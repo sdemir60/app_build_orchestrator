@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BuildOrchestrator.Contracts")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1f8bb68406f5ce1c4508e16eb86f7d185a27875e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+279b090fc8dafa730ce9d686e868db0990d6df99")]
 [assembly: System.Reflection.AssemblyProductAttribute("BuildOrchestrator.Contracts")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BuildOrchestrator.Contracts")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

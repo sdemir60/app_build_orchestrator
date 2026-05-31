@@ -35,6 +35,7 @@ public static class Events
 {
     public const string SyncProgress = "syncProgress";
     public const string SyncCompleted = "syncCompleted";
+    public const string BranchList = "branchList";
     public const string RunStarted = "runStarted";
     public const string ProjectStarted = "projectStarted";
     public const string ProjectLog = "projectLog";
