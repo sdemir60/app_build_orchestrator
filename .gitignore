@@ -1,0 +1,19 @@
+## .NET build output
+bin/
+obj/
+[Bb]uild/
+artifacts/
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+## Test results
+TestResults/
+[Tt]est[Rr]esults/
+
+## OS / misc
+.DS_Store
+Thumbs.db

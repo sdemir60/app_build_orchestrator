@@ -28,7 +28,6 @@ public static class AutoFollowBehavior
     {
         public bool Following = true;
         public DispatcherTimer? ResumeTimer;
-        public double LastExtentHeight;
     }
 
     private static void OnEnabledChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
