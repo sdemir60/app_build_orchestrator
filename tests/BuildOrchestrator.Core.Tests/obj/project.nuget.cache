@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "FaKbga3YKio=",
+  "dgSpecHash": "luieBwN1l7w=",
   "success": true,
   "projectFilePath": "/tmp/workspace/sdemir60/app_build_orchestrator/tests/BuildOrchestrator.Core.Tests/BuildOrchestrator.Core.Tests.csproj",
   "expectedPackageFiles": [
@@ -17,7 +17,8 @@
     "/home/runner/.nuget/packages/xunit.core/2.9.2/xunit.core.2.9.2.nupkg.sha512",
     "/home/runner/.nuget/packages/xunit.extensibility.core/2.9.2/xunit.extensibility.core.2.9.2.nupkg.sha512",
     "/home/runner/.nuget/packages/xunit.extensibility.execution/2.9.2/xunit.extensibility.execution.2.9.2.nupkg.sha512",
-    "/home/runner/.nuget/packages/xunit.runner.visualstudio/2.8.2/xunit.runner.visualstudio.2.8.2.nupkg.sha512"
+    "/home/runner/.nuget/packages/xunit.runner.visualstudio/2.8.2/xunit.runner.visualstudio.2.8.2.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.windowsdesktop.app.ref/8.0.27/microsoft.windowsdesktop.app.ref.8.0.27.nupkg.sha512"
   ],
   "logs": []
 }

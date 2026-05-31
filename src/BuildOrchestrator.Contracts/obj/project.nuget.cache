@@ -1,8 +1,10 @@
 {
   "version": 2,
-  "dgSpecHash": "yHbJGz0XQ1Q=",
+  "dgSpecHash": "qyeo8paTMLQ=",
   "success": true,
   "projectFilePath": "/tmp/workspace/sdemir60/app_build_orchestrator/src/BuildOrchestrator.Contracts/BuildOrchestrator.Contracts.csproj",
-  "expectedPackageFiles": [],
+  "expectedPackageFiles": [
+    "/home/runner/.nuget/packages/microsoft.windowsdesktop.app.ref/8.0.27/microsoft.windowsdesktop.app.ref.8.0.27.nupkg.sha512"
+  ],
   "logs": []
 }
