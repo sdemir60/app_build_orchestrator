@@ -77,12 +77,24 @@ public sealed class MsBuildBuildEngine
         var gate = new object();
         bool cancelled = false;
 
+        // Build-order index for every project so the ready set can be drained in order.
+        var orderIndex = new Dictionary<string, int>(orderedToBuild.Count);
+        for (int i = 0; i < orderedToBuild.Count; i++)
+            orderIndex[orderedToBuild[i]] = i;
+
+        int maxParallel = Math.Max(1, profile.MaxParallel);
+        int inFlight = 0;
+        // Projects whose dependencies are satisfied, kept ordered by build order (smallest first).
+        var ready = new SortedSet<int>();
+
         using var ctr = cancellationToken.Register(() =>
         {
             cancelled = true;
             try { manager.CancelAllSubmissions(); } catch { /* ignore */ }
         });
 
+        // Submit one project to MSBuild. Always invoked while holding <paramref name="gate"/>,
+        // after inFlight has been incremented for it.
         void Submit(string id)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -117,46 +129,61 @@ public sealed class MsBuildBuildEngine
                 submission.ExecuteAsync(s =>
                 {
                     bool ok = s.BuildResult is { OverallResult: BuildResultCode.Success };
-                    lock (gate)
-                    {
-                        if (ok) succeeded++; else failed++;
-                    }
                     ProjectFinished?.Invoke(id, ok);
                     completions[id].TrySetResult(ok);
-                    ReleaseDependents(id);
+                    OnFinished(id, ok);
                 }, null);
             }
             catch (Exception ex)
             {
                 ProjectLog?.Invoke(id, $"build submission failed: {ex.Message}", true);
-                lock (gate) { failed++; }
                 ProjectFinished?.Invoke(id, false);
                 completions[id].TrySetResult(false);
-                ReleaseDependents(id);
+                OnFinished(id, false);
             }
         }
 
-        void ReleaseDependents(string id)
+        // A project finished: account for it, unblock dependents, then pull the next ready
+        // projects (in build order) up to the parallelism limit.
+        void OnFinished(string id, bool ok)
         {
             lock (gate)
             {
+                if (ok) succeeded++; else failed++;
+                inFlight--;
                 foreach (var dep in dependents[id])
                 {
                     if (--remaining[dep] == 0)
-                        Submit(dep);
+                        ready.Add(orderIndex[dep]);
                 }
+                Pump();
+            }
+        }
+
+        // Drain the ready set in build order, respecting the parallelism limit.
+        // Must be called while holding <paramref name="gate"/>.
+        void Pump()
+        {
+            while (!cancelled && inFlight < maxParallel && ready.Count > 0)
+            {
+                int idx = ready.Min;
+                ready.Remove(idx);
+                inFlight++;
+                Submit(orderedToBuild[idx]);
             }
         }
 
         manager.BeginBuild(buildParams);
         try
         {
-            // Kick off all projects whose dependencies are already satisfied.
+            // Seed the ready set with projects that have no (in-scope) dependencies, then start
+            // the first <c>maxParallel</c> in build order.
             lock (gate)
             {
                 foreach (var id in orderedToBuild)
                     if (remaining[id] == 0)
-                        Submit(id);
+                        ready.Add(orderIndex[id]);
+                Pump();
             }
 
             Task.WhenAll(completions.Values.Select(c => c.Task)).WaitAsync(cancellationToken).GetAwaiter().GetResult();

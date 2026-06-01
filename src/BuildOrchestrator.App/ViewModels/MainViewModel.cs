@@ -33,7 +33,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _client.Diagnostic += OnWorkerDiagnostic;
 
         Console = new ConsoleViewModel();
-        ReducedMotion = _config.ReducedMotion;
     }
 
     public ConsoleViewModel Console { get; }
@@ -41,7 +40,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<ProjectCardViewModel> Projects { get; } = new();
     public ObservableCollection<BranchInfo> Branches { get; } = new();
 
-    [ObservableProperty] private bool _reducedMotion;
     [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private bool _isSyncing;
     [ObservableProperty] private string _syncStatus = "Ready";
@@ -70,7 +68,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public void ApplyConfig(AppConfig config)
     {
         _config = config;
-        ReducedMotion = config.ReducedMotion;
         _configStore.Save(config);
         // Re-sync against the (possibly new) root.
         if (!string.IsNullOrWhiteSpace(config.RootPath))
@@ -115,6 +112,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             SyncStatus = "Stopping\u2026";
             _client.Send(new StopRunCommand(_currentRunId));
         }
+    }
+
+    /// <summary>Stop any in-progress build before the application exits (tray "Exit"/close).</summary>
+    public void StopForExit()
+    {
+        if (IsRunning && _currentRunId != null)
+            _client.Send(new StopRunCommand(_currentRunId));
     }
 
     [RelayCommand]
@@ -187,9 +191,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             card.IsVisible = visible;
         }
     }
-
-    [RelayCommand]
-    private void ToggleFullLog() => Console.ShowFullLog = !Console.ShowFullLog;
 
     private void StartRun(BuildMode mode)
     {

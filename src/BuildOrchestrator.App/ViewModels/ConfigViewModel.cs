@@ -13,10 +13,8 @@ public sealed partial class ConfigViewModel : ObservableObject
         _buildConfiguration = config.BuildConfiguration;
         _performance = config.Performance;
         _branchWorkMode = config.BranchWorkMode;
-        _logLevel = config.LogLevel;
         _dependentMode = config.DependentMode;
         _cacheLocation = config.CacheLocation ?? AppPaths.Root;
-        _reducedMotion = config.ReducedMotion;
         _autoStart = config.AutoStart;
         _minimizeToTray = config.MinimizeToTray;
     }
@@ -25,10 +23,8 @@ public sealed partial class ConfigViewModel : ObservableObject
     [ObservableProperty] private BuildConfiguration _buildConfiguration;
     [ObservableProperty] private PerformanceMode _performance;
     [ObservableProperty] private BranchWorkMode _branchWorkMode;
-    [ObservableProperty] private LogLevel _logLevel;
     [ObservableProperty] private DependentMode _dependentMode;
     [ObservableProperty] private string _cacheLocation;
-    [ObservableProperty] private bool _reducedMotion;
     [ObservableProperty] private bool _autoStart;
     [ObservableProperty] private bool _minimizeToTray;
 
@@ -38,7 +34,6 @@ public sealed partial class ConfigViewModel : ObservableObject
         Enum.GetValues<PerformanceMode>();
     public IReadOnlyList<BranchWorkMode> BranchWorkModes { get; } =
         Enum.GetValues<BranchWorkMode>();
-    public IReadOnlyList<LogLevel> LogLevels { get; } = Enum.GetValues<LogLevel>();
     public IReadOnlyList<DependentMode> DependentModes { get; } = Enum.GetValues<DependentMode>();
 
     public AppConfig ToConfig() => new()
@@ -47,10 +42,8 @@ public sealed partial class ConfigViewModel : ObservableObject
         BuildConfiguration = BuildConfiguration,
         Performance = Performance,
         BranchWorkMode = BranchWorkMode,
-        LogLevel = LogLevel,
         DependentMode = DependentMode,
         CacheLocation = string.IsNullOrWhiteSpace(CacheLocation) ? null : CacheLocation,
-        ReducedMotion = ReducedMotion,
         AutoStart = AutoStart,
         MinimizeToTray = MinimizeToTray
     };

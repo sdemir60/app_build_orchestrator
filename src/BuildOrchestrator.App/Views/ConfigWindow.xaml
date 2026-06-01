@@ -39,18 +39,12 @@
                     <TextBlock Text="Dependent mode" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,0,4" />
                     <ComboBox ItemsSource="{Binding DependentModes}" SelectedItem="{Binding DependentMode}" />
                 </StackPanel>
-                <StackPanel Margin="0,0,8,8">
-                    <TextBlock Text="Log level" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,0,4" />
-                    <ComboBox ItemsSource="{Binding LogLevels}" SelectedItem="{Binding LogLevel}" />
-                </StackPanel>
             </UniformGrid>
 
             <TextBlock Text="Cache location" Foreground="{StaticResource SubtleTextBrush}" Margin="0,6,0,4" />
             <TextBox Text="{Binding CacheLocation, UpdateSourceTrigger=PropertyChanged}"
                      VerticalContentAlignment="Center" Padding="6,4" Margin="0,0,0,14" />
 
-            <CheckBox Content="Reduced motion (disable animations)" Foreground="{StaticResource TextBrush}"
-                      IsChecked="{Binding ReducedMotion}" Margin="0,4" />
             <CheckBox Content="Start with Windows" Foreground="{StaticResource TextBrush}"
                       IsChecked="{Binding AutoStart}" Margin="0,4" />
             <CheckBox Content="Minimize to tray" Foreground="{StaticResource TextBrush}"

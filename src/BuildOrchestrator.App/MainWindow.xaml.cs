@@ -14,6 +14,8 @@ namespace BuildOrchestrator.App;
 /// </summary>
 public partial class MainWindow : Window
 {
+    private bool _exitRequested;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -89,6 +91,9 @@ public partial class MainWindow : Window
 
     private void TrayExit_OnClick(object sender, RoutedEventArgs e)
     {
+        _exitRequested = true;
+        // Stop/kill any in-progress build before tearing everything down.
+        ViewModel?.StopForExit();
         Tray.Dispose();
         Application.Current.Shutdown();
     }
@@ -110,6 +115,16 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        // Closing the window minimizes to the tray instead of exiting; only the tray "Exit"
+        // (which sets _exitRequested) actually shuts the app down.
+        if (!_exitRequested && ViewModel?.Config.MinimizeToTray == true)
+        {
+            e.Cancel = true;
+            Hide();
+            return;
+        }
+
+        ViewModel?.StopForExit();
         Tray.Dispose();
         base.OnClosing(e);
     }

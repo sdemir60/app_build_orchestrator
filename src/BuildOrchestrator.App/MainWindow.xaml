@@ -18,20 +18,27 @@
                                   Command="{Binding DataContext.FocusCardCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                   CommandParameter="{Binding}" />
                 </ContentControl.InputBindings>
-                <Border x:Name="CardBorder" Background="{StaticResource CardBrush}" CornerRadius="10"
+                <Border x:Name="CardBorder" CornerRadius="10"
                         Margin="0,5,6,5" Padding="0" BorderThickness="1.4" BorderBrush="#262B36">
+                    <Border.Background>
+                        <SolidColorBrush Color="{StaticResource CardColor}" />
+                    </Border.Background>
                     <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="6" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <!-- status accent bar -->
-                        <Border Grid.Column="0" CornerRadius="10,0,0,10"
+                        <!-- status accent bar (thickens when selected) -->
+                        <Border Grid.Column="0" x:Name="Accent" Width="6" CornerRadius="10,0,0,10"
                                 Background="{Binding Status, Converter={StaticResource StatusToBrush}}" />
 
-                        <StackPanel Grid.Column="1" Margin="12,10">
+                        <StackPanel Grid.Column="1" x:Name="CardText" Margin="12,10"
+                                    RenderTransformOrigin="0,0.5">
+                            <StackPanel.RenderTransform>
+                                <TranslateTransform X="0" />
+                            </StackPanel.RenderTransform>
                             <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextBrush}"
                                        FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                             <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
@@ -85,10 +92,47 @@
             </ContentControl>
 
             <DataTemplate.Triggers>
-                <!-- selected (console scoped to this project): selection-coloured border, default thickness -->
+                <!-- selected (console scoped to this project): the accent bar thickens and the
+                     text slides inward — quick, animated, no border. -->
                 <DataTrigger Binding="{Binding IsConsoleFocused}" Value="True">
-                    <Setter TargetName="CardBorder" Property="Background" Value="#222834" />
-                    <Setter TargetName="CardBorder" Property="BorderBrush" Value="#AEB6C2" />
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Accent"
+                                                 Storyboard.TargetProperty="Width"
+                                                 To="13" Duration="0:0:0.12">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                                <DoubleAnimation Storyboard.TargetName="CardText"
+                                                 Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                 To="7" Duration="0:0:0.12">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                                <ColorAnimation Storyboard.TargetName="CardBorder"
+                                                Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                To="#252B36" Duration="0:0:0.12" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Accent"
+                                                 Storyboard.TargetProperty="Width"
+                                                 To="6" Duration="0:0:0.12" />
+                                <DoubleAnimation Storyboard.TargetName="CardText"
+                                                 Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                 To="0" Duration="0:0:0.12" />
+                                <ColorAnimation Storyboard.TargetName="CardBorder"
+                                                Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                To="{StaticResource CardColor}" Duration="0:0:0.12" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.ExitActions>
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -178,9 +222,6 @@
                     <DockPanel Grid.Row="0" Margin="6,4,6,6">
                         <TextBlock Text="Console" Foreground="{StaticResource SubtleTextBrush}"
                                    FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <CheckBox Content="Full log" DockPanel.Dock="Right" Foreground="{StaticResource SubtleTextBrush}"
-                                  IsChecked="{Binding Console.ShowFullLog}" VerticalAlignment="Center"
-                                  HorizontalAlignment="Right" />
                     </DockPanel>
                     <ListBox Grid.Row="1" x:Name="ConsoleList" ItemsSource="{Binding Console.Lines}"
                              Background="Transparent" BorderThickness="0" Foreground="#D0D0D0"
