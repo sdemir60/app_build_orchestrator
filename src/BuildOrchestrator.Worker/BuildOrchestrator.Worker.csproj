@@ -1,24 +1,40 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
-    <AssemblyName>BuildOrchestrator.Worker</AssemblyName>
     <RootNamespace>BuildOrchestrator.Worker</RootNamespace>
-    <!-- MSBuild assemblies are resolved at runtime via MSBuildLocator, never copied locally. -->
-    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
-    <!-- NU1701: Microsoft.Build ships net472 ref assemblies; this is the documented MSBuildLocator
-         pattern (ExcludeAssets=runtime + runtime resolution). MSB3277: benign System.Text.Json unify. -->
-    <NoWarn>$(NoWarn);NU1701;MSB3277</NoWarn>
+    <!--
+      RollForward=LatestMajor: the worker uses MSBuildLocator to load the machine's
+      installed .NET SDK MSBuild in-process. MSBuildLocator only detects SDKs whose
+      major version matches the running runtime. This machine has SDK 9 and 10 but no
+      SDK 8, so a net8.0 process (running on the .NET 8 runtime) finds zero SDK instances
+      and every build fails with "Could not load Microsoft.Build.Framework".
+      Rolling forward makes the worker run on the latest installed runtime (e.g. .NET 10),
+      so MSBuildLocator finds and binds the matching SDK.
+    -->
+    <RollForward>LatestMajor</RollForward>
+    <!--
+      Do NOT set CopyLocalLockFileAssemblies=false here: that would also stop
+      Microsoft.Build.Locator.dll from being copied, crashing the worker at startup.
+      The heavy MSBuild assemblies are kept out of the output via ExcludeAssets="runtime"
+      on their PackageReferences below (MSBuildLocator binds them from the installed SDK).
+    -->
+    <!--
+      NU1903: the Microsoft.Build packages are referenced compile-time ONLY (ExcludeAssets="runtime").
+      At runtime MSBuildLocator binds to the machine's installed SDK MSBuild, so the vulnerable
+      assemblies are never shipped or loaded. Suppressing is safe here.
+    -->
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
-    <PackageReference Include="Microsoft.Build" Version="17.13.9" ExcludeAssets="runtime" />
-    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.13.9" ExcludeAssets="runtime" />
+    <!-- Build packages: compile-time only; runtime comes from the located MSBuild -->
+    <PackageReference Include="Microsoft.Build" Version="17.11.4" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.11.4" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,29 +1,40 @@
+using System.IO;
 using System.Windows;
 using BuildOrchestrator.App.ViewModels;
+using Microsoft.Win32;
 
-namespace BuildOrchestrator.App.Views;
+namespace BuildOrchestrator.App;
 
-/// <summary>Configuration dialog (Section 3). Closes itself when the view model requests it.</summary>
+/// <summary>Interaction logic for ConfigWindow.xaml (Section 3 settings).</summary>
 public partial class ConfigWindow : Window
 {
+    private readonly ConfigViewModel _viewModel;
+
     public ConfigWindow(ConfigViewModel viewModel)
     {
         InitializeComponent();
+        _viewModel = viewModel;
         DataContext = viewModel;
-        viewModel.CloseRequested += OnCloseRequested;
-        Closed += (_, _) => viewModel.CloseRequested -= OnCloseRequested;
     }
 
-    private void OnCloseRequested(bool _)
+    private void Browse_OnClick(object sender, RoutedEventArgs e)
     {
-        // DialogResult can only be set when shown via ShowDialog; guard for safety.
-        try
-        {
-            DialogResult = true;
-        }
-        catch (InvalidOperationException)
-        {
-            Close();
-        }
+        var dialog = new OpenFolderDialog { Title = "Select workspace root" };
+        if (Directory.Exists(_viewModel.RootPath))
+            dialog.InitialDirectory = _viewModel.RootPath;
+        if (dialog.ShowDialog(this) == true)
+            _viewModel.RootPath = dialog.FolderName;
+    }
+
+    private void Save_OnClick(object sender, RoutedEventArgs e)
+    {
+        DialogResult = true;
+        Close();
+    }
+
+    private void Cancel_OnClick(object sender, RoutedEventArgs e)
+    {
+        DialogResult = false;
+        Close();
     }
 }

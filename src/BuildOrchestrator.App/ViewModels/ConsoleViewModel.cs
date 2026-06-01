@@ -3,94 +3,93 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
 
-public sealed record ConsoleEntry(string ProjectId, string Text, bool IsError);
+/// <summary>
+/// One console line. <paramref name="IsHeader"/> marks status lines (start/finish/skip) that
+/// are always shown regardless of the errors-only toggle; <paramref name="IsSuccess"/> tints
+/// success headers green.
+/// </summary>
+public sealed record ConsoleLine(
+    string ProjectId, string ProjectName, string Text, bool IsError,
+    bool IsHeader = false, bool IsSuccess = false)
+{
+    /// <summary>Wall-clock time the line was produced (shown as a hh:mm:ss prefix).</summary>
+    public DateTime Time { get; init; } = DateTime.Now;
+
+    /// <summary>Rendered text: time prefix, project name (for non-header lines), then the message.</summary>
+    public string Display => IsHeader
+        ? $"[{Time:HH:mm:ss}]  {Text}"
+        : $"[{Time:HH:mm:ss}]  {ProjectName,-22}  {Text}";
+}
 
 /// <summary>
-/// Console output model (Section 7): a bounded ring buffer with two live filters — errors-only
-/// (default) and an optional single-project focus. The visible collection is what the UI binds to;
-/// auto-follow scrolling is handled by a view behavior. All methods must be called on the UI thread.
+/// The right-hand console (Section 7): ring buffer, errors-only/full toggle, and optional
+/// per-project scoping.
 /// </summary>
 public sealed partial class ConsoleViewModel : ObservableObject
 {
-    private readonly LinkedList<ConsoleEntry> _buffer = new();
-    private readonly int _maxLines;
+    private const int MaxLines = 5000;
 
-    public ConsoleViewModel(int maxLines = 20000)
-    {
-        _maxLines = Math.Max(1000, maxLines);
-    }
+    private readonly List<ConsoleLine> _all = new();
+    private readonly object _sync = new();
 
-    /// <summary>The currently visible (filtered) lines bound by the console view.</summary>
-    public ObservableCollection<ConsoleEntry> Visible { get; } = new();
+    /// <summary>Lines currently visible after filtering (bound to the UI).</summary>
+    public ObservableCollection<ConsoleLine> Lines { get; } = new();
 
+    /// <summary>False = errors only (default), true = full log.</summary>
     [ObservableProperty]
-    private bool _errorsOnly = true; // Section 7 default
+    private bool _showFullLog;
 
-    /// <summary>When set, only this project's output is shown; null shows all.</summary>
+    /// <summary>When set, only this project's output is shown.</summary>
     [ObservableProperty]
     private string? _focusedProjectId;
 
-    partial void OnErrorsOnlyChanged(bool value) => Rebuild();
+    partial void OnShowFullLogChanged(bool value) => Rebuild();
     partial void OnFocusedProjectIdChanged(string? value) => Rebuild();
 
-    public void Append(ConsoleEntry entry)
+    public void Append(ConsoleLine line)
     {
-        _buffer.AddLast(entry);
-        if (_buffer.Count > _maxLines)
+        lock (_sync)
         {
-            _buffer.RemoveFirst();
-            if (Visible.Count > 0 && Passes(Visible[0]))
-            {
-                // Keep the visible collection roughly bounded too.
-                if (Visible.Count >= _maxLines)
-                {
-                    Visible.RemoveAt(0);
-                }
-            }
+            _all.Add(line);
+            if (_all.Count > MaxLines)
+                _all.RemoveRange(0, _all.Count - MaxLines);
         }
 
-        if (Passes(entry))
+        if (Passes(line))
         {
-            Visible.Add(entry);
-            if (Visible.Count > _maxLines)
-            {
-                Visible.RemoveAt(0);
-            }
+            Lines.Add(line);
+            if (Lines.Count > MaxLines)
+                Lines.RemoveAt(0);
         }
     }
 
     public void Clear()
     {
-        _buffer.Clear();
-        Visible.Clear();
+        lock (_sync)
+            _all.Clear();
+        Lines.Clear();
     }
 
-    private bool Passes(ConsoleEntry e)
+    private bool Passes(ConsoleLine line)
     {
-        if (ErrorsOnly && !e.IsError)
-        {
-            return false;
-        }
-        if (FocusedProjectId is not null && !string.Equals(e.ProjectId, FocusedProjectId, StringComparison.Ordinal))
-        {
-            return false;
-        }
-        return true;
+        // A card is selected: show that project's full, detailed output (VS-style).
+        if (FocusedProjectId != null)
+            return line.ProjectId == FocusedProjectId;
+        // "Tümü" mode: only the concise summaries (building / built / result), unless the user
+        // explicitly turned on the full log.
+        if (ShowFullLog)
+            return true;
+        return line.IsHeader || line.IsError;
     }
 
     private void Rebuild()
     {
-        Visible.Clear();
-        foreach (var e in _buffer)
-        {
-            if (Passes(e))
-            {
-                Visible.Add(e);
-            }
-        }
+        Lines.Clear();
+        List<ConsoleLine> snapshot;
+        lock (_sync)
+            snapshot = _all.ToList();
+        foreach (var line in snapshot)
+            if (Passes(line))
+                Lines.Add(line);
     }
-
-    /// <summary>Toggle focus: clicking a failed card focuses it; clicking again clears (Section 7).</summary>
-    public void ToggleFocus(string projectId)
-        => FocusedProjectId = string.Equals(FocusedProjectId, projectId, StringComparison.Ordinal) ? null : projectId;
 }

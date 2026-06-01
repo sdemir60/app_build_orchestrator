@@ -1,139 +1,115 @@
-using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Contracts;
+using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
 
 /// <summary>
-/// Command-line git wrapper (Section 2/6): branch listing, current branch/commit, working-tree
-/// status, diff against a commit, and worktree preparation in the orchestrator's pool.
+/// Command-line git operations (Section 2 / 6): branches, status, current commit, worktree.
 /// </summary>
 public sealed class GitService
 {
-    private readonly string _repoRoot;
+    private const string Git = "git";
 
-    public GitService(string repoRoot)
+    /// <summary>Find the repository root (the folder containing .git) at or above <paramref name="startPath"/>.</summary>
+    public async Task<string?> FindRepoRootAsync(string startPath, CancellationToken ct = default)
     {
-        _repoRoot = repoRoot;
+        if (string.IsNullOrWhiteSpace(startPath) || !Directory.Exists(startPath))
+            return null;
+
+        var result = await ProcessRunner.RunAsync(
+            Git, "rev-parse --show-toplevel", startPath, ct).ConfigureAwait(false);
+        if (!result.Success)
+            return null;
+        var path = result.StdOut.Trim();
+        return string.IsNullOrEmpty(path) ? null : Path.GetFullPath(path);
     }
 
-    public string RepoRoot => _repoRoot;
-
-    public async Task<bool> IsRepositoryAsync(CancellationToken ct = default)
+    public async Task<string?> GetCurrentBranchAsync(string repoRoot, CancellationToken ct = default)
     {
-        var r = await Run(new[] { "rev-parse", "--is-inside-work-tree" }, ct).ConfigureAwait(false);
-        return r.Success && r.StdOut.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+        var result = await ProcessRunner.RunAsync(
+            Git, "rev-parse --abbrev-ref HEAD", repoRoot, ct).ConfigureAwait(false);
+        return result.Success ? result.StdOut.Trim() : null;
     }
 
-    public async Task<string> GetCurrentBranchAsync(CancellationToken ct = default)
+    public async Task<List<BranchInfo>> ListBranchesAsync(string repoRoot, CancellationToken ct = default)
     {
-        var r = await Run(new[] { "rev-parse", "--abbrev-ref", "HEAD" }, ct).ConfigureAwait(false);
-        return r.StdOut.Trim();
-    }
+        var branches = new List<BranchInfo>();
+        var current = await GetCurrentBranchAsync(repoRoot, ct).ConfigureAwait(false);
 
-    public async Task<string> GetCurrentCommitAsync(string? rev = null, CancellationToken ct = default)
-    {
-        var r = await Run(new[] { "rev-parse", rev ?? "HEAD" }, ct).ConfigureAwait(false);
-        return r.StdOut.Trim();
-    }
+        var result = await ProcessRunner.RunAsync(
+            Git, "branch --format=%(refname:short)", repoRoot, ct).ConfigureAwait(false);
+        if (!result.Success)
+            return branches;
 
-    public async Task<IReadOnlyList<string>> ListBranchesAsync(CancellationToken ct = default)
-    {
-        var r = await Run(new[] { "for-each-ref", "--format=%(refname:short)", "refs/heads" }, ct)
-            .ConfigureAwait(false);
-        if (!r.Success)
+        foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            return Array.Empty<string>();
+            var name = line.Trim();
+            if (name.Length == 0 || name.StartsWith("(HEAD"))
+                continue;
+            branches.Add(new BranchInfo
+            {
+                Name = name,
+                IsCurrent = string.Equals(name, current, StringComparison.Ordinal)
+            });
         }
+        return branches;
+    }
 
-        return r.StdOut
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
+    /// <summary>HEAD commit sha of a branch (or current HEAD when branch is null/empty).</summary>
+    public async Task<string?> GetCommitAsync(string repoRoot, string? branch = null, CancellationToken ct = default)
+    {
+        var rev = string.IsNullOrWhiteSpace(branch) ? "HEAD" : branch!;
+        var result = await ProcessRunner.RunAsync(
+            Git, $"rev-parse {rev}", repoRoot, ct).ConfigureAwait(false);
+        return result.Success ? result.StdOut.Trim() : null;
     }
 
     /// <summary>
-    /// Working-tree changes from <c>git status --porcelain</c> as build-affecting <see cref="FileChange"/>s.
-    /// Paths are repo-relative; the mapper resolves them against the repo root.
+    /// Absolute paths of files changed in the working tree (staged + unstaged + untracked),
+    /// used for dirty-project detection (Section 6).
     /// </summary>
-    public async Task<IReadOnlyList<FileChange>> GetStatusChangesAsync(string? workingDir = null, CancellationToken ct = default)
+    public async Task<List<string>> GetChangedFilesAsync(string repoRoot, CancellationToken ct = default)
     {
-        var r = await Run(new[] { "status", "--porcelain", "-z", "--untracked-files=all" }, ct, workingDir)
-            .ConfigureAwait(false);
-        if (!r.Success)
+        var changed = new List<string>();
+        var result = await ProcessRunner.RunAsync(
+            Git, "status --porcelain=v1 --untracked-files=all", repoRoot, ct).ConfigureAwait(false);
+        if (!result.Success)
+            return changed;
+
+        foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            return Array.Empty<FileChange>();
+            if (line.Length < 4)
+                continue;
+            // Format: "XY <path>" or "XY <old> -> <new>" for renames.
+            var pathPart = line[3..].Trim();
+            var arrow = pathPart.IndexOf(" -> ", StringComparison.Ordinal);
+            if (arrow >= 0)
+                pathPart = pathPart[(arrow + 4)..];
+            pathPart = pathPart.Trim('"');
+            changed.Add(Path.GetFullPath(Path.Combine(repoRoot, pathPart.Replace('/', Path.DirectorySeparatorChar))));
         }
-
-        return ParsePorcelainZ(r.StdOut).Select(p => new FileChange(p)).ToList();
-    }
-
-    /// <summary>Files changed between <paramref name="fromCommit"/> and HEAD (committed delta).</summary>
-    public async Task<IReadOnlyList<FileChange>> GetDiffChangesAsync(string fromCommit, string toCommit = "HEAD", string? workingDir = null, CancellationToken ct = default)
-    {
-        var r = await Run(new[] { "diff", "--name-only", "-z", fromCommit, toCommit }, ct, workingDir)
-            .ConfigureAwait(false);
-        if (!r.Success)
-        {
-            return Array.Empty<FileChange>();
-        }
-
-        return r.StdOut
-            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
-            .Select(p => new FileChange(p))
-            .ToList();
+        return changed;
     }
 
     /// <summary>
-    /// Ensures a worktree for <paramref name="branch"/> exists at <paramref name="worktreePath"/>
-    /// and is updated to that branch's tip — without touching the user's VS working tree (Section 6).
+    /// Ensure a worktree for <paramref name="branch"/> exists at <paramref name="worktreePath"/>
+    /// and is updated to the branch tip (Section 6 / branch yönetimi). The user's main working
+    /// tree is never touched.
     /// </summary>
-    public async Task PrepareWorktreeAsync(string branch, string worktreePath, CancellationToken ct = default)
+    public async Task EnsureWorktreeAsync(
+        string repoRoot, string branch, string worktreePath, CancellationToken ct = default)
     {
-        if (Directory.Exists(Path.Combine(worktreePath, ".git")) ||
-            File.Exists(Path.Combine(worktreePath, ".git")))
+        if (Directory.Exists(Path.Combine(worktreePath, ".git")) || File.Exists(Path.Combine(worktreePath, ".git")))
         {
-            // Existing worktree: make sure it points at the branch and is current.
-            await Run(new[] { "-C", worktreePath, "checkout", branch }, ct).ConfigureAwait(false);
-            await Run(new[] { "-C", worktreePath, "reset", "--hard", branch }, ct).ConfigureAwait(false);
+            // Existing worktree: fetch + checkout + hard reset to the branch tip.
+            await ProcessRunner.RunAsync(Git, $"checkout {branch}", worktreePath, ct).ConfigureAwait(false);
+            await ProcessRunner.RunAsync(Git, $"reset --hard {branch}", worktreePath, ct).ConfigureAwait(false);
             return;
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(worktreePath.TrimEnd(Path.DirectorySeparatorChar))!);
-
-        // Remove any stale registration then add fresh.
-        await Run(new[] { "worktree", "prune" }, ct).ConfigureAwait(false);
-        var add = await Run(new[] { "worktree", "add", "--force", worktreePath, branch }, ct).ConfigureAwait(false);
-        if (!add.Success)
-        {
-            throw new InvalidOperationException($"git worktree add failed: {add.StdErr}");
-        }
+        Directory.CreateDirectory(Path.GetDirectoryName(worktreePath)!);
+        // Create the worktree pinned to the branch. --force tolerates a pre-existing empty dir.
+        await ProcessRunner.RunAsync(
+            Git, $"worktree add --force \"{worktreePath}\" {branch}", repoRoot, ct).ConfigureAwait(false);
     }
-
-    private static IEnumerable<string> ParsePorcelainZ(string output)
-    {
-        // Records are NUL-separated; each entry is "XY <path>" and renames add an extra path record.
-        var parts = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var part in parts)
-        {
-            if (part.Length < 4)
-            {
-                continue;
-            }
-
-            var status = part.Substring(0, 2);
-            var path = part.Substring(3);
-
-            // For renames "R  old -> new" the porcelain -z form splits paths into separate records,
-            // but defensively handle an inline arrow too.
-            var arrow = path.IndexOf(" -> ", StringComparison.Ordinal);
-            if (arrow >= 0)
-            {
-                path = path[(arrow + 4)..];
-            }
-
-            _ = status;
-            yield return path;
-        }
-    }
-
-    private Task<ProcessResult> Run(IEnumerable<string> args, CancellationToken ct, string? workingDir = null)
-        => ProcessRunner.RunAsync("git", args, workingDir ?? _repoRoot, ct);
 }

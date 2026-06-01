@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -6,22 +6,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
-    <LangVersion>latest</LangVersion>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>BuildOrchestrator</AssemblyName>
     <RootNamespace>BuildOrchestrator.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
-  </ItemGroup>
-
-  <!-- WinForms is only used for the tray icon and folder dialog. Drop its project-wide global
-       usings so they don't collide with WPF types (Brush/Color/Binding/ListBox/Application). -->
-  <ItemGroup>
-    <Using Remove="System.Windows.Forms" />
-    <Using Remove="System.Drawing" />
+    <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,10 +21,26 @@
     <ProjectReference Include="..\BuildOrchestrator.Core\BuildOrchestrator.Core.csproj" />
   </ItemGroup>
 
-  <!-- The Worker is launched as a child process by the App at runtime. -->
+  <!-- Build the Worker first, but do not reference its assembly directly -->
   <ItemGroup>
-    <ProjectReference Include="..\BuildOrchestrator.Worker\BuildOrchestrator.Worker.csproj"
-                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\BuildOrchestrator.Worker\BuildOrchestrator.Worker.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
   </ItemGroup>
+
+  <!-- Copy the Worker's full output into <AppOutDir>\Worker\ so the app can spawn it -->
+  <Target Name="CopyWorkerOutput" AfterTargets="Build">
+    <PropertyGroup>
+      <WorkerOutDir>$(MSBuildThisFileDirectory)..\BuildOrchestrator.Worker\bin\$(Configuration)\net8.0\</WorkerOutDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <WorkerFiles Include="$(WorkerOutDir)**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WorkerFiles)"
+          DestinationFiles="@(WorkerFiles->'$(OutDir)Worker\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(WorkerOutDir)')" />
+  </Target>
 
 </Project>

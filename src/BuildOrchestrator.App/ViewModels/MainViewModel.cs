@@ -1,98 +1,92 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.Windows.Data;
-using BuildOrchestrator.App.Services;
+using System.Windows;
+using BuildOrchestrator.App.Ipc;
 using BuildOrchestrator.Contracts;
 using BuildOrchestrator.Core.Configuration;
-using BuildOrchestrator.Core.Storage;
-using BuildOrchestrator.Core.Sync;
+using BuildOrchestrator.Core.Persistence;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace BuildOrchestrator.App.ViewModels;
 
-/// <summary>Status-label filters that can be toggled from the bottom-left stats (Section 7).</summary>
-public enum CardFilter
+/// <summary>Root view model for the single window (Sections 7, 8).</summary>
+public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
-    All,
-    Built,
-    Succeeded,
-    Failed,
-    Skipped
-}
+    private readonly WorkerClient _client;
+    private readonly ConfigStore _configStore = new();
+    private readonly Dictionary<string, ProjectCardViewModel> _byId = new();
+    private readonly Dictionary<string, DateTime> _startTimes = new();
 
-/// <summary>
-/// Root view model for the single window (Section 7). Owns the project cards, console, branch list,
-/// run lifecycle (Build/Rebuild/Stop morph), and stats; it brokers all Worker communication and
-/// marshals incoming events onto the UI thread.
-/// </summary>
-public sealed partial class MainViewModel : ObservableObject
-{
-    private readonly WorkerClient _worker;
-    private readonly ConfigStore _configStore;
-    private readonly Action<Action> _uiInvoke;
-    private readonly Dictionary<string, ProjectCardViewModel> _byId = new(StringComparer.Ordinal);
-
+    private AppConfig _config;
     private string? _currentRunId;
-    private CardFilter _filter = CardFilter.All;
+    private int _runTotal;
 
-    public MainViewModel(WorkerClient worker, ConfigStore configStore, AppConfig config, Action<Action> uiInvoke)
+    /// <summary>Raised when a project starts building so the view can scroll it into focus.</summary>
+    public event Action<ProjectCardViewModel>? ScrollToCardRequested;
+
+    public MainViewModel()
     {
-        _worker = worker;
-        _configStore = configStore;
-        _uiInvoke = uiInvoke;
-        Config = config;
-        ReducedMotion = config.ReducedMotion;
+        _config = _configStore.Load();
+        _client = new WorkerClient();
+        _client.EventReceived += OnWorkerEvent;
+        _client.WorkerExited += OnWorkerExited;
+        _client.Diagnostic += OnWorkerDiagnostic;
 
-        Console = new ConsoleViewModel(config.ConsoleMaxLines);
-        ProjectsView = CollectionViewSource.GetDefaultView(Projects);
-        ProjectsView.Filter = FilterPredicate;
-
-        HookWorker();
+        Console = new ConsoleViewModel();
+        ReducedMotion = _config.ReducedMotion;
     }
 
-    public AppConfig Config { get; }
     public ConsoleViewModel Console { get; }
 
     public ObservableCollection<ProjectCardViewModel> Projects { get; } = new();
-    public ICollectionView ProjectsView { get; }
+    public ObservableCollection<BranchInfo> Branches { get; } = new();
 
-    public ObservableCollection<string> Branches { get; } = new();
+    [ObservableProperty] private bool _reducedMotion;
+    [ObservableProperty] private bool _isRunning;
+    [ObservableProperty] private bool _isSyncing;
+    [ObservableProperty] private string _syncStatus = "Ready";
+    [ObservableProperty] private BranchInfo? _selectedBranch;
 
-    [ObservableProperty]
-    private string? _selectedBranch;
+    [ObservableProperty] private ProjectStatus? _activeFilter;
 
-    [ObservableProperty]
-    private bool _reducedMotion;
+    // Counts (Section 7 bottom-left labels)
+    [ObservableProperty] private int _total;
+    [ObservableProperty] private int _built;
+    [ObservableProperty] private int _succeeded;
+    [ObservableProperty] private int _failed;
+    [ObservableProperty] private int _skipped;
 
-    [ObservableProperty]
-    private bool _isRunning;
-
-    [ObservableProperty]
-    private string? _activeProjectId;
-
-    [ObservableProperty]
-    private string _statusText = "Ready";
-
-    // ---- Stats (Section 7 bottom-left) ----
-    [ObservableProperty] private int _totalCount;
-    [ObservableProperty] private int _builtCount;
-    [ObservableProperty] private int _succeededCount;
-    [ObservableProperty] private int _failedCount;
-    [ObservableProperty] private int _skippedCount;
-
-    partial void OnSelectedBranchChanged(string? value)
+    public void Initialize()
     {
-        if (!string.IsNullOrEmpty(value))
-        {
-            _worker.SelectBranch(value);
-        }
+        _client.Start();
+        if (!string.IsNullOrWhiteSpace(_config.RootPath))
+            _client.Send(new SyncWorkspaceCommand(_config.RootPath!));
+        else
+            _client.Send(new ReanalyzeCommand());
     }
 
-    partial void OnReducedMotionChanged(bool value)
+    public AppConfig Config => _config;
+
+    public void ApplyConfig(AppConfig config)
     {
-        Config.ReducedMotion = value;
-        _configStore.Save(Config);
+        _config = config;
+        ReducedMotion = config.ReducedMotion;
+        _configStore.Save(config);
+        // Re-sync against the (possibly new) root.
+        if (!string.IsNullOrWhiteSpace(config.RootPath))
+            _client.Send(new SyncWorkspaceCommand(config.RootPath!));
+    }
+
+    partial void OnSelectedBranchChanged(BranchInfo? value)
+    {
+        if (value != null)
+            _client.Send(new SelectBranchCommand(value.Name));
+    }
+
+    partial void OnIsRunningChanged(bool value)
+    {
+        BuildCommand.NotifyCanExecuteChanged();
+        RebuildCommand.NotifyCanExecuteChanged();
     }
 
     // ---- Commands ----
@@ -100,270 +94,298 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void Sync()
     {
-        StatusText = "Syncing…";
-        Projects.Clear();
-        _byId.Clear();
-        if (string.IsNullOrWhiteSpace(Config.RootPath))
-        {
-            StatusText = "Set a root path in Settings first.";
-            return;
-        }
-        _worker.SyncWorkspace(Config.RootPath);
-        _worker.ListBranches();
+        IsSyncing = true;
+        SyncStatus = "Syncing...";
+        _client.Send(new ReanalyzeCommand());
     }
 
-    [RelayCommand(CanExecute = nameof(CanBuild))]
+    [RelayCommand(CanExecute = nameof(CanStartRun))]
     private void Build() => StartRun(BuildMode.Build);
 
-    [RelayCommand(CanExecute = nameof(CanBuild))]
+    [RelayCommand(CanExecute = nameof(CanStartRun))]
     private void Rebuild() => StartRun(BuildMode.Rebuild);
 
-    private bool CanBuild() => !IsRunning && Projects.Count > 0;
-
-    [RelayCommand(CanExecute = nameof(CanStop))]
-    private void Stop()
-    {
-        if (_currentRunId is not null)
-        {
-            StatusText = "Stopping…";
-            _worker.StopRun(_currentRunId);
-        }
-    }
-
-    private bool CanStop() => IsRunning && _currentRunId is not null;
+    private bool CanStartRun() => !IsRunning && Projects.Count > 0;
 
     [RelayCommand]
-    private void Filter(string? filterName)
+    private void Stop()
     {
-        _filter = Enum.TryParse<CardFilter>(filterName, ignoreCase: true, out var f) ? f : CardFilter.All;
-        ProjectsView.Refresh();
+        if (_currentRunId != null)
+        {
+            SyncStatus = "Stopping\u2026";
+            _client.Send(new StopRunCommand(_currentRunId));
+        }
     }
 
     [RelayCommand]
     private void OpenPath(ProjectCardViewModel? card)
     {
-        if (card is not null)
+        if (card != null)
+            _client.Send(new OpenPathCommand(card.Id));
+    }
+
+    [RelayCommand]
+    private void OpenInVS(ProjectCardViewModel? card)
+    {
+        if (card != null)
+            _client.Send(new OpenInVSCommand(card.Id));
+    }
+
+    /// <summary>Click a card to scope the console to it; click again to clear (Section 7).</summary>
+    [RelayCommand]
+    private void FocusCard(ProjectCardViewModel? card)
+    {
+        if (card == null)
+            return;
+        if (Console.FocusedProjectId == card.Id)
         {
-            _worker.OpenPath(card.Id);
+            Console.FocusedProjectId = null;
+            card.IsConsoleFocused = false;
+        }
+        else
+        {
+            foreach (var c in Projects)
+                c.IsConsoleFocused = false;
+            card.IsConsoleFocused = true;
+            Console.FocusedProjectId = card.Id;
         }
     }
 
     [RelayCommand]
-    private void OpenInVs(ProjectCardViewModel? card)
+    private void ToggleFilter(string? statusName)
     {
-        if (card is not null)
+        ProjectStatus? status = statusName switch
         {
-            _worker.OpenInVs(card.Id);
+            "Succeeded" => ProjectStatus.Succeeded,
+            "Failed" => ProjectStatus.Failed,
+            "Skipped" => ProjectStatus.Skipped,
+            "Built" => null, // handled below as composite
+            _ => null
+        };
+
+        // Toggle off if same filter clicked again.
+        if (ActiveFilter == status && statusName != "Total" && status != null)
+            ActiveFilter = null;
+        else
+            ActiveFilter = status;
+
+        ApplyFilter(statusName);
+    }
+
+    private void ApplyFilter(string? statusName)
+    {
+        foreach (var card in Projects)
+        {
+            bool visible = statusName switch
+            {
+                "Succeeded" => ActiveFilter == ProjectStatus.Succeeded ? card.Status == ProjectStatus.Succeeded : true,
+                "Failed" => ActiveFilter == ProjectStatus.Failed ? card.Status == ProjectStatus.Failed : true,
+                "Skipped" => ActiveFilter == ProjectStatus.Skipped ? card.Status == ProjectStatus.Skipped : true,
+                "Built" => card.Status is ProjectStatus.Succeeded or ProjectStatus.Failed,
+                _ => true
+            };
+            card.IsVisible = visible;
         }
     }
 
     [RelayCommand]
-    private void CardClicked(ProjectCardViewModel? card)
-    {
-        // Clicking a failed card focuses its output in the console; clicking again clears (Section 7).
-        if (card is { IsFailed: true })
-        {
-            Console.ToggleFocus(card.Id);
-        }
-    }
+    private void ToggleFullLog() => Console.ShowFullLog = !Console.ShowFullLog;
 
     private void StartRun(BuildMode mode)
     {
-        foreach (var c in Projects)
-        {
-            c.Reset();
-        }
-        Console.Clear();
-        BuiltCount = SucceededCount = FailedCount = SkippedCount = 0;
+        if (IsRunning)
+            return;
 
+        foreach (var card in Projects)
+            card.Reset();
+        RecountStatuses();
+        Console.Clear();
+        _startTimes.Clear();
+
+        _currentRunId = Guid.NewGuid().ToString("N");
         var request = new RunRequest
         {
             Mode = mode,
-            Branch = SelectedBranch ?? string.Empty,
-            Config = Config.Configuration,
-            DependentMode = Config.DependentMode,
-            Performance = Config.Performance
+            Branch = SelectedBranch?.Name ?? string.Empty,
+            Config = _config.BuildConfiguration,
+            DependentMode = _config.DependentMode,
+            Performance = _config.Performance,
+            BranchWorkMode = _config.BranchWorkMode
         };
-
         IsRunning = true;
-        UpdateCommandStates();
-        StatusText = mode == BuildMode.Rebuild ? "Rebuilding…" : "Building…";
-        _worker.StartRun(request);
+        _client.Send(new StartRunCommand(_currentRunId, request));
     }
 
-    // ---- Worker event wiring (marshalled to UI thread) ----
+    // ---- Worker events (marshalled to the UI thread) ----
 
-    private void HookWorker()
+    private void OnWorkerEvent(WorkerEvent evt)
     {
-        _worker.SyncCompleted += p => _uiInvoke(() => OnSyncCompleted(p));
-        _worker.SyncProgress += p => _uiInvoke(() => StatusText = $"Scanning… {p.Scanned}/{p.Total}");
-        _worker.BranchList += p => _uiInvoke(() => OnBranchList(p));
-        _worker.RunStarted += p => _uiInvoke(() => OnRunStarted(p));
-        _worker.ProjectStarted += p => _uiInvoke(() => OnProjectStarted(p));
-        _worker.ProjectLog += p => _uiInvoke(() => Console.Append(new ConsoleEntry(p.ProjectId, p.Line, p.IsError)));
-        _worker.ProjectSucceeded += p => _uiInvoke(() => OnProjectSucceeded(p));
-        _worker.ProjectFailed += p => _uiInvoke(() => OnProjectFailed(p));
-        _worker.ProjectSkipped += p => _uiInvoke(() => OnProjectSkipped(p));
-        _worker.RunCompleted += p => _uiInvoke(() => OnRunCompleted(p));
-        _worker.RunCancelled += p => _uiInvoke(() => OnRunCancelled(p));
-        _worker.Error += p => _uiInvoke(() => StatusText = "Error: " + p.Message);
-        _worker.WorkerExited += () => _uiInvoke(OnWorkerExited);
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null)
+            return;
+        dispatcher.BeginInvoke(() => HandleEvent(evt));
     }
 
-    private void OnSyncCompleted(SyncCompletedPayload p)
+    private void HandleEvent(WorkerEvent evt)
     {
-        LoadProjects(p.Projects, p.HasCycles);
-        StatusText = p.HasCycles ? $"Synced {TotalCount} projects (cycles detected)" : $"Synced {TotalCount} projects";
+        switch (evt)
+        {
+            case SyncProgressEvent sp:
+                IsSyncing = true;
+                SyncStatus = sp.Total > 0 ? $"{sp.Message} ({sp.Current}/{sp.Total})" : sp.Message;
+                Console.Append(new ConsoleLine("", "sync", SyncStatus, false));
+                break;
+
+            case SyncCompletedEvent sc:
+                LoadGraph(sc.Graph);
+                IsSyncing = false;
+                SyncStatus = $"{Projects.Count} projects";
+                break;
+
+            case BranchListEvent bl:
+                LoadBranches(bl.Branches);
+                break;
+
+            case RunStartedEvent rs:
+                IsRunning = true;
+                _runTotal = rs.TotalProjects;
+                UpdateRunProgress();
+                break;
+
+            case ProjectStartedEvent ps when _byId.TryGetValue(ps.ProjectId, out var startedCard):
+                startedCard.Status = ProjectStatus.Building;
+                startedCard.IsActive = true;
+                _startTimes[ps.ProjectId] = DateTime.Now;
+                Console.Append(new ConsoleLine(ps.ProjectId, startedCard.Name,
+                    $"\u25B6 Building {startedCard.Name}", false, IsHeader: true));
+                ScrollToCardRequested?.Invoke(startedCard);
+                break;
+
+            case ProjectLogEvent pl:
+                _byId.TryGetValue(pl.ProjectId, out var logCard);
+                Console.Append(new ConsoleLine(pl.ProjectId, logCard?.Name ?? pl.ProjectId, pl.Line, pl.IsError));
+                break;
+
+            case ProjectSucceededEvent pe when _byId.TryGetValue(pe.ProjectId, out var okCard):
+                okCard.Status = ProjectStatus.Succeeded;
+                okCard.IsActive = false;
+                Console.Append(new ConsoleLine(pe.ProjectId, okCard.Name,
+                    $"\u2713 {okCard.Name} succeeded{Elapsed(pe.ProjectId)}", false, IsHeader: true, IsSuccess: true));
+                RecountStatuses();
+                UpdateRunProgress();
+                break;
+
+            case ProjectFailedEvent pf when _byId.TryGetValue(pf.ProjectId, out var failCard):
+                failCard.Status = ProjectStatus.Failed;
+                failCard.IsActive = false;
+                Console.Append(new ConsoleLine(pf.ProjectId, failCard.Name,
+                    $"\u2717 {failCard.Name} FAILED{Elapsed(pf.ProjectId)}", true, IsHeader: true));
+                RecountStatuses();
+                UpdateRunProgress();
+                break;
+
+            case ProjectSkippedEvent psk when _byId.TryGetValue(psk.ProjectId, out var skipCard):
+                skipCard.Status = ProjectStatus.Skipped;
+                skipCard.IsActive = false;
+                Console.Append(new ConsoleLine(psk.ProjectId, skipCard.Name,
+                    $"\u29B8 {skipCard.Name} skipped — {psk.Reason}", false, IsHeader: true));
+                RecountStatuses();
+                UpdateRunProgress();
+                break;
+
+            case RunCompletedEvent rc:
+                IsRunning = false;
+                _currentRunId = null;
+                SyncStatus = $"Done — {rc.Succeeded} ok, {rc.Failed} failed, {rc.Skipped} skipped";
+                Console.Append(new ConsoleLine("", "run",
+                    $"\u2756 Done — {rc.Succeeded} ok, {rc.Failed} failed, {rc.Skipped} skipped", false, IsHeader: true));
+                RecountStatuses();
+                break;
+
+            case RunCancelledEvent:
+                IsRunning = false;
+                _currentRunId = null;
+                SyncStatus = "Stopped";
+                Console.Append(new ConsoleLine("", "run", "\u2756 Stopped", false, IsHeader: true));
+                RecountStatuses();
+                break;
+
+            case WorkerErrorEvent we:
+                Console.Append(new ConsoleLine("", "worker", we.Detail is null ? we.Message : $"{we.Message}: {we.Detail}", true));
+                break;
+        }
     }
 
-    /// <summary>Populate the card list from a project set (used by Sync results and the cached graph).</summary>
-    public void LoadProjects(IReadOnlyList<ProjectNode> nodes, bool hasCycles)
+    private void UpdateRunProgress()
+    {
+        if (IsRunning)
+            SyncStatus = $"Building {Succeeded + Failed + Skipped}/{_runTotal}\u2026";
+    }
+
+    /// <summary>Formats the elapsed build time for a project (" in 1.2s" / " in 800ms").</summary>
+    private string Elapsed(string projectId)
+    {
+        if (!_startTimes.TryGetValue(projectId, out var start))
+            return string.Empty;
+        var span = DateTime.Now - start;
+        return span.TotalSeconds >= 1
+            ? $" in {span.TotalSeconds:0.0}s"
+            : $" in {span.TotalMilliseconds:0}ms";
+    }
+
+    private void LoadGraph(DependencyGraph graph)
     {
         Projects.Clear();
         _byId.Clear();
-        foreach (var node in nodes)
+        foreach (var node in graph.Projects.OrderBy(n => n.BuildOrder))
         {
             var card = new ProjectCardViewModel(node);
             Projects.Add(card);
-            _byId[card.Id] = card;
+            _byId[node.Id] = card;
         }
-        TotalCount = Projects.Count;
-        UpdateCommandStates();
+        RecountStatuses();
+        BuildCommand.NotifyCanExecuteChanged();
+        RebuildCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>Thread-safe-ish status setter for early startup before the window exists.</summary>
-    public void StatusTextSafe(string text) => StatusText = text;
-
-    private void OnBranchList(BranchListPayload p)
+    private void LoadBranches(List<BranchInfo> branches)
     {
         Branches.Clear();
-        foreach (var b in p.Branches)
-        {
+        foreach (var b in branches)
             Branches.Add(b);
-        }
-        // Section 6: the user's active branch comes pre-selected.
-        SelectedBranch = !string.IsNullOrEmpty(p.Current) ? p.Current : Branches.FirstOrDefault();
+        SelectedBranch = branches.FirstOrDefault(b => b.IsCurrent) ?? branches.FirstOrDefault();
     }
 
-    private void OnRunStarted(RunStartedPayload p)
+    private void RecountStatuses()
     {
-        _currentRunId = p.RunId;
-        var planned = new HashSet<string>(p.PlannedProjectIds, StringComparer.Ordinal);
-        foreach (var card in Projects)
-        {
-            if (planned.Contains(card.Id))
-            {
-                card.Status = ProjectStatus.Queued;
-            }
-        }
-        UpdateCommandStates();
-    }
-
-    private void OnProjectStarted(ProjectStartedPayload p)
-    {
-        if (_byId.TryGetValue(p.ProjectId, out var card))
-        {
-            card.Status = ProjectStatus.Building;
-            card.IsActive = true;
-            ActiveProjectId = p.ProjectId; // drives auto-focus scroll
-        }
-    }
-
-    private void OnProjectSucceeded(ProjectSucceededPayload p)
-    {
-        if (_byId.TryGetValue(p.ProjectId, out var card))
-        {
-            card.Status = ProjectStatus.Succeeded;
-            card.ElapsedMs = p.ElapsedMs;
-            card.IsActive = false;
-        }
-        SucceededCount++;
-        BuiltCount++;
-    }
-
-    private void OnProjectFailed(ProjectFailedPayload p)
-    {
-        if (_byId.TryGetValue(p.ProjectId, out var card))
-        {
-            card.Status = ProjectStatus.Failed;
-            card.FailureReason = p.Reason;
-            card.ElapsedMs = p.ElapsedMs;
-            card.IsActive = false;
-        }
-        FailedCount++;
-        BuiltCount++;
-    }
-
-    private void OnProjectSkipped(ProjectSkippedPayload p)
-    {
-        if (_byId.TryGetValue(p.ProjectId, out var card))
-        {
-            card.Status = ProjectStatus.Skipped;
-        }
-        SkippedCount++;
-    }
-
-    private void OnRunCompleted(RunCompletedPayload p)
-    {
-        IsRunning = false;
-        _currentRunId = null;
-        ActiveProjectId = null;
-        StatusText = $"Done — {p.Succeeded} ok, {p.Failed} failed, {p.Skipped} skipped in {p.ElapsedMs} ms";
-        UpdateCommandStates();
-    }
-
-    private void OnRunCancelled(RunCancelledPayload p)
-    {
-        IsRunning = false;
-        _currentRunId = null;
-        ActiveProjectId = null;
-        StatusText = "Stopped";
-        foreach (var card in Projects.Where(c => c.Status is ProjectStatus.Building or ProjectStatus.Queued))
-        {
-            card.Reset();
-        }
-        UpdateCommandStates();
+        Total = Projects.Count;
+        Succeeded = Projects.Count(p => p.Status == ProjectStatus.Succeeded);
+        Failed = Projects.Count(p => p.Status == ProjectStatus.Failed);
+        Skipped = Projects.Count(p => p.Status == ProjectStatus.Skipped);
+        Built = Succeeded + Failed;
     }
 
     private void OnWorkerExited()
     {
-        // Section 2: UI survives a Worker crash. Reset run state and offer recovery.
-        IsRunning = false;
-        _currentRunId = null;
-        ActiveProjectId = null;
-        StatusText = "Worker stopped unexpectedly. Restarting…";
-        try
+        Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            _worker.Start();
-        }
-        catch
-        {
-            StatusText = "Worker unavailable.";
-        }
-        UpdateCommandStates();
+            IsRunning = false;
+            IsSyncing = false;
+            SyncStatus = "Worker stopped";
+        });
     }
 
-    private bool FilterPredicate(object obj)
+    private void OnWorkerDiagnostic(string message, bool isError)
     {
-        if (obj is not ProjectCardViewModel card)
-        {
-            return true;
-        }
-        return _filter switch
-        {
-            CardFilter.All => true,
-            CardFilter.Built => card.Status is ProjectStatus.Succeeded or ProjectStatus.Failed,
-            CardFilter.Succeeded => card.Status == ProjectStatus.Succeeded,
-            CardFilter.Failed => card.Status == ProjectStatus.Failed,
-            CardFilter.Skipped => card.Status == ProjectStatus.Skipped,
-            _ => true
-        };
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+            Console.Append(new ConsoleLine("", "worker", message, isError)));
     }
 
-    private void UpdateCommandStates()
+    public void Dispose()
     {
-        BuildCommand.NotifyCanExecuteChanged();
-        RebuildCommand.NotifyCanExecuteChanged();
-        StopCommand.NotifyCanExecuteChanged();
+        _client.EventReceived -= OnWorkerEvent;
+        _client.WorkerExited -= OnWorkerExited;
+        _client.Diagnostic -= OnWorkerDiagnostic;
+        _client.Dispose();
     }
 }

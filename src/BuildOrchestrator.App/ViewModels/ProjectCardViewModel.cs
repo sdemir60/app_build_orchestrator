@@ -3,10 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
 
-/// <summary>
-/// View model for a single project card (Section 7). Status drives card color and which animation
-/// plays (pulse while building, glow on success, shake on failure, fade+desaturate when skipped).
-/// </summary>
+/// <summary>One project card in the left list (Section 7).</summary>
 public sealed partial class ProjectCardViewModel : ObservableObject
 {
     public ProjectCardViewModel(ProjectNode node)
@@ -15,53 +12,41 @@ public sealed partial class ProjectCardViewModel : ObservableObject
         Name = node.Name;
         SolutionName = node.SolutionName;
         ProjectPath = node.ProjectPath;
-        BuildOrder = node.BuildOrder;
-        IsInCycle = node.IsInCycle;
-        CycleMembersTooltip = node.IsInCycle
-            ? "Cycle: " + string.Join(" → ", node.CycleMembers.Select(System.IO.Path.GetFileNameWithoutExtension))
+        InCycle = node.InCycle;
+        CycleTooltip = node.InCycle
+            ? "Cycle: " + string.Join(" \u2192 ", node.CycleMembers)
             : string.Empty;
-        Status = node.IsInCycle ? ProjectStatus.CycleDetected : ProjectStatus.Discovered;
+        BuildOrder = node.BuildOrder;
+        Status = node.InCycle ? ProjectStatus.CycleDetected : ProjectStatus.Discovered;
     }
 
     public string Id { get; }
     public string Name { get; }
     public string SolutionName { get; }
     public string ProjectPath { get; }
+    public bool InCycle { get; }
+    public string CycleTooltip { get; }
     public int BuildOrder { get; }
-    public bool IsInCycle { get; }
-    public string CycleMembersTooltip { get; }
 
+    /// <summary>Lifecycle status; drives the card colour and animation triggers.</summary>
     [ObservableProperty]
     private ProjectStatus _status;
 
-    [ObservableProperty]
-    private long _elapsedMs;
-
-    [ObservableProperty]
-    private string? _failureReason;
-
-    /// <summary>True when this card is the active/focused build (drives carousel emphasis).</summary>
+    /// <summary>True while this project is actively building (pulse + scale + bring-to-front).</summary>
     [ObservableProperty]
     private bool _isActive;
 
-    /// <summary>True when filtered out; the UI collapses it with an opacity animation.</summary>
+    /// <summary>Whether the card is shown after a status filter is applied.</summary>
     [ObservableProperty]
-    private bool _isFilteredOut;
+    private bool _isVisible = true;
 
-    public bool IsSkipped => Status == ProjectStatus.Skipped;
-    public bool IsFailed => Status == ProjectStatus.Failed;
-
-    partial void OnStatusChanged(ProjectStatus value)
-    {
-        OnPropertyChanged(nameof(IsSkipped));
-        OnPropertyChanged(nameof(IsFailed));
-    }
+    /// <summary>True when the user clicked this card to scope the console to it.</summary>
+    [ObservableProperty]
+    private bool _isConsoleFocused;
 
     public void Reset()
     {
-        FailureReason = null;
-        ElapsedMs = 0;
         IsActive = false;
-        Status = IsInCycle ? ProjectStatus.CycleDetected : ProjectStatus.Discovered;
+        Status = InCycle ? ProjectStatus.CycleDetected : ProjectStatus.Discovered;
     }
 }

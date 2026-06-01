@@ -1,98 +1,117 @@
 using BuildOrchestrator.Contracts;
-using BuildOrchestrator.Core.Graph;
+using BuildOrchestrator.Core.Persistence;
 
 namespace BuildOrchestrator.Core.Incremental;
 
-/// <summary>Why a project was selected to build, for logging/console reasons.</summary>
-public enum BuildReason
+public enum BuildDecision
 {
-    NeverBuilt,
-    CommitChanged,
-    LocalChange,
-    DependentOfDirty,
-    Rebuild
+    Build,
+    Skip
 }
 
-/// <summary>Per-project decision produced by the planner.</summary>
-public sealed record ProjectDecision(string ProjectId, bool ShouldBuild, BuildReason? Reason);
+public sealed record ProjectPlan(string ProjectId, BuildDecision Decision, string Reason);
 
-/// <summary>Inputs needed to decide an incremental plan (Section 6).</summary>
-public sealed class IncrementalContext
+public sealed class RunPlan
 {
-    public required string Branch { get; init; }
-
-    /// <summary>Current HEAD commit on the branch being built.</summary>
-    public required string CurrentCommit { get; init; }
-
-    /// <summary>Ids of projects with working-tree changes affecting them (from <see cref="ProjectFileMapper"/>).</summary>
-    public required IReadOnlySet<string> LocallyDirty { get; init; }
-
-    /// <summary>Lookup of last successful build state per project on this branch.</summary>
-    public required Func<string, BuildState?> StateLookup { get; init; }
-
-    public DependentMode DependentMode { get; init; } = DependentMode.Safe;
+    public List<ProjectPlan> Items { get; } = new();
+    public IEnumerable<string> ToBuild => Items.Where(i => i.Decision == BuildDecision.Build).Select(i => i.ProjectId);
+    public IEnumerable<string> ToSkip => Items.Where(i => i.Decision == BuildDecision.Skip).Select(i => i.ProjectId);
 }
 
 /// <summary>
-/// Computes the incremental build plan. A project builds when its commit moved, when it has a
-/// local change, or when it was never successfully built. In Safe mode the transitive dependents
-/// of every selected project are also built; in Fast mode only the directly-dirty projects build.
+/// Computes the incremental build plan (Section 6): which projects build vs skip, honoring
+/// commit/diff/never-built signals and Safe/Fast downstream propagation.
 /// </summary>
 public sealed class IncrementalPlanner
 {
-    private readonly DependencyGraph _graph;
-
-    public IncrementalPlanner(DependencyGraph graph)
+    /// <summary>
+    /// Build a project when: (1) current commit differs from last built commit, OR
+    /// (2) a local change affects it, OR (3) it was never successfully built.
+    /// Safe mode additionally pulls in transitive dependents of dirty projects.
+    /// </summary>
+    public RunPlan Plan(
+        DependencyGraph graph,
+        BuildStateStore states,
+        string branch,
+        string? currentCommit,
+        ISet<string> locallyDirty,
+        DependentMode dependentMode)
     {
-        _graph = graph;
-    }
+        var directlyDirty = new HashSet<string>();
 
-    public IReadOnlyList<ProjectDecision> PlanBuild(IncrementalContext context)
-    {
-        var reasons = new Dictionary<string, BuildReason>(StringComparer.Ordinal);
-
-        foreach (var node in _graph.Nodes)
+        foreach (var project in graph.Projects)
         {
-            var state = context.StateLookup(node.Id);
+            var state = states.Get(project.Id, branch);
 
-            if (state is null || state.LastResult != ProjectStatus.Succeeded || string.IsNullOrEmpty(state.LastBuiltCommit))
-            {
-                reasons[node.Id] = BuildReason.NeverBuilt;
-            }
-            else if (!string.Equals(state.LastBuiltCommit, context.CurrentCommit, StringComparison.Ordinal))
-            {
-                reasons[node.Id] = BuildReason.CommitChanged;
-            }
-            else if (context.LocallyDirty.Contains(node.Id))
-            {
-                reasons[node.Id] = BuildReason.LocalChange;
-            }
+            bool neverBuilt = state is null || state.LastResult != ProjectStatus.Succeeded;
+            bool commitChanged = state?.LastBuiltCommit is null ||
+                                 !string.Equals(state.LastBuiltCommit, currentCommit, StringComparison.Ordinal);
+            bool localChange = locallyDirty.Contains(project.Id);
+
+            if (neverBuilt || localChange || (commitChanged && currentCommit != null))
+                directlyDirty.Add(project.Id);
         }
 
-        if (context.DependentMode == DependentMode.Safe && reasons.Count > 0)
+        var toBuild = new HashSet<string>(directlyDirty);
+
+        if (dependentMode == DependentMode.Safe)
+            PropagateToDependents(graph, directlyDirty, toBuild);
+
+        var plan = new RunPlan();
+        foreach (var project in graph.Projects.OrderBy(p => p.BuildOrder))
         {
-            var dependents = _graph.TransitiveDependents(reasons.Keys);
-            foreach (var id in dependents)
+            if (toBuild.Contains(project.Id))
             {
-                if (!reasons.ContainsKey(id))
-                {
-                    reasons[id] = BuildReason.DependentOfDirty;
-                }
+                var reason = directlyDirty.Contains(project.Id)
+                    ? ReasonFor(project, states, branch, currentCommit, locallyDirty)
+                    : "dependent of changed project";
+                plan.Items.Add(new ProjectPlan(project.Id, BuildDecision.Build, reason));
+            }
+            else
+            {
+                plan.Items.Add(new ProjectPlan(project.Id, BuildDecision.Skip, "no source change"));
             }
         }
-
-        return _graph.Nodes
-            .OrderBy(n => n.BuildOrder)
-            .Select(n => reasons.TryGetValue(n.Id, out var r)
-                ? new ProjectDecision(n.Id, true, r)
-                : new ProjectDecision(n.Id, false, null))
-            .ToList();
+        return plan;
     }
 
-    /// <summary>Rebuild: every project builds, in topological order (Section 6 Rebuild).</summary>
-    public IReadOnlyList<ProjectDecision> PlanRebuild()
-        => _graph.Nodes
-            .OrderBy(n => n.BuildOrder)
-            .Select(n => new ProjectDecision(n.Id, true, BuildReason.Rebuild))
-            .ToList();
+    private static string ReasonFor(
+        ProjectNode project, BuildStateStore states, string branch,
+        string? currentCommit, ISet<string> locallyDirty)
+    {
+        var state = states.Get(project.Id, branch);
+        if (state is null || state.LastResult != ProjectStatus.Succeeded)
+            return "never built";
+        if (locallyDirty.Contains(project.Id))
+            return "local changes";
+        if (!string.Equals(state.LastBuiltCommit, currentCommit, StringComparison.Ordinal))
+            return "new commit";
+        return "changed";
+    }
+
+    /// <summary>Add transitive dependents (reverse edges) of all dirty projects.</summary>
+    private static void PropagateToDependents(
+        DependencyGraph graph, HashSet<string> dirty, HashSet<string> result)
+    {
+        // Reverse adjacency: dependency -> list of projects that depend on it.
+        var dependents = new Dictionary<string, List<string>>();
+        foreach (var p in graph.Projects)
+            foreach (var dep in p.Dependencies)
+            {
+                if (!dependents.TryGetValue(dep, out var list))
+                    dependents[dep] = list = new List<string>();
+                list.Add(p.Id);
+            }
+
+        var queue = new Queue<string>(dirty);
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            if (!dependents.TryGetValue(cur, out var deps))
+                continue;
+            foreach (var d in deps)
+                if (result.Add(d))
+                    queue.Enqueue(d);
+        }
+    }
 }

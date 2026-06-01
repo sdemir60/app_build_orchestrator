@@ -1,413 +1,390 @@
 using System.Diagnostics;
 using BuildOrchestrator.Contracts;
 using BuildOrchestrator.Core.Configuration;
+using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
-using BuildOrchestrator.Core.Graph;
 using BuildOrchestrator.Core.Incremental;
-using BuildOrchestrator.Core.Storage;
-using BuildOrchestrator.Core.Sync;
-using BuildOrchestrator.Worker.MsBuild;
+using BuildOrchestrator.Core.Persistence;
+using BuildOrchestrator.Worker.Building;
+using BuildOrchestrator.Worker.Ipc;
 using BuildOrchestrator.Worker.ProcessControl;
 
 namespace BuildOrchestrator.Worker;
 
 /// <summary>
-/// Hosts the Worker side of the Section 8 protocol: receives commands, runs Sync/Build/Rebuild via
-/// the Core engine + <see cref="BuildRunner"/>, and streams events back. Guarantees a single in-flight
-/// run (Section 6) and owns the <see cref="JobObject"/> that guarantees process-tree cleanup (Section 6.1).
+/// Orchestrates the Worker side of the contract (Section 8): handles commands, runs sync and
+/// builds, guarantees a single active run, and emits events back to the UI.
 /// </summary>
-public sealed class WorkerHost : IRunEventSink, IDisposable
+public sealed class WorkerHost
 {
-    private readonly MessageChannel _channel;
-    private readonly AppPaths _paths;
-    private readonly ConfigStore _configStore;
-    private readonly GraphCacheStore _graphCacheStore;
-    private readonly BuildStateStore _buildStateStore;
-    private readonly SyncService _syncService;
-    private readonly JobObject _job;
-    private readonly PidTracker _pids;
+    private readonly IpcChannel _channel;
+    private readonly ProjectScanner _scanner = new();
+    private readonly DependencyGraphBuilder _graphBuilder = new();
+    private readonly GraphStore _graphStore = new();
+    private readonly BuildStateStore _stateStore = new();
+    private readonly GitService _git = new();
+    private readonly DiffAnalyzer _diff = new();
+    private readonly IncrementalPlanner _planner = new();
 
-    private readonly SemaphoreSlim _runGate = new(1, 1);
-    private CancellationTokenSource? _activeRunCts;
-    private string? _activeRunId;
+    private readonly object _runLock = new();
+    private CancellationTokenSource? _activeRun;
+    private bool _isRunning;
 
-    private AppConfig _config;
     private DependencyGraph? _graph;
+    private string? _rootPath;
+    private string? _repoRoot;
     private string _selectedBranch = string.Empty;
 
-    public WorkerHost(MessageChannel channel, AppPaths? paths = null)
+    private static readonly TimeSpan GracefulStopTimeout = TimeSpan.FromSeconds(5);
+
+    public WorkerHost(IpcChannel channel)
     {
         _channel = channel;
-        _paths = paths ?? new AppPaths();
-        _paths.EnsureRoot();
-        var store = new JsonStore();
-        _configStore = new ConfigStore(_paths, store);
-        _graphCacheStore = new GraphCacheStore(_paths, store);
-        _buildStateStore = new BuildStateStore(_paths, store);
-        _syncService = new SyncService(new WorkspaceScanner(), _graphCacheStore);
-        _job = new JobObject();
-        _pids = new PidTracker();
-        _config = _configStore.Load();
+        _graph = _graphStore.Load();
+        _rootPath = _graph?.RootPath;
     }
 
-    public async Task RunAsync(CancellationToken ct)
+    public void Run()
     {
-        // Warm the graph from cache if a root is already configured (Section 5: read cache on startup).
-        if (!string.IsNullOrWhiteSpace(_config.RootPath))
+        foreach (var command in _channel.ReadCommands())
         {
-            _graph = _syncService.LoadCachedGraph(_config.RootPath, out _);
-        }
-
-        while (!ct.IsCancellationRequested)
-        {
-            Message? message;
             try
             {
-                message = await _channel.ReadAsync(ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-
-            if (message is null)
-            {
-                break; // stdin closed -> UI gone; shut down (Job Object cleans children)
-            }
-
-            if (message.Kind != MessageKind.Command)
-            {
-                continue;
-            }
-
-            try
-            {
-                if (await DispatchAsync(message, ct).ConfigureAwait(false))
-                {
-                    break; // shutdown requested
-                }
+                Dispatch(command);
             }
             catch (Exception ex)
             {
-                _channel.WriteEvent(Events.Error, new ErrorPayload(ex.Message, ex.ToString()), message.CorrelationId);
+                _channel.Send(new WorkerErrorEvent($"Command failed: {command.GetType().Name}", ex.Message));
             }
+
+            if (command is ShutdownCommand)
+                break;
         }
     }
 
-    private async Task<bool> DispatchAsync(Message message, CancellationToken ct)
+    private void Dispatch(WorkerCommand command)
     {
-        switch (message.Name)
+        switch (command)
         {
-            case Commands.SyncWorkspace:
-                HandleSync(message.GetPayload<SyncWorkspacePayload>()?.RootPath ?? _config.RootPath, message.CorrelationId, ct);
-                return false;
-
-            case Commands.Reanalyze:
-                HandleSync(_config.RootPath, message.CorrelationId, ct);
-                return false;
-
-            case Commands.ListBranches:
-                await HandleListBranchesAsync(message.CorrelationId, ct).ConfigureAwait(false);
-                return false;
-
-            case Commands.SelectBranch:
-                _selectedBranch = message.GetPayload<SelectBranchPayload>()?.Branch ?? _selectedBranch;
-                return false;
-
-            case Commands.StartRun:
-                await HandleStartRunAsync(message.GetPayload<StartRunPayload>()?.Request, message.CorrelationId, ct).ConfigureAwait(false);
-                return false;
-
-            case Commands.StopRun:
-                HandleStop(message.GetPayload<StopRunPayload>()?.RunId);
-                return false;
-
-            case Commands.OpenPath:
-                OpenPath(message.GetPayload<OpenPathPayload>()?.ProjectId);
-                return false;
-
-            case Commands.OpenInVs:
-                OpenInVs(message.GetPayload<OpenInVsPayload>()?.ProjectId);
-                return false;
-
-            case Commands.Shutdown:
-                HandleStop(_activeRunId);
-                return true;
-
-            default:
-                _channel.WriteEvent(Events.Error, new ErrorPayload($"Unknown command: {message.Name}", null), message.CorrelationId);
-                return false;
+            case SyncWorkspaceCommand sync:
+                _rootPath = sync.RootPath;
+                Reanalyze();
+                break;
+            case ReanalyzeCommand:
+                Reanalyze();
+                break;
+            case ListBranchesCommand:
+                SendBranches();
+                break;
+            case SelectBranchCommand sb:
+                _selectedBranch = sb.Branch;
+                break;
+            case StartRunCommand start:
+                StartRun(start);
+                break;
+            case StopRunCommand:
+                StopRun();
+                break;
+            case OpenPathCommand op:
+                OpenPath(op.ProjectId);
+                break;
+            case OpenInVSCommand ov:
+                OpenInVS(ov.ProjectId);
+                break;
+            case ShutdownCommand:
+                StopRun();
+                break;
         }
     }
 
-    private void HandleSync(string rootPath, string? correlationId, CancellationToken ct)
+    // ---- Sync (Section 5) ----
+
+    private void Reanalyze()
     {
-        if (string.IsNullOrWhiteSpace(rootPath))
+        if (string.IsNullOrWhiteSpace(_rootPath) || !Directory.Exists(_rootPath))
         {
-            _channel.WriteEvent(Events.Error, new ErrorPayload("No root path configured.", null), correlationId);
+            _channel.Send(new WorkerErrorEvent("Root path is not set or does not exist."));
             return;
         }
 
-        _config.RootPath = rootPath;
-        _configStore.Save(_config);
+        _channel.Send(new SyncProgressEvent("Scanning workspace...", 0, 0));
+        var scan = _scanner.Scan(_rootPath);
+        _channel.Send(new SyncProgressEvent($"Found {scan.ProjectFiles.Count} projects, building graph...",
+            0, scan.ProjectFiles.Count));
 
-        var result = _syncService.Reanalyze(rootPath,
-            (phase, scanned, total, current) =>
-                _channel.WriteEvent(Events.SyncProgress, new SyncProgressPayload(phase, scanned, total, current), correlationId),
-            ct);
+        var graph = _graphBuilder.Build(_rootPath, scan,
+            (name, current, total) => _channel.Send(new SyncProgressEvent(name, current, total)));
 
-        _graph = new DependencyGraph(result.Projects);
-        _channel.WriteEvent(Events.SyncCompleted, new SyncCompletedPayload(result.Projects, result.HasCycles), correlationId);
+        _graph = graph;
+        _graphStore.Save(graph);
+
+        _repoRoot = _git.FindRepoRootAsync(_rootPath).GetAwaiter().GetResult();
+        if (_repoRoot != null && string.IsNullOrEmpty(_selectedBranch))
+            _selectedBranch = _git.GetCurrentBranchAsync(_repoRoot).GetAwaiter().GetResult() ?? string.Empty;
+
+        _channel.Send(new SyncCompletedEvent(graph));
+        SendBranches();
     }
 
-    private async Task HandleListBranchesAsync(string? correlationId, CancellationToken ct)
+    private void SendBranches()
     {
-        if (string.IsNullOrWhiteSpace(_config.RootPath))
+        _repoRoot ??= _rootPath != null ? _git.FindRepoRootAsync(_rootPath).GetAwaiter().GetResult() : null;
+        if (_repoRoot == null)
         {
-            _channel.WriteEvent(Events.Error, new ErrorPayload("No root path configured.", null), correlationId);
+            _channel.Send(new BranchListEvent(new List<BranchInfo>()));
             return;
         }
-
-        var git = new GitService(_config.RootPath);
-        var branches = await git.ListBranchesAsync(ct).ConfigureAwait(false);
-        var current = await git.GetCurrentBranchAsync(ct).ConfigureAwait(false);
+        var branches = _git.ListBranchesAsync(_repoRoot).GetAwaiter().GetResult();
         if (string.IsNullOrEmpty(_selectedBranch))
-        {
-            _selectedBranch = current; // Section 6: user's active branch is selected on startup
-        }
-        _channel.WriteEvent(Events.BranchList, new BranchListPayload(branches, current), correlationId);
+            _selectedBranch = branches.FirstOrDefault(b => b.IsCurrent)?.Name ?? string.Empty;
+        _channel.Send(new BranchListEvent(branches));
     }
 
-    private async Task HandleStartRunAsync(RunRequest? request, string? correlationId, CancellationToken ct)
+    // ---- Run (Sections 6, 6.1) ----
+
+    private void StartRun(StartRunCommand start)
     {
-        if (request is null)
+        lock (_runLock)
         {
-            _channel.WriteEvent(Events.Error, new ErrorPayload("Missing run request.", null), correlationId);
-            return;
+            if (_isRunning)
+            {
+                _channel.Send(new WorkerErrorEvent("A run is already in progress."));
+                return;
+            }
+            _isRunning = true;
+            _activeRun = new CancellationTokenSource();
         }
 
-        if (_graph is null)
-        {
-            _channel.WriteEvent(Events.Error, new ErrorPayload("Run a Sync first.", null), correlationId);
-            return;
-        }
+        var ct = _activeRun!.Token;
+        // Run off the IPC-reading thread so Stop can still be processed.
+        // Observe the task so a JIT/type-load failure (e.g. MSBuild assemblies) is reported
+        // instead of being silently swallowed as an unobserved task exception.
+        Task.Run(() => ExecuteRun(start.RunId, start.Request, ct))
+            .ContinueWith(t =>
+            {
+                var ex = t.Exception?.GetBaseException();
+                if (ex != null)
+                {
+                    _channel.Send(new WorkerErrorEvent("Run crashed", ex.Message));
+                    _channel.Send(new RunCancelledEvent(start.RunId));
+                    lock (_runLock)
+                    {
+                        _isRunning = false;
+                        _activeRun?.Dispose();
+                        _activeRun = null;
+                    }
+                }
+            }, TaskContinuationOptions.OnlyOnFaulted);
+    }
 
-        // Section 6: only a single run at a time.
-        if (!await _runGate.WaitAsync(0, ct).ConfigureAwait(false))
-        {
-            _channel.WriteEvent(Events.Error, new ErrorPayload("A run is already in progress.", null), correlationId);
-            return;
-        }
-
-        var runId = Guid.NewGuid().ToString("N");
-        _activeRunId = runId;
-        _activeRunCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var token = _activeRunCts.Token;
-
+    private void ExecuteRun(string runId, RunRequest request, CancellationToken ct)
+    {
         try
         {
-            var branch = string.IsNullOrEmpty(request.Branch) ? _selectedBranch : request.Branch;
-            var workingDir = await PrepareWorkingDirAsync(branch, token).ConfigureAwait(false);
-            var git = new GitService(_config.RootPath);
+            if (_graph is null)
+            {
+                _channel.Send(new WorkerErrorEvent("No dependency graph. Run Sync first."));
+                return;
+            }
 
-            var planner = new IncrementalPlanner(_graph);
-            IReadOnlyList<ProjectDecision> plan;
+            var branch = string.IsNullOrEmpty(request.Branch) ? _selectedBranch : request.Branch;
+            _repoRoot ??= _rootPath != null ? _git.FindRepoRootAsync(_rootPath).GetAwaiter().GetResult() : null;
+
+            // Resolve build working tree + obj isolation (Section 4 / 6).
+            string buildRoot = _repoRoot ?? _rootPath!;
+            string? objBasePath = null;
+            DependencyGraph buildGraph = _graph;
+
+            if (request.BranchWorkMode == BranchWorkMode.Worktree && _repoRoot != null && !string.IsNullOrEmpty(branch))
+            {
+                var worktree = AppPaths.WorktreeFor(branch);
+                _git.EnsureWorktreeAsync(_repoRoot, branch, worktree, ct).GetAwaiter().GetResult();
+                buildRoot = worktree;
+                objBasePath = Path.Combine(worktree, ".bo-obj");
+                buildGraph = TranslateGraphTo(_graph, _repoRoot, worktree);
+            }
+
+            // Determine which projects to build.
+            string? currentCommit = _repoRoot != null
+                ? _git.GetCommitAsync(_repoRoot, branch, ct).GetAwaiter().GetResult()
+                : null;
+
+            List<string> ordered;
+            HashSet<string> skipped = new();
 
             if (request.Mode == BuildMode.Rebuild)
             {
-                plan = planner.PlanRebuild();
+                ordered = _graph.Projects.OrderBy(p => p.BuildOrder).Select(p => p.Id).ToList();
             }
             else
             {
-                var commit = await git.GetCurrentCommitAsync("HEAD", token).ConfigureAwait(false);
-                var changes = await git.GetStatusChangesAsync(workingDir, token).ConfigureAwait(false);
-                var mapper = new ProjectFileMapper(_graph.Nodes);
-                var dirty = mapper.MapToDirtyProjects(changes, _config.RootPath);
-
-                plan = planner.PlanBuild(new IncrementalContext
-                {
-                    Branch = branch,
-                    CurrentCommit = commit,
-                    LocallyDirty = dirty,
-                    DependentMode = request.DependentMode,
-                    StateLookup = id => _buildStateStore.Get(id, branch)
-                });
+                var locallyDirty = ComputeLocallyDirty(_graph, ct);
+                var plan = _planner.Plan(_graph, _stateStore, branch, currentCommit, locallyDirty, request.DependentMode);
+                ordered = plan.ToBuild.ToList();
+                skipped = new HashSet<string>(plan.ToSkip);
             }
 
-            var engineRegistry = new System.Collections.Concurrent.ConcurrentDictionary<string, MsBuildEngine>(StringComparer.Ordinal);
-            var runner = BuildRunner.CreateWithMsBuild(_graph, _job, engineRegistry);
-            runner.IntermediateOutputResolver = id => ResolveObjPath(id, workingDir);
+            _channel.Send(new RunStartedEvent(runId, _graph.Projects.Count, ordered.Count));
+            foreach (var id in skipped)
+                _channel.Send(new ProjectSkippedEvent(runId, id, "no source change"));
 
-            await runner.RunAsync(
-                runId,
-                plan,
-                request.Config,
-                request.Performance,
-                this,
-                (projectId, _, status, _) =>
-                {
-                    PersistState(projectId, branch, status, token);
-                    return Task.CompletedTask;
-                },
-                token).ConfigureAwait(false);
+            if (ordered.Count == 0)
+            {
+                _channel.Send(new RunCompletedEvent(runId, 0, 0, skipped.Count));
+                return;
+            }
+
+            var engine = new MsBuildBuildEngine();
+            engine.ProjectStarted += id => _channel.Send(new ProjectStartedEvent(runId, id));
+            engine.ProjectLog += (id, line, isError) => _channel.Send(new ProjectLogEvent(runId, id, line, isError));
+            engine.ProjectFinished += (id, ok) =>
+            {
+                RecordResult(id, branch, currentCommit, ok);
+                if (ok)
+                    _channel.Send(new ProjectSucceededEvent(runId, id, currentCommit));
+                else
+                    _channel.Send(new ProjectFailedEvent(runId, id, "build failed"));
+            };
+
+            bool errorsOnly = false; // capture full per-project output; UI shows summaries unless a card is selected
+            var result = engine.Run(buildGraph, ordered, request, objBasePath, errorsOnly, ct);
+            _stateStore.Save();
+
+            if (result.Cancelled || ct.IsCancellationRequested)
+                _channel.Send(new RunCancelledEvent(runId));
+            else
+                _channel.Send(new RunCompletedEvent(runId, result.Succeeded, result.Failed, skipped.Count));
+        }
+        catch (Exception ex)
+        {
+            _channel.Send(new WorkerErrorEvent("Run failed", ex.Message));
+            _channel.Send(new RunCancelledEvent(runId));
         }
         finally
         {
-            _pids.SweepTracked();
-            _pids.SweepStragglers();
-            _activeRunCts?.Dispose();
-            _activeRunCts = null;
-            _activeRunId = null;
-            _runGate.Release();
+            lock (_runLock)
+            {
+                _isRunning = false;
+                _activeRun?.Dispose();
+                _activeRun = null;
+            }
         }
     }
 
-    private void PersistState(string projectId, string branch, ProjectStatus status, CancellationToken ct)
+    private HashSet<string> ComputeLocallyDirty(DependencyGraph graph, CancellationToken ct)
     {
-        string? commit = null;
-        if (status == ProjectStatus.Succeeded)
-        {
-            try
-            {
-                commit = new GitService(_config.RootPath).GetCurrentCommitAsync("HEAD", ct).GetAwaiter().GetResult();
-            }
-            catch
-            {
-                // leave commit null if git unavailable
-            }
-        }
+        if (_repoRoot == null)
+            return new HashSet<string>();
+        var changed = _git.GetChangedFilesAsync(_repoRoot, ct).GetAwaiter().GetResult();
+        return _diff.GetDirtyProjects(graph, changed);
+    }
 
-        _buildStateStore.Set(new BuildState
+    private void RecordResult(string id, string branch, string? commit, bool ok)
+    {
+        _stateStore.Set(new BuildState
         {
-            ProjectId = projectId,
+            ProjectId = id,
             Branch = branch,
-            LastResult = status,
-            LastBuiltCommit = status == ProjectStatus.Succeeded ? commit : _buildStateStore.Get(projectId, branch)?.LastBuiltCommit,
+            LastBuiltCommit = ok ? commit : _stateStore.Get(id, branch)?.LastBuiltCommit,
+            LastResult = ok ? ProjectStatus.Succeeded : ProjectStatus.Failed,
             LastRunAt = DateTimeOffset.UtcNow
         });
     }
 
-    private async Task<string> PrepareWorkingDirAsync(string branch, CancellationToken ct)
+    /// <summary>
+    /// Clone the graph but repoint each ProjectPath into the worktree (ids/edges unchanged),
+    /// so the engine builds the branch's files while final DLLs still land in the shared OutDir.
+    /// </summary>
+    private static DependencyGraph TranslateGraphTo(DependencyGraph graph, string fromRoot, string toRoot)
     {
-        if (_config.BranchMode != BranchMode.Worktree || string.IsNullOrEmpty(branch))
+        var projects = graph.Projects.Select(p =>
         {
-            return _config.RootPath;
-        }
+            string newPath = p.ProjectPath;
+            var rel = Path.GetRelativePath(fromRoot, p.ProjectPath);
+            if (!rel.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(rel))
+            {
+                var candidate = Path.Combine(toRoot, rel);
+                if (File.Exists(candidate))
+                    newPath = candidate;
+            }
+            return p with { ProjectPath = newPath };
+        }).ToList();
 
-        var git = new GitService(_config.RootPath);
-        var current = await git.GetCurrentBranchAsync(ct).ConfigureAwait(false);
-        if (string.Equals(current, branch, StringComparison.Ordinal))
-        {
-            // Building the active branch: use the main tree (read-only operations only).
-            return _config.RootPath;
-        }
-
-        var worktree = _paths.WorktreeFor(branch);
-        await git.PrepareWorktreeAsync(branch, worktree, ct).ConfigureAwait(false);
-        return worktree;
+        return graph with { Projects = projects };
     }
 
-    /// <summary>Section 4: isolate obj inside the working dir; OutDir is never touched.</summary>
-    private string? ResolveObjPath(string projectId, string workingDir)
+    private void StopRun()
     {
-        if (_graph is null || !_graph.TryGet(projectId, out var node))
+        CancellationTokenSource? cts;
+        lock (_runLock)
         {
-            return null;
+            cts = _activeRun;
+            if (cts == null)
+                return;
         }
 
-        var rel = Path.GetRelativePath(_config.RootPath, Path.GetDirectoryName(node.ProjectPath) ?? _config.RootPath);
-        return Path.Combine(workingDir, ".bo-obj", rel, "obj");
-    }
+        // Graceful first (Section 6.1 rule 2): CancelAllSubmissions via the token.
+        cts.Cancel();
 
-    private void HandleStop(string? runId)
-    {
-        _ = runId;
-        _activeRunCts?.Cancel();
-    }
-
-    private void OpenPath(string? projectId)
-    {
-        if (projectId is null || _graph is null || !_graph.TryGet(projectId, out var node))
+        // Hard fallback after timeout: sweep build child processes (worker stays alive).
+        Task.Run(() =>
         {
+            var sw = Stopwatch.StartNew();
+            while (sw.Elapsed < GracefulStopTimeout)
+            {
+                lock (_runLock)
+                    if (!_isRunning)
+                        return;
+                Thread.Sleep(150);
+            }
+            ProcessSweeper.SweepDescendants();
+        });
+    }
+
+    // ---- Open helpers ----
+
+    private void OpenPath(string projectId)
+    {
+        var project = _graph?.Projects.FirstOrDefault(p => p.Id == projectId);
+        if (project == null)
             return;
-        }
-        var dir = Path.GetDirectoryName(node.ProjectPath);
-        if (dir is null)
-        {
-            return;
-        }
-
-        TryShellOpen(OperatingSystem.IsWindows() ? "explorer.exe" : "xdg-open", dir);
+        var folder = Path.GetDirectoryName(project.ProjectPath);
+        if (folder != null && Directory.Exists(folder))
+            ShellOpen(folder);
     }
 
-    private void OpenInVs(string? projectId)
+    private void OpenInVS(string projectId)
     {
-        if (projectId is null || _graph is null || !_graph.TryGet(projectId, out var node))
-        {
+        var project = _graph?.Projects.FirstOrDefault(p => p.Id == projectId);
+        if (project == null)
             return;
-        }
-
-        // Prefer the owning solution; fall back to the project file.
-        var target = node.ProjectPath;
-        if (OperatingSystem.IsWindows())
-        {
-            TryShellOpen("cmd.exe", "/c", "start", "", target);
-        }
-        else
-        {
-            TryShellOpen("xdg-open", target);
-        }
+        // Prefer the nearest solution; fall back to the project file.
+        var target = FindNearestSolution(project.ProjectPath) ?? project.ProjectPath;
+        ShellOpen(target);
     }
 
-    private static void TryShellOpen(string file, params string[] args)
+    private static string? FindNearestSolution(string projectPath)
+    {
+        var dir = Path.GetDirectoryName(projectPath);
+        while (!string.IsNullOrEmpty(dir))
+        {
+            var sln = Directory.EnumerateFiles(dir, "*.sln", SearchOption.TopDirectoryOnly).FirstOrDefault();
+            if (sln != null)
+                return sln;
+            dir = Path.GetDirectoryName(dir);
+        }
+        return null;
+    }
+
+    private static void ShellOpen(string path)
     {
         try
         {
-            var psi = new ProcessStartInfo { FileName = file, UseShellExecute = false };
-            foreach (var a in args)
-            {
-                psi.ArgumentList.Add(a);
-            }
-            Process.Start(psi);
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
         }
         catch
         {
-            // best effort; opening UI helpers must never crash the worker
+            // Best effort.
         }
-    }
-
-    // ---- IRunEventSink ----
-
-    public void RunStarted(string runId, IReadOnlyList<string> plannedProjectIds)
-        => _channel.WriteEvent(Events.RunStarted, new RunStartedPayload(runId, plannedProjectIds));
-
-    public void ProjectStarted(string runId, string projectId)
-        => _channel.WriteEvent(Events.ProjectStarted, new ProjectStartedPayload(runId, projectId));
-
-    public void ProjectLog(string runId, string projectId, string line, bool isError)
-        => _channel.WriteEvent(Events.ProjectLog, new ProjectLogPayload(runId, projectId, line, isError));
-
-    public void ProjectSucceeded(string runId, string projectId, long elapsedMs)
-        => _channel.WriteEvent(Events.ProjectSucceeded, new ProjectSucceededPayload(runId, projectId, null, elapsedMs));
-
-    public void ProjectFailed(string runId, string projectId, string reason, long elapsedMs)
-        => _channel.WriteEvent(Events.ProjectFailed, new ProjectFailedPayload(runId, projectId, reason, elapsedMs));
-
-    public void ProjectSkipped(string runId, string projectId, string reason)
-        => _channel.WriteEvent(Events.ProjectSkipped, new ProjectSkippedPayload(runId, projectId, reason));
-
-    public void RunCompleted(string runId, RunSummary s)
-        => _channel.WriteEvent(Events.RunCompleted,
-            new RunCompletedPayload(runId, s.Total, s.Built, s.Succeeded, s.Failed, s.Skipped, s.ElapsedMs));
-
-    public void RunCancelled(string runId, string reason)
-        => _channel.WriteEvent(Events.RunCancelled, new RunCancelledPayload(runId, reason));
-
-    public void Dispose()
-    {
-        _activeRunCts?.Cancel();
-        _pids.SweepTracked();
-        // Closing the Job Object terminates any surviving child processes (Section 6.1).
-        _job.Dispose();
     }
 }
