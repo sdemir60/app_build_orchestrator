@@ -1,0 +1,6 @@
+# Yerel makineye özel
+settings.local.json
+
+# Geçici dosyalar (handoff/özet/çıktı takip edilir, temp edilmez)
+temp/
+!temp/.gitkeep
