@@ -1,26 +1,29 @@
 # App Build Orchestrator — Claude Talimatları
 
-Bu proje, çok projeli bir .NET çözümünü (solution) akıllıca derleyen bir **build orchestrator** masaüstü uygulamasıdır. Dependency graph çıkarır, sadece değişen projeleri incremental olarak derler ve derlemeyi ayrı bir worker process üzerinde IPC ile yönetir.
+Bu proje, çok projeli bir .NET çözümünü (solution) akıllıca derleyen bir **build orchestrator** masaüstü uygulamasıdır. Dependency graph çıkarır, sadece değişen projeleri incremental olarak derler ve derlemeyi ayrı bir **supervisor process** üzerinden yönetir; her projeyi **shell-out** (`dotnet build` ayrı child process) ile derler.
 
 ---
 
-## Proje Yapısı / Mimari
+## Proje Yapısı / Mimari (hedef — v2 plan)
+
+> **DURUM:** Proje sıfırdan yeniden kuruluyor. Aşağıdaki mimari, onaylı **v2 plan**'a dayanır: [.claude/outputs/2026-06-27-22-46-build-orchestrator-yeni-plan.md](.claude/outputs/2026-06-27-22-46-build-orchestrator-yeni-plan.md). Kod henüz yoktur; bu tablo hedef yapıdır. Teslim, walking-skeleton (Iteration 0→5) ile yapılır.
 
 Solution: `BuildOrchestrator.slnx` (kökte). Ana git kökü: bu dizin.
 
 | Proje | Target | Sorumluluk |
 |---|---|---|
-| `src/BuildOrchestrator.App` | net8.0-windows (WPF) | UI katmanı. MVVM (CommunityToolkit.Mvvm), DI, system tray, single-instance, worker ile IPC client. |
-| `src/BuildOrchestrator.Core` | net8.0 | Çekirdek mantık: project discovery, dependency graph, git servisi, incremental planlama (DiffAnalyzer/IncrementalPlanner), state & config persistence. |
-| `src/BuildOrchestrator.Worker` | net8.0-windows | Derlemeyi yürüten ayrı process: MSBuild engine, IPC channel, process control (Job Object, sweeper). App tarafından spawn edilir. |
-| `src/BuildOrchestrator.Contracts` | netstandard2.0 / net8.0 | App ↔ Worker arası IPC sözleşmeleri: DTO'lar, enum'lar, WorkerCommand/WorkerEvent, JSON serialization. |
-| `tests/BuildOrchestrator.Tests` | net8.0 (xUnit) | Core testleri: dependency graph, diff analyzer, incremental planner. |
-
-> Not: `src/BuildOrchestrator.Native` solution'a dahil değildir (orphan/artık); aktif değildir, dikkate alma.
+| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI katmanı. MVVM (CommunityToolkit.Mvvm), DI, system tray, single-instance, supervisor ile IPC client. **Outer Job Object** sahibi. |
+| `src/BuildOrchestrator.Core` | net10.0 | Saf çekirdek mantık: project discovery, dependency graph, git servisi, incremental planlama (DiffAnalyzer/IncrementalPlanner), state & config persistence. UI/process bağımsız, test edilebilir. |
+| `src/BuildOrchestrator.Supervisor` | net10.0-windows | Derlemeyi yöneten ayrı process: build kuyruğu, **inner Job Object**, her projeyi `dotnet build` ile **shell-out**, log parse, IPC server (stdio). App tarafından spawn edilir. |
+| `src/BuildOrchestrator.Contracts` | net10.0 | App ↔ Supervisor IPC sözleşmeleri: DTO'lar, enum'lar, command/event, JSON serialization. |
+| `tests/BuildOrchestrator.Tests` | net10.0 (xUnit) | Core unit + process-control + integration testleri. |
 
 **Mimari ilkeler:**
-- App, Worker'ın assembly'sine referans vermez; sadece çıktısını `Worker/` alt klasörüne kopyalar ve runtime'da process olarak başlatır. İletişim tamamen IPC (Contracts) üzerinden.
-- Core, UI'dan ve Worker'dan bağımsız test edilebilir olmalıdır; iş mantığını App/Worker'a sızdırma.
+- App, Supervisor'ın assembly'sine referans vermez; sadece çıktısını yanına kopyalar ve runtime'da process olarak başlatır. İletişim tamamen IPC (Contracts) üzerinden, **stdio newline-delimited JSON**.
+- **Derleme shell-out ile:** in-process MSBuild (BuildManager) kullanılmaz; her proje `dotnet build` child process'i olarak derlenir (`-p:UseSharedCompilation=false -nodeReuse:false`).
+- **§6.1 process kontrolü = nested Job Object:** App outer Job (`KILL_ON_JOB_CLOSE`) sahibi; Supervisor onun içinde doğar; Supervisor inner Job'da `dotnet build` child'larını tutar. App ölünce kaskat halinde her şey ölür. Managed parent-watcher veya PID-heuristik süpürme **kullanılmaz**.
+- **§4 OutDir'e dokunulmaz:** sadece `BaseIntermediateOutputPath` (obj) worktree altında, proje **Id (tam yol)** anahtarıyla izole edilir. "Değişti mi" kararı yalnız kaynak sinyaline (commit + git diff) dayanır; DLL/bin timestamp asla okunmaz.
+- Core, UI'dan ve Supervisor'dan bağımsız test edilebilir olmalıdır; iş mantığını App/Supervisor'a sızdırma. DI baştan kurulu.
 
 ---
 
@@ -67,6 +70,7 @@ Format: `YYYY-MM-DD-HH-mm-{baslik}.md`
   1. Önce bu konuşmanın özetini `summaries/`'e yaz (yukarıdaki gibi).
   2. Sonra `handoffs/`'a **KISA** bir aşama girişi (handoff) yaz. Bu, kullanıcının yeni session'da mesajının başına yapıştıracağı devir belgesidir. **AMACI YALNIZCA:** (a) o ana kadarki ilgili özet dosyalarını listelemek (yol + tek satır; yeni oluşturulan bu konuşmanın özeti dahil), (b) en son nerede kaldığımızı işaretlemek.
      - **Kısa tut.** "Sıradaki adımlar / ne yapılacak / detaylı durum / çalışma ortamı" gibi bölümler YAZMA — kullanıcı devamını kendi mesajıyla yazar.
+- **"bu çalışma tamam" / "iz bırak" / "bir sonraki aşamaya geçeceğim" (ve benzeri ifadeler)** → SADECE `handoffs/`'a **çok kısa** bir handoff yaz (özet yazma). Dosya listesi **KÜMÜLATİFTİR**: bir önceki handoff'taki ilgili dosyaları taşı + bu session'da oluşturulan/güncellenenleri ekle (her biri yol + tek satır). Ayrıca ne yaptığımızı tek-iki cümle + "Buradan devam edilecek." de. Ekstra yorum / sıradaki adım / detay EKLEME — dosyalar zaten var.
 - Handoff dosyası da aynı isim formatını (`YYYY-MM-DD-HH-mm-...`) kullanır.
 
 ---
