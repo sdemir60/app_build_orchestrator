@@ -45,8 +45,11 @@ public sealed class ProcessRunner : IProcessRunner
         }
         catch (OperationCanceledException)
         {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* zaten öldü */ }
-            await process.WaitForExitAsync(CancellationToken.None);
+            try { process.Kill(entireProcessTree: true); }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* zaten öldü / erişim */ }
+            // post-kill wait BOUNDED — kill takılsa da sonsuz beklemeyiz [it0-devir]
+            try { await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token); }
+            catch (OperationCanceledException) { /* çıkış onayı gelmedi; yine de sonucu döneriz */ }
             if (ct.IsCancellationRequested) throw; // caller iptali: child öldürüldü, iptal yay
             return new ProcessResult(-1, await stdoutTask, await stderrTask, sw.Elapsed, TimedOut: true);
         }

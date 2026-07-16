@@ -45,4 +45,20 @@ public class ProcessRunnerTests
         // Cancellation surfaces promptly and the 60s child is not waited out (proves kill, not natural exit).
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"iptal gecikti: {sw.Elapsed}");
     }
+
+    [Fact]
+    public async Task RunAsync_timeout_kills_and_returns_bounded_TimedOut()
+    {
+        var runner = new ProcessRunner();
+        // 30sn uyuyan child'ı 500ms timeout ile öldür; test 30sn beklememeli
+        var spec = new ProcessSpec("cmd.exe",
+            ["/c", "powershell -NoProfile -Command Start-Sleep -Seconds 30"],
+            Timeout: TimeSpan.FromMilliseconds(500));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await runner.RunAsync(spec).WaitAsync(TimeSpan.FromSeconds(10)); // aşım = FAIL
+        sw.Stop();
+        Assert.True(result.TimedOut);
+        Assert.Equal(-1, result.ExitCode);
+        Assert.True(sw.ElapsedMilliseconds < 10_000, $"kill-path {sw.ElapsedMilliseconds}ms — bounded olmalı");
+    }
 }
