@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
@@ -34,5 +35,15 @@ public class EngineHostTests
         host.EventReceived += e => { if (e is PongEvent p) pong.TrySetResult(p); };
         await host.SendAsync(new PingCommand(1));
         Assert.Equal(1, (await pong.Task.WaitAsync(TimeSpan.FromSeconds(5))).Seq);
+    }
+
+    [Fact]
+    public async Task StartAsync_timeout_disposes_child_and_no_leak()
+    {
+        // Var olmayan exe → child hızla ölür; StartAsync 5sn timeout'a düşmeden EngineExited ya da hata dönmeli.
+        await using var host = new EngineHost(Path.Combine(AppContext.BaseDirectory, "does-not-exist.exe"));
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await host.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(6)).Token));
+        Assert.Null(host.EnginePid); // child referansı sızmadı/temizlendi
     }
 }
