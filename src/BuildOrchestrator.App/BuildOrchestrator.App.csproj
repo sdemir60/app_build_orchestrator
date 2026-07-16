@@ -22,11 +22,18 @@
                       ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
   <Target Name="CopySupervisorOutput" AfterTargets="Build">
+    <!-- Tüm dosyaları eşle ama RecursiveDir'i TFM klasörü olmadan hesapla [it0-devir] -->
     <ItemGroup>
       <_SupervisorFiles Include="..\BuildOrchestrator.Supervisor\bin\$(Configuration)\**\*.*" />
+      <!-- RecursiveDir'den TFM dizinini çıkart (ilk / öncesi) [it0-devir] -->
+      <_SupervisorFiles>
+        <CopyRecursiveDir Condition="'%(RecursiveDir)' != ''">$([System.Text.RegularExpressions.Regex]::Replace('%(RecursiveDir)', '^[^\\]+\\(.*)$', '$1'))</CopyRecursiveDir>
+        <CopyRecursiveDir Condition="'%(RecursiveDir)' == ''"></CopyRecursiveDir>
+      </_SupervisorFiles>
     </ItemGroup>
+    <!-- stale birikimi önle: hedef supervisor klasörünü kopya öncesi sil [it0-devir] -->
     <RemoveDir Directories="$(OutDir)supervisor" />
-    <Copy SourceFiles="@(_SupervisorFiles)" DestinationFolder="$(OutDir)supervisor" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SupervisorFiles)" DestinationFolder="$(OutDir)supervisor\%(CopyRecursiveDir)" SkipUnchangedFiles="true" />
   </Target>
 
   <ItemGroup>
