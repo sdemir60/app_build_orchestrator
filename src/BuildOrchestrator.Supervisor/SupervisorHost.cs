@@ -17,15 +17,15 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
         string version = typeof(SupervisorHost).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
-        await writer.WriteAsync<IpcEvent>(new EngineReadyEvent(Environment.ProcessId, version), ct);
+        await writer.WriteAsync(new EngineReadyEvent(Environment.ProcessId, version), ct);
         while (_running)
         {
             IpcCommand? cmd;
             try { cmd = await reader.ReadAsync<IpcCommand>(ct); }
             catch (IpcFramingException ex)
-            { await writer.WriteAsync<IpcEvent>(new ErrorEvent("framing", ex.Message), ct); return 2; } // kurtarılamaz
+            { await writer.WriteAsync(new ErrorEvent("framing", ex.Message), ct); return 2; } // kurtarılamaz
             catch (Exception ex) when (ex is JsonException or NotSupportedException)
-            { await writer.WriteAsync<IpcEvent>(new ErrorEvent("badCommand", ex.Message), ct); continue; } // satır tüketildi, devam
+            { await writer.WriteAsync(new ErrorEvent("badCommand", ex.Message), ct); continue; } // satır tüketildi, devam
             if (cmd is null) return 0; // stdin EOF → App kapandı (outer Job zaten süpürür; bu düzenli çıkış)
             await DispatchAsync(cmd, ct);
         }
@@ -37,21 +37,21 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         switch (cmd)
         {
             case PingCommand p:
-                await writer.WriteAsync<IpcEvent>(new PongEvent(p.Seq), ct); break;
+                await writer.WriteAsync(new PongEvent(p.Seq), ct); break;
             case ShutdownCommand:
                 _running = false; break;
             case StopRunCommand s when s.Kind == StopKind.Hard:
                 innerJob.Terminate(); // T4 base: hard stop = TerminateJobObject(inner) — proje sınırı beklenmez
-                await writer.WriteAsync<IpcEvent>(new RunStoppedEvent(s.RunId, WasHard: true), ct); break;
+                await writer.WriteAsync(new RunStoppedEvent(s.RunId, WasHard: true), ct); break;
             case StopRunCommand s:
                 _stopRequested = true;
-                await writer.WriteAsync<IpcEvent>(new RunStoppedEvent(s.RunId, WasHard: false), ct); break;
+                await writer.WriteAsync(new RunStoppedEvent(s.RunId, WasHard: false), ct); break;
             case GetProjectLogCommand g:
                 await SendProjectLogAsync(g, ct); break;
             case DebugSpawnChildrenCommand d:
                 await SpawnDebugChildrenAsync(d, ct); break;
             default:
-                await writer.WriteAsync<IpcEvent>(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
+                await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
     }
 
@@ -59,10 +59,10 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     {
         string path = Path.Combine(logsRoot, ProjectLogNaming.FileNameFor(g.ProjectId));
         if (!File.Exists(path))
-        { await writer.WriteAsync<IpcEvent>(new ErrorEvent("logNotFound", g.ProjectId), ct); return; }
+        { await writer.WriteAsync(new ErrorEvent("logNotFound", g.ProjectId), ct); return; }
         string text = await File.ReadAllTextAsync(path, ct);
         foreach (var c in LogChunker.Chunk(text))
-            await writer.WriteAsync<IpcEvent>(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast), ct);
+            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast), ct);
     }
 
     private async Task SpawnDebugChildrenAsync(DebugSpawnChildrenCommand d, CancellationToken ct)
@@ -78,8 +78,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 pids.Add(child.Pid);
             }
             catch (Win32Exception ex) // breakaway probe: NativeErrorCode==5 (ERROR_ACCESS_DENIED) beklenir
-            { await writer.WriteAsync<IpcEvent>(new ErrorEvent("spawnFailed", $"win32={ex.NativeErrorCode}"), ct); return; }
+            { await writer.WriteAsync(new ErrorEvent("spawnFailed", $"win32={ex.NativeErrorCode}"), ct); return; }
         }
-        await writer.WriteAsync<IpcEvent>(new DebugChildrenSpawnedEvent(pids.ToArray()), ct);
+        await writer.WriteAsync(new DebugChildrenSpawnedEvent(pids.ToArray()), ct);
     }
 }

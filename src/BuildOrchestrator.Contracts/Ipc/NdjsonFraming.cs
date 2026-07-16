@@ -10,7 +10,11 @@ public sealed class NdjsonWriter(Stream stream)
     private static readonly byte[] NewLine = [(byte)'\n'];
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public async Task WriteAsync<T>(T message, CancellationToken ct = default)
+    // Base-type kısıtı: discriminator daima yazılır (polimorfizm footgun kapandı). [it0-devir]
+    public Task WriteAsync(IpcCommand message, CancellationToken ct = default) => WriteCoreAsync(message, ct);
+    public Task WriteAsync(IpcEvent message, CancellationToken ct = default) => WriteCoreAsync(message, ct);
+
+    private async Task WriteCoreAsync<T>(T message, CancellationToken ct)
     {
         byte[] payload = JsonSerializer.SerializeToUtf8Bytes(message, IpcJson.Options); // JSON escape → payload'da ham \n olamaz
         if (payload.Length + 1 > MaxLineBytes)

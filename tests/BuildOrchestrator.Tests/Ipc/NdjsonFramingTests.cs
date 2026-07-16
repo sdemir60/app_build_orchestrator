@@ -12,8 +12,8 @@ public class NdjsonFramingTests
     public async Task Writer_then_reader_roundtrips_two_messages_back_to_back()
     {
         var (w, s) = W();
-        await w.WriteAsync<IpcEvent>(new PongEvent(1));
-        await w.WriteAsync<IpcEvent>(new ErrorEvent("a", "b"));
+        await w.WriteAsync(new PongEvent(1));
+        await w.WriteAsync(new ErrorEvent("a", "b"));
         s.Position = 0;
         var r = new NdjsonReader(s);
         Assert.Equal(new PongEvent(1), await r.ReadAsync<IpcEvent>());
@@ -26,7 +26,7 @@ public class NdjsonFramingTests
     {
         var (w, _) = W();
         var big = new ErrorEvent("x", new string('y', NdjsonWriter.MaxLineBytes));
-        await Assert.ThrowsAsync<IpcFramingException>(() => w.WriteAsync<IpcEvent>(big));
+        await Assert.ThrowsAsync<IpcFramingException>(() => w.WriteAsync(big));
     }
 
     [Fact]
@@ -44,5 +44,18 @@ public class NdjsonFramingTests
         var r = new NdjsonReader(s);
         await Assert.ThrowsAnyAsync<Exception>(() => r.ReadAsync<IpcEvent>()); // çöp satır
         Assert.Equal(new PongEvent(5), await r.ReadAsync<IpcEvent>());        // framing bozulmadı
+    }
+
+    [Fact]
+    public async Task WriteAsync_concrete_type_still_emits_polymorphic_discriminator()
+    {
+        using var ms = new MemoryStream();
+        var writer = new NdjsonWriter(ms);
+        await writer.WriteAsync(new PongEvent(7)); // concrete tip — base overload'a bağlanmalı
+        string line = System.Text.Encoding.UTF8.GetString(ms.ToArray());
+        Assert.Contains("\"type\":\"pong\"", line); // discriminator yazıldı
+        ms.Position = 0;
+        var ev = await new NdjsonReader(ms).ReadAsync<IpcEvent>();
+        Assert.IsType<PongEvent>(ev); // round-trip base tipe deserialize oldu
     }
 }

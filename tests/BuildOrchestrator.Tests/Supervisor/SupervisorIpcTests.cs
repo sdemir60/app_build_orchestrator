@@ -51,7 +51,7 @@ public class SupervisorIpcTests
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
 
-        await writer.WriteAsync<IpcCommand>(new GetProjectLogCommand(projectId));
+        await writer.WriteAsync(new GetProjectLogCommand(projectId));
         var chunks = new List<ProjectLogChunkEvent>();
         while (true)
         {
@@ -62,10 +62,10 @@ public class SupervisorIpcTests
         Assert.True(chunks.Count >= 3);
         Assert.Equal(Enumerable.Range(0, chunks.Count), chunks.Select(c => c.Sequence));
 
-        await writer.WriteAsync<IpcCommand>(new GetProjectLogCommand(@"d:\yok\yok.csproj"));
+        await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj"));
         var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("logNotFound", err.Code);
-        await writer.WriteAsync<IpcCommand>(new ShutdownCommand());
+        await writer.WriteAsync(new ShutdownCommand());
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
     }
 
@@ -76,9 +76,9 @@ public class SupervisorIpcTests
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
-        await writer.WriteAsync<IpcCommand>(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
         var spawned = Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
-        await writer.WriteAsync<IpcCommand>(new StopRunCommand("r1", StopKind.Hard)); // T4 base: hard = TerminateJobObject(inner)
+        await writer.WriteAsync(new StopRunCommand("r1", StopKind.Hard)); // T4 base: hard = TerminateJobObject(inner)
         var stopped = Assert.IsType<RunStoppedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.True(stopped.WasHard);
         foreach (int pid in spawned.Pids)
@@ -86,7 +86,7 @@ public class SupervisorIpcTests
             try { await Process.GetProcessById(pid).WaitForExitAsync(new CancellationTokenSource(2000).Token); }
             catch (ArgumentException) { /* zaten öldü */ }
         }
-        await writer.WriteAsync<IpcCommand>(new ShutdownCommand());
+        await writer.WriteAsync(new ShutdownCommand());
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
     }
 }

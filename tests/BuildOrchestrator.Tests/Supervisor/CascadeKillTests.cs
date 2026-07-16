@@ -25,7 +25,7 @@ public class CascadeKillTests
             var reader = new NdjsonReader(supervisor.StandardOutput!);
             Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
 
-            await writer.WriteAsync<IpcCommand>(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
+            await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
             Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
 
             // outer IOCP tüm ağacı görür (nested üyelik mirası): supervisor + 2×cmd + 2×powershell ≥ 5
@@ -60,7 +60,7 @@ public class CascadeKillTests
         var writer = new NdjsonWriter(supervisor.StandardInput!);
         var reader = new NdjsonReader(supervisor.StandardOutput!);
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
-        await writer.WriteAsync<IpcCommand>(new DebugSpawnChildrenCommand(Count: 1, Breakaway: true));
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: true));
         var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("spawnFailed", err.Code);
         Assert.Contains("win32=5", err.Message); // ERROR_ACCESS_DENIED — çocuklar job'dan çıkamaz (spike S4 ile aynı)
