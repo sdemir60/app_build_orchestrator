@@ -90,7 +90,7 @@ Aşağıdaki değerler **her task'ın** örtük gereksinimidir; ihlal = plan ihl
 - **[v7Δ-6] Fidelity çerçevesi:** hedef piksel-hassas; A13'teki yapısal farklar "algısal eşdeğer" kabul sınıfındadır — iş gücüyle kapatılmaya çalışılmaz.
 - **v1 = tek repo.** `[§12]`
 - **Scan ignore:** `.git bin obj node_modules .vs`. **Build-etkileyen uzantılar:** `.cs .xaml .resx .csproj .props .targets`. `[§5/§6]`
-- **Hedef repo (girdi, varlık değil):** `D:\Projects\Delta\OSYS` — 191 csproj · 45 sln · 21 packages.config · 175 legacy (152×v4.6 + 23×v4.8) · 1927 HintPath · 178 post-build copy. `[Eng yer-gerçeği]`
+- **Hedef repo (girdi, varlık değil):** `D:\Projects\Delta\OSYS` — **[SPIKE-AMEND 2026-07-16] 177 csproj · 44 sln · 1854 HintPath · 173 legacy (152×v4.6 + 21×v4.8) + 4 SDK-style** (spike S3 gerçek taraması; plandaki 191/1927/45 eski taramaydı). 21 packages.config · 178 post-build copy (eski tarama; It-1'de yeniden ölçülür). `[Eng yer-gerçeği · SPIKE-RESULTS S3]`
 
 ---
 
@@ -331,7 +331,20 @@ v6 listesi aynen (tek git repo · ortak çıktı post-build event'lerle · confi
 
 ---
 
-# PART B — Birleşik Task Backlog (T1–T70)
+## SPIKE SONUÇ KAYDI `[SPIKE-AMEND 2026-07-16]` (T23 tamamlandı — GATE GEÇİLDİ)
+
+> Kaynak: [SPIKE-RESULTS](2026-07-16-10-20-spike-results.md). Part D gate kuralına göre değerlendirme: **S1 PASS · S2 PASS · S3 PARTIAL · S4 PASS · S5 kayıt → GATE AÇIK, It-0 onaylı** (kural: S2/S4 FAIL → STOP; S3 PARTIAL → devam + It-1 fallback). Aşağıdakiler BAĞLAYICI girdi olarak plana işlendi:
+
+- **S3 PARTIAL → T71 (It-1 fallback):** Ham intra-repo oran %57.2 (< %95); ancak producer çakışması 0, kaçırılan edge 0, unmatched'lerin tamamı kanıtlanabilir repo-DIŞI (kardeş repo platform DLL'leri + 3. parti). D11 stratejisi fizibil; %95 eşiği yerine **metrik = matched / (matched + sınıflandırılamayan)** izlenir → 3-sınıf sınıflandırıcı T71.
+- **T22 resolve/invoke sözleşmesine bağlayıcı (S2):** (a) packages.config restore per-project çağrıda **`-p:SolutionDir=<projenin bağlı olduğu sln dizini>\` İSTER** (sln bağlamı olmadan `-t:restore` "Çözüm bulunamadı" verir; T32 sln eşlemesi bu yüzden restore'un da girdisidir); (b) per-project shell-out'ta **`-p:BuildProjectReferences=false` ZORUNLU** (orchestrator bağımlılığı zaten ayrı node olarak derler; ProjectReference zinciri yeniden derlenmeye kalkınca kardeş obj zehrine çarpar); (c) restore yolu **`msbuild -t:restore -p:RestorePackagesConfig=true`** — **nuget.exe'ye bağımlılık YOK** (PATH'te yok; S1).
+- **Bayat obj zehirlenmesi GERÇEK (S2 şart-2, OSYS.Types.NewSales.Print vakası):** silinmiş kardeş csproj'un `netstandard2.0` artıkları (`project.assets.json` + `*.nuget.g.props/targets`) default obj ile build'i kırıyor; `-p:BaseIntermediateOutputPath=<izole>\` ile yeşil → §4 obj-izolasyon kararı gerçek veriyle doğrulandı; **obj-izolasyon testlerine bayat-obj senaryosu eklenir**; in-place build'ler için **T72 (obj tanı/warn, It-1)**.
+- **D9/S5 kaydı (T33 koşul girdisi):** v1 flag'leri kapalıyken 47–50s ↔ açıkken 16–21s (**≈2.9×**); kazanç **TAMAMEN shared compilation'dan** (nodeReuse tek başına ≈0 — per-project shell-out'ta ekstra node doğmuyor). ANCAK shared compilation açıkken emit **job-DIŞI kalıcı VBCSCompiler'da** gerçekleşir → kill anında in-flight emit job garantisinin dışında = **torn-DLL riski geri gelir** (kill süresi değil, emit bütünlüğü sorunu; kill reuse açıkken de 18ms). → **v1'de flag'ler KORUNUR**; T33 fast-follow bu sayılarla koşullu, "Stop anında server'a bağlı derleme bekleniyor mu" sorusu çözülmeden açılmaz.
+- **Yer-gerçeği güncellendi:** 177 csproj · 1854 HintPath · 44 sln (Global Constraints satırına işlendi).
+- **It-0 TDD planı:** [2026-07-16-10-35-it0-tdd-plan.md](2026-07-16-10-35-it0-tdd-plan.md)
+
+---
+
+# PART B — Birleşik Task Backlog (T1–T72)
 
 > v6'nın T1–T53'ü korundu (izlenebilirlik; absorbe olanlar hâlâ başka task içinde). **[v7Δ] T54–T70 eklendi**; revize edilen mevcut tasklar aşağıda ayrıca işaretli.
 
@@ -400,8 +413,10 @@ v6 listesi aynen (tek git repo · ortak çıktı post-build event'lerle · confi
 | **T68** | **[v7Δ-6] Klavye/focus mimarisi:** satır tabIndex+Enter; in-window dialog focus-trap; popover focus yönetimi; AutomationProperties.Name + live-region; T46/T47'nin teknik somutlaması | YENİ | 4 | v7Δ-6 · F |
 | **T69** | **[v7Δ-2 · K1] Sync-fetch adımı:** `git fetch origin <branch>` ref-only; offline degrade (warn + yerel HEAD); hedef SHA = remote-tracking ref; `curSha → targetSha` beslemesi; testler | YENİ | 3 | v7Δ-2 · K1 |
 | **T70** | **[v7Δ-8] ETA + lastDurationMs:** BuildState alanı + persist; ETA formülü (EMA 0.75/0.25 + building 400ms + 5s yuvarlama + almost-done); ilk-koşu fallback'i (tahmin yokken X/N + geçen); unit testler | YENİ | 3/4 | v7Δ-8 · D |
+| **T71** | **[SPIKE-AMEND] HintPath 3-sınıf sınıflandırıcı (S3 fallback):** Sync'te her HintPath → `edge` (producer map hit) · `external-3rdparty` (`packages\`/`Program Files` vb. yol kuralı) · `external-osys-platform` (`C:\OSYS\*\Bin` altında, repo-içi üretici yok → kart/tooltip: "repo-dışı OSYS bağımlılığı — değişiklik takibi yapılmaz (v1 tek repo)"); sınıflandırılamayan artık → warn; **rapor metriği = matched / (matched + sınıflandırılamayan)** | YENİ (gate kuralı) | 1 | SPIKE S3 PARTIAL |
+| **T72** | **[SPIKE-AMEND] Bayat obj tanı/warn (S2 bulgusu):** in-place build öncesi default obj'de yabancı-TFM artığı tespiti (`project.assets.json` hedef framework uyuşmazlığı / `*.nuget.g.props-targets` kalıntısı) → **dokunmadan** konsola warn; obj-izolasyon testlerine bayat-obj senaryosu (OSYS.Types.NewSales.Print vakası) | YENİ (spike bulgusu) | 1 | SPIKE S2 şart-2 |
 
-**Özet:** v6'nın 46 task'ı korundu — **17'si `[v7Δ]` revize** (T4/T12/T29/T32/T34/T35/T37–T42/T44/T49/T50/T51/T53); T46/T47 yalnız nota bağlı (T68 detaylandırır); **T54–T70 (17 yeni)** eklendi. Hiçbir v5/v6 kararı silinmedi.
+**Özet:** v6'nın 46 task'ı korundu — **17'si `[v7Δ]` revize** (T4/T12/T29/T32/T34/T35/T37–T42/T44/T49/T50/T51/T53); T46/T47 yalnız nota bağlı (T68 detaylandırır); **T54–T70 (17 yeni)** eklendi. Hiçbir v5/v6 kararı silinmedi. **[SPIKE-AMEND 2026-07-16] T71/T72 eklendi** (S3 fallback sınıflandırıcı + S2 obj tanı/warn — It-1).
 
 ---
 
@@ -411,7 +426,7 @@ v6 listesi aynen (tek git repo · ortak çıktı post-build event'lerle · confi
 |---|---|---|---|
 | **-1** | **Feasibility Spike (GATE, throwaway)** | T23 | (a) 5 legacy proje MSBuild.exe+nuget green; (b) HintPath→producer match-rate + eşik; (c) cascade-kill gerçek MSBuild ağacı ≤2s, 0 orphan, no-breakaway; (d) D9 flag delta. **SPIKE-RESULTS.md** yazıldı. Herhangi biri fail → STOP. |
 | **0** | İki process + stdio IPC + nested Job cascade + minimal pencere + DI iskeleti **+ [v7Δ] UI spike'ları** | T22(resolve), T30, T7, T28(base), T6, T31, T4(base), **T56(CompositeFont spike), T62(WindowChrome temel + maximize düzeltmesi), T64(font gömme + glif testi)** | §3 deterministik kabul geçer. stdout yalnız NDJSON. **[v7Δ] CompositeFont line-height spike sonucu kayıtlı (1.55 tutuyor/tutmuyor); Geist gömülü ve 400/500/600 ayrışıyor.** |
-| **1** | Sync/graph: scan, HintPath→producer, Tarjan/Kahn, batch eval+cache, BuildPlan, build-order kartlar + cycle rozeti; pre-run will-build (Core) | T24, T32, T26, T53(Core) | Gerçek OSYS Sync cache-hit'te hızlı; kartlar build-order'da; cycle rozeti; will-build kümesi testli. |
+| **1** | Sync/graph: scan, HintPath→producer, Tarjan/Kahn, batch eval+cache, BuildPlan, build-order kartlar + cycle rozeti; pre-run will-build (Core) **+ [SPIKE-AMEND] HintPath 3-sınıf sınıflandırıcı + bayat-obj tanı/warn** | T24, T32, T26, T53(Core), **T71(sınıflandırıcı — S3 fallback), T72(obj tanı/warn — S2 bulgusu)** | Gerçek OSYS Sync cache-hit'te hızlı; kartlar build-order'da; cycle rozeti; will-build kümesi testli. **[SPIKE-AMEND] Sınıflandırma metriği raporlanır (matched/(matched+sınıflandırılamayan)); sınıflandırılamayan → warn; bayat obj → dokunmadan warn.** |
 | **2** | Rebuild (gerçek, paralel) + per-run disk log + kart seçince detay + copy-aware Stop **+ [v7Δ] Continue + AvalonEdit gerçek akış** | T22(invoke), T28(stream), T5, T4(copy-aware), T8, T9, **T55(Continue), T56(konsol canlı akış + batch flush)** | OSYS rebuild paralel green; dispatch deterministik (ready-set — K2); kill mid-build → torn DLL yok; karta tıkla → tam log diskten; **Stop→Continue kalanlardan sürer; konsol MSBuild-verbose altında akıcı.** |
 | **3** | Incremental: commit/diff/status, GLOBAL build-state, propagation, Safe/Fast, branch-driven worktree, Skipped, will-build UI, katman pattern **+ [v7Δ] fetch + depIssue + retry + ETA** | T25, T27, T11, T13, T14, T29, T15, T53(UI), **T69(fetch), T54(depIssue motor), T55(Retry failed), T70(ETA+lastDurationMs)** | Branch-bounce doğru; L1→L3 dirty; config-switch all-dirty; worktree matris + **niyet satırı (K3)**; will-build dot doğru + **succeeded→clean canlı**; **fetch'li Sync (offline degrade dahil — K1); depIssue zinciri testli; Retry failed kümesi doğru; ETA formülü testli.** |
 | **4** | **UX polish (design-v1 birebir):** 2×2 layout + görünüm modları, graf paneli, typing degradation, senkron seçim/deselect, frontier + sticky şerit (hata kümesi), chip'ler + aranabilir branch + Debug/Release, worktree UI, kısayollar (K6) + hotkey, motion budget, dark chrome + tray balloon, autostart, single-instance, Settings (LAYERS+REPOSITORY), interaction states, progress/ETA, keyboard nav, SR/kontrast, reduced-motion **+ [v7Δ] tüm UI altyapı taskları. İterasyon BAŞI: T65 font A/B karar kapısı (K9).** | T34–T43, T45–T48, T10, T12, T16, T50, T49, **T54(UI), T56(kaskat/chunk UI), T57–T63, T64(ikonlar), T65(GATE-lite), T66, T67, T68, T70(ETA gösterimi)** | **T65 kararı kayıtlı**; design-v1 birebirlik gözle doğrulandı (token'lar, animasyon süreleri, kopya metinleri); 500–1000 kart+node akıcı; frontier senkron (tek hero); seçim/deselect çalışır; all-skipped DELIGHT; reduce-motion anlık; keyboard-first; **failure sticky kümesi + per-row log; ▲ dep filtresi; Continue/Retry menüde; Ctrl+F filtresi; Copy log; restore glyph; Snap Layouts; balloon.** |

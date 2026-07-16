@@ -32,6 +32,8 @@
 
 ## A1 — Feasibility Spike (T23, GATE) · Model: **Fable** · Effort: **high**
 
+> **✅ TAMAMLANDI (2026-07-16).** Sonuç: [2026-07-16-10-20-spike-results.md](2026-07-16-10-20-spike-results.md) — S1 PASS · S2 PASS · S3 PARTIAL · S4 PASS · S5 kayıt · **S6: GATE GEÇİLDİ.** A2'ye geç.
+
 **Ön koşul:** `D:\Projects\Delta\OSYS` erişilebilir; makinede VS/Build Tools kurulu (vswhere bulacak).
 
 **PROMPT — yapıştır:**
@@ -55,43 +57,54 @@ Bittiğinde bana özetle: hangi gate'ler geçti, sayılar ne, It-0'a başlayabil
 
 ## A2 — Gate kararı + It-0 detaylı TDD planı · Model: **Fable** · Effort: **high**
 
-**PROMPT — yapıştır** (`<spike-results>` yerine A1'in ürettiği dosya adını koy):
+> **✅ TAMAMLANDI (2026-07-16).** Gate teyidi: S1/S2/S4 PASS · S3 PARTIAL (kabul) → **It-0 ONAYLI.** Çıktılar: (a) It-0 TDD planı [2026-07-16-10-35-it0-tdd-plan.md](2026-07-16-10-35-it0-tdd-plan.md) — 14 task, test-önce döngülü; (b) v7 plana `[SPIKE-AMEND 2026-07-16]` bölümü + **T71** (HintPath 3-sınıf sınıflandırıcı, metrik=matched/(matched+sınıflandırılamayan)) + **T72** (bayat obj tanı/warn) It-1'e eklendi; (c) yer-gerçeği 177 csproj·44 sln·1854 HintPath; (d) D9/S5 kaydı (flag'ler v1'de korunur, T33 koşullu). Bağlayıcı spike girdileri (SolutionDir·BuildProjectReferences=false·nuget'siz restore·obj-izolasyon) It-0 planına test olarak kilitlendi. **A3'e geç.**
+
+**PROMPT — yapıştır** (spike sonuç dosyası işlendi — 2026-07-16 son hali):
 
 ```
 Şu dosyaları oku:
 1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (Plan v7)
-2. .claude/outputs/<spike-results>.md (spike sonuçları)
+2. .claude/outputs/2026-07-16-10-20-spike-results.md (spike sonuçları — S1 PASS · S2 PASS · S3 PARTIAL · S4 PASS · S5 kayıt; S6 verdict: gate geçildi)
 
 Görev:
-1. Spike sonuçlarını v7 Part D gate kurallarına göre değerlendir: It-0'a geçiş onayı var mı? S3 PARTIAL ise It-1'e HintPath fallback task'ı öner ve plana not düş.
+1. Spike sonuçlarını v7 Part D gate kurallarına göre değerlendir ve teyit et: It-0'a geçiş onayı var mı? S3 PARTIAL → spike'ın önerdiği 3-sınıf HintPath sınıflandırıcısını (edge / external-3rdparty / external-osys-platform + sınıflandırılamayana warn; metrik = matched / (matched + sınıflandırılamayan)) It-1'e fallback task olarak plana not düş.
 2. Onay varsa: superpowers:writing-plans skill'ini kullanarak IT-0 İÇİN DETAYLI TDD UYGULAMA PLANI yaz. Kapsam = v7 Part C It-0 satırındaki tasklar (T22 resolve, T30, T7, T28 base, T6, T31, T4 base, T56 CompositeFont spike, T62 WindowChrome temel + maximize düzeltmesi, T64 font gömme + glif testi). Her task: adımlar, önce test, kabul kriteri. v7 Global Constraints ve A13 kuralları bağlayıcı.
-3. Planı .claude/outputs/ altına yaz (YYYY-MM-DD-HH-mm-it0-tdd-plani.md, gerçek zaman ile).
+3. Spike'ın mühendislik bulgularını (SPIKE-RESULTS S2/S3 bölümleri) plana BAĞLAYICI girdi olarak işle:
+   - packages.config restore per-project çağrıda -p:SolutionDir=<projenin bağlı olduğu sln dizini>\ İSTER (T22 resolve/invoke sözleşmesine yaz; T32 sln eşlemesi girdisi).
+   - Per-project shell-out'ta -p:BuildProjectReferences=false ZORUNLU.
+   - Bayat obj zehirlenmesi gerçek (silinmiş kardeş csproj'un netstandard artıkları build'i kırıyor; OSYS.Types.NewSales.Print vakası) — obj-izolasyon tasarımına test senaryosu olarak ekle; in-place build'ler için It-1'e "obj tanı/warn" notu düş.
+   - nuget.exe PATH'te YOK; restore yolu msbuild -t:restore -p:RestorePackagesConfig=true (orchestrator nuget.exe'ye bağımlı olmamalı).
+   - Repo yer-gerçeği güncellendi: 177 csproj · 1854 HintPath · 44 sln (plandaki 191/1927/45 eskidi).
+4. Planı .claude/outputs/ altına yaz (YYYY-MM-DD-HH-mm-it0-tdd-plan.md, gerçek zaman Bash date ile).
 
-D9 flag notunu (S5) plana kayıt olarak işle. Bittiğinde planın özetini ver.
+D9 flag notunu (S5) plana kayıt olarak işle: v1 flag'leri kapalıyken ≈2.9× yavaş (47-50s ↔ 16-21s); kazanç TAMAMEN shared compilation'dan (nodeReuse tek başına ≈0); ama shared compilation açıkken emit job-DIŞI VBCSCompiler'da gerçekleşir → torn-DLL riski → v1'de flag'ler KORUNUR, T33 fast-follow bu sayılarla koşullu. Bittiğinde planın özetini ver.
 ```
 
-**Bitti kriteri:** `it0-tdd-plani` dosyası var; her task için test-önce adımlar + kabul kriterleri yazılı.
+**Bitti kriteri:** `it0-tdd-plan` dosyası var; her task için test-önce adımlar + kabul kriterleri yazılı.
 
 ---
 
 ## A3 — It-0 uygulama (iki process + IPC + Job cascade + minimal pencere) · Model: **Fable** · Effort: **high**
 
-**PROMPT — yapıştır** (`<it0-plani>` yerine A2'nin dosya adını koy):
+**PROMPT — yapıştır** (yapıştırmaya hazır — gerçek dosya adları gömülü):
 
 ```
 Şu dosyaları oku:
-1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (Plan v7 — Global Constraints + A2/A3 + A13 bağlayıcı)
-2. .claude/outputs/<it0-plani>.md (It-0 detay planı — birincil yürütme kaynağın)
+1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (Plan v7 — Global Constraints + A2/A3 + A13 bağlayıcı; ayrıca SPIKE-AMEND bölümü)
+2. .claude/outputs/2026-07-16-10-35-it0-tdd-plan.md (It-0 detay TDD planı, 14 task — BİRİNCİL yürütme kaynağın)
 
-Görev: superpowers:subagent-driven-development skill'i ile It-0 planını task-by-task uygula. Kurallar:
-- Solution: BuildOrchestrator.slnx (kökte), proje yerleşimi v7 A2 tablosuna göre (src/App, src/Core, src/Supervisor, src/Contracts, tests/Tests).
-- TDD: her task önce test (superpowers:test-driven-development).
-- v7 A3 kabulü ZORUNLU: X→tray'de build devam; Exit/kill/crash → ≤2sn artık process yok; testler deterministik.
-- A13.2 kuralları: WindowChrome + maximize Padding düzeltmesi; AllowsTransparency ASLA; fontlar statik OTF (vercel/geist-font), variable font YASAK; CompositeFont line-height spike sonucunu kaydet.
-- stdout YALNIZ NDJSON; tüm log stderr/dosyaya.
+Görev: superpowers:subagent-driven-development skill'i ile It-0 planını Task 1'den Task 14'e kadar sırayla uygula. Kurallar:
+- Solution: BuildOrchestrator.slnx (kökte), proje yerleşimi It-0 planının "Dosya Yapısı" bölümüne göre (src/App, src/Core, src/Supervisor, src/Contracts, tests/Tests).
+- TDD: her task önce failing test → FAIL doğrula → minimal implementasyon → PASS (superpowers:test-driven-development). Plandaki adımlar/kodlar birebir.
+- v7 A3 kabulü ZORUNLU: X→tray'de build devam; Exit/kill/crash → ≤2sn artık process yok; testler deterministik (sleep-poll YASAK — D8).
+- BAĞLAYICI spike girdileri (SPIKE-RESULTS S2, plana test olarak kilitli): per-project restore -p:SolutionDir=<sln dizini>\ İSTER; per-project shell-out -p:BuildProjectReferences=false ZORUNLU; nuget.exe'ye bağımlılık YOK (msbuild -t:restore -p:RestorePackagesConfig=true); obj-izolasyon (-p:BaseIntermediateOutputPath) — bayat-obj senaryosu test.
+- v1 flag'leri SABİT: -p:UseSharedCompilation=false -nodeReuse:false (D9/S5 kaydı — torn-DLL riski).
+- A13.2: WindowChrome + maximize Padding düzeltmesi (dotnet/wpf#3887); AllowsTransparency ASLA; fontlar statik OTF (vercel/geist-font), variable font YASAK; CompositeFont line-height 1.55 spike sonucunu kaydet (tutuyor/tutmuyor + ölçülen değer).
+- stdout YALNIZ NDJSON; tüm log stderr/dosyaya (D4).
+- Yeni dosya adları İngilizce olsun (proje kuralı); it0-records.md gibi.
 - Commit'leri ben istemeden yapma; task biterken bana "commit'e hazır" de.
 
-Her task bitiminde kısa durum ver. Tümü bitince: dotnet build + dotnet test çıktılarını göster, It-0 acceptance'ının her maddesini kanıtla.
+Her task bitiminde kısa durum ver. Tümü bitince: dotnet build + dotnet test çıktılarını göster, It-0 acceptance'ının her maddesini (§3 cascade ≤2s, NDJSON-only, CompositeFont kaydı, font 400/500/600 ayrışması) kanıtla.
 ```
 
 **Bitti kriteri:** `dotnet build` + `dotnet test` yeşil; It-0 acceptance maddeleri kanıtlı (özellikle ≤2sn cascade-kill testi). Ardından **R (review) promptunu** çalıştır.
@@ -110,10 +123,10 @@ Her task bitiminde kısa durum ver. Tümü bitince: dotnet build + dotnet test �
 Görev: v7 Part C It-1'i uygula: T24 (HintPath→producer graf + batch eval + mtime/hash cache), T32 (solution belirsizliği), T26 (BuildPlan Core'da), T53 Core kısmı (pre-run willBuild kümesi: dirty⇒true, güncel⇒false, imza-yok⇒null).
 
 Kurallar:
-- Önce superpowers:writing-plans ile bu iterasyonun kısa TDD dökümünü çıkar (.claude/outputs/YYYY-MM-DD-HH-mm-it1-tdd-plani.md), sonra superpowers:subagent-driven-development ile task-by-task uygula.
+- Önce superpowers:writing-plans ile bu iterasyonun kısa TDD dökümünü çıkar (.claude/outputs/YYYY-MM-DD-HH-mm-it1-tdd-plan.md), sonra superpowers:subagent-driven-development ile task-by-task uygula.
 - TDD zorunlu; v7 A8'deki It-1 unit test kalemleri kapsanacak.
 - Graf primer = HintPath-basename→producer, ProjectReference İKİNCİL (D11). file→project = MSBuild-evaluated Compile items, path-prefix DEĞİL.
-- Gerçek OSYS (D:\Projects\Delta\OSYS) ile entegrasyon kontrolü: Sync cache-hit hızlı; 191 csproj'da producer match-rate spike'taki eşiği tutuyor mu raporla.
+- Gerçek OSYS (D:\Projects\Delta\OSYS) ile entegrasyon kontrolü: Sync cache-hit hızlı; 177 csproj'da (spike yer-gerçeği) HintPath sınıflandırması spike'ın 3-sınıf modeline uyuyor mu raporla (repo-içi kenar %100 çözülür, sınıflandırılamayan artığa warn).
 - Commit'leri ben istemeden yapma.
 
 It-1 acceptance'ının her maddesini kanıtla; bitince .claude/summaries/ + .claude/handoffs/ güncelle ("aşamamızı kaydet" kuralı).
@@ -135,7 +148,7 @@ It-1 acceptance'ının her maddesini kanıtla; bitince .claude/summaries/ + .cla
 Görev: v7 Part C It-2'yi uygula: T22(invoke), T28(stream), T5 (per-run disk log), T4 (copy-aware Stop), T8, T9, T55(Continue kısmı), T56 (AvalonEdit konsol canlı akış + batch flush).
 
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it2-tdd-plani.md), sonra task-by-task uygulama (superpowers:subagent-driven-development).
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it2-tdd-plan.md), sonra task-by-task uygulama (superpowers:subagent-driven-development).
 - Scheduler = ready-set, ileri atlamalı (v7 K2); dispatch deterministik.
 - Konsol A13.2'ye uyar: AvalonEdit, IPC background → Channel → ~50ms batch flush → BeginUpdate/tek Insert/EndUpdate; satır başına Dispatcher.Invoke YASAK.
 - Stop → kalanlar queued; Continue kalanlardan sürer, elapsed korunur (T55/K karar kaydı).
@@ -161,7 +174,7 @@ It-2 acceptance'ını kanıtla (OSYS rebuild paralel green dahil); bitince aşam
 Görev: v7 Part C It-3'ü uygula: T25, T27, T11, T13, T14, T29 (branch-driven worktree + K3 niyet satırı), T15, T53(UI), T69 (Sync-fetch ref-only + offline degrade — K1), T54 (depIssue motor kısmı), T55 (Retry failed), T70 (ETA + lastDurationMs).
 
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it3-tdd-plani.md), sonra task-by-task uygulama.
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it3-tdd-plan.md), sonra task-by-task uygulama.
 - Sync başında git fetch origin <branch> — YALNIZ ref güncelleme; checkout/pull ASLA; ağ yoksa warn + yerel HEAD (K1).
 - Branch seçimi = niyet; konsola 'branch target: … — worktree will be used at Build' satırı; git worktree add YALNIZ Build anında (K3).
 - depIssue: resolved = succeeded|failed|skipped; hatalı bağımlılık bloklamaz; kök adlar zincirde taşınır; Contracts alanları (ProjectResult.depIssues[], runCompleted.depIssueCount) v7 A9'a birebir.
@@ -186,7 +199,7 @@ It-3 acceptance'ını kanıtla (branch-bounce, L1→L3 dirty, worktree matrisi, 
 
 Görev (T65, K9 karar kapısı): Küçük bir WPF test penceresi yap — design-v1'deki gerçek metin örnekleri (konsol satırları, 13px liste satırı, 11px caps başlık; Geist + Geist Mono gömülü) 4 kombinasyonda yan yana: TextFormattingMode Display/Ideal × TextRenderingMode ClearType/Grayscale. Aynı metnin tarayıcı (prototip) görünümüyle karşılaştırma talimatı ekle.
 
-Bana ekran görüntüsü alıp karşılaştıracağım net bir yönerge ver. SONUCU BEN KARAR VERECEĞİM: kabul → saf WPF kesinleşir (varsayılan ayar kombinasyonunu koda sabitle); ret → bana dön, WebView2 hibrit planını konuşuruz. Kararımı .claude/outputs/ altına kısa karar notu olarak yaz (YYYY-MM-DD-HH-mm-t65-font-karari.md).
+Bana ekran görüntüsü alıp karşılaştıracağım net bir yönerge ver. SONUCU BEN KARAR VERECEĞİM: kabul → saf WPF kesinleşir (varsayılan ayar kombinasyonunu koda sabitle); ret → bana dön, WebView2 hibrit planını konuşuruz. Kararımı .claude/outputs/ altına kısa karar notu olarak yaz (YYYY-MM-DD-HH-mm-t65-font-decision.md).
 ```
 
 **Bitti kriteri:** Sen ekranda karşılaştırdın, karar verdin, karar notu dosyası yazıldı. (Beklenen: kabul — analiz ~%95-98 diyor.)
@@ -207,7 +220,7 @@ Bana ekran görüntüsü alıp karşılaştıracağım net bir yönerge ver. SON
 Görev: It-4'ün ZOR-CUSTOM paketini uygula (yalnız bunlar): T56 (AvalonEdit konsol UI'sının kalanı: colorizer + hibrit aktif-satır typewriter + kaskat tempo+fade + chunk loader), T57 (TrackedTextBlock), T58 (sticky overlay + LayoutMetrics; virtualization KAPALI başlar), T59 (ScrollAnimator/BottomAnchor/Follow + latest pill), T62 (pencere kabuğu paketi: Snap Layouts, restore glyph, tray+balloon, single-instance AllowSetForegroundWindow, Alt+B), T63 (graf render: Shapes yolu + kamera + dash-flow tek clock + EdgeStyleResolver; etiketler Ideal).
 
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it4a-tdd-plani.md), sonra task-by-task.
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it4a-tdd-plan.md), sonra task-by-task.
 - A13.2 kuralları HARFİYEN (DoDragDrop yasak, dash birimi thickness çarpanı, ContainerVisual.Opacity animate edilemez, koleksiyon reset yasak…).
 - Görsel değerler design-v1'den BİREBİR (süreler, easing KeySpline karşılıkları, renk token'ları) — uydurma değer yok.
 - Reduced-motion: tüm süre/eğri tek ResourceDictionary'den; SystemParameters.ClientAreaAnimation canlı takip.
@@ -233,7 +246,7 @@ Her task sonunda uygulamayı çalıştırıp ilgili davranışı gözle doğrula
 Görev: It-4'ün KALAN görevlerini uygula: T34–T43, T45–T48, T10, T12, T16, T50 (graf panelinin kalan davranışları), T49 (token ResourceDictionary), T54(UI: ▲ rozet + dep filtresi), T60 (DS kontrol kütüphanesi), T61 (tooltip altyapısı), T64 (ikon/ICO kalanı), T66 (Settings: LAYERS + REPOSITORY), T67 (OS eylemleri), T68 (klavye/focus + SR), T70 (ETA gösterimi).
 
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it4b-tdd-plani.md), sonra task-by-task (superpowers:subagent-driven-development).
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it4b-tdd-plan.md), sonra task-by-task (superpowers:subagent-driven-development).
 - Görsel/kopya değerleri design-v1'den BİREBİR; README'de olmayan davranışlar için fizibilite raporu Ek A listesi bağlayıcı (Continue/Retry menüleri, Copy log, Ctrl+F, render dilimleri…).
 - A13.2: tooltip delay=0 + CustomPopupPlacementCallback; Settings sürükle-sırala Mouse.Capture (DoDragDrop YASAK); Clipboard retry; 120ms geçişler template-lokal brush.
 - Kısayol şeması v7 K6'ya birebir (F5 ailesi; çift-Shift/Ctrl+P YOK).

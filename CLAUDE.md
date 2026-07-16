@@ -61,6 +61,7 @@ Format: `YYYY-MM-DD-HH-mm-{baslik}.md`
 
 - Tarih ve saat her zaman o anki gerçek zamandır (Bash `date` ile al).
 - Başlık: yaptığımız işlemi kısaca özetleyen kebab-case ifade (Türkçe karakter kullanılmaz).
+- **Başlık İNGİLİZCE olur** (2026-07-16'dan itibaren geçerli yeni kural): `it0-tdd-plan`, `spike-results`, `it0-records` gibi — Türkçe kelime kullanılmaz (`plani`, `kayitlari`, `karari` DEĞİL → `plan`, `records`, `decision`). Bir dosyaya referans veren linkler/kod da İngilizce ada göre yazılır. **Eski (Türkçe adlı) dosyalar oldukları gibi kalır** — geriye dönük yeniden adlandırma yapılmaz, yalnız yeni dosyalar bu kurala tabidir.
 - Çıktı ve özet dosyaları **aynı dosya adını** taşır, sadece klasörleri farklıdır — bu sayede ikisi kolayca eşleştirilir.
 
 ### Özet vs Aşama Kaydı (Tetikleyiciler)
