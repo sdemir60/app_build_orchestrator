@@ -10,7 +10,7 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
     private JobChildProcess? _child;
     private NdjsonWriter? _writer;
     private TaskCompletionSource<EngineReadyEvent>? _ready;
-    private volatile int _generation; // cross-thread okuma → volatile [it0-devir]
+    private int _generation; // cross-thread okuma → volatile [it0-devir]
     private int _exitReportedGen = -1; // EngineExited hangi generation için fırlatıldı — monotonik tek-atım [it0-devir]
 
     public event Action<IpcEvent>? EventReceived;
