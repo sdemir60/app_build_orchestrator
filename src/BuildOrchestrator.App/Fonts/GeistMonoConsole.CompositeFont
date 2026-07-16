@@ -1,0 +1,16 @@
+<FontFamily xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            xmlns:sys="clr-namespace:System;assembly=mscorlib"
+            Baseline="1.005" LineSpacing="1.55">
+  <FontFamily.FamilyNames>
+    <sys:String x:Key="en-us">Geist Mono Console</sys:String>
+  </FontFamily.FamilyNames>
+  <FontFamily.FamilyTypefaces>
+    <FamilyTypeface Weight="Normal" Style="Normal" Stretch="Normal" />
+  </FontFamily.FamilyTypefaces>
+  <FontFamily.FamilyMaps>
+    <!-- Task 11 glyph-coverage.txt: FALLBACK cikan glifler (25B2 GeistMono'da mevcut oldugu icin burada yok) -->
+    <FontFamilyMap Unicode="25B8,2304,2717,2713,27F3" Target="Segoe UI Symbol" Scale="1.0" />
+    <FontFamilyMap Unicode="0000-10ffff" Target="./#Geist Mono" Scale="1.0" />
+  </FontFamily.FamilyMaps>
+</FontFamily>

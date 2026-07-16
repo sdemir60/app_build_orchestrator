@@ -1,0 +1,68 @@
+using System.Diagnostics;
+using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Core.Processes;
+using Xunit;
+
+namespace BuildOrchestrator.Tests.Supervisor;
+
+[Trait("Category", "ProcessControl")]
+public class CascadeKillTests
+{
+    [Fact]
+    public async Task App_death_cascades_through_supervisor_and_inner_children_within_2s_zero_orphans() // §3 kabul
+    {
+        var livePids = new HashSet<int>();
+        List<Process> handles;
+        var outer = JobObject.CreateKillOnClose(); // using DEĞİL — kill anını biz seçiyoruz
+        try
+        {
+            using var iocp = outer.AttachCompletionPort();
+            var supervisor = JobProcessLauncher.Launch(outer,
+                WindowsCommandLine.Build(TestPaths.SupervisorExe), new LaunchOptions(RedirectStdio: true));
+            livePids.Add(supervisor.Pid);
+            var writer = new NdjsonWriter(supervisor.StandardInput!);
+            var reader = new NdjsonReader(supervisor.StandardOutput!);
+            Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+
+            await writer.WriteAsync<IpcCommand>(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
+            Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+
+            // outer IOCP tüm ağacı görür (nested üyelik mirası): supervisor + 2×cmd + 2×powershell ≥ 5
+            while (livePids.Count < 5)
+            {
+                var n = iocp.WaitNext(TimeSpan.FromSeconds(10)) ?? throw new TimeoutException("IOCP doğumları eksik");
+                if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) livePids.Add(n.Pid);
+                if (n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
+                                or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS) livePids.Remove(n.Pid);
+            }
+            handles = livePids.Select(pid => { try { return Process.GetProcessById(pid); } catch (ArgumentException) { return null; } })
+                              .Where(p => p is not null).Cast<Process>().ToList(); // handle'ları kill ÖNCESİ aç
+        }
+        finally { }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        outer.Dispose(); // App'in en sert ölümü: son job handle kapanışı → KILL_ON_JOB_CLOSE kaskadı
+        foreach (var p in handles)
+            await p.WaitForExitAsync(new CancellationTokenSource(2000).Token); // aşım → OCE → FAIL
+        sw.Stop();
+        Assert.True(sw.ElapsedMilliseconds <= 2000, $"kaskat {sw.ElapsedMilliseconds}ms (spike: 18–34ms)");
+        foreach (var p in handles) // 0 orphan
+            Assert.Throws<ArgumentException>(() => Process.GetProcessById(p.Id));
+    }
+
+    [Fact]
+    public async Task Breakaway_from_inside_job_is_denied_err5() // D1 probe — no-breakaway garantisi
+    {
+        using var outer = JobObject.CreateKillOnClose();
+        var supervisor = JobProcessLauncher.Launch(outer,
+            WindowsCommandLine.Build(TestPaths.SupervisorExe), new LaunchOptions(RedirectStdio: true));
+        var writer = new NdjsonWriter(supervisor.StandardInput!);
+        var reader = new NdjsonReader(supervisor.StandardOutput!);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        await writer.WriteAsync<IpcCommand>(new DebugSpawnChildrenCommand(Count: 1, Breakaway: true));
+        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("spawnFailed", err.Code);
+        Assert.Contains("win32=5", err.Message); // ERROR_ACCESS_DENIED — çocuklar job'dan çıkamaz (spike S4 ile aynı)
+    }
+}

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BuildOrchestrator.App/BuildOrchestrator.App.csproj" />
+    <Project Path="src/BuildOrchestrator.Contracts/BuildOrchestrator.Contracts.csproj" />
+    <Project Path="src/BuildOrchestrator.Core/BuildOrchestrator.Core.csproj" />
+    <Project Path="src/BuildOrchestrator.Supervisor/BuildOrchestrator.Supervisor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj" />
+  </Folder>
+</Solution>

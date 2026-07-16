@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildOrchestrator.Core\BuildOrchestrator.Core.csproj" />
+    <ProjectReference Include="..\BuildOrchestrator.Contracts\BuildOrchestrator.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildOrchestrator.Supervisor\BuildOrchestrator.Supervisor.csproj"
+                      ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+  <Target Name="CopySupervisorOutput" AfterTargets="Build">
+    <ItemGroup>
+      <_SupervisorFiles Include="..\BuildOrchestrator.Supervisor\bin\$(Configuration)\net10.0-windows\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SupervisorFiles)" DestinationFolder="$(OutDir)supervisor\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
+    <Resource Include="Fonts\*.otf" />
+  </ItemGroup>
+
+</Project>
