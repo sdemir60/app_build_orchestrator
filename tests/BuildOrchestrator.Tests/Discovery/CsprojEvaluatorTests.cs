@@ -67,4 +67,75 @@ public class CsprojEvaluatorTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    // [D11] legacy <Compile Include="**\*.cs" /> recursive glob'un projectDir altındaki TÜM .cs dosyalarını
+    // (nested dahil) bulması gerekir; eskiden "**" literal dizin adı sanılıp sıfır dosya dönüyordu.
+    [Fact]
+    public void Evaluate_legacy_recursive_glob_finds_nested_files_but_flat_glob_does_not()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "R");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "Root.cs"), "class Root{}");
+            Directory.CreateDirectory(Path.Combine(dir, "Sub"));
+            File.WriteAllText(Path.Combine(dir, "Sub", "Deep.cs"), "class Deep{}");
+
+            string projRecursive = WriteProj(dir, "R.csproj", """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup><AssemblyName>OSYS.R</AssemblyName></PropertyGroup>
+                  <ItemGroup>
+                    <Compile Include="**\*.cs" />
+                  </ItemGroup>
+                </Project>
+                """);
+            var evRecursive = new CsprojEvaluator().Evaluate(projRecursive);
+            Assert.Contains(evRecursive.CompileFiles, f => f.EndsWith("Root.cs", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(evRecursive.CompileFiles, f => f.EndsWith("Deep.cs", StringComparison.OrdinalIgnoreCase));
+
+            string flatDir = Path.Combine(root, "F");
+            Directory.CreateDirectory(flatDir);
+            File.WriteAllText(Path.Combine(flatDir, "Root.cs"), "class Root{}");
+            Directory.CreateDirectory(Path.Combine(flatDir, "Sub"));
+            File.WriteAllText(Path.Combine(flatDir, "Sub", "Deep.cs"), "class Deep{}");
+            string projFlat = WriteProj(flatDir, "F.csproj", """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup><AssemblyName>OSYS.F</AssemblyName></PropertyGroup>
+                  <ItemGroup>
+                    <Compile Include="*.cs" />
+                  </ItemGroup>
+                </Project>
+                """);
+            var evFlat = new CsprojEvaluator().Evaluate(projFlat);
+            Assert.Contains(evFlat.CompileFiles, f => f.EndsWith("Root.cs", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(evFlat.CompileFiles, f => f.EndsWith("Deep.cs", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // [D11] ProjectReference Include de MSBuild kuralınca ';' ile bölünmeli (Compile ile aynı davranış).
+    [Fact]
+    public void Evaluate_legacy_projectreference_splits_on_semicolon()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "P");
+            Directory.CreateDirectory(dir);
+            string proj = WriteProj(dir, "P.csproj", """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup><AssemblyName>OSYS.P</AssemblyName></PropertyGroup>
+                  <ItemGroup>
+                    <ProjectReference Include="..\C\C.csproj;..\D\D.csproj" />
+                  </ItemGroup>
+                </Project>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Equal(2, ev.ProjectReferences.Count);
+            Assert.Contains(ev.ProjectReferences, r => r.EndsWith("C.csproj", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(ev.ProjectReferences, r => r.EndsWith("D.csproj", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

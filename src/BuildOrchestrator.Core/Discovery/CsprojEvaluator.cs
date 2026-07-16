@@ -53,9 +53,11 @@ public sealed class CsprojEvaluator
             .Select(h => new RawHintPath(h!, System.IO.Path.GetFileName(h!).ToLowerInvariant()))
             .OrderBy(h => h.BaseName, StringComparer.OrdinalIgnoreCase).ToList();
 
+        // MSBuild HER item'ın Include'unu ';' ile böler — ProjectReference de istisna değil [D11].
         var projRefs = Items(root, "ProjectReference")
             .Select(p => p.Attribute("Include")?.Value).Where(v => !string.IsNullOrWhiteSpace(v))
-            .Select(v => System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, v!)))
+            .SelectMany(v => v!.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Select(v => System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, v)))
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToList();
 
         return new EvaluatedProject(csprojPath, asmName, compile.ToList(), hints, projRefs, sdk);
@@ -76,10 +78,14 @@ public sealed class CsprojEvaluator
             {
                 string pat = System.IO.Path.GetFileName(part);
                 string sub = System.IO.Path.GetDirectoryName(part) ?? "";
+                // "**" bir dizin adı DEĞİL, recursive işaretidir: taban dizinden RECURSE et [D11].
+                // Eskiden GetDirectoryName("**\*.cs") == "**" döndüğü ve o ad diskte hiç var olmadığı
+                // için Directory.Exists daima false dönüyor, dosyalar sessizce kayboluyordu.
+                bool recursive = sub.Contains("**");
+                if (recursive) sub = sub.Replace("**", "").TrimEnd('\\', '/');
                 string baseDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, sub));
                 if (Directory.Exists(baseDir))
-                    foreach (var f in Directory.EnumerateFiles(baseDir, pat,
-                        part.Contains("**") ? Recurse : new EnumerationOptions()))
+                    foreach (var f in Directory.EnumerateFiles(baseDir, pat, recursive ? Recurse : new EnumerationOptions()))
                         yield return System.IO.Path.GetFullPath(f);
             }
             else yield return System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, part));
