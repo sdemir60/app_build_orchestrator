@@ -86,6 +86,10 @@ D9 flag notunu (S5) plana kayıt olarak işle: v1 flag'leri kapalıyken ≈2.9×
 
 ## A3 — It-0 uygulama (iki process + IPC + Job cascade + minimal pencere) · Model: **Fable** · Effort: **high**
 
+> **✅ TAMAMLANDI (2026-07-16).** superpowers:subagent-driven-development ile 14 task sırayla, task başına implementer + spec/quality review + fix-loop döngüsüyle uygulandı. **Sonuç:** `dotnet build BuildOrchestrator.slnx` yeşil (0 uyarı, 0 hata); `dotnet test` **47 PASS + 1 SKIP** (skip = CompositeFont spike'ının FAIL dalı, protokol gereği meşru kayıt). It-0 acceptance her maddesi kanıtlı: **§3 cascade-kill** ≤2000ms (per-test 106–303ms; 0 orphan; breakaway `win32=5`), **stdout yalnız NDJSON** (D4, çöp komut sonrası dahil), **CompositeFont** LineSpacing=1.55 **TUTMUYOR** (ölçülen 15.96 DIP @13px vs hedef 20.15, sapma ~%20.8 — konsol DefaultLineHeight ile kalır), **Geist statik OTF** 400/500/600 ayrışması testli (binary-level doğrulandı, variable font yok). Final whole-branch review (Fable, high): **Ready to merge (with fixes)** — kritik yok, davranışsız temizlikler uygulandı. Kayıt: [2026-07-16-15-33-it0-records.md](2026-07-16-15-33-it0-records.md) (§3/D4/T56/T64 kanıtları + **It-1/It-2 giriş backlog'u** = ertelenen sertleştirmeler). **Commit BEKLİYOR** (kullanıcı kararı; hiçbir commit yapılmadı, 14 task working tree'de). **A4'e geç.**
+>
+> **Manuel (insana kalan) görsel kontroller:** dark chrome görünümü, maximize'da taşma olmaması, Restart butonu akışı, caption buton stilleri — `.superpowers/sdd/task-13-report.md` listeliyor.
+
 **PROMPT — yapıştır** (yapıştırmaya hazır — gerçek dosya adları gömülü):
 
 ```
@@ -118,15 +122,17 @@ Her task bitiminde kısa durum ver. Tümü bitince: dotnet build + dotnet test �
 ```
 Şu dosyaları oku:
 1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (Plan v7)
-2. .claude/handoffs/ altındaki EN YENİ handoff (önceki aşamanın durumu)
+2. .claude/outputs/2026-07-16-15-33-it0-records.md (It-0 kabul kayıtları + FINAL REVIEW It-1/It-2 giriş backlog'u — önceki aşamanın çıktısı; It-0 kodu working tree'de HAZIR, henüz commit'siz)
+3. .claude/handoffs/ altındaki EN YENİ handoff (varsa; It-0 handoff'u It-0 records'a işaret eder)
 
-Görev: v7 Part C It-1'i uygula: T24 (HintPath→producer graf + batch eval + mtime/hash cache), T32 (solution belirsizliği), T26 (BuildPlan Core'da), T53 Core kısmı (pre-run willBuild kümesi: dirty⇒true, güncel⇒false, imza-yok⇒null).
+Görev: v7 Part C It-1'i uygula: T24 (HintPath→producer graf + batch eval + mtime/hash cache), T32 (solution belirsizliği), T26 (BuildPlan Core'da), T53 Core kısmı (pre-run willBuild kümesi: dirty⇒true, güncel⇒false, imza-yok⇒null). AYRICA It-0 final review'ın It-1'e devrettiği sertleştirmeleri bu iterasyonda kapat (it0-records "It-1 giriş listesi" bölümü): EngineHost kümesi (_generation Interlocked/volatile; ReadLoop swallow-all catch'i loop içine + framing hatasında engine'i öldür/EngineExited — Supervisor exit-2 ile simetri; startup çift-sinyal; StartAsync-timeout child temizliği; graceful ShutdownCommand+generation; App copy-target hardcoded TFM/stale), NdjsonWriter base-type kısıtı (polimorfizm footgun'ı), ProcessRunner kill-path sertleştirme, CascadeKillTests handles.Count>=5 assert. T71 (HintPath 3-sınıf sınıflandırıcı) + T72 (bayat obj tanı/warn) zaten It-1 kapsamında.
 
 Kurallar:
-- Önce superpowers:writing-plans ile bu iterasyonun kısa TDD dökümünü çıkar (.claude/outputs/YYYY-MM-DD-HH-mm-it1-tdd-plan.md), sonra superpowers:subagent-driven-development ile task-by-task uygula.
+- Önce superpowers:writing-plans ile bu iterasyonun kısa TDD dökümünü çıkar (.claude/outputs/YYYY-MM-DD-HH-mm-it1-tdd-plan.md; yukarıdaki devir sertleştirmelerini de task olarak dahil et), sonra superpowers:subagent-driven-development ile task-by-task uygula.
 - TDD zorunlu; v7 A8'deki It-1 unit test kalemleri kapsanacak.
 - Graf primer = HintPath-basename→producer, ProjectReference İKİNCİL (D11). file→project = MSBuild-evaluated Compile items, path-prefix DEĞİL.
 - Gerçek OSYS (D:\Projects\Delta\OSYS) ile entegrasyon kontrolü: Sync cache-hit hızlı; 177 csproj'da (spike yer-gerçeği) HintPath sınıflandırması spike'ın 3-sınıf modeline uyuyor mu raporla (repo-içi kenar %100 çözülür, sınıflandırılamayan artığa warn).
+- Determinizm/D8 korunur (sleep-poll yasak); It-0'ın v7 yasakları (in-process MSBuild yok, OutDir okunmaz, stdout yalnız NDJSON, AllowsTransparency yok) It-1'de de geçerli.
 - Commit'leri ben istemeden yapma.
 
 It-1 acceptance'ının her maddesini kanıtla; bitince .claude/summaries/ + .claude/handoffs/ güncelle ("aşamamızı kaydet" kuralı).
