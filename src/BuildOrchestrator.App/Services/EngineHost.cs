@@ -69,6 +69,7 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
                     // Bozuk frame = kalıcı sağırlık YARATMAZ; Supervisor exit-2 ile simetri: engine'i öldür + TEK sinyal. [it0-devir]
                     if (Volatile.Read(ref _generation) == gen)
                     {
+                        _ready?.TrySetException(new InvalidOperationException("Engine framing hatası ile öldü.")); // startup'ta anlık sinyal [it0-devir]
                         Interlocked.Increment(ref _generation); // exit watcher'ı sustur → EngineExited tek kez
                         KillCurrent();
                         if (TryClaimExit(gen)) EngineExited?.Invoke(null); // tek raporcu kazanır, stale gen yeni geni bloklayamaz
