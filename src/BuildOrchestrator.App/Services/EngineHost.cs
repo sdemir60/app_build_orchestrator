@@ -11,6 +11,7 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
     private NdjsonWriter? _writer;
     private TaskCompletionSource<EngineReadyEvent>? _ready;
     private volatile int _generation; // cross-thread okuma → volatile [it0-devir]
+    private int _exitReported; // her generation'da bir kez EngineExited — çift raporu engelle [it0-devir]
 
     public event Action<IpcEvent>? EventReceived;
     public event Action<int?>? EngineExited;
@@ -19,6 +20,7 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
     public async Task<EngineReadyEvent> StartAsync(CancellationToken ct = default)
     {
         int gen = Interlocked.Increment(ref _generation);
+        Interlocked.Exchange(ref _exitReported, 0); // yeni engine → tek raporculuk hakkı sıfırlanır [it0-devir]
         _ready = new TaskCompletionSource<EngineReadyEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         string cmdLine = WindowsCommandLine.Build(supervisorExePath);
         _child = JobProcessLauncher.Launch(_outerJob, cmdLine, new LaunchOptions(RedirectStdio: true));
@@ -32,7 +34,8 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
             if (Volatile.Read(ref _generation) == gen)
             {
                 _ready?.TrySetException(new InvalidOperationException($"Engine startup'ta öldü (exit {code}).")); // startup-crash tek sinyal
-                EngineExited?.Invoke(code);
+                if (Interlocked.CompareExchange(ref _exitReported, 1, 0) == 0)
+                    EngineExited?.Invoke(code);
             }
         }, CancellationToken.None);
         try
@@ -70,7 +73,8 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
                     {
                         Interlocked.Increment(ref _generation); // exit watcher'ı sustur → EngineExited tek kez
                         KillCurrent();
-                        EngineExited?.Invoke(null);
+                        if (Interlocked.CompareExchange(ref _exitReported, 1, 0) == 0) // tek raporcu kazanır [it0-devir]
+                            EngineExited?.Invoke(null);
                     }
                     return;
                 }
