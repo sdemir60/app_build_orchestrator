@@ -19,6 +19,7 @@ public interface IProcessRunner
 public sealed class ProcessRunner : IProcessRunner
 {
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(10); // [D7] timeout ZORUNLU — null spec bile tavana çarpar
+    public static readonly TimeSpan PostKillWait = TimeSpan.FromSeconds(5); // [it0-devir] kill takılırsa çıktı okuması da bu tavana çarpar
 
     public async Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
     {
@@ -47,12 +48,20 @@ public sealed class ProcessRunner : IProcessRunner
         {
             try { process.Kill(entireProcessTree: true); }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* zaten öldü / erişim */ }
-            // post-kill wait BOUNDED — kill takılsa da sonsuz beklemeyiz [it0-devir]
-            try { await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token); }
-            catch (OperationCanceledException) { /* çıkış onayı gelmedi; yine de sonucu döneriz */ }
+            // post-kill exit-wait VE çıktı okuması BOUNDED — kill takılsa da metod asılı kalmaz [it0-devir]
+            using var postKillCts = new CancellationTokenSource(PostKillWait);
+            try { await process.WaitForExitAsync(postKillCts.Token); } catch (OperationCanceledException) { /* çıkış onayı gelmedi */ }
             if (ct.IsCancellationRequested) throw; // caller iptali: child öldürüldü, iptal yay
-            return new ProcessResult(-1, await stdoutTask, await stderrTask, sw.Elapsed, TimedOut: true);
+            string outText = await ReadBoundedAsync(stdoutTask, postKillCts.Token);
+            string errText = await ReadBoundedAsync(stderrTask, postKillCts.Token);
+            return new ProcessResult(-1, outText, errText, sw.Elapsed, TimedOut: true);
         }
         return new ProcessResult(process.ExitCode, await stdoutTask, await stderrTask, sw.Elapsed, TimedOut: false);
+    }
+
+    private static async Task<string> ReadBoundedAsync(Task<string> read, CancellationToken ct)
+    {
+        try { return await read.WaitAsync(ct); }
+        catch (OperationCanceledException) { return string.Empty; } // kill takıldı → kısmi/boş çıktı, hang yok
     }
 }
