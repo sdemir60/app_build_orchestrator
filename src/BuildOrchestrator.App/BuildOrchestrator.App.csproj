@@ -23,9 +23,10 @@
   </ItemGroup>
   <Target Name="CopySupervisorOutput" AfterTargets="Build">
     <ItemGroup>
-      <_SupervisorFiles Include="..\BuildOrchestrator.Supervisor\bin\$(Configuration)\net10.0-windows\**\*.*" />
+      <_SupervisorFiles Include="..\BuildOrchestrator.Supervisor\bin\$(Configuration)\**\*.*" />
     </ItemGroup>
-    <Copy SourceFiles="@(_SupervisorFiles)" DestinationFolder="$(OutDir)supervisor\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <RemoveDir Directories="$(OutDir)supervisor" />
+    <Copy SourceFiles="@(_SupervisorFiles)" DestinationFolder="$(OutDir)supervisor" SkipUnchangedFiles="true" />
   </Target>
 
   <ItemGroup>
