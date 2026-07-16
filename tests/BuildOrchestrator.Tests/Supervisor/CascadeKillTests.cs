@@ -38,6 +38,7 @@ public class CascadeKillTests
             }
             handles = livePids.Select(pid => { try { return Process.GetProcessById(pid); } catch (ArgumentException) { return null; } })
                               .Where(p => p is not null).Cast<Process>().ToList(); // handle'ları kill ÖNCESİ aç
+            Assert.True(handles.Count >= 5, $"kill öncesi {handles.Count} açık handle — beklenen ≥5 (vakum-geçiş guard)"); // [it0-devir]
         }
         finally { }
 
