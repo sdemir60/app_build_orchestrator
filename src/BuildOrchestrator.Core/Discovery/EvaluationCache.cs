@@ -52,6 +52,6 @@ public sealed class EvaluationCache(string cachePath)
             var d = JsonSerializer.Deserialize<Dictionary<string, Entry>>(File.ReadAllText(path), Json);
             return d is null ? new(StringComparer.OrdinalIgnoreCase) : new(d, StringComparer.OrdinalIgnoreCase);
         }
-        catch (Exception ex) when (ex is JsonException or IOException) { return new(StringComparer.OrdinalIgnoreCase); } // bozuk cache → yeniden kur
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return new(StringComparer.OrdinalIgnoreCase); } // bozuk cache → yeniden kur
     }
 }
