@@ -462,7 +462,7 @@ foreach ($proj in $projects) {
 
 ## Execution Handoff
 
-Plan kaydedildi: `.claude/outputs/2026-06-29-13-06-build-orchestrator-plan-v5-final-implementation.md`.
+Plan kaydedildi: `.claude/outputs/2026-06-29-13-06-build-orchestrator-plan-v5-implementation.md`.
 
 **Sıradaki adım = Iteration -1 Feasibility Spike (Part D).** Bu gate geçmeden It-0 kodlanmaz. Spike sonrası It-0 için detaylı TDD planı (writing-plans 2. tur) yazılır.
 

@@ -5,7 +5,7 @@
 > 2. **Template = Prototype**, **Model = Claude Opus 4.8** seç.
 > 3. **Describe** kutusuna → **Bölüm 2 (App Prompt)** + **Bölüm 3 (Canlı Demo Eki)**'ni **birlikte** yapıştır.
 >
-> **Kaynak otorite:** Uygulama kararları → `2026-07-02-01-38-build-orchestrator-plan-v6-final-implementation.md` (bu tasarımın türetildiği plan). Token değerleri → önceki Claude Design çıktısının ürettiği stylesheet'ten **birebir** (kullanıcı beğenisiyle donmuş). Bu dosya v4.3 design promptunun (`2026-06-29-12-55-claude-design-prompt-v4.3.md`) türevidir; onaylı yeni özellikler işlendi.
+> **Kaynak otorite:** Uygulama kararları → `2026-07-02-01-38-build-orchestrator-plan-v6-implementation.md` (bu tasarımın türetildiği plan). Token değerleri → önceki Claude Design çıktısının ürettiği stylesheet'ten **birebir** (kullanıcı beğenisiyle donmuş). Bu dosya v4.3 design promptunun (`2026-06-29-12-55-claude-design-prompt-v4.3.md`) türevidir; onaylı yeni özellikler işlendi.
 
 ---
 

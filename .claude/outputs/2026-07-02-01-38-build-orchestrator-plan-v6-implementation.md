@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL — Bu planı task-by-task uygulamak için `superpowers:subagent-driven-development` (önerilen) veya `superpowers:executing-plans` kullan. Adımlar checkbox (`- [ ]`) ile izlenir.
 
-> **v6 nedir / ne DEĞİLDİR.** v6 = v5'in ([2026-06-29-13-06-build-orchestrator-plan-v5-final-implementation.md](2026-06-29-13-06-build-orchestrator-plan-v5-final-implementation.md)) **türevi**; v5 **tek uygulama kaynağı**ydı, v6 onu **4 onaylı yeni karar + fold-in cilalarla** günceller. **Hiçbir v5/v4.3 kararı silinmedi veya ezilmedi.** Değişen/eklenen her yer `[v6Δ]` etiketiyle işaretli; çelişki çıkarsa **v6'daki `[v6Δ]` son sözdür**, aksi halde v5/v4.3 iz etiketi (`[v4.3 §X · D.. · DD.. · N.. · Tnn]`) geçerlidir. Tasarım otoritesi zinciri: v4.3 (donmuş arşiv) → v5 (düzleştirilmiş) → **v6 (bu dosya, güncel).** Delta design-system + Claude Design promptu: [2026-07-02-01-38-delta-design-system-v1.md](2026-07-02-01-38-delta-design-system-v1.md).
+> **v6 nedir / ne DEĞİLDİR.** v6 = v5'in ([2026-06-29-13-06-build-orchestrator-plan-v5-implementation.md](2026-06-29-13-06-build-orchestrator-plan-v5-implementation.md)) **türevi**; v5 **tek uygulama kaynağı**ydı, v6 onu **4 onaylı yeni karar + fold-in cilalarla** günceller. **Hiçbir v5/v4.3 kararı silinmedi veya ezilmedi.** Değişen/eklenen her yer `[v6Δ]` etiketiyle işaretli; çelişki çıkarsa **v6'daki `[v6Δ]` son sözdür**, aksi halde v5/v4.3 iz etiketi (`[v4.3 §X · D.. · DD.. · N.. · Tnn]`) geçerlidir. Tasarım otoritesi zinciri: v4.3 (donmuş arşiv) → v5 (düzleştirilmiş) → **v6 (bu dosya, güncel).** Delta design-system + Claude Design promptu: [2026-07-02-01-38-delta-design-system-v1.md](2026-07-02-01-38-delta-design-system-v1.md).
 
 **Goal:** Yüzlerce legacy .NET Framework C#/WPF projesini (tek git repo, OSYS) bağımlılık sırasına göre, paralel ve yalnızca değişenleri derleyen; derlemeyi ayrı bir Supervisor process'te nested Job Object ile yöneten, dark/modern WPF masaüstü orchestrator.
 
@@ -366,7 +366,7 @@ Tek git repo · ortak çıktı projelerin post-build event'leriyle dolar, config
 
 ## Execution Handoff
 
-Plan kaydedildi: `.claude/outputs/2026-07-02-01-38-build-orchestrator-plan-v6-final-implementation.md`. Delta design-system + Claude Design promptu: `.claude/outputs/2026-07-02-01-38-delta-design-system-v1.md`.
+Plan kaydedildi: `.claude/outputs/2026-07-02-01-38-build-orchestrator-plan-v6-implementation.md`. Delta design-system + Claude Design promptu: `.claude/outputs/2026-07-02-01-38-delta-design-system-v1.md`.
 
 **Sıradaki adım = Iteration -1 Feasibility Spike (Part D).** Bu gate geçmeden It-0 kodlanmaz. Spike sonrası It-0 için detaylı TDD planı (writing-plans 2. tur).
 
