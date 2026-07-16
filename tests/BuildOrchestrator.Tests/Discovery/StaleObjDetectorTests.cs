@@ -36,4 +36,48 @@ public class StaleObjDetectorTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    // [T72] Fix pass: "libraries" bölümündeki çoklu-TFM nupkg dosya yolları (ör. lib/netstandard2.0/...)
+    // yalnız "targets" anahtarları taranınca artık yanlış-pozitif üretmemeli.
+    [Fact]
+    public void clean_when_foreign_tfm_only_in_libraries_not_targets()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "stale-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "P"); Directory.CreateDirectory(Path.Combine(dir, "obj"));
+            string proj = Path.Combine(dir, "P.csproj"); File.WriteAllText(proj, "<Project/>");
+            File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"), """
+                {
+                  "targets": { ".NETFramework,Version=v4.6": {} },
+                  "libraries": {
+                    "Newtonsoft.Json/13.0.1": {
+                      "path": "newtonsoft.json/13.0.1",
+                      "files": [ "lib/netstandard2.0/Newtonsoft.Json.dll" ]
+                    }
+                  }
+                }
+                """);
+            var d = StaleObjDetector.Inspect(proj, "net46");
+            Assert.False(d.IsStale);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // [T72] "targets" anahtarı beklenen TFM'yi içerdiğinde temiz sayılmalı (expectedTfm=targets anahtarının kendisi).
+    [Fact]
+    public void clean_when_targets_key_contains_expected_tfm()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "stale-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "P"); Directory.CreateDirectory(Path.Combine(dir, "obj"));
+            string proj = Path.Combine(dir, "P.csproj"); File.WriteAllText(proj, "<Project/>");
+            File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"),
+                "{ \"targets\": { \".NETFramework,Version=v4.6\": {} } }");
+            var d = StaleObjDetector.Inspect(proj, ".NETFramework,Version=v4.6");
+            Assert.False(d.IsStale);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

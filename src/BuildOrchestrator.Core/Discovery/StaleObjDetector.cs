@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace BuildOrchestrator.Core.Discovery;
@@ -21,13 +22,29 @@ public static partial class StaleObjDetector
         string assets = Path.Combine(Path.GetDirectoryName(csprojPath)!, "obj", "project.assets.json");
         if (!File.Exists(assets)) return new StaleObjDiagnosis(csprojPath, false, null); // obj yok → temiz
 
-        string text = File.ReadAllText(assets);
-        if (text.Contains(expectedTfm, StringComparison.OrdinalIgnoreCase))
-            return new StaleObjDiagnosis(csprojPath, false, null); // beklenen TFM zaten mevcut → temiz
+        // [T72] Fix: tüm dosya metnini taramak yerine yalnız "targets" anahtarlarını (çözülmüş TFM'ler)
+        // oku. "libraries" bölümü referans edilen paketlerin TÜM TFM'lere ait nupkg dosya yollarını
+        // (ör. lib/netstandard2.0/Newtonsoft.Json.dll) listeler — bunlar yabancı-TFM sinyali DEĞİLDİR,
+        // whole-file substring scan bunları yanlış-pozitif olarak işaretliyordu.
+        string[] targetKeys;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(assets));
+            if (!doc.RootElement.TryGetProperty("targets", out var targets) || targets.ValueKind != JsonValueKind.Object)
+                return new StaleObjDiagnosis(csprojPath, false, null); // targets yok → teşhis edilemez, warn yok
+            targetKeys = targets.EnumerateObject().Select(p => p.Name).ToArray();
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return new StaleObjDiagnosis(csprojPath, false, null); // bozuk/okunamaz assets → warn-only detector ASLA patlamaz [T72]
+        }
 
-        var m = ForeignTfm().Match(text);
-        return m.Success
-            ? new StaleObjDiagnosis(csprojPath, true, $"obj/project.assets.json yabancı TFM içeriyor: {m.Value} (beklenen {expectedTfm}) — dokunulmadı, build kırılabilir")
+        if (targetKeys.Any(k => k.Contains(expectedTfm, StringComparison.OrdinalIgnoreCase)))
+            return new StaleObjDiagnosis(csprojPath, false, null); // beklenen TFM çözülmüş → temiz
+
+        var foreign = targetKeys.Select(k => ForeignTfm().Match(k)).FirstOrDefault(m => m.Success);
+        return foreign is { Success: true }
+            ? new StaleObjDiagnosis(csprojPath, true, $"obj/project.assets.json çözülmüş yabancı TFM içeriyor: {foreign.Value} (beklenen {expectedTfm}) — dokunulmadı, build kırılabilir")
             : new StaleObjDiagnosis(csprojPath, false, null);
     }
 }
