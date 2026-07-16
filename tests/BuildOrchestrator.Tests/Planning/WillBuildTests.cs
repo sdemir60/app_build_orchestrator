@@ -35,6 +35,15 @@ public class WillBuildTests
             "sig1", new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Failed)));
 
     [Fact]
+    public void false_when_in_cycle_even_if_signature_null()
+        => Assert.False(WillBuildEvaluator.Evaluate(true, null, null));
+
+    [Fact]
+    public void true_when_signature_matches_but_last_result_null()
+        => Assert.True(WillBuildEvaluator.Evaluate(false,
+            "sig1", new BuildState("A", BuiltSignature: "sig1", LastResult: null)));
+
+    [Fact]
     public void ComputeWillBuild_populates_node_field()
     {
         var node = new ProjectNode("A", "A", "A", [], [], 0, null, null, InCycle: false, WillBuild: null);
