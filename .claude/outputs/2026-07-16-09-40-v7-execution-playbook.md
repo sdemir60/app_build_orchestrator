@@ -117,6 +117,8 @@ Her task bitiminde kısa durum ver. Tümü bitince: dotnet build + dotnet test �
 
 ## A4 — It-1 uygulama (Sync/graph) · Model: **Opus** · Effort: **medium**
 
+> **✅ TAMAMLANDI (2026-07-16).** superpowers:writing-plans → It-1 TDD planı ([2026-07-16-17-25-it1-tdd-plan.md](2026-07-16-17-25-it1-tdd-plan.md), **17 task**), sonra superpowers:subagent-driven-development ile task-başına implementer + spec/quality review + fix-loop. **Sonuç:** clean build **0 uyarı/0 hata**; `dotnet test` **85 PASS + 1 SKIP** (CompositeFont spike). **It-1 acceptance 8/8 kanıtlı** (kartlar build-order · InCycle+Cycles rozet verisi · willBuild testli · OSYS cache-hit · sınıflandırma metriği · unclassified→warn · stale-obj no-touch · 5 sertleştirme). **Gerçek OSYS (`D:\Projects\Delta\OSYS`):** 177 csproj · Edge=**1060** (spike'la birebir) · ThirdParty=78 · OsysPlatform=716 · Unclassified=0 · **RepoResolveRatio=1.0** · AmbiguousDlls=0 (metrik spike ham verisiyle çapraz doğrulandı, gamed değil). Devir sertleştirmeleri kapandı: **EngineHost** concurrency (4 fix-pass: monotonik generation-scoped exit-gate + atomik `KillCurrent` + graceful shutdown + startup-framing surface), NdjsonWriter base-overload, ProcessRunner bounded kill-path, App copy TFM-agnostik+RemoveDir, CascadeKill `>=5` guard + **T71** (3-sınıf HintPath) + **T72** (bayat-obj no-touch warn). Review'ın yakaladığı **gerçek buglar** düzeltildi: EvaluationCache stale-cache (mtime-only → +file-length fingerprint), CsprojEvaluator recursive `**` glob sessiz-sıfır-dosya, StaleObjDetector `libraries` false-positive (→ yalnız `targets` anahtarları), CS0420 x3. Opus final whole-branch review: **Ready with must-fixes** → tek must-fix (EvaluationCache `UnauthorizedAccessException`) uygulandı. **main'e fast-forward merge edildi** (It-0 zaten main'deydi) → tek trunk; It-1 + tüm yardımcı branch'ler (lokal+remote) temizlendi. **main henüz origin'e push EDİLMEDİ** (origin/main 30 commit geride — kullanıcı kararı). Kayıt: [2026-07-16-21-09-it1-sync-graph-complete.md](2026-07-16-21-09-it1-sync-graph-complete.md) (summaries/ + aynı adlı handoff). Ertelenen Minor'lar It-2/It-3 fix-wave'e bırakıldı. **A5'e geç.**
+
 **PROMPT — yapıştır:**
 
 ```
@@ -149,17 +151,25 @@ It-1 acceptance'ının her maddesini kanıtla; bitince .claude/summaries/ + .cla
 ```
 Şu dosyaları oku:
 1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (Plan v7)
-2. .claude/handoffs/ altındaki EN YENİ handoff
+2. .claude/outputs/2026-07-16-15-33-it0-records.md ("It-2 GİRİŞ KRİTERİ (bloklayıcı)" + "Kabul edilenler" bölümleri — devir girdileri)
+3. .claude/handoffs/ altındaki EN YENİ handoff (2026-07-16-21-09-... → It-1 tamam, main'de)
 
-Görev: v7 Part C It-2'yi uygula: T22(invoke), T28(stream), T5 (per-run disk log), T4 (copy-aware Stop), T8, T9, T55(Continue kısmı), T56 (AvalonEdit konsol canlı akış + batch flush).
+DURUM: It-0 + It-1 main'de (fast-forward merge, tek trunk). Clean build 0 uyarı/0 hata, 85 test yeşil, working tree temiz. Bu iterasyona main'den başla. (main henüz push edilmedi — origin'e taşımak istersen kullanıcıya sor.)
+
+Görev: v7 Part C It-2'yi uygula: T22(invoke: MSBuild.exe+nuget shell-out), T28(stream), T5 (per-run disk log), T4 (copy-aware Stop), T8, T9, T55(Continue kısmı), T56 (AvalonEdit konsol canlı akış + batch flush).
+
+⛔ BLOKLAYICI GİRİŞ KRİTERİ (it0-records — paralel redirected build BAŞLAMADAN çözülmeli, It-2 planının İLK task'ı):
+- JobProcessLauncher: bInheritHandles=true tüm inheritable handle'ları miras verir → paralel redirected launch'ta pipe uçları çapraz sızar (EOF/deadlock). Paralel redirected build başlamadan PROC_THREAD_ATTRIBUTE_HANDLE_LIST ile handle-inheritance izolasyonu ŞART. (Tek child'lı It-0 akışında sorun çıkmadı; It-2'nin paralelliği bunu tetikler.)
 
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it2-tdd-plan.md), sonra task-by-task uygulama (superpowers:subagent-driven-development).
+- Önce superpowers:writing-plans ile kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it2-tdd-plan.md; yukarıdaki bloklayıcı girişi İLK task olarak dahil et), sonra superpowers:subagent-driven-development ile task-by-task.
 - Scheduler = ready-set, ileri atlamalı (v7 K2); dispatch deterministik.
 - Konsol A13.2'ye uyar: AvalonEdit, IPC background → Channel → ~50ms batch flush → BeginUpdate/tek Insert/EndUpdate; satır başına Dispatcher.Invoke YASAK.
 - Stop → kalanlar queued; Continue kalanlardan sürer, elapsed korunur (T55/K karar kaydı).
 - kill mid-parallel-build testi: torn DLL yok + leftover process yok (T9).
-- Commit'leri ben istemeden yapma.
+- Determinizm/D8 (sleep-poll YASAK); v7 yasakları (in-process MSBuild yok, OutDir okunmaz, stdout yalnız NDJSON) It-2'de de geçerli. v1 flag'leri SABİT (-p:UseSharedCompilation=false -nodeReuse:false — torn-DLL, D9/S5); per-project restore -p:SolutionDir + -p:BuildProjectReferences=false + obj-izolasyon (SPIKE S2, It-1 T32/graf'ından besle).
+- It-1'den ertelenen It-2-ilgili minor'ları fırsat oldukça kapat (ör. TopoSort diamond/multi-SCC testleri) — kritik değil.
+- Commit'leri ben istemeden yapma (It-1 deseni: feature branch + task-başı WIP commit; main'e merge / push benim onayımla).
 
 It-2 acceptance'ını kanıtla (OSYS rebuild paralel green dahil); bitince aşamamızı kaydet.
 ```
