@@ -65,8 +65,13 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
                 try { ev = await reader.ReadAsync<IpcEvent>(CancellationToken.None); }
                 catch (IpcFramingException)
                 {
-                    // Bozuk frame = kalıcı sağırlık YARATMAZ; Supervisor exit-2 ile simetri: engine'i öldür + bildir. [it0-devir]
-                    if (Volatile.Read(ref _generation) == gen) { KillCurrent(); EngineExited?.Invoke(null); }
+                    // Bozuk frame = kalıcı sağırlık YARATMAZ; Supervisor exit-2 ile simetri: engine'i öldür + TEK sinyal. [it0-devir]
+                    if (Volatile.Read(ref _generation) == gen)
+                    {
+                        Interlocked.Increment(ref _generation); // exit watcher'ı sustur → EngineExited tek kez
+                        KillCurrent();
+                        EngineExited?.Invoke(null);
+                    }
                     return;
                 }
                 if (ev is null) return; // EOF — exit watcher bildirir
@@ -91,10 +96,12 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
 
     private void KillCurrent()
     {
-        if (_child is null) return;
-        try { System.Diagnostics.Process.GetProcessById(_child.Pid).Kill(entireProcessTree: true); }
+        var child = Interlocked.Exchange(ref _child, null); // atomik: yalnız bir thread non-null alır → idempotent [it0-devir]
+        if (child is null) return;
+        try { System.Diagnostics.Process.GetProcessById(child.Pid).Kill(entireProcessTree: true); }
         catch (ArgumentException) { /* zaten öldü */ }
-        _child.Dispose(); _child = null; _writer = null;
+        child.Dispose();
+        _writer = null;
     }
 
     public async ValueTask DisposeAsync()
