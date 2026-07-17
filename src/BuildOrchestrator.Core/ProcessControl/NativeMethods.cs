@@ -20,6 +20,10 @@ internal static class NativeMethods
 
     public const uint STARTF_USESTDHANDLES = 0x00000100;
 
+    public const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    public const int ERROR_INSUFFICIENT_BUFFER = 122;
+    public static readonly nint PROC_THREAD_ATTRIBUTE_HANDLE_LIST = new(0x00020002);
+
     public const uint JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
     public const uint JOB_OBJECT_MSG_NEW_PROCESS = 6;
     public const uint JOB_OBJECT_MSG_EXIT_PROCESS = 7;
@@ -91,6 +95,13 @@ internal static class NativeMethods
         public uint dwThreadId;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct STARTUPINFOEXW
+    {
+        public STARTUPINFOW StartupInfo;
+        public nint lpAttributeList;
+    }
+
     [DllImport("kernel32.dll", EntryPoint = "CreateJobObjectW", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern nint CreateJobObjectW(nint lpJobAttributes, string? lpName);
 
@@ -113,6 +124,22 @@ internal static class NativeMethods
         string? lpApplicationName, StringBuilder lpCommandLine, nint lpProcessAttributes, nint lpThreadAttributes,
         bool bInheritHandles, uint dwCreationFlags, nint lpEnvironment, string? lpCurrentDirectory,
         ref STARTUPINFOW lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool CreateProcessW(
+        string? lpApplicationName, StringBuilder lpCommandLine, nint lpProcessAttributes, nint lpThreadAttributes,
+        bool bInheritHandles, uint dwCreationFlags, nint lpEnvironment, string? lpCurrentDirectory,
+        ref STARTUPINFOEXW lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool InitializeProcThreadAttributeList(nint lpAttributeList, int dwAttributeCount, int dwFlags, ref nint lpSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool UpdateProcThreadAttribute(nint lpAttributeList, uint dwFlags, nint attribute,
+        nint lpValue, nint cbSize, nint lpPreviousValue, nint lpReturnSize);
+
+    [DllImport("kernel32.dll")]
+    public static extern void DeleteProcThreadAttributeList(nint lpAttributeList);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint ResumeThread(nint hThread);
