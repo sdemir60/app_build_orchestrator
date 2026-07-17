@@ -18,8 +18,13 @@ namespace BuildOrchestrator.App.Console;
 /// </summary>
 public sealed class ConsoleBatcher
 {
+    // [Fix wave 1, Finding 3] SingleReader ARTIK false: DiscardPending, PumpAsync'in kendi arka plan
+    // okuyucusuyla EŞZAMANLI çağrılabilir (mod değişiminde reseed'den hemen önce, RunViewModel'in _gate
+    // kilidi altında) — true iken bu, kanalın iç durumunu bozma riski taşırdı (yalnız tek okuyucu varsayımı
+    // altında optimize edilir). Hacim düşük (satır değil, tick başına en fazla birkaç Dispose/Discard) —
+    // performans farkı ölçülemez.
     private readonly Channel<string> _channel = Channel.CreateUnbounded<string>(
-        new UnboundedChannelOptions { SingleReader = true });
+        new UnboundedChannelOptions { SingleReader = false });
     private readonly Func<CancellationToken, Task> _tick;
 
     public ConsoleBatcher(Func<CancellationToken, Task> tick) => _tick = tick;
@@ -29,6 +34,17 @@ public sealed class ConsoleBatcher
 
     /// <summary>Kanalı tamamlar; pump bir sonraki tick'te kalan satırları boşaltıp döngüyü biter.</summary>
     public void Complete() => _channel.Writer.TryComplete();
+
+    /// <summary>[Fix wave 1, Finding 3] Kanaldaki BEKLEYEN (henüz bu tick'e uğramamış) satırları senkron
+    /// olarak boşaltır ve atar — <c>flush</c> ÇAĞRILMAZ. Mod değişiminde (proje/run geçişi) VM'in taze
+    /// dokümanı tohumlamasından HEMEN ÖNCE, aynı satırların pump'ın bir SONRAKİ tick'inde yeni dokümana
+    /// TEKRAR eklenmesini (kopya) önlemek için çağrılır. Çağıranın sorumluluğu: bunu VM'in kendi
+    /// senkronizasyon noktasıyla (_gate) sarmalamak — bkz. <c>RunViewModel.SeedRunDocument</c>/
+    /// <c>SeedProjectDocument</c>.</summary>
+    public void DiscardPending()
+    {
+        while (_channel.Reader.TryRead(out _)) { }
+    }
 
     /// <summary>
     /// tick → boşalt → (satır varsa) TEK flush döngüsü. Kanal <see cref="Complete"/> ile tamamlanıp

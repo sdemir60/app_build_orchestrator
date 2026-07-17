@@ -123,6 +123,35 @@ public class RunViewModelTests
         Assert.Equal(projectId, vm.ActiveProjectId);
     }
 
+    [Fact] // [Fix wave 1, Finding 2] dikiş kilidi kapanması ile ActiveProjectId ataması AYNI kilit altında olmalı
+    public async Task LoadProjectLogAsync_does_not_drop_a_live_line_racing_the_stitch_finalize()
+    {
+        // ActiveProjectId ataması eskiden kilit DIŞINDAYDI: kilit kapanıp _projectText yazıldıktan SONRA,
+        // ActiveProjectId GÜNCELLENMEDEN ÖNCEKİ dar aralıkta gelen bir canlı ProjectLog satırı, _liveLines'a
+        // eklenir (kilitli) ama ActiveProjectId hâlâ eski değeri taşıdığından _projectText'e YAZILMAZ — snapshot
+        // da o satırı zaten kapatmış olur, satır kalıcı olarak kaybolur. DebugAfterStitchLockExited kancası,
+        // TAM O aralığın (artık fix ile var OLMAYAN) sınırında senkron (tek thread, sleep/poll YOK — D8) bir
+        // canlı satır enjekte ederek bunu kanıtlar: fix'ten ÖNCE bu satır kaybolur, fix'ten SONRA (atama artık
+        // kilit içinde olduğundan kanca zaten güncellenmiş ActiveProjectId'yi görür) satır projeye düşer.
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "line1"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "line2"));
+
+        vm.DebugAfterStitchLockExited = () => vm.OnEvent(new ProjectLogEvent("r1", projectId, 3, "race-line3"));
+
+        // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE tamponlanmış canlı satırlardan (line1, line2 —
+        // kilit çalıştığı ANDA _liveLines'ta zaten var) üretilir; race-line3 kanca ile kilit KAPANDIKTAN SONRA
+        // enjekte edilir — snapshot'ın parçası DEĞİLDİR, yalnız (fix ile) güncel ActiveProjectId sayesinde canlı eklenir.
+        var load = vm.LoadProjectLogAsync(projectId);
+        vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "", IsLast: true, ThroughLineNumber: 0));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("line1\nline2\nrace-line3\n", vm.GetProjectDocumentText(projectId));
+    }
+
     [Fact]
     public async Task LoadProjectLogAsync_multi_chunk_history_is_assembled_in_arrival_order()
     {
@@ -271,6 +300,95 @@ public class RunViewModelTests
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         Assert.True(vm.RebuildCommand.CanExecute(null));
+    }
+
+    // ---------------------------------------------------------------- 6b) [Fix wave 1, Finding 1] CanExecuteChanged canlı UI'a ULAŞMALI
+    // CommunityToolkit RelayCommand CommandManager.RequerySuggested'a ABONE OLMAZ — [NotifyCanExecuteChangedFor]
+    // olmadan gerçek pencerede Stop/Continue butonları hiç yeniden sorgulanmaz (Stop hep disabled, Continue hep
+    // ölü kalır). Bu testler CanExecute'in DOĞRU DEĞERİ değil, event'in GERÇEKTEN ATEŞLENDİĞİNİ kanıtlar.
+
+    [Fact]
+    public async Task RunStarted_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        bool rebuildChanged = false, stopChanged = false, continueChanged = false;
+        vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
+        vm.StopCommand.CanExecuteChanged += (_, _) => stopChanged = true;
+        vm.ContinueCommand.CanExecuteChanged += (_, _) => continueChanged = true;
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0)); // IsRunning false→true
+
+        Assert.True(rebuildChanged); // CanRebuild = !IsRunning
+        Assert.True(stopChanged);    // CanStop = IsRunning — Kısıt 3: kullanıcı Stop'a hiç basamaz olmasın diye
+        Assert.True(continueChanged); // CanContinueRun = !IsRunning && CanContinue
+        Assert.True(vm.StopCommand.CanExecute(null));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task RunCompleted_after_a_running_state_raises_CanExecuteChanged_for_Stop_via_IsRunning()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        bool stopChanged = false;
+        vm.StopCommand.CanExecuteChanged += (_, _) => stopChanged = true;
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500)); // IsRunning true→false
+
+        Assert.True(stopChanged);
+        Assert.False(vm.StopCommand.CanExecute(null));
+    }
+
+    [Fact] // CanContinue'nun KENDİ NotifyCanExecuteChangedFor'unu, IsRunning'in DEĞİŞMEDİĞİ bir senaryoda izole eder
+    public async Task CanContinue_becoming_true_raises_ContinueCommand_CanExecuteChanged_without_an_IsRunning_transition()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        Assert.False(vm.IsRunning); // hiç run başlamadı — IsRunning zaten false
+        bool continueChanged = false;
+        vm.ContinueCommand.CanExecuteChanged += (_, _) => continueChanged = true;
+
+        // OnRunCompleted IsRunning'i false yapar (false→false, DEĞİŞİM YOK, [ObservableProperty] no-op) ama
+        // CanContinue'yu false→true çevirir (outcome Stopped) — yalnız _canContinue'nun kendi annotation'ı
+        // tetiklenirse ContinueCommand.CanExecuteChanged ateşlenir.
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10));
+
+        Assert.True(continueChanged);
+        Assert.True(vm.ContinueCommand.CanExecute(null));
+    }
+
+    // ---------------------------------------------------------------- 6c) [Fix wave 1] TickElapsed enjekte edilen saatle deterministik
+
+    [Fact]
+    public async Task TickElapsed_uses_the_injected_clock_deterministically()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        long fakeNow = 1_000_000;
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => fakeNow);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", ElapsedMsAtStart: 500));
+        Assert.Equal(500, vm.ElapsedMs);
+
+        fakeNow += 250;
+        vm.TickElapsed();
+
+        Assert.Equal(750, vm.ElapsedMs);
+    }
+
+    [Fact]
+    public async Task TickElapsed_does_nothing_once_stopped()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        long fakeNow = 1_000_000;
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => fakeNow);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, DurationMs: 4242));
+
+        fakeNow += 10_000;
+        vm.TickElapsed();
+
+        Assert.Equal(4242, vm.ElapsedMs); // IsRunning=false → TickElapsed no-op, engine'in kesin süresi korunur
     }
 
     // ---------------------------------------------------------------- 7) gerçek uçtan uca (Rebuild → satırlar + IsRunning)

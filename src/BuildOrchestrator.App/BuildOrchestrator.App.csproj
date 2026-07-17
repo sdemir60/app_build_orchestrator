@@ -6,6 +6,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- RunViewModel'deki test-only race senkronizasyon kancası (Fix wave 1, Finding 2 regression testi) için. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>BuildOrchestrator.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />

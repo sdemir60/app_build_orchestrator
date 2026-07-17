@@ -78,21 +78,32 @@ public partial class MainWindow : Window
             await _console.PumpAsync(text => Dispatcher.InvokeAsync(() => ConsoleViewControl.AppendBatch(text)), _consoleCts.Token);
         }
         catch (OperationCanceledException) { /* pencere kapanıyor — beklenen */ }
+        catch (Exception ex)
+        {
+            // [Minor/Fix wave 1] fire-and-forget (`_ = RunConsolePumpAsync()`) task'i gözlenmemiş bir
+            // exception'la sessizce ölmesin — burada tek gözlem noktası; UI thread affinity garantisi
+            // olmadığından (PumpAsync ConfigureAwait(false) kullanır) doğrudan bir WPF kontrolüne DOKUNULMAZ.
+            System.Diagnostics.Debug.WriteLine($"[console pump] gözlenmeyen hata: {ex}");
+        }
     }
 
     /// <summary>Karta tıkla → tam log [T28]: chunk geçmişi + tamponlanmış canlı satırların dikişi VM'de
-    /// yapılır; burada yalnız sonucu konsola (yeni bir doküman olarak) taşırız.</summary>
+    /// yapılır; burada yalnız sonucu konsola (yeni bir doküman olarak) taşırız. [Fix wave 1, Finding 3]
+    /// <c>SeedProjectDocument</c> (Get* DEĞİL) kullanılır: VM'in _gate kilidi altında hem metni okur hem de
+    /// ConsoleBatcher'daki bekleyen satırları atar — aksi halde pump'ın bir sonraki tick'i aynı satırları
+    /// taze dokümana TEKRAR ekler (kopya).</summary>
     private async void OnProjectSelected(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (ProjectsList.SelectedItem is not ProjectRowViewModel row) return;
         await _vm.LoadProjectLogAsync(row.Id);
-        ConsoleViewControl.Document = new TextDocument(_vm.GetProjectDocumentText(row.Id));
+        ConsoleViewControl.Document = new TextDocument(_vm.SeedProjectDocument(row.Id));
     }
 
+    /// <summary>[Fix wave 1, Finding 3] bkz. <see cref="OnProjectSelected"/> — aynı gerekçeyle <c>SeedRunDocument</c>.</summary>
     private void OnBack(object sender, RoutedEventArgs e)
     {
         _vm.ShowRun();
-        ConsoleViewControl.Document = new TextDocument(_vm.GetRunDocumentText());
+        ConsoleViewControl.Document = new TextDocument(_vm.SeedRunDocument());
     }
 
     private async Task StartEngineAsync()

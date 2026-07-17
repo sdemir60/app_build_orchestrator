@@ -53,7 +53,7 @@
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="{Binding Name}" Width="170" TextTrimming="CharacterEllipsis" />
                   <TextBlock Text="{Binding State}" Width="70" />
-                  <TextBlock Text="{Binding DurationMs}" />
+                  <TextBlock Text="{Binding DurationMsText}" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>

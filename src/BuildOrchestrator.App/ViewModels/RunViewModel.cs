@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using BuildOrchestrator.App.Console;
@@ -16,7 +16,14 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     public string Id { get; }
     public string Name { get; }
     [ObservableProperty] private ProjectRowState _state;
-    [ObservableProperty] private long _durationMs;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DurationMsText))]
+    private long _durationMs;
+
+    /// <summary>[Minor/Fix wave 1] XAML doğrudan <c>DurationMs</c>'e bağlanırsa current culture kullanılır
+    /// (brief InvariantCulture ister) — bu yüzden görüntü için ayrı, invariant biçimli bir string.</summary>
+    public string DurationMsText => DurationMs.ToString(CultureInfo.InvariantCulture);
 
     public ProjectRowViewModel(string id, string name, ProjectRowState state)
     {
@@ -59,6 +66,7 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly EngineHost _engine;
     private readonly ConsoleBatcher _console;
     private readonly Func<string> _newRunId;
+    private readonly Func<long> _nowMs; // [Minor/Fix wave 1] elapsed hesap kaynağı — testte deterministik saat enjekte edilir (D8)
 
     // [Kısıt 4] _runText/_projectText/_liveLines HEM arka plan thread'inden (OnProjectLog — marshal YOK,
     // A13.2) HEM UI thread'inden (chunk/Get*DocumentText) dokunulur — düz Dictionary/StringBuilder thread-safe
@@ -75,7 +83,15 @@ public sealed partial class RunViewModel : ObservableObject
     private string? _currentRunId;
     private bool _sawRunStarted; // bu run denemesinde runStarted görüldü mü — runStopped'ın runCompleted'sız gelip gelmeyeceğini ayırt eder
     private long _elapsedBaseMs;
-    private Stopwatch? _elapsedStopwatch;
+    private long? _elapsedStartMs; // run başladığında _nowMs() — null iken hiç run başlamamış/durmuş
+
+    /// <summary>[Fix wave 1, Finding 2 regression testi] YALNIZ testler için: <see cref="OnProjectLogChunk"/>
+    /// dikiş kilidinden çıkar çıkmaz (kilit ne zaman kapansa, kapandığı ANDA) senkron tetiklenir. Üretimde
+    /// hep null — sıfır maliyet. Testte, kilit içinde <c>ActiveProjectId</c> atamasının GERÇEKTEN kilitle
+    /// birlikte kapandığını (eskiden kilit DIŞINDAYDI — bkz. Finding 2) tek thread'de, sleep/poll OLMADAN
+    /// deterministik biçimde kanıtlamak için kullanılır: kanca içinden enjekte edilen bir canlı
+    /// <c>ProjectLogEvent</c>, ancak <c>ActiveProjectId</c> zaten güncellenmişse projeye düşer.</summary>
+    internal Action? DebugAfterStitchLockExited;
 
     public ObservableCollection<ProjectRowViewModel> Projects { get; } = [];
 
@@ -83,15 +99,29 @@ public sealed partial class RunViewModel : ObservableObject
     [ObservableProperty] private string _configuration = "Debug";
     [ObservableProperty] private int _parallelism = Math.Max(1, Environment.ProcessorCount);
     [ObservableProperty] private long _elapsedMs;
-    [ObservableProperty] private bool _isRunning;
-    [ObservableProperty] private bool _canContinue;
+
+    // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
+    // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
+    // ABONE OLMAZ. Bu olmadan Stop/Continue butonları gerçek pencerede İLK bind sonrası ASLA yeniden
+    // sorgulanmaz (StopCommand hep disabled kalır, ContinueCommand hep ölü kalır) — Kısıt 3'ü bozar.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    private bool _isRunning;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    private bool _canContinue;
+
     [ObservableProperty] private string? _activeProjectId; // null = run dokümanı gösteriliyor
 
-    public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId)
+    public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null)
     {
         _engine = engine;
         _console = console;
         _newRunId = newRunId;
+        _nowMs = nowMs ?? (() => Environment.TickCount64);
     }
 
     // ---------------------------------------------------------------- komutlar
@@ -137,11 +167,13 @@ public sealed partial class RunViewModel : ObservableObject
     // ---------------------------------------------------------------- elapsed
 
     /// <summary>MainWindow'un DispatcherTimer'ı UI thread'inde periyodik çağırır. VM Dispatcher/Timer TÜRÜ
-    /// TAŞIMAZ — test edilebilirlik için saat kaynağı yalnız <see cref="Stopwatch"/> (plain BCL).</summary>
+    /// TAŞIMAZ — test edilebilirlik için saat kaynağı enjekte edilen <see cref="_nowMs"/> (constructor'da
+    /// verilmezse <c>Environment.TickCount64</c>; testte deterministik bir <c>Func&lt;long&gt;</c> geçilir,
+    /// D8: sleep/poll yok) [Minor/Fix wave 1].</summary>
     public void TickElapsed()
     {
-        if (IsRunning && _elapsedStopwatch is not null)
-            ElapsedMs = _elapsedBaseMs + _elapsedStopwatch.ElapsedMilliseconds;
+        if (IsRunning && _elapsedStartMs is { } startMs)
+            ElapsedMs = _elapsedBaseMs + (_nowMs() - startMs);
     }
 
     // ---------------------------------------------------------------- event → durum
@@ -169,7 +201,7 @@ public sealed partial class RunViewModel : ObservableObject
         _sawRunStarted = true;
         IsRunning = true;
         _elapsedBaseMs = e.ElapsedMsAtStart;
-        _elapsedStopwatch = Stopwatch.StartNew();
+        _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
         if (e.Mode == RunMode.Rebuild) Projects.Clear(); // Continue'da liste (önceki segmentin sonuçları) korunur
     }
@@ -220,7 +252,8 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[A13.2] MainWindow bu event'i MARSHAL ETMEDEN doğrudan arka plan (IPC okuma) thread'inden
     /// çağırır — bu yüzden burada YALNIZ thread-safe işlemler yapılır: kilitli arabellek yazımı +
-    /// <see cref="ConsoleBatcher.Post"/> (kilitsiz). ObservableProperty/ObservableCollection'a ASLA dokunulmaz.</summary>
+    /// <see cref="ConsoleBatcher.Post"/> (kilitsiz, ama artık AYNI kilit altında — bkz. Fix wave 1, Finding 3).
+    /// ObservableProperty/ObservableCollection'a ASLA dokunulmaz.</summary>
     private void OnProjectLog(ProjectLogEvent e)
     {
         lock (_gate)
@@ -233,10 +266,15 @@ public sealed partial class RunViewModel : ObservableObject
             _runText.Append(e.Text).Append('\n');
             if (string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
                 AppendProjectTextLocked(e.ProjectId, e.Text);
+
+            // [Fix wave 1, Finding 3] Post ARTIK AYNI kilit altında: eskiden kilit DIŞINDaydı, bu da
+            // "buffer'a yazıldı ama kanala henüz post edilmedi" aralığını SeedRunDocument/SeedProjectDocument'ın
+            // (kendi _gate kilidiyle) atomik biçimde kapatmasını engelliyordu (mod değişiminde kopya satır —
+            // bkz. task-12-report.md Fix wave 1). Post kilitsiz/hızlı (Channel.Writer.TryWrite) olduğundan
+            // kilidi gereksiz uzatmaz.
+            if (ActiveProjectId is null || string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
+                _console.Post(e.Text);
         }
-        // Post kilit DIŞINDA: ConsoleBatcher zaten kilitsiz/thread-safe, kilidi gereksiz yere uzatmaz.
-        if (ActiveProjectId is null || string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
-            _console.Post(e.Text);
     }
 
     private void AppendProjectTextLocked(string projectId, string text)
@@ -248,14 +286,48 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void AppendRunLine(string text)
     {
-        lock (_gate) _runText.Append(text).Append('\n');
-        if (ActiveProjectId is null) _console.Post(text);
+        // [Fix wave 1, Finding 3] OnProjectLog ile aynı gerekçeyle Post kilit İÇİNE alındı.
+        lock (_gate)
+        {
+            _runText.Append(text).Append('\n');
+            if (ActiveProjectId is null) _console.Post(text);
+        }
     }
 
     public string GetRunDocumentText() { lock (_gate) return _runText.ToString(); }
     public string GetProjectDocumentText(string projectId)
     {
         lock (_gate) return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
+    }
+
+    /// <summary>[Fix wave 1, Finding 3] MainWindow'un "Back" akışının kullanması gereken tohumlama metodu:
+    /// run dokümanının metnini AYNI _gate kilidi altında okur VE ConsoleBatcher'daki bekleyen satırları atar.
+    /// OnProjectLog'un Post'u da bu kilit altında yaptığı için (yukarı bakınız), bir satır ya TAMAMEN bu
+    /// snapshot'a (ve dolayısıyla discard'a) girer ya da TAMAMEN girmez — üçüncü bir "kilit dışı post,
+    /// kilit içi snapshot" aralığı YOKTUR. Kalan artık risk: ConsoleBatcher'ın kendi pump döngüsünün BU
+    /// kilitten TAMAMEN bağımsız arka plan tick'i, bu metot çağrılmadan hemen önce bir satırı kanaldan çekip
+    /// (henüz çalışmamış) bir <c>Dispatcher.InvokeAsync</c> kuyruğa almışsa — bu, tam tick periyodu (~50ms)
+    /// yerine yalnız Dispatcher zamanlama gecikmesi kadar dar bir artık pencere; normal bir tıklamada
+    /// gözlemlenmez. Tam kapanış (pump'ın tek okuyucu döngüsünden geçirme) Task 11 API değişikliği ister —
+    /// It-4 için Minor olarak kayıtlı (bkz. task-12-report.md Fix wave 1).</summary>
+    public string SeedRunDocument()
+    {
+        lock (_gate)
+        {
+            _console.DiscardPending();
+            return _runText.ToString();
+        }
+    }
+
+    /// <summary>[Fix wave 1, Finding 3] Proje kartına tıklama akışının kullanması gereken tohumlama metodu —
+    /// bkz. <see cref="SeedRunDocument"/>'ın XML yorumu (aynı gerekçe, proje dokümanı için).</summary>
+    public string SeedProjectDocument(string projectId)
+    {
+        lock (_gate)
+        {
+            _console.DiscardPending();
+            return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
+        }
     }
 
     /// <summary>Konsolu run dokümanına döndürür (MainWindow'daki "Back").</summary>
@@ -288,6 +360,13 @@ public sealed partial class RunViewModel : ObservableObject
         pending.Assembly.Append(e.Text);
         if (!e.IsLast) return;
 
+        // [Fix wave 1, Finding 2] ActiveProjectId ataması dikiş snapshot'ıyla AYNI kilit altında olmalı:
+        // aksi halde kilit kapandıktan (_projectText yazıldıktan) ama ActiveProjectId GÜNCELLENMEDEN önceki
+        // dar aralıkta arka plandan gelen bir OnProjectLog, _liveLines'a eklenir AMA (ActiveProjectId hâlâ
+        // eski değeri taşıdığından) _projectText'e YAZILMAZ — snapshot da o satırı zaten kapatmış olur; satır
+        // kalıcı olarak kaybolur. Atama kilit içine alınınca OnProjectLog (kendi _gate kilidiyle) ya bu
+        // bloktan ÖNCE (satır snapshot'ta) ya da SONRA (ActiveProjectId zaten güncel, canlı ekleme yapar)
+        // çalışır — üçüncü bir aralık yok.
         lock (_gate)
         {
             var stitched = new StringBuilder(pending.Assembly.ToString());
@@ -295,8 +374,9 @@ public sealed partial class RunViewModel : ObservableObject
                 foreach (var line in buffered.Where(l => l.LineNumber > e.ThroughLineNumber).OrderBy(l => l.LineNumber))
                     stitched.Append(line.Text).Append('\n');
             _projectText[e.ProjectId] = stitched;
+            ActiveProjectId = e.ProjectId;
         }
-        ActiveProjectId = e.ProjectId;
+        DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
         _pendingLoad = null;
         pending.Completion.TrySetResult();
     }
