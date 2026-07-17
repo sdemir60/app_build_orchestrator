@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using BuildOrchestrator.Core.Logs;
 using Xunit;
@@ -67,5 +68,89 @@ public class RunLogWriterTests : IDisposable
         var lines = File.ReadAllLines(Path.Combine(w.RunDirectory, "decision.log"));
         Assert.Equal(200, lines.Length);
         Assert.All(lines, l => Assert.Matches(@"^\d{2}:\d{2}:\d{2}\.\d{3} decision-\d{3}$", l));
+    }
+
+    [Fact] // Bulgu 1: Dispose sonrası AppendLine sessizce satır düşürmek yerine fail-fast eder — çağıran "yazıldı" ile "düşürüldü"yü ayırt edebilsin
+    public void AppendLine_after_dispose_throws()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        var log = w.OpenProjectLog(@"C:\repo\A\A.csproj");
+        log.AppendLine("first");
+        log.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => log.AppendLine("second"));
+    }
+
+    [Fact] // Bulgu 2: gömülü CR/LF tek fiziksel satıra indirgenir — tüketici modeli '\n' ile böler (LogChunker), bir AppendLine == bir fiziksel satır
+    public void AppendLine_with_embedded_newline_produces_one_physical_line()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        using (var log = w.OpenProjectLog(id))
+        {
+            Assert.Equal(1, log.AppendLine("a\nb"));
+        } // dosya kapansın ki File.ReadAllLines paylaşım çakışması olmadan okuyabilsin (mevcut testteki desenle aynı)
+
+        Assert.Equal(["a b"], File.ReadAllLines(w.ProjectLogPath(id)));
+
+        var snap = w.SnapshotProjectLog(id);
+        Assert.NotNull(snap);
+        Assert.Equal(1, snap!.Value.ThroughLineNumber);
+        Assert.Equal(RunLogWriter.CountLines(snap.Value.Text), snap.Value.ThroughLineNumber);
+    }
+
+    [Fact] // Bulgu 3: run bitti — orijinal RunLogWriter Dispose edildi; aynı run dizini üzerinde YENİ bir RunLogWriter açılıp geçmiş projenin logu diskten okunur
+    public void SnapshotProjectLog_reads_from_disk_via_a_fresh_writer_over_the_same_run_directory()
+    {
+        string id = @"C:\repo\A\A.csproj";
+        var w1 = new RunLogWriter(_root, Ts);
+        var log = w1.OpenProjectLog(id);
+        log.AppendLine("first");
+        log.AppendLine("second");
+        var liveSnap = w1.SnapshotProjectLog(id);
+        Assert.NotNull(liveSnap);
+        var expected = liveSnap!.Value;
+        w1.Dispose(); // run bitti: proje logu + decision.log kapandı
+
+        using var w2 = new RunLogWriter(_root, Ts); // aynı logsRoot + aynı startedAt => aynı run dizini
+        var diskSnap = w2.SnapshotProjectLog(id);
+        Assert.NotNull(diskSnap);
+        Assert.Equal(expected.Text, diskSnap!.Value.Text);
+        Assert.Equal(expected.ThroughLineNumber, diskSnap.Value.ThroughLineNumber);
+    }
+
+    [Fact] // Bulgu 4: Snapshot canlı yazıcıyla ATOMİK — her snapshot'ta CountLines(Text) == ThroughLineNumber invariant'ı korunmalı (sleep-poll YOK, [D8])
+    public async Task Snapshot_is_atomic_against_a_concurrently_appending_writer()
+    {
+        using var w = new RunLogWriter(_root, Ts);
+        string id = @"C:\repo\A\A.csproj";
+        using var log = w.OpenProjectLog(id);
+        const int iterations = 500;
+
+        var writerTask = Task.Run(() =>
+        {
+            for (int i = 0; i < iterations; i++)
+                log.AppendLine("line-" + i.ToString(CultureInfo.InvariantCulture));
+        });
+
+        var readerTask = Task.Run(() =>
+        {
+            for (int i = 0; i < iterations; i++)
+            {
+                var snap = w.SnapshotProjectLog(id);
+                Assert.NotNull(snap);
+                Assert.Equal(RunLogWriter.CountLines(snap!.Value.Text), snap.Value.ThroughLineNumber);
+            }
+        });
+
+        await Task.WhenAll(writerTask, readerTask);
+    }
+
+    [Fact] // Bulgu 6: RunLogWriter Dispose sonrası OpenProjectLog/AppendDecision tutarsız (biri leak, biri incidental exception) yerine fail-fast eder
+    public void OpenProjectLog_and_AppendDecision_after_RunLogWriter_dispose_throw()
+    {
+        var w = new RunLogWriter(_root, Ts);
+        w.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => w.OpenProjectLog(@"C:\repo\A\A.csproj"));
+        Assert.Throws<ObjectDisposedException>(() => w.AppendDecision("x"));
     }
 }
