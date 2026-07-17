@@ -121,6 +121,33 @@ public class PathSanitizerTests
         Assert.Equal("main-1", PathSanitizer.NextWorktreeName("main", new[] { "release-2026.06", "release-2026.06-2" }));
     }
 
+    [Fact] // regresyon: gap'li existing set'te count-tabanlı eski formül "main-2" (çakışma) döndürürdü;
+           // max-suffix+1 formülü "main-3" döner — existing'de OLMAYAN bir ad garantisi
+    public void NextWorktreeName_does_not_collide_when_existing_has_a_gap()
+    {
+        string result = PathSanitizer.NextWorktreeName("main", new[] { "main-2" });
+
+        Assert.NotEqual("main-2", result);
+        Assert.Equal("main-3", result);
+    }
+
+    [Fact] // karışık existing: sadece birebir "main" sayılır; "main-experimental" (sayısal olmayan suffix)
+           // ve alakasız "release-2026.06" (başka slug) sayıma dahil edilmez
+    public void NextWorktreeName_with_mixed_matching_and_non_matching_existing_names()
+    {
+        string result = PathSanitizer.NextWorktreeName(
+            "main",
+            new[] { "main", "main-experimental", "release-2026.06" });
+
+        Assert.Equal("main-2", result);
+    }
+
+    [Fact] // existing null → tanımlı davranış: ArgumentNullException (NRE değil)
+    public void NextWorktreeName_throws_ArgumentNullException_when_existing_is_null()
+    {
+        Assert.Throws<ArgumentNullException>(() => PathSanitizer.NextWorktreeName("main", null!));
+    }
+
     // ---- IsSafeSegment ----
 
     [Theory]
@@ -157,5 +184,14 @@ public class PathSanitizerTests
     public void IsSafeSegment_returns_false_for_null_without_throwing()
     {
         Assert.False(PathSanitizer.IsSafeSegment(null!));
+    }
+
+    [Theory] // kontrol karakterleri (< 0x20) SanitizeBranchSlug'da olduğu gibi burada da unsafe sayılmalı
+    [InlineData("ab\tcd")]
+    [InlineData("ab\ncd")]
+    [InlineData("ab\rcd")]
+    public void IsSafeSegment_returns_false_for_control_characters(string segment)
+    {
+        Assert.False(PathSanitizer.IsSafeSegment(segment));
     }
 }

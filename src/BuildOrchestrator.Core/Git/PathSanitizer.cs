@@ -59,26 +59,47 @@ public static class PathSanitizer
     }
 
     /// <summary>
-    /// v7 A6 auto-name kuralı: <c>slug + "-" + (aynı prefix'i paylaşan mevcut worktree sayısı + 1)</c>.
+    /// v7 A6 auto-name kuralı: <c>slug + "-" + (aynı prefix'i paylaşan mevcut adlardaki en büyük sayı + 1)</c>.
     /// "Aynı prefix'i paylaşma" = ad birebir slug'a eşit VEYA <c>slug-&lt;sayı&gt;</c> kalıbına uyuyor
     /// (ör. slug=main iken "main" ve "main-2" sayılır; "main-experimental" gibi sayısal olmayan bir suffix
     /// SAYILMAZ — alakasız elle oluşturulmuş bir ad yanlışlıkla numaralandırmayı etkilemez). Karşılaştırma
-    /// OrdinalIgnoreCase (Windows dosya sistemi case-insensitive). <paramref name="existing"/> boşsa sonuç
-    /// "&lt;slug&gt;-1" olur — brief'in tek verdiği örnek ("main → main-2 when one already exists", yani
-    /// existing count=1 → main-2) formülün literal uzantısıdır (existing count=0 → suffix 0+1=1).
+    /// OrdinalIgnoreCase (Windows dosya sistemi case-insensitive). Sayı, basit bir count DEĞİL, eşleşen
+    /// adlardan çıkarılan en büyük sayıdır: bare <c>slug</c> → 1, <c>slug-N</c> → N; sonuç = (max, yoksa 0) + 1.
+    /// Bu, <paramref name="existing"/> içinde boşluk (gap) olsa bile — ör. yalnız "main-2" varken count-tabanlı
+    /// formül "main-2" döndürüp mevcutla çakışırdı — sonucun HER ZAMAN <paramref name="existing"/>'de
+    /// bulunmayan bir ad olmasını garanti eder. <paramref name="existing"/> boşsa sonuç "&lt;slug&gt;-1" olur
+    /// (max 0 → 0+1=1); tek "main" varken "main-2" olur (bare main=1 → max 1 → 1+1=2) — brief'in örneğiyle
+    /// birebir uyumlu.
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="existing"/> null ise.</exception>
     public static string NextWorktreeName(string branch, IEnumerable<string> existing)
     {
+        ArgumentNullException.ThrowIfNull(existing);
+
         string slug = SanitizeBranchSlug(branch);
-        int count = existing.Count(name => SharesPrefix(name, slug));
-        return $"{slug}-{count + 1}";
+
+        int maxNumber = 0;
+        foreach (string name in existing)
+        {
+            if (!SharesPrefix(name, slug)) continue;
+
+            int number = string.Equals(name, slug, StringComparison.OrdinalIgnoreCase)
+                ? 1
+                : int.Parse(name[(slug.Length + 1)..]);
+
+            if (number > maxNumber) maxNumber = number;
+        }
+
+        return $"{slug}-{maxNumber + 1}";
     }
 
     /// <summary>
     /// Bir adayın güvenli TEK path segmenti olup olmadığını doğrular — salt validator, mutasyon/throw yok
     /// (null dahil her girdi için güvenle çağrılabilir, yalnızca true/false döner). false döner: null/boş/
     /// whitespace, tam olarak `.`/`..`, path ayracı (`/` veya `\`) içeren, mutlak yol
-    /// (<see cref="Path.IsPathRooted"/>), veya geçersiz Windows karakteri içeren adaylar için.
+    /// (<see cref="Path.IsPathRooted"/>), geçersiz Windows karakteri içeren, veya kontrol karakteri
+    /// (&lt; 0x20) içeren adaylar için — bu son kural <see cref="SanitizeBranchSlug"/>'ın kontrol
+    /// karakterlerini de `-`'ye çevirmesiyle simetriktir (Task 9 entegrasyonunda tutarlılık).
     /// </summary>
     public static bool IsSafeSegment(string segment)
     {
@@ -87,6 +108,7 @@ public static class PathSanitizer
         if (segment.IndexOfAny(Separators) >= 0) return false;
         if (segment.IndexOfAny(InvalidChars) >= 0) return false;
         if (Path.IsPathRooted(segment)) return false;
+        if (segment.Any(char.IsControl)) return false;
         return true;
     }
 
