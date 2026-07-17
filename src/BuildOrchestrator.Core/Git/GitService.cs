@@ -7,6 +7,19 @@ namespace BuildOrchestrator.Core.Git;
 public sealed record GitBranchInfo(string Name, bool IsRemote, bool IsActive);
 
 /// <summary>
+/// [T69/K1] <see cref="GitService.FetchRefOnlyAsync"/> sonucu. Normal durumda <see cref="TargetSha"/>
+/// fetch sonrası remote-tracking ref'ten gelir (<see cref="Degraded"/>=false). Fetch başarısız olursa
+/// (offline/unreachable/invalid remote) hata YUTULUR — throw yok — <see cref="Degraded"/>=true olur,
+/// sebep <see cref="Warning"/>'de veri olarak taşınır ve <see cref="TargetSha"/> yerel HEAD'e düşer (K1).
+/// </summary>
+public sealed record FetchResult
+{
+    public bool Degraded { get; init; }
+    public string? TargetSha { get; init; }
+    public string? Warning { get; init; }
+}
+
+/// <summary>
 /// Tek bir git sorgusunun tanımlı sonucu: exception YOK — başarı/hata her zaman veri olarak döner
 /// (brief: "git missing / command error -> DEFINED error signal, NOT an unhandled exception").
 /// </summary>
@@ -46,18 +59,18 @@ public sealed record GitRepoState
 }
 
 /// <summary>
-/// [T11] <see cref="ProcessRunner"/> tabanlı git wrapper: HEAD commit, current branch, dirty paths, branch
-/// listesi sorguları + edge tespiti (no-commits/detached HEAD/shallow clone). Fetch (Task 5) ve worktree
-/// add (Task 9) burada YOK — yalnız read/query yüzeyi. Her metot process spawn edip git.exe'yi çağırır;
-/// git bulunamazsa (<see cref="Win32Exception"/>) ya da beklenmeyen bir başlatma hatası olursa (<see
-/// cref="InvalidOperationException"/>, bkz. <see cref="ProcessRunner.RunAsync"/>) exception YUKARI SIZMAZ
-/// — <see cref="GitResult{T}.Fail"/> olarak döner.
+/// [T11] <see cref="IProcessRunner"/> tabanlı git wrapper: HEAD commit, current branch, dirty paths, branch
+/// listesi sorguları + edge tespiti (no-commits/detached HEAD/shallow clone) + [T69/K1] Sync'in ilk adımı
+/// olan ref-only fetch (<see cref="FetchRefOnlyAsync"/>). Worktree add (Task 9) burada YOK. Her metot
+/// process spawn edip git.exe'yi çağırır; git bulunamazsa (<see cref="Win32Exception"/>) ya da beklenmeyen
+/// bir başlatma hatası olursa (<see cref="InvalidOperationException"/>, bkz. <see
+/// cref="IProcessRunner.RunAsync"/>) exception YUKARI SIZMAZ — <see cref="GitResult{T}.Fail"/> olarak döner.
 /// </summary>
-public sealed class GitService(ProcessRunner runner, string repoRoot, string gitExecutable = "git")
+public sealed class GitService(IProcessRunner runner, string repoRoot, string gitExecutable = "git")
 {
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(30);
 
-    private readonly ProcessRunner _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+    private readonly IProcessRunner _runner = runner ?? throw new ArgumentNullException(nameof(runner));
     private readonly string _repoRoot = repoRoot ?? throw new ArgumentNullException(nameof(repoRoot));
     private readonly string _gitExecutable = string.IsNullOrWhiteSpace(gitExecutable)
         ? throw new ArgumentException("gitExecutable boş olamaz.", nameof(gitExecutable))
@@ -159,6 +172,67 @@ public sealed class GitService(ProcessRunner runner, string repoRoot, string git
         }
 
         return GitResult<IReadOnlyList<GitBranchInfo>>.Ok(list);
+    }
+
+    /// <summary>
+    /// [T69/K1] Sync akışının İLK adımı: yalnızca remote-tracking ref'i günceller (<c>git fetch origin
+    /// &lt;branch&gt; --no-tags</c>). Checkout/pull/merge/switch KESİNLİKLE çağrılmaz — aktif branch ve
+    /// working tree bu metotla ASLA değişmez (bkz. <c>SyncFetchTests</c>: HEAD + tracked dosya içeriği
+    /// fetch öncesi/sonrası aynı kalır). Fetch başarısız olursa (offline, unreachable/invalid remote, git
+    /// çalıştırılamadı) hata YUTULUR — throw YOK: <see cref="FetchResult.Degraded"/>=true + <see
+    /// cref="FetchResult.Warning"/>, hedef SHA yerel HEAD'e düşer (K1 — Task 6/BuildSignature curSha ile
+    /// aynı değere iner, güvenli taraf).
+    /// </summary>
+    public async Task<FetchResult> FetchRefOnlyAsync(string branch, CancellationToken ct = default)
+    {
+        var outcome = await TryRunGitAsync(["fetch", "origin", branch, "--no-tags"], ct);
+
+        if (outcome.Ok && outcome.Result!.ExitCode == 0)
+        {
+            var tracking = await GetRemoteTrackingShaAsync(branch, ct);
+            if (tracking.Success && tracking.Value is not null)
+                return new FetchResult { Degraded = false, TargetSha = tracking.Value };
+
+            // fetch başarılı ama remote-tracking ref beklenen şekilde okunamadı — beklenmeyen durum,
+            // güvenli tarafta kalınarak degrade edilir (throw yok).
+            return await DegradeToLocalHeadAsync(
+                $"git fetch başarılı ama remote-tracking ref okunamadı: {tracking.Error ?? "beklenmeyen boş sonuç"}", ct);
+        }
+
+        string reason = outcome.Ok ? DescribeGitFailure(outcome.Result!) : outcome.Error!;
+        return await DegradeToLocalHeadAsync(
+            $"git fetch başarısız (offline/unreachable/invalid remote) — yerel HEAD'e düşülüyor: {reason}", ct);
+    }
+
+    /// <summary>
+    /// [T69/K1] Fetch sonrası remote-tracking ref (<c>refs/remotes/origin/&lt;branch&gt;</c>) SHA'sı — Task
+    /// 6/BuildSignature ve UI'daki curSha → targetSha kartı için hedef SHA kaynağı. Ref henüz mevcut değilse
+    /// (hiç fetch edilmemiş / branch remote'ta yok) <c>Ok(null)</c> döner (hata DEĞİL, edge).
+    /// </summary>
+    public async Task<GitResult<string?>> GetRemoteTrackingShaAsync(string branch, CancellationToken ct = default)
+    {
+        var outcome = await TryRunGitAsync(["rev-parse", "--verify", "-q", $"refs/remotes/origin/{branch}"], ct);
+        if (!outcome.Ok) return GitResult<string?>.Fail(outcome.Error!);
+
+        var r = outcome.Result!;
+        if (r.ExitCode == 0)
+        {
+            string sha = r.StandardOutput.Trim();
+            return IsFortyHexSha(sha)
+                ? GitResult<string?>.Ok(sha)
+                : GitResult<string?>.Fail($"beklenmeyen 'git rev-parse refs/remotes/origin/{branch}' çıktısı: '{sha}'");
+        }
+
+        if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // ref yok — henüz fetch edilmemiş
+
+        return GitResult<string?>.Fail(DescribeGitFailure(r));
+    }
+
+    /// <summary>K1 fallback: fetch başarısız olduğunda hedef SHA yerel HEAD'e düşer; HEAD de okunamazsa null (güvenli taraf, throw yok).</summary>
+    private async Task<FetchResult> DegradeToLocalHeadAsync(string warning, CancellationToken ct)
+    {
+        var head = await GetHeadCommitAsync(ct);
+        return new FetchResult { Degraded = true, TargetSha = head.Success ? head.Value : null, Warning = warning };
     }
 
     /// <summary>

@@ -14,7 +14,6 @@ namespace BuildOrchestrator.Tests.Git;
 /// </summary>
 public sealed class GitTestRepo : IDisposable
 {
-    private readonly ProcessRunner _runner = new();
     private readonly List<string> _extraDirsToClean = [];
 
     public string RootPath { get; }
@@ -89,9 +88,16 @@ public sealed class GitTestRepo : IDisposable
         return cloneRoot;
     }
 
-    private string RunGit(string workingDirectory, params string[] args)
+    private string RunGit(string workingDirectory, params string[] args) => RunGitAt(workingDirectory, args);
+
+    /// <summary>
+    /// Herhangi bir çalışma dizininde keyfi bir git komutu çalıştırır — bu bir <see cref="GitTestRepo"/>
+    /// fixture'ına bağlı olmayan yardımcı (ör. <see cref="CloneFull"/>'un döndürdüğü klon dizininde remote
+    /// URL'sini bozmak — Task 5 offline-degrade testi). Instance metodu <see cref="RunGit"/> bunu sarmalar.
+    /// </summary>
+    public static string RunGitAt(string workingDirectory, params string[] args)
     {
-        var result = _runner.RunAsync(new ProcessSpec("git", args, workingDirectory)).GetAwaiter().GetResult();
+        var result = new ProcessRunner().RunAsync(new ProcessSpec("git", args, workingDirectory)).GetAwaiter().GetResult();
         if (result.ExitCode != 0)
             throw new InvalidOperationException(
                 $"git {string.Join(' ', args)} (cwd={workingDirectory}) başarısız (exit {result.ExitCode}): {result.StandardError}");
