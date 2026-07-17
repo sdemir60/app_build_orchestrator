@@ -295,4 +295,83 @@ public static class LegacyFixture
 
         return csprojPath;
     }
+
+    /// <summary>
+    /// Task 13 (T9) fixture'ı: <see cref="CreateClassLib"/> ile AYNI derlenebilir v4.6 classlib, FAKAT gerçek bir
+    /// VS-parity post-build copy EKLER — derlenen DLL, projenin kendi <c>bin\Debug</c>'ı DIŞINDA,
+    /// <paramref name="sharedBinDir"/> altındaki ORTAK bir dizine de kopyalanır (Copy task DestinationFolder'ı
+    /// kendisi oluşturur). Kill-mid-build testi bu ortak dizini okuyarak "torn DLL yok" iddiasını (kill'den önce
+    /// başarıyla biten her projenin DLL'i geçerli bir PE'dir) doğrular — paralel derlenen ≥2 proje AYNI çıktı
+    /// dizinine yazdığı için bir yarım kalmış kopya gözlemlenebilir olurdu.
+    /// <para>
+    /// DENEYSEL BULGU: bu kadar küçük bir classlib gerçek MSBuild.exe altında bile ~yüzlerce ms içinde bitiyor —
+    /// "kill mid-build" iddiasını sağlam kanıtlamak için (kill anında GERÇEKTEN uçuşta ≥2 MSBuild.exe olsun diye)
+    /// <c>CoreCompile</c>'DAN ÖNCE senkron bir <c>ping</c> gecikmesi eklendi: <c>&lt;Exec&gt;</c> MSBuild.exe'yi
+    /// <paramref name="delaySeconds"/> kadar kendi içinde bloklar (grandchild bırakmaz — LingeringPostBuild
+    /// varyantlarının aksine burada Exec'in KENDİ senkron bekleme mekanizması kasıtlı olarak kullanılıyor),
+    /// böylece paralel dispatch edilen projeler bu pencerede aynı anda gerçekten "mid-build" kalır.
+    /// </para>
+    /// </summary>
+    public static string CreateClassLibWithSharedBinCopy(string dir, string assemblyName, string sharedBinDir, int delaySeconds = 3)
+    {
+        Directory.CreateDirectory(dir);
+
+        string csPath = Path.Combine(dir, "Class1.cs");
+        File.WriteAllText(csPath,
+            $$"""
+            namespace {{assemblyName}}
+            {
+                public class Class1
+                {
+                    public int Answer() => 42;
+                }
+            }
+            """);
+
+        string csprojPath = Path.Combine(dir, assemblyName + ".csproj");
+        File.WriteAllText(csprojPath,
+            $$"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <Import Project="$(MSBuildToolsPath)\Microsoft.Common.props" Condition="Exists('$(MSBuildToolsPath)\Microsoft.Common.props')" />
+              <PropertyGroup>
+                <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+                <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+                <ProjectGuid>{{Guid.NewGuid():B}}</ProjectGuid>
+                <OutputType>Library</OutputType>
+                <RootNamespace>{{assemblyName}}</RootNamespace>
+                <AssemblyName>{{assemblyName}}</AssemblyName>
+                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+              </PropertyGroup>
+              <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+                <DebugSymbols>true</DebugSymbols>
+                <DebugType>full</DebugType>
+                <Optimize>false</Optimize>
+                <OutputPath>bin\Debug\</OutputPath>
+                <DefineConstants>DEBUG;TRACE</DefineConstants>
+                <ErrorReport>prompt</ErrorReport>
+                <WarningLevel>4</WarningLevel>
+              </PropertyGroup>
+              <ItemGroup>
+                <Reference Include="System" />
+                <Reference Include="System.Core" />
+              </ItemGroup>
+              <ItemGroup>
+                <Compile Include="Class1.cs" />
+              </ItemGroup>
+              <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+              <Target Name="DelayBeforeCompile" BeforeTargets="CoreCompile">
+                <Exec Command="ping -n {{delaySeconds + 1}} 127.0.0.1 &gt;NUL" />
+              </Target>
+              <Target Name="CopyToSharedBin" AfterTargets="Build">
+                <ItemGroup>
+                  <_SharedBinCopy Include="$(OutDir)$(AssemblyName).dll" />
+                </ItemGroup>
+                <Copy SourceFiles="@(_SharedBinCopy)" DestinationFolder="{{sharedBinDir}}" />
+              </Target>
+            </Project>
+            """);
+
+        return csprojPath;
+    }
 }
