@@ -44,6 +44,9 @@ public static partial class SolutionMapper
         IReadOnlyList<string> slnPaths, IReadOnlyList<string> csprojPaths) =>
         MapRefs(slnPaths, csprojPaths).ToDictionary(
             kv => kv.Key,
-            kv => (IReadOnlyList<string>)kv.Value.Select(r => r.Name).ToList(),
+            // MapRefs yol bazlı ayrıştırır; Map ad bazlı olmalı — aynı base filename'e sahip
+            // farklı yollardaki .sln'ler (ör. iki branch'teki aynı "Osys.sln") burada tek ada
+            // düşer (eski SortedSet<string> davranışıyla aynı, satır sırası zaten Name'e göredir).
+            kv => (IReadOnlyList<string>)kv.Value.Select(r => r.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             StringComparer.OrdinalIgnoreCase);
 }

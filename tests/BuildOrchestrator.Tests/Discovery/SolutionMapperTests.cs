@@ -69,4 +69,34 @@ public class SolutionMapperTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    [Fact]
+    public void Map_collapses_same_name_solutions_from_different_paths_while_MapRefs_keeps_both()
+    {
+        // İki farklı dizindeki aynı base filename'e sahip .sln aynı csproj'u referans ediyor.
+        // Map (ad bazlı) tek "Osys" döner; MapRefs (yol bazlı) iki ayrı SolutionRef döner.
+        string root = Path.Combine(Path.GetTempPath(), "bo-slnmap-samename-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "branchA"));
+        Directory.CreateDirectory(Path.Combine(root, "branchB"));
+        Directory.CreateDirectory(Path.Combine(root, "sub"));
+        try
+        {
+            string csproj = Path.Combine(root, "sub", "A.csproj");
+            File.WriteAllText(csproj, "<Project />");
+            string slnLine = "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"..\\sub\\A.csproj\", \"{1}\"\nEndProject\n";
+            string slnA = Path.Combine(root, "branchA", "Osys.sln");
+            string slnB = Path.Combine(root, "branchB", "Osys.sln");
+            File.WriteAllText(slnA, slnLine);
+            File.WriteAllText(slnB, slnLine);
+
+            var map = SolutionMapper.Map([slnA, slnB], [csproj]);
+            var refs = SolutionMapper.MapRefs([slnA, slnB], [csproj]);
+
+            Assert.Equal(["Osys"], map[csproj]);
+            Assert.Equal(2, refs[csproj].Count);
+            Assert.Contains(refs[csproj], r => r.Path.Equals(Path.GetFullPath(slnA), StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(refs[csproj], r => r.Path.Equals(Path.GetFullPath(slnB), StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }
