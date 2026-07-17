@@ -152,6 +152,55 @@ public class RunViewModelTests
         Assert.Equal("line1\nline2\nrace-line3\n", vm.GetProjectDocumentText(projectId));
     }
 
+    [Fact] // [Fix wave 1(It-3), Finding 1] ikinci Rebuild'de dosya sıfırdan yazılır (satır no'ları 1'den başlar) —
+           // eski run'ın _liveLines/_projectText'te kalan tortusu yeni dikişe SIZMAMALI.
+    public async Task Second_Rebuild_clears_stitch_buffers_so_old_run_lines_do_not_leak_into_new_stitch()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — startRun senkron atılır, VM içinde yutulur
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+
+        // --- ilk run: P için 1..4 satır, run tamamlanır ---
+        await vm.RebuildCommand.ExecuteAsync(null);
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        for (int i = 1; i <= 4; i++)
+            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"old-line{i}"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        // --- ikinci Rebuild: proje log dosyası sıfırdan yazılıyor, satır no'ları yeniden 1'den başlıyor ---
+        await vm.RebuildCommand.ExecuteAsync(null); // buffer'lar burada temizlenmeli (fix ÖNCESİ: temizlenmez)
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        for (int i = 1; i <= 2; i++)
+            vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"new-line{i}"));
+
+        // Karta tıklama: disk snapshot ikinci run'ın 1. satırını kapatıyor (ThroughLineNumber=1)
+        var load = vm.LoadProjectLogAsync(projectId);
+        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "new-line1\n", IsLast: true, ThroughLineNumber: 1));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var text = vm.GetProjectDocumentText(projectId);
+        Assert.Equal("new-line1\nnew-line2\n", text);
+        Assert.DoesNotContain("old-line", text);
+    }
+
+    [Fact] // [Fix wave 1(It-3), Finding 2] Skipped proje (cycle üyesi) hiç log dosyası taşımaz — Supervisor
+           // error(logNotFound) döner; pending Completion tamamlanmazsa await SONSUZA DEK asılı kalır.
+    public async Task LoadProjectLogAsync_completes_on_logNotFound_instead_of_hanging_forever()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\skipped.csproj";
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "bağımlılık döngüsünde"));
+
+        var load = vm.LoadProjectLogAsync(projectId);
+        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+
+        // Sınırlı bekleme [D8]: fix ÖNCESİ hiçbir şey Completion'ı tamamlamaz → WaitAsync timeout ile FAIL.
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(vm.ActiveProjectId); // dikiş hiç kurulmadı — proje moduna geçilmedi, VM tutarlı kaldı
+    }
+
     [Fact]
     public async Task LoadProjectLogAsync_multi_chunk_history_is_assembled_in_arrival_order()
     {
@@ -357,6 +406,40 @@ public class RunViewModelTests
 
         Assert.True(continueChanged);
         Assert.True(vm.ContinueCommand.CanExecute(null));
+    }
+
+    // ---------------------------------------------------------------- 6b-2) [Fix wave 1(It-3), Finding 3] planlama sırasında Stop erişilebilir olmalı
+    // Supervisor runStarted'dan ÖNCE planlama yapar (scan/graph/topo) ve stop-during-planning'i destekler
+    // (ack-debt yolu) — App bunu yalnız IsRunning'e bakarak engelliyordu; IsStarting bu boşluğu kapatır.
+
+    [Fact]
+    public async Task RebuildCommand_enables_Stop_and_disables_Rebuild_before_runStarted_arrives()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — startRun senkron atılır, yutulur
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        await vm.RebuildCommand.ExecuteAsync(null); // runStarted HENÜZ gelmedi — yalnız IsStarting=true
+
+        Assert.True(vm.StopCommand.CanExecute(null));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+
+        Assert.True(vm.StopCommand.CanExecute(null)); // runStarted sonrası da Stop erişilebilir kalmalı
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+    }
+
+    [Fact] // stop-during-planning ack: runStarted hiç gelmedi, runStopped geldi → Rebuild tekrar aktif olmalı
+    public async Task RunStopped_without_runStarted_after_Rebuild_reenables_Rebuild_and_disables_Stop()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        await vm.RebuildCommand.ExecuteAsync(null); // IsStarting=true, runStarted HENÜZ gelmedi
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.StopCommand.CanExecute(null));
     }
 
     // ---------------------------------------------------------------- 6c) [Fix wave 1] TickElapsed enjekte edilen saatle deterministik

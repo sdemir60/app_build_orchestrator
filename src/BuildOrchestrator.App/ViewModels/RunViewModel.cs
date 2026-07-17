@@ -110,6 +110,17 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
     private bool _isRunning;
 
+    // [Fix wave 1(It-3), Finding 3] Supervisor runStarted'dan ÖNCE planlama yapar (scan/graph/topo — 177
+    // projeli OSYS'te saniyeler sürebilir) ve stop-during-planning'i AÇIKÇA destekler (ack-debt yolu,
+    // RunCoordinator'da test edilmiş). IsRunning yalnız runStarted ile true olduğundan, planlama sırasında
+    // Stop erişilemez kalıyordu ve çift Rebuild tıklaması runInProgress'e neden olabiliyordu. IsStarting,
+    // komut gönderilir gönderilmez (runStarted/runStopped/run-bitiren ErrorEvent'e kadar) bu boşluğu kapatır.
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    private bool _isStarting;
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
     private bool _canContinue;
@@ -133,9 +144,23 @@ public sealed partial class RunViewModel : ObservableObject
         _currentRunId = runId;
         _sawRunStarted = false;
         ActiveProjectId = null;
+        IsStarting = true; // [Fix wave 1(It-3), Finding 3] runStarted gelene kadar Stop'u erişilebilir tut
+        // [Fix wave 1(It-3), Finding 1] İKİNCİ (veya sonraki) bir Rebuild'de proje log dosyaları diskte
+        // sıfırdan yazılır (satır no'ları yeniden 1'den başlar). Önceki run'ın _liveLines/_projectText/_runText
+        // tortusu temizlenmezse, bir sonraki kart tıklamasında dikiş filtresi (LineNumber > ThroughLineNumber)
+        // eski run'ın kuyruk satırlarını da geçirir ve OrderBy(LineNumber) eski+yeni'yi birbirine karıştırır
+        // (bozuk/tekrarlı "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir: ProjectLogEvent marshal'sız
+        // işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine düşmeden ÖNCE buraya
+        // varabilir — OnRunStarted'da temizlemek o satırları silerdi.
+        lock (_gate)
+        {
+            _liveLines.Clear();
+            _projectText.Clear();
+            _runText.Clear();
+        }
         await TrySendAsync(new StartRunCommand(runId, RunMode.Rebuild, RootPath, Configuration, Parallelism), "rebuild");
     }
-    private bool CanRebuild() => !IsRunning;
+    private bool CanRebuild() => !IsRunning && !IsStarting;
 
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
@@ -143,7 +168,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (_currentRunId is null) return;
         await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Graceful), "stop");
     }
-    private bool CanStop() => IsRunning;
+    private bool CanStop() => IsRunning || IsStarting;
 
     [RelayCommand(CanExecute = nameof(CanContinueRun))]
     private async Task ContinueAsync()
@@ -152,9 +177,10 @@ public sealed partial class RunViewModel : ObservableObject
         _currentRunId = runId;
         _sawRunStarted = false;
         ActiveProjectId = null;
+        IsStarting = true; // [Fix wave 1(It-3), Finding 3] — bkz. RebuildAsync; Continue buffer'ları TEMİZLEMEZ
         await TrySendAsync(new StartRunCommand(runId, RunMode.Continue, RootPath, Configuration, Parallelism), "continue");
     }
-    private bool CanContinueRun() => !IsRunning && CanContinue;
+    private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue;
 
     /// <summary>Engine hazır değilken (henüz başlamadı/çöktü) SendAsync SENKRON fırlar — UI tıklaması bu
     /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz.</summary>
@@ -200,6 +226,7 @@ public sealed partial class RunViewModel : ObservableObject
         _currentRunId = e.RunId;
         _sawRunStarted = true;
         IsRunning = true;
+        IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
         _elapsedBaseMs = e.ElapsedMsAtStart;
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
@@ -236,14 +263,26 @@ public sealed partial class RunViewModel : ObservableObject
         if (_sawRunStarted) return; // normal akış: runCompleted az sonra gelecek, slot orada serbest kalır
         // [Kısıt 3] Planlama sırasında stop — runStarted hiç gelmedi, runCompleted de ASLA gelmeyecek.
         IsRunning = false;
+        IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama-sırasında-stop ack'i — Rebuild'i geri aç
         CanContinue = false;
     }
 
     private void OnError(ErrorEvent e)
     {
         AppendRunLine($"[hata] {e.Code}: {e.Message}");
+        // [Fix wave 1(It-3), Finding 2] logNotFound (ör. Skipped/cycle üyesi proje kartına tıklama — hiç log
+        // dosyası yok) OnError'da hiç ele alınmıyordu: bekleyen LoadProjectLogAsync'in Completion'ı asla
+        // tamamlanmaz, await SONSUZA DEK asılı kalırdı. ErrorEvent'te ProjectId yok (kontrat sabit) — eldeki
+        // TEK bekleyen yüklemeyi (varsa) burada çözüyoruz; proje modu hiç kurulmadığından ActiveProjectId
+        // dokunulmadan kalır (run dokümanı gösterilmeye devam eder).
+        if (e.Code == "logNotFound" && _pendingLoad is { } pending)
+        {
+            _pendingLoad = null;
+            pending.Completion.TrySetResult();
+        }
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/logNotFound/... aktif run'ı ETKİLEMEZ
         IsRunning = false;
+        IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
         CanContinue = false;
         _sawRunStarted = false;
     }
@@ -342,6 +381,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     public async Task LoadProjectLogAsync(string projectId)
     {
+        // [Fix wave 1(It-3), Finding 2] Yeni bir yükleme, henüz tamamlanmamış eski bir _pendingLoad'ın yerini
+        // alırsa eskisini burada çözüyoruz — aksi halde eski awaiter'ın Completion'ı ASLA tamamlanmaz (leak).
+        // (SendAsync'in senkron fırlaması burada BİLEREK tamamlanmaz: mevcut test seti bu yolu — engine hiç
+        // başlatılmadan yerel dikişi doğrulamak için — SendAsync'in yutulup pending'in AÇIK kalmasına ve
+        // ardından bir ProjectLogChunkEvent/ErrorEvent'in onu tamamlamasına dayanır; gerçek "engine öldü, hiçbir
+        // yanıt asla gelmeyecek" senaryosu zaten OnError'daki logNotFound/run-bitiren kod yollarıyla kapanır.)
+        _pendingLoad?.Completion.TrySetResult();
         var pending = new PendingLoad(projectId);
         _pendingLoad = pending;
         try { await _engine.SendAsync(new GetProjectLogCommand(projectId)); }
