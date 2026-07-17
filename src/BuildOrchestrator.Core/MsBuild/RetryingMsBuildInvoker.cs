@@ -18,6 +18,11 @@ public sealed class RetryingMsBuildInvoker(
     Func<TimeSpan, CancellationToken, Task> delay,
     Action<string>? onRetry = null) : IMsBuildInvoker
 {
+    private readonly IMsBuildInvoker _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+    private readonly IReadOnlyList<TimeSpan> _backoff = backoff ?? throw new ArgumentNullException(nameof(backoff));
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? throw new ArgumentNullException(nameof(delay));
+    private readonly Action<string>? _onRetry = onRetry;
+
     /// <summary>200ms, 600ms — toplam 3 deneme (ilk deneme + iki retry).</summary>
     public static readonly IReadOnlyList<TimeSpan> DefaultBackoff = [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(600)];
 
@@ -26,7 +31,7 @@ public sealed class RetryingMsBuildInvoker(
         ArgumentNullException.ThrowIfNull(req);
         ArgumentNullException.ThrowIfNull(onLine);
 
-        int totalAttempts = backoff.Count + 1;
+        int totalAttempts = _backoff.Count + 1;
         for (int attempt = 1; ; attempt++)
         {
             // contentionFlag: iç invoker satırları KENDİ reader thread'lerinden (stdout/stderr pump'ları)
@@ -42,23 +47,23 @@ public sealed class RetryingMsBuildInvoker(
                     Interlocked.Exchange(ref contentionFlag, 1);
             }
 
-            var result = await inner.InvokeAsync(req, TeeOnLine, ct);
+            var result = await _inner.InvokeAsync(req, TeeOnLine, ct);
 
             bool isLastAttempt = attempt >= totalAttempts;
             // TimedOut/Killed: teardown ya da caller iptali — bu yollardan dönen bir sonuç, satırlarda tesadüfen
             // bir contention kodu geçse bile RETRY EDİLMEZ (retry, devam eden teardown/iptal ile YARIŞMAMALI).
-            bool contentionSeen = Interlocked.CompareExchange(ref contentionFlag, 0, 0) == 1;
+            bool contentionSeen = Volatile.Read(ref contentionFlag) == 1;
             bool shouldRetry = !isLastAttempt && result.ExitCode != 0 && !result.TimedOut && !result.Killed && contentionSeen;
 
             if (!shouldRetry)
                 return result;
 
-            var wait = backoff[attempt - 1];
-            onRetry?.Invoke(string.Format(CultureInfo.InvariantCulture,
+            var wait = _backoff[attempt - 1];
+            _onRetry?.Invoke(string.Format(CultureInfo.InvariantCulture,
                 "Copy contention algılandı ({0}), deneme {1}/{2} başarısız — {3}ms sonra yeniden denenecek.",
                 req.ProjectId, attempt, totalAttempts, wait.TotalMilliseconds));
 
-            await delay(wait, ct); // ct mid-backoff iptal edilirse delay OperationCanceledException fırlatır — döngü burada aynen yukarı fırlatır.
+            await _delay(wait, ct); // ct mid-backoff iptal edilirse delay OperationCanceledException fırlatır — döngü burada aynen yukarı fırlatır.
         }
     }
 }

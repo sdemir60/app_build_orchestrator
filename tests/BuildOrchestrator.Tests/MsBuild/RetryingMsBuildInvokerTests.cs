@@ -13,15 +13,11 @@ namespace BuildOrchestrator.Tests.MsBuild;
 public class CopyContentionTests
 {
     [Theory]
-    [InlineData("obj\\Debug\\Foo.dll -> bin\\Debug\\Foo.dll")]
     [InlineData("Foo.csproj : error MSB3021: Unable to copy file \"obj\\Debug\\Foo.dll\" to \"bin\\Debug\\Foo.dll\". The process cannot access the file because it is being used by another process.")]
     [InlineData("Foo.csproj : warning MSB3026: Could not copy \"obj\\Debug\\Foo.dll\" to \"bin\\Debug\\Foo.dll\". Beginning retry 1 in 1000ms.")]
     [InlineData("Foo.csproj : error MSB3027: Could not copy \"obj\\Debug\\Foo.dll\" to \"bin\\Debug\\Foo.dll\". Exceeded retry count of 10. Failed.")]
     public void IsContention_true_only_for_real_MSB3021_MSB3026_MSB3027_lines(string line)
     {
-        // ilk InlineData satırı "copy hedefi" bilgisi taşır ama KOD içermez — kasıtlı NEGATİF örnek olarak
-        // aşağıdaki ayrı [Fact]'te doğrulanıyor; burada yalnız gerçek kod satırları test edilir.
-        if (!line.Contains("MSB302", StringComparison.Ordinal)) return;
         Assert.True(CopyContention.IsContention(line));
     }
 
@@ -175,6 +171,11 @@ public class RetryingMsBuildInvokerTests
         await invoker.InvokeAsync(Req, _ => { }, CancellationToken.None);
 
         Assert.Single(onRetryCalls);
+        // İçerik doğrulaması: proje id, deneme numarası, bekleme ms bulunmalı
+        var message = onRetryCalls[0];
+        Assert.Contains(Req.ProjectId, message);
+        Assert.Contains("1", message);  // attempt number
+        Assert.Contains("200", message); // first backoff in ms
     }
 
     [Fact]
@@ -224,6 +225,23 @@ public class RetryingMsBuildInvokerTests
 
         Assert.Equal(1, scripted.CallCount);
         Assert.Single(recordingDelay.Calls);
+    }
+
+    [Fact]
+    public async Task Success_with_contention_warning_line_does_not_retry()
+    {
+        // Başarılı bir deneme (ExitCode: 0) bir MSB3026 uyarı satırı içerse bile (MSBuild kendi internal
+        // copy-retry kendini iyileştirdi), retry EDİLMEZ — retry edecek bir şey yok, build başarılı.
+        var scripted = new ScriptedInvoker(
+            (Success, ["Foo.csproj : warning MSB3026: Copy retrying due to contention. Succeeded on retry."]));
+        var recordingDelay = new RecordingDelay();
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff, recordingDelay.Delay);
+
+        var result = await invoker.InvokeAsync(Req, _ => { }, CancellationToken.None);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(1, scripted.CallCount);
+        Assert.Empty(recordingDelay.Calls);
     }
 
     [Fact]
