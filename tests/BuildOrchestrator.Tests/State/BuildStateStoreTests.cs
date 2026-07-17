@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.State;
@@ -48,6 +49,30 @@ public class BuildStateStoreTests : IDisposable
         var store = new BuildStateStore(_root);
         var map = store.Load();
         Assert.Empty(map);
+    }
+
+    [Fact] // [Review Important 1] elle bozulmuş dosyada case-variant duplicate anahtar (Ordinal→OrdinalIgnoreCase
+           // kopyasında ArgumentException fırlatırdı) → Load() ASLA fırlamaz, ignore-case dedup ile hayatta kalan
+           // kayıt (JSON'daki SON değer) döner.
+    public void Load_dedups_case_variant_duplicate_keys_instead_of_throwing()
+    {
+        Directory.CreateDirectory(_root);
+        // JsonSerializer.Deserialize<Dictionary<string,BuildState>> varsayılan Ordinal comparer kullandığından
+        // bu iki anahtar (yalnız case'te farklı) doğrudan JSON'a elle yazılabilir — normal Upsert bunu üretemez,
+        // senaryo elle bozulmuş / başka bir process'in yazdığı dosyayı simüle eder.
+        string json = """
+        {
+          "C:\\repo\\A.csproj": { "ProjectId": "C:\\repo\\A.csproj", "BuiltSignature": "sig-upper" },
+          "c:\\repo\\a.csproj": { "ProjectId": "c:\\repo\\a.csproj", "BuiltSignature": "sig-lower" }
+        }
+        """;
+        File.WriteAllText(StatePath, json);
+
+        var store = new BuildStateStore(_root);
+        var map = store.Load(); // throw ATMAMALI
+
+        var surviving = Assert.Single(map);
+        Assert.Equal("sig-lower", surviving.Value.BuiltSignature); // JSON'daki SON görülen anahtar kazanır
     }
 
     [Fact] // Save+Load round-trip: tüm alanlar (LastRunAt/LastDurationMs dahil) tam korunur
@@ -213,5 +238,76 @@ public class BuildStateStoreTests : IDisposable
         Assert.Null(writerFailure);
         Assert.Null(corruption);
         Assert.Equal(bigSig + "-r" + (rounds - 1), store.Load()["P"].BuiltSignature); // son yazan kazandı, kayıp yok
+    }
+
+    [Fact] // [Review Important 2] MoveAtomicWithRetry: hedef dosya geçici olarak (Delete-share VERİLMEDEN) kilitliyken
+           // Upsert atomik rename'i retry ile başarır. D8: koordinasyon TCS ile — lock ALINDIĞI kesin bilinene kadar
+           // beklenir (poll yok); ardından retry'ların gerçek kilide çarpması için TEK seferlik, kısa ve sabit bir
+           // bekleme var (retry bütçesi ~19x5ms≈95ms — 40ms bu bütçenin ortasında, hem birkaç retry'ın gerçekleşmesine
+           // hem release sonrası başarı için yeterli paya izin verir); bu bir sleep-poll DÖNGÜSÜ değildir.
+    public async Task Upsert_retries_and_succeeds_when_target_file_is_transiently_locked_without_delete_share()
+    {
+        Directory.CreateDirectory(_root);
+        var store = new BuildStateStore(_root);
+        store.Upsert(new BuildState("Seed", "seed-sig")); // hedef dosyayı önceden var eder (kilitlenecek dosya)
+
+        var lockAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLock = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var lockHolder = Task.Run(async () =>
+        {
+            // FileShare.Read (Delete YOK): File.Move(overwrite:true) hedefi silmek/değiştirmek zorunda olduğundan
+            // bu handle açıkken sharing-violation ile başarısız olur — MoveAtomicWithRetry'ın retry yolunu tetikler.
+            using var fs = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            lockAcquired.SetResult();
+            await releaseLock.Task;
+        });
+
+        await lockAcquired.Task; // dosya kilidi KESİN alınmış — deterministik senkronizasyon noktası, poll yok
+
+        var upsertTask = Task.Run(() => store.Upsert(new BuildState("P1", "sig1")));
+
+        await Task.Delay(40); // bkz. üstteki not: retry bütçesinin ortası, sleep-poll DÖNGÜSÜ değil, tek seferlik
+        releaseLock.SetResult();
+
+        await Task.WhenAll(lockHolder, upsertTask).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var map = new BuildStateStore(_root).Load();
+        Assert.Equal("sig1", map["P1"].BuiltSignature);
+        Assert.Equal("seed-sig", map["Seed"].BuiltSignature); // kilit sırasında var olan diğer kayıt kaybolmadı
+    }
+
+    [Fact] // [Review Important 2, optional] MoveAtomicWithRetry retry bütçesini (20 deneme) aşarsa Upsert net bir
+           // IOException/UnauthorizedAccessException ile fırlar — concern #2 (kalıcı kilit) belgeleniyor. Ayrıca
+           // [Review Minor 4] doğrulaması: throw sonrası tmp dosyası öksüz kalmamalı. D8: lock hiç serbest
+           // bırakılmadan Upsert'in exhaust olup fırlamasını doğrudan await ediyoruz — poll yok, tek bekleme noktası.
+    public async Task Upsert_throws_and_cleans_up_tmp_file_when_target_stays_locked_past_retry_budget()
+    {
+        Directory.CreateDirectory(_root);
+        var store = new BuildStateStore(_root);
+        store.Upsert(new BuildState("Seed", "seed-sig"));
+
+        var lockAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseLock = new ManualResetEventSlim(false);
+
+        var lockHolder = Task.Run(() =>
+        {
+            using var fs = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            lockAcquired.SetResult();
+            releaseLock.Wait(TimeSpan.FromSeconds(10)); // retry bütçesi tükenene kadar SERBEST BIRAKILMAZ
+        });
+
+        await lockAcquired.Task;
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(
+            () => Task.Run(() => store.Upsert(new BuildState("P2", "sig2"))))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(thrown is IOException or UnauthorizedAccessException, $"beklenmeyen exception tipi: {thrown.GetType()}");
+
+        releaseLock.Set();
+        await lockHolder.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(Directory.GetFiles(_root, "*.tmp")); // [Minor 4] öksüz tmp kalmamalı
+        Assert.DoesNotContain("P2", new BuildStateStore(_root).Load().Keys); // başarısız Upsert veri bırakmadı
     }
 }

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Model;
 
@@ -27,9 +28,15 @@ public sealed class BuildStateStore
             string text = ReadAllTextSharingDelete(_path);
             if (string.IsNullOrWhiteSpace(text)) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
             var map = JsonSerializer.Deserialize<Dictionary<string, BuildState>>(text, Json);
-            return map is null
-                ? new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
-                : new Dictionary<string, BuildState>(map, StringComparer.OrdinalIgnoreCase);
+            if (map is null) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
+            // [Review Important 1] map, JSON'dan Ordinal-comparer bir Dictionary olarak gelir. Elle bozulmuş bir
+            // dosyada büyük/küçük harfle FARKLI iki anahtar aynı projeye işaret edebilir (ör. "C:\repo\A.csproj" ve
+            // "c:\repo\a.csproj"); bunu doğrudan bir OrdinalIgnoreCase Dictionary'e kopyalamak ArgumentException
+            // fırlatır (never-throw sözleşmesini ihlal eder). GroupBy ile ignore-case dedup edilir — dosyadaki JSON
+            // sırasında SON görülen değer kazanır; map tamamen boşalmak yerine hayatta kalan kayıtlarla döner.
+            return map
+                .GroupBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Last().Value, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -47,11 +54,23 @@ public sealed class BuildStateStore
         _writeGate.Wait();
         try
         {
+            // Load() zaten ignore-case dedup edilmiş bir map döner (yukarıdaki [Review Important 1] fix'i); bu
+            // kopya sadece state.ProjectId'yi merge eder, ayrıca bir case-collision riski taşımaz.
             var map = new Dictionary<string, BuildState>(Load(), StringComparer.OrdinalIgnoreCase) { [state.ProjectId] = state };
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             string tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(map, Json));
-            MoveAtomicWithRetry(tmp, _path);
+            try
+            {
+                File.WriteAllText(tmp, JsonSerializer.Serialize(map, Json));
+                MoveAtomicWithRetry(tmp, _path);
+            }
+            catch
+            {
+                // [Review Minor 4] rename retry bütçesini aşarsa (veya yazım sonrası başka bir şey fırlarsa) tmp
+                // dosyası diskte öksüz kalmasın — best-effort temizlik, orijinal exception önceliklidir.
+                try { File.Delete(tmp); } catch { /* best-effort, temizlik başarısızlığı orijinal hatayı gölgelemez */ }
+                throw;
+            }
         }
         finally
         {
@@ -92,6 +111,9 @@ public sealed class BuildStateStore
             }
             catch (Exception ex) when (attempt < maxAttempts && ex is IOException or UnauthorizedAccessException)
             {
+                // [Review Minor 3] Deliberate deviation: RetryingMsBuildInvoker enjekte edilebilir async delay
+                // kullanır (testability için DI), ama Upsert senkron bir metot — o desen burada doğrudan uymuyor.
+                // Gerçek Thread.Sleep(5) kullanılıyor; üst bütçe küçük ve sabit (20 deneme x 5ms ≈ 100ms max).
                 Thread.Sleep(5);
             }
         }
