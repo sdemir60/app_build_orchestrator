@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
-using BuildOrchestrator.Core.Logs;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
@@ -42,33 +41,26 @@ public class SupervisorIpcTests
         Assert.Equal(0, p.ExitCode);
     }
 
+    // [T28] getProjectLog artık AKTİF run'ın dizininden okur (bkz. RunCoordinator.TryGetProjectLogSnapshot) —
+    // gerçek run/chunk/dikiş davranışı ProjectLogStreamTests.cs'te (in-process, sahte invoker, gerçek writer)
+    // test edilir. Burada yalnız gerçek Supervisor process'i üzerinden "hiç run koşmadıysa bilinmeyen proje
+    // logNotFound döner + stdout NDJSON kalır" wiring'i doğrulanır (D4).
     [Fact]
-    public async Task GetProjectLog_streams_chunks_and_missing_log_errors()
+    public async Task GetProjectLog_of_unknown_project_before_any_run_errors_and_stdout_stays_ndjson()
     {
-        string logs = Directory.CreateTempSubdirectory("bo-logs").FullName;
-        string projectId = @"d:\repo\a\a.csproj";
-        await File.WriteAllTextAsync(Path.Combine(logs, ProjectLogNaming.FileNameFor(projectId)),
-            string.Concat(Enumerable.Repeat(new string('x', 100) + "\n", 2000))); // ~200KB → ≥3 chunk
-        using var p = Process.Start(Psi(logs))!;
+        using var p = Process.Start(Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
 
-        await writer.WriteAsync(new GetProjectLogCommand(projectId));
-        var chunks = new List<ProjectLogChunkEvent>();
-        while (true)
-        {
-            var e = Assert.IsType<ProjectLogChunkEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
-            chunks.Add(e);
-            if (e.IsLast) break;
-        }
-        Assert.True(chunks.Count >= 3);
-        Assert.Equal(Enumerable.Range(0, chunks.Count), chunks.Select(c => c.Sequence));
-
         await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj"));
         var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("logNotFound", err.Code);
+
         await writer.WriteAsync(new ShutdownCommand());
+        string rest = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        foreach (var line in rest.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            Assert.NotNull(System.Text.Json.JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options)); // D4: kalan satırlar da NDJSON
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
     }
 

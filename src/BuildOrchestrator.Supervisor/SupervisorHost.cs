@@ -7,7 +7,7 @@ using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Supervisor;
 
-public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob, string logsRoot,
+public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob,
     RunCoordinator coordinator)
 {
     private bool _running = true;
@@ -69,14 +69,20 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         await writer.WriteAsync(new RunStoppedEvent(s.RunId, WasHard: s.Kind == StopKind.Hard), ct);
     }
 
+    /// <summary>
+    /// [T28] Log, AKTİF (ya da en son biten) run'ın dizininden okunur — statik <c>logsRoot</c> DEĞİL (koşan bir
+    /// run sırasında logsRoot'un kendisinde hiçbir şey bulunmaz, yalnız run-alt-dizininde). Kaynak koordinatördür
+    /// (<see cref="RunCoordinator.TryGetProjectLogSnapshot"/>): atomik metin + o ana kadar diske yazılmış satır
+    /// sayısı (<c>ThroughLineNumber</c>) birlikte gelir — App bunu canlı <c>projectLog</c> akışıyla dikiş
+    /// noktası olarak kullanır (<c>LineNumber &lt;= ThroughLineNumber</c> olanlar zaten bu chunk'larda vardır).
+    /// Her chunk AYNI ThroughLineNumber'ı taşır — o, chunk'ı değil SNAPSHOT'ı tanımlar.
+    /// </summary>
     private async Task SendProjectLogAsync(GetProjectLogCommand g, CancellationToken ct)
     {
-        string path = Path.Combine(logsRoot, ProjectLogNaming.FileNameFor(g.ProjectId));
-        if (!File.Exists(path))
+        if (!coordinator.TryGetProjectLogSnapshot(g.ProjectId, out string text, out int throughLineNumber))
         { await writer.WriteAsync(new ErrorEvent("logNotFound", g.ProjectId), ct); return; }
-        string text = await File.ReadAllTextAsync(path, ct);
         foreach (var c in LogChunker.Chunk(text))
-            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, 0), ct);
+            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber), ct);
     }
 
     private async Task SpawnDebugChildrenAsync(DebugSpawnChildrenCommand d, CancellationToken ct)

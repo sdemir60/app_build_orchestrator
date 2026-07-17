@@ -32,7 +32,7 @@ public static class Program
             innerJob: innerJob,
             nowMs: () => Environment.TickCount64, // MONOTONİK — duvar saati geri atlayabilir, elapsed negatife düşerdi
             console: Console.Error.WriteLine);
-        var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, logsRoot, coordinator);
+        var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator);
         return await host.RunAsync();
 
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan.

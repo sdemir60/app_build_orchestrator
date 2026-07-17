@@ -80,6 +80,9 @@ public sealed class RunCoordinator(
     private string? _root;
     private RunLogWriter? _logs;
     private RunSnapshot? _snapshot;
+    // [T28] En son (aktif ya da tamamlanmış) run'ın dizini — _logs Dispose edilip null'landıktan SONRA da
+    // hayatta kalır: run tamamen bitmiş olsa bile bir proje kartına tıklamak logunu diskten okuyabilsin diye.
+    private string? _lastRunDirectory;
 
     private bool _disposed;
 
@@ -91,6 +94,28 @@ public sealed class RunCoordinator(
 
     private bool HasResumableRunLocked =>
         _snapshot is not null && _plan is not null && _logs is not null && _snapshot.Queued.Count > 0;
+
+    /// <summary>
+    /// [T28] <c>getProjectLog</c>'un tek kaynağı. Aktif/resumable run varsa canlı writer'dan (in-memory sayaçla
+    /// ATOMİK — bkz. <see cref="RunLogWriter.SnapshotProjectLog"/>) okunur; run tamamen bitmişse (writer Dispose
+    /// edilmiş, <c>_logs</c> null) en son run dizininden PATH-tabanlı okunur (bkz.
+    /// <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) — dizin hâlâ diskte durduğu için sonradan bir proje
+    /// kartına tıklamak yine çalışır. <see cref="RunLogWriter"/>'ın KENDİSİ asla dışarı verilmez: host onun
+    /// yaşam döngüsüne (ne zaman Dispose edileceğine) müdahale etmemeli. Hiç run koşmadıysa ya da proje o run'da
+    /// hiç loglanmadıysa <c>false</c> döner.
+    /// </summary>
+    public bool TryGetProjectLogSnapshot(string projectId, out string text, out int throughLineNumber)
+    {
+        (string Text, int ThroughLineNumber)? snap;
+        lock (_gate)
+        {
+            snap = _logs is not null
+                ? _logs.SnapshotProjectLog(projectId)
+                : _lastRunDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(_lastRunDirectory, projectId) : null;
+        }
+        if (snap is { } s) { text = s.Text; throughLineNumber = s.ThroughLineNumber; return true; }
+        text = ""; throughLineNumber = 0; return false;
+    }
 
     /// <summary>
     /// [A6] Run'ı başlatır ve HEMEN döner — run arka planda koşar, aksi halde IPC dispatch loop'u bloklanır
@@ -249,6 +274,7 @@ public sealed class RunCoordinator(
                 _plan = runPlan;
                 _root = Canonical(cmd.RootPath);
                 logs = _logs = logFactory(DateTimeOffset.Now);
+                _lastRunDirectory = logs.RunDirectory;
             }
             scheduler = new ReadySetScheduler(runPlan.Plan);
             elapsedAtStart = 0;

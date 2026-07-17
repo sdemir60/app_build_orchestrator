@@ -55,8 +55,20 @@ public sealed class RunLogWriter : IDisposable
     {
         ProjectLogFile? file;
         lock (_projectsGate) _projects.TryGetValue(projectId, out file);
-        if (file is not null) return file.Snapshot();
-        string path = ProjectLogPath(projectId);
+        return file is not null ? file.Snapshot() : ReadProjectLogFromDisk(RunDirectory, projectId);
+    }
+
+    /// <summary>
+    /// [T28] Writer'sız, PATH-tabanlı okuma: run tamamen bitip bu <see cref="RunLogWriter"/> Dispose edildikten
+    /// SONRA (kullanıcı bir proje kartına tıklayınca) çağrılır. Yeni bir <see cref="RunLogWriter"/> AÇMAZ — o,
+    /// decision.log'u append-mode'da yeniden açardı; yalnız aynı adlandırma kuralıyla (<see cref="ProjectLogNaming"/>)
+    /// dosyayı okur. Satır sayısı '\n' sayılarak elde edilir — <see cref="ProjectLogFile.AppendLine"/>'ın
+    /// tek-satır-tek-çağrı garantisi sayesinde canlı sayaçla AYNI sonucu verir. <see cref="SnapshotProjectLog"/>'un
+    /// disk-fallback dalı da AYNI metodu çağırır — iki dal aynı sonucu üretir, kopya sayım mantığı YOK.
+    /// </summary>
+    public static (string Text, int ThroughLineNumber)? ReadProjectLogFromDisk(string runDirectory, string projectId)
+    {
+        string path = Path.Combine(runDirectory, ProjectLogNaming.FileNameFor(projectId));
         if (!File.Exists(path)) return null;
         string text = File.ReadAllText(path);
         return (text, CountLines(text));
