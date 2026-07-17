@@ -1,5 +1,10 @@
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Logs;
+using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Supervisor;
 
@@ -16,8 +21,48 @@ public static class Program
         Directory.CreateDirectory(logsRoot);
 
         using var innerJob = JobObject.CreateKillOnClose(); // §3: inner Job — MSBuild child'ları burada yaşayacak
-        var host = new SupervisorHost(new NdjsonWriter(stdout), new NdjsonReader(stdin), innerJob, logsRoot);
+        // TEK NdjsonWriter: host ve koordinatör AYNI stdout'a yazar; satır bütünlüğü writer'ın kendi kilidiyle
+        // korunur — ikinci bir writer örneği o kilidi baypas edip satırları iç içe geçirirdi.
+        var writer = new NdjsonWriter(stdout);
+        using var coordinator = new RunCoordinator(
+            planner: BuildRunPlan,
+            msbuildFactory: ct => ResolveMsBuildAsync(innerJob, ct),
+            logFactory: startedAt => new RunLogWriter(logsRoot, startedAt),
+            writer: writer,
+            innerJob: innerJob,
+            nowMs: () => Environment.TickCount64, // MONOTONİK — duvar saati geri atlayabilir, elapsed negatife düşerdi
+            console: Console.Error.WriteLine);
+        var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, logsRoot, coordinator);
         return await host.RunAsync();
+
+        // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan.
+        RunPlan BuildRunPlan(string root, string configuration)
+        {
+            // Cache, logsRoot'un yanında durur: `--logs` ile izole edilen bir Supervisor kullanıcının gerçek
+            // cache'ini kirletmez.
+            string cachePath = Path.Combine(Path.GetDirectoryName(logsRoot) ?? logsRoot, "evaluation-cache.json");
+            var scanner = new WorkspaceScanner();
+            var plan = new BuildPlanBuilder(scanner, new CsprojEvaluator(), new EvaluationCache(cachePath))
+                .Build(root, configuration);
+            // İkinci tarama: BuildPlanBuilder kendi ScanResult'ını dışarı vermiyor, packages.config restore'un
+            // istediği SolutionDir ise .sln YOLLARINI gerektiriyor (ProjectNode yalnız solution ADI taşır).
+            // Tek taramaya indirmek Core'da bir Build(ScanResult, …) overload'ı ister — It-3'e bırakıldı.
+            var scan = scanner.Scan(root);
+            return new RunPlan(plan, SolutionMapper.MapRefs(scan.SlnPaths, scan.CsprojPaths));
+        }
+    }
+
+    // MSBuild çözümü LAZY: vswhere/VS yoksa Supervisor yine ayağa kalkar (ping/getProjectLog çalışır), hata ancak
+    // startRun'da error(msbuildNotFound) olarak bildirilir. Tek seferde tek run (A6) → bu lazy init yarışsızdır.
+    private static MsBuildToolset? _toolset;
+
+    private static async Task<MsBuildToolset> ResolveMsBuildAsync(JobObject innerJob, CancellationToken ct)
+    {
+        if (_toolset is not null) return _toolset;
+        var location = await new MsBuildResolver(new ProcessRunner()).ResolveAsync(ct: ct);
+        // [D10] dotnet build DEĞİL, MSBuild.exe; child'lar JobProcessLauncher ile inner Job içinde doğar.
+        // Ham (retry'siz) invoker verilir — retry sarmalaması run'a özgü decision.log'a yazdığı için koordinatörün işi.
+        return _toolset = new MsBuildToolset(new MsBuildInvoker(innerJob, location.MsBuildExePath), location.MsBuildExePath);
     }
 
     private static string? GetArg(string[] args, string name)

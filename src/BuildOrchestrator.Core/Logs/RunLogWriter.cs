@@ -77,8 +77,11 @@ public sealed class RunLogWriter : IDisposable
         return n;
     }
 
-    /// <summary>Gömülü CR/LF'i tek boşlukla değiştirir: bir <c>AppendLine</c>/<c>AppendDecision</c> çağrısı == tam olarak bir fiziksel satır (tüketici modeli '\n' ile böler — bkz. <c>LogChunker</c>). Asla fırlatmaz; garip bir MSBuild satırı build'i öldürmemeli.</summary>
-    internal static string SanitizeLine(string text) =>
+    /// <summary>Gömülü CR/LF'i tek boşlukla değiştirir: bir <c>AppendLine</c>/<c>AppendDecision</c> çağrısı == tam olarak bir fiziksel satır (tüketici modeli '\n' ile böler — bkz. <c>LogChunker</c>). Asla fırlatmaz; garip bir MSBuild satırı build'i öldürmemeli.
+    /// <para>public: Supervisor (Task 9) canlı <c>projectLog</c> olayına diske YAZILAN satırın AYNISINI koymak için
+    /// aynı dönüşümü uygular — kopyalanmış ikinci bir sanitizer, canlı akış ile disk logunu sessizce ayrıştırırdı
+    /// (T28 dikişi satır numarası ⇄ metin eşleşmesine dayanır).</para></summary>
+    public static string SanitizeLine(string text) =>
         text.IndexOfAny(['\r', '\n']) < 0 ? text : text.Replace('\r', ' ').Replace('\n', ' ');
 
     public void Dispose()

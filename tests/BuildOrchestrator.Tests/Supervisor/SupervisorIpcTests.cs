@@ -8,17 +8,20 @@ namespace BuildOrchestrator.Tests.Supervisor;
 public static class TestPaths
 {
     public static string SupervisorExe => Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.Supervisor.exe");
-}
 
-public class SupervisorIpcTests
-{
-    private static ProcessStartInfo Psi(string? logsDir = null)
+    /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).</summary>
+    public static ProcessStartInfo Psi(string? logsDir = null)
     {
-        var psi = new ProcessStartInfo(TestPaths.SupervisorExe)
+        var psi = new ProcessStartInfo(SupervisorExe)
         { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         if (logsDir is not null) { psi.ArgumentList.Add("--logs"); psi.ArgumentList.Add(logsDir); }
         return psi;
     }
+}
+
+public class SupervisorIpcTests
+{
+    private static ProcessStartInfo Psi(string? logsDir = null) => TestPaths.Psi(logsDir);
 
     [Fact]
     public async Task Stdout_is_ndjson_only_even_after_garbage_command() // [D4 — It-0 kabul maddesi]

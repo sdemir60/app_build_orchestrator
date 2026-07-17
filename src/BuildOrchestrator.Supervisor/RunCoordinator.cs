@@ -1,0 +1,530 @@
+using System.Globalization;
+using System.Threading.Channels;
+using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Logs;
+using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Core.Scheduling;
+
+namespace BuildOrchestrator.Supervisor;
+
+/// <summary>
+/// Bir run'ın planı: <see cref="BuildPlan"/> (build-order'da) + her projenin solution referansları
+/// (<c>SolutionDirResolver</c> için gereklidir; <see cref="ProjectNode.SolutionNames"/> yalnız AD taşır, YOL taşımaz).
+/// Planlama TAMAMEN Core'da yapılır [D3]; koordinatör yalnız çalıştırır — bu tip iki Core çıktısını bir arada taşır.
+/// </summary>
+public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs);
+
+/// <summary>
+/// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
+/// Yol, proje logunun İLK satırına yazılan gerçek komut satırını üretmek için gerekir (v7Δ-7).
+/// Retry sarmalamasını (<see cref="RetryingMsBuildInvoker"/>) koordinatör yapar: <c>onRetry</c> run'a özgü
+/// <c>decision.log</c>'a yazar, o log ise ancak run başlarken var olur.
+/// </summary>
+public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePath);
+
+/// <summary>
+/// [T4/T55] Run'ın yürütme kalbi: plan → N paralel worker → proje-başına <c>MSBuild.exe</c> shell-out →
+/// disk log + IPC event → Stop/Continue. Planlama YOK (Core'un işi [D3]), in-process MSBuild YOK [§0/§3],
+/// bin/OutDir okuma YOK [§4], bellek ring buffer YOK — tek log kaynağı disktir [D4].
+///
+/// <para><b>Tek seferde tek run</b> (A6): koşarken gelen <c>startRun</c> → <c>error(runInProgress)</c>.</para>
+///
+/// <para><b>Worker döngüsü:</b> N worker aynı <see cref="ReadySetScheduler"/>'ı sürer.
+/// <c>TryDispatch == false</c> "run bitti" DEĞİL, "şu an hazır iş yok" demektir (bağımlılıkları hâlâ
+/// derleniyor olabilir); bu yüzden döngü <see cref="ReadySetScheduler.IsDone"/> olana kadar sürer ve hazır iş
+/// yokken <see cref="WakeSignal"/> üzerinde PARK eder. Her <c>Complete</c>'ten (ve her Stop'tan) sonra tüm
+/// parked worker'lar uyandırılır — sleep-poll YOK [D8]. Sinyal, beklenecek Task <i>koşul kontrolünden ÖNCE</i>
+/// yakalanarak kaçırılmaz (lost-wakeup yok).</para>
+///
+/// <para><b>Event sırası:</b> tüm event'ler tek bir FIFO kanaldan tek bir pump task'ı ile yazılır. Sebep:
+/// <c>onLine</c> SENKRON çağrılır (MSBuild'in stdout/stderr pump thread'lerinden) ama IPC yazımı async'tir —
+/// kanal hem sırayı garanti eder (<c>runStarted</c> → <c>projectStarted</c>* → sonuç* → <c>runCompleted</c>)
+/// hem de pump thread'ini BLOKLAMAZ (bkz. MsBuildInvoker: terk edilmiş pump'lar zaten thread-pool baskısı
+/// yaratıyor; buraya bloklu bekleme eklenmez).</para>
+/// </summary>
+/// <param name="planner">(root, configuration) → <see cref="RunPlan"/>. Core'un planlama pipeline'ı; senkron ve
+/// I/O yapar, bu yüzden run'ın arka plan task'ından çağrılır (IPC dispatch loop'u bloklanmaz).</param>
+/// <param name="msbuildFactory">MSBuild takımını (ham invoker + exe yolu) LAZY çözer: vswhere/VS yoksa Supervisor
+/// yine ayağa kalkar, hata ancak <c>startRun</c>'da <c>error(msbuildNotFound)</c> olarak bildirilir.</param>
+/// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; Continue AYNI writer'ı (aynı run
+/// dizinini) kullanır — log dikişi bozulmaz.</param>
+/// <param name="nowMs">MONOTONİK zaman kaynağı (üretimde <c>Environment.TickCount64</c>); duvar saati
+/// KULLANILMAZ — geri atlarsa elapsed negatife düşerdi.</param>
+/// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
+/// asla stdout'a yazılmaz.</param>
+public sealed class RunCoordinator(
+    Func<string, string, RunPlan> planner,
+    Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
+    Func<DateTimeOffset, RunLogWriter> logFactory,
+    NdjsonWriter writer,
+    JobObject innerJob,
+    Func<long> nowMs,
+    Action<string> console) : IDisposable
+{
+    private readonly object _gate = new();
+
+    // --- run yaşam döngüsü (hepsi _gate altında) ---
+    private bool _runActive;            // startRun slotu dolu (planlama dahil) — A6
+    private bool _finishing;            // sonuç olayları yazılmaya başladı → Stop artık sahiplenilemez
+    private Task _runTask = Task.CompletedTask;
+    private StopKind? _stopKind;        // null = stop istenmedi; Hard, Graceful'u EZER (geri alınmaz)
+    private bool _stopAcked;            // runStopped yazıldı mı — TryRequestStop true dedi ise ACK BORCU vardır
+    private ReadySetScheduler? _scheduler;
+    private WakeSignal? _wake;
+
+    // --- Continue için devredilen state (run'lar ARASINDA yaşar) ---
+    private RunPlan? _plan;
+    private string? _root;
+    private RunLogWriter? _logs;
+    private RunSnapshot? _snapshot;
+
+    private bool _disposed;
+
+    /// <summary>Aktif (ya da en son) run'ın task'ı: run'ın TÜM event'leri yazıldıktan sonra tamamlanır.</summary>
+    public Task RunCompletion { get { lock (_gate) return _runTask; } }
+
+    /// <summary>Stop'la yarıda kalmış, Continue ile sürdürülebilir bir run var mı (kuyrukta iş kaldı mı).</summary>
+    public bool HasResumableRun { get { lock (_gate) return HasResumableRunLocked; } }
+
+    private bool HasResumableRunLocked =>
+        _snapshot is not null && _plan is not null && _logs is not null && _snapshot.Queued.Count > 0;
+
+    /// <summary>
+    /// [A6] Run'ı başlatır ve HEMEN döner — run arka planda koşar, aksi halde IPC dispatch loop'u bloklanır
+    /// ve <c>stopRun</c> asla ulaşamazdı. Reddedilen istekler (<c>runInProgress</c>/<c>noResumableRun</c>)
+    /// dönmeden önce <c>error</c> olayı yazılır.
+    /// </summary>
+    public async Task StartAsync(StartRunCommand cmd, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(cmd);
+        ErrorEvent? rejection = null;
+        lock (_gate)
+        {
+            if (_disposed)
+                rejection = new ErrorEvent("runInProgress", "Supervisor kapanıyor — yeni run kabul edilmiyor.");
+            else if (_runActive)
+                rejection = new ErrorEvent("runInProgress", $"Zaten bir run koşuyor — '{cmd.RunId}' reddedildi.");
+            else if (cmd.Mode == RunMode.Continue && !IsResumableForLocked(cmd.RootPath))
+                rejection = new ErrorEvent("noResumableRun", $"'{cmd.RootPath}' için sürdürülebilir bir run yok.");
+            else
+            {
+                // Slot, arka plan task'ı başlamadan ÖNCE burada tutulur: ikinci bir startRun (planlama sürerken
+                // bile) runInProgress alır.
+                _runActive = true;
+                _finishing = false;
+                _stopKind = null;
+                _stopAcked = false;
+                _runTask = Task.Run(() => ExecuteRunAsync(cmd, ct), CancellationToken.None);
+            }
+        }
+        if (rejection is not null) await writer.WriteAsync(rejection, ct);
+    }
+
+    // Continue yalnız AYNI kök için geçerlidir: plan yeniden kurulmaz (T55), bu yüzden başka bir kök için
+    // Continue sessizce ESKİ kökün projelerini derlerdi.
+    private bool IsResumableForLocked(string rootPath) =>
+        HasResumableRunLocked && Canonical(rootPath) is string root
+        && string.Equals(root, _root, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Bozuk yol (boş/geçersiz karakter) fırlatmaz, null döner: bu, IPC dispatch loop'undan (StartAsync)
+    /// çağrılır — hatalı bir komut tüm Supervisor'ı düşürmemeli.</summary>
+    private static string? Canonical(string path)
+    {
+        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException) { return null; }
+    }
+
+    /// <summary>
+    /// [I2-K1] Aktif run'ın Stop'unu sahiplenir. <c>true</c> → <c>runStopped</c>'ı (in-flight sonuçları
+    /// raporlandıktan SONRA) bu koordinatör yazar. <c>false</c> → sahiplenilecek run yok; çağıran (host) kendi
+    /// ack'ini vermelidir.
+    ///
+    /// <para><b>Graceful:</b> yalnız <see cref="ReadySetScheduler.RequestStop"/> — yeni dispatch yok, in-flight
+    /// <c>MSBuild.exe</c> child'ları post-build copy DAHİL kendi tamamlanmalarını yapar (ortak çıktı dizini
+    /// yarım yazılmış kalmaz). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
+    /// <c>projectFailed("stopped")</c> raporlanır. Terminate edilmiş Job yeni process kabul ettiği için ikisi de
+    /// Continue'ya açıktır.</para>
+    /// </summary>
+    public bool TryRequestStop(StopKind kind)
+    {
+        lock (_gate)
+        {
+            if (!_runActive || _finishing) return false;
+            _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
+            if (kind == StopKind.Hard) innerJob.Terminate();
+            _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
+            _wake?.WakeAll();          // parked worker'lar IsDone'ı yeniden değerlendirsin
+            return true;
+        }
+    }
+
+    // ---------------------------------------------------------------- run
+
+    private async Task ExecuteRunAsync(StartRunCommand cmd, CancellationToken ct)
+    {
+        var events = Channel.CreateUnbounded<IpcEvent>(new UnboundedChannelOptions { SingleReader = true });
+        var pump = Task.Run(() => PumpEventsAsync(events.Reader, ct), CancellationToken.None);
+        try
+        {
+            await RunSegmentAsync(cmd, events.Writer, ct);
+        }
+        catch (Exception ex)
+        {
+            // Beklenmeyen hata: run slotu asla kilitli kalmamalı, App da sessizce beklememeli.
+            events.Writer.TryWrite(new ErrorEvent("runFailed", ex.Message));
+        }
+        finally
+        {
+            // ACK BORCU: TryRequestStop true dediyse runStopped'ı yazmak BİZİM sorumluluğumuzdur — ama run,
+            // runStarted'a hiç ulaşmamış olabilir (planFailed/msbuildNotFound ya da beklenmeyen bir hata; ör.
+            // kullanıcı 177 projelik bir planlama sürerken Stop'a bastı). O yolda aşağıdaki finally çalışmadığı
+            // için ack burada kapatılır; aksi halde App sonsuza dek runStopped bekler.
+            StopKind? unacked;
+            lock (_gate)
+            {
+                unacked = _stopKind is not null && !_stopAcked ? _stopKind : null;
+                _stopAcked = true;
+            }
+            if (unacked is not null)
+                events.Writer.TryWrite(new RunStoppedEvent(cmd.RunId, WasHard: unacked == StopKind.Hard));
+
+            events.Writer.Complete();
+            await pump; // tüm event'ler yazıldıktan SONRA run task'ı biter
+            lock (_gate)
+            {
+                _runActive = false;
+                _finishing = false;
+                _stopKind = null;
+                _scheduler = null;
+                _wake = null;
+            }
+        }
+    }
+
+    /// <summary>Tek FIFO kanal → tek yazıcı: event SIRASI korunur, çağıran thread'ler bloklanmaz.</summary>
+    private async Task PumpEventsAsync(ChannelReader<IpcEvent> reader, CancellationToken ct)
+    {
+        bool broken = false;
+        await foreach (var ev in reader.ReadAllAsync(CancellationToken.None))
+        {
+            if (broken) continue; // kanal yine de sonuna kadar tüketilir (yazıcı asla bloklanmaz)
+            try { await writer.WriteAsync(ev, ct); }
+            catch (IpcFramingException) { /* tek mesaj çok büyük — yalnız O atlanır, akış bozulmaz */ }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
+            { broken = true; } // App/stdout gitti — run devam eder, disk logu tek gerçek kaynaktır [D4]
+        }
+    }
+
+    private async Task RunSegmentAsync(StartRunCommand cmd, ChannelWriter<IpcEvent> events, CancellationToken ct)
+    {
+        RunPlan runPlan;
+        RunLogWriter logs;
+        ReadySetScheduler scheduler;
+        RunClock clock;
+        long elapsedAtStart;
+
+        if (cmd.Mode == RunMode.Continue)
+        {
+            RunSnapshot snapshot;
+            lock (_gate) { runPlan = _plan!; logs = _logs!; snapshot = _snapshot!; }
+            // [T55] AYNI plan'dan devam: yeniden tarama/planlama YOK. Snapshot.Queued INERT'tir — resume ctor'u
+            // kuyruğu Completed'tan türetir.
+            scheduler = new ReadySetScheduler(runPlan.Plan, snapshot);
+            elapsedAtStart = snapshot.ElapsedMs;
+            clock = new RunClock(nowMs, snapshot.ElapsedMs);
+        }
+        else
+        {
+            try { runPlan = planner(cmd.RootPath, cmd.Configuration); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }
+
+            lock (_gate)
+            {
+                _logs?.Dispose(); // terk edilmiş (artık sürdürülmeyecek) önceki run'ın writer'ı
+                _snapshot = null;
+                _plan = runPlan;
+                _root = Canonical(cmd.RootPath);
+                logs = _logs = logFactory(DateTimeOffset.Now);
+            }
+            scheduler = new ReadySetScheduler(runPlan.Plan);
+            elapsedAtStart = 0;
+            clock = new RunClock(nowMs);
+        }
+
+        MsBuildToolset toolset;
+        try { toolset = await msbuildFactory(ct); }
+        catch (MsBuildResolveException ex)
+        { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
+
+        int parallelism = Math.Max(1, cmd.Parallelism);
+        var wake = new WakeSignal();
+        lock (_gate)
+        {
+            _scheduler = scheduler;
+            _wake = wake;
+            if (_stopKind is not null) scheduler.RequestStop(); // plan kurulurken gelmiş Stop
+        }
+
+        clock.Start();
+        var plan = runPlan.Plan;
+        var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+        events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
+            plan.Configuration, elapsedAtStart));
+        // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
+        // gerçek komut satırları proje loglarındadır.
+        console(string.Format(CultureInfo.InvariantCulture,
+            "Run {0} ({1}): {2} proje, {3} worker, {4} — her proje ayrı bir derleyici child process'i olarak derlenir; komut satırları proje loglarında.",
+            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration));
+        Decide(logs, string.Format(CultureInfo.InvariantCulture,
+            "run {0} başladı: mode={1} projeler={2} parallelism={3} configuration={4} elapsedAtStart={5}ms",
+            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration, elapsedAtStart));
+
+        // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
+        // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.
+        try
+        {
+            // Cycle üyeleri (construction anında Skipped) — resume edilmiş scheduler'ın PreSkipped'i BOŞTUR,
+            // bu yüzden Continue'da tekrar yazılmazlar (yalnız snapshot onları taşımıyorsa savunmacı olarak yazılır).
+            foreach (var (projectId, reason) in scheduler.PreSkipped)
+            {
+                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason));
+                Decide(logs, $"{nodeById[projectId].Name}: atlandı — {reason}");
+            }
+
+            var run = new RunContext(
+                cmd.RunId, plan.Configuration, runPlan.SolutionRefs, nodeById,
+                scheduler, wake, logs, events,
+                // Retry politikası Core'un [T8]; burada yalnız run'a bağlanır: onRetry hem decision.log'a hem konsola.
+                new RetryingMsBuildInvoker(toolset.Invoker, RetryingMsBuildInvoker.DefaultBackoff,
+                    (delay, token) => Task.Delay(delay, token),
+                    onRetry: message => { Decide(logs, message); console(message); }),
+                toolset.MsBuildExePath);
+
+            var workers = Enumerable.Range(0, parallelism)
+                .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
+                .ToArray();
+            try { await Task.WhenAll(workers); }
+            catch (Exception ex)
+            {
+                // Worker'lar normalde fırlatmaz (her proje kendi sonucunu raporlar). Yine de fırlarsa: run ASILI
+                // KALMAZ — aşağıdaki finally snapshot alıp runCompleted yazar; kalanlar Queued olarak raporlanır.
+                Decide(logs, "worker beklenmedik şekilde sonlandı: " + ex.Message);
+            }
+        }
+        finally
+        {
+            // [Kısıt 4] Snapshot ANCAK tüm worker'lar join olduktan sonra alınır (her in-flight proje sonucunu
+            // raporlamıştır) — hem graceful hem hard için. Böylece Queued kesindir, "öldürüldü" ≠ "raporlandı"
+            // belirsizliği yoktur.
+            clock.Pause();
+            var snapshotAtEnd = scheduler.TakeSnapshot(clock.ElapsedMs);
+
+            StopKind? stopKind;
+            // _finishing: bundan sonra TryRequestStop sahiplenmez. _stopAcked: runStopped'ı BURADA yazıyoruz,
+            // ExecuteRunAsync'in ack-borcu kapatıcısı bir daha yazmasın (tek runStopped garantisi).
+            lock (_gate) { stopKind = _stopKind; _finishing = true; if (stopKind is not null) _stopAcked = true; }
+
+            var outcome = stopKind is null ? RunOutcome.Completed : RunOutcome.Stopped;
+            var completed = scheduler.Completed;
+            int succeeded = completed.Count(kv => kv.Value == BuildResult.Succeeded);
+            int failed = completed.Count(kv => kv.Value == BuildResult.Failed);
+            int skipped = completed.Count(kv => kv.Value == BuildResult.Skipped);
+
+            // Olaylar ÖNCE (TryWrite fırlatmaz), disk logu sonra: log I/O'su patlasa bile App kapanışı görür.
+            if (stopKind is not null)
+                events.TryWrite(new RunStoppedEvent(cmd.RunId, WasHard: stopKind == StopKind.Hard));
+            events.TryWrite(new RunCompletedEvent(cmd.RunId, outcome, succeeded, failed, skipped,
+                snapshotAtEnd.Queued.Count, clock.ElapsedMs));
+            Decide(logs, string.Format(CultureInfo.InvariantCulture,
+                "run {0} bitti: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms",
+                cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs));
+
+            bool resumable = outcome == RunOutcome.Stopped && snapshotAtEnd.Queued.Count > 0;
+            lock (_gate) _snapshot = resumable ? snapshotAtEnd : null;
+            if (!resumable)
+            {
+                // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
+                lock (_gate) { _logs = null; _plan = null; _root = null; }
+                logs.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// decision.log'a yazar. Log bir TANI kaydıdır: disk hatası (dolu disk vb.) run'ı ÖLDÜRMEMELİ — konsola uyarı
+    /// düşer ve run devam eder. <see cref="ObjectDisposedException"/> KASITLI olarak yakalanmaz: o, bu sınıfın
+    /// kendi log yaşam-döngüsü hatası demektir (kısıt 1) ve sessizce yutulmamalıdır.
+    /// </summary>
+    private void Decide(RunLogWriter logs, string line)
+    {
+        try { logs.AppendDecision(line); }
+        catch (IOException ex) { console("decision.log yazılamadı: " + ex.Message); }
+    }
+
+    // ---------------------------------------------------------------- worker
+
+    private async Task WorkerAsync(RunContext run, CancellationToken ct)
+    {
+        while (true)
+        {
+            // Beklenecek sinyal, KOŞUL KONTROLÜNDEN ÖNCE yakalanır: kontrol ile park arasında gelen bir uyandırma
+            // kaçırılmaz (lost wakeup yok).
+            var wake = run.Wake.Waiter;
+            if (run.Scheduler.IsDone) return;
+            if (!run.Scheduler.TryDispatch(out string projectId))
+            {
+                // [Kısıt 2] TryDispatch==false "run bitti" DEĞİL, "şu an hazır iş yok" demektir — bağımlılıklar
+                // hâlâ derleniyor olabilir. Burada dönmek run'ı sessizce kırpardı; bunun yerine park edilir.
+                try { await wake.WaitAsync(ct); }
+                catch (OperationCanceledException) { return; } // Supervisor kapanıyor
+                continue;
+            }
+            try { await BuildProjectAsync(run, projectId, ct); }
+            finally { run.Wake.WakeAll(); } // Complete edildi (ya da patladı) → parked worker'lar yeniden baksın
+        }
+    }
+
+    /// <summary>Tek projenin tüm yaşam döngüsü. <see cref="ReadySetScheduler.Complete"/> her yoldan TAM BİR KEZ çağrılır.</summary>
+    private async Task BuildProjectAsync(RunContext run, string projectId, CancellationToken ct)
+    {
+        // Dispatch ile Complete arasındaki HER ŞEY try/finally içinde: buradan fırlayan bir exception Complete'i
+        // atlarsa proje sonsuza dek in-flight kalır (IsDone asla true olmaz) ve run ASILIR. Bu yüzden ad araması
+        // da fırlatmayan biçimde yapılır (id her zaman plan'da vardır — scheduler aynı plan'dan sürülür).
+        string name = run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
+        var result = BuildResult.Failed;
+        try
+        {
+            run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, name));
+            var request = new MsBuildInvokeRequest(
+                ProjectId: projectId,
+                Configuration: run.Configuration,
+                SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
+                NeedsRestore: HasPackagesConfig(projectId),
+                BaseIntermediateOutputPath: null); // [I2-K2] in-place = projenin kendi obj'i; izolasyon It-3/worktree
+
+            MsBuildInvokeResult invoke;
+            // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose sonrası
+            // AppendLine fırlatır — satır sessizce düşmez).
+            using (var log = run.Logs.OpenProjectLog(projectId))
+            {
+                // v7Δ-7: proje logunun İLK satırı, bu proje için çalıştırılacak GERÇEK MSBuild komut satırıdır.
+                foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
+                    Emit(run, projectId, log, commandLine);
+                invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
+            }
+
+            if (invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed)
+            {
+                result = BuildResult.Succeeded;
+                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs));
+                Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
+                    "{0}: başarılı ({1}ms)", name, invoke.DurationMs));
+            }
+            else
+            {
+                string reason = ReasonFor(invoke);
+                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, invoke.DurationMs, reason));
+                Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
+                    "{0}: başarısız — {1} ({2}ms)", name, reason, invoke.DurationMs));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "stopped"));
+            Decide(run.Logs, $"{name}: başarısız — stopped (iptal)");
+        }
+        catch (Exception ex)
+        {
+            // Invoke/log yolunda beklenmeyen hata: proje tek başına düşer, run devam eder ("hata derlemeyi
+            // öldürmez", A3) — ve aşağıdaki finally sayesinde scheduler ASLA askıda kalmaz.
+            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "invoke error: " + ex.Message));
+            Decide(run.Logs, $"{name}: başarısız — invoke error: {ex.Message}");
+        }
+        finally
+        {
+            run.Scheduler.Complete(projectId, result);
+        }
+    }
+
+    /// <summary>Satırı diske yazar (1-tabanlı satır no) ve aynı numarayla canlı <c>projectLog</c> olayı üretir.</summary>
+    private static void Emit(RunContext run, string projectId, ProjectLogFile log, string line)
+    {
+        int lineNumber = log.AppendLine(line);
+        run.Events.TryWrite(new ProjectLogEvent(run.RunId, projectId, lineNumber, RunLogWriter.SanitizeLine(line)));
+    }
+
+    private static IEnumerable<string> CommandLines(MsBuildInvokeRequest request, string msbuildExePath)
+    {
+        if (request.NeedsRestore) // restore ÖNCE koşar (bkz. MsBuildInvoker) — komut satırı da o sırada yazılır
+            yield return WindowsCommandLine.Build(msbuildExePath,
+                [.. MsBuildArguments.RestorePackagesConfig(request.ProjectId, request.SolutionDir)]);
+        yield return WindowsCommandLine.Build(msbuildExePath,
+            [.. MsBuildArguments.Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath)]);
+    }
+
+    private string ReasonFor(MsBuildInvokeResult invoke)
+    {
+        // Hard stop ÖNCE bakılır: TerminateJobObject child'ı öldürdüğünde invoke sıradan bir "exit N" gibi döner
+        // (OperationCanceledException DEĞİL) — bu, kullanıcının bilinçli Stop'udur, projenin hatası değil.
+        lock (_gate)
+        {
+            if (_stopKind == StopKind.Hard) return "stopped";
+        }
+        if (invoke.TimedOut) return "timeout";
+        if (invoke.Killed) return "stopped";
+        return string.Format(CultureInfo.InvariantCulture, "exit {0}", invoke.ExitCode);
+    }
+
+    // [I2-K2/S2] Legacy restore sinyali: csproj'un YANINDA packages.config. bin/OutDir'e BAKILMAZ [§4].
+    private static bool HasPackagesConfig(string projectId)
+    {
+        string? dir = Path.GetDirectoryName(Path.GetFullPath(projectId));
+        return dir is not null && File.Exists(Path.Combine(dir, "packages.config"));
+    }
+
+    /// <summary>Yalnız aktif run YOKKEN log writer'ı kapatır: process kapanırken (bkz. Program) hâlâ koşan bir
+    /// run'ın worker'ları altından dosyayı çekmek, yakalayanı olmayan bir exception'a dönüşürdü.</summary>
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (_runActive) return;
+            _logs?.Dispose();
+            _logs = null;
+        }
+    }
+
+    private sealed record RunContext(
+        string RunId,
+        string Configuration,
+        IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs,
+        IReadOnlyDictionary<string, ProjectNode> NodeById,
+        ReadySetScheduler Scheduler,
+        WakeSignal Wake,
+        RunLogWriter Logs,
+        ChannelWriter<IpcEvent> Events,
+        IMsBuildInvoker Invoker,
+        string MsBuildExePath);
+
+    /// <summary>
+    /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].
+    /// <see cref="Waiter"/> ile alınan Task, bir sonraki <see cref="WakeAll"/>'da tamamlanır; her uyandırmada
+    /// TCS atomik olarak yenilenir, böylece sinyal "tek kullanımlık" değil tekrarlanabilir olur.
+    /// </summary>
+    private sealed class WakeSignal
+    {
+        private TaskCompletionSource _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Waiter => Volatile.Read(ref _tcs).Task;
+
+        public void WakeAll() =>
+            Interlocked.Exchange(ref _tcs, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+                .TrySetResult();
+    }
+}

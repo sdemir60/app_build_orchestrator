@@ -7,10 +7,11 @@ using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Supervisor;
 
-public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob, string logsRoot)
+public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob, string logsRoot,
+    RunCoordinator coordinator)
 {
     private bool _running = true;
-    private bool _stopRequested; // T4 base: graceful bayrağı — proje-sınırı semantiği It-2'de build kuyruğuna bağlanır
+    private bool _stopRequested; // aktif run YOKKEN gelen graceful stop (run koşarken sahibi koordinatördür)
 
     public bool StopRequested => _stopRequested;
 
@@ -40,12 +41,10 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await writer.WriteAsync(new PongEvent(p.Seq), ct); break;
             case ShutdownCommand:
                 _running = false; break;
-            case StopRunCommand s when s.Kind == StopKind.Hard:
-                innerJob.Terminate(); // T4 base: hard stop = TerminateJobObject(inner) — proje sınırı beklenmez
-                await writer.WriteAsync(new RunStoppedEvent(s.RunId, WasHard: true), ct); break;
+            case StartRunCommand s:
+                await coordinator.StartAsync(s, ct); break; // hemen döner — run arka planda koşar, loop komut almaya devam eder
             case StopRunCommand s:
-                _stopRequested = true;
-                await writer.WriteAsync(new RunStoppedEvent(s.RunId, WasHard: false), ct); break;
+                await StopRunAsync(s, ct); break;
             case GetProjectLogCommand g:
                 await SendProjectLogAsync(g, ct); break;
             case DebugSpawnChildrenCommand d:
@@ -53,6 +52,21 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
+    }
+
+    /// <summary>
+    /// [I2-K1] Aktif bir run varsa Stop'un SAHİBİ koordinatördür: hard'da inner Job'ı O terminate eder ve
+    /// <c>runStopped</c>'ı in-flight projelerin sonuçları raporlandıktan SONRA O yazar (kısıt: "öldürüldü" ≠
+    /// "raporlandı"). Aktif run yoksa T4-base davranışı korunur: hard → job terminate + anında ack.
+    /// TryRequestStop ATOMİKTİR — "aktif mi?" kontrolü ile sahiplenme arasında yarış penceresi yoktur, bu yüzden
+    /// runStopped tam olarak bir kez (ya koordinatörden ya buradan) yazılır.
+    /// </summary>
+    private async Task StopRunAsync(StopRunCommand s, CancellationToken ct)
+    {
+        if (coordinator.TryRequestStop(s.Kind)) return;
+        if (s.Kind == StopKind.Hard) innerJob.Terminate();
+        else _stopRequested = true;
+        await writer.WriteAsync(new RunStoppedEvent(s.RunId, WasHard: s.Kind == StopKind.Hard), ct);
     }
 
     private async Task SendProjectLogAsync(GetProjectLogCommand g, CancellationToken ct)
