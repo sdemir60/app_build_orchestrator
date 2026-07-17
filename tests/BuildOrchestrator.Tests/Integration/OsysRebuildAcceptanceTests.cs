@@ -273,9 +273,34 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
 
         // ---- KABUL İDDİALARI (güçlü, temiz invariantlar)
         Assert.NotNull(completed);                                  // koşu tamamlandı: hang/çökme YOK
+        Assert.NotNull(started);                                    // runStarted event alındı (TotalProjects kanıtı)
         Assert.True(maxConcurrent <= Parallelism,
             Inv($"paralellik tavanı aşıldı: {maxConcurrent} > {Parallelism}"));
         Assert.Equal(0, orchestratorCaused);                        // I2-K3: orchestrator kendisi hiçbir build'i kırmadı
+
+        // "COMPLETED, GREEN" iddiasını yalnız records.md'ye YAZMAKLA yetinme — testin kendisi ZORUNLU kılsın:
+        // Stopped bir outcome ya da geride kalan Queued>0 ile de bu satıra kadar gelinebilirdi (orchestratorCaused
+        // hâlâ 0 olurdu), bu yüzden şekil ayrı assert edilir.
+        Assert.Equal(RunOutcome.Completed, completed!.Outcome);     // Stopped DEĞİL — koşu gerçekten bitti
+        Assert.Equal(0, completed.Queued);                          // dispatch edilmeden kalan proje YOK
+
+        // Sabit "177" yerine SAYAÇ İNVARİANTI tercih edildi: OSYS reposu zamanla proje kazanıp/kaybedebilir
+        // (repo drift), 177'yi buraya gömmek testi kırılgan yapardı — repoda meşru bir proje eklenip/silinince
+        // test anlamsızca kırılırdı. Bunun yerine üç kovanın (succeeded/failed/skipped) toplamının
+        // runStarted.TotalProjects'e eşit olması istenir (hiçbir proje "kaybolmadı"/çift sayılmadı); alt sınır
+        // 150 ise boş/yanlış-scan bir koşunun (ör. yanlış RootPath) sessizce "yeşil" geçmesini engelleyen akıl
+        // sağlığı tabanıdır.
+        Assert.True(started!.TotalProjects > 150,
+            Inv($"toplam proje sayısı beklenenden düşük — yanlış-scan/boş koşu şüphesi: {started.TotalProjects}"));
+        Assert.Equal(started.TotalProjects, succeeded.Count + failed.Count + skipped.Count);
+
+        // Log kanıtı olmadan "0 orchestrator-kaynaklı" vermek dürüst bir YEŞİL değildir: Classify() MSB3027/
+        // invoke-error gibi sinyalleri PROJE LOGLARINDAN okur; runDir çözülemezse ya da loglar okunamazsa her
+        // failed'in logText'i boş kalır ve hepsi sessizce "repo-kaynaklı" varsayılır — kanıtsız bir GEÇİŞ.
+        // failedCount>0 iken runDir/log kanıtı YOKSA test FAIL etmeli (vacuous-pass'i engelle).
+        if (failed.Count > 0)
+            Assert.True(runDir is not null, "başarısız proje VAR ama run dizini/log kanıtı çözülemedi — " +
+                "0 orchestrator-kaynaklı iddiası log kanıtsız (vacuous pass); GEÇERSİZ.");
     }
 
     // ---------------------------------------------------------------- 2) dispatch determinizmi (iki koşu)
