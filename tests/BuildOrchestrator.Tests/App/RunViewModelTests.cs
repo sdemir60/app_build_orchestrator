@@ -454,6 +454,28 @@ public class RunViewModelTests
         Assert.False(vm.StopCommand.CanExecute(null));
     }
 
+    [Fact] // [Fix wave 3] RunCoordinator.ExecuteRunAsync'in dış catch'i planlama SIRASINDA (runStarted'dan ÖNCE)
+           // beklenmedik bir istisnada "runFailed" ErrorEvent'i yayınlar — bu kod eskiden RunEndingErrorCodes'ta
+           // yoktu, bu yüzden IsStarting kalıcı true kalır, Rebuild/Continue sonsuza dek kilitli kalırdı.
+    public async Task RunFailed_error_during_planning_reenables_Rebuild_and_disables_Stop()
+    {
+        // bkz. yukarıdaki iki test — gerçek (başlatılmış) engine gerekir ki runFailed geldiğinde IsStarting
+        // GERÇEKTEN true olsun (planlama-sırasında-beklenmedik-hata senaryosu).
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await engine.StartAsync();
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
+        Assert.True(vm.IsStarting);
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+
+        vm.OnEvent(new ErrorEvent("runFailed", "planlama sırasında beklenmedik hata"));
+
+        Assert.False(vm.IsStarting);
+        Assert.False(vm.IsRunning);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.StopCommand.CanExecute(null));
+    }
+
     // ---------------------------------------------------------------- 6d) [Fix wave 2, Finding 1] gönderim senkron BAŞARISIZ olursa IsStarting geri açılmalı
 
     [Fact] // engine hiç başlamadı/öldü → SendAsync senkron fırlar → IsStarting KALICI takılmamalı (hiç event gelmeden)

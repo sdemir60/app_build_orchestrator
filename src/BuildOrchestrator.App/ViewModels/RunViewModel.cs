@@ -59,9 +59,13 @@ public enum ProjectRowState { Started, Succeeded, Failed, Skipped }
 public sealed partial class RunViewModel : ObservableObject
 {
     // Bu kodlarda çalışan run'ın slotu serbest kalır ama runCompleted ASLA gelmez — App sonsuza dek
-    // beklememeli [Kısıt 3]: planFailed/msbuildNotFound/noResumableRun.
+    // beklememeli [Kısıt 3]: planFailed/msbuildNotFound/noResumableRun/runFailed.
+    // [Fix wave 3] runFailed: RunCoordinator.ExecuteRunAsync'in dış catch'i planlama SIRASINDA (runStarted'dan
+    // ÖNCE) beklenmedik bir istisnada da bu kodu yayınlar — eklenmezse IsStarting kalıcı true kalır (aynı
+    // wedge sınıfı, farklı tetikleyici). Küme BİLEREK genişletilmedi (ör. "tanınmayan her kod run-ending"
+    // yapılmadı): badCommand/unknownCommand gibi run'ı bitirmeyen per-command hatalar da vardır.
     private static readonly HashSet<string> RunEndingErrorCodes =
-        new(StringComparer.Ordinal) { "planFailed", "msbuildNotFound", "noResumableRun" };
+        new(StringComparer.Ordinal) { "planFailed", "msbuildNotFound", "noResumableRun", "runFailed" };
 
     private readonly EngineHost _engine;
     private readonly ConsoleBatcher _console;
