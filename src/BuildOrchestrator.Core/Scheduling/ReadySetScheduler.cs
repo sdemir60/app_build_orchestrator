@@ -55,6 +55,43 @@ public sealed class ReadySetScheduler
         }
     }
 
+    /// <summary>
+    /// [T55] Continue (resume) ctor'u: AYNI plan'dan devam eder — yeniden planlama/tarama/sıralama YOK.
+    /// <paramref name="snapshot"/>.Completed olduğu gibi devralınır (bu projeler bir daha ASLA dispatch
+    /// edilmez); geri kalan her şey (Completed'ta olmayan) build-order sırasıyla queued sayılır — bu,
+    /// <paramref name="snapshot"/>.Queued alanının kendisi kullanılmadan da _completed üyeliğinden türetilir,
+    /// çünkü TakeSnapshot ile Queued zaten "Completed'ta olmayanlar" olacak şekilde üretilir (partisyon
+    /// invaryantı) — burada ayrıca kullanılması gereken tek şey Completed'tır.
+    ///
+    /// Cycle/pre-skip DAVRANIŞI korunur: normal akışta (TakeSnapshot'tan gelen snapshot) cycle üyeleri zaten
+    /// önceki construction'da Skipped olarak Completed'a yazılmıştı, bu yüzden burada YENİDEN pre-skip
+    /// edilmezler (PreSkipped bu construction için boş kalır — hiçbir şey YENİ pre-skip edilmedi). Ama
+    /// savunmacı: snapshot Completed'ta cycle üyelerini taşımıyorsa (örn. elle kurulmuş bir snapshot),
+    /// yine de burada pre-skip edilirler — aksi halde bağımlılıkları birbirine dairesel olduğu için asla
+    /// ready olamazlar ve run kilitlenir (plan A6, fresh ctor ile aynı garanti).
+    /// </summary>
+    public ReadySetScheduler(BuildPlan plan, RunSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        _nodesInOrder = plan.Nodes;
+        _byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
+        _completed = new Dictionary<string, BuildResult>(snapshot.Completed, StringComparer.OrdinalIgnoreCase);
+        _inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _preSkipped = new List<(string, string)>();
+
+        foreach (var node in _nodesInOrder)
+        {
+            _byId[node.Id] = node;
+            if (node.InCycle && !_completed.ContainsKey(node.Id))
+            {
+                _completed[node.Id] = BuildResult.Skipped;
+                _preSkipped.Add((node.Id, "in dependency cycle"));
+            }
+        }
+    }
+
     /// <summary>Hiç dispatch edilmemiş (henüz TryDispatch tarafından verilmemiş) proje id'leri, build-order sıralı.</summary>
     public IReadOnlyList<string> QueuedProjectIds
     {
@@ -136,6 +173,31 @@ public sealed class ReadySetScheduler
     public void RequestStop()
     {
         lock (_gate) _stopRequested = true;
+    }
+
+    /// <summary>
+    /// [T55] Stop/Continue sınırını aşacak run state'ini alır (<paramref name="elapsedMs"/>, çağıran
+    /// tarafından <see cref="RunClock.ElapsedMs"/>'ten geçirilir — bu class saat tutmaz [D3]).
+    ///
+    /// Queued = plan'daki, Completed'ta OLMAYAN tüm node id'leri, build-order sıralı — bu, dispatch edilmiş
+    /// ama henüz Complete çağrılmamış (in-flight) projeleri DAHİL eder. Kasıtlı: gerçek Stop akışında engine
+    /// snapshot'ı ancak in-flight tükendikten sonra alır (IsDone), ama Task 9 bu metodu worker'lar hâlâ
+    /// koşarken de çağırabilir (thread-safety gereksinimi) — o anda in-flight olan bir proje ne tamamlanmış
+    /// sayılabilir (sonucu henüz yok) ne de sessizce kaybolabilir; bu yüzden "henüz kesin bitmemiş her şey"
+    /// Queued'a düşer. Sonuç: her node id tam olarak Completed VEYA Queued'dadır — asla ikisinde birden, asla
+    /// hiçbirinde (bkz. ContinueRunTests.take_snapshot_mid_run_keeps_in_flight_project_in_queued_not_lost).
+    ///
+    /// Not: bu, QueuedProjectIds property'sinden farklıdır — o "hiç dispatch edilmemiş" demektir ve in-flight'ı
+    /// hariç tutar (farklı bir soruya cevap verir: "TryDispatch'in bu run'da hiç vermediği projeler").
+    /// </summary>
+    public RunSnapshot TakeSnapshot(long elapsedMs)
+    {
+        lock (_gate)
+        {
+            var completed = new Dictionary<string, BuildResult>(_completed, StringComparer.OrdinalIgnoreCase);
+            var queued = _nodesInOrder.Where(n => !_completed.ContainsKey(n.Id)).Select(n => n.Id).ToList();
+            return new RunSnapshot(completed, queued, elapsedMs);
+        }
     }
 
     // _gate zaten tutulu iken çağrılmalı.
