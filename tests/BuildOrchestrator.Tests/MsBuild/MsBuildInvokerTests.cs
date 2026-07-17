@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -162,5 +163,91 @@ public class MsBuildInvokerTests
         Assert.False(result.Killed);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15),
             $"başarı yolu sınırlı sürede dönmedi: {sw.Elapsed} (grandchild hâlâ ayakta olabilir — fix eksik/bozuk)");
+    }
+
+    [SkippableFact] // Fix wave 2 / Finding 1 regresyon: WaitPumpsBoundedAsync 5sn sonra pes eder ama pump GÖREVİ
+                     // öldürülmez — grandchild MSBuild.exe'nin miras verdiği stdout pipe ucunu tutmaya devam
+                     // eder; bir sonraki satırı yazdığında abandoned pump'ın ReadLineAsync'i tamamlanır ve
+                     // onLine'ı InvokeAsync DÖNDÜKTEN SONRA çağırır. Task 9 bu anda ilişkili ProjectLogFile'ı
+                     // zaten dispose etmiş olabilir (Task 4 fix'i: dispose sonrası AppendLine artık
+                     // ObjectDisposedException fırlatıyor) — thread-pool thread'inde yakalayan olmayan bir
+                     // exception Supervisor'ı düşürür.
+                     // NOT: brief'in işaret ettiği ping.exe tabanlı fixture (CreateClassLibWithLingeringPostBuild)
+                     // BU MAKİNEDE görünür bir "geç satır" ÜRETMİYOR — deneysel olarak doğrulandı: ping.exe
+                     // pipe UCUNU açık tutuyor (WaitPumpsBoundedAsync'in 5sn sınırına gerçekten çarpılıyor,
+                     // pump EOF'u ping çıkana kadar gecikiyor) FAKAT kendisi o pipe'a HİÇBİR BAYT yazmıyor
+                     // (muhtemelen yönlendirilmiş/konsolsuz handle'da WriteConsole tabanlı I/O'su sessizce
+                     // başarısız oluyor) — yalnız sessiz/geç EOF gözlenir, onLine hiç tetiklenmez, bu da
+                     // Finding 1'in asıl iddiasını (geç bir SATIR yakalanması) bu fixture ile KANITLANAMAZ hale
+                     // getirir. Bkz. task-5-report.md "Fix wave 2" — RED/GREEN kanıtı bu notta detaylandırıldı.
+                     // Bunun yerine CreateClassLibWithLingeringPostBuildTextWriter kullanılır: grandchild
+                     // (powershell.exe) kendi stdout'una DEĞİL, MSBuild.exe İÇİNDEN <c>GetStdHandle</c> ile
+                     // okunan TAM handle DEĞERİNE argüman olarak alıp doğrudan <c>WriteFile</c> ile yazar —
+                     // inherited handle DEĞERLERİ child'ta AYNI sayı kaldığından bizim pipe'ımıza garantili
+                     // teslimat sağlar (bkz. LegacyFixture.cs XML doc'u). Grandchild'ın tam ne zaman öldüğü,
+                     // aynı `job`'a bağlı IOCP ile DETERMİNİSTİK izlenir
+                     // (D8 — sleep-poll YOK, test (c) ile aynı teknik): NEW_PROCESS bildirimleri PID İSMİNE göre
+                     // süzülür ("powershell" — MSBuild.exe'nin kendisi ve CoreCompile'ın kısa ömürlü derleyici
+                     // child'ı (csc.exe/VBCSCompiler) da job üyesi olabildiği için doğum SIRASINA güvenilmez).
+                     // Fix ÖNCESİ (RED): en az bir satır AfterReturn=true kaydedilir. Fix SONRASI (GREEN): onLine,
+                     // RunChildAsync dönmeden HEMEN ÖNCE aynı onLineLock altında latch edilir — geç çağrı YOK.
+    public async Task LingeringPostBuildGrandchild_no_onLine_after_invoke_returns()
+    {
+        string exe = await ResolveMsBuildExeOrSkipAsync();
+        string dir = NewTempDir();
+        string csproj = LegacyFixture.CreateClassLibWithLingeringPostBuildTextWriter(dir, "LatchLib", seconds: 8);
+
+        using var job = JobObject.CreateKillOnClose();
+        using var iocp = job.AttachCompletionPort(); // Launch'tan ÖNCE bağlanmalı — kaçırılan bildirim olmasın
+        var invoker = new MsBuildInvoker(job, exe);
+
+        var recordedLock = new object();
+        var recorded = new List<(string Line, bool AfterReturn)>();
+        bool returned = false;
+
+        var invokeTask = invoker.InvokeAsync(
+            new MsBuildInvokeRequest(csproj, "Debug", dir, NeedsRestore: false),
+            line => { lock (recordedLock) recorded.Add((line, returned)); },
+            CancellationToken.None);
+
+        // job'a katılan NEW_PROCESS bildirimlerini isme göre süz — MSBuild.exe'nin kendisi ve CoreCompile'ın
+        // kısa ömürlü derleyici child'ı (csc.exe/VBCSCompiler, breakaway YAPMAZSA o da job üyesi olur)
+        // "powershell" DEĞİLDİR, atlanır. Kısa ömürlü job üyeleri isim sorgusundan ÖNCE çıkmış olabilir
+        // (ArgumentException) — bunlar da "powershell değil" sayılıp atlanır.
+        int writerPid = -1;
+        while (writerPid < 0)
+        {
+            var born = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("grandchild (powershell.exe) doğum bildirimi gelmedi");
+            if (born.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
+            try
+            {
+                if (string.Equals(Process.GetProcessById(born.Pid).ProcessName, "powershell", StringComparison.OrdinalIgnoreCase))
+                    writerPid = born.Pid;
+            }
+            catch (ArgumentException) { /* zaten çıkmış kısa ömürlü job üyesi — powershell değil, atla */ }
+        }
+
+        var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(20));
+
+        // InvokeAsync az önce döndü — bu andan sonraki HERHANGİ bir onLine çağrısı "geç" sayılır.
+        lock (recordedLock) returned = true;
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(result.TimedOut);
+        Assert.False(result.Killed);
+
+        // grandchild'ın GERÇEKTEN çıktığını (son satırı yazıp pipe'ı kapattığı an) IOCP bildirimiyle bloklu
+        // bekle — MSBuild.exe'nin kendi exit bildirimi de gelebilir, o pid'i ATLA, yalnız writerPid'i eşleştir.
+        while (true)
+        {
+            var n = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("grandchild exit bildirimi gelmedi");
+            if (n.Pid == writerPid && n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
+                                                   or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
+                break;
+        }
+
+        bool anyLateLine;
+        lock (recordedLock) anyLateLine = recorded.Any(r => r.AfterReturn);
+        Assert.False(anyLateLine, "InvokeAsync döndükten SONRA onLine çağrıldı — abandoned pump latch edilmedi");
     }
 }

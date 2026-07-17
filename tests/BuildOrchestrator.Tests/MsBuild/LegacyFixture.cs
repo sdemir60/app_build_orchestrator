@@ -167,4 +167,132 @@ public static class LegacyFixture
 
         return csprojPath;
     }
+
+    /// <summary>
+    /// Fix wave 2 / Finding 1 regresyon fixture'ı: <see cref="CreateClassLibWithLingeringPostBuild"/> ile AYNI
+    /// "MSBuild.exe çıkar, grandchild yaşamaya devam eder" senaryosu, FAKAT grandchild'in ÇIKTISI GÜVENİLİR
+    /// şekilde bizim inherited pipe'ımıza yazılır. Deneysel olarak doğrulandı: ping.exe VE düz
+    /// (redirect'siz) powershell.exe HER İKİSİ DE bu ortamda MSBuild.exe'nin miras verdiği pipe UCUNU açık
+    /// tutuyor (pump'ın EOF'u grandchild çıkana kadar gerçekten gecikiyor) FAKAT KENDİ çıktılarını o pipe'a HİÇ
+    /// YAZMIYORLAR — muhtemelen konsolsuz/headless bir ata (CreateNoWindow+STARTF_USESTDHANDLES ile başlatılan
+    /// MSBuild.exe) altında, STARTF_USESTDHANDLES OLMADAN başlatılan konsol alt-sistemi child'ları için Windows
+    /// KENDİ (görünmez) yeni bir konsol ayırıyor; miras alınan pipe uçları yalnız "kazara" (bInheritHandles=TRUE
+    /// blanket inheritance) açık kalıyor, hiç KULLANILMIYOR. Bu da "abandoned pump geç bir SATIR yakalar"
+    /// senaryosunu (Finding 1'in asıl iddiası) ping/powershell'in KENDİ çıktısıyla KANITLANAMAZ hale getirir.
+    /// <para>
+    /// Bu yüzden grandchild, kendi stdout'unu DEĞİL, MSBuild.exe'nin (yani BİZİM pipe'ımızın) tam handle
+    /// DEĞERİNİ (<c>GetStdHandle(STD_OUTPUT_HANDLE)</c>, RoslynCodeTaskFactory'nin <c>Type="Class"</c> +
+    /// <c>DllImport</c> ile MSBuild.exe İÇİNDEN okunur) argüman olarak alıp doğrudan <c>WriteFile</c> ile o
+    /// handle'a yazan bir PowerShell script'i başlatır — Windows'ta inherited handle DEĞERLERİ child'ta AYNI
+    /// sayı olarak kalır, dolayısıyla bu, MSBuild.exe'nin exit ettiği pipe ucuna kesin/garantili teslimat sağlar.
+    /// </para>
+    /// </summary>
+    public static string CreateClassLibWithLingeringPostBuildTextWriter(string dir, string assemblyName, int seconds)
+    {
+        Directory.CreateDirectory(dir);
+
+        string csPath = Path.Combine(dir, "Class1.cs");
+        File.WriteAllText(csPath,
+            $$"""
+            namespace {{assemblyName}}
+            {
+                public class Class1
+                {
+                    public int Answer() => 42;
+                }
+            }
+            """);
+
+        string csprojPath = Path.Combine(dir, assemblyName + ".csproj");
+        File.WriteAllText(csprojPath,
+            $$"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <Import Project="$(MSBuildToolsPath)\Microsoft.Common.props" Condition="Exists('$(MSBuildToolsPath)\Microsoft.Common.props')" />
+              <PropertyGroup>
+                <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+                <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+                <ProjectGuid>{{Guid.NewGuid():B}}</ProjectGuid>
+                <OutputType>Library</OutputType>
+                <RootNamespace>{{assemblyName}}</RootNamespace>
+                <AssemblyName>{{assemblyName}}</AssemblyName>
+                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+              </PropertyGroup>
+              <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+                <DebugSymbols>true</DebugSymbols>
+                <DebugType>full</DebugType>
+                <Optimize>false</Optimize>
+                <OutputPath>bin\Debug\</OutputPath>
+                <DefineConstants>DEBUG;TRACE</DefineConstants>
+                <ErrorReport>prompt</ErrorReport>
+                <WarningLevel>4</WarningLevel>
+              </PropertyGroup>
+              <ItemGroup>
+                <Reference Include="System" />
+                <Reference Include="System.Core" />
+              </ItemGroup>
+              <ItemGroup>
+                <Compile Include="Class1.cs" />
+              </ItemGroup>
+              <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+              <UsingTask TaskName="SpawnLingeringGrandchildWriter" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+                <ParameterGroup>
+                  <Seconds ParameterType="System.Int32" Required="true" />
+                </ParameterGroup>
+                <Task>
+                  <Reference Include="$(MSBuildToolsPath)\Microsoft.Build.Framework.dll" />
+                  <Reference Include="$(MSBuildToolsPath)\Microsoft.Build.Utilities.Core.dll" />
+                  <Code Type="Class" Language="cs"><![CDATA[
+                    using System;
+                    using System.Diagnostics;
+                    using System.IO;
+                    using System.Runtime.InteropServices;
+                    using Microsoft.Build.Framework;
+                    using Microsoft.Build.Utilities;
+
+                    public class SpawnLingeringGrandchildWriter : Task
+                    {
+                        public int Seconds { get; set; }
+
+                        [DllImport("kernel32.dll", SetLastError = true)]
+                        private static extern IntPtr GetStdHandle(int nStdHandle);
+
+                        private const int STD_OUTPUT_HANDLE = -11;
+
+                        public override bool Execute()
+                        {
+                            long handleValue = GetStdHandle(STD_OUTPUT_HANDLE).ToInt64();
+                            string scriptPath = Path.Combine(Path.GetTempPath(), "boi-grandchild-writer-" + Guid.NewGuid().ToString("N") + ".ps1");
+                            string script =
+                                "Add-Type -Name W -Namespace N -MemberDefinition '[System.Runtime.InteropServices.DllImport(\"kernel32.dll\")] public static extern bool WriteFile(IntPtr h, byte[] b, int n, out int w, IntPtr o);'\r\n" +
+                                "$h = [IntPtr]" + handleValue + "\r\n" +
+                                "for ($i = 1; $i -le " + Seconds + "; $i++) {\r\n" +
+                                "  $b = [System.Text.Encoding]::ASCII.GetBytes('GRANDCHILD-LINE-' + $i + \"`r`n\")\r\n" +
+                                "  $w = 0\r\n" +
+                                "  [N.W]::WriteFile($h, $b, $b.Length, [ref] $w, [IntPtr]::Zero) | Out-Null\r\n" +
+                                "  Start-Sleep -Seconds 1\r\n" +
+                                "}\r\n";
+                            File.WriteAllText(scriptPath, script);
+
+                            var psi = new ProcessStartInfo("powershell.exe",
+                                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + scriptPath + "\"")
+                            {
+                                UseShellExecute = false,
+                                CreateNoWindow = true,
+                            };
+                            Process.Start(psi);
+                            return true;
+                        }
+                    }
+                  ]]></Code>
+                </Task>
+              </UsingTask>
+              <Target Name="LingeringPostBuildWriter" AfterTargets="Build">
+                <SpawnLingeringGrandchildWriter Seconds="{{seconds}}" />
+              </Target>
+            </Project>
+            """);
+
+        return csprojPath;
+    }
 }

@@ -23,7 +23,13 @@ public interface IMsBuildInvoker
 public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : IMsBuildInvoker
 {
     public static readonly TimeSpan PerProjectTimeout = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan PostKillWait = TimeSpan.FromSeconds(5); // ProcessRunner ile aynı desen — kill takılsa da hang yok
+
+    // Fix wave 2 / Finding 3: eskiden TEK "PostKillWait" adı hem başarı-yolu drain'inde (hiçbir şey
+    // öldürülmedi) HEM de kill-sonrası beklemede kullanılıyordu — isim, kill OLMAYAN yolda yanıltıcıydı.
+    // İkisi anlamca farklı olduğu için (ve gelecekte bağımsız ayarlanabilir olsun diye) İKİ AYRI sabite
+    // bölündü; değerleri şimdilik aynı (5s), ProcessRunner ile aynı desen — kill/drain takılsa da hang yok.
+    private static readonly TimeSpan DrainWait = TimeSpan.FromSeconds(5); // başarı yolu: MSBuild çıktı, pump'ları BOUNDED bekle
+    private static readonly TimeSpan PostKillWait = TimeSpan.FromSeconds(5); // kill yolu: Kill() sonrası çıkış + pump beklemesi
 
     public async Task<MsBuildInvokeResult> InvokeAsync(MsBuildInvokeRequest req, Action<string> onLine, CancellationToken ct)
     {
@@ -63,39 +69,67 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
             new LaunchOptions(RedirectStdio: true, WorkingDirectory: workingDirectory));
 
         // invoke-lokal kilit: stdout/stderr iki ayrı reader task'ından geliyor, onLine çağrıları serileşir.
+        // Fix wave 2 / Finding 1: `detached`, aynı kilit altında bir LATCH görevi de görür — RunChildAsync
+        // dönmeden HEMEN ÖNCE (aşağıdaki finally) true'ya çekilir, SafeOnLine bundan sonra onLine'ı hiç
+        // ÇAĞIRMAZ. Gerekçe: WaitPumpsBoundedAsync (aşağıda) pes ettiğinde pump TASK'ları iptal EDİLMEZ —
+        // yalnız beklemekten vazgeçilir (bkz. Finding 2 açıklaması) — bir sonraki satır geldiğinde abandoned
+        // pump'ın ReadLineAsync'i tamamlanır ve InvokeAsync DÖNDÜKTEN SONRA onLine'ı çağırabilirdi. Task 9'da
+        // onLine çağrıya karşılık gelen ProjectLogFile invoke bitince dispose edilir (Task 4 fix'i: dispose
+        // sonrası AppendLine artık ObjectDisposedException fırlatır) — bu latch olmadan, thread-pool
+        // thread'inde yakalayan olmayan bir exception Supervisor'ı düşürebilir.
         var onLineLock = new object();
-        void SafeOnLine(string line) { lock (onLineLock) onLine(line); }
+        bool detached = false;
+        void SafeOnLine(string line) { lock (onLineLock) { if (!detached) onLine(line); } }
 
         var stdoutTask = PumpLinesAsync(child.StandardOutput!, SafeOnLine);
         var stderrTask = PumpLinesAsync(child.StandardError!, SafeOnLine);
 
         try
         {
-            int exitCode = await child.WaitForExitAsync(timeoutToken);
-            // Fix wave 1 / Finding 1: başarı yolu da BOUNDED beklemeli — MSBuild.exe çıksa bile, post-build
-            // <Exec>'in başlattığı bir grandchild (örn. copy-event) inherited stdout/stderr pipe uçlarının bir
-            // kopyasını tutuyor olabilir (JobProcessLauncher'ın HANDLE_LIST'i yalnız BİZİM doğrudan miras
-            // verdiğimiz uçları sınırlar — torunun mirasını sınırlamaz), bu durumda pipe hiç EOF vermez ve eski
-            // unbounded Task.WhenAll sonsuza dek asılı kalırdı. WaitPumpsBoundedAsync zaten kill-yolunda var
-            // olan yardımcı; burada da PostKillWait (5s) içinde döner. `using var child` (yukarıda) metot
-            // dönünce Dispose olur, akışları kapatır — bloklu ReadLineAsync bu yüzden ObjectDisposedException/
-            // IOException fırlatır ve pump görevi PumpLinesAsync'in kendi filtresiyle sessizce/hatasız biter.
-            await WaitPumpsBoundedAsync(stdoutTask, stderrTask);
-            return new MsBuildInvokeResult(exitCode, sw.ElapsedMilliseconds, TimedOut: false, Killed: false);
+            try
+            {
+                int exitCode = await child.WaitForExitAsync(timeoutToken);
+                // Fix wave 1 / Finding 1: başarı yolu da BOUNDED beklemeli — MSBuild.exe çıksa bile, post-build
+                // <Exec>'in başlattığı bir grandchild (örn. copy-event) inherited stdout/stderr pipe uçlarının
+                // bir kopyasını tutuyor olabilir (JobProcessLauncher'ın HANDLE_LIST'i yalnız BİZİM doğrudan
+                // miras verdiğimiz uçları sınırlar — torunun mirasını sınırlamaz), bu durumda pipe hiç EOF
+                // vermez ve eski unbounded Task.WhenAll sonsuza dek asılı kalırdı. WaitPumpsBoundedAsync zaten
+                // kill-yolunda var olan yardımcı; burada da DrainWait (5s) içinde döner.
+                // Fix wave 2 / Finding 2 DÜZELTMESİ: aşağıdaki `using var child`'ın Dispose'u, pump'ı
+                // İPTAL/ABORT ETMEZ — yalnız TERK EDER. `child.StandardOutput`/`StandardError`
+                // AnonymousPipeServerStream'dir; anonim pipe'lar overlapped OLUŞTURULAMAZ, bu yüzden
+                // ReadLineAsync fiilen thread-pool thread'inde BLOKLU bir ReadFile'a düşer. SafePipeHandle
+                // referans-sayımlıdır ve devam eden ReadFile bir referans TUTAR — Dispose bu yüzden
+                // CloseHandle'ı ERTELER, bloklu okumayı KESMEZ. Pump ancak grandchild bir daha yazınca ya da
+                // çıkınca (Finding 1) uyanır. Task 9 ölçeğinde (~178 kopya olayı/177 proje) bu, grandchild'ların
+                // TÜM ömrü boyunca yüzlerce bloklu thread-pool thread'i tutabilir; pool ise yeni thread'i
+                // yalnız ~1-2/sn enjekte eder — `InvokeAsync` yine de HİÇ asılmaz (kontrat korunur), ama bu
+                // yorum, Task 9/13'ü ayarlayacak kişiyi yanlış yönlendirmesin diye düzeltildi.
+                await WaitPumpsBoundedAsync(stdoutTask, stderrTask, DrainWait);
+                return new MsBuildInvokeResult(exitCode, sw.ElapsedMilliseconds, TimedOut: false, Killed: false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Fix wave 1 / Finding 3: timedOut artık ct'nin durumundan DOLAYLI çıkarılmıyor (eski:
+                // !ct.IsCancellationRequested) — timeoutOnlyCts'in KENDİSİ ateşlendi mi diye DOĞRUDAN bakılır.
+                // ct ve PerProjectTimeout neredeyse eşzamanlı ateşlenirse eski kod gerçek bir timeout'u
+                // TimedOut:false raporlardı; bu iki kaynak birbirinden bağımsız tutulduğu için artık öyle bir
+                // yanlış-atıf yok.
+                bool timedOut = timeoutOnlyCts.IsCancellationRequested;
+                KillChild(child.Pid);
+                using var postKillCts = new CancellationTokenSource(PostKillWait);
+                try { await child.WaitForExitAsync(postKillCts.Token); }
+                catch (OperationCanceledException) { /* çıkış onayı gelmedi — devam, metot asılı kalmaz */ }
+                await WaitPumpsBoundedAsync(stdoutTask, stderrTask, PostKillWait);
+                return new MsBuildInvokeResult(-1, sw.ElapsedMilliseconds, TimedOut: timedOut, Killed: true);
+            }
         }
-        catch (OperationCanceledException)
+        finally
         {
-            // Fix wave 1 / Finding 3: timedOut artık ct'nin durumundan DOLAYLI çıkarılmıyor (eski:
-            // !ct.IsCancellationRequested) — timeoutOnlyCts'in KENDİSİ ateşlendi mi diye DOĞRUDAN bakılır. ct ve
-            // PerProjectTimeout neredeyse eşzamanlı ateşlenirse eski kod gerçek bir timeout'u TimedOut:false
-            // raporlardı; bu iki kaynak birbirinden bağımsız tutulduğu için artık öyle bir yanlış-atıf yok.
-            bool timedOut = timeoutOnlyCts.IsCancellationRequested;
-            KillChild(child.Pid);
-            using var postKillCts = new CancellationTokenSource(PostKillWait);
-            try { await child.WaitForExitAsync(postKillCts.Token); }
-            catch (OperationCanceledException) { /* çıkış onayı gelmedi — devam, metot asılı kalmaz */ }
-            await WaitPumpsBoundedAsync(stdoutTask, stderrTask);
-            return new MsBuildInvokeResult(-1, sw.ElapsedMilliseconds, TimedOut: timedOut, Killed: true);
+            // Fix wave 2 / Finding 1: hangi yoldan dönülürse dönülsün (başarı, kill, ya da beklenmeyen bir
+            // exception) RunChildAsync'in kendisi dönmeden ÖNCE latch kapanır — abandoned pump'lar bundan
+            // sonra hiçbir onLine çağrısı BAŞLATAMAZ.
+            lock (onLineLock) detached = true;
         }
     }
 
@@ -125,9 +159,9 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
         }
     }
 
-    private static async Task WaitPumpsBoundedAsync(Task stdoutTask, Task stderrTask)
+    private static async Task WaitPumpsBoundedAsync(Task stdoutTask, Task stderrTask, TimeSpan wait)
     {
-        using var cts = new CancellationTokenSource(PostKillWait);
+        using var cts = new CancellationTokenSource(wait);
         try { await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(cts.Token); }
         catch (OperationCanceledException) { /* pump'lar takılsa da metot asılı kalmaz */ }
     }
