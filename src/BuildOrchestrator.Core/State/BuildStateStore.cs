@@ -19,6 +19,15 @@ public sealed class BuildStateStore
 
     public BuildStateStore(string cacheRoot) => _path = Path.Combine(cacheRoot, "build-state.json");
 
+    /// <summary>
+    /// TEST-ONLY hook: her başarısız rename denemesinden sonra, retry sleep'inden ÖNCE çağrılır (parametre: 1-based
+    /// attempt no). Üretimde null bırakılır — zero-cost (bir null-check dışında davranış değişmez, 20x5ms bütçesi
+    /// AYNEN korunur). Testler (BuildOrchestrator.Tests, InternalsVisibleTo ile) bunu, sabit bir wall-clock bekleme
+    /// (ör. Task.Delay(40)) yerine GÖZLEMLENEN retry ilerlemesine göre kilidi bırakmak için kullanır — böylece
+    /// paralel test yükü altında (xUnit sınıfları paralel koşar) makine yavaşlasa bile test deterministik kalır.
+    /// </summary>
+    internal Action<int>? OnRenameRetry { get; set; }
+
     /// <summary>Diskten tüm build-state map'ini okur. Dosya yok/boş/bozuk → boş map, ASLA fırlatmaz.</summary>
     public IReadOnlyDictionary<string, BuildState> Load()
     {
@@ -99,7 +108,7 @@ public sealed class BuildStateStore
     /// bu geçici pencereyi absorbe eder (bkz. RetryingMsBuildInvoker'daki MSB302x contention retry deseni — burada
     /// enjekte edilmiş delay yerine küçük sabit bekleme yeterli, çünkü pencere mikrosaniyeler mertebesinde).
     /// </summary>
-    private static void MoveAtomicWithRetry(string tmp, string target)
+    private void MoveAtomicWithRetry(string tmp, string target)
     {
         const int maxAttempts = 20;
         for (int attempt = 1; ; attempt++)
@@ -114,6 +123,7 @@ public sealed class BuildStateStore
                 // [Review Minor 3] Deliberate deviation: RetryingMsBuildInvoker enjekte edilebilir async delay
                 // kullanır (testability için DI), ama Upsert senkron bir metot — o desen burada doğrudan uymuyor.
                 // Gerçek Thread.Sleep(5) kullanılıyor; üst bütçe küçük ve sabit (20 deneme x 5ms ≈ 100ms max).
+                OnRenameRetry?.Invoke(attempt); // test-only, null → zero-cost; üretim davranışı/bütçesi değişmez
                 Thread.Sleep(5);
             }
         }

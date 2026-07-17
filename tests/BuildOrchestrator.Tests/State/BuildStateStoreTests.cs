@@ -242,9 +242,13 @@ public class BuildStateStoreTests : IDisposable
 
     [Fact] // [Review Important 2] MoveAtomicWithRetry: hedef dosya geçici olarak (Delete-share VERİLMEDEN) kilitliyken
            // Upsert atomik rename'i retry ile başarır. D8: koordinasyon TCS ile — lock ALINDIĞI kesin bilinene kadar
-           // beklenir (poll yok); ardından retry'ların gerçek kilide çarpması için TEK seferlik, kısa ve sabit bir
-           // bekleme var (retry bütçesi ~19x5ms≈95ms — 40ms bu bütçenin ortasında, hem birkaç retry'ın gerçekleşmesine
-           // hem release sonrası başarı için yeterli paya izin verir); bu bir sleep-poll DÖNGÜSÜ değildir.
+           // beklenir (poll yok). [Flaky-test hardening] Eskiden lock-holder kilidi SABİT Task.Delay(40) sonra
+           // bırakıyordu: paralel suite yükü altında (xUnit sınıfları paralel koşar) hem bu 40ms hem retry
+           // Thread.Sleep(5)'leri gerçek zamanda uzayabiliyor, Upsert bazen 100ms bütçesini tüketmeden kilit
+           // bırakılmadan tükeniyordu (282/284 run'da gözlemlenmiş ara sıra fail, izole çalışmada geçiyordu).
+           // Artık wall-clock tahmini YOK: internal OnRenameRetry hook'u ile Upsert'in İLK retry'a girdiği an
+           // (gerçek gözlemlenen ilerleme) bir TCS ile sinyallenir, lock-holder TAM O ANDA kilidi bırakır — bir
+           // sonraki rename denemesi başarılı olur. Makine ne kadar yavaş/hızlı olursa olsun deterministik.
     public async Task Upsert_retries_and_succeeds_when_target_file_is_transiently_locked_without_delete_share()
     {
         Directory.CreateDirectory(_root);
@@ -252,7 +256,11 @@ public class BuildStateStoreTests : IDisposable
         store.Upsert(new BuildState("Seed", "seed-sig")); // hedef dosyayı önceden var eder (kilitlenecek dosya)
 
         var lockAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseLock = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstRetryObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Yalnız BİR kez sinyallemek yeterli — ilk retry gözlemlenir gözlemlenmez kilit bırakılacak, sonraki
+        // retry denemeleri zaten olmayacak (ya da olsa da TrySetResult ikinci çağrıda no-op).
+        store.OnRenameRetry = _ => firstRetryObserved.TrySetResult();
 
         var lockHolder = Task.Run(async () =>
         {
@@ -260,15 +268,13 @@ public class BuildStateStoreTests : IDisposable
             // bu handle açıkken sharing-violation ile başarısız olur — MoveAtomicWithRetry'ın retry yolunu tetikler.
             using var fs = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             lockAcquired.SetResult();
-            await releaseLock.Task;
+            await firstRetryObserved.Task; // Upsert'in İLK retry'a girdiği, GÖZLEMLENEN an — wall-clock tahmini yok
+            // fs Dispose burada (using bloğu sonunda) kilidi bırakır; bir sonraki rename denemesi başarılı olur.
         });
 
         await lockAcquired.Task; // dosya kilidi KESİN alınmış — deterministik senkronizasyon noktası, poll yok
 
         var upsertTask = Task.Run(() => store.Upsert(new BuildState("P1", "sig1")));
-
-        await Task.Delay(40); // bkz. üstteki not: retry bütçesinin ortası, sleep-poll DÖNGÜSÜ değil, tek seferlik
-        releaseLock.SetResult();
 
         await Task.WhenAll(lockHolder, upsertTask).WaitAsync(TimeSpan.FromSeconds(10));
 
