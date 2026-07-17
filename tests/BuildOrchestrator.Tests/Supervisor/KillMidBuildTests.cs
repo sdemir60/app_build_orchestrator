@@ -27,9 +27,12 @@ public class KillMidBuildTests
         string root = Directory.CreateTempSubdirectory("bo-killmid-ws-").FullName;
         string sharedBin = Path.Combine(root, "SharedBin");
         string logsDir = Directory.CreateTempSubdirectory("bo-killmid-logs-").FullName;
-        string[] names = ["KM1", "KM2", "KM3", "KM4"];
-        foreach (string name in names)
-            LegacyFixture.CreateClassLibWithSharedBinCopy(Path.Combine(root, name), name, sharedBin);
+        // Fix wave 1 / Finding 1: karışık hız — KM1 gecikmesiz (hızlı/kontrol: compile + ortak-bin kopyası kill'den
+        // ÖNCE gerçekten biter, succeededBeforeKill'e GARANTİLİ en az bir GERÇEK DLL girer), KM2-4 gecikmeli (yavaş:
+        // compile GERÇEKTEN olur ama ortak-bin kopyası kill anında hâlâ MSBuild.exe'nin Exec bloğunda uçuştadır).
+        (string Name, int DelaySeconds)[] projects = [("KM1", 0), ("KM2", 3), ("KM3", 3), ("KM4", 3)];
+        foreach (var (name, delay) in projects)
+            LegacyFixture.CreateClassLibWithSharedBinCopy(Path.Combine(root, name), name, sharedBin, delay);
 
         var livePids = new HashSet<int>();          // outer Job'un o ana kadar gördüğü TÜM canlı üyeler (supervisor dahil)
         var liveMsBuildPids = new HashSet<int>();    // yalnız hâlâ canlı GERÇEK MSBuild.exe çocukları — eşik BURADA ölçülür
@@ -49,41 +52,54 @@ public class KillMidBuildTests
 
             await writer.WriteAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", Parallelism: 4));
 
-            // Deterministik tetik [D8]: sleep-poll YOK — ≥2 projectStarted gelene kadar IPC okunur (gerçek
-            // paralel derlemenin uçuşta olduğunun kanıtı). Cold build yavaş olabilir → cömert timeout (60s);
-            // asıl kill→ölüm iddiası aşağıda AYRI ve dar (≤2000ms) tutulur.
+            // Fix wave 1 / Finding 1 + Finding 2: TEK birleşik olay döngüsü — eskiden "phase 1 (IPC)" ve "phase 2
+            // (IOCP)" ayrı döngülerdi; phase 2 sırasında gelen ProjectSucceededEvent'ler HİÇ okunmuyordu (Finding 2:
+            // kill-öncesi pencere eksikti). Şimdi IPC okuma ve IOCP bekleme AYNI döngüde, Task.WhenAny ile
+            // ARALIKSIZ birlikte sürdürülüyor — succeededBeforeKill artık start'tan kill anına kadar TÜM pencereyi
+            // kapsıyor. Deterministik tetik [D8]: sleep-poll YOK, ikisi de blok bekleme (IPC: pipe read; IOCP:
+            // GetQueuedCompletionStatus) üzerine kurulu. Çıkış koşulu ÜÇ gerçek sinyalin BİRLİKTE sağlanması:
+            // ≥2 ProjectStartedEvent (paralel derlemenin uçuşta olduğunun kanıtı), ≥1 ProjectSucceededEvent
+            // (Finding 1: succeededBeforeKill GARANTİLİ ≥1 — KM1 gecikmesiz olduğu için bu olay mutlaka erken gelir,
+            // sleep YOK, gerçek bir olaya bağlı) ve ≥2 hâlâ canlı gerçek MSBuild.exe (Finding 1: kill anında GERÇEK
+            // derleyici/kopya işi uçuşta olduğunun kanıtı — KM2-4 compile'ı bitirmiş, ortak-bin kopyasını henüz
+            // YAPMAMIŞ olarak Exec'te bloke haldedir). Cold build yavaş olabilir → cömert timeout'lar (IPC 60s,
+            // IOCP 30s); asıl kill→ölüm iddiası aşağıda AYRI ve dar (≤2000ms) tutulur.
             int startedCount = 0;
-            while (startedCount < 2)
+            Task<IpcEvent?> ipcTask = ReadIpcAsync(reader);
+            Task<JobNotification?> iocpTask = Task.Run(() => iocp.WaitNext(TimeSpan.FromSeconds(30)));
+            while (startedCount < 2 || succeededBeforeKill.Count < 1 || liveMsBuildPids.Count < 2)
             {
-                var e = await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(60))
-                        ?? throw new InvalidOperationException("Supervisor stdout beklenmedik şekilde kapandı.");
-                // VS/MSBuild kurulu değilse run başlamadan msbuildNotFound gelir — mevcut MsBuildInvokerTests deseni.
-                if (e is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
-                if (e is ProjectStartedEvent) startedCount++;
-                if (e is ProjectSucceededEvent ps) succeededBeforeKill.Add(ps.ProjectId); // kill ÖNCESİ bitenler
-            }
-
-            // pid koleksiyonu: outer IOCP tüm ağacı görür (nested üyelik mirası) — supervisor, MsBuildResolver'ın
-            // kısa ömürlü vswhere.exe yardımcı süreci VE gerçek MSBuild.exe çocukları hepsi aynı bildirim akışına
-            // düşer (vswhere.exe job-DIŞI bir ProcessRunner ile başlatılsa da, job üyesi Supervisor'ın soyundan
-            // geldiği için otomatik job üyesi olur ve saniyeler önce zaten doğup ölmüş olabilir). Bu yüzden eşik
-            // HAM canlı sayısı değil, isme göre süzülmüş "hâlâ canlı MSBuild.exe" sayısıdır — aksi halde vswhere.exe
-            // gibi çoktan ölmüş bir üye eşiği yanlışlıkla doldurur. Bildirimler kernel'de zaten kuyruklanmıştır
-            // (biz dinlemesek de kaybolmaz); ≥2 GERÇEK ve hâlâ canlı MSBuild.exe gözlenene kadar bloklu beklenir
-            // (D8: sleep-poll YOK — IOCP bildirimi üzerinde blok).
-            while (liveMsBuildPids.Count < 2)
-            {
-                var n = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("IOCP doğumları eksik");
-                if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS)
+                var completed = await Task.WhenAny(ipcTask, iocpTask);
+                if (completed == ipcTask)
                 {
-                    livePids.Add(n.Pid);
-                    if (IsMsBuildProcess(n.Pid)) liveMsBuildPids.Add(n.Pid);
+                    var e = await ipcTask ?? throw new InvalidOperationException("Supervisor stdout beklenmedik şekilde kapandı.");
+                    // VS/MSBuild kurulu değilse run başlamadan msbuildNotFound gelir — mevcut MsBuildInvokerTests deseni.
+                    if (e is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
+                    if (e is ProjectStartedEvent) startedCount++;
+                    if (e is ProjectSucceededEvent ps) succeededBeforeKill.Add(ps.ProjectId); // kill ÖNCESİ bitenler
+                    ipcTask = ReadIpcAsync(reader);
                 }
-                if (n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
-                                or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
+                else
                 {
-                    livePids.Remove(n.Pid);
-                    liveMsBuildPids.Remove(n.Pid);
+                    // outer IOCP tüm ağacı görür (nested üyelik mirası) — supervisor, MsBuildResolver'ın kısa ömürlü
+                    // vswhere.exe yardımcı süreci VE gerçek MSBuild.exe çocukları hepsi aynı bildirim akışına düşer
+                    // (vswhere.exe job-DIŞI bir ProcessRunner ile başlatılsa da, job üyesi Supervisor'ın soyundan
+                    // geldiği için otomatik job üyesi olur ve saniyeler önce zaten doğup ölmüş olabilir). Bu yüzden
+                    // eşik HAM canlı sayısı değil, isme göre süzülmüş "hâlâ canlı MSBuild.exe" sayısıdır — aksi halde
+                    // vswhere.exe gibi çoktan ölmüş bir üye eşiği yanlışlıkla doldurur.
+                    var n = await iocpTask ?? throw new TimeoutException("IOCP doğumları eksik");
+                    if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS)
+                    {
+                        livePids.Add(n.Pid);
+                        if (IsMsBuildProcess(n.Pid)) liveMsBuildPids.Add(n.Pid);
+                    }
+                    if (n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
+                                    or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
+                    {
+                        livePids.Remove(n.Pid);
+                        liveMsBuildPids.Remove(n.Pid);
+                    }
+                    iocpTask = Task.Run(() => iocp.WaitNext(TimeSpan.FromSeconds(30)));
                 }
             }
             handles = livePids.Select(pid => { try { return Process.GetProcessById(pid); } catch (ArgumentException) { return null; } })
@@ -105,18 +121,30 @@ public class KillMidBuildTests
         foreach (var p in handles) // 0 orphan
             Assert.Throws<ArgumentException>(() => Process.GetProcessById(p.Id));
 
-        // Torn DLL yok: kill'den ÖNCE projectSucceeded raporlamış her projenin ortak bin'deki DLL'i geçerli bir
-        // PE'dir (yarım/torn olsaydı AssemblyName.GetAssemblyName BadImageFormatException/FileLoadException fırlatırdı).
-        // ≤2 proje bitmiş olabilir (kill erken gelmiş olabilir) — bu, "mid-build" senaryosunun ta kendisidir.
+        // Fix wave 1 / Finding 1: succeededBeforeKill artık GARANTİLİ ≥1 (bkz. yukarıdaki birleşik döngünün çıkış
+        // koşulu — KM1 gecikmesiz olduğu için bu, opsiyonel/tesadüfi bir doğrulama DEĞİL, her koşuda tetiklenen
+        // gerçek bir kontrol). Torn DLL yok: kill'den ÖNCE projectSucceeded raporlamış her projenin ortak bin'deki
+        // DLL'i geçerli bir PE'dir (yarım/torn olsaydı AssemblyName.GetAssemblyName BadImageFormatException/
+        // FileLoadException fırlatırdı). KM2-4 (yavaş) kill anında hâlâ uçuşta olabilir — bu "mid-build"
+        // senaryosunun ta kendisidir; onların ortak-bin kopyası hiç yazılmamış (Copy hiç ÇALIŞMAMIŞ) olabilir,
+        // o yüzden DLL-geçerlilik kontrolü yalnızca succeededBeforeKill'e girenlere uygulanır.
+        Assert.True(succeededBeforeKill.Count >= 1, "succeededBeforeKill boş — birleşik döngünün çıkış koşulu garantisi bozulmuş olmalı");
         foreach (string projectId in succeededBeforeKill)
         {
             string name = Path.GetFileNameWithoutExtension(projectId);
             string dllPath = Path.Combine(sharedBin, name + ".dll");
             Assert.True(File.Exists(dllPath), $"{name}: succeeded raporlandı ama ortak bin'de DLL yok: {dllPath}");
-            var asmName = AssemblyName.GetAssemblyName(dllPath);
-            Assert.Equal(name, asmName.Name);
+            // Minor fix wave 1: asıl anlamlı kontrol budur — fırlatmaması (throw etmemesi) geçerli bir PE demektir;
+            // torn/half-written olsaydı BadImageFormatException/FileLoadException fırlatırdı. dllPath zaten
+            // "name + .dll" ile kurulduğu için asmName.Name'i AYNI "name" ile karşılaştırmak totolojikti — kaldırıldı.
+            _ = AssemblyName.GetAssemblyName(dllPath);
         }
     }
+
+    // Fix wave 1 / Finding 2: birleşik döngünün IPC bacağı — cömert 60s timeout (cold build payı), Task.WhenAny
+    // ile IOCP bekleyişiyle ARALIKSIZ birlikte sürüyor (bkz. yukarıdaki birleşik döngü yorumu).
+    private static async Task<IpcEvent?> ReadIpcAsync(NdjsonReader reader) =>
+        await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(60));
 
     // MsBuildResolver'ın (bir kez, run'ın en başında) çalıştırdığı vswhere.exe de job-DIŞI bir helper olsa dahi
     // otomatik job üyesi olur ve genelde saniyeler önce çoktan ölmüştür — isim süzgeci onu "gerçek MSBuild.exe

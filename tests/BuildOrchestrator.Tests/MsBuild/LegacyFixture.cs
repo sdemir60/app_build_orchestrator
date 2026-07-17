@@ -304,12 +304,20 @@ public static class LegacyFixture
     /// başarıyla biten her projenin DLL'i geçerli bir PE'dir) doğrular — paralel derlenen ≥2 proje AYNI çıktı
     /// dizinine yazdığı için bir yarım kalmış kopya gözlemlenebilir olurdu.
     /// <para>
-    /// DENEYSEL BULGU: bu kadar küçük bir classlib gerçek MSBuild.exe altında bile ~yüzlerce ms içinde bitiyor —
-    /// "kill mid-build" iddiasını sağlam kanıtlamak için (kill anında GERÇEKTEN uçuşta ≥2 MSBuild.exe olsun diye)
-    /// <c>CoreCompile</c>'DAN ÖNCE senkron bir <c>ping</c> gecikmesi eklendi: <c>&lt;Exec&gt;</c> MSBuild.exe'yi
-    /// <paramref name="delaySeconds"/> kadar kendi içinde bloklar (grandchild bırakmaz — LingeringPostBuild
-    /// varyantlarının aksine burada Exec'in KENDİ senkron bekleme mekanizması kasıtlı olarak kullanılıyor),
-    /// böylece paralel dispatch edilen projeler bu pencerede aynı anda gerçekten "mid-build" kalır.
+    /// Fix wave 1 / Finding 1: gecikme artık <c>CoreCompile</c>'DAN ÖNCE değil, <c>Build</c> hedefinden SONRA
+    /// (yani <c>csc.exe</c> GERÇEKTEN çalışıp DLL projenin kendi <c>bin\Debug</c>'ına yazıldıktan SONRA) ama ortak
+    /// bin'e kopyadan HEMEN ÖNCE devreye giriyor (<c>CopyToSharedBin</c> hedefinin başında). Eski konumda
+    /// (compile'dan önce) kill her zaman derleyici hiç doğmadan gelirdi — torn-DLL senaryosu yapısal olarak asla
+    /// tetiklenemezdi. Yeni konumda derleyici GERÇEKTEN çalışmış olur; <paramref name="delaySeconds"/> &gt; 0 olan
+    /// projeler için MSBuild.exe, ortak bine kopyayı henüz YAPMADAN bloke kalır — kill o anda gelirse gerçek,
+    /// tamamlanmamış bir "writer" öldürülmüş olur (Exec'in KENDİ senkron bekleme mekanizması kullanılıyor,
+    /// LingeringPostBuild varyantlarının aksine grandchild bırakmaz).
+    /// </para>
+    /// <para>
+    /// <paramref name="delaySeconds"/> = 0 → gecikme YOK ("hızlı/kontrol" proje: compile + ortak-bin kopyası
+    /// erken tamamlanır, kill'den önce GERÇEK, geçerli bir DLL üretilmiş olur). Kill-mid-build testi, bir kısım
+    /// projeyi 0 (hızlı) bir kısmını &gt;0 (yavaş) vererek aynı anda hem "kill öncesi gerçekten bitmiş bir DLL"
+    /// hem de "kill anında hâlâ uçuşta, kopyası henüz yapılmamış bir MSBuild.exe" gözlemler.
     /// </para>
     /// </summary>
     public static string CreateClassLibWithSharedBinCopy(string dir, string assemblyName, string sharedBinDir, int delaySeconds = 3)
@@ -327,6 +335,11 @@ public static class LegacyFixture
                 }
             }
             """);
+
+        // delaySeconds = 0 → Exec hedefi hiç eklenmiyor (gecikmesiz "hızlı/kontrol" proje).
+        string delayExec = delaySeconds > 0
+            ? $"""<Exec Command="ping -n {delaySeconds + 1} 127.0.0.1 &gt;NUL" />"""
+            : "";
 
         string csprojPath = Path.Combine(dir, assemblyName + ".csproj");
         File.WriteAllText(csprojPath,
@@ -360,10 +373,8 @@ public static class LegacyFixture
                 <Compile Include="Class1.cs" />
               </ItemGroup>
               <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-              <Target Name="DelayBeforeCompile" BeforeTargets="CoreCompile">
-                <Exec Command="ping -n {{delaySeconds + 1}} 127.0.0.1 &gt;NUL" />
-              </Target>
               <Target Name="CopyToSharedBin" AfterTargets="Build">
+                {{delayExec}}
                 <ItemGroup>
                   <_SharedBinCopy Include="$(OutDir)$(AssemblyName).dll" />
                 </ItemGroup>
