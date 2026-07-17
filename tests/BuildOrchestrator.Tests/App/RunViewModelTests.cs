@@ -415,10 +415,17 @@ public class RunViewModelTests
     [Fact]
     public async Task RebuildCommand_enables_Stop_and_disables_Rebuild_before_runStarted_arrives()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — startRun senkron atılır, yutulur
+        // [Fix wave 2, Finding 1] Gerçek (başlatılmış) engine kullanılır: gönderim GERÇEKTEN başarılı olmalı
+        // ki "planlama sürüyor, runStarted henüz gelmedi" penceresi doğru simüle edilsin — engine hiç
+        // başlatılmamış olsaydı SendAsync senkron fırlardı ve (Finding 1 fix'i ile) IsStarting hemen geri
+        // açılırdı; bu artık "send başarısız" senaryosu olur, "planlama sürüyor" değil. Event pump vm.OnEvent'e
+        // bağlanmadığından Supervisor'ın gerçek yanıtı (varsa) bu testi etkilemez — yalnız elle enjekte edilen
+        // RunStartedEvent state'i değiştirir.
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        await vm.RebuildCommand.ExecuteAsync(null); // runStarted HENÜZ gelmedi — yalnız IsStarting=true
+        await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — runStarted HENÜZ gelmedi — yalnız IsStarting=true
 
         Assert.True(vm.StopCommand.CanExecute(null));
         Assert.False(vm.RebuildCommand.CanExecute(null));
@@ -432,14 +439,62 @@ public class RunViewModelTests
     [Fact] // stop-during-planning ack: runStarted hiç gelmedi, runStopped geldi → Rebuild tekrar aktif olmalı
     public async Task RunStopped_without_runStarted_after_Rebuild_reenables_Rebuild_and_disables_Stop()
     {
+        // [Fix wave 2, Finding 1] bkz. yukarıdaki test — gerçek engine gerekir ki RunStoppedEvent geldiğinde
+        // IsStarting GERÇEKTEN true olsun (aksi halde unstarted-engine senaryosunda gönderim zaten başarısız
+        // olup IsStarting'i erkenden false yapar — test sonucu tesadüfen aynı kalır ama artık "stop-during-
+        // planning" senaryosunu DOĞRULAMAZ).
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        await vm.RebuildCommand.ExecuteAsync(null); // IsStarting=true, runStarted HENÜZ gelmedi
+        await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
 
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
 
         Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.False(vm.StopCommand.CanExecute(null));
+    }
+
+    // ---------------------------------------------------------------- 6d) [Fix wave 2, Finding 1] gönderim senkron BAŞARISIZ olursa IsStarting geri açılmalı
+
+    [Fact] // engine hiç başlamadı/öldü → SendAsync senkron fırlar → IsStarting KALICI takılmamalı (hiç event gelmeden)
+    public async Task RebuildCommand_recovers_IsStarting_when_the_initial_send_fails_synchronously()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — writer null, SendAsync senkron fırlar
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarısız — hiçbir engine event'i asla gelmeyecek
+
+        Assert.False(vm.IsStarting);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+    }
+
+    [Fact] // Continue için aynı senaryo — ContinueCommand da kalıcı kilitlenmemeli
+    public async Task ContinueCommand_recovers_IsStarting_when_the_initial_send_fails_synchronously()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10)); // CanContinue=true durumu kurar
+
+        await vm.ContinueCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsStarting);
+        Assert.True(vm.ContinueCommand.CanExecute(null));
+    }
+
+    // ---------------------------------------------------------------- 6e) [Fix wave 2, Finding 2] engine ölüyken kart tıklaması ASILI KALMAMALI
+
+    [Fact] // SendAsync senkron fırlar, hiçbir event Completion'ı tamamlamaz eskiden — LoadProjectLogAsync sonsuza dek asılı kalırdı
+    public async Task LoadProjectLogAsync_completes_when_engine_is_dead_without_any_event()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — SendAsync senkron fırlar
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\dead.csproj";
+
+        var load = vm.LoadProjectLogAsync(projectId);
+
+        // Sınırlı bekleme [D8]: fix ÖNCESİ hiçbir şey Completion'ı tamamlamaz → WaitAsync timeout ile FAIL (hang kanıtı).
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(vm.ActiveProjectId); // dikiş hiç kurulmadı — boş/loglu-olmayan doküman, proje moduna geçilmedi
     }
 
     // ---------------------------------------------------------------- 6c) [Fix wave 1] TickElapsed enjekte edilen saatle deterministik

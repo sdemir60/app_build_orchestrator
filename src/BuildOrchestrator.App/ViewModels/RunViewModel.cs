@@ -158,7 +158,12 @@ public sealed partial class RunViewModel : ObservableObject
             _projectText.Clear();
             _runText.Clear();
         }
-        await TrySendAsync(new StartRunCommand(runId, RunMode.Rebuild, RootPath, Configuration, Parallelism), "rebuild");
+        // [Fix wave 2, Finding 1] gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
+        // burada geri açılmalı — aksi halde hiçbir engine event'i asla gelmeyeceğinden (ne runStarted ne
+        // runStopped ne run-bitiren ErrorEvent) IsStarting kalıcı true kalır, Rebuild/Stop/Continue sonsuza
+        // dek kilitli kalır (eskiden self-healing olan bir buton artık "Restart Engine" ile bile açılmıyordu).
+        if (!await TrySendAsync(new StartRunCommand(runId, RunMode.Rebuild, RootPath, Configuration, Parallelism), "rebuild"))
+            IsStarting = false;
     }
     private bool CanRebuild() => !IsRunning && !IsStarting;
 
@@ -178,16 +183,21 @@ public sealed partial class RunViewModel : ObservableObject
         _sawRunStarted = false;
         ActiveProjectId = null;
         IsStarting = true; // [Fix wave 1(It-3), Finding 3] — bkz. RebuildAsync; Continue buffer'ları TEMİZLEMEZ
-        await TrySendAsync(new StartRunCommand(runId, RunMode.Continue, RootPath, Configuration, Parallelism), "continue");
+        // [Fix wave 2, Finding 1] — bkz. RebuildAsync'deki aynı gerekçe: gönderim senkron başarısız olursa
+        // IsStarting geri açılmalı, yoksa hiçbir engine event'i gelmediğinden ContinueCommand kalıcı kilitlenir.
+        if (!await TrySendAsync(new StartRunCommand(runId, RunMode.Continue, RootPath, Configuration, Parallelism), "continue"))
+            IsStarting = false;
     }
     private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue;
 
     /// <summary>Engine hazır değilken (henüz başlamadı/çöktü) SendAsync SENKRON fırlar — UI tıklaması bu
-    /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz.</summary>
-    private async Task TrySendAsync(IpcCommand cmd, string what)
+    /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz. [Fix wave 2, Finding 1] Dönen
+    /// <c>bool</c>, çağıranın (Rebuild/Continue) gönderim BAŞARISIZ olduğunda kendi "starting" durumunu geri
+    /// açabilmesi içindir — bu metot kendi başına hiçbir bound-state'e dokunmaz.</summary>
+    private async Task<bool> TrySendAsync(IpcCommand cmd, string what)
     {
-        try { await _engine.SendAsync(cmd); }
-        catch (Exception ex) { AppendRunLine($"[hata] {what} gönderilemedi: {ex.Message}"); }
+        try { await _engine.SendAsync(cmd); return true; }
+        catch (Exception ex) { AppendRunLine($"[hata] {what} gönderilemedi: {ex.Message}"); return false; }
     }
 
     // ---------------------------------------------------------------- elapsed
@@ -383,15 +393,22 @@ public sealed partial class RunViewModel : ObservableObject
     {
         // [Fix wave 1(It-3), Finding 2] Yeni bir yükleme, henüz tamamlanmamış eski bir _pendingLoad'ın yerini
         // alırsa eskisini burada çözüyoruz — aksi halde eski awaiter'ın Completion'ı ASLA tamamlanmaz (leak).
-        // (SendAsync'in senkron fırlaması burada BİLEREK tamamlanmaz: mevcut test seti bu yolu — engine hiç
-        // başlatılmadan yerel dikişi doğrulamak için — SendAsync'in yutulup pending'in AÇIK kalmasına ve
-        // ardından bir ProjectLogChunkEvent/ErrorEvent'in onu tamamlamasına dayanır; gerçek "engine öldü, hiçbir
-        // yanıt asla gelmeyecek" senaryosu zaten OnError'daki logNotFound/run-bitiren kod yollarıyla kapanır.)
         _pendingLoad?.Completion.TrySetResult();
         var pending = new PendingLoad(projectId);
         _pendingLoad = pending;
         try { await _engine.SendAsync(new GetProjectLogCommand(projectId)); }
-        catch (Exception ex) { AppendRunLine($"[hata] proje logu istenemedi: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            AppendRunLine($"[hata] proje logu istenemedi: {ex.Message}");
+            // [Fix wave 2, Finding 2] SendAsync engine ölüyken/hiç başlamamışken SENKRON fırlar (writer null) —
+            // bu catch `await` HİÇBİR suspension olmadan senkron çalışır. Önceden Completion burada asla
+            // tamamlanmıyordu: hiçbir yanıt/event gelmeyeceğinden aşağıdaki `await pending.Completion.Task`
+            // SONSUZA DEK asılı kalırdı (kart tıklaması hang). BİLEREK `_pendingLoad` null'LANMIYOR (OnError'ın
+            // logNotFound dalının aksine): mevcut testler (ör. stitch testleri) engine hiç başlatılmadan aynı
+            // senkron fırlamaya dayanır ve sonrasında gelen bir ProjectLogChunkEvent'in _pendingLoad üzerinden
+            // OnProjectLogChunk'ta hâlâ eşleşip dikişi tamamlamasını bekler — burada null'lamak o akışı kırardı.
+            pending.Completion.TrySetResult();
+        }
         await pending.Completion.Task;
     }
 
