@@ -38,6 +38,8 @@
 
   <ItemGroup>
     <Resource Include="Fonts\*.otf" />
+    <!-- CompositeFont XML de gömülmeli: pack URI ile "#Geist Mono Console" ailesini çözebilmek için [T56] -->
+    <Resource Include="Fonts\*.CompositeFont" />
   </ItemGroup>
 
 </Project>
