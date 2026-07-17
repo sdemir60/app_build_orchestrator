@@ -120,14 +120,47 @@ public class MsBuildInvokerTests
     }
 
     [Fact] // (d) — gerçek MSBuild gerektirmez: saf encoding round-trip
-    public void OutputEncoding_is_ansi_codepage_and_round_trips_turkish_text()
+    public void OutputEncoding_is_system_acp_and_round_trips_turkish_text()
     {
-        int expectedCodePage = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage;
+        // Fix wave 1 / Finding 4: kaynak artık CultureInfo.CurrentCulture.TextInfo.ANSICodePage (kullanıcı
+        // culture'ı) DEĞİL, GetACP() (sistem ACP'si) — test de aynı kaynağı doğrulamalı, yoksa bu iki değer
+        // aynı makinede tesadüfen eşit olduğu için fix'i gerçekten sınamaz.
+        int expectedCodePage = (int)NativeMethods.GetACP();
         Assert.Equal(expectedCodePage, MsBuildOutputEncoding.Value.CodePage);
 
         const string turkish = "İstanbul: Özgün Çözüm Üretiliyor — Şükrü Iğdır";
         byte[] encoded = MsBuildOutputEncoding.Value.GetBytes(turkish);
         string roundTripped = MsBuildOutputEncoding.Value.GetString(encoded);
         Assert.Equal(turkish, roundTripped);
+    }
+
+    [SkippableFact] // Fix wave 1 / Finding 1 regresyon: post-build event MSBuild.exe'den sonra da yaşayan
+                     // detached bir grandchild (ping.exe) bırakır — stdout/stderr pipe'ının write-end kopyasını
+                     // MSBuild.exe çıktıktan SONRA da tutar. Fix ÖNCESİ RunChildAsync'in başarı yolundaki
+                     // unbounded `Task.WhenAll(stdoutTask, stderrTask)` bu EOF'u hiç göremez (RED — dış
+                     // WaitAsync(20s) TimeoutException fırlatır); fix SONRASI WaitPumpsBoundedAsync
+                     // PostKillWait(5s) içinde döner (GREEN). Bkz. task-5-report.md "Fix wave 1" RED/GREEN kanıtı.
+    public async Task LingeringPostBuildGrandchild_does_not_stall_success_path()
+    {
+        string exe = await ResolveMsBuildExeOrSkipAsync();
+        string dir = NewTempDir();
+        string csproj = LegacyFixture.CreateClassLibWithLingeringPostBuild(dir, "LingerLib", sleepSeconds: 60);
+
+        using var job = JobObject.CreateKillOnClose(); // grandchild breakaway YAPAMAZ — test sonunda Dispose kaskadıyla temizlenir
+        var invoker = new MsBuildInvoker(job, exe);
+        var lines = new List<string>();
+
+        var sw = Stopwatch.StartNew();
+        var result = await invoker.InvokeAsync(
+            new MsBuildInvokeRequest(csproj, "Debug", dir, NeedsRestore: false),
+            line => { lock (lines) lines.Add(line); },
+            CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20)); // hang'i sonsuza kadar değil, teste çevirir
+        sw.Stop();
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(result.TimedOut);
+        Assert.False(result.Killed);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15),
+            $"başarı yolu sınırlı sürede dönmedi: {sw.Elapsed} (grandchild hâlâ ayakta olabilir — fix eksik/bozuk)");
     }
 }

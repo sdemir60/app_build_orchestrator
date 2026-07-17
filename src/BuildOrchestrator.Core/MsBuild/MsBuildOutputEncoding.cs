@@ -1,5 +1,5 @@
-using System.Globalization;
 using System.Text;
+using BuildOrchestrator.Core.ProcessControl;
 
 namespace BuildOrchestrator.Core.MsBuild;
 
@@ -16,8 +16,13 @@ public static class MsBuildOutputEncoding
     // kayıtsız 1254 gibi bir ANSI CP'yi GetEncoding ile istemek NotSupportedException fırlatır.
     private static readonly bool s_providerRegistered = RegisterProvider();
 
+    // Fix wave 1 / Finding 4: CultureInfo.CurrentCulture.TextInfo.ANSICodePage KULLANICI culture'ının ANSI CP'si.
+    // Redirected pipe'a yazan .NET Framework konsol programı (MSBuild.exe) Encoding.Default = GetACP() (SİSTEM
+    // ACP'si, "Language for non-Unicode programs" ile ayarlanır) kullanır. Windows bu ikisini BAĞIMSIZ
+    // ayarlanabilir tutar; ayrıştıkları bir makinede kullanıcı-culture varsayımı her satırı mojibake eder —
+    // tam bu sınıfın önlemeye çalıştığı hata. Doğru kaynak GetACP() P/Invoke'udur (NativeMethods.GetACP).
     /// <summary>Sistemin ANSI codepage'i (Encoding.Default'un .NET Core'da artık UTF-8'e sabitlenmiş olmasının yerini tutar).</summary>
-    public static Encoding Value { get; } = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.ANSICodePage);
+    public static Encoding Value { get; } = Encoding.GetEncoding((int)NativeMethods.GetACP());
 
     private static bool RegisterProvider()
     {

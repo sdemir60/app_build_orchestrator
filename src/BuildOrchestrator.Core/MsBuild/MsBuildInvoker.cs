@@ -34,21 +34,29 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
             ?? throw new ArgumentException("ProjectId geçerli bir dosya yolu değil.", nameof(req));
         var sw = Stopwatch.StartNew();
 
+        // Fix wave 1 / Finding 2: PerProjectTimeout invoke BAŞINA bir kez kurulur (restore + build toplamı) —
+        // önceden RunChildAsync içinde per-child kuruluyordu (NeedsRestore:true → restore 10dk + build 10dk =
+        // 20dk, "PerProjectTimeout" adının vaat ettiğinin iki katı). timeoutOnlyCts SADECE zaman aşımını temsil
+        // eder — ct'den ayrı tutulur, Finding 3'ün ct/timeout ayrımı bu ikisinin bağımsızlığına dayanır.
+        using var timeoutOnlyCts = new CancellationTokenSource(PerProjectTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutOnlyCts.Token);
+
         // DurationMs tüm invoke'u (restore + build) kapsar — sw yalnız bir kez başlar, iki child de aynı sw'yi okur.
         if (req.NeedsRestore)
         {
             var restoreArgs = MsBuildArguments.RestorePackagesConfig(req.ProjectId, req.SolutionDir);
-            var restoreResult = await RunChildAsync(restoreArgs, workingDirectory, sw, onLine, ct);
+            var restoreResult = await RunChildAsync(restoreArgs, workingDirectory, sw, onLine, linkedCts.Token, timeoutOnlyCts);
             if (restoreResult.ExitCode != 0 || restoreResult.TimedOut || restoreResult.Killed)
                 return restoreResult; // restore başarısızsa build DENENMEZ
         }
 
         var buildArgs = MsBuildArguments.Build(req.ProjectId, req.Configuration, req.BaseIntermediateOutputPath);
-        return await RunChildAsync(buildArgs, workingDirectory, sw, onLine, ct);
+        return await RunChildAsync(buildArgs, workingDirectory, sw, onLine, linkedCts.Token, timeoutOnlyCts);
     }
 
     private async Task<MsBuildInvokeResult> RunChildAsync(
-        IReadOnlyList<string> msbuildArgs, string workingDirectory, Stopwatch sw, Action<string> onLine, CancellationToken ct)
+        IReadOnlyList<string> msbuildArgs, string workingDirectory, Stopwatch sw, Action<string> onLine,
+        CancellationToken timeoutToken, CancellationTokenSource timeoutOnlyCts)
     {
         string commandLine = WindowsCommandLine.Build(msbuildExePath, [.. msbuildArgs]);
         using var child = JobProcessLauncher.Launch(innerJob, commandLine,
@@ -61,18 +69,27 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
         var stdoutTask = PumpLinesAsync(child.StandardOutput!, SafeOnLine);
         var stderrTask = PumpLinesAsync(child.StandardError!, SafeOnLine);
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(PerProjectTimeout);
-
         try
         {
-            int exitCode = await child.WaitForExitAsync(timeoutCts.Token);
-            await Task.WhenAll(stdoutTask, stderrTask); // normal çıkış: process kapanınca pipe'lar EOF verir
+            int exitCode = await child.WaitForExitAsync(timeoutToken);
+            // Fix wave 1 / Finding 1: başarı yolu da BOUNDED beklemeli — MSBuild.exe çıksa bile, post-build
+            // <Exec>'in başlattığı bir grandchild (örn. copy-event) inherited stdout/stderr pipe uçlarının bir
+            // kopyasını tutuyor olabilir (JobProcessLauncher'ın HANDLE_LIST'i yalnız BİZİM doğrudan miras
+            // verdiğimiz uçları sınırlar — torunun mirasını sınırlamaz), bu durumda pipe hiç EOF vermez ve eski
+            // unbounded Task.WhenAll sonsuza dek asılı kalırdı. WaitPumpsBoundedAsync zaten kill-yolunda var
+            // olan yardımcı; burada da PostKillWait (5s) içinde döner. `using var child` (yukarıda) metot
+            // dönünce Dispose olur, akışları kapatır — bloklu ReadLineAsync bu yüzden ObjectDisposedException/
+            // IOException fırlatır ve pump görevi PumpLinesAsync'in kendi filtresiyle sessizce/hatasız biter.
+            await WaitPumpsBoundedAsync(stdoutTask, stderrTask);
             return new MsBuildInvokeResult(exitCode, sw.ElapsedMilliseconds, TimedOut: false, Killed: false);
         }
         catch (OperationCanceledException)
         {
-            bool timedOut = !ct.IsCancellationRequested; // caller kendi ct'sini iptal etmediyse PerProjectTimeout tetiklemiştir
+            // Fix wave 1 / Finding 3: timedOut artık ct'nin durumundan DOLAYLI çıkarılmıyor (eski:
+            // !ct.IsCancellationRequested) — timeoutOnlyCts'in KENDİSİ ateşlendi mi diye DOĞRUDAN bakılır. ct ve
+            // PerProjectTimeout neredeyse eşzamanlı ateşlenirse eski kod gerçek bir timeout'u TimedOut:false
+            // raporlardı; bu iki kaynak birbirinden bağımsız tutulduğu için artık öyle bir yanlış-atıf yok.
+            bool timedOut = timeoutOnlyCts.IsCancellationRequested;
             KillChild(child.Pid);
             using var postKillCts = new CancellationTokenSource(PostKillWait);
             try { await child.WaitForExitAsync(postKillCts.Token); }

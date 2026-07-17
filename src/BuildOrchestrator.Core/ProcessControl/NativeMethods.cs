@@ -158,4 +158,11 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool GetExitCodeProcess(nint hProcess, out uint lpExitCode);
+
+    // Fix wave 1 / Finding 4 (MsBuildOutputEncoding): sistemin ANSI codepage'i — CultureInfo.CurrentCulture'ın
+    // ANSICodePage'i KULLANICI culture'ına bağlıdır; GetACP() ise "Language for non-Unicode programs" ile
+    // ayarlanan SİSTEM ACP'sidir. Redirected pipe'a yazan .NET Framework konsol programı (Encoding.Default) bu
+    // ikinciyi kullanır — ikisi bağımsız ayarlanabildiği için makinede ayrışırlarsa culture varsayımı mojibake eder.
+    [DllImport("kernel32.dll")]
+    public static extern uint GetACP();
 }
