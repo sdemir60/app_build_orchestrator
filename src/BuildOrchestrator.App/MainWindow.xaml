@@ -1,6 +1,7 @@
 <Window x:Class="BuildOrchestrator.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
         Title="Build Orchestrator" Width="1400" Height="800" MinWidth="1240" MinHeight="620"
         WindowStyle="SingleBorderWindow" Background="#0F1115" Foreground="#D7DBE0"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
@@ -21,11 +22,50 @@
         </StackPanel>
         <TextBlock Text="Build Orchestrator" VerticalAlignment="Center" Margin="12,0" />
       </DockPanel>
-      <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center">
-        <TextBlock x:Name="EngineStatusText" Text="engine: starting…" FontSize="13" HorizontalAlignment="Center" />
-        <Button x:Name="RestartEngineButton" Content="Restart engine" Margin="0,8,0,0"
-                Visibility="Collapsed" Click="OnRestartEngine" HorizontalAlignment="Center" />
-      </StackPanel>
+
+      <!-- [Task 12] It-2 fonksiyonel iskele: repo kökü + Rebuild/Stop/Continue + proje listesi + konsol.
+           design-v1 birebirliği (kartlar, graf paneli, sticky şerit) It-4'tür — burada YOK (YAGNI). -->
+      <Grid Grid.Row="1" WindowChrome.IsHitTestVisibleInChrome="True">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="320" /><ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Grid.Column="0" Margin="10" WindowChrome.IsHitTestVisibleInChrome="True">
+          <TextBlock x:Name="EngineStatusText" Text="engine: starting…" FontSize="12" />
+          <Button x:Name="RestartEngineButton" Content="Restart engine" Margin="0,4,0,8"
+                  Visibility="Collapsed" Click="OnRestartEngine" HorizontalAlignment="Left" />
+
+          <TextBlock Text="Repo kökü" FontSize="11" Margin="0,8,0,2" />
+          <TextBox x:Name="RootPathBox" Text="{Binding RootPath, UpdateSourceTrigger=PropertyChanged}" />
+
+          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <Button Content="Rebuild" Command="{Binding RebuildCommand}" Margin="0,0,6,0" />
+            <Button Content="Stop" Command="{Binding StopCommand}" Margin="0,0,6,0" />
+            <Button Content="Continue" Command="{Binding ContinueCommand}" />
+          </StackPanel>
+
+          <TextBlock x:Name="ElapsedText" Text="00:00:00" FontSize="12" Margin="0,8,0,8" />
+
+          <ListBox x:Name="ProjectsList" ItemsSource="{Binding Projects}" Height="420"
+                   SelectionChanged="OnProjectSelected">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{Binding Name}" Width="170" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding State}" Width="70" />
+                  <TextBlock Text="{Binding DurationMs}" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </StackPanel>
+
+        <DockPanel Grid.Column="1" Margin="0,10,10,10">
+          <Button x:Name="BackButton" DockPanel.Dock="Top" Content="&#x2190; Back" HorizontalAlignment="Left"
+                  Margin="0,0,0,6" Visibility="Collapsed" Click="OnBack" />
+          <appConsole:ConsoleView x:Name="ConsoleViewControl" />
+        </DockPanel>
+      </Grid>
     </Grid>
   </Border>
 </Window>

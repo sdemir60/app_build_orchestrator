@@ -1,25 +1,98 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
+using ICSharpCode.AvalonEdit.Document;
 
 namespace BuildOrchestrator.App;
 
 public partial class MainWindow : Window
 {
     private readonly EngineHost _engine;
+    private readonly RunViewModel _vm;
+    private readonly ConsoleBatcher _console;
+    private readonly CancellationTokenSource _consoleCts = new();
+    private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
-    public MainWindow(EngineHost engine)
+    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console)
     {
         InitializeComponent();
         _engine = engine;
+        _vm = vm;
+        _console = console;
+        DataContext = _vm;
+
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
             EngineStatusText.Text = $"engine: died (exit {code})"; // It-4'te sticky şerit kalıcı hata moduna taşınır (T37)
             RestartEngineButton.Visibility = Visibility.Visible;
         });
+        // [A13.2/Kısıt 4] YALNIZ projectLog YÜKSEK frekanslı akan log satırıdır (MSBuild çıktısının HER satırı) —
+        // VM'in o dalı yalnız ConsoleBatcher.Post (kilitsiz) + iç kilitli arabellek kullanır, ObservableProperty'e
+        // DOKUNMAZ; marshal OLMADAN doğrudan çağrılabilir (satır başına Dispatcher YASAK). projectLogChunk ise
+        // proje başına yalnız birkaç adettir (LogChunker parça sayısı) VE son parçada ActiveProjectId'yi
+        // (BackButton.Visibility'e bağlı [ObservableProperty]) mutasyona uğratır — bu yüzden DİĞER TÜM
+        // event'ler gibi UI thread'ine taşınır.
+        _engine.EventReceived += ev =>
+        {
+            if (ev is ProjectLogEvent) _vm.OnEvent(ev);
+            else Dispatcher.InvokeAsync(() => _vm.OnEvent(ev));
+        };
+
+        _elapsedTimer.Tick += (_, _) =>
+        {
+            _vm.TickElapsed();
+            ElapsedText.Text = TimeSpan.FromMilliseconds(_vm.ElapsedMs).ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
+        };
+        _elapsedTimer.Start();
+
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(RunViewModel.ActiveProjectId)) return;
+            BackButton.Visibility = _vm.ActiveProjectId is null ? Visibility.Collapsed : Visibility.Visible;
+        };
+
         Loaded += async (_, _) => await StartEngineAsync();
+        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
+
+        _ = RunConsolePumpAsync();
+    }
+
+    /// <summary>
+    /// [Kısıt 1] <c>ConsoleBatcher.PumpAsync</c> tick'i (üretimde <c>Task.Delay(50, ct)</c>) iptal edilince
+    /// <see cref="OperationCanceledException"/> YAKALANMADAN yükselir — burada TEK yerde gözlenir, aksi halde
+    /// pencere kapanırken gözlemlenmemiş (unobserved) bir exception kalırdı. Flush BATCH BAŞINA TEK
+    /// <c>Dispatcher.InvokeAsync</c> ile <see cref="ConsoleView.AppendBatch"/>'e taşınır — satır başına
+    /// Dispatcher çağrısı YASAK [A13.2].
+    /// </summary>
+    private async Task RunConsolePumpAsync()
+    {
+        try
+        {
+            await _console.PumpAsync(text => Dispatcher.InvokeAsync(() => ConsoleViewControl.AppendBatch(text)), _consoleCts.Token);
+        }
+        catch (OperationCanceledException) { /* pencere kapanıyor — beklenen */ }
+    }
+
+    /// <summary>Karta tıkla → tam log [T28]: chunk geçmişi + tamponlanmış canlı satırların dikişi VM'de
+    /// yapılır; burada yalnız sonucu konsola (yeni bir doküman olarak) taşırız.</summary>
+    private async void OnProjectSelected(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (ProjectsList.SelectedItem is not ProjectRowViewModel row) return;
+        await _vm.LoadProjectLogAsync(row.Id);
+        ConsoleViewControl.Document = new TextDocument(_vm.GetProjectDocumentText(row.Id));
+    }
+
+    private void OnBack(object sender, RoutedEventArgs e)
+    {
+        _vm.ShowRun();
+        ConsoleViewControl.Document = new TextDocument(_vm.GetRunDocumentText());
     }
 
     private async Task StartEngineAsync()
