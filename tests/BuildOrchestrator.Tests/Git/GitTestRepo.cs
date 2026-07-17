@@ -46,6 +46,16 @@ public sealed class GitTestRepo : IDisposable
 
     public void Checkout(string refName) => RunGit(RootPath, "checkout", "-q", refName);
 
+    /// <summary>
+    /// <c>.git/config</c>'e bozuk bir satır ekleyerek repoyu gerçek bir "corrupted repo" durumuna sokar:
+    /// git bundan sonra <c>rev-parse</c>/<c>symbolic-ref</c> gibi komutlarda exit=128 + "fatal: bad config
+    /// line ..." ile başarısız olur — stderr'de "not a git repository" GEÇMEZ. Bu, gerçek 128-class bir
+    /// git hatasının "not a git repository" alt-string eşleşmesine (yanlışlıkla) dayanan eski sınıflandırma
+    /// mantığının, no-commits ile karıştırılıp yutulduğunu ispatlamak için kullanılır (deneysel doğrulandı).
+    /// </summary>
+    public void CorruptGitConfig()
+        => File.AppendAllText(Path.Combine(RootPath, ".git", "config"), "\n[garbage syntax error !!! ===\n");
+
     public void CreateBranch(string name) => RunGit(RootPath, "branch", name);
 
     /// <summary>Şu an checkout edilmiş branch adı (fixture doğrulaması için — GitService sonucu buna karşı kıyaslanır).</summary>

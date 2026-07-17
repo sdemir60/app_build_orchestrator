@@ -274,6 +274,39 @@ public class GitServiceTests
         finally { System.IO.Directory.Delete(plainDir, recursive: true); }
     }
 
+    // ---- corrupted repo: a real (non-"not a git repository") 128-class git error must surface as
+    // Fail, NOT be silently swallowed as "no commits"/"detached" (review fix — Task 4) ----
+
+    [Fact]
+    public async Task GetHeadCommitAsync_on_corrupted_repo_returns_Fail_not_silent_no_commits()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.CommitAll("c1");
+        repo.CorruptGitConfig(); // exit=128, stderr "fatal: bad config line ..." — "not a git repository" İÇERMEZ
+
+        var svc = new GitService(Runner, repo.RootPath);
+        var result = await svc.GetHeadCommitAsync();
+
+        Assert.False(result.Success); // gerçek hata — no-commits (Ok(null)) OLMAMALI
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task GetCurrentBranchAsync_on_corrupted_repo_returns_Fail_not_silent_detached()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.CommitAll("c1");
+        repo.CorruptGitConfig();
+
+        var svc = new GitService(Runner, repo.RootPath);
+        var result = await svc.GetCurrentBranchAsync();
+
+        Assert.False(result.Success); // gerçek hata — detached (Ok(null)) OLMAMALI
+        Assert.NotNull(result.Error);
+    }
+
     [Fact]
     public async Task GetHeadCommitAsync_with_missing_git_executable_returns_defined_error_without_throwing()
     {

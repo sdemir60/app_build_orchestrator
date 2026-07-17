@@ -55,7 +55,6 @@ public sealed record GitRepoState
 /// </summary>
 public sealed class GitService(ProcessRunner runner, string repoRoot, string gitExecutable = "git")
 {
-    private const string NotARepositoryMarker = "not a git repository";
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(30);
 
     private readonly ProcessRunner _runner = runner ?? throw new ArgumentNullException(nameof(runner));
@@ -79,11 +78,13 @@ public sealed class GitService(ProcessRunner runner, string repoRoot, string git
                 : GitResult<string?>.Fail($"beklenmeyen 'git rev-parse HEAD' çıktısı: '{sha}'");
         }
 
-        if (LooksLikeNotARepository(r)) return GitResult<string?>.Fail(r.StandardError.Trim());
+        // rev-parse --verify -q HEAD, unborn HEAD (henüz commit yok) durumunda ve YALNIZ bu durumda
+        // sessizce exit=1 + BOŞ stderr döner. Bu tek sinyal "no-commits" anlamına gelir; başka HERHANGİ
+        // bir exit kodu/stderr kombinasyonu (özellikle exit=128 — bozuk repo, izin hatası, vb.) gerçek
+        // bir git hatasıdır ve Fail olarak yüzeye çıkarılmalı, "no-commits" ile karıştırılmamalıdır.
+        if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null);
 
-        // rev-parse --verify -q HEAD, unborn HEAD (henüz commit yok) durumunda sessizce exit=1 döner
-        // (stderr boş) — "not a git repository" (exit=128) ile karışmaz, ayrı kontrol edildi.
-        return GitResult<string?>.Ok(null);
+        return GitResult<string?>.Fail(DescribeGitFailure(r));
     }
 
     /// <summary>Checkout edilmiş branch adı. Normal → ad. Detached HEAD → <c>Ok(null)</c> (hata DEĞİL, edge).</summary>
@@ -94,10 +95,12 @@ public sealed class GitService(ProcessRunner runner, string repoRoot, string git
 
         var r = outcome.Result!;
         if (r.ExitCode == 0) return GitResult<string?>.Ok(r.StandardOutput.Trim());
-        if (LooksLikeNotARepository(r)) return GitResult<string?>.Fail(r.StandardError.Trim());
 
-        // symbolic-ref -q, HEAD detached olduğunda sessizce exit=1 döner (stderr boş).
-        return GitResult<string?>.Ok(null);
+        // symbolic-ref -q, HEAD detached olduğunda ve YALNIZ bu durumda sessizce exit=1 + BOŞ stderr
+        // döner. Başka her kombinasyon (özellikle exit=128) gerçek bir git hatasıdır — Fail.
+        if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null);
+
+        return GitResult<string?>.Fail(DescribeGitFailure(r));
     }
 
     /// <summary>Working-tree + staged değişiklikler (`git status --porcelain`'den path listesi). Temiz repo → boş liste.</summary>
@@ -223,8 +226,16 @@ public sealed class GitService(ProcessRunner runner, string repoRoot, string git
         }
     }
 
-    private static bool LooksLikeNotARepository(ProcessResult r)
-        => r.ExitCode == 128 && r.StandardError.Contains(NotARepositoryMarker, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// "no-commits" / "detached HEAD" edge sinyalinin TEK doğru tanımı: exit=1 + BOŞ stderr. (Örn.
+    /// "not a git repository" metnine bakmak yanlış ve dar bir yaklaşımdır — bkz. tip özeti.)
+    /// </summary>
+    private static bool IsUnbornHeadSignal(ProcessResult r) => r.ExitCode == 1 && string.IsNullOrEmpty(r.StandardError);
+
+    private static string DescribeGitFailure(ProcessResult r)
+        => string.IsNullOrEmpty(r.StandardError)
+            ? $"git komutu beklenmeyen exit kodu ile sonlandı: {r.ExitCode}"
+            : r.StandardError.Trim();
 
     private static bool IsFortyHexSha(string s) => s.Length == 40 && s.All(Uri.IsHexDigit);
 
