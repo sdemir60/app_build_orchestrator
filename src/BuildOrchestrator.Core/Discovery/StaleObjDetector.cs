@@ -16,6 +16,20 @@ public static partial class StaleObjDetector
     [GeneratedRegex(@"\.NETStandard,Version=v[\d.]+|netstandard[\d.]+", RegexOptions.IgnoreCase)]
     private static partial Regex ForeignTfm();
 
+    /// <summary>
+    /// obj/project.assets.json içindeki çözülmüş "targets" anahtarlarını beklenen TFM ile karşılaştırır.
+    /// Teşhis-only: hiçbir dosyaya dokunmaz/silmez; bozuk/okunamaz JSON dahil hiçbir girdide fırlatmaz —
+    /// belirsiz durumlarda sessizce "temiz" (IsStale=false) döner (warn-only detector, correctness dependency değil).
+    /// </summary>
+    /// <param name="csprojPath">İncelenecek .csproj tam yolu.</param>
+    /// <param name="expectedTfm">
+    /// TAM target-framework moniker'ı — project.assets.json "targets" anahtarlarının biçimiyle aynı
+    /// (ör. <c>.NETFramework,Version=v4.6</c>). KISA TFM alias'ı (ör. <c>net46</c>) DEĞİL: kıyaslama
+    /// substring-contains ile yapılır, kısa alias verilirse "beklenen TFM bulundu" eşleşmesi yanlışlıkla
+    /// kaçabilir (bkz. yabancı-TFM regex fallback'i buna rağmen çoğu durumda doğru sonuç verir, ama
+    /// pozitif-eşleşme yolu garanti değildir). Çağıran taraf tam moniker'ı proje discovery/graph katmanından
+    /// (TargetFrameworkMoniker gibi) sağlamalıdır.
+    /// </param>
     public static StaleObjDiagnosis Inspect(string csprojPath, string expectedTfm)
     {
         csprojPath = Path.GetFullPath(csprojPath);

@@ -80,4 +80,47 @@ public class StaleObjDetectorTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    // [T72 follow-up → It-2] warn-only detector ASLA fırlatmamalı: bozuk JSON degrade olup "temiz" dönmeli.
+    [Fact]
+    public void does_not_throw_and_reports_clean_on_malformed_json()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "stale-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "P"); Directory.CreateDirectory(Path.Combine(dir, "obj"));
+            string proj = Path.Combine(dir, "P.csproj"); File.WriteAllText(proj, "<Project/>");
+            File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"), "{ bu gecerli json degil ///");
+
+            var ex = Record.Exception(() => StaleObjDetector.Inspect(proj, ".NETFramework,Version=v4.6"));
+            Assert.Null(ex);
+
+            var d = StaleObjDetector.Inspect(proj, ".NETFramework,Version=v4.6");
+            Assert.False(d.IsStale);
+            Assert.Null(d.Reason);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // [T72 follow-up → It-2] "targets" anahtarı hiç yoksa (ör. farklı biçimli/eksik assets dosyası)
+    // teşhis edilemez sayılır — throw yok, false-positive warn yok.
+    [Fact]
+    public void does_not_throw_and_reports_clean_when_targets_key_missing()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "stale-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "P"); Directory.CreateDirectory(Path.Combine(dir, "obj"));
+            string proj = Path.Combine(dir, "P.csproj"); File.WriteAllText(proj, "<Project/>");
+            File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"), "{ \"libraries\": {} }");
+
+            var ex = Record.Exception(() => StaleObjDetector.Inspect(proj, ".NETFramework,Version=v4.6"));
+            Assert.Null(ex);
+
+            var d = StaleObjDetector.Inspect(proj, ".NETFramework,Version=v4.6");
+            Assert.False(d.IsStale);
+            Assert.Null(d.Reason);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }
