@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Core.Discovery;
 
@@ -13,24 +14,36 @@ public static partial class SolutionMapper
     [GeneratedRegex(@"Project\(""\{[^}]*\}""\)\s*=\s*""[^""]*"",\s*""([^""]+\.csproj)""", RegexOptions.IgnoreCase)]
     private static partial Regex ProjectLine();
 
-    public static IReadOnlyDictionary<string, IReadOnlyList<string>> Map(
+    /// <summary>csprojId → onu içeren solution'lar (ad + tam yol), Name'e göre OrdinalIgnoreCase sıralı. [T32]</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> MapRefs(
         IReadOnlyList<string> slnPaths, IReadOnlyList<string> csprojPaths)
     {
         var csprojSet = new HashSet<string>(csprojPaths.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
-        var acc = csprojSet.ToDictionary(c => c, _ => new SortedSet<string>(StringComparer.OrdinalIgnoreCase),
-                                         StringComparer.OrdinalIgnoreCase);
+        var acc = csprojSet.ToDictionary(c => c, _ => new List<SolutionRef>(), StringComparer.OrdinalIgnoreCase);
         // determinizm [D8]: sln'leri OrdinalIgnoreCase sırayla gez.
         foreach (var sln in slnPaths.OrderBy(s => s, StringComparer.OrdinalIgnoreCase))
         {
-            string slnDir = Path.GetDirectoryName(Path.GetFullPath(sln))!;
-            string name = Path.GetFileNameWithoutExtension(sln);
+            string full = Path.GetFullPath(sln);
+            string slnDir = Path.GetDirectoryName(full)!;
+            var slnRef = new SolutionRef(Path.GetFileNameWithoutExtension(full), full);
             foreach (Match m in ProjectLine().Matches(File.ReadAllText(sln)))
             {
-                string rel = m.Groups[1].Value;
-                string full = Path.GetFullPath(Path.Combine(slnDir, rel));
-                if (acc.TryGetValue(full, out var set)) set.Add(name);
+                string proj = Path.GetFullPath(Path.Combine(slnDir, m.Groups[1].Value));
+                if (acc.TryGetValue(proj, out var list) && !list.Any(r => r.Path.Equals(slnRef.Path, StringComparison.OrdinalIgnoreCase)))
+                    list.Add(slnRef);
             }
         }
-        return acc.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.ToList(), StringComparer.OrdinalIgnoreCase);
+        return acc.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<SolutionRef>)kv.Value.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList(),
+            StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>0 solution → boş liste, >1 solution → çok değerli (sıralı) liste. [T32]</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyList<string>> Map(
+        IReadOnlyList<string> slnPaths, IReadOnlyList<string> csprojPaths) =>
+        MapRefs(slnPaths, csprojPaths).ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<string>)kv.Value.Select(r => r.Name).ToList(),
+            StringComparer.OrdinalIgnoreCase);
 }

@@ -45,4 +45,28 @@ public class SolutionMapperTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    [Fact]
+    public void MapRefs_carries_solution_path_not_just_name()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-slnrefs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "sub"));
+        try
+        {
+            string csproj = Path.Combine(root, "sub", "A.csproj");
+            File.WriteAllText(csproj, "<Project />");
+            string sln = Path.Combine(root, "Osys.sln");
+            File.WriteAllText(sln,
+                "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"sub\\A.csproj\", \"{1}\"\nEndProject\n");
+
+            var refs = SolutionMapper.MapRefs([sln], [csproj]);
+
+            var one = Assert.Single(refs[csproj]);
+            Assert.Equal("Osys", one.Name);
+            Assert.Equal(Path.GetFullPath(sln), one.Path);
+            // Map(), MapRefs üzerinden aynı adları vermeye devam eder (davranış korunur)
+            Assert.Equal(["Osys"], SolutionMapper.Map([sln], [csproj])[csproj]);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }
