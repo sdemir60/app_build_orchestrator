@@ -62,7 +62,7 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         { await writer.WriteAsync(new ErrorEvent("logNotFound", g.ProjectId), ct); return; }
         string text = await File.ReadAllTextAsync(path, ct);
         foreach (var c in LogChunker.Chunk(text))
-            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast), ct);
+            await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, 0), ct);
     }
 
     private async Task SpawnDebugChildrenAsync(DebugSpawnChildrenCommand d, CancellationToken ct)
