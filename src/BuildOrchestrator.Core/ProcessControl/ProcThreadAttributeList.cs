@@ -20,9 +20,9 @@ internal sealed class ProcThreadAttributeList : IDisposable
     public ProcThreadAttributeList(IReadOnlyList<nint> handles)
     {
         nint size = 0;
-        NativeMethods.InitializeProcThreadAttributeList(nint.Zero, 1, 0, ref size); // boyut sorgusu: false + ERROR_INSUFFICIENT_BUFFER beklenir
+        bool sized = NativeMethods.InitializeProcThreadAttributeList(nint.Zero, 1, 0, ref size); // boyut sorgusu: false + ERROR_INSUFFICIENT_BUFFER beklenir
         int err = Marshal.GetLastWin32Error();
-        if (size == 0) throw new Win32Exception(err);
+        if (!sized && err != NativeMethods.ERROR_INSUFFICIENT_BUFFER) throw new Win32Exception(err);
 
         _list = Marshal.AllocHGlobal(size);
         try

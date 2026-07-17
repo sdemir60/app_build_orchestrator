@@ -27,7 +27,12 @@ public static class JobProcessLauncher
         ProcThreadAttributeList? attributes = null;
 
         var six = new NativeMethods.STARTUPINFOEXW();
-        six.StartupInfo.cb = Marshal.SizeOf<NativeMethods.STARTUPINFOEXW>();
+        // cb, fiilen kullanılan yapının boyutunu yansıtmalı: redirected yolda EXTENDED_STARTUPINFO_PRESENT
+        // set edildiği için STARTUPINFOEXW boyutu; non-redirected yolda Windows bunu düz STARTUPINFOW
+        // olarak okur (attribute list yok), dolayısıyla cb de o boyutu bildirmeli.
+        six.StartupInfo.cb = options.RedirectStdio
+            ? Marshal.SizeOf<NativeMethods.STARTUPINFOEXW>()
+            : Marshal.SizeOf<NativeMethods.STARTUPINFOW>();
         bool inheritHandles = false;
 
         try

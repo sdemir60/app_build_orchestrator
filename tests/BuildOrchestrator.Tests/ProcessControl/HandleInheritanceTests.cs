@@ -31,26 +31,43 @@ public class HandleInheritanceTests
         Assert.Equal(0, n);
     }
 
-    [Fact] // Paralel launch: her child'ın stdout'u KENDİ EOF'una ulaşmalı (çapraz sızıntı = ReadToEnd askıda kalır)
+    [Fact] // Paralel launch: 5 kısa ömürlü ("echo") child + 1 UZUN ömürlü ("pause") child aynı anda redirected
+           // launch edilir. Pre-fix, uzun ömürlü child snapshot anında diğerlerinin henüz kapatılmamış stdout
+           // write-ucunu miras alabilir ve süresiz açık tuttuğu için o child'ın ReadToEnd'i EOF'a ulaşamaz
+           // (timeout). Kısa ömürlü child'lar birbirlerine sızsa bile hemen çıkıp write-ucunu kendileri
+           // kapattığından bu senaryoyu YAKALAMAZ — ayrım gücü uzun ömürlü child'tan gelir.
     public async Task Parallel_redirected_launches_each_reach_eof_on_their_own_stdout()
     {
         using var job = JobObject.CreateKillOnClose();
-        var children = new List<JobChildProcess>();
-        await Task.WhenAll(Enumerable.Range(0, 6).Select(i => Task.Run(() =>
-        {
-            var c = JobProcessLauncher.Launch(job,
-                WindowsCommandLine.Build(CmdExe, "/c", $"echo child{i}"), new LaunchOptions(RedirectStdio: true));
-            lock (children) children.Add(c);
-        })));
+
+        // TaskCreationOptions.LongRunning: gerçek eşzamanlı OS thread'leri garanti eder (ThreadPool
+        // enjeksiyon gecikmesi launch pencerelerinin çakışma olasılığını düşürmesin diye).
+        var pauseTask = Task.Factory.StartNew(
+            () => JobProcessLauncher.Launch(job, WindowsCommandLine.Build(CmdExe, "/c", "pause"),
+                new LaunchOptions(RedirectStdio: true)),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        var echoTasks = Enumerable.Range(0, 5).Select(i => Task.Factory.StartNew(
+            () => (Index: i, Child: JobProcessLauncher.Launch(job,
+                WindowsCommandLine.Build(CmdExe, "/c", $"echo child{i}"), new LaunchOptions(RedirectStdio: true))),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
+
+        // StartNew çağrıları zaten eşzamanlı başladı; await sırası yalnız sonuç toplamayı etkiler,
+        // launch pencerelerinin çakışmasını değil.
+        using var pause = await pauseTask; // stdin redirected → biz kapatana dek yaşar (bkz. üstteki test)
+        var echoes = await Task.WhenAll(echoTasks);
+
         try
         {
-            foreach (var c in children)
+            foreach (var (i, c) in echoes)
             {
                 using var reader = new StreamReader(c.StandardOutput!);
                 string text = await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10));
-                Assert.Contains("child", text);
+                Assert.Contains($"child{i}", text);
             }
         }
-        finally { foreach (var c in children) c.Dispose(); }
+        finally { foreach (var (_, c) in echoes) c.Dispose(); }
+        // pause: using var → metot sonunda dispose edilir (stdin EOF alır, süreç çıkar); job.Dispose()
+        // KILL_ON_JOB_CLOSE ile her ihtimalde (pass/fail fark etmez) kalıntı süreç bırakmaz.
     }
 }
