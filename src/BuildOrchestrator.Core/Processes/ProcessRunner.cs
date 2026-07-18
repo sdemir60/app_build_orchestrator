@@ -27,6 +27,11 @@ public sealed class ProcessRunner : IProcessRunner
         {
             FileName = spec.FileName,
             WorkingDirectory = spec.WorkingDirectory ?? string.Empty,
+            // [Task 19] stdin de yönlendirilir ve HEMEN kapatılır: aksi halde child, EBEVEYNİN stdin'ini
+            // (Supervisor'da bu, App'ten gelen NDJSON PIPE'ı) miras alır — git.exe gibi bir konsol child'ı o
+            // pipe'ta EOF beklerken sonsuza dek asılı kalır (conhost tahsis edip bloklar). Kapalı stdin → anında
+            // EOF; git/vswhere stdin OKUMAZ, davranış değişmez. Bu runner yalnız git + vswhere spawn eder.
+            RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
@@ -35,6 +40,7 @@ public sealed class ProcessRunner : IProcessRunner
 
         var sw = Stopwatch.StartNew();
         using var process = Process.Start(psi) ?? throw new InvalidOperationException($"Process başlatılamadı: {spec.FileName}");
+        process.StandardInput.Close(); // child'a anında EOF ver — asla stdin'de bloklamasın
         var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
         var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
 

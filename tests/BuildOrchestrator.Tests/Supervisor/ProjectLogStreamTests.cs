@@ -107,7 +107,7 @@ public class ProjectLogStreamTests
         {
             var supervisorWriter = new NdjsonWriter(_fromHost); // koordinatör VE host AYNI writer'ı paylaşır (Program.cs deseniyle aynı)
             Coordinator = new RunCoordinator(
-                planner: (_, _) => plan,
+                planner: _ => plan,
                 msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
                 logFactory: startedAt => new RunLogWriter(LogsRoot, startedAt),
                 writer: supervisorWriter,

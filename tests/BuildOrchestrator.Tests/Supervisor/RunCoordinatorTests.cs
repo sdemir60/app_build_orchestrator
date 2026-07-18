@@ -8,6 +8,7 @@ using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Supervisor;
 
 namespace BuildOrchestrator.Tests.Supervisor;
@@ -96,11 +97,11 @@ public class RunCoordinatorTests
         public RunCoordinator Sut { get; }
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
-        public Harness(RunPlan plan, FakeInvoker invoker, Func<string, string, RunPlan>? planner = null,
-            Func<StartRunCommand, string?>? worktreeObjRootResolver = null)
+        public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, RunPlan>? planner = null,
+            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null)
         {
             Sut = new RunCoordinator(
-                planner: planner ?? ((_, _) => plan),
+                planner: planner ?? (_ => plan),
                 msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
                 logFactory: startedAt =>
                 {
@@ -112,7 +113,8 @@ public class RunCoordinatorTests
                 innerJob: Job,
                 nowMs: () => Volatile.Read(ref _now),
                 console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
-                worktreeObjRootResolver: worktreeObjRootResolver);
+                worktreeObjRootResolver: worktreeObjRootResolver,
+                stateStore: stateStore);
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -430,7 +432,7 @@ public class RunCoordinatorTests
         // Koordinatör bu borcu yine de kapatmalı — aksi halde App sonsuza dek runStopped bekler.
         var planningReached = Signal();
         var releasePlanning = Signal();
-        Func<string, string, RunPlan> blockingPlanner = (_, _) =>
+        Func<StartRunCommand, RunPlan> blockingPlanner = _ =>
         {
             planningReached.TrySetResult();
             releasePlanning.Task.GetAwaiter().GetResult(); // deterministik blok (sleep-poll YOK [D8])

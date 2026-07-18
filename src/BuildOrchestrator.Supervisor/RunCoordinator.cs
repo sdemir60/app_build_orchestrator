@@ -8,6 +8,7 @@ using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.Scheduling;
+using BuildOrchestrator.Core.State;
 
 namespace BuildOrchestrator.Supervisor;
 
@@ -16,7 +17,21 @@ namespace BuildOrchestrator.Supervisor;
 /// (<c>SolutionDirResolver</c> için gereklidir; <see cref="ProjectNode.SolutionNames"/> yalnız AD taşır, YOL taşımaz).
 /// Planlama TAMAMEN Core'da yapılır [D3]; koordinatör yalnız çalıştırır — bu tip iki Core çıktısını bir arada taşır.
 /// </summary>
-public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs);
+public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs,
+    IncrementalPlan? Incremental = null);
+
+/// <summary>
+/// [Task 19 wiring] Bir fresh (Rebuild/Build) run için incremental karar verileri: her projenin planlama
+/// anında hesaplanmış <see cref="Contracts.Model.BuildSignature"/> (byte-stable) imzası + HEAD commit + branch.
+/// <see cref="RunCoordinator"/> bir proje <c>projectSucceeded</c> olduğunda bu bilgiyle <see
+/// cref="Core.State.BuildStateStore"/>'a <see cref="BuildState"/> persist eder — böylece BİR SONRAKİ Build
+/// incremental olur. <see cref="SignatureById"/> yalnız non-null imzaları içerir (hollow/never-committed
+/// persist edilmez); <c>null</c> Incremental (ör. testlerdeki basit planner) → persist YOK, pre-skip YOK.
+/// </summary>
+public sealed record IncrementalPlan(
+    IReadOnlyDictionary<string, string> SignatureById,
+    string? HeadCommit,
+    string? Branch);
 
 /// <summary>
 /// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
@@ -67,14 +82,15 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// OSYS.Types.NewSales.Print vakası).
 /// </param>
 public sealed class RunCoordinator(
-    Func<string, string, RunPlan> planner,
+    Func<StartRunCommand, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
     Func<DateTimeOffset, RunLogWriter> logFactory,
     NdjsonWriter writer,
     JobObject innerJob,
     Func<long> nowMs,
     Action<string> console,
-    Func<StartRunCommand, string?>? worktreeObjRootResolver = null) : IDisposable
+    Func<StartRunCommand, string?>? worktreeObjRootResolver = null,
+    BuildStateStore? stateStore = null) : IDisposable
 {
     private readonly object _gate = new();
 
@@ -307,6 +323,10 @@ public sealed class RunCoordinator(
         long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
         ConcurrentDictionary<string, byte> stoppedFailedIds;
+        // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
+        // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
+        // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild/Continue/RetryFailed'de boş kalır.
+        var upToDateSkips = new List<(string ProjectId, string Reason)>();
 
         if (cmd.Mode is RunMode.Continue or RunMode.RetryFailed)
         {
@@ -336,7 +356,7 @@ public sealed class RunCoordinator(
         }
         else
         {
-            try { runPlan = planner(cmd.RootPath, cmd.Configuration); }
+            try { runPlan = planner(cmd); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }
 
@@ -351,7 +371,27 @@ public sealed class RunCoordinator(
                 depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
                 stoppedFailedIds = _stoppedFailedIds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase); // [Task-13] taze run → taze birikim
             }
-            scheduler = new ReadySetScheduler(runPlan.Plan);
+            // [Task 19] Yalnız Build modunda: planlayıcının hesapladığı WillBuild==false (ve cycle DIŞI) projeler
+            // "up to date" olarak pre-skip edilir — scheduler'a Skipped tohumlanır (dependent'ları için resolved),
+            // dispatch edilmezler. Rebuild HER ŞEYİ derler (tohum yok, mevcut davranış). Cycle üyeleri seed'e
+            // GİRMEZ → ctor onları "in dependency cycle" reason'ıyla ayrı pre-skip eder (reason karışmaz).
+            if (cmd.Mode == RunMode.Build)
+            {
+                var seed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
+                foreach (var n in runPlan.Plan.Nodes)
+                    if (n.WillBuild == false && !n.InCycle)
+                    {
+                        seed[n.Id] = BuildResult.Skipped;
+                        upToDateSkips.Add((n.Id, "skipped — up to date"));
+                    }
+                scheduler = seed.Count > 0
+                    ? new ReadySetScheduler(runPlan.Plan, new RunSnapshot(seed, [], 0))
+                    : new ReadySetScheduler(runPlan.Plan);
+            }
+            else
+            {
+                scheduler = new ReadySetScheduler(runPlan.Plan);
+            }
             elapsedAtStart = 0;
             clock = new RunClock(nowMs);
         }
@@ -414,6 +454,13 @@ public sealed class RunCoordinator(
                 events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason));
                 Decide(logs, $"{nodeById[projectId].Name}: atlandı — {reason}");
             }
+            // [Task 19] Build modunda incremental "up to date" skip'ler (cycle pre-skip ile AYNI konumda, ilk
+            // dispatch'ten ÖNCE): dependent'ları için scheduler'da zaten Skipped/resolved tohumlandı.
+            foreach (var (projectId, reason) in upToDateSkips)
+            {
+                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason));
+                Decide(logs, $"{nodeById[projectId].Name}: atlandı — {reason}");
+            }
 
             var run = new RunContext(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs, nodeById,
@@ -425,7 +472,9 @@ public sealed class RunCoordinator(
                 toolset.MsBuildExePath,
                 worktreeObjRoot,
                 depIssuesById, // [T54]
-                stoppedFailedIds); // [Task-13]
+                stoppedFailedIds, // [Task-13]
+                stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
+                runPlan.Incremental); // [Task 19] imza + HEAD + branch (persist için)
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -570,6 +619,7 @@ public sealed class RunCoordinator(
             {
                 result = BuildResult.Succeeded;
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
+                PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: başarılı ({1}ms)", name, invoke.DurationMs));
@@ -647,6 +697,26 @@ public sealed class RunCoordinator(
         else run.StoppedFailedIds.TryRemove(projectId, out _);
     }
 
+    /// <summary>
+    /// [Task 19] Bir proje BAŞARIYLA derlendiğinde <see cref="BuildState"/> persist eder — BİR SONRAKİ Build
+    /// koşusu bunu okuyup (imza eşit + Succeeded ⇒ skip) incremental olur. Persist YALNIZ hem <see
+    /// cref="RunContext.StateStore"/> hem de bu proje için non-null bir imza (<see cref="IncrementalPlan"/>)
+    /// varsa yapılır (testlerdeki basit planner → Incremental null → persist YOK, davranış nötr). §4: yalnız
+    /// build-state.json'a yazılır, DLL/bin/obj'ye dokunulmaz. Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
+    /// </summary>
+    private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs)
+    {
+        if (run.StateStore is null || run.Incremental is not { } inc
+            || !inc.SignatureById.TryGetValue(projectId, out var signature))
+            return;
+
+        var state = new BuildState(projectId, signature, inc.HeadCommit, BuildResult.Succeeded,
+            DateTimeOffset.UtcNow, inc.Branch, durationMs);
+        try { run.StateStore.Upsert(state); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { console("build-state yazılamadı (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+    }
+
     private string ReasonFor(MsBuildInvokeResult invoke)
     {
         // Hard stop ÖNCE bakılır: TerminateJobObject child'ı öldürdüğünde invoke sıradan bir "exit N" gibi döner
@@ -700,7 +770,10 @@ public sealed class RunCoordinator(
         // [Task-13] projectId → "şu an Failed VE reason=stopped" işareti (BuildProjectAsync tarafından yazılır/
         // silinir — bkz. o metodun sonundaki not). Continue segmentinin torn-DLL guard'ı için: RunSegmentAsync
         // bunu Completed'tan Queued'a geri taşımak üzere okur (bkz. RetryPlanning.RequeueStoppedFailed).
-        ConcurrentDictionary<string, byte> StoppedFailedIds);
+        ConcurrentDictionary<string, byte> StoppedFailedIds,
+        // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.
+        BuildStateStore? StateStore,
+        IncrementalPlan? Incremental);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

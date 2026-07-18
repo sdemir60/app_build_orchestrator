@@ -74,6 +74,25 @@ public static class IncrementalPlanner
         IReadOnlyDictionary<string, BuildState> state,
         bool inPlace,
         DependentMode mode = DependentMode.Safe)
+        => ComputeWillBuildWithSignatures(
+            plan, headCommit, dirtyFilesForNode, readFileContent, committedFingerprintForNode, state, inPlace, mode).Plan;
+
+    /// <summary>
+    /// [Task 19 wiring] <see cref="ComputeWillBuild"/> ile AYNI hesap, ek olarak her düğüm için hesaplanan
+    /// (topological memoize edilmiş) imzayı da döner. Supervisor'ın kompozisyon kökü, bir proje
+    /// <c>projectSucceeded</c> olduğunda <see cref="BuildState.BuiltSignature"/>'ı bu haritadan persist eder —
+    /// böylece BİR SONRAKİ <c>Build</c> koşusu incremental olur (temiz projeler skip). Hollow (headCommit=null)
+    /// durumda TÜM imzalar <c>null</c>'dır (persist edilmez).
+    /// </summary>
+    public static (BuildPlan Plan, IReadOnlyDictionary<string, string?> SignatureById) ComputeWillBuildWithSignatures(
+        BuildPlan plan,
+        string? headCommit,
+        Func<ProjectNode, IReadOnlyList<string>> dirtyFilesForNode,
+        Func<string, string> readFileContent,
+        Func<ProjectNode, string?> committedFingerprintForNode,
+        IReadOnlyDictionary<string, BuildState> state,
+        bool inPlace,
+        DependentMode mode = DependentMode.Safe)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(dirtyFilesForNode);
@@ -87,7 +106,9 @@ public static class IncrementalPlanner
         {
             // Hollow / pre-Sync: anlamlı bir imza yok — WillBuildEvaluator bunu null (hollow) olarak yorumlar.
             // committedFingerprintForNode BURADA hiç çağrılmaz (kısa devre) — bkz. tip özeti "Hollow" notu.
-            return BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup);
+            var hollowSignatures = plan.Nodes.ToDictionary(
+                n => n.Id, _ => (string?)null, StringComparer.OrdinalIgnoreCase);
+            return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup), hollowSignatures);
         }
 
         // Safe: bu run içinde TAZE hesaplanmış upstream imzalarını besler (topological memoization) — bir
@@ -114,7 +135,7 @@ public static class IncrementalPlanner
             computedMemo[node.Id] = signature;
         }
 
-        return BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup);
+        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup), computedMemo);
     }
 
     /// <summary>
