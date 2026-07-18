@@ -10,7 +10,11 @@ using BuildOrchestrator.Contracts.Model;
 /// Signature = <c>configuration</c> + <c>headCommit</c> + (YALNIZ in-place modda) <c>local-diff hash</c> +
 /// transitive upstream producer imzaları. Aynı girdi kümesi HER ZAMAN byte-identik SHA256 hex string üretir
 /// (determinism testli) ve girdi listelerinin (dirty dosyalar, upstream id'ler) SIRASI SONUCU ETKİLEMEZ —
-/// dahili olarak Ordinal sıralanırlar.
+/// dahili olarak case-insensitive (OrdinalIgnoreCase) sıralanırlar. Her liste elemanının RAW (değişken
+/// uzunluklu/serbest karakterli) kısmı (dosya yolu, upstream projectId) da ayraç yanına gömülmeden ÖNCE
+/// ayrıca hash'lenir (bkz. <see cref="HashText"/> kullanımı Compute içinde) — böylece bir yol veya id
+/// içinde tesadüfen (ya da kasıtlı) bir ayraç/`=` karakteri geçse bile iki farklı terim kümesi aynı
+/// pre-hash string'e indirgenemez (bkz. <c>BuildSignatureTests</c>: separator/`=` içeren id/yol testleri).
 ///
 /// <para>
 /// §4 kaynak-sinyali kuralı: yalnız kaynak sinyalleri (config string, commit SHA, dirty dosya İÇERİĞİ,
@@ -86,17 +90,21 @@ public static class BuildSignature
         sb.Append("diff=");
         if (inPlace)
         {
-            // Determinizm [D8]: build-etkileyen filtre + Ordinal sıralama — çağıran hangi sırada/hangi
-            // ek (non-build-affecting) dosyalarla verirse versin sonuç aynı kalır.
+            // Determinizm [D8]: build-etkileyen filtre + case-insensitive sıralama (Windows path'leri
+            // case-insensitive'dır — upstream id listesiyle TUTARLI karşılaştırıcı) — çağıran hangi
+            // sırada/hangi ek (non-build-affecting) dosyalarla verirse versin sonuç aynı kalır.
             var sortedDirty = dirtyFiles
                 .Where(IsBuildAffecting)
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(p => p, StringComparer.Ordinal);
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase);
 
             foreach (var path in sortedDirty)
             {
                 string hash = HashText(readFileContent(path));
-                sb.Append(path).Append('=').Append(hash).Append(ItemSeparator);
+                // RAW path ASLA doğrudan ayraç yanına gömülmez — sabit-genişlikli hash'lenir (bkz. tip
+                // özeti): bir yol içinde tesadüfen ItemSeparator/FieldSeparator/'=' geçmesi terimler
+                // arası sınırı kaydıramaz.
+                sb.Append(HashText(path)).Append('=').Append(hash).Append(ItemSeparator);
             }
         }
         // inPlace=false (worktree/committed): local-diff terimi kasıtlı olarak TAMAMEN atlanır — bkz. tip özeti.
@@ -110,7 +118,11 @@ public static class BuildSignature
         foreach (var upstreamId in sortedUpstream)
         {
             string? sig = upstreamSignature(upstreamId);
-            sb.Append(upstreamId).Append('=').Append(sig ?? NullMarker).Append(ItemSeparator);
+            // RAW upstreamId (tam dosya yolu olabilir) ASLA doğrudan ayraç yanına gömülmez — sabit-
+            // genişlikli hash'lenir (bkz. tip özeti): örn. id içinde bir ItemSeparator + başka bir id +
+            // '=' + sig geçmesi, iki-öğeli bir kümeyi tek-öğeli başka bir kümeyle aynı pre-hash string'e
+            // indirgeyemez (bkz. BuildSignatureTests: upstream_ids_containing_separator...).
+            sb.Append(HashText(upstreamId)).Append('=').Append(sig ?? NullMarker).Append(ItemSeparator);
         }
 
         return HashText(sb.ToString());

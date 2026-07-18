@@ -174,6 +174,68 @@ public class BuildSignatureTests
         Assert.False(string.IsNullOrEmpty(sig)); // exception atılmadan tamamlandı
     }
 
+    // ---- In-place dirty dosya varlığı/yokluğu (simetrik) --------------------------------------------
+
+    [Fact]
+    public void inplace_mode_empty_vs_nonempty_dirty_list_yields_different_signature()
+    {
+        // worktree_mode_ignores_dirty_files_entirely_only_commit_and_upstream_matter testinin simetriği:
+        // inPlace=TRUE iken boş dirty listesi ile dolu dirty listesi FARKLI imza üretmeli (doğrudan
+        // varlık/yokluk testi — worktree=false'ta ise aynı olmalıydı, bu zaten ayrı testle kanıtlı).
+        var node = Node("A");
+        var read = ContentMap(("f1.cs", "int x;"));
+
+        string sigNoDirty = BuildSignature.Compute(node, "Debug", "abc123", [], NoRead, NoUpstream, inPlace: true);
+        string sigWithDirty = BuildSignature.Compute(node, "Debug", "abc123", ["f1.cs"], read, NoUpstream, inPlace: true);
+
+        Assert.NotEqual(sigNoDirty, sigWithDirty);
+    }
+
+    // ---- Hash-per-term collision-resistance (raw path/id ayraç yanına gömülmez) ---------------------
+
+    [Fact]
+    public void upstream_ids_containing_separator_and_equals_characters_do_not_cause_signature_collision()
+    {
+        // Boundary-shift saldırısı: RAW upstreamId (hash'lenmeden) doğrudan '='+ItemSeparator yanına
+        // gömülseydi, iki FARKLI upstream term kümesi aynı pre-hash string'e indirgenebilirdi:
+        //   SetA: Dep1->"S1", Dep2->"S2"           => "Dep1=S1" ItemSep "Dep2=S2" ItemSep
+        //   SetB: tek id "Dep1=S1<ItemSep>Dep2"->"S2" => AYNI concatenation (id'nin içine gömülü
+        //         "=S1<ItemSep>Dep2" parçası, SetA'daki iki-öğeli sınırı taklit eder)
+        // HashText(upstreamId) düzeltmesiyle bu iki küme artık FARKLI imza üretmeli.
+        char itemSep = (char)0x1E;
+
+        var nodeA = Node("A", "Dep1", "Dep2");
+        Func<string, string?> upstreamA = id => id switch { "Dep1" => "S1", "Dep2" => "S2", _ => null };
+
+        string collidingId = "Dep1=S1" + itemSep + "Dep2";
+        var nodeB = Node("A", collidingId);
+        Func<string, string?> upstreamB = id => id == collidingId ? "S2" : null;
+
+        string sigA = BuildSignature.Compute(nodeA, "Debug", "abc123", [], NoRead, upstreamA, inPlace: false);
+        string sigB = BuildSignature.Compute(nodeB, "Debug", "abc123", [], NoRead, upstreamB, inPlace: false);
+
+        Assert.NotEqual(sigA, sigB);
+    }
+
+    [Fact]
+    public void dirty_file_path_containing_separator_and_equals_characters_yields_different_signature_than_benign_path()
+    {
+        // Minimum robustness kanıtı: dosya yolu içinde literal ItemSeparator/'=' karakterleri geçse
+        // bile (ör. bozuk/egzotik bir path) fonksiyon çökmez ve benzer-ama-farklı benign bir yoldan
+        // FARKLI bir imza üretir — path artık raw değil HashText(path) olarak gömülür.
+        char itemSep = (char)0x1E;
+        var node = Node("A");
+
+        string weirdPath = "a" + itemSep + "b=c.cs";
+        var readWeird = ContentMap((weirdPath, "int x;"));
+        var readBenign = ContentMap(("abc.cs", "int x;"));
+
+        string sigWeird = BuildSignature.Compute(node, "Debug", "abc123", [weirdPath], readWeird, NoUpstream, inPlace: true);
+        string sigBenign = BuildSignature.Compute(node, "Debug", "abc123", ["abc.cs"], readBenign, NoUpstream, inPlace: true);
+
+        Assert.NotEqual(sigWeird, sigBenign);
+    }
+
     // ---- Non-build-affecting dosya filtresi ------------------------------------------------------
 
     [Fact]
