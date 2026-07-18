@@ -55,6 +55,16 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// KULLANILMAZ — geri atlarsa elapsed negatife düşerdi.</param>
 /// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
 /// asla stdout'a yazılmaz.</param>
+/// <param name="worktreeObjRootResolver">
+/// [I2-K2/It-3 Task 10] <c>cmd.UseWorktree</c>=true iken bu run için kullanılacak worktree kökünü döner (null
+/// dönerse in-place gibi davranılır — obj izole EDİLMEZ). Worktree KÖKÜNÜN gerçekten hazırlanması
+/// (<c>WorktreeManager.PrepareWorktreeAsync</c>) bu run akışına HENÜZ bağlı değildir (<c>planner</c> yalnız
+/// <c>cmd.RootPath</c>/<c>cmd.Configuration</c> alır) — bu yüzden parametre isteğe bağlıdır ve verilmezse
+/// (varsayılan <c>null</c>) mevcut davranış (her zaman in-place obj) korunur. Verildiğinde, dönen kök
+/// <see cref="Core.MsBuild.WorktreeObjPathResolver.Resolve"/> ile proje-Id başına izole bir
+/// <c>BaseIntermediateOutputPath</c>'e çevrilir — obj PAYLAŞILMAZ (bayat-obj zehri, SPIKE-proven
+/// OSYS.Types.NewSales.Print vakası).
+/// </param>
 public sealed class RunCoordinator(
     Func<string, string, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -62,7 +72,8 @@ public sealed class RunCoordinator(
     NdjsonWriter writer,
     JobObject innerJob,
     Func<long> nowMs,
-    Action<string> console) : IDisposable
+    Action<string> console,
+    Func<StartRunCommand, string?>? worktreeObjRootResolver = null) : IDisposable
 {
     private readonly object _gate = new();
 
@@ -286,6 +297,11 @@ public sealed class RunCoordinator(
         catch (MsBuildResolveException ex)
         { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
 
+        // [I2-K2/Task 10] cmd.UseWorktree=false → HER ZAMAN null (in-place, VS-parity, mevcut davranış). true
+        // iken resolver YOKSA (Program.cs henüz worktree hazırlamıyor) yine null'a düşer — obj izolasyonu ancak
+        // resolver GERÇEK bir worktree kökü döndürdüğünde devreye girer.
+        string? worktreeObjRoot = cmd.UseWorktree ? worktreeObjRootResolver?.Invoke(cmd) : null;
+
         int parallelism = Math.Max(1, cmd.Parallelism);
         var wake = new WakeSignal();
         lock (_gate)
@@ -328,7 +344,8 @@ public sealed class RunCoordinator(
                 new RetryingMsBuildInvoker(toolset.Invoker, RetryingMsBuildInvoker.DefaultBackoff,
                     (delay, token) => Task.Delay(delay, token),
                     onRetry: message => { Decide(logs, message); console(message); }),
-                toolset.MsBuildExePath);
+                toolset.MsBuildExePath,
+                worktreeObjRoot);
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -430,7 +447,11 @@ public sealed class RunCoordinator(
                 Configuration: run.Configuration,
                 SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
                 NeedsRestore: HasPackagesConfig(projectId),
-                BaseIntermediateOutputPath: null); // [I2-K2] in-place = projenin kendi obj'i; izolasyon It-3/worktree
+                // [I2-K2/Task 10] worktree kökü verilmişse proje-Id başına izole obj; aksi halde in-place =
+                // projenin kendi (VS-parity) obj'i — bkz. RunCoordinator ctor'daki worktreeObjRootResolver doc'u.
+                BaseIntermediateOutputPath: run.WorktreeObjRoot is not null
+                    ? WorktreeObjPathResolver.Resolve(run.WorktreeObjRoot, projectId)
+                    : null);
 
             MsBuildInvokeResult invoke;
             // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose sonrası
@@ -536,7 +557,9 @@ public sealed class RunCoordinator(
         RunLogWriter Logs,
         ChannelWriter<IpcEvent> Events,
         IMsBuildInvoker Invoker,
-        string MsBuildExePath);
+        string MsBuildExePath,
+        // [I2-K2/Task 10] worktree run + resolver'ın döndüğü kök (bkz. RunCoordinator ctor doc); null ⇒ in-place obj.
+        string? WorktreeObjRoot);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

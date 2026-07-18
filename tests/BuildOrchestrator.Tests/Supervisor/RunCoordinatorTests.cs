@@ -95,7 +95,8 @@ public class RunCoordinatorTests
         public RunCoordinator Sut { get; }
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
-        public Harness(RunPlan plan, FakeInvoker invoker, Func<string, string, RunPlan>? planner = null)
+        public Harness(RunPlan plan, FakeInvoker invoker, Func<string, string, RunPlan>? planner = null,
+            Func<StartRunCommand, string?>? worktreeObjRootResolver = null)
         {
             Sut = new RunCoordinator(
                 planner: planner ?? ((_, _) => plan),
@@ -109,7 +110,8 @@ public class RunCoordinatorTests
                 writer: new NdjsonWriter(_out),
                 innerJob: Job,
                 nowMs: () => Volatile.Read(ref _now),
-                console: line => { lock (ConsoleLines) ConsoleLines.Add(line); });
+                console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
+                worktreeObjRootResolver: worktreeObjRootResolver);
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -586,5 +588,59 @@ public class RunCoordinatorTests
         Assert.False(b.NeedsRestore);
         Assert.Equal(Path.Combine(root, "B"), b.SolutionDir);         // sln yok → projenin kendi dizini
         Assert.Null(b.BaseIntermediateOutputPath);
+    }
+
+    // ---------------------------------------------------------------- 11) worktree obj-izolasyonu (Task 10 / I2-K2)
+
+    [Fact]
+    public async Task worktree_run_with_a_supplied_resolver_gets_per_project_isolated_obj_paths()
+    {
+        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) bu run
+        // akışına henüz bağlı DEĞİL (Program.cs planner'ı yalnız cmd.RootPath/Configuration alır) — burada
+        // worktreeObjRootResolver enjekte edilerek "worktree kökü biliniyorsa" davranış test edilir.
+        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-obj-" + Guid.NewGuid());
+        var plan = PlanOf(Node("A"), Node("B"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
+
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var a = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "A");
+        var b = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "B");
+        Assert.NotNull(a.BaseIntermediateOutputPath);
+        Assert.NotNull(b.BaseIntermediateOutputPath);
+        Assert.NotEqual(a.BaseIntermediateOutputPath, b.BaseIntermediateOutputPath); // farklı proje → farklı izole path
+        Assert.Equal(WorktreeObjPathResolver.Resolve(worktreeRoot, a.ProjectId), a.BaseIntermediateOutputPath); // deterministik şema
+        Assert.StartsWith(worktreeRoot, a.BaseIntermediateOutputPath!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // deferred wiring: Program.cs henüz resolver vermiyor
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker); // worktreeObjRootResolver verilmedi
+
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var a = Assert.Single(invoker.Requests);
+        Assert.Null(a.BaseIntermediateOutputPath); // resolver yoksa UseWorktree=true bile null'a düşer
+    }
+
+    [Fact]
+    public async Task in_place_run_ignores_a_supplied_resolver_and_stays_null() // UseWorktree=false her zaman kazanır
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker,
+            worktreeObjRootResolver: _ => @"c:\should-not-be-used"); // UseWorktree=false olduğu için hiç ÇAĞRILMAMALI
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default); // UseWorktree varsayılan false
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var a = Assert.Single(invoker.Requests);
+        Assert.Null(a.BaseIntermediateOutputPath);
     }
 }

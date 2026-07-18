@@ -24,6 +24,13 @@ public class MsBuildArgumentsTests
     }
 
     [Fact]
+    public void Build_with_null_obj_isolation_emits_no_BaseIntermediateOutputPath_arg() // [I2-K2] in-place = VS-parity, projenin kendi obj'i
+    {
+        var args = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", baseIntermediateOutputPath: null);
+        Assert.DoesNotContain(args, a => a.StartsWith("-p:BaseIntermediateOutputPath=", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Restore_requires_solutionDir_with_trailing_backslash_and_no_nuget_exe() // [SPIKE S2 şart-1 + S1]
     {
         var args = MsBuildArguments.RestorePackagesConfig(@"c:\r\p.csproj", @"c:\r\slnDir");
