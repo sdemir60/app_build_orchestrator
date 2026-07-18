@@ -246,25 +246,32 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// yine ASLA okunmaz, yalnız git'in kendi committed blob SHA'sı).
     /// <para>
     /// No-commits (unborn HEAD) repo → <c>Ok(boş map)</c> (hata DEĞİL, tanımlı edge — <see
-    /// cref="GetHeadCommitAsync"/> ile tutarlı). Bu durumda git, <c>ls-tree -r HEAD</c>'i exit=128 + "fatal:
-    /// Not a valid object name HEAD" ile reddeder (deneysel doğrulandı) — <see cref="IsUnbornHeadSignal"/>'daki
-    /// "exit=1 + boş stderr" kalıbından FARKLI bir sinyal olduğu için ayrı bir tanıyıcı (<see
-    /// cref="IsNoCommitsLsTreeSignal"/>) kullanılır. Başka HERHANGİ bir hata gerçek bir git hatasıdır — Fail.
+    /// cref="GetHeadCommitAsync"/> ile tutarlı). Bu edge, <c>ls-tree -r HEAD</c>'in stderr METNİNE (İngilizce
+    /// "fatal: Not a valid object name HEAD" vb.) BAKILARAK değil, <see cref="GetHeadCommitAsync"/> ile AYNI
+    /// locale-bağımsız primitive'e (<c>rev-parse --verify -q HEAD</c>, <see cref="IsUnbornHeadSignal"/> — exit=1
+    /// + BOŞ stderr) önden bir ön-kontrol (pre-check) olarak başvurularak tespit edilir: HEAD unborn ise ls-tree
+    /// HİÇ ÇALIŞTIRILMAZ. [Review fix — Task 7b] Önceki sürüm ls-tree'nin İngilizce stderr metnini (`"Not a valid
+    /// object name"`) `Contains` ile arıyordu — bu, TÜRKÇE (veya başka) git locale'inde çevrilmiş fatal mesajla
+    /// sessizce kaçırılır ve no-commits repo yanlışlıkla <c>Fail</c> döndürürdü; tam olarak bu dosyada daha önce
+    /// KASITLI olarak terk edilen yaklaşımın (bkz. <see cref="IsUnbornHeadSignal"/> yorumu) bir tekrarıydı.
+    /// HEAD unborn DEĞİLSE ls-tree çalıştırılır ve ANY (herhangi bir) sıfır-olmayan exit kodu gerçek bir git
+    /// hatasıdır — Fail.
     /// </para>
     /// </summary>
     public async Task<GitResult<IReadOnlyDictionary<string, string>>> GetTrackedBlobHashesAsync(CancellationToken ct = default)
     {
+        // Locale-bağımsız no-commits ön-kontrolü: GetHeadCommitAsync ile AYNI primitive (rev-parse --verify -q
+        // HEAD + IsUnbornHeadSignal). ls-tree'nin stderr metni ASLA parse edilmez (bkz. yukarıdaki tip özeti).
+        var head = await GetHeadCommitAsync(ct);
+        if (!head.Success) return GitResult<IReadOnlyDictionary<string, string>>.Fail(head.Error!);
+        if (head.Value is null)
+            return GitResult<IReadOnlyDictionary<string, string>>.Ok(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+
         var outcome = await TryRunGitAsync(["ls-tree", "-r", "HEAD"], ct);
         if (!outcome.Ok) return GitResult<IReadOnlyDictionary<string, string>>.Fail(outcome.Error!);
 
         var r = outcome.Result!;
-        if (r.ExitCode != 0)
-        {
-            if (IsNoCommitsLsTreeSignal(r))
-                return GitResult<IReadOnlyDictionary<string, string>>.Ok(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
-
-            return GitResult<IReadOnlyDictionary<string, string>>.Fail(DescribeGitFailure(r));
-        }
+        if (r.ExitCode != 0) return GitResult<IReadOnlyDictionary<string, string>>.Fail(DescribeGitFailure(r));
 
         // ExitCode==0 iken stdout parse edilir; stderr'de CRLF-dönüşüm UYARISI gibi zararsız satırlar
         // olabilir (deneysel doğrulandı) — başarı, YALNIZ ExitCode'a bakılarak belirlenir.
@@ -348,15 +355,6 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             : r.StandardError.Trim();
 
     private static bool IsFortyHexSha(string s) => s.Length == 40 && s.All(Uri.IsHexDigit);
-
-    /// <summary>
-    /// <c>git ls-tree -r HEAD</c>'in "no-commits" (unborn HEAD) sinyali: exit≠0 + stderr "Not a valid object
-    /// name" içerir (ör. "fatal: Not a valid object name HEAD", deneysel doğrulandı). <see
-    /// cref="IsUnbornHeadSignal"/>'daki "exit=1 + boş stderr" kalıbından KASITLI olarak farklı — ls-tree bu
-    /// durumda exit=128 + DOLU stderr döner, o yüzden ayrı bir tanıyıcı gerekir.
-    /// </summary>
-    private static bool IsNoCommitsLsTreeSignal(ProcessResult r) =>
-        r.ExitCode != 0 && r.StandardError.Contains("Not a valid object name", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// <c>git ls-tree -r HEAD</c> çıktısını (<c>&lt;mode&gt; &lt;type&gt; &lt;sha&gt;\t&lt;path&gt;</c> satırları)

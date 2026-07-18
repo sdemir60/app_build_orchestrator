@@ -62,7 +62,13 @@ public static class BuildSignature
     // (char)hex-kod ile tanımlanır: kaynak dosyada literal/görünmez bir karakter GÖMÜLMEZ, yalnız rakamlar
     // yazılır — kopyala/yapıştır ya da düzenleme sırasında sessizce başka bir karaktere bozulma riski yok.
     private static readonly char FieldSeparator = (char)0x1F; // Unit Separator — alanlar arası (cfg / committed / diff / up)
-    private static readonly char ItemSeparator = (char)0x1E;  // Record Separator — bir alan içindeki liste elemanları arası
+
+    /// <summary>Record Separator — bir alan içindeki liste elemanları arası. <c>internal</c>: aynı assembly
+    /// içindeki <see cref="BuildOrchestrator.Core.Incremental.IncrementalPlanner.ComputeCommittedFingerprint"/>
+    /// da AYNI ayracı kullanır (review fix — Task 7b: eskiden burada duplike/senkronize-yorum ile kopyalanıyordu,
+    /// artık tek kaynak).</summary>
+    internal const char ItemSeparator = (char)0x1E;
+
     private const string NullMarker = "￿__NULL__"; // ayırt edici null-işareti (gerçek path/commit/imza değeriyle asla çakışmaz)
 
     /// <summary>Bir yolun build-etkileyen uzantılardan biriyle bitip bitmediği (Ordinal, case-insensitive uzantı karşılaştırması).</summary>
@@ -141,6 +147,10 @@ public static class BuildSignature
         return HashText(sb.ToString());
     }
 
-    private static string HashText(string text) =>
+    /// <summary>SHA256→upper-case-hex. <c>internal</c>: aynı assembly içindeki <see
+    /// cref="BuildOrchestrator.Core.Incremental.IncrementalPlanner.ComputeCommittedFingerprint"/> da AYNI
+    /// primitive'i kullanır (review fix — Task 7b: eskiden burada duplike/verbatim-kopya ediliyordu, artık tek
+    /// kaynak — bkz. <see cref="ItemSeparator"/> ile aynı gerekçe).</summary>
+    internal static string HashText(string text) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 }

@@ -1,6 +1,5 @@
 namespace BuildOrchestrator.Core.Incremental;
 
-using System.Security.Cryptography;
 using System.Text;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -56,10 +55,6 @@ using BuildOrchestrator.Core.Planning;
 /// </summary>
 public static class IncrementalPlanner
 {
-    // Kaynak dosya path'inde pratikte hiç görünmeyen ASCII kontrol byte'ı — ComputeCommittedFingerprint'in
-    // dahili terim ayracı (BuildSignature'daki ItemSeparator ile aynı kalıp, bkz. o tip özeti).
-    private static readonly char FingerprintItemSeparator = (char)0x1E;
-
     /// <param name="plan">Build-order'da (topological) bir <see cref="BuildPlan"/>.</param>
     /// <param name="headCommit">HEAD commit SHA'sı; <c>null</c> ise hollow (tüm plan için WillBuild=null). [A6 refinement] Proje imzasına DOĞRUDAN girmez — yalnız hollow kapısı içindir, bkz. <paramref name="committedFingerprintForNode"/>.</param>
     /// <param name="dirtyFilesForNode">Düğüm → bu projeye ait working-tree dirty dosya yollarının listesi
@@ -160,13 +155,12 @@ public static class IncrementalPlanner
         foreach (var path in matches)
         {
             // RAW path ASLA doğrudan ayraç yanına gömülmez — BuildSignature'daki boundary-shift korumasıyla
-            // aynı kalıp (bkz. BuildSignatureTests: separator/`=` içeren id/yol testleri).
-            sb.Append(HashText(path)).Append('=').Append(trackedBlobHashes[path]).Append(FingerprintItemSeparator);
+            // aynı kalıp (bkz. BuildSignatureTests: separator/`=` içeren id/yol testleri). HashText ve
+            // ItemSeparator, BuildSignature'daki AYNI primitive'lerin (internal) reuse'u — review fix (Task 7b):
+            // eskiden burada verbatim-kopya edilmişti, artık tek kaynak.
+            sb.Append(BuildSignature.HashText(path)).Append('=').Append(trackedBlobHashes[path]).Append(BuildSignature.ItemSeparator);
         }
 
-        return HashText(sb.ToString());
+        return BuildSignature.HashText(sb.ToString());
     }
-
-    private static string HashText(string text) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 }
