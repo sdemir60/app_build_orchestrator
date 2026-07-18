@@ -146,6 +146,12 @@ It-1 acceptance'ının her maddesini kanıtla; bitince .claude/summaries/ + .cla
 
 ## A5 — It-2 uygulama (Rebuild, paralel + Continue + konsol akışı) · Model: **Opus** · Effort: **medium**
 
+> **✅ TAMAMLANDI (2026-07-17).** superpowers:writing-plans → It-2 TDD planı ([2026-07-17-12-39-it2-tdd-plan.md](2026-07-17-12-39-it2-tdd-plan.md), **15 task**), sonra superpowers:subagent-driven-development ile task-başına implementer + spec/quality review + fix/re-review döngüsü. **Sonuç:** clean build **0 uyarı/0 hata**; non-acceptance suite **214 PASS + 1 SKIP** (CompositeFont). **Bloklayıcı giriş kriteri kapatıldı** (Task 1: `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` handle-inheritance izolasyonu — paralel redirected launch'ta kardeş pipe uçlarının çapraz sızması kökten kesildi; izolasyon kapatılınca test 3/3 timeout ile ayırt ediyor). **It-2 acceptance kanıtlı** — gerçek OSYS 177-proje paralel rebuild: **122 succeeded / 23 failed / 32 skipped / 0 queued**, Outcome.Completed, max eşzamanlı 6 (tavan tuttu), 0 copy-contention retry → **orchestrator-kaynaklı 0 hata = YEŞİL** (23 başarısızlık repo-kaynaklı: stale-obj NewSales kökleri + CS0006 cascade + gerçek CS/MC compile; reviewer obj=null'ı bağımsız doğrulayarak standalone MSBuild'in de aynı hataları vereceğini teyit etti). **Stop→Continue** (graceful=proje sınırı copy-aware / hard=anında TerminateJobObject; runStopped/runCompleted her yolda tam bir kez; elapsed korunur) ve **karta tıkla→tam log** (aktif run dizininden chunk + canlı dikiş; ilk satır gerçek MSBuild komutu) çalışıyor. Kayıt: [2026-07-17-21-01-it2-records.md](2026-07-17-21-01-it2-records.md) (acceptance kanıtları + It-3 handoff + manuel checklist) + [summaries/2026-07-17-22-38-it2-build-engine-complete.md](../summaries/2026-07-17-22-38-it2-build-engine-complete.md).
+>
+> **Review (R promptu, Fable) atlanmadı — işe yaradı.** Final whole-branch review verdikt "With fixes". **Riskli bölge (Stop/copy-aware/scheduler-concurrency — Supervisor+Core) ROCK SOLID: Critical yok** (exactly-once event protokolü, snapshot-after-join, onLine latch retry decorator'ı kapsıyor, handle izolasyonu, worker lost-wakeup-safe). Yakalanan 3 Important App seam'indeydi (per-task review'ların göremediği cross-cutting): cross-run stitch kirlenmesi, PendingLoad hang (Skipped-satır tıklaması), planlamada Stop erişilemezliği — 3 fix wave ile kapatıldı (biri fix wave 1'in kendi getirdiği IsStarting-stuck regresyonu, o da re-review'da yakalandı). Review süreci iki gerçek motor bug'ı da erken yakaladı: Task 5 sonsuz pipe-hang (`PerProjectTimeout` başarı-yolu drain'ini kapsamıyordu; OSYS'nin ~178 copy-event'i tetikleyebilirdi), Task 12 canlı UI'da ölü Stop/Continue butonları (`[NotifyCanExecuteChangedFor]` eksik). **main'e fast-forward merge edildi** (It-0+It-1 zaten main'deydi) → tek trunk, 28 commit; branch temizlendi. **main henüz origin'e push EDİLMEDİ** (kullanıcı kararı). Ertelenen bulgular A6/It-3 girdisi (aşağıda) + `.superpowers/sdd/progress.md` It-3 backlog. **A6'ya geç.**
+>
+> **Manuel (insana kalan) WPF geçişi** (records §7 checklist): canlı pencerede paralel rebuild, Stop→Continue elapsed korunumu, karta tıkla→log (ilk satır gerçek MSBuild komutu), konsol MSBuild-verbose altında akıcılık, Task 12 CanExecute buton canlılığı.
+
 **PROMPT — yapıştır:**
 
 ```
@@ -180,31 +186,53 @@ It-2 acceptance'ını kanıtla (OSYS rebuild paralel green dahil); bitince aşam
 
 ## A6 — It-3 uygulama (Incremental + worktree + fetch + depIssue + Retry) · Model: **Opus** · Effort: **medium**
 
+> **✅ TAMAMLANDI (2026-07-18).** Kısa TDD dökümü ([2026-07-18-00-29-it3-tdd-plan.md](2026-07-18-00-29-it3-tdd-plan.md), **19 task** = 12 It-3 task + It-2 devir girdileri), sonra superpowers:subagent-driven-development ile task-başına implementer + spec/quality review + fix/re-review döngüsü. **Sonuç:** clean build **0 uyarı/0 hata**; non-acceptance suite **473 PASS + 1 SKIP** (CompositeFont); gerçek OSYS **incremental acceptance 3/3 GREEN**. **Incremental UÇTAN UCA çalışıyor:** Run1 Build 177 → 122 succ/23 fail/32 cycle-skip (19s); **Run2 (kaynak değişmeden) → 122 "up to date" skipped, 0 önceden-başarılı kaçak** (5.7s); minimal-rebuild: 1 dirty → hedef + 3 direct dependent, 100 alakasız skip; **ordering assert 145 ProjectStarted / 0 ihlal**. **K1 doğrulandı:** OSYS aktif branch (HEAD `6b4ecba…`) koşu öncesi/sonrası DEĞİŞMEDİ; tüm git production yolu salt-okur (checkout/switch/pull/reset YOK). **Kullanıcı kararı:** imza commit-terimi **per-project committed fingerprint**'e (ls-tree blob-hash) rafine edildi (global HEAD yerine — A6 "projeyi etkiliyor"); branch-bounce minimal/doğru. **Cross-cutting bug** T19'da bulundu+düzeltildi: ProcessRunner child stdin'i kapatmıyordu → git.exe Supervisor NDJSON pipe'ını miras alıp ~30s asılıyordu (MSBuild JobProcessLauncher kullandığı için regresyon yok). **Tüm It-2 devir girdileri kapatıldı** (mojibake→pure UTF-8, EngineExited→VM, depIssue ▲ etiketleme, obj-izolasyon worktree seam, ordering assert, sync-I/O kilit dışı, ucuz sertleştirmeler). **Fable whole-branch review → MERGE READY** (tek doc-blocker düzeltildi). **main'e `--no-ff` merge (commit `b82f739`) + origin'e PUSH EDİLDİ** (`37e97d4..b82f739`); `it3-incremental` branch'i de origin'de. Kayıt: [2026-07-18-12-37-it3-records.md](2026-07-18-12-37-it3-records.md) (canlı sayılar + It-4 backlog) + [summaries/2026-07-18-13-02-it3-incremental-complete.md](../summaries/2026-07-18-13-02-it3-incremental-complete.md). **It-4 MUST-DO-FIRST** (final review + progress.md): SCC-aware propagation (cycle-tangled stale-skip), depIssue-persist penceresi (depIssues doluyken persist etme), Build pre-skip için deterministik unit-test, LayerEngine warn'larını layer-UI'dan ÖNCE kapat, worktree e2e wiring. **A7'ye geç.**
+>
+> **Manuel (insana kalan) WPF/canlı kontroller** (records + It-2 §7 checklist devam): canlı pencerede incremental Build → temiz projeler "up to date" atlanır, Sync (fetch) satırları, branch-niyet satırı, will-build dot'ları (pixel It-4).
+>
+> **⚠️ Not — DURUM (aşağıdaki kutu tarihseldir):** It-2 sonu itibarıyla yazılmıştı; It-3 başlangıç girdilerini gösterir. Güncel durum yukarıdaki ✅ bloğudur.
+> It-0 + It-1 + **It-2 main'de** (fast-forward merge, tek trunk; 28 commit). Clean build 0/0, non-acceptance suite 214 PASS + 1 SKIP, OSYS 177-proje acceptance GREEN. It-2 motoru (paralel MSBuild.exe shell-out, ReadySetScheduler, RunCoordinator, RunLogWriter, RunClock/RunSnapshot, RetryingMsBuildInvoker, RunViewModel/ConsoleBatcher) hazır ve review'lu — It-3 bunların ÜSTÜNE incremental/worktree/fetch/depIssue/Retry/ETA ekler; ağır motor tekrar yazılmaz.
+
 **PROMPT — yapıştır:**
 
 ```
 Şu dosyaları oku:
 1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (Plan v7)
-2. .claude/handoffs/ altındaki EN YENİ handoff
+2. .claude/outputs/2026-07-17-21-01-it2-records.md (It-2 acceptance kayıtları + It-3 handoff backlog + manuel checklist — devir girdileri)
+3. .claude/handoffs/ altındaki EN YENİ handoff (2026-07-17-22-38-... → It-2 tamam, main'de)
+4. .superpowers/sdd/progress.md "It-3 backlog" + "Minor findings roll-up (It-2)" bölümleri (It-2 review'larının bıraktığı bağlayıcı devir kalemleri)
+
+DURUM: It-0+It-1+It-2 main'de (tek trunk, clean build 0/0, 214 test yeşil, acceptance GREEN). Bu iterasyona main'den başla. (main origin'e push edilmedi — taşımak istersen kullanıcıya sor.)
 
 Görev: v7 Part C It-3'ü uygula: T25, T27, T11, T13, T14, T29 (branch-driven worktree + K3 niyet satırı), T15, T53(UI), T69 (Sync-fetch ref-only + offline degrade — K1), T54 (depIssue motor kısmı), T55 (Retry failed), T70 (ETA + lastDurationMs).
 
+⚠️ It-2'den DEVREDEN BAĞLAYICI GİRDİLER (bu iterasyonda kapatılacak — it2-records + progress.md It-3 backlog'undan):
+- depIssue (T54) ACCEPTANCE'TA GÖRÜLDÜ: OSYS koşusunda kök proje (stale-obj) başarısız olunca dependent'ları CS0006 "metadata dosyası bulunamadı" ile başarısız oldu (resolved=succ|fail|skip olduğu için dispatch edildiler, upstream DLL üretilmemişti). T54 bu zinciri ▲ dependency-affected olarak ETİKETLEMELİ (ham failure değil); kök adlar zincirde taşınmalı. AYRICA: hard-stop mid-copy bir DLL'i yarım bırakabilir; reason=stopped ile Failed'a düşen proje Continue'da yeniden derlenmiyor → dependent'lar olası torn DLL'e referansla derleniyor. Continue'da reason=stopped Failed'ları Queued'a geri çevirmeyi değerlendir.
+- MsBuildOutputEncoding mojibake (Task 5 defect, log-okunabilirliği): VS18/Roslyn redirected pipe'a UTF-8 yazıyor, kod ANSI CP1254 sanıyor (basladi→baÅŸladi). Proje loglarındaki Türkçe MSBuild çıktısı bozuk. UTF-8 decode et (ya da tespit et). Build'i kırmıyor ama It-3'te düzelt.
+- EngineExited RunViewModel'e BAĞLI DEĞİL: engine başarılı startRun sonrası ama runStarted öncesi (ya da run ortasında) ölürse IsStarting/IsRunning sıfırlanmıyor, "Restart Engine" bile temizlemiyor → butonlar app-restart'a kadar kilitli. EngineHost.EngineExited → run-state sıfırlayan bir VM handler'ı bağla.
+- TryGetProjectLogSnapshot senkron dosya I/O'sunu RunCoordinator._gate ALTINDA yapıyor (latency, correctness değil): büyük log okuması sırasında stopRun/startRun bloklanabilir. Okumayı kilit dışına taşı.
+- Acceptance testi resolved-gate'i (dependent yalnız dep'i terminal olduktan SONRA dispatch) bağımsız pinlemiyor, RunCoordinatorTests'e güveniyor. It-3'te ProjectStarted-after-dependencies-terminal ordering assert'i ekle.
+- Ucuz sertleştirmeler (progress.md minor roll-up): ReadySetScheduler IsDone "queued empty"→"nothing ready" (self-loop güvenliği); resume-ctor dedup (fresh ctor'un kopyası); SupervisorHost dead _stopRequested temizliği; NativeMethods dead STARTUPINFOW overload; RunLogWriter XML-doc CS1574/CS1570.
+
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it3-tdd-plan.md), sonra task-by-task uygulama.
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it3-tdd-plan.md; yukarıdaki devir girdilerini de task olarak dahil et), sonra superpowers:subagent-driven-development ile task-by-task.
 - Sync başında git fetch origin <branch> — YALNIZ ref güncelleme; checkout/pull ASLA; ağ yoksa warn + yerel HEAD (K1).
 - Branch seçimi = niyet; konsola 'branch target: … — worktree will be used at Build' satırı; git worktree add YALNIZ Build anında (K3).
+- It-2 kararları KORUNUR: I2-K1 iki-katmanlı Stop, ready-set ileri-atlamalı deterministik scheduler, per-run disk log, stdout yalnız NDJSON, D8 (sleep-poll yasak), v1 flag'leri sabit. It-2'de in-place obj kullanılıyordu (I2-K2); It-3 worktree build'lerinde obj-izolasyonu (BaseIntermediateOutputPath, proje Id anahtarlı) DEVREYE GİRER — plumbing (MsBuildArguments/MsBuildInvokeRequest) It-2'de hazır, worktree yolunda null yerine izole path geç.
 - depIssue: resolved = succeeded|failed|skipped; hatalı bağımlılık bloklamaz; kök adlar zincirde taşınır; Contracts alanları (ProjectResult.depIssues[], runCompleted.depIssueCount) v7 A9'a birebir.
-- ETA formülü v7 A6'ya birebir (EMA 0.75/0.25, +400ms, 5s yuvarlama, almost done).
-- Commit'leri ben istemeden yapma.
+- ETA formülü v7 A6'ya birebir (EMA 0.75/0.25, +400ms, 5s yuvarlama, almost done); BuildState.lastDurationMs zaten Contracts'ta hazır (It-1'de eklendi).
+- Commit'leri ben istemeden yapma (It-2 deseni: feature branch + task-başı WIP commit; main'e merge / push benim onayımla).
 
-It-3 acceptance'ını kanıtla (branch-bounce, L1→L3 dirty, worktree matrisi, will-build dot'lar, fetch degrade, depIssue zinciri, Retry kümesi); bitince aşamamızı kaydet.
+It-3 acceptance'ını kanıtla (branch-bounce, L1→L3 dirty, config-switch all-dirty, worktree matrisi + niyet satırı, will-build dot'lar + succeeded→clean canlı geçiş, fetch'li Sync + offline degrade, depIssue zinciri testli, Retry failed kümesi, ETA formülü testli); bitince aşamamızı kaydet.
 ```
 
-**Bitti kriteri:** It-3 acceptance kanıtlı. Ardından **R promptu (Fable)**.
+**Bitti kriteri:** It-3 acceptance kanıtlı (branch-bounce, L1→L3 dirty, worktree matrisi, will-build dot'lar, fetch degrade, depIssue zinciri, Retry kümesi) + It-2 devir girdileri (mojibake, EngineExited→VM, depIssue etiketleme, obj-izolasyon worktree yolunda) kapatılmış. Ardından **R promptu (Fable)**.
 
 ---
 
 ## A7 — It-4 BAŞI: T65 Font A/B karar kapısı · Model: **Fable** · Effort: **medium**
+
+> **DURUM (2026-07-18):** It-0 + It-1 + It-2 + **It-3 main'de VE origin'e PUSH EDİLDİ** (merge commit `b82f739`; `it3-incremental` branch'i de origin'de). Clean build 0/0, non-acceptance suite 473 PASS + 1 SKIP, gerçek OSYS **incremental acceptance GREEN** (Run2 no-change → 122 up-to-date skip / 0 kaçak; K1 salt-okur doğrulandı). Motor tam: incremental (per-project committed-fingerprint imza + build-state persist + Safe/Fast propagation), git subsistem (ref-only fetch + branch-driven worktree + pool), layer/depIssue/Retry/ETA, ve **VM-seviyesi** will-build/depIssue/ETA state (buildPreview). **It-4 = design-v1 birebir UI** (pixel/kart/graf/typewriter render — motor VM state hazır, App yalnız minimal). Temiz oturumda başla. **It-4 MUST-DO-FIRST backlog** (`.superpowers/sdd/progress.md` + it3-records §7): SCC-aware propagation (cycle-tangled stale-skip), depIssue-persist penceresi, Build pre-skip deterministik unit-test, **LayerEngine warn'larını layer-config UI'dan ÖNCE kapat**, worktree e2e BUILD wiring + Continue'nun UseWorktree'yi devralması + inPlace'i resolved-worktree'den türetme, sync-workspace IPC/UI, ETA live-tick. Bunlar A8/A9'un (UI/feature It-4) kapsamı; **A7 yalnız izole T65 font kapısı** — motor/backlog'a dokunmaz.
 
 **PROMPT — yapıştır:**
 
@@ -212,6 +240,9 @@ It-3 acceptance'ını kanıtla (branch-bounce, L1→L3 dirty, worktree matrisi, 
 Şu dosyaları oku:
 1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (v7 — T65 + A13.1 madde 1)
 2. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (§3.1 tipografi + §5 yapısal farklar)
+3. .claude/handoffs/ altındaki EN YENİ handoff (2026-07-18-13-02-... → It-3 tamam, main'de + origin'de)
+
+DURUM: It-0..It-3 main'de ve origin'e push edildi (merge b82f739). Geist/Geist Mono statik OTF It-0'da gömüldü (400/500/600 ayrışması testli); CompositeFont line-height 1.55 It-0 spike'ında TUTMADI (ölçülen ~15.96 DIP @13px, konsol DefaultLineHeight ile kalır) — T65 bu bağlamda font rasterization kalitesini (Display/Ideal × ClearType/Grayscale) hedef monitörde karara bağlar.
 
 Görev (T65, K9 karar kapısı): Küçük bir WPF test penceresi yap — design-v1'deki gerçek metin örnekleri (konsol satırları, 13px liste satırı, 11px caps başlık; Geist + Geist Mono gömülü) 4 kombinasyonda yan yana: TextFormattingMode Display/Ideal × TextRenderingMode ClearType/Grayscale. Aynı metnin tarayıcı (prototip) görünümüyle karşılaştırma talimatı ekle.
 
