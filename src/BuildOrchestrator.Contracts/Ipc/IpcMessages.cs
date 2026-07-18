@@ -45,7 +45,8 @@ public enum DependentMode { Safe, Fast }
 /// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>
 /// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
-/// yalnız dirty, cascade yok), RetryFailed modunda failed+dependent kapsamını belirler. Varsayılan Safe. [It-3]</param>
+/// yalnız dirty, cascade yok). RetryFailed modunda ETKİSİZDİR — o mod DependentMode'dan bağımsız, her zaman
+/// failed + tüm transitive dependent'ları derler. Varsayılan Safe. [It-3]</param>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe) : IpcCommand;
 
