@@ -64,6 +64,12 @@ public sealed record BuildPlan(
     IReadOnlyList<IReadOnlyList<string>> Cycles,            // her biri bir SCC (>1 üye), üyeler sıralı
     string Configuration);
 
+/// <summary>[T15][N8] Katman ataması config'i: sıralı regex+isim. Order ÇİFT görev görür — (1) eşleşme
+/// önceliği (LayerEngine, küçük Order'ı önce dener, ilk eşleşen kazanır), (2) eşleşen projelere atanan
+/// katmanın LayerIndex'i (bu pattern = "Order numaralı katmana şu regex'e uyanlar girer"). Regex,
+/// ProjectNode.Name'e (AssemblyName türevi kısa ad) karşı denenir — Id (tam csproj yolu) değil.</summary>
+public sealed record LayerPattern(int Order, string Regex, string Name);
+
 public sealed record BuildState(
     string ProjectId,
     string? BuiltSignature,

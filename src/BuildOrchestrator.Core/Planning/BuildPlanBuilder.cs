@@ -11,7 +11,7 @@ using BuildOrchestrator.Contracts.Model;
 /// </summary>
 public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator evaluator, EvaluationCache cache)
 {
-    public BuildPlan Build(string root, string configuration)
+    public BuildPlan Build(string root, string configuration, IReadOnlyList<LayerPattern>? layerPatterns = null)
     {
         var scan = scanner.Scan(root);
         var evaluated = scan.CsprojPaths.Select(p => cache.GetOrEvaluate(p, evaluator.Evaluate)).ToList();
@@ -37,6 +37,11 @@ public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator e
                 BuildOrder: i, LayerIndex: null, LayerName: null,
                 InCycle: inCycle.Contains(id), WillBuild: null));
         }
-        return new BuildPlan(nodes, topo.Cycles, configuration);
+
+        // [T15][N8] Katman ataması + sert faz bariyeri: pattern yoksa (varsayılan) LayerEngine nodes'u aynen
+        // döner (mevcut davranış, regresyon yok). Warnings (ters katman bağımlılığı) burada bilinçli olarak
+        // yutulur — BuildPlan'ın henüz bir warnings alanı yok; LayerEngine.AssignLayers doğrudan test edilir.
+        var assignment = LayerEngine.AssignLayers(nodes, layerPatterns ?? []);
+        return new BuildPlan(assignment.Nodes, topo.Cycles, configuration);
     }
 }
