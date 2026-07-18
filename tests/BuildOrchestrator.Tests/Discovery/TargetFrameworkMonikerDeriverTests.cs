@@ -12,9 +12,13 @@ public class TargetFrameworkMonikerDeriverTests
     public void legacy_target_framework_version_becomes_dot_net_framework_moniker(string tfv, string expected) =>
         Assert.Equal(expected, TargetFrameworkMonikerDeriver.FromRaw(tfv, null));
 
+    // [Review fix/Task 14] SDK-style netstandardX.Y'nin project.assets.json "targets" anahtarı da diğer SDK-style
+    // TFM'ler gibi KISA biçimdir (asla ".NETStandard,Version=vX.Y" uzun biçimine restore edilmez) — bu yüzden
+    // burada da ham kısa TFM olduğu gibi geçmeli, yoksa temiz bir SDK-style netstandard projesi StaleObjDetector
+    // tarafından yanlışlıkla "stale" işaretlenir (bkz. StaleObjRunStartWarnerTests round-trip testi).
     [Fact]
-    public void sdk_style_netstandard_becomes_dot_net_standard_moniker() =>
-        Assert.Equal(".NETStandard,Version=v2.0", TargetFrameworkMonikerDeriver.FromRaw(null, "netstandard2.0"));
+    public void sdk_style_netstandard_passes_through_unchanged() =>
+        Assert.Equal("netstandard2.0", TargetFrameworkMonikerDeriver.FromRaw(null, "netstandard2.0"));
 
     // net5.0+ SDK projelerinde project.assets.json "targets" anahtarı UZUN moniker DEĞİL, KISA TFM'nin
     // kendisidir (doğrulandı: bu repodaki src/BuildOrchestrator.Supervisor/obj/project.assets.json →

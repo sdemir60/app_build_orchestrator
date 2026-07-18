@@ -50,6 +50,20 @@ public class StaleObjRunStartWarnerTests
         return proj;
     }
 
+    // [Review fix/Task 14] Temiz SDK-style netstandard projesi: obj/project.assets.json "targets" anahtarı
+    // NuGet'in gerçekte ürettiği KISA biçim ("netstandard2.0") — bu projenin KENDİ meşru restore'u, yabancı
+    // artık DEĞİL.
+    private static string WriteCleanSdkStyleNetstandardProject(string dir, string name)
+    {
+        Directory.CreateDirectory(Path.Combine(dir, "obj"));
+        string proj = Path.Combine(dir, name + ".csproj");
+        File.WriteAllText(proj,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup></Project>");
+        File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"),
+            "{ \"targets\": { \"netstandard2.0\": {} } }"); // temiz — SDK-style'ın kendi kısa-form restore'u
+        return proj;
+    }
+
     [Fact]
     public void warns_once_for_a_stale_project_and_never_touches_its_obj_files()
     {
@@ -87,6 +101,35 @@ public class StaleObjRunStartWarnerTests
 
             var lines = new System.Collections.Generic.List<string>();
             StaleObjRunStartWarner.WarnStaleObj([Node(proj, "P")], lines.Add);
+
+            Assert.Empty(lines);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // [Review fix/Task 14] Round-trip false-positive regression: a CLEAN SDK-style netstandard project (its OWN
+    // legit restore, not a foreign artifact) whose obj/project.assets.json "targets" key is the SHORT form
+    // "netstandard2.0" — the ONLY form NuGet ever produces for SDK-style projects (verified in this repo's own
+    // obj outputs: net10.0-windows, net46 — never long-form). Full round-trip through
+    // CsprojEvaluator → TargetFrameworkMonikerDeriver → StaleObjDetector.Inspect.
+    //
+    // Before the fix, TargetFrameworkMonikerDeriver special-cased SDK-style "netstandardX.Y" to the LONG form
+    // ".NETStandard,Version=vX.Y". That expectedTfm never Contains-matches the real short-form key
+    // "netstandard2.0", so Inspect fell through to its ForeignTfm regex — which matches the project's OWN key —
+    // producing a SPURIOUS "yabancı TFM" warning on every fresh run of a perfectly clean project. RED under the
+    // buggy long-form derivation (this test failed: Assert.Empty(lines) got 1 spurious warning); GREEN after the
+    // fix (short-form pass-through matches the real key, no warning).
+    [Fact]
+    public void does_not_warn_for_a_clean_sdk_style_netstandard_project_with_short_form_targets_key()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "warner-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "N");
+            string proj = WriteCleanSdkStyleNetstandardProject(dir, "N");
+
+            var lines = new System.Collections.Generic.List<string>();
+            StaleObjRunStartWarner.WarnStaleObj([Node(proj, "N")], lines.Add);
 
             Assert.Empty(lines);
         }

@@ -92,10 +92,13 @@ public class CsprojEvaluatorTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    // [T72/Task 14] SDK-style <TargetFramework>netstandardX.Y</TargetFramework> uzun moniker'a çevrilmeli
-    // (StaleObjDetector'ın karşılaştırdığı project.assets.json "targets" anahtar biçimiyle aynı olsun diye).
+    // [Review fix/Task 14] SDK-style <TargetFramework>netstandardX.Y</TargetFramework> KISA biçimde geçmeli —
+    // project.assets.json "targets" anahtarı SDK-style'da hep kısa TFM'dir, netstandard de istisna değildir.
+    // Eskiden burada uzun ".NETStandard,Version=vX.Y" biçimine çevriliyordu; bu, temiz bir SDK-style netstandard
+    // projesinde StaleObjDetector'ın kendi meşru "targets" anahtarını tanımayıp sahte "stale" uyarısı üretmesine
+    // yol açıyordu (bkz. StaleObjRunStartWarnerTests round-trip testi — RED→GREEN kanıtı orada).
     [Fact]
-    public void Evaluate_sdk_style_netstandard_derives_dot_net_standard_moniker()
+    public void Evaluate_sdk_style_netstandard_passes_through_unchanged()
     {
         string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
         try
@@ -105,7 +108,7 @@ public class CsprojEvaluatorTests
             File.WriteAllText(Path.Combine(dir, "N.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup></Project>");
             var ev = new CsprojEvaluator().Evaluate(Path.Combine(dir, "N.csproj"));
-            Assert.Equal(".NETStandard,Version=v2.0", ev.TargetFrameworkMoniker);
+            Assert.Equal("netstandard2.0", ev.TargetFrameworkMoniker);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
