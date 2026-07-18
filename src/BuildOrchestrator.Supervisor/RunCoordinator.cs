@@ -100,7 +100,9 @@ public sealed class RunCoordinator(
     // reason TAŞIMAZ — bu yüzden reason bilgisi ayrı, run segmentleri arası kümülatif bu sözlükte izlenir (aynı
     // _depIssuesById gibi Continue/RetryFailed segmentleri BOYUNCA aynı örnek paylaşılır). Bir proje sonradan
     // FARKLI bir sonuçla (Succeeded ya da başka reason'la Failed) tamamlanırsa buradan silinir (bkz.
-    // BuildProjectAsync) — bu yüzden değer her zaman "şu an Failed VE reason=stopped" ile TUTARLIDIR.
+    // BuildProjectAsync). NOT: RetryPlanning re-queue bir girdiyi Queued'a çevirirken bu seti güncellemez, bu
+    // yüzden geçici olarak bayat bir "stopped" girdisi kalabilir; RequeueStoppedFailed'ın savunmacı re-check'i
+    // (yalnız hâlâ Failed olanları re-queue eder) bunu zararsız kılar.
     private ConcurrentDictionary<string, byte>? _stoppedFailedIds;
     // [T28] En son (aktif ya da tamamlanmış) run'ın dizini — _logs Dispose edilip null'landıktan SONRA da
     // hayatta kalır: run tamamen bitmiş olsa bile bir proje kartına tıklamak logunu diskten okuyabilsin diye.

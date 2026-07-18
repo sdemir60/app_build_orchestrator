@@ -32,12 +32,14 @@ public sealed record GetProjectLogCommand(string ProjectId) : IpcCommand;
 public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcCommand;
 
 public enum RunMode { Rebuild, Build, Continue, RetryFailed }
-/// <summary>Dependent'ların RetryFailed sonrası nasıl ele alınacağı: Safe = failed + tüm transitive dependent'lar
-/// yeniden derlenir; Fast = yalnız failed projeler (dependent'lar riske rağmen atlanır). [It-3]</summary>
+/// <summary>Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c> Safe/Fast, Task 7):
+/// Build modunda WillBuild hesabını besler — Safe = dirty + tüm transitive dependent'lar yeniden derlenir;
+/// Fast = yalnız dirty (cascade yok). RetryFailed her zaman failed + tüm transitive dependent'ları derler
+/// (DependentMode'dan BAĞIMSIZ). [It-3]</summary>
 public enum DependentMode { Safe, Fast }
 /// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty); Continue = önceki run'ın
-/// queued'larından sürer (elapsed korunur); RetryFailed = önceki run'da failed olanlar + (DependentMode'a göre)
-/// dependent'ları. [v7Δ-4] [It-3]</param>
+/// queued'larından sürer (elapsed korunur); RetryFailed = önceki run'da failed olanlar + tüm transitive
+/// dependent'ları (DependentMode'dan bağımsız — her zaman full cascade). [v7Δ-4] [It-3]</param>
 /// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
 /// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
 /// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>
