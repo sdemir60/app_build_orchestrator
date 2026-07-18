@@ -304,11 +304,21 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
     /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
-    /// Satır zaten varsa (savunmacı — protokol garantisi ihlal edilirse) yalnız WillBuild güncellenir.</summary>
+    /// [Review fix, Task 17] Satır zaten varsa bu ARTIK normal Continue/RetryFailed şeklidir (savunmacı bir
+    /// edge case DEĞİL): <see cref="RunCoordinator"/> her segmentin başında AYNI (dondurulmuş, segment-1
+    /// zamanlı) plan'dan türetilmiş <see cref="BuildPreviewEvent"/>'i YENİDEN yayınlar, ve <see cref="Projects"/>
+    /// Continue'da temizlenmez (bkz. <see cref="OnRunStarted"/>). Satır bu VM instance'ında zaten TERMİNAL
+    /// (Succeeded/Failed/Skipped) ise WillBuild GÜNCELLENMEZ — aksi halde segment 1'de gerçekleşen
+    /// succeeded→clean canlı geçişi (bkz. <see cref="OnProjectDone"/>), segment 2'nin (bilerek bayat) preview
+    /// değeriyle sessizce EZİLİRDİ.</summary>
     private void OnBuildPreview(BuildPreviewEvent e)
     {
         foreach (var item in e.Items)
-            EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending).WillBuild = item.WillBuild;
+        {
+            var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
+            if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
+            row.WillBuild = item.WillBuild;
+        }
     }
 
     /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —

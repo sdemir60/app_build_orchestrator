@@ -846,6 +846,28 @@ public class RunViewModelTests
         Assert.Null(Assert.Single(vm.Projects).WillBuild);
     }
 
+    [Fact] // [Review fix, Task 17] RunCoordinator, Continue segmentinde AYNI (dondurulmuş) plan'dan türetilmiş
+           // buildPreview'ı YENİDEN yayınlar (Projects Continue'da temizlenmez) — bu yeniden-yayın, segment 1'de
+           // gerçekleşen succeeded→clean canlı geçişini EZMEMELİ
+    public async Task BuildPreviewEvent_on_a_Continue_segment_does_not_clobber_an_already_clean_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\dirty.csproj";
+
+        // segment 1: preview (dirty) → started → succeeded (canlı clean geçişi)
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+        Assert.False(Assert.Single(vm.Projects).WillBuild); // clean
+
+        // segment 2 (Continue): RunCoordinator aynı (bayat) planı yeniden preview eder — WillBuild=true (dirty)
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Continue, 1, 1, "Debug", ElapsedMsAtStart: 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true)]));
+
+        Assert.False(Assert.Single(vm.Projects).WillBuild); // succeeded→clean geçişi HÂLÂ ayakta — ezilmedi
+    }
+
     // ---------------------------------------------------------------- 10) [Task 17] ETA text (Core.Incremental.EtaCalculator)
 
     [Fact] // run başlar başlamaz (hiç completion yok) — ETA NUMARASI YOK, yalnız X/N · elapsed (EtaCalculator'ın "ilk koşu" fallback'i)
