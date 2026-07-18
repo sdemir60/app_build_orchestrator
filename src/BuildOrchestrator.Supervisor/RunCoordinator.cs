@@ -96,6 +96,12 @@ public sealed class RunCoordinator(
     // tallies gibi run SEGMENTLERİ ARASINDA KÜMÜLATİF: Continue AYNI birikimi devralır (aksi halde 1. segmentte
     // tamamlanmış bir projenin depIssue zinciri, 2. segmentteki dependent'ları için kaybolurdu).
     private ConcurrentDictionary<string, IReadOnlyList<string>>? _depIssuesById;
+    // [Task-13] projectId → Failed'a düştüğü AN ki reason "stopped" mıydı (torn-DLL guard). RunSnapshot/BuildResult
+    // reason TAŞIMAZ — bu yüzden reason bilgisi ayrı, run segmentleri arası kümülatif bu sözlükte izlenir (aynı
+    // _depIssuesById gibi Continue/RetryFailed segmentleri BOYUNCA aynı örnek paylaşılır). Bir proje sonradan
+    // FARKLI bir sonuçla (Succeeded ya da başka reason'la Failed) tamamlanırsa buradan silinir (bkz.
+    // BuildProjectAsync) — bu yüzden değer her zaman "şu an Failed VE reason=stopped" ile TUTARLIDIR.
+    private ConcurrentDictionary<string, byte>? _stoppedFailedIds;
     // [T28] En son (aktif ya da tamamlanmış) run'ın dizini — _logs Dispose edilip null'landıktan SONRA da
     // hayatta kalır: run tamamen bitmiş olsa bile bir proje kartına tıklamak logunu diskten okuyabilsin diye.
     private string? _lastRunDirectory;
@@ -110,6 +116,17 @@ public sealed class RunCoordinator(
 
     private bool HasResumableRunLocked =>
         _snapshot is not null && _plan is not null && _logs is not null && _snapshot.Queued.Count > 0;
+
+    /// <summary>
+    /// [Task-13] RetryFailed'a açık bir run var mı: en az bir Failed proje taşıyan bir snapshot/plan/logs
+    /// devredilmiş olmalı. <see cref="HasResumableRunLocked"/>'dan FARKLI: Continue "Queued backlog var mı"
+    /// sorar (yalnız Stopped+Queued&gt;0), bu ise "Failed proje var mı" sorar — bir run TAMAMEN bitmiş
+    /// (Completed, Queued=0) olsa bile içinde Failed projeler varsa RetryFailed'a açıktır (bkz.
+    /// RunSegmentAsync'in finally'sindeki <c>resumable</c> hesaplaması — plan/logs bu durumda da devredilir).
+    /// </summary>
+    private bool HasRetryableRunLocked =>
+        _snapshot is not null && _plan is not null && _logs is not null
+        && _snapshot.Completed.Values.Any(v => v == BuildResult.Failed);
 
     /// <summary>
     /// [T28] <c>getProjectLog</c>'un tek kaynağı. Aktif/resumable run varsa canlı writer'dan (in-memory sayaçla
@@ -150,6 +167,8 @@ public sealed class RunCoordinator(
                 rejection = new ErrorEvent("runInProgress", $"Zaten bir run koşuyor — '{cmd.RunId}' reddedildi.");
             else if (cmd.Mode == RunMode.Continue && !IsResumableForLocked(cmd.RootPath))
                 rejection = new ErrorEvent("noResumableRun", $"'{cmd.RootPath}' için sürdürülebilir bir run yok.");
+            else if (cmd.Mode == RunMode.RetryFailed && !IsRetryableForLocked(cmd.RootPath))
+                rejection = new ErrorEvent("noResumableRun", $"'{cmd.RootPath}' için retry edilecek failed proje yok.");
             else
             {
                 // Slot, arka plan task'ı başlamadan ÖNCE burada tutulur: ikinci bir startRun (planlama sürerken
@@ -166,9 +185,14 @@ public sealed class RunCoordinator(
 
     // Continue yalnız AYNI kök için geçerlidir: plan yeniden kurulmaz (T55), bu yüzden başka bir kök için
     // Continue sessizce ESKİ kökün projelerini derlerdi.
-    private bool IsResumableForLocked(string rootPath) =>
-        HasResumableRunLocked && Canonical(rootPath) is string root
-        && string.Equals(root, _root, StringComparison.OrdinalIgnoreCase);
+    private bool IsResumableForLocked(string rootPath) => HasResumableRunLocked && SameRootLocked(rootPath);
+
+    // [Task-13] RetryFailed de AYNI nedenle (plan yeniden kurulmaz, mevcut plan/logs üstünden devam eder) yalnız
+    // AYNI kök için geçerlidir.
+    private bool IsRetryableForLocked(string rootPath) => HasRetryableRunLocked && SameRootLocked(rootPath);
+
+    private bool SameRootLocked(string rootPath) =>
+        Canonical(rootPath) is string root && string.Equals(root, _root, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Bozuk yol (boş/geçersiz karakter) fırlatmaz, null döner: bu, IPC dispatch loop'undan (StartAsync)
     /// çağrılır — hatalı bir komut tüm Supervisor'ı düşürmemeli.</summary>
@@ -267,15 +291,31 @@ public sealed class RunCoordinator(
         RunClock clock;
         long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
+        ConcurrentDictionary<string, byte> stoppedFailedIds;
 
-        if (cmd.Mode == RunMode.Continue)
+        if (cmd.Mode is RunMode.Continue or RunMode.RetryFailed)
         {
             RunSnapshot snapshot;
-            // [T54] 1. segmentin depIssue birikimi AYNEN devralınır — yoksa (savunmacı) taze başlar.
-            lock (_gate) { runPlan = _plan!; logs = _logs!; snapshot = _snapshot!; depIssuesById = _depIssuesById ??= new(StringComparer.OrdinalIgnoreCase); }
+            // [T54] 1. segmentin depIssue birikimi AYNEN devralınır — yoksa (savunmacı) taze başlar. [Task-13]
+            // stoppedFailedIds birikimi de AYNI şekilde devralınır (Continue'un reason=stopped tespiti için).
+            lock (_gate)
+            {
+                runPlan = _plan!; logs = _logs!; snapshot = _snapshot!;
+                depIssuesById = _depIssuesById ??= new(StringComparer.OrdinalIgnoreCase);
+                stoppedFailedIds = _stoppedFailedIds ??= new(StringComparer.OrdinalIgnoreCase);
+            }
             // [T55] AYNI plan'dan devam: yeniden tarama/planlama YOK. Snapshot.Queued INERT'tir — resume ctor'u
-            // kuyruğu Completed'tan türetir.
-            scheduler = new ReadySetScheduler(runPlan.Plan, snapshot);
+            // kuyruğu Completed'tan türetir; RetryPlanning ise Completed'ı dispatch edilecek yeni bir kümeyle
+            // (bkz. iki mod ayrımı aşağıda) buluşturarak resume ctor'a besler.
+            //
+            // [Task-13] Continue: yalnız reason="stopped" ile Failed'a düşenler (torn-DLL guard) Queued'a döner —
+            // diğer reason'larla Failed olanlar (ör. "exit 1") Failed kalır, yeniden derlenmez.
+            // RetryFailed: Failed olan HER proje + transitive dependent'ları Queued'a döner; succeeded/skipped
+            // dokunulmaz. İkisinde de elapsed/console/log writer SIFIRLANMAZ — aynı segment üstünden devam.
+            RunSnapshot effectiveSnapshot = cmd.Mode == RunMode.Continue
+                ? RetryPlanning.RequeueStoppedFailed(snapshot, new HashSet<string>(stoppedFailedIds.Keys, StringComparer.OrdinalIgnoreCase))
+                : RetryPlanning.RequeueFailedAndDependents(runPlan.Plan, snapshot);
+            scheduler = new ReadySetScheduler(runPlan.Plan, effectiveSnapshot);
             elapsedAtStart = snapshot.ElapsedMs;
             clock = new RunClock(nowMs, snapshot.ElapsedMs);
         }
@@ -294,6 +334,7 @@ public sealed class RunCoordinator(
                 logs = _logs = logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
                 depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
+                stoppedFailedIds = _stoppedFailedIds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase); // [Task-13] taze run → taze birikim
             }
             scheduler = new ReadySetScheduler(runPlan.Plan);
             elapsedAtStart = 0;
@@ -354,7 +395,8 @@ public sealed class RunCoordinator(
                     onRetry: message => { Decide(logs, message); console(message); }),
                 toolset.MsBuildExePath,
                 worktreeObjRoot,
-                depIssuesById); // [T54]
+                depIssuesById, // [T54]
+                stoppedFailedIds); // [Task-13]
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -398,12 +440,15 @@ public sealed class RunCoordinator(
                 "run {0} bitti: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms depIssues={7}",
                 cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
 
-            bool resumable = outcome == RunOutcome.Stopped && snapshotAtEnd.Queued.Count > 0;
+            // [Task-13] Continue backlog'u (Stopped + Queued>0) VEYA en az bir Failed proje varsa (RetryFailed'a
+            // açık — bkz. HasRetryableRunLocked) plan/logs/birikimler devredilir; ikisi de yoksa (run tamamen
+            // temiz bitti) her şey temizlenir — aksi halde RetryFailed'ın "yeniden derlenecek" bir kümesi olmaz.
+            bool resumable = (outcome == RunOutcome.Stopped && snapshotAtEnd.Queued.Count > 0) || failed > 0;
             lock (_gate) _snapshot = resumable ? snapshotAtEnd : null;
             if (!resumable)
             {
                 // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
-                lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; } // [T54]
+                lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; } // [T54/Task-13]
                 logs.Dispose();
             }
         }
@@ -495,6 +540,7 @@ public sealed class RunCoordinator(
             if (invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed)
             {
                 result = BuildResult.Succeeded;
+                run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: başarılı ({1}ms)", name, invoke.DurationMs));
@@ -502,6 +548,7 @@ public sealed class RunCoordinator(
             else
             {
                 string reason = ReasonFor(invoke);
+                MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
                 run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, invoke.DurationMs, reason, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: başarısız — {1} ({2}ms)", name, reason, invoke.DurationMs));
@@ -509,6 +556,7 @@ public sealed class RunCoordinator(
         }
         catch (OperationCanceledException)
         {
+            MarkStoppedFailed(run, projectId, "stopped"); // [Task-13]
             run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "stopped", depIssuesForEvent));
             Decide(run.Logs, $"{name}: başarısız — stopped (iptal)");
         }
@@ -516,6 +564,7 @@ public sealed class RunCoordinator(
         {
             // Invoke/log yolunda beklenmeyen hata: proje tek başına düşer, run devam eder ("hata derlemeyi
             // öldürmez", A3) — ve aşağıdaki finally sayesinde scheduler ASLA askıda kalmaz.
+            run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] reason="invoke error: ..." — stopped DEĞİL
             run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "invoke error: " + ex.Message, depIssuesForEvent));
             Decide(run.Logs, $"{name}: başarısız — invoke error: {ex.Message}");
         }
@@ -555,6 +604,18 @@ public sealed class RunCoordinator(
                 [.. MsBuildArguments.RestorePackagesConfig(request.ProjectId, request.SolutionDir)]);
         yield return WindowsCommandLine.Build(msbuildExePath,
             [.. MsBuildArguments.Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath)]);
+    }
+
+    /// <summary>
+    /// [Task-13] <paramref name="reason"/>=="stopped" ise <paramref name="projectId"/>'i run'lar arası devredilen
+    /// <c>StoppedFailedIds</c> birikimine yazar (torn-DLL guard — bkz. Continue'un RetryPlanning.RequeueStoppedFailed
+    /// çağrısı); değilse (savunmacı — id daha önce stopped işaretliyken şimdi FARKLI bir reason'la Failed olduysa)
+    /// siler, aksi halde stale bir "stopped" izi Continue'da yanlışlıkla yeniden derlemeye yol açardı.
+    /// </summary>
+    private static void MarkStoppedFailed(RunContext run, string projectId, string reason)
+    {
+        if (reason == "stopped") run.StoppedFailedIds[projectId] = 0;
+        else run.StoppedFailedIds.TryRemove(projectId, out _);
     }
 
     private string ReasonFor(MsBuildInvokeResult invoke)
@@ -606,7 +667,11 @@ public sealed class RunCoordinator(
         string? WorktreeObjRoot,
         // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur, Continue segmentleri boyunca aynı
         // örnek paylaşılır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
-        ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById);
+        ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById,
+        // [Task-13] projectId → "şu an Failed VE reason=stopped" işareti (BuildProjectAsync tarafından yazılır/
+        // silinir — bkz. o metodun sonundaki not). Continue segmentinin torn-DLL guard'ı için: RunSegmentAsync
+        // bunu Completed'tan Queued'a geri taşımak üzere okur (bkz. RetryPlanning.RequeueStoppedFailed).
+        ConcurrentDictionary<string, byte> StoppedFailedIds);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

@@ -409,6 +409,166 @@ public class RunCoordinatorTests
         Assert.Empty(h.LogWriters);
     }
 
+    // ---------------------------------------------------------------- 5b) RetryFailed + Continue re-queue stopped (Task-13)
+
+    [Fact]
+    public async Task continue_requeues_reason_stopped_failed_projects_but_leaves_other_failure_reasons_failed()
+    {
+        // A: normal build hatası (exit 1) — torn DLL değil, Continue'da DOKUNULMAMALI.
+        // B: hard Stop'ta mid-build yarıda kalır (reason=stopped) — torn-DLL guard: Continue'da YENİDEN derlenmeli.
+        // C: hiç dispatch edilmeden Queued kalır (sıradan Continue davranışı, değişmez).
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"));
+        var inFlight = Signal();
+        var release = Signal();
+        int bCalls = 0;
+        var invoker = new FakeInvoker(async (req, _, _) =>
+        {
+            string n = NameOf(req.ProjectId);
+            if (n == "A") return Exit(1);
+            if (n == "B" && Interlocked.Increment(ref bCalls) == 1)
+            {
+                inFlight.TrySetResult();
+                await release.Task; // hard Stop burada yakalar — invoke exit=1 döner ama ReasonFor "stopped" yazar
+                return Exit(1);
+            }
+            return Ok(); // B'nin 2. çağrısı (Continue'da retry) ve C
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg1 = h.Events;
+        var failed1 = seg1.OfType<ProjectFailedEvent>().ToList();
+        Assert.Equal(2, failed1.Count);
+        Assert.Equal("exit 1", failed1.Single(e => NameOf(e.ProjectId) == "A").Reason);
+        Assert.Equal("stopped", failed1.Single(e => NameOf(e.ProjectId) == "B").Reason);
+        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
+        Assert.Equal(RunOutcome.Stopped, done1.Outcome);
+        Assert.Equal(2, done1.Failed);
+        Assert.Equal(1, done1.Queued); // C hiç dispatch edilmedi
+
+        await h.Sut.StartAsync(Start(RunMode.Continue, parallelism: 1, runId: "r1"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // A ASLA yeniden dispatch edilmez (farklı reason — Failed kalır); B torn-DLL guard ile YENİDEN derlenir;
+        // C sıradan Continue davranışıyla dispatch edilir.
+        Assert.Equal(["A", "B", "B", "C"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
+
+        var seg2 = h.Events.Skip(seg1.Count).ToList();
+        var done2 = Assert.IsType<RunCompletedEvent>(seg2[^1]);
+        Assert.Equal(RunOutcome.Completed, done2.Outcome);
+        Assert.Equal(2, done2.Succeeded); // B (retried) + C
+        Assert.Equal(1, done2.Failed);    // A hâlâ failed
+        Assert.Equal(0, done2.Queued);
+
+        Assert.Single(h.LogWriters); // console/stream SIFIRLANMAZ — Continue AYNI run dizinine/writer'a yazar
+    }
+
+    [Fact]
+    public async Task retry_failed_rebuilds_failed_projects_and_their_transitive_dependents_only()
+    {
+        // F1 ← D1 ← D2 zinciri (D1 F1'e, D2 D1'e bağımlı — transitive dependent); S bağımsız.
+        var plan = PlanOf(Node("F1"), Node("D1", deps: ["F1"]), Node("D2", deps: ["D1"]), Node("S"));
+        int f1Calls = 0;
+        var invoker = new FakeInvoker((req, _, _) =>
+        {
+            if (NameOf(req.ProjectId) == "F1")
+                return Task.FromResult(Interlocked.Increment(ref f1Calls) == 1 ? Exit(1) : Ok());
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg1 = h.Events;
+        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
+        Assert.Equal(RunOutcome.Completed, done1.Outcome);
+        Assert.Equal(1, done1.Failed);    // F1
+        Assert.Equal(3, done1.Succeeded); // D1, D2, S ("hata derlemeyi öldürmez" — A3 — bloklanmadan build edildiler)
+
+        await h.Sut.StartAsync(Start(RunMode.RetryFailed, parallelism: 1, runId: "r1"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Retry kümesi = F1 + transitive dependent'ları (D1, D2) — S ASLA yeniden dispatch edilmez.
+        Assert.Equal(["F1", "D1", "D2", "S", "F1", "D1", "D2"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
+
+        var seg2 = h.Events.Skip(seg1.Count).ToList();
+        var started2 = Assert.IsType<RunStartedEvent>(seg2[0]);
+        Assert.Equal(RunMode.RetryFailed, started2.Mode);
+        var done2 = Assert.IsType<RunCompletedEvent>(seg2[^1]);
+        Assert.Equal(RunOutcome.Completed, done2.Outcome);
+        Assert.Equal(4, done2.Succeeded); // F1 (retried, artık succeeded) + D1 + D2 + S (kümülatif)
+        Assert.Equal(0, done2.Failed);
+        Assert.Equal(0, done2.Queued);
+
+        Assert.Single(h.LogWriters); // console/stream SIFIRLANMAZ — RetryFailed AYNI run dizinine/writer'a yazar
+    }
+
+    [Fact]
+    public async Task retry_failed_without_a_retryable_run_errors()
+    {
+        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())));
+
+        await h.Sut.StartAsync(Start(RunMode.RetryFailed), default);
+
+        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
+        Assert.Equal("noResumableRun", err.Code);
+        Assert.Empty(h.Events.OfType<RunStartedEvent>());
+        Assert.Empty(h.LogWriters);
+    }
+
+    [Fact]
+    public async Task dep_issues_accumulated_in_the_first_segment_are_inherited_by_a_dependent_dispatched_after_continue()
+    {
+        // [T54 carry] R (kök) 1. segmentte failed olur; M (R'ye DOĞRUDAN bağımlı) aynı segmentte succeeded olur
+        // ve depIssues=[R] taşıdığı _depIssuesById birikimine yazılır; run M'den SONRA (Dep dispatch edilmeden
+        // önce) Stop edilir. Continue'da Dep (M'ye bağımlı, R'ye DEĞİL) dispatch edilince R artık Completed'ta
+        // FAILED değildir aramaz (M zaten Succeeded) — depIssues'unu YALNIZ 1. segmentten devralınan
+        // _depIssuesById["M"]=[R] üzerinden (DOLAYLI/inherited) alabilir. Bu, birikimin segment sınırını
+        // AŞARAK aynı örnekle devretmesini kanıtlar.
+        var plan = PlanOf(Node("R"), Node("M", deps: ["R"]), Node("Dep", deps: ["M"]));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (req, _, _) =>
+        {
+            string n = NameOf(req.ProjectId);
+            if (n == "R") return Exit(1);
+            if (n == "M")
+            {
+                inFlight.TrySetResult();
+                await release.Task;
+                return Ok();
+            }
+            return Ok(); // Dep
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg1 = h.Events;
+        var succeededM = Assert.Single(seg1.OfType<ProjectSucceededEvent>());
+        Assert.Equal(["R"], succeededM.DepIssues); // sanity: M, R'ye DOĞRUDAN bağımlı
+        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
+        Assert.Equal(RunOutcome.Stopped, done1.Outcome);
+        Assert.Equal(1, done1.Queued); // Dep hiç dispatch edilmedi
+
+        await h.Sut.StartAsync(Start(RunMode.Continue, parallelism: 1, runId: "r1"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg2 = h.Events.Skip(seg1.Count).ToList();
+        var depEvent = Assert.Single(seg2.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "Dep");
+        Assert.Equal(["R"], depEvent.DepIssues); // 1. segmentten MİRAS — _depIssuesById segment sınırını aştı
+    }
+
     // ---------------------------------------------------------------- 6) tek seferde tek run
 
     [Fact]
