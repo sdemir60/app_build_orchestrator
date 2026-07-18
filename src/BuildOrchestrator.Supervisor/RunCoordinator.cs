@@ -353,6 +353,14 @@ public sealed class RunCoordinator(
         // resolver GERÇEK bir worktree kökü döndürdüğünde devreye girer.
         string? worktreeObjRoot = cmd.UseWorktree ? worktreeObjRootResolver?.Invoke(cmd) : null;
 
+        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi YALNIZ taze (Rebuild/Build)
+        // segmentte VE in-place (worktreeObjRoot null — izole obj YOK) projeler için tetiklenir: Continue/RetryFailed
+        // AYNI obj üstünde devam eder (yeniden teşhis gerekmez), worktree run'ları zaten PAYLAŞILMAYAN izole obj
+        // kullanır (bayat-obj zehri worktree'de oluşamaz). onRetry ile AYNI ikili-yazım deseni: hem decision.log
+        // hem konsol. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
+        if (cmd.Mode is not (RunMode.Continue or RunMode.RetryFailed) && worktreeObjRoot is null)
+            StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
+
         int parallelism = Math.Max(1, cmd.Parallelism);
         var wake = new WakeSignal();
         lock (_gate)

@@ -11,9 +11,14 @@ public sealed record RawHintPath(string Raw, string BaseName);
 /// Tek bir .csproj'un ham-XML değerlendirme sonucu: AssemblyName, Compile dosyaları,
 /// HintPath referansları ve ProjectReference'lar. MSBuild.exe çalıştırılmaz — [Global Constraints raw-XML].
 /// </summary>
+/// <param name="TargetFrameworkMoniker">
+/// [T72/Task 14] StaleObjDetector.Inspect'in beklediği TAM moniker (bkz. TargetFrameworkMonikerDeriver) — csproj'ta
+/// ne TargetFrameworkVersion ne TargetFramework varsa (nadiren, ör. bozuk/eksik proje dosyası) null.
+/// </param>
 public sealed record EvaluatedProject(
     string Path, string AssemblyName, IReadOnlyList<string> CompileFiles,
-    IReadOnlyList<RawHintPath> HintPaths, IReadOnlyList<string> ProjectReferences, bool IsSdkStyle);
+    IReadOnlyList<RawHintPath> HintPaths, IReadOnlyList<string> ProjectReferences, bool IsSdkStyle,
+    string? TargetFrameworkMoniker = null);
 
 /// <summary>
 /// Ham-XML csproj evaluator. Legacy (.NET Framework, xmlns'li) ve SDK-style projeleri
@@ -36,6 +41,14 @@ public sealed class CsprojEvaluator
         string asmName = Elements(root, "PropertyGroup").SelectMany(pg => Elements(pg, "AssemblyName"))
             .Select(e => e.Value.Trim()).FirstOrDefault(v => v.Length > 0)
             ?? System.IO.Path.GetFileNameWithoutExtension(csprojPath);
+
+        // [T72/Task 14] StaleObjDetector.Inspect'in expectedTfm'i için: legacy TargetFrameworkVersion ya da
+        // SDK-style TargetFramework — bkz. TargetFrameworkMonikerDeriver.
+        string? tfv = Elements(root, "PropertyGroup").SelectMany(pg => Elements(pg, "TargetFrameworkVersion"))
+            .Select(e => e.Value.Trim()).FirstOrDefault(v => v.Length > 0);
+        string? tf = Elements(root, "PropertyGroup").SelectMany(pg => Elements(pg, "TargetFramework"))
+            .Select(e => e.Value.Trim()).FirstOrDefault(v => v.Length > 0);
+        string? tfMoniker = TargetFrameworkMonikerDeriver.FromRaw(tfv, tf);
 
         // Compile: legacy'de yalnız explicit <Compile Include> (wildcard varsa diskle genişlet);
         // SDK-style'da implicit glob **/*.cs (obj/bin hariç) + explicit Include birleşimi. Determinizm [D8]: SortedSet.
@@ -60,7 +73,7 @@ public sealed class CsprojEvaluator
             .Select(v => System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, v)))
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToList();
 
-        return new EvaluatedProject(csprojPath, asmName, compile.ToList(), hints, projRefs, sdk);
+        return new EvaluatedProject(csprojPath, asmName, compile.ToList(), hints, projRefs, sdk, tfMoniker);
     }
 
     // MSBuild namespace toleransı: legacy'de xmlns var, SDK'da yok → LocalName ile eşle [D5].

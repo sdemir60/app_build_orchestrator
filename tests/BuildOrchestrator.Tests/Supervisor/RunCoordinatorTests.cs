@@ -897,4 +897,156 @@ public class RunCoordinatorTests
         var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
         Assert.Equal(0, done.DepIssueCount);
     }
+
+    // ---------------------------------------------------------------- 13) StaleObjDetector wiring (Task 14/T72)
+
+    // OSYS.Types.NewSales.Print vakasının aynısı: v4.6 legacy csproj + obj altında yabancı (netstandard2.0)
+    // restore artığı — Reason metnindeki "yabancı TFM" ifadesi test boyunca stale-warn işareti olarak kullanılır.
+    private const string StaleMarker = "yabancı TFM";
+
+    private static string WriteStaleObjProject(string dir, string assemblyName)
+    {
+        Directory.CreateDirectory(Path.Combine(dir, "obj"));
+        string proj = Path.Combine(dir, assemblyName + ".csproj");
+        File.WriteAllText(proj, $"""
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <PropertyGroup>
+                <AssemblyName>{assemblyName}</AssemblyName>
+                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+              </PropertyGroup>
+            </Project>
+            """);
+        File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"),
+            "{ \"targets\": { \".NETStandard,Version=v2.0\": {} } }"); // yabancı
+        return proj;
+    }
+
+    [Fact]
+    public async Task fresh_in_place_run_warns_once_on_stale_obj_via_console_and_decision_log_and_never_touches_the_obj()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+            string assets = Path.Combine(root, "P", "obj", "project.assets.json");
+            byte[] before = File.ReadAllBytes(assets);
+
+            var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            var plan = PlanOf(node);
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker); // worktreeObjRootResolver YOK → in-place
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var warnLines = h.ConsoleLines.Where(l => l.Contains(StaleMarker, StringComparison.Ordinal)).ToList();
+            var warn = Assert.Single(warnLines);
+            Assert.Contains("P", warn);
+
+            string decisionLog = File.ReadAllText(Path.Combine(h.LogWriters.Single().RunDirectory, "decision.log"));
+            Assert.Contains(StaleMarker, decisionLog); // aynı satır decision.log'a da yazılır (onRetry ile aynı ikili-yazım deseni)
+
+            Assert.Equal(before, File.ReadAllBytes(assets)); // [§4] dokunulmadı — byte-tam aynı
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task does_not_warn_on_a_clean_project()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "P");
+            Directory.CreateDirectory(Path.Combine(dir, "obj"));
+            string proj = Path.Combine(dir, "P.csproj");
+            File.WriteAllText(proj, """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup>
+                    <AssemblyName>P</AssemblyName>
+                    <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+                  </PropertyGroup>
+                </Project>
+                """);
+            File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"),
+                "{ \"targets\": { \".NETFramework,Version=v4.6\": {} } }"); // temiz
+
+            var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            var plan = PlanOf(node);
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker);
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task worktree_run_does_not_warn_even_when_the_project_s_default_obj_is_stale()
+    {
+        // [I2-K2/Task 10] worktree run izole obj kullanır (BaseIntermediateOutputPath worktree altına yönlenir) —
+        // projenin KENDİ (default) obj'i hiç okunmaz/derlenmez, bu yüzden bayat-obj teşhisi anlamsızdır.
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-wt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+
+            var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            var plan = PlanOf(node);
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1, UseWorktree: true), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task continue_segment_does_not_re_emit_the_stale_obj_warning_from_the_fresh_segment()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+            var pNode = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            // Q/R gerçek diskte YOK (nonexistent fake path) — StaleObjRunStartWarner bunları ASLA fırlatmadan
+            // sessizce atlamalı (never-throw); yalnız Q'yu in-flight'ta durdurup 2. segment (Continue) tetiklenir.
+            var qNode = Node("Q");
+            var rNode = Node("R");
+            var plan = PlanOf(pNode, qNode, rNode);
+
+            var qInFlight = Signal();
+            var releaseQ = Signal();
+            var invoker = new FakeInvoker(async (req, _, _) =>
+            {
+                if (NameOf(req.ProjectId) == "Q") { qInFlight.TrySetResult(); await releaseQ.Task; }
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker);
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
+            await qInFlight.Task.WaitAsync(Limit);
+            h.Sut.TryRequestStop(StopKind.Graceful);
+            releaseQ.SetResult();
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.True(h.Sut.HasResumableRun); // R hiç dispatch edilmedi → Continue'ya açık
+
+            int warnsAfterSegment1 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Equal(1, warnsAfterSegment1); // 1. (fresh) segment TEK BİR KEZ warn eder
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Continue, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            int warnsAfterSegment2 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Equal(1, warnsAfterSegment2); // Continue AYNI obj üstünde devam eder — yeniden teşhis/warn YOK
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }
