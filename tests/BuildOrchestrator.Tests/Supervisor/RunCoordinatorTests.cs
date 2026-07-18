@@ -215,12 +215,14 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // Proje logunun 1. satırı gerçek MSBuild komut satırı, 2. satırı build çıktısı → ikisi de projectLog.
+        // İSTİSNA: A, B'ye DOĞRUDAN bağımlı ve B failed → [T54] A'nın log başına EK bir depIssue uyarı satırı
+        // girer (komut satırından SONRA, gerçek çıktıdan ÖNCE) — bu yüzden A'nın logu 3 satır (C/B'ninki 2 kalır).
         Assert.Equal(
         [
             "runStarted",
             "projectStarted:C", "projectLog:C:1", "projectLog:C:2", "projectSucceeded:C",
             "projectStarted:B", "projectLog:B:1", "projectLog:B:2", "projectFailed:B:exit 1",
-            "projectStarted:A", "projectLog:A:1", "projectLog:A:2", "projectSucceeded:A",
+            "projectStarted:A", "projectLog:A:1", "projectLog:A:2", "projectLog:A:3", "projectSucceeded:A",
             "runCompleted:Completed",
         ], h.Events.Select(Describe));
 
@@ -231,11 +233,18 @@ public class RunCoordinatorTests
         Assert.Equal("Debug", started.Configuration);
         Assert.Equal(0, started.ElapsedMsAtStart);
 
+        // [T54] A, B'ye doğrudan bağımlı ve B failed → A depIssues=[B] taşır; warn satırı log'un 2. satırında.
+        var succeededA = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "A");
+        Assert.Equal(["B"], succeededA.DepIssues);
+        var aLog2 = Assert.Single(h.Events.OfType<ProjectLogEvent>(), e => NameOf(e.ProjectId) == "A" && e.LineNumber == 2);
+        Assert.Equal("warning: B failed in this run — last successful output referenced (B)", aLog2.Text);
+
         var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
         Assert.Equal(2, done.Succeeded);
         Assert.Equal(1, done.Failed);
         Assert.Equal(0, done.Skipped);
         Assert.Equal(0, done.Queued);
+        Assert.Equal(1, done.DepIssueCount); // yalnız A dependency-affected
 
         // v7Δ-7: konsol run-start özeti solution-level bir msbuild çağrısı İZLENİMİ vermez — gerçek komut
         // satırları yalnız proje loglarındadır.
@@ -642,5 +651,90 @@ public class RunCoordinatorTests
 
         var a = Assert.Single(invoker.Requests);
         Assert.Null(a.BaseIntermediateOutputPath);
+    }
+
+    // ---------------------------------------------------------------- 12) depIssue propagation (T54)
+
+    [Fact]
+    public async Task a_failed_root_s_dependents_carry_dep_issues_direct_and_inherited_and_are_not_blocked()
+    {
+        // C ← B ← A zinciri (B, C'ye; A, B'ye bağımlı), tek worker → deterministik sıra. C (kök) başarısız olur;
+        // "hata derlemeyi öldürmez" (A3): B ve C'nin dependent'ı A yine de BLOKLANMADAN derlenir (resolved =
+        // succeeded|failed|skipped) — ama B DOĞRUDAN, A ise B üzerinden MİRAS (dolaylı) olarak C'yi depIssue taşır.
+        var plan = PlanOf(Node("C"), Node("B", deps: ["C"]), Node("A", deps: ["B"]));
+        var invoker = new FakeInvoker((req, _, _) =>
+            Task.FromResult(NameOf(req.ProjectId) == "C" ? Exit(1) : Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var events = h.Events;
+        var failedC = Assert.Single(events.OfType<ProjectFailedEvent>());
+        Assert.Equal("C", NameOf(failedC.ProjectId));
+        Assert.Null(failedC.DepIssues); // C kendisi kök — kendi başına bir depIssue taşımaz (null, JSON'a yazılmaz)
+
+        var succeededB = events.OfType<ProjectSucceededEvent>().Single(e => NameOf(e.ProjectId) == "B");
+        Assert.Equal(["C"], succeededB.DepIssues); // B, C'ye DOĞRUDAN bağımlı ve C failed
+
+        var succeededA = events.OfType<ProjectSucceededEvent>().Single(e => NameOf(e.ProjectId) == "A");
+        Assert.Equal(["C"], succeededA.DepIssues); // A, C'ye doğrudan bağımlı DEĞİL — B üzerinden MİRAS aldı
+
+        var done = Assert.IsType<RunCompletedEvent>(events[^1]);
+        Assert.Equal(RunOutcome.Completed, done.Outcome);
+        Assert.Equal(2, done.Succeeded); // A, B
+        Assert.Equal(1, done.Failed);    // C
+        Assert.Equal(2, done.DepIssueCount); // B ve A dependency-affected (C kendi depIssue'u boş, sayılmaz)
+    }
+
+    [Fact]
+    public async Task dep_issue_warn_lines_appear_at_the_affected_project_s_log_head_direct_then_indirect_wording()
+    {
+        var plan = PlanOf(Node("C"), Node("B", deps: ["C"]), Node("A", deps: ["B"]));
+        var invoker = new FakeInvoker((req, onLine, _) =>
+        {
+            onLine("gerçek derleme çıktısı " + NameOf(req.ProjectId));
+            return Task.FromResult(NameOf(req.ProjectId) == "C" ? Exit(1) : Ok());
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        List<string> LogTextsFor(string name) => h.Events.OfType<ProjectLogEvent>()
+            .Where(e => NameOf(e.ProjectId) == name).OrderBy(e => e.LineNumber).Select(e => e.Text).ToList();
+
+        // B: satır 1 gerçek MSBuild komut satırı (v7Δ-7 invaryantı korunur) → satır 2 DOĞRUDAN uyarı → satır 3 gerçek çıktı.
+        var b = LogTextsFor("B");
+        Assert.Equal("warning: C failed in this run — last successful output referenced (C)", b[1]);
+        Assert.Equal("gerçek derleme çıktısı B", b[2]);
+
+        // A: C'ye doğrudan bağımlı değil (B'ye bağımlı) → DOLAYLI (zincir) uyarısı.
+        var a = LogTextsFor("A");
+        Assert.Equal("warning: failure in dependency chain (C) — referenced outputs may be stale", a[1]);
+        Assert.Equal("gerçek derleme çıktısı A", a[2]);
+
+        // C kendisi kök — kendi logunda hiç depIssue uyarı satırı YOK.
+        Assert.DoesNotContain(LogTextsFor("C"), l => l.StartsWith("warning:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task a_skipped_dependency_produces_no_dep_issue_for_its_dependent()
+    {
+        // X cycle nedeniyle construction'da Skipped (pre-skip) sayılır. Y, X'e bağımlı: X resolved sayılır
+        // (bloklamaz) ama SKIPPED bir bağımlılık depIssue ÜRETMEZ (yalnız FAILED kökler taşınır — v7 A6).
+        var plan = PlanOf(Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("Z", deps: ["X"]));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var succeededZ = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+        Assert.Equal("Z", NameOf(succeededZ.ProjectId));
+        Assert.Null(succeededZ.DepIssues);
+
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(0, done.DepIssueCount);
     }
 }

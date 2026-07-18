@@ -10,7 +10,8 @@ using BuildOrchestrator.Contracts.Model;
 ///
 /// Bir bağımlılık "çözülmüş" sayılır: Succeeded | Failed | Skipped (yalnız Succeeded değil) — başarısız bir
 /// bağımlılık dependent'ini BLOKLAMAZ, aksi halde tek bir hata run'ı sonsuza dek bekletirdi ("hata derlemeyi
-/// öldürmez", A3). Bu durumun raporlanması (depIssue zinciri, ▲ badge) It-3'ün işi (T54) — burada yok.
+/// öldürmez", A3). Bu durumun raporlanması (depIssue zinciri, ▲ badge — It-3/T54) artık <see cref="DepIssueTracker"/>
+/// ile gerçeklendi: bu class'ın resolved semantiği DEĞİŞMEDİ, yalnız <see cref="Completed"/> üzerinden okunur.
 ///
 /// InCycle=true node'lar (TopoSort'un SCC üyeleri, Nodes içinde hâlâ mevcut) construction anında
 /// Skipped("in dependency cycle") sayılıp PreSkipped'e yazılır; böylece bağımlıları için çözülmüş kabul

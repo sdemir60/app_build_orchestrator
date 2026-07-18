@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Threading.Channels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -91,6 +92,10 @@ public sealed class RunCoordinator(
     private string? _root;
     private RunLogWriter? _logs;
     private RunSnapshot? _snapshot;
+    // [T54] projectId → o projenin (dependency zincirinden) taşıdığı kök depIssue adları. Succeeded/Failed
+    // tallies gibi run SEGMENTLERİ ARASINDA KÜMÜLATİF: Continue AYNI birikimi devralır (aksi halde 1. segmentte
+    // tamamlanmış bir projenin depIssue zinciri, 2. segmentteki dependent'ları için kaybolurdu).
+    private ConcurrentDictionary<string, IReadOnlyList<string>>? _depIssuesById;
     // [T28] En son (aktif ya da tamamlanmış) run'ın dizini — _logs Dispose edilip null'landıktan SONRA da
     // hayatta kalır: run tamamen bitmiş olsa bile bir proje kartına tıklamak logunu diskten okuyabilsin diye.
     private string? _lastRunDirectory;
@@ -261,11 +266,13 @@ public sealed class RunCoordinator(
         ReadySetScheduler scheduler;
         RunClock clock;
         long elapsedAtStart;
+        ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
 
         if (cmd.Mode == RunMode.Continue)
         {
             RunSnapshot snapshot;
-            lock (_gate) { runPlan = _plan!; logs = _logs!; snapshot = _snapshot!; }
+            // [T54] 1. segmentin depIssue birikimi AYNEN devralınır — yoksa (savunmacı) taze başlar.
+            lock (_gate) { runPlan = _plan!; logs = _logs!; snapshot = _snapshot!; depIssuesById = _depIssuesById ??= new(StringComparer.OrdinalIgnoreCase); }
             // [T55] AYNI plan'dan devam: yeniden tarama/planlama YOK. Snapshot.Queued INERT'tir — resume ctor'u
             // kuyruğu Completed'tan türetir.
             scheduler = new ReadySetScheduler(runPlan.Plan, snapshot);
@@ -286,6 +293,7 @@ public sealed class RunCoordinator(
                 _root = Canonical(cmd.RootPath);
                 logs = _logs = logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
+                depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
             }
             scheduler = new ReadySetScheduler(runPlan.Plan);
             elapsedAtStart = 0;
@@ -345,7 +353,8 @@ public sealed class RunCoordinator(
                     (delay, token) => Task.Delay(delay, token),
                     onRetry: message => { Decide(logs, message); console(message); }),
                 toolset.MsBuildExePath,
-                worktreeObjRoot);
+                worktreeObjRoot,
+                depIssuesById); // [T54]
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -376,22 +385,25 @@ public sealed class RunCoordinator(
             int succeeded = completed.Count(kv => kv.Value == BuildResult.Succeeded);
             int failed = completed.Count(kv => kv.Value == BuildResult.Failed);
             int skipped = completed.Count(kv => kv.Value == BuildResult.Skipped);
+            // [T54] Run genelinde (Continue segmentleri DAHİL, kümülatif) dependency-affected proje sayısı —
+            // depIssues'u boş OLMAYAN projeler. Kendisi failed bir kök, kendi depIssue'unu taşımaz (sayılmaz).
+            int depIssueCount = depIssuesById.Values.Count(v => v.Count > 0);
 
             // Olaylar ÖNCE (TryWrite fırlatmaz), disk logu sonra: log I/O'su patlasa bile App kapanışı görür.
             if (stopKind is not null)
                 events.TryWrite(new RunStoppedEvent(cmd.RunId, WasHard: stopKind == StopKind.Hard));
             events.TryWrite(new RunCompletedEvent(cmd.RunId, outcome, succeeded, failed, skipped,
-                snapshotAtEnd.Queued.Count, clock.ElapsedMs));
+                snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
             Decide(logs, string.Format(CultureInfo.InvariantCulture,
-                "run {0} bitti: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms",
-                cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs));
+                "run {0} bitti: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms depIssues={7}",
+                cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
 
             bool resumable = outcome == RunOutcome.Stopped && snapshotAtEnd.Queued.Count > 0;
             lock (_gate) _snapshot = resumable ? snapshotAtEnd : null;
             if (!resumable)
             {
                 // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
-                lock (_gate) { _logs = null; _plan = null; _root = null; }
+                lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; } // [T54]
                 logs.Dispose();
             }
         }
@@ -439,6 +451,18 @@ public sealed class RunCoordinator(
         // da fırlatmayan biçimde yapılır (id her zaman plan'da vardır — scheduler aynı plan'dan sürülür).
         string name = run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
         var result = BuildResult.Failed;
+
+        // [T54] Dispatch anında TÜM bağımlılıklar zaten terminaldir (ReadySetScheduler'ın resolved-gate'i,
+        // IsReadyLocked) — bu yüzden depIssues burada, invoke'tan ÖNCE, güvenle hesaplanıp HEM warn satırlarına
+        // HEM olaya (event) HEM de birikime (bu projenin kendi dependent'ları miras alabilsin diye) yazılabilir.
+        var depIssues = DepIssueTracker.Compute(
+            node?.Dependencies ?? [],
+            run.Scheduler.Completed,
+            run.DepIssuesById,
+            id => run.NodeById.TryGetValue(id, out var n) ? n.Name : id);
+        run.DepIssuesById[projectId] = depIssues.All;
+        IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
+
         try
         {
             run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, name));
@@ -458,43 +482,63 @@ public sealed class RunCoordinator(
             // AppendLine fırlatır — satır sessizce düşmez).
             using (var log = run.Logs.OpenProjectLog(projectId))
             {
-                // v7Δ-7: proje logunun İLK satırı, bu proje için çalıştırılacak GERÇEK MSBuild komut satırıdır.
+                // v7Δ-7: proje logunun İLK satırı, bu proje için çalıştırılacak GERÇEK MSBuild komut satırıdır —
+                // depIssue uyarıları bu invaryantı BOZMAZ, komut satır(lar)ından SONRA, gerçek derleme çıktısından
+                // ÖNCE (log başı) yazılır [T54].
                 foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
                     Emit(run, projectId, log, commandLine);
+                foreach (string warnLine in DepIssueWarnLines(depIssues))
+                    Emit(run, projectId, log, warnLine);
                 invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
             }
 
             if (invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed)
             {
                 result = BuildResult.Succeeded;
-                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs));
+                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: başarılı ({1}ms)", name, invoke.DurationMs));
             }
             else
             {
                 string reason = ReasonFor(invoke);
-                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, invoke.DurationMs, reason));
+                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, invoke.DurationMs, reason, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: başarısız — {1} ({2}ms)", name, reason, invoke.DurationMs));
             }
         }
         catch (OperationCanceledException)
         {
-            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "stopped"));
+            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "stopped", depIssuesForEvent));
             Decide(run.Logs, $"{name}: başarısız — stopped (iptal)");
         }
         catch (Exception ex)
         {
             // Invoke/log yolunda beklenmeyen hata: proje tek başına düşer, run devam eder ("hata derlemeyi
             // öldürmez", A3) — ve aşağıdaki finally sayesinde scheduler ASLA askıda kalmaz.
-            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "invoke error: " + ex.Message));
+            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "invoke error: " + ex.Message, depIssuesForEvent));
             Decide(run.Logs, $"{name}: başarısız — invoke error: {ex.Message}");
         }
         finally
         {
             run.Scheduler.Complete(projectId, result);
         }
+    }
+
+    /// <summary>
+    /// [T54] Proje logunun BAŞINDA (komut satırlarından hemen sonra, gerçek derleme çıktısından ÖNCE) yazılan
+    /// depIssue uyarı satırları. DOĞRUDAN her failed bağımlılık için AYRI bir satır ("X failed in this run —
+    /// last successful output referenced (X)"): bu projenin doğrudan bağımlılığı olan X bu run'da failed oldu,
+    /// dolayısıyla X'in ÖNCEKİ (başarılı) çıktısı referanslanıyor. DOLAYLI (bu projenin doğrudan bağımlılığı
+    /// OLMAYAN, zincirden miras alınan) kökler TEK birleşik satırda toplanır — CS0006 zincirinde ara katmanların
+    /// her biri aynı kökü tekrar tekrar uyarmasın diye. Hiç depIssue yoksa hiçbir satır YOK.
+    /// </summary>
+    private static IEnumerable<string> DepIssueWarnLines(DepIssueResult depIssues)
+    {
+        foreach (string root in depIssues.Direct)
+            yield return $"warning: {root} failed in this run — last successful output referenced ({root})";
+        if (depIssues.Indirect.Count > 0)
+            yield return $"warning: failure in dependency chain ({string.Join(", ", depIssues.Indirect)}) — referenced outputs may be stale";
     }
 
     /// <summary>Satırı diske yazar (1-tabanlı satır no) ve aynı numarayla canlı <c>projectLog</c> olayı üretir.</summary>
@@ -559,7 +603,10 @@ public sealed class RunCoordinator(
         IMsBuildInvoker Invoker,
         string MsBuildExePath,
         // [I2-K2/Task 10] worktree run + resolver'ın döndüğü kök (bkz. RunCoordinator ctor doc); null ⇒ in-place obj.
-        string? WorktreeObjRoot);
+        string? WorktreeObjRoot,
+        // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur, Continue segmentleri boyunca aynı
+        // örnek paylaşılır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
+        ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].
