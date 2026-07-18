@@ -145,8 +145,11 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
 
     private static async Task PumpLinesAsync(Stream stream, Action<string> onLine)
     {
+        // Task 15: detectEncodingFromByteOrderMarks:true — MsBuildOutputEncoding.Value artık UTF-8; olası bir
+        // UTF-8 BOM (EF BB BF) StreamReader tarafından yutulur, satıra sızmaz. BOM yoksa (normal durum) Value
+        // olduğu gibi kullanılır — davranış değişmez.
         using var reader = new StreamReader(stream, MsBuildOutputEncoding.Value,
-            detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true); // stream sahipliği child'ta (Dispose orada)
+            detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: true); // stream sahipliği child'ta (Dispose orada)
         try
         {
             string? line;
