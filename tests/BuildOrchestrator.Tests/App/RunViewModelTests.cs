@@ -637,6 +637,20 @@ public class RunViewModelTests
         Assert.Contains("139", vm.EngineDiedMessage);
     }
 
+    [Fact] // [Review fix, Task 16] EngineDiedMessage engine ölümünden sonra KALICI kalmamalı — sonraki run gerçekten
+    // başladığında (runStarted, IPC round-trip kanıtı) VM'in artık CANLI/güncel bir engine'e bağlı olduğu kesinleşir.
+    public async Task OnEngineExited_then_next_runStarted_clears_EngineDiedMessage()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEngineExited(139);
+        Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage)); // önce kama-sonrası mesaj var
+
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Rebuild, 1, 1, "Debug", 0)); // sonraki run gerçekten başladı
+
+        Assert.Null(vm.EngineDiedMessage); // eski ölüm mesajı artık geçerli engine durumunu YANLIŞ yansıtmamalı
+    }
+
     [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
     public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
     {

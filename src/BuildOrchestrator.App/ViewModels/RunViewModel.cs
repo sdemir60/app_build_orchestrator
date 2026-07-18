@@ -133,8 +133,9 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[Task 16 — It-2 devir §8] Engine process öldüğünde (<see cref="OnEngineExited"/>) kullanıcıya
     /// gösterilecek metin — sticky şerit kalıcı hata modunun PIXEL karşılığı It-4'te; burada yalnız VM-state.
-    /// Bir sonraki başarılı run/Restart ile ilgisi yoktur (bilerek TEMİZLENMEZ) — kullanıcı en son ne olduğunu
-    /// (engine öldü mü, hangi kodla) geriye dönük görebilsin diye kalıcıdır.</summary>
+    /// [Review fix] Kalıcı DEĞİLDİR: bir sonraki run'ın <see cref="OnRunStarted"/>'ı (engine'in CANLI ve IPC
+    /// round-trip yaptığının ilk somut kanıtı) bu mesajı temizler — aksi halde tek bir ölümden sonra sonsuza
+    /// dek stale kalıp, tamamen başarılı sonraki run'larda bile güncel engine sağlığını yanlış yansıtırdı.</summary>
     [ObservableProperty] private string? _engineDiedMessage;
 
     public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null)
@@ -247,6 +248,12 @@ public sealed partial class RunViewModel : ObservableObject
         _sawRunStarted = true;
         IsRunning = true;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
+        // [Review fix, Task 16] EngineDiedMessage burada temizlenir: runStarted, VM'in CANLI engine instance'ıyla
+        // IPC round-trip yaptığının ilk somut kanıtıdır — RebuildAsync/ContinueAsync'de ERKEN temizlemek YANLIŞ
+        // olurdu (gönderim henüz round-trip olmadan "iyimser" temizlik, engine hâlâ ölüyken bile mesajı silerdi).
+        // Temizlenmezse EngineDiedMessage tek bir ölümden sonra SONSUZA DEK stale kalır — sıradaki N run tamamen
+        // başarılı olsa bile "engine öldü" mesajı güncel engine sağlığını YANLIŞ yansıtmaya devam eder.
+        EngineDiedMessage = null;
         _elapsedBaseMs = e.ElapsedMsAtStart;
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
