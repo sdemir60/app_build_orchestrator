@@ -46,6 +46,29 @@ public class CsprojEvaluatorTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    // [T72/Task 14] Legacy csproj'un TargetFrameworkVersion'ı StaleObjDetector.Inspect'in beklediği TAM
+    // moniker'a çevrilip EvaluatedProject'e taşınmalı (OSYS legacy csproj'ları v4.6/v4.8 kullanır).
+    [Fact]
+    public void Evaluate_legacy_project_derives_target_framework_moniker_from_target_framework_version()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteProj(dir, "A.csproj", """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup>
+                    <AssemblyName>OSYS.A</AssemblyName>
+                    <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+                  </PropertyGroup>
+                </Project>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Equal(".NETFramework,Version=v4.6", ev.TargetFrameworkMoniker);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public void Evaluate_sdk_style_defaults_assemblyname_and_globs_cs()
     {
@@ -64,6 +87,28 @@ public class CsprojEvaluatorTests
             Assert.Equal("S", ev.AssemblyName);                // default = dosya adı
             Assert.Contains(ev.CompileFiles, f => f.EndsWith("Bar.cs", StringComparison.OrdinalIgnoreCase));
             Assert.DoesNotContain(ev.CompileFiles, f => f.EndsWith("Skip.cs", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("net10.0", ev.TargetFrameworkMoniker); // [T72/Task 14] SDK-style TFM olduğu gibi taşınır
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // [Review fix/Task 14] SDK-style <TargetFramework>netstandardX.Y</TargetFramework> KISA biçimde geçmeli —
+    // project.assets.json "targets" anahtarı SDK-style'da hep kısa TFM'dir, netstandard de istisna değildir.
+    // Eskiden burada uzun ".NETStandard,Version=vX.Y" biçimine çevriliyordu; bu, temiz bir SDK-style netstandard
+    // projesinde StaleObjDetector'ın kendi meşru "targets" anahtarını tanımayıp sahte "stale" uyarısı üretmesine
+    // yol açıyordu (bkz. StaleObjRunStartWarnerTests round-trip testi — RED→GREEN kanıtı orada).
+    [Fact]
+    public void Evaluate_sdk_style_netstandard_passes_through_unchanged()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "N");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "N.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup></Project>");
+            var ev = new CsprojEvaluator().Evaluate(Path.Combine(dir, "N.csproj"));
+            Assert.Equal("netstandard2.0", ev.TargetFrameworkMoniker);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

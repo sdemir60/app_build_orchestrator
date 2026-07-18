@@ -3,8 +3,11 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Tests.Supervisor;
 using Xunit;
@@ -102,6 +105,10 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
         Skip.IfNot(Directory.Exists(OsysRoot), $"OSYS yok ({OsysRoot}) — kabul koşusu atlandı.");
         using var overall = new CancellationTokenSource(OverallBudget);
 
+        // [K1] OSYS'in aktif branch + HEAD'i koşu ÖNCESİ yakalanır; koşu SONRASI değişmediği assert edilir
+        // (Rebuild artık planlama sırasında SALT-OKUR git çalıştırıyor — checkout/pull/fetch YOK).
+        var (headBefore, branchBefore) = ReadOsysHeadAndBranch();
+
         // MSBuild.exe kapısı: yoksa SKIP (fail DEĞİL).
         try { _ = await new MsBuildResolver(new ProcessRunner()).ResolveAsync(ct: overall.Token); }
         catch (MsBuildResolveException ex) { Skip.If(true, "MSBuild.exe yok — kabul koşusu atlandı: " + ex.Message); }
@@ -109,6 +116,10 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
         string logsDir = Directory.CreateTempSubdirectory("bo-it2-acc-logs-").FullName;
 
         var dispatchOrder = new List<string>();                 // ProjectStarted sırası (dispatch kanıtı)
+        // [Task 19 · resolved-gate] Started/terminal olaylarının GLOBAL varış sırası — bağımlılık sıralaması
+        // assert'i (her ProjectStarted, o projenin TÜM bağımlılıkları terminal OLDUKTAN SONRA) bunun üzerinden
+        // bağımsız pinlenir (it2-records §8 carry). Kind: "start" | "terminal".
+        var timeline = new List<(string Kind, string ProjectId)>();
         var inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int maxConcurrent = 0;
         var succeeded = new List<string>();
@@ -140,15 +151,19 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
                     case RunStartedEvent s: started = s; break;
                     case ProjectStartedEvent p:
                         dispatchOrder.Add(p.ProjectId);
+                        timeline.Add(("start", p.ProjectId));
                         inFlight.Add(p.ProjectId);
                         maxConcurrent = Math.Max(maxConcurrent, inFlight.Count);
                         break;
                     case ProjectSucceededEvent p:
-                        inFlight.Remove(p.ProjectId); succeeded.Add(p.ProjectId); break;
+                        inFlight.Remove(p.ProjectId); succeeded.Add(p.ProjectId);
+                        timeline.Add(("terminal", p.ProjectId)); break;
                     case ProjectFailedEvent p:
-                        inFlight.Remove(p.ProjectId); failed.Add((p.ProjectId, p.DurationMs, p.Reason)); break;
+                        inFlight.Remove(p.ProjectId); failed.Add((p.ProjectId, p.DurationMs, p.Reason));
+                        timeline.Add(("terminal", p.ProjectId)); break;
                     case ProjectSkippedEvent p:
-                        skipped.Add((p.ProjectId, p.Reason)); break;
+                        skipped.Add((p.ProjectId, p.Reason));
+                        timeline.Add(("terminal", p.ProjectId)); break;
                     case RunCompletedEvent c: completed = c; break;
                 }
                 if (completed is not null) break;
@@ -301,6 +316,33 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
         if (failed.Count > 0)
             Assert.True(runDir is not null, "başarısız proje VAR ama run dizini/log kanıtı çözülemedi — " +
                 "0 orchestrator-kaynaklı iddiası log kanıtsız (vacuous pass); GEÇERSİZ.");
+
+        // ---- [Task 19 · PART 2] BAĞIMSIZ SIRALAMA ASSERT'İ (resolved-gate, it2-records §8 carry)
+        // Bağımlılık grafı in-process (Core) çıkarılır; olay zaman çizelgesi (timeline) üzerinden her "start P",
+        // P'nin plandaki TÜM bağımlılıkları o ana kadar terminal (succeeded|failed|skipped) OLDUKTAN SONRA
+        // geldiği KANITLANIR — RunCoordinatorTests'ten BAĞIMSIZ (gerçek OSYS koşusunun kendi olay akışından).
+        var depById = BuildDependencyMap();
+        var nodeIds = new HashSet<string>(depById.Keys, StringComparer.OrdinalIgnoreCase);
+        var terminalSoFar = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var orderingViolations = new List<string>();
+        foreach (var (kind, projectId) in timeline)
+        {
+            if (kind == "terminal") { terminalSoFar.Add(projectId); continue; }
+            // start: plandaki (bilinen) bağımlılıkların HEPSİ zaten terminal olmalı. Bilinmeyen (plan-dışı) dep id
+            // scheduler tarafından "resolved" sayılır (IsResolvedLocked) — assert'te de hariç tutulur.
+            var deps = depById.TryGetValue(projectId, out var d) ? d : [];
+            foreach (var dep in deps.Where(nodeIds.Contains))
+                if (!terminalSoFar.Contains(dep))
+                    orderingViolations.Add($"{Path.GetFileNameWithoutExtension(projectId)} started, ama bağımlılığı " +
+                        $"{Path.GetFileNameWithoutExtension(dep)} henüz terminal DEĞİL");
+        }
+        output.WriteLine(Inv($"Sıralama assert: {timeline.Count(t => t.Kind == "start")} start olayı, ihlal={orderingViolations.Count}"));
+        Assert.Empty(orderingViolations);
+
+        // ---- [Task 19 · K1] OSYS aktif branch + HEAD koşu boyunca DEĞİŞMEDİ (read-only garanti)
+        var (headAfter, branchAfter) = ReadOsysHeadAndBranch();
+        Assert.Equal(headBefore, headAfter);
+        Assert.Equal(branchBefore, branchAfter);
     }
 
     // ---------------------------------------------------------------- 2) dispatch determinizmi (iki koşu)
@@ -398,6 +440,36 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
     // ---------------------------------------------------------------- yardımcılar
 
     private static string Inv(FormattableString s) => s.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>[K1] OSYS'in HEAD SHA'sı + aktif branch adını doğrudan git ile (SALT-OKUR) okur — koşu öncesi/sonrası
+    /// karşılaştırma için. <c>git</c> yoksa/başarısızsa boş string döner (assert yine before==after tutar).</summary>
+    internal static (string Head, string Branch) ReadOsysHeadAndBranch()
+    {
+        string Run(params string[] args)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("git") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = OsysRoot };
+                foreach (var a in args) psi.ArgumentList.Add(a);
+                using var p = Process.Start(psi)!;
+                string o = p.StandardOutput.ReadToEnd().Trim();
+                p.WaitForExit(10000);
+                return p.ExitCode == 0 ? o : "";
+            }
+            catch { return ""; }
+        }
+        return (Run("rev-parse", "HEAD"), Run("rev-parse", "--abbrev-ref", "HEAD"));
+    }
+
+    /// <summary>[Task 19] OSYS'in bağımlılık grafını in-process (Core) çıkarır: projectId → doğrudan üretici
+    /// (upstream) projectId'ler. Sıralama assert'i (resolved-gate) için — gerçek koşunun olay akışından BAĞIMSIZ.</summary>
+    internal static IReadOnlyDictionary<string, IReadOnlyList<string>> BuildDependencyMap()
+    {
+        string cachePath = Path.Combine(Directory.CreateTempSubdirectory("bo-acc-plan-").FullName, "evaluation-cache.json");
+        var plan = new BuildPlanBuilder(new WorkspaceScanner(), new CsprojEvaluator(), new EvaluationCache(cachePath))
+            .Build(OsysRoot, "Debug");
+        return plan.Nodes.ToDictionary(n => n.Id, n => n.Dependencies, StringComparer.OrdinalIgnoreCase);
+    }
 
     private static void WriteEvidence(Action<StringBuilder> build)
     {

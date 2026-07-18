@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Contracts.Ipc;
 
@@ -20,6 +21,7 @@ public static class IpcJson
 [JsonDerivedType(typeof(GetProjectLogCommand), "getProjectLog")]
 [JsonDerivedType(typeof(DebugSpawnChildrenCommand), "debugSpawnChildren")]
 [JsonDerivedType(typeof(StartRunCommand), "startRun")]
+[JsonDerivedType(typeof(SyncWorkspaceCommand), "syncWorkspace")]
 public abstract record IpcCommand;
 
 public sealed record PingCommand(int Seq) : IpcCommand;
@@ -29,9 +31,31 @@ public sealed record StopRunCommand(string RunId, StopKind Kind) : IpcCommand;
 public sealed record GetProjectLogCommand(string ProjectId) : IpcCommand;
 public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcCommand;
 
-public enum RunMode { Rebuild, Continue }
-/// <param name="Mode">Rebuild = tüm projeler; Continue = önceki run'ın queued'larından sürer (elapsed korunur). [v7Δ-4]</param>
-public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism) : IpcCommand;
+public enum RunMode { Rebuild, Build, Continue, RetryFailed }
+/// <summary>Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c> Safe/Fast, Task 7):
+/// Build modunda WillBuild hesabını besler — Safe = dirty + tüm transitive dependent'lar yeniden derlenir;
+/// Fast = yalnız dirty (cascade yok). RetryFailed her zaman failed + tüm transitive dependent'ları derler
+/// (DependentMode'dan BAĞIMSIZ). [It-3]</summary>
+public enum DependentMode { Safe, Fast }
+/// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty); Continue = önceki run'ın
+/// queued'larından sürer (elapsed korunur); RetryFailed = önceki run'da failed olanlar + tüm transitive
+/// dependent'ları (DependentMode'dan bağımsız — her zaman full cascade). [v7Δ-4] [It-3]</param>
+/// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
+/// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
+/// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>
+/// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
+/// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
+/// yalnız dirty, cascade yok). RetryFailed modunda ETKİSİZDİR — o mod DependentMode'dan bağımsız, her zaman
+/// failed + tüm transitive dependent'ları derler. Varsayılan Safe. [It-3]</param>
+public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
+    string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe) : IpcCommand;
+
+/// <summary>
+/// [K1 DOC FIX] Workspace'i verilen branch'e senkronize et. Sync REF-ONLY'dir: yalnızca <c>git fetch origin
+/// &lt;branch&gt;</c> ile remote-tracking ref'i günceller — checkout/pull/reset KESİNLİKLE çağrılmaz, aktif
+/// branch ve working tree ASLA değişmez (bkz. Core'daki <c>GitService.FetchRefOnlyAsync</c>). [It-3]
+/// </summary>
+public sealed record SyncWorkspaceCommand(string RootPath, string Branch) : IpcCommand;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(EngineReadyEvent), "engineReady")]
@@ -47,6 +71,11 @@ public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath
 [JsonDerivedType(typeof(ProjectFailedEvent), "projectFailed")]
 [JsonDerivedType(typeof(ProjectSkippedEvent), "projectSkipped")]
 [JsonDerivedType(typeof(RunCompletedEvent), "runCompleted")]
+[JsonDerivedType(typeof(SyncStartedEvent), "syncStarted")]
+[JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
+[JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
+[JsonDerivedType(typeof(BranchListEvent), "branchList")]
+[JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 public abstract record IpcEvent;
 
 public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
@@ -63,8 +92,35 @@ public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjec
     string Configuration, long ElapsedMsAtStart) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
-public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long DurationMs) : IpcEvent;
-public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason) : IpcEvent;
+/// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
+/// yoksa null (JSON'a yazılmaz). [It-3]</param>
+public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long DurationMs,
+    IReadOnlyList<string>? DepIssues = null) : IpcEvent;
+/// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları; yoksa null (JSON'a yazılmaz). [It-3]</param>
+public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
+    IReadOnlyList<string>? DepIssues = null) : IpcEvent;
 public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason) : IpcEvent;
+/// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
-    int Queued, long DurationMs) : IpcEvent;
+    int Queued, long DurationMs, int DepIssueCount = 0) : IpcEvent;
+
+/// <summary>[K1 DOC FIX] Sync (ref-only <c>git fetch origin &lt;branch&gt;</c> — checkout/pull/reset YOK, aktif
+/// branch değişmez) başladı. [It-3]</summary>
+public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent;
+/// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
+public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
+/// <param name="TargetSha">Sync sonrası HEAD sha'sı; belirlenemediyse null.</param>
+/// <param name="FetchDegraded">true ise fetch başarısız/kısıtlı oldu ve sync yerel state ile devam etti.</param>
+public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool FetchDegraded,
+    int ProjectCount, int CycleCount) : IpcEvent;
+public sealed record BranchListEvent(IReadOnlyList<BranchRef> Branches) : IpcEvent;
+
+/// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
+/// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
+/// (hollow)=null. App bunu <c>Projects</c> listesini run başlamadan (proje-başına ilk event'ten önce) PRE-POPULATE
+/// etmek için kullanır — bkz. RunViewModel.OnBuildPreview.</summary>
+public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild);
+/// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
+/// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
+/// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>
+public sealed record BuildPreviewEvent(IReadOnlyList<BuildPreviewItem> Items) : IpcEvent;

@@ -32,6 +32,10 @@ public partial class MainWindow : Window
         {
             EngineStatusText.Text = $"engine: died (exit {code})"; // It-4'te sticky şerit kalıcı hata moduna taşınır (T37)
             RestartEngineButton.Visibility = Visibility.Visible;
+            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning/CanContinue) eskiden bu
+            // sinyale hiç BAĞLI değildi — Restart bile Rebuild/Stop/Continue'yu açmıyordu. Aynı Dispatcher.Invoke
+            // marshal'ı altında (ObservableProperty/CanExecuteChanged'a dokunduğundan UI thread gerekir).
+            _vm.OnEngineExited(code);
         });
         // [A13.2/Kısıt 4] YALNIZ projectLog YÜKSEK frekanslı akan log satırıdır (MSBuild çıktısının HER satırı) —
         // VM'in o dalı yalnız ConsoleBatcher.Post (kilitsiz) + iç kilitli arabellek kullanır, ObservableProperty'e

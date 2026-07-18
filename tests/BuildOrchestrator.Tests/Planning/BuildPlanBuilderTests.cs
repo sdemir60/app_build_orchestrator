@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Planning;
 
@@ -39,6 +40,49 @@ public class BuildPlanBuilderTests
             Assert.Equal(["Root"], a.SolutionNames);
             Assert.Empty(plan.Cycles);
             Assert.All(plan.Nodes, n => Assert.Null(n.WillBuild)); // Task 15 dolduracak
+            Assert.All(plan.Nodes, n => Assert.Null(n.LayerIndex));
+            Assert.All(plan.Nodes, n => Assert.Null(n.LayerName));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // [T15] Wire-in: pattern verilirse katman ataması uygulanır (LayerIndex/LayerName dolar, sert bariyer
+    // sırayı etkiler); pattern verilmezse (varsayılan) davranış birebir eskisiyle aynıdır (yukarıdaki test).
+    [Fact]
+    public void with_layer_patterns_assigns_layers_and_applies_hard_phase_barrier()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "plan-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            // B (yaprak) ← A (B'ye bağımlı). B "Ui" pattern'ine, A "Data" pattern'ine uyar — normalde
+            // (patternsiz) build-order zaten B, A olurdu; burada A'yı Data(layer0), B'yi Ui(layer1) yaparak
+            // bariyerin B'yi (dependency, layer1) A'dan (dependent, layer0) SONRAYA ittiğini doğruluyoruz.
+            Directory.CreateDirectory(Path.Combine(root, "A"));
+            Directory.CreateDirectory(Path.Combine(root, "B"));
+            File.WriteAllText(Path.Combine(root, "B", "B.csproj"),
+                "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><PropertyGroup><AssemblyName>OSYS.Ui</AssemblyName></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(root, "A", "A.csproj"),
+                "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><PropertyGroup><AssemblyName>OSYS.Data</AssemblyName></PropertyGroup>" +
+                "<ItemGroup><Reference Include=\"OSYS.Ui\"><HintPath>..\\B\\bin\\OSYS.Ui.dll</HintPath></Reference></ItemGroup></Project>");
+
+            var builder = new BuildPlanBuilder(new WorkspaceScanner(), new CsprojEvaluator(),
+                new EvaluationCache(Path.Combine(root, "cache.json")));
+            LayerPattern[] patterns =
+            [
+                new(Order: 0, Regex: "Data", Name: "DataLayer"),
+                new(Order: 1, Regex: "Ui", Name: "UiLayer"),
+            ];
+            var plan = builder.Build(root, "Debug", patterns);
+
+            Assert.Equal(2, plan.Nodes.Count);
+            Assert.Equal("OSYS.Data", plan.Nodes[0].Name);
+            Assert.Equal(0, plan.Nodes[0].LayerIndex);
+            Assert.Equal("DataLayer", plan.Nodes[0].LayerName);
+            Assert.Equal(0, plan.Nodes[0].BuildOrder);
+            Assert.Equal("OSYS.Ui", plan.Nodes[1].Name);
+            Assert.Equal(1, plan.Nodes[1].LayerIndex);
+            Assert.Equal("UiLayer", plan.Nodes[1].LayerName);
+            Assert.Equal(1, plan.Nodes[1].BuildOrder);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

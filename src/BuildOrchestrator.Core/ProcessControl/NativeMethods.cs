@@ -119,12 +119,9 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool TerminateJobObject(nint hJob, uint uExitCode);
 
-    [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern bool CreateProcessW(
-        string? lpApplicationName, StringBuilder lpCommandLine, nint lpProcessAttributes, nint lpThreadAttributes,
-        bool bInheritHandles, uint dwCreationFlags, nint lpEnvironment, string? lpCurrentDirectory,
-        ref STARTUPINFOW lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
-
+    // [Task 18] Task 15'te GetACP() kaldırıldı; burada da yalnız STARTUPINFOEXW overload'ı canlı yol tarafından
+    // kullanılıyor (bkz. JobProcessLauncher — `six` her zaman STARTUPINFOEXW) — düz STARTUPINFOW alan overload
+    // hiçbir çağıranı olmadığı için (grep doğrulaması) kaldırıldı.
     [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool CreateProcessW(
         string? lpApplicationName, StringBuilder lpCommandLine, nint lpProcessAttributes, nint lpThreadAttributes,
@@ -159,10 +156,7 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool GetExitCodeProcess(nint hProcess, out uint lpExitCode);
 
-    // Fix wave 1 / Finding 4 (MsBuildOutputEncoding): sistemin ANSI codepage'i — CultureInfo.CurrentCulture'ın
-    // ANSICodePage'i KULLANICI culture'ına bağlıdır; GetACP() ise "Language for non-Unicode programs" ile
-    // ayarlanan SİSTEM ACP'sidir. Redirected pipe'a yazan .NET Framework konsol programı (Encoding.Default) bu
-    // ikinciyi kullanır — ikisi bağımsız ayarlanabildiği için makinede ayrışırlarsa culture varsayımı mojibake eder.
-    [DllImport("kernel32.dll")]
-    public static extern uint GetACP();
+    // Fix wave 1 / Finding 4 (MsBuildOutputEncoding) — [Task 15] KALDIRILDI: GetACP()/ANSI-codepage-decode
+    // varsayımı bu toolchain'de (VS18/Roslyn UTF-8 yazıyor) mojibake üretiyordu; MsBuildOutputEncoding artık
+    // pure UTF-8 kullanıyor ve bu P/Invoke'a bağımlı değil (bkz. MsBuildOutputEncoding.cs XML doc, "D-Task15").
 }

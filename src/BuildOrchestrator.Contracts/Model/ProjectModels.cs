@@ -3,7 +3,8 @@ using System.Linq;
 namespace BuildOrchestrator.Contracts.Model;
 
 // It-1 domain DTO'ları — A9 şeklini sabitler. Core → Contracts referansı üzerinden Core bu tipleri üretir.
-// YAGNI: ProjectResult.depIssues / RunRequest.mode gibi It-2/It-3 alanları buraya EKLENMEZ.
+// It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent) ve RunRequest.mode genişlemesi (Build/RetryFailed,
+// DependentMode) artık IpcMessages.cs'de sabit; BranchRef/Worktree git-yüzeyi DTO'ları burada.
 
 public enum HintPathClass { Edge, ExternalThirdParty, ExternalOsysPlatform, Unclassified }
 public enum BuildResult { Succeeded, Failed, Skipped }
@@ -63,6 +64,12 @@ public sealed record BuildPlan(
     IReadOnlyList<IReadOnlyList<string>> Cycles,            // her biri bir SCC (>1 üye), üyeler sıralı
     string Configuration);
 
+/// <summary>[T15][N8] Katman ataması config'i: sıralı regex+isim. Order ÇİFT görev görür — (1) eşleşme
+/// önceliği (LayerEngine, küçük Order'ı önce dener, ilk eşleşen kazanır), (2) eşleşen projelere atanan
+/// katmanın LayerIndex'i (bu pattern = "Order numaralı katmana şu regex'e uyanlar girer"). Regex,
+/// ProjectNode.Name'e (AssemblyName türevi kısa ad) karşı denenir — Id (tam csproj yolu) değil.</summary>
+public sealed record LayerPattern(int Order, string Regex, string Name);
+
 public sealed record BuildState(
     string ProjectId,
     string? BuiltSignature,
@@ -71,3 +78,10 @@ public sealed record BuildState(
     DateTimeOffset? LastRunAt = null,
     string? LastBranch = null,
     long? LastDurationMs = null);           // T70 (It-3) burada alan olarak hazır
+
+/// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
+public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);
+
+/// <summary>Bir git worktree bilgisi (GitService.ListWorktrees). IPC yüzeyi minimal — bu DTO It-3'te yalnız
+/// GitService tarafında kullanılır; tam listWorktrees/deleteWorktree komutları It-4 UI'a ertelendi. [It-3]</summary>
+public sealed record Worktree(string Name, string Branch, string Path, bool IsActive, long? DiskSizeBytes);

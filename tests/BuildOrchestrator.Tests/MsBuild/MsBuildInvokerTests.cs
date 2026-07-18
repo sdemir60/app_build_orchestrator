@@ -121,13 +121,13 @@ public class MsBuildInvokerTests
     }
 
     [Fact] // (d) — gerçek MSBuild gerektirmez: saf encoding round-trip
-    public void OutputEncoding_is_system_acp_and_round_trips_turkish_text()
+    public void OutputEncoding_is_utf8_and_round_trips_turkish_text()
     {
-        // Fix wave 1 / Finding 4: kaynak artık CultureInfo.CurrentCulture.TextInfo.ANSICodePage (kullanıcı
-        // culture'ı) DEĞİL, GetACP() (sistem ACP'si) — test de aynı kaynağı doğrulamalı, yoksa bu iki değer
-        // aynı makinede tesadüfen eşit olduğu için fix'i gerçekten sınamaz.
-        int expectedCodePage = (int)NativeMethods.GetACP();
-        Assert.Equal(expectedCodePage, MsBuildOutputEncoding.Value.CodePage);
+        // [Task 15 / It-2 devir §5] Eski varsayım (sistem ANSI CP'si, GetACP()) bu toolchain'de (VS18/Roslyn
+        // redirected pipe UTF-8 yazıyor) mojibake üretiyordu — bkz. MsBuildOutputEncodingTests.cs +
+        // task-15-report.md. Value artık pure UTF-8 (BOM'suz, replacement fallback); GetACP()/NativeMethods
+        // bağımlılığı kaldırıldı.
+        Assert.Equal(Encoding.UTF8.CodePage, MsBuildOutputEncoding.Value.CodePage);
 
         const string turkish = "İstanbul: Özgün Çözüm Üretiliyor — Şükrü Iğdır";
         byte[] encoded = MsBuildOutputEncoding.Value.GetBytes(turkish);

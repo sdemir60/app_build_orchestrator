@@ -11,9 +11,18 @@ using BuildOrchestrator.Contracts.Model;
 /// </summary>
 public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator evaluator, EvaluationCache cache)
 {
-    public BuildPlan Build(string root, string configuration)
+    public BuildPlan Build(string root, string configuration, IReadOnlyList<LayerPattern>? layerPatterns = null) =>
+        Build(scanner.Scan(root), configuration, layerPatterns);
+
+    /// <summary>
+    /// [Task 18] <see cref="Build(string, string, IReadOnlyList{LayerPattern}?)"/> ile AYNI pipeline, yalnız
+    /// scan ADIMI dışarıdan verilir: çağıran (ör. Supervisor'ın Program.cs'i) hem <see cref="BuildPlan"/>'ı hem
+    /// de HAM <see cref="ScanResult"/>'ı (ör. <c>SolutionMapper.MapRefs</c> için .sln YOLLARI) istiyorsa,
+    /// workspace'i İKİ KEZ taramak zorunda kalmaz — <c>scanner.Scan(root)</c> TEK SEFER çağrılır, sonucu her
+    /// iki ihtiyaç için de paylaşılır.
+    /// </summary>
+    public BuildPlan Build(ScanResult scan, string configuration, IReadOnlyList<LayerPattern>? layerPatterns = null)
     {
-        var scan = scanner.Scan(root);
         var evaluated = scan.CsprojPaths.Select(p => cache.GetOrEvaluate(p, evaluator.Evaluate)).ToList();
         cache.Flush();
 
@@ -37,6 +46,11 @@ public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator e
                 BuildOrder: i, LayerIndex: null, LayerName: null,
                 InCycle: inCycle.Contains(id), WillBuild: null));
         }
-        return new BuildPlan(nodes, topo.Cycles, configuration);
+
+        // [T15][N8] Katman ataması + sert faz bariyeri: pattern yoksa (varsayılan) LayerEngine nodes'u aynen
+        // döner (mevcut davranış, regresyon yok). Warnings (ters katman bağımlılığı) burada bilinçli olarak
+        // yutulur — BuildPlan'ın henüz bir warnings alanı yok; LayerEngine.AssignLayers doğrudan test edilir.
+        var assignment = LayerEngine.AssignLayers(nodes, layerPatterns ?? []);
+        return new BuildPlan(assignment.Nodes, topo.Cycles, configuration);
     }
 }

@@ -8,6 +8,7 @@ using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Supervisor;
 
 namespace BuildOrchestrator.Tests.Supervisor;
@@ -47,6 +48,7 @@ public class RunCoordinatorTests
     private static string Describe(IpcEvent e) => e switch
     {
         RunStartedEvent => "runStarted",
+        BuildPreviewEvent => "buildPreview",
         ProjectStartedEvent p => "projectStarted:" + NameOf(p.ProjectId),
         ProjectLogEvent p => $"projectLog:{NameOf(p.ProjectId)}:{p.LineNumber}",
         ProjectSucceededEvent p => "projectSucceeded:" + NameOf(p.ProjectId),
@@ -95,10 +97,11 @@ public class RunCoordinatorTests
         public RunCoordinator Sut { get; }
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
-        public Harness(RunPlan plan, FakeInvoker invoker, Func<string, string, RunPlan>? planner = null)
+        public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, RunPlan>? planner = null,
+            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null)
         {
             Sut = new RunCoordinator(
-                planner: planner ?? ((_, _) => plan),
+                planner: planner ?? (_ => plan),
                 msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
                 logFactory: startedAt =>
                 {
@@ -109,7 +112,9 @@ public class RunCoordinatorTests
                 writer: new NdjsonWriter(_out),
                 innerJob: Job,
                 nowMs: () => Volatile.Read(ref _now),
-                console: line => { lock (ConsoleLines) ConsoleLines.Add(line); });
+                console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
+                worktreeObjRootResolver: worktreeObjRootResolver,
+                stateStore: stateStore);
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -213,12 +218,14 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // Proje logunun 1. satırı gerçek MSBuild komut satırı, 2. satırı build çıktısı → ikisi de projectLog.
+        // İSTİSNA: A, B'ye DOĞRUDAN bağımlı ve B failed → [T54] A'nın log başına EK bir depIssue uyarı satırı
+        // girer (komut satırından SONRA, gerçek çıktıdan ÖNCE) — bu yüzden A'nın logu 3 satır (C/B'ninki 2 kalır).
         Assert.Equal(
         [
-            "runStarted",
+            "runStarted", "buildPreview",
             "projectStarted:C", "projectLog:C:1", "projectLog:C:2", "projectSucceeded:C",
             "projectStarted:B", "projectLog:B:1", "projectLog:B:2", "projectFailed:B:exit 1",
-            "projectStarted:A", "projectLog:A:1", "projectLog:A:2", "projectSucceeded:A",
+            "projectStarted:A", "projectLog:A:1", "projectLog:A:2", "projectLog:A:3", "projectSucceeded:A",
             "runCompleted:Completed",
         ], h.Events.Select(Describe));
 
@@ -229,11 +236,24 @@ public class RunCoordinatorTests
         Assert.Equal("Debug", started.Configuration);
         Assert.Equal(0, started.ElapsedMsAtStart);
 
+        // [T54] A, B'ye doğrudan bağımlı ve B failed → A depIssues=[B] taşır; warn satırı log'un 2. satırında.
+        var succeededA = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "A");
+        Assert.Equal(["B"], succeededA.DepIssues);
+        var aLog2 = Assert.Single(h.Events.OfType<ProjectLogEvent>(), e => NameOf(e.ProjectId) == "A" && e.LineNumber == 2);
+        Assert.Equal("warning: B failed in this run — last successful output referenced (B)", aLog2.Text);
+
+        // [Task 17] buildPreview, plan.Nodes'un TAMAMINI (build-order'da) taşır — henüz hiçbir proje
+        // başlamadan (WillBuild burada hep null: BuildPlanBuilder run-time wiring'i henüz doldurmuyor).
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+        Assert.Equal(["C", "B", "A"], preview.Items.Select(i => NameOf(i.ProjectId)));
+        Assert.All(preview.Items, i => Assert.Null(i.WillBuild));
+
         var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
         Assert.Equal(2, done.Succeeded);
         Assert.Equal(1, done.Failed);
         Assert.Equal(0, done.Skipped);
         Assert.Equal(0, done.Queued);
+        Assert.Equal(1, done.DepIssueCount); // yalnız A dependency-affected
 
         // v7Δ-7: konsol run-start özeti solution-level bir msbuild çağrısı İZLENİMİ vermez — gerçek komut
         // satırları yalnız proje loglarındadır.
@@ -269,6 +289,55 @@ public class RunCoordinatorTests
         Assert.Equal(1, done.Succeeded);
         Assert.Equal(3, done.Queued);                          // B, C, D — kısıt 4: snapshot in-flight tükendikten sonra
         Assert.True(h.Sut.HasResumableRun);
+    }
+
+    // [Task 18] TryGetProjectLogSnapshot artık gerçek disk okumasını (canlı writer'ın FileStream'i ya da
+    // ReadProjectLogFromDisk'in File.ReadAllText'i) _gate DIŞINDA yapıyor — kilit altında yalnız "hangi
+    // kaynaktan okunacağı" (canlı writer referansı / en son run dizini) yakalanır. Bu test, bir proje
+    // in-flight'ken (log aktif büyürken) EŞZAMANLI bir getProjectLog + bir stopRun isteğinin BİRBİRİNİ
+    // BEKLEMEDEN (aynı Task.WhenAll içinde, ikisi de ayrı thread'lerden) doğru sonuçlanabildiğini kanıtlar:
+    // ne snapshot stop'u, ne stop snapshot'ı bloklar — run normal şekilde durur. (Gerçek disk I/O test
+    // ortamında yeterince yavaş değildir; bu yüzden burada "kilit süresi azaldı" TIMING'i değil, YENİ
+    // eşzamanlı erişim deseninin DOĞRULUĞU kanıtlanır — bkz. Task 18 raporu.)
+    [Fact]
+    public async Task getting_a_project_log_snapshot_concurrently_with_a_stop_request_does_not_deadlock_and_both_succeed()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (req, onLine, _) =>
+        {
+            if (NameOf(req.ProjectId) != "A") return Ok();
+            onLine("line-1");
+            inFlight.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit); // A in-flight, logu aktif (komut satırı + "line-1" diske yazılmış)
+
+        // İki bağımsız thread'den AYNI ANDA: biri log snapshot'ı ister, diğeri stop ister — ikisi de _gate'e
+        // dokunuyor (TryGetProjectLogSnapshot artık yalnız KISA bir capture için, TryRequestStop hep KISA).
+        var snapshotTask = Task.Run(() => h.Sut.TryGetProjectLogSnapshot(Id("A"), out string text, out int through)
+            ? (Found: true, Text: text, Through: through) : (Found: false, Text: "", Through: 0));
+        var stopTask = Task.Run(() => h.Sut.TryRequestStop(StopKind.Graceful));
+        await Task.WhenAll(snapshotTask, stopTask).WaitAsync(Limit); // takılırsa Limit'te timeout ile FAIL eder
+
+        var snap = await snapshotTask;
+        Assert.True(snap.Found);
+        Assert.Contains("line-1", snap.Text);
+        Assert.True(snap.Through >= 1);
+        Assert.True(await stopTask);
+
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(RunOutcome.Stopped, done.Outcome);
+        Assert.Equal(1, done.Succeeded); // A in-flight'tı, kendi sonucunu verdi
+        Assert.Equal(1, done.Queued);    // B hiç dispatch edilmedi
     }
 
     // ---------------------------------------------------------------- 4) hard stop
@@ -363,7 +432,7 @@ public class RunCoordinatorTests
         // Koordinatör bu borcu yine de kapatmalı — aksi halde App sonsuza dek runStopped bekler.
         var planningReached = Signal();
         var releasePlanning = Signal();
-        Func<string, string, RunPlan> blockingPlanner = (_, _) =>
+        Func<StartRunCommand, RunPlan> blockingPlanner = _ =>
         {
             planningReached.TrySetResult();
             releasePlanning.Task.GetAwaiter().GetResult(); // deterministik blok (sleep-poll YOK [D8])
@@ -396,6 +465,166 @@ public class RunCoordinatorTests
         Assert.Equal("noResumableRun", err.Code);
         Assert.Empty(h.Events.OfType<RunStartedEvent>());
         Assert.Empty(h.LogWriters);
+    }
+
+    // ---------------------------------------------------------------- 5b) RetryFailed + Continue re-queue stopped (Task-13)
+
+    [Fact]
+    public async Task continue_requeues_reason_stopped_failed_projects_but_leaves_other_failure_reasons_failed()
+    {
+        // A: normal build hatası (exit 1) — torn DLL değil, Continue'da DOKUNULMAMALI.
+        // B: hard Stop'ta mid-build yarıda kalır (reason=stopped) — torn-DLL guard: Continue'da YENİDEN derlenmeli.
+        // C: hiç dispatch edilmeden Queued kalır (sıradan Continue davranışı, değişmez).
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"));
+        var inFlight = Signal();
+        var release = Signal();
+        int bCalls = 0;
+        var invoker = new FakeInvoker(async (req, _, _) =>
+        {
+            string n = NameOf(req.ProjectId);
+            if (n == "A") return Exit(1);
+            if (n == "B" && Interlocked.Increment(ref bCalls) == 1)
+            {
+                inFlight.TrySetResult();
+                await release.Task; // hard Stop burada yakalar — invoke exit=1 döner ama ReasonFor "stopped" yazar
+                return Exit(1);
+            }
+            return Ok(); // B'nin 2. çağrısı (Continue'da retry) ve C
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg1 = h.Events;
+        var failed1 = seg1.OfType<ProjectFailedEvent>().ToList();
+        Assert.Equal(2, failed1.Count);
+        Assert.Equal("exit 1", failed1.Single(e => NameOf(e.ProjectId) == "A").Reason);
+        Assert.Equal("stopped", failed1.Single(e => NameOf(e.ProjectId) == "B").Reason);
+        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
+        Assert.Equal(RunOutcome.Stopped, done1.Outcome);
+        Assert.Equal(2, done1.Failed);
+        Assert.Equal(1, done1.Queued); // C hiç dispatch edilmedi
+
+        await h.Sut.StartAsync(Start(RunMode.Continue, parallelism: 1, runId: "r1"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // A ASLA yeniden dispatch edilmez (farklı reason — Failed kalır); B torn-DLL guard ile YENİDEN derlenir;
+        // C sıradan Continue davranışıyla dispatch edilir.
+        Assert.Equal(["A", "B", "B", "C"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
+
+        var seg2 = h.Events.Skip(seg1.Count).ToList();
+        var done2 = Assert.IsType<RunCompletedEvent>(seg2[^1]);
+        Assert.Equal(RunOutcome.Completed, done2.Outcome);
+        Assert.Equal(2, done2.Succeeded); // B (retried) + C
+        Assert.Equal(1, done2.Failed);    // A hâlâ failed
+        Assert.Equal(0, done2.Queued);
+
+        Assert.Single(h.LogWriters); // console/stream SIFIRLANMAZ — Continue AYNI run dizinine/writer'a yazar
+    }
+
+    [Fact]
+    public async Task retry_failed_rebuilds_failed_projects_and_their_transitive_dependents_only()
+    {
+        // F1 ← D1 ← D2 zinciri (D1 F1'e, D2 D1'e bağımlı — transitive dependent); S bağımsız.
+        var plan = PlanOf(Node("F1"), Node("D1", deps: ["F1"]), Node("D2", deps: ["D1"]), Node("S"));
+        int f1Calls = 0;
+        var invoker = new FakeInvoker((req, _, _) =>
+        {
+            if (NameOf(req.ProjectId) == "F1")
+                return Task.FromResult(Interlocked.Increment(ref f1Calls) == 1 ? Exit(1) : Ok());
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg1 = h.Events;
+        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
+        Assert.Equal(RunOutcome.Completed, done1.Outcome);
+        Assert.Equal(1, done1.Failed);    // F1
+        Assert.Equal(3, done1.Succeeded); // D1, D2, S ("hata derlemeyi öldürmez" — A3 — bloklanmadan build edildiler)
+
+        await h.Sut.StartAsync(Start(RunMode.RetryFailed, parallelism: 1, runId: "r1"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Retry kümesi = F1 + transitive dependent'ları (D1, D2) — S ASLA yeniden dispatch edilmez.
+        Assert.Equal(["F1", "D1", "D2", "S", "F1", "D1", "D2"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
+
+        var seg2 = h.Events.Skip(seg1.Count).ToList();
+        var started2 = Assert.IsType<RunStartedEvent>(seg2[0]);
+        Assert.Equal(RunMode.RetryFailed, started2.Mode);
+        var done2 = Assert.IsType<RunCompletedEvent>(seg2[^1]);
+        Assert.Equal(RunOutcome.Completed, done2.Outcome);
+        Assert.Equal(4, done2.Succeeded); // F1 (retried, artık succeeded) + D1 + D2 + S (kümülatif)
+        Assert.Equal(0, done2.Failed);
+        Assert.Equal(0, done2.Queued);
+
+        Assert.Single(h.LogWriters); // console/stream SIFIRLANMAZ — RetryFailed AYNI run dizinine/writer'a yazar
+    }
+
+    [Fact]
+    public async Task retry_failed_without_a_retryable_run_errors()
+    {
+        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())));
+
+        await h.Sut.StartAsync(Start(RunMode.RetryFailed), default);
+
+        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
+        Assert.Equal("noResumableRun", err.Code);
+        Assert.Empty(h.Events.OfType<RunStartedEvent>());
+        Assert.Empty(h.LogWriters);
+    }
+
+    [Fact]
+    public async Task dep_issues_accumulated_in_the_first_segment_are_inherited_by_a_dependent_dispatched_after_continue()
+    {
+        // [T54 carry] R (kök) 1. segmentte failed olur; M (R'ye DOĞRUDAN bağımlı) aynı segmentte succeeded olur
+        // ve depIssues=[R] taşıdığı _depIssuesById birikimine yazılır; run M'den SONRA (Dep dispatch edilmeden
+        // önce) Stop edilir. Continue'da Dep (M'ye bağımlı, R'ye DEĞİL) dispatch edilince R artık Completed'ta
+        // FAILED değildir aramaz (M zaten Succeeded) — depIssues'unu YALNIZ 1. segmentten devralınan
+        // _depIssuesById["M"]=[R] üzerinden (DOLAYLI/inherited) alabilir. Bu, birikimin segment sınırını
+        // AŞARAK aynı örnekle devretmesini kanıtlar.
+        var plan = PlanOf(Node("R"), Node("M", deps: ["R"]), Node("Dep", deps: ["M"]));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (req, _, _) =>
+        {
+            string n = NameOf(req.ProjectId);
+            if (n == "R") return Exit(1);
+            if (n == "M")
+            {
+                inFlight.TrySetResult();
+                await release.Task;
+                return Ok();
+            }
+            return Ok(); // Dep
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg1 = h.Events;
+        var succeededM = Assert.Single(seg1.OfType<ProjectSucceededEvent>());
+        Assert.Equal(["R"], succeededM.DepIssues); // sanity: M, R'ye DOĞRUDAN bağımlı
+        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
+        Assert.Equal(RunOutcome.Stopped, done1.Outcome);
+        Assert.Equal(1, done1.Queued); // Dep hiç dispatch edilmedi
+
+        await h.Sut.StartAsync(Start(RunMode.Continue, parallelism: 1, runId: "r1"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var seg2 = h.Events.Skip(seg1.Count).ToList();
+        var depEvent = Assert.Single(seg2.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "Dep");
+        Assert.Equal(["R"], depEvent.DepIssues); // 1. segmentten MİRAS — _depIssuesById segment sınırını aştı
     }
 
     // ---------------------------------------------------------------- 6) tek seferde tek run
@@ -534,7 +763,7 @@ public class RunCoordinatorTests
             if (e is RunCompletedEvent) break;
         }
 
-        Assert.Equal(["runStarted", "projectSkipped:X", "projectSkipped:Y", "runCompleted:Completed"],
+        Assert.Equal(["runStarted", "buildPreview", "projectSkipped:X", "projectSkipped:Y", "runCompleted:Completed"],
             received.Select(Describe));
         var done = Assert.IsType<RunCompletedEvent>(received[^1]);
         Assert.Equal(2, done.Skipped);
@@ -586,5 +815,296 @@ public class RunCoordinatorTests
         Assert.False(b.NeedsRestore);
         Assert.Equal(Path.Combine(root, "B"), b.SolutionDir);         // sln yok → projenin kendi dizini
         Assert.Null(b.BaseIntermediateOutputPath);
+    }
+
+    // ---------------------------------------------------------------- 11) worktree obj-izolasyonu (Task 10 / I2-K2)
+
+    [Fact]
+    public async Task worktree_run_with_a_supplied_resolver_gets_per_project_isolated_obj_paths()
+    {
+        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) bu run
+        // akışına henüz bağlı DEĞİL (Program.cs planner'ı yalnız cmd.RootPath/Configuration alır) — burada
+        // worktreeObjRootResolver enjekte edilerek "worktree kökü biliniyorsa" davranış test edilir.
+        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-obj-" + Guid.NewGuid());
+        var plan = PlanOf(Node("A"), Node("B"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
+
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var a = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "A");
+        var b = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "B");
+        Assert.NotNull(a.BaseIntermediateOutputPath);
+        Assert.NotNull(b.BaseIntermediateOutputPath);
+        Assert.NotEqual(a.BaseIntermediateOutputPath, b.BaseIntermediateOutputPath); // farklı proje → farklı izole path
+        Assert.Equal(WorktreeObjPathResolver.Resolve(worktreeRoot, a.ProjectId), a.BaseIntermediateOutputPath); // deterministik şema
+        Assert.StartsWith(worktreeRoot, a.BaseIntermediateOutputPath!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // deferred wiring: Program.cs henüz resolver vermiyor
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker); // worktreeObjRootResolver verilmedi
+
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var a = Assert.Single(invoker.Requests);
+        Assert.Null(a.BaseIntermediateOutputPath); // resolver yoksa UseWorktree=true bile null'a düşer
+    }
+
+    [Fact]
+    public async Task in_place_run_ignores_a_supplied_resolver_and_stays_null() // UseWorktree=false her zaman kazanır
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker,
+            worktreeObjRootResolver: _ => @"c:\should-not-be-used"); // UseWorktree=false olduğu için hiç ÇAĞRILMAMALI
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default); // UseWorktree varsayılan false
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var a = Assert.Single(invoker.Requests);
+        Assert.Null(a.BaseIntermediateOutputPath);
+    }
+
+    // ---------------------------------------------------------------- 12) depIssue propagation (T54)
+
+    [Fact]
+    public async Task a_failed_root_s_dependents_carry_dep_issues_direct_and_inherited_and_are_not_blocked()
+    {
+        // C ← B ← A zinciri (B, C'ye; A, B'ye bağımlı), tek worker → deterministik sıra. C (kök) başarısız olur;
+        // "hata derlemeyi öldürmez" (A3): B ve C'nin dependent'ı A yine de BLOKLANMADAN derlenir (resolved =
+        // succeeded|failed|skipped) — ama B DOĞRUDAN, A ise B üzerinden MİRAS (dolaylı) olarak C'yi depIssue taşır.
+        var plan = PlanOf(Node("C"), Node("B", deps: ["C"]), Node("A", deps: ["B"]));
+        var invoker = new FakeInvoker((req, _, _) =>
+            Task.FromResult(NameOf(req.ProjectId) == "C" ? Exit(1) : Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var events = h.Events;
+        var failedC = Assert.Single(events.OfType<ProjectFailedEvent>());
+        Assert.Equal("C", NameOf(failedC.ProjectId));
+        Assert.Null(failedC.DepIssues); // C kendisi kök — kendi başına bir depIssue taşımaz (null, JSON'a yazılmaz)
+
+        var succeededB = events.OfType<ProjectSucceededEvent>().Single(e => NameOf(e.ProjectId) == "B");
+        Assert.Equal(["C"], succeededB.DepIssues); // B, C'ye DOĞRUDAN bağımlı ve C failed
+
+        var succeededA = events.OfType<ProjectSucceededEvent>().Single(e => NameOf(e.ProjectId) == "A");
+        Assert.Equal(["C"], succeededA.DepIssues); // A, C'ye doğrudan bağımlı DEĞİL — B üzerinden MİRAS aldı
+
+        var done = Assert.IsType<RunCompletedEvent>(events[^1]);
+        Assert.Equal(RunOutcome.Completed, done.Outcome);
+        Assert.Equal(2, done.Succeeded); // A, B
+        Assert.Equal(1, done.Failed);    // C
+        Assert.Equal(2, done.DepIssueCount); // B ve A dependency-affected (C kendi depIssue'u boş, sayılmaz)
+    }
+
+    [Fact]
+    public async Task dep_issue_warn_lines_appear_at_the_affected_project_s_log_head_direct_then_indirect_wording()
+    {
+        var plan = PlanOf(Node("C"), Node("B", deps: ["C"]), Node("A", deps: ["B"]));
+        var invoker = new FakeInvoker((req, onLine, _) =>
+        {
+            onLine("gerçek derleme çıktısı " + NameOf(req.ProjectId));
+            return Task.FromResult(NameOf(req.ProjectId) == "C" ? Exit(1) : Ok());
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        List<string> LogTextsFor(string name) => h.Events.OfType<ProjectLogEvent>()
+            .Where(e => NameOf(e.ProjectId) == name).OrderBy(e => e.LineNumber).Select(e => e.Text).ToList();
+
+        // B: satır 1 gerçek MSBuild komut satırı (v7Δ-7 invaryantı korunur) → satır 2 DOĞRUDAN uyarı → satır 3 gerçek çıktı.
+        var b = LogTextsFor("B");
+        Assert.Equal("warning: C failed in this run — last successful output referenced (C)", b[1]);
+        Assert.Equal("gerçek derleme çıktısı B", b[2]);
+
+        // A: C'ye doğrudan bağımlı değil (B'ye bağımlı) → DOLAYLI (zincir) uyarısı.
+        var a = LogTextsFor("A");
+        Assert.Equal("warning: failure in dependency chain (C) — referenced outputs may be stale", a[1]);
+        Assert.Equal("gerçek derleme çıktısı A", a[2]);
+
+        // C kendisi kök — kendi logunda hiç depIssue uyarı satırı YOK.
+        Assert.DoesNotContain(LogTextsFor("C"), l => l.StartsWith("warning:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task a_skipped_dependency_produces_no_dep_issue_for_its_dependent()
+    {
+        // X cycle nedeniyle construction'da Skipped (pre-skip) sayılır. Y, X'e bağımlı: X resolved sayılır
+        // (bloklamaz) ama SKIPPED bir bağımlılık depIssue ÜRETMEZ (yalnız FAILED kökler taşınır — v7 A6).
+        var plan = PlanOf(Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("Z", deps: ["X"]));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var succeededZ = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+        Assert.Equal("Z", NameOf(succeededZ.ProjectId));
+        Assert.Null(succeededZ.DepIssues);
+
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(0, done.DepIssueCount);
+    }
+
+    // ---------------------------------------------------------------- 13) StaleObjDetector wiring (Task 14/T72)
+
+    // OSYS.Types.NewSales.Print vakasının aynısı: v4.6 legacy csproj + obj altında yabancı (netstandard2.0)
+    // restore artığı — Reason metnindeki "yabancı TFM" ifadesi test boyunca stale-warn işareti olarak kullanılır.
+    private const string StaleMarker = "yabancı TFM";
+
+    private static string WriteStaleObjProject(string dir, string assemblyName)
+    {
+        Directory.CreateDirectory(Path.Combine(dir, "obj"));
+        string proj = Path.Combine(dir, assemblyName + ".csproj");
+        File.WriteAllText(proj, $"""
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <PropertyGroup>
+                <AssemblyName>{assemblyName}</AssemblyName>
+                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+              </PropertyGroup>
+            </Project>
+            """);
+        File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"),
+            "{ \"targets\": { \".NETStandard,Version=v2.0\": {} } }"); // yabancı
+        return proj;
+    }
+
+    [Fact]
+    public async Task fresh_in_place_run_warns_once_on_stale_obj_via_console_and_decision_log_and_never_touches_the_obj()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+            string assets = Path.Combine(root, "P", "obj", "project.assets.json");
+            byte[] before = File.ReadAllBytes(assets);
+
+            var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            var plan = PlanOf(node);
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker); // worktreeObjRootResolver YOK → in-place
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var warnLines = h.ConsoleLines.Where(l => l.Contains(StaleMarker, StringComparison.Ordinal)).ToList();
+            var warn = Assert.Single(warnLines);
+            Assert.Contains("P", warn);
+
+            string decisionLog = File.ReadAllText(Path.Combine(h.LogWriters.Single().RunDirectory, "decision.log"));
+            Assert.Contains(StaleMarker, decisionLog); // aynı satır decision.log'a da yazılır (onRetry ile aynı ikili-yazım deseni)
+
+            Assert.Equal(before, File.ReadAllBytes(assets)); // [§4] dokunulmadı — byte-tam aynı
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task does_not_warn_on_a_clean_project()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "P");
+            Directory.CreateDirectory(Path.Combine(dir, "obj"));
+            string proj = Path.Combine(dir, "P.csproj");
+            File.WriteAllText(proj, """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup>
+                    <AssemblyName>P</AssemblyName>
+                    <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+                  </PropertyGroup>
+                </Project>
+                """);
+            File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"),
+                "{ \"targets\": { \".NETFramework,Version=v4.6\": {} } }"); // temiz
+
+            var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            var plan = PlanOf(node);
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker);
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task worktree_run_does_not_warn_even_when_the_project_s_default_obj_is_stale()
+    {
+        // [I2-K2/Task 10] worktree run izole obj kullanır (BaseIntermediateOutputPath worktree altına yönlenir) —
+        // projenin KENDİ (default) obj'i hiç okunmaz/derlenmez, bu yüzden bayat-obj teşhisi anlamsızdır.
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-wt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+
+            var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            var plan = PlanOf(node);
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1, UseWorktree: true), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task continue_segment_does_not_re_emit_the_stale_obj_warning_from_the_fresh_segment()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+            var pNode = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
+            // Q/R gerçek diskte YOK (nonexistent fake path) — StaleObjRunStartWarner bunları ASLA fırlatmadan
+            // sessizce atlamalı (never-throw); yalnız Q'yu in-flight'ta durdurup 2. segment (Continue) tetiklenir.
+            var qNode = Node("Q");
+            var rNode = Node("R");
+            var plan = PlanOf(pNode, qNode, rNode);
+
+            var qInFlight = Signal();
+            var releaseQ = Signal();
+            var invoker = new FakeInvoker(async (req, _, _) =>
+            {
+                if (NameOf(req.ProjectId) == "Q") { qInFlight.TrySetResult(); await releaseQ.Task; }
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker);
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
+            await qInFlight.Task.WaitAsync(Limit);
+            h.Sut.TryRequestStop(StopKind.Graceful);
+            releaseQ.SetResult();
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.True(h.Sut.HasResumableRun); // R hiç dispatch edilmedi → Continue'ya açık
+
+            int warnsAfterSegment1 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Equal(1, warnsAfterSegment1); // 1. (fresh) segment TEK BİR KEZ warn eder
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Continue, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            int warnsAfterSegment2 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Equal(1, warnsAfterSegment2); // Continue AYNI obj üstünde devam eder — yeniden teşhis/warn YOK
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 }

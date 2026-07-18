@@ -198,6 +198,24 @@ public class ReadySetSchedulerTests
     }
 
     [Fact]
+    public void is_done_becomes_true_when_a_remaining_node_can_never_become_ready_self_loop_safety()
+    {
+        // [Task 18] X kendine bağımlı VE InCycle=false (sentetik/bozuk bir durum — normalde TopoSort böyle bir
+        // düğümü InCycle işaretler ve construction'da pre-skip ederdi; burada bilerek o güvenceyi ATLAYARAK
+        // "hiçbir zaman ready olamayacak bir queued düğüm" senaryosu kuruluyor). Eski "queued boş mu"
+        // formülasyonu bu düğüm hiç dispatch/complete edilemeyeceği için IsDone'ı SONSUZA dek false döndürürdü
+        // (worker'lar WakeSignal'da parklı kalır, run askıda kalırdı). Yeni formülasyon "ready olabilecek bir
+        // şey var mı" sorduğu için X asla ready olamayacağından run terminal sayılmalı.
+        var plan = Plan(N("X", deps: ["X"], buildOrder: 0));
+        var sut = new ReadySetScheduler(plan);
+
+        Assert.False(sut.TryDispatch(out var none)); // X asla ready değil (kendi bağımlılığı kendisi, hiç complete edilmedi)
+        Assert.Null(none);
+        Assert.Contains("X", sut.QueuedProjectIds); // hâlâ "queued" (hiç dispatch edilmedi) — eski formülasyon burada takılırdı
+        Assert.True(sut.IsDone); // ama artık terminal: inFlight=0 ve kalan tek düğüm asla ready olamaz
+    }
+
+    [Fact]
     public async Task concurrent_try_dispatch_from_many_workers_never_double_dispatches()
     {
         // Task 9, N paralel worker'dan TryDispatch/Complete çağıracak. 50 bağımsız node, 8 worker aynı anda

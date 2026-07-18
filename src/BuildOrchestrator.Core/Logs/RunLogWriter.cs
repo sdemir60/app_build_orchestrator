@@ -4,7 +4,7 @@ using System.Text;
 namespace BuildOrchestrator.Core.Logs;
 
 /// <summary>
-/// [T5/D4] Bir run'ın tüm disk logu: `<logsRoot>\run-<ts>\` altında proje-başına log + decision.log.
+/// [T5/D4] Bir run'ın tüm disk logu: <c>&lt;logsRoot&gt;\run-&lt;ts&gt;\</c> altında proje-başına log + decision.log.
 /// Proje logunu proje-başına TEK worker yazar (scheduler garantisi); decision.log çok worker'dan yazılır.
 /// </summary>
 public sealed class RunLogWriter : IDisposable
@@ -45,7 +45,7 @@ public sealed class RunLogWriter : IDisposable
     /// <summary>
     /// Log metni + o ana kadar diske yazılmış satır sayısı — ATOMİK (yazıcı ile aynı kilit). [T28 dikişi]
     /// Proje hâlâ BU writer'da kayıtlıysa canlı <see cref="ProjectLogFile.Snapshot"/> kullanılır.
-    /// Kayıtlı değilse diskten doğrudan okunur (satır sayısı '\n' sayılarak — bkz. <see cref="AppendLine"/>'ın
+    /// Kayıtlı değilse diskten doğrudan okunur (satır sayısı '\n' sayılarak — bkz. <see cref="ProjectLogFile.AppendLine"/>'ın
     /// tek-satır-tek-çağrı garantisi, bu yüzden iki dal aynı sonucu üretir). <see cref="ProjectLogFile.Dispose"/>
     /// bu sözlükten kayıt SİLMEZ; disk dalı yalnızca run bitip bu <see cref="RunLogWriter"/> Dispose edildikten
     /// sonra, AYNI run dizini üzerinde açılan TAZE bir <see cref="RunLogWriter"/> örneğinden erişilince devreye
