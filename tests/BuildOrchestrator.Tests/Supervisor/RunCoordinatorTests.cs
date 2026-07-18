@@ -289,6 +289,55 @@ public class RunCoordinatorTests
         Assert.True(h.Sut.HasResumableRun);
     }
 
+    // [Task 18] TryGetProjectLogSnapshot artık gerçek disk okumasını (canlı writer'ın FileStream'i ya da
+    // ReadProjectLogFromDisk'in File.ReadAllText'i) _gate DIŞINDA yapıyor — kilit altında yalnız "hangi
+    // kaynaktan okunacağı" (canlı writer referansı / en son run dizini) yakalanır. Bu test, bir proje
+    // in-flight'ken (log aktif büyürken) EŞZAMANLI bir getProjectLog + bir stopRun isteğinin BİRBİRİNİ
+    // BEKLEMEDEN (aynı Task.WhenAll içinde, ikisi de ayrı thread'lerden) doğru sonuçlanabildiğini kanıtlar:
+    // ne snapshot stop'u, ne stop snapshot'ı bloklar — run normal şekilde durur. (Gerçek disk I/O test
+    // ortamında yeterince yavaş değildir; bu yüzden burada "kilit süresi azaldı" TIMING'i değil, YENİ
+    // eşzamanlı erişim deseninin DOĞRULUĞU kanıtlanır — bkz. Task 18 raporu.)
+    [Fact]
+    public async Task getting_a_project_log_snapshot_concurrently_with_a_stop_request_does_not_deadlock_and_both_succeed()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (req, onLine, _) =>
+        {
+            if (NameOf(req.ProjectId) != "A") return Ok();
+            onLine("line-1");
+            inFlight.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit); // A in-flight, logu aktif (komut satırı + "line-1" diske yazılmış)
+
+        // İki bağımsız thread'den AYNI ANDA: biri log snapshot'ı ister, diğeri stop ister — ikisi de _gate'e
+        // dokunuyor (TryGetProjectLogSnapshot artık yalnız KISA bir capture için, TryRequestStop hep KISA).
+        var snapshotTask = Task.Run(() => h.Sut.TryGetProjectLogSnapshot(Id("A"), out string text, out int through)
+            ? (Found: true, Text: text, Through: through) : (Found: false, Text: "", Through: 0));
+        var stopTask = Task.Run(() => h.Sut.TryRequestStop(StopKind.Graceful));
+        await Task.WhenAll(snapshotTask, stopTask).WaitAsync(Limit); // takılırsa Limit'te timeout ile FAIL eder
+
+        var snap = await snapshotTask;
+        Assert.True(snap.Found);
+        Assert.Contains("line-1", snap.Text);
+        Assert.True(snap.Through >= 1);
+        Assert.True(await stopTask);
+
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(RunOutcome.Stopped, done.Outcome);
+        Assert.Equal(1, done.Succeeded); // A in-flight'tı, kendi sonucunu verdi
+        Assert.Equal(1, done.Queued);    // B hiç dispatch edilmedi
+    }
+
     // ---------------------------------------------------------------- 4) hard stop
 
     [Fact]

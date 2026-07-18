@@ -34,26 +34,17 @@ public sealed class ReadySetScheduler
 
     private bool _stopRequested;
 
-    public ReadySetScheduler(BuildPlan plan)
+    // [Task 18] Boş bir snapshot: Completed boş, Queued/ElapsedMs bu ctor tarafından hiç okunmaz (yalnız
+    // Completed kullanılır — bkz. resume ctor'un doc'u). Fresh ctor'u resume ctor'un ÜZERİNE (this(plan,
+    // EmptySnapshot)) kurmak için var: iki neredeyse-birebir ctor gövdesi TEK gövdeye iner, davranış AYNI kalır
+    // (boş Completed ile başlayan resume ctor, eski fresh ctor'un yaptığı HER ŞEYİ birebir yapar — cycle
+    // guard'daki `!_completed.ContainsKey` kontrolü boş sözlükte her zaman true'dur, fresh ctor'un koşulsuz
+    // eklemesiyle aynı sonucu verir).
+    private static readonly RunSnapshot EmptySnapshot =
+        new(new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase), [], 0);
+
+    public ReadySetScheduler(BuildPlan plan) : this(plan, EmptySnapshot)
     {
-        ArgumentNullException.ThrowIfNull(plan);
-
-        _nodesInOrder = plan.Nodes;
-        _byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
-        _completed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
-        _inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        _preSkipped = new List<(string, string)>();
-
-        foreach (var node in _nodesInOrder)
-        {
-            _byId[node.Id] = node;
-            if (node.InCycle)
-            {
-                // Cycle üyeleri asla ready olamaz (bağımlılıkları birbirine dairesel) — plan anında çözülmüş say.
-                _completed[node.Id] = BuildResult.Skipped;
-                _preSkipped.Add((node.Id, "in dependency cycle"));
-            }
-        }
     }
 
     /// <summary>
@@ -67,9 +58,10 @@ public sealed class ReadySetScheduler
     /// Cycle/pre-skip DAVRANIŞI korunur: normal akışta (TakeSnapshot'tan gelen snapshot) cycle üyeleri zaten
     /// önceki construction'da Skipped olarak Completed'a yazılmıştı, bu yüzden burada YENİDEN pre-skip
     /// edilmezler (PreSkipped bu construction için boş kalır — hiçbir şey YENİ pre-skip edilmedi). Ama
-    /// savunmacı: snapshot Completed'ta cycle üyelerini taşımıyorsa (örn. elle kurulmuş bir snapshot),
-    /// yine de burada pre-skip edilirler — aksi halde bağımlılıkları birbirine dairesel olduğu için asla
-    /// ready olamazlar ve run kilitlenir (plan A6, fresh ctor ile aynı garanti).
+    /// savunmacı: snapshot Completed'ta cycle üyelerini taşımıyorsa (örn. elle kurulmuş bir snapshot, ya da
+    /// [Task 18] fresh ctor'un devrettiği <see cref="EmptySnapshot"/>), yine de burada pre-skip edilirler —
+    /// aksi halde bağımlılıkları birbirine dairesel olduğu için asla ready olamazlar ve run kilitlenir (plan
+    /// A6, fresh ctor ile aynı garanti — artık TEK gövde, iki ayrı garanti değil).
     /// </summary>
     public ReadySetScheduler(BuildPlan plan, RunSnapshot snapshot)
     {
@@ -120,12 +112,24 @@ public sealed class ReadySetScheduler
         }
     }
 
-    /// <summary>InFlight == 0 VE (stop istendi VEYA dispatch edilecek başka proje kalmadı).</summary>
+    /// <summary>
+    /// InFlight == 0 VE (stop istendi VEYA artık READY olabilecek hiçbir şey kalmadı).
+    ///
+    /// [Task 18] "queued boş mu" (eski formülasyon) DEĞİL, "ready olabilecek bir şey var mı" sorulur —
+    /// self-loop güvenliği: bağımlılığı asla çözülemeyecek (ör. kendine bağımlı, InCycle olarak
+    /// işaretlenmemiş sentetik/bozuk bir düğüm) bir proje sonsuza dek Queued'da kalabilir ama asla ready
+    /// olamaz; eski formülasyon böyle bir düğüm varken IsDone'ı SONSUZA dek false döndürürdü (worker'lar
+    /// WakeSignal üzerinde parkta kalır, hiçbir Complete tetiklenmediği için asla uyanmazlar — run askıda
+    /// kalır). Yeni formülasyon: kalan (Completed/InFlight'ta olmayan) düğümlerden HİÇBİRİ ready değilse run
+    /// terminal sayılır — worker'lar döner, run normal şekilde biter (kalan projeler Queued'da raporlanır).
+    /// </summary>
     public bool IsDone
     {
         get
         {
-            lock (_gate) return _inFlight.Count == 0 && (_stopRequested || !QueuedLocked().Any());
+            lock (_gate)
+                return _inFlight.Count == 0 && (_stopRequested || !_nodesInOrder.Any(n =>
+                    !_completed.ContainsKey(n.Id) && !_inFlight.Contains(n.Id) && IsReadyLocked(n)));
         }
     }
 

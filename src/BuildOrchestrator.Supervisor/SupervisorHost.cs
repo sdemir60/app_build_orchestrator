@@ -11,9 +11,6 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     RunCoordinator coordinator)
 {
     private bool _running = true;
-    private bool _stopRequested; // aktif run YOKKEN gelen graceful stop (run koşarken sahibi koordinatördür)
-
-    public bool StopRequested => _stopRequested;
 
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
@@ -65,7 +62,6 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     {
         if (coordinator.TryRequestStop(s.Kind)) return;
         if (s.Kind == StopKind.Hard) innerJob.Terminate();
-        else _stopRequested = true;
         await writer.WriteAsync(new RunStoppedEvent(s.RunId, WasHard: s.Kind == StopKind.Hard), ct);
     }
 

@@ -49,7 +49,11 @@ public enum DependentMode { Safe, Fast }
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe) : IpcCommand;
 
-/// <summary>Workspace'i verilen branch'e senkronize et (fetch + checkout/reset). [It-3]</summary>
+/// <summary>
+/// [K1 DOC FIX] Workspace'i verilen branch'e senkronize et. Sync REF-ONLY'dir: yalnızca <c>git fetch origin
+/// &lt;branch&gt;</c> ile remote-tracking ref'i günceller — checkout/pull/reset KESİNLİKLE çağrılmaz, aktif
+/// branch ve working tree ASLA değişmez (bkz. Core'daki <c>GitService.FetchRefOnlyAsync</c>). [It-3]
+/// </summary>
 public sealed record SyncWorkspaceCommand(string RootPath, string Branch) : IpcCommand;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
@@ -99,7 +103,8 @@ public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string 
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
     int Queued, long DurationMs, int DepIssueCount = 0) : IpcEvent;
 
-/// <summary>Sync (fetch + checkout/reset) başladı. [It-3]</summary>
+/// <summary>[K1 DOC FIX] Sync (ref-only <c>git fetch origin &lt;branch&gt;</c> — checkout/pull/reset YOK, aktif
+/// branch değişmez) başladı. [It-3]</summary>
 public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent;
 /// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;

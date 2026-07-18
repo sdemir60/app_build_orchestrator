@@ -138,16 +138,29 @@ public sealed class RunCoordinator(
     /// kartına tıklamak yine çalışır. <see cref="RunLogWriter"/>'ın KENDİSİ asla dışarı verilmez: host onun
     /// yaşam döngüsüne (ne zaman Dispose edileceğine) müdahale etmemeli. Hiç run koşmadıysa ya da proje o run'da
     /// hiç loglanmadıysa <c>false</c> döner.
+    ///
+    /// <para>[Task 18] Gerçek disk okuması (<c>File.ReadAllText</c> / <c>ProjectLogFile.Snapshot</c>'ın
+    /// FileStream'i) kilit DIŞINDA yapılır: kilit altında yalnız "hangi kaynaktan okunacağı" (canlı writer
+    /// referansı ya da en son run dizini) yakalanır. Büyük bir proje logunun okunması artık stopRun/startRun
+    /// gibi AYNI kilidi paylaşan ilgisiz çağrıları bloklamaz. Doğruluk korunur: <see cref="RunLogWriter"/> kendi
+    /// iç kilitlerini (<c>_projectsGate</c>, <c>ProjectLogFile</c>'ın kendi kilidi) taşır — bu metod dönmeden
+    /// SONRA <c>_logs.Dispose()</c> çağrılsa bile (bkz. RunSegmentAsync'in finally'si, dispose HER ZAMAN
+    /// worker'lar join olduktan sonra ayrı bir noktada yapılır) yakalanan <see cref="RunLogWriter"/> referansı
+    /// burada canlı tutulur (GC toplamaz) ve <c>SnapshotProjectLog</c> kendi kilidiyle Dispose ile serileşir —
+    /// canlı-writer anlık görüntüsü hâlâ tutarlıdır.</para>
     /// </summary>
     public bool TryGetProjectLogSnapshot(string projectId, out string text, out int throughLineNumber)
     {
-        (string Text, int ThroughLineNumber)? snap;
+        RunLogWriter? logs;
+        string? lastRunDirectory;
         lock (_gate)
         {
-            snap = _logs is not null
-                ? _logs.SnapshotProjectLog(projectId)
-                : _lastRunDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(_lastRunDirectory, projectId) : null;
+            logs = _logs;
+            lastRunDirectory = _lastRunDirectory;
         }
+        (string Text, int ThroughLineNumber)? snap = logs is not null
+            ? logs.SnapshotProjectLog(projectId)
+            : lastRunDirectory is not null ? RunLogWriter.ReadProjectLogFromDisk(lastRunDirectory, projectId) : null;
         if (snap is { } s) { text = s.Text; throughLineNumber = s.ThroughLineNumber; return true; }
         text = ""; throughLineNumber = 0; return false;
     }

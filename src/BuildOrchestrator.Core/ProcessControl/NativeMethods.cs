@@ -119,12 +119,9 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool TerminateJobObject(nint hJob, uint uExitCode);
 
-    [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern bool CreateProcessW(
-        string? lpApplicationName, StringBuilder lpCommandLine, nint lpProcessAttributes, nint lpThreadAttributes,
-        bool bInheritHandles, uint dwCreationFlags, nint lpEnvironment, string? lpCurrentDirectory,
-        ref STARTUPINFOW lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
-
+    // [Task 18] Task 15'te GetACP() kaldırıldı; burada da yalnız STARTUPINFOEXW overload'ı canlı yol tarafından
+    // kullanılıyor (bkz. JobProcessLauncher — `six` her zaman STARTUPINFOEXW) — düz STARTUPINFOW alan overload
+    // hiçbir çağıranı olmadığı için (grep doğrulaması) kaldırıldı.
     [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool CreateProcessW(
         string? lpApplicationName, StringBuilder lpCommandLine, nint lpProcessAttributes, nint lpThreadAttributes,

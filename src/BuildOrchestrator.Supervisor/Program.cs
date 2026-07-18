@@ -42,12 +42,12 @@ public static class Program
             // cache'ini kirletmez.
             string cachePath = Path.Combine(Path.GetDirectoryName(logsRoot) ?? logsRoot, "evaluation-cache.json");
             var scanner = new WorkspaceScanner();
-            var plan = new BuildPlanBuilder(scanner, new CsprojEvaluator(), new EvaluationCache(cachePath))
-                .Build(root, configuration);
-            // İkinci tarama: BuildPlanBuilder kendi ScanResult'ını dışarı vermiyor, packages.config restore'un
-            // istediği SolutionDir ise .sln YOLLARINI gerektiriyor (ProjectNode yalnız solution ADI taşır).
-            // Tek taramaya indirmek Core'da bir Build(ScanResult, …) overload'ı ister — It-3'e bırakıldı.
+            // [Task 18] TEK tarama: BuildPlanBuilder'ın ScanResult-alan overload'ı kullanılır — packages.config
+            // restore'un istediği SolutionDir için .sln YOLLARI (ProjectNode yalnız solution ADI taşır) aynı
+            // scan'den (`scan.SlnPaths`) elde edilir, workspace ikinci kez taranmaz.
             var scan = scanner.Scan(root);
+            var plan = new BuildPlanBuilder(scanner, new CsprojEvaluator(), new EvaluationCache(cachePath))
+                .Build(scan, configuration);
             return new RunPlan(plan, SolutionMapper.MapRefs(scan.SlnPaths, scan.CsprojPaths));
         }
     }
