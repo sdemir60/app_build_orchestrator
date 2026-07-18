@@ -7,13 +7,17 @@ namespace BuildOrchestrator.Tests.Incremental;
 // [T25][A6] IncrementalPlanner — GLOBAL graf propagation (Safe = dirty + transitive dependents; Fast = yalnız
 // dirty, cascade yok) + skip gate. BuildSignature (Task 6) + BuildStateStore (Task 2) + WillBuildEvaluator/
 // BuildPreview (mevcut, değişmez) seam'ine bağlanır. Testler senkron/in-memory git facts enjekte eder (gerçek
-// repo gerekmez): headCommit, per-node dirty dosya listesi, state dictionary.
+// repo gerekmez): headCommit (yalnız hollow kapısı — [A6 refinement/Task 7b] proje imzasına DOĞRUDAN girmez),
+// per-node PER-PROJECT committedFingerprint (bkz. ComputeCommittedFingerprint testleri altta), per-node dirty
+// dosya listesi, state dictionary.
 public class IncrementalPlannerTests
 {
     private static ProjectNode Node(string id, int buildOrder, bool inCycle, params string[] dependencies) =>
         new(id, id, id, [], dependencies, buildOrder, null, null, InCycle: inCycle, WillBuild: null);
 
     private static readonly Func<string, string> NoRead = _ => throw new InvalidOperationException("okunmamalıydı");
+    private static readonly Func<ProjectNode, string?> NoFingerprint =
+        _ => throw new InvalidOperationException("okunmamalıydı");
 
     private static Func<string, string> ContentMap(params (string Path, string Content)[] entries)
     {
@@ -27,6 +31,15 @@ public class IncrementalPlannerTests
     private static Func<ProjectNode, IReadOnlyList<string>> DirtyLookup(IReadOnlyDictionary<string, IReadOnlyList<string>> map) =>
         node => map.TryGetValue(node.Id, out var files) ? files : [];
 
+    // [A6 refinement — Task 7b] Per-project committed fingerprint enjeksiyonu — headCommit'in eski GLOBAL
+    // rolünün yerini alır. Testler gerçek bir git repo/GitService.GetTrackedBlobHashesAsync KULLANMAZ (D8 —
+    // repo-free): her projeye ayrı bir opak fingerprint token'ı doğrudan atanır.
+    private static Dictionary<string, string?> Fingerprints(params (string Id, string? Fingerprint)[] entries) =>
+        entries.ToDictionary(e => e.Id, e => e.Fingerprint, StringComparer.OrdinalIgnoreCase);
+
+    private static Func<ProjectNode, string?> FingerprintLookup(IReadOnlyDictionary<string, string?> map) =>
+        node => map.TryGetValue(node.Id, out var fp) ? fp : null;
+
     // ---- L1 -> L2 -> L3 chain: kök dirty, Safe TÜM zincire yayılır, Fast yalnız kökte kalır -----------------
 
     [Fact]
@@ -38,10 +51,12 @@ public class IncrementalPlannerTests
         var plan = new BuildPlan([l1, l2, l3], [], "Debug");
 
         // Baseline: L1 önceden temiz içerikle (v1) başarıyla derlenmiş; zincir tutarlı imzalarla state'e yazılmış.
+        // Committed fingerprint'ler bu testte SABİT kalır — senaryo bir COMMIT değil, working-tree dirty'sidir.
+        var fp = Fingerprints(("L1", "fpL1"), ("L2", "fpL2"), ("L3", "fpL3"));
         var readV1 = ContentMap(("L1.cs", "v1"));
-        string sigL1Old = BuildSignature.Compute(l1, "Debug", "headA", [], readV1, _ => null, inPlace: true);
-        string sigL2Old = BuildSignature.Compute(l2, "Debug", "headA", [], NoRead, id => id == "L1" ? sigL1Old : null, inPlace: true);
-        string sigL3Old = BuildSignature.Compute(l3, "Debug", "headA", [], NoRead, id => id == "L2" ? sigL2Old : null, inPlace: true);
+        string sigL1Old = BuildSignature.Compute(l1, "Debug", "fpL1", [], readV1, _ => null, inPlace: true);
+        string sigL2Old = BuildSignature.Compute(l2, "Debug", "fpL2", [], NoRead, id => id == "L1" ? sigL1Old : null, inPlace: true);
+        string sigL3Old = BuildSignature.Compute(l3, "Debug", "fpL3", [], NoRead, id => id == "L2" ? sigL2Old : null, inPlace: true);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -56,7 +71,7 @@ public class IncrementalPlannerTests
 
         var result = IncrementalPlanner.ComputeWillBuild(
             plan, headCommit: "headA", dirtyFilesForNode: dirty, readFileContent: readV2,
-            state: state, inPlace: true, mode: DependentMode.Safe);
+            committedFingerprintForNode: FingerprintLookup(fp), state: state, inPlace: true, mode: DependentMode.Safe);
 
         Assert.True(result.Nodes.Single(n => n.Id == "L1").WillBuild);
         Assert.True(result.Nodes.Single(n => n.Id == "L2").WillBuild); // transitive propagation
@@ -71,10 +86,11 @@ public class IncrementalPlannerTests
         var l3 = Node("L3", 2, inCycle: false, "L2");
         var plan = new BuildPlan([l1, l2, l3], [], "Debug");
 
+        var fp = Fingerprints(("L1", "fpL1"), ("L2", "fpL2"), ("L3", "fpL3"));
         var readV1 = ContentMap(("L1.cs", "v1"));
-        string sigL1Old = BuildSignature.Compute(l1, "Debug", "headA", [], readV1, _ => null, inPlace: true);
-        string sigL2Old = BuildSignature.Compute(l2, "Debug", "headA", [], NoRead, id => id == "L1" ? sigL1Old : null, inPlace: true);
-        string sigL3Old = BuildSignature.Compute(l3, "Debug", "headA", [], NoRead, id => id == "L2" ? sigL2Old : null, inPlace: true);
+        string sigL1Old = BuildSignature.Compute(l1, "Debug", "fpL1", [], readV1, _ => null, inPlace: true);
+        string sigL2Old = BuildSignature.Compute(l2, "Debug", "fpL2", [], NoRead, id => id == "L1" ? sigL1Old : null, inPlace: true);
+        string sigL3Old = BuildSignature.Compute(l3, "Debug", "fpL3", [], NoRead, id => id == "L2" ? sigL2Old : null, inPlace: true);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -88,7 +104,7 @@ public class IncrementalPlannerTests
 
         var result = IncrementalPlanner.ComputeWillBuild(
             plan, headCommit: "headA", dirtyFilesForNode: dirty, readFileContent: readV2,
-            state: state, inPlace: true, mode: DependentMode.Fast);
+            committedFingerprintForNode: FingerprintLookup(fp), state: state, inPlace: true, mode: DependentMode.Fast);
 
         Assert.True(result.Nodes.Single(n => n.Id == "L1").WillBuild);
         Assert.False(result.Nodes.Single(n => n.Id == "L2").WillBuild); // no cascade
@@ -103,7 +119,8 @@ public class IncrementalPlannerTests
         var plan = new BuildPlan([l1, l2], [], "Debug");
 
         // L2 daha önce başarıyla derlenmiş (L1'in o zamanki -yok- imzasıyla tutarlı: upstream null idi).
-        string sigL2Old = BuildSignature.Compute(l2, "Debug", "headA", [], NoRead, _ => null, inPlace: true);
+        var fp = Fingerprints(("L1", "fpL1"), ("L2", "fpL2"));
+        string sigL2Old = BuildSignature.Compute(l2, "Debug", "fpL2", [], NoRead, _ => null, inPlace: true);
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
             // L1 hiç state'e girmemiş (never-built) — kayıt yok.
@@ -113,12 +130,12 @@ public class IncrementalPlannerTests
         var noDirty = DirtyLookup(Dirty());
 
         var safe = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", noDirty, NoRead, state, inPlace: true, mode: DependentMode.Safe);
+            plan, "headA", noDirty, NoRead, FingerprintLookup(fp), state, inPlace: true, mode: DependentMode.Safe);
         Assert.True(safe.Nodes.Single(n => n.Id == "L1").WillBuild); // never-built
         Assert.True(safe.Nodes.Single(n => n.Id == "L2").WillBuild); // upstream (L1) imzası artık farklı (gerçek vs null) -> propagate
 
         var fast = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", noDirty, NoRead, state, inPlace: true, mode: DependentMode.Fast);
+            plan, "headA", noDirty, NoRead, FingerprintLookup(fp), state, inPlace: true, mode: DependentMode.Fast);
         Assert.True(fast.Nodes.Single(n => n.Id == "L1").WillBuild);  // never-built (own)
         Assert.False(fast.Nodes.Single(n => n.Id == "L2").WillBuild); // frozen upstream = stored (null) -> own unchanged -> no cascade
     }
@@ -133,9 +150,10 @@ public class IncrementalPlannerTests
         var l3 = Node("L3", 2, inCycle: false, "L2");
         var planDebug = new BuildPlan([l1, l2, l3], [], "Debug");
 
-        string sigL1 = BuildSignature.Compute(l1, "Debug", "headA", [], NoRead, _ => null, inPlace: true);
-        string sigL2 = BuildSignature.Compute(l2, "Debug", "headA", [], NoRead, id => id == "L1" ? sigL1 : null, inPlace: true);
-        string sigL3 = BuildSignature.Compute(l3, "Debug", "headA", [], NoRead, id => id == "L2" ? sigL2 : null, inPlace: true);
+        var fp = Fingerprints(("L1", "fpL1"), ("L2", "fpL2"), ("L3", "fpL3"));
+        string sigL1 = BuildSignature.Compute(l1, "Debug", "fpL1", [], NoRead, _ => null, inPlace: true);
+        string sigL2 = BuildSignature.Compute(l2, "Debug", "fpL2", [], NoRead, id => id == "L1" ? sigL1 : null, inPlace: true);
+        string sigL3 = BuildSignature.Compute(l3, "Debug", "fpL3", [], NoRead, id => id == "L2" ? sigL2 : null, inPlace: true);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -149,7 +167,7 @@ public class IncrementalPlannerTests
         var noDirty = DirtyLookup(Dirty());
 
         var result = IncrementalPlanner.ComputeWillBuild(
-            planRelease, "headA", noDirty, NoRead, state, inPlace: true, mode: DependentMode.Safe);
+            planRelease, "headA", noDirty, NoRead, FingerprintLookup(fp), state, inPlace: true, mode: DependentMode.Safe);
 
         Assert.True(result.Nodes.Single(n => n.Id == "L1").WillBuild);
         Assert.True(result.Nodes.Single(n => n.Id == "L2").WillBuild);
@@ -165,8 +183,9 @@ public class IncrementalPlannerTests
         var l2 = Node("L2", 1, inCycle: false, "L1");
         var planDebug = new BuildPlan([l1, l2], [], "Debug");
 
-        string sigL1 = BuildSignature.Compute(l1, "Debug", "headA", [], NoRead, _ => null, inPlace: true);
-        string sigL2 = BuildSignature.Compute(l2, "Debug", "headA", [], NoRead, id => id == "L1" ? sigL1 : null, inPlace: true);
+        var fp = Fingerprints(("L1", "fpL1"), ("L2", "fpL2"));
+        string sigL1 = BuildSignature.Compute(l1, "Debug", "fpL1", [], NoRead, _ => null, inPlace: true);
+        string sigL2 = BuildSignature.Compute(l2, "Debug", "fpL2", [], NoRead, id => id == "L1" ? sigL1 : null, inPlace: true);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -178,7 +197,7 @@ public class IncrementalPlannerTests
         var noDirty = DirtyLookup(Dirty());
 
         var result = IncrementalPlanner.ComputeWillBuild(
-            planRelease, "headA", noDirty, NoRead, state, inPlace: true, mode: DependentMode.Fast);
+            planRelease, "headA", noDirty, NoRead, FingerprintLookup(fp), state, inPlace: true, mode: DependentMode.Fast);
 
         Assert.True(result.Nodes.Single(n => n.Id == "L1").WillBuild);
         Assert.True(result.Nodes.Single(n => n.Id == "L2").WillBuild);
@@ -194,9 +213,10 @@ public class IncrementalPlannerTests
         var l3 = Node("L3", 2, inCycle: false, "L2");
         var plan = new BuildPlan([l1, l2, l3], [], "Debug");
 
-        string sigL1 = BuildSignature.Compute(l1, "Debug", "headA", [], NoRead, _ => null, inPlace: true);
-        string sigL2 = BuildSignature.Compute(l2, "Debug", "headA", [], NoRead, id => id == "L1" ? sigL1 : null, inPlace: true);
-        string sigL3 = BuildSignature.Compute(l3, "Debug", "headA", [], NoRead, id => id == "L2" ? sigL2 : null, inPlace: true);
+        var fp = Fingerprints(("L1", "fpL1"), ("L2", "fpL2"), ("L3", "fpL3"));
+        string sigL1 = BuildSignature.Compute(l1, "Debug", "fpL1", [], NoRead, _ => null, inPlace: true);
+        string sigL2 = BuildSignature.Compute(l2, "Debug", "fpL2", [], NoRead, id => id == "L1" ? sigL1 : null, inPlace: true);
+        string sigL3 = BuildSignature.Compute(l3, "Debug", "fpL3", [], NoRead, id => id == "L2" ? sigL2 : null, inPlace: true);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -208,10 +228,14 @@ public class IncrementalPlannerTests
         var noDirty = DirtyLookup(Dirty());
 
         var result = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", noDirty, NoRead, state, inPlace: true, mode: DependentMode.Safe);
+            plan, "headA", noDirty, NoRead, FingerprintLookup(fp), state, inPlace: true, mode: DependentMode.Safe);
 
-        // Sıra korunur (build-order) ve her biri KENDİ konumunda, önceki düğümün skip kararına bağlı biçimde
-        // (topological/memoized) hesaplanır — hepsi tek seferde/toptan değil.
+        // Not: sıranın korunması (aşağıdaki Assert.Equal) BuildPreview.ComputeWillBuild'in plan.Nodes üzerinde
+        // sırayı BOZMAYAN bir Select yapmasının doğrudan yapısal sonucudur — memoized/topological hesaplamanın
+        // KANITI DEĞİLDİR (önceki yorum bunu abartıyordu). Asıl kanıt burada: computedMemo yalnız DAHA ÖNCE
+        // işlenmiş düğümlerin imzalarını okuyabilir (bkz. IncrementalPlanner.ComputeWillBuild — foreach +
+        // memoize) — üç düğümün de "skip" (WillBuild=false) çıkması, her düğümün upstream teriminin DOĞRU
+        // (taze, state'teki ile birebir eşleşen) değerle beslendiğinin kanıtıdır.
         Assert.Equal(["L1", "L2", "L3"], result.Nodes.Select(n => n.Id));
         Assert.All(result.Nodes, n => Assert.False(n.WillBuild));
     }
@@ -226,9 +250,11 @@ public class IncrementalPlannerTests
         var plan = new BuildPlan([a, b], [["A", "B"]], "Debug");
 
         var noDirty = DirtyLookup(Dirty());
+        var fp = Fingerprints(("A", "fpA"), ("B", "fpB"));
 
         var result = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", noDirty, NoRead, new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase),
+            plan, "headA", noDirty, NoRead, FingerprintLookup(fp),
+            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase),
             inPlace: true, mode: DependentMode.Safe);
 
         Assert.False(result.Nodes.Single(n => n.Id == "A").WillBuild);
@@ -244,8 +270,11 @@ public class IncrementalPlannerTests
         var l2 = Node("L2", 1, inCycle: false, "L1");
         var plan = new BuildPlan([l1, l2], [], "Debug");
 
+        // NoFingerprint throw eder eğer çağrılırsa — hollow kısa devresi committedFingerprintForNode'u HİÇ
+        // çağırmamalı (bkz. IncrementalPlanner.ComputeWillBuild "headCommit is null" dalı).
         var result = IncrementalPlanner.ComputeWillBuild(
             plan, headCommit: null, dirtyFilesForNode: DirtyLookup(Dirty()), readFileContent: NoRead,
+            committedFingerprintForNode: NoFingerprint,
             state: new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), inPlace: true, mode: DependentMode.Safe);
 
         Assert.Null(result.Nodes.Single(n => n.Id == "L1").WillBuild);
@@ -263,11 +292,12 @@ public class IncrementalPlannerTests
         var d = Node("D", 3, inCycle: false, "B", "C");
         var plan = new BuildPlan([a, b, c, d], [], "Debug");
 
+        var fp = Fingerprints(("A", "fpA"), ("B", "fpB"), ("C", "fpC"), ("D", "fpD"));
         var readV1 = ContentMap(("A.cs", "v1"));
-        string sigAOld = BuildSignature.Compute(a, "Debug", "headA", [], readV1, _ => null, inPlace: true);
-        string sigBOld = BuildSignature.Compute(b, "Debug", "headA", [], NoRead, id => id == "A" ? sigAOld : null, inPlace: true);
-        string sigCOld = BuildSignature.Compute(c, "Debug", "headA", [], NoRead, id => id == "A" ? sigAOld : null, inPlace: true);
-        string sigDOld = BuildSignature.Compute(d, "Debug", "headA", [], NoRead,
+        string sigAOld = BuildSignature.Compute(a, "Debug", "fpA", [], readV1, _ => null, inPlace: true);
+        string sigBOld = BuildSignature.Compute(b, "Debug", "fpB", [], NoRead, id => id == "A" ? sigAOld : null, inPlace: true);
+        string sigCOld = BuildSignature.Compute(c, "Debug", "fpC", [], NoRead, id => id == "A" ? sigAOld : null, inPlace: true);
+        string sigDOld = BuildSignature.Compute(d, "Debug", "fpD", [], NoRead,
             id => id == "B" ? sigBOld : id == "C" ? sigCOld : null, inPlace: true);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
@@ -282,7 +312,7 @@ public class IncrementalPlannerTests
         var dirty = DirtyLookup(Dirty(("A", ["A.cs"])));
 
         var safe = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", dirty, readV2, state, inPlace: true, mode: DependentMode.Safe);
+            plan, "headA", dirty, readV2, FingerprintLookup(fp), state, inPlace: true, mode: DependentMode.Safe);
 
         Assert.True(safe.Nodes.Single(n => n.Id == "A").WillBuild);
         Assert.True(safe.Nodes.Single(n => n.Id == "B").WillBuild);
@@ -290,11 +320,176 @@ public class IncrementalPlannerTests
         Assert.True(safe.Nodes.Single(n => n.Id == "D").WillBuild); // join, iki koldan da propagate
 
         var fast = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", dirty, readV2, state, inPlace: true, mode: DependentMode.Fast);
+            plan, "headA", dirty, readV2, FingerprintLookup(fp), state, inPlace: true, mode: DependentMode.Fast);
 
         Assert.True(fast.Nodes.Single(n => n.Id == "A").WillBuild);
         Assert.False(fast.Nodes.Single(n => n.Id == "B").WillBuild);
         Assert.False(fast.Nodes.Single(n => n.Id == "C").WillBuild);
         Assert.False(fast.Nodes.Single(n => n.Id == "D").WillBuild);
+    }
+
+    // ---- [A6 refinement — Task 7b] COMMIT GRANULARITY: bir commit yalnız BİR projenin dosyasını değiştirirse,
+    // yalnız O proje (+ Safe'te transitive dependent'leri) dirty olur — ilişkisiz projeler DOKUNULMAZ. Bu,
+    // eski repo-GLOBAL headCommit tasarımının ALTINDA imkansızdı (tek bir headCommit değişimi HER düğümün
+    // "own" teriminde doğrudan yer aldığı için TÜM projeleri, ilişkisiz olsalar bile, dirty işaretlerdi) — bu
+    // testler yeni committedFingerprintForNode enjeksiyonu OLMADAN (eski API'de) ifade DAHİ edilemez; yani bu
+    // dosyanın geri kalanı derlenebilir hale gelmeden önce bu iki test RED'di (API'de committedFingerprintForNode
+    // parametresi yoktu — derleme hatası). Şimdi (GREEN): -------------------------------------------------
+
+    [Fact]
+    public void commit_changing_only_a_leaf_projects_committed_file_does_not_dirty_unrelated_upstream_projects()
+    {
+        var l1 = Node("L1", 0, inCycle: false);
+        var l2 = Node("L2", 1, inCycle: false, "L1");
+        var l3 = Node("L3", 2, inCycle: false, "L2");
+        var plan = new BuildPlan([l1, l2, l3], [], "Debug");
+
+        // Baseline: L1/L2/L3, hepsi önceden clean + Succeeded olarak state'e yazılmış (kendi eski committed
+        // fingerprint'leriyle tutarlı imzalar).
+        string sigL1Old = BuildSignature.Compute(l1, "Debug", "fpL1-old", [], NoRead, _ => null, inPlace: true);
+        string sigL2Old = BuildSignature.Compute(l2, "Debug", "fpL2-old", [], NoRead, id => id == "L1" ? sigL1Old : null, inPlace: true);
+        string sigL3Old = BuildSignature.Compute(l3, "Debug", "fpL3-old", [], NoRead, id => id == "L2" ? sigL2Old : null, inPlace: true);
+
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["L1"] = new BuildState("L1", sigL1Old, LastResult: BuildResult.Succeeded),
+            ["L2"] = new BuildState("L2", sigL2Old, LastResult: BuildResult.Succeeded),
+            ["L3"] = new BuildState("L3", sigL3Old, LastResult: BuildResult.Succeeded),
+        };
+
+        // Şimdi: repo'da YENİ bir commit var (repo-GLOBAL HEAD "headA" -> "headB" değişti — bu KASITLI: global
+        // HEAD değişse dahi ilişkisiz projeler dirty OLMAMALI, bu testin tam kanıtladığı şey budur), ama commit
+        // YALNIZ L3'ün kendi dosyasını değiştiriyor: L3'ün committed fingerprint'i farklı; L1/L2'ninki AYNEN
+        // eskisi gibi. Working-tree'de hiçbir şey dirty değil (noDirty) — bu saf bir commit senaryosu.
+        var fp = Fingerprints(("L1", "fpL1-old"), ("L2", "fpL2-old"), ("L3", "fpL3-NEW"));
+        var noDirty = DirtyLookup(Dirty());
+
+        var result = IncrementalPlanner.ComputeWillBuild(
+            plan, headCommit: "headB", dirtyFilesForNode: noDirty, readFileContent: NoRead,
+            committedFingerprintForNode: FingerprintLookup(fp), state: state, inPlace: true, mode: DependentMode.Safe);
+
+        Assert.False(result.Nodes.Single(n => n.Id == "L1").WillBuild); // ilişkisiz — commit onu ETKİLEMEDİ
+        Assert.False(result.Nodes.Single(n => n.Id == "L2").WillBuild); // ilişkisiz — commit onu ETKİLEMEDİ
+        Assert.True(result.Nodes.Single(n => n.Id == "L3").WillBuild);  // yalnız BU projenin dosyası değişti
+    }
+
+    [Fact]
+    public void commit_changing_only_the_root_projects_committed_file_propagates_in_safe_but_not_in_fast()
+    {
+        var l1 = Node("L1", 0, inCycle: false);
+        var l2 = Node("L2", 1, inCycle: false, "L1");
+        var l3 = Node("L3", 2, inCycle: false, "L2");
+        var plan = new BuildPlan([l1, l2, l3], [], "Debug");
+
+        string sigL1Old = BuildSignature.Compute(l1, "Debug", "fpL1-old", [], NoRead, _ => null, inPlace: true);
+        string sigL2Old = BuildSignature.Compute(l2, "Debug", "fpL2-old", [], NoRead, id => id == "L1" ? sigL1Old : null, inPlace: true);
+        string sigL3Old = BuildSignature.Compute(l3, "Debug", "fpL3-old", [], NoRead, id => id == "L2" ? sigL2Old : null, inPlace: true);
+
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["L1"] = new BuildState("L1", sigL1Old, LastResult: BuildResult.Succeeded),
+            ["L2"] = new BuildState("L2", sigL2Old, LastResult: BuildResult.Succeeded),
+            ["L3"] = new BuildState("L3", sigL3Old, LastResult: BuildResult.Succeeded),
+        };
+
+        // Commit YALNIZ L1'in (kökün) dosyasını değiştiriyor — L2/L3'ünki aynı.
+        var fp = Fingerprints(("L1", "fpL1-NEW"), ("L2", "fpL2-old"), ("L3", "fpL3-old"));
+        var noDirty = DirtyLookup(Dirty());
+
+        var safe = IncrementalPlanner.ComputeWillBuild(
+            plan, headCommit: "headB", dirtyFilesForNode: noDirty, readFileContent: NoRead,
+            committedFingerprintForNode: FingerprintLookup(fp), state: state, inPlace: true, mode: DependentMode.Safe);
+
+        Assert.True(safe.Nodes.Single(n => n.Id == "L1").WillBuild); // kendi commit'i değişti
+        Assert.True(safe.Nodes.Single(n => n.Id == "L2").WillBuild); // transitive propagation
+        Assert.True(safe.Nodes.Single(n => n.Id == "L3").WillBuild); // transitive propagation
+
+        var fast = IncrementalPlanner.ComputeWillBuild(
+            plan, headCommit: "headB", dirtyFilesForNode: noDirty, readFileContent: NoRead,
+            committedFingerprintForNode: FingerprintLookup(fp), state: state, inPlace: true, mode: DependentMode.Fast);
+
+        Assert.True(fast.Nodes.Single(n => n.Id == "L1").WillBuild);  // kendi commit'i değişti
+        Assert.False(fast.Nodes.Single(n => n.Id == "L2").WillBuild); // frozen upstream -> cascade yok
+        Assert.False(fast.Nodes.Single(n => n.Id == "L3").WillBuild); // frozen upstream -> cascade yok
+    }
+
+    // ---- ComputeCommittedFingerprint: GitService tracked-blob map ∩ projenin build-etkileyen dosyaları -----
+
+    [Fact]
+    public void ComputeCommittedFingerprint_returns_null_when_no_project_file_intersects_the_tracked_blob_map()
+    {
+        var trackedBlobHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Other/File.cs"] = "aaaa",
+        };
+
+        string? fp = IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, ["L1.cs"]);
+
+        Assert.Null(fp); // proje hiç commit'lenmemiş (map'te bu projenin dosyası yok)
+    }
+
+    [Fact]
+    public void ComputeCommittedFingerprint_returns_null_when_tracked_blob_map_is_empty_no_commits_repo()
+    {
+        var emptyMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        string? fp = IncrementalPlanner.ComputeCommittedFingerprint(emptyMap, ["L1.cs", "L1.csproj"]);
+
+        Assert.Null(fp);
+    }
+
+    [Fact]
+    public void ComputeCommittedFingerprint_reordering_project_files_yields_the_same_fingerprint()
+    {
+        var trackedBlobHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["a.cs"] = "shaA",
+            ["b.cs"] = "shaB",
+        };
+
+        string? fp1 = IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, ["a.cs", "b.cs"]);
+        string? fp2 = IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, ["b.cs", "a.cs"]);
+
+        Assert.Equal(fp1, fp2);
+    }
+
+    [Fact]
+    public void ComputeCommittedFingerprint_ignores_non_build_affecting_files_even_when_present_in_the_map()
+    {
+        var trackedBlobHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["a.cs"] = "shaA",
+            ["README.md"] = "shaReadme",
+        };
+
+        string? fpWithoutReadme = IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, ["a.cs"]);
+        string? fpWithReadme = IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, ["a.cs", "README.md"]);
+
+        Assert.Equal(fpWithoutReadme, fpWithReadme); // .md build-etkileyen değil -> filtrelenir
+    }
+
+    [Fact]
+    public void ComputeCommittedFingerprint_changing_a_matched_files_blob_sha_changes_the_fingerprint()
+    {
+        var mapV1 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["a.cs"] = "sha1" };
+        var mapV2 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["a.cs"] = "sha2" };
+
+        string? fp1 = IncrementalPlanner.ComputeCommittedFingerprint(mapV1, ["a.cs"]);
+        string? fp2 = IncrementalPlanner.ComputeCommittedFingerprint(mapV2, ["a.cs"]);
+
+        Assert.NotEqual(fp1, fp2);
+    }
+
+    [Fact]
+    public void ComputeCommittedFingerprint_a_new_uncommitted_project_file_absent_from_the_map_does_not_affect_the_fingerprint()
+    {
+        // b.cs henüz commit'lenmemiş (map'te yok) — bu YENİ dosyanın varlığı committed fingerprint'i etkilemez;
+        // onun sinyali ayrıca working-tree dirty listesi (local-diff terimi, inPlace modda) üzerinden gelir.
+        var trackedBlobHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["a.cs"] = "shaA" };
+
+        string? fpOnlyTracked = IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, ["a.cs"]);
+        string? fpWithUncommittedExtra = IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, ["a.cs", "b.cs"]);
+
+        Assert.Equal(fpOnlyTracked, fpWithUncommittedExtra);
     }
 }

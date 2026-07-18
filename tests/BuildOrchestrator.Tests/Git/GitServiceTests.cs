@@ -239,6 +239,62 @@ public class GitServiceTests
         Assert.True(locals[0].IsActive);
     }
 
+    // ---- tracked blob hashes [A6 refinement — Task 7b: per-project committed fingerprint kaynağı] ----
+
+    [Fact]
+    public async Task GetTrackedBlobHashesAsync_returns_path_to_blob_sha_map_for_committed_files()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "hello");
+        repo.WriteFile("sub/b.txt", "world");
+        repo.CommitAll("c1");
+
+        var svc = new GitService(Runner, repo.RootPath);
+        var result = await svc.GetTrackedBlobHashesAsync();
+
+        Assert.True(result.Success);
+        Assert.True(result.Value!.ContainsKey("a.txt"));
+        Assert.True(result.Value!.ContainsKey("sub/b.txt"));
+        Assert.Equal(40, result.Value!["a.txt"].Length);
+        Assert.True(result.Value!["a.txt"].All(Uri.IsHexDigit));
+        Assert.Equal(40, result.Value!["sub/b.txt"].Length);
+        Assert.True(result.Value!["sub/b.txt"].All(Uri.IsHexDigit));
+    }
+
+    [Fact]
+    public async Task GetTrackedBlobHashesAsync_modifying_and_committing_a_file_changes_only_its_own_blob_sha()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.WriteFile("b.txt", "unchanged");
+        repo.CommitAll("c1");
+
+        var svc = new GitService(Runner, repo.RootPath);
+        var before = await svc.GetTrackedBlobHashesAsync();
+
+        repo.WriteFile("a.txt", "v2 — modified");
+        repo.CommitAll("c2");
+
+        var after = await svc.GetTrackedBlobHashesAsync();
+
+        Assert.True(before.Success);
+        Assert.True(after.Success);
+        Assert.NotEqual(before.Value!["a.txt"], after.Value!["a.txt"]);
+        Assert.Equal(before.Value!["b.txt"], after.Value!["b.txt"]); // dokunulmayan dosya aynı blob SHA'sını korur
+    }
+
+    [Fact]
+    public async Task GetTrackedBlobHashesAsync_returns_empty_map_on_repo_with_no_commits()
+    {
+        using var repo = new GitTestRepo(); // init only — hiç commit yok
+
+        var svc = new GitService(Runner, repo.RootPath);
+        var result = await svc.GetTrackedBlobHashesAsync();
+
+        Assert.True(result.Success); // no-commits bir HATA değil, tanımlı bir edge
+        Assert.Empty(result.Value!);
+    }
+
     // ---- error signals: no unhandled exception ----
 
     [Fact]

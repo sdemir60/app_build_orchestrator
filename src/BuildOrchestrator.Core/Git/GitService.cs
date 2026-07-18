@@ -236,6 +236,42 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     }
 
     /// <summary>
+    /// [A6 refinement — Task 7b] HEAD'deki TÜM tracked dosyaların repo-relative path → blob SHA eşlemesi,
+    /// TEK bir <c>git ls-tree -r HEAD</c> çağrısıyla (<c>&lt;mode&gt; &lt;type&gt; &lt;sha&gt;\t&lt;path&gt;</c>
+    /// satırları parse edilir; yalnız <c>type=blob</c> satırları alınır — submodule girdileri (<c>type=commit</c>)
+    /// dışlanır). Bu harita, per-project COMMITTED fingerprint'in kaynağıdır (bkz. <see
+    /// cref="BuildOrchestrator.Core.Incremental.IncrementalPlanner.ComputeCommittedFingerprint"/>): eskiden
+    /// TÜM projelere GLOBAL olarak enjekte edilen repo-HEAD commit SHA'sı yerine, her projenin YALNIZ kendi
+    /// build-etkileyen dosyalarının committed blob içerik kimliği kullanılır (§4 — DLL/bin/obj timestamp'ı
+    /// yine ASLA okunmaz, yalnız git'in kendi committed blob SHA'sı).
+    /// <para>
+    /// No-commits (unborn HEAD) repo → <c>Ok(boş map)</c> (hata DEĞİL, tanımlı edge — <see
+    /// cref="GetHeadCommitAsync"/> ile tutarlı). Bu durumda git, <c>ls-tree -r HEAD</c>'i exit=128 + "fatal:
+    /// Not a valid object name HEAD" ile reddeder (deneysel doğrulandı) — <see cref="IsUnbornHeadSignal"/>'daki
+    /// "exit=1 + boş stderr" kalıbından FARKLI bir sinyal olduğu için ayrı bir tanıyıcı (<see
+    /// cref="IsNoCommitsLsTreeSignal"/>) kullanılır. Başka HERHANGİ bir hata gerçek bir git hatasıdır — Fail.
+    /// </para>
+    /// </summary>
+    public async Task<GitResult<IReadOnlyDictionary<string, string>>> GetTrackedBlobHashesAsync(CancellationToken ct = default)
+    {
+        var outcome = await TryRunGitAsync(["ls-tree", "-r", "HEAD"], ct);
+        if (!outcome.Ok) return GitResult<IReadOnlyDictionary<string, string>>.Fail(outcome.Error!);
+
+        var r = outcome.Result!;
+        if (r.ExitCode != 0)
+        {
+            if (IsNoCommitsLsTreeSignal(r))
+                return GitResult<IReadOnlyDictionary<string, string>>.Ok(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+
+            return GitResult<IReadOnlyDictionary<string, string>>.Fail(DescribeGitFailure(r));
+        }
+
+        // ExitCode==0 iken stdout parse edilir; stderr'de CRLF-dönüşüm UYARISI gibi zararsız satırlar
+        // olabilir (deneysel doğrulandı) — başarı, YALNIZ ExitCode'a bakılarak belirlenir.
+        return GitResult<IReadOnlyDictionary<string, string>>.Ok(ParseLsTreeBlobHashes(r.StandardOutput));
+    }
+
+    /// <summary>
     /// Tüm sorguları toplar ve edge durumlarını (<see cref="GitRepoState.HasNoCommits"/>, <see
     /// cref="GitRepoState.IsDetached"/>, <see cref="GitRepoState.IsShallow"/>) <see
     /// cref="GitRepoState.TreatAsDirty"/> kararına indirger. Herhangi bir alt-sorgu hata dönerse
@@ -312,6 +348,46 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             : r.StandardError.Trim();
 
     private static bool IsFortyHexSha(string s) => s.Length == 40 && s.All(Uri.IsHexDigit);
+
+    /// <summary>
+    /// <c>git ls-tree -r HEAD</c>'in "no-commits" (unborn HEAD) sinyali: exit≠0 + stderr "Not a valid object
+    /// name" içerir (ör. "fatal: Not a valid object name HEAD", deneysel doğrulandı). <see
+    /// cref="IsUnbornHeadSignal"/>'daki "exit=1 + boş stderr" kalıbından KASITLI olarak farklı — ls-tree bu
+    /// durumda exit=128 + DOLU stderr döner, o yüzden ayrı bir tanıyıcı gerekir.
+    /// </summary>
+    private static bool IsNoCommitsLsTreeSignal(ProcessResult r) =>
+        r.ExitCode != 0 && r.StandardError.Contains("Not a valid object name", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// <c>git ls-tree -r HEAD</c> çıktısını (<c>&lt;mode&gt; &lt;type&gt; &lt;sha&gt;\t&lt;path&gt;</c> satırları)
+    /// path → blob SHA haritasına indirger; yalnız <c>type=blob</c> (submodule/<c>commit</c> girdileri dışlanır).
+    /// Path git tarafından tırnaklanmış olabilir (özel karakterler) — <see cref="ParsePorcelainPaths"/> ile
+    /// tutarlı biçimde kırpılır.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> ParseLsTreeBlobHashes(string lsTreeOutput)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using var reader = new StringReader(lsTreeOutput);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            if (line.Length == 0) continue;
+
+            int tab = line.IndexOf('\t');
+            if (tab < 0) continue; // beklenmeyen satır formatı — savunmacı biçimde atlanır
+
+            string[] meta = line[..tab].Split(' ', 3); // "<mode> <type> <sha>"
+            if (meta.Length != 3) continue;
+
+            string type = meta[1];
+            string sha = meta[2];
+            if (!string.Equals(type, "blob", StringComparison.Ordinal)) continue; // submodule (commit) vb. dışlanır
+
+            string path = line[(tab + 1)..].Trim('"');
+            map[path] = sha;
+        }
+        return map;
+    }
 
     private static IReadOnlyList<string> ParsePorcelainPaths(string porcelainOutput)
     {

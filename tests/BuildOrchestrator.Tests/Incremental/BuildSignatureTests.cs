@@ -4,7 +4,8 @@ using BuildOrchestrator.Core.Incremental;
 namespace BuildOrchestrator.Tests.Incremental;
 
 // [T25][A6][D6] BuildSignature.Compute determinism + sinyal testleri (It-3 — incremental build çekirdeği).
-// Signature = configuration + headCommit + (yalnız in-place) local-diff hash + transitive upstream imzaları.
+// Signature = configuration + committedFingerprint (PER-PROJECT, A6 refinement — bkz. Task 7b) +
+// (yalnız in-place) local-diff hash + transitive upstream imzaları.
 public class BuildSignatureTests
 {
     private static ProjectNode Node(string id, params string[] dependencies) =>
@@ -72,26 +73,26 @@ public class BuildSignatureTests
         Assert.NotEqual(debug, release);
     }
 
-    // ---- HEAD commit değişimi ------------------------------------------------------------------
+    // ---- Committed fingerprint değişimi [A6 refinement — Task 7b: PER-PROJECT, global HEAD DEĞİL] --------
 
     [Fact]
-    public void changing_head_commit_changes_signature()
+    public void changing_committed_fingerprint_changes_signature()
     {
         var node = Node("A");
 
-        string sig1 = BuildSignature.Compute(node, "Debug", "commit1", [], NoRead, NoUpstream, inPlace: false);
-        string sig2 = BuildSignature.Compute(node, "Debug", "commit2", [], NoRead, NoUpstream, inPlace: false);
+        string sig1 = BuildSignature.Compute(node, "Debug", "fp1", [], NoRead, NoUpstream, inPlace: false);
+        string sig2 = BuildSignature.Compute(node, "Debug", "fp2", [], NoRead, NoUpstream, inPlace: false);
 
         Assert.NotEqual(sig1, sig2);
     }
 
     [Fact]
-    public void null_head_commit_is_tolerated_and_differs_from_a_real_commit()
+    public void null_committed_fingerprint_is_tolerated_and_differs_from_a_real_fingerprint()
     {
         var node = Node("A");
 
         string sigNull = BuildSignature.Compute(node, "Debug", null, [], NoRead, NoUpstream, inPlace: false);
-        string sigReal = BuildSignature.Compute(node, "Debug", "commit1", [], NoRead, NoUpstream, inPlace: false);
+        string sigReal = BuildSignature.Compute(node, "Debug", "fp1", [], NoRead, NoUpstream, inPlace: false);
 
         Assert.NotEqual(sigNull, sigReal);
     }

@@ -7,28 +7,41 @@ using BuildOrchestrator.Contracts.Model;
 
 /// <summary>
 /// [T25][A6][D6] Byte-stable proje imzası — incremental build kararının çekirdeği (bkz. plan v7 D6/A6).
-/// Signature = <c>configuration</c> + <c>headCommit</c> + (YALNIZ in-place modda) <c>local-diff hash</c> +
-/// transitive upstream producer imzaları. Aynı girdi kümesi HER ZAMAN byte-identik SHA256 hex string üretir
-/// (determinism testli) ve girdi listelerinin (dirty dosyalar, upstream id'ler) SIRASI SONUCU ETKİLEMEZ —
-/// dahili olarak case-insensitive (OrdinalIgnoreCase) sıralanırlar. Her liste elemanının RAW (değişken
-/// uzunluklu/serbest karakterli) kısmı (dosya yolu, upstream projectId) da ayraç yanına gömülmeden ÖNCE
-/// ayrıca hash'lenir (bkz. <see cref="HashText"/> kullanımı Compute içinde) — böylece bir yol veya id
-/// içinde tesadüfen (ya da kasıtlı) bir ayraç/`=` karakteri geçse bile iki farklı terim kümesi aynı
-/// pre-hash string'e indirgenemez (bkz. <c>BuildSignatureTests</c>: separator/`=` içeren id/yol testleri).
+/// Signature = <c>configuration</c> + <c>committedFingerprint</c> (PER-PROJECT, bkz. aşağıdaki A6-refinement
+/// notu) + (YALNIZ in-place modda) <c>local-diff hash</c> + transitive upstream producer imzaları. Aynı girdi
+/// kümesi HER ZAMAN byte-identik SHA256 hex string üretir (determinism testli) ve girdi listelerinin (dirty
+/// dosyalar, upstream id'ler) SIRASI SONUCU ETKİLEMEZ — dahili olarak case-insensitive (OrdinalIgnoreCase)
+/// sıralanırlar. Her liste elemanının RAW (değişken uzunluklu/serbest karakterli) kısmı (dosya yolu, upstream
+/// projectId) da ayraç yanına gömülmeden ÖNCE ayrıca hash'lenir (bkz. <see cref="HashText"/> kullanımı Compute
+/// içinde) — böylece bir yol veya id içinde tesadüfen (ya da kasıtlı) bir ayraç/`=` karakteri geçse bile iki
+/// farklı terim kümesi aynı pre-hash string'e indirgenemez (bkz. <c>BuildSignatureTests</c>: separator/`=`
+/// içeren id/yol testleri).
 ///
 /// <para>
-/// §4 kaynak-sinyali kuralı: yalnız kaynak sinyalleri (config string, commit SHA, dirty dosya İÇERİĞİ,
-/// upstream imzası) girdi olur — DLL/bin/obj veya herhangi bir dosya/derleme timestamp'ı ASLA okunmaz.
+/// §4 kaynak-sinyali kuralı: yalnız kaynak sinyalleri (config string, committed fingerprint, dirty dosya
+/// İÇERİĞİ, upstream imzası) girdi olur — DLL/bin/obj veya herhangi bir dosya/derleme timestamp'ı ASLA okunmaz.
+/// </para>
+///
+/// <para>
+/// <b>[A6 refinement — Task 7b] PER-PROJECT committed fingerprint (global HEAD DEĞİL):</b> eskiden bu terim
+/// repo-GLOBAL <c>headCommit</c> idi — repo'da HERHANGİ bir yeni commit/branch-bounce, ilişkisiz projeler
+/// DAHİL TÜM projeleri dirty işaretliyordu (over-build). Artık <paramref name="committedFingerprint"/>,
+/// çağıranın (Task 7/IncrementalPlanner, bkz. <see
+/// cref="BuildOrchestrator.Core.Incremental.IncrementalPlanner.ComputeCommittedFingerprint"/>) hesapladığı,
+/// YALNIZ BU PROJENİN build-etkileyen dosyalarının HEAD'deki committed blob içeriğini temsil eden bir hash'tir
+/// — commit değişimi, yalnız o projeyi GERÇEKTEN etkiliyorsa (+ Safe modda transitive dependent'lerine) imzayı
+/// değiştirir. <c>null</c> tolere edilir (ör. proje hiç commit'lenmemiş / no-commits repo) — sabit bir
+/// null-işaretiyle imzaya girer, hata fırlatılmaz.
 /// </para>
 ///
 /// <para>
 /// <b>In-place vs worktree/committed:</b> in-place modda (<paramref name="inPlace"/>=true, bkz. <see
-/// cref="Compute"/>) HEAD commit'e ek olarak working-tree'deki henüz commit'lenmemiş yerel değişiklikler de
-/// projenin gerçek kaynak durumunu oluşturduğu için "local-diff hash" terimi imzaya dahil edilir. Worktree
-/// (committed) modda (inPlace=false) bu terim TAMAMEN atlanır: o worktree'nin kaynağı zaten HEAD commit'i
-/// tarafından tam olarak yakalanmıştır — working-tree'deki dirty değişiklikler o worktree'yi etkilemez, o
-/// yüzden dirty-dosya girdisi committed modda dikkate ALINMAZ (bkz. <c>BuildSignatureTests</c>: "worktree
-/// modunda dirty girdisi imzayı değiştirmez").
+/// cref="Compute"/>) committed fingerprint'e ek olarak working-tree'deki henüz commit'lenmemiş yerel
+/// değişiklikler de projenin gerçek kaynak durumunu oluşturduğu için "local-diff hash" terimi imzaya dahil
+/// edilir. Worktree (committed) modda (inPlace=false) bu terim TAMAMEN atlanır: o worktree'nin kaynağı zaten
+/// committed fingerprint tarafından tam olarak yakalanmıştır — working-tree'deki dirty değişiklikler o
+/// worktree'yi etkilemez, o yüzden dirty-dosya girdisi committed modda dikkate ALINMAZ (bkz.
+/// <c>BuildSignatureTests</c>: "worktree modunda dirty girdisi imzayı değiştirmez").
 /// </para>
 ///
 /// <para>
@@ -48,7 +61,7 @@ public static class BuildSignature
     // Kaynak dosya path/içeriğinde pratikte hiç görünmeyen ASCII kontrol byte'ları — alan/eleman ayracı.
     // (char)hex-kod ile tanımlanır: kaynak dosyada literal/görünmez bir karakter GÖMÜLMEZ, yalnız rakamlar
     // yazılır — kopyala/yapıştır ya da düzenleme sırasında sessizce başka bir karaktere bozulma riski yok.
-    private static readonly char FieldSeparator = (char)0x1F; // Unit Separator — alanlar arası (cfg / head / diff / up)
+    private static readonly char FieldSeparator = (char)0x1F; // Unit Separator — alanlar arası (cfg / committed / diff / up)
     private static readonly char ItemSeparator = (char)0x1E;  // Record Separator — bir alan içindeki liste elemanları arası
     private const string NullMarker = "￿__NULL__"; // ayırt edici null-işareti (gerçek path/commit/imza değeriyle asla çakışmaz)
 
@@ -61,16 +74,16 @@ public static class BuildSignature
     /// </summary>
     /// <param name="node">Bu projenin graph düğümü — yalnız <see cref="ProjectNode.Dependencies"/> (upstream producer projectId'leri) kullanılır.</param>
     /// <param name="configuration">"Debug"/"Release" vb. derleme configuration'ı — aynen (case-sensitive) imzaya girer.</param>
-    /// <param name="headCommit">HEAD commit SHA'sı. <c>null</c> tolere edilir (ör. no-commits repo) — sabit bir null-işaretiyle imzaya girer, hata fırlatılmaz.</param>
+    /// <param name="committedFingerprint">[A6 refinement] Bu projenin PER-PROJECT committed fingerprint'i — YALNIZ bu projenin build-etkileyen dosyalarının HEAD'deki committed blob içeriğini temsil eder (bkz. <see cref="BuildOrchestrator.Core.Incremental.IncrementalPlanner.ComputeCommittedFingerprint"/>). Repo-GLOBAL bir commit SHA'sı DEĞİLDİR. <c>null</c> tolere edilir (ör. proje hiç commit'lenmemiş / no-commits repo) — sabit bir null-işaretiyle imzaya girer, hata fırlatılmaz.</param>
     /// <param name="dirtyFiles">Bu projeye ait, working-tree'de dirty (GitService.GetDirtyPaths) olan dosya yollarının listesi. Build-etkileyen olmayanlar burada dahili olarak elenir; <paramref name="inPlace"/>=false ise bu parametrenin TÜM içeriği yok sayılır.</param>
     /// <param name="readFileContent">path → o dosyanın güncel (working-tree) İÇERİĞİ. Yalnız <paramref name="inPlace"/>=true iken ve yalnız sıralı/filtrelenmiş dirty dosyalar için çağrılır.</param>
     /// <param name="upstreamSignature">projectId → o projenin ZATEN hesaplanmış imzası (Task 7 topological sırayla besler). Henüz hesaplanmamış/bilinmeyen bir id için <c>null</c> dönebilir; <c>null</c> da imzaya deterministik biçimde girer (ör. cycle/hollow upstream).</param>
-    /// <param name="inPlace">true → in-place mod (local-diff dahil). false → worktree/committed mod (local-diff terimi tamamen atlanır, yalnız commit + upstream sayılır).</param>
+    /// <param name="inPlace">true → in-place mod (local-diff dahil). false → worktree/committed mod (local-diff terimi tamamen atlanır, yalnız committed fingerprint + upstream sayılır).</param>
     /// <returns>SHA256 hex string (64 karakter, upper-case hex — <see cref="Convert.ToHexString(byte[])"/>).</returns>
     public static string Compute(
         ProjectNode node,
         string configuration,
-        string? headCommit,
+        string? committedFingerprint,
         IReadOnlyList<string> dirtyFiles,
         Func<string, string> readFileContent,
         Func<string, string?> upstreamSignature,
@@ -85,7 +98,7 @@ public static class BuildSignature
         var sb = new StringBuilder();
 
         sb.Append("cfg=").Append(configuration).Append(FieldSeparator);
-        sb.Append("head=").Append(headCommit ?? NullMarker).Append(FieldSeparator);
+        sb.Append("committed=").Append(committedFingerprint ?? NullMarker).Append(FieldSeparator);
 
         sb.Append("diff=");
         if (inPlace)
