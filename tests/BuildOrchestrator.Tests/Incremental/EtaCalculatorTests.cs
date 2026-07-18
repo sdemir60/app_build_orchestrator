@@ -8,7 +8,8 @@ namespace BuildOrchestrator.Tests.Incremental;
 // [T70][A6/Δ8] EtaCalculator: "kalan süre" tahmini — BAĞLAYICI formül (bkz. task-11-brief.md / v7 A6/Δ8):
 //   raw = (queued tahminleri toplamı + building kalanları) / parallelism  +  (building varsa) 400ms
 //   smoothed = previous == null ? raw : 0.75*previous + 0.25*raw
-//   display: <4000ms -> "· almost done"; aksi halde en yakın 5s'e yuvarlanmış "~Ns left" / "~Nm SSs left"
+//   display: <4000ms -> "· almost done"; aksi halde en yakın 5s'e yuvarlanmış ham saniye "~Ns left" (design-v1
+//   prototype BuildApp.jsx:761-763 birebir, ASLA "~Nm SSs left" dakika formatına çevrilmez)
 //   fallback: hiçbir yerde bilinen LastDurationMs yoksa ComputeRawEstimateMs -> null (ETA numarası YOK,
 //             yalnız X/N + elapsed gösterilir); KISMİ bilgi varsa bilinmeyenler ortalamayla temsil edilir.
 public class EtaCalculatorTests
@@ -100,17 +101,18 @@ public class EtaCalculatorTests
     [Fact]
     public void smoothed_eta_rounds_to_nearest_5_seconds_sub_minute()
     {
-        // 35000ms -> round(35000/5000)*5 = 35s -> "~35s left" (brief example, birebir)
+        // 35000ms -> round(35000/5000)*5 = 35s -> "~35s left" (design-v1 prototype example, birebir)
         string display = EtaCalculator.FormatDisplay(35_000, completedCount: 2, totalCount: 5, elapsedMs: 12_000);
         Assert.Equal("~35s left", display);
     }
 
     [Fact]
-    public void smoothed_eta_over_a_minute_formats_as_minutes_and_zero_padded_seconds()
+    public void smoothed_eta_over_a_minute_stays_in_raw_seconds_no_minutes_conversion()
     {
-        // 125000ms -> round(125000/5000)*5 = 125s = 2m 05s -> "~2m 05s left" (brief example, birebir)
+        // 125000ms -> round(125000/5000)*5 = 125s -> "~125s left" (design-v1 prototype BuildApp.jsx:761-763
+        // never switches to a minutes format, it always shows raw seconds — NOT "~2m 05s left")
         string display = EtaCalculator.FormatDisplay(125_000, completedCount: 4, totalCount: 20, elapsedMs: 60_000);
-        Assert.Equal("~2m 05s left", display);
+        Assert.Equal("~125s left", display);
     }
 
     // ---- First-run fallback: no LastDurationMs anywhere -> no ETA number ----------------------

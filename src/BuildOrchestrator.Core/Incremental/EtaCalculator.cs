@@ -12,13 +12,15 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <item><b>EMA yumuşatma</b> ardışık tick'ler arası: <c>newEta = 0.75·previousEta + 0.25·rawEstimate</c>
 /// (<see cref="PreviousWeight"/>/<see cref="RawWeight"/>). İlk tick (previousEta yok) → doğrudan ham tahmin.</item>
 /// <item><b>Gösterim:</b> en yakın 5 saniyeye yuvarlanır; <see cref="AlmostDoneThresholdMs"/> (4000ms) ALTI →
-/// "· almost done" (numerik YOK); üstü → "~Ns left" / "~Nm SSs left" (InvariantCulture, saniye 2 hane sıfır
-/// dolgulu).</item>
+/// "· almost done" (numerik YOK); üstü → HAM SANİYE olarak "~Ns left" (InvariantCulture) — design-v1 prototype
+/// <c>BuildApp.jsx:761-763</c>'ün birebir portu (<c>Math.round(eta/5000)*5 + 's left'</c>, ör. 125000ms →
+/// "~125s left"); dakikaya ASLA çevrilmez — mm:ss formatı (<see cref="FormatDuration"/>) yalnız elapsed/
+/// no-history dalında (bkz. aşağı) kullanılır, ETA'da DEĞİL.</item>
 /// <item><b>İlk koşu / bilinmeyen süre fallback:</b> bir projenin <c>BuildState.LastDurationMs</c>'i yoksa
 /// (null) — TÜM projeler (queued+building) arasında bilinen (non-null) sürelerin ORTALAMASI o proje için
 /// temsili tahmin olarak kullanılır. Hiçbir yerde bilinen süre YOKSA (ortalama hesaplanamaz)
 /// <see cref="ComputeRawEstimateMs"/> <c>null</c> döner — çağıran bu durumda ETA NUMARASI GÖSTERMEMELİ,
-/// yalnız X/N ilerleme + geçen süre (bkz. <see cref="FormatDisplay"/> null-eta dalı).</item>
+/// yalnız X/N · elapsed süre (bkz. <see cref="FormatDisplay"/> null-eta dalı).</item>
 /// </list>
 /// <para>
 /// Saf/stateless: previousEta (EMA state'i) çağıran tarafından (VM/tick loop) taşınır — burada hiçbir alan/saat
@@ -108,7 +110,9 @@ public static class EtaCalculator
     /// için hiç smooth edilecek bir şey yok — ilk koşu/no-history) → <c>"{completed}/{total} · {elapsed}"</c>,
     /// ETA NUMARASI YOK.</item>
     /// <item><paramref name="smoothedEtaMs"/> &lt; <see cref="AlmostDoneThresholdMs"/> → <c>"· almost done"</c>.</item>
-    /// <item>Aksi halde en yakın 5 saniyeye yuvarlanmış <c>"~Ns left"</c> (&lt;60s) / <c>"~Nm SSs left"</c> (≥60s).</item>
+    /// <item>Aksi halde en yakın 5 saniyeye yuvarlanmış HAM SANİYE olarak <c>"~Ns left"</c> — design-v1
+    /// prototype'ın <c>BuildApp.jsx:761-763</c> davranışının birebir portu; DAKİKAYA ÇEVRİLMEZ (ör. 125000ms →
+    /// "~125s left", "~2m 05s left" DEĞİL).</item>
     /// </list>
     /// Tüm formatlama <see cref="CultureInfo.InvariantCulture"/> ile.
     /// </summary>
@@ -121,16 +125,17 @@ public static class EtaCalculator
             return "· almost done";
 
         long roundedTotalSec = RoundToLong(smoothedEtaMs.Value / (double)DisplayRoundingMs) * 5;
-        return string.Format(CultureInfo.InvariantCulture, "~{0} left", FormatDuration(roundedTotalSec * 1000));
+        return string.Format(CultureInfo.InvariantCulture, "~{0}s left", roundedTotalSec);
     }
 
     /// <summary>
     /// [Δ1 conv.] Süre formatlayıcı — design-v1 JS prototipindeki <c>fmtElapsed</c>'in (BuildApp.jsx:76-80,
-    /// CANLI/akan süreler için: elapsed, ETA) InvariantCulture C# portu: &lt;60s → "Ns"; ≥60s → "Mm SSs"
-    /// (saniye 2 hane sıfır dolgulu). Codebase'de henüz bir C# <c>fmtDur</c>/<c>fmtElapsed</c> yoktu (yalnız bu
-    /// JS prototipte vardı) — burada yeniden yazıldı, gelecekte per-project TAMAMLANMIŞ süre gösterimi ayrı bir
-    /// yardımcı (<c>fmtDur</c>, build-data.js:16-23 — &lt;9950ms için ondalık alt-saniye dalı, ör. "3.4s") ister;
-    /// o BURADA YOK ve bu görevin kapsamı dışında (bkz. task raporu "reused fmtDur?" notu).
+    /// CANLI/akan süreler için: yalnız elapsed — ETA DEĞİL, bkz. <see cref="FormatDisplay"/> üstteki not)
+    /// InvariantCulture C# portu: &lt;60s → "Ns"; ≥60s → "Mm SSs" (saniye 2 hane sıfır dolgulu). Codebase'de
+    /// henüz bir C# <c>fmtDur</c>/<c>fmtElapsed</c> yoktu (yalnız bu JS prototipte vardı) — burada yeniden
+    /// yazıldı, gelecekte per-project TAMAMLANMIŞ süre gösterimi ayrı bir yardımcı (<c>fmtDur</c>,
+    /// build-data.js:16-23 — &lt;9950ms için ondalık alt-saniye dalı, ör. "3.4s") ister; o BURADA YOK ve bu
+    /// görevin kapsamı dışında (bkz. task raporu "reused fmtDur?" notu).
     /// </summary>
     public static string FormatDuration(long ms)
     {
