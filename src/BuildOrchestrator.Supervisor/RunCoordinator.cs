@@ -375,6 +375,12 @@ public sealed class RunCoordinator(
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
             plan.Configuration, elapsedAtStart));
+        // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
+        // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
+        // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
+        // taşınır; burada AYRICA hesaplanmaz.
+        events.TryWrite(new BuildPreviewEvent(
+            [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild))]));
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,

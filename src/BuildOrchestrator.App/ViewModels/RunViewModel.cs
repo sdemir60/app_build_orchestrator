@@ -5,12 +5,14 @@ using System.Text;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Core.Incremental;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace BuildOrchestrator.App.ViewModels;
 
-/// <summary>Proje listesindeki tek satır — tam kart görselleri (state renkleri, ▲/depIssue, ETA) It-4'te.</summary>
+/// <summary>Proje listesindeki tek satır — tam kart görselleri (state renkleri, ▲/depIssue, ETA) It-4'te; burada
+/// yalnız gözlemlenebilir VM-state [Task 17].</summary>
 public sealed partial class ProjectRowViewModel : ObservableObject
 {
     public string Id { get; }
@@ -25,6 +27,21 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// (brief InvariantCulture ister) — bu yüzden görüntü için ayrı, invariant biçimli bir string.</summary>
     public string DurationMsText => DurationMs.ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>[Task 17][T53/v7Δ8] dirty=true, güncel(clean)=false, imza-yok/pre-Sync(hollow)=null.
+    /// <see cref="BuildPreviewEvent"/> ile pre-populate edilir; proje succeeded olduğu ANDA (run içinde canlı)
+    /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).</summary>
+    [ObservableProperty] private bool? _willBuild;
+
+    /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
+    /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
+    /// doğrudan taşınır.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDepIssue))]
+    private IReadOnlyList<string>? _depIssues;
+
+    /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
+    public bool HasDepIssue => DepIssues is { Count: > 0 };
+
     public ProjectRowViewModel(string id, string name, ProjectRowState state)
     {
         Id = id;
@@ -33,7 +50,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     }
 }
 
-public enum ProjectRowState { Started, Succeeded, Failed, Skipped }
+public enum ProjectRowState { Pending, Started, Succeeded, Failed, Skipped }
 
 /// <summary>
 /// [Task 12] Event → proje satırı/elapsed/log durumu. **UI-thread-agnostic çekirdek:** hiçbir yerde
@@ -89,6 +106,16 @@ public sealed partial class RunViewModel : ObservableObject
     private long _elapsedBaseMs;
     private long? _elapsedStartMs; // run başladığında _nowMs() — null iken hiç run başlamamış/durmuş
 
+    // [Task 17] ETA: EtaCalculator saf/stateless'tir (D3 — hiçbir alan/saat tutmaz) — EMA'nın önceki (smoothed)
+    // değerini VM burada taşır. _totalProjects/_runParallelism runStarted'dan gelir; _projectStartedAtMs, şu an
+    // building olan her projenin (_nowMs() ile ölçülen) elapsed'ini hesaplamak için ProjectStarted'da kaydedilir,
+    // proje tamamlanınca silinir. App'te BuildState.LastDurationMs YOK — tahmin kaynağı bu run içinde GÖZLEMLENEN
+    // (Succeeded/Failed) süphelerin ortalamasıdır (brief'te açıkça belirtilen kasıtlı basitleştirme).
+    private long? _previousEtaMs;
+    private int? _totalProjects;
+    private int? _runParallelism;
+    private readonly Dictionary<string, long> _projectStartedAtMs = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>[Fix wave 1, Finding 2 regression testi] YALNIZ testler için: <see cref="OnProjectLogChunk"/>
     /// dikiş kilidinden çıkar çıkmaz (kilit ne zaman kapansa, kapandığı ANDA) senkron tetiklenir. Üretimde
     /// hep null — sıfır maliyet. Testte, kilit içinde <c>ActiveProjectId</c> atamasının GERÇEKTEN kilitle
@@ -103,6 +130,14 @@ public sealed partial class RunViewModel : ObservableObject
     [ObservableProperty] private string _configuration = "Debug";
     [ObservableProperty] private int _parallelism = Math.Max(1, Environment.ProcessorCount);
     [ObservableProperty] private long _elapsedMs;
+
+    /// <summary>[Task 17] Run genelinde (RunCompletedEvent'ten) dependency-affected proje sayısı özeti.</summary>
+    [ObservableProperty] private int _depIssueCount;
+
+    /// <summary>[Task 17][T70/A6-Δ8] EtaCalculator'ın gösterim metni — "~Ns left" / "· almost done" /
+    /// "{completed}/{total} · {elapsed}" (ilk-koşu/bilinmeyen-süre fallback'i). Her proje tamamlanışında
+    /// (<see cref="OnProjectDone"/>/ProjectSkipped) ve runStarted'da (X/N fallback ile) güncellenir.</summary>
+    [ObservableProperty] private string _etaText = "";
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
@@ -230,12 +265,13 @@ public sealed partial class RunViewModel : ObservableObject
         switch (ev)
         {
             case RunStartedEvent e: OnRunStarted(e); break;
-            case ProjectStartedEvent e: EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started); break;
+            case BuildPreviewEvent e: OnBuildPreview(e); break;
+            case ProjectStartedEvent e: OnProjectStarted(e); break;
             case ProjectLogEvent e: OnProjectLog(e); break;
             case ProjectLogChunkEvent e: OnProjectLogChunk(e); break;
-            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs); break;
-            case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs); break;
-            case ProjectSkippedEvent e: EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped).State = ProjectRowState.Skipped; break;
+            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues); break;
+            case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues); break;
+            case ProjectSkippedEvent e: OnProjectSkipped(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;
             case RunStoppedEvent: OnRunStopped(); break;
             case ErrorEvent e: OnError(e); break;
@@ -258,14 +294,51 @@ public sealed partial class RunViewModel : ObservableObject
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
         if (e.Mode == RunMode.Rebuild) Projects.Clear(); // Continue'da liste (önceki segmentin sonuçları) korunur
+        // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
+        _previousEtaMs = null;
+        _totalProjects = e.TotalProjects;
+        _runParallelism = e.Parallelism;
+        _projectStartedAtMs.Clear();
+        UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
     }
 
-    private void OnProjectDone(string projectId, ProjectRowState state, long durationMs)
+    /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
+    /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
+    /// Satır zaten varsa (savunmacı — protokol garantisi ihlal edilirse) yalnız WillBuild güncellenir.</summary>
+    private void OnBuildPreview(BuildPreviewEvent e)
+    {
+        foreach (var item in e.Items)
+            EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending).WillBuild = item.WillBuild;
+    }
+
+    /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —
+    /// EnsureRow yalnız YENİ satırlar için initialState uygular, var olan satırın State'ini DEĞİŞTİRMEZ, bu
+    /// yüzden burada AYRICA atanır (ProjectSkipped'in zaten yaptığı gibi).</summary>
+    private void OnProjectStarted(ProjectStartedEvent e)
+    {
+        EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started).State = ProjectRowState.Started;
+        _projectStartedAtMs[e.ProjectId] = _nowMs();
+    }
+
+    private void OnProjectSkipped(ProjectSkippedEvent e)
+    {
+        EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped).State = ProjectRowState.Skipped;
+        _projectStartedAtMs.Remove(e.ProjectId);
+        UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
+    }
+
+    private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues)
     {
         var row = Projects.FirstOrDefault(p => p.Id == projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
         row.State = state;
         row.DurationMs = durationMs;
+        row.DepIssues = depIssues; // [Task 17] ▲ sinyali — HasDepIssue bundan türetilir
+        // [Task 17][v7Δ8] "succeeded→clean" CANLI geçiş: proje bu run içinde başarıyla derlendiği ANDA artık
+        // güncel (clean) sayılır — preview'ın dirty=true'sunu (ya da hollow=null'ını) burada EZER.
+        if (state == ProjectRowState.Succeeded) row.WillBuild = false;
+        _projectStartedAtMs.Remove(projectId);
+        UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla
     }
 
     private ProjectRowViewModel EnsureRow(string id, string name, ProjectRowState initialState)
@@ -277,11 +350,52 @@ public sealed partial class RunViewModel : ObservableObject
         return row;
     }
 
+    /// <summary>
+    /// [Task 17][T70/A6-Δ8] <see cref="EtaCalculator"/>'ı bu run'ın GÖZLEMLENEN (Succeeded/Failed) süreleriyle
+    /// besler — App'te <c>BuildState.LastDurationMs</c> (Core/Supervisor tarafı geçmiş) YOK, bu yüzden kasıtlı
+    /// basitleştirme: hem queued (henüz hiç başlamamış) hem building projeler için tahmin kaynağı, bu run
+    /// içinde ŞİMDİYE KADAR tamamlanmış projelerin süre ORTALAMASIdır (EtaCalculator'ın kendi "bilinmeyen süre"
+    /// ortalama-fallback'i zaten bunu queued/building arasında ayrıca uygular — burada yalnız per-proje "bilinen
+    /// süre" KAYNAĞI, engine'in kalıcı geçmişi yerine run-içi gözlemdir). Building'in elapsed'i
+    /// <see cref="_projectStartedAtMs"/> + enjekte edilen <see cref="_nowMs"/> ile ölçülür (D8: sleep/poll yok,
+    /// testte deterministik saat).
+    /// </summary>
+    private void UpdateEta()
+    {
+        int total = _totalProjects ?? Projects.Count;
+        if (total <= 0) { EtaText = ""; return; }
+
+        int completed = Projects.Count(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped);
+        var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started).ToList();
+        int remaining = Math.Max(0, total - completed);
+        int queuedCount = Math.Max(0, remaining - buildingRows.Count);
+
+        var knownDurations = Projects
+            .Where(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed)
+            .Select(p => p.DurationMs)
+            .ToList();
+        long? observedAverageMs = knownDurations.Count > 0 ? (long)knownDurations.Average() : null;
+
+        var queuedEstimatesMs = Enumerable.Repeat(observedAverageMs, queuedCount).ToList();
+        long now = _nowMs();
+        var building = buildingRows
+            .Select(p => new EtaCalculator.BuildingProject(
+                ElapsedMs: _projectStartedAtMs.TryGetValue(p.Id, out long startedAt) ? Math.Max(0, now - startedAt) : 0,
+                LastDurationMs: observedAverageMs))
+            .ToList();
+
+        long? rawEstimateMs = EtaCalculator.ComputeRawEstimateMs(queuedEstimatesMs, building, _runParallelism ?? Parallelism);
+        long? smoothedEtaMs = rawEstimateMs is { } raw ? EtaCalculator.Smooth(_previousEtaMs, raw) : null;
+        _previousEtaMs = smoothedEtaMs;
+        EtaText = EtaCalculator.FormatDisplay(smoothedEtaMs, completed, total, ElapsedMs);
+    }
+
     private void OnRunCompleted(RunCompletedEvent e)
     {
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
         CanContinue = e.Outcome == RunOutcome.Stopped;
+        DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde (Continue segmentleri dahil) kümülatif özet
         _sawRunStarted = false;
     }
 

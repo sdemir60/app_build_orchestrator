@@ -150,6 +150,21 @@ public class IpcMessagesTests
     }
 
     [Fact]
+    public void BuildPreviewEvent_roundtrips_with_discriminator_and_preserves_willBuild_tristate()
+    {
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),   // dirty
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", false),  // güncel/clean
+            new BuildPreviewItem(@"C:\p\c.csproj", "C", null),   // hollow/imza-yok
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"buildPreview\"", json);
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+    }
+
+    [Fact]
     public void SyncWorkspaceCommand_roundtrips_with_discriminator()
     {
         IpcCommand cmd = new SyncWorkspaceCommand(@"D:\repo", "main");

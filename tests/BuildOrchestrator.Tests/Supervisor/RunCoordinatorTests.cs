@@ -47,6 +47,7 @@ public class RunCoordinatorTests
     private static string Describe(IpcEvent e) => e switch
     {
         RunStartedEvent => "runStarted",
+        BuildPreviewEvent => "buildPreview",
         ProjectStartedEvent p => "projectStarted:" + NameOf(p.ProjectId),
         ProjectLogEvent p => $"projectLog:{NameOf(p.ProjectId)}:{p.LineNumber}",
         ProjectSucceededEvent p => "projectSucceeded:" + NameOf(p.ProjectId),
@@ -219,7 +220,7 @@ public class RunCoordinatorTests
         // girer (komut satırından SONRA, gerçek çıktıdan ÖNCE) — bu yüzden A'nın logu 3 satır (C/B'ninki 2 kalır).
         Assert.Equal(
         [
-            "runStarted",
+            "runStarted", "buildPreview",
             "projectStarted:C", "projectLog:C:1", "projectLog:C:2", "projectSucceeded:C",
             "projectStarted:B", "projectLog:B:1", "projectLog:B:2", "projectFailed:B:exit 1",
             "projectStarted:A", "projectLog:A:1", "projectLog:A:2", "projectLog:A:3", "projectSucceeded:A",
@@ -238,6 +239,12 @@ public class RunCoordinatorTests
         Assert.Equal(["B"], succeededA.DepIssues);
         var aLog2 = Assert.Single(h.Events.OfType<ProjectLogEvent>(), e => NameOf(e.ProjectId) == "A" && e.LineNumber == 2);
         Assert.Equal("warning: B failed in this run — last successful output referenced (B)", aLog2.Text);
+
+        // [Task 17] buildPreview, plan.Nodes'un TAMAMINI (build-order'da) taşır — henüz hiçbir proje
+        // başlamadan (WillBuild burada hep null: BuildPlanBuilder run-time wiring'i henüz doldurmuyor).
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+        Assert.Equal(["C", "B", "A"], preview.Items.Select(i => NameOf(i.ProjectId)));
+        Assert.All(preview.Items, i => Assert.Null(i.WillBuild));
 
         var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
         Assert.Equal(2, done.Succeeded);
@@ -705,7 +712,7 @@ public class RunCoordinatorTests
             if (e is RunCompletedEvent) break;
         }
 
-        Assert.Equal(["runStarted", "projectSkipped:X", "projectSkipped:Y", "runCompleted:Completed"],
+        Assert.Equal(["runStarted", "buildPreview", "projectSkipped:X", "projectSkipped:Y", "runCompleted:Completed"],
             received.Select(Describe));
         var done = Assert.IsType<RunCompletedEvent>(received[^1]);
         Assert.Equal(2, done.Skipped);

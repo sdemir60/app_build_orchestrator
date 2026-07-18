@@ -70,6 +70,7 @@ public sealed record SyncWorkspaceCommand(string RootPath, string Branch) : IpcC
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
+[JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 public abstract record IpcEvent;
 
 public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
@@ -107,3 +108,13 @@ public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
 public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool FetchDegraded,
     int ProjectCount, int CycleCount) : IpcEvent;
 public sealed record BranchListEvent(IReadOnlyList<BranchRef> Branches) : IpcEvent;
+
+/// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
+/// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
+/// (hollow)=null. App bunu <c>Projects</c> listesini run başlamadan (proje-başına ilk event'ten önce) PRE-POPULATE
+/// etmek için kullanır — bkz. RunViewModel.OnBuildPreview.</summary>
+public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild);
+/// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
+/// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
+/// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>
+public sealed record BuildPreviewEvent(IReadOnlyList<BuildPreviewItem> Items) : IpcEvent;

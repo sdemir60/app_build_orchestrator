@@ -708,4 +708,188 @@ public class RunViewModelTests
         Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Skipped, p.State));
         Assert.False(vm.IsRunning);
     }
+
+    // ---------------------------------------------------------------- 8) [Task 17] depIssue VM state
+
+    [Fact]
+    public async Task ProjectSucceeded_with_depIssues_sets_HasDepIssue_and_DepIssues_roots_on_the_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100, DepIssues: ["B", "C"]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.HasDepIssue);
+        Assert.Equal(["B", "C"], row.DepIssues);
+    }
+
+    [Fact]
+    public async Task ProjectFailed_with_depIssues_sets_HasDepIssue_and_DepIssues_roots_on_the_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\b.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "B"));
+
+        vm.OnEvent(new ProjectFailedEvent("r1", projectId, 100, "exit 1", DepIssues: ["X"]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.HasDepIssue);
+        Assert.Equal(["X"], row.DepIssues);
+    }
+
+    [Fact]
+    public async Task ProjectSucceeded_without_depIssues_leaves_HasDepIssue_false()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\clean.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Clean"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100)); // DepIssues null
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.HasDepIssue);
+        Assert.Null(row.DepIssues);
+    }
+
+    [Fact]
+    public async Task RunCompleted_sets_DepIssueCount_from_the_event()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug", 0));
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 1, 0, 0, 500, DepIssueCount: 2));
+
+        Assert.Equal(2, vm.DepIssueCount);
+    }
+
+    // ---------------------------------------------------------------- 9) [Task 17] will-build + succeeded→clean live transition
+
+    [Fact]
+    public async Task BuildPreviewEvent_pre_populates_rows_with_WillBuild_dirty_clean_and_hollow()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\dirty.csproj", "Dirty", true),
+            new BuildPreviewItem(@"C:\p\clean.csproj", "Clean", false),
+            new BuildPreviewItem(@"C:\p\hollow.csproj", "Hollow", null),
+        ]));
+
+        Assert.Equal(3, vm.Projects.Count);
+        Assert.True(vm.Projects.Single(p => p.Name == "Dirty").WillBuild);
+        Assert.False(vm.Projects.Single(p => p.Name == "Clean").WillBuild);
+        Assert.Null(vm.Projects.Single(p => p.Name == "Hollow").WillBuild);
+    }
+
+    [Fact] // buildPreview arrives BEFORE the per-project events; ProjectStarted on an already-previewed row must still flip it to Started
+    public async Task ProjectStarted_after_a_buildPreview_row_still_transitions_the_row_to_Started()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\dirty.csproj";
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Started, row.State);
+        Assert.True(row.WillBuild); // preview'ın dirty=true'su korunur — henüz succeeded değil
+    }
+
+    [Fact] // v7Δ8: proje succeeded olduğu ANDA (bu run içinde canlı) willBuild=false (clean/güncel) olur
+    public async Task ProjectSucceeded_flips_WillBuild_to_clean_immediately()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\dirty.csproj";
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.WillBuild);
+    }
+
+    [Fact] // hollow (WillBuild=null — imza yok/pre-Sync) preview'dan SONRA da (henüz succeeded olmadıkça) null kalmalı
+    public async Task Hollow_WillBuild_is_preserved_until_a_project_succeeds()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\hollow.csproj";
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Hollow", null)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Hollow"));
+
+        Assert.Null(Assert.Single(vm.Projects).WillBuild); // henüz succeeded değil — hollow korunur
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+
+        Assert.False(Assert.Single(vm.Projects).WillBuild); // succeeded → artık clean, hollow değil
+    }
+
+    [Fact] // preview hiç gelmeden (buildPreview YOK) doğrudan ProjectStarted gelirse satır yine hollow (null) başlar
+    public async Task ProjectStarted_without_a_prior_buildPreview_defaults_WillBuild_to_hollow_null()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        Assert.Null(Assert.Single(vm.Projects).WillBuild);
+    }
+
+    // ---------------------------------------------------------------- 10) [Task 17] ETA text (Core.Incremental.EtaCalculator)
+
+    [Fact] // run başlar başlamaz (hiç completion yok) — ETA NUMARASI YOK, yalnız X/N · elapsed (EtaCalculator'ın "ilk koşu" fallback'i)
+    public async Task EtaText_shows_XofN_fallback_before_any_completion_no_bogus_number()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug", ElapsedMsAtStart: 0));
+
+        Assert.Equal("0/3 · 0s", vm.EtaText);
+    }
+
+    [Fact] // bir proje 10s'de tamamlandı, 2 proje daha kuyrukta (henüz başlamadı) — kalan tahmini bu run'ın
+           // GÖZLEMLENEN süresinden (EtaCalculator'ın BuildState.LastDurationMs YERİNE bu run'ın ortalaması) üretilir
+    public async Task EtaText_reflects_the_calculator_estimate_after_a_completion_using_observed_durations()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug", ElapsedMsAtStart: 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        // A 10s sürdü; B/C henüz hiç başlamadı (queued=2) → ortalama=10s, (10s+10s)/1 parallelism = 20s, +0 (building yok)
+        // → ilk tick smoothing yok, raw AYNEN → 20000ms → yuvarlanmış "~20s left"
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", DurationMs: 10_000));
+
+        Assert.Equal("~20s left", vm.EtaText);
+    }
+
+    [Fact] // ham tahmin AlmostDoneThresholdMs (4000ms) altına düşünce numerik değer YOK, "· almost done"
+    public async Task EtaText_shows_almost_done_when_the_raw_estimate_is_small()
+    {
+        long fakeNow = 0;
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => fakeNow);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 2, 1, "Debug", ElapsedMsAtStart: 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+
+        fakeNow = 1000; // A 1000ms sürdü, B de aynı anda (t=0) başlamıştı → B şu an 1000ms building
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", DurationMs: 1000));
+        // completed=1 (A, avg=1000ms), building=[B: elapsed=1000, est=1000] → remaining=max(0,1000-1000)=0
+        // queued=max(0, 2-1-1)=0 → raw=(0+0)/1 + 400(building var) = 400ms < 4000ms eşiği
+
+        Assert.Equal("· almost done", vm.EtaText);
+    }
 }
