@@ -16,7 +16,11 @@ namespace BuildOrchestrator.Tests.State;
 /// [T27] BuildStateStore: global `build-state.json` — projectId anahtarlı, single-writer serialized,
 /// atomik temp+rename yazım (bkz. EvaluationCache/StaleObjDetector deseni). Hiçbir testte sleep/poll yok [D8];
 /// eşzamanlılık Barrier ile deterministik olarak kurulur, single-writer Task.WaitAll ile beklenir (poll değil).
+/// [Flaky-test hardening] Bu sınıf "BuildStateStore file-lock (serial)" collection'ında (DisableParallelization=true) —
+/// gerçek OS file-lock testleri (Upsert retry/exhaustion, concurrent-reader atomicity) full suite paralel yükü
+/// altında CPU starvation nedeniyle ara sıra flaky oluyordu; bkz. BuildStateStoreSerialCollection.cs.
 /// </summary>
+[Collection("BuildStateStore file-lock (serial)")]
 public class BuildStateStoreTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "bo-buildstate-" + Guid.NewGuid().ToString("N"));
