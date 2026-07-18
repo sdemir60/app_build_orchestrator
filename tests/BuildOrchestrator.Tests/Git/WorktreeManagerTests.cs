@@ -143,9 +143,14 @@ public class WorktreeManagerTests
 
         var plan = mgr.PlanWorktree(activeBranch, "feature-x", useWorktreeToggle: false, selectedSha: featureSha);
         Assert.Equal(WorktreeMode.Worktree, plan.Mode);
+        // [Review fix — Task 9] plan.Sha, PlanWorktree'ye verilen selectedSha ile AYNI kaynaktan gelir ve
+        // K3 IntentLine'da GÖSTERİLEN sha budur — PrepareWorktreeAsync'in build ettiği sha bununla GARANTİ
+        // olarak eşleşir (ayrı bir sha parametresi YOK, sapma yapısal olarak imkansız).
+        Assert.Equal(featureSha, plan.Sha);
+        Assert.Contains(featureSha, plan.IntentLine);
         Assert.Empty(recorder.Calls); // plan aşamasında hâlâ hiçbir git çağrısı yok
 
-        var result = await mgr.PrepareWorktreeAsync(plan, featureSha);
+        var result = await mgr.PrepareWorktreeAsync(plan);
 
         Assert.True(result.Success);
         Assert.Equal(plan.Path, result.Value);
@@ -158,7 +163,8 @@ public class WorktreeManagerTests
 
         var addCalls = recorder.Calls.Where(c => c.Count > 1 && c[0] == "worktree" && c[1] == "add").ToList();
         var singleAdd = Assert.Single(addCalls);
-        Assert.Equal(["worktree", "add", "--detach", plan.Path!, featureSha], singleAdd);
+        // [Review fix — Task 9] build edilen sha == plan.Sha (== K3'te gösterilen sha) — birebir aynı değer.
+        Assert.Equal(["worktree", "add", "--detach", plan.Path!, plan.Sha], singleAdd);
 
         foreach (var call in recorder.Calls)
         {
@@ -180,7 +186,7 @@ public class WorktreeManagerTests
         var mgr = new WorktreeManager(Runner, repo.RootPath, NewPoolRoot());
         var plan = mgr.PlanWorktree(branch, branch, useWorktreeToggle: false, selectedSha: sha);
 
-        var result = await mgr.PrepareWorktreeAsync(plan, sha);
+        var result = await mgr.PrepareWorktreeAsync(plan);
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
@@ -220,18 +226,33 @@ public class WorktreeManagerTests
         var planF2 = mgr.PlanWorktree(activeBranch, f2.Branch, useWorktreeToggle: false, selectedSha: f2.Sha);
         var planF3 = mgr.PlanWorktree(activeBranch, f3.Branch, useWorktreeToggle: false, selectedSha: f3.Sha);
 
-        Assert.True((await mgr.PrepareWorktreeAsync(planActive, activeSha)).Success);
-        Assert.True((await mgr.PrepareWorktreeAsync(planF1, f1.Sha)).Success);
-        Assert.True((await mgr.PrepareWorktreeAsync(planF2, f2.Sha)).Success);
-        Assert.True((await mgr.PrepareWorktreeAsync(planF3, f3.Sha)).Success);
+        // Gerçek oluşturma sırası (sequential, "şimdi" mtime'ları): active, f1, f2, f3 — yani f1 GERÇEKTE en
+        // eski, f3 GERÇEKTE en yeni oluşturulan worktree.
+        Assert.True((await mgr.PrepareWorktreeAsync(planActive)).Success);
+        Assert.True((await mgr.PrepareWorktreeAsync(planF1)).Success);
+        Assert.True((await mgr.PrepareWorktreeAsync(planF2)).Success);
+        Assert.True((await mgr.PrepareWorktreeAsync(planF3)).Success);
 
-        // D8: sleep-poll YOK — LRU sırasını sabit, deterministik mtime'lar VEREREK zorluyoruz.
-        // active en ESKİ mtime'a sahip olsun (LRU'ya göre ilk aday) ama yine de ASLA silinmemeli (IsActive).
+        // [Review fix — Task 9] D8: sleep-poll YOK — LRU sırasını DETERMİNİSTİK kılmak için HER worktree'nin
+        // TÜM dosyalarının (recursive, bkz. DirectoryTimestampHelper) mtime'ı backdate edilir.
+        // WorktreeManager.ComputeDirStats, LastUsedUtc'yi worktree içindeki TÜM dosyaların (recursive) MAX
+        // LastWriteTimeUtc'si olarak hesaplar — YALNIZ sidecar dosyasını (.bo-worktree-branch.txt) backdate
+        // etmek YETERSİZDİR: git worktree add'in yazdığı diğer tüm dosyalar hâlâ "şimdi" zamanına sahip olur
+        // ve max() bunları ezer (önceki sürümdeki bug tam olarak buydu — sidecar-only backdate hiçbir etkiye
+        // sahip DEĞİLDİ, test yalnız sequential oluşturma sırasının tesadüfen intended sırayla eşleşmesi
+        // sayesinde geçiyordu).
+        //
+        // Bu testin gerçekten mtime'lara (backdate'e) bağımlı olduğunu, tesadüfi sıralamaya DEĞİL, ispatlamak
+        // için intended LRU sırası BİLEREK gerçek oluşturma sırasının TERSİNE atanır: f1 gerçekte İLK
+        // oluşturuldu ama burada intended-EN YENİ; f3 gerçekte SON oluşturuldu ama burada intended-EN ESKİ
+        // (non-active). Backdating'in gerçek bir etkisi OLMASAYDI, ComputeDirStats "şimdi"ye (gerçek
+        // oluşturma sırasına) düşer ve LRU f1'i en eski sanırdı — aşağıdaki prune assert'i (f3 silinmeli, f1
+        // DEĞİL) o durumda BAŞARISIZ olurdu.
         var baseTime = DateTime.UtcNow.AddMinutes(-10);
-        SetMetaMtime(planActive.Path!, baseTime);
-        SetMetaMtime(planF1.Path!, baseTime.AddMinutes(1)); // f1 = en eski NON-active -> ilk silinecek aday
-        SetMetaMtime(planF2.Path!, baseTime.AddMinutes(2));
-        SetMetaMtime(planF3.Path!, baseTime.AddMinutes(3)); // en yeni -> son silinecek aday
+        DirectoryTimestampHelper.SetAllTimestampsUtc(planActive.Path!, baseTime); // active: en eski ama IsActive -> asla silinmez
+        DirectoryTimestampHelper.SetAllTimestampsUtc(planF3.Path!, baseTime.AddMinutes(1)); // intended EN ESKİ non-active -> ilk silinecek aday (gerçekte SON oluşturulan)
+        DirectoryTimestampHelper.SetAllTimestampsUtc(planF2.Path!, baseTime.AddMinutes(2));
+        DirectoryTimestampHelper.SetAllTimestampsUtc(planF1.Path!, baseTime.AddMinutes(3)); // intended EN YENİ non-active -> son silinecek aday (gerçekte İLK oluşturulan)
 
         var listResult = await mgr.ListWorktreesAsync();
         Assert.True(listResult.Success);
@@ -242,26 +263,32 @@ public class WorktreeManagerTests
         Assert.Equal(Path.GetFileName(planActive.Path!), activeInfo.Name);
         Assert.Equal(activeBranch, activeInfo.Branch);
 
-        string f1Name = Path.GetFileName(planF1.Path!);
-        long f1Size = listResult.Value!.Single(w => w.Name == f1Name).SizeBytes;
+        // LastUsedUtc gerçekten intended (gerçek oluşturma sırasının TERSİ) sırayı mı yansıtıyor — yani
+        // recursive-max backdate GERÇEKTEN etkili mi (yoksa "şimdi"ye mi düşüyor)?
+        var f1Info = listResult.Value!.Single(w => w.Name == Path.GetFileName(planF1.Path!));
+        var f3Info = listResult.Value!.Single(w => w.Name == Path.GetFileName(planF3.Path!));
+        Assert.True(f3Info.LastUsedUtc < f1Info.LastUsedUtc); // intended: f3 EN ESKİ, f1 EN YENİ
+
+        string f3Name = Path.GetFileName(planF3.Path!);
+        long f3Size = listResult.Value!.Single(w => w.Name == f3Name).SizeBytes;
         long totalSize = listResult.Value!.Sum(w => w.SizeBytes);
 
-        // cap: yalnız f1'in silinmesiyle tam olarak cap altına inecek şekilde seçildi (determinist tek-adım prune).
-        long cap = totalSize - f1Size;
+        // cap: yalnız f3'ün silinmesiyle tam olarak cap altına inecek şekilde seçildi (determinist tek-adım prune).
+        long cap = totalSize - f3Size;
 
         var pruneResult = await mgr.PruneToCapAsync(cap);
         Assert.True(pruneResult.Success);
-        Assert.Equal([f1Name], pruneResult.Value);
+        Assert.Equal([f3Name], pruneResult.Value); // intended EN ESKİ non-active (f3) silindi — gerçek oluşturma sırası (f1 ilk) DEĞİL
         Assert.DoesNotContain(Path.GetFileName(planActive.Path!), pruneResult.Value!); // aktif ASLA silinmedi
 
         var afterList = await mgr.ListWorktreesAsync();
         Assert.True(afterList.Success);
-        Assert.DoesNotContain(afterList.Value!, w => w.Name == f1Name);
+        Assert.DoesNotContain(afterList.Value!, w => w.Name == f3Name);
         Assert.Contains(afterList.Value!, w => w.IsActive); // aktif hâlâ orada
 
         // git worktree list Windows'ta '/' kullanır — normalize edilmeden karşılaştırmak sessizce hep-doğru (vacuous) olurdu.
         string listOutputAfterPrune = GitTestRepo.RunGitAt(repo.RootPath, "worktree", "list");
-        Assert.DoesNotContain(planF1.Path!.Replace('\\', '/'), listOutputAfterPrune.Replace('\\', '/'));
+        Assert.DoesNotContain(planF3.Path!.Replace('\\', '/'), listOutputAfterPrune.Replace('\\', '/'));
 
         // isimle silme (T14 — per-worktree Sil)
         string f2Name = Path.GetFileName(planF2.Path!);
@@ -273,11 +300,8 @@ public class WorktreeManagerTests
 
         var finalList = await mgr.ListWorktreesAsync();
         Assert.DoesNotContain(finalList.Value!, w => w.Name == f2Name);
-        Assert.Contains(finalList.Value!, w => w.Name == Path.GetFileName(planF3.Path!)); // dokunulmayan hâlâ orada
+        Assert.Contains(finalList.Value!, w => w.Name == Path.GetFileName(planF1.Path!)); // dokunulmayan (intended en yeni) hâlâ orada
     }
-
-    private static void SetMetaMtime(string worktreePath, DateTime utc)
-        => File.SetLastWriteTimeUtc(Path.Combine(worktreePath, ".bo-worktree-branch.txt"), utc);
 
     private sealed class RecordingProcessRunner : IProcessRunner
     {

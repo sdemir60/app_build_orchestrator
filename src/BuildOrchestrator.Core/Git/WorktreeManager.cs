@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
@@ -40,6 +39,15 @@ public sealed record WorktreePlan
     /// havuzun kendi "hangi worktree hangi branch'e ait" defterini tutmak için.
     /// </summary>
     public required string SelectedBranch { get; init; }
+
+    /// <summary>
+    /// [Review fix — Task 9] <see cref="PlanWorktree"/>'nin çözdüğü ve <see cref="IntentLine"/>'da (K3) kullanıcıya
+    /// GÖSTERİLEN sha. <see cref="WorktreeManager.PrepareWorktreeAsync"/>, Build anında AYNI sha'yı kullanır —
+    /// böylece K3 satırında gösterilen commit ile gerçekten build edilen commit GARANTİ OLARAK aynıdır (önceden
+    /// <c>PrepareWorktreeAsync</c> ayrı bir <c>sha</c> parametresi alıyordu; caller yanlışlıkla farklı bir sha
+    /// geçerse K3'te gösterilenden FARKLI bir commit build edilebilirdi).
+    /// </summary>
+    public required string Sha { get; init; }
 }
 
 /// <summary>[T14] Havuzdaki tek bir worktree'nin envanter kaydı — <see cref="WorktreeManager.ListWorktreesAsync"/> çıktısı.</summary>
@@ -125,7 +133,7 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
 
         if (!differentBranch && !useWorktreeToggle)
         {
-            return new WorktreePlan { Mode = WorktreeMode.InPlace, Path = null, IntentLine = string.Empty, SelectedBranch = selectedBranch };
+            return new WorktreePlan { Mode = WorktreeMode.InPlace, Path = null, IntentLine = string.Empty, SelectedBranch = selectedBranch, Sha = selectedSha };
         }
 
         var existingNames = Directory.Exists(_poolRoot)
@@ -134,35 +142,39 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
         string name = PathSanitizer.NextWorktreeName(selectedBranch, existingNames);
         string path = Path.Combine(_poolRoot, name);
 
+        // [Review fix — Task 9] K3 satırında gösterilen sha ile Build anında PrepareWorktreeAsync'in kullanacağı
+        // sha AYNI kaynaktan (selectedSha) geliyor ve plan.Sha'da taşınıyor — ikisinin ayrışması imkansız.
         string intentLine = $"branch target: {selectedBranch} ({selectedSha}) — worktree will be used at Build";
         if (differentBranch)
             intentLine = intentLine + "\n" + $"Branch changed: {selectedBranch} — Sync required";
 
-        return new WorktreePlan { Mode = WorktreeMode.Worktree, Path = path, IntentLine = intentLine, SelectedBranch = selectedBranch };
+        return new WorktreePlan { Mode = WorktreeMode.Worktree, Path = path, IntentLine = intentLine, SelectedBranch = selectedBranch, Sha = selectedSha };
     }
 
     /// <summary>
-    /// [K3] Build ANI: gerçek <c>git worktree add --detach &lt;plan.Path&gt; &lt;sha&gt;</c> — bu, GİT WORKTREE
-    /// AÇAN TEK YER. <c>switch</c>/<c>checkout</c> ASLA çağrılmaz. <paramref name="plan"/> <see
+    /// [K3] Build ANI: gerçek <c>git worktree add --detach &lt;plan.Path&gt; &lt;plan.Sha&gt;</c> — bu, GİT
+    /// WORKTREE AÇAN TEK YER. <c>switch</c>/<c>checkout</c> ASLA çağrılmaz. <paramref name="plan"/> <see
     /// cref="WorktreeMode.InPlace"/> ise (hazırlanacak bir worktree yok) tanımlı hata döner (throw yok).
-    /// Başarı sonrası, havuz bookkeeping'i için küçük bir branch-metadata sidecar dosyası yazılır (best-effort —
-    /// yazım başarısız olsa bile worktree'nin kendisi zaten oluşturulmuştur, hata yutulur).
+    /// [Review fix — Task 9] sha ayrı bir parametre DEĞİL — <see cref="WorktreePlan.Sha"/> kullanılır: bu,
+    /// <see cref="PlanWorktree"/>'nin K3 <see cref="WorktreePlan.IntentLine"/>'ında kullanıcıya GÖSTERDİĞİ AYNI
+    /// sha'dır, böylece caller'ın yanlışlıkla farklı bir sha ile farklı bir commit build etmesi YAPISAL OLARAK
+    /// imkansız hale gelir. Başarı sonrası, havuz bookkeeping'i için küçük bir branch-metadata sidecar dosyası
+    /// yazılır (best-effort — yazım başarısız olsa bile worktree'nin kendisi zaten oluşturulmuştur, hata yutulur).
     /// </summary>
-    public async Task<GitResult<string>> PrepareWorktreeAsync(WorktreePlan plan, string sha, CancellationToken ct = default)
+    public async Task<GitResult<string>> PrepareWorktreeAsync(WorktreePlan plan, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        if (string.IsNullOrWhiteSpace(sha)) throw new ArgumentException("sha boş olamaz.", nameof(sha));
 
         if (plan.Mode != WorktreeMode.Worktree || plan.Path is null)
             return GitResult<string>.Fail("InPlace plan için worktree hazırlanamaz (PrepareWorktreeAsync yalnız Worktree modunda kullanılabilir).");
 
         Directory.CreateDirectory(_poolRoot);
 
-        var outcome = await TryRunGitAsync(["worktree", "add", "--detach", plan.Path, sha], ct);
-        if (!outcome.Ok) return GitResult<string>.Fail(outcome.Error!);
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "add", "--detach", plan.Path, plan.Sha], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<string>.Fail(outcome.Error!);
 
-        var r = outcome.Result!;
-        if (r.ExitCode != 0) return GitResult<string>.Fail(DescribeGitFailure(r));
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<string>.Fail(GitCommandExecutor.DescribeGitFailure(r));
 
         try
         {
@@ -187,11 +199,11 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     /// </summary>
     public async Task<GitResult<IReadOnlyList<WorktreeInfo>>> ListWorktreesAsync(CancellationToken ct = default)
     {
-        var outcome = await TryRunGitAsync(["worktree", "list", "--porcelain"], ct);
-        if (!outcome.Ok) return GitResult<IReadOnlyList<WorktreeInfo>>.Fail(outcome.Error!);
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "list", "--porcelain"], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<IReadOnlyList<WorktreeInfo>>.Fail(outcome.Error!);
 
-        var r = outcome.Result!;
-        if (r.ExitCode != 0) return GitResult<IReadOnlyList<WorktreeInfo>>.Fail(DescribeGitFailure(r));
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<IReadOnlyList<WorktreeInfo>>.Fail(GitCommandExecutor.DescribeGitFailure(r));
 
         var activeBranchResult = await _gitService.GetCurrentBranchAsync(ct);
         string? activeBranch = activeBranchResult.Success ? activeBranchResult.Value : null;
@@ -253,32 +265,14 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
             return GitResult<bool>.Fail($"güvensiz worktree adı: '{name}'.");
 
         string path = Path.Combine(_poolRoot, name);
-        var outcome = await TryRunGitAsync(["worktree", "remove", "--force", path], ct);
-        if (!outcome.Ok) return GitResult<bool>.Fail(outcome.Error!);
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "remove", "--force", path], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<bool>.Fail(outcome.Error!);
 
-        var r = outcome.Result!;
-        if (r.ExitCode != 0) return GitResult<bool>.Fail(DescribeGitFailure(r));
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<bool>.Fail(GitCommandExecutor.DescribeGitFailure(r));
 
         return GitResult<bool>.Ok(true);
     }
-
-    private async Task<(bool Ok, ProcessResult? Result, string? Error)> TryRunGitAsync(IReadOnlyList<string> args, CancellationToken ct)
-    {
-        try
-        {
-            var result = await _runner.RunAsync(new ProcessSpec(_gitExecutable, args, _repoRoot, CommandTimeout), ct);
-            return (true, result, null);
-        }
-        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
-        {
-            return (false, null, $"git komutu çalıştırılamadı ('{_gitExecutable}'): {ex.Message}");
-        }
-    }
-
-    private static string DescribeGitFailure(ProcessResult r)
-        => string.IsNullOrEmpty(r.StandardError)
-            ? $"git komutu beklenmeyen exit kodu ile sonlandı: {r.ExitCode}"
-            : r.StandardError.Trim();
 
     private static IEnumerable<string> ParseWorktreePaths(string porcelainOutput)
     {
