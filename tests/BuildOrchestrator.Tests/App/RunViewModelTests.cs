@@ -551,6 +551,109 @@ public class RunViewModelTests
         Assert.Equal(4242, vm.ElapsedMs); // IsRunning=false → TickElapsed no-op, engine'in kesin süresi korunur
     }
 
+    // ---------------------------------------------------------------- 6f) [Task 16 — It-2 devir §8] EngineExited → run-state reset (wedge fix)
+    // EngineHost.EngineExited sinyali eskiden VM'e hiç bağlı DEĞİLDİ (yalnız MainWindow'daki banner'ı
+    // güncelliyordu) — engine startRun sonrası runStarted'dan ÖNCE ya da run ORTASINDA ölürse hiçbir IPC
+    // event'i asla gelmeyeceğinden IsStarting/IsRunning/CanContinue SONSUZA DEK kilitli kalırdı, "Restart
+    // Engine" bile açmıyordu. OnEngineExited bu kamayı kapatır.
+
+    [Fact] // startRun gönderildi, runStarted HENÜZ gelmedi (IsStarting=true) — engine bu pencerede ölürse butonlar açılmalı
+    public async Task OnEngineExited_while_IsStarting_resets_run_state_and_reenables_Rebuild()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await engine.StartAsync();
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
+        Assert.True(vm.IsStarting);
+
+        vm.OnEngineExited(1);
+
+        Assert.False(vm.IsStarting);
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.CanContinue);
+        Assert.True(vm.RebuildCommand.CanExecute(null)); // butonlar artık un-wedged
+        Assert.False(vm.StopCommand.CanExecute(null));
+    }
+
+    [Fact] // run ORTASINDA (IsRunning=true, runStarted zaten geldi) engine ölürse yine sıfırlanmalı
+    public async Task OnEngineExited_while_IsRunning_resets_run_state_and_reenables_Rebuild()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        Assert.True(vm.IsRunning);
+
+        vm.OnEngineExited(139);
+
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.IsStarting);
+        Assert.False(vm.CanContinue);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+    }
+
+    [Fact] // hiçbir run aktif değilken (idle, zaten temiz) engine ölürse no-op — state bozulmamalı, fırlamamalı
+    public async Task OnEngineExited_with_nothing_running_is_a_noop()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.IsStarting);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+
+        vm.OnEngineExited(null); // framing-hatası senaryosu (exit code yok) — fırlamamalı
+
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.IsStarting);
+        Assert.False(vm.CanContinue);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+    }
+
+    [Fact] // normal runCompleted akışı ZATEN sıfırlamıştı — ardından gelen engine-death bu temiz durumu bozmamalı (idempotent)
+    public async Task OnEngineExited_after_a_normal_runCompleted_does_not_corrupt_already_reset_state()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        Assert.False(vm.IsRunning);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+
+        vm.OnEngineExited(0); // supervisor bu run'dan SONRA, sıradan bir sebeple kapanmış olabilir
+
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.IsStarting);
+        Assert.True(vm.RebuildCommand.CanExecute(null)); // hâlâ un-wedged
+    }
+
+    [Fact] // engine-died VM-observable bir durum/hata metnine yansımalı (pixel It-4 — burada yalnız VM-state)
+    public async Task OnEngineExited_sets_an_observable_engine_died_message()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEngineExited(139);
+
+        Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
+        Assert.Contains("139", vm.EngineDiedMessage);
+    }
+
+    [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
+    public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await engine.StartAsync();
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        await vm.RebuildCommand.ExecuteAsync(null); // IsStarting=true
+        bool rebuildChanged = false, stopChanged = false;
+        vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
+        vm.StopCommand.CanExecuteChanged += (_, _) => stopChanged = true;
+
+        vm.OnEngineExited(1);
+
+        Assert.True(rebuildChanged);
+        Assert.True(stopChanged);
+    }
+
     // ---------------------------------------------------------------- 7) gerçek uçtan uca (Rebuild → satırlar + IsRunning)
 
     [SkippableFact] // vswhere/VS kurulu değilse msbuildNotFound gelir — RunCoordinatorTests ile aynı desen

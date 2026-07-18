@@ -131,6 +131,12 @@ public sealed partial class RunViewModel : ObservableObject
 
     [ObservableProperty] private string? _activeProjectId; // null = run dokümanı gösteriliyor
 
+    /// <summary>[Task 16 — It-2 devir §8] Engine process öldüğünde (<see cref="OnEngineExited"/>) kullanıcıya
+    /// gösterilecek metin — sticky şerit kalıcı hata modunun PIXEL karşılığı It-4'te; burada yalnız VM-state.
+    /// Bir sonraki başarılı run/Restart ile ilgisi yoktur (bilerek TEMİZLENMEZ) — kullanıcı en son ne olduğunu
+    /// (engine öldü mü, hangi kodla) geriye dönük görebilsin diye kalıcıdır.</summary>
+    [ObservableProperty] private string? _engineDiedMessage;
+
     public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null)
     {
         _engine = engine;
@@ -299,6 +305,36 @@ public sealed partial class RunViewModel : ObservableObject
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
         CanContinue = false;
         _sawRunStarted = false;
+    }
+
+    /// <summary>[Task 16 — It-2 devir §8, kama düzeltmesi] <see cref="EngineHost.EngineExited"/> eskiden VM'e
+    /// hiç BAĞLI DEĞİLDİ: engine process startRun sonrası runStarted'dan ÖNCE ya da run ORTASINDA ölürse,
+    /// hiçbir IPC event'i asla gelmeyeceğinden (ne runCompleted ne runStopped ne run-bitiren ErrorEvent)
+    /// IsStarting/IsRunning/CanContinue SONSUZA DEK kilitli kalırdı — "Restart Engine" MainWindow'daki
+    /// banner'ı güncelliyordu ama VM'e hiç dokunmadığından butonlar açılmıyordu. <see cref="RunEndingErrorCodes"/>
+    /// deseniyle TUTARLI: aynı üç run-state alanı sıfırlanır; ayrıca bir sonraki run/Restart'ın _currentRunId/
+    /// _sawRunStarted bakiyesiyle karışmaması için o bakiye de temizlenir (StopAsync zaten CanStop=false
+    /// olduğundan tıklanamaz, ama temiz başlangıç için bilerek sıfırlanır).
+    ///
+    /// <para><b>Idempotent:</b> [ObservableProperty] setter'ları CommunityToolkit'in eşitlik kontrolüyle
+    /// çalışır (false→false / null→null hiçbir PropertyChanged/CanExecuteChanged YAYINLAMAZ) — bu yüzden
+    /// hiçbir run aktif değilken (zaten temiz durum) ya da normal <c>runCompleted</c> SONRASI çağrılırsa
+    /// no-op'tur, ayrı bir guard GEREKMEZ.</para>
+    ///
+    /// <para><b>Thread/marshal:</b> <see cref="EngineHost.EngineExited"/> arka plan thread'inde (exit-watcher
+    /// ya da framing-hatası dalı) ateşlenir; bu metot ObservableProperty/CanExecuteChanged'a dokunduğundan
+    /// <see cref="OnEvent"/>'in Dispatcher-gerektiren dalları GİBİ UI thread'ine marshal edilerek çağrılmalıdır
+    /// — çağıran (MainWindow) bu sorumluluğu taşır, VM'in kendisi Dispatcher TÜRÜ TAŞIMAZ (test edilebilirlik).</para></summary>
+    public void OnEngineExited(int? exitCode)
+    {
+        EngineDiedMessage = exitCode is { } code
+            ? $"engine öldü (exit {code})"
+            : "engine öldü (framing hatası)";
+        IsRunning = false;
+        IsStarting = false;
+        CanContinue = false;
+        _sawRunStarted = false;
+        _currentRunId = null;
     }
 
     // ---------------------------------------------------------------- konsol/log
