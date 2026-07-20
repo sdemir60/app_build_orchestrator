@@ -58,6 +58,23 @@ public class CopyLogTests
         Assert.Equal(1, calls); // pano-kilit sınıfı DIŞI istisna retry EDİLMEZ, yayılır
     }
 
+    [Fact]
+    public void TrySet_does_not_retry_or_silently_swallow_a_non_lock_com_exception()
+    {
+        // [M-6] Kilit-DIŞI bir COMException (ör. E_FAIL) retry EDİLMEMELİ ve N deneme sonunda sessizce
+        // yutulup false DÖNMEMELİ — olduğu gibi yayılmalı (aksi halde gerçek bir hata gizlenir).
+        const int EFail = unchecked((int)0x80004005);
+        int calls = 0;
+        var ex = Assert.Throws<COMException>(() =>
+            ClipboardRetry.TrySet(
+                set: () => { calls++; throw new COMException("some other COM failure", EFail); },
+                attempts: 5,
+                wait: _ => { }));
+
+        Assert.Equal(EFail, ex.ErrorCode);
+        Assert.Equal(1, calls); // ilk denemede yayıldı — retry YOK, yutma YOK
+    }
+
     // ---------------------------------------------------------------- CopyLogFeedback (1400ms ✓ enjekte-saat)
 
     [Fact]
@@ -89,6 +106,24 @@ public class CopyLogTests
 
         header.ShowProjectLog("OSYS.Sales.Core", ProjectRowState.Started, hasDepIssue: false, lineCount: 42);
         Assert.Equal(Visibility.Visible, header.CopyLogButton.Visibility);
+    }
+
+    [StaFact]
+    public void CopyLog_button_appears_when_lines_stream_in_after_an_empty_project_log()
+    {
+        // [M-3] Seçim anında log boş → buton gizli; ~200ms sayaç tazelemesi (SetLineCount) satır gelince
+        // görünürlüğü YENİDEN değerlendirir → buton belirir (yalnız ShowProjectLog anında bir kez değil).
+        var header = new ConsoleHeader();
+        header.ShowProjectLog("OSYS.Server.Api", ProjectRowState.Started, hasDepIssue: false, lineCount: 0);
+        Assert.Equal(Visibility.Collapsed, header.CopyLogButton.Visibility);
+
+        header.SetLineCount(7); // build başladı, satırlar akmaya başladı
+        Assert.Equal(Visibility.Visible, header.CopyLogButton.Visibility);
+
+        // Narrative modda sayaç tazelense de copy butonu gizli kalır (mod duyarlı).
+        header.ShowNarrative(0);
+        header.SetLineCount(120);
+        Assert.Equal(Visibility.Collapsed, header.CopyLogButton.Visibility);
     }
 
     [StaFact]

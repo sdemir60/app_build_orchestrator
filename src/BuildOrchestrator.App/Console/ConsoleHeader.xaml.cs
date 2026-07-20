@@ -79,14 +79,22 @@ public partial class ConsoleHeader : UserControl
         StatusNameText.Visibility = Visibility.Visible;
 
         DepIssueBadge.Visibility = hasDepIssue ? Visibility.Visible : Visibility.Collapsed;
-        // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0).
+        // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0). Görünürlük artık
+        // TEK yerde — SetLineCount, proje-log modunda lineCount>0'a göre karar verir (M-3 ile satır geldikçe tazelenir).
         ResetCopyVisual();
-        CopyLogButton.Visibility = lineCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         SetLineCount(lineCount);
     }
 
-    /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23).</summary>
-    public void SetLineCount(int lineCount) => LinesText.Text = $"{lineCount} lines";
+    /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). [3b M-3]
+    /// Proje-log modunda copy-log görünürlüğü de burada (satır sayısıyla birlikte) yeniden değerlendirilir:
+    /// seçim anında boş olan bir log akış başlayınca (~200ms sayaç tazelemesi) copy butonu görünür olur — yalnız
+    /// <c>ShowProjectLog</c>'ta bir kez değil.</summary>
+    public void SetLineCount(int lineCount)
+    {
+        LinesText.Text = $"{lineCount} lines";
+        if (Mode == HeaderMode.ProjectLog)
+            CopyLogButton.Visibility = lineCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     private void OnBackClick(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
 

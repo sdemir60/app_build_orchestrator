@@ -1,3 +1,4 @@
+using System.Windows;
 using ICSharpCode.AvalonEdit;
 using BuildOrchestrator.App.Console;
 
@@ -94,17 +95,72 @@ public class ConsoleViewTests
         Assert.Equal("a\nb\nc\n", view.Document.Text);
     }
 
-    // ---------------------------------------------------------------- [3b] chunk prepend (scroll-telafili)
+    // ---------------------------------------------------------------- [3b I-2] chunk loader GERÇEK yolu
 
     [StaFact]
-    public void PrependChunk_inserts_older_lines_at_the_top_preserving_current_content()
+    public void Chunk_scroll_to_top_prepends_previous_slice_contiguously_and_compensates_offset()
     {
+        // GERÇEK yol: PlayCascade render dilimini (son 200) kurar; arm (tepeden uzaklaş) → scroll-to-top →
+        // ConsoleView.PrependPreviousChunk contiguous eski dilimi prepend eder + VerticalOffset'i telafi eder.
         var view = new ConsoleView();
-        view.PlayCascade(new[] { "new1", "new2" }, buildInProgress: false); // instant → "new1\nnew2\n"
+        // Layout: TextView.DefaultLineHeight/VerticalOffset gerçek değer alsın (offset telafisi ölçülebilsin).
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
 
-        view.PrependChunk("old1\nold2\n");
+        var all = Enumerable.Range(0, 250).Select(i => $"line{i}").ToArray();
+        view.PlayCascade(all, buildInProgress: false); // instant → son 200 (line50..line249)
+        Assert.StartsWith("line50\n", view.Document.Text);
+        Assert.DoesNotContain("line49\n", view.Document.Text); // ilk 50 henüz chunk loader'da
 
-        // Eski chunk tepeye eklendi; mevcut içerik korundu; sınırda tekrar/kayıp yok (dikiş).
-        Assert.Equal("old1\nold2\nnew1\nnew2\n", view.Document.Text);
+        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı (aşağı kaydırdı)
+        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk prepend edilir
+
+        // Dikiş: line0..line249 bitişik ve TAM — tekrar YOK, kayıp YOK.
+        var expected = string.Concat(all.Select(l => l + "\n"));
+        Assert.Equal(expected, view.Document.Text);
+
+        // Offset prepend edilen 50 satırın piksel yüksekliği kadar telafi edildi (viewport zıplamaz).
+        Assert.NotNull(view.LastPrepend);
+        var (before, delta, applied) = view.LastPrepend!.Value;
+        Assert.True(delta > 0, $"prepend edilen 50 satırın piksel yüksekliği > 0 olmalı (delta={delta})");
+        Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring
+
+        // Re-arm + tekrar tepe: yüklenecek daha eski satır yok → idempotent (tekrar yükleme/dup YOK).
+        view.EvaluateChunkScroll(100.0);
+        view.EvaluateChunkScroll(0.0);
+        Assert.Equal(expected, view.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [3b M-2] proje modu follow tail-trim
+
+    [StaFact]
+    public void Project_mode_following_document_stays_capped_at_the_render_slice()
+    {
+        // Alta-yapışık (follow) proje logu chatty bir build'de akarken belge render dilimini AŞMAZ.
+        var view = new ConsoleView();
+        view.PlayCascade(new[] { "seed" }, buildInProgress: true); // _projectMode=true, StickToBottom=true (varsayılan)
+
+        for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
+
+        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+            $"follow'da belge satır sayısı ({view.Document.LineCount}) render dilimini aşmamalı");
+        Assert.Contains("live399", view.Document.Text);   // en yeni korunur
+        Assert.DoesNotContain("live0\n", view.Document.Text); // en eski düştü
+    }
+
+    [StaFact]
+    public void Project_mode_scrolled_up_document_is_not_trimmed()
+    {
+        // Kullanıcı yukarı kaydırıp chunk gezerken (StickToBottom=false) tail-trim YOK — prepend'le çakışmaz.
+        var view = new ConsoleView();
+        view.PlayCascade(new[] { "seed" }, buildInProgress: true);
+        view.StickToBottom = false;
+
+        for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
+
+        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines,
+            "scroll-up (browse) durumunda belge kırpılmamalı");
+        Assert.Contains("live0\n", view.Document.Text); // eski satırlar korunur (chunk gezme bozulmaz)
     }
 }

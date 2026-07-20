@@ -16,16 +16,21 @@ public static class ClipboardRetry
     public const int DefaultAttempts = 10;
     public const int DefaultDelayMs = 10;
 
-    /// <summary><paramref name="set"/>'i çağırır; pano-kilit sınıfı bir <see cref="ExternalException"/>
-    /// (COMException/CLIPBRD_E_CANT_OPEN dahil) fırlarsa <paramref name="attempts"/> kez, aralarında
-    /// <paramref name="wait"/> çağrılarak yeniden dener. Başarılıysa true; tüm denemeler kilit hatasıyla
-    /// biterse false (kilit-DIŞI istisnalar YUTULMAZ — yayılır). </summary>
+    /// <summary>CLIPBRD_E_CANT_OPEN (dotnet/wpf#9901) — pano başka bir process tarafından kilitliyken
+    /// <c>Clipboard.SetText</c>'in fırlattığı HRESULT. YALNIZ bu istisna retry edilir.</summary>
+    public const int ClipboardCantOpen = unchecked((int)0x800401D0);
+
+    /// <summary><paramref name="set"/>'i çağırır; YALNIZ pano-kilidi (<see cref="COMException"/>/
+    /// <see cref="ExternalException"/>, HRESULT <see cref="ClipboardCantOpen"/>) fırlarsa <paramref name="attempts"/>
+    /// kez, aralarında <paramref name="wait"/> çağrılarak yeniden dener. Başarılıysa true; tüm denemeler kilit
+    /// hatasıyla biterse false. Kilit-DIŞI istisnalar (başka bir COM/HRESULT dahil) retry EDİLMEZ ve YUTULMAZ —
+    /// olduğu gibi yayılır (sessizce yutulmuş bir hata değil). </summary>
     public static bool TrySet(Action set, int attempts = DefaultAttempts, Action<int>? wait = null)
     {
         for (int i = 0; i < attempts; i++)
         {
             try { set(); return true; }
-            catch (ExternalException) // COMException dahil — pano kilidi sınıfı
+            catch (ExternalException ex) when (ex.ErrorCode == ClipboardCantOpen) // YALNIZ pano kilidi
             {
                 if (i + 1 < attempts) wait?.Invoke(i);
             }

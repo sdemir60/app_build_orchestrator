@@ -100,7 +100,10 @@ public partial class ConsoleView : UserControl
         try
         {
             document.Insert(document.TextLength, text);
-            if (_trimTail) TrimToRenderSlice(document);
+            // Run modunda daima; proje modunda YALNIZ alta-yapışıkken (follow) tail-trim: chatty bir build
+            // (MSBuild hacmi) belgeyi sınırsız büyütmesin — render dilimi kadar tutulur (§3.6). [3b M-2]
+            // Kullanıcı yukarı kaydırıp chunk gezerken (StickToBottom=false) trim YOK — prepend'le çakışmaz.
+            if (_trimTail || (_projectMode && StickToBottom)) TrimToRenderSlice(document);
         }
         finally
         {
@@ -240,7 +243,9 @@ public partial class ConsoleView : UserControl
         if (commit && pending.Length > 0) AppendBatch(pending + "\n");
     }
 
-    private void StartBlink()
+    // [3b M-4] Aktif-satır imleci ile "build in progress" imlecinin ORTAK blink animasyonu (design-v1 §2.5:
+    // 1.0→0.1, 0.55s, SineEase in/out, 30fps). Tek kaynak — iki başlatıcı bunu paylaşır (kopya yok).
+    private static DoubleAnimation CreateBlinkAnimation()
     {
         var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromSeconds(0.55)))
         {
@@ -249,8 +254,10 @@ public partial class ConsoleView : UserControl
             EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
         };
         Timeline.SetDesiredFrameRate(blink, 30);
-        ActiveCursor.BeginAnimation(OpacityProperty, blink);
+        return blink;
     }
+
+    private void StartBlink() => ActiveCursor.BeginAnimation(OpacityProperty, CreateBlinkAnimation());
 
     private void StopBlink()
     {
@@ -367,17 +374,7 @@ public partial class ConsoleView : UserControl
         BuildProgressOverlay.Visibility = Visibility.Collapsed;
     }
 
-    private void StartBuildBlink()
-    {
-        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromSeconds(0.55)))
-        {
-            AutoReverse = true,
-            RepeatBehavior = RepeatBehavior.Forever,
-            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-        };
-        Timeline.SetDesiredFrameRate(blink, 30);
-        BuildProgressCursor.BeginAnimation(OpacityProperty, blink);
-    }
+    private void StartBuildBlink() => BuildProgressCursor.BeginAnimation(OpacityProperty, CreateBlinkAnimation());
 
     private void StopBuildBlink()
     {
@@ -387,12 +384,17 @@ public partial class ConsoleView : UserControl
 
     // ---------------------------------------------------------------- chunk loader (scroll-telafili prepend)
 
-    private void OnScrollOffsetChanged()
+    private void OnScrollOffsetChanged() => EvaluateChunkScroll(EditorControl.VerticalOffset);
+
+    /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
+    /// <c>EditorControl.VerticalOffset</c> ile çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
+    /// canlı bir scroll event'i olmadan test edilebilir (paralel bir kopya yol DEĞİL — üretimin çağırdığı metodun
+    /// ta kendisi). Kullanıcı tepeden uzaklaşınca "arm" (ilk layout'ta offset=0 iken spurious prepend olmaz);
+    /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.</summary>
+    internal void EvaluateChunkScroll(double verticalOffset)
     {
         if (!_projectMode || _prepending) return;
-        // Kullanıcı tepeden uzaklaştıysa (aşağı kaydırdı) chunk yüklemeye "arm" et — böylece PlayCascade sonrası
-        // ilk layout'ta offset=0 iken spurious prepend olmaz; yalnız GERÇEK bir tepeye-scroll tetikler.
-        if (EditorControl.VerticalOffset > ChunkTopThresholdPx) { _armedForChunk = true; return; }
+        if (verticalOffset > ChunkTopThresholdPx) { _armedForChunk = true; return; }
         if (_armedForChunk && _loadedFrom > 0)
         {
             _armedForChunk = false; // prepend sonrası offset telafi edilir → tepeden uzaklaşır → yeniden arm olur
@@ -400,10 +402,14 @@ public partial class ConsoleView : UserControl
         }
     }
 
+    /// <summary>[Test gözlemi] Son <see cref="PrependPreviousChunk"/>'ın uyguladığı scroll-telafisi: prepend ÖNCESİ
+    /// offset, eklenen dilimin piksel yüksekliği (delta) ve uygulanan yeni offset. Yalnız test okur.</summary>
+    internal (double Before, double Delta, double Applied)? LastPrepend { get; private set; }
+
     /// <summary>Belgede yüklü ilk satırdan ÖNCEKİ ~<see cref="RenderSliceLines"/> satırı (contiguous, sequence-id
     /// bitişik → tekrar/kayıp yok) tepeye prepend eder ve <c>VerticalOffset</c>'i prepend edilen içeriğin piksel
     /// yüksekliği kadar artırır (<see cref="ChunkStitch.CompensatedOffset"/>) → viewport zıplamaz.</summary>
-    private void PrependPreviousChunk()
+    internal void PrependPreviousChunk()
     {
         int from = Math.Max(0, _loadedFrom - RenderSliceLines);
         string chunk = Join(_projectAllLines, from, _loadedFrom);
@@ -423,27 +429,9 @@ public partial class ConsoleView : UserControl
             finally { document.EndUpdate(); }
 
             _loadedFrom = from;
-            EditorControl.ScrollToVerticalOffset(ChunkStitch.CompensatedOffset(before, delta));
-        }
-        finally { _prepending = false; }
-    }
-
-    /// <summary>[Test/host] Bir metin chunk'ını doğrudan tepeye prepend eder ve scroll-telafisi uygular (chunk
-    /// loader'ın <see cref="PrependPreviousChunk"/> yolunun test edilebilir çekirdeği).</summary>
-    public void PrependChunk(string chunkText)
-    {
-        if (string.IsNullOrEmpty(chunkText)) return;
-        _prepending = true;
-        try
-        {
-            var tv = EditorControl.TextArea.TextView;
-            double before = EditorControl.VerticalOffset;
-            double delta = CountLines(chunkText) * tv.DefaultLineHeight;
-            var document = EditorControl.Document;
-            document.BeginUpdate();
-            try { document.Insert(0, chunkText); }
-            finally { document.EndUpdate(); }
-            EditorControl.ScrollToVerticalOffset(ChunkStitch.CompensatedOffset(before, delta));
+            double applied = ChunkStitch.CompensatedOffset(before, delta);
+            LastPrepend = (before, delta, applied);
+            EditorControl.ScrollToVerticalOffset(applied);
         }
         finally { _prepending = false; }
     }
@@ -457,13 +445,6 @@ public partial class ConsoleView : UserControl
         var sb = new System.Text.StringBuilder();
         for (int i = from; i < to; i++) sb.Append(lines[i]).Append('\n');
         return sb.ToString();
-    }
-
-    private static int CountLines(string text)
-    {
-        int n = 0;
-        foreach (char c in text) if (c == '\n') n++;
-        return n;
     }
 
     // Duration.* kaynağını çözer (motion sözleşmesi: süreler token'dan); yoksa fallback ms.
