@@ -146,7 +146,9 @@ public class EdgeStyleResolverTests
         Assert.Equal("Brush.StatusFailBorder", style.BrushKey);
         Assert.Equal(1.6, style.Thickness);
         Assert.Equal(1.0, style.Opacity);
-        Assert.Equal([3.0, 4.0], style.Dash);
+        // A13.2: "1.6px seçili kenarda değerler BÖLÜNÜR" — desen çarpan-birimi olduğundan bölünmüş {3/1.6, 4/1.6}
+        // MUTLAKTA yine 3px/4px çizer (bölünmeseydi 4.8/6.4px olurdu).
+        Assert.Equal([3.0 / 1.6, 4.0 / 1.6], style.Dash);
         Assert.False(style.IsFlowing);
     }
 
@@ -158,7 +160,7 @@ public class EdgeStyleResolverTests
         Assert.Equal("Brush.StatusFailBorder", style.BrushKey);
         Assert.Equal(1.6, style.Thickness);
         Assert.True(style.IsFlowing);
-        Assert.Equal([4.0, 7.0], style.Dash);
+        Assert.Equal([4.0 / 1.6, 7.0 / 1.6], style.Dash);
     }
 
     [Fact]
@@ -171,29 +173,73 @@ public class EdgeStyleResolverTests
         Assert.Equal("Brush.StatusSuccessBorder", style.BrushKey);
     }
 
-    // ---------------------------------------------------------------- dash birimi = thickness çarpanı (A13.2)
+    // ------------------------------------------- dash birimi = thickness çarpanı + 1.6px bölmesi (A13.2)
 
-    [Fact]
-    public void The_flow_offset_is_exactly_two_dash_periods_so_the_loop_is_seamless_at_every_thickness()
+    [Theory]
+    [InlineData(EdgeStyleResolver.DefaultThickness)]
+    [InlineData(EdgeStyleResolver.SelectedThickness)]
+    public void The_flowing_dash_draws_the_same_absolute_4px_7px_pattern_at_both_thicknesses(double thickness)
     {
-        // WPF dash birimi StrokeThickness ÇARPANI'dır: desen {4,7} → periyot 11 çarpan-birimi, HANGİ kalınlıkta olursa
-        // olsun. To=-22 tam 2 periyot ⇒ 1px'lik akan kenar da 1.6px'lik (hata dalı + seçime değen) akan kenar da AYNI
-        // paylaşımlı clock'a bağlanabilir ve dikiş görünmez.
-        double period = EdgeStyleResolver.FlowDash[0] + EdgeStyleResolver.FlowDash[1];
+        // WPF'te dash birimi StrokeThickness ÇARPANI'dır → MUTLAK px = birim × kalınlık. A13.2: 1px'te birebir,
+        // 1.6px seçili kenarda değerler BÖLÜNÜR ⇒ iki kalınlıkta da tasarımın `stroke-dasharray: 4 7`'si.
+        var dash = thickness == EdgeStyleResolver.SelectedThickness
+            ? EdgeStyleResolver.FlowDashThick
+            : EdgeStyleResolver.FlowDash;
 
-        Assert.Equal(11.0, period);
-        Assert.Equal(-2.0, EdgeStyleResolver.FlowDashOffsetTo / period);
-        Assert.Equal(0.0, EdgeStyleResolver.FlowDashOffsetTo % period);
+        Assert.Equal(4.0, dash[0] * thickness, 9);
+        Assert.Equal(7.0, dash[1] * thickness, 9);
+    }
+
+    [Theory]
+    [InlineData(EdgeStyleResolver.DefaultThickness)]
+    [InlineData(EdgeStyleResolver.SelectedThickness)]
+    public void The_static_error_dash_draws_the_same_absolute_3px_4px_pattern_at_both_thicknesses(double thickness)
+    {
+        // Statik desen HİÇ clock'a bağlanmaz — "tek clock" gerekçesi buraya uygulanmaz, bölme kuralı çıplaktır.
+        var dash = thickness == EdgeStyleResolver.SelectedThickness
+            ? EdgeStyleResolver.ErrorDashThick
+            : EdgeStyleResolver.ErrorDash;
+
+        Assert.Equal(3.0, dash[0] * thickness, 9);
+        Assert.Equal(4.0, dash[1] * thickness, 9);
+    }
+
+    [Theory]
+    [InlineData(EdgeStyleResolver.DefaultThickness, -22.0)]
+    [InlineData(EdgeStyleResolver.SelectedThickness, -13.75)]
+    public void The_flow_offset_is_two_periods_of_its_OWN_divided_pattern_so_one_clock_stays_phase_locked(
+        double thickness, double expectedOffset)
+    {
+        var dash = thickness == EdgeStyleResolver.SelectedThickness
+            ? EdgeStyleResolver.FlowDashThick
+            : EdgeStyleResolver.FlowDash;
+        double offset = EdgeStyleResolver.FlowDashOffsetFor(thickness);
+        double period = dash[0] + dash[1];
+
+        Assert.Equal(expectedOffset, offset, 9);
+        // Her dal KENDİ (bölünmüş) deseninin tam 2 periyodunu kat eder ⇒ dikiş görünmez.
+        Assert.Equal(-2.0, offset / period, 9);
+        // ... ve ikisi de 0.9s'de AYNI 22px MUTLAK yolu alır ⇒ tek paylaşılan clock'un iki dalı faz-kilitli kalır.
+        Assert.Equal(-EdgeStyleResolver.FlowTravelPx, offset * thickness, 9);
     }
 
     [Fact]
-    public void Flowing_edges_at_both_thicknesses_share_one_dash_pattern_instance_so_one_clock_serves_them_all()
+    public void Every_dash_pattern_is_a_stable_static_instance_so_the_style_fast_path_can_compare_by_reference()
     {
-        var thin = Resolve(GraphStatus.Succeeded, GraphStatus.Building);
-        var thick = Resolve(GraphStatus.Failed, GraphStatus.Building, touchesSelection: true, hasSelection: true);
+        // GraphView "stil değişmediyse fırça/dash/clock kablajına dokunma" hızlı yolu EdgeStyle record eşitliğine
+        // dayanır; IReadOnlyList<double> için bu REFERANS eşitliğidir — her çağrıda yeni dizi üretilirse hızlı yol
+        // sessizce ölür (her tick'te full binding refresh).
+        Assert.Same(EdgeStyleResolver.FlowDash,
+            Resolve(GraphStatus.Succeeded, GraphStatus.Building).Dash);
+        Assert.Same(EdgeStyleResolver.FlowDashThick,
+            Resolve(GraphStatus.Failed, GraphStatus.Building, touchesSelection: true, hasSelection: true).Dash);
+        Assert.Same(EdgeStyleResolver.ErrorDash,
+            Resolve(GraphStatus.Failed, GraphStatus.Queued).Dash);
+        Assert.Same(EdgeStyleResolver.ErrorDashThick,
+            Resolve(GraphStatus.Failed, GraphStatus.Queued, touchesSelection: true, hasSelection: true).Dash);
 
-        Assert.NotEqual(thin.Thickness, thick.Thickness);
-        Assert.Same(EdgeStyleResolver.FlowDash, thin.Dash);
-        Assert.Same(EdgeStyleResolver.FlowDash, thick.Dash);
+        // Aynı girdi iki kez çağrıldığında da AYNI örnek döner (record eşitliği bozulmaz).
+        Assert.Equal(Resolve(GraphStatus.Succeeded, GraphStatus.Building),
+                     Resolve(GraphStatus.Succeeded, GraphStatus.Building));
     }
 }

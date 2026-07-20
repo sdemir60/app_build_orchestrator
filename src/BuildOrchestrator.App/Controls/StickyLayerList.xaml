@@ -15,7 +15,8 @@
         <StackPanel Orientation="Horizontal" Margin="10,0" VerticalAlignment="Center">
           <controls:TrackedTextBlock Text="{Binding Name}" VerticalAlignment="Center" />
           <TextBlock Text="{Binding RowCount}" Margin="8,0,0,0" VerticalAlignment="Center"
-                     FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource Brush.TextFaint}" />
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
+                     Foreground="{DynamicResource Brush.TextFaint}" />
         </StackPanel>
       </Border>
     </DataTemplate>

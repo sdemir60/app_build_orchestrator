@@ -11,8 +11,10 @@
             Background="{DynamicResource Brush.Surface}"
             BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
       <DockPanel Margin="10,0" LastChildFill="True">
+        <!-- design-v1 §1.2: sayaç MAKİNE ÇIKTISIDIR → gömülü Geist Mono (sistem Consolas'ı DEĞİL). -->
         <TextBlock x:Name="CountsText" DockPanel.Dock="Right" VerticalAlignment="Center"
-                   FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource Brush.TextFaint}" />
+                   FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
+                   Foreground="{DynamicResource Brush.TextFaint}" />
         <controls:TrackedTextBlock Text="DEPENDENCY GRAPH" VerticalAlignment="Center" />
       </DockPanel>
     </Border>

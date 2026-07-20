@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
 
 namespace BuildOrchestrator.App.Graph;
 
@@ -45,6 +46,14 @@ public partial class GraphView : UserControl
     public const double DimmedNodeOpacity = 0.25;
     /// <summary>Dekoratif sonsuz animasyonlarda kare hızı tavanı (feasibility §3.4).</summary>
     public const int DecorativeFrameRate = 30;
+    /// <summary>Düğüm karesinin çerçeve kalınlığı (DS <c>DependencyGraphNode</c>: <c>selected ? 2 : 1.5</c>).</summary>
+    public const double NodeBorderThickness = 1.5;
+    /// <summary>Seçili düğüm karesinin çerçeve kalınlığı (DS: 2px).</summary>
+    public const double SelectedNodeBorderThickness = 2.0;
+    /// <summary>Building düğümün nabzı — DS <c>ds-node-pulse 1.6s var(--ease-in-out) infinite</c>.</summary>
+    public const double PulseMs = 1600.0;
+    /// <summary>Nabzın orta noktadaki opaklığı (DS <c>@keyframes: 50% { opacity: .5 }</c>).</summary>
+    public const double PulseMinOpacity = 0.5;
 
     // lucide "package" — DS DependencyGraphNode'un çizdiği ikonun BİREBİR geometrisi (24'lük viewBox).
     private const string PackageIconPath =
@@ -53,12 +62,6 @@ public partial class GraphView : UserControl
     private const double PackageIconStrokeWidth = 1.6; // viewBox birimi — Viewbox ölçeği ile birlikte küçülür
     // lucide depWarn (DS ProjectRow/graf rozeti) — dolu üçgen, 24'lük viewBox.
     private const string WarningTriangleIconPath = "M12 3 23 21H1Z";
-
-    // Gömülü Geist Mono (It-0 asset'i) — graf etiketi tasarımın İÇERİK monosu (panel başlığındaki sayaç ise
-    // kardeş panel başlıklarıyla aynı chrome yazı tipini kullanır).
-    private static readonly FontFamily MonoFamily = new(
-        new Uri("pack://application:,,,/BuildOrchestrator.App;component/Fonts/"),
-        "./#Geist Mono");
 
     private readonly Dictionary<string, GraphNodeVisual> _nodes = new(StringComparer.Ordinal);
     private readonly List<GraphEdgeVisual> _edges = [];
@@ -70,7 +73,10 @@ public partial class GraphView : UserControl
     private string? _selectedNode;
     private bool _isSettled;
     private Point? _previousFocus;
-    private AnimationClock? _dashClock;
+    private ClockGroup? _dashClockRoot;
+    private AnimationClock? _thinDashClock;
+    private AnimationClock? _thickDashClock;
+    private IMotionSettings? _subscribedMotion;
     private bool _edgesAnimated;
     private bool _hasCamera;
 
@@ -86,6 +92,11 @@ public partial class GraphView : UserControl
         Ground.MouseLeftButtonDown += (_, _) => SelectedNode = null;
         Ground.SizeChanged += (_, _) => ApplyCamera(animate: false);
 
+        // [M-2] Canlı reduced-motion: OS ayarı koşu SIRASINDA değişirse akan dash ve nabız ANINDA durur/başlar
+        // (aksi halde bir sonraki UpdateStatuses'a kadar dönmeye devam ederdi).
+        Loaded += OnLoadedSubscribeMotion;
+        Unloaded += OnUnloadedUnsubscribeMotion;
+
         ShowEmptyState(true);
     }
 
@@ -93,6 +104,37 @@ public partial class GraphView : UserControl
     /// testler enjekte eder).</summary>
     public Func<bool> AnimationsEnabledProvider { get; set; } =
         () => BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+
+    /// <summary>[M-2] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null ise <c>App.Motion</c>.
+    /// Testler kendi sahtesini enjekte eder (abonelik <c>Loaded</c>'da kurulur, <c>Unloaded</c>'da bırakılır).</summary>
+    public IMotionSettings? MotionSettings { get; set; }
+
+    private void OnLoadedSubscribeMotion(object? sender, RoutedEventArgs e)
+    {
+        if (_subscribedMotion is not null) return;
+        _subscribedMotion = MotionSettings ?? BuildOrchestrator.App.App.Motion;
+        if (_subscribedMotion is not null)
+            _subscribedMotion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+    }
+
+    private void OnUnloadedUnsubscribeMotion(object? sender, RoutedEventArgs e)
+    {
+        if (_subscribedMotion is null) return;
+        _subscribedMotion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+        _subscribedMotion = null;
+    }
+
+    private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
+
+    /// <summary>Motion sinyali canlı değiştiğinde sürmekte olan sonsuz animasyonları (akan dash + building nabzı)
+    /// yeni sinyale göre yeniden kurar. <see cref="ApplyEdgeStyles"/> zaten sinyal değişimini tespit edip TÜM
+    /// kenar kablajını yeniler; nabız düğüm başına ayrıca güncellenir.</summary>
+    internal void ReapplyMotion()
+    {
+        ApplyEdgeStyles();
+        foreach (var visual in _nodes.Values)
+            ApplyBuildingPulse(visual);
+    }
 
     /// <summary>Koşu bitti/durduruldu mu — kamera bu durumda grafın tam merkezine oturur (design-v1 §2.3).</summary>
     public bool IsSettled
@@ -221,7 +263,7 @@ public partial class GraphView : UserControl
             Height = GraphLayout.NodeSize,
             RadiusX = GraphLayout.NodeCornerRadius,
             RadiusY = GraphLayout.NodeCornerRadius,
-            StrokeThickness = 1.5,
+            StrokeThickness = NodeBorderThickness, // seçiliyken 2px — bkz. ApplySelection (DS: selected ? 2 : 1.5)
         };
 
         var icon = new Path
@@ -271,17 +313,26 @@ public partial class GraphView : UserControl
             },
         };
 
+        // Nabız kabı: DS'te `ds-node-pulse` YALNIZ kare span'ındadır — halka (outline) ve ikon onunla birlikte
+        // solar, dep-hata rozeti (kardeş eleman) ise solmaz. Bu yüzden rozet bu kabın DIŞINDA kalır.
+        var pulseHost = new Grid
+        {
+            Width = GraphLayout.NodeSize,
+            Height = GraphLayout.NodeSize,
+            Children = { ring, square, iconBox },
+        };
+
         var squareHost = new Grid
         {
             Width = GraphLayout.NodeSize,
             Height = GraphLayout.NodeSize,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Children = { ring, square, iconBox, badge },
+            Children = { pulseHost, badge },
         };
 
         var label = new TextBlock
         {
-            FontFamily = MonoFamily,
+            FontFamily = AppFonts.Mono,
             FontSize = 10,
             MaxWidth = GraphLayout.NodeCellWidth,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -320,6 +371,7 @@ public partial class GraphView : UserControl
             Model = node,
             Cell = cell,
             Body = body,
+            PulseHost = pulseHost,
             Square = square,
             SelectionRing = ring,
             Icon = icon,
@@ -334,8 +386,8 @@ public partial class GraphView : UserControl
     }
 
     /// <summary>DS <c>DependencyGraphNode</c> statü tablosunun birebir karşılığı: çerçeve + zemin + ikon rengi
-    /// (+ discovered'ın kesikli çerçevesi) ve dep-hata rozetinin görünürlüğü.</summary>
-    private static void ApplyNodeStatus(GraphNodeVisual visual)
+    /// (+ discovered'ın kesikli çerçevesi), dep-hata rozetinin görünürlüğü ve building nabzı.</summary>
+    private void ApplyNodeStatus(GraphNodeVisual visual)
     {
         var (border, background, iconColor, dashed) = visual.Model.Status switch
         {
@@ -356,6 +408,39 @@ public partial class GraphView : UserControl
         // `1.5px dashed` varsayılanının karşılığı (tasarımda ayrı bir sayısal değer verilmemiştir).
         visual.Square.StrokeDashArray = dashed ? [2.0, 2.0] : [];
         visual.Badge.Visibility = visual.Model.HasDepIssue ? Visibility.Visible : Visibility.Collapsed;
+        ApplyBuildingPulse(visual);
+    }
+
+    /// <summary>
+    /// [I-3] DS <c>ds-node-pulse</c> paritesi: building düğümün karesi 1.6s'de <c>1 → 0.5 → 1</c> nefes alır
+    /// (<c>ease-in-out</c>, sonsuz). Reduced-motion'da HİÇ kurulmaz (DS'te de kural
+    /// <c>@media (prefers-reduced-motion: no-preference)</c> içindedir) ve sinyal TAZE okunur.
+    ///
+    /// <para>Zaten dönen bir nabız YENİDEN BAŞLATILMAZ: <c>UpdateStatuses</c> koşarken saniyede birkaç kez çağrılır
+    /// ve her çağrıda animasyonu baştan kurmak nabzı "takılı" gösterirdi (kameradaki Zeno korumasının eşi).</para>
+    /// </summary>
+    private void ApplyBuildingPulse(GraphNodeVisual visual)
+    {
+        bool shouldPulse = visual.Model.Status == GraphStatus.Building && AnimationsEnabledProvider();
+        if (shouldPulse == visual.IsPulsing) return;
+        visual.IsPulsing = shouldPulse;
+
+        if (!shouldPulse)
+        {
+            visual.PulseHost.BeginAnimation(OpacityProperty, null);
+            visual.PulseHost.Opacity = 1.0;
+            return;
+        }
+
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
+        var half = TimeSpan.FromMilliseconds(PulseMs / 2);
+        var full = TimeSpan.FromMilliseconds(PulseMs);
+        var pulse = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
+        pulse.KeyFrames.Add(new DiscreteDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        pulse.KeyFrames.Add(new SplineDoubleKeyFrame(PulseMinOpacity, KeyTime.FromTimeSpan(half), spline));
+        pulse.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(full), spline));
+        Timeline.SetDesiredFrameRate(pulse, DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
+        visual.PulseHost.BeginAnimation(OpacityProperty, pulse);
     }
 
     // ---------------------------------------------------------------- seçim (halka + sönme)
@@ -378,6 +463,8 @@ public partial class GraphView : UserControl
         {
             bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
             visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
+            // [M-1] DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
+            visual.Square.StrokeThickness = isSelected ? SelectedNodeBorderThickness : NodeBorderThickness;
             // DS DependencyGraphNode: etiket seçiliyken text-primary, aksi halde text-dim.
             visual.Label.SetResourceReference(TextBlock.ForegroundProperty,
                 isSelected ? "Brush.TextPrimary" : "Brush.TextDim");
@@ -456,7 +543,7 @@ public partial class GraphView : UserControl
             if (style.IsFlowing && animationsEnabled)
             {
                 // TEK paylaşımlı clock: bütün akan kenarlar (1px ve 1.6px olanlar dahil) aynı fazda kayar.
-                edge.Path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, EnsureDashClock());
+                edge.Path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, DashClockFor(style.Thickness));
             }
             else
             {
@@ -464,24 +551,59 @@ public partial class GraphView : UserControl
                 edge.Path.StrokeDashOffset = 0; // reduced-motion: kesikli AMA statik
             }
         }
+
+        // [M-3] Akan kenar kalmadıysa (veya motion kapandıysa) clock BIRAKILIR — aksi halde timing engine boşta
+        // da 30fps uyanık kalırdı. Bir sonraki akan kenarda yeniden kurulur (aşağıdaki hızlı yol notuna bak).
+        if (_flowingEdges.Count == 0 || !animationsEnabled)
+            ReleaseDashClock();
     }
 
-    /// <summary>Akan dash'in TEK clock'u — ilk akan kenarda kurulur, kontrolün ömrü boyunca yaşar. Aynı
-    /// <see cref="AnimationClock"/> birden çok <see cref="Path"/>'e uygulanabilir; faz farkı oluşmaz.</summary>
-    private AnimationClock EnsureDashClock()
+    /// <summary>
+    /// Akan dash'in TEK paylaşımlı clock'u (A13.2). Kök <see cref="ClockGroup"/> timing engine'de TEK bir clock'tur;
+    /// iki çocuğu (1px ve 1.6px dalı) aynı kökten türediği için faz farkı MATEMATİKSEL OLARAK imkânsızdır.
+    ///
+    /// <para><b>Neden iki çocuk:</b> A13.2 deseni 1.6px'te BÖLMEYİ de şart koşar; bölünmüş desenin periyodu da
+    /// bölündüğünden (11 → 6.875 çarpan-birimi) "tam 2 periyot" offset'i kalınlığa göre farklıdır
+    /// (−22 / −13.75). İki farklı hedef değeri tek bir <see cref="AnimationClock"/> üretemez — ama tek bir KÖK
+    /// clock'un iki çocuğu üretir. İki dal da 0.9s'de 22px MUTLAK yol alır ⇒ dikişsiz ve faz-kilitli.</para>
+    /// </summary>
+    private AnimationClock DashClockFor(double thickness)
     {
-        if (_dashClock is not null) return _dashClock;
-
-        var animation = new DoubleAnimation
+        if (_dashClockRoot is null)
         {
-            To = EdgeStyleResolver.FlowDashOffsetTo,
-            Duration = new Duration(TimeSpan.FromMilliseconds(EdgeStyleResolver.FlowDurationMs)),
-            RepeatBehavior = RepeatBehavior.Forever,
-        };
-        Timeline.SetDesiredFrameRate(animation, DecorativeFrameRate);
-        animation.Freeze();
-        _dashClock = animation.CreateClock();
-        return _dashClock;
+            var root = new ParallelTimeline();
+            root.Children.Add(BuildDashAnimation(EdgeStyleResolver.DefaultThickness));
+            root.Children.Add(BuildDashAnimation(EdgeStyleResolver.SelectedThickness));
+            // DesiredFrameRate yalnız KÖK timeline'da dikkate alınır (WPF) — dolayısıyla köke konur.
+            Timeline.SetDesiredFrameRate(root, DecorativeFrameRate);
+            root.Freeze();
+
+            _dashClockRoot = (ClockGroup)root.CreateClock();
+            _thinDashClock = (AnimationClock)_dashClockRoot.Children[0];
+            _thickDashClock = (AnimationClock)_dashClockRoot.Children[1];
+        }
+
+        return thickness == EdgeStyleResolver.SelectedThickness ? _thickDashClock! : _thinDashClock!;
+    }
+
+    private static DoubleAnimation BuildDashAnimation(double thickness) => new()
+    {
+        From = 0.0, // paylaşılan clock birden çok Path'e uygulanır → başlangıç Path'in taban değerine BIRAKILMAZ
+        To = EdgeStyleResolver.FlowDashOffsetFor(thickness),
+        Duration = new Duration(TimeSpan.FromMilliseconds(EdgeStyleResolver.FlowDurationMs)),
+        RepeatBehavior = RepeatBehavior.Forever,
+    };
+
+    /// <summary>[M-3] Kök clock'u durdurur ve bırakır. Yeniden kurulum güvenlidir: clock ancak akan kenar
+    /// KALMADIĞINDA bırakılır; yeni bir kenar akmaya başladığında stili değişmiş olacağından hızlı yola
+    /// (<c>edge.Style == style</c>) girmez ve kablaj yeniden kurulur.</summary>
+    private void ReleaseDashClock()
+    {
+        if (_dashClockRoot is null) return;
+        _dashClockRoot.Controller?.Stop();
+        _dashClockRoot = null;
+        _thinDashClock = null;
+        _thickDashClock = null;
     }
 
     // ---------------------------------------------------------------- ilk açılış stagger'ı
@@ -539,7 +661,11 @@ public partial class GraphView : UserControl
             .ToList();
 
         var focus = GraphCamera.ResolveFocus(selected, building, _isSettled, GraphSize, _previousFocus);
-        _previousFocus = focus;
+        // [M-5] <8px eşiği YALNIZ frontier dalında geçerlidir (GraphCamera.ResolveFocus) — bu yüzden odak yalnız
+        // O DALDAN geldiyse hatırlanır. Aksi halde seçimden yeni çıkılmış bir odak (ya da settled merkezi) ilk
+        // frontier hedefini eşiğin altında kalarak BASTIRABİLİRDİ.
+        bool focusCameFromFrontier = selected is null && building.Count > 0;
+        _previousFocus = focusCameFromFrontier ? focus : null;
 
         var camera = GraphCamera.Compute(viewport, GraphSize, focus);
         // Hedef DEĞİŞMEDİYSE hiçbir animasyon yeniden başlatılmaz: koşarken UpdateStatuses saniyede birkaç kez
@@ -590,10 +716,17 @@ public partial class GraphView : UserControl
     internal IReadOnlyList<GraphEdgeVisual> EdgeVisuals => _edges;
     /// <summary>O an akan (hedefi building) kenarların Path'leri — paylaşılan clock TAM BU kümeye uygulanır.</summary>
     internal IReadOnlyList<Path> FlowingEdgePaths => _flowingEdges;
-    internal AnimationClock? SharedDashClock => _dashClock;
+    /// <summary>Akan dash'in TEK kök clock'u (null = hiç akan kenar yok / motion kapalı).</summary>
+    internal ClockGroup? SharedDashClock => _dashClockRoot;
+    /// <summary>Kökün 1px / 1.6px dalları — ikisi de AYNI köke bağlıdır (faz kilidi).</summary>
+    internal AnimationClock? ThinDashClock => _thinDashClock;
+    internal AnimationClock? ThickDashClock => _thickDashClock;
     internal CameraTransform CurrentCamera { get; private set; }
     internal bool LastCameraAnimated { get; private set; }
+    /// <summary>[M-5] Yalnız FRONTIER dalından gelen odak hatırlanır (8px eşiği yalnız orada geçerli).</summary>
+    internal Point? PreviousFocus => _previousFocus;
     internal string HeaderCountsText => CountsText.Text;
+    internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;
     internal bool IsEmptyStateVisible => EmptyState.Visibility == Visibility.Visible;
     internal string EmptyStateText => EmptyStateLabel.Text;
     internal Size ViewportSize => new(Ground.ActualWidth, Ground.ActualHeight);

@@ -3,8 +3,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using BuildOrchestrator.App.Graph;
+using BuildOrchestrator.App.Services;
 using IoPath = System.IO.Path;
 using ShapePath = System.Windows.Shapes.Path;
 
@@ -39,9 +41,14 @@ public class GraphRenderTests
         new("OSYS.Data.Core", "OSYS.Web.Portal"),
     ];
 
-    private static GraphView NewView(bool animationsEnabled, double width = 600, double height = 400)
+    private static GraphView NewView(
+        bool animationsEnabled, double width = 600, double height = 400, IMotionSettings? motion = null)
     {
-        var view = new GraphView { AnimationsEnabledProvider = () => animationsEnabled };
+        var view = new GraphView
+        {
+            MotionSettings = motion,
+            AnimationsEnabledProvider = () => motion?.AnimationsEnabled ?? animationsEnabled,
+        };
         // pack:// / Application.Resources olmadan (headless host) token'lar çözülmez — Tokens/Motion sözlükleri
         // dosyadan merge edilir (FontAssetTests/TokenBrushesTests ile AYNI TestAssets deseni). Böylece
         // SetResourceReference ile bağlanan fırçalar ve Duration/KeySpline token'ları gerçekten çözülür.
@@ -99,16 +106,23 @@ public class GraphRenderTests
     }
 
     [StaFact]
-    public void Selecting_a_node_shows_its_amber_ring()
+    public void Selecting_a_node_shows_its_amber_ring_and_thickens_the_square_border_to_2px()
     {
         var view = NewView(false);
         view.SetGraph(Nodes(), Edges());
         Assert.Equal(Visibility.Collapsed, view.NodeVisuals["OSYS.Base"].SelectionRing.Visibility);
+        Assert.Equal(1.5, view.NodeVisuals["OSYS.Base"].Square.StrokeThickness);
 
         view.SelectedNode = "OSYS.Base";
 
         Assert.Equal(Visibility.Visible, view.NodeVisuals["OSYS.Base"].SelectionRing.Visibility);
         Assert.Equal(Visibility.Collapsed, view.NodeVisuals["OSYS.Data.Core"].SelectionRing.Visibility);
+        // [M-1] DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …`
+        Assert.Equal(2.0, view.NodeVisuals["OSYS.Base"].Square.StrokeThickness);
+        Assert.Equal(1.5, view.NodeVisuals["OSYS.Data.Core"].Square.StrokeThickness);
+
+        view.SelectedNode = null;
+        Assert.Equal(1.5, view.NodeVisuals["OSYS.Base"].Square.StrokeThickness); // seçim kalkınca geri döner
     }
 
     // ---------------------------------------------------------------- dep-hata rozeti
@@ -194,10 +208,21 @@ public class GraphRenderTests
         view.SetGraph(Nodes(apiStatus: GraphStatus.Building, portalStatus: GraphStatus.Building), Edges());
 
         Assert.Equal(2, view.FlowingEdgePaths.Count);
-        Assert.All(view.FlowingEdgePaths, p => Assert.IsType<ShapePath>(p)); // DrawingContext Pen.DashStyle.Offset GÜVENİLMEZ (A13.2)
         Assert.All(view.FlowingEdgePaths, p => Assert.Equal([4.0, 7.0], p.StrokeDashArray));
         var clock = view.SharedDashClock;
         Assert.NotNull(clock);
+
+        // [M-4] "clock var" yetmez — HER akan Path'in StrokeDashOffset'i GERÇEKTEN clock'a bağlı olmalı
+        // (DrawingContext Pen.DashStyle.Offset güvenilmez olduğu için A13.2 bu kablajı şart koşar):
+        // animasyon değeri taban (local) değerin ÜSTÜNDE yaşar → HasAnimatedProperties + local value hâlâ 0.
+        Assert.All(view.FlowingEdgePaths, p =>
+        {
+            Assert.True(p.HasAnimatedProperties, "akan Path clock'a bağlı değil");
+            // Taban (animasyonsuz) değer hâlâ 0 — yani görünen offset'i ÜRETEN şey clock'tur, düz bir atama değil.
+            Assert.Equal(0.0, (double)p.GetAnimationBaseValue(ShapePath.StrokeDashOffsetProperty)!);
+        });
+        // Akmayan bir kenarda animasyon YOK — yukarıdaki bayrak akan kenarlara özgüdür.
+        Assert.False(view.EdgeVisuals.Single(e => e.Model.From == "OSYS.Base").Path.HasAnimatedProperties);
 
         // Akan küme değişse bile clock AYNI nesnedir — tüm akan kenarlar tek clock'ta faz-kilitli kalır.
         view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Building, apiStatus: GraphStatus.Building));
@@ -211,12 +236,73 @@ public class GraphRenderTests
         var view = NewView(true);
         view.SetGraph(Nodes(apiStatus: GraphStatus.Building), Edges());
 
-        var timeline = Assert.IsType<System.Windows.Media.Animation.DoubleAnimation>(view.SharedDashClock!.Timeline);
-        Assert.Equal(-22.0, timeline.To);
-        Assert.Equal(TimeSpan.FromMilliseconds(900), timeline.Duration.TimeSpan);
-        Assert.Equal(System.Windows.Media.Animation.RepeatBehavior.Forever, timeline.RepeatBehavior);
-        // Dekoratif sonsuz animasyon → 30fps tavanı (feasibility §3.4).
-        Assert.Equal(30, System.Windows.Media.Animation.Timeline.GetDesiredFrameRate(timeline));
+        // TEK kök clock (timing engine'de tek abonelik) + kalınlık başına iki dal — hepsi aynı kökten.
+        var root = view.SharedDashClock;
+        Assert.NotNull(root);
+        Assert.Equal(2, root.Children.Count);
+        Assert.Same(root, view.ThinDashClock!.Parent);
+        Assert.Same(root, view.ThickDashClock!.Parent);
+        // Dekoratif sonsuz animasyon → 30fps tavanı (feasibility §3.4). DesiredFrameRate yalnız KÖK'te geçerlidir.
+        Assert.Equal(30, Timeline.GetDesiredFrameRate(root.Timeline));
+
+        var thin = Assert.IsType<DoubleAnimation>(view.ThinDashClock.Timeline);
+        var thick = Assert.IsType<DoubleAnimation>(view.ThickDashClock.Timeline);
+        // 1px → -22 birim × 1px = 22px; 1.6px → -13.75 birim × 1.6px = 22px. AYNI mutlak yol, AYNI süre ⇒ faz kilidi.
+        Assert.Equal(-22.0, thin.To);
+        Assert.Equal(-13.75, thick.To);
+        foreach (var a in new[] { thin, thick })
+        {
+            Assert.Equal(TimeSpan.FromMilliseconds(900), a.Duration.TimeSpan);
+            Assert.Equal(RepeatBehavior.Forever, a.RepeatBehavior);
+        }
+    }
+
+    [StaFact]
+    public void A_selected_1_6px_flowing_edge_divides_its_dash_and_gets_the_thick_branch_of_the_same_clock()
+    {
+        var view = NewView(true);
+        // Base failed ⇒ Base→Data.Core hata dalı; Data.Core building ⇒ AKAR. Base seçilince kenar 1.6px olur.
+        view.SetGraph(Nodes(baseStatus: GraphStatus.Failed, dataStatus: GraphStatus.Building), Edges());
+        view.SelectedNode = "OSYS.Base";
+
+        var edge = view.EdgeVisuals.Single(e => e.Model.From == "OSYS.Base");
+        Assert.Equal(1.6, edge.Path.StrokeThickness);
+        // A13.2: 1.6px'te değerler BÖLÜNÜR ⇒ mutlakta yine 4px/7px (bölünmeseydi 6.4/11.2px olurdu).
+        Assert.Equal([4.0 / 1.6, 7.0 / 1.6], edge.Path.StrokeDashArray);
+        Assert.True(edge.Path.HasAnimatedProperties);
+        // ... ve hâlâ TEK kök clock: kalın dal da aynı kökün çocuğudur.
+        Assert.Same(view.SharedDashClock, view.ThickDashClock!.Parent);
+    }
+
+    [StaFact]
+    public void A_selected_1_6px_static_error_edge_divides_its_dash_and_never_animates()
+    {
+        var view = NewView(true);
+        view.SetGraph(Nodes(baseStatus: GraphStatus.Failed), Edges()); // Data.Core building DEĞİL ⇒ statik hata dalı
+        view.SelectedNode = "OSYS.Base";
+
+        var edge = view.EdgeVisuals.Single(e => e.Model.From == "OSYS.Base");
+        Assert.Equal(1.6, edge.Path.StrokeThickness);
+        Assert.Equal([3.0 / 1.6, 4.0 / 1.6], edge.Path.StrokeDashArray); // mutlakta 3px/4px
+        Assert.False(edge.Path.HasAnimatedProperties);
+        Assert.Null(view.SharedDashClock); // akan kenar yok ⇒ clock hiç kurulmaz
+    }
+
+    [StaFact]
+    public void The_shared_clock_is_released_when_the_last_flowing_edge_stops_and_rebuilt_on_demand()
+    {
+        // [M-3] Boşta 30fps'te uyanık bir timing engine bırakma.
+        var view = NewView(true);
+        view.SetGraph(Nodes(apiStatus: GraphStatus.Building), Edges());
+        Assert.NotNull(view.SharedDashClock);
+
+        view.UpdateStatuses(Nodes(apiStatus: GraphStatus.Succeeded)); // akan kenar kalmadı
+        Assert.Empty(view.FlowingEdgePaths);
+        Assert.Null(view.SharedDashClock);
+
+        view.UpdateStatuses(Nodes(apiStatus: GraphStatus.Succeeded, portalStatus: GraphStatus.Building));
+        Assert.NotNull(view.SharedDashClock); // talep üzerine yeniden kurulur
+        Assert.All(view.FlowingEdgePaths, p => Assert.True(p.HasAnimatedProperties));
     }
 
     [StaFact]
@@ -229,6 +315,92 @@ public class GraphRenderTests
         var flowing = Assert.Single(view.FlowingEdgePaths);
         Assert.Equal([4.0, 7.0], flowing.StrokeDashArray); // statik kesikli
         Assert.Equal(0.0, flowing.StrokeDashOffset);
+        Assert.False(flowing.HasAnimatedProperties);
+    }
+
+    // ---------------------------------------------------------------- building nabzı (DS ds-node-pulse)
+
+    [StaFact]
+    public void A_building_node_breathes_1_to_half_and_back_over_1_6s_at_30fps()
+    {
+        var view = NewView(true);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+
+        var building = view.NodeVisuals["OSYS.Data.Core"];
+        Assert.True(building.IsPulsing);
+        // Cell (stagger) ve Body (seçim sönmesi) DOLU olduğundan nabzın ÜÇÜNCÜ bir opaklık taşıyıcısı olmalı.
+        Assert.True(building.PulseHost.HasAnimatedProperties);
+        Assert.NotSame(building.PulseHost, building.Cell);
+        // Rozet nabız kabının DIŞINDADIR (DS'te kardeş eleman) — building düğümde de solmaz.
+        Assert.DoesNotContain(building.Badge, building.PulseHost.Children.Cast<UIElement>());
+
+        // Nabız dışındaki düğümler animasyonsuz ve tam opak.
+        var idle = view.NodeVisuals["OSYS.Base"];
+        Assert.False(idle.IsPulsing);
+        Assert.False(idle.PulseHost.HasAnimatedProperties);
+        Assert.Equal(1.0, idle.PulseHost.Opacity);
+    }
+
+    [StaFact]
+    public void The_pulse_stops_when_the_node_leaves_building()
+    {
+        var view = NewView(true);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        Assert.True(view.NodeVisuals["OSYS.Data.Core"].IsPulsing);
+
+        view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Succeeded));
+
+        var settled = view.NodeVisuals["OSYS.Data.Core"];
+        Assert.False(settled.IsPulsing);
+        Assert.False(settled.PulseHost.HasAnimatedProperties);
+        Assert.Equal(1.0, settled.PulseHost.Opacity);
+    }
+
+    [StaFact]
+    public void Reduced_motion_never_starts_the_building_pulse()
+    {
+        var view = NewView(false);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+
+        var building = view.NodeVisuals["OSYS.Data.Core"];
+        Assert.False(building.IsPulsing);
+        Assert.False(building.PulseHost.HasAnimatedProperties);
+        Assert.Equal(1.0, building.PulseHost.Opacity);
+    }
+
+    // ---------------------------------------------------------------- canlı reduced-motion (M-2)
+
+    [StaFact]
+    public void Flipping_the_motion_signal_at_runtime_stops_the_flow_and_the_pulse_immediately()
+    {
+        var motion = new FakeMotionSettings { AnimationsEnabled = true };
+        var view = NewView(true, motion: motion);
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent)); // aboneliği kur
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        Assert.NotNull(view.SharedDashClock);
+        Assert.True(view.NodeVisuals["OSYS.Data.Core"].IsPulsing);
+
+        motion.Flip(false); // OS reduced-motion'a geçti — bir sonraki UpdateStatuses BEKLENMEZ
+
+        Assert.Null(view.SharedDashClock);
+        Assert.False(view.NodeVisuals["OSYS.Data.Core"].IsPulsing);
+        Assert.All(view.FlowingEdgePaths, p => Assert.False(p.HasAnimatedProperties));
+
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+        motion.Flip(true); // abonelik bırakıldı → view artık tepki vermez
+        Assert.Null(view.SharedDashClock);
+    }
+
+    private sealed class FakeMotionSettings : IMotionSettings
+    {
+        public bool AnimationsEnabled { get; set; }
+        public event EventHandler? AnimationsEnabledChanged;
+        public TimeSpan Effective(TimeSpan token) => AnimationsEnabled ? token : TimeSpan.Zero;
+        public void Flip(bool enabled)
+        {
+            AnimationsEnabled = enabled;
+            AnimationsEnabledChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     // ---------------------------------------------------------------- seçim sönmesi
@@ -275,6 +447,11 @@ public class GraphRenderTests
         view.SetGraph(Nodes(), Edges());
 
         Assert.Equal("4 projects · 3 dependencies", view.HeaderCountsText);
+        // [I-2] design-v1 §1.2: sayaç MAKİNE ÇIKTISIDIR → gömülü Geist Mono (sistem Consolas'ı tasarımın parçası
+        // değildir). Kardeş chrome (ConsoleHeader "N lines", StickyLayerList satır sayısı, LatestPill) da aynı
+        // TEK aileyi (AppFonts.Mono) kullanır — pack URI hiçbir yerde kopyalanmaz.
+        Assert.Same(BuildOrchestrator.App.Controls.AppFonts.Mono, view.HeaderCountsFontFamily);
+        Assert.Equal("./#Geist Mono", BuildOrchestrator.App.Controls.AppFonts.Mono.Source);
     }
 
     [StaFact]
@@ -347,5 +524,29 @@ public class GraphRenderTests
         view.UpdateStatuses(Nodes(apiStatus: GraphStatus.Building));
 
         Assert.Equal(applied, view.CurrentCamera);
+    }
+
+    [StaFact]
+    public void Only_a_FRONTIER_focus_is_remembered_so_it_cannot_suppress_the_next_frontier_retarget()
+    {
+        // [M-5] 8px "yeniden hedefleme" eşiği YALNIZ frontier dalında uygulanır (GraphCamera.ResolveFocus).
+        // Seçimden / settled-merkezden / varsayılan merkezden gelen odak hatırlanırsa, bir sonraki frontier
+        // hedefini eşiğin altında kalarak BASTIRABİLİR — bu yüzden yalnız frontier odağı saklanır.
+        var view = NewView(false);
+        view.SetGraph(Nodes(), Edges());
+        Assert.Null(view.PreviousFocus); // seçim yok + frontier yok → varsayılan merkez, HATIRLANMAZ
+
+        view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Building));
+        Assert.Equal(view.NodeCenter("OSYS.Data.Core"), view.PreviousFocus); // frontier → hatırlanır
+
+        view.SelectedNode = "OSYS.Web.Portal";
+        Assert.Null(view.PreviousFocus); // seçim dalı → HATIRLANMAZ
+
+        view.SelectedNode = null;
+        Assert.Equal(view.NodeCenter("OSYS.Data.Core"), view.PreviousFocus); // frontier yeniden hedeflenir
+
+        view.IsSettled = true;
+        view.UpdateStatuses(Nodes()); // frontier boşaldı → settled merkezi
+        Assert.Null(view.PreviousFocus);
     }
 }
