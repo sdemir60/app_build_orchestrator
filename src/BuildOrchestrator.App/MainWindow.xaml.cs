@@ -41,7 +41,7 @@ public partial class MainWindow : Window
         // VM'in o dalı yalnız ConsoleBatcher.Post (kilitsiz) + iç kilitli arabellek kullanır, ObservableProperty'e
         // DOKUNMAZ; marshal OLMADAN doğrudan çağrılabilir (satır başına Dispatcher YASAK). projectLogChunk ise
         // proje başına yalnız birkaç adettir (LogChunker parça sayısı) VE son parçada ActiveProjectId'yi
-        // (BackButton.Visibility'e bağlı [ObservableProperty]) mutasyona uğratır — bu yüzden DİĞER TÜM
+        // (konsol modunu/ConsoleHeader'ı süren [ObservableProperty]) mutasyona uğratır — bu yüzden DİĞER TÜM
         // event'ler gibi UI thread'ine taşınır.
         _engine.EventReceived += ev =>
         {
@@ -53,14 +53,20 @@ public partial class MainWindow : Window
         {
             _vm.TickElapsed();
             ElapsedText.Text = TimeSpan.FromMilliseconds(_vm.ElapsedMs).ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
+            // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
+            // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
+            ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
         };
         _elapsedTimer.Start();
 
+        // [T56/3a] Konsol modu ActiveProjectId'yi izler: null → anlatı başlığı (proje seçimi OnProjectSelected'te
+        // zengin proje-log başlığını kurar; buradaki null dalı Rebuild/Continue'nun temizlemesini de kapsar).
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName != nameof(RunViewModel.ActiveProjectId)) return;
-            BackButton.Visibility = _vm.ActiveProjectId is null ? Visibility.Collapsed : Visibility.Visible;
+            if (_vm.ActiveProjectId is null) ConsoleHeaderControl.ShowNarrative(_vm.GetActiveLineCount());
         };
+        ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
 
         Loaded += async (_, _) => await StartEngineAsync();
         Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
@@ -100,15 +106,31 @@ public partial class MainWindow : Window
     {
         if (ProjectsList.SelectedItem is not ProjectRowViewModel row) return;
         await _vm.LoadProjectLogAsync(row.Id);
-        ConsoleViewControl.Document = new TextDocument(_vm.SeedProjectDocument(row.Id));
+        string seeded = _vm.SeedProjectDocument(row.Id);
+        // [T56/3a] Log boşsa design-v1 §2.5 boş-durum metni (kaskat animasyonu Task 3b) — düz render.
+        if (seeded.Length == 0) seeded = EmptyStateFor(row) + "\n";
+        ConsoleViewControl.Document = new TextDocument(seeded);
+        // [T56/3a] Proje-log modu başlığı: ← Back + proje adı + statü glyph/adı + (varsa) ▲ dependency issue.
+        ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
     }
 
-    /// <summary>[Fix wave 1, Finding 3] bkz. <see cref="OnProjectSelected"/> — aynı gerekçeyle <c>SeedRunDocument</c>.</summary>
-    private void OnBack(object sender, RoutedEventArgs e)
+    /// <summary>[Fix wave 1, Finding 3] bkz. <see cref="OnProjectSelected"/> — aynı gerekçeyle <c>SeedRunDocument</c>.
+    /// [T56/3a] ConsoleHeader.BackRequested'tan çağrılır; başlık anlatı moduna ActiveProjectId=null PropertyChanged'ı
+    /// üzerinden döner (bkz. constructor).</summary>
+    private void OnBack()
     {
         _vm.ShowRun();
         ConsoleViewControl.Document = new TextDocument(_vm.SeedRunDocument());
     }
+
+    // [T56/3a] Boş proje logu için design-v1 §2.5 metinleri. sha/deps gerçek kaynağı 3a'da YOK — design örnek
+    // değerleri (placeholder) kullanılır; gerçek "son başarılı build"/bekleyen-bağımlılık verisi ileride bağlanır.
+    private static string EmptyStateFor(ProjectRowViewModel row) => row.State switch
+    {
+        ProjectRowState.Skipped => Console.ConsoleEmptyState.Skipped("a3f81c2"),
+        ProjectRowState.Pending => Console.ConsoleEmptyState.Queued(row.DepIssues ?? ["Sales.Core", "Security"]),
+        _ => Console.ConsoleEmptyState.NoLog,
+    };
 
     private async Task StartEngineAsync()
     {

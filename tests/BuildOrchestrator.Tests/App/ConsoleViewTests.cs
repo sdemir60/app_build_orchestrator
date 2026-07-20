@@ -37,7 +37,8 @@ public class ConsoleViewTests
     public void Editor_is_read_only_no_wrap_and_uses_embedded_console_font()
     {
         var view = new ConsoleView();
-        var editor = Assert.IsType<TextEditor>(view.Content);
+        // [T56/3a] Content artık editör+overlay Grid'i; editöre public Editor erişimcisinden ulaşılır.
+        var editor = view.Editor;
 
         Assert.True(editor.IsReadOnly);
         Assert.False(editor.WordWrap);
@@ -61,6 +62,6 @@ public class ConsoleViewTests
         view.Document = swapped;
 
         Assert.Same(swapped, view.Document);
-        Assert.Equal("swapped content", ((TextEditor)view.Content).Document.Text);
+        Assert.Equal("swapped content", view.Editor.Document.Text);
     }
 }

@@ -99,6 +99,11 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly StringBuilder _runText = new();
     private readonly Dictionary<string, StringBuilder> _projectText = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<ProjectLogEvent>> _liveLines = new(StringComparer.OrdinalIgnoreCase);
+    // [T56/3a] "N lines" TAM tampon sayacı (render dilimi DEĞİL, Ek A #23). _gate altında O(1) artırılır — her
+    // append tam bir satır ('\n' sonekli) eklediğinden konsol başlığı (ConsoleHeader) bunu okur. Marshal-free
+    // OnProjectLog yolundan yazıldığı için ObservableProperty DEĞİL; UI thread'i _gate altında okur (GetActiveLineCount).
+    private int _runLineCount;
+    private readonly Dictionary<string, int> _projectLineCount = new(StringComparer.OrdinalIgnoreCase);
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde dokunulur (LoadProjectLogAsync + OnProjectLogChunk)
 
     private string? _currentRunId;
@@ -203,6 +208,8 @@ public sealed partial class RunViewModel : ObservableObject
             _liveLines.Clear();
             _projectText.Clear();
             _runText.Clear();
+            _runLineCount = 0;
+            _projectLineCount.Clear();
         }
         // [Fix wave 2, Finding 1] gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
         // burada geri açılmalı — aksi halde hiçbir engine event'i asla gelmeyeceğinden (ne runStarted ne
@@ -484,6 +491,7 @@ public sealed partial class RunViewModel : ObservableObject
 
             // Run dokümanı proje modunda bile birikmeye devam eder — ekranda görünmese de.
             _runText.Append(e.Text).Append('\n');
+            _runLineCount++;
             if (string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
                 AppendProjectTextLocked(e.ProjectId, e.Text);
 
@@ -502,6 +510,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (!_projectText.TryGetValue(projectId, out var sb))
             _projectText[projectId] = sb = new StringBuilder();
         sb.Append(text).Append('\n');
+        _projectLineCount[projectId] = (_projectLineCount.TryGetValue(projectId, out var n) ? n : 0) + 1;
     }
 
     private void AppendRunLine(string text)
@@ -510,8 +519,28 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate)
         {
             _runText.Append(text).Append('\n');
+            _runLineCount++;
             if (ActiveProjectId is null) _console.Post(text);
         }
+    }
+
+    /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
+    /// TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). UI thread'inde çağrılır; sayaçlar arka plandan
+    /// (marshal-free OnProjectLog) yazıldığından okuma _gate altındadır.</summary>
+    public int GetActiveLineCount()
+    {
+        lock (_gate)
+            return ActiveProjectId is null
+                ? _runLineCount
+                : _projectLineCount.TryGetValue(ActiveProjectId, out var n) ? n : 0;
+    }
+
+    private static int CountLines(StringBuilder sb)
+    {
+        int n = 0;
+        for (int i = 0; i < sb.Length; i++)
+            if (sb[i] == '\n') n++;
+        return n;
     }
 
     public string GetRunDocumentText() { lock (_gate) return _runText.ToString(); }
@@ -608,6 +637,7 @@ public sealed partial class RunViewModel : ObservableObject
                 foreach (var line in buffered.Where(l => l.LineNumber > e.ThroughLineNumber).OrderBy(l => l.LineNumber))
                     stitched.Append(line.Text).Append('\n');
             _projectText[e.ProjectId] = stitched;
+            _projectLineCount[e.ProjectId] = CountLines(stitched); // [T56/3a] dikilmiş tam log satır sayısı
             ActiveProjectId = e.ProjectId;
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
