@@ -29,7 +29,14 @@ public sealed class WorkspaceScanner
     {
         foreach (var file in Directory.EnumerateFiles(dir))
         {
-            if (file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) csproj.Add(Path.GetFullPath(file));
+            if (file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                // Canlı build sırasında WPF MarkupCompilePass proje klasöründe (obj DEĞİL) geçici
+                // "<Ad>_<8hex>_wpftmp.csproj" üretip saniyeler içinde siler — kalıcı proje değil,
+                // canlı build artefaktı; scan ile silinme arasındaki yarışı önlemek için atla.
+                if (file.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase)) continue;
+                csproj.Add(Path.GetFullPath(file));
+            }
             else if (file.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)) sln.Add(Path.GetFullPath(file));
         }
         foreach (var sub in Directory.EnumerateDirectories(dir))

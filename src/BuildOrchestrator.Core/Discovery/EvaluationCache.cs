@@ -17,12 +17,31 @@ public sealed class EvaluationCache(string cachePath)
     private readonly Dictionary<string, Entry> _entries = Load(cachePath);
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
-    public EvaluatedProject GetOrEvaluate(string csprojPath, Func<string, EvaluatedProject> evaluate)
+    /// <summary>
+    /// Canlı build ↔ scan yarışı [Task 0/It-4a]: scanner bir .csproj'u bulduktan sonra bu çağrı
+    /// gerçekleşene kadar dosya kaybolabilir (ör. WPF wpftmp geçici projesi scanner filtresini
+    /// aşarsa — savunmanın ikinci katı). Erişilemeyen dosya için THROW ETMEZ: daha önce cache'e
+    /// girmişse mevcut girdi AYNEN döner (bu "yeniden değerlendir" DEĞİL — kalıcı bir dosya
+    /// gerçekten silinmişse bir sonraki Sync onu zaten görmez); hiç girmemişse <c>evaluate</c>
+    /// çağrılmadan <c>null</c> döner (girdi güvenle atlanır).
+    /// </summary>
+    public EvaluatedProject? GetOrEvaluate(string csprojPath, Func<string, EvaluatedProject> evaluate)
     {
         csprojPath = Path.GetFullPath(csprojPath);
+        EvaluatedProject? Stale() => _entries.TryGetValue(csprojPath, out var s) ? s.Project : null;
+
         var info = new FileInfo(csprojPath);
-        long mtime = info.LastWriteTimeUtc.Ticks;
-        long length = info.Length;
+        long mtime, length;
+        try
+        {
+            if (!info.Exists) return Stale();
+            mtime = info.LastWriteTimeUtc.Ticks;
+            length = info.Length;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException)
+        {
+            return Stale(); // dosya info okunurken kayboldu (TOCTOU) — aynı tolerans
+        }
         if (_entries.TryGetValue(csprojPath, out var e))
         {
             if (e.MtimeTicks == mtime && e.Length == length) return e.Project; // hızlı yol: mtime+size eşit

@@ -91,11 +91,12 @@ public static class Program
                 ? trackedResult.Value! : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             // projectId (tam csproj yolu) → EvaluatedProject: cache SICAK (Build zaten değerlendirdi) — bu re-call
-            // mtime+size hızlı yolundan bellekten döner, XML yeniden okunmaz.
-            var evaluatedById = scan.CsprojPaths.ToDictionary(
-                p => Path.GetFullPath(p),
-                p => cache.GetOrEvaluate(p, evaluator.Evaluate),
-                StringComparer.OrdinalIgnoreCase);
+            // mtime+size hızlı yolundan bellekten döner, XML yeniden okunmaz. GetOrEvaluate canlı build ↔ scan
+            // yarışında kaybolan bir dosya için null dönebilir [Task 0/It-4a] — o yollar burada sessizce elenir.
+            var evaluatedById = scan.CsprojPaths
+                .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
+                .Where(x => x.Project is not null)
+                .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
 
             bool inPlace = !cmd.UseWorktree; // worktree yolu App/Program tarafından HENÜZ hazırlanmıyor → in-place
             var (bound, signatures) = IncrementalRunBinder.Bind(
