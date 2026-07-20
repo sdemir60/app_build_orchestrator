@@ -163,4 +163,55 @@ public class ConsoleViewTests
             "scroll-up (browse) durumunda belge kırpılmamalı");
         Assert.Contains("live0\n", view.Document.Text); // eski satırlar korunur (chunk gezme bozulmaz)
     }
+
+    // ---------------------------------------------------------------- [3b C-1] follow-trim + scroll-to-top: delik yok
+
+    [StaFact]
+    public void Project_mode_follow_trim_then_scroll_to_top_recovers_backlog_without_a_hole()
+    {
+        // [C-1 regression] Follow-trim, proje modunda belge tepesinden satır siler; bu, chunk loader'ın
+        // _loadedFrom index'ini de ilerletmeli. Aksi halde sonraki scroll-to-top prepend'i STALE index'e karşı
+        // YANLIŞ dilimi yükler → kırpılan satırlar KALICI kaybolur (delik) ve _loadedFrom onları "yüklü" sandığı
+        // için geri getirilemez. Reviewer repro şekli: _loadedFrom>0 olan bir kaskat + çok sayıda canlı append
+        // (follow aktif) + tepeye kaydırma. Layout: offset telafisi ölçülebilsin diye.
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
+        var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
+        view.PlayCascade(all, buildInProgress: true); // instant (headless), _projectMode, StickToBottom=true (varsayılan)
+        Assert.StartsWith("orig100\n", view.Document.Text);
+        Assert.DoesNotContain("orig99\n", view.Document.Text); // ilk 100 chunk loader backlog'unda
+
+        // Chatty canlı build: follow aktifken 250 satır append → tail-trim TÜM orijinal satırları belgeden atar.
+        for (int i = 0; i < 250; i++) view.AppendBatch($"live{i}\n");
+        string liveTail = view.Document.Text;              // belgede kalan salt-live kuyruk (orijinaller kırpıldı)
+        Assert.Contains("live249\n", liveTail);            // en yeni korunur
+        Assert.DoesNotContain("orig", liveTail);           // tüm orijinaller belgeden kırpıldı (backlog'a düştü)
+
+        // Kullanıcı yukarı kaydırır: arm → scroll-to-top → önceki chunk prepend edilir.
+        view.EvaluateChunkScroll(100.0); // arm (tepeden uzaklaş)
+        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk
+
+        // (a) DELİK YOK: prepend, mevcut live kuyruğun ÖNÜNE TAM olarak orig100..orig299'u (kırpılan backlog'un
+        // sonu) dikmeli — kuyruk aynen korunur, araya kayıp/tekrar girmez. STALE index bug'ında _loadedFrom=100
+        // kalır → from=100-200→0 hesaplanır, orig0..orig99 yüklenir ve orig100..orig299 KALICI kaybolur (delik).
+        string expectedAfterFirst = string.Concat(Enumerable.Range(100, 200).Select(i => $"orig{i}\n")) + liveTail;
+        Assert.Equal(expectedAfterFirst, view.Document.Text); // bug'da orig0.. yüklenir → eşitlik tutmaz (RED)
+
+        // (b) VerticalOffset prepend edilen dilimin piksel yüksekliği kadar telafi edildi (viewport zıplamaz).
+        Assert.NotNull(view.LastPrepend);
+        var (before, delta, applied) = view.LastPrepend!.Value;
+        Assert.True(delta > 0, $"prepend edilen dilimin piksel yüksekliği > 0 olmalı (delta={delta})");
+        Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring
+
+        // Tekrar tepeye kaydır: kalan backlog (orig0..orig99) da geri gelir → HİÇBİR satır kalıcı kayıp değil,
+        // belge orig0..orig299 + live kuyruğu olarak TAM ve bitişik (contiguous).
+        view.EvaluateChunkScroll(100.0);
+        view.EvaluateChunkScroll(0.0);
+        string expectedAfterSecond = string.Concat(Enumerable.Range(0, 300).Select(i => $"orig{i}\n")) + liveTail;
+        Assert.Equal(expectedAfterSecond, view.Document.Text);
+    }
 }

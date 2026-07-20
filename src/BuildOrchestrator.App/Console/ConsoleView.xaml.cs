@@ -89,9 +89,12 @@ public partial class ConsoleView : UserControl
 
     /// <summary>
     /// UI thread'inde çağrılır. TEK batch ekler — asla satır satır bölmez, asla <c>Dispatcher.Invoke</c>
-    /// çağırmaz (çağıranın/Task 12'nin sorumluluğu). [A13.2 ZORUNLU sıra]. [3b] Run modunda belge, son
-    /// <see cref="RenderSliceLines"/> satırla sınırlanır (baştan kırpma); proje modunda kırpma YOK (chunk loader
-    /// eski satırları yönetir).
+    /// çağırmaz (çağıranın/Task 12'nin sorumluluğu). [A13.2 ZORUNLU sıra]. [3b] Run modunda belge daima son
+    /// <see cref="RenderSliceLines"/> satırla sınırlanır (baştan kırpma). Proje modunda YALNIZ alta-yapışıkken
+    /// (follow) aynı tail-trim uygulanır (chatty build belgeyi sınırsız büyütmesin, §3.6); kırpılan her satır için
+    /// <see cref="_loadedFrom"/> ilerletilir ki chunk loader index'i belgenin gerçek ilk satırıyla TUTARLI kalsın
+    /// [C-1]. Kırpılan satırlar <see cref="_projectAllLines"/>'ta durur → tepeye kaydırınca prepend onları DELİKSİZ
+    /// geri yükler. Kullanıcı yukarı kaydırıp chunk gezerken (follow kapalı) trim YOK — prepend'le çakışmaz.
     /// </summary>
     public void AppendBatch(string text)
     {
@@ -103,7 +106,16 @@ public partial class ConsoleView : UserControl
             // Run modunda daima; proje modunda YALNIZ alta-yapışıkken (follow) tail-trim: chatty bir build
             // (MSBuild hacmi) belgeyi sınırsız büyütmesin — render dilimi kadar tutulur (§3.6). [3b M-2]
             // Kullanıcı yukarı kaydırıp chunk gezerken (StickToBottom=false) trim YOK — prepend'le çakışmaz.
-            if (_trimTail || (_projectMode && StickToBottom)) TrimToRenderSlice(document);
+            if (_trimTail || (_projectMode && StickToBottom))
+            {
+                int trimmed = TrimToRenderSlice(document);
+                // [C-1] Tepeden K satır kırpıldıysa belgenin ilk satırı _projectAllLines[_loadedFrom + K] olur.
+                // Chunk loader index'ini K kadar ilerlet (aksi halde stale _loadedFrom → sonraki scroll-to-top
+                // prepend'i YANLIŞ dilimi yükler, kırpılan satırlar KALICI kaybolur = delik). Yalnız proje modunda:
+                // run modunun (_trimTail) chunk bookkeeping'i yoktur (_projectAllLines boş, _loadedFrom=0). Üst sınır
+                // _projectAllLines.Count: tüm backlog kırpılınca belgenin ilk satırı live bir satırdır (index'i yok).
+                if (_projectMode) _loadedFrom = Math.Min(_loadedFrom + trimmed, _projectAllLines.Count);
+            }
         }
         finally
         {
@@ -114,12 +126,14 @@ public partial class ConsoleView : UserControl
     }
 
     // Belgeyi son RenderSliceLines satıra kırpar (baştaki fazla satırları TEK Remove ile siler).
-    private static void TrimToRenderSlice(TextDocument document)
+    // Tepeden silinen satır sayısını döndürür ([C-1] proje modunda _loadedFrom'u ilerletmek için).
+    private static int TrimToRenderSlice(TextDocument document)
     {
         int excess = document.LineCount - RenderSliceLines;
-        if (excess <= 0) return;
+        if (excess <= 0) return 0;
         var lastToRemove = document.GetLineByNumber(excess); // 1..excess satırlarını (ayraçlarıyla) sil
         document.Remove(0, lastToRemove.Offset + lastToRemove.TotalLength);
+        return excess;
     }
 
     // ---------------------------------------------------------------- colorizer
