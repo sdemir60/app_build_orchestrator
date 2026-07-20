@@ -13,12 +13,7 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class MotionResourcesTests
 {
-    private sealed class FakeMotionSignal : IMotionSignal
-    {
-        public bool AnimationsEnabled { get; set; } = true;
-        public event EventHandler? Changed;
-        public void Raise() => Changed?.Invoke(this, EventArgs.Empty);
-    }
+    // FakeMotionSignal: bkz. FakeMotionSignal.cs (ReducedMotionTests ile paylaşılan tek tanım).
 
     // pack:// URI'ler gerçek bir Application olmadan (headless test host) çözülmez (FontAssetTests'teki
     // TestAssets deseniyle aynı: dosyadan doğrudan XamlReader ile yükle).

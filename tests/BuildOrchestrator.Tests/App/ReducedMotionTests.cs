@@ -10,12 +10,7 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ReducedMotionTests
 {
-    private sealed class FakeMotionSignal : IMotionSignal
-    {
-        public bool AnimationsEnabled { get; set; } = true;
-        public event EventHandler? Changed;
-        public void Raise() => Changed?.Invoke(this, EventArgs.Empty);
-    }
+    // FakeMotionSignal: bkz. FakeMotionSignal.cs (MotionResourcesTests ile paylaşılan tek tanım).
 
     [Fact]
     public void AnimationsEnabled_reflects_the_injected_signal_at_construction()
