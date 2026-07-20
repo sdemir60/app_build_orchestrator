@@ -119,9 +119,14 @@ public partial class GraphView : UserControl
 
     private void OnUnloadedUnsubscribeMotion(object? sender, RoutedEventArgs e)
     {
-        if (_subscribedMotion is null) return;
-        _subscribedMotion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-        _subscribedMotion = null;
+        if (_subscribedMotion is not null)
+        {
+            _subscribedMotion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+            _subscribedMotion = null;
+        }
+        // [M-d] View unload olurken paylaşımlı dash clock'u da bırak — aksi halde (M-3'ün kapsamadığı bu yol
+        // için) timing engine, view artık ağaçta olmasa bile 30fps'te uyanık kalırdı.
+        ReleaseDashClock();
     }
 
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
@@ -176,6 +181,11 @@ public partial class GraphView : UserControl
         ArgumentNullException.ThrowIfNull(edges);
 
         World.Children.Clear();
+        // [M-d] Atılacak eski görsellerin (varsa) sonsuz nabız animasyonunu bırak — aksi halde bunlar artık
+        // ağaçta/_nodes'ta olmasa bile timing engine'de 30fps'te uyanık kalırlardı (M-3'ün kapsadığı dash clock
+        // sızıntısıyla AYNI sınıf, düğüm nabzı için).
+        foreach (var stale in _nodes.Values)
+            StopPulse(stale);
         _nodes.Clear();
         _edges.Clear();
         _flowingEdges.Clear();
@@ -427,8 +437,7 @@ public partial class GraphView : UserControl
 
         if (!shouldPulse)
         {
-            visual.PulseHost.BeginAnimation(OpacityProperty, null);
-            visual.PulseHost.Opacity = 1.0;
+            StopPulse(visual);
             return;
         }
 
@@ -441,6 +450,15 @@ public partial class GraphView : UserControl
         pulse.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(full), spline));
         Timeline.SetDesiredFrameRate(pulse, DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
         visual.PulseHost.BeginAnimation(OpacityProperty, pulse);
+    }
+
+    /// <summary>[M-d] Nabız animasyonunu (varsa) bırakıp opaklığı 1.0'a sabitler — hem building'den çıkan
+    /// düğümler (<see cref="ApplyBuildingPulse"/>) hem <see cref="SetGraph"/>'ta atılan eski görseller için TEK
+    /// durdurma yolu (kopya YASAK, CLAUDE.md).</summary>
+    private static void StopPulse(GraphNodeVisual visual)
+    {
+        visual.PulseHost.BeginAnimation(OpacityProperty, null);
+        visual.PulseHost.Opacity = 1.0;
     }
 
     // ---------------------------------------------------------------- seçim (halka + sönme)

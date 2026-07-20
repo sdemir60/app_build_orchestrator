@@ -69,7 +69,7 @@
                 <Button Content="Reset graph (replay reveal)" Margin="0,0,0,6" Click="OnGraphReset" />
                 <Button Content="Mark run settled (camera → center)" Margin="0,0,0,6" Click="OnGraphSettled" />
                 <TextBlock x:Name="GraphSelectionText" Text="selection: —"
-                           FontFamily="Consolas" FontSize="11"
+                           FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
                            Foreground="{StaticResource Brush.TextDim}" Margin="0,2,0,0" />
                 <TextBlock Text="Düğüme tıkla → kamera 460ms kayar + komşu-dışı %25'e söner; boş alana tıkla → seçim kalkar. Failed düğümün dalı kırmızı statik kesikli + ▲ rozet."
                            Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
@@ -83,7 +83,7 @@
                         BorderBrush="{StaticResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
                     <DockPanel Margin="10,0" LastChildFill="True">
                         <TextBlock x:Name="ProjectsMode" DockPanel.Dock="Right" VerticalAlignment="Center"
-                                   FontFamily="Consolas" FontSize="11" Foreground="{StaticResource Brush.TextFaint}" />
+                                   FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11" Foreground="{StaticResource Brush.TextFaint}" />
                         <controls:TrackedTextBlock Text="PROJECTS" VerticalAlignment="Center" />
                     </DockPanel>
                 </Border>

@@ -29,7 +29,7 @@
                 Foreground="{DynamicResource Brush.TextSecondary}" Cursor="Hand"
                 VerticalAlignment="Center" Click="OnBackClick" />
         <TextBlock x:Name="ProjectNameText" Visibility="Collapsed" Margin="8,0,0,0" VerticalAlignment="Center"
-                   FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource Brush.TextPrimary}"
+                   FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="12" Foreground="{DynamicResource Brush.TextPrimary}"
                    TextTrimming="CharacterEllipsis" />
         <TextBlock x:Name="StatusGlyphText" Visibility="Collapsed" Margin="8,0,0,0" VerticalAlignment="Center"
                    FontSize="12" />

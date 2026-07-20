@@ -204,6 +204,11 @@ public class GraphRenderTests
     public void Flowing_edges_are_UIElement_paths_bound_to_one_single_shared_dash_clock()
     {
         var view = NewView(true);
+        // [M-a] Aşağıdaki "clock local değerin üstüne biniyor mu" ispatı GERÇEK bir compositor tick'i ister —
+        // AnimationHost'un belgelediği (T59, ScrollAnimatorTests'te de aynı desen) doğrulanmış kısıt: bir
+        // PresentationSource'a (HWND) bağlı olmayan elemanda ApplyAnimationClock HİÇBİR gözlenebilir etki
+        // üretmez (GetValue hep taban/local değeri döner, tick hiç olmaz).
+        var window = AnimationHost.ShowOffscreen(view, width: 600, height: 400);
         // İki kenar birden akar: Data.Core→Server.Api ve Data.Core→Web.Portal (ikisi de building).
         view.SetGraph(Nodes(apiStatus: GraphStatus.Building, portalStatus: GraphStatus.Building), Edges());
 
@@ -213,13 +218,21 @@ public class GraphRenderTests
         Assert.NotNull(clock);
 
         // [M-4] "clock var" yetmez — HER akan Path'in StrokeDashOffset'i GERÇEKTEN clock'a bağlı olmalı
-        // (DrawingContext Pen.DashStyle.Offset güvenilmez olduğu için A13.2 bu kablajı şart koşar):
-        // animasyon değeri taban (local) değerin ÜSTÜNDE yaşar → HasAnimatedProperties + local value hâlâ 0.
+        // (DrawingContext Pen.DashStyle.Offset güvenilmez olduğu için A13.2 bu kablajı şart koşar).
+        // [M-a] İspat: local değeri GÖRÜNÜR bir şeye zorla (99) — GetAnimationBaseValue burada AYIRT EDİCİ
+        // DEĞİLDİR (clock bağlı olsun olmasın hep son atanan local değeri döner, hiç atanmamışsa varsayılan 0 —
+        // önceki assert bu yüzden tautolojikti). Asıl kanıt: clock GERÇEKTEN üstüne biniyorsa (tick'ten SONRA)
+        // GetValue hâlâ 99 OLAMAZ — görünen offset'i ÜRETEN şey clock'tur, düz bir atama değil.
         Assert.All(view.FlowingEdgePaths, p =>
         {
             Assert.True(p.HasAnimatedProperties, "akan Path clock'a bağlı değil");
-            // Taban (animasyonsuz) değer hâlâ 0 — yani görünen offset'i ÜRETEN şey clock'tur, düz bir atama değil.
-            Assert.Equal(0.0, (double)p.GetAnimationBaseValue(ShapePath.StrokeDashOffsetProperty)!);
+            DispatcherPump.PumpUntil(
+                () => DependencyPropertyHelper.GetValueSource(p, ShapePath.StrokeDashOffsetProperty).IsAnimated,
+                TimeSpan.FromSeconds(2));
+            Assert.True(DependencyPropertyHelper.GetValueSource(p, ShapePath.StrokeDashOffsetProperty).IsAnimated,
+                "compositor hiç tick etmedi — clock canlı değil");
+            p.StrokeDashOffset = 99;
+            Assert.NotEqual(99.0, (double)p.GetValue(ShapePath.StrokeDashOffsetProperty));
         });
         // Akmayan bir kenarda animasyon YOK — yukarıdaki bayrak akan kenarlara özgüdür.
         Assert.False(view.EdgeVisuals.Single(e => e.Model.From == "OSYS.Base").Path.HasAnimatedProperties);
@@ -228,6 +241,7 @@ public class GraphRenderTests
         view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Building, apiStatus: GraphStatus.Building));
         Assert.Same(clock, view.SharedDashClock);
         Assert.Equal(2, view.FlowingEdgePaths.Count);
+        GC.KeepAlive(window); // canlı tutulmalı — kapatmak şart değil (AnimationHost dokümantasyonu)
     }
 
     [StaFact]
@@ -306,6 +320,20 @@ public class GraphRenderTests
     }
 
     [StaFact]
+    public void Unloading_the_view_releases_a_running_shared_dash_clock()
+    {
+        // [M-d] M-3 yalnız "son akan kenar durdu" yolunu kapatır — view TAMAMEN ağaçtan kalktığında da (henüz
+        // akan kenar varken) clock bırakılmalı, aksi halde timing engine view'dan bağımsız 30fps'te uyanık kalır.
+        var view = NewView(true);
+        view.SetGraph(Nodes(apiStatus: GraphStatus.Building), Edges());
+        Assert.NotNull(view.SharedDashClock);
+
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+
+        Assert.Null(view.SharedDashClock);
+    }
+
+    [StaFact]
     public void Reduced_motion_keeps_the_dash_but_never_starts_a_clock()
     {
         var view = NewView(false);
@@ -354,6 +382,26 @@ public class GraphRenderTests
         Assert.False(settled.IsPulsing);
         Assert.False(settled.PulseHost.HasAnimatedProperties);
         Assert.Equal(1.0, settled.PulseHost.Opacity);
+    }
+
+    [StaFact]
+    public void Re_SetGraph_stops_the_pulse_on_the_discarded_old_visuals()
+    {
+        // [M-d] M-3'ün dash-clock sızıntısıyla AYNI sınıf: SetGraph eski görselleri _nodes'tan ATAR ama
+        // GC'ye bırakılmadan önce sonsuz nabız animasyonu durdurulmazsa timing engine 30fps'te uyanık kalırdı.
+        var view = NewView(true);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        var stale = view.NodeVisuals["OSYS.Data.Core"];
+        Assert.True(stale.PulseHost.HasAnimatedProperties); // nabız gerçekten dönüyor
+
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges()); // yeni topoloji → eski görsel ATILIR
+
+        Assert.False(stale.PulseHost.HasAnimatedProperties, "atılan eski görselin nabzı hâlâ dönüyor — sızıntı");
+        Assert.Equal(1.0, stale.PulseHost.Opacity);
+        // Yeni görsel kendi nabzını normal şekilde kurar — StopPulse yalnız ESKİYİ durdurur, yeniyi etkilemez.
+        var fresh = view.NodeVisuals["OSYS.Data.Core"];
+        Assert.NotSame(stale, fresh);
+        Assert.True(fresh.PulseHost.HasAnimatedProperties);
     }
 
     [StaFact]
