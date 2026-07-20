@@ -1,5 +1,6 @@
 using System.Windows;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Spikes;
@@ -53,8 +54,36 @@ public partial class It4aLabWindow : Window
     public It4aLabWindow()
     {
         InitializeComponent();
-        Loaded += (_, _) => SeedNarrative();
+        Loaded += (_, _) =>
+        {
+            SeedNarrative();
+            LoadSampleLayers(); // [T58] açılışta 6 örnek katmanla göster (prototip "Load sample layers")
+        };
     }
+
+    // [T58] SampleGraphData'nın 36 OSYS düğümünü katman indeksine göre 6 gruba böl (build sırası korunur —
+    // Nodes zaten L0..L5 sıralı). Grup adı = Layers[i].Name (caps başlık) + satır adedi başlıkta gösterilir.
+    private void LoadSampleLayers()
+    {
+        var groups = SampleGraphData.Layers
+            .Select(layer => new StickyLayerList.LayerGroup(
+                layer.Name,
+                SampleGraphData.Nodes.Where(n => n.Layer == layer.Id).Cast<object>().ToList()))
+            .Where(g => g.Rows.Count > 0)
+            .ToList();
+        LabProjects.SetGroups(groups);
+        ProjectsMode.Text = $"{groups.Count} layers";
+    }
+
+    // [T58] Varsayılan: katman YOK → tek başlıksız liste, build sırasında (sticky devrede değil).
+    private void LoadFlatProjects()
+    {
+        LabProjects.SetGroups([new StickyLayerList.LayerGroup("", SampleGraphData.Nodes.Cast<object>().ToList())]);
+        ProjectsMode.Text = "build-order";
+    }
+
+    private void OnProjectsLayers(object sender, RoutedEventArgs e) => LoadSampleLayers();
+    private void OnProjectsFlat(object sender, RoutedEventArgs e) => LoadFlatProjects();
 
     private void SeedNarrative()
     {

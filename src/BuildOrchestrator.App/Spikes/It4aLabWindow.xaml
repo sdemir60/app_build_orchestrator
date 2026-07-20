@@ -28,6 +28,7 @@
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="360" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
@@ -42,12 +43,32 @@
                 <Button Content="Project-log · Skipped (empty)" Margin="0,0,0,6" Click="OnProjectLogSkipped" />
                 <Button Content="Project-log · Queued (empty)" Margin="0,0,0,6" Click="OnProjectLogQueued" />
                 <Button Content="Back to narrative" Margin="0,0,0,6" Click="OnBackToNarrative" />
-                <TextBlock Text="Reduced-motion OS ayarında typewriter + kaskat INSTANT olmalı (blink/fade yok). Copy-log butonu başlıkta."
+
+                <!-- [T58] Sticky katman başlıkları demo tetikleyicileri -->
+                <TextBlock Text="Projects sticky (T58)" Foreground="{StaticResource Brush.TextSecondary}"
+                           FontSize="12" Margin="0,16,0,8" />
+                <Button Content="Flat list (build order)" Margin="0,0,0,6" Click="OnProjectsFlat" />
+                <Button Content="Load sample layers (6)" Margin="0,0,0,6" Click="OnProjectsLayers" />
+                <TextBlock Text="Kaydır: katman başlıkları birikimli yapışır (i×24px), alttaki üsttekini iter. Prototiple yan yana karşılaştır."
                            Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
-                           TextWrapping="Wrap" Margin="0,8,0,0" />
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
             </StackPanel>
 
-            <DockPanel Grid.Column="1">
+            <!-- [T58] Projects listesi paneli (sticky overlay + LayoutMetrics) -->
+            <DockPanel Grid.Column="1" Margin="0,0,12,0">
+                <Border DockPanel.Dock="Top" Height="28" Margin="0,0,0,6"
+                        Background="{StaticResource Brush.Surface}"
+                        BorderBrush="{StaticResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
+                    <DockPanel Margin="10,0" LastChildFill="True">
+                        <TextBlock x:Name="ProjectsMode" DockPanel.Dock="Right" VerticalAlignment="Center"
+                                   FontFamily="Consolas" FontSize="11" Foreground="{StaticResource Brush.TextFaint}" />
+                        <controls:TrackedTextBlock Text="PROJECTS" VerticalAlignment="Center" />
+                    </DockPanel>
+                </Border>
+                <controls:StickyLayerList x:Name="LabProjects" />
+            </DockPanel>
+
+            <DockPanel Grid.Column="2">
                 <appConsole:ConsoleHeader x:Name="LabHeader" DockPanel.Dock="Top" Margin="0,0,0,6" />
                 <appConsole:ConsoleView x:Name="LabConsole" />
             </DockPanel>
