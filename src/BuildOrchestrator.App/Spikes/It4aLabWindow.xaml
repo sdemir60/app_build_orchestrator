@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
         xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
+        xmlns:graph="clr-namespace:BuildOrchestrator.App.Graph"
         Title="It-4a Lab — UI primitifleri (dev-only)"
         Width="1400" Height="900"
         Background="{StaticResource Brush.SurfaceBase}"
@@ -58,7 +59,19 @@
                            FontSize="12" Margin="0,16,0,8" />
                 <Button Content="Start run simulation" Margin="0,0,0,6" Click="OnStartSim" />
                 <Button Content="Stop run simulation" Margin="0,0,0,6" Click="OnStopSim" />
-                <TextBlock Text="Koşu simülasyonu: liste frontier'i yumuşak takip eder + konsola satır akar. Elle yukarı kaydır (liste VEYA konsol) → takip/yapışıklık durur + ⌄ latest pill çıkar; pill'e tıkla → yumuşak dön/dibe."
+                <TextBlock Text="Koşu simülasyonu: liste frontier'i yumuşak takip eder + konsola satır akar + GRAF'ta building frontier akan amber dash ile aşağı iner. Elle yukarı kaydır (liste VEYA konsol) → takip/yapışıklık durur + ⌄ latest pill çıkar; pill'e tıkla → yumuşak dön/dibe."
+                           Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                <!-- [T63] Dependency graph demo tetikleyicileri -->
+                <TextBlock Text="Dependency graph (T63)" Foreground="{StaticResource Brush.TextSecondary}"
+                           FontSize="12" Margin="0,16,0,8" />
+                <Button Content="Reset graph (replay reveal)" Margin="0,0,0,6" Click="OnGraphReset" />
+                <Button Content="Mark run settled (camera → center)" Margin="0,0,0,6" Click="OnGraphSettled" />
+                <TextBlock x:Name="GraphSelectionText" Text="selection: —"
+                           FontFamily="Consolas" FontSize="11"
+                           Foreground="{StaticResource Brush.TextDim}" Margin="0,2,0,0" />
+                <TextBlock Text="Düğüme tıkla → kamera 460ms kayar + komşu-dışı %25'e söner; boş alana tıkla → seçim kalkar. Failed düğümün dalı kırmızı statik kesikli + ▲ rozet."
                            Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
                            TextWrapping="Wrap" Margin="0,4,0,0" />
             </StackPanel>
@@ -82,11 +95,22 @@
                 </Grid>
             </DockPanel>
 
-            <DockPanel Grid.Column="2">
-                <appConsole:ConsoleHeader x:Name="LabHeader" DockPanel.Dock="Top" Margin="0,0,0,6" />
-                <!-- [T59] Konsolun `⌄ latest` pill'i ARTIK ConsoleView'ın kendi içinde (production) — burada ayrıca eklenmez. -->
-                <appConsole:ConsoleView x:Name="LabConsole" />
-            </DockPanel>
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1.1*" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- [T63] Dependency graph paneli (Shapes yolu) — 36 düğümlü örnek graf + koşu simülasyonu -->
+                <graph:GraphView x:Name="LabGraph" Grid.Row="0" Margin="0,0,0,10"
+                                 SelectionChanged="OnGraphSelectionChanged" />
+
+                <DockPanel Grid.Row="1">
+                    <appConsole:ConsoleHeader x:Name="LabHeader" DockPanel.Dock="Top" Margin="0,0,0,6" />
+                    <!-- [T59] Konsolun `⌄ latest` pill'i ARTIK ConsoleView'ın kendi içinde (production) — burada ayrıca eklenmez. -->
+                    <appConsole:ConsoleView x:Name="LabConsole" />
+                </DockPanel>
+            </Grid>
         </Grid>
     </DockPanel>
 </Window>

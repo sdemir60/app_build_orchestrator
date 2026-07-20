@@ -9,9 +9,9 @@ namespace BuildOrchestrator.App.Spikes;
 /// </summary>
 public static class SampleGraphData
 {
-    /// <summary>build-data.js LAYERS[i].name'deki "OSYS." önekini atar (kısa ad — graf düğüm etiketi).</summary>
-    public static string ShortName(string fullName) =>
-        fullName.StartsWith("OSYS.", StringComparison.Ordinal) ? fullName["OSYS.".Length..] : fullName;
+    /// <summary>build-data.js LAYERS[i].name'deki "OSYS." önekini atar (kısa ad — graf düğüm etiketi).
+    /// [T63] Tek tanım <see cref="Graph.GraphNode.ShortLabel"/>'dedir (kopya YASAK) — bu yalnız devralınan addır.</summary>
+    public static string ShortName(string fullName) => Graph.GraphNode.ShortLabel(fullName);
 
     public sealed record Layer(int Id, string Name);
 

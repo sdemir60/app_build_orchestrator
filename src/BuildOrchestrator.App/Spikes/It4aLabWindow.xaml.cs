@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Spikes;
@@ -59,6 +60,7 @@ public partial class It4aLabWindow : Window
         {
             SeedNarrative();
             LoadSampleLayers(); // [T58] açılışta 6 örnek katmanla göster (prototip "Load sample layers")
+            ResetGraph();       // [T63] 36 düğümlü örnek graf — hepsi discovered, katman katman belirir
         };
     }
 
@@ -146,6 +148,7 @@ public partial class It4aLabWindow : Window
         LabConsole.ShowRunDocument(""); // temiz sayfa — BottomAnchor yeniden dibe yapışır (T59)
         LabListPill.Visibility = Visibility.Collapsed;
         LabHeader.ShowNarrative(0);
+        LabGraph.IsSettled = false; // [T63] koşu başladı — kamera artık frontier'i izler
 
         _simTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = SimTickInterval };
         _simTimer.Tick += OnSimTick;
@@ -169,9 +172,67 @@ public partial class It4aLabWindow : Window
         LabProjects.FollowRow(_simIndex);
         LabConsole.AppendBatch($"{DateTime.Now:HH:mm:ss} ▸ building {node.Name} ({node.DurationMs}ms)\n");
         LabListPill.Visibility = LabProjects.IsFollowSuppressedByUser ? Visibility.Visible : Visibility.Collapsed;
+        // [T63] Aynı frontier grafı da sürer: tamamlananlar yeşil/kırmızı, o an derlenenler amber (kenarları akar).
+        LabGraph.UpdateStatuses(ComposeGraphNodes(_simIndex, SimStepRows));
 
         _simIndex += SimStepRows;
     }
+
+    // ---------------------------------------------------------------- [T63] dependency graph demo
+
+    private static readonly IReadOnlyList<GraphEdge> GraphEdges =
+        SampleGraphData.Edges.Select(e => new GraphEdge(e.From, e.To)).ToList();
+
+    /// <summary>Sync öncesi/başlangıç hâli: tüm düğümler <c>discovered</c> (kesikli çerçeve).</summary>
+    private static IReadOnlyList<GraphNode> DiscoveredGraphNodes() =>
+        SampleGraphData.Nodes.Select(n => new GraphNode(n.Name, n.Layer, GraphStatus.Discovered)).ToList();
+
+    /// <summary>
+    /// Simülasyonun o anki statü kesiti: build sırasındaki (SampleGraphData.Nodes = L0..L5) ilk
+    /// <paramref name="frontier"/> düğüm tamamlanmış (fails ise failed), sonraki
+    /// <paramref name="buildingCount"/> düğüm derleniyor, kalanı kuyrukta. Bir düğüm, bağımlılıklarından biri
+    /// failed ya da kendisi dep-hatası taşıyorsa dep-hatası taşır (kırmızı statik kesikli dal + ▲ rozet).
+    /// </summary>
+    private static IReadOnlyList<GraphNode> ComposeGraphNodes(int frontier, int buildingCount)
+    {
+        var statuses = new Dictionary<string, GraphStatus>(StringComparer.Ordinal);
+        var depIssues = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<GraphNode>(SampleGraphData.Nodes.Count);
+
+        for (int i = 0; i < SampleGraphData.Nodes.Count; i++)
+        {
+            var node = SampleGraphData.Nodes[i];
+            bool reached = i < frontier + buildingCount;
+            bool carriesIssue = node.Dependencies.Any(d =>
+                statuses.GetValueOrDefault(d) == GraphStatus.Failed || depIssues.Contains(d));
+            if (carriesIssue) depIssues.Add(node.Name);
+
+            var status =
+                i < frontier ? (node.Fails ? GraphStatus.Failed : GraphStatus.Succeeded)
+                : reached ? GraphStatus.Building
+                : GraphStatus.Queued;
+
+            statuses[node.Name] = status;
+            result.Add(new GraphNode(node.Name, node.Layer, status, HasDepIssue: carriesIssue && reached));
+        }
+
+        return result;
+    }
+
+    private void ResetGraph()
+    {
+        LabGraph.IsSettled = false;
+        LabGraph.SelectedNode = null;
+        LabGraph.SetGraph(DiscoveredGraphNodes(), GraphEdges);
+    }
+
+    private void OnGraphReset(object sender, RoutedEventArgs e) => ResetGraph();
+
+    // Koşu bitti/durduruldu → kamera grafın tam merkezine oturur (design-v1 §2.3).
+    private void OnGraphSettled(object sender, RoutedEventArgs e) => LabGraph.IsSettled = true;
+
+    private void OnGraphSelectionChanged(object? sender, string? selected) =>
+        GraphSelectionText.Text = $"selection: {selected ?? "—"}";
 
     // [T59] Liste pill tıklaması: "frontier'e dön" — kullanıcı-suppress'i yok sayarak son bilinen frontier satırına
     // yumuşak döner ve pill'i gizler (design-v1'in dip-pili değil, follow-mode'a özgü bir varyant — bkz. task-5-report.md).

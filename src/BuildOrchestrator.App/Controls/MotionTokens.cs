@@ -20,6 +20,22 @@ internal static class MotionTokens
     public static KeySpline ResolveKeySpline(FrameworkElement host, string key, KeySpline fallback)
         => host.TryFindResource(key) is KeySpline k ? k : fallback;
 
+    /// <summary>
+    /// From'SUZ, tek <see cref="SplineDoubleKeyFrame"/>'lik "hedefe git" animasyonu — CSS <c>transition</c>
+    /// paritesinin WPF karşılığı: <c>HandoffBehavior.SnapshotAndReplace</c> ile başlatıldığında uçuştaki bir
+    /// animasyonun O ANKİ değerinden devam eder (retarget), tıpkı CSS'in yeni bir hedefe geçişi gibi. WPF'in düz
+    /// <c>DoubleAnimation</c>'ı bir <c>KeySpline</c> alamadığı için keyframe biçimi kullanılır.
+    ///
+    /// <para>[T63] <see cref="ScrollAnimator.BuildAnimation"/> (T59, scroll offset) ve <c>GraphView</c>'ın kamera
+    /// transform'u BİREBİR aynı şekle ihtiyaç duyar — tek tanım burada (kopya YASAK, CLAUDE.md).</para>
+    /// </summary>
+    public static DoubleAnimationUsingKeyFrames SplineTo(double to, TimeSpan duration, KeySpline keySpline)
+    {
+        var animation = new DoubleAnimationUsingKeyFrames();
+        animation.KeyFrames.Add(new SplineDoubleKeyFrame(to, KeyTime.FromTimeSpan(duration), keySpline));
+        return animation;
+    }
+
     /// <summary>[M-1] <see cref="Console.ConsoleView.AnimateToBottom"/> ve
     /// <see cref="StickyLayerList.AnimateScrollTo"/>'nun BİREBİR aynı desenini (taze <c>AnimationsEnabled</c> +
     /// <c>Duration.Slow</c> + <c>KeySpline.EaseInOut</c> + <see cref="ScrollAnimator.AnimateTo"/>) tek yerde

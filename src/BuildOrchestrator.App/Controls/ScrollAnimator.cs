@@ -94,13 +94,10 @@ public static class ScrollAnimator
         return true;
     }
 
-    /// <summary>Saf fabrika — testler doğrudan çağırıp hedef/süre/eğriyi WPF clock'u hiç tetiklemeden doğrulayabilir.</summary>
+    /// <summary>Saf fabrika — testler doğrudan çağırıp hedef/süre/eğriyi WPF clock'u hiç tetiklemeden doğrulayabilir.
+    /// [T63] Gövde <see cref="MotionTokens.SplineTo"/>'ya taşındı (graf kamerası AYNI şekli kullanır — kopya YASAK).</summary>
     internal static DoubleAnimationUsingKeyFrames BuildAnimation(double to, TimeSpan duration, KeySpline keySpline)
-    {
-        var animation = new DoubleAnimationUsingKeyFrames();
-        animation.KeyFrames.Add(new SplineDoubleKeyFrame(to, KeyTime.FromTimeSpan(duration), keySpline));
-        return animation;
-    }
+        => MotionTokens.SplineTo(to, duration, keySpline);
 
     private static void OnVerticalOffsetChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
         PushOffset(d, (double)e.NewValue);
