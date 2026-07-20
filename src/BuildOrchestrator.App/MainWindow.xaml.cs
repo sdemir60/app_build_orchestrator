@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -83,6 +82,13 @@ public partial class MainWindow : Window
 
         Loaded += async (_, _) => await StartEngineAsync();
         Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
+
+        // [M-3 fix wave] Logoff/shutdown'da WPF Closing'i YİNE tetikler ama e.Cancel'i YOK SAYAR
+        // (InternalClose(shutdown:true, ignoreCancel:true)) — _exiting hâlâ false olduğundan OnClosing normalde
+        // MinimizeToTray()'e düşer: Hide() + (ilk sefer ise) K5 balloon'u YAKAR VE tek-seferlik bayrağı YAKAR.
+        // Kullanıcı hiç X'e basmamışken K5 uyarısını sonsuza dek kaybeder. SessionEnding, Closing'den ÖNCE gelir
+        // (WM_QUERYENDSESSION) — burada _exiting'i erkenden set ederek OnClosing'in tray/balloon dalını atlarız.
+        Application.Current.SessionEnding += OnSessionEnding;
 
         _ = RunConsolePumpAsync();
     }
@@ -207,18 +213,34 @@ public partial class MainWindow : Window
         _tray.StopRequested += () => { if (_vm.StopCommand.CanExecute(null)) _vm.StopCommand.Execute(null); };
         _tray.ExitRequested += ExitApplication;
 
-        // [T62] Snap Layouts: hook, base'den SONRA eklenir — HwndSource son eklenen hook'u ÖNCE çağırır, yani
-        // WindowChrome'un kendi WM_NCHITTEST yanıtından (IsHitTestVisibleInChrome → HTCLIENT) önce davranırız.
-        // Hook nesnesini alanda tutmaya gerek yok: HwndSource'un tuttuğu delegate zaten onu canlı tutar.
-        var snapLayout = new SnapLayoutHook(MaxButton, SetMaxButtonHover, ToggleMaximizeRestore);
-        var source = HwndSource.FromHwnd(hwnd)!;
-        source.AddHook(snapLayout.WndProc);
-        source.AddHook(HotkeyWndProc);
+        AttachSnapLayoutHook(hwnd);
+        HwndSource.FromHwnd(hwnd)!.AddHook(HotkeyWndProc);
 
         // [v7Δ-5] Alt+B (ayarlanabilir) — çakışmada SESSİZ devre dışı.
         if (!HotkeyBinding.TryParse(_uiState.Load().Hotkey, out var binding))
             HotkeyBinding.TryParse(HotkeyBinding.DefaultGesture, out binding);
         _hotkey = HotkeyRegistration.Register(hwnd, GlobalHotkeyId, binding);
+    }
+
+    /// <summary>
+    /// [T62] Snap Layouts hook'unu bağlar. <c>base.OnSourceInitialized</c>'dan SONRA (yani <c>WindowChrome</c>
+    /// zaten <c>WindowChrome.SetWindowChrome</c> ile atanmışken) çağrılması ZORUNLUDUR: <c>HwndSource.AddHook</c>
+    /// hook'u LİSTENİN BAŞINA ekler ve mesaj pompası son eklenen hook'u ÖNCE çağırır — bu yüzden burada
+    /// eklendiğinde bizim hook <c>WindowChrome</c>'un kendi <c>WM_NCHITTEST</c> yanıtından (IsHitTestVisibleInChrome
+    /// → HTCLIENT) önce çalışır.
+    ///
+    /// <para><b>[M-9] Kırılma senaryosu:</b> <c>WindowChromeWorker</c> kendi hook'unu <c>WindowChrome</c> pencereye
+    /// ATANDIĞI anda ekler. Eğer ileride (T60/T35) <c>WindowChrome</c> BU noktadan SONRA yeniden atanırsa,
+    /// <c>WindowChromeWorker</c>'ın hook'u BİZİMKİNDEN SONRA eklenmiş olur → ÖNCE çalışır → kendi
+    /// <c>WM_NCHITTEST</c> yanıtını (HTCLIENT) döner → bizim hook'a mesaj hiç ULAŞMAZ → Snap Layouts SESSİZCE
+    /// ÖLÜR (ne test ne build bunu yakalar). Böyle bir yeniden atama olursa BU metot o atamadan SONRA tekrar
+    /// çağrılmalıdır.</para>
+    /// </summary>
+    private void AttachSnapLayoutHook(nint hwnd)
+    {
+        // Hook nesnesini alanda tutmaya gerek yok: HwndSource'un tuttuğu delegate zaten onu canlı tutar.
+        var snapLayout = new SnapLayoutHook(MaxButton, SetMaxButtonHover, ToggleMaximizeRestore);
+        HwndSource.FromHwnd(hwnd)!.AddHook(snapLayout.WndProc);
     }
 
     /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir. WM_HOTKEY alan process'e Windows
@@ -254,22 +276,20 @@ public partial class MainWindow : Window
         if (_closeBalloon.ClaimShow()) _tray?.ShowClosedToTrayNotification();
     }
 
-    /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir. Getiriliş animasyonu
-    /// reduced-motion'a TABİDİR: sinyal TAZE okunur, kapalıysa anında görünür (Foundation sözleşmesi).</summary>
+    /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.
+    /// [M-1 fix wave] Önceki getiriliş fade'i (Window.Opacity 0→1) KALDIRILDI — ölçüldü: bu pencerede
+    /// <c>WindowStyle=SingleBorderWindow</c> + <c>AllowsTransparency=false</c> altında <c>Window.Opacity</c>
+    /// <c>WS_EX_LAYERED</c>'ı AYARLAMAZ, yalnız İÇERİK solar; kullanıcı çerçeve/arka planın ANINDA patladığını,
+    /// ardından içeriğin soluklanarak belirdiğini görür ("boş koyu dikdörtgen patlar, sonra içerik gelir") —
+    /// istenen yumuşak geliş DEĞİL. Üstüne, animasyon hiç başlamazsa (ör. istisna) yerel <c>Opacity=0</c> pencereyi
+    /// KALICI GÖRÜNMEZ bırakabilirdi. OS zaten tepsiden restore'u kendi animasyonuyla sürüyor; A13.2'nin motion
+    /// budget'ı ZATEN ÇALIŞMAYAN dekoratif hareketi caydırır — bu yüzden fade'i geri getirmek yerine kaldırmak
+    /// seçildi (bkz. Task 7 review M-1).</summary>
     public void ShowFromTray()
     {
-        bool wasHidden = !IsVisible || WindowState == WindowState.Minimized;
         Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
-        if (!wasHidden) return; // zaten görünürken (ikinci instance öne getirme) yeniden fade YOK
-
-        BeginAnimation(OpacityProperty, null); // uçuştaki önceki getiriliş animasyonunu bırak
-        if (!(App.Motion?.AnimationsEnabled ?? false)) { Opacity = 1; return; } // TAZE okuma [Foundation]
-        Opacity = 0;
-        var duration = MotionTokens.ResolveDuration(this, "Duration.Fast", 120);
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
-        BeginAnimation(OpacityProperty, MotionTokens.SplineTo(1.0, duration.TimeSpan, spline));
     }
 
     /// <summary>Tepsi → Exit: GERÇEK çıkış. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
@@ -279,6 +299,11 @@ public partial class MainWindow : Window
         _exiting = true;
         Application.Current.Shutdown();
     }
+
+    /// <summary>[M-3 fix wave] Oturum kapanışı/sistem kapatma GERÇEK bir çıkıştır — tepsiye küçültme/balloon
+    /// YASAK, bkz. <see cref="OnClosing"/> yorumu. <c>e.Cancel</c>'a burada DOKUNULMAZ: OS'a kapanmayı engelleme
+    /// niyeti yok, yalnız aşağı akan <c>Closing</c>'in tray'e sapmasını önlüyoruz.</summary>
+    private void OnSessionEnding(object? sender, SessionEndingCancelEventArgs e) => _exiting = true;
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
@@ -298,6 +323,7 @@ public partial class MainWindow : Window
     /// "iptal yok sayılan" kapanışları da kapsar.</summary>
     protected override void OnClosed(EventArgs e)
     {
+        Application.Current.SessionEnding -= OnSessionEnding; // [M-3 fix wave]
         _hotkey?.Dispose();
         _tray?.Dispose();
         base.OnClosed(e);

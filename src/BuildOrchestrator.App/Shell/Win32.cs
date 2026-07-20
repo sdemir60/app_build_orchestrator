@@ -10,10 +10,12 @@ namespace BuildOrchestrator.App.Shell;
 internal static class Win32
 {
     // --- pencere mesajları (WndProc hook'unun tanıdıkları)
+    public const int WM_CAPTURECHANGED = 0x0215;
     public const int WM_NCHITTEST = 0x0084;
     public const int WM_NCMOUSELEAVE = 0x02A2;
     public const int WM_NCLBUTTONDOWN = 0x00A1;
     public const int WM_NCLBUTTONUP = 0x00A5;
+    public const int WM_MOUSELEAVE = 0x02A3;
     public const int WM_HOTKEY = 0x0312;
 
     /// <summary>

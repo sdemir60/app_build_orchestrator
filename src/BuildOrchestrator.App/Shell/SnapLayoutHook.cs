@@ -34,6 +34,12 @@ internal sealed class SnapLayoutHook(FrameworkElement maxButton, Action<bool> se
                 return hit.Value;
 
             case Win32.WM_NCMOUSELEAVE: // fare pencereden/non-client alandan çıktı — hover kalıntısı bırakma
+            // [M-4 fix wave] Hover/basılı kalıntısı YALNIZ WM_NCMOUSELEAVE'e ya da bir sonraki WM_NCHITTEST'e
+            // bağlıysa, düğmeden pencere DIŞINA hızlı fare hareketi (ör. non-client'tan doğrudan ekran dışına)
+            // ikisini de tetiklemeyebilir. WM_MOUSELEAVE (client-area) ve WM_CAPTURECHANGED (capture başka
+            // pencereye/kontrole geçti — basılıyken Alt+Tab, sistem menüsü vb.) AYNI temizliği tetikler.
+            case Win32.WM_MOUSELEAVE:
+            case Win32.WM_CAPTURECHANGED:
                 SetHover(false);
                 _pressed = false;
                 return 0;
@@ -48,6 +54,14 @@ internal sealed class SnapLayoutHook(FrameworkElement maxButton, Action<bool> se
                 if (!_pressed) return 0;
                 _pressed = false;
                 toggleMaximizeRestore();
+                return 0;
+
+            // [M-4 fix wave] Basma maximize butonunda başladı ama bırakma BAŞKA bir non-client bölgede bitti
+            // (ör. basılı sürükleyip başlık çubuğuna/kenara taşıdı) — bu olay bize ait DEĞİL (handled=false,
+            // DefWindowProc/WindowChrome görsün) ama stale _pressed'i temizlemezsek sonraki bağımsız bir
+            // maximize-butonu basımı olmadan beklenmeyen bir toggle üretebilirdi.
+            case Win32.WM_NCLBUTTONUP:
+                _pressed = false;
                 return 0;
 
             default:
