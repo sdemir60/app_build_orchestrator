@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -91,7 +92,9 @@ public partial class ConsoleHeader : UserControl
     /// <c>ShowProjectLog</c>'ta bir kez değil.</summary>
     public void SetLineCount(int lineCount)
     {
-        LinesText.Text = $"{lineCount} lines";
+        // [M-4] Global Constraint: kullanıcıya gösterilen sayı biçimlemesi InvariantCulture (locale'e göre
+        // basamak gruplama/rakam değişmesin).
+        LinesText.Text = string.Format(CultureInfo.InvariantCulture, "{0} lines", lineCount);
         if (Mode == HeaderMode.ProjectLog)
             CopyLogButton.Visibility = lineCount > 0 ? Visibility.Visible : Visibility.Collapsed;
     }

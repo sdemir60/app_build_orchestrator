@@ -69,6 +69,28 @@ public class StickyOverlayTests
     }
 
     [StaFact]
+    public void Overlay_ItemsSource_is_not_reassigned_while_the_stuck_set_is_unchanged()
+    {
+        // [Final review I-2 / A13.2 "koleksiyon reset YOK"] ItemsSource'a YENİ bir liste atamak ItemsControl
+        // için tam reset'tir (container teardown + yeniden üretim). T59'un animasyonlu scroll'u UpdateOverlay'i
+        // HER karede çağırır → yapışık küme değişmedikçe atama yapılmamalı. Regresyon kilidi budur.
+        var list = new StickyLayerList();
+        list.SetGroups(SampleGroups());
+
+        list.UpdateOverlay(200);
+        var atSet = list.Overlay.ItemsSource;
+        list.UpdateOverlay(210); // aynı bant: L0+L1 yapışık
+        Assert.Same(atSet, list.Overlay.ItemsSource);
+        list.UpdateOverlay(260);
+        Assert.Same(atSet, list.Overlay.ItemsSource);
+
+        // Küme gerçekten değişince (L2 de yığına ulaşır) yeni koleksiyon atanır.
+        list.UpdateOverlay(288);
+        Assert.NotSame(atSet, list.Overlay.ItemsSource);
+        Assert.Equal(3, ((IReadOnlyList<StuckHeader>)list.Overlay.ItemsSource).Count);
+    }
+
+    [StaFact]
     public void Overlay_and_inflow_headers_use_the_exact_same_DataTemplate_instance()
     {
         var list = new StickyLayerList();

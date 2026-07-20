@@ -45,6 +45,9 @@ public sealed class LayoutMetrics
 
     private readonly double[] _rowTops;      // global satır indeksi → içerik Y (üst)
     private readonly HeaderInfo[] _headers;  // yalnız görünür başlıklar, SlotIndex sırasında
+    // [Final review I-2] Yapışık ADEDE göre ÖNCEDEN hesaplanmış (immutable) ön-ek listeleri: 0..#başlık.
+    // StickyHeadersAt her çağrıda yeni liste üretmez — bkz. o metodun notu (A13.2 koleksiyon reset yasağı).
+    private readonly IReadOnlyList<StuckHeader>[] _stuckPrefixes;
 
     public double RowHeight { get; }
     public double HeaderHeight { get; }
@@ -87,6 +90,18 @@ public sealed class LayoutMetrics
         _headers = [.. headers];
         RowCount = _rowTops.Length;
         TotalHeight = y;
+
+        // Yapışık küme YALNIZ adede bağlıdır (StuckHeader'ın her alanı HeaderInfo'dan sabit; PinnedY =
+        // SlotIndex×HeaderHeight) → tüm ön-ekler burada BİR KEZ kurulur, sonra paylaşılır.
+        _stuckPrefixes = new IReadOnlyList<StuckHeader>[_headers.Length + 1];
+        _stuckPrefixes[0] = [];
+        var prefix = new List<StuckHeader>(_headers.Length);
+        for (int i = 0; i < _headers.Length; i++)
+        {
+            var h = _headers[i];
+            prefix.Add(new StuckHeader(h.LayerIndex, h.SlotIndex, h.Name, h.RowCount, h.SlotIndex * headerHeight));
+            _stuckPrefixes[i + 1] = prefix.ToArray();
+        }
     }
 
     /// <summary>Varsayılan (katman YOK): tek başlıksız grup, uniform 36px — sticky devrede DEĞİL.</summary>
@@ -109,17 +124,23 @@ public sealed class LayoutMetrics
     /// içerik konumu (ContentTop) slotuna (<c>j×24</c>) ulaştığında yapışır: eşik <c>τ_j = ContentTop_j -
     /// j×HeaderHeight</c>. <c>τ_j</c> j'de artan olduğundan (her katman en az bir başlık ekler) küme daima bir
     /// ön-ek'tir. Pinned Y = <c>SlotIndex×HeaderHeight</c> (accumulation — üstteki itilmez). Katman yoksa boş.
+    ///
+    /// <para><b>[Final review I-2] Dönen liste ÖNBELLEKLİDİR</b> (constructor'daki <c>_stuckPrefixes</c>):
+    /// aynı yapışık ADET için HER ZAMAN AYNI instance döner. Sebep: T59'un animasyonlu scroll'u (ScrollAnimator
+    /// → ScrollToVerticalOffset) <c>StickyLayerList.UpdateOverlay</c>'i HER KAREDE çağırır; her çağrıda yeni bir
+    /// liste üretmek overlay ItemsControl'üne yeni bir ItemsSource atanmasına = tam koleksiyon reset'ine
+    /// (container teardown + yeniden üretim) yol açardı (A13.2 "koleksiyon reset YOK").</para>
     /// </summary>
     public IReadOnlyList<StuckHeader> StickyHeadersAt(double verticalOffset)
     {
-        var stuck = new List<StuckHeader>();
+        int count = 0;
         foreach (var h in _headers)
         {
             double threshold = h.ContentTop - h.SlotIndex * HeaderHeight;
             if (verticalOffset < threshold) break; // ön-ek: ilk yapışmayan başlıktan sonrası da yapışmaz
-            stuck.Add(new StuckHeader(h.LayerIndex, h.SlotIndex, h.Name, h.RowCount, h.SlotIndex * HeaderHeight));
+            count++;
         }
-        return stuck;
+        return _stuckPrefixes[count];
     }
 
     /// <summary>

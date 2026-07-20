@@ -17,10 +17,12 @@ public class MotionResourcesTests
 
     // pack:// URI'ler gerçek bir Application olmadan (headless test host) çözülmez (FontAssetTests'teki
     // TestAssets deseniyle aynı: dosyadan doğrudan XamlReader ile yükle).
+    private static string MotionAssetPath() =>
+        Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Motion.xaml");
+
     private static ResourceDictionary LoadMotionDictionary()
     {
-        string path = Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Motion.xaml");
-        using var stream = File.OpenRead(path);
+        using var stream = File.OpenRead(MotionAssetPath());
         return (ResourceDictionary)XamlReader.Load(stream);
     }
 
@@ -82,5 +84,51 @@ public class MotionResourcesTests
 
         Assert.Equal(new Duration(TimeSpan.FromMilliseconds(180)), resources["Duration.Base"]);
         Assert.Equal(new Duration(TimeSpan.FromMilliseconds(280)), resources["Duration.Slow"]);
+    }
+
+    [StaFact]
+    public void Attach_restores_the_durations_declared_in_the_dictionary_not_a_duplicated_table()
+    {
+        // [Final review I-1] Süre otoritesi TEK olmalı: Motion.xaml. Drift guard'ı: gerçek asset'in METNİNİ
+        // alıp bir token'ı KASTEN kaydırırız (280ms → 320ms) ve restore'un DICTIONARY'nin dediği değere
+        // döndüğünü doğrularız. MotionSettings kendi (kopya) süre tablosunu taşırsa 280ms'e döner → KIRMIZI.
+        // Beklenen değer testte sabit DEĞİL, dictionary'den okunur — testin kendisi ikinci bir otorite olmasın.
+        string xaml = File.ReadAllText(MotionAssetPath()).Replace("0:0:0.28", "0:0:0.32", StringComparison.Ordinal);
+        var resources = (ResourceDictionary)XamlReader.Parse(xaml);
+        var declaredSlow = (Duration)resources["Duration.Slow"];
+        var declaredBase = (Duration)resources["Duration.Base"];
+        Assert.Equal(new Duration(TimeSpan.FromMilliseconds(320)), declaredSlow); // drift gerçekten kuruldu
+
+        var signal = new FakeMotionSignal { AnimationsEnabled = false };
+        var settings = new MotionSettings(signal);
+        settings.Attach(resources);
+        Assert.Equal(new Duration(TimeSpan.Zero), resources["Duration.Slow"]);
+
+        signal.AnimationsEnabled = true;
+        signal.Raise();
+
+        Assert.Equal(declaredSlow, resources["Duration.Slow"]); // dictionary ne diyorsa o (320ms)
+        Assert.Equal(declaredBase, resources["Duration.Base"]);
+    }
+
+    [StaFact]
+    public void Attach_twice_while_reduced_does_not_capture_the_zeroed_values_as_the_baseline()
+    {
+        // [Final review I-1] Baseline dictionary'den okunduğu için: kapalıyken Attach → girdiler 0 olur;
+        // AYNI dictionary yeniden Attach edilirse 0'lar baseline sanılmamalı (aksi halde sinyal açılınca
+        // süreler kalıcı 0 kalırdı). Beklenen değerler yine dictionary'nin TAZE bir kopyasından okunur.
+        var expected = LoadMotionDictionary();
+        var resources = LoadMotionDictionary();
+        var signal = new FakeMotionSignal { AnimationsEnabled = false };
+        var settings = new MotionSettings(signal);
+
+        settings.Attach(resources);
+        settings.Attach(resources); // ikinci Attach — 0'lar baseline OLMAMALI
+
+        signal.AnimationsEnabled = true;
+        signal.Raise();
+
+        Assert.Equal(expected["Duration.Base"], resources["Duration.Base"]);
+        Assert.Equal(expected["Duration.Slow"], resources["Duration.Slow"]);
     }
 }

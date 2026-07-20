@@ -4,10 +4,15 @@
       [It-4a Foundation] Motion token'ları — design-v1 tokens/effects.css BİREBİR (uydurma yok).
       Bu 6 UI task'ının TEK motion kaynağı (reduced-motion kuralı: "tüm süre/eğri tek ResourceDictionary'den").
 
-      Reduced-motion: Duration.* girdileri burada TOKEN (tam) değerleriyle tanımlıdır. Uygulama başlatılırken
+      Reduced-motion: Duration.* girdileri burada TOKEN (tam) değerleriyle tanımlıdır ve TEK OTORİTE bu dosyadır —
+      MotionSettings bir kopya süre tablosu tutmaz, baseline'ı Attach anında buradan okur. Uygulama başlatılırken
       App/Services/MotionSettings.Attach(ResourceDictionary) bu dört girdiyi OS "animasyonları göster" sinyaline
-      göre canlı 0'a çevirir / token değerine geri yükler (App/Services/MotionSettings.cs). Tüketiciler doğrudan
-      {StaticResource Duration.*} kullanabilir — reduced iken zaten 0 döner, ayrı bir kontrol gerekmez.
+      göre canlı 0'a çevirir / token değerine geri yükler (App/Services/MotionSettings.cs).
+
+      TÜKETİM: saf-XAML Storyboard'lar {DynamicResource Duration.*} kullanmalı, {StaticResource} DEĞİL —
+      {StaticResource} yalnız kurulum anında bir kez çözülür ve sinyal SONRADAN değişirse canlı sıfırlamayı
+      GÖRMEZ (sözleşmenin tamamı: App/Services/IMotionSettings.cs). Kod-tarafı animasyonlar süreyi başlatma
+      anında IMotionSettings.Effective ile TAZE okur.
 
       KeySpline'lar sabit — 0 süreli bir animasyonda eğri şekli zaten etkisizdir, bu yüzden reduced-motion
       onları değiştirmez.

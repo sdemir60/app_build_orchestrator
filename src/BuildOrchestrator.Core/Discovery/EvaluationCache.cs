@@ -20,13 +20,17 @@ public sealed class EvaluationCache(string cachePath)
     /// <summary>
     /// Canlı build ↔ scan yarışı [Task 0/It-4a]: scanner bir .csproj'u bulduktan sonra bu çağrı
     /// gerçekleşene kadar dosya kaybolabilir (ör. WPF wpftmp geçici projesi scanner filtresini
-    /// aşarsa — savunmanın ikinci katı). Erişilemeyen dosya için THROW ETMEZ — bu tolerans yalnız
+    /// aşarsa — savunmanın ikinci katı). KAYBOLAN dosya için THROW ETMEZ — bu tolerans yalnız
     /// ilk <see cref="FileInfo"/> okumasını değil, metodun TÜM gövdesini (hash hesaplama +
     /// <paramref name="evaluate"/> çağrısı dahil) kapsar, çünkü dosya <c>info.Exists</c> geçtikten
     /// SONRA da (Hash veya evaluate sırasında) kaybolabilir: daha önce cache'e girmişse mevcut
     /// girdi AYNEN döner (bu "yeniden değerlendir" DEĞİL — kalıcı bir dosya gerçekten silinmişse
     /// bir sonraki Sync onu zaten görmez); hiç girmemişse <c>evaluate</c> çağrısı tamamlanmadan
     /// (veya tamamlanamadan) <c>null</c> döner (girdi güvenle atlanır).
+    ///
+    /// <para><b>[Final review I-3] Tolerans "her IO hatası" DEĞİLDİR:</b> dosya VAR ama okunamıyorsa (kilit/
+    /// paylaşım ihlali, ağ/disk hatası) istisna YUKARI SIZAR — yutulsaydı proje sessizce build plan'ından
+    /// düşer ve build eksik graph ile koşardı. Malformed csproj'un <c>XmlException</c>'ı da sızar.</para>
     /// </summary>
     public EvaluatedProject? GetOrEvaluate(string csprojPath, Func<string, EvaluatedProject> evaluate)
     {
@@ -50,11 +54,19 @@ public sealed class EvaluationCache(string cachePath)
             _entries[csprojPath] = new Entry(mtime, length, Hash(csprojPath), proj);
             return proj;
         }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException)
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException
+                                   || (ex is IOException && !File.Exists(csprojPath)))
         {
-            // Dosya pipeline'ın HERHANGİ bir aşamasında kayboldu (info okuma, Hash, ya da evaluate
-            // içindeki XDocument.Load) — aynı tolerans. Kalıcı/malformed bir csproj'un fırlattığı
-            // XmlException gibi diğer istisnalar buraya YAKALANMAZ, olduğu gibi yukarı sızar.
+            // Tolerans YALNIZ "dosya kayboldu" yarışına özgüdür [final review I-3]: FileNotFound/
+            // DirectoryNotFound zaten tam olarak bu sinyaldir; genel bir IOException ise yalnız dosya
+            // GERÇEKTEN ortada yoksa yutulur. Kayıp pipeline'ın HERHANGİ bir aşamasında olabilir (info
+            // okuma, Hash, ya da evaluate içindeki XDocument.Load) — hepsi aynı tolerans.
+            //
+            // VAR OLAN ama okunamayan bir csproj (editör kilidi/paylaşım ihlali, ağ yolu hıçkırığı, disk
+            // hatası) buraya DÜŞMEZ: yutulsaydı proje sessizce build plan'ından düşer ve build EKSİK
+            // graph ile koşardı (BuildPlanBuilder .OfType<EvaluatedProject>() / Supervisor .Where(is not
+            // null) null'ı sessizce eler). Kalıcı/malformed bir csproj'un XmlException'ı da — eskiden
+            // olduğu gibi — yakalanmaz, olduğu gibi yukarı sızar.
             return Stale();
         }
     }

@@ -100,9 +100,19 @@ public partial class StickyLayerList : UserControl
 
     /// <summary>Verilen VerticalOffset'teki yapışık başlıkları overlay'e ver. ScrollChanged production'da bunu
     /// <c>Scroll.VerticalOffset</c> ile çağırır; testler deterministik olsun diye offset'i doğrudan enjekte eder
-    /// (D8: gerçek scroll plumbing'e bağlı değil).</summary>
+    /// (D8: gerçek scroll plumbing'e bağlı değil).
+    ///
+    /// <para><b>[Final review I-2 / A13.2 "koleksiyon reset YOK"]</b> ItemsSource'a atama ItemsControl için TAM
+    /// reset'tir (container teardown + yeniden üretim). T59'un animasyonlu scroll'u burayı HER KAREDE çağırdığından
+    /// atama yalnız yapışık küme GERÇEKTEN değiştiğinde yapılır: <see cref="LayoutMetrics.StickyHeadersAt"/> aynı
+    /// adet için hep AYNI (önbelleklenmiş) instance'ı döndürür, burada da referans eşitliği kontrol edilir.</para>
+    /// </summary>
     internal void UpdateOverlay(double verticalOffset)
-        => Overlay.ItemsSource = Metrics?.StickyHeadersAt(verticalOffset) ?? NoHeaders;
+    {
+        var stuck = Metrics?.StickyHeadersAt(verticalOffset) ?? NoHeaders;
+        if (ReferenceEquals(Overlay.ItemsSource, stuck)) return;
+        Overlay.ItemsSource = stuck;
+    }
 
     private sealed class EntrySelector(StickyLayerList owner) : DataTemplateSelector
     {

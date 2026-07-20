@@ -117,6 +117,25 @@ public class LayoutMetricsTests
     }
 
     [Fact]
+    public void StickyHeadersAt_returns_the_SAME_instance_while_the_stuck_set_is_unchanged()
+    {
+        // [Final review I-2 / A13.2 "koleksiyon reset YOK"] Dönen liste yalnız YAPIŞIK ADEDE bağlıdır
+        // (her alan HeaderInfo'dan sabit, PinnedY = SlotIndex×24) → prefix'ler bir kez önceden hesaplanır.
+        // T59'un animasyonlu scroll'u bunu HER karede çağırdığından, her çağrıda YENİ liste üretmek
+        // overlay ItemsControl'ünü her karede sıfırlardı.
+        var m = Mixed();
+
+        var a = m.StickyHeadersAt(200);
+        var b = m.StickyHeadersAt(210); // aynı bant → aynı yapışık küme
+        Assert.Same(a, b);
+
+        // Küme değişince (yeni başlık yığına ulaşır) başka bir instance döner.
+        var c = m.StickyHeadersAt(m.TotalHeight);
+        Assert.NotSame(a, c);
+        Assert.Same(c, m.StickyHeadersAt(m.TotalHeight));
+    }
+
+    [Fact]
     public void ScrollTargetForRow_subtracts_the_top_margin_and_floors_at_zero()
     {
         var m = Mixed();

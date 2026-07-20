@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -192,7 +193,9 @@ public partial class GraphView : UserControl
         _previousFocus = null;
         _hasCamera = false; // yeni topoloji → kamera hedefi baştan hesaplanır
 
-        CountsText.Text = $"{nodes.Count} projects · {edges.Count} dependencies";
+        // [M-4] Global Constraint: sayı biçimlemesi InvariantCulture.
+        CountsText.Text = string.Format(
+            CultureInfo.InvariantCulture, "{0} projects · {1} dependencies", nodes.Count, edges.Count);
         ShowEmptyState(nodes.Count == 0);
         if (nodes.Count == 0) return;
 

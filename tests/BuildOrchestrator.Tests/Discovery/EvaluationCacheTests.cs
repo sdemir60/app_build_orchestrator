@@ -192,6 +192,49 @@ public class EvaluationCacheTests
     }
 
     [Fact]
+    public void GetOrEvaluate_propagates_io_failure_of_an_existing_locked_csproj_instead_of_dropping_it()
+    {
+        // [Final review I-3] Tolerans YALNIZ "dosya kayboldu" yarışı içindir. VAR OLAN ama okunamayan bir
+        // csproj (ör. editör/başka bir process tarafından FileShare.None ile kilitli, ağ yolu hıçkırığı, disk
+        // hatası) SESSİZCE null dönmemeli: null dönerse proje build plan'ından düşer ve build EKSİK graph ile
+        // koşar. Gerçek bir kilit kullanılır (simülasyon değil).
+        string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string proj = Path.Combine(root, "Locked.csproj");
+            File.WriteAllText(proj, "<Project/>");
+            var cache = new EvaluationCache(Path.Combine(root, "cache.json"));
+            EvaluatedProject Fake(string p) => new(p, "A", [], [], [], false);
+
+            using var exclusive = new FileStream(proj, FileMode.Open, FileAccess.Read, FileShare.None);
+
+            // Hash(csprojPath) → File.ReadAllBytes → paylaşım ihlali (IOException). Bu YUTULMAMALI.
+            Assert.Throws<IOException>(() => cache.GetOrEvaluate(proj, Fake));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void GetOrEvaluate_propagates_XmlException_from_a_malformed_csproj()
+    {
+        // [Final review I-3] Bozuk/malformed bir csproj'un XmlException'ı IO toleransına takılmaz — aynen
+        // yukarı sızar (kalıcı bir hata sessizce "proje yok" sayılmaz). Gerçek CsprojEvaluator kullanılır.
+        string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string proj = Path.Combine(root, "Broken.csproj");
+            File.WriteAllText(proj, "<Project><ItemGroup></Project>"); // kapanmayan etiket
+            var cache = new EvaluationCache(Path.Combine(root, "cache.json"));
+            var evaluator = new CsprojEvaluator();
+
+            Assert.Throws<System.Xml.XmlException>(() => cache.GetOrEvaluate(proj, evaluator.Evaluate));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void GetOrEvaluate_persists_to_disk_and_reloads_in_new_instance()
     {
         string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
