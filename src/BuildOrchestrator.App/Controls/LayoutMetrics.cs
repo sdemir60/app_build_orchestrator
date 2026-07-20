@@ -37,8 +37,9 @@ public sealed record StuckHeader(int LayerIndex, int SlotIndex, string Name, int
 /// </summary>
 public sealed class LayoutMetrics
 {
-    // design-v1 §2.4: satır 36px (compact 30), katman başlığı 24px. Overlay/in-flow şablonlarındaki Height'lar
-    // bu sabitlerle BİREBİR eşleşmeli (StickyLayerList) — aksi halde overlay Y'si kayar.
+    // design-v1 §2.4: satır 36px (compact 30), katman başlığı 24px. StickyLayerList.xaml, Border Height'larını
+    // {x:Static controls:LayoutMetrics.DefaultRowHeight/DefaultHeaderHeight} ile BUNLARA bağlar (drift imkansız,
+    // literal DEĞİL) — StickyOverlayTests'te regresyon testi bu bağı doğrular.
     public const double DefaultRowHeight = 36;
     public const double DefaultHeaderHeight = 24;
 

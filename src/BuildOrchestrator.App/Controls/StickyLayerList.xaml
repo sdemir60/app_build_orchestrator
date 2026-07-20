@@ -10,7 +10,7 @@
     <!-- design-v1 §2.4: katman başlığı 24px, caps 11px (TrackedTextBlock — letter-spacing 0.07em) + mono satır
          sayısı. In-flow VE overlay AYNI bu şablonu (tek nesne) kullanır — bkz. StickyLayerList.xaml.cs. -->
     <DataTemplate x:Key="HeaderTemplate">
-      <Border Height="24" Background="{DynamicResource Brush.Surface}"
+      <Border Height="{x:Static controls:LayoutMetrics.DefaultHeaderHeight}" Background="{DynamicResource Brush.Surface}"
               BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
         <StackPanel Orientation="Horizontal" Margin="10,0" VerticalAlignment="Center">
           <controls:TrackedTextBlock Text="{Binding Name}" VerticalAlignment="Center" />
@@ -23,7 +23,7 @@
     <!-- design-v1 §2.4: satır 36px, alt çizgi border-subtle. Tam kart (statü şeridi/dot/ikonlar/ETA) It-4b —
          burada sticky'yi gözle doğrulamaya yetecek minimal satır (ad). -->
     <DataTemplate x:Key="RowTemplate">
-      <Border Height="36" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
+      <Border Height="{x:Static controls:LayoutMetrics.DefaultRowHeight}" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
         <TextBlock Text="{Binding Name}" Margin="12,0" VerticalAlignment="Center"
                    FontSize="13" FontWeight="Medium" Foreground="{DynamicResource Brush.TextPrimary}"
                    TextTrimming="CharacterEllipsis" />

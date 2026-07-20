@@ -19,7 +19,7 @@ public partial class StickyLayerList : UserControl
     /// <summary>In-flow başlık entry'si — <see cref="LayoutMetrics.HeaderInfo"/>'nun WPF-binding karşılığı;
     /// overlay'in StuckHeader'ı ile AYNI <c>Name</c>/<c>RowCount</c> alanlarını taşır ki tek şablon ikisine de
     /// bağlansın.</summary>
-    public sealed record HeaderEntry(string Name, int RowCount, int SlotIndex);
+    public sealed record HeaderEntry(string Name, int RowCount);
 
     private static readonly IReadOnlyList<StuckHeader> NoHeaders = [];
 
@@ -52,11 +52,10 @@ public partial class StickyLayerList : UserControl
         Metrics = new LayoutMetrics(groups.Select(g => new LayerSpec(g.Name ?? "", g.Rows.Count)).ToList());
 
         var entries = new List<object>();
-        int slot = 0;
         foreach (var g in groups)
         {
             if (!string.IsNullOrEmpty(g.Name))
-                entries.Add(new HeaderEntry(g.Name, g.Rows.Count, slot++));
+                entries.Add(new HeaderEntry(g.Name, g.Rows.Count));
             entries.AddRange(g.Rows);
         }
         Flow.ItemsSource = entries;

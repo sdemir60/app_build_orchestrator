@@ -31,7 +31,9 @@ public class StickyOverlayTests
 
         // feasibility §4.1: aritmetik tablo yalnız virtualization KAPALIYKEN birebir doğru.
         Assert.False(VirtualizingPanel.GetIsVirtualizing(list.Flow));
-        Assert.False(list.Scroll.CanContentScroll); // pixel scroll (VerticalOffset px = LayoutMetrics içerik Y)
+        // production XAML'daki VirtualizingPanel.ScrollUnit="Pixel" ayarını pinler (el ile kurulmuş bir
+        // ScrollViewer'ın varsayılanı DEĞİL — list.Scroll.CanContentScroll==false her zaman trivially geçerdi).
+        Assert.Equal(ScrollUnit.Pixel, VirtualizingPanel.GetScrollUnit(list.Flow));
     }
 
     [StaFact]
@@ -74,6 +76,22 @@ public class StickyOverlayTests
         // Geçişin görünmez olması için overlay ile in-flow başlık AYNI şablon nesnesini kullanır.
         Assert.Same(list.HeaderTemplate, list.Overlay.ItemTemplate);
         Assert.Same(list.HeaderTemplate, list.HeaderTemplateForFlow());
+    }
+
+    [StaFact]
+    public void HeaderTemplate_and_RowTemplate_border_heights_are_bound_to_LayoutMetrics_constants()
+    {
+        // Regresyon kilidi: StickyLayerList.xaml Border Height'ları {x:Static LayoutMetrics.Default*Height}
+        // ile bağlıdır (literal DEĞİL) — aksi halde biri diğerinden sürüklenir (drift) ve overlay Y'si kayar
+        // (sticky jitter, bkz. LayoutMetrics.cs sabit yorumu). Bu test compile edilmiş şablonu yükleyip gerçek
+        // Height'ı sabitlerle karşılaştırır; sabit değişip XAML güncellenmezse (veya tersi) burada kırılır.
+        var list = new StickyLayerList();
+
+        var headerRoot = Assert.IsType<Border>(list.HeaderTemplate.LoadContent());
+        Assert.Equal(LayoutMetrics.DefaultHeaderHeight, headerRoot.Height);
+
+        var rowRoot = Assert.IsType<Border>(list.RowTemplate.LoadContent());
+        Assert.Equal(LayoutMetrics.DefaultRowHeight, rowRoot.Height);
     }
 
     [StaFact]
