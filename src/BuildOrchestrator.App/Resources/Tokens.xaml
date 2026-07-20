@@ -1,0 +1,77 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+      [It-4a Foundation] Renk token'ları — design-v1 tokens/colors.css alt kümesi, BİREBİR (uydurma yok).
+      Bu, tam T49 token çevirisi DEĞİL — yalnız bu paketteki 6 UI task'ının (konsol/TrackedTextBlock/sticky
+      header/scroll/graf/pencere kabuğu) kullandığı brush ailesi. Anahtar adları kararlı, design token adıyla
+      eşlenir (ör. Brush.ConsoleBg kaynağı console-bg token'ından gelir).
+    -->
+
+    <!-- Yüzeyler -->
+    <SolidColorBrush x:Key="Brush.ConsoleBg" Color="#060608" />
+    <SolidColorBrush x:Key="Brush.SurfaceSunken" Color="#0a0a0c" />
+    <SolidColorBrush x:Key="Brush.SurfaceBase" Color="#0e0e10" />
+    <SolidColorBrush x:Key="Brush.Surface" Color="#141417" />
+    <SolidColorBrush x:Key="Brush.SurfaceRaised" Color="#1a1a1e" />
+    <SolidColorBrush x:Key="Brush.SurfaceOverlay" Color="#202024" />
+
+    <!-- Border'lar (hairline) -->
+    <SolidColorBrush x:Key="Brush.BorderSubtle" Color="#1c1c20" />
+    <SolidColorBrush x:Key="Brush.Border" Color="#2a2a30" />
+    <SolidColorBrush x:Key="Brush.BorderStrong" Color="#3a3a42" />
+
+    <!-- Metin tonları -->
+    <SolidColorBrush x:Key="Brush.TextPrimary" Color="#ededee" />
+    <SolidColorBrush x:Key="Brush.TextSecondary" Color="#a9a9b0" />
+    <SolidColorBrush x:Key="Brush.TextDim" Color="#76767e" />
+    <SolidColorBrush x:Key="Brush.TextFaint" Color="#54545c" />
+    <SolidColorBrush x:Key="Brush.TextOnAccent" Color="#1c1304" />
+
+    <!-- Amber (TEK marka rengi) -->
+    <SolidColorBrush x:Key="Brush.Amber" Color="#eda10f" />
+    <SolidColorBrush x:Key="Brush.AmberBright" Color="#ffb52e" />
+    <SolidColorBrush x:Key="Brush.AmberDim" Color="#b87a0b" />
+    <SolidColorBrush x:Key="Brush.AmberText" Color="#f1ab2e" />
+    <SolidColorBrush x:Key="Brush.AmberSoft" Color="#1FEDA10F" />
+    <SolidColorBrush x:Key="Brush.AmberSoftHover" Color="#2EEDA10F" />
+    <SolidColorBrush x:Key="Brush.AmberBorder" Color="#52EDA10F" />
+
+    <!-- Statü: success -->
+    <SolidColorBrush x:Key="Brush.StatusSuccess" Color="#43b16b" />
+    <SolidColorBrush x:Key="Brush.StatusSuccessText" Color="#58cb80" />
+    <SolidColorBrush x:Key="Brush.StatusSuccessSoft" Color="#1F43B16B" />
+    <SolidColorBrush x:Key="Brush.StatusSuccessBorder" Color="#4D43B16B" />
+
+    <!-- Statü: fail -->
+    <SolidColorBrush x:Key="Brush.StatusFail" Color="#ee5a52" />
+    <SolidColorBrush x:Key="Brush.StatusFailText" Color="#ff706a" />
+    <SolidColorBrush x:Key="Brush.StatusFailSoft" Color="#1FEE5A52" />
+    <SolidColorBrush x:Key="Brush.StatusFailBorder" Color="#52EE5A52" />
+
+    <!-- Statü: skipped -->
+    <SolidColorBrush x:Key="Brush.StatusSkipped" Color="#6a6a73" />
+    <SolidColorBrush x:Key="Brush.StatusSkippedText" Color="#888890" />
+    <SolidColorBrush x:Key="Brush.StatusSkippedSoft" Color="#1A787880" />
+    <SolidColorBrush x:Key="Brush.StatusSkippedBorder" Color="#3D787880" />
+
+    <!-- Statü: cycle (warn / bağımlılık döngüsü) -->
+    <SolidColorBrush x:Key="Brush.StatusCycle" Color="#df6f2b" />
+    <SolidColorBrush x:Key="Brush.StatusCycleText" Color="#f0853f" />
+    <SolidColorBrush x:Key="Brush.StatusCycleSoft" Color="#1FDF6F2B" />
+    <SolidColorBrush x:Key="Brush.StatusCycleBorder" Color="#52DF6F2B" />
+
+    <!-- Statü: queued -->
+    <SolidColorBrush x:Key="Brush.StatusQueued" Color="#7c7c84" />
+    <SolidColorBrush x:Key="Brush.StatusQueuedText" Color="#9a9aa2" />
+    <SolidColorBrush x:Key="Brush.StatusQueuedSoft" Color="#1A7C7C84" />
+
+    <!-- Will-build noktası (accent'ten AYRI, ortogonal dot semantiği) -->
+    <SolidColorBrush x:Key="Brush.DotDirty" Color="#eda10f" />
+    <SolidColorBrush x:Key="Brush.DotClean" Color="#3a3a42" />
+    <SolidColorBrush x:Key="Brush.DotUnknown" Color="Transparent" />
+    <SolidColorBrush x:Key="Brush.DotOutline" Color="#1c1c20" />
+
+    <!-- Focus -->
+    <SolidColorBrush x:Key="Brush.FocusRing" Color="#80EDA10F" />
+
+</ResourceDictionary>

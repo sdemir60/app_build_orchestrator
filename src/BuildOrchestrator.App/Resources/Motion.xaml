@@ -1,0 +1,28 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+      [It-4a Foundation] Motion token'ları — design-v1 tokens/effects.css BİREBİR (uydurma yok).
+      Bu 6 UI task'ının TEK motion kaynağı (reduced-motion kuralı: "tüm süre/eğri tek ResourceDictionary'den").
+
+      Reduced-motion: Duration.* girdileri burada TOKEN (tam) değerleriyle tanımlıdır. Uygulama başlatılırken
+      App/Services/MotionSettings.Attach(ResourceDictionary) bu dört girdiyi OS "animasyonları göster" sinyaline
+      göre canlı 0'a çevirir / token değerine geri yükler (App/Services/MotionSettings.cs). Tüketiciler doğrudan
+      {StaticResource Duration.*} kullanabilir — reduced iken zaten 0 döner, ayrı bir kontrol gerekmez.
+
+      KeySpline'lar sabit — 0 süreli bir animasyonda eğri şekli zaten etkisizdir, bu yüzden reduced-motion
+      onları değiştirmez.
+    -->
+
+    <Duration x:Key="Duration.Instant">0:0:0.08</Duration>
+    <Duration x:Key="Duration.Fast">0:0:0.12</Duration>
+    <Duration x:Key="Duration.Base">0:0:0.18</Duration>
+    <Duration x:Key="Duration.Slow">0:0:0.28</Duration>
+
+    <!-- ease-out [giriş] -->
+    <KeySpline x:Key="KeySpline.EaseOut">0.22,1,0.36,1</KeySpline>
+    <!-- ease-standard [durum değişimi] -->
+    <KeySpline x:Key="KeySpline.EaseStandard">0.4,0,0.2,1</KeySpline>
+    <!-- ease-in-out [yer değiştirme] -->
+    <KeySpline x:Key="KeySpline.EaseInOut">0.65,0,0.35,1</KeySpline>
+
+</ResourceDictionary>

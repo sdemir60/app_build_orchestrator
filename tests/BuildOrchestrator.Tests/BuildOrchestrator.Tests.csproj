@@ -30,6 +30,9 @@
   <ItemGroup>
     <Content Include="..\..\src\BuildOrchestrator.App\Fonts\*.otf" Link="TestAssets\Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\src\BuildOrchestrator.App\Fonts\*.CompositeFont" Link="TestAssets\Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- [It-4a Foundation] pack:// URI'ler App.xaml/Application olmadan (headless test host) çözülmez —
+         diğer TestAssets kopyalarıyla aynı desen: dosyadan XamlReader ile yükle. -->
+    <Content Include="..\..\src\BuildOrchestrator.App\Resources\*.xaml" Link="TestAssets\Resources\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
