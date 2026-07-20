@@ -2,8 +2,10 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
@@ -13,11 +15,21 @@ namespace BuildOrchestrator.App;
 
 public partial class MainWindow : Window
 {
+    /// <summary>Bu pencerenin global kısayol kaydının id'si (WM_HOTKEY wParam'ı) — tek hotkey, sabit id.</summary>
+    private const int GlobalHotkeyId = 0xB0;
+
     private readonly EngineHost _engine;
     private readonly RunViewModel _vm;
     private readonly ConsoleBatcher _console;
     private readonly CancellationTokenSource _consoleCts = new();
     private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+
+    // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + Alt+B (v7Δ-5).
+    private readonly IUiStateStore _uiState = new JsonUiStateStore(JsonUiStateStore.DefaultPath);
+    private readonly FirstCloseBalloonGate _closeBalloon;
+    private AppTrayIcon? _tray;
+    private HotkeyRegistration? _hotkey;
+    private bool _exiting; // tepsi Exit'i (gerçek çıkış) ile X'i (tepsiye küçült) ayıran TEK bayrak
 
     public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console)
     {
@@ -26,6 +38,8 @@ public partial class MainWindow : Window
         _vm = vm;
         _console = console;
         DataContext = _vm;
+        _closeBalloon = new FirstCloseBalloonGate(_uiState);
+        CaptionGlyphs.BindMaxButton(this, MaxButton); // [K8] maximize'da restore glyph'i
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
@@ -186,6 +200,107 @@ public partial class MainWindow : Window
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
+
+        // [T62] Tepsi: X artık kapatmaz (K5) → uygulama tepsiden yönetilir.
+        _tray = new AppTrayIcon();
+        _tray.RestoreRequested += ShowFromTray;
+        _tray.StopRequested += () => { if (_vm.StopCommand.CanExecute(null)) _vm.StopCommand.Execute(null); };
+        _tray.ExitRequested += ExitApplication;
+
+        // [T62] Snap Layouts: hook, base'den SONRA eklenir — HwndSource son eklenen hook'u ÖNCE çağırır, yani
+        // WindowChrome'un kendi WM_NCHITTEST yanıtından (IsHitTestVisibleInChrome → HTCLIENT) önce davranırız.
+        // Hook nesnesini alanda tutmaya gerek yok: HwndSource'un tuttuğu delegate zaten onu canlı tutar.
+        var snapLayout = new SnapLayoutHook(MaxButton, SetMaxButtonHover, ToggleMaximizeRestore);
+        var source = HwndSource.FromHwnd(hwnd)!;
+        source.AddHook(snapLayout.WndProc);
+        source.AddHook(HotkeyWndProc);
+
+        // [v7Δ-5] Alt+B (ayarlanabilir) — çakışmada SESSİZ devre dışı.
+        if (!HotkeyBinding.TryParse(_uiState.Load().Hotkey, out var binding))
+            HotkeyBinding.TryParse(HotkeyBinding.DefaultGesture, out binding);
+        _hotkey = HotkeyRegistration.Register(hwnd, GlobalHotkeyId, binding);
+    }
+
+    /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir. WM_HOTKEY alan process'e Windows
+    /// foreground hakkı verdiğinden burada <see cref="Window.Activate"/> yeterlidir (single-instance yolundaki
+    /// <c>AllowSetForegroundWindow</c> devrine gerek yok — bkz. <see cref="SingleInstanceProtocol"/>).</summary>
+    private nint HotkeyWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg != Win32.WM_HOTKEY || (int)wParam != GlobalHotkeyId) return 0;
+        handled = true;
+        ShowFromTray();
+        return 0;
+    }
+
+    /// <summary>Snap Layouts bölgesinin hover'ı: o alan non-client olduğundan WPF'in IsMouseOver'ı çalışmaz,
+    /// görsel elle sürülür. Kapanışta yerel değer TEMİZLENİR → şablonun kendi (Transparent) değeri geri gelir.</summary>
+    private void SetMaxButtonHover(bool on)
+    {
+        if (on && TryFindResource("Brush.SurfaceRaised") is Brush hover) MaxButton.Background = hover;
+        else MaxButton.ClearValue(BackgroundProperty);
+    }
+
+    private void ToggleMaximizeRestore()
+    {
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    /// <summary>[K5] `X` pencereyi KAPATMAZ — tepsiye küçültür; YALNIZ ilk seferde OS tray balloon'u
+    /// (uygulama içi toast design §8'de yasak).</summary>
+    private void MinimizeToTray()
+    {
+        Hide();
+        if (_closeBalloon.ClaimShow()) _tray?.ShowClosedToTrayNotification();
+    }
+
+    /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir. Getiriliş animasyonu
+    /// reduced-motion'a TABİDİR: sinyal TAZE okunur, kapalıysa anında görünür (Foundation sözleşmesi).</summary>
+    public void ShowFromTray()
+    {
+        bool wasHidden = !IsVisible || WindowState == WindowState.Minimized;
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        if (!wasHidden) return; // zaten görünürken (ikinci instance öne getirme) yeniden fade YOK
+
+        BeginAnimation(OpacityProperty, null); // uçuştaki önceki getiriliş animasyonunu bırak
+        if (!(App.Motion?.AnimationsEnabled ?? false)) { Opacity = 1; return; } // TAZE okuma [Foundation]
+        Opacity = 0;
+        var duration = MotionTokens.ResolveDuration(this, "Duration.Fast", 120);
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+        BeginAnimation(OpacityProperty, MotionTokens.SplineTo(1.0, duration.TimeSpan, spline));
+    }
+
+    /// <summary>Tepsi → Exit: GERÇEK çıkış. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
+    /// outer Job (KILL_ON_JOB_CLOSE) → Supervisor ve tüm <c>dotnet build</c> child'ları.</summary>
+    private void ExitApplication()
+    {
+        _exiting = true;
+        Application.Current.Shutdown();
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        // [K5] X / Alt+F4 / sistem menüsü Kapat → tepsiye küçült. Yalnız tepsi Exit'i (veya Application.Shutdown)
+        // gerçekten kapatır.
+        if (!_exiting)
+        {
+            e.Cancel = true;
+            MinimizeToTray();
+            return;
+        }
+        base.OnClosing(e);
+    }
+
+    /// <summary>Kabuk kaynakları BURADA bırakılır, OnClosing'de DEĞİL: pencere gerçekten kapandığında tam olarak
+    /// bir kez çalışır ve iptal edilen (tepsiye küçülen) kapatmalardan etkilenmez; oturum kapanışı gibi
+    /// "iptal yok sayılan" kapanışları da kapsar.</summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        _hotkey?.Dispose();
+        _tray?.Dispose();
+        base.OnClosed(e);
     }
 
     protected override void OnStateChanged(EventArgs e)
@@ -200,7 +315,7 @@ public partial class MainWindow : Window
     }
 
     private void OnMinimize(object s, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
-    private void OnMaximizeRestore(object s, RoutedEventArgs e)
-    { if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this); else SystemCommands.MaximizeWindow(this); }
-    private void OnClose(object s, RoutedEventArgs e) => Close(); // X→tray davranışı It-4 (T62 devamı + K5)
+    // Buton tıklaması ile Snap Layouts'un WM_NCLBUTTONUP yolu AYNI davranışa gider (kopya YASAK).
+    private void OnMaximizeRestore(object s, RoutedEventArgs e) => ToggleMaximizeRestore();
+    private void OnClose(object s, RoutedEventArgs e) => Close(); // OnClosing X'i tepsiye çevirir [K5]
 }

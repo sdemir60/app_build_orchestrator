@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -11,6 +12,8 @@ public partial class App : Application
 {
     public static ServiceProvider Services { get; private set; } = null!;
     public static IMotionSettings Motion { get; private set; } = null!;
+
+    private SingleInstanceGuard? _singleInstance;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -35,6 +38,18 @@ public partial class App : Application
             new Spikes.It4aLabWindow().Show();
             return;
         }
+        // [T62 / feasibility §4.3] Single-instance. Dev kabukları (--font-ab / --it4a-lab) BİLİNÇLİ olarak bu
+        // kapının DIŞINDADIR: çalışan bir ana pencere varken bile ayrı açılabilmelidirler.
+        _singleInstance = SingleInstanceGuard.Acquire(SingleInstanceGuard.DefaultKey);
+        if (!_singleInstance.IsFirst)
+        {
+            // İkinci instance: çalışan pencereyi öne getir ve sessizce kapan (AllowSetForegroundWindow sinyalden
+            // ÖNCE — sırayı SingleInstanceProtocol garanti eder).
+            _singleInstance.ActivateExistingInstance(TimeSpan.FromSeconds(3));
+            Shutdown();
+            return;
+        }
+
         var sc = new ServiceCollection();
         sc.AddSingleton(_ => new EngineHost(
             Path.Combine(AppContext.BaseDirectory, "supervisor", "BuildOrchestrator.Supervisor.exe")));
@@ -44,13 +59,17 @@ public partial class App : Application
             sp.GetRequiredService<EngineHost>(), sp.GetRequiredService<ConsoleBatcher>(), () => Guid.NewGuid().ToString()));
         sc.AddSingleton<MainWindow>();
         Services = sc.BuildServiceProvider();
-        Services.GetRequiredService<MainWindow>().Show();
+        var window = Services.GetRequiredService<MainWindow>();
+        // İkinci instance'ın sinyali arka plan thread'inden gelir — UI thread'ine burada marshal edilir.
+        _singleInstance.StartListening(() => Dispatcher.Invoke(window.ShowFromTray));
+        window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         // --font-ab yolunda DI hiç kurulmaz — Services null kalır.
         (Services?.GetService<EngineHost>() as IAsyncDisposable)?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        _singleInstance?.Dispose();
         base.OnExit(e);
     }
 }

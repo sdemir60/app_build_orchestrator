@@ -10,6 +10,32 @@
     <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0"
                   CornerRadius="0" UseAeroCaptionButtons="False" />
   </WindowChrome.WindowChrome>
+  <Window.Resources>
+    <!-- [T62] Title bar buton şablonu. GEREKÇE: maximize butonu Snap Layouts için WM_NCHITTEST'te HTMAXBUTTON
+         döndürür → o bölge NON-CLIENT olur ve WPF'in IsMouseOver'ı ORADA HİÇ TETİKLENMEZ; hover görseli elle
+         (MainWindow.SetMaxButtonHover → Button.Background) sürülmek zorundadır ve bunun için Background'ı
+         gerçekten boyayan bir şablon gerekir. Renkler token'dan (hardcode YASAK). Tasarımın tam title bar
+         birebirliği (10x10 1px stroke ikonlar, close hover = status-fail) T60'tır. -->
+    <Style x:Key="CaptionButton" TargetType="Button">
+      <Setter Property="Width" Value="46" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bg" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Brush.SurfaceRaised}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
   <Border x:Name="RootShell">
     <Grid>
       <Grid.RowDefinitions>
@@ -17,9 +43,10 @@
       </Grid.RowDefinitions>
       <DockPanel Grid.Row="0" Background="#14171C">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
-          <Button x:Name="MinButton" Content="&#x2013;" Width="46" Click="OnMinimize" />
-          <Button x:Name="MaxButton" Content="&#x25A1;" Width="46" Click="OnMaximizeRestore" />
-          <Button x:Name="CloseButton" Content="&#x2715;" Width="46" Click="OnClose" />
+          <Button x:Name="MinButton" Content="&#x2013;" Style="{StaticResource CaptionButton}" Click="OnMinimize" />
+          <!-- Content'i CaptionGlyphs.BindMaxButton sürer (K8: maximize'da restore glyph'i) -->
+          <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="OnMaximizeRestore" />
+          <Button x:Name="CloseButton" Content="&#x2715;" Style="{StaticResource CaptionButton}" Click="OnClose" />
         </StackPanel>
         <TextBlock Text="Build Orchestrator" VerticalAlignment="Center" Margin="12,0" />
       </DockPanel>
