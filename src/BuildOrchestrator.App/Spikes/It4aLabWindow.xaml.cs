@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
@@ -125,4 +126,59 @@ public partial class It4aLabWindow : Window
     }
 
     private void OnBackToNarrative(object sender, RoutedEventArgs e) => SeedNarrative();
+
+    // ---------------------------------------------------------------- [T59] scroll/follow/pill demo
+
+    // Bir tick'te birden çok satır ilerlenir: tek satır (36px) çoğu zaman 54px dead-band'in ALTINDA kalır
+    // (bilerek — spec'in "hedef sapması <54px ise dokunulmaz" kuralı), bu yüzden gözle DOĞRULANABİLİR bir hareket
+    // için birkaç satır atlanır (gerçek koşuda bağımlılık katmanları paralel bitince frontier de böyle sıçrar).
+    private const int SimStepRows = 2;
+    private static readonly TimeSpan SimTickInterval = TimeSpan.FromMilliseconds(600); // > 550ms throttle penceresi
+
+    private DispatcherTimer? _simTimer;
+    private int _simIndex;
+
+    private void OnStartSim(object sender, RoutedEventArgs e)
+    {
+        _simTimer?.Stop();
+        _simIndex = 0;
+        LoadSampleLayers(); // [T59] Metrics/FollowScrollController'ı taze kurar — satır indeksleri SampleGraphData.Nodes ile hizalanır (Nodes zaten L0..L5 sıralı)
+        LabConsole.ShowRunDocument(""); // temiz sayfa — BottomAnchor yeniden dibe yapışır (T59)
+        LabListPill.Visibility = Visibility.Collapsed;
+        LabHeader.ShowNarrative(0);
+
+        _simTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = SimTickInterval };
+        _simTimer.Tick += OnSimTick;
+        _simTimer.Start();
+    }
+
+    private void OnStopSim(object sender, RoutedEventArgs e)
+    {
+        _simTimer?.Stop();
+        _simTimer = null;
+    }
+
+    // Her tick: frontier'i (T59 FollowScrollController) ilerlet + konsola bir "building" satırı akıt + liste-pill'i
+    // (elle kaydırılıp follow durduysa) göster. Konsolun KENDİ `⌄ latest` pill'i ConsoleView'ın içinde, ayrıca kod
+    // gerekmez.
+    private void OnSimTick(object? sender, EventArgs e)
+    {
+        if (_simIndex >= SampleGraphData.Nodes.Count) _simIndex = 0; // sürekli demo için baştan sar
+        var node = SampleGraphData.Nodes[_simIndex];
+
+        LabProjects.FollowRow(_simIndex);
+        LabConsole.AppendBatch($"{DateTime.Now:HH:mm:ss} ▸ building {node.Name} ({node.DurationMs}ms)\n");
+        LabListPill.Visibility = LabProjects.IsFollowSuppressedByUser ? Visibility.Visible : Visibility.Collapsed;
+
+        _simIndex += SimStepRows;
+    }
+
+    // [T59] Liste pill tıklaması: "frontier'e dön" — kullanıcı-suppress'i yok sayarak son bilinen frontier satırına
+    // yumuşak döner ve pill'i gizler (design-v1'in dip-pili değil, follow-mode'a özgü bir varyant — bkz. task-5-report.md).
+    private void OnResumeFollowClick(object sender, RoutedEventArgs e)
+    {
+        int row = Math.Clamp(_simIndex, 0, SampleGraphData.Nodes.Count - 1);
+        LabProjects.ResumeFollow(row);
+        LabListPill.Visibility = Visibility.Collapsed;
+    }
 }

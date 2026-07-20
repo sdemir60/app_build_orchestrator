@@ -52,9 +52,18 @@
                 <TextBlock Text="Kaydır: katman başlıkları birikimli yapışır (i×24px), alttaki üsttekini iter. Prototiple yan yana karşılaştır."
                            Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
                            TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                <!-- [T59] Scroll/follow/pill demo tetikleyicileri -->
+                <TextBlock Text="Scroll / follow / pill (T59)" Foreground="{StaticResource Brush.TextSecondary}"
+                           FontSize="12" Margin="0,16,0,8" />
+                <Button Content="Start run simulation" Margin="0,0,0,6" Click="OnStartSim" />
+                <Button Content="Stop run simulation" Margin="0,0,0,6" Click="OnStopSim" />
+                <TextBlock Text="Koşu simülasyonu: liste frontier'i yumuşak takip eder + konsola satır akar. Elle yukarı kaydır (liste VEYA konsol) → takip/yapışıklık durur + ⌄ latest pill çıkar; pill'e tıkla → yumuşak dön/dibe."
+                           Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
             </StackPanel>
 
-            <!-- [T58] Projects listesi paneli (sticky overlay + LayoutMetrics) -->
+            <!-- [T58/T59] Projects listesi paneli (sticky overlay + LayoutMetrics + follow-mode + frontier pill) -->
             <DockPanel Grid.Column="1" Margin="0,0,12,0">
                 <Border DockPanel.Dock="Top" Height="28" Margin="0,0,0,6"
                         Background="{StaticResource Brush.Surface}"
@@ -65,11 +74,17 @@
                         <controls:TrackedTextBlock Text="PROJECTS" VerticalAlignment="Center" />
                     </DockPanel>
                 </Border>
-                <controls:StickyLayerList x:Name="LabProjects" />
+                <Grid>
+                    <controls:StickyLayerList x:Name="LabProjects" />
+                    <!-- [T59] Liste-özel demo: sim sırasında elle kaydırma follow'u durdurur — pill "frontier'e dön"
+                         affordance'ı sunar (design-v1 §2.4/§2.5 birebir DEĞİL — bkz. task-5-report.md gerekçesi). -->
+                    <controls:LatestPill x:Name="LabListPill" Click="OnResumeFollowClick" />
+                </Grid>
             </DockPanel>
 
             <DockPanel Grid.Column="2">
                 <appConsole:ConsoleHeader x:Name="LabHeader" DockPanel.Dock="Top" Margin="0,0,0,6" />
+                <!-- [T59] Konsolun `⌄ latest` pill'i ARTIK ConsoleView'ın kendi içinde (production) — burada ayrıca eklenmez. -->
                 <appConsole:ConsoleView x:Name="LabConsole" />
             </DockPanel>
         </Grid>

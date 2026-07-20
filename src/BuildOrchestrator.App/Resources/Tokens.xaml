@@ -74,4 +74,12 @@
     <!-- Focus -->
     <SolidColorBrush x:Key="Brush.FocusRing" Color="#80EDA10F" />
 
+    <!-- [T59] radius/gölge — yalnız `⌄ latest` pill'in ihtiyaç duyduğu alt küme (tam radius/elevation ölçeği T49). -->
+    <!-- design-v1 §1.3: overlay radius 8 (pill "radius-md" prototip CSS adı, gerçek değer overlay=8). -->
+    <CornerRadius x:Key="Radius.Overlay">8</CornerRadius>
+    <!-- design-v1 §1.3/it4a-tdd-plan Global Constraints: popover gölgesi `0 6px 18px -8px rgba(0,0,0,.6)`.
+         DropShadowEffect'te spread parametresi yok (feasibility §3.2/§5-2) — tek katmanla yakınsanır:
+         Direction=270 (düz aşağı) + ShadowDepth=6 + BlurRadius=18 + Opacity=.6. -->
+    <DropShadowEffect x:Key="Effect.PopoverShadow" Color="Black" Direction="270" ShadowDepth="6" BlurRadius="18" Opacity="0.6" />
+
 </ResourceDictionary>

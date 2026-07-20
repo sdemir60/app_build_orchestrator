@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Animation;
 
 namespace BuildOrchestrator.App.Controls;
 
@@ -27,6 +28,9 @@ public partial class StickyLayerList : UserControl
     /// hedefleri AYNI instance'tan üretilir. <see cref="SetGroups"/>'tan önce null.</summary>
     public LayoutMetrics? Metrics { get; private set; }
 
+    // [T59] Follow-mode/seçili-karta-kaydırma orkestratörü — Metrics her SetGroups'ta yenilendiğinden burada da yenilenir.
+    private FollowScrollController? _follow;
+
     public StickyLayerList()
     {
         InitializeComponent();
@@ -34,6 +38,9 @@ public partial class StickyLayerList : UserControl
         Overlay.ItemsSource = NoHeaders;
         // Salt aritmetik overlay recompute: kaydırmada yapışık küme değişir (ScrollUnit=Pixel → VerticalOffset px).
         Scroll.ScrollChanged += (_, _) => UpdateOverlay(Scroll.VerticalOffset);
+        // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki follow/seçim-scroll animasyonu iptal olur + suppress
+        // bayrağı kalkar (feasibility §3.3 — WPF'te wheel'in animasyonu otomatik iptal etmesi YOK, tarayıcının aksine).
+        ScrollAnimator.EnableUserCancellation(Scroll);
     }
 
     /// <summary>In-flow ve overlay başlıklarının paylaştığı TEK DataTemplate (geçişin görünmezliği bunu gerektirir).</summary>
@@ -50,6 +57,8 @@ public partial class StickyLayerList : UserControl
     {
         ArgumentNullException.ThrowIfNull(groups);
         Metrics = new LayoutMetrics(groups.Select(g => new LayerSpec(g.Name ?? "", g.Rows.Count)).ToList());
+        // [T59] Metrics tazelendi — follow/seçim controller'ı da AYNI (yeni) instance'ı paylaşacak şekilde yenilenir.
+        _follow = new FollowScrollController(Metrics, () => Scroll.ViewportHeight, () => Scroll.VerticalOffset, AnimateScrollTo);
 
         var entries = new List<object>();
         foreach (var g in groups)
@@ -60,6 +69,37 @@ public partial class StickyLayerList : UserControl
         }
         Flow.ItemsSource = entries;
         UpdateOverlay(Scroll.VerticalOffset);
+    }
+
+    /// <summary>[T59] Koşarken + seçim yokken frontier satırının (çağıranın belirlediği — ör. ilk
+    /// <c>State==Started</c> proje) görünür kalması için çağrılır. Throttle(550ms)/dead-band(54px)/kullanıcı-
+    /// suppress kararı <see cref="FollowScrollController"/>'a aittir.</summary>
+    public void FollowRow(int rowIndex) => _follow?.FollowRow(rowIndex, ScrollAnimator.GetIsUserSuppressed(Scroll));
+
+    /// <summary>[T59] Kullanıcı tekerleği çevirerek follow'u en son iptal etti mi — çağıranın (ör. bir "geri frontier'e
+    /// dön" affordance'ı, --it4a-lab demosundaki gibi) bunu gösterip göstermeyeceğine karar vermesi için.</summary>
+    public bool IsFollowSuppressedByUser => ScrollAnimator.GetIsUserSuppressed(Scroll);
+
+    /// <summary>[T59] Kullanıcı-suppress bayrağını YOK SAYARAK satırı zorla görünür kılar ("frontier'e dön" tıklaması) —
+    /// <see cref="ScrollAnimator.AnimateTo"/> ZATEN her çağrıda suppress'i temizler (yeni programatik hareket).</summary>
+    public void ResumeFollow(int rowIndex) => _follow?.FollowRow(rowIndex, userSuppressed: false);
+
+    /// <summary>[T59] Karta tıklama — follow durur, satır 90ms sonra %35 üst-marjla görünür kılınır (Ek A-11).</summary>
+    public void SelectRow(int rowIndex) => _follow?.SelectRow(rowIndex);
+
+    /// <summary>[T59] Seçim kalkar — follow kaldığı yerden sürer.</summary>
+    public void ClearSelection() => _follow?.ClearSelection();
+
+    // [T59] ScrollAnimator'a sarar: süre/eğri Foundation'dan, motion sinyali ÇAĞRI ANINDA taze okunur (sözleşme).
+    private bool AnimateScrollTo(double target)
+    {
+        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        var duration = MotionTokens.ResolveDuration(this, "Duration.Slow", 280.0);
+        // design-v1 §1.3: "yer değiştirme" = ease-in-out. Scroll'un kendi bir süre token'ı YOK (yalnız throttle/
+        // dead-band kadansı verilmiş) — 4 Foundation süresinden en yakını (Slow) gerekçeli seçim (bkz. ScrollAnimator
+        // XML yorumu ve task-5-report.md).
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
+        return ScrollAnimator.AnimateTo(Scroll, Scroll.VerticalOffset, target, animationsEnabled, duration.TimeSpan, spline);
     }
 
     /// <summary>Verilen VerticalOffset'teki yapışık başlıkları overlay'e ver. ScrollChanged production'da bunu

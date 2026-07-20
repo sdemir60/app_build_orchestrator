@@ -2,7 +2,8 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:sys="clr-namespace:System;assembly=mscorlib"
-             xmlns:avalonEdit="clr-namespace:ICSharpCode.AvalonEdit;assembly=ICSharpCode.AvalonEdit">
+             xmlns:avalonEdit="clr-namespace:ICSharpCode.AvalonEdit;assembly=ICSharpCode.AvalonEdit"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
   <!-- [T56/3a+3b] Editör + hibrit aktif-satır overlay aynı hücrede. Overlay IsHitTestVisible=False → metin seçimi
        (kutsal) engellenmez; aktif satır ~250ms boyunca dokümanda YOKtur (bilinçli seçilemezlik, feasibility §3.6). -->
   <UserControl.Resources>
@@ -39,5 +40,8 @@
       <Rectangle x:Name="BuildProgressCursor" Width="7" Height="13" Margin="6,0,0,0"
                  Fill="{DynamicResource Brush.AmberText}" VerticalAlignment="Center" />
     </StackPanel>
+    <!-- [T59] Alta yapışık scroll + `⌄ latest` pill (design-v1 §2.5, konsol+stream ORTAK kural). Görünürlük
+         BottomAnchorBehavior.ShowPill'den (48px eşik + 560ms jumping penceresi); tıkla → yumuşak dibe. -->
+    <controls:LatestPill x:Name="Pill" Click="OnPillClick" />
   </Grid>
 </UserControl>

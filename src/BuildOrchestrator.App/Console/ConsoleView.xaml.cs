@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using BuildOrchestrator.App.Controls;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 
@@ -43,6 +44,10 @@ public partial class ConsoleView : UserControl
     private ConsoleColorizer? _colorizer;
     private ConsolePalette? _palette;
 
+    // [T59] Alta-yapışık + `⌄ latest` pill — StickToBottom'ın TEK gerçek kaynağı (bkz. StickToBottom get/set altta).
+    private readonly BottomAnchorBehavior _bottomAnchor;
+    private double _lastExtentHeight; // AvalonEdit ScrollChanged extent-delta VERMEZ — burada elle izlenir (T59)
+
     // Aktif-satır daktilosu durumu (yalnız UI thread'inde dokunulur).
     private DispatcherTimer? _typeTimer;
     private Stopwatch? _typeClock;
@@ -72,6 +77,15 @@ public partial class ConsoleView : UserControl
         BuildProgressText.FontFamily = ConsoleFontFamily;
         Loaded += (_, _) => EnsureColorizer();
         EditorControl.TextArea.TextView.ScrollOffsetChanged += (_, _) => OnScrollOffsetChanged();
+        // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
+        ScrollAnimator.EnableUserCancellation(EditorControl);
+        _bottomAnchor = new BottomAnchorBehavior(
+            getOffset: () => EditorControl.VerticalOffset,
+            getExtent: () => EditorControl.ExtentHeight,
+            getViewport: () => EditorControl.ViewportHeight,
+            scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
+            scrollSmooth: AnimateToBottom);
+        _bottomAnchor.Changed += (_, _) => Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Test/host erişimi için altındaki AvalonEdit kontrolü.</summary>
@@ -84,8 +98,23 @@ public partial class ConsoleView : UserControl
         set => EditorControl.Document = value;
     }
 
-    /// <summary>true iken her <see cref="AppendBatch"/> sonrası en alta kaydırılır (varsayılan true).</summary>
-    public bool StickToBottom { get; set; } = true;
+    /// <summary>
+    /// true iken her <see cref="AppendBatch"/> sonrası en alta kaydırılır (varsayılan true).
+    ///
+    /// <para><b>[T59] Reconciliation:</b> ARTIK <see cref="BottomAnchorBehavior.IsStuck"/>'ın ince bir geçişidir —
+    /// TEK bottom-anchor mekanizması <see cref="_bottomAnchor"/>'dır (görev talimatı: "çift iş yok"). Public API
+    /// AYNI kaldı (3b testleri elle <c>StickToBottom = false</c> atar, bu hâlâ çalışır — <see cref="BottomAnchorBehavior.ForceStuck"/>
+    /// bir doğrudan override'dır). YENİ olan: gerçek uygulamada artık <see cref="OnScrollOffsetChanged"/> her scroll
+    /// olayında 48px eşiğine göre bunu OTOMATİK de günceller — önceden (Task 3b'de) hiçbir mekanizma bunu yapmıyordu
+    /// (MainWindow hiçbir yerde StickToBottom atamıyordu, konsol pratikte kalıcı yapışıktı). Headless testlerde
+    /// gerçek layout/scroll geometrisi oluşmadığından (bkz. ScrollOffsetChanged'in AvalonEdit'te layout gerektirmesi)
+    /// bu otomatik yol tetiklenmez — mevcut 3b testleri ETKİLENMEZ.</para>
+    /// </summary>
+    public bool StickToBottom
+    {
+        get => _bottomAnchor.IsStuck;
+        set => _bottomAnchor.ForceStuck(value);
+    }
 
     /// <summary>
     /// UI thread'inde çağrılır. TEK batch ekler — asla satır satır bölmez, asla <c>Dispatcher.Invoke</c>
@@ -287,6 +316,9 @@ public partial class ConsoleView : UserControl
     {
         CancelCascade();
         HideBuildInProgress();
+        // [T59] design-v1 §2.5: "konsol↔proje-log geçişinde dibe sabitlenir" — kullanıcı önceki modda serbest
+        // kaydırmış olsa bile mod değişimi HER ZAMAN yeniden yapıştırır (aşağıdaki `if (StickToBottom)` artık true okur).
+        _bottomAnchor.ForceStuck(true);
         _projectMode = false;
         _trimTail = true;
         _projectAllLines = [];
@@ -307,6 +339,8 @@ public partial class ConsoleView : UserControl
         EnsureColorizer();
         CancelCascade();
         HideBuildInProgress();
+        // [T59] design-v1 §2.5: "konsol↔proje-log geçişinde dibe sabitlenir" — bkz. ShowRunDocument'taki aynı gerekçe.
+        _bottomAnchor.ForceStuck(true);
         FinishActiveLine(commit: false); // narrative typewriter varsa temizle (mod değişimi)
 
         allLines ??= [];
@@ -398,7 +432,31 @@ public partial class ConsoleView : UserControl
 
     // ---------------------------------------------------------------- chunk loader (scroll-telafili prepend)
 
-    private void OnScrollOffsetChanged() => EvaluateChunkScroll(EditorControl.VerticalOffset);
+    private void OnScrollOffsetChanged()
+    {
+        EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
+
+        // [T59] AvalonEdit'in ScrollOffsetChanged'i WPF ScrollViewer.ScrollChanged.ExtentHeightChange gibi bir delta
+        // VERMEZ — burada elle izlenir (BottomAnchorDecision içerik-büyümesi/kullanıcı-scroll ayrımı için bunu ister).
+        double extent = EditorControl.ExtentHeight;
+        double extentChange = extent - _lastExtentHeight;
+        _lastExtentHeight = extent;
+        _bottomAnchor.OnScrollChanged(extentChange);
+    }
+
+    // [T59] Pill tıklaması → yumuşak (reduced-motion'da anında) dibe.
+    private void OnPillClick(object sender, RoutedEventArgs e) => _bottomAnchor.JumpToBottom();
+
+    // [T59] BottomAnchorBehavior'ın "scrollSmooth" delege'i — ScrollAnimator'a sarar; süre/eğri Foundation'dan,
+    // motion sinyali ÇAĞRI ANINDA taze okunur (sözleşme). StickyLayerList.AnimateScrollTo ile AYNI desen (kopya
+    // değil — ayrı host'lar farklı hedef türlerine [TextEditor/ScrollViewer] sarıyor, ScrollAnimator ortak çekirdek).
+    private bool AnimateToBottom(double target)
+    {
+        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        var duration = ResolveDuration("Duration.Slow", 280.0);
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
+        return ScrollAnimator.AnimateTo(EditorControl, EditorControl.VerticalOffset, target, animationsEnabled, duration.TimeSpan, spline);
+    }
 
     /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
     /// <c>EditorControl.VerticalOffset</c> ile çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
@@ -462,6 +520,7 @@ public partial class ConsoleView : UserControl
     }
 
     // Duration.* kaynağını çözer (motion sözleşmesi: süreler token'dan); yoksa fallback ms.
-    private Duration ResolveDuration(string key, double fallbackMs)
-        => TryFindResource(key) is Duration d ? d : new Duration(TimeSpan.FromMilliseconds(fallbackMs));
+    // [T59] Controls.MotionTokens'a taşındı (ScrollAnimator/BottomAnchor/FollowScroll/LatestPill AYNI ihtiyacı
+    // duyar) — kopya YASAK; davranış DEĞİŞMEDİ (aynı TryFindResource + aynı fallback deseni).
+    private Duration ResolveDuration(string key, double fallbackMs) => MotionTokens.ResolveDuration(this, key, fallbackMs);
 }
