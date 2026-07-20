@@ -1,6 +1,6 @@
 # Plan v7 — Aşama Aşama Uygulama Rehberi (Kopyala-Yapıştır Promptlar + Model & Effort Seçimi)
 
-> **Nasıl kullanılır:** Her aşama için → ① Claude Code'da modeli VE effort'u seç (`/model claude-fable-5` veya `/model claude-opus-4-8`; effort, model menüsündeki reasoning-effort seçeneğinden — aşağıdaki tabloya göre) → ② aşamanın PROMPT kutusunu olduğu gibi yapıştır → ③ "Bitti kriteri"ni kontrol et → ④ sonraki aşamaya geç. Her aşamayı **temiz (yeni) oturumda** başlatman önerilir — promptlar kendi bağlamını dosyalardan kuruyor, önceki sohbete ihtiyaç yok.
+> **Nasıl kullanılır:** Her aşama için → ① Claude Code'da modeli VE effort'u seç (`/model claude-opus-4-8`; effort, model menüsündeki reasoning-effort seçeneğinden — aşağıdaki tabloya göre. **Not: bu plan artık yalnız Opus kullanır — Fable kaldırıldı; tamamlanmış aşamaların ✅ kayıtlarındaki "Fable" ifadeleri o gün ne kullanıldığının tarihsel kaydıdır.**) → ② aşamanın PROMPT kutusunu olduğu gibi yapıştır → ③ "Bitti kriteri"ni kontrol et → ④ sonraki aşamaya geç. Her aşamayı **temiz (yeni) oturumda** başlatman önerilir — promptlar kendi bağlamını dosyalardan kuruyor, önceki sohbete ihtiyaç yok.
 >
 > **Kaynak dosyalar (promptların referans verdiği):**
 > - Plan v7: `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md`
@@ -20,13 +20,13 @@
 | A5 | It-2 uygulama (Rebuild) | **Opus** | **medium** | İyi spec'lenmiş; Stop/copy-aware kısmında review şart |
 | A6 | It-3 uygulama (Incremental) | **Opus** | **medium** | İyi spec'lenmiş; test listesi hazır |
 | A7 | It-4 BAŞI: T65 font A/B testi | **Fable** | **medium** | Karar kapısı (K9) — küçük harness, derin akıl yürütme gerektirmez |
-| A8 | It-4a: zor-custom UI paketi | **Fable** | **high** | AvalonEdit, sticky overlay, TrackedTextBlock, graf render, WindowChrome — A13'ün riskli parçaları |
+| A8 | It-4a: zor-custom UI paketi | **Opus** | **xhigh** | AvalonEdit, sticky overlay, TrackedTextBlock, graf render, WindowChrome — A13'ün riskli parçaları; plandaki en zor iş, Fable telafisi → xhigh |
 | A9 | It-4b: kalan UI görevleri | **Opus** | **medium** | Template/stil hacim işi; değerler design-v1'de hazır |
-| A10 | It-5: perf + dağıtım + docs | **Opus** | **medium** | Rutin; perf sorunu çıkarsa Fable high'a dön |
-| R | Her iterasyon SONU review | **Fable** | **high** | Kod review'da en güçlü model; ucuz aşamaların sigortası (`/code-review high` argümanı promptta zaten var) |
+| A10 | It-5: perf + dağıtım + docs | **Opus** | **medium** | Rutin; perf sorunu çıkarsa effort'u high/xhigh'a çıkar |
+| R | Her iterasyon SONU review | **Opus** | **high** (UI iter. **xhigh**) | Plandaki en güçlü model; her iterasyonun sigortası (`/code-review high` argümanı promptta zaten var); A8/A9 gibi UI iterasyonlarının review'unda xhigh |
 
-> **Kural 1 (model):** Opus'lu bir aşamada model tıkanırsa (aynı hatada 2-3 tur dönüyorsa) o task'ı Fable ile temiz oturumda yaptır, sonra Opus'a dön. Ters yönde de serbestsin — bütçe önceliğin varsa A4-A6'yı da Fable yerine Opus review'suz GEÇME, review'u atlama.
-> **Kural 2 (effort):** Tıkanmada İLK çare model değiştirmek değil, aynı modelde effort'u bir kademe yükseltmek (medium → high). `low` hiçbir aşamada kullanılmaz — bu projede en ucuz iş bile davranış spec'ine birebir sadakat istiyor. Effort'u düşürmek yalnız mekanik tekrar işlerinde (örn. A9'da ikon/stil kopyalama alt-taskları) kabul edilebilir, onda da medium tabandır.
+> **Kural 1 (model):** Plan artık tek model kullanır: **Opus** (Fable kaldırıldı). Tıkanırsan model değiştirme kolu yok; çare effort'u yükseltmek (Kural 2). Hiçbir aşamada review'u atlama — özellikle riskli bölgelerde (Stop/copy-aware, UI custom render).
+> **Kural 2 (effort):** Tıkanmada çare, aynı modelde effort'u bir kademe yükseltmek (medium → high → xhigh; Fable olmadığı için tek yükseltme kolu bu). **Fable'ın atandığı aşamalarda taban high değil xhigh'dır** (A8) — güçlü modelin kaybı effort ile telafi edilir; effort modelin tavanını AŞMAZ, yalnız o tavanı sonuna kadar kullandırır (xhigh Opus, Fable'a yaklaşır ama Fable OLMAZ). `low` hiçbir aşamada kullanılmaz — bu projede en ucuz iş bile davranış spec'ine birebir sadakat istiyor. Effort'u düşürmek yalnız mekanik tekrar işlerinde (örn. A9'da ikon/stil kopyalama alt-taskları) kabul edilebilir, onda da medium tabandır.
 
 ---
 
@@ -232,6 +232,9 @@ It-3 acceptance'ını kanıtla (branch-bounce, L1→L3 dirty, config-switch all-
 
 ## A7 — It-4 BAŞI: T65 Font A/B karar kapısı · Model: **Fable** · Effort: **medium**
 
+> **✅ TAMAMLANDI (2026-07-19).** T65 spike penceresi App'e eklendi: `BuildOrchestrator.App.exe --font-ab` → `Spikes/FontAbWindow` (DI/Supervisor kurulmadan açılır; design-v1 gerçek örnekleri — 11px caps PanelHead, 13px ProjectRow Medium/SemiBold, 12px mono konsol satırları, renkler token'lardan — 4 kombinasyon yan yana). Tarayıcı referansı **aynı OTF dosyalarıyla** `.claude/temp/2026-07-18-23-45-t65-font-ab-reference.html` (standalone prototip HTML'i kullanılmadı — Google CDN blob'ları kırık). Önkoşul olarak **PerMonitorV2 manifest'i** eklendi (`app.manifest`, A13.2 zorunlu kararı). **KULLANICI KARARI: KABUL — saf WPF kesinleşti; WebView2 hibrit kapısı (K9) KAPANDI** (yalnız v2 backlog'unda). Kullanıcı ne 4 kombinasyonu ne WPF↔tarayıcıyı ayırt edebildi; piksel doğrulaması farkların gerçek ama algı-altı olduğunu kanıtladı (çeyrekler arası ~%15,5-15,8 piksel farkı; renk saçağı ClearType %82 ↔ Grayscale %33-40) → A13.1 madde 1'in ~%95-98 öngörüsü tuttu. Varsayılan **`Display × Grayscale`** MainWindow köküne sabitlendi (gerekçe: Display <14px netlik şartı; Grayscale prototipin `antialiased` görünümüne en yakın, saçaksız, sistem-ClearType/panel-tipinden bağımsız deterministik). Karar notu: [2026-07-19-03-29-t65-font-decision.md](2026-07-19-03-29-t65-font-decision.md). Testler: **475 PASS + 1 SKIP (CompositeFont) + 1 FAIL (T65-DIŞI):** OsysRebuildAcceptance canlı koşusunda WPF markup derlemesinin geçici `*_wpftmp.csproj` dosyası, `EvaluationCache.GetOrEvaluate` FileInfo.Length okuyana kadar silinip `FileNotFoundException` fırlattı (canlı build ↔ scan yarış durumu; Core'a dokunulmadı, T65 kaynaklı değil) → **A8'e devir: scanner `*_wpftmp.csproj` dışlasın + EvaluationCache kaybolan dosyaya toleranslı olsun.** Commit `1d004f0` main'de + origin'de; yardımcı branch'ler temizlendi (lokal `it2-build-engine`/`it3-incremental` + `origin/it3-incremental` silindi — tek trunk `main`). **A8'e geç.**
+>
+> **⚠️ Not — DURUM (aşağıdaki kutu tarihseldir):** It-3 sonu itibarıyla yazılmıştı; A7 başlangıç girdilerini gösterir. Güncel durum yukarıdaki ✅ bloğudur.
 > **DURUM (2026-07-18):** It-0 + It-1 + It-2 + **It-3 main'de VE origin'e PUSH EDİLDİ** (merge commit `b82f739`; `it3-incremental` branch'i de origin'de). Clean build 0/0, non-acceptance suite 473 PASS + 1 SKIP, gerçek OSYS **incremental acceptance GREEN** (Run2 no-change → 122 up-to-date skip / 0 kaçak; K1 salt-okur doğrulandı). Motor tam: incremental (per-project committed-fingerprint imza + build-state persist + Safe/Fast propagation), git subsistem (ref-only fetch + branch-driven worktree + pool), layer/depIssue/Retry/ETA, ve **VM-seviyesi** will-build/depIssue/ETA state (buildPreview). **It-4 = design-v1 birebir UI** (pixel/kart/graf/typewriter render — motor VM state hazır, App yalnız minimal). Temiz oturumda başla. **It-4 MUST-DO-FIRST backlog** (`.superpowers/sdd/progress.md` + it3-records §7): SCC-aware propagation (cycle-tangled stale-skip), depIssue-persist penceresi, Build pre-skip deterministik unit-test, **LayerEngine warn'larını layer-config UI'dan ÖNCE kapat**, worktree e2e BUILD wiring + Continue'nun UseWorktree'yi devralması + inPlace'i resolved-worktree'den türetme, sync-workspace IPC/UI, ETA live-tick. Bunlar A8/A9'un (UI/feature It-4) kapsamı; **A7 yalnız izole T65 font kapısı** — motor/backlog'a dokunmaz.
 
 **PROMPT — yapıştır:**
@@ -253,7 +256,9 @@ Bana ekran görüntüsü alıp karşılaştıracağım net bir yönerge ver. SON
 
 ---
 
-## A8 — It-4a: Zor-custom UI paketi · Model: **Fable** · Effort: **high**
+## A8 — It-4a: Zor-custom UI paketi · Model: **Opus** · Effort: **xhigh**
+
+> **DURUM (2026-07-19):** It-0..It-3 + **A7 (T65)** main'de VE origin'de (tek trunk `main`, HEAD `1d004f0`; yardımcı branch'ler temizlendi). **T65 kararı: KABUL — saf WPF; `Display × Grayscale` MainWindow köküne sabit** (karar notu: [2026-07-19-03-29-t65-font-decision.md](2026-07-19-03-29-t65-font-decision.md)); WebView2 kapısı kapandı. Motor tam ve VM-seviyesi state hazır (will-build/depIssue/ETA/buildPreview); App yalnız minimal fonksiyonel iskelet — **It-4a = design-v1 birebir UI'nin zor-custom parçaları.** Clean build 0/0; test **475 PASS + 1 SKIP** + **1 bilinen FAIL** (T65-dışı, aşağıda İLK task). Temiz oturumda başla.
 
 **PROMPT — yapıştır:**
 
@@ -262,21 +267,28 @@ Bana ekran görüntüsü alıp karşılaştıracağım net bir yönerge ver. SON
 1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (v7 — A7 + A13 bağlayıcı)
 2. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; gerekli yerlerde prototype/app/BuildApp.jsx ve prototype/_ds token'larına in)
 3. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (§3-§5 teknik çözümler)
-4. .claude/handoffs/ altındaki EN YENİ handoff
+4. .claude/outputs/2026-07-18-12-37-it3-records.md §7 + .superpowers/sdd/progress.md "It-4 backlog" (MUST-DO-FIRST devir kalemleri)
+5. .claude/handoffs/ altındaki EN YENİ handoff (2026-07-18-13-02-... → It-3 tamam; A7/T65 handoff üretmedi, durum bu playbook'un A7 ✅ bloğunda)
 
-Görev: It-4'ün ZOR-CUSTOM paketini uygula (yalnız bunlar): T56 (AvalonEdit konsol UI'sının kalanı: colorizer + hibrit aktif-satır typewriter + kaskat tempo+fade + chunk loader), T57 (TrackedTextBlock), T58 (sticky overlay + LayoutMetrics; virtualization KAPALI başlar), T59 (ScrollAnimator/BottomAnchor/Follow + latest pill), T62 (pencere kabuğu paketi: Snap Layouts, restore glyph, tray+balloon, single-instance AllowSetForegroundWindow, Alt+B), T63 (graf render: Shapes yolu + kamera + dash-flow tek clock + EdgeStyleResolver; etiketler Ideal).
+DURUM: It-0..It-3 + A7(T65) main'de ve origin'de (HEAD 1d004f0, tek trunk). T65 KABUL → saf WPF; MainWindow kökünde TextFormattingMode=Display + TextRenderingMode=Grayscale SABİT (dokunma). App şu an minimal fonksiyonel iskele; motor VM state (will-build/depIssue/ETA/buildPreview) hazır. Bu iterasyona main'den başla.
+
+⛔ İLK TASK (T65'ten devreden, T65-dışı bilinen FAIL — bu iterasyonun ilk işi):
+OsysRebuildAcceptance canlı koşusunda WPF markup derlemesinin ürettiği geçici *_wpftmp.csproj dosyası, EvaluationCache.GetOrEvaluate FileInfo.Length okuyana kadar silinip FileNotFoundException fırlatıyor (canlı build ↔ project scan yarış durumu; src/BuildOrchestrator.Core/Discovery/EvaluationCache.cs:25 + BuildPlanBuilder.cs:26). Fix: (a) project scanner *_wpftmp.csproj (ve benzeri geçici WPF temp proje) dosyalarını DIŞLASIN — bunlar kalıcı proje değil; (b) EvaluationCache kaybolan/erişilemeyen dosyaya toleranslı olsun (FileNotFound → skip/yeniden-değerlendir, throw etme). Önce failing test, sonra fix.
+
+Görev: yukarıdaki İLK task'tan sonra It-4'ün ZOR-CUSTOM paketini uygula (yalnız bunlar): T56 (AvalonEdit konsol UI'sının kalanı: colorizer + hibrit aktif-satır typewriter + kaskat tempo+fade + chunk loader), T57 (TrackedTextBlock), T58 (sticky overlay + LayoutMetrics; virtualization KAPALI başlar), T59 (ScrollAnimator/BottomAnchor/Follow + latest pill), T62 (pencere kabuğu paketi: Snap Layouts, restore glyph, tray+balloon, single-instance AllowSetForegroundWindow, Alt+B), T63 (graf render: Shapes yolu + kamera + dash-flow tek clock + EdgeStyleResolver; etiketler Ideal).
 
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it4a-tdd-plan.md), sonra task-by-task.
-- A13.2 kuralları HARFİYEN (DoDragDrop yasak, dash birimi thickness çarpanı, ContainerVisual.Opacity animate edilemez, koleksiyon reset yasak…).
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it4a-tdd-plan.md; İLK task'ı ve MUST-DO-FIRST backlog'undan bu pakete düşenleri dahil et), sonra superpowers:subagent-driven-development ile task-by-task.
+- A13.2 kuralları HARFİYEN (DoDragDrop yasak, dash birimi thickness çarpanı, ContainerVisual.Opacity animate edilemez, koleksiyon reset yasak…). T65 kararı gereği kökteki Display+Grayscale font ayarına dokunma; graf etiketleri Ideal (A13.2 lokal override).
 - Görsel değerler design-v1'den BİREBİR (süreler, easing KeySpline karşılıkları, renk token'ları) — uydurma değer yok.
 - Reduced-motion: tüm süre/eğri tek ResourceDictionary'den; SystemParameters.ClientAreaAnimation canlı takip.
+- FontAbWindow (--font-ab spike) repoda referans olarak KALIR; It-4a onu silmez/taşımaz.
 - Commit'leri ben istemeden yapma.
 
 Her task sonunda uygulamayı çalıştırıp ilgili davranışı gözle doğrulayabileceğim kısa bir kontrol adımı ver; bitince aşamamızı kaydet.
 ```
 
-**Bitti kriteri:** Konsol (seçim+renk+typewriter), sticky başlıklar, graf canlı animasyonları ve pencere kabuğu davranışları prototiple yan yana karşılaştırıldığında birebir his veriyor. Ardından **R promptu (Fable)**.
+**Bitti kriteri:** Konsol (seçim+renk+typewriter), sticky başlıklar, graf canlı animasyonları ve pencere kabuğu davranışları prototiple yan yana karşılaştırıldığında birebir his veriyor. Ardından **R promptu (Opus)**.
 
 ---
 
@@ -302,7 +314,7 @@ Kurallar:
 It-4 acceptance'ının tamamını (v7 Part C) madde madde kanıtla; bitince aşamamızı kaydet.
 ```
 
-**Bitti kriteri:** It-4 acceptance tam; tasarımla yan yana gözle karşılaştırma yapıldı. Ardından **R promptu (Fable)** — UI'da review'u mutlaka çalıştır.
+**Bitti kriteri:** It-4 acceptance tam; tasarımla yan yana gözle karşılaştırma yapıldı. Ardından **R promptu (Opus)** — UI'da review'u mutlaka çalıştır.
 
 ---
 
@@ -319,19 +331,19 @@ Görev: It-5'i uygula: T20 (CPU-cap × copy/git/IPC + copy rate floor), T33 (yal
 
 Kurallar:
 - Perf modları K11'e birebir: sabit 6/4/2 + priority + inner Job CPU cap (∞/%70/%40); cap tavanı ölçümle kanıtla.
-- 500–1000 kart + node akıcılık ölçümü (v7 A8 perf kalemleri); takılma varsa profiling sonucunu raporla — çözümü büyükse durup bana bildir (Fable'a taşırız).
+- 500–1000 kart + node akıcılık ölçümü (v7 A8 perf kalemleri); takılma varsa profiling sonucunu raporla — çözümü büyükse durup bana bildir (effort'u xhigh'a çıkarır ya da ayrı oturumda ele alırız).
 - Commit'leri ben istemeden yapma.
 
 It-5 acceptance'ını kanıtla (publish çalışır exe dahil); bitince aşamamızı kaydet.
 ```
 
-**Bitti kriteri:** It-5 acceptance tam; `dotnet publish` çıktısı çalışıyor. Son **R promptu (Fable)** + istersen `/code-review ultra` ile kapanış denetimi.
+**Bitti kriteri:** It-5 acceptance tam; `dotnet publish` çıktısı çalışıyor. Son **R promptu (Opus)** + istersen `/code-review ultra` ile kapanış denetimi.
 
 ---
 
-## R — Her iterasyon SONU: Review promptu · Model: **Fable** · Effort: **high** (yeniden kullanılabilir)
+## R — Her iterasyon SONU: Review promptu · Model: **Opus** · Effort: **high** (yeniden kullanılabilir)
 
-Her A3/A4/A5/A6/A8/A9/A10 sonrası, **Fable (high)** ile:
+Her A8/A9/A10 sonrası (A3-A6 zaten tamamlandı), **Opus (high)** ile:
 
 ```
 .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md dosyasını oku; sonra bu iterasyonda değişen kodu review et: /code-review high
@@ -360,6 +372,6 @@ kaldığımız yerden devam et
 ## Sık sorulanlar
 
 - **Sıra atlayabilir miyim?** Hayır — A1 (spike) GATE'tir; A2 onsuz başlamaz. A4–A6 sıralıdır (walking-skeleton). A7 (font kapısı) It-4'ün ilk işi olmalı.
-- **Hepsini Fable ile yapsam?** Olur, daha güvenli ama daha pahalı/yavaş. Kritik olan minimum şu üçünün Fable olması: **A1, A3, A8** + tüm **R** review'ları.
-- **Hepsini Opus ile yapsam?** Önermem — A1/A3/A8'de hata maliyeti yüksek. Ama yaparsan R review'larını kesinlikle Fable ile çalıştır.
+- **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). Kalan aşamalar: A8 (Opus/**xhigh** — plandaki en zor iş, Fable telafisi), A9 (Opus/medium), A10 (Opus/medium) ve her iterasyon sonu **R** review'ları (Opus/high; UI iterasyonlarında xhigh).
+- **Tıkanırsam?** Model değiştirme kolu yok; effort'u yükselt (medium → high → xhigh, Kural 2). Effort modelin tavanını aşmaz — yalnız o tavanı sonuna kadar kullandırır. Review'u hiçbir koşulda atlama — riskli bölgelerin (UI custom render, Stop/copy-aware) tek sigortası o.
 - **Commit ne zaman?** Promptlar commit'i sana bırakıyor (CLAUDE.md kuralı). Her aşama sonunda "commit et" demen yeterli.
