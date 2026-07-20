@@ -149,13 +149,19 @@ public sealed class TrackedTextBlock : FrameworkElement
         if (result.GlyphIndices.Length == 0)
             return null;
 
+        // Gerçek monitör DPI'sı (PerMonitorV2, app.manifest) — glyph hinting'in kök
+        // TextOptions.TextFormattingMode="Display" ile aynı piksel ızgarasına snap olması için. Bağlı
+        // olmayan/headless bir visual'de (ör. testler) GetDpi sistem varsayılanını (1.0) döner, çökmez —
+        // bkz. MainWindow.xaml.cs (VisualTreeHelper.GetDpi kullanımı, aynı desen).
+        float pixelsPerDip = (float)VisualTreeHelper.GetDpi(this).PixelsPerDip;
+
         var baselineOrigin = new Point(0, glyphTypeface.Baseline * FontSize);
         return new GlyphRun(
             glyphTypeface,
             bidiLevel: 0,
             isSideways: false,
             renderingEmSize: FontSize,
-            pixelsPerDip: 1.0f,
+            pixelsPerDip: pixelsPerDip,
             glyphIndices: result.GlyphIndices,
             baselineOrigin: baselineOrigin,
             advanceWidths: result.AdvanceWidths,

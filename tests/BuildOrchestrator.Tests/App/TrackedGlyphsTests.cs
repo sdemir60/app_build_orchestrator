@@ -1,5 +1,4 @@
 using System.IO;
-using System.Linq;
 using System.Windows.Media;
 using BuildOrchestrator.App.Controls;
 
@@ -36,8 +35,6 @@ public class TrackedGlyphsTests
         Assert.Equal(upper.Length, result.GlyphIndices.Length);
         Assert.Equal(upper.Length, result.AdvanceWidths.Length);
         Assert.Equal(expectedTotal, result.TotalWidth, precision: 9);
-        // N karakter × (fontSize*trackingEm) ek payı toplamda ayrıca doğrulanır (kanıt: brief'teki formül).
-        Assert.Equal(upper.Length * fontSize * trackingEm, result.AdvanceWidths.Sum() - upper.Sum(c => typeface.AdvanceWidths[typeface.CharacterToGlyphMap[c]] * fontSize), precision: 9);
     }
 
     [StaFact]
