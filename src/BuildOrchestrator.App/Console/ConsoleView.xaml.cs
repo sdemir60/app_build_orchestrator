@@ -432,31 +432,40 @@ public partial class ConsoleView : UserControl
 
     // ---------------------------------------------------------------- chunk loader (scroll-telafili prepend)
 
-    private void OnScrollOffsetChanged()
+    /// <summary>[I-1 test gözlemi] AvalonEdit'in <c>TextView.ScrollOffsetChanged</c>'ine bağlı GERÇEK handler —
+    /// üretimde ctor'da <c>EditorControl.TextArea.TextView.ScrollOffsetChanged += (_, _) => OnScrollOffsetChanged();</c>
+    /// ile kablanır. <see cref="EvaluateChunkScroll"/> ile AYNI gerekçeyle internal: testler canlı bir scroll
+    /// event'i (AvalonEdit'in layout-bağımlı, headless'ta güvenilmez zamanlamalı) beklemeden ÜRETİMİN ÇAĞIRDIĞI
+    /// metodun ta kendisini doğrudan tetikleyebilsin (paralel bir kopya yol DEĞİL).</summary>
+    internal void OnScrollOffsetChanged()
     {
-        EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
-
+        // [I-1 fix] Bottom-anchor'ın IsStuck YENİDEN-HESABI, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır.
+        // Neden sıra kritik: bir prepend (aşağıda) belgeyi TEPEDE büyütür ve VerticalOffset'i ChunkStitch.
+        // CompensatedOffset'e telafi eder — ExtentHeight bu satırdan SONRA okunsaydı, prepend'in kendi
+        // büyümesini "dipte içerik büyüdü" sanıp (extentChange>0, stale IsStuck=true) kullanıcıyı dibe
+        // YANKLARDI (CompensatedOffset'i ezerdi). Burada ÖNCE çalıştırmak, henüz-prepend-edilmemiş offset/extent
+        // ile IsStuck'ı taze tutar (tepeye scroll → IsStuck=false); prepend'in extent artışı SONRAKİ olaya
+        // sarkarsa bile o an IsStuck zaten false olduğundan içerik-büyümesi yakalaması tetiklenmez.
+        //
         // [T59] AvalonEdit'in ScrollOffsetChanged'i WPF ScrollViewer.ScrollChanged.ExtentHeightChange gibi bir delta
         // VERMEZ — burada elle izlenir (BottomAnchorDecision içerik-büyümesi/kullanıcı-scroll ayrımı için bunu ister).
         double extent = EditorControl.ExtentHeight;
         double extentChange = extent - _lastExtentHeight;
         _lastExtentHeight = extent;
         _bottomAnchor.OnScrollChanged(extentChange);
+
+        EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
     }
 
     // [T59] Pill tıklaması → yumuşak (reduced-motion'da anında) dibe.
     private void OnPillClick(object sender, RoutedEventArgs e) => _bottomAnchor.JumpToBottom();
 
-    // [T59] BottomAnchorBehavior'ın "scrollSmooth" delege'i — ScrollAnimator'a sarar; süre/eğri Foundation'dan,
-    // motion sinyali ÇAĞRI ANINDA taze okunur (sözleşme). StickyLayerList.AnimateScrollTo ile AYNI desen (kopya
-    // değil — ayrı host'lar farklı hedef türlerine [TextEditor/ScrollViewer] sarıyor, ScrollAnimator ortak çekirdek).
-    private bool AnimateToBottom(double target)
-    {
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
-        var duration = ResolveDuration("Duration.Slow", 280.0);
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
-        return ScrollAnimator.AnimateTo(EditorControl, EditorControl.VerticalOffset, target, animationsEnabled, duration.TimeSpan, spline);
-    }
+    // [T59] BottomAnchorBehavior'ın "scrollSmooth" delege'i. [M-1] Ortak desen (taze AnimationsEnabled + Duration.Slow
+    // + KeySpline.EaseInOut + ScrollAnimator.AnimateTo) StickyLayerList.AnimateScrollTo ile PAYLAŞILIR —
+    // MotionTokens.AnimateSlowEaseInOut'a çıkarıldı (kopya YASAK, CLAUDE.md); ayrı host'lar (TextEditor/ScrollViewer)
+    // ScrollAnimator'ın ortak UIElement/ScrollToVerticalOffset çekirdeğinden geçer.
+    private bool AnimateToBottom(double target) =>
+        MotionTokens.AnimateSlowEaseInOut(this, EditorControl, EditorControl.VerticalOffset, target);
 
     /// <summary>[3b I-2] Chunk-scroll kararı. Offset dışarıdan verilir — üretimde <see cref="OnScrollOffsetChanged"/>
     /// <c>EditorControl.VerticalOffset</c> ile çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)

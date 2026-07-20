@@ -214,4 +214,71 @@ public class ConsoleViewTests
         string expectedAfterSecond = string.Concat(Enumerable.Range(0, 300).Select(i => $"orig{i}\n")) + liveTail;
         Assert.Equal(expectedAfterSecond, view.Document.Text);
     }
+
+    // ---------------------------------------------------------------- [I-1] gerçek OnScrollOffsetChanged yolu
+
+    [StaFact]
+    public void Real_OnScrollOffsetChanged_path_prepends_on_jump_to_top_and_releases_stuck_without_data_loss()
+    {
+        // [I-1] EvaluateChunkScroll(offset) çağıran testlerin AKSİNE (yukarıdakiler), bu test AvalonEdit'in
+        // gerçek ScrollOffsetChanged'ine kablı OLAN, üretimin ta kendisi ConsoleView.OnScrollOffsetChanged'i
+        // ÇAĞIRIR (paralel bir kopya yol DEĞİL — internal, EvaluateChunkScroll'daki AYNI gerekçeyle: canlı bir
+        // scroll event'i beklemeden GERÇEK metodu tetikleyebilmek). Amaç: bottom-anchor'ın IsStuck yeniden-hesabı
+        // ile chunk-loader'ın prepend'i AYNI olayda (kullanıcı dipteyken tek hamlede tepeye/Ctrl+Home) çakıştığında
+        // (a) prepend'in delik BIRAKMADIĞINI (backlog bitişik) VE (b) kullanıcının artık dipte OLMADIĞININ doğru
+        // yansıtıldığını (StickToBottom=false — CompensatedOffset'in üzerine YANLIŞLIKLA "dibe git" yazılmadığının
+        // dolaylı kanıtı: bkz. BottomAnchorBehaviorTests.Growth_arriving_after_IsStuck_was_freshly_released_...)
+        // doğrular.
+        //
+        // [Önemli — dürüstlük notu] Deneysel olarak doğrulandı: AvalonEdit'in ExtentHeight/VerticalOffset'i BU
+        // headless/offscreen host'ta document.Insert/ScrollToVerticalOffset'ten SONRA, araya GERÇEK bir layout
+        // pass girmeden senkron YANSIMAZ — bu yüzden I-1'in tarif ettiği "aynı senkron çağrı içinde post-prepend
+        // extent'in stale-true IsStuck'a sızması" tam olarak BU testte yeniden üretilemiyor (eski SIRA ile de bu
+        // assertion'lar geçiyor — denenip doğrulandı, geri alınıp tekrar denendi). Gerçek mekanizma yalnız
+        // AvalonEdit'in KENDİ iç senkron re-entrant event'i (ScrollToVerticalOffset'in kendi layout flush'ı)
+        // üzerinden tetiklenebilir, ki bu headless bir StaFact'te DETERMİNİSTİK olarak zorlanamıyor. Bu yüzden bu
+        // test — GERÇEK yolu şu ana dek TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick)
+        // doğrular; I-1'in SIRA-bağımlı korumasının kendisi ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic
+        // testiyle kanıtlanır (task-5-report.md "Fix wave" bölümünde gerekçelendirilmiştir).
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
+        var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
+        view.PlayCascade(all, buildInProgress: true); // _projectMode, StickToBottom=true (varsayılan/forced)
+        view.UpdateLayout();
+
+        // _lastExtentHeight'i taze bir gerçek olayla ilk kez tohumla (üretimde bu ilk gerçek scroll olayında
+        // zaten olurdu) — bunu ATLAMAK "ilk gözlem = dev büyüme" yapay bir ayrı davranışı test eder, I-1 DEĞİL.
+        view.OnScrollOffsetChanged();
+
+        // Kullanıcı dipteyken normal aktivite offset'i hep 48px eşiğinin ÜSTÜNDE tutar → _armedForChunk latch'i
+        // GERÇEK üretimde böyle true olurdu (bkz. EvaluateChunkScroll: offset>48 → armed=true). Offset argümanı
+        // burada AYNI mekanizma — gerçek VerticalOffset'e dokunmadan (EditorControl.ScrollToVerticalOffset'in bu
+        // host'ta senkron yansımadığı yukarıda belgelendi) latch'i üretimin kendi metoduyla kurar.
+        view.EvaluateChunkScroll(500.0);
+
+        Assert.True(view.StickToBottom, "senaryo ön-koşulu: kullanıcı dipteyken IsStuck=true (henüz taze değil)");
+
+        // TEK hamlede Ctrl+Home/Home: gerçek editör offset'i zaten (bu host'ta) tepeye yakın dinleniyor — GERÇEK
+        // handler'ı SENKRON tetikle (canlı bir event beklemeden, EvaluateChunkScroll ile AYNI test deseni).
+        view.OnScrollOffsetChanged();
+
+        // (a) Delik yok: prepend gerçekleşti, backlog (orig0..orig99) render dilimine (orig100..orig299) bitişik
+        // dikildi — tekrar/kayıp yok.
+        var expected = string.Concat(all.Select(l => l + "\n"));
+        Assert.Equal(expected, view.Document.Text);
+        Assert.NotNull(view.LastPrepend);
+        var (before, delta, applied) = view.LastPrepend!.Value;
+        Assert.True(delta > 0, $"prepend edilen dilimin piksel yüksekliği > 0 olmalı (delta={delta})");
+        Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring — CompensatedOffset OTORİTE
+
+        // (b) Kullanıcı artık dipte SAYILMIYOR (StickToBottom=false) — I-1'in ana iddiası: prepend'in kendi
+        // büyümesi stale-true bir IsStuck'ı YANLIŞLIKLA "dipte kal" olarak yorumlayıp CompensatedOffset'i ezip
+        // dibe YANKLAMAMALI. StickToBottom hâlâ true kalsaydı bu, kullanıcının az önce tepeye kaydırdığı GERÇEĞİYLE
+        // ÇELİŞirdi (ve bir sonraki içerik büyümesinde konsol onu TEKRAR dibe fırlatırdı).
+        Assert.False(view.StickToBottom);
+    }
 }

@@ -159,4 +159,57 @@ public class BottomAnchorBehaviorTests
         Assert.True(behavior.IsStuck);
         Assert.False(behavior.IsJumping);
     }
+
+    // ---------------------------------------------------------------- [I-1] chunk-prepend guard-logic
+
+    [Fact]
+    public void Growth_arriving_after_IsStuck_was_freshly_released_in_the_same_dispatch_does_not_re_stick()
+    {
+        // [I-1 guard-logic] ConsoleView.OnScrollOffsetChanged bir chunk-prepend'i (EvaluateChunkScroll) tetiklemeden
+        // ÖNCE bottom-anchor'ın IsStuck'ını tazeler (bkz. ConsoleView.xaml.cs "[I-1 fix]" yorumu) — TAM OLARAK bu
+        // yüzden: kullanıcı dipteyken (IsStuck=true) TEK bir olayda tepeye zıplarsa (Ctrl+Home), o olayın kendi
+        // extentHeightChange==0 (saf offset değişimi) recompute'u ÖNCE çalışıp IsStuck'ı false'a çevirir; prepend'in
+        // KENDİ içerik-büyümesi (extentHeightChange>0) — ister AYNI olayda senkron gözlemlensin ister AvalonEdit'in
+        // layout'u geciktirmesiyle SONRAKİ bir olayda — artık STALE-true bir IsStuck'a çarpmaz, CompensatedOffset'i
+        // ezen bir "dibe git" YANKI tetiklemez. Bu, ConsoleView seviyesinde gerçek AvalonEdit scroll geometrisiyle
+        // güvenilir biçimde yeniden üretilemeyen (bkz. ConsoleViewTests.Real_OnScrollOffsetChanged_path_... dürüstlük
+        // notu) SIRA korumasının SAF çekirdeğidir — WPF'siz, deterministik olarak burada kanıtlanır.
+        var f = new Fake { Extent = 1000, Offset = 900, Viewport = 200 }; // dipte (distance=0) → IsStuck kalır true
+        var behavior = f.New();
+        Assert.True(behavior.IsStuck);
+
+        // Aynı "olay": önce kullanıcı-scroll payı (extentHeightChange==0) tepeye zıplamayı yansıtır → IsStuck taze
+        // false olur (ConsoleView'ın chunk-scroll'dan ÖNCE çalışan recompute'unun karşılığı).
+        f.Offset = 0; // tepeye zıpladı
+        behavior.OnScrollChanged(extentHeightChange: 0);
+        Assert.False(behavior.IsStuck, "tepeye zıplama sonrası IsStuck taze false OLMALI (prepend'den ÖNCE)");
+
+        // ...HEMEN ARDINDAN prepend'in kendi büyümesi gelir (chunk loader tepeye içerik ekledi) — ister aynı ister
+        // sonraki bir "olayda" gözlemlensin, artık STALE-true bir IsStuck'a çarpmıyor.
+        f.Extent = 1300; // +300px prepend edilen dilimin piksel yüksekliği
+        behavior.OnScrollChanged(extentHeightChange: 300);
+
+        Assert.False(behavior.IsStuck, "prepend büyümesi, ZATEN taze-false olan IsStuck'ı YANLIŞLIKLA true'ya döndürmemeli");
+        Assert.Empty(f.InstantScrolls); // CompensatedOffset'i ezen bir "dibe git" YOK — I-1'in önlediği tam da bu
+    }
+
+    [Fact]
+    public void Growth_arriving_while_IsStuck_is_still_stale_true_does_yank_to_bottom_illustrating_the_I1_risk()
+    {
+        // [I-1 guard-logic — KONTRAST] Bunun TERSİ: eğer IsStuck recompute'u prepend'den ÖNCE çalışmasaydı (ESKİ
+        // — düzeltilmemiş sıra), tepeye zıplama sonrası hâlâ stale-true bir IsStuck, prepend'in extentHeightChange
+        // >0'ıyla karşılaşır — davranış (bu sınıfın kendisi, ConsoleView'dan bağımsız SAF) BUNU YAKALAR: dibe anında
+        // bir kaydırma TETİKLENİR. Bu test, I-1'in düzeltmediği (SIRA yanlışken) durumda gerçekten neyin ters
+        // gideceğini SOMUT gösterir — ConsoleView'ın düzeltmesi tam olarak yukarıdaki testteki SIRAYI garanti eder.
+        var f = new Fake { Extent = 1000, Offset = 900, Viewport = 200 }; // dipte, IsStuck=true
+        var behavior = f.New();
+
+        // Prepend'in büyümesi, IsStuck HENÜZ taze-false OLMADAN (yanlış/eski sıra) gözlemlenirse:
+        f.Extent = 1300;
+        behavior.OnScrollChanged(extentHeightChange: 300); // extentHeightChange>0 → IsStuck DEĞİŞMEZ (hâlâ stale-true)
+
+        Assert.True(behavior.IsStuck); // stale — kullanıcı aslında tepeye zıplamıştı, ama bu henüz yansımadı
+        Assert.Single(f.InstantScrolls);
+        Assert.Equal(1300, f.InstantScrolls[0]); // YANK: CompensatedOffset'i ezip dibe (extent) kaydırır — I-1 riski
+    }
 }

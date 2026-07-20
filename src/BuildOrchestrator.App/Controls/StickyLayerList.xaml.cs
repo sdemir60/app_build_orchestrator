@@ -91,16 +91,12 @@ public partial class StickyLayerList : UserControl
     public void ClearSelection() => _follow?.ClearSelection();
 
     // [T59] ScrollAnimator'a sarar: süre/eğri Foundation'dan, motion sinyali ÇAĞRI ANINDA taze okunur (sözleşme).
-    private bool AnimateScrollTo(double target)
-    {
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
-        var duration = MotionTokens.ResolveDuration(this, "Duration.Slow", 280.0);
-        // design-v1 §1.3: "yer değiştirme" = ease-in-out. Scroll'un kendi bir süre token'ı YOK (yalnız throttle/
-        // dead-band kadansı verilmiş) — 4 Foundation süresinden en yakını (Slow) gerekçeli seçim (bkz. ScrollAnimator
-        // XML yorumu ve task-5-report.md).
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
-        return ScrollAnimator.AnimateTo(Scroll, Scroll.VerticalOffset, target, animationsEnabled, duration.TimeSpan, spline);
-    }
+    // design-v1 §1.3: "yer değiştirme" = ease-in-out. Scroll'un kendi bir süre token'ı YOK (yalnız throttle/
+    // dead-band kadansı verilmiş) — 4 Foundation süresinden en yakını (Slow) gerekçeli seçim (bkz. ScrollAnimator
+    // XML yorumu ve task-5-report.md). [M-1] ConsoleView.AnimateToBottom ile AYNI desen — MotionTokens.
+    // AnimateSlowEaseInOut'a çıkarıldı (kopya YASAK, CLAUDE.md).
+    private bool AnimateScrollTo(double target) =>
+        MotionTokens.AnimateSlowEaseInOut(this, Scroll, Scroll.VerticalOffset, target);
 
     /// <summary>Verilen VerticalOffset'teki yapışık başlıkları overlay'e ver. ScrollChanged production'da bunu
     /// <c>Scroll.VerticalOffset</c> ile çağırır; testler deterministik olsun diye offset'i doğrudan enjekte eder
