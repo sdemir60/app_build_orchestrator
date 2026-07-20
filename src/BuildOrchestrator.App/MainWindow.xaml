@@ -4,7 +4,8 @@
         xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
         Title="Build Orchestrator" Width="1400" Height="800" MinWidth="1240" MinHeight="620"
         WindowStyle="SingleBorderWindow" Background="#0F1115" Foreground="#D7DBE0"
-        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="Grayscale">
   <WindowChrome.WindowChrome>
     <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0"
                   CornerRadius="0" UseAeroCaptionButtons="False" />

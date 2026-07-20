@@ -14,6 +14,12 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Contains("--font-ab"))
+        {
+            // [T65/K9] Font A/B karar penceresi — DI/EngineHost kurulmaz, Supervisor spawn edilmez.
+            new Spikes.FontAbWindow().Show();
+            return;
+        }
         var sc = new ServiceCollection();
         sc.AddSingleton(_ => new EngineHost(
             Path.Combine(AppContext.BaseDirectory, "supervisor", "BuildOrchestrator.Supervisor.exe")));
@@ -28,7 +34,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        (Services.GetService<EngineHost>() as IAsyncDisposable)?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        // --font-ab yolunda DI hiç kurulmaz — Services null kalır.
+        (Services?.GetService<EngineHost>() as IAsyncDisposable)?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         base.OnExit(e);
     }
 }
