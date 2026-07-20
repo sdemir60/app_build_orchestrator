@@ -8,7 +8,6 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
-using ICSharpCode.AvalonEdit.Document;
 
 namespace BuildOrchestrator.App;
 
@@ -97,30 +96,47 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Karta tıkla → tam log [T28]: chunk geçmişi + tamponlanmış canlı satırların dikişi VM'de
-    /// yapılır; burada yalnız sonucu konsola (yeni bir doküman olarak) taşırız. [Fix wave 1, Finding 3]
-    /// <c>SeedProjectDocument</c> (Get* DEĞİL) kullanılır: VM'in _gate kilidi altında hem metni okur hem de
-    /// ConsoleBatcher'daki bekleyen satırları atar — aksi halde pump'ın bir sonraki tick'i aynı satırları
-    /// taze dokümana TEKRAR ekler (kopya).</summary>
+    /// <summary>Karta tıkla → tam log [T28]: chunk geçmişi + tamponlanmış canlı satırların dikişi VM'de yapılır.
+    /// [3b] Reseed pump'ın TEK okuyucusundan geçer (<c>SeedProjectDocument(id, apply)</c>): VM _gate altında
+    /// snapshot okur + kanala reseed sentinel'i yazar; pump sentinel'e uğrayınca <paramref name="apply"/>'ı çağırır
+    /// ve konsolu kaskatla kurar — yarım-dequeue kopya satırı residual'ı kapanır (It-4 backlog). Başlık + copy-log
+    /// provider HEMEN (UI thread) kurulur; konsol içeriği reseed ile ~tick sonra kaskatla belirir.</summary>
     private async void OnProjectSelected(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (ProjectsList.SelectedItem is not ProjectRowViewModel row) return;
         await _vm.LoadProjectLogAsync(row.Id);
-        string seeded = _vm.SeedProjectDocument(row.Id);
-        // [T56/3a] Log boşsa design-v1 §2.5 boş-durum metni (kaskat animasyonu Task 3b) — düz render.
-        if (seeded.Length == 0) seeded = EmptyStateFor(row) + "\n";
-        ConsoleViewControl.Document = new TextDocument(seeded);
+
         // [T56/3a] Proje-log modu başlığı: ← Back + proje adı + statü glyph/adı + (varsa) ▲ dependency issue.
         ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
+        // [3b/Ek A #3] Copy log = TAM proje logu (render dilimi DEĞİL) — VM'in tam tamponundan.
+        ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(row.Id);
+
+        bool building = row.State == ProjectRowState.Started;
+        _vm.SeedProjectDocument(row.Id, seeded => Dispatcher.InvokeAsync(() =>
+        {
+            // [T56/3b] Log boşsa design-v1 §2.5 boş-durum metni. Kaskat: 26ms'de 3 satır + 140ms/satır fade.
+            var lines = SplitLines(seeded.Length == 0 ? EmptyStateFor(row) + "\n" : seeded);
+            ConsoleViewControl.PlayCascade(lines, buildInProgress: building);
+        }));
     }
 
-    /// <summary>[Fix wave 1, Finding 3] bkz. <see cref="OnProjectSelected"/> — aynı gerekçeyle <c>SeedRunDocument</c>.
-    /// [T56/3a] ConsoleHeader.BackRequested'tan çağrılır; başlık anlatı moduna ActiveProjectId=null PropertyChanged'ı
-    /// üzerinden döner (bkz. constructor).</summary>
+    /// <summary>[3b] bkz. <see cref="OnProjectSelected"/> — aynı gerekçeyle <c>SeedRunDocument(apply)</c> (reseed
+    /// pump'tan geçer). ConsoleHeader.BackRequested'tan çağrılır; başlık anlatı moduna ActiveProjectId=null
+    /// PropertyChanged'ı üzerinden döner (bkz. constructor).</summary>
     private void OnBack()
     {
         _vm.ShowRun();
-        ConsoleViewControl.Document = new TextDocument(_vm.SeedRunDocument());
+        _vm.SeedRunDocument(text => Dispatcher.InvokeAsync(() => ConsoleViewControl.ShowRunDocument(text)));
+    }
+
+    // seeded metni ('\n' sonekli satırlar) satır listesine böler — sondaki boş satırı (final '\n' artefaktı) atar.
+    private static IReadOnlyList<string> SplitLines(string text)
+    {
+        var parts = text.Split('\n');
+        int count = parts.Length > 0 && parts[^1].Length == 0 ? parts.Length - 1 : parts.Length;
+        var lines = new string[count];
+        Array.Copy(parts, lines, count);
+        return lines;
     }
 
     // [T56/3a] Boş proje logu için design-v1 §2.5 metinleri. sha/deps gerçek kaynağı 3a'da YOK — design örnek

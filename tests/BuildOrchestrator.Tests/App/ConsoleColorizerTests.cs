@@ -12,6 +12,7 @@ namespace BuildOrchestrator.Tests.App;
 /// (saat=text-faint, ▸=amber-text, gövde=tip rengi). Brush'lar TOKEN'dan (Tokens.xaml) — headless host'ta
 /// dosyadan yüklenir (TokenBrushesTests deseni). Belge DÜZ metin kalır; renk yalnız görsel katmandır.
 /// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleColorizerTests
 {
     private const char Arrow = '▸';  // ▸

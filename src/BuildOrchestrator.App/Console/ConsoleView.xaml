@@ -1,26 +1,43 @@
 <UserControl x:Class="BuildOrchestrator.App.Console.ConsoleView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sys="clr-namespace:System;assembly=mscorlib"
              xmlns:avalonEdit="clr-namespace:ICSharpCode.AvalonEdit;assembly=ICSharpCode.AvalonEdit">
-  <!-- [T56/3a] Editör + hibrit aktif-satır overlay aynı hücrede. Overlay IsHitTestVisible=False → metin seçimi
+  <!-- [T56/3a+3b] Editör + hibrit aktif-satır overlay aynı hücrede. Overlay IsHitTestVisible=False → metin seçimi
        (kutsal) engellenmez; aktif satır ~250ms boyunca dokümanda YOKtur (bilinçli seçilemezlik, feasibility §3.6). -->
+  <UserControl.Resources>
+    <!-- [3b Minor 2] Konsol mono punto TEK kaynaktan (design-v1 §2.5 "mono 12px"): editör ile aktif-satır overlay
+         AYNI değeri paylaşır → editör≡overlay drift edemez. -->
+    <sys:Double x:Key="Console.FontSize">12</sys:Double>
+  </UserControl.Resources>
   <Grid Background="{DynamicResource Brush.ConsoleBg}">
+    <!-- [3b Minor 1] Base foreground token (Brush.TextPrimary) — colorizer her satırı zaten ezer; off-palette hex YOK. -->
     <avalonEdit:TextEditor x:Name="EditorControl"
                             IsReadOnly="True"
                             WordWrap="False"
                             ShowLineNumbers="False"
-                            FontSize="13"
+                            FontSize="{StaticResource Console.FontSize}"
                             Padding="12,8"
-                            Background="Transparent" Foreground="#D7DBE0" />
+                            Background="Transparent" Foreground="{DynamicResource Brush.TextPrimary}" />
     <!-- Aktif (en yeni) satır: dokümana girmeden burada daktilolanır; bitince Document.Insert ile commit.
          İmleç bir 7×13px Rectangle'dır (font glyph'i DEĞİL) — design-v1 §2.5. -->
     <StackPanel x:Name="ActiveLineOverlay" Orientation="Horizontal" Visibility="Collapsed"
                 HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"
                 Margin="12,0,0,8">
-      <TextBlock x:Name="ActiveLineText" FontSize="13" VerticalAlignment="Center"
-                 TextWrapping="NoWrap" Foreground="#D7DBE0" />
-      <Rectangle x:Name="ActiveCursor" Width="7" Height="13" Margin="3,0,0,0" Fill="#D7DBE0"
-                 VerticalAlignment="Center" />
+      <TextBlock x:Name="ActiveLineText" FontSize="{StaticResource Console.FontSize}" VerticalAlignment="Center"
+                 TextWrapping="NoWrap" Foreground="{DynamicResource Brush.TextPrimary}" />
+      <Rectangle x:Name="ActiveCursor" Width="7" Height="13" Margin="3,0,0,0"
+                 Fill="{DynamicResource Brush.TextPrimary}" VerticalAlignment="Center" />
+    </StackPanel>
+    <!-- [3b] Proje-log modunda building proje için sondaki amber "build in progress ▮" (design-v1 §2.5).
+         Kaskat bitince/instant görünür; blink imleç (reduced-motion iken statik). -->
+    <StackPanel x:Name="BuildProgressOverlay" Orientation="Horizontal" Visibility="Collapsed"
+                HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"
+                Margin="12,0,0,8">
+      <TextBlock x:Name="BuildProgressText" Text="build in progress" FontSize="{StaticResource Console.FontSize}"
+                 VerticalAlignment="Center" Foreground="{DynamicResource Brush.AmberText}" />
+      <Rectangle x:Name="BuildProgressCursor" Width="7" Height="13" Margin="6,0,0,0"
+                 Fill="{DynamicResource Brush.AmberText}" VerticalAlignment="Center" />
     </StackPanel>
   </Grid>
 </UserControl>

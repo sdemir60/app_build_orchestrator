@@ -33,15 +33,16 @@
 
             <!-- [T56/3a] Demo tetikleyicileri -->
             <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                <TextBlock Text="Console (T56 / 3a)" Foreground="{StaticResource Brush.TextSecondary}"
+                <TextBlock Text="Console (T56 / 3a+3b)" Foreground="{StaticResource Brush.TextSecondary}"
                            FontSize="12" Margin="0,0,0,8" />
                 <Button Content="Seed narrative (colorized)" Margin="0,0,0,6" Click="OnSeedNarrative" />
                 <Button Content="Type active line (typewriter)" Margin="0,0,0,6" Click="OnTypeLine" />
-                <Button Content="Project-log · Failed + depIssue" Margin="0,0,0,6" Click="OnProjectLogFailed" />
+                <Button Content="Project-log · Building (cascade + ▮)" Margin="0,0,0,6" Click="OnProjectLogBuilding" />
+                <Button Content="Project-log · Failed + depIssue (cascade)" Margin="0,0,0,6" Click="OnProjectLogFailed" />
                 <Button Content="Project-log · Skipped (empty)" Margin="0,0,0,6" Click="OnProjectLogSkipped" />
                 <Button Content="Project-log · Queued (empty)" Margin="0,0,0,6" Click="OnProjectLogQueued" />
                 <Button Content="Back to narrative" Margin="0,0,0,6" Click="OnBackToNarrative" />
-                <TextBlock Text="Reduced-motion OS ayarında typewriter INSTANT olmalı (blink yok)."
+                <TextBlock Text="Reduced-motion OS ayarında typewriter + kaskat INSTANT olmalı (blink/fade yok). Copy-log butonu başlıkta."
                            Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
                            TextWrapping="Wrap" Margin="0,8,0,0" />
             </StackPanel>

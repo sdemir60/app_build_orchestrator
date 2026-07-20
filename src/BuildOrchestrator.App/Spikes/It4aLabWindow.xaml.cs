@@ -1,7 +1,6 @@
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.ViewModels;
-using ICSharpCode.AvalonEdit.Document;
 
 namespace BuildOrchestrator.App.Spikes;
 
@@ -35,6 +34,22 @@ public partial class It4aLabWindow : Window
         "    2 Error(s)",
     ];
 
+    // [3b] Kaskatı ve build-in-progress'i gözle görmek için daha uzun, building bir proje logu.
+    private static readonly string[] BuildingLogSample =
+    [
+        "12:04:07 ▸ msbuild OSYS.Server.Api.csproj /m:4 /p:Configuration=Debug",
+        "  Determining projects to restore...",
+        "  Restored OSYS.Server.Api.csproj (in 388 ms).",
+        "  Restored OSYS.Domain.Service.csproj (in 401 ms).",
+        "OSYS.Base -> obj\\Debug\\net10.0\\OSYS.Base.dll",
+        "OSYS.Domain.Service -> obj\\Debug\\net10.0\\OSYS.Domain.Service.dll",
+        "  Compiling OSYS.Server.Api ...",
+        "  ApiControllers.cs -> generated routes (24)",
+        "  Emitting OSYS.Server.Api.dll ...",
+        "12:04:09 warning: referenced outputs may be stale (Sales.Core)",
+        "  Linking references ...",
+    ];
+
     public It4aLabWindow()
     {
         InitializeComponent();
@@ -43,7 +58,8 @@ public partial class It4aLabWindow : Window
 
     private void SeedNarrative()
     {
-        LabConsole.Document = new TextDocument(string.Join('\n', NarrativeSample) + "\n");
+        // [3b] ShowRunDocument: proje modunu/kaskatı sıfırlar + render dilimini (son 200) uygular.
+        LabConsole.ShowRunDocument(string.Join('\n', NarrativeSample) + "\n");
         LabHeader.ShowNarrative(NarrativeSample.Length);
     }
 
@@ -52,22 +68,31 @@ public partial class It4aLabWindow : Window
     private void OnTypeLine(object sender, RoutedEventArgs e)
         => LabConsole.TypeActiveLine("12:04:12 ▸ msbuild Osys.sln /m:4 /p:Configuration=Debug — 14 projects, 22 skipped");
 
+    // [3b] Kaskat + copy-log gözle doğrulama: PlayCascade (26ms/3 satır + 140ms/satır fade), building'de amber ▮.
     private void OnProjectLogFailed(object sender, RoutedEventArgs e)
     {
-        LabConsole.Document = new TextDocument(string.Join('\n', FailedLogSample) + "\n");
         LabHeader.ShowProjectLog("OSYS.Sales.Core", ProjectRowState.Failed, hasDepIssue: true, lineCount: FailedLogSample.Length);
+        LabHeader.LogTextProvider = () => string.Join('\n', FailedLogSample);
+        LabConsole.PlayCascade(FailedLogSample, buildInProgress: false);
+    }
+
+    private void OnProjectLogBuilding(object sender, RoutedEventArgs e)
+    {
+        LabHeader.ShowProjectLog("OSYS.Server.Api", ProjectRowState.Started, hasDepIssue: false, lineCount: BuildingLogSample.Length);
+        LabHeader.LogTextProvider = () => string.Join('\n', BuildingLogSample);
+        LabConsole.PlayCascade(BuildingLogSample, buildInProgress: true);
     }
 
     private void OnProjectLogSkipped(object sender, RoutedEventArgs e)
     {
-        LabConsole.Document = new TextDocument(ConsoleEmptyState.Skipped("a3f81c2") + "\n");
         LabHeader.ShowProjectLog("OSYS.Base", ProjectRowState.Skipped, hasDepIssue: false, lineCount: 0);
+        LabConsole.PlayCascade([ConsoleEmptyState.Skipped("a3f81c2")], buildInProgress: false);
     }
 
     private void OnProjectLogQueued(object sender, RoutedEventArgs e)
     {
-        LabConsole.Document = new TextDocument(ConsoleEmptyState.Queued(["Sales.Core", "Security"]) + "\n");
         LabHeader.ShowProjectLog("OSYS.Server.Api", ProjectRowState.Pending, hasDepIssue: false, lineCount: 0);
+        LabConsole.PlayCascade([ConsoleEmptyState.Queued(["Sales.Core", "Security"])], buildInProgress: false);
     }
 
     private void OnBackToNarrative(object sender, RoutedEventArgs e) => SeedNarrative();

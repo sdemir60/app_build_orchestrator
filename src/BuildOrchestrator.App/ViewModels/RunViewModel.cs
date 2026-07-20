@@ -549,34 +549,32 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate) return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
     }
 
-    /// <summary>[Fix wave 1, Finding 3] MainWindow'un "Back" akışının kullanması gereken tohumlama metodu:
-    /// run dokümanının metnini AYNI _gate kilidi altında okur VE ConsoleBatcher'daki bekleyen satırları atar.
-    /// OnProjectLog'un Post'u da bu kilit altında yaptığı için (yukarı bakınız), bir satır ya TAMAMEN bu
-    /// snapshot'a (ve dolayısıyla discard'a) girer ya da TAMAMEN girmez — üçüncü bir "kilit dışı post,
-    /// kilit içi snapshot" aralığı YOKTUR. Kalan artık risk: ConsoleBatcher'ın kendi pump döngüsünün BU
-    /// kilitten TAMAMEN bağımsız arka plan tick'i, bu metot çağrılmadan hemen önce bir satırı kanaldan çekip
-    /// (henüz çalışmamış) bir <c>Dispatcher.InvokeAsync</c> kuyruğa almışsa — bu, tam tick periyodu (~50ms)
-    /// yerine yalnız Dispatcher zamanlama gecikmesi kadar dar bir artık pencere; normal bir tıklamada
-    /// gözlemlenmez. Tam kapanış (pump'ın tek okuyucu döngüsünden geçirme) Task 11 API değişikliği ister —
-    /// It-4 için Minor olarak kayıtlı (bkz. task-12-report.md Fix wave 1).</summary>
-    public string SeedRunDocument()
+    /// <summary>[Fix wave 1, Finding 3 → 3b: tek-okuyucudan geçen reseed] MainWindow'un "Back" akışının
+    /// kullandığı tohumlama metodu: run dokümanının metnini AYNI _gate kilidi altında okur ve
+    /// <see cref="ConsoleBatcher.PostReseed"/> ile kanala bir reseed sentinel'i yazar. <paramref name="apply"/>,
+    /// pump tarafından (sentinel'e uğrayınca) çağrılır ve TAZE snapshot'ı UI dokümanına kurar (marshal ETME
+    /// çağıranın işi).
+    ///
+    /// <para><b>Neden kilit altında snapshot + PostReseed birlikte:</b> OnProjectLog da _runText yazımını ve
+    /// <c>_console.Post</c>'unu AYNI _gate altında yapar. Bu yüzden snapshot okunurken bir OnProjectLog araya
+    /// giremez: snapshot'a giren her satır, sentinel'den ÖNCE kanala girmiştir; snapshot'a girmeyen her satır
+    /// sentinel'den SONRA girer. Pump tek okuyucudur → sentinel'e kadarki satırları (snapshot'ta zaten var) atar,
+    /// sonrakileri yeni dokümana akıtır. Eski <c>DiscardPending</c>'in bıraktığı "pump satırı TryRead'le çekti ama
+    /// henüz flush etmedi" Dispatcher-gecikmesi artık penceresi KAPANIR (It-4 backlog kalemi — task-12 Fix wave 1
+    /// residual'ı).</para></summary>
+    public void SeedRunDocument(Action<string> apply)
     {
         lock (_gate)
-        {
-            _console.DiscardPending();
-            return _runText.ToString();
-        }
+            _console.PostReseed(_runText.ToString(), apply);
     }
 
-    /// <summary>[Fix wave 1, Finding 3] Proje kartına tıklama akışının kullanması gereken tohumlama metodu —
-    /// bkz. <see cref="SeedRunDocument"/>'ın XML yorumu (aynı gerekçe, proje dokümanı için).</summary>
-    public string SeedProjectDocument(string projectId)
+    /// <summary>[3b] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın XML
+    /// yorumu (aynı gerekçe, proje dokümanı için). Log yoksa boş snapshot ile çağrılır (çağıran boş-durum metnini
+    /// uygular).</summary>
+    public void SeedProjectDocument(string projectId, Action<string> apply)
     {
         lock (_gate)
-        {
-            _console.DiscardPending();
-            return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
-        }
+            _console.PostReseed(_projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "", apply);
     }
 
     /// <summary>Konsolu run dokümanına döndürür (MainWindow'daki "Back").</summary>

@@ -8,9 +8,17 @@
   <Border Height="28" Background="{DynamicResource Brush.Surface}"
           BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
     <DockPanel Margin="10,0" LastChildFill="True">
-      <!-- Sağ: N lines -->
+      <!-- Sağ: N lines (en sağda) -->
       <TextBlock x:Name="LinesText" DockPanel.Dock="Right" VerticalAlignment="Center"
                  FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource Brush.TextFaint}" />
+      <!-- [3b/Ek A #3] Copy log butonu — yalnız proje-log modunda (log varken) görünür; N lines'ın SOLUNDA.
+           Segoe MDL2 glyph: copy (E8C8) → başarılı kopyada ✓ (E73E) + "Copied" tooltip (1400ms). -->
+      <Button x:Name="CopyLogButton" DockPanel.Dock="Right" Visibility="Collapsed" Click="OnCopyLogClick"
+              Background="Transparent" BorderThickness="0" Padding="4,0" Margin="0,0,8,0" Cursor="Hand"
+              VerticalAlignment="Center" ToolTip="Copy log"
+              Foreground="{DynamicResource Brush.TextSecondary}">
+        <TextBlock x:Name="CopyLogGlyph" Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+      </Button>
       <!-- Sol: moda göre değişen içerik -->
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <controls:TrackedTextBlock x:Name="ConsoleLabel" Text="Console" VerticalAlignment="Center" />

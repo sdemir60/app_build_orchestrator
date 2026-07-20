@@ -1,16 +1,29 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Console;
 
-/// <summary>[T56/3a] Konsol panel başlığının iki modu (design-v1 §2.5). Kod-tarafı sürülür (DP/binding şişkinliği
+/// <summary>[T56/3a+3b] Konsol panel başlığının iki modu (design-v1 §2.5). Kod-tarafı sürülür (DP/binding şişkinliği
 /// yerine küçük, test edilebilir yüzey): <see cref="ShowNarrative"/> / <see cref="ShowProjectLog"/> modu değiştirir,
 /// <see cref="SetLineCount"/> sağdaki "N lines" sayacını günceller. Statü rengi token ANAHTARIndan
-/// (<see cref="ConsoleStatus.BrushKey"/>) SetResourceReference ile canlı çözülür (hardcode YASAK).</summary>
+/// (<see cref="ConsoleStatus.BrushKey"/>) SetResourceReference ile canlı çözülür (hardcode YASAK).
+///
+/// <para>[3b] Copy-log butonu (Ek A #3): yalnız proje-log modunda (log varken) görünür; <see cref="LogTextProvider"/>'ın
+/// döndürdüğü TAM log metnini <see cref="ClipboardWriter"/> (retry sarmalayıcı) ile panoya yazar; başarıda ikon
+/// 1400ms ✓ + "Copied" tooltip (<see cref="CopyLogFeedback"/>).</para></summary>
 public partial class ConsoleHeader : UserControl
 {
     public enum HeaderMode { Narrative, ProjectLog }
+
+    private const string CopyGlyph = "";  // Segoe MDL2 Assets: Copy
+    private const string CheckGlyph = ""; // Segoe MDL2 Assets: CheckMark / Accept
+
+    private readonly CopyLogFeedback _copyFeedback = new();
+    private DispatcherTimer? _copyRevertTimer;
+    private Stopwatch? _copyClock;
 
     public ConsoleHeader()
     {
@@ -24,7 +37,15 @@ public partial class ConsoleHeader : UserControl
     /// <summary>Back ghost butonuna tıklandığında — MainWindow bunu <c>ShowRun</c>+reseed'e bağlar.</summary>
     public event EventHandler? BackRequested;
 
-    /// <summary>Anlatı modu: caps "CONSOLE" etiketi + N lines; proje başlığı öğeleri gizli.</summary>
+    /// <summary>[3b] Copy-log'un kopyalayacağı TAM aktif log metnini döndürür (MainWindow: VM'in tam tamponu —
+    /// render dilimi DEĞİL). null ise boş metin kopyalanır.</summary>
+    public Func<string>? LogTextProvider { get; set; }
+
+    /// <summary>[3b] Panoya yazma yolu — üretimde <see cref="ClipboardRetry.SetText"/> (CLIPBRD_E_CANT_OPEN retry).
+    /// Testte fail/success enjekte edilir (gerçek panoya dokunmadan görsel toggle doğrulanır — D8).</summary>
+    public Func<string, bool> ClipboardWriter { get; set; } = ClipboardRetry.SetText;
+
+    /// <summary>Anlatı modu: caps "CONSOLE" etiketi + N lines; proje başlığı öğeleri + copy butonu gizli.</summary>
     public void ShowNarrative(int lineCount)
     {
         Mode = HeaderMode.Narrative;
@@ -34,10 +55,12 @@ public partial class ConsoleHeader : UserControl
         StatusGlyphText.Visibility = Visibility.Collapsed;
         StatusNameText.Visibility = Visibility.Collapsed;
         DepIssueBadge.Visibility = Visibility.Collapsed;
+        ResetCopyVisual();
+        CopyLogButton.Visibility = Visibility.Collapsed;
         SetLineCount(lineCount);
     }
 
-    /// <summary>Proje-log modu: ← Back + proje adı (mono) + statü glyph/adı + (varsa) ▲ dependency issue + N lines.</summary>
+    /// <summary>Proje-log modu: ← Back + proje adı (mono) + statü glyph/adı + (varsa) ▲ dependency issue + copy + N lines.</summary>
     public void ShowProjectLog(string projectName, ProjectRowState state, bool hasDepIssue, int lineCount)
     {
         Mode = HeaderMode.ProjectLog;
@@ -56,6 +79,9 @@ public partial class ConsoleHeader : UserControl
         StatusNameText.Visibility = Visibility.Visible;
 
         DepIssueBadge.Visibility = hasDepIssue ? Visibility.Visible : Visibility.Collapsed;
+        // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0).
+        ResetCopyVisual();
+        CopyLogButton.Visibility = lineCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         SetLineCount(lineCount);
     }
 
@@ -63,4 +89,56 @@ public partial class ConsoleHeader : UserControl
     public void SetLineCount(int lineCount) => LinesText.Text = $"{lineCount} lines";
 
     private void OnBackClick(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
+
+    // ---------------------------------------------------------------- copy log (Ek A #3)
+
+    private void OnCopyLogClick(object sender, RoutedEventArgs e) => CopyLog();
+
+    /// <summary>[3b] Aktif logu (<see cref="LogTextProvider"/>) satırlar '\n' ile panoya kopyalar (retry
+    /// sarmalayıcıyla). Başarıda ✓ + "Copied" 1400ms görünür, sonra normale döner.</summary>
+    public void CopyLog()
+    {
+        string text = LogTextProvider?.Invoke() ?? "";
+        if (!ClipboardWriter(text)) return; // kalıcı pano kilidi — sessizce başarısız (UI çökmez)
+
+        _copyClock = Stopwatch.StartNew();
+        _copyFeedback.MarkCopied(TimeSpan.Zero);
+        ShowCopiedVisual();
+
+        _copyRevertTimer?.Stop();
+        _copyRevertTimer ??= CreateRevertTimer();
+        _copyRevertTimer.Start();
+    }
+
+    private DispatcherTimer CreateRevertTimer()
+    {
+        var timer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(60) };
+        timer.Tick += (_, _) =>
+        {
+            if (_copyClock is not null && _copyFeedback.ShouldRevert(_copyClock.Elapsed))
+                ResetCopyVisual();
+        };
+        return timer;
+    }
+
+    private void ShowCopiedVisual()
+    {
+        CopyLogGlyph.Text = CheckGlyph;
+        CopyLogButton.ToolTip = "Copied";
+        CopyLogButton.SetResourceReference(ForegroundProperty, "Brush.StatusSuccessText");
+    }
+
+    private void ResetCopyVisual()
+    {
+        _copyRevertTimer?.Stop();
+        _copyClock?.Stop();
+        _copyClock = null;
+        _copyFeedback.Revert();
+        CopyLogGlyph.Text = CopyGlyph;
+        CopyLogButton.ToolTip = "Copy log";
+        CopyLogButton.SetResourceReference(ForegroundProperty, "Brush.TextSecondary");
+    }
+
+    /// <summary>Test için: kopyalandı görsel durumunda mı (✓ + "Copied").</summary>
+    internal bool IsShowingCopied => CopyLogGlyph.Text == CheckGlyph;
 }
