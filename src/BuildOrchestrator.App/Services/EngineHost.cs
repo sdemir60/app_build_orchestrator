@@ -84,13 +84,16 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
         catch { /* stream koptu — exit watcher bildirir */ }
     }
 
+    // ConfigureAwait(false): bu yol DisposeAsync'ten (App.OnExit → UI/Dispatcher thread'i) çağrılır. Çağıranın
+    // SynchronizationContext'i yakalanırsa continuation, o an bekleyişte bloklu olan Dispatcher'a post edilir →
+    // sync-over-async deadlock (process çıkamaz). Disposal yolu ASLA çağıranın context'ine bağımlı olmamalı. [T62 fix]
     private async Task ShutdownGracefullyAsync()
     {
         Interlocked.Increment(ref _generation); // eski watcher/reader sustur
         try
         {
             if (_writer is not null)
-                await _writer.WriteAsync(new ShutdownCommand()).WaitAsync(TimeSpan.FromMilliseconds(500)); // graceful [it0-devir]
+                await _writer.WriteAsync(new ShutdownCommand()).WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false); // graceful [it0-devir]
         }
         catch { /* zaten ölmüş olabilir */ }
         KillCurrent();
@@ -120,7 +123,7 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await ShutdownGracefullyAsync();
+        await ShutdownGracefullyAsync().ConfigureAwait(false); // bkz. ShutdownGracefullyAsync notu [T62 fix]
         _outerJob.Dispose(); // KILL_ON_JOB_CLOSE: her koşulda süpürge
     }
 }

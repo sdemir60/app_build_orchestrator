@@ -68,7 +68,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         // --font-ab yolunda DI hiç kurulmaz — Services null kalır.
-        (Services?.GetService<EngineHost>() as IAsyncDisposable)?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        AppShutdown.WaitForAsyncDisposal(Services?.GetService<EngineHost>(), AppShutdown.DisposalTimeout);
         _singleInstance?.Dispose();
         base.OnExit(e);
     }
