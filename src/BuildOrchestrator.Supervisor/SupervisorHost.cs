@@ -94,23 +94,31 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     /// saniyeler mertebesindedir; ayrı bir arka plan task'ına almak, komut sırasını (ör. hemen ardından gelen
     /// bir <c>startRun</c>) Sync'in event akışıyla YARIŞTIRIRDI.
     /// </para>
+    /// <para>
+    /// <b>[Fix wave 1 — Finding 1] Event'ler TAMPONLANMAZ:</b> her event üretildiği ANDA yazılır. Eskiden
+    /// hepsi bir listede toplanıp Sync bittikten SONRA yazılıyordu — bu, <c>SyncProgressEvent</c>'i
+    /// "progress" olmaktan çıkarıyor (konsol tüm süre boyunca boş kalıyor), <c>Syncing</c> fazını da tek bir
+    /// event-pump turunda <c>Empty → Syncing → Idle</c> yapıp şeridin hiç render edilememesine yol açıyordu.
+    /// Tamponlama sıra için GEREKLİ DEĞİLDİR: bu komut zaten komut döngüsünü bloklar ve writer paylaşılan tek
+    /// örnektir (satır bütünlüğü onun kendi semaforunda).
+    /// </para>
     /// </summary>
     private async Task SyncWorkspaceAsync(SyncWorkspaceCommand cmd, CancellationToken ct)
     {
-        // emit senkrondur ama writer async'tir: event'ler önce toplanıp sonra SIRAYLA yazılır — böylece
-        // servis Core'da UI/IPC türü taşımadan kalır ve satır sırası bozulmaz.
-        var pending = new List<IpcEvent>();
+        // Servisin `emit`i SENKRON (Core, IPC yazımını/async'i bilmez), writer ise async'tir: bu köprüde
+        // bloklamak GÜVENLİDİR — çağıran zaten bu komut boyunca bloklanmış bir Supervisor thread'idir,
+        // SynchronizationContext yoktur (console host), ve writer'ın semaforu koordinatörle sırayı korur.
+        void Emit(IpcEvent ev) => writer.WriteAsync(ev, ct).GetAwaiter().GetResult();
         try
         {
-            await workspace.Sync(cmd.RootPath).RunAsync(cmd, pending.Add, ct);
+            await workspace.Sync(cmd.RootPath).RunAsync(cmd, Emit, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Sync'in kendi kapıları bozuk girdiyi zaten planFailed'a çevirir; buraya yalnız GERÇEKTEN
             // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli — tanımlı bir event'e çevrilir.
-            pending.Add(new ErrorEvent("planFailed", ex.Message));
+            await writer.WriteAsync(new ErrorEvent("planFailed", ex.Message), ct);
         }
-        foreach (var ev in pending) await writer.WriteAsync(ev, ct);
     }
 
     /// <summary>[A5/T69] Yerel + remote-tracking branch listesi (SALT-OKUR) → <see cref="BranchListEvent"/>.</summary>

@@ -5,8 +5,11 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
+using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Core.Workspace;
@@ -155,6 +158,67 @@ public class SyncWorkspaceServiceTests
         Assert.True(fetchAt >= 0 && scanAt > fetchAt && readAt > scanAt && graphAt > readAt && orderAt > graphAt,
             "N1 tarama satırları fetch satırından sonra ve kendi sıralarında bekleniyor; gelen satırlar: "
             + string.Join(" | ", lines));
+    }
+
+    // [Fix wave 1 — Finding 5] Tamamen temiz workspace, design-v1'in AYRI satırını basar
+    // (prototype/app/build-data.js:278) — "0 changed projects, 0 to build" + "0 projects up to date (will skip)"
+    // DEĞİL: o, en sık görülen kararlı durum için yanlış okunur. Sayı (36) PLACEHOLDER'dır, gerçek veriden gelir.
+    [Fact]
+    public async Task Sync_prints_the_all_clean_line_when_nothing_has_changed()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        // Sayaçlar GERÇEKTEN her şeyin güncel olduğunu söylüyor (satır boş bir kümeden türetilmiyor)
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(0, done.ChangedCount);
+        Assert.Equal(0, done.ToBuildCount);
+        Assert.Equal(2, done.UpToDateCount);
+        Assert.All(Assert.Single(events.OfType<WorkspaceTopologyEvent>()).Nodes, n => Assert.False(n.WillBuild));
+
+        var completeLine = LineStartingWith(events, "Sync complete — ");
+        Assert.Equal("Sync complete — no changes, 2 projects up to date", completeLine.Line);
+        Assert.Equal("info", completeLine.Level);
+        // All-clean varyantı TEK satırdır: "(will skip)" satırı bu durumda BASILMAZ
+        Assert.DoesNotContain(Progress(events), e => e.Line.EndsWith("(will skip)", StringComparison.Ordinal));
+    }
+
+    /// <summary>Her projeyi "en son bu imzayla başarıyla derlendi" diye işaretler — servisin will-build pass'inin
+    /// hesapladığı imzanın AYNISI kullanılır (<see cref="IncrementalRunBinder.Bind"/>), böylece sonraki Sync
+    /// gerçekten all-clean görür (sayaçlar uydurulmaz).</summary>
+    private static async Task PrimeBuildStateAsUpToDateAsync(string root, string cacheRoot)
+    {
+        var scanner = new WorkspaceScanner();
+        var evaluator = new CsprojEvaluator();
+        var cache = new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json"));
+        var scan = scanner.Scan(root);
+        var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, "Debug", null);
+
+        var git = new GitService(new ProcessRunner(), root);
+        string? head = (await git.GetHeadCommitAsync()).Value;
+        var tracked = (await git.GetTrackedBlobHashesAsync()).Value!;
+        var dirty = (await git.GetDirtyPathsAsync()).Value!;
+        var evaluatedById = scan.CsprojPaths
+            .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
+            .Where(x => x.Project is not null)
+            .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
+
+        var (_, signatures) = IncrementalRunBinder.Bind(plan, evaluatedById, root, head, tracked, dirty,
+            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), inPlace: true, DependentMode.Safe);
+
+        var store = new BuildStateStore(cacheRoot);
+        foreach (var (projectId, signature) in signatures)
+            store.Upsert(new BuildState(projectId, signature, head, BuildResult.Succeeded));
     }
 
     // ---------------------------------------------------------------- 2) offline degrade

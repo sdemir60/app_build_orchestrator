@@ -67,6 +67,12 @@ public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath
 /// cref="BuildPreviewEvent"/> + <see cref="SyncCompletedEvent"/> ile App'e taşınır.
 /// </para>
 /// </summary>
+/// <param name="Branch">Fetch edilecek ref (<c>git fetch origin &lt;Branch&gt;</c>) ve
+/// <see cref="SyncCompletedEvent.TargetSha"/>'in kaynağı.
+/// <b>[A5/T69 bilinen seam] Analizi SEÇMEZ:</b> tarama ve will-build pass'i her zaman AKTİF çalışma ağacı
+/// üzerinde (in-place) koşar — K1 gereği hiçbir branch checkout EDİLMEZ. Aktif branch'ten farklı bir ad
+/// verilirse fetch ve <c>TargetSha</c> o branch'i gösterir ama topoloji/önizleme/sayaçlar hâlâ AKTİF ağacı
+/// tarif eder. Seam'i kapatmak branch seçimini UI'a bağlayan task'ın (D6) işidir.</param>
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri — <see cref="StartRunCommand.LayerPatterns"/>
 /// ile AYNI anlam. null/boş ise katmanlama KAPALIDIR; dolu ise topoloji event'i LayerIndex/LayerName ve
 /// ters-katman uyarılarını taşır.</param>
@@ -143,6 +149,10 @@ public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
 /// <param name="TargetSha">Sync sonrası HEAD sha'sı; belirlenemediyse null.</param>
 /// <param name="FetchDegraded">true ise fetch başarısız/kısıtlı oldu ve sync yerel state ile devam etti.</param>
+/// <remarks>[A5/T69 bilinen seam] Aşağıdaki ÜÇ sayaç da (<paramref name="ChangedCount"/>/
+/// <paramref name="ToBuildCount"/>/<paramref name="UpToDateCount"/>) AKTİF çalışma ağacına karşı hesaplanır —
+/// <paramref name="Branch"/> farklı bir branch adlandırsa bile (bkz. <see cref="SyncWorkspaceCommand.Branch"/>).
+/// <paramref name="TargetSha"/> ise fetch edilen ref'i taşır; ikisi FARKLI commit'leri tarif edebilir.</remarks>
 /// <param name="ChangedCount">[A5/T69] DOĞRUDAN değişen (kendi imza terimi bayatlamış) proje sayısı — will-build
 /// pass'inin <c>DependentMode.Fast</c> (cascade YOK) sonucudur. <paramref name="ToBuildCount"/>'tan TÜRETİLEMEZ:
 /// o küme transitive dependent'ları da içerir (§3.1 "7 changed projects, 14 to build" tam olarak bu farktır).</param>

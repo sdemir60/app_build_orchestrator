@@ -284,4 +284,98 @@ public class EvaluationCacheTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    // ---------------------------------------------------------------- [Fix wave 1 — Finding 3] eşzamanlı Flush
+
+    /// <summary>Bir cache dosyası + tek bir projelik girdi hazırlar (Flush'ın yazacak bir şeyi olsun).</summary>
+    private static EvaluationCache SeededCache(string root, string cachePath)
+    {
+        string proj = Path.Combine(root, "A.csproj");
+        if (!File.Exists(proj)) File.WriteAllText(proj, "<Project/>");
+        var cache = new EvaluationCache(cachePath);
+        cache.GetOrEvaluate(proj, p => new EvaluatedProject(p, "A", [], [], [], false));
+        return cache;
+    }
+
+    // [Fix wave 1 — Finding 3] Flush eskiden SABİT bir `.tmp` adı kullanıyor ve HİÇBİR ŞEY yakalamıyordu:
+    // hedefe erişilemediğinde (eşzamanlı bir Sync + run aynı yola flush ediyorken oluşan paylaşım ihlali)
+    // istisna BuildPlanBuilder.Build üzerinden IPC sınırına kadar çıkıp TÜM Sync'i planFailed'a çeviriyordu.
+    // Burada hedef GERÇEKTEN kilitlenir (FileShare.None) — rename deterministik olarak başarısız olur.
+    [Fact]
+    public void Flush_does_not_throw_when_the_destination_cannot_be_replaced()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string cachePath = Path.Combine(root, "cache.json");
+            File.WriteAllText(cachePath, "{}");
+            var cache = SeededCache(root, cachePath);
+
+            // Başka bir process'in cache dosyasını tuttuğu an: rename (File.Move overwrite) sharing-violation alır.
+            using (new FileStream(cachePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                cache.Flush(); // FIRLATMAMALI — kaybolan tek şey bir cache girdisidir, Sync değil
+
+            // Öksüz .tmp bırakmaz (aksi halde her başarısız flush diskte çöp biriktirirdi)
+            Assert.Empty(Directory.GetFiles(root, "*.tmp"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // İki EvaluationCache örneği (bir run'ın planner'ı + eşzamanlı dispatch edilen bir Sync) AYNI yola
+    // flush eder. Sabit `.tmp` adıyla ikisi aynı geçici dosyayı yazıp/rename etmeye çalışır ve biri patlardı.
+    [Fact]
+    public async Task Concurrent_flushes_on_the_same_cache_path_never_throw()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string cachePath = Path.Combine(root, "cache.json");
+            var a = SeededCache(root, cachePath);
+            var b = SeededCache(root, cachePath);
+
+            // Sleep YOK [D8]: iki task aynı bariyerden çıkıp 200 kez yarışır — sabit .tmp adında çakışma kaçınılmaz.
+            using var barrier = new Barrier(2);
+            Task Hammer(EvaluationCache cache) => Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                for (int i = 0; i < 200; i++) cache.Flush();
+            });
+
+            await Task.WhenAll(Hammer(a), Hammer(b)); // tek bir istisna bile testi düşürür
+
+            // Cache dosyası kullanılabilir durumda (yarım/bozuk JSON yok) ve çöp .tmp kalmadı
+            Assert.Empty(Directory.GetFiles(root, "*.tmp"));
+            Assert.NotNull(new EvaluationCache(cachePath));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // Düşen bir flush'ın GERÇEKTEN zararsız olduğunun kanıtı (Finding 3'ün "yutmak güvenli" gerekçesi):
+    // yükleyici hem YOK olan hem BOZUK bir cache dosyasını tolere eder — yalnız yeniden değerlendirilir.
+    [Fact]
+    public void The_loader_tolerates_a_missing_or_corrupt_cache_so_a_dropped_flush_is_harmless()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string proj = Path.Combine(root, "A.csproj");
+            File.WriteAllText(proj, "<Project/>");
+            string cachePath = Path.Combine(root, "cache.json");
+            int calls = 0;
+            EvaluatedProject Fake(string p) { calls++; return new EvaluatedProject(p, "A", [], [], [], false); }
+
+            // (a) hiç yazılmamış cache (flush düştü) → sıfırdan kurulur
+            Assert.NotNull(new EvaluationCache(cachePath).GetOrEvaluate(proj, Fake));
+            Assert.Equal(1, calls);
+
+            // (b) yarım/bozuk cache (yarışta ezilmiş dosya) → fırlatmaz, yeniden değerlendirir
+            File.WriteAllText(cachePath, "{ bu gecerli JSON degil");
+            Assert.NotNull(new EvaluationCache(cachePath).GetOrEvaluate(proj, Fake));
+            Assert.Equal(2, calls);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

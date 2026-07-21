@@ -71,12 +71,37 @@ public sealed class EvaluationCache(string cachePath)
         }
     }
 
-    public void Flush() // atomik temp+rename [D2/D8]
+    /// <summary>
+    /// Cache'i diske yazar: atomik temp+rename [D2/D8].
+    ///
+    /// <para><b>[Fix wave 1 — Finding 3] Eşzamanlılık altında ASLA FIRLATMAZ.</b> Aynı cache yoluna iki
+    /// <see cref="EvaluationCache"/> ÖRNEĞİ paralel flush edebilir (koşan bir run'ın planner thread'i +
+    /// eşzamanlı dispatch edilen bir Sync; ikisi de kendi örneğini kurar). Eski kod SABİT bir <c>.tmp</c> adı
+    /// kullanıyordu — iki yazıcı aynı geçici dosyada çakışıyor (IOException) ya da rename hedefte paylaşım
+    /// ihlaline düşüyordu (UnauthorizedAccessException). İstisna, <c>BuildPlanBuilder.Build</c> üzerinden
+    /// Sync'in kendi try'ının DIŞINDAN IPC sınırına kadar çıkıp TÜM Sync'i <c>planFailed</c>'a çeviriyordu.
+    /// İki savunma: (1) geçici ad ÖRNEK BAŞINA tekil (çakışma imkânsız), (2) IO hatası YUTULUR.</para>
+    ///
+    /// <para>Yutmak güvenlidir çünkü bu cache SALT bir optimizasyondur ve <see cref="Load"/> hem YOK olan hem
+    /// BOZUK bir dosyayı zaten tolere eder (boş map ile devam) — düşen bir flush'ın bedeli, bir sonraki
+    /// taramada yeniden değerlendirilecek csproj'lardır; kaybolan bir Sync değil.</para>
+    /// </summary>
+    public void Flush()
     {
-        string tmp = cachePath + ".tmp";
-        Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-        File.WriteAllText(tmp, JsonSerializer.Serialize(_entries, Json));
-        File.Move(tmp, cachePath, overwrite: true);
+        // Tekil temp adı: BuildStateStore.Upsert ile AYNI desen (`<path>.<guid>.tmp`).
+        string tmp = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+            File.WriteAllText(tmp, JsonSerializer.Serialize(_entries, Json));
+            File.Move(tmp, cachePath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Öksüz temp dosyası bırakma (her başarısız flush diskte çöp biriktirirdi); temizliğin kendisi de
+            // best-effort'tur — zaten yutulmuş bir hatanın üstüne yeni bir hata fırlatmak anlamsız olurdu.
+            try { File.Delete(tmp); } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));

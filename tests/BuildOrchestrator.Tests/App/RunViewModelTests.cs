@@ -1052,6 +1052,70 @@ public class RunViewModelTests
         Assert.Equal(AppPhase.Idle, vm.Phase); // önceki topoloji hâlâ geçerli
     }
 
+    // [Fix wave 1 — Finding 2] Sync SALT-OKURDUR ve KOŞAN bir run sırasında da tetiklenebilir (bkz.
+    // OnWorkspaceTopology'nin mid-run koruması). A5, `planFailed`'ı Sync'in de hata kodu yaptı; başarısız bir
+    // Sync CANLI run state'ini yıkarsa motor derlemeye devam ederken UI run'ı bitmiş gösterir (Stop erişilemez
+    // olur) ve sonraki projectSucceeded/runCompleted YIKILMIŞ bir state'e düşer.
+    [Fact]
+    public async Task A_failed_sync_during_a_live_run_releases_the_phase_without_tearing_down_the_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        Assert.True(vm.IsRunning);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new ErrorEvent("planFailed", "'D:\\repo' is not a usable git repository: ..."));
+
+        Assert.True(vm.IsRunning);                      // run YAŞIYOR — motor hâlâ derliyor
+        Assert.True(vm.StopCommand.CanExecute(null));   // Stop erişilebilir kaldı [Kısıt 3]
+        Assert.Equal(AppPhase.Boot, vm.Phase);          // faz Syncing'de ASILI kalmadı (topoloji yok → Boot)
+
+        // Motor derlemeye devam etti: sonraki event'ler hâlâ AYAKTA bir state'e düşer
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200));
+        Assert.Equal(ProjectRowState.Succeeded, Assert.Single(vm.Projects).State);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 1500));
+        Assert.False(vm.IsRunning);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+    }
+
+    // Ayrım ÇİFT YÖNLÜ olmalı: Sync in-flight iken gelen bir planFailed, run PLANLAMA penceresindeyse
+    // (IsStarting — `planFailed`'ın run tarafındaki TEK üretim penceresi) yine run'ı bitirir; aksi halde
+    // hiçbir engine event'i gelmeyeceğinden IsStarting kalıcı true kalır ve butonlar sonsuza dek kilitlenir.
+    [Fact]
+    public async Task A_plan_failure_while_a_run_is_still_starting_still_ends_the_run_even_if_a_sync_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.IsStarting = true; // Rebuild gönderildi, runStarted HENÜZ gelmedi = planlama penceresi
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        vm.OnEvent(new ErrorEvent("planFailed", "planlama patladı"));
+
+        Assert.False(vm.IsStarting);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
+    }
+
+    // Ayrım KODA da bakar: `runFailed` Sync'in ASLA yayınlamadığı (yalnız RunCoordinator'ın dış catch'inden
+    // gelen, run ORTASINDA da gelebilen) bir koddur — uçuşta bir Sync olması onu Sync'e atfettirmemelidir,
+    // yoksa gerçek bir run çöküşünde IsRunning kalıcı true kalır (buton kaması).
+    [Fact]
+    public async Task A_mid_run_runFailed_still_ends_the_run_even_while_a_sync_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        vm.OnEvent(new ErrorEvent("runFailed", "beklenmeyen hata"));
+
+        Assert.False(vm.IsRunning);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.Equal(AppPhase.Syncing, vm.Phase); // Sync HÂLÂ uçuşta — fazı bu hata bırakmaz
+    }
+
     [Fact]
     public async Task Branch_list_event_fills_branches()
     {

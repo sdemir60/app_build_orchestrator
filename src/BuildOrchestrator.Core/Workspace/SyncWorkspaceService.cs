@@ -112,8 +112,16 @@ public sealed class SyncWorkspaceService(
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
         if (outcome.Known)
         {
-            emit(Info($"Sync complete — {outcome.Changed} changed projects, {outcome.ToBuild} to build"));
-            emit(Dim($"{outcome.UpToDate} projects up to date (will skip)"));
+            // [Fix wave 1 — Finding 5] TAMAMEN temiz workspace design-v1'de AYRI ve TEK bir satırdır
+            // (prototype/app/build-data.js:278 — `allClean` dalı): "0 changed projects, 0 to build" + "0 projects
+            // up to date (will skip)" yazmak, en sık görülen kararlı durumu yanlış anlatırdı.
+            if (outcome.ToBuild == 0 && outcome.Changed == 0)
+                emit(Info($"Sync complete — no changes, {outcome.UpToDate} projects up to date"));
+            else
+            {
+                emit(Info($"Sync complete — {outcome.Changed} changed projects, {outcome.ToBuild} to build"));
+                emit(Dim($"{outcome.UpToDate} projects up to date (will skip)"));
+            }
         }
         else
         {
