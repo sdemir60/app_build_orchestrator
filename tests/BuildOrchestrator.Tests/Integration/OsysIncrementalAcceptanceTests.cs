@@ -83,8 +83,18 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // build-state.json GERÇEKTEN yazıldı mı (persist kanıtı — sonraki Build'in incremental olmasının önkoşulu).
         var store = new BuildStateStore(shared);
         var stateAfterRun1 = store.Load();
-        Assert.True(stateAfterRun1.Count >= run1.Succeeded.Count,
-            Inv($"build-state kaydı ({stateAfterRun1.Count}) < başarılı proje ({run1.Succeeded.Count}) — persist eksik."));
+        // [A2] Persist EDEN küme = "depIssue TAŞIMAYAN success"ler. depIssue taşıyan bir success A2'den beri taze
+        // imza persist ETMEZ (RunCoordinator.BuildProjectAsync: `if (depIssuesForEvent is null)` →
+        // PersistBuildStateOnSuccess), FAILED'ler ise BOŞ store'da geçersizleştirilecek kayıt bulamadığı için
+        // satır EKLEMEZ (InvalidateBuildStateOnFailure "kayıt yoksa yazma"). Bu yüzden alt sınır
+        // Succeeded - DepIssueCarriers'tır. A2 ÖNCESİ buradaki `>= Succeeded` beklentisi yalnız Run 1 TAMAMEN
+        // yeşilken (failed=0 ⇒ carrier=0) doğrudur; bir failure olduğunda YANLIŞ kırmızı verir ve testin geri
+        // kalanına HİÇ ulaşılmaz. (A2, aşağıdaki :222-232'deki iddiaları düzeltirken burayı atlamıştı.)
+        // İddia ZAYIFLAMAZ: derlenip depIssue TAŞIMAYAN her proje için bir satır ZORUNLUDUR — biri bile
+        // eksik kalırsa sayı bu alt sınırın ALTINA düşer ve test kırmızı verir.
+        int run1PersistExpected = run1.Succeeded.Count - run1.DepIssueCarriers.Count;
+        Assert.True(stateAfterRun1.Count >= run1PersistExpected,
+            Inv($"build-state kaydı ({stateAfterRun1.Count}) < persist etmesi beklenen ({run1PersistExpected} = başarılı {run1.Succeeded.Count} − depIssue taşıyan {run1.DepIssueCarriers.Count}) — persist eksik."));
 
         // ---- RUN 2: kaynak DEĞİŞMEDEN yeniden Build → önceki başarılıların HEPSİ "skipped — up to date".
         var run2 = await RunBuildAsync(logsDir, "it3-build-2", overall.Token);
@@ -180,7 +190,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine();
             sb.AppendLine("## Run 1 (Build, state YOK — hepsi derlenir)");
             sb.AppendLine(Inv($"- TotalProjects: {run1.Started?.TotalProjects} · Succeeded: {run1.Completed?.Succeeded} · Failed: {run1.Completed?.Failed} · Skipped: {run1.Completed?.Skipped} · Süre: {run1.Completed?.DurationMs} ms"));
-            sb.AppendLine(Inv($"- build-state.json kayıt sayısı (Run 1 sonrası): {stateAfterRun1.Count}"));
+            sb.AppendLine(Inv($"- build-state.json kayıt sayısı (Run 1 sonrası): {stateAfterRun1.Count} · [A2] beklenen alt sınır: {run1PersistExpected} (başarılı {run1.Succeeded.Count} − depIssue taşıyan {run1.DepIssueCarriers.Count})"));
             sb.AppendLine();
             sb.AppendLine("## Run 2 (Build, kaynak DEĞİŞMEDEN — incremental)");
             sb.AppendLine(Inv($"- TotalProjects: {run2.Started?.TotalProjects} · Succeeded: {run2.Completed?.Succeeded} · Failed: {run2.Completed?.Failed} · Skipped: {run2.Completed?.Skipped} · Süre: {run2.Completed?.DurationMs} ms"));

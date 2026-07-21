@@ -139,6 +139,7 @@ public static class IncrementalPlanner
         // KURULMAZ — bkz. ComputeComponent'in gerekçesi.
         var componentOf = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         if (mode != DependentMode.Fast)
+        {
             foreach (var cycle in plan.Cycles)
             {
                 var members = cycle
@@ -148,6 +149,7 @@ public static class IncrementalPlanner
                     .ToList();
                 foreach (string id in members) componentOf[id] = members;
             }
+        }
         var componentOnStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Fast: upstream'in TAZE imzası yerine STORED/frozen imzasını besler — upstream'de bu run'da oluşan
