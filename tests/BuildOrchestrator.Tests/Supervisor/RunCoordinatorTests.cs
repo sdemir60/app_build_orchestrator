@@ -6,6 +6,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
@@ -1190,7 +1191,9 @@ public class RunCoordinatorTests
                                Node("Dirty", willBuild: true) with { BuildOrder = 1 }],
                     Cycles: [], Configuration: "Debug"),
                 EmptyRefs(),
-                Incremental: Incremental("Dirty"));
+                // [A2 fix-3] Clean'e de imza verilir: aksi halde aşağıdaki "Clean persist EDİLMEDİ" iddiası
+                // önemsizce doğrudur (imzasız proje için PersistBuildStateOnSuccess zaten erken döner).
+                Incremental: Incremental("Clean", "Dirty"));
             var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
             using var h = new Harness(plan, invoker, stateStore: store);
 
@@ -1203,7 +1206,73 @@ public class RunCoordinatorTests
             Assert.DoesNotContain(invoker.Requests, r => r.ProjectId == Id("Clean")); // MSBuild ÇAĞRILMADI
             Assert.Equal([Id("Dirty")], invoker.Requests.Select(r => r.ProjectId));   // yalnız dirty derlendi
             Assert.Contains(store.Load().Values, s => s.ProjectId == Id("Dirty"));
+            // [A2 fix-1] Clean'in de imzası VAR (Incremental("Clean", "Dirty")) — bu yüzden bu iddia artık
+            // önemsizce doğru değil: pre-skip bozulup Clean derlenseydi PersistBuildStateOnSuccess erken
+            // dönmez, kaydı yazardı. Yani bu satır "Clean derlendi mi" için İKİNCİ bağımsız dedektördür.
             Assert.DoesNotContain(store.Load().Values, s => s.ProjectId == Id("Clean")); // derlenmedi → persist yok
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task A_failed_project_is_invalidated_in_build_state_so_the_next_Build_cannot_pre_skip_it()
+    {
+        // [A2 fix-1] KAYNAK DEĞİŞMEDEN başarısızlık sınıfı (zehirli obj: silinmiş bir kardeş csproj'un
+        // project.assets.json/*.nuget.g.props artığı): Up dün YEŞİLDİ (Succeeded + imza persist edildi), bugün
+        // AYNI imzayla FAIL ediyor. Başarısızlık build-state'e yazılmazsa kayıt hâlâ "Succeeded + eşleşen imza"
+        // der ve bir sonraki Build projeyi "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk bir
+        // proje "güncel" olarak raporlanır. §4 gereği DLL/bin timestamp'i okunmadığı için bunu yakalayabilecek
+        // başka mekanizma YOKTUR. Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder
+        // → BuildPreview/WillBuildEvaluator) aynısını kullanır: WillBuild HER run'da GÜNCEL store'dan hesaplanır.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var inc = Incremental("Up", "Solo"); // imzalar SABİT — kaynak hiçbir run'da değişmiyor
+            var basePlan = new BuildPlan([Node("Up") with { BuildOrder = 0 }, Node("Solo") with { BuildOrder = 1 }],
+                Cycles: [], Configuration: "Debug");
+            RunPlan Planner(StartRunCommand _)
+            {
+                var state = store.Load();
+                return new RunPlan(
+                    BuildPreview.ComputeWillBuild(basePlan, n => inc.SignatureById[n.Id], state.GetValueOrDefault),
+                    EmptyRefs(), Incremental: inc);
+            }
+
+            bool upFails = false;
+            var invoker = new FakeInvoker((req, _, _) =>
+                Task.FromResult(upFails && NameOf(req.ProjectId) == "Up" ? Exit(1) : Ok()));
+            // planner verildiği için sabit plan argümanı KULLANILMAZ (Harness: planner ?? (_ => plan)).
+            using var h = new Harness(PlanOf(), invoker, planner: Planner, stateStore: store);
+
+            // ---- Run 1 ("dün"): state YOK → ikisi de derlenir, ikisi de Succeeded + imza persist eder.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult);
+
+            // ---- Run 2 ("bugün"): Rebuild (pre-skip yok) → Up KAYNAK DEĞİŞMEDEN fail eder.
+            upFails = true;
+            await h.Sut.StartAsync(Start(RunMode.Rebuild, runId: "r2"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var upAfterFailure = store.Load()[Id("Up")];
+            Assert.Equal(BuildResult.Failed, upAfterFailure.LastResult);   // artık "bilinen iyi" DEĞİL
+            Assert.Equal("sig", upAfterFailure.BuiltSignature);            // son BAŞARILI imza KORUNUR (Fast frozen-upstream)
+            Assert.Equal(7, upAfterFailure.LastDurationMs);                // ETA: iyi süre (Ok=7ms) fail süresiyle (9ms) EZİLMEZ
+
+            // ---- Run 3: incremental Build → Up PRE-SKIP EDİLEMEZ, GERÇEK bir MSBuild invoke'u olmalı.
+            upFails = false;
+            int before = invoker.Requests.Count;
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r3"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var run3 = invoker.Requests.Skip(before).Select(r => r.ProjectId).ToList();
+            Assert.Equal([Id("Up")], run3); // Up GERÇEKTEN derlendi (olay değil, invoke kanıtı) — Solo derlenmedi
+            // Kontrol: pre-skip mekanizması bu run'da CANLI (yoksa Up'ın derlenmesi önemsiz olurdu).
+            var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+            Assert.Equal(Id("Solo"), skipped.ProjectId);
+            Assert.Equal("skipped — up to date", skipped.Reason);
+            Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult); // yeşile dönünce kayıt düzelir
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

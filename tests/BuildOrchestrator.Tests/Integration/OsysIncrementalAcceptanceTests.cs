@@ -45,10 +45,14 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 
     private static string Inv(FormattableString s) => s.ToString(CultureInfo.InvariantCulture);
 
+    /// <param name="DepIssueCarriers">[A2] BAŞARILI olduğu hâlde depIssue TAŞIYAN projeler — bir bağımlılığı bu
+    /// run'da fail ettiği için onun BAYAT (önceki) çıktısına link'lidirler. A2'den beri bunlar taze imza persist
+    /// ETMEZ, dolayısıyla bir sonraki Build'de MEŞRU olarak yeniden derlenirler.</param>
     private sealed record RunOutcomeData(
         IReadOnlyList<string> Succeeded,
         IReadOnlyList<(string ProjectId, string Reason)> Failed,
         IReadOnlyList<(string ProjectId, string Reason)> Skipped,
+        IReadOnlyList<string> DepIssueCarriers,
         RunStartedEvent? Started,
         RunCompletedEvent? Completed);
 
@@ -91,11 +95,20 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             StringComparer.OrdinalIgnoreCase);
         var run1Succeeded = new HashSet<string>(run1.Succeeded, StringComparer.OrdinalIgnoreCase);
 
-        // Run 1'de başarılı olan HER proje, Run 2'de "up to date" skip olmalı (incremental kalbi).
+        // Run 1'de başarılı olan projelerden Run 2'de "up to date" skip EDİLMEYENLER.
         var notSkipped = run1Succeeded.Where(id => !run2UpToDate.Contains(id)).ToList();
-        // Run 2'de gerçekten dispatch edilen (derlenen) projeler yalnız Run 1'de FAILED olanlar olabilir.
+        // Run 2'de gerçekten dispatch edilen (derlenen) projeler.
         var run2Started = run2.Succeeded.Concat(run2.Failed.Select(f => f.ProjectId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // [A2] Run 2'de derlenmesi MEŞRU olan küme = Run 1'in FAILED'leri + Run 1'de depIssue TAŞIYAN success'ler.
+        // İkinci grup A2'den beri taze imza persist ETMEZ (bayat upstream çıktısına link'lidirler), bu yüzden
+        // yeniden derlenirler. A2 ÖNCESİ bu iddialar "notSkipped BOŞ" ve "run2Started ≤ run1.Failed" idi — o
+        // beklenti yalnız Run 1 TAMAMEN yeşilken (failed=0 ⇒ carrier=0) doğrudur; bir failure olduğunda onun
+        // succeeded dependent'ları meşru olarak yeniden derlenir ve eski iddialar YANLIŞ kırmızı verirdi.
+        var run1LegitimateRebuild = run1.Failed.Select(f => f.ProjectId).Concat(run1.DepIssueCarriers)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var notSkippedUnexplained = notSkipped.Except(run1LegitimateRebuild, StringComparer.OrdinalIgnoreCase).ToList();
+        var run2Unexplained = run2Started.Except(run1LegitimateRebuild, StringComparer.OrdinalIgnoreCase).ToList();
 
         // ---- MINIMAL REBUILD (in-process, SALT-OKUR OSYS): TEK proje dirty → o + transitive dependent'ları true.
         var (plan, evaluatedById) = BuildPlanAndEvaluated();
@@ -171,8 +184,9 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine("## Run 2 (Build, kaynak DEĞİŞMEDEN — incremental)");
             sb.AppendLine(Inv($"- TotalProjects: {run2.Started?.TotalProjects} · Succeeded: {run2.Completed?.Succeeded} · Failed: {run2.Completed?.Failed} · Skipped: {run2.Completed?.Skipped} · Süre: {run2.Completed?.DurationMs} ms"));
             sb.AppendLine(Inv($"- 'skipped — up to date' sayısı: {run2UpToDate.Count}"));
-            sb.AppendLine(Inv($"- Run 1 başarılı ({run1Succeeded.Count}) → Run 2'de up-to-date SKIP edilmeyen: {notSkipped.Count} (0 OLMALI)"));
-            sb.AppendLine(Inv($"- Run 2'de dispatch edilen (derlenen) proje: {run2Started.Count} (≤ Run 1 failed = {run1.Failed.Count})"));
+            sb.AppendLine(Inv($"- Run 1 başarılı ({run1Succeeded.Count}) → Run 2'de up-to-date SKIP edilmeyen: {notSkipped.Count} · bunlardan A2 ile AÇIKLANAMAYAN: {notSkippedUnexplained.Count} (0 OLMALI)"));
+            sb.AppendLine(Inv($"- [A2] Run 1: failed={run1.Failed.Count} + depIssue taşıyan success={run1.DepIssueCarriers.Count} → Run 2'de derlenmesi MEŞRU: {run1LegitimateRebuild.Count}"));
+            sb.AppendLine(Inv($"- Run 2'de dispatch edilen (derlenen) proje: {run2Started.Count} · bunlardan MEŞRU kümede OLMAYAN: {run2Unexplained.Count} (0 OLMALI)"));
             sb.AppendLine();
             sb.AppendLine("## Minimal rebuild (tek proje dirty, in-process — gerçek OSYS grafı)");
             sb.AppendLine(Inv($"- Dirty edilen hedef: {Path.GetFileNameWithoutExtension(targetNode.Id)} (dirty path: {dirtyRel})"));
@@ -194,11 +208,18 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 
         // ---- KABUL İDDİALARI
         Assert.Equal(RunOutcome.Completed, run2.Completed!.Outcome);
-        Assert.Empty(notSkipped);                                        // incremental all-skipped: 1'de başarılı olan HEPSİ 2'de skip
+        // [A2] incremental all-skipped: Run 1'de başarılı olan her proje Run 2'de skip olmalı — TEK meşru istisna
+        // depIssue taşıyan success'lerdir (A2'den beri persist etmezler). Run 1 tamamen yeşilse bu iddia eski
+        // "Assert.Empty(notSkipped)"e BİREBİR indirgenir (carrier ancak bir failure varsa oluşur).
+        Assert.Empty(notSkippedUnexplained);
         Assert.True(run2UpToDate.Count >= 100,
             Inv($"'up to date' skip sayısı beklenenden düşük — incremental çalışmıyor: {run2UpToDate.Count}"));
-        Assert.True(run2Started.Count <= run1.Failed.Count,
-            Inv($"Run 2 gereğinden fazla proje derledi ({run2Started.Count}) — sadece Run 1 failed'ler ({run1.Failed.Count}) beklenirdi."));
+        // Bu bir ÜST SINIR (⊆) iddiasıdır: "Run 2 yalnız meşru kümeden derleyebilir". İfade EDEMEDİĞİ şey,
+        // kümenin TAMAMININ gerçekten derlendiği (eşitlik) — bir carrier, DAHA ÖNCEKİ bir koşudan kalan
+        // Succeeded kaydı sayesinde meşru olarak skip de EDİLEBİLİR (bu testte Run 1 sıfır state ile başladığı
+        // için pratikte eşitlik beklenir, ama iddia bilinçli olarak üst sınırda tutulmuştur — aksi hâlde
+        // gelecekte state taşıyan bir varyant yanlış kırmızı verirdi).
+        Assert.Empty(run2Unexplained);
 
         Assert.NotEmpty(directDependents);                               // hedefin gerçekten dependent'ı var (cascade anlamlı)
         Assert.Empty(cascadeMisses);                                     // minimal rebuild: hedef + DOĞRUDAN dependent'lar kesin true
@@ -224,6 +245,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         var succeeded = new List<string>();
         var failed = new List<(string, string)>();
         var skipped = new List<(string, string)>();
+        var depIssueCarriers = new List<string>(); // [A2] depIssue TAŞIYAN success'ler
         RunStartedEvent? started = null;
         RunCompletedEvent? completed = null;
 
@@ -244,7 +266,10 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
                 {
                     case ErrorEvent { Code: "msbuildNotFound" } err: Skip.If(true, err.Message); break;
                     case RunStartedEvent s: started = s; break;
-                    case ProjectSucceededEvent p: succeeded.Add(p.ProjectId); break;
+                    case ProjectSucceededEvent p:
+                        succeeded.Add(p.ProjectId);
+                        if (p.DepIssues is { Count: > 0 }) depIssueCarriers.Add(p.ProjectId); // [A2]
+                        break;
                     case ProjectFailedEvent p: failed.Add((p.ProjectId, p.Reason)); break;
                     case ProjectSkippedEvent p: skipped.Add((p.ProjectId, p.Reason)); break;
                     case RunCompletedEvent c: completed = c; break;
@@ -258,7 +283,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         {
             if (!proc.HasExited) { try { proc.Kill(entireProcessTree: true); } catch { /* temizlik */ } }
         }
-        return new RunOutcomeData(succeeded, failed, skipped, started, completed);
+        return new RunOutcomeData(succeeded, failed, skipped, depIssueCarriers, started, completed);
     }
 
     private static (BuildPlan Plan, IReadOnlyDictionary<string, EvaluatedProject> EvaluatedById) BuildPlanAndEvaluated()

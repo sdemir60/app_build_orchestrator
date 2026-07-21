@@ -27,6 +27,8 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// cref="Core.State.BuildStateStore"/>'a <see cref="BuildState"/> persist eder — böylece BİR SONRAKİ Build
 /// incremental olur. <see cref="SignatureById"/> yalnız non-null imzaları içerir (hollow/never-committed
 /// persist edilmez); <c>null</c> Incremental (ör. testlerdeki basit planner) → persist YOK, pre-skip YOK.
+/// [A2 fix-1] Bu yalnız BAŞARI yolu içindir: başarısızlıkta yapılan invalidasyon (bkz.
+/// <c>InvalidateBuildStateOnFailure</c>) imza/HEAD gerektirmez, mevcut kaydı yerinde günceller.
 /// </summary>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
@@ -633,7 +635,9 @@ public sealed class RunCoordinator(
                 // proje sonsuza dek bayat binary'e link'li kalır. §4 gereği DLL/bin timestamp'i OKUNMADIĞI için
                 // bunu yakalayabilecek başka bir mekanizma yoktur. Persist etmemenin bedeli "gereksiz bir kez daha
                 // derlemek", persist etmenin bedeli "sessizce yanlış çıktı" — güvenli taraf seçilir.
-                if (depIssues.All.Count == 0)
+                // [A2 fix-4] Aynı ayrımı ikinci kez TÜRETME: depIssuesForEvent (:594) zaten "depIssue var mı"
+                // sorusunun materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
+                if (depIssuesForEvent is null)
                     PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
@@ -664,7 +668,14 @@ public sealed class RunCoordinator(
         }
         finally
         {
-            run.Scheduler.Complete(projectId, result);
+            run.Scheduler.Complete(projectId, result); // ÖNCE: her yoldan TAM BİR KEZ, hiçbir I/O bunu geciktiremez
+            // [A2 fix-1] BAŞARISIZ biten HER yol (exit!=0 / timeout / stopped / invoke error) stored BuildState'i
+            // GEÇERSİZLEŞTİRİR. Aksi halde tek yazıcı PersistBuildStateOnSuccess olduğu için başarısız bir proje
+            // kaydına HİÇ dokunmaz: dün Succeeded+eşleşen imzayla yazılmış kayıt bugün proje FAIL etse bile
+            // aynen durur ve bir sonraki Build onu "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk
+            // bir proje "güncel" diye raporlanır. Complete'ten SONRA çağrılır: persist I/O'su beklenmedik bir
+            // şekilde fırlasa bile scheduler ASLA askıda kalmaz.
+            if (result != BuildResult.Succeeded) InvalidateBuildStateOnFailure(run, projectId);
         }
     }
 
@@ -733,6 +744,42 @@ public sealed class RunCoordinator(
         { console("build-state yazılamadı (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
 
+    /// <summary>
+    /// [A2 fix-1] Bir proje BAŞARISIZ bittiğinde stored <see cref="BuildState"/>'i GEÇERSİZLEŞTİRİR:
+    /// <c>LastResult=Failed</c> yazılır, böylece <see cref="Core.Planning.WillBuildEvaluator"/>
+    /// (<c>LastResult != Succeeded ⇒ WillBuild=true</c>) bir sonraki Build'de bu projeyi "up to date" sayıp
+    /// pre-skip EDEMEZ. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek yeri burasıdır.
+    /// <para>
+    /// <b>Neden HER başarısızlık türü:</b> stopped/timeout/invoke-error de "bilinen iyi" DEĞİLDİR — yarıda
+    /// kesilmiş bir derleme torn/eksik çıktı bırakabilir. Güvenli yön invalidasyondur; bedeli "gereksiz bir kez
+    /// daha derlemek", diğer yönün bedeli "sessizce bozuk çıktıyı güncel sanmak".
+    /// </para>
+    /// <para>
+    /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni): <see
+    /// cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
+    /// <see cref="BuildState.LastDurationMs"/> DOKUNULMADAN korunur. Gerekçe: (1) imza, Fast (frozen-upstream)
+    /// modda dependent'ların karşılaştırma tabanıdır — null'lanırsa bu projeye bağımlı HER proje de gereksizce
+    /// dirty olurdu; (2) <c>LastDurationMs</c> ETA tahminini besler, bir başarısızlığın (çoğu zaman erken patlayan)
+    /// süresi İYİ bir ölçümün üzerine yazılmamalıdır. Yalnız <c>LastResult</c>/<c>LastRunAt</c> güncellenir.
+    /// </para>
+    /// <para>
+    /// Kayıt YOKSA hiçbir şey yazılmaz: "kayıt yok" ile "imzası olmayan kayıt" tüm tüketiciler için AYNI anlama
+    /// gelir (WillBuild=true) — boş satır eklemek store'u şişirmekten başka bir şey yapmaz.
+    /// </para>
+    /// Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only, <see cref="PersistBuildStateOnSuccess"/> ile aynı sözleşme).
+    /// </summary>
+    private void InvalidateBuildStateOnFailure(RunContext run, string projectId)
+    {
+        if (run.StateStore is null) return;
+        try
+        {
+            if (!run.StateStore.Load().TryGetValue(projectId, out var existing)) return; // geçersizleştirilecek kayıt yok
+            run.StateStore.Upsert(existing with { LastResult = BuildResult.Failed, LastRunAt = DateTimeOffset.UtcNow });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { console("build-state geçersizleştirilemedi (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+    }
+
     private string ReasonFor(MsBuildInvokeResult invoke)
     {
         // Hard stop ÖNCE bakılır: TerminateJobObject child'ı öldürdüğünde invoke sıradan bir "exit N" gibi döner
@@ -788,6 +835,7 @@ public sealed class RunCoordinator(
         // bunu Completed'tan Queued'a geri taşımak üzere okur (bkz. RetryPlanning.RequeueStoppedFailed).
         ConcurrentDictionary<string, byte> StoppedFailedIds,
         // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.
+        // [A2 fix-1] AYRICA projectFailed → mevcut kaydın LastResult'ı Failed'a çekilir (stale pre-skip'i keser).
         BuildStateStore? StateStore,
         IncrementalPlan? Incremental);
 
