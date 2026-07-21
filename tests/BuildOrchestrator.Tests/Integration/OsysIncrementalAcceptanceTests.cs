@@ -22,7 +22,9 @@ namespace BuildOrchestrator.Tests.Integration;
 /// <c>MSBuild.exe</c> ile <b>incremental</b> derler ve It-3'ün kalbini CANLI sayılarla kanıtlar:
 /// <list type="number">
 /// <item><b>Incremental all-skipped:</b> bir <c>Build</c> başarıyla BuildState kurar; kaynak DEĞİŞMEDEN ikinci
-///   <c>Build</c> → önceki başarılı projelerin HEPSİ "skipped — up to date". (En güçlü tek gösterim.)</item>
+///   <c>Build</c> → Run 1'de <b>satır persist eden</b> projelerin HEPSİ "skipped — up to date". (En güçlü tek
+///   gösterim.) [A2] Bu küme "Run 1'de başarılı olan HER proje" DEĞİLDİR: depIssue taşıyan bir success taze imza
+///   persist etmez, dolayısıyla Run 2'de MEŞRU olarak yeniden derlenir (bkz. <c>DepIssueCarriers</c>).</item>
 /// <item><b>Minimal rebuild (L1→L3 dirty):</b> kurulu state üstünde TEK bir projenin kaynağı "dirty" simüle
 ///   edilir (OSYS working tree'ye DOKUNULMADAN — sentetik dirty path) → yalnız o proje + transitive dependent'ları
 ///   WillBuild=true, ilgisiz projeler skip kalır. (Gerçek OSYS grafı + gerçek committed hash'ler + gerçek state.)</item>
@@ -90,8 +92,13 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // Succeeded - DepIssueCarriers'tır. A2 ÖNCESİ buradaki `>= Succeeded` beklentisi yalnız Run 1 TAMAMEN
         // yeşilken (failed=0 ⇒ carrier=0) doğrudur; bir failure olduğunda YANLIŞ kırmızı verir ve testin geri
         // kalanına HİÇ ulaşılmaz. (A2, aşağıdaki :222-232'deki iddiaları düzeltirken burayı atlamıştı.)
-        // İddia ZAYIFLAMAZ: derlenip depIssue TAŞIMAYAN her proje için bir satır ZORUNLUDUR — biri bile
-        // eksik kalırsa sayı bu alt sınırın ALTINA düşer ve test kırmızı verir.
+        // İddia ZAYIFLAMAZ: derlenip depIssue TAŞIMAYAN her proje için KURAL OLARAK bir satır beklenir — biri
+        // bile eksik kalırsa sayı bu alt sınırın ALTINA düşer ve test kırmızı verir. Muafiyet listesi tam OLSUN
+        // diye: ÜÇÜNCÜ bir persist-etmeme yolu daha vardır ve o da bu iddiaya girmez —
+        // PersistBuildStateOnSuccess (RunCoordinator.cs:736-738) incremental planda bu proje için İMZA YOKSA
+        // (SignatureById miss: hollow / imzası hesaplanamamış proje) satır YAZMADAN döner. Yani buradaki bir
+        // kırmızı "persist eksik" kadar "imzasız success var" da demek olabilir; teşhis için önce kanıt
+        // dosyasındaki Run 1 satırına ve build-state.json'a bakılmalı.
         int run1PersistExpected = run1.Succeeded.Count - run1.DepIssueCarriers.Count;
         Assert.True(stateAfterRun1.Count >= run1PersistExpected,
             Inv($"build-state kaydı ({stateAfterRun1.Count}) < persist etmesi beklenen ({run1PersistExpected} = başarılı {run1.Succeeded.Count} − depIssue taşıyan {run1.DepIssueCarriers.Count}) — persist eksik."));
@@ -194,7 +201,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine();
             sb.AppendLine("## Run 2 (Build, kaynak DEĞİŞMEDEN — incremental)");
             sb.AppendLine(Inv($"- TotalProjects: {run2.Started?.TotalProjects} · Succeeded: {run2.Completed?.Succeeded} · Failed: {run2.Completed?.Failed} · Skipped: {run2.Completed?.Skipped} · Süre: {run2.Completed?.DurationMs} ms"));
-            sb.AppendLine(Inv($"- 'skipped — up to date' sayısı: {run2UpToDate.Count}"));
+            sb.AppendLine(Inv($"- 'skipped — up to date' sayısı: {run2UpToDate.Count} · Run 1'de persist edilen satır: {stateAfterRun1.Count} (EŞİT olmalı — satır yazan her proje pre-skip edilmeli)"));
             sb.AppendLine(Inv($"- Run 1 başarılı ({run1Succeeded.Count}) → Run 2'de up-to-date SKIP edilmeyen: {notSkipped.Count} · bunlardan A2 ile AÇIKLANAMAYAN: {notSkippedUnexplained.Count} (0 OLMALI)"));
             sb.AppendLine(Inv($"- [A2] Run 1: failed={run1.Failed.Count} + depIssue taşıyan success={run1.DepIssueCarriers.Count} → Run 2'de derlenmesi MEŞRU: {run1LegitimateRebuild.Count}"));
             sb.AppendLine(Inv($"- Run 2'de dispatch edilen (derlenen) proje: {run2Started.Count} · bunlardan MEŞRU kümede OLMAYAN: {run2Unexplained.Count} (0 OLMALI)"));
@@ -223,8 +230,24 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // depIssue taşıyan success'lerdir (A2'den beri persist etmezler). Run 1 tamamen yeşilse bu iddia eski
         // "Assert.Empty(notSkipped)"e BİREBİR indirgenir (carrier ancak bir failure varsa oluşur).
         Assert.Empty(notSkippedUnexplained);
-        Assert.True(run2UpToDate.Count >= 100,
-            Inv($"'up to date' skip sayısı beklenenden düşük — incremental çalışmıyor: {run2UpToDate.Count}"));
+        // [A2] SABİT bir taban ("en az 100 proje up-to-date olmalı") burada YANLIŞ ölçüdür ve A2'den ÖNCE
+        // yazılmıştır: A2'den beri depIssue TAŞIYAN success'ler taze imza persist ETMEZ, dolayısıyla Run 2'de
+        // pre-skip EDİLEBİLECEK proje sayısı repodaki failure sayısına göre değişir (canlı OSYS: 118 success −
+        // 71 carrier = 47 satır ⇒ en fazla 47 pre-skip). Sabit 100'lük taban, motor kusursuz çalışsa bile bu
+        // repoda kırmızı verir; tabanı 47'ye ÇEKMEK de aynı kırılganlığı küçük bir sayıyla geri getirirdi.
+        // Doğru ölçü koşunun KENDİ ürettiği sayıdan türer: Run 1'de satır persist eden HER proje Run 2'de
+        // "skipped — up to date" pre-skip EDİLMELİDİR.
+        // NEDEN ">=" DEĞİL "==": ters yön de üretim kodunca garanti altındadır — WillBuildEvaluator "false"
+        // (⇒ pre-skip) diyebilmek için state'te LastResult=Succeeded + EŞLEŞEN imza taşıyan bir satır ARAR
+        // (WillBuildEvaluator.cs:16-18) ve run2UpToDate yalnız "skipped — up to date" reason'ıyla
+        // filtrelenmiştir (cycle vb. sebeplerle skip edilenler bu kümede DEĞİL, bkz. yukarıdaki Where). Yani
+        // satırı olmayan bir proje bu kümeye giremez ⇒ küme zaten satır kümesinin ALT KÜMESİ. Eşitlik bu ikinci
+        // yönü de pinler: satırsız bir "up to date" raporu ("hiç başarıyla derlenmemiş proje güncel sayıldı")
+        // gerçek bir bug olurdu. İddia ZAYIF DEĞİL — incremental bozulup satır yazmış tek bir proje bile Run
+        // 2'de yeniden derlenirse sol taraf düşer ve test kırmızı verir. Koşunun ÖLÇEĞİ ayrıca "Run 1 başarılı
+        // > 100" ve persist alt sınırı iddialarıyla ayrıca pinlidir.
+        Assert.True(run2UpToDate.Count == stateAfterRun1.Count,
+            Inv($"'up to date' pre-skip sayısı ({run2UpToDate.Count}) ≠ Run 1'de persist edilen satır sayısı ({stateAfterRun1.Count}) — incremental çalışmıyor: satır yazan HER proje Run 2'de skip edilmeliydi."));
         // Bu bir ÜST SINIR (⊆) iddiasıdır: "Run 2 yalnız meşru kümeden derleyebilir". İfade EDEMEDİĞİ şey,
         // kümenin TAMAMININ gerçekten derlendiği (eşitlik) — bir carrier, DAHA ÖNCEKİ bir koşudan kalan
         // Succeeded kaydı sayesinde meşru olarak skip de EDİLEBİLİR (bu testte Run 1 sıfır state ile başladığı

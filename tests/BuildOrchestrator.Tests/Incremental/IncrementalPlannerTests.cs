@@ -585,14 +585,24 @@ public class IncrementalPlannerTests
         // tüm incremental sistem bu byte-kararlılığına dayanır (state'e persist edilen imza, bir sonraki
         // koşuda YENİDEN hesaplananla karşılaştırılır — arada plan sırası değişmiş olabilir).
         var (a, b, d) = CycleNodes();
-        // İKİ sıra da değişir: hem plan.Nodes dizisi hem de Cycles içindeki ÜYE sırası. İkincisi
+        // order2'de İKİ sıra da değişir: hem plan.Nodes dizisi hem de Cycles içindeki ÜYE sırası. İkincisi
         // IncrementalPlanner'daki OrderBy'ı (componentOf kurulumu) pinler — yalnız düğüm sırasını değiştirmek
         // o sıralamayı test etmez, çünkü kompozit üyeleri her iki planda da aynı sırada gelirdi.
+        // order3, order1'den YALNIZ üye sırasıyla, order2'den ise YALNIZ düğüm sırasıyla ayrılır: böylece bir
+        // regresyonda hangi invaryantın kırıldığı kırmızı satırdan OKUNUR (order1↔order2 tek başına ikisini
+        // ayırt edemezdi).
         var order1 = new BuildPlan([a, b, d], [[CycA, CycB]], "Debug");
         var order2 = new BuildPlan([b, a, d], [[CycB, CycA]], "Debug");
+        var order3 = new BuildPlan([a, b, d], [[CycB, CycA]], "Debug");
 
         Assert.Equal(CycleSignatureOf(order1, CycD, "v1"), CycleSignatureOf(order2, CycD, "v1"));
         Assert.Equal(CycleSignatureOf(order1, CycA, "v1"), CycleSignatureOf(order2, CycA, "v1"));
+        // YALNIZ üye sırası değişti (düğüm sırası order1 ile aynı) → componentOf'un OrderBy'ı.
+        Assert.Equal(CycleSignatureOf(order1, CycD, "v1"), CycleSignatureOf(order3, CycD, "v1"));
+        Assert.Equal(CycleSignatureOf(order1, CycA, "v1"), CycleSignatureOf(order3, CycA, "v1"));
+        // YALNIZ düğüm sırası değişti (üye sırası order2 ile aynı) → DFS ziyaret sırasından bağımsızlık.
+        Assert.Equal(CycleSignatureOf(order2, CycD, "v1"), CycleSignatureOf(order3, CycD, "v1"));
+        Assert.Equal(CycleSignatureOf(order2, CycA, "v1"), CycleSignatureOf(order3, CycA, "v1"));
     }
 
     [Fact]
@@ -655,6 +665,33 @@ public class IncrementalPlannerTests
         Assert.NotEqual(SigOfD("v1"), SigOfD("v2"));
     }
 
+    private const string SccE = @"C:\r\E.csproj";      // SCC2 üyeleri (bkz. AdjacentSccNodes)
+    private const string SccF = @"C:\r\F.csproj";
+    private const string SccFSourcePath = @"C:\r\F.cs";
+
+    /// <summary>SCC1={A,B} ve SCC2={E,F} ayrık; A (SCC1 üyesi) → E (SCC2 üyesi), yani bir SCC'nin SCC-DIŞI
+    /// upstream'i BAŞKA bir SCC'dir. D cycle DIŞINDA ve A'ya bağımlıdır (downstream).</summary>
+    private static (ProjectNode A, ProjectNode B, ProjectNode E, ProjectNode F, ProjectNode D) AdjacentSccNodes() => (
+        Node(CycA, 0, inCycle: true, CycB, SccE),
+        Node(CycB, 1, inCycle: true, CycA),
+        Node(SccE, 2, inCycle: true, SccF),
+        Node(SccF, 3, inCycle: true, SccE),
+        Node(CycD, 4, inCycle: false, CycA));
+
+    /// <summary><see cref="AdjacentSccNodes"/> grafının TÜM imzaları. DEĞİŞEN tek girdi, SCC2 üyesi F'nin dirty
+    /// kaynak dosyasının İÇERİĞİdir (<paramref name="fContent"/>).</summary>
+    private static IReadOnlyDictionary<string, string?> AdjacentSccSignatures(BuildPlan plan, string fContent) =>
+        IncrementalPlanner.ComputeWillBuildWithSignatures(
+            plan,
+            headCommit: "headA",
+            dirtyFilesForNode: DirtyLookup(Dirty((SccF, [SccFSourcePath]))),
+            readFileContent: ContentMap((SccFSourcePath, fContent)),
+            committedFingerprintForNode: FingerprintLookup(Fingerprints(
+                (CycA, "fpA"), (CycB, "fpB"), (SccE, "fpE"), (SccF, "fpF"), (CycD, "fpD"))),
+            state: new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase),
+            inPlace: true,
+            mode: DependentMode.Safe).SignatureById;
+
     [Fact]
     public void Two_adjacent_sccs_where_one_depends_on_the_other_terminate_and_yield_stable_signatures()
     {
@@ -663,32 +700,40 @@ public class IncrementalPlannerTests
         // sonlanmasının gerekçesi condensation'ın DAG olmasıdır. Bu gerekçe bugüne kadar yalnız YORUMDA
         // vardı: bir regresyon burada KIRMIZI assertion olarak değil, ASILI test host'u / StackOverflow
         // olarak patlar — en kötü başarısızlık kipi. Bu test o senaryoyu koşturur.
-        const string SccE = @"C:\r\E.csproj";
-        const string SccF = @"C:\r\F.csproj";
-        var a = Node(CycA, 0, inCycle: true, CycB, SccE);
-        var b = Node(CycB, 1, inCycle: true, CycA);
-        var e = Node(SccE, 2, inCycle: true, SccF);
-        var f = Node(SccF, 3, inCycle: true, SccE);
-        var d = Node(CycD, 4, inCycle: false, CycA);
+        var (a, b, e, f, d) = AdjacentSccNodes();
         var plan = new BuildPlan([d, b, a, f, e], [[CycA, CycB], [SccE, SccF]], "Debug");
 
-        IReadOnlyDictionary<string, string?> Signatures() =>
-            IncrementalPlanner.ComputeWillBuildWithSignatures(
-                plan, headCommit: "headA", dirtyFilesForNode: DirtyLookup(Dirty()), readFileContent: NoRead,
-                committedFingerprintForNode: FingerprintLookup(Fingerprints(
-                    (CycA, "fpA"), (CycB, "fpB"), (SccE, "fpE"), (SccF, "fpF"), (CycD, "fpD"))),
-                state: new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase),
-                inPlace: true, mode: DependentMode.Safe).SignatureById;
-
-        var first = Signatures(); // buraya dönülmesi ZATEN sonlanma kanıtıdır
+        var first = AdjacentSccSignatures(plan, "v1"); // buraya dönülmesi ZATEN sonlanma kanıtıdır
         Assert.All(new[] { CycA, CycB, SccE, SccF, CycD }, id => Assert.NotNull(first[id]));
         Assert.Equal(first[CycA], first[CycB]);   // SCC1 tek kompozit
         Assert.Equal(first[SccE], first[SccF]);   // SCC2 tek kompozit
         Assert.NotEqual(first[CycA], first[SccE]); // AYRI component'ler AYRI kompozit (birleşmiş/çakışmış değil)
 
-        var second = Signatures();                 // kararlılık: aynı girdi → aynı imza
+        var second = AdjacentSccSignatures(plan, "v1"); // kararlılık: aynı girdi → aynı imza
         Assert.Equal(first[CycD], second[CycD]);
         Assert.Equal(first[CycA], second[CycA]);
         Assert.Equal(first[SccE], second[SccE]);
+    }
+
+    [Fact]
+    public void A_source_change_inside_an_upstream_scc_propagates_through_both_composites_to_a_downstream()
+    {
+        // SCC2={E,F} → SCC1={A,B} → D. Değişim SCC2'nin İÇİNDE (F'nin kaynağında) doğar ve İKİ kompozit
+        // zincirinden geçerek cycle DIŞINDAKİ D'ye ulaşmalıdır. Komşu-SCC testi tüm düğümleri TEMİZ tuttuğu
+        // için yalnız SONLANMAYI ve kararlılığı pinliyordu: SCC→SCC YAYILIMI — bir SCC'nin kompozitinin, kendi
+        // SCC-dışı upstream'i olan BAŞKA bir SCC'nin kompozitini gerçekten İÇERMESİ — hiçbir yerde koşulmuyordu
+        // (tek üyeli/iki üyeli tek SCC testleri bu dalı zincirlemiyor). Acceptance'taki "TAM cascade" eşitliği
+        // gerçek OSYS grafında tam olarak bu zincire dayanır.
+        var (a, b, e, f, d) = AdjacentSccNodes();
+        // Sıra KASITLI olarak topolojik DEĞİL (D ve B, A'dan; F, E'den önce) — cascade sıraya bağlı olmamalı.
+        var plan = new BuildPlan([d, b, a, f, e], [[CycA, CycB], [SccE, SccF]], "Debug");
+
+        var before = AdjacentSccSignatures(plan, "v1");
+        var after = AdjacentSccSignatures(plan, "v2");
+
+        Assert.NotEqual(before[SccF], after[SccF]);  // SCC2 kompoziti kendi üyesinin dirty kaynağını görüyor
+        Assert.NotEqual(before[SccE], after[SccE]);  // ... ve component'in TÜM üyelerine yazılıyor
+        Assert.NotEqual(before[CycA], after[CycA]);  // SCC1 kompoziti SCC-DIŞI upstream'i (SCC2) üzerinden değişti
+        Assert.NotEqual(before[CycD], after[CycD]);  // cycle DIŞINDAKİ downstream'e ULAŞTI (under-build yok)
     }
 }
