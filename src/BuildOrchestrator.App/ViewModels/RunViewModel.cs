@@ -5,6 +5,7 @@ using System.Text;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Incremental;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -130,6 +131,31 @@ public sealed partial class RunViewModel : ObservableObject
     internal Action? DebugAfterStitchLockExited;
 
     public ObservableCollection<ProjectRowViewModel> Projects { get; } = [];
+
+    // ---------------------------------------------------------------- [A5/T69] Sync / topoloji state
+
+    /// <summary>[design-v1 §3.1] Faz makinesi. A5 yalnız <c>Syncing</c> (syncStarted) ve <c>Idle</c>
+    /// (syncCompleted) geçişlerini sürer; kalan geçişler (boot/running/done/stopped) sonraki UI task'larınındır.</summary>
+    [ObservableProperty] private AppPhase _phase = AppPhase.Empty;
+
+    /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
+    [ObservableProperty] private string? _targetSha;
+
+    /// <summary>true ⇒ son Sync'te fetch başarısız oldu ve akış yerel HEAD ile devam etti (offline degrade).</summary>
+    [ObservableProperty] private bool _fetchDegraded;
+
+    public ObservableCollection<BranchRef> Branches { get; } = [];
+    public ObservableCollection<Worktree> Worktrees { get; } = [];
+
+    /// <summary>Son <c>workspaceTopology</c>'nin düğümleri (build-order) — bağımlılık, katman ve solution
+    /// bilgisinin TEK kaynağı; graf paneli (D5) ve katman gruplaması (D1) bunu okur.</summary>
+    public IReadOnlyList<ProjectNode> Topology { get; private set; } = [];
+
+    /// <summary>Workspace'teki .sln'ler (ad + tam yol) — Open-in-VS (E1) <see cref="ProjectNode.SolutionNames"/>'i buradan çözer.</summary>
+    public IReadOnlyList<SolutionRef> Solutions { get; private set; } = [];
+
+    /// <summary>Topoloji DEĞİŞTİĞİNDE (her statü güncellemesinde DEĞİL) tetiklenir — D5 grafı yalnız bunda yeniden kurar.</summary>
+    public event EventHandler? TopologyChanged;
 
     [ObservableProperty] private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
@@ -282,7 +308,81 @@ public sealed partial class RunViewModel : ObservableObject
             case RunCompletedEvent e: OnRunCompleted(e); break;
             case RunStoppedEvent: OnRunStopped(); break;
             case ErrorEvent e: OnError(e); break;
+            // [A5/T69] Sync yüzeyi — bkz. OnSyncCompleted/OnWorkspaceTopology
+            case SyncStartedEvent: Phase = AppPhase.Syncing; break;
+            case SyncProgressEvent e: AppendRunLine(e.Line); break;
+            case SyncCompletedEvent e: OnSyncCompleted(e); break;
+            case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
+            case BranchListEvent e: Replace(Branches, e.Branches); break;
+            case WorktreeListEvent e: Replace(Worktrees, e.Worktrees); break;
         }
+    }
+
+    /// <summary>[A5/T69] Sync bitti: hedef commit + degrade bayrağı kaydedilir, faz <c>Idle</c>'a geçer
+    /// (proje durumları artık bilinir — hollow değil).</summary>
+    private void OnSyncCompleted(SyncCompletedEvent e)
+    {
+        TargetSha = e.TargetSha;
+        FetchDegraded = e.FetchDegraded;
+        Phase = AppPhase.Idle;
+    }
+
+    /// <summary>
+    /// [A5/T69] <see cref="Projects"/>'i topolojiden BUILD-ORDER'da yeniden kurar ve <see cref="TopologyChanged"/>'i
+    /// tetikler. Will-dot'lar BURADA kurulmaz: hemen ardından gelen <see cref="BuildPreviewEvent"/> (mevcut
+    /// handler) onları zaten kurar — ikinci bir will-build yolu açılmaz.
+    /// <para>
+    /// [A13.2] <b>Koleksiyon reset'i YASAK:</b> <c>Clear()</c> bir Reset bildirimi yayınlar (item container'ları
+    /// ve seçim çöker). Bunun yerine liste YERİNDE uzlaştırılır — yalnız Remove/Move/Insert bildirimleri çıkar
+    /// ve topolojide kalan satırlar (dolayısıyla seçim) korunur.
+    /// </para>
+    /// <para>
+    /// <b>Mid-run koruma:</b> satır durumları YALNIZ hiçbir run koşmuyorken sıfırlanır. Sync salt-okurdur ve
+    /// koşan bir run sırasında da tetiklenebilir; o durumda canlı sonuçları (Succeeded/Failed) silmek, ekranı
+    /// motorun gerçek durumundan koparırdı.
+    /// </para>
+    /// </summary>
+    private void OnWorkspaceTopology(WorkspaceTopologyEvent e)
+    {
+        Topology = e.Nodes;
+        Solutions = e.Solutions;
+
+        var wanted = e.Nodes.Select(n => n.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        for (int i = Projects.Count - 1; i >= 0; i--)
+            if (!wanted.Contains(Projects[i].Id)) Projects.RemoveAt(i);
+
+        for (int i = 0; i < e.Nodes.Count; i++)
+        {
+            var node = e.Nodes[i];
+            int existing = IndexOf(node.Id);
+            if (existing < 0) Projects.Insert(i, new ProjectRowViewModel(node.Id, node.Name, ProjectRowState.Pending));
+            else if (existing != i) Projects.Move(existing, i);
+        }
+
+        if (!IsRunning)
+            foreach (var row in Projects)
+            {
+                row.State = ProjectRowState.Pending; // Sync = yeni taban: önceki run'ın sonuçları artık geçmiştir
+                row.DepIssues = null;
+                row.DurationMs = 0;
+            }
+
+        TopologyChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private int IndexOf(string projectId)
+    {
+        for (int i = 0; i < Projects.Count; i++)
+            if (string.Equals(Projects[i].Id, projectId, StringComparison.OrdinalIgnoreCase)) return i;
+        return -1;
+    }
+
+    /// <summary>Bir listeyi gelen anlık görüntüyle değiştirir. <see cref="ObservableCollection{T}.Clear"/>
+    /// KULLANILMAZ ([A13.2] reset yasağı) — sondan silip yeniden eklemek yalnız Remove/Add bildirimleri üretir.</summary>
+    private static void Replace<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
+    {
+        for (int i = target.Count - 1; i >= 0; i--) target.RemoveAt(i);
+        foreach (var item in source) target.Add(item);
     }
 
     private void OnRunStarted(RunStartedEvent e)
@@ -439,6 +539,11 @@ public sealed partial class RunViewModel : ObservableObject
             pending.Completion.TrySetResult();
         }
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/logNotFound/... aktif run'ı ETKİLEMEZ
+        // [A5/T69] Başarısız bir Sync yalnız planFailed yayınlar — syncCompleted GELMEZ. Faz burada
+        // bırakılmazsa Syncing'de ASILI kalır (şerit sonsuza dek "▸ Sync — git fetch origin…" gösterir).
+        // Geri düşülecek faz, ELDE bir topoloji olup olmamasıdır: varsa önceki Sync'in sonucu hâlâ geçerlidir
+        // (Idle), yoksa repo henüz hiç sync'lenmemiştir (Boot).
+        if (Phase == AppPhase.Syncing) Phase = Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
         CanContinue = false;

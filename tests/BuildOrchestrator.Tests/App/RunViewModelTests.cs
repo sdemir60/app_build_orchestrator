@@ -1,8 +1,10 @@
+using System.Collections.Specialized;
 using System.IO;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -913,5 +915,197 @@ public class RunViewModelTests
         // queued=max(0, 2-1-1)=0 → raw=(0+0)/1 + 400(building var) = 400ms < 4000ms eşiği
 
         Assert.Equal("· almost done", vm.EtaText);
+    }
+
+    // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree / topoloji
+
+    private static ProjectNode Node(string id, string name, int buildOrder, bool? willBuild = null,
+        IReadOnlyList<string>? deps = null, string? layerName = null) =>
+        new(id, name, id, ["Osys"], deps ?? [], buildOrder, layerName is null ? null : 0, layerName, false, willBuild);
+
+    [Fact]
+    public async Task Sync_events_update_phase_target_sha_and_topology()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        Assert.Equal(AppPhase.Empty, vm.Phase);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0, willBuild: true), Node(@"C:\p\b.csproj", "B", 1, willBuild: false)],
+            Cycles: [],
+            Solutions: [new SolutionRef("Osys", @"C:\p\Osys.sln")],
+            LayerWarnings: []));
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4c0affee", FetchDegraded: false, 2, 0,
+            ChangedCount: 1, ToBuildCount: 1, UpToDateCount: 1));
+
+        Assert.Equal(AppPhase.Idle, vm.Phase);          // syncing → idle
+        Assert.Equal("b7e91d4c0affee", vm.TargetSha);
+        Assert.False(vm.FetchDegraded);
+        Assert.Equal(["A", "B"], vm.Topology.Select(n => n.Name));
+        Assert.Equal("Osys", Assert.Single(vm.Solutions).Name);
+    }
+
+    [Fact]
+    public async Task Sync_completed_records_a_degraded_fetch()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new SyncCompletedEvent("main", "abc1234", FetchDegraded: true, 1, 0));
+
+        Assert.True(vm.FetchDegraded);
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+    }
+
+    // [A5/T69] Topoloji, proje listesini BUILD-ORDER'da yeniden kurar; D1 (katman gruplaması) ve D5 (graf)
+    // TopologyChanged'i dinler. [A13.2] Koleksiyon RESET'İ YASAK — liste yerinde uzlaştırılır (Add/Remove/Move).
+    [Fact]
+    public async Task Workspace_topology_rebuilds_the_project_list_in_build_order_and_raises_TopologyChanged()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        // Önceki bir run'ın kalıntısı: sıra TERS ve topolojide olmayan bir proje var
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\gone.csproj", "Gone"));
+
+        var resets = new List<NotifyCollectionChangedAction>();
+        ((INotifyCollectionChanged)vm.Projects).CollectionChanged += (_, e) => resets.Add(e.Action);
+        int topologyChanged = 0;
+        vm.TopologyChanged += (_, _) => topologyChanged++;
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"])],
+            Cycles: [], Solutions: [], LayerWarnings: []));
+
+        Assert.Equal([@"C:\p\a.csproj", @"C:\p\b.csproj"], vm.Projects.Select(p => p.Id)); // build-order
+        Assert.DoesNotContain(NotifyCollectionChangedAction.Reset, resets);                // [A13.2]
+        Assert.Equal(1, topologyChanged);
+        Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));      // Sync = yeni taban
+    }
+
+    // Topolojinin hemen ardından gelen buildPreview, satırların will-dot'unu kurar (mevcut handler — İKİNCİ
+    // bir will-build yolu açılmaz). Sync sonrası hiçbir düğüm hollow KALMAZ.
+    [Fact]
+    public async Task Build_preview_after_topology_fills_the_will_build_dots()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1)],
+            Cycles: [], Solutions: [], LayerWarnings: []));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", false),
+        ]));
+
+        Assert.True(vm.Projects[0].WillBuild);
+        Assert.False(vm.Projects[1].WillBuild);
+    }
+
+    // Koşan bir run'ın CANLI satır durumu, araya giren bir Sync tarafından SİLİNMEZ (mid-run Sync koruması).
+    [Fact]
+    public async Task Workspace_topology_does_not_reset_row_state_while_a_run_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400));
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0)], Cycles: [], Solutions: [], LayerWarnings: []));
+
+        Assert.Equal(ProjectRowState.Succeeded, Assert.Single(vm.Projects).State);
+    }
+
+    // Başarısız bir Sync (ör. kök bir git repo'su değil) syncCompleted YAYINLAMAZ — yalnız planFailed gelir.
+    // Faz Syncing'de ASILI KALMAMALIDIR, aksi halde şerit sonsuza dek "▸ Sync — git fetch origin…" gösterirdi.
+    [Fact]
+    public async Task A_failed_sync_releases_the_syncing_phase_instead_of_hanging_there()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+
+        vm.OnEvent(new ErrorEvent("planFailed", "'D:\\repo' is not a usable git repository: ..."));
+
+        Assert.Equal(AppPhase.Boot, vm.Phase); // topoloji hiç gelmedi → "repo var, Sync yapılmadı"
+    }
+
+    [Fact]
+    public async Task A_failed_resync_falls_back_to_idle_when_a_topology_is_already_known()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "abc1234", false, 1, 0));
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new ErrorEvent("planFailed", "boom"));
+
+        Assert.Equal(AppPhase.Idle, vm.Phase); // önceki topoloji hâlâ geçerli
+    }
+
+    [Fact]
+    public async Task Branch_list_event_fills_branches()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "abc1234", true, false),
+            new BranchRef("origin/main", "abc1234", false, true),
+        ]));
+
+        Assert.Equal(["main", "origin/main"], vm.Branches.Select(b => b.Name));
+        Assert.True(vm.Branches[0].IsActive);
+
+        // İkinci liste ÖNCEKİNİ değiştirir, üstüne eklemez
+        vm.OnEvent(new BranchListEvent([new BranchRef("feature-x", "def5678", false, false)]));
+        Assert.Equal(["feature-x"], vm.Branches.Select(b => b.Name));
+    }
+
+    [Fact]
+    public async Task Worktree_list_event_fills_worktrees()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new WorktreeListEvent([new Worktree("main-1", "main", @"C:\pool\main-1", true, 4096)]));
+
+        Assert.Equal("main-1", Assert.Single(vm.Worktrees).Name);
+    }
+
+    // [D8] Gerçek 50ms beklenmez — tick tamamen kontrol edilir (ConsoleBatcherTests deseni).
+    [Fact]
+    public async Task Sync_progress_lines_reach_the_console_batcher()
+    {
+        int ticks = 0;
+        ConsoleBatcher? batcher = null;
+        Task Tick(CancellationToken ct)
+        {
+            ticks++;
+            if (ticks == 2) batcher!.Complete(); // 1. tick birikenleri flush eder, 2. tick pump'ı kapatır
+            return Task.CompletedTask;
+        }
+        batcher = new ConsoleBatcher(Tick);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, batcher, () => "r1");
+
+        vm.OnEvent(new SyncProgressEvent("▸ git fetch origin main", "cmd"));
+        vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
+
+        var flushes = new List<string>();
+        await batcher.PumpAsync(text => flushes.Add(text), CancellationToken.None);
+
+        Assert.Equal(["▸ git fetch origin main\nSync complete — 7 changed projects, 14 to build\n"], flushes);
+        // Konsol dokümanına da düşer (run dokümanı aktifken)
+        Assert.Contains("▸ git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 }

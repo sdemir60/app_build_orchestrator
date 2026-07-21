@@ -1,14 +1,40 @@
 using System.ComponentModel;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Core.State;
+using BuildOrchestrator.Core.Workspace;
 
 namespace BuildOrchestrator.Supervisor;
 
+/// <summary>
+/// [A5/T69] Kök-yola (<c>RootPath</c>) bağlı Core servislerinin fabrikaları. Bu tipler kök başına kurulur
+/// çünkü komutlar kökü BERABERİNDE taşır — Supervisor tek bir repo'ya sabitlenmiş değildir. Kompozisyon kökü
+/// (<see cref="Program"/>) doldurur; testler izole cache/havuz kökleriyle kendi örneğini verir.
+/// </summary>
+public sealed record WorkspaceServices(
+    Func<string, SyncWorkspaceService> Sync,
+    Func<string, GitService> Git,
+    Func<string, WorktreeManager> Worktree)
+{
+    /// <summary>Üretim bağlaması: gerçek <see cref="ProcessRunner"/>, <paramref name="cacheRoot"/>'taki
+    /// evaluation-cache + build-state, <paramref name="poolRoot"/>'taki worktree havuzu.</summary>
+    public static WorkspaceServices Default(string cacheRoot, string poolRoot) => new(
+        root => new SyncWorkspaceService(
+            new WorkspaceScanner(), new CsprojEvaluator(),
+            new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json")),
+            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot)),
+        root => new GitService(new ProcessRunner(), root),
+        root => new WorktreeManager(new ProcessRunner(), root, poolRoot));
+}
+
 public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob,
-    RunCoordinator coordinator)
+    RunCoordinator coordinator, WorkspaceServices workspace)
 {
     private bool _running = true;
 
@@ -46,9 +72,82 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await SendProjectLogAsync(g, ct); break;
             case DebugSpawnChildrenCommand d:
                 await SpawnDebugChildrenAsync(d, ct); break;
+            case SyncWorkspaceCommand s:
+                await SyncWorkspaceAsync(s, ct); break;
+            case ListBranchesCommand b:
+                await ListBranchesAsync(b, ct); break;
+            case ListWorktreesCommand w:
+                await WriteWorktreeListAsync(w.RootPath, ct); break;
+            case DeleteWorktreeCommand d:
+                await DeleteWorktreeAsync(d, ct); break;
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
+    }
+
+    /// <summary>
+    /// [A5/T69] Sync akışı: iş TAMAMEN Core'da (<see cref="SyncWorkspaceService"/>, D3), burada yalnız
+    /// event'lerin tek NdjsonWriter'a aktarılması var. Aynı writer koordinatörle PAYLAŞILIR — satır bütünlüğü
+    /// writer'ın kendi kilidiyle korunur, yani stdout YALNIZ NDJSON kalır [D4].
+    /// <para>
+    /// Bu çağrı, <c>startRun</c>'ın aksine, komut döngüsünü Sync BİTENE KADAR BLOKLAR: Sync salt-okurdur ve
+    /// saniyeler mertebesindedir; ayrı bir arka plan task'ına almak, komut sırasını (ör. hemen ardından gelen
+    /// bir <c>startRun</c>) Sync'in event akışıyla YARIŞTIRIRDI.
+    /// </para>
+    /// </summary>
+    private async Task SyncWorkspaceAsync(SyncWorkspaceCommand cmd, CancellationToken ct)
+    {
+        // emit senkrondur ama writer async'tir: event'ler önce toplanıp sonra SIRAYLA yazılır — böylece
+        // servis Core'da UI/IPC türü taşımadan kalır ve satır sırası bozulmaz.
+        var pending = new List<IpcEvent>();
+        try
+        {
+            await workspace.Sync(cmd.RootPath).RunAsync(cmd, pending.Add, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Sync'in kendi kapıları bozuk girdiyi zaten planFailed'a çevirir; buraya yalnız GERÇEKTEN
+            // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli — tanımlı bir event'e çevrilir.
+            pending.Add(new ErrorEvent("planFailed", ex.Message));
+        }
+        foreach (var ev in pending) await writer.WriteAsync(ev, ct);
+    }
+
+    /// <summary>[A5/T69] Yerel + remote-tracking branch listesi (SALT-OKUR) → <see cref="BranchListEvent"/>.</summary>
+    private async Task ListBranchesAsync(ListBranchesCommand cmd, CancellationToken ct)
+    {
+        var result = await workspace.Git(cmd.RootPath).ListBranchesAsync(ct);
+        if (!result.Success)
+        { await writer.WriteAsync(new ErrorEvent("branchListFailed", result.Error!), ct); return; }
+
+        var branches = result.Value!
+            .Select(b => new BranchRef(b.Name, b.Sha, b.IsActive, b.IsRemote))
+            .ToList();
+        await writer.WriteAsync(new BranchListEvent(branches), ct);
+    }
+
+    /// <summary>[A5/T69] Havuz envanteri → <see cref="WorktreeListEvent"/>. <c>deleteWorktree</c> de silme
+    /// sonrası BUNU yeniden yayınlar, böylece App'in listesi ek bir komut gerekmeden tazelenir.</summary>
+    private async Task WriteWorktreeListAsync(string rootPath, CancellationToken ct)
+    {
+        var result = await workspace.Worktree(rootPath).ListWorktreesAsync(ct);
+        if (!result.Success)
+        { await writer.WriteAsync(new ErrorEvent("worktreeListFailed", result.Error!), ct); return; }
+
+        var worktrees = result.Value!
+            .Select(w => new Worktree(w.Name, w.Branch ?? "", w.Path, w.IsActive, w.SizeBytes))
+            .ToList();
+        await writer.WriteAsync(new WorktreeListEvent(worktrees), ct);
+    }
+
+    private async Task DeleteWorktreeAsync(DeleteWorktreeCommand cmd, CancellationToken ct)
+    {
+        // Ad doğrulaması (path traversal) Core'da: WorktreeManager.DeleteAsync → PathSanitizer.IsSafeSegment.
+        var result = await workspace.Worktree(cmd.RootPath).DeleteAsync(cmd.Name, ct);
+        if (!result.Success)
+        { await writer.WriteAsync(new ErrorEvent("worktreeDeleteFailed", result.Error!), ct); return; }
+
+        await WriteWorktreeListAsync(cmd.RootPath, ct);
     }
 
     /// <summary>

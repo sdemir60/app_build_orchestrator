@@ -216,6 +216,26 @@ public class GitServiceTests
         Assert.Contains(locals, b => b.Name == "feature-x" && !b.IsActive);
     }
 
+    // [A5/T69] BranchRef (branchList IPC event'i) her branch için sha TAŞIR — UI kart/chip'lerinde commit
+    // gösterimi (N10) buna dayanır. Sha, branch listesiyle AYNI `for-each-ref` çağrısından gelir: branch
+    // başına ayrı bir `rev-parse` process'i spawn etmek çok branch'li repolarda gereksiz pahalıdır.
+    [Fact]
+    public async Task ListBranchesAsync_carries_the_commit_sha_of_every_branch()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        string firstSha = repo.CommitAll("c1");
+        string current = repo.CurrentBranchName();
+        repo.CreateBranch("feature-x"); // aynı commit'ten dallanır
+
+        var svc = new GitService(Runner, repo.RootPath);
+        var result = await svc.ListBranchesAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(firstSha, Assert.Single(result.Value!, b => b.Name == current).Sha);
+        Assert.Equal(firstSha, Assert.Single(result.Value!, b => b.Name == "feature-x").Sha);
+    }
+
     [Fact]
     public async Task ListBranchesAsync_reports_remote_tracking_branches_from_a_clone()
     {

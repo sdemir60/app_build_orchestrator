@@ -114,7 +114,10 @@ public class ProjectLogStreamTests
                 innerJob: Job,
                 nowMs: () => Environment.TickCount64,
                 console: _ => { });
-            var host = new SupervisorHost(supervisorWriter, new NdjsonReader(_toHost), Job, Coordinator);
+            // [A5/T69] Sync/branch/worktree servisleri İZOLE köklerle bağlanır (bu harness onları kullanmaz,
+            // ama kullanıcının gerçek cache/havuz dosyalarına hiçbir koşulda dokunulmamalıdır).
+            var host = new SupervisorHost(supervisorWriter, new NdjsonReader(_toHost), Job, Coordinator,
+                WorkspaceServices.Default(LogsRoot, Path.Combine(LogsRoot, "worktrees")));
             _cmdWriter = new NdjsonWriter(_toHost);
             _eventReader = new NdjsonReader(_fromHost);
             _hostTask = Task.Run(() => host.RunAsync());

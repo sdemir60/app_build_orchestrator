@@ -221,4 +221,105 @@ public class IpcMessagesTests
         Assert.Contains("\"type\":\"syncCompleted\"", JsonSerializer.Serialize(events[2], IpcJson.Options));
         Assert.Contains("\"type\":\"branchList\"", JsonSerializer.Serialize(events[3], IpcJson.Options));
     }
+
+    // ---------------------------------------------------------------- [A5/T69] Sync / branch / worktree / topoloji
+
+    // App'in branch seçici, worktree havuzu ve "worktree sil" akışlarını besleyen üç komut: hepsi RootPath
+    // taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR — kök her komutta gelir).
+    [Fact]
+    public void ListBranches_listWorktrees_deleteWorktree_roundtrip_with_discriminators()
+    {
+        IpcCommand[] commands = [new ListBranchesCommand(@"D:\repo"), new ListWorktreesCommand(@"D:\repo"),
+            new DeleteWorktreeCommand(@"D:\repo", "main-1")];
+        string[] expectedDiscriminators = ["\"type\":\"listBranches\"", "\"type\":\"listWorktrees\"", "\"type\":\"deleteWorktree\""];
+        for (int i = 0; i < commands.Length; i++)
+        {
+            string json = JsonSerializer.Serialize(commands[i], IpcJson.Options);
+            Assert.Contains(expectedDiscriminators[i], json);
+            Assert.Equal(commands[i], JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        }
+    }
+
+    // [A5/T69] Graf paneli (D5), katman gruplaması (D1) ve Open-in-VS (E1) için gereken TÜM veri tek event'te
+    // taşınır. ProjectNode'un liste alanları (SolutionNames/Dependencies) round-trip'te YENİ liste örneklerine
+    // dönüşür — ProjectNode'un ELLE YAZILMIŞ Equals'ı (sıralı içerik eşitliği) bu yüzden vardır; Cycles ise
+    // iç içe liste olduğundan event-seviyesinde record eşitliğiyle KIYASLANAMAZ, üye üye karşılaştırılır.
+    [Fact]
+    public void WorkspaceTopology_roundtrips_with_nodes_cycles_solutions_and_layer_warnings()
+    {
+        var ev = new WorkspaceTopologyEvent(
+            Nodes:
+            [
+                new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, 0, "DataLayer", false, true),
+                new ProjectNode(@"C:\p\b.csproj", "B", @"C:\p\b.csproj", ["Osys", "Tools"], [@"C:\p\a.csproj"], 1, 1, "UiLayer", true, false),
+            ],
+            Cycles: [[@"C:\p\b.csproj", @"C:\p\c.csproj"]],
+            Solutions: [new SolutionRef("Osys", @"C:\p\Osys.sln"), new SolutionRef("Tools", @"C:\p\Tools.sln")],
+            LayerWarnings: ["UiLayer -> DataLayer reverse dependency"]);
+
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"workspaceTopology\"", json);
+
+        var back = Assert.IsType<WorkspaceTopologyEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Nodes, back.Nodes);                   // ProjectNode.Equals — sıralı içerik eşitliği
+        Assert.Equal(ev.Solutions, back.Solutions);
+        Assert.Equal(ev.LayerWarnings, back.LayerWarnings);
+        Assert.Equal(ev.Cycles.Count, back.Cycles.Count);
+        for (int i = 0; i < ev.Cycles.Count; i++) Assert.Equal(ev.Cycles[i], back.Cycles[i]);
+        // Dependency/layer/solution verisinin GERÇEKTEN taşındığının kanıtı (boş listeler de eşit olurdu):
+        Assert.Equal([@"C:\p\a.csproj"], back.Nodes[1].Dependencies);
+        Assert.Equal("UiLayer", back.Nodes[1].LayerName);
+        Assert.Equal(@"C:\p\Osys.sln", back.Solutions[0].Path);
+    }
+
+    [Fact]
+    public void WorktreeList_roundtrips_with_discriminator()
+    {
+        var ev = new WorktreeListEvent([
+            new Worktree("main-1", "main", @"C:\pool\main-1", true, 1234),
+            new Worktree("feature-x-1", "feature/x", @"C:\pool\feature-x-1", false, null),
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"worktreeList\"", json);
+        var back = Assert.IsType<WorktreeListEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Worktrees, back.Worktrees);
+    }
+
+    // [A5/T69] Sync de katman pattern'lerini taşır (StartRunCommand ile aynı gerekçe): topoloji event'indeki
+    // LayerIndex/LayerName ve ters-katman uyarıları ancak pattern'ler Core'a ULAŞIRSA doldurulabilir.
+    [Fact]
+    public void SyncWorkspace_carries_layer_patterns()
+    {
+        var cmd = new SyncWorkspaceCommand(@"D:\repo", "main",
+            LayerPatterns: [new LayerPattern(0, "^OSYS\\.Data", "DataLayer"), new LayerPattern(1, "^OSYS\\.Ui", "UiLayer")],
+            Configuration: "Release");
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"type\":\"syncWorkspace\"", json);
+        Assert.Contains("\"layerPatterns\":", json);
+        Assert.Contains("\"configuration\":\"Release\"", json);
+
+        var back = Assert.IsType<SyncWorkspaceCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        Assert.Equal(cmd.LayerPatterns, back.LayerPatterns);
+        Assert.Equal("Release", back.Configuration);
+
+        // Varsayılan şekil geriye dönük uyumlu kalır (mevcut çağrılar iki argümanla kurar).
+        var bare = new SyncWorkspaceCommand(@"D:\repo", "main");
+        Assert.Null(bare.LayerPatterns);
+        Assert.Equal("Debug", bare.Configuration);
+    }
+
+    // [A5/T69] Sync artık will-build pass'ini de koşar; §3.1 konsol satırları ("N changed projects, M to build" /
+    // "K projects up to date") ve D2'nin idle şeridi bu üç sayacı OKUR. "changed" (doğrudan dirty) will-build
+    // kümesinden TÜRETİLEMEZ (o küme transitive dependent'ları da içerir) — bu yüzden ayrı bir alandır.
+    [Fact]
+    public void SyncCompleted_carries_changed_toBuild_and_upToDate_counts()
+    {
+        var ev = new SyncCompletedEvent("main", "b7e91d4c0a", false, 36, 1,
+            ChangedCount: 7, ToBuildCount: 14, UpToDateCount: 22);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"changedCount\":7", json);
+        Assert.Contains("\"toBuildCount\":14", json);
+        Assert.Contains("\"upToDateCount\":22", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
 }

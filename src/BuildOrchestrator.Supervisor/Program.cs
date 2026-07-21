@@ -68,6 +68,10 @@ public static class Program
         string cacheRoot = Path.GetDirectoryName(logsRoot) ?? logsRoot;
         var stateStore = new BuildStateStore(cacheRoot); // [Task 19] global build-state (projectId anahtarlı)
 
+        // [A5/T69] Worktree havuz kökü: `--logs`'un cache/state için yaptığının aynısı — havuza dokunan
+        // testler kendi temp kökünü verir, kullanıcının gerçek havuzu (N3/D12) ASLA hedef alınmaz.
+        string worktreePoolRoot = GetArg(args, "--worktrees") ?? WorktreeManager.DefaultPoolRoot;
+
         using var innerJob = JobObject.CreateKillOnClose(); // §3: inner Job — MSBuild child'ları burada yaşayacak
         // TEK NdjsonWriter: host ve koordinatör AYNI stdout'a yazar; satır bütünlüğü writer'ın kendi kilidiyle
         // korunur — ikinci bir writer örneği o kilidi baypas edip satırları iç içe geçirirdi.
@@ -87,7 +91,8 @@ public static class Program
             console: Console.Error.WriteLine,
             worktreeObjRootResolver: _ => prepared?.WorktreeObjRoot, // [A4] obj izolasyonu artık CANLI
             stateStore: stateStore); // [Task 19] projectSucceeded → BuildState persist
-        var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator);
+        var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator,
+            WorkspaceServices.Default(cacheRoot, worktreePoolRoot)); // [A5/T69] sync/branch/worktree komutları
         return await host.RunAsync();
 
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan → (fresh modda)
@@ -99,7 +104,10 @@ public static class Program
             // hazırlık planlamanın İLK adımıdır: tarama da, incremental imza da AYNI çözülmüş kökü görmelidir.
             // Senkron çağrı, planner'ın zaten senkron/I/O yapan sözleşmesiyle uyumludur (bkz. ComputeIncremental'ın
             // aynı desendeki git çağrıları) — koordinatör onu arka plan task'ından çağırır, IPC loop'u bloklanmaz.
-            var workspace = PrepareAsync(cmd, new ProcessRunner(), WorktreeManager.DefaultPoolRoot,
+            // [A5/T69] Havuz kökü artık TEK yerden gelir (`--worktrees` ile override edilebilir) — build-anı
+            // hazırlığı ile listWorktrees/deleteWorktree AYNI havuzu görmelidir, aksi halde App'in listelediği
+            // worktree'ler build'in kullandıklarından farklı olurdu.
+            var workspace = PrepareAsync(cmd, new ProcessRunner(), worktreePoolRoot,
                 Console.Error.WriteLine).GetAwaiter().GetResult();
             prepared = workspace;
 

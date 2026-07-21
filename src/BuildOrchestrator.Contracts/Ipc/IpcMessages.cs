@@ -22,6 +22,9 @@ public static class IpcJson
 [JsonDerivedType(typeof(DebugSpawnChildrenCommand), "debugSpawnChildren")]
 [JsonDerivedType(typeof(StartRunCommand), "startRun")]
 [JsonDerivedType(typeof(SyncWorkspaceCommand), "syncWorkspace")]
+[JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
+[JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
+[JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
 public abstract record IpcCommand;
 
 public sealed record PingCommand(int Seq) : IpcCommand;
@@ -58,8 +61,31 @@ public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath
 /// [K1 DOC FIX] Workspace'i verilen branch'e senkronize et. Sync REF-ONLY'dir: yalnızca <c>git fetch origin
 /// &lt;branch&gt;</c> ile remote-tracking ref'i günceller — checkout/pull/reset KESİNLİKLE çağrılmaz, aktif
 /// branch ve working tree ASLA değişmez (bkz. Core'daki <c>GitService.FetchRefOnlyAsync</c>). [It-3]
+/// <para>
+/// [A5/T69] Sync yalnız fetch DEĞİLDİR: tam analiz (scan → evaluate → graf → topo → will-build) BURADA koşar
+/// (v7 A5 — "tam analiz yalnız Sync"), sonucu <see cref="WorkspaceTopologyEvent"/> + <see
+/// cref="BuildPreviewEvent"/> + <see cref="SyncCompletedEvent"/> ile App'e taşınır.
+/// </para>
 /// </summary>
-public sealed record SyncWorkspaceCommand(string RootPath, string Branch) : IpcCommand;
+/// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri — <see cref="StartRunCommand.LayerPatterns"/>
+/// ile AYNI anlam. null/boş ise katmanlama KAPALIDIR; dolu ise topoloji event'i LayerIndex/LayerName ve
+/// ters-katman uyarılarını taşır.</param>
+/// <param name="Configuration">Will-build pass'inin imza terimine giren configuration (Debug/Release) — config
+/// değişimi TÜM projeleri dirty yapar (bkz. <c>BuildSignature.Compute</c> "cfg=" terimi), bu yüzden Sync'in
+/// önizlemesi ancak doğru configuration ile anlamlıdır.</param>
+public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
+    IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug") : IpcCommand;
+
+/// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
+public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
+
+/// <summary>[A5/T69] Worktree havuzunun envanterini iste (yanıt: <see cref="WorktreeListEvent"/>). SALT-OKUR.</summary>
+public sealed record ListWorktreesCommand(string RootPath) : IpcCommand;
+
+/// <summary>[A5/T69] Havuzdaki tek bir worktree'yi sil; ardından güncel envanter (<see cref="WorktreeListEvent"/>)
+/// yayınlanır. <paramref name="Name"/> havuz kökü altındaki DİZİN ADIDIR (yol değil) — Core tarafında
+/// <c>PathSanitizer.IsSafeSegment</c> ile doğrulanır.</summary>
+public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCommand;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(EngineReadyEvent), "engineReady")]
@@ -80,6 +106,8 @@ public sealed record SyncWorkspaceCommand(string RootPath, string Branch) : IpcC
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
+[JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
+[JsonDerivedType(typeof(WorktreeListEvent), "worktreeList")]
 public abstract record IpcEvent;
 
 public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
@@ -115,9 +143,35 @@ public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
 /// <param name="TargetSha">Sync sonrası HEAD sha'sı; belirlenemediyse null.</param>
 /// <param name="FetchDegraded">true ise fetch başarısız/kısıtlı oldu ve sync yerel state ile devam etti.</param>
+/// <param name="ChangedCount">[A5/T69] DOĞRUDAN değişen (kendi imza terimi bayatlamış) proje sayısı — will-build
+/// pass'inin <c>DependentMode.Fast</c> (cascade YOK) sonucudur. <paramref name="ToBuildCount"/>'tan TÜRETİLEMEZ:
+/// o küme transitive dependent'ları da içerir (§3.1 "7 changed projects, 14 to build" tam olarak bu farktır).</param>
+/// <param name="ToBuildCount">[A5/T69] Will-build kümesinin boyutu (<c>DependentMode.Safe</c> — dirty + transitive dependent).</param>
+/// <param name="UpToDateCount">[A5/T69] Güncel (<c>WillBuild=false</c>) proje sayısı — Build'de pre-skip edilecekler.</param>
 public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool FetchDegraded,
-    int ProjectCount, int CycleCount) : IpcEvent;
+    int ProjectCount, int CycleCount,
+    int ChangedCount = 0, int ToBuildCount = 0, int UpToDateCount = 0) : IpcEvent;
 public sealed record BranchListEvent(IReadOnlyList<BranchRef> Branches) : IpcEvent;
+
+/// <summary>
+/// [A5/T69] Sync'in ürettiği workspace topolojisi — graf paneli (D5), katman gruplaması (D1) ve Open-in-VS
+/// (E1) için gereken TÜM veriyi tek seferde App'e taşır. <see cref="SyncCompletedEvent"/>'ten ÖNCE yayınlanır.
+/// </summary>
+/// <param name="Nodes">Plan'ın build-order'ındaki TÜM düğümler (cycle üyeleri DAHİL); bağımlılıklar, katman
+/// ataması, solution adları ve will-build üçlü durumu düğümün üzerindedir.</param>
+/// <param name="Cycles">Her biri bir SCC (&gt;1 üye), üyeler sıralı — cycle rozeti bunu okur.</param>
+/// <param name="Solutions">Workspace'te bulunan .sln'lerin ad + TAM YOL karşılıkları (ada göre sıralı, tekil).
+/// <see cref="ProjectNode.SolutionNames"/> yalnız AD taşır; "VS'de Aç" (E1) yolu buradan çözülür.</param>
+/// <param name="LayerWarnings">[A1/T15] Ters-katman uyarıları (warn-only DATA — hiçbir şey bloklanmaz/yeniden sıralanmaz).</param>
+public sealed record WorkspaceTopologyEvent(
+    IReadOnlyList<ProjectNode> Nodes,
+    IReadOnlyList<IReadOnlyList<string>> Cycles,
+    IReadOnlyList<SolutionRef> Solutions,
+    IReadOnlyList<string> LayerWarnings) : IpcEvent;
+
+/// <summary>[A5/T69] Worktree havuzunun envanteri — <see cref="ListWorktreesCommand"/>/<see
+/// cref="DeleteWorktreeCommand"/> yanıtı.</summary>
+public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcEvent;
 
 /// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
