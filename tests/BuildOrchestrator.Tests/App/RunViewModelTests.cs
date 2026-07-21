@@ -75,6 +75,70 @@ public class RunViewModelTests
         Assert.Equal("Osys.sln", Assert.Single(vm.Projects).SolutionName);
     }
 
+    // [Fix wave 1, Finding 1] cycle verisi IPC'de VAR: ProjectNode.InCycle topolojiden satıra taşınır ve
+    // Status onu cycle görsel statüsüne çevirir (Pending/pre-skipped alt-durumu ezer).
+    [Fact]
+    public async Task A_cycle_member_node_maps_the_row_to_cycle_status()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        var node = new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj",
+            SolutionNames: ["Osys.sln"], Dependencies: [], BuildOrder: 0,
+            LayerIndex: null, LayerName: null, InCycle: true, WillBuild: null);
+        vm.OnEvent(new WorkspaceTopologyEvent([node], [], [], []));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.InCycle);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status); // pending ama cycle üyesi
+
+        // Motor cycle üyesini pre-skip etse bile görsel cycle KALIR (skipped değil).
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "cycle"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status);
+    }
+
+    // [Fix wave 1, Finding 1] queued verisi TÜRETİLİR: willBuild=true + Pending + run uçuşta → Queued;
+    // run bitince (IsRunning düşer) yine Discovered.
+    [Fact]
+    public async Task A_planned_pending_row_is_queued_during_a_run_and_discovered_once_it_ends()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0)); // IsRunning=true
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Pending, row.State);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // planlanmış, henüz başlamadı
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500)); // IsRunning=false
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // run bitti → dinlenme
+    }
+
+    // [Fix wave 1, Minor 6] TickElapsed building satırların CANLI süresini ilerletir; building OLMAYAN satırlara
+    // dokunmaz. Deterministik saat enjekte edilir (D8: sleep/poll yok).
+    [Fact]
+    public async Task TickElapsed_advances_only_the_building_rows_live_duration()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        long clock = 0;
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 2, 2, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A")); // building (started at 0)
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\b.csproj", 1000)); // terminal, DurationMs=1000
+
+        clock = 5000;
+        vm.TickElapsed();
+
+        var a = vm.Projects.Single(p => p.Id == @"C:\p\a.csproj");
+        var b = vm.Projects.Single(p => p.Id == @"C:\p\b.csproj");
+        Assert.Equal(5000, a.DurationMs); // building → canlı ilerledi
+        Assert.Equal(1000, b.DurationMs); // succeeded → dokunulmadı
+    }
+
     [Fact]
     public async Task ProjectSucceeded_updates_state_and_duration()
     {

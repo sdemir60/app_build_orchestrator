@@ -40,6 +40,17 @@ public partial class ProjectRow : UserControl
     private bool _hover;
     private bool _isBreathing;
     private ProjectRowState? _prevState;
+    private BuildOrchestrator.App.Services.IMotionSettings? _subscribedMotion;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 2] Motion sinyalinin TAZE okunduğu kapı (GraphView deseni, D8) —
+    /// sınıf statik <c>App.Motion</c>'a doğrudan bağlanmaz; testler gerçek bir 30fps saatini (nefes) sürebilmek
+    /// için bunu <c>() =&gt; true</c> ile enjekte eder (headless'ta <c>App.Motion</c> null → hiç saat başlamazdı).</summary>
+    public Func<bool> AnimationsEnabledProvider { get; set; } =
+        () => App.Motion?.AnimationsEnabled ?? false;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 2] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null
+    /// ise <c>App.Motion</c> (GraphView.MotionSettings deseni).</summary>
+    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings { get; set; }
 
     public ProjectRow()
     {
@@ -66,6 +77,8 @@ public partial class ProjectRow : UserControl
     internal void SimulateHover(bool hover) => SetHover(hover);
     internal TranslateTransform InnerTranslate => PART_InnerTranslate;
     internal StatusGlyph Glyph => PART_Glyph;
+    internal string? DepTooltip => PART_DepTip.Content as string;   // [Fix wave 1, Finding 3] birebir metin testi
+    internal string? GlyphTooltip => PART_GlyphTip.Content as string;
 
     /// <summary>[T54-UI test] Nefes animasyonunu üreten TEK yer — kontrol ve test AYNI fabrikayı kullanır;
     /// 30fps sınırı ve 3.8s süre burada pinlenir (inline magic number YOK).</summary>
@@ -83,13 +96,21 @@ public partial class ProjectRow : UserControl
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (App.Motion is { } motion) motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        // [Fix wave 1 · D1 review Minor 5] İdempotent abonelik: her Loaded'da -= sonra += — bir kontrol
+        // unload/reload olursa çift abonelik (ve çift ApplyBreathing) birikmesin.
+        _subscribedMotion = MotionSettings ?? App.Motion;
+        if (_subscribedMotion is { } motion)
+        {
+            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        }
         ApplyAll();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+        if (_subscribedMotion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+        _subscribedMotion = null;
         StopBreathing(); // GraphView deseni: durum building'i terk edince / unload'da clock serbest
     }
 
@@ -109,13 +130,20 @@ public partial class ProjectRow : UserControl
         switch (e.PropertyName)
         {
             case nameof(ProjectRowViewModel.State):
-                ApplyStateVisuals();
+                // [Fix wave 1, Finding 1] Statü-türevi görseller (glyph/şerit/tooltip) ARTIK Status case'inde;
+                // State setter'ı NotifyPropertyChangedFor(Status) ile onu hemen ardından tetikler. Burada yalnız
+                // State'e özel yan etkiler kalır: shake/nefes geçişi + süre + sağ blok (building geçişinde sha).
+                ApplyStateTransition();
                 ApplyDuration();
-                ApplyRightBlock(); // sha/ikon görünürlüğü sha WillBuild'e bağlı ama building geçişinde de tazelensin
+                ApplyRightBlock();
+                break;
+            case nameof(ProjectRowViewModel.Status):
+                ApplyStatusVisuals(); // [Fix wave 1, Finding 1] cycle/queued dahil TEK eşleme yolundan gelir
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
                 PART_Dot.State = _vm?.WillBuild;
                 ApplyRightBlock();
+                // Not: WillBuild, Status'u (queued) da tetikler → şerit/glyph Status case'inde tazelenir.
                 break;
             case nameof(ProjectRowViewModel.DepIssues):
             case nameof(ProjectRowViewModel.HasDepIssue):
@@ -144,40 +172,46 @@ public partial class ProjectRow : UserControl
         PART_Name.Text = _vm?.Name;
         PART_Sln.Text = _vm?.SolutionName;
         PART_Dot.State = _vm?.WillBuild;
-        ApplyStateVisuals();
+        ApplyStatusVisuals(); // glyph/ad-rengi/şerit/tooltip (Status'tan)
+        ApplyBreathing();     // building nabzı (State'ten) — ilk kurulumda shake YOK (_prevState taze)
         ApplyDep();
         ApplyDuration();
         ApplySelection();  // şerit genişliği/renk + translateX + zemin
         ApplyRightBlock(); // sha/hover ikonları
     }
 
-    /// <summary>Statüye bağlı görseller: glyph, ad soluk/parlak, şerit rengi, nefes, shake, glyph tooltip.</summary>
-    private void ApplyStateVisuals()
+    /// <summary>[Fix wave 1, Finding 1] Statü-türevi görseller: glyph, ad soluk/parlak, şerit rengi, glyph
+    /// tooltip. Statü kaynağı <see cref="ProjectRowViewModel.Status"/> (cycle/queued dahil TEK eşleme yeri) —
+    /// kart artık kendi eşlemesini yapmaz.</summary>
+    private void ApplyStatusVisuals()
     {
+        GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
         var state = _vm?.State ?? ProjectRowState.Pending;
-        GraphStatus status = MapStatus(state);
 
         PART_Glyph.Status = status;
 
-        // Ad rengi: skipped | discovered(pending) → dim (BuildApp.jsx:348).
+        // Ad rengi: skipped | pending(discovered/queued/cycle) → dim (BuildApp.jsx:348) — alt-durum (State) okunur.
         bool dim = state is ProjectRowState.Skipped or ProjectRowState.Pending;
         PART_Name.SetResourceReference(TextBlock.ForegroundProperty, dim ? "Brush.TextDim" : "Brush.TextPrimary");
 
         SetStripeFill();
         UpdateGlyphTooltip();
+    }
 
+    /// <summary>State'e özel geçiş yan etkileri: hata ANINDA bir kez shake + building nefes geçişi.</summary>
+    private void ApplyStateTransition()
+    {
+        var state = _vm?.State ?? ProjectRowState.Pending;
         // Shake yalnız hata ANINDA (Pending/Started/... → Failed geçişinde), bir kez.
         if (state == ProjectRowState.Failed && _prevState is not null && _prevState != ProjectRowState.Failed)
             PlayShake();
         _prevState = state;
-
         ApplyBreathing();
     }
 
     private void SetStripeFill()
     {
-        var state = _vm?.State ?? ProjectRowState.Pending;
-        string? key = MapStatus(state) switch
+        string? key = (_vm?.Status ?? GraphStatus.Discovered) switch
         {
             GraphStatus.Queued => "Brush.StatusQueued",
             GraphStatus.Building => "Brush.Amber",
@@ -269,7 +303,7 @@ public partial class ProjectRow : UserControl
     private void UpdateGlyphTooltip()
     {
         var state = _vm?.State ?? ProjectRowState.Pending;
-        GraphStatus status = MapStatus(state);
+        GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
         string text = StatusLabel(status);
         if (state == ProjectRowState.Started)
             text += " — " + DurationFormat.Elapsed(_vm?.DurationMs ?? 0);
@@ -286,7 +320,7 @@ public partial class ProjectRow : UserControl
         // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken döner.
         PART_Breath.Visibility = building ? Visibility.Visible : Visibility.Collapsed;
 
-        bool shouldBreathe = building && (App.Motion?.AnimationsEnabled ?? false);
+        bool shouldBreathe = building && AnimationsEnabledProvider();
         if (shouldBreathe == _isBreathing) return; // zaten dönen nabız baştan almaz (StatusGlyph deseni)
         _isBreathing = shouldBreathe;
         if (!shouldBreathe) { StopBreathing(); return; }
@@ -302,9 +336,11 @@ public partial class ProjectRow : UserControl
 
     private void PlayShake()
     {
-        if (!(App.Motion?.AnimationsEnabled ?? false)) return;
+        if (!AnimationsEnabledProvider()) return;
         var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
-        var anim = new DoubleAnimationUsingKeyFrames(); // bir kez (RepeatBehavior default 1x), sonunda 0'a döner
+        // [Fix wave 1 · D1 review Minor 4] FillBehavior.Stop: keyframe'ler zaten 0'da biter → görsel aynı, ama
+        // varsayılan HoldEnd'in aksine clock BİTİNCE serbest kalır (her shake'lenmiş satırda takılı saat kalmaz).
+        var anim = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
         void Frame(double v, double pct) =>
             anim.KeyFrames.Add(new SplineDoubleKeyFrame(v, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ShakeMs * pct)), spline));
         // BuildApp.jsx:27 keyframe'leri: 10%,90% → -2 · 25%,75% → +3 · 50% → -3.
@@ -324,7 +360,7 @@ public partial class ProjectRow : UserControl
     private void AnimateDouble(IAnimatable target, DependencyProperty prop, double to,
         string durKey, double durFallback, string splineKey, KeySpline splineFallback)
     {
-        bool enabled = App.Motion?.AnimationsEnabled ?? false;
+        bool enabled = AnimationsEnabledProvider();
         var duration = MotionTokens.ResolveDuration(this, durKey, durFallback);
         var spline = MotionTokens.ResolveKeySpline(this, splineKey, splineFallback);
         if (!enabled || duration.TimeSpan <= TimeSpan.Zero)
@@ -364,19 +400,9 @@ public partial class ProjectRow : UserControl
         return null;
     }
 
-    // ---------------------------------------------------------------- eşleme / metin
-    /// <summary>ProjectRowState → görsel <see cref="GraphStatus"/>. VM'de <c>queued</c>/<c>cycle</c> sinyali YOK
-    /// (IPC bunları taşımaz); <c>Pending</c> nötr <c>Discovered</c>'a eşlenir (dinlenme görünümü).</summary>
-    private static GraphStatus MapStatus(ProjectRowState state) => state switch
-    {
-        ProjectRowState.Started => GraphStatus.Building,
-        ProjectRowState.Succeeded => GraphStatus.Succeeded,
-        ProjectRowState.Failed => GraphStatus.Failed,
-        ProjectRowState.Skipped => GraphStatus.Skipped,
-        _ => GraphStatus.Discovered,
-    };
-
-    /// <summary>design-v1 EN_STATUS (BuildApp.jsx:342) — glyph tooltip'inin İngilizce statü etiketi.</summary>
+    // ---------------------------------------------------------------- metin
+    /// <summary>design-v1 EN_STATUS (BuildApp.jsx:342) — glyph tooltip'inin İngilizce statü etiketi. Eşlemenin
+    /// KENDİSİ (state+cycle+queued → GraphStatus) artık <see cref="ProjectRowViewModel.Status"/>'tadır (TEK yer).</summary>
     private static string StatusLabel(GraphStatus status) => status switch
     {
         GraphStatus.Queued => "Queued",

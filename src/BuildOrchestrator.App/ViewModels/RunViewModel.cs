@@ -18,7 +18,27 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 {
     public string Id { get; }
     public string Name { get; }
-    [ObservableProperty] private ProjectRowState _state;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private ProjectRowState _state;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Bu proje topolojide bir cycle (SCC) üyesi mi —
+    /// <see cref="ProjectNode.InCycle"/>'dan topoloji uzlaştırmasında (<see cref="RunViewModel.OnWorkspaceTopology"/>)
+    /// taşınır (tıpkı <see cref="SolutionName"/> gibi). Cycle üyeleri motor tarafından pre-skip edilir; tasarım
+    /// onları <c>skipped</c> değil <c>cycle</c> gösterir — bu bayrak <see cref="Status"/>'ta Pending/Skipped
+    /// alt-durumunu EZER.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool _inCycle;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı (<see cref="RunViewModel.IsRunning"/> ||
+    /// <see cref="RunViewModel.IsStarting"/>) — <see cref="RunViewModel"/> her satıra iter (IsSelected deseni).
+    /// <c>queued</c> = "planlanmış ama henüz başlamamış" YALNIZ bir run uçuştayken görünür bir durumdur; bu bayrak
+    /// olmadan Pending bir satır ölü envanterden (Discovered) ayırt edilemez.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool _isRunActive;
 
     /// <summary>[T53-UI] Kartın soluk ikinci satırı — projenin ait olduğu solution'ın adı (prototip
     /// <c>p.sln</c>, BuildApp.jsx:384). Kaynak: <see cref="ProjectNode.SolutionNames"/> (ilk eleman); topoloji
@@ -49,7 +69,9 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <summary>[Task 17][T53/v7Δ8] dirty=true, güncel(clean)=false, imza-yok/pre-Sync(hollow)=null.
     /// <see cref="BuildPreviewEvent"/> ile pre-populate edilir; proje succeeded olduğu ANDA (run içinde canlı)
     /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).</summary>
-    [ObservableProperty] private bool? _willBuild;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool? _willBuild;
 
     /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
     /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
@@ -60,6 +82,33 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
     public bool HasDepIssue => DepIssues is { Count: > 0 };
+
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
+    /// <see cref="InCycle"/> + <see cref="WillBuild"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
+    /// (kart yalnız bunu okur; eşleme mantığı kontrolde kopyalanmaz). <c>cycle</c> ve <c>queued</c> ayrı IPC
+    /// alanları TAŞIMAZ — ikisi de eldeki topoloji/run sinyallerinden TÜRETİLİR:
+    /// <list type="bullet">
+    /// <item><b>cycle</b>: <see cref="InCycle"/>=true olan bir satır (Pending ya da pre-skipped Skipped) — tasarım
+    /// onu skipped değil cycle gösterir (alt-durumu ezer).</item>
+    /// <item><b>queued</b>: bir run uçuştayken (<see cref="IsRunActive"/>) planlanmış (<see cref="WillBuild"/>==true)
+    /// ama henüz başlamamış (Pending) satır. Run bitince <see cref="IsRunActive"/> düşer → yine Discovered.</item>
+    /// </list></summary>
+    public Controls.GraphStatus Status
+    {
+        get
+        {
+            if (InCycle && State is ProjectRowState.Pending or ProjectRowState.Skipped)
+                return Controls.GraphStatus.Cycle;
+            return State switch
+            {
+                ProjectRowState.Started => Controls.GraphStatus.Building,
+                ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
+                ProjectRowState.Failed => Controls.GraphStatus.Failed,
+                ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
+                _ => IsRunActive && WillBuild == true ? Controls.GraphStatus.Queued : Controls.GraphStatus.Discovered,
+            };
+        }
+    }
 
     public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)
     {
@@ -389,6 +438,19 @@ public sealed partial class RunViewModel : ObservableObject
             row.IsSelected = string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı — <see cref="ProjectRowViewModel.Status"/>'un
+    /// <c>queued</c> türetimi için her satıra iter (IsSelected akışının eşi). <see cref="IsRunning"/>/
+    /// <see cref="IsStarting"/> değiştiğinde tazelenir; yeni doğan satırlar (<see cref="EnsureRow"/>/topoloji)
+    /// da mevcut değeri alır.</summary>
+    private bool RunActive => IsRunning || IsStarting;
+    partial void OnIsRunningChanged(bool value) => PropagateRunActive();
+    partial void OnIsStartingChanged(bool value) => PropagateRunActive();
+    private void PropagateRunActive()
+    {
+        bool active = RunActive;
+        foreach (var row in Projects) row.IsRunActive = active;
+    }
+
     /// <summary>[T53/T54-UI] Proje listesini katman gruplarına böler — gruplama YALNIZ topolojiden
     /// (<see cref="ProjectNode.LayerName"/>/<see cref="ProjectNode.LayerIndex"/>) gelir; App'te regex YOKTUR
     /// (mimari kural, test pinler). <see cref="Projects"/> zaten build-order'dadır (topoloji sırası). Hiçbir
@@ -584,7 +646,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var existing = Projects.FirstOrDefault(p => p.Id == id);
         if (existing is not null) return existing;
-        var row = new ProjectRowViewModel(id, name, initialState);
+        var row = new ProjectRowViewModel(id, name, initialState) { IsRunActive = RunActive };
         Projects.Add(row);
         return row;
     }

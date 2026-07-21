@@ -134,12 +134,34 @@ public class ProjectRowTests
     }
 
     [StaFact]
-    public void Breathing_layer_only_exists_while_building_and_is_capped_at_thirty_fps()
+    public void Breathing_runs_a_real_opacity_clock_while_building_and_releases_it_after()
+    {
+        // [Fix wave 1, Finding 2] Görünürlük saatin sahte proxy'siydi: StopBreathing silinse bile Visibility
+        // testi yeşil kalırdı (Visibility ApplyBreathing'in EN BAŞINDA koşulsuz set edilir). GraphRenderTests
+        // (nabız) deseniyle: gerçek 30fps opaklık saatini HasAnimatedProperties ile ölç — motion enjekte edilir
+        // (headless'ta App.Motion null → hiç saat başlamazdı; GraphView.AnimationsEnabledProvider deseni).
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        // Building iken: nefes katmanında GERÇEK bir (dönen) opaklık saati var.
+        Assert.True(row.BreathLayer.HasAnimatedProperties);
+
+        // Building'i terk edince saat SERBEST kalır (yalnız Visibility'yi Collapse etmek yetmez).
+        vm.State = ProjectRowState.Succeeded;
+        row.UpdateLayout();
+        Assert.False(row.BreathLayer.HasAnimatedProperties);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Breathing_layer_only_shows_while_building_and_is_capped_at_thirty_fps()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
         var (row, window, _) = Realize(vm);
 
-        // Yalnız building iken katman VAR (görünür); durum building'i terk edince yok olur.
+        // Yalnız building iken katman görünür; durum building'i terk edince gizlenir.
         Assert.Equal(Visibility.Visible, row.BreathLayer.Visibility);
         vm.State = ProjectRowState.Succeeded;
         row.UpdateLayout();
@@ -149,6 +171,88 @@ public class ProjectRowTests
         var anim = ProjectRow.BuildBreathingAnimation(row);
         Assert.Equal(30, Timeline.GetDesiredFrameRate(anim));
         Assert.Equal(TimeSpan.FromMilliseconds(3800), anim.KeyFrames[^1].KeyTime.TimeSpan);
+        GC.KeepAlive(window);
+    }
+
+    // [Fix wave 1, Finding 1 + lens-3 Minor] Şerit rengi TÜM statüler için pinlenir (cycle + queued dahil) —
+    // satır gerçekten kurulur, Stripe.Fill'in çözdüğü fırça statü başına doğru token'dır. Discovered → transparent
+    // (token DEĞİL) ayrı test edilir.
+    [StaTheory]
+    [InlineData(ProjectRowState.Started, false, false, "Brush.Amber")]
+    [InlineData(ProjectRowState.Succeeded, false, false, "Brush.StatusSuccess")]
+    [InlineData(ProjectRowState.Failed, false, false, "Brush.StatusFail")]
+    [InlineData(ProjectRowState.Skipped, false, false, "Brush.StatusSkipped")]
+    [InlineData(ProjectRowState.Pending, true, false, "Brush.StatusCycle")]   // InCycle → cycle (skipped/pending'i ezer)
+    [InlineData(ProjectRowState.Pending, false, true, "Brush.StatusQueued")]  // willBuild + run uçuşta → queued
+    public void Status_stripe_uses_the_right_token_brush_per_status(
+        ProjectRowState state, bool inCycle, bool queued, string expectedKey)
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", state) { InCycle = inCycle };
+        if (queued) { vm.WillBuild = true; vm.IsRunActive = true; }
+        var (row, window, host) = Realize(vm);
+
+        Assert.Equal(DsResources.TokenColor(host, expectedKey), DsResources.ColorOf(row.Stripe.Fill));
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Discovered_stripe_is_transparent_not_a_token_brush()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending); // pending, no run, no cycle
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Colors.Transparent, DsResources.ColorOf(row.Stripe.Fill));
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Dep_tooltip_is_the_verbatim_brief_text_with_the_osys_prefix_stripped()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed);
+        var (row, window, _) = Realize(vm);
+
+        // Tek dep: OSYS. öneki atılır.
+        vm.DepIssues = new[] { "OSYS.Sales.Core" };
+        row.UpdateLayout();
+        Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);
+
+        // İki dep: ", " ile birleşir (brief slot 6 birebir).
+        vm.DepIssues = new[] { "OSYS.Sales.Core", "OSYS.Billing.Core" };
+        row.UpdateLayout();
+        Assert.Equal("Failed dependency: Sales.Core, Billing.Core — last successful output referenced", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Glyph_tooltip_is_the_status_label_with_building_elapsed_and_dependency_issue_suffix()
+    {
+        // Building: "Building — {Elapsed}" (paylaşılan biçimleyici).
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started) { DurationMs = 5000 };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal($"Building — {DurationFormat.Elapsed(5000)}", row.GlyphTooltip);
+
+        // Non-building, dep sorunsuz: yalın etiket.
+        vm.State = ProjectRowState.Succeeded;
+        row.UpdateLayout();
+        Assert.Equal("Succeeded", row.GlyphTooltip);
+
+        // Non-building + dep sorunu: " — dependency issue" eki.
+        vm.State = ProjectRowState.Failed;
+        vm.DepIssues = new[] { "OSYS.Sales.Core" };
+        row.UpdateLayout();
+        Assert.Equal("Failed — dependency issue", row.GlyphTooltip);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Sha_text_interpolates_current_and_target_with_an_arrow()
+    {
+        // [lens Minor] "{cur} → {target}". TargetSha run-genelidir (RunViewModel'den) — bu izole kart testinde
+        // ata RunViewModel yok, target boş; ok + cur yarısı yine de pinlenir.
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal("a3f81c2 → ", row.ShaText.Text);
         GC.KeepAlive(window);
     }
 }

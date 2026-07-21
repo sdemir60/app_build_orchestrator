@@ -162,10 +162,17 @@ public sealed partial class RunViewModel
             string? solutionName = node.SolutionNames.Count > 0 ? node.SolutionNames[0] : null;
             int existing = IndexOf(node.Id);
             if (existing < 0)
-                Projects.Insert(i, new ProjectRowViewModel(node.Id, node.Name, ProjectRowState.Pending, solutionName));
+                Projects.Insert(i, new ProjectRowViewModel(node.Id, node.Name, ProjectRowState.Pending, solutionName)
+                {
+                    // [Fix wave 1 · D1 review Finding 1] cycle üyeliği topolojinin TEK kaynağıdır (SolutionName gibi
+                    // taşınır); Status bunu cycle görsel statüsüne çevirir. IsRunActive queued türetimi için.
+                    InCycle = node.InCycle,
+                    IsRunActive = RunActive,
+                });
             else
             {
                 Projects[existing].SolutionName = solutionName; // topoloji sln atamasını değiştirmiş olabilir
+                Projects[existing].InCycle = node.InCycle;       // cycle üyeliği topolojiyle değişmiş olabilir
                 if (existing != i) Projects.Move(existing, i);
             }
         }
