@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -38,24 +39,43 @@ public partial class MainWindow : Window
         _console = console;
         DataContext = _vm;
         _closeBalloon = new FirstCloseBalloonGate(_uiState);
+
+        // [T35 fold #1] Title-bar yüksekliğinin TEK kaynağı Size.TitleBarHeight token'ıdır: WindowChrome
+        // (CaptionHeight = sürüklenebilir başlık bandı) VE title-bar satırı ONDAN türetilir. WindowChrome bir
+        // Freezable olduğundan DynamicResource onda güvenilir çözülmez → kod-tarafı kurulur (kesin çalışır).
+        // WindowChrome burada (OnSourceInitialized'DAN ÖNCE) atanır: Snap Layouts hook sıralaması bozulmaz (M-9).
+        double titleBarHeight = (double)FindResource("Size.TitleBarHeight");
+        TitleRow.Height = new GridLength(titleBarHeight);
+        WindowChrome.SetWindowChrome(this, new WindowChrome
+        {
+            CaptionHeight = titleBarHeight,
+            ResizeBorderThickness = new Thickness(6),
+            GlassFrameThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(0),
+            UseAeroCaptionButtons = false,
+        });
+
         // [K8] maximize'da restore glyph'i (çizilmiş geometri, T64) + butonun duruma bağlı UIA adı.
         CaptionGlyphs.BindMaxButton(this, MaxButton, MaxGlyph);
 
+        // [T35] Kalıcı yerleşimi geri yükle; kullanıcı değişiklikleri (mod düğmesi / split sürükleme sonu) persist.
+        // GraphView'ın MotionSettings'i Loaded'dan ÖNCE atanmalı (GraphView.xaml.cs:111-119 sözleşmesi).
+        Shell.GraphHost.MotionSettings = App.Motion;
+        var saved = _uiState.Load();
+        var layout = new LayoutState(saved.LayoutMode, saved.ColPct, saved.LeftPct, saved.RightPct);
+        Shell.ApplyLayout(layout);
+        SyncModeButtons(layout.Mode);
+        Shell.LayoutChanged += OnShellLayoutChanged;
+
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
-            EngineStatusText.Text = $"engine: died (exit {code})"; // It-4'te sticky şerit kalıcı hata moduna taşınır (T37)
-            RestartEngineButton.Visibility = Visibility.Visible;
-            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning/CanContinue) eskiden bu
-            // sinyale hiç BAĞLI değildi — Restart bile Rebuild/Stop/Continue'yu açmıyordu. Aynı Dispatcher.Invoke
-            // marshal'ı altında (ObservableProperty/CanExecuteChanged'a dokunduğundan UI thread gerekir).
+            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning/CanContinue) bu sinyale bağlıdır.
+            // Motor durumu görsel şeridi (sticky ribbon) T37'nin işidir — C1'de yalnız VM state'i güncellenir.
             _vm.OnEngineExited(code);
         });
-        // [A13.2/Kısıt 4] YALNIZ projectLog YÜKSEK frekanslı akan log satırıdır (MSBuild çıktısının HER satırı) —
-        // VM'in o dalı yalnız ConsoleBatcher.Post (kilitsiz) + iç kilitli arabellek kullanır, ObservableProperty'e
-        // DOKUNMAZ; marshal OLMADAN doğrudan çağrılabilir (satır başına Dispatcher YASAK). projectLogChunk ise
-        // proje başına yalnız birkaç adettir (LogChunker parça sayısı) VE son parçada ActiveProjectId'yi
-        // (konsol modunu/ConsoleHeader'ı süren [ObservableProperty]) mutasyona uğratır — bu yüzden DİĞER TÜM
-        // event'ler gibi UI thread'ine taşınır.
+        // [A13.2/Kısıt 4] YALNIZ projectLog YÜKSEK frekanslı akan log satırıdır — VM'in o dalı ConsoleBatcher.Post
+        // (kilitsiz) kullanır, ObservableProperty'e DOKUNMAZ; marshal OLMADAN doğrudan çağrılabilir. Diğer TÜM
+        // event'ler UI thread'ine taşınır.
         _engine.EventReceived += ev =>
         {
             if (ev is ProjectLogEvent) _vm.OnEvent(ev);
@@ -65,147 +85,103 @@ public partial class MainWindow : Window
         _elapsedTimer.Tick += (_, _) =>
         {
             _vm.TickElapsed();
-            ElapsedText.Text = TimeSpan.FromMilliseconds(_vm.ElapsedMs).ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
             // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
             // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
-            ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
+            Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
         };
         _elapsedTimer.Start();
 
-        // [T56/3a] Konsol modu ActiveProjectId'yi izler: null → anlatı başlığı (proje seçimi OnProjectSelected'te
-        // zengin proje-log başlığını kurar; buradaki null dalı Rebuild/Continue'nun temizlemesini de kapsar).
+        // [T56/3a] Konsol modu ActiveProjectId'yi izler: null → anlatı başlığı.
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName != nameof(RunViewModel.ActiveProjectId)) return;
-            if (_vm.ActiveProjectId is null) ConsoleHeaderControl.ShowNarrative(_vm.GetActiveLineCount());
+            if (_vm.ActiveProjectId is null) Shell.ConsoleHeaderControl.ShowNarrative(_vm.GetActiveLineCount());
         };
-        ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
+        Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
 
         Loaded += async (_, _) => await StartEngineAsync();
         Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
 
-        // [M-3 fix wave] Logoff/shutdown'da WPF Closing'i YİNE tetikler ama e.Cancel'i YOK SAYAR
-        // (InternalClose(shutdown:true, ignoreCancel:true)) — _exiting hâlâ false olduğundan OnClosing normalde
-        // MinimizeToTray()'e düşer: Hide() + (ilk sefer ise) K5 balloon'u YAKAR VE tek-seferlik bayrağı YAKAR.
-        // Kullanıcı hiç X'e basmamışken K5 uyarısını sonsuza dek kaybeder. SessionEnding, Closing'den ÖNCE gelir
-        // (WM_QUERYENDSESSION) — burada _exiting'i erkenden set ederek OnClosing'in tray/balloon dalını atlarız.
+        // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
+        // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
         Application.Current.SessionEnding += OnSessionEnding;
 
         _ = RunConsolePumpAsync();
     }
 
     /// <summary>
-    /// [Kısıt 1] <c>ConsoleBatcher.PumpAsync</c> tick'i (üretimde <c>Task.Delay(50, ct)</c>) iptal edilince
-    /// <see cref="OperationCanceledException"/> YAKALANMADAN yükselir — burada TEK yerde gözlenir, aksi halde
-    /// pencere kapanırken gözlemlenmemiş (unobserved) bir exception kalırdı. Flush BATCH BAŞINA TEK
-    /// <c>Dispatcher.InvokeAsync</c> ile <see cref="ConsoleView.AppendBatch"/>'e taşınır — satır başına
-    /// Dispatcher çağrısı YASAK [A13.2].
+    /// [Kısıt 1] <c>ConsoleBatcher.PumpAsync</c> tick'i iptal edilince <see cref="OperationCanceledException"/>
+    /// YAKALANMADAN yükselir — burada TEK yerde gözlenir. Flush BATCH BAŞINA TEK <c>Dispatcher.InvokeAsync</c>
+    /// ile <see cref="ConsoleView.AppendBatch"/>'e taşınır — satır başına Dispatcher çağrısı YASAK [A13.2].
     /// </summary>
     private async Task RunConsolePumpAsync()
     {
         try
         {
-            await _console.PumpAsync(text => Dispatcher.InvokeAsync(() => ConsoleViewControl.AppendBatch(text)), _consoleCts.Token);
+            await _console.PumpAsync(text => Dispatcher.InvokeAsync(() => Shell.ConsoleViewControl.AppendBatch(text)), _consoleCts.Token);
         }
         catch (OperationCanceledException) { /* pencere kapanıyor — beklenen */ }
         catch (Exception ex)
         {
-            // [Minor/Fix wave 1] fire-and-forget (`_ = RunConsolePumpAsync()`) task'i gözlenmemiş bir
-            // exception'la sessizce ölmesin — burada tek gözlem noktası; UI thread affinity garantisi
-            // olmadığından (PumpAsync ConfigureAwait(false) kullanır) doğrudan bir WPF kontrolüne DOKUNULMAZ.
+            // [Minor/Fix wave 1] fire-and-forget task'i gözlenmemiş bir exception'la sessizce ölmesin — burada tek
+            // gözlem noktası; UI thread affinity garantisi olmadığından doğrudan bir WPF kontrolüne DOKUNULMAZ.
             System.Diagnostics.Debug.WriteLine($"[console pump] gözlenmeyen hata: {ex}");
         }
     }
 
-    /// <summary>Karta tıkla → tam log [T28]: chunk geçmişi + tamponlanmış canlı satırların dikişi VM'de yapılır.
-    /// [3b] Reseed pump'ın TEK okuyucusundan geçer (<c>SeedProjectDocument(id, apply)</c>): VM _gate altında
-    /// snapshot okur + kanala reseed sentinel'i yazar; pump sentinel'e uğrayınca <paramref name="apply"/>'ı çağırır
-    /// ve konsolu kaskatla kurar — yarım-dequeue kopya satırı residual'ı kapanır (It-4 backlog). Başlık + copy-log
-    /// provider HEMEN (UI thread) kurulur; konsol içeriği reseed ile ~tick sonra kaskatla belirir.</summary>
-    private async void OnProjectSelected(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-    {
-        if (ProjectsList.SelectedItem is not ProjectRowViewModel row) return;
-        await _vm.LoadProjectLogAsync(row.Id);
-
-        // [T56/3a] Proje-log modu başlığı: ← Back + proje adı + statü glyph/adı + (varsa) ▲ dependency issue.
-        ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
-        // [3b/Ek A #3] Copy log = TAM proje logu (render dilimi DEĞİL) — VM'in tam tamponundan.
-        ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(row.Id);
-
-        bool building = row.State == ProjectRowState.Started;
-        _vm.SeedProjectDocument(row.Id, seeded => Dispatcher.InvokeAsync(() =>
-        {
-            // [T56/3b] Log boşsa design-v1 §2.5 boş-durum metni. Kaskat: 26ms'de 3 satır + 140ms/satır fade.
-            var lines = SplitLines(seeded.Length == 0 ? EmptyStateFor(row) + "\n" : seeded);
-            ConsoleViewControl.PlayCascade(lines, buildInProgress: building);
-        }));
-    }
-
-    /// <summary>[3b] bkz. <see cref="OnProjectSelected"/> — aynı gerekçeyle <c>SeedRunDocument(apply)</c> (reseed
-    /// pump'tan geçer). ConsoleHeader.BackRequested'tan çağrılır; başlık anlatı moduna ActiveProjectId=null
-    /// PropertyChanged'ı üzerinden döner (bkz. constructor).</summary>
+    /// <summary>[3b] ConsoleHeader.BackRequested'tan çağrılır: run belgesine döner; başlık anlatı moduna
+    /// ActiveProjectId=null PropertyChanged'ı üzerinden döner (bkz. constructor).</summary>
     private void OnBack()
     {
         _vm.ShowRun();
-        _vm.SeedRunDocument(text => Dispatcher.InvokeAsync(() => ConsoleViewControl.ShowRunDocument(text)));
+        _vm.SeedRunDocument(text => Dispatcher.InvokeAsync(() => Shell.ConsoleViewControl.ShowRunDocument(text)));
     }
-
-    // seeded metni ('\n' sonekli satırlar) satır listesine böler — sondaki boş satırı (final '\n' artefaktı) atar.
-    private static IReadOnlyList<string> SplitLines(string text)
-    {
-        var parts = text.Split('\n');
-        int count = parts.Length > 0 && parts[^1].Length == 0 ? parts.Length - 1 : parts.Length;
-        var lines = new string[count];
-        Array.Copy(parts, lines, count);
-        return lines;
-    }
-
-    // [T56/3a] Boş proje logu için design-v1 §2.5 metinleri. sha/deps gerçek kaynağı 3a'da YOK — design örnek
-    // değerleri (placeholder) kullanılır; gerçek "son başarılı build"/bekleyen-bağımlılık verisi ileride bağlanır.
-    private static string EmptyStateFor(ProjectRowViewModel row) => row.State switch
-    {
-        ProjectRowState.Skipped => Console.ConsoleEmptyState.Skipped("a3f81c2"),
-        ProjectRowState.Pending => Console.ConsoleEmptyState.Queued(row.DepIssues ?? ["Sales.Core", "Security"]),
-        _ => Console.ConsoleEmptyState.NoLog,
-    };
 
     private async Task StartEngineAsync()
     {
         try
         {
-            RestartEngineButton.Visibility = Visibility.Collapsed;
-            var ready = await _engine.StartAsync();
-            EngineStatusText.Text = $"engine: ready (pid {ready.Pid}, v{ready.EngineVersion})";
+            await _engine.StartAsync();
         }
         catch (Exception ex)
         {
-            EngineStatusText.Text = $"engine: start failed — {ex.Message}";
-            RestartEngineButton.Visibility = Visibility.Visible;
+            // Motor başlatılamadı. Görsel bildirim (sticky ribbon + Restart) T37'nin işidir — burada gözlenir.
+            System.Diagnostics.Debug.WriteLine($"[engine] start failed — {ex.Message}");
         }
     }
 
-    private async void OnRestartEngine(object sender, RoutedEventArgs e)
+    // ==================================== [T35] Yerleşim ====================================
+
+    private void OnLayoutQuad(object sender, RoutedEventArgs e) => Shell.SetMode(LayoutMode.Quad);
+    private void OnLayoutList(object sender, RoutedEventArgs e) => Shell.SetMode(LayoutMode.List);
+    private void OnLayoutFocus(object sender, RoutedEventArgs e) => Shell.SetMode(LayoutMode.Focus);
+
+    // Gear: layer-definitions Settings diyaloğu bir sonraki task'ın kapsamıdır (C1'de inert).
+    private void OnSettings(object sender, RoutedEventArgs e) { /* Settings dialog — sonraki task */ }
+
+    /// <summary>Split sürükleme sonu ya da mod değişimi → kalıcı UiState'e yaz + aktif mod düğmesini eşle.</summary>
+    private void OnShellLayoutChanged(object? sender, LayoutState state)
     {
-        try
-        {
-            RestartEngineButton.Visibility = Visibility.Collapsed;
-            var ready = await _engine.RestartAsync();
-            EngineStatusText.Text = $"engine: ready (pid {ready.Pid}, v{ready.EngineVersion})";
-        }
-        catch (Exception ex)
-        {
-            EngineStatusText.Text = $"engine: restart failed — {ex.Message}";
-            RestartEngineButton.Visibility = Visibility.Visible;
-        }
+        var s = _uiState.Load();
+        s.LayoutMode = state.Mode; s.ColPct = state.ColPct; s.LeftPct = state.LeftPct; s.RightPct = state.RightPct;
+        _uiState.Save(s);
+        SyncModeButtons(state.Mode);
     }
+
+    private void SyncModeButtons(LayoutMode mode)
+    {
+        LayQuadButton.IsChecked = mode == LayoutMode.Quad;
+        LayListButton.IsChecked = mode == LayoutMode.List;
+        LayFocusButton.IsChecked = mode == LayoutMode.Focus;
+    }
+
+    // ==================================== Pencere kabuğu ====================================
 
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
         nint hwnd = new WindowInteropHelper(this).Handle;
         // [T49] Pencere kenarlığı rengi TOKEN'dan gelir (hardcode YASAK): Brush.Border → COLORREF 0x00BBGGRR.
-        // FindResource kasıtlı: sözlük merge edilmemişse sessiz yanlış-renk yerine anlaşılır hata (ConsolePalette
-        // ile aynı desen); merge'ü AppResourcesMergeTests pinler.
         int on = 1, round = 2;
         int border = Dwm.ColorRefFrom(((SolidColorBrush)FindResource("Brush.Border")).Color);
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
@@ -228,29 +204,22 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [T62] Snap Layouts hook'unu bağlar. <c>base.OnSourceInitialized</c>'dan SONRA (yani <c>WindowChrome</c>
-    /// zaten <c>WindowChrome.SetWindowChrome</c> ile atanmışken) çağrılması ZORUNLUDUR: <c>HwndSource.AddHook</c>
-    /// hook'u LİSTENİN BAŞINA ekler ve mesaj pompası son eklenen hook'u ÖNCE çağırır — bu yüzden burada
-    /// eklendiğinde bizim hook <c>WindowChrome</c>'un kendi <c>WM_NCHITTEST</c> yanıtından (IsHitTestVisibleInChrome
-    /// → HTCLIENT) önce çalışır.
+    /// [T62] Snap Layouts hook'unu bağlar. <c>base.OnSourceInitialized</c>'dan SONRA çağrılması ZORUNLUDUR:
+    /// <c>HwndSource.AddHook</c> hook'u LİSTENİN BAŞINA ekler ve mesaj pompası son eklenen hook'u ÖNCE çağırır —
+    /// bu yüzden burada eklendiğinde bizim hook <c>WindowChrome</c>'un <c>WM_NCHITTEST</c> yanıtından önce çalışır.
     ///
-    /// <para><b>[M-9] Kırılma senaryosu:</b> <c>WindowChromeWorker</c> kendi hook'unu <c>WindowChrome</c> pencereye
-    /// ATANDIĞI anda ekler. Eğer ileride (T60/T35) <c>WindowChrome</c> BU noktadan SONRA yeniden atanırsa,
-    /// <c>WindowChromeWorker</c>'ın hook'u BİZİMKİNDEN SONRA eklenmiş olur → ÖNCE çalışır → kendi
-    /// <c>WM_NCHITTEST</c> yanıtını (HTCLIENT) döner → bizim hook'a mesaj hiç ULAŞMAZ → Snap Layouts SESSİZCE
-    /// ÖLÜR (ne test ne build bunu yakalar). Böyle bir yeniden atama olursa BU metot o atamadan SONRA tekrar
-    /// çağrılmalıdır.</para>
+    /// <para><b>[M-9]:</b> <c>WindowChromeWorker</c> kendi hook'unu <c>WindowChrome</c> ATANDIĞINDA ekler.
+    /// WindowChrome BU noktadan (OnSourceInitialized) SONRA yeniden atanırsa, worker'ın hook'u BİZİMKİNDEN SONRA
+    /// eklenir → ÖNCE çalışır → Snap Layouts SESSİZCE ÖLÜR. WindowChrome ctor'da (buradan ÖNCE) atanır — sıralama
+    /// korunur; ileride yeniden atanırsa bu metot o atamadan SONRA tekrar çağrılmalıdır.</para>
     /// </summary>
     private void AttachSnapLayoutHook(nint hwnd)
     {
-        // Hook nesnesini alanda tutmaya gerek yok: HwndSource'un tuttuğu delegate zaten onu canlı tutar.
         var snapLayout = new SnapLayoutHook(MaxButton, SetMaxButtonHover, ToggleMaximizeRestore);
         HwndSource.FromHwnd(hwnd)!.AddHook(snapLayout.WndProc);
     }
 
-    /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir. WM_HOTKEY alan process'e Windows
-    /// foreground hakkı verdiğinden burada <see cref="Window.Activate"/> yeterlidir (single-instance yolundaki
-    /// <c>AllowSetForegroundWindow</c> devrine gerek yok — bkz. <see cref="SingleInstanceProtocol"/>).</summary>
+    /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir.</summary>
     private nint HotkeyWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
         if (msg != Win32.WM_HOTKEY || (int)wParam != GlobalHotkeyId) return 0;
@@ -273,23 +242,14 @@ public partial class MainWindow : Window
         else SystemCommands.MaximizeWindow(this);
     }
 
-    /// <summary>[K5] `X` pencereyi KAPATMAZ — tepsiye küçültür; YALNIZ ilk seferde OS tray balloon'u
-    /// (uygulama içi toast design §8'de yasak).</summary>
+    /// <summary>[K5] `X` pencereyi KAPATMAZ — tepsiye küçültür; YALNIZ ilk seferde OS tray balloon'u.</summary>
     private void MinimizeToTray()
     {
         Hide();
         if (_closeBalloon.ClaimShow()) _tray?.ShowClosedToTrayNotification();
     }
 
-    /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.
-    /// [M-1 fix wave] Önceki getiriliş fade'i (Window.Opacity 0→1) KALDIRILDI — ölçüldü: bu pencerede
-    /// <c>WindowStyle=SingleBorderWindow</c> + <c>AllowsTransparency=false</c> altında <c>Window.Opacity</c>
-    /// <c>WS_EX_LAYERED</c>'ı AYARLAMAZ, yalnız İÇERİK solar; kullanıcı çerçeve/arka planın ANINDA patladığını,
-    /// ardından içeriğin soluklanarak belirdiğini görür ("boş koyu dikdörtgen patlar, sonra içerik gelir") —
-    /// istenen yumuşak geliş DEĞİL. Üstüne, animasyon hiç başlamazsa (ör. istisna) yerel <c>Opacity=0</c> pencereyi
-    /// KALICI GÖRÜNMEZ bırakabilirdi. OS zaten tepsiden restore'u kendi animasyonuyla sürüyor; A13.2'nin motion
-    /// budget'ı ZATEN ÇALIŞMAYAN dekoratif hareketi caydırır — bu yüzden fade'i geri getirmek yerine kaldırmak
-    /// seçildi (bkz. Task 7 review M-1).</summary>
+    /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.</summary>
     public void ShowFromTray()
     {
         Show();
@@ -305,9 +265,8 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
-    /// <summary>[M-3 fix wave] Oturum kapanışı/sistem kapatma GERÇEK bir çıkıştır — tepsiye küçültme/balloon
-    /// YASAK, bkz. <see cref="OnClosing"/> yorumu. <c>e.Cancel</c>'a burada DOKUNULMAZ: OS'a kapanmayı engelleme
-    /// niyeti yok, yalnız aşağı akan <c>Closing</c>'in tray'e sapmasını önlüyoruz.</summary>
+    /// <summary>[M-3 fix wave] Oturum kapanışı GERÇEK bir çıkıştır — tray/balloon YASAK. <c>e.Cancel</c>'a
+    /// DOKUNULMAZ: yalnız aşağı akan <c>Closing</c>'in tray'e sapmasını önleriz.</summary>
     private void OnSessionEnding(object? sender, SessionEndingCancelEventArgs e) => _exiting = true;
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
@@ -323,9 +282,8 @@ public partial class MainWindow : Window
         base.OnClosing(e);
     }
 
-    /// <summary>Kabuk kaynakları BURADA bırakılır, OnClosing'de DEĞİL: pencere gerçekten kapandığında tam olarak
-    /// bir kez çalışır ve iptal edilen (tepsiye küçülen) kapatmalardan etkilenmez; oturum kapanışı gibi
-    /// "iptal yok sayılan" kapanışları da kapsar.</summary>
+    /// <summary>Kabuk kaynakları BURADA bırakılır: pencere gerçekten kapandığında tam bir kez çalışır ve
+    /// iptal edilen (tepsiye küçülen) kapatmalardan etkilenmez.</summary>
     protected override void OnClosed(EventArgs e)
     {
         Application.Current.SessionEnding -= OnSessionEnding; // [M-3 fix wave]

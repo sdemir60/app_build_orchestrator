@@ -32,14 +32,9 @@ public partial class App : Application
             new Spikes.FontAbWindow().Show();
             return;
         }
-        if (e.Args.Contains("--it4a-lab"))
-        {
-            // [It-4a Foundation] Dev-only lab kabuğu — DI/EngineHost kurulmaz, Supervisor spawn edilmez.
-            new Spikes.It4aLabWindow().Show();
-            return;
-        }
-        // [T62 / feasibility §4.3] Single-instance. Dev kabukları (--font-ab / --it4a-lab) BİLİNÇLİ olarak bu
-        // kapının DIŞINDADIR: çalışan bir ana pencere varken bile ayrı açılabilmelidirler.
+        // [T62 / feasibility §4.3] Single-instance. Dev kabuğu (--font-ab) BİLİNÇLİ olarak bu kapının DIŞINDADIR:
+        // çalışan bir ana pencere varken bile ayrı açılabilmelidir. (--it4a-lab lab kabuğu T35'te kaldırıldı —
+        // primitifleri gerçek pencereye (ShellRoot) taşındı.)
         _singleInstance = SingleInstanceGuard.Acquire(SingleInstanceGuard.DefaultKey);
         if (!_singleInstance.IsFirst)
         {

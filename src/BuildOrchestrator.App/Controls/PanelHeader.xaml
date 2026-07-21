@@ -1,0 +1,19 @@
+<UserControl x:Class="BuildOrchestrator.App.Controls.PanelHeader"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+  <!-- [T35] design-v1 PanelHead (BuildApp.jsx:224-236): 28px, surface zemin, altta 1px border-subtle,
+       10px yatay dolgu. Sol: caps etiket (TrackedTextBlock) + LeftContent; sağa dayalı: RightContent.
+       Ölçü/renk token'dan (hardcode YASAK); yükseklik Size.PanelHeaderHeight. -->
+  <Border Height="{DynamicResource Size.PanelHeaderHeight}"
+          Background="{DynamicResource Brush.Surface}"
+          BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
+    <Grid Margin="10,0">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+        <controls:TrackedTextBlock x:Name="LabelText" VerticalAlignment="Center" />
+        <ContentPresenter x:Name="LeftSlot" VerticalAlignment="Center" Margin="8,0,0,0" />
+      </StackPanel>
+      <ContentPresenter x:Name="RightSlot" HorizontalAlignment="Right" VerticalAlignment="Center" />
+    </Grid>
+  </Border>
+</UserControl>

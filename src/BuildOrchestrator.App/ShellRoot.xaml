@@ -1,0 +1,112 @@
+<UserControl x:Class="BuildOrchestrator.App.ShellRoot"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
+             xmlns:graph="clr-namespace:BuildOrchestrator.App.Graph">
+  <!--
+    [T35] Pencere GÖVDESİ (design-v1 kök yerleşimi). Pencere kabuğu (WindowChrome/DWM/tray/hotkey/title bar
+    + caption butonları) MainWindow'dadır; burada test edilebilir LAYOUT vardır. Kök grid = ribbon · gövde ·
+    action bar (title bar 40px MainWindow'un satırıdır). Ölçü/renk token'dan (hardcode YASAK), cross-file
+    kaynaklar DynamicResource (Controls.xaml sözleşmesi — headless yüklemede StaticResource patlardı).
+  -->
+  <Grid Background="{DynamicResource Brush.SurfaceBase}">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />                                    <!-- sticky şerit + 2px progress (T37) -->
+      <RowDefinition Height="*" />                                       <!-- gövde: 2×2 -->
+      <RowDefinition Height="{DynamicResource Size.ActionBarHeight}" />  <!-- action bar (42px) -->
+    </Grid.RowDefinitions>
+
+    <!-- Ribbon bölgesi — sticky durum şeridi + global progress bir sonraki task'ın (T37) işidir; burada
+         yalnız yapısal satır tutulur (içerik uydurmak YAGNI). -->
+    <Grid x:Name="RibbonHost" Grid.Row="0" />
+
+    <!-- ==================================== GÖVDE (2×2) ==================================== -->
+    <Grid x:Name="Body" Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition x:Name="LeftColumn" Width="50*" />
+        <ColumnDefinition Width="Auto" />        <!-- dikey ayraç kolonu -->
+        <ColumnDefinition x:Name="RightColumn" Width="50*" />
+      </Grid.ColumnDefinitions>
+
+      <!-- ===== SOL KOLON: graf / yatay ayraç / proje listesi ===== -->
+      <Grid Grid.Column="0">
+        <Grid.RowDefinitions>
+          <RowDefinition x:Name="GraphRow" Height="50*" />
+          <RowDefinition x:Name="LeftSplitterRow" Height="Auto" />
+          <RowDefinition x:Name="ProjectsRow" Height="50*" />
+        </Grid.RowDefinitions>
+
+        <graph:GraphView x:Name="PART_Graph" Grid.Row="0" />
+
+        <controls:DsSplitter x:Name="PART_LeftSplitter" Grid.Row="1" LineOrientation="Horizontal" />
+
+        <!-- Projects paneli: PanelHeader + StickyLayerList + LatestPill (aynı Grid'de üst üste) -->
+        <DockPanel Grid.Row="2">
+          <controls:PanelHeader DockPanel.Dock="Top" Text="PROJECTS">
+            <controls:PanelHeader.LeftContent>
+              <TextBlock Text="build-order" VerticalAlignment="Center"
+                         FontFamily="{x:Static controls:AppFonts.Mono}"
+                         FontSize="{DynamicResource FontSize.2xs}"
+                         Foreground="{DynamicResource Brush.TextFaint}" />
+            </controls:PanelHeader.LeftContent>
+            <controls:PanelHeader.RightContent>
+              <!-- Ds.Input (implicit TextBox) + büyüteç prefix (paddingLeft 26) + watermark -->
+              <TextBox Width="160" controls:DsChrome.Watermark="Filter…">
+                <controls:DsChrome.Prefix>
+                  <Viewbox Width="14" Height="14">
+                    <Canvas Width="24" Height="24">
+                      <Path Data="{DynamicResource Icon.Search}"
+                            StrokeThickness="{DynamicResource Icon.Search.StrokeThickness}"
+                            Stroke="{DynamicResource Brush.TextDim}"
+                            StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                    </Canvas>
+                  </Viewbox>
+                </controls:DsChrome.Prefix>
+              </TextBox>
+            </controls:PanelHeader.RightContent>
+          </controls:PanelHeader>
+          <Grid>
+            <controls:StickyLayerList x:Name="PART_Projects" />
+            <controls:LatestPill x:Name="PART_ProjectsPill" Visibility="Collapsed" />
+          </Grid>
+        </DockPanel>
+      </Grid>
+
+      <!-- ===== DİKEY AYRAÇ (kolon) ===== -->
+      <controls:DsSplitter x:Name="PART_ColumnSplitter" Grid.Column="1" LineOrientation="Vertical" />
+
+      <!-- ===== SAĞ KOLON: konsol / yatay ayraç / event stream ===== -->
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition x:Name="ConsoleRow" Height="50*" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition x:Name="StreamRow" Height="50*" />
+        </Grid.RowDefinitions>
+
+        <!-- Konsol paneli: ConsoleHeader (kendi başlığı) + ConsoleView (kendi pill'i var — ikinci pill YOK) -->
+        <DockPanel Grid.Row="0">
+          <appConsole:ConsoleHeader x:Name="PART_ConsoleHeader" DockPanel.Dock="Top" />
+          <appConsole:ConsoleView x:Name="PART_ConsoleView" />
+        </DockPanel>
+
+        <controls:DsSplitter x:Name="PART_RightSplitter" Grid.Row="1" LineOrientation="Horizontal" />
+
+        <!-- Event stream paneli: PanelHeader + geçici boş ItemsControl (D3 dolduracak) -->
+        <DockPanel Grid.Row="2">
+          <controls:PanelHeader DockPanel.Dock="Top" Text="EVENT STREAM" />
+          <ScrollViewer VerticalScrollBarVisibility="Auto" Background="{DynamicResource Brush.SurfaceBase}">
+            <ItemsControl x:Name="PART_EventStream" />
+          </ScrollViewer>
+        </DockPanel>
+      </Grid>
+    </Grid>
+
+    <!-- ==================================== ACTION BAR (42px) ==================================== -->
+    <!-- Build/Sync/Continue kontrolleri (design-v1 action bar) bir sonraki it4b task'ının kapsamıdır;
+         burada yalnız yapısal bölge tutulur. -->
+    <Border x:Name="ActionBar" Grid.Row="2"
+            Background="{DynamicResource Brush.Surface}"
+            BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0" />
+  </Grid>
+</UserControl>

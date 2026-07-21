@@ -4,9 +4,9 @@ using System.Text.Json;
 namespace BuildOrchestrator.App.Shell;
 
 /// <summary>
-/// [T62] Pencere kabuğunun KALICI kullanıcı durumu (küçük ve sürüm-toleranslı bir JSON). Şimdilik yalnız iki
-/// alan: ilk-X balloon bayrağı (K5) ve ayarlanabilir global kısayol (v7Δ-5). Tam Settings/config yüzeyi A10/T49
-/// kapsamıdır — burada YAGNI.
+/// [T62/T35] Pencere kabuğunun KALICI kullanıcı durumu (küçük ve sürüm-toleranslı bir JSON). Kabuk bayrakları
+/// (K5 balloon, v7Δ-5 hotkey) + [T35] 2×2 yerleşim (mod + üç split) ve iş akışı tercihleri (repo/config/branch/
+/// worktree/layer patterns/autostart). Eksik alan → varsayılan (JSON sürüm-toleranslıdır).
 /// </summary>
 public sealed class UiState
 {
@@ -15,6 +15,26 @@ public sealed class UiState
 
     /// <summary>[v7Δ-5] Global kısayol jesti; ayrıştırılamazsa varsayılana düşülür.</summary>
     public string Hotkey { get; set; } = HotkeyBinding.DefaultGesture;
+
+    // ---- [T35] 2×2 yerleşim (design-v1 BuildApp.jsx:1143 varsayılanları) ----
+    /// <summary>[T35] Son görünüm modu (quad/list/focus).</summary>
+    public LayoutMode LayoutMode { get; set; } = LayoutMode.Quad;
+    /// <summary>[T35] Kolon split yüzdesi (sol kolon genişliği).</summary>
+    public double ColPct { get; set; } = 50;
+    /// <summary>[T35] Sol kolon satır split'i (graf/liste).</summary>
+    public double LeftPct { get; set; } = 50;
+    /// <summary>[T35] Sağ kolon satır split'i (konsol/stream).</summary>
+    public double RightPct { get; set; } = 50;
+
+    // ---- İş akışı tercihleri (ileride Settings/action-bar task'larının bağlayacağı yüzey) ----
+    public string? RepositoryRoot { get; set; }
+    public string? Configuration { get; set; }
+    public bool PerfMode { get; set; }
+    public string? Branch { get; set; }
+    public bool UseWorktree { get; set; }
+    public string? WorktreeName { get; set; }
+    public List<string> LayerPatterns { get; set; } = [];
+    public bool Autostart { get; set; }
 }
 
 public interface IUiStateStore

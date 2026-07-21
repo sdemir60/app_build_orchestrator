@@ -53,6 +53,37 @@ public class TooltipTests
             s => s.Property == ToolTip.PlacementProperty && (PlacementMode)s.Value! == PlacementMode.Custom);
     }
 
+    // ---- [T35 B4-fold] AppTooltip.Side trigger'larının DOĞRU callback'i çözdüğü — C1 title-bar butonları ilk
+    // gerçek <ToolTip> tüketicisidir. Yanlış bağlı bir trigger (ör. Left → PlacementRight) suite'i sessizce
+    // yeşil bırakırdı: her yönün AYRI callback'e gittiğini bu test pinler. ----
+
+    [StaFact]
+    public void Each_tooltip_side_trigger_resolves_the_matching_placement_callback()
+    {
+        var style = (Style)DsResources.Load("Controls.xaml")[typeof(ToolTip)];
+
+        // Side verilmemiş (varsayılan Top): baz Setter PlacementTop'a gitmeli.
+        var baseSetter = style.Setters.OfType<Setter>()
+            .Single(s => s.Property == ToolTip.CustomPopupPlacementCallbackProperty);
+        Assert.Same(AppTooltip.PlacementTop, baseSetter.Value);
+
+        var expected = new (string Side, CustomPopupPlacementCallback Callback)[]
+        {
+            (AppTooltip.Bottom, AppTooltip.PlacementBottom),
+            (AppTooltip.Left, AppTooltip.PlacementLeft),
+            (AppTooltip.Right, AppTooltip.PlacementRight),
+        };
+
+        foreach (var (side, callback) in expected)
+        {
+            var trigger = style.Triggers.OfType<Trigger>()
+                .Single(t => t.Property == AppTooltip.SideProperty && (string)t.Value! == side);
+            var setter = trigger.Setters.OfType<Setter>()
+                .Single(s => s.Property == ToolTip.CustomPopupPlacementCallbackProperty);
+            Assert.Same(callback, setter.Value);
+        }
+    }
+
     // ---- Self-review ek kapsam: Side=Left/Right/Bottom matematiği (brief'in test'i yalnız varsayılan Top'u
     // kanıtlıyor; callback un-centered'a dönerse veya Left/Right karışırsa bunlar kırmızı olmalı). ----
 
