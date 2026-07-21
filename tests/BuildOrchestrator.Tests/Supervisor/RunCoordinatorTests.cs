@@ -825,9 +825,9 @@ public class RunCoordinatorTests
     [Fact]
     public async Task worktree_run_with_a_supplied_resolver_gets_per_project_isolated_obj_paths()
     {
-        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) bu run
-        // akışına henüz bağlı DEĞİL (Program.cs planner'ı yalnız cmd.RootPath/Configuration alır) — burada
-        // worktreeObjRootResolver enjekte edilerek "worktree kökü biliniyorsa" davranış test edilir.
+        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) üretimde
+        // Program.cs'in planner'ında yapılır (A4) — burada koordinatörün kendi sözleşmesi izole test edilir:
+        // "worktree kökü biliniyorsa proje başına izole obj".
         string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-obj-" + Guid.NewGuid());
         var plan = PlanOf(Node("A"), Node("B"));
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
@@ -846,7 +846,7 @@ public class RunCoordinatorTests
     }
 
     [Fact]
-    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // deferred wiring: Program.cs henüz resolver vermiyor
+    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // resolver opsiyoneldir: yoksa in-place obj
     {
         var plan = PlanOf(Node("A"));
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
@@ -872,6 +872,49 @@ public class RunCoordinatorTests
 
         var a = Assert.Single(invoker.Requests);
         Assert.Null(a.BaseIntermediateOutputPath);
+    }
+
+    [Fact]
+    public async Task Continue_inherits_the_original_runs_worktree_obj_root()
+    {
+        // [A4] Worktree, run'ın ÇÖZÜLMÜŞ workspace'idir — segment başına yeniden hesaplanan bir istek bayrağı
+        // DEĞİL. App, Continue'yu bugün UseWorktree=false ile yollar (RunViewModel.cs:241); segment-2 kökü
+        // cmd'den yeniden hesaplasaydı AYNI run'ın yarısı worktree'nin izole obj'sine, yarısı projenin default
+        // obj'sine derlenirdi (yarısı bayat-obj zehrine açık, üstelik sessizce).
+        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-continue-" + Guid.NewGuid().ToString("N"));
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
+        var resolverCalls = new List<StartRunCommand>();
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (req, _, _) =>
+        {
+            if (NameOf(req.ProjectId) != "A") return Ok();
+            inFlight.TrySetResult();
+            await release.Task; // 1. segment A'da duruyorken Stop → B/C/D Queued kalır
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd =>
+        {
+            lock (resolverCalls) resolverCalls.Add(cmd);
+            return worktreeRoot;
+        });
+
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
+        await inFlight.Task.WaitAsync(Limit);
+        h.Sut.TryRequestStop(StopKind.Graceful);
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Continue: UseWorktree BAYRAĞI YOK (App'in bugünkü davranışı) — yine de 1. segmentin kökü kullanılmalı.
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Continue, PlanRoot, "Debug", 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A", "B", "C", "D"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
+        Assert.All(invoker.Requests,
+            r => Assert.StartsWith(worktreeRoot, r.BaseIntermediateOutputPath!, StringComparison.Ordinal));
+        var call = Assert.Single(resolverCalls); // resolver YALNIZ taze run'da çağrılır — Continue MİRAS ALIR
+        Assert.True(call.UseWorktree);
+        Assert.Equal(RunMode.Rebuild, call.Mode);
     }
 
     // ---------------------------------------------------------------- 12) depIssue propagation (T54)

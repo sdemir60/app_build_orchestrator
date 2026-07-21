@@ -4,8 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Supervisor;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Git;
@@ -301,6 +303,68 @@ public class WorktreeManagerTests
         var finalList = await mgr.ListWorktreesAsync();
         Assert.DoesNotContain(finalList.Value!, w => w.Name == f2Name);
         Assert.Contains(finalList.Value!, w => w.Name == Path.GetFileName(planF1.Path!)); // dokunulmayan (intended en yeni) hâlâ orada
+    }
+
+    // ---- [A4] Build-anı workspace çözümü (Supervisor kompozisyon kökü: Program.PrepareAsync) ----
+
+    [Fact]
+    public async Task PrepareAsync_falls_back_to_in_place_and_reports_in_place_when_the_worktree_cannot_be_created()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        string sha = repo.CommitAll("c1");
+        string branch = repo.CurrentBranchName();
+        string poolRoot = NewPoolRoot();
+
+        // `git worktree add`'i DETERMİNİSTİK olarak patlatmak için hedef path'e önceden bir DOSYA konur:
+        // PlanWorktree adayı yalnız mevcut DİZİNLERE bakarak seçtiği (Directory.EnumerateDirectories) için
+        // PrepareAsync'in kendi planı da AYNI adı seçer, git ise "already exists" ile exit!=0 döner.
+        Directory.CreateDirectory(poolRoot);
+        string targetPath = new WorktreeManager(Runner, repo.RootPath, poolRoot)
+            .PlanWorktree(branch, branch, useWorktreeToggle: true, selectedSha: sha).Path!;
+        File.WriteAllText(targetPath, "bu bir dosya, dizin degil");
+
+        var warnings = new List<string>();
+        var cmd = new StartRunCommand("r1", RunMode.Rebuild, repo.RootPath, "Debug", 1, Branch: branch, UseWorktree: true);
+
+        var prepared = await Program.PrepareAsync(cmd, Runner, poolRoot, warnings.Add);
+
+        // GÜVENLİ TARAF: run ÖLMEZ (in-place'e düşülür) — ama InPlace GERÇEĞİ söyler, aksi halde imza
+        // local-diff terimini atlar ve "temiz commit'ten derlendi" diyen bir imza dirty working tree için
+        // persist edilirdi (A4'ün kapattığı ters-çevrilme penceresi).
+        Assert.True(prepared.InPlace);
+        Assert.Equal(repo.RootPath, prepared.ScanRoot);
+        Assert.Null(prepared.WorktreeObjRoot);
+        // Uyarı GERÇEKTEN `git worktree add`'in kendi hatasını taşımalı (git, hedef path'i mesajında yankılar) —
+        // aksi halde test, daha erken bir guard'a (branch/sha çözülemedi) düşerek sessizce boşa geçerdi. git
+        // Windows'ta path'i '/' ile normalize eder (bkz. yukarıdaki worktree-list karşılaştırmaları).
+        Assert.Contains(warnings, w => w.Replace('\\', '/')
+            .Contains(targetPath.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(branch, repo.CurrentBranchName()); // aktif branch ASLA checkout/switch edilmedi (K1)
+    }
+
+    [Fact]
+    public async Task PrepareAsync_returns_the_worktree_path_as_both_scan_root_and_obj_root_on_success()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.CommitAll("c1");
+        string branch = repo.CurrentBranchName();
+        string poolRoot = NewPoolRoot();
+
+        var warnings = new List<string>();
+        var cmd = new StartRunCommand("r1", RunMode.Rebuild, repo.RootPath, "Debug", 1, Branch: branch, UseWorktree: true);
+
+        var prepared = await Program.PrepareAsync(cmd, Runner, poolRoot, warnings.Add);
+
+        Assert.False(prepared.InPlace); // ÇÖZÜLMÜŞ worktree → imza committed moda (local-diff'siz) HAKLI olarak geçer
+        Assert.NotNull(prepared.WorktreeObjRoot);
+        Assert.Equal(prepared.ScanRoot, prepared.WorktreeObjRoot); // tarama ve obj izolasyonu AYNI kök
+        Assert.NotEqual(repo.RootPath, prepared.ScanRoot);
+        Assert.StartsWith(poolRoot, prepared.ScanRoot, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("v1", File.ReadAllText(Path.Combine(prepared.ScanRoot, "a.txt"))); // committed HEAD gerçekten orada
+        Assert.Empty(warnings);
+        Assert.Equal(branch, repo.CurrentBranchName()); // aktif branch ASLA checkout/switch edilmedi (K1)
     }
 
     private sealed class RecordingProcessRunner : IProcessRunner
