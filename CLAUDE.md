@@ -79,4 +79,6 @@ Format: `YYYY-MM-DD-HH-mm-{baslik}.md`
 ## Git
 
 - Repo **GitHub**'da: `sdemir60/app_build_orchestrator`. Ana branch: `main`.
-- Commit/push işlemlerini yalnızca senden istediğimde yap.
+- **Commit/merge serbest** (2026-07-21 kullanıcı kararı): bir iterasyon için kendi çalışma branch'ini aç, task başına commit at, iş bitince `main`'e merge et ve push'la.
+- Merge'ün gerçekten geçtiğini **doğruladıktan sonra** çalışma branch'ini hem local'den hem remote'tan sil.
+- Süreç sonunda çalışma dizini **`main` üzerinde** bırakılır (kullanıcı oturumu `main`'de görmek istiyor).
