@@ -301,4 +301,29 @@ public class RunViewModelStateTests
         Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(vm.RetryFailedCommand.CanExecute(null));
     }
+
+    [Fact] // [re-review C2, Finding 4] Sync'e atfedilen planFailed (normal başarısız-sync yolu) da CanExecuteChanged tetiklemeli
+    public async Task Sync_attributed_planFailed_reenables_rebuild_and_retry_and_raises_CanExecuteChanged()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.RetryFailedCommand.CanExecute(null));
+
+        bool rebuildChanged = false, retryChanged = false;
+        vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
+        vm.RetryFailedCommand.CanExecuteChanged += (_, _) => retryChanged = true;
+
+        // IsStarting false (hiç run başlamadı) → TryConsumeSyncFailure normal yola girer: _syncInFlight=false
+        // olur ama Fix wave 1'in kaçırdığı 4. geçiş burasıdır — notify BURADA da ateşlenmeli.
+        vm.OnEvent(new ErrorEvent("planFailed", "git fetch origin failed"));
+
+        Assert.True(rebuildChanged);
+        Assert.True(retryChanged);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RetryFailedCommand.CanExecute(null));
+    }
 }

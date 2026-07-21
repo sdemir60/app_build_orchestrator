@@ -118,6 +118,11 @@ public sealed partial class RunViewModel
         if (Phase == AppPhase.Syncing) Phase = Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
         if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
+        // [re-review C2, Finding 4] OnSyncStarted'ın simetriği burada da gerekir: bu, _syncInFlight'ı false'a
+        // çeken 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
+        // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
+        RebuildCommand.NotifyCanExecuteChanged();
+        RetryFailedCommand.NotifyCanExecuteChanged();
         return true;
     }
 
