@@ -673,6 +673,80 @@
     <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.TextPrimary}" />
   </Style>
 
+  <!-- ======================================= TOOLTIP ======================================= -->
+  <!--
+    [T61] _ds_bundle.js:1285-1348 (Tooltip.jsx) — surface-overlay zemin (:1331), 1px border-strong (:1332),
+    radius-sm (:1333), elevation-popover gölge (:1334), padding '4px 8px' (:1335 — bileşenin KENDİ ölçüsü,
+    token değil, kaynak satırıyla yazılır), font-sans/text-xs (:1337-1338).
+
+    SAPMA (kayıtlı, task-B4-brief.md:41 harfiyen): gövde metni brief'in pinlediği Brush.TextSecondary'dir;
+    kaynakta (:1339) text-primary'dir — yalnız kbd alt-metni (:1345) text-dim'dir. Brief TARTIŞMASIZ kazanır.
+
+    A13.2 (feasibility otoritesi, harfiyen): WPF'in PlacementMode.Top/Bottom'u hedefi SOLA hizalar, ORTALAMAZ
+    → Placement=Custom + CustomPopupPlacementCallback ZORUNLU (bkz. Controls/AppTooltip.cs). Tooltip AYRI bir
+    HWND'dir — bu yüzden T65'in kök ClearTypeHint'i (Grayscale, MainWindow.xaml — BURADA DOKUNULMAZ) buraya
+    sızmaz; yerel olarak BİLİNÇLİ şekilde ClearType'a döndürülür.
+
+    ShowDuration int.MaxValue'ya (sonsuz) ayarlanır — DS'in web karşılığında `open` React state'i mouse
+    ayrılana kadar sürer; WPF'in ~5sn varsayılan ShowDuration'ı bunu keserdi.
+
+    Side: controls:AppTooltip.Side, DsChrome.Prefix'in TextBox üzerinde KENDİ KENDİNİ tetiklediği desenin
+    AYNISIYLA, EXPLICIT bir <ToolTip> öğesinin KENDİSİNDE ilan edilir — otomatik sarılan düz-metin tooltip'ler
+    (Side verilmemiş) varsayılan Top kalır.
+
+    Bu stil bir ControlTemplate.Triggers/Storyboard TAŞIMAZ (Step 1 kararı, T60) — burada zaten animasyon
+    istenmiyor (brief).
+  -->
+  <Style TargetType="ToolTip">
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <!-- _ds_bundle.js:1335 `padding: '4px 8px'` → WPF Thickness(left,top,right,bottom). -->
+    <Setter Property="Padding" Value="8,4" />
+    <Setter Property="Effect" Value="{DynamicResource Effect.PopoverShadow}" />
+    <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
+    <Setter Property="ToolTipService.InitialShowDelay" Value="0" />
+    <!-- int.MaxValue — "sonsuz" (fare ayrılana kadar açık kalır). -->
+    <Setter Property="ToolTipService.ShowDuration" Value="2147483647" />
+    <Setter Property="Placement" Value="Custom" />
+    <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementTop}" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToolTip">
+          <!-- ToolTip'in kendi CornerRadius'u YOKTUR (Control'ün bir parçası değil) — Radius.Sm bu yüzden
+               TemplateBinding değil, doğrudan token ile yazılır (SplitButton'ın DEĞİŞKEN köşe ihtiyacı
+               burada yok, tek sabit değer — DsChrome.CornerRadius makinesi burada GEREKSİZ, YAGNI). -->
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{DynamicResource Radius.Sm}"
+                  Padding="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True">
+            <!-- Varsayılan ContentSource="Content" — Content/ContentTemplate/ContentStringFormat
+                 TemplatedParent'tan OLDUĞU GİBİ akar; canlı bağlı içerik (`Building — 24s`, `Copy → Copied`)
+                 burada ENGELLENMEZ. -->
+            <ContentPresenter />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property="controls:AppTooltip.Side" Value="Bottom">
+        <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementBottom}" />
+      </Trigger>
+      <Trigger Property="controls:AppTooltip.Side" Value="Left">
+        <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementLeft}" />
+      </Trigger>
+      <Trigger Property="controls:AppTooltip.Side" Value="Right">
+        <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementRight}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- ========================= ÖZEL KONTROLLERİN VARSAYILAN ŞABLONLARI ========================= -->
   <!-- Anahtar `{x:Type …}`: DefaultStyleKey ile aranan implicit style'dır. Themes/Generic.xaml'e GEREK YOK —
        uygulama kaynakları tema sözlüğünden ÖNCE taranır. -->
