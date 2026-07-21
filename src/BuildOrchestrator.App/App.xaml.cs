@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -10,16 +11,45 @@ namespace BuildOrchestrator.App;
 public partial class App : Application
 {
     public static ServiceProvider Services { get; private set; } = null!;
+    public static IMotionSettings Motion { get; private set; } = null!;
+
+    private SingleInstanceGuard? _singleInstance;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // [It-4a Foundation / Global Constraints — reduced-motion] Tüm yollarda (font-ab/it4a-lab/normal) TEK
+        // instance: Resources (Application.Resources, App.xaml'de merge edilen Motion.xaml) içindeki Duration.*
+        // kaynaklarını OS "animasyonları göster" sinyaline göre canlı 0'a çevirir / geri yükler.
+        var motion = new MotionSettings(new SystemParametersMotionSignal());
+        motion.Attach(Resources);
+        Motion = motion;
+
         if (e.Args.Contains("--font-ab"))
         {
             // [T65/K9] Font A/B karar penceresi — DI/EngineHost kurulmaz, Supervisor spawn edilmez.
             new Spikes.FontAbWindow().Show();
             return;
         }
+        if (e.Args.Contains("--it4a-lab"))
+        {
+            // [It-4a Foundation] Dev-only lab kabuğu — DI/EngineHost kurulmaz, Supervisor spawn edilmez.
+            new Spikes.It4aLabWindow().Show();
+            return;
+        }
+        // [T62 / feasibility §4.3] Single-instance. Dev kabukları (--font-ab / --it4a-lab) BİLİNÇLİ olarak bu
+        // kapının DIŞINDADIR: çalışan bir ana pencere varken bile ayrı açılabilmelidirler.
+        _singleInstance = SingleInstanceGuard.Acquire(SingleInstanceGuard.DefaultKey);
+        if (!_singleInstance.IsFirst)
+        {
+            // İkinci instance: çalışan pencereyi öne getir ve sessizce kapan (AllowSetForegroundWindow sinyalden
+            // ÖNCE — sırayı SingleInstanceProtocol garanti eder).
+            _singleInstance.ActivateExistingInstance(TimeSpan.FromSeconds(3));
+            Shutdown();
+            return;
+        }
+
         var sc = new ServiceCollection();
         sc.AddSingleton(_ => new EngineHost(
             Path.Combine(AppContext.BaseDirectory, "supervisor", "BuildOrchestrator.Supervisor.exe")));
@@ -29,13 +59,17 @@ public partial class App : Application
             sp.GetRequiredService<EngineHost>(), sp.GetRequiredService<ConsoleBatcher>(), () => Guid.NewGuid().ToString()));
         sc.AddSingleton<MainWindow>();
         Services = sc.BuildServiceProvider();
-        Services.GetRequiredService<MainWindow>().Show();
+        var window = Services.GetRequiredService<MainWindow>();
+        // İkinci instance'ın sinyali arka plan thread'inden gelir — UI thread'ine burada marshal edilir.
+        _singleInstance.StartListening(() => Dispatcher.Invoke(window.ShowFromTray));
+        window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         // --font-ab yolunda DI hiç kurulmaz — Services null kalır.
-        (Services?.GetService<EngineHost>() as IAsyncDisposable)?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        AppShutdown.WaitForAsyncDisposal(Services?.GetService<EngineHost>(), AppShutdown.DisposalTimeout);
+        _singleInstance?.Dispose();
         base.OnExit(e);
     }
 }

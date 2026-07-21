@@ -99,6 +99,11 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly StringBuilder _runText = new();
     private readonly Dictionary<string, StringBuilder> _projectText = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<ProjectLogEvent>> _liveLines = new(StringComparer.OrdinalIgnoreCase);
+    // [T56/3a] "N lines" TAM tampon sayacı (render dilimi DEĞİL, Ek A #23). _gate altında O(1) artırılır — her
+    // append tam bir satır ('\n' sonekli) eklediğinden konsol başlığı (ConsoleHeader) bunu okur. Marshal-free
+    // OnProjectLog yolundan yazıldığı için ObservableProperty DEĞİL; UI thread'i _gate altında okur (GetActiveLineCount).
+    private int _runLineCount;
+    private readonly Dictionary<string, int> _projectLineCount = new(StringComparer.OrdinalIgnoreCase);
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde dokunulur (LoadProjectLogAsync + OnProjectLogChunk)
 
     private string? _currentRunId;
@@ -203,6 +208,8 @@ public sealed partial class RunViewModel : ObservableObject
             _liveLines.Clear();
             _projectText.Clear();
             _runText.Clear();
+            _runLineCount = 0;
+            _projectLineCount.Clear();
         }
         // [Fix wave 2, Finding 1] gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
         // burada geri açılmalı — aksi halde hiçbir engine event'i asla gelmeyeceğinden (ne runStarted ne
@@ -484,6 +491,7 @@ public sealed partial class RunViewModel : ObservableObject
 
             // Run dokümanı proje modunda bile birikmeye devam eder — ekranda görünmese de.
             _runText.Append(e.Text).Append('\n');
+            _runLineCount++;
             if (string.Equals(ActiveProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
                 AppendProjectTextLocked(e.ProjectId, e.Text);
 
@@ -502,6 +510,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (!_projectText.TryGetValue(projectId, out var sb))
             _projectText[projectId] = sb = new StringBuilder();
         sb.Append(text).Append('\n');
+        _projectLineCount[projectId] = (_projectLineCount.TryGetValue(projectId, out var n) ? n : 0) + 1;
     }
 
     private void AppendRunLine(string text)
@@ -510,8 +519,28 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate)
         {
             _runText.Append(text).Append('\n');
+            _runLineCount++;
             if (ActiveProjectId is null) _console.Post(text);
         }
+    }
+
+    /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
+    /// TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). UI thread'inde çağrılır; sayaçlar arka plandan
+    /// (marshal-free OnProjectLog) yazıldığından okuma _gate altındadır.</summary>
+    public int GetActiveLineCount()
+    {
+        lock (_gate)
+            return ActiveProjectId is null
+                ? _runLineCount
+                : _projectLineCount.TryGetValue(ActiveProjectId, out var n) ? n : 0;
+    }
+
+    private static int CountLines(StringBuilder sb)
+    {
+        int n = 0;
+        for (int i = 0; i < sb.Length; i++)
+            if (sb[i] == '\n') n++;
+        return n;
     }
 
     public string GetRunDocumentText() { lock (_gate) return _runText.ToString(); }
@@ -520,34 +549,32 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate) return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
     }
 
-    /// <summary>[Fix wave 1, Finding 3] MainWindow'un "Back" akışının kullanması gereken tohumlama metodu:
-    /// run dokümanının metnini AYNI _gate kilidi altında okur VE ConsoleBatcher'daki bekleyen satırları atar.
-    /// OnProjectLog'un Post'u da bu kilit altında yaptığı için (yukarı bakınız), bir satır ya TAMAMEN bu
-    /// snapshot'a (ve dolayısıyla discard'a) girer ya da TAMAMEN girmez — üçüncü bir "kilit dışı post,
-    /// kilit içi snapshot" aralığı YOKTUR. Kalan artık risk: ConsoleBatcher'ın kendi pump döngüsünün BU
-    /// kilitten TAMAMEN bağımsız arka plan tick'i, bu metot çağrılmadan hemen önce bir satırı kanaldan çekip
-    /// (henüz çalışmamış) bir <c>Dispatcher.InvokeAsync</c> kuyruğa almışsa — bu, tam tick periyodu (~50ms)
-    /// yerine yalnız Dispatcher zamanlama gecikmesi kadar dar bir artık pencere; normal bir tıklamada
-    /// gözlemlenmez. Tam kapanış (pump'ın tek okuyucu döngüsünden geçirme) Task 11 API değişikliği ister —
-    /// It-4 için Minor olarak kayıtlı (bkz. task-12-report.md Fix wave 1).</summary>
-    public string SeedRunDocument()
+    /// <summary>[Fix wave 1, Finding 3 → 3b: tek-okuyucudan geçen reseed] MainWindow'un "Back" akışının
+    /// kullandığı tohumlama metodu: run dokümanının metnini AYNI _gate kilidi altında okur ve
+    /// <see cref="ConsoleBatcher.PostReseed"/> ile kanala bir reseed sentinel'i yazar. <paramref name="apply"/>,
+    /// pump tarafından (sentinel'e uğrayınca) çağrılır ve TAZE snapshot'ı UI dokümanına kurar (marshal ETME
+    /// çağıranın işi).
+    ///
+    /// <para><b>Neden kilit altında snapshot + PostReseed birlikte:</b> OnProjectLog da _runText yazımını ve
+    /// <c>_console.Post</c>'unu AYNI _gate altında yapar. Bu yüzden snapshot okunurken bir OnProjectLog araya
+    /// giremez: snapshot'a giren her satır, sentinel'den ÖNCE kanala girmiştir; snapshot'a girmeyen her satır
+    /// sentinel'den SONRA girer. Pump tek okuyucudur → sentinel'e kadarki satırları (snapshot'ta zaten var) atar,
+    /// sonrakileri yeni dokümana akıtır. Eski <c>DiscardPending</c>'in bıraktığı "pump satırı TryRead'le çekti ama
+    /// henüz flush etmedi" Dispatcher-gecikmesi artık penceresi KAPANIR (It-4 backlog kalemi — task-12 Fix wave 1
+    /// residual'ı).</para></summary>
+    public void SeedRunDocument(Action<string> apply)
     {
         lock (_gate)
-        {
-            _console.DiscardPending();
-            return _runText.ToString();
-        }
+            _console.PostReseed(_runText.ToString(), apply);
     }
 
-    /// <summary>[Fix wave 1, Finding 3] Proje kartına tıklama akışının kullanması gereken tohumlama metodu —
-    /// bkz. <see cref="SeedRunDocument"/>'ın XML yorumu (aynı gerekçe, proje dokümanı için).</summary>
-    public string SeedProjectDocument(string projectId)
+    /// <summary>[3b] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın XML
+    /// yorumu (aynı gerekçe, proje dokümanı için). Log yoksa boş snapshot ile çağrılır (çağıran boş-durum metnini
+    /// uygular).</summary>
+    public void SeedProjectDocument(string projectId, Action<string> apply)
     {
         lock (_gate)
-        {
-            _console.DiscardPending();
-            return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
-        }
+            _console.PostReseed(_projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "", apply);
     }
 
     /// <summary>Konsolu run dokümanına döndürür (MainWindow'daki "Back").</summary>
@@ -608,6 +635,7 @@ public sealed partial class RunViewModel : ObservableObject
                 foreach (var line in buffered.Where(l => l.LineNumber > e.ThroughLineNumber).OrderBy(l => l.LineNumber))
                     stitched.Append(line.Text).Append('\n');
             _projectText[e.ProjectId] = stitched;
+            _projectLineCount[e.ProjectId] = CountLines(stitched); // [T56/3a] dikilmiş tam log satır sayısı
             ActiveProjectId = e.ProjectId;
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı

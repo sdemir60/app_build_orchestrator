@@ -116,4 +116,65 @@ public class ConsoleBatcherTests
         var batcher = new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite));
         for (int i = 0; i < 1000; i++) batcher.Post($"line{i}"); // TryWrite üzerinde: hiçbir okuyucu koşmasa bile senkron döner
     }
+
+    // ---------------------------------------------------------------- [3b] reseed tek okuyucudan geçer (dup residual kapanır)
+
+    [Fact]
+    public async Task Reseed_through_the_single_reader_does_not_duplicate_a_half_dequeued_line()
+    {
+        // "Yarım-dequeue" residual senaryosu: mod değişiminde bir satır (b) pump tarafından çekilmiş ama henüz
+        // flush edilmemişken, taze doküman kurulur. Eski DiscardPending yolu bunu kaçırıp b'yi HEM snapshot'ta
+        // HEM in-flight flush'ta bırakabiliyordu (kopya). Reseed artık AYNI tek-okuyucu FIFO'dan (PostReseed
+        // sentinel'i) geçtiğinden: sentinel'den önceki satırlar (snapshot'ta zaten var) ATILIR, sonrakiler yeni
+        // dokümana akar — her satır TAM BİR kez.
+        var doc = new System.Text.StringBuilder();
+        ConsoleBatcher? batcher = null;
+        int callCount = 0;
+        Task Tick(CancellationToken ct)
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                batcher!.Post("a");
+                batcher!.Post("b");
+                // reseed snapshot'ı a+b'yi İÇERİR (VM'in _gate altında okuduğu tampon gibi); apply dokümanı KURAR.
+                batcher!.PostReseed("a\nb\n", snap => { doc.Clear(); doc.Append(snap); });
+                batcher!.Post("c"); // reseed'den SONRAki (yeni mod) satır — yeni dokümana akmalı
+            }
+            else if (callCount == 2) batcher!.Complete();
+            return Task.CompletedTask;
+        }
+        batcher = new ConsoleBatcher(Tick);
+
+        await batcher.PumpAsync(text => doc.Append(text), CancellationToken.None);
+
+        Assert.Equal("a\nb\nc\n", doc.ToString()); // a,b (snapshot) + c (append) — hiçbir satır iki kez değil
+    }
+
+    [Fact]
+    public async Task Reseed_discards_pending_lines_captured_in_the_snapshot()
+    {
+        // Sentinel'den ÖNCE post edilen tüm satırlar snapshot'ta olduğu VARSAYILIR → yeni dokümana TEKRAR
+        // eklenmemeli (yalnız apply'ın kurduğu snapshot kalır).
+        var doc = new System.Text.StringBuilder();
+        ConsoleBatcher? batcher = null;
+        int callCount = 0;
+        Task Tick(CancellationToken ct)
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                batcher!.Post("old1");
+                batcher!.Post("old2");
+                batcher!.PostReseed("SNAPSHOT\n", snap => { doc.Clear(); doc.Append(snap); });
+            }
+            else if (callCount == 2) batcher!.Complete();
+            return Task.CompletedTask;
+        }
+        batcher = new ConsoleBatcher(Tick);
+
+        await batcher.PumpAsync(text => doc.Append(text), CancellationToken.None);
+
+        Assert.Equal("SNAPSHOT\n", doc.ToString()); // old1/old2 flush EDİLMEDİ (snapshot'ta zaten var)
+    }
 }

@@ -23,7 +23,9 @@ public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator e
     /// </summary>
     public BuildPlan Build(ScanResult scan, string configuration, IReadOnlyList<LayerPattern>? layerPatterns = null)
     {
-        var evaluated = scan.CsprojPaths.Select(p => cache.GetOrEvaluate(p, evaluator.Evaluate)).ToList();
+        // GetOrEvaluate canlı build ↔ scan yarışında kaybolan bir dosya için null dönebilir
+        // [Task 0/It-4a, savunmanın ikinci katı] — bu yollar plandan sessizce düşer (OfType null'ları eler).
+        var evaluated = scan.CsprojPaths.Select(p => cache.GetOrEvaluate(p, evaluator.Evaluate)).OfType<EvaluatedProject>().ToList();
         cache.Flush();
 
         var producers = ProducerMapBuilder.Build(evaluated);

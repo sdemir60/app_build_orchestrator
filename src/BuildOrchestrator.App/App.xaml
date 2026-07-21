@@ -3,6 +3,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:BuildOrchestrator.App">
     <Application.Resources>
-
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- [It-4a Foundation] Bu 6 UI task'ının TEK motion/token kaynağı — reuse zorunlu, hardcode YASAK. -->
+                <ResourceDictionary Source="Resources/Motion.xaml" />
+                <ResourceDictionary Source="Resources/Tokens.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

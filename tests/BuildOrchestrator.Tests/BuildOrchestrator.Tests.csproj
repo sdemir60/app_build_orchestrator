@@ -30,6 +30,13 @@
   <ItemGroup>
     <Content Include="..\..\src\BuildOrchestrator.App\Fonts\*.otf" Link="TestAssets\Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\src\BuildOrchestrator.App\Fonts\*.CompositeFont" Link="TestAssets\Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- [It-4a Foundation] pack:// URI'ler App.xaml/Application olmadan (headless test host) çözülmez —
+         diğer TestAssets kopyalarıyla aynı desen: dosyadan XamlReader ile yükle. -->
+    <Content Include="..\..\src\BuildOrchestrator.App\Resources\*.xaml" Link="TestAssets\Resources\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- [It-4a Foundation, Task 1 fix wave Important #1] App.xaml'in KENDİSİ (kaynağın canlı kopyası) —
+         AppResourcesMergeTests, App.xaml'in Motion.xaml + Tokens.xaml'i gerçekten merge ettiğini bu dosyadan
+         yapısal (XML) olarak doğrular; App.xaml'deki merge satırı silinse/typo'lansa bu test kırılır. -->
+    <Content Include="..\..\src\BuildOrchestrator.App\App.xaml" Link="TestAssets\App.xaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

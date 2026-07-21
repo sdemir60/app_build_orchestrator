@@ -269,8 +269,12 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         var cache = new EvaluationCache(cachePath);
         var scan = scanner.Scan(OsysRoot);
         var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, "Debug");
-        var evaluatedById = scan.CsprojPaths.ToDictionary(
-            p => Path.GetFullPath(p), p => cache.GetOrEvaluate(p, evaluator.Evaluate), StringComparer.OrdinalIgnoreCase);
+        // GetOrEvaluate canlı build ↔ scan yarışında kaybolan bir dosya için null dönebilir [Task 0/It-4a] —
+        // o yollar burada sessizce elenir (bkz. EvaluationCache.GetOrEvaluate XML doc).
+        var evaluatedById = scan.CsprojPaths
+            .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
+            .Where(x => x.Project is not null)
+            .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
         return (plan, evaluatedById);
     }
 

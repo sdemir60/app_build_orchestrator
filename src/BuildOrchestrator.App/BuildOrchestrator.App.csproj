@@ -15,6 +15,7 @@
   <ItemGroup>
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
   </ItemGroup>
 
@@ -27,8 +28,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\BuildOrchestrator.Supervisor\BuildOrchestrator.Supervisor.csproj"
-                      ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\BuildOrchestrator.Supervisor\BuildOrchestrator.Supervisor.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
   <Target Name="CopySupervisorOutput" AfterTargets="Build">
     <!-- Tüm dosyaları eşle ama RecursiveDir'i TFM klasörü olmadan hesapla [it0-devir] -->
@@ -46,6 +46,8 @@
   </Target>
 
   <ItemGroup>
+    <!-- [T62] Tepsi ikonu — elle ayarlanmış 16px raster (üreteci: Assets/generate-tray-icon.ps1). Tam ikon hattı T64. -->
+    <Resource Include="Assets\*.ico" />
     <Resource Include="Fonts\*.otf" />
     <!-- CompositeFont XML de gömülmeli: pack URI ile "#Geist Mono Console" ailesini çözebilmek için [T56] -->
     <Resource Include="Fonts\*.CompositeFont" />

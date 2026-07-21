@@ -1,0 +1,116 @@
+<Window x:Class="BuildOrchestrator.App.Spikes.It4aLabWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+        xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
+        xmlns:graph="clr-namespace:BuildOrchestrator.App.Graph"
+        Title="It-4a Lab — UI primitifleri (dev-only)"
+        Width="1400" Height="900"
+        Background="{StaticResource Brush.SurfaceBase}"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="Grayscale"
+        WindowStartupLocation="CenterScreen">
+    <!-- [It-4a Foundation] Dev-only lab kabuğu (it4a-lab bayrağı). [T56/3a] Konsol demo paneli: colorizer + hibrit
+         typewriter + anlatı/proje-log mod geçişi + boş-durum metinleri gözle doğrulanır (prototiple yan yana). -->
+    <DockPanel Margin="16">
+        <Border DockPanel.Dock="Top" Height="28" Margin="0,0,0,12"
+                Background="{StaticResource Brush.Surface}"
+                BorderBrush="{StaticResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Margin="10,0" VerticalAlignment="Center">
+                <controls:TrackedTextBlock Text="PROJECTS" VerticalAlignment="Center" />
+                <Border Width="16" />
+                <controls:TrackedTextBlock Text="EVENT STREAM" VerticalAlignment="Center" />
+                <Border Width="16" />
+                <controls:TrackedTextBlock Text="DEPENDENCY GRAPH" VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- [T56/3a] Demo tetikleyicileri -->
+            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                <TextBlock Text="Console (T56 / 3a+3b)" Foreground="{StaticResource Brush.TextSecondary}"
+                           FontSize="12" Margin="0,0,0,8" />
+                <Button Content="Seed narrative (colorized)" Margin="0,0,0,6" Click="OnSeedNarrative" />
+                <Button Content="Type active line (typewriter)" Margin="0,0,0,6" Click="OnTypeLine" />
+                <Button Content="Project-log · Building (cascade + ▮)" Margin="0,0,0,6" Click="OnProjectLogBuilding" />
+                <Button Content="Project-log · Failed + depIssue (cascade)" Margin="0,0,0,6" Click="OnProjectLogFailed" />
+                <Button Content="Project-log · Skipped (empty)" Margin="0,0,0,6" Click="OnProjectLogSkipped" />
+                <Button Content="Project-log · Queued (empty)" Margin="0,0,0,6" Click="OnProjectLogQueued" />
+                <Button Content="Back to narrative" Margin="0,0,0,6" Click="OnBackToNarrative" />
+
+                <!-- [T58] Sticky katman başlıkları demo tetikleyicileri -->
+                <TextBlock Text="Projects sticky (T58)" Foreground="{StaticResource Brush.TextSecondary}"
+                           FontSize="12" Margin="0,16,0,8" />
+                <Button Content="Flat list (build order)" Margin="0,0,0,6" Click="OnProjectsFlat" />
+                <Button Content="Load sample layers (6)" Margin="0,0,0,6" Click="OnProjectsLayers" />
+                <TextBlock Text="Kaydır: katman başlıkları birikimli yapışır (i×24px), alttaki üsttekini iter. Prototiple yan yana karşılaştır."
+                           Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                <!-- [T59] Scroll/follow/pill demo tetikleyicileri -->
+                <TextBlock Text="Scroll / follow / pill (T59)" Foreground="{StaticResource Brush.TextSecondary}"
+                           FontSize="12" Margin="0,16,0,8" />
+                <Button Content="Start run simulation" Margin="0,0,0,6" Click="OnStartSim" />
+                <Button Content="Stop run simulation" Margin="0,0,0,6" Click="OnStopSim" />
+                <TextBlock Text="Koşu simülasyonu: liste frontier'i yumuşak takip eder + konsola satır akar + GRAF'ta building frontier akan amber dash ile aşağı iner. Elle yukarı kaydır (liste VEYA konsol) → takip/yapışıklık durur + ⌄ latest pill çıkar; pill'e tıkla → yumuşak dön/dibe."
+                           Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                <!-- [T63] Dependency graph demo tetikleyicileri -->
+                <TextBlock Text="Dependency graph (T63)" Foreground="{StaticResource Brush.TextSecondary}"
+                           FontSize="12" Margin="0,16,0,8" />
+                <Button Content="Reset graph (replay reveal)" Margin="0,0,0,6" Click="OnGraphReset" />
+                <Button Content="Mark run settled (camera → center)" Margin="0,0,0,6" Click="OnGraphSettled" />
+                <TextBlock x:Name="GraphSelectionText" Text="selection: —"
+                           FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
+                           Foreground="{StaticResource Brush.TextDim}" Margin="0,2,0,0" />
+                <TextBlock Text="Düğüme tıkla → kamera 460ms kayar + komşu-dışı %25'e söner; boş alana tıkla → seçim kalkar. Failed düğümün dalı kırmızı statik kesikli + ▲ rozet."
+                           Foreground="{StaticResource Brush.TextFaint}" FontSize="11"
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
+            </StackPanel>
+
+            <!-- [T58/T59] Projects listesi paneli (sticky overlay + LayoutMetrics + follow-mode + frontier pill) -->
+            <DockPanel Grid.Column="1" Margin="0,0,12,0">
+                <Border DockPanel.Dock="Top" Height="28" Margin="0,0,0,6"
+                        Background="{StaticResource Brush.Surface}"
+                        BorderBrush="{StaticResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
+                    <DockPanel Margin="10,0" LastChildFill="True">
+                        <TextBlock x:Name="ProjectsMode" DockPanel.Dock="Right" VerticalAlignment="Center"
+                                   FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11" Foreground="{StaticResource Brush.TextFaint}" />
+                        <controls:TrackedTextBlock Text="PROJECTS" VerticalAlignment="Center" />
+                    </DockPanel>
+                </Border>
+                <Grid>
+                    <controls:StickyLayerList x:Name="LabProjects" />
+                    <!-- [T59] Liste-özel demo: sim sırasında elle kaydırma follow'u durdurur — pill "frontier'e dön"
+                         affordance'ı sunar (design-v1 §2.4/§2.5 birebir DEĞİL — bkz. task-5-report.md gerekçesi). -->
+                    <controls:LatestPill x:Name="LabListPill" Click="OnResumeFollowClick" />
+                </Grid>
+            </DockPanel>
+
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1.1*" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- [T63] Dependency graph paneli (Shapes yolu) — 36 düğümlü örnek graf + koşu simülasyonu -->
+                <graph:GraphView x:Name="LabGraph" Grid.Row="0" Margin="0,0,0,10"
+                                 SelectionChanged="OnGraphSelectionChanged" />
+
+                <DockPanel Grid.Row="1">
+                    <appConsole:ConsoleHeader x:Name="LabHeader" DockPanel.Dock="Top" Margin="0,0,0,6" />
+                    <!-- [T59] Konsolun `⌄ latest` pill'i ARTIK ConsoleView'ın kendi içinde (production) — burada ayrıca eklenmez. -->
+                    <appConsole:ConsoleView x:Name="LabConsole" />
+                </DockPanel>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>

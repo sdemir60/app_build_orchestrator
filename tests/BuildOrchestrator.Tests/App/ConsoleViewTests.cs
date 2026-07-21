@@ -1,3 +1,4 @@
+using System.Windows;
 using ICSharpCode.AvalonEdit;
 using BuildOrchestrator.App.Console;
 
@@ -7,6 +8,7 @@ namespace BuildOrchestrator.Tests.App;
 /// [T56/A13.2] ConsoleView: AvalonEdit tabanlı, salt-okunur, batch-append konsol control'ü. Bu iterasyonda
 /// YALNIZ batching + append iskeleti test edilir — colorizer/typewriter/cascade/trim/pill It-4'tür (YAGNI).
 /// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ConsoleViewTests
 {
     [StaFact]
@@ -37,7 +39,8 @@ public class ConsoleViewTests
     public void Editor_is_read_only_no_wrap_and_uses_embedded_console_font()
     {
         var view = new ConsoleView();
-        var editor = Assert.IsType<TextEditor>(view.Content);
+        // [T56/3a] Content artık editör+overlay Grid'i; editöre public Editor erişimcisinden ulaşılır.
+        var editor = view.Editor;
 
         Assert.True(editor.IsReadOnly);
         Assert.False(editor.WordWrap);
@@ -61,6 +64,221 @@ public class ConsoleViewTests
         view.Document = swapped;
 
         Assert.Same(swapped, view.Document);
-        Assert.Equal("swapped content", ((TextEditor)view.Content).Document.Text);
+        Assert.Equal("swapped content", view.Editor.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [3b] render dilimi (son 200 satır)
+
+    [StaFact]
+    public void AppendBatch_caps_the_document_at_the_render_slice_last_lines()
+    {
+        var view = new ConsoleView();
+        for (int i = 0; i < 250; i++) view.AppendBatch($"line{i}\n");
+
+        // Belge son ~200 satıra kırpıldı (baştakiler düştü) — hacim/performans (Ek A #16).
+        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+            $"belge satır sayısı ({view.Document.LineCount}) render dilimini aşmamalı");
+        Assert.Contains("line249", view.Document.Text); // en yeni korunur
+        Assert.DoesNotContain("line0\n", view.Document.Text); // en eski kırpıldı
+    }
+
+    // ---------------------------------------------------------------- [3b] kaskat (reduced-motion instant yolu)
+
+    [StaFact]
+    public void PlayCascade_shows_all_lines_when_reduced_motion_instant()
+    {
+        // Headless testte App.Motion null → animationsEnabled=false → kaskat INSTANT (tüm satırlar, fade yok).
+        var view = new ConsoleView();
+
+        view.PlayCascade(new[] { "a", "b", "c" }, buildInProgress: false);
+
+        Assert.Equal("a\nb\nc\n", view.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [3b I-2] chunk loader GERÇEK yolu
+
+    [StaFact]
+    public void Chunk_scroll_to_top_prepends_previous_slice_contiguously_and_compensates_offset()
+    {
+        // GERÇEK yol: PlayCascade render dilimini (son 200) kurar; arm (tepeden uzaklaş) → scroll-to-top →
+        // ConsoleView.PrependPreviousChunk contiguous eski dilimi prepend eder + VerticalOffset'i telafi eder.
+        var view = new ConsoleView();
+        // Layout: TextView.DefaultLineHeight/VerticalOffset gerçek değer alsın (offset telafisi ölçülebilsin).
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        var all = Enumerable.Range(0, 250).Select(i => $"line{i}").ToArray();
+        view.PlayCascade(all, buildInProgress: false); // instant → son 200 (line50..line249)
+        Assert.StartsWith("line50\n", view.Document.Text);
+        Assert.DoesNotContain("line49\n", view.Document.Text); // ilk 50 henüz chunk loader'da
+
+        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı (aşağı kaydırdı)
+        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk prepend edilir
+
+        // Dikiş: line0..line249 bitişik ve TAM — tekrar YOK, kayıp YOK.
+        var expected = string.Concat(all.Select(l => l + "\n"));
+        Assert.Equal(expected, view.Document.Text);
+
+        // Offset prepend edilen 50 satırın piksel yüksekliği kadar telafi edildi (viewport zıplamaz).
+        Assert.NotNull(view.LastPrepend);
+        var (before, delta, applied) = view.LastPrepend!.Value;
+        Assert.True(delta > 0, $"prepend edilen 50 satırın piksel yüksekliği > 0 olmalı (delta={delta})");
+        Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring
+
+        // Re-arm + tekrar tepe: yüklenecek daha eski satır yok → idempotent (tekrar yükleme/dup YOK).
+        view.EvaluateChunkScroll(100.0);
+        view.EvaluateChunkScroll(0.0);
+        Assert.Equal(expected, view.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [3b M-2] proje modu follow tail-trim
+
+    [StaFact]
+    public void Project_mode_following_document_stays_capped_at_the_render_slice()
+    {
+        // Alta-yapışık (follow) proje logu chatty bir build'de akarken belge render dilimini AŞMAZ.
+        var view = new ConsoleView();
+        view.PlayCascade(new[] { "seed" }, buildInProgress: true); // _projectMode=true, StickToBottom=true (varsayılan)
+
+        for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
+
+        Assert.True(view.Document.LineCount <= ConsoleView.RenderSliceLines + 1,
+            $"follow'da belge satır sayısı ({view.Document.LineCount}) render dilimini aşmamalı");
+        Assert.Contains("live399", view.Document.Text);   // en yeni korunur
+        Assert.DoesNotContain("live0\n", view.Document.Text); // en eski düştü
+    }
+
+    [StaFact]
+    public void Project_mode_scrolled_up_document_is_not_trimmed()
+    {
+        // Kullanıcı yukarı kaydırıp chunk gezerken (StickToBottom=false) tail-trim YOK — prepend'le çakışmaz.
+        var view = new ConsoleView();
+        view.PlayCascade(new[] { "seed" }, buildInProgress: true);
+        view.StickToBottom = false;
+
+        for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
+
+        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines,
+            "scroll-up (browse) durumunda belge kırpılmamalı");
+        Assert.Contains("live0\n", view.Document.Text); // eski satırlar korunur (chunk gezme bozulmaz)
+    }
+
+    // ---------------------------------------------------------------- [3b C-1] follow-trim + scroll-to-top: delik yok
+
+    [StaFact]
+    public void Project_mode_follow_trim_then_scroll_to_top_recovers_backlog_without_a_hole()
+    {
+        // [C-1 regression] Follow-trim, proje modunda belge tepesinden satır siler; bu, chunk loader'ın
+        // _loadedFrom index'ini de ilerletmeli. Aksi halde sonraki scroll-to-top prepend'i STALE index'e karşı
+        // YANLIŞ dilimi yükler → kırpılan satırlar KALICI kaybolur (delik) ve _loadedFrom onları "yüklü" sandığı
+        // için geri getirilemez. Reviewer repro şekli: _loadedFrom>0 olan bir kaskat + çok sayıda canlı append
+        // (follow aktif) + tepeye kaydırma. Layout: offset telafisi ölçülebilsin diye.
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
+        var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
+        view.PlayCascade(all, buildInProgress: true); // instant (headless), _projectMode, StickToBottom=true (varsayılan)
+        Assert.StartsWith("orig100\n", view.Document.Text);
+        Assert.DoesNotContain("orig99\n", view.Document.Text); // ilk 100 chunk loader backlog'unda
+
+        // Chatty canlı build: follow aktifken 250 satır append → tail-trim TÜM orijinal satırları belgeden atar.
+        for (int i = 0; i < 250; i++) view.AppendBatch($"live{i}\n");
+        string liveTail = view.Document.Text;              // belgede kalan salt-live kuyruk (orijinaller kırpıldı)
+        Assert.Contains("live249\n", liveTail);            // en yeni korunur
+        Assert.DoesNotContain("orig", liveTail);           // tüm orijinaller belgeden kırpıldı (backlog'a düştü)
+
+        // Kullanıcı yukarı kaydırır: arm → scroll-to-top → önceki chunk prepend edilir.
+        view.EvaluateChunkScroll(100.0); // arm (tepeden uzaklaş)
+        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk
+
+        // (a) DELİK YOK: prepend, mevcut live kuyruğun ÖNÜNE TAM olarak orig100..orig299'u (kırpılan backlog'un
+        // sonu) dikmeli — kuyruk aynen korunur, araya kayıp/tekrar girmez. STALE index bug'ında _loadedFrom=100
+        // kalır → from=100-200→0 hesaplanır, orig0..orig99 yüklenir ve orig100..orig299 KALICI kaybolur (delik).
+        string expectedAfterFirst = string.Concat(Enumerable.Range(100, 200).Select(i => $"orig{i}\n")) + liveTail;
+        Assert.Equal(expectedAfterFirst, view.Document.Text); // bug'da orig0.. yüklenir → eşitlik tutmaz (RED)
+
+        // (b) VerticalOffset prepend edilen dilimin piksel yüksekliği kadar telafi edildi (viewport zıplamaz).
+        Assert.NotNull(view.LastPrepend);
+        var (before, delta, applied) = view.LastPrepend!.Value;
+        Assert.True(delta > 0, $"prepend edilen dilimin piksel yüksekliği > 0 olmalı (delta={delta})");
+        Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring
+
+        // Tekrar tepeye kaydır: kalan backlog (orig0..orig99) da geri gelir → HİÇBİR satır kalıcı kayıp değil,
+        // belge orig0..orig299 + live kuyruğu olarak TAM ve bitişik (contiguous).
+        view.EvaluateChunkScroll(100.0);
+        view.EvaluateChunkScroll(0.0);
+        string expectedAfterSecond = string.Concat(Enumerable.Range(0, 300).Select(i => $"orig{i}\n")) + liveTail;
+        Assert.Equal(expectedAfterSecond, view.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [I-1] gerçek OnScrollOffsetChanged yolu
+
+    [StaFact]
+    public void Real_OnScrollOffsetChanged_path_prepends_on_jump_to_top_and_releases_stuck_without_data_loss()
+    {
+        // [I-1] EvaluateChunkScroll(offset) çağıran testlerin AKSİNE (yukarıdakiler), bu test AvalonEdit'in
+        // gerçek ScrollOffsetChanged'ine kablı OLAN, üretimin ta kendisi ConsoleView.OnScrollOffsetChanged'i
+        // ÇAĞIRIR (paralel bir kopya yol DEĞİL — internal, EvaluateChunkScroll'daki AYNI gerekçeyle: canlı bir
+        // scroll event'i beklemeden GERÇEK metodu tetikleyebilmek). Amaç: bottom-anchor'ın IsStuck yeniden-hesabı
+        // ile chunk-loader'ın prepend'i AYNI olayda (kullanıcı dipteyken tek hamlede tepeye/Ctrl+Home) çakıştığında
+        // (a) prepend'in delik BIRAKMADIĞINI (backlog bitişik) VE (b) kullanıcının artık dipte OLMADIĞININ doğru
+        // yansıtıldığını (StickToBottom=false — CompensatedOffset'in üzerine YANLIŞLIKLA "dibe git" yazılmadığının
+        // dolaylı kanıtı: bkz. BottomAnchorBehaviorTests.Growth_arriving_after_IsStuck_was_freshly_released_...)
+        // doğrular.
+        //
+        // [Önemli — dürüstlük notu] Deneysel olarak doğrulandı: AvalonEdit'in ExtentHeight/VerticalOffset'i BU
+        // headless/offscreen host'ta document.Insert/ScrollToVerticalOffset'ten SONRA, araya GERÇEK bir layout
+        // pass girmeden senkron YANSIMAZ — bu yüzden I-1'in tarif ettiği "aynı senkron çağrı içinde post-prepend
+        // extent'in stale-true IsStuck'a sızması" tam olarak BU testte yeniden üretilemiyor (eski SIRA ile de bu
+        // assertion'lar geçiyor — denenip doğrulandı, geri alınıp tekrar denendi). Gerçek mekanizma yalnız
+        // AvalonEdit'in KENDİ iç senkron re-entrant event'i (ScrollToVerticalOffset'in kendi layout flush'ı)
+        // üzerinden tetiklenebilir, ki bu headless bir StaFact'te DETERMİNİSTİK olarak zorlanamıyor. Bu yüzden bu
+        // test — GERÇEK yolu şu ana dek TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick)
+        // doğrular; I-1'in SIRA-bağımlı korumasının kendisi ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic
+        // testiyle kanıtlanır (task-5-report.md "Fix wave" bölümünde gerekçelendirilmiştir).
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
+        var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
+        view.PlayCascade(all, buildInProgress: true); // _projectMode, StickToBottom=true (varsayılan/forced)
+        view.UpdateLayout();
+
+        // _lastExtentHeight'i taze bir gerçek olayla ilk kez tohumla (üretimde bu ilk gerçek scroll olayında
+        // zaten olurdu) — bunu ATLAMAK "ilk gözlem = dev büyüme" yapay bir ayrı davranışı test eder, I-1 DEĞİL.
+        view.OnScrollOffsetChanged();
+
+        // Kullanıcı dipteyken normal aktivite offset'i hep 48px eşiğinin ÜSTÜNDE tutar → _armedForChunk latch'i
+        // GERÇEK üretimde böyle true olurdu (bkz. EvaluateChunkScroll: offset>48 → armed=true). Offset argümanı
+        // burada AYNI mekanizma — gerçek VerticalOffset'e dokunmadan (EditorControl.ScrollToVerticalOffset'in bu
+        // host'ta senkron yansımadığı yukarıda belgelendi) latch'i üretimin kendi metoduyla kurar.
+        view.EvaluateChunkScroll(500.0);
+
+        Assert.True(view.StickToBottom, "senaryo ön-koşulu: kullanıcı dipteyken IsStuck=true (henüz taze değil)");
+
+        // TEK hamlede Ctrl+Home/Home: gerçek editör offset'i zaten (bu host'ta) tepeye yakın dinleniyor — GERÇEK
+        // handler'ı SENKRON tetikle (canlı bir event beklemeden, EvaluateChunkScroll ile AYNI test deseni).
+        view.OnScrollOffsetChanged();
+
+        // (a) Delik yok: prepend gerçekleşti, backlog (orig0..orig99) render dilimine (orig100..orig299) bitişik
+        // dikildi — tekrar/kayıp yok.
+        var expected = string.Concat(all.Select(l => l + "\n"));
+        Assert.Equal(expected, view.Document.Text);
+        Assert.NotNull(view.LastPrepend);
+        var (before, delta, applied) = view.LastPrepend!.Value;
+        Assert.True(delta > 0, $"prepend edilen dilimin piksel yüksekliği > 0 olmalı (delta={delta})");
+        Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring — CompensatedOffset OTORİTE
+
+        // (b) Kullanıcı artık dipte SAYILMIYOR (StickToBottom=false) — I-1'in ana iddiası: prepend'in kendi
+        // büyümesi stale-true bir IsStuck'ı YANLIŞLIKLA "dipte kal" olarak yorumlayıp CompensatedOffset'i ezip
+        // dibe YANKLAMAMALI. StickToBottom hâlâ true kalsaydı bu, kullanıcının az önce tepeye kaydırdığı GERÇEĞİYLE
+        // ÇELİŞirdi (ve bir sonraki içerik büyümesinde konsol onu TEKRAR dibe fırlatırdı).
+        Assert.False(view.StickToBottom);
     }
 }
