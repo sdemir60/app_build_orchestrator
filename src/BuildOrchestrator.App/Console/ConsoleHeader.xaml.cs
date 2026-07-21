@@ -1,7 +1,8 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using BuildOrchestrator.App.ViewModels;
 
@@ -19,8 +20,12 @@ public partial class ConsoleHeader : UserControl
 {
     public enum HeaderMode { Narrative, ProjectLog }
 
-    private const string CopyGlyph = "";  // Segoe MDL2 Assets: Copy
-    private const string CheckGlyph = ""; // Segoe MDL2 Assets: CheckMark / Accept
+    // [T64] Çizilmiş ikonlar (Icons.xaml) — ikon fontu YOK. Stroke kalınlığı kaynağın kendi değeri:
+    // copy 1.8 (BuildApp.jsx:68), check 2 (BuildApp.jsx:56); 24'lük viewBox birimindedir, Viewbox küçültür.
+    private const string CopyIconKey = "Icon.Copy";
+    private const double CopyIconStrokeWidth = 1.8;
+    private const string CheckIconKey = "Icon.Check";
+    private const double CheckIconStrokeWidth = 2.0;
 
     private readonly CopyLogFeedback _copyFeedback = new();
     private DispatcherTimer? _copyRevertTimer;
@@ -132,12 +137,7 @@ public partial class ConsoleHeader : UserControl
         return timer;
     }
 
-    private void ShowCopiedVisual()
-    {
-        CopyLogGlyph.Text = CheckGlyph;
-        CopyLogButton.ToolTip = "Copied";
-        CopyLogButton.SetResourceReference(ForegroundProperty, "Brush.StatusSuccessText");
-    }
+    private void ShowCopiedVisual() => SetCopyIcon(CheckIconKey, CheckIconStrokeWidth, "Copied", "Brush.StatusSuccessText");
 
     private void ResetCopyVisual()
     {
@@ -145,11 +145,22 @@ public partial class ConsoleHeader : UserControl
         _copyClock?.Stop();
         _copyClock = null;
         _copyFeedback.Revert();
-        CopyLogGlyph.Text = CopyGlyph;
-        CopyLogButton.ToolTip = "Copy log";
-        CopyLogButton.SetResourceReference(ForegroundProperty, "Brush.TextSecondary");
+        SetCopyIcon(CopyIconKey, CopyIconStrokeWidth, "Copy log", "Brush.TextSecondary");
     }
 
-    /// <summary>Test için: kopyalandı görsel durumunda mı (✓ + "Copied").</summary>
-    internal bool IsShowingCopied => CopyLogGlyph.Text == CheckGlyph;
+    /// <summary>Copy-log butonunun görselini (ikon geometrisi + stroke + tooltip + renk) tek yerden sürer.
+    /// Geometri <c>SetResourceReference</c> ile bağlanır: sözlük merge edilmemişse sessizce çözümsüz kalır.</summary>
+    private void SetCopyIcon(string iconKey, double strokeWidth, string tooltip, string foregroundKey)
+    {
+        CopyLogGlyph.SetResourceReference(System.Windows.Shapes.Path.DataProperty, iconKey);
+        CopyLogGlyph.StrokeThickness = strokeWidth;
+        CopyLogButton.ToolTip = tooltip;
+        CopyLogButton.SetResourceReference(ForegroundProperty, foregroundKey);
+    }
+
+    /// <summary>Test için: kopyalandı görsel durumunda mı (✓ ikonu + "Copied"). Gerçek <c>Path.Data</c>
+    /// okunur — Icons.xaml bu kontrolün kaynak kapsamında değilse (merge yok) her iki durumda da
+    /// <c>null</c> olurdu, bu yüzden çözülemeyen ikon açıkça "kopyalanmadı" sayılır.</summary>
+    internal bool IsShowingCopied
+        => TryFindResource(CheckIconKey) is Geometry check && ReferenceEquals(CopyLogGlyph.Data, check);
 }

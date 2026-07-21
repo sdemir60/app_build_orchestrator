@@ -5,9 +5,11 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <!-- [It-4a Foundation] Bu 6 UI task'ının TEK motion/token kaynağı — reuse zorunlu, hardcode YASAK. -->
+                <!-- [It-4a Foundation] Bu 6 UI task'ının TEK motion/token kaynağı — reuse zorunlu, hardcode YASAK.
+                     [T64] Icons.xaml de aynı statüdedir: uygulamanın TEK ikon kaynağı (sistem ikon fontu YOK). -->
                 <ResourceDictionary Source="Resources/Motion.xaml" />
                 <ResourceDictionary Source="Resources/Tokens.xaml" />
+                <ResourceDictionary Source="Resources/Icons.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>

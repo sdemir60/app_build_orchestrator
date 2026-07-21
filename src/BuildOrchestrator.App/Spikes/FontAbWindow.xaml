@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="T65 — Font A/B (Geist / Geist Mono · Display|Ideal × ClearType|Grayscale)"
         Width="1500" Height="920"
-        Background="#0e0e10"
+        Background="{DynamicResource Brush.SurfaceBase}"
         UseLayoutRounding="True"
         WindowStartupLocation="CenterScreen">
     <!-- [T65/K9] Karar-kapısı spike penceresi: aynı design-v1 metin örnekleri 4 kombinasyonda yan yana.

@@ -14,6 +14,25 @@ internal static class RepoPaths
     /// <summary>Solution dosyasını içeren dizin (mutlak yol).</summary>
     public static string RepoRoot { get; } = FindRepoRoot();
 
+    /// <summary>App projesinin kaynak kökü (mutlak yol).</summary>
+    public static string AppSrcRoot { get; } = Path.Combine(RepoRoot, "src", "BuildOrchestrator.App");
+
+    /// <summary>
+    /// [T64] App kaynak ağacındaki dosyalar — derleme çıktıları (<c>bin</c>/<c>obj</c>) HARİÇ. Kaynağın
+    /// KENDİSİNİ tarayan guard testleri (ikon fontu / font pack URI'si / ham renk literali) hepsi buradan
+    /// beslenir: aynı filtreyi her test sınıfında yeniden yazmak (kopya YASAK, CLAUDE.md) yerine tek yer.
+    /// </summary>
+    public static IEnumerable<string> AppSourceFiles(string searchPattern) =>
+        Directory.EnumerateFiles(AppSrcRoot, searchPattern, SearchOption.AllDirectories)
+                 .Where(f => !IsBuildOutput(f));
+
+    private static bool IsBuildOutput(string path)
+    {
+        string[] segments = Path.GetRelativePath(AppSrcRoot, path)
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return segments.Contains("bin") || segments.Contains("obj");
+    }
+
     private static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

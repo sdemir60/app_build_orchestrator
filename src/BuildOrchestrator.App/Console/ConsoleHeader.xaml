@@ -13,12 +13,21 @@
                  FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
                  Foreground="{DynamicResource Brush.TextFaint}" />
       <!-- [3b/Ek A #3] Copy log butonu — yalnız proje-log modunda (log varken) görünür; N lines'ın SOLUNDA.
-           Segoe MDL2 glyph: copy (E8C8) → başarılı kopyada ✓ (E73E) + "Copied" tooltip (1400ms). -->
+           [T64] İkon fontu YOK: Icon.Copy → başarılı kopyada Icon.Check + "Copied" tooltip (1400ms), ikisi de
+           Icons.xaml'den çizilmiş geometri (bkz. ConsoleHeader.xaml.cs). 24'lük viewBox 12px'e Viewbox ile
+           küçültülür — böylece stroke da birlikte küçülür (Path.Stretch stroke'u ölçeklemez).
+           DynamicResource: headless test host'unda (merge zinciri yok) StaticResource throw ederdi. -->
       <Button x:Name="CopyLogButton" DockPanel.Dock="Right" Visibility="Collapsed" Click="OnCopyLogClick"
               Background="Transparent" BorderThickness="0" Padding="4,0" Margin="0,0,8,0" Cursor="Hand"
               VerticalAlignment="Center" ToolTip="Copy log"
               Foreground="{DynamicResource Brush.TextSecondary}">
-        <TextBlock x:Name="CopyLogGlyph" Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+        <Viewbox Width="12" Height="12">
+          <Canvas Width="24" Height="24">
+            <Path x:Name="CopyLogGlyph" Data="{DynamicResource Icon.Copy}" StrokeThickness="1.8"
+                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+          </Canvas>
+        </Viewbox>
       </Button>
       <!-- Sol: moda göre değişen içerik -->
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

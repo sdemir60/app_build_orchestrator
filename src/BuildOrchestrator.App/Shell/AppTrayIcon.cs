@@ -12,7 +12,9 @@ namespace BuildOrchestrator.App.Shell;
 /// dışarı verir (<see cref="RestoreRequested"/>/<see cref="StopRequested"/>/<see cref="ExitRequested"/>).
 ///
 /// <para><b>İkon:</b> 16px ELLE ayarlanmış raster (<c>Assets/tray-icon-16.ico</c>) — 64px SVG'nin otomatik
-/// küçültülmesi amber "D"yi bozar (feasibility §3.2). Tam ikon hattı (çok boyutlu ICO/XAML) T64.</para>
+/// küçültülmesi amber "D"yi bozar (feasibility §3.2). [T64] Çok boyutlu <c>app-icon.ico</c> (pencere/taskbar)
+/// artık var ama tepsi BİLEREK 16px varyantında kalır: tepsi zaten 16px ister ve elle ayarlanmış kare
+/// rasterlestirilmiş olandan nettir.</para>
 /// </summary>
 internal sealed class AppTrayIcon : IDisposable
 {

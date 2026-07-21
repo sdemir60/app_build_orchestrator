@@ -3,6 +3,11 @@ using System.Windows.Media;
 
 namespace BuildOrchestrator.Tests.App;
 
+/// <summary>
+/// [It-0 · T64] Gömülü Geist/Geist Mono asset'lerinin kabul testleri (ağırlık ayrışması, ASCII kapsamı,
+/// gerekli UI glif'lerinin bir sağlayıcısı olması) + gömülü font <b>pack URI'sinin TEK yerde</b> (AppFonts)
+/// yazıldığının guard'ı.
+/// </summary>
 public class FontAssetTests
 {
     static string FontsDir => Path.Combine(AppContext.BaseDirectory, "TestAssets", "Fonts");
@@ -37,5 +42,32 @@ public class FontAssetTests
         }
         // rapor kayda girer (Task 14): FALLBACK satırları CompositeFont FamilyMap'ine (Task 12) taşınır
         File.WriteAllLines(Path.Combine(AppContext.BaseDirectory, "glyph-coverage.txt"), report);
+    }
+
+    [Fact]
+    public void Geist_SIL_OFL_licence_ships_with_the_application()
+    {
+        // [T64] OFL §"the above copyright notice ... shall be included in all copies": gömülü OTF'ler
+        // uygulamanın içinde dağıtıldığı için lisans metni de ÇIKTIYA kopyalanmak zorunda (csproj Content +
+        // CopyToOutputDirectory). Kaynaktaki varlığı yeterli DEĞİL — bu yüzden çıktı dizini de kontrol edilir.
+        string source = Path.Combine(RepoPaths.AppSrcRoot, "Assets", "GEIST-LICENSE.txt");
+        Assert.True(File.Exists(source), $"lisans kaynakta yok: {source}");
+        Assert.Contains("SIL Open Font License", File.ReadAllText(source), StringComparison.Ordinal);
+
+        string copied = Path.Combine(AppContext.BaseDirectory, "Assets", "GEIST-LICENSE.txt");
+        Assert.True(File.Exists(copied), $"lisans çıktıya kopyalanmamış: {copied}");
+    }
+
+    [StaFact]
+    public void Font_pack_uri_is_declared_in_exactly_one_place()
+    {
+        // [T64] AppFonts'un kendi doc'u "pack URI'yi her tüketicide tekrar yazma" diyordu ama kural üç yerde
+        // ihlal ediliyordu (TrackedTextBlock/ConsoleView/FontAbWindow). Spikes HARİÇ: FontAbWindow T65'in
+        // referans kabuğudur, App'ten bağımsız kalmalıdır (bkz. T65 kararı) — bilinçli tek istisna.
+        int sites = RepoPaths.AppSourceFiles("*.cs")
+            .Where(f => !f.Contains("Spikes", StringComparison.Ordinal))
+            .Count(f => File.ReadAllText(f).Contains("component/Fonts/", StringComparison.Ordinal));
+
+        Assert.Equal(1, sites);                                        // yalnız AppFonts.cs
     }
 }

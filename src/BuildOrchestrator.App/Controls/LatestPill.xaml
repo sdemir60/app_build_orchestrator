@@ -20,7 +20,9 @@
                 Effect="{DynamicResource Effect.PopoverShadow}"
                 Padding="7,0,9,0" Height="22">
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock x:Name="Glyph" Text="&#x2304;" FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
+            <!-- [T64] Chevron ⌄ Geist Mono'da YOK: CompositeFont (Geist Mono Console) kullanılır — FamilyMap'i
+                 sembolü Segoe UI Symbol'e düşürür (düz Mono bu eşlemeyi baypas eder → tofu riski). -->
+            <TextBlock x:Name="Glyph" Text="&#x2304;" FontFamily="{x:Static controls:AppFonts.MonoConsole}" FontSize="11"
                        Margin="0,0,5,0" VerticalAlignment="Center" />
             <TextBlock x:Name="Label" Text="latest" FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
                        VerticalAlignment="Center" />

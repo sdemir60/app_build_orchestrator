@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
         Title="Build Orchestrator" Width="1400" Height="800"
+        Icon="pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
         WindowStyle="SingleBorderWindow"
         Background="{DynamicResource Brush.SurfaceBase}" Foreground="{DynamicResource Brush.TextPrimary}"
@@ -37,6 +38,17 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <!-- [T64] Caption glyph'leri artık KARAKTER değil, Icons.xaml'deki çizilmiş 10x10 1px-stroke geometri.
+         Stretch="None": geometri kendi viewBox koordinatlarında (0..10) çizilir, ölçeklenmez — SVG ile birebir.
+         Stroke, butonun Foreground'unu izler (hover/close-fail rengi T60'ta oradan sürülecek). -->
+    <Style x:Key="CaptionGlyph" TargetType="Path">
+      <Setter Property="Width" Value="10" />
+      <Setter Property="Height" Value="10" />
+      <Setter Property="Stretch" Value="None" />
+      <Setter Property="StrokeThickness" Value="1" />
+      <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+      <Setter Property="SnapsToDevicePixels" Value="True" />
+    </Style>
   </Window.Resources>
   <Border x:Name="RootShell">
     <Grid>
@@ -45,10 +57,18 @@
       </Grid.RowDefinitions>
       <DockPanel Grid.Row="0" Background="{DynamicResource Brush.Surface}">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
-          <Button x:Name="MinButton" Content="&#x2013;" Style="{StaticResource CaptionButton}" Click="OnMinimize" />
-          <!-- Content'i CaptionGlyphs.BindMaxButton sürer (K8: maximize'da restore glyph'i) -->
-          <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="OnMaximizeRestore" />
-          <Button x:Name="CloseButton" Content="&#x2715;" Style="{StaticResource CaptionButton}" Click="OnClose" />
+          <!-- DynamicResource (StaticResource DEĞİL): merge zinciri olmayan bir bağlamda StaticResource
+               yükleme anında throw ederdi; DynamicResource sessizce çözümsüz kalır (LatestPill ile aynı gerekçe). -->
+          <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Click="OnMinimize">
+            <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionMinimize}" />
+          </Button>
+          <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="OnMaximizeRestore">
+            <!-- Data'yı CaptionGlyphs.BindMaxButton sürer (K8: maximize'da restore glyph'i) -->
+            <Path x:Name="MaxGlyph" Style="{StaticResource CaptionGlyph}" />
+          </Button>
+          <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Click="OnClose">
+            <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionClose}" />
+          </Button>
         </StackPanel>
         <TextBlock Text="Build Orchestrator" VerticalAlignment="Center" Margin="12,0" />
       </DockPanel>

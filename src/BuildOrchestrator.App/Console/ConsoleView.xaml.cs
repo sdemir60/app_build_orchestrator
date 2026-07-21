@@ -36,11 +36,6 @@ public partial class ConsoleView : UserControl
     // Kullanıcı tepeye ne kadar yaklaşınca önceki chunk yüklenir (px) — bottom-stick eşiğiyle uyumlu (48px).
     private const double ChunkTopThresholdPx = 48.0;
 
-    // Gömülü Geist Mono Console composite font (It-0 asset'i) — pack URI (App assembly'sinden gömülü kaynak).
-    private static readonly FontFamily ConsoleFontFamily = new(
-        new Uri("pack://application:,,,/BuildOrchestrator.App;component/Fonts/"),
-        "./#Geist Mono Console");
-
     private ConsoleColorizer? _colorizer;
     private ConsolePalette? _palette;
 
@@ -72,9 +67,10 @@ public partial class ConsoleView : UserControl
     public ConsoleView()
     {
         InitializeComponent();
-        EditorControl.FontFamily = ConsoleFontFamily;
-        ActiveLineText.FontFamily = ConsoleFontFamily;
-        BuildProgressText.FontFamily = ConsoleFontFamily;
+        // Gömülü Geist Mono Console CompositeFont'u (It-0 asset'i) — pack URI burada TEKRARLANMAZ [T64].
+        EditorControl.FontFamily = AppFonts.MonoConsole;
+        ActiveLineText.FontFamily = AppFonts.MonoConsole;
+        BuildProgressText.FontFamily = AppFonts.MonoConsole;
         Loaded += (_, _) => EnsureColorizer();
         EditorControl.TextArea.TextView.ScrollOffsetChanged += (_, _) => OnScrollOffsetChanged();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.

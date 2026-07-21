@@ -1,0 +1,186 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+      [T64] Uygulamanın TEK ikon sözlüğü. Öncesinde dört uyumsuz kaynak vardı: Unicode karakterler
+      (CaptionGlyphs), Windows'un sistem ikon FONTU (ConsoleHeader), düz semboller ve koda gömülü
+      Geometry.Parse path'leri (GraphView). Bundan sonra HER ikon buradaki ÇİZİLMİŞ bir Geometry'dir —
+      sistem ikon fontuna bağımlılık YOK (IconGeometryTests bunu pinler; testin adındaki font adının
+      kaynak ağacında hiçbir yerde geçmemesi guard'ın ta kendisidir).
+
+      KAYNAK — path data BİREBİR kopyalanmıştır, yeniden çizim/yuvarlama YOK:
+        * `I.*` tablosu: .claude/outputs/2026-07-15-19-00-design-v1/prototype/app/BuildApp.jsx:44-72
+          (satır numarası her ikonun kendi yorumunda). Lucide geometrisi, viewBox 0 0 24 24 —
+          İSTİSNA: Icon.LayQuad/LayList/LayFocus viewBox 0 0 16 16'dır.
+        * Icon.Package: aynı design-v1 DependencyGraphNode'unun lucide "package"'ı; repoda zaten
+          Graph/GraphView.xaml.cs:60-62'de inline sabit olarak duruyordu (o dördüncü kaynak).
+        * Caption glyph'leri: prototype/_ds/**/_ds_bundle.js:1164-1172 (WinBtn SVG'leri), viewBox 0 0 10 10,
+          1px stroke. Icon.CaptionRestore tasarımda LİTERAL yoktur — aşağıda gerekçesiyle TÜRETİLMİŞTİR.
+
+      BİÇİM: SVG'de birden çok <path d="…"> varsa figürler tek PathGeometry'de boşlukla birleştirilir
+      (GraphView.xaml.cs:60-62 aynı deseni kullanıyordu). <circle>/<rect>/<line> gibi path OLMAYAN öğeler
+      WPF'in kendi geometri tipleriyle (Ellipse/Rectangle/LineGeometry) bir GeometryGroup içinde verilir;
+      <polygon>/<polyline> nokta listeleri path'e çevrilir (tek olası karşılık) ve noktalar birebir korunur.
+
+      TÜKETİM: bunlar DONMUŞ (parse anında freeze) ve TÜM tüketiciler arasında PAYLAŞILAN geometrilerdir —
+      Path, Data'nın sahipliğini almaz, bu yüzden paylaşım doğrudur. Mutasyon/animasyon gerektiren bir
+      tüketici çıkarsa x:Shared="False" GEREKİR (bugün yok).
+
+      ÖLÇEK: geometriler kendi viewBox birimindedir. 24'lük bir ikonu 12px çizerken stroke da küçülmelidir —
+      Viewbox + Canvas(24x24) sarmalayıcısı kullanılır (bkz. ConsoleHeader.xaml, GraphView.xaml.cs:290-299).
+      Caption glyph'leri 10x10'da 1:1 çizilir, ölçekleme yok.
+    -->
+
+    <!-- ============================ eylem / durum ikonları (viewBox 0 0 24 24) ============================ -->
+
+    <!-- BuildApp.jsx:47 play — <polygon points="6 3 20 12 6 21 6 3"/> (dolu) -->
+    <PathGeometry x:Key="Icon.Play" Figures="M6 3L20 12L6 21L6 3Z" />
+
+    <!-- BuildApp.jsx:48 stop — <rect x="5" y="5" width="14" height="14" rx="1"/> (dolu) -->
+    <RectangleGeometry x:Key="Icon.Stop" Rect="5,5,14,14" RadiusX="1" RadiusY="1" />
+
+    <!-- BuildApp.jsx:49 sync -->
+    <PathGeometry x:Key="Icon.Sync"
+                  Figures="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M21 21v-5h-5" />
+
+    <!-- BuildApp.jsx:66 rot -->
+    <PathGeometry x:Key="Icon.Rot" Figures="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5" />
+
+    <!-- BuildApp.jsx:69 redo -->
+    <PathGeometry x:Key="Icon.Redo" Figures="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5" />
+
+    <!-- BuildApp.jsx:51 folder -->
+    <PathGeometry x:Key="Icon.Folder"
+                  Figures="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+
+    <!-- BuildApp.jsx:52 folderOpen -->
+    <PathGeometry x:Key="Icon.FolderOpen"
+                  Figures="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+
+    <!-- BuildApp.jsx:53 vs — <polyline points="16 18 22 12 16 6"/> + <polyline points="8 6 2 12 8 18"/> -->
+    <PathGeometry x:Key="Icon.Vs" Figures="M16 18L22 12L16 6 M8 6L2 12L8 18" />
+
+    <!-- BuildApp.jsx:45 branch — <line x1="6" x2="6" y1="3" y2="15"/> + 2x <circle r="3"/> + <path/> -->
+    <GeometryGroup x:Key="Icon.Branch">
+        <LineGeometry StartPoint="6,3" EndPoint="6,15" />
+        <EllipseGeometry Center="18,6" RadiusX="3" RadiusY="3" />
+        <EllipseGeometry Center="6,18" RadiusX="3" RadiusY="3" />
+        <PathGeometry Figures="M18 9a9 9 0 0 1-9 9" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:46 tree -->
+    <PathGeometry x:Key="Icon.Tree"
+                  Figures="M8 3v4a2 2 0 0 0 2 2h8 M8 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2 M8 13h6a2 2 0 0 1 2 2v6" />
+
+    <!-- BuildApp.jsx:50 search — <circle cx="11" cy="11" r="8"/> + <path d="m21 21-4.3-4.3"/> -->
+    <GeometryGroup x:Key="Icon.Search">
+        <EllipseGeometry Center="11,11" RadiusX="8" RadiusY="8" />
+        <PathGeometry Figures="m21 21-4.3-4.3" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:56 check -->
+    <PathGeometry x:Key="Icon.Check" Figures="M20 6 9 17l-5-5" />
+
+    <!-- BuildApp.jsx:68 copy — <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/> + <path/> -->
+    <GeometryGroup x:Key="Icon.Copy">
+        <RectangleGeometry Rect="8,8,14,14" RadiusX="2" RadiusY="2" />
+        <PathGeometry Figures="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:64 down -->
+    <PathGeometry x:Key="Icon.Down" Figures="m6 9 6 6 6-6" />
+
+    <!-- BuildApp.jsx:55 trash -->
+    <PathGeometry x:Key="Icon.Trash"
+                  Figures="M3 6h18 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+
+    <!-- BuildApp.jsx:65 plus -->
+    <PathGeometry x:Key="Icon.Plus" Figures="M5 12h14 M12 5v14" />
+
+    <!-- BuildApp.jsx:54 back -->
+    <PathGeometry x:Key="Icon.Back" Figures="m12 19-7-7 7-7 M19 12H5" />
+
+    <!-- BuildApp.jsx:67 grip — 6x <circle r="1.4"/> (dolu) -->
+    <GeometryGroup x:Key="Icon.Grip">
+        <EllipseGeometry Center="9,6" RadiusX="1.4" RadiusY="1.4" />
+        <EllipseGeometry Center="9,12" RadiusX="1.4" RadiusY="1.4" />
+        <EllipseGeometry Center="9,18" RadiusX="1.4" RadiusY="1.4" />
+        <EllipseGeometry Center="15,6" RadiusX="1.4" RadiusY="1.4" />
+        <EllipseGeometry Center="15,12" RadiusX="1.4" RadiusY="1.4" />
+        <EllipseGeometry Center="15,18" RadiusX="1.4" RadiusY="1.4" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:60 gear — <path/> + <circle cx="12" cy="12" r="3"/> -->
+    <GeometryGroup x:Key="Icon.Gear">
+        <PathGeometry Figures="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+        <EllipseGeometry Center="12,12" RadiusX="3" RadiusY="3" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:61 sigma -->
+    <PathGeometry x:Key="Icon.Sigma" Figures="M18 7V4H6l6 8-6 8h12v-3" />
+
+    <!-- BuildApp.jsx:62 chevUp (BuildApp.jsx:63 `up` ile path'i AYNI — yalnız çizim boyu farklı, tek anahtar) -->
+    <PathGeometry x:Key="Icon.ChevUp" Figures="m18 15-6-6-6 6" />
+
+    <!-- BuildApp.jsx:59 alertTri -->
+    <PathGeometry x:Key="Icon.AlertTri"
+                  Figures="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z M12 9v4 M12 17h.01" />
+
+    <!-- BuildApp.jsx:58 depWarn — dolu üçgen -->
+    <PathGeometry x:Key="Icon.DepWarn" Figures="M12 3 23 21H1Z" />
+
+    <!-- GraphView.xaml.cs:60-62 lucide "package" — DS DependencyGraphNode'un çizdiği ikon -->
+    <PathGeometry x:Key="Icon.Package"
+                  Figures="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12" />
+
+    <!-- ============================ layout seçici ikonları (viewBox 0 0 16 16) ============================ -->
+
+    <!-- BuildApp.jsx:70 layQuad — 4x <rect rx="1"/> -->
+    <GeometryGroup x:Key="Icon.LayQuad">
+        <RectangleGeometry Rect="1.7,2.7,5.5,4.5" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="8.8,2.7,5.5,4.5" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="1.7,8.8,5.5,4.5" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="8.8,8.8,5.5,4.5" RadiusX="1" RadiusY="1" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:71 layList -->
+    <GeometryGroup x:Key="Icon.LayList">
+        <RectangleGeometry Rect="1.7,2.7,5.5,10.6" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="8.8,2.7,5.5,4.5" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="8.8,8.8,5.5,4.5" RadiusX="1" RadiusY="1" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:72 layFocus -->
+    <GeometryGroup x:Key="Icon.LayFocus">
+        <RectangleGeometry Rect="1.7,2.7,5.5,10.6" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="8.8,2.7,5.5,7.1" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="8.8,11.4,5.5,1.9" RadiusX="0.95" RadiusY="0.95" />
+    </GeometryGroup>
+
+    <!-- ====================== title bar caption glyph'leri (viewBox 0 0 10 10, 1px stroke) ====================== -->
+
+    <!-- _ds_bundle.js:1164-1172 WinBtn kind='min' — <path d="M0.5 5h9"/> -->
+    <PathGeometry x:Key="Icon.CaptionMinimize" Figures="M0.5 5h9" />
+
+    <!-- _ds_bundle.js:1164-1172 WinBtn kind='max' — <rect x="1" y="1" width="8" height="8"/> -->
+    <PathGeometry x:Key="Icon.CaptionMaximize" Figures="M1 1h8v8h-8Z" />
+
+    <!--
+      [K8] TÜRETİLMİŞ — tasarımda literal karşılığı YOKTUR (Tokens.xaml'deki Brush.StatusQueuedBorder /
+      FontWeight.* ile aynı statü: kaynaksız değer, gerekçesi burada).
+
+      Tasarım (design-v1) maximize butonunu TEK kare olarak verir ve WindowState=Maximized durumunu tanımsız
+      bırakır; v7 kararı K8 bu durumda glyph'in "restore" (iki iç içe / kaydırılmış kare) olmasını ister.
+      Türetme, diğer üç caption glyph'iyle AYNI 10x10 ızgarada ve aynı 1px stroke ile yapılır:
+        * ön kare  = maximize karesinin (1,1 8x8) 6x6'ya küçültülüp sol-alta kaydırılmışı → (1,3) 6x6
+        * arka kare = aynı 6x6 karenin sağ-üste kaydırılmışı → (3,1) 6x6; yalnız ön karenin DIŞINDA kalan
+          parçası çizilir (klasik Windows restore kancası: sol kenarın üst 2 birimi, üst kenar, sağ kenar,
+          alt kenarın sağ 2 birimi) → "M3 3V1h6v6h-2"
+      Sonuç Icon.CaptionMaximize ile aynı sınırlara (1..9) oturur; iki FIGÜR olması "iki kare" anlamını
+      taşır ve IconGeometryTests bunu pinler.
+    -->
+    <PathGeometry x:Key="Icon.CaptionRestore" Figures="M1 3h6v6h-6Z M3 3V1h6v6h-2" />
+
+    <!-- _ds_bundle.js:1164-1172 WinBtn kind='close' — <path d="M1 1l8 8M9 1l-8 8"/> -->
+    <PathGeometry x:Key="Icon.CaptionClose" Figures="M1 1l8 8M9 1l-8 8" />
+
+</ResourceDictionary>

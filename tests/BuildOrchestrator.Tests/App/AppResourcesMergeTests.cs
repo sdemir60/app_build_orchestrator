@@ -50,7 +50,27 @@ public class AppResourcesMergeTests
     }
 
     [Fact]
-    public void App_xaml_merges_exactly_the_two_foundation_dictionaries_no_more_no_less()
+    public void App_xaml_merges_the_Icons_resource_dictionary()
+    {
+        var doc = LoadAppXaml();
+
+        var sources = doc.Descendants(Presentation + "ResourceDictionary")
+            .Attributes("Source")
+            .Select(a => a.Value)
+            .ToList();
+
+        Assert.Contains("Resources/Icons.xaml", sources);
+    }
+
+    /// <summary>
+    /// Beklenen liste [T64] ile İKİDEN ÜÇE çıktı: <c>Resources/Icons.xaml</c> uygulamanın TEK ikon kaynağı
+    /// olarak merge zincirine katıldı (Segoe MDL2 ikon fontu ve koda gömülü <c>Geometry.Parse</c> path'leri
+    /// yerine). İddia bilerek TAM EŞİTLİK'tir ("en az N" DEĞİL): bu testin tüm değeri, merge zincirine
+    /// düşünmeden bir sözlük eklenmesinin derlemeyi kırmasıdır — yükleme sırası (token'lar ikonlardan önce)
+    /// ve zincirin kısalığı bilinçli kararlardır.
+    /// </summary>
+    [Fact]
+    public void App_xaml_merges_exactly_the_three_foundation_dictionaries_no_more_no_less()
     {
         var doc = LoadAppXaml();
 
@@ -60,6 +80,6 @@ public class AppResourcesMergeTests
             .Select(e => e.Attribute("Source")?.Value)
             .ToList();
 
-        Assert.Equal(["Resources/Motion.xaml", "Resources/Tokens.xaml"], sources);
+        Assert.Equal(["Resources/Motion.xaml", "Resources/Tokens.xaml", "Resources/Icons.xaml"], sources);
     }
 }
