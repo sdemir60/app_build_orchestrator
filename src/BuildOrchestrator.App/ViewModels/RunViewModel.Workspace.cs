@@ -158,9 +158,16 @@ public sealed partial class RunViewModel
         for (int i = 0; i < e.Nodes.Count; i++)
         {
             var node = e.Nodes[i];
+            // [T53-UI] Kart soluk sln adı — bir proje birden çok .sln içerebilir; kart ilk adı gösterir.
+            string? solutionName = node.SolutionNames.Count > 0 ? node.SolutionNames[0] : null;
             int existing = IndexOf(node.Id);
-            if (existing < 0) Projects.Insert(i, new ProjectRowViewModel(node.Id, node.Name, ProjectRowState.Pending));
-            else if (existing != i) Projects.Move(existing, i);
+            if (existing < 0)
+                Projects.Insert(i, new ProjectRowViewModel(node.Id, node.Name, ProjectRowState.Pending, solutionName));
+            else
+            {
+                Projects[existing].SolutionName = solutionName; // topoloji sln atamasını değiştirmiş olabilir
+                if (existing != i) Projects.Move(existing, i);
+            }
         }
 
         if (!IsRunning)

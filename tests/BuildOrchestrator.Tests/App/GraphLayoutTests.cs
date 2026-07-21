@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 
 namespace BuildOrchestrator.Tests.App;

@@ -20,6 +20,23 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     public string Name { get; }
     [ObservableProperty] private ProjectRowState _state;
 
+    /// <summary>[T53-UI] Kartın soluk ikinci satırı — projenin ait olduğu solution'ın adı (prototip
+    /// <c>p.sln</c>, BuildApp.jsx:384). Kaynak: <see cref="ProjectNode.SolutionNames"/> (ilk eleman); topoloji
+    /// kurulurken atanır. Bir projeyi birden çok .sln içerebilir — kart tek (ilk) adı gösterir.</summary>
+    [ObservableProperty] private string? _solutionName;
+
+    /// <summary>[T53-UI] SHA çiftinin sol yarısı: projenin MEVCUT (derlenmiş) commit'i — prototip <c>st.curSha</c>
+    /// (BuildApp.jsx:400). <b>Şu an hiçbir IPC event'i per-proje sha taşımaz</b> (yalnız run-geneli
+    /// <see cref="RunViewModel.TargetSha"/> = SyncCompletedEvent.TargetSha vardır); bu alan bir sonraki
+    /// per-proje-sha kablajına dek boş kalır (uydurulmaz). Kart yalnız <see cref="WillBuild"/>==true iken bu
+    /// çifti gösterir.</summary>
+    [ObservableProperty] private string? _currentSha;
+
+    /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
+    /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
+    /// genişliği (2→3), iç sarmalayıcı <c>TranslateX 4</c> ve <c>Brush.SurfaceRaised</c> zemini için okur.</summary>
+    [ObservableProperty] private bool _isSelected;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DurationMsText))]
     private long _durationMs;
@@ -44,11 +61,12 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
     public bool HasDepIssue => DepIssues is { Count: > 0 };
 
-    public ProjectRowViewModel(string id, string name, ProjectRowState state)
+    public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)
     {
         Id = id;
         Name = name;
         _state = state;
+        _solutionName = solutionName;
     }
 }
 
@@ -362,6 +380,22 @@ public sealed partial class RunViewModel : ObservableObject
     public void SelectProject(string? id) =>
         SelectedProjectId = string.Equals(SelectedProjectId, id, StringComparison.OrdinalIgnoreCase) ? null : id;
 
+    /// <summary>[T53-UI · C1 debt] Seçim değişince her satırın <see cref="ProjectRowViewModel.IsSelected"/>'ını
+    /// tazeler — kartın görsel seçili durumu (şerit 2→3, iç sarmalayıcı TranslateX, <c>Brush.SurfaceRaised</c>
+    /// zemin) satır VM'inin INotifyPropertyChanged'inden akar (konsol/log geçişi D4'ün işi — burada YOK).</summary>
+    partial void OnSelectedProjectIdChanged(string? value)
+    {
+        foreach (var row in Projects)
+            row.IsSelected = string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>[T53/T54-UI] Proje listesini katman gruplarına böler — gruplama YALNIZ topolojiden
+    /// (<see cref="ProjectNode.LayerName"/>/<see cref="ProjectNode.LayerIndex"/>) gelir; App'te regex YOKTUR
+    /// (mimari kural, test pinler). <see cref="Projects"/> zaten build-order'dadır (topoloji sırası). Hiçbir
+    /// düğümün <c>LayerName</c>'i yoksa tek isimsiz grup = düz build-order.</summary>
+    public IReadOnlyList<LayerGrouping.Group> BuildLayerGroups() =>
+        LayerGrouping.Build(Projects, Topology);
+
     private void ClearSelectionAndFilter()
     {
         SelectedProjectId = null;
@@ -429,7 +463,15 @@ public sealed partial class RunViewModel : ObservableObject
     public void TickElapsed()
     {
         if (IsRunning && _elapsedStartMs is { } startMs)
+        {
             ElapsedMs = _elapsedBaseMs + (_nowMs() - startMs);
+            // [T53-UI] Building satırların CANLI süresi (kart süre kolonu + glyph tooltip) — done olunca
+            // OnProjectDone kesin DurationMs'i ezer. Kaynak: _projectStartedAtMs (ETA ile AYNI, ekstra state yok).
+            long now = _nowMs();
+            foreach (var row in Projects)
+                if (row.State == ProjectRowState.Started && _projectStartedAtMs.TryGetValue(row.Id, out long at))
+                    row.DurationMs = Math.Max(0, now - at);
+        }
     }
 
     // ---------------------------------------------------------------- event → durum

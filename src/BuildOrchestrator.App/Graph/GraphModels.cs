@@ -1,20 +1,9 @@
+using BuildOrchestrator.App.Controls;
+
 namespace BuildOrchestrator.App.Graph;
 
-/// <summary>
-/// [T63] design-v1 DS <c>STATUS_META</c> / <c>DependencyGraphNode</c> statü kümesi — graf düğümünün renk/çerçeve
-/// ailesini seçen TEK enum. (Çekirdeğin <c>ProjectRowState</c>'i ile birebir aynı değildir: graf, tasarımın
-/// <c>discovered</c>/<c>cycle</c> gibi görsel durumlarını da taşır; eşleme çağıranın işidir.)
-/// </summary>
-public enum GraphStatus
-{
-    Discovered,
-    Queued,
-    Building,
-    Succeeded,
-    Failed,
-    Skipped,
-    Cycle,
-}
+// [D1 fold — B3 review] GraphStatus enum'ı nötr Controls namespace'ine taşındı (Controls/GraphStatus.cs) —
+// StatusGlyph'in graf-dışı ilk tüketicisi D1'dir. Buradaki kullanımlar için yukarıdaki using yeterlidir.
 
 /// <summary>[T63] Graf düğümü — kimlik (tam proje adı), katman indeksi, statü ve dep-hata bayrağı.</summary>
 public sealed record GraphNode(string Name, int Layer, GraphStatus Status, bool HasDepIssue = false)

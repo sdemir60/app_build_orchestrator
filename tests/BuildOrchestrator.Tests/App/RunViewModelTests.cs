@@ -37,6 +37,45 @@ public class RunViewModelTests
     }
 
     [Fact]
+    public async Task Selecting_a_project_flows_IsSelected_to_the_matching_row_and_toggles_off_on_repeat()
+    {
+        // [D1 · C1 debt] Seçim RunViewModel.SelectedProjectId'de yaşar; kart görsel seçili durumunu satır
+        // VM'inin IsSelected'ından okur (kanonik same-click deselect korunur).
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+        var a = vm.Projects.Single(p => p.Id == @"C:\p\a.csproj");
+        var b = vm.Projects.Single(p => p.Id == @"C:\p\b.csproj");
+
+        vm.SelectProject(a.Id);
+        Assert.True(a.IsSelected);
+        Assert.False(b.IsSelected);
+
+        vm.SelectProject(b.Id); // seçim taşınır — eski satır bırakılır
+        Assert.False(a.IsSelected);
+        Assert.True(b.IsSelected);
+
+        vm.SelectProject(b.Id); // aynı satıra tekrar → deselect
+        Assert.False(b.IsSelected);
+        Assert.Null(vm.SelectedProjectId);
+    }
+
+    [Fact]
+    public async Task Topology_carries_the_solution_name_onto_each_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        var node = new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj",
+            SolutionNames: ["Osys.sln"], Dependencies: [], BuildOrder: 0,
+            LayerIndex: null, LayerName: null, InCycle: false, WillBuild: null);
+        vm.OnEvent(new WorkspaceTopologyEvent([node], [], [], []));
+
+        Assert.Equal("Osys.sln", Assert.Single(vm.Projects).SolutionName);
+    }
+
+    [Fact]
     public async Task ProjectSucceeded_updates_state_and_duration()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);

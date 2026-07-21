@@ -1,0 +1,139 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.ProjectRow"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             Focusable="True">
+  <!-- [T53/T54-UI] design-v1 proje kartı (BuildApp.jsx:355-416 — birebir). Yükseklik LayoutMetrics sabitine
+       bağlı (sticky aritmetiği bunu varsayar); geçiş/durum renkleri kod-tarafı (ProjectRow.xaml.cs) — saf-XAML
+       Storyboard motion sözleşmesince İMKANSIZ (MotionTokens.cs). Sol padding YOK: şerit kenara yapışır. -->
+  <Border x:Name="PART_Root"
+          Height="{x:Static controls:LayoutMetrics.DefaultRowHeight}"
+          Padding="0,0,10,0"
+          BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1"
+          Background="Transparent" SnapsToDevicePixels="True" Cursor="Hand">
+    <Border.RenderTransform>
+      <!-- Shake (hata anı) — seçim TranslateX'inden AYRI transform (çakışma yok). -->
+      <TranslateTransform x:Name="PART_ShakeTranslate" />
+    </Border.RenderTransform>
+
+    <Grid>
+      <!-- 1) Nefes katmanı: yalnız building'de görünür + animasyonlu (Opacity 0→0.32→0, 3.8s, 30fps). -->
+      <Border x:Name="PART_Breath" Background="{DynamicResource Brush.AmberSoft}"
+              Opacity="0" Visibility="Collapsed" IsHitTestVisible="False" />
+
+      <Grid VerticalAlignment="Stretch">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 1) Statü şeridi (Width 2/3, dikey stretch, kenara yapışık; renk statüden). -->
+        <Rectangle x:Name="PART_Stripe" Grid.Column="0" Width="2" HorizontalAlignment="Left" />
+
+        <!-- 2+3) İç sarmalayıcı: WillBuildDot + (ad + sln). Seçiliyken TranslateX 4. -->
+        <Grid x:Name="PART_Inner" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
+          <Grid.RenderTransform>
+            <TranslateTransform x:Name="PART_InnerTranslate" />
+          </Grid.RenderTransform>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+
+          <controls:WillBuildDot x:Name="PART_Dot" Grid.Column="0" Margin="4,0,0,0" VerticalAlignment="Center" />
+
+          <Grid Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="PART_Name" Grid.Column="0" VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSize.Sm}" FontWeight="{DynamicResource FontWeight.Emphasis}"
+                       FontFamily="{x:Static controls:AppFonts.Ui}"
+                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+            <TextBlock x:Name="PART_Sln" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}"
+                       FontFamily="{x:Static controls:AppFonts.Ui}"
+                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+          </Grid>
+        </Grid>
+
+        <!-- 4) Sağ blok (MinWidth 118): hover→aç-ikonları, değilse (will==dirty) sha çifti. -->
+        <Grid Grid.Column="2" Margin="8,0,0,0" MinWidth="118" VerticalAlignment="Center" HorizontalAlignment="Right">
+          <!-- SHA çifti: mono 10.5px (token ölçeğinde YOK — prototip :399 literal, kasıtlı). -->
+          <TextBlock x:Name="PART_Sha" HorizontalAlignment="Right" VerticalAlignment="Center"
+                     Visibility="Collapsed" Typography.NumeralAlignment="Tabular"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="10.5"
+                     Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="NoWrap" />
+          <!-- Hover ikonları (sha'nın YERİNE aynı blokta): folder + VS, 13px. -->
+          <StackPanel x:Name="PART_HoverIcons" Orientation="Horizontal" HorizontalAlignment="Right"
+                      VerticalAlignment="Center" Visibility="Collapsed">
+            <Button x:Name="PART_RevealButton" Style="{DynamicResource Ds.IconButton}"
+                    AutomationProperties.Name="Reveal in Explorer">
+              <Button.ToolTip>
+                <ToolTip controls:AppTooltip.Side="Left">Reveal in Explorer</ToolTip>
+              </Button.ToolTip>
+              <Viewbox Width="13" Height="13">
+                <Canvas Width="24" Height="24">
+                  <Path Data="{DynamicResource Icon.FolderOpen}"
+                        StrokeThickness="{DynamicResource Icon.FolderOpen.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+            </Button>
+            <Button x:Name="PART_VsButton" Style="{DynamicResource Ds.IconButton}" Margin="2,0,0,0"
+                    AutomationProperties.Name="Open in Visual Studio">
+              <Button.ToolTip>
+                <ToolTip controls:AppTooltip.Side="Left">Open in Visual Studio</ToolTip>
+              </Button.ToolTip>
+              <Viewbox Width="13" Height="13">
+                <Canvas Width="24" Height="24">
+                  <Path Data="{DynamicResource Icon.Vs}"
+                        StrokeThickness="{DynamicResource Icon.Vs.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+            </Button>
+          </StackPanel>
+        </Grid>
+
+        <!-- 5) Statü glyph'i 14px + tooltip (metin kod-tarafı). -->
+        <controls:StatusGlyph x:Name="PART_Glyph" Grid.Column="3" Margin="8,0,0,0" Size="14"
+                              VerticalAlignment="Center">
+          <controls:StatusGlyph.ToolTip>
+            <ToolTip x:Name="PART_GlyphTip" controls:AppTooltip.Side="Left" />
+          </controls:StatusGlyph.ToolTip>
+        </controls:StatusGlyph>
+
+        <!-- 6) depIssue slotu — SABİT 14px (boşken bile var → hiza asla bozulmaz). -->
+        <Grid x:Name="PART_DepSlot" Grid.Column="4" Width="14" Margin="8,0,0,0"
+              VerticalAlignment="Center" HorizontalAlignment="Center">
+          <Viewbox x:Name="PART_DepIcon" Width="12" Height="12" Visibility="Collapsed"
+                   HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Canvas Width="24" Height="24">
+              <Path Data="{DynamicResource Icon.AlertTri}"
+                    StrokeThickness="{DynamicResource Icon.AlertTri.StrokeThickness}"
+                    Stroke="{DynamicResource Brush.StatusFailText}"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+            </Canvas>
+            <Viewbox.ToolTip>
+              <ToolTip x:Name="PART_DepTip" controls:AppTooltip.Side="Left" />
+            </Viewbox.ToolTip>
+          </Viewbox>
+        </Grid>
+
+        <!-- 7) Süre: mono Xs, tabular, sağa yaslı, MinWidth 46. -->
+        <TextBlock x:Name="PART_Duration" Grid.Column="5" Margin="8,0,0,0" MinWidth="46"
+                   VerticalAlignment="Center" TextAlignment="Right" TextWrapping="NoWrap"
+                   Typography.NumeralAlignment="Tabular"
+                   FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}" />
+      </Grid>
+    </Grid>
+  </Border>
+</UserControl>

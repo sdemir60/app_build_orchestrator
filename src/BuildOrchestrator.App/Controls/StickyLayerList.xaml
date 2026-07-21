@@ -1,7 +1,8 @@
 <UserControl x:Class="BuildOrchestrator.App.Controls.StickyLayerList"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
   <!-- [T58] Sticky overlay mimarisi (feasibility §3.3 — tasarımın en zor layout parçası): liste ScrollViewer'ının
        üstünde overlay ItemsControl (Canvas). Yapışık başlık kümesi salt aritmetikle (LayoutMetrics: 36px satır +
        24px başlık kümülatif tablosu) hesaplanır; overlay item'ları in-flow başlıkla AYNI DataTemplate + opak
@@ -21,14 +22,10 @@
       </Border>
     </DataTemplate>
 
-    <!-- design-v1 §2.4: satır 36px, alt çizgi border-subtle. Tam kart (statü şeridi/dot/ikonlar/ETA) It-4b —
-         burada sticky'yi gözle doğrulamaya yetecek minimal satır (ad). -->
+    <!-- design-v1 §2.4: satır 36px (yükseklik ProjectRow kökünde LayoutMetrics.DefaultRowHeight'a bağlı — sticky
+         aritmetiği bunu varsayar). Tam 7-slot kart It-4b/D1: Views/ProjectRow. Item = ProjectRowViewModel. -->
     <DataTemplate x:Key="RowTemplate">
-      <Border Height="{x:Static controls:LayoutMetrics.DefaultRowHeight}" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
-        <TextBlock Text="{Binding Name}" Margin="12,0" VerticalAlignment="Center"
-                   FontSize="13" FontWeight="Medium" Foreground="{DynamicResource Brush.TextPrimary}"
-                   TextTrimming="CharacterEllipsis" />
-      </Border>
+      <views:ProjectRow />
     </DataTemplate>
   </UserControl.Resources>
 

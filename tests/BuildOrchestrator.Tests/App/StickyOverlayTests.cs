@@ -112,8 +112,11 @@ public class StickyOverlayTests
         var headerRoot = Assert.IsType<Border>(list.HeaderTemplate.LoadContent());
         Assert.Equal(LayoutMetrics.DefaultHeaderHeight, headerRoot.Height);
 
-        var rowRoot = Assert.IsType<Border>(list.RowTemplate.LoadContent());
-        Assert.Equal(LayoutMetrics.DefaultRowHeight, rowRoot.Height);
+        // [D1] RowTemplate artık tam kart (Views/ProjectRow); yükseklik onun kök Border'ında DefaultRowHeight'a
+        // bağlıdır (sticky aritmetiği bunu varsayar — LayoutMetrics.cs sabit yorumu).
+        var row = Assert.IsType<BuildOrchestrator.App.Views.ProjectRow>(list.RowTemplate.LoadContent());
+        var rowBorder = Assert.IsType<Border>(row.Content);
+        Assert.Equal(LayoutMetrics.DefaultRowHeight, rowBorder.Height);
     }
 
     [StaFact]

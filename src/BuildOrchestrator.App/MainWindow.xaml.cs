@@ -67,6 +67,11 @@ public partial class MainWindow : Window
         SyncModeButtons(layout.Mode);
         Shell.LayoutChanged += OnShellLayoutChanged;
 
+        // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
+        // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
+        _vm.TopologyChanged += (_, _) => RefreshProjectGroups();
+        RefreshProjectGroups();
+
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
             // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning/CanContinue) bu sinyale bağlıdır.
@@ -135,6 +140,17 @@ public partial class MainWindow : Window
     {
         _vm.ShowRun();
         _vm.SeedRunDocument(text => Dispatcher.InvokeAsync(() => Shell.ConsoleViewControl.ShowRunDocument(text)));
+    }
+
+    /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
+    /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te
+    /// başlıksızdır.</summary>
+    private void RefreshProjectGroups()
+    {
+        var groups = _vm.BuildLayerGroups()
+            .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
+            .ToList();
+        Shell.ProjectsList.SetGroups(groups);
     }
 
     private async Task StartEngineAsync()

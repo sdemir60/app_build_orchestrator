@@ -327,13 +327,13 @@ public class DsControlTemplateTests
         Assert.Equal(0.6, ring.Opacity);             // _ds_bundle.js:1452
 
         glyph.SetValue(BuildOrchestrator.App.Controls.StatusGlyph.StatusProperty,
-            BuildOrchestrator.App.Graph.GraphStatus.Discovered);
+            BuildOrchestrator.App.Controls.GraphStatus.Discovered);
         glyph.UpdateLayout();
         Assert.NotEmpty(ring.StrokeDashArray);       // _ds_bundle.js:1517 dasharray "2.3 2.5"
         Assert.Equal(0.9, ring.Opacity);
 
         glyph.SetValue(BuildOrchestrator.App.Controls.StatusGlyph.StatusProperty,
-            BuildOrchestrator.App.Graph.GraphStatus.Building);
+            BuildOrchestrator.App.Controls.GraphStatus.Building);
         glyph.UpdateLayout();
         var spinner = DsResources.Descendants(glyph).OfType<BuildOrchestrator.App.Controls.BuildingSpinner>().Single();
         Assert.Equal(Visibility.Visible, spinner.Visibility);

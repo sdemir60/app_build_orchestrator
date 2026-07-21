@@ -5,6 +5,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 using IoPath = System.IO.Path;
