@@ -54,10 +54,22 @@ public sealed partial class RunViewModel
     /// (proje durumları artık bilinir — hollow değil).</summary>
     private void OnSyncCompleted(SyncCompletedEvent e)
     {
-        _syncInFlight = false;
         TargetSha = e.TargetSha;
         FetchDegraded = e.FetchDegraded;
-        Phase = AppPhase.Idle;
+        ReleaseSyncPhase();    // [C2 fold] uçuş bayrağını normal yoldan da BURADAN temizle (tek yer)
+        Phase = AppPhase.Idle; // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil)
+    }
+
+    /// <summary>[C2 fold — A5 review] Uçuştaki Sync'i serbest bırakır: <see cref="_syncInFlight"/> temizlenir ve
+    /// faz <c>Syncing</c>'de ASILI kaldıysa elde topoloji varsa <c>Idle</c>, yoksa <c>Boot</c>'a düşürülür.
+    /// İki yerden çağrılır: (1) normal <see cref="OnSyncCompleted"/> (yalnız bayrağı temizler — çağıran fazı
+    /// zaten Idle yapar) ve (2) <see cref="OnEngineExited"/> — engine Sync ORTASINDA ölürse (ne syncCompleted
+    /// ne Sync-bitiren hata gelir) faz Syncing'de sonsuza dek asılı kalamaz ve bayrak sızmaz.</summary>
+    private void ReleaseSyncPhase()
+    {
+        _syncInFlight = false;
+        if (Phase == AppPhase.Syncing)
+            Phase = Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
     }
 
     /// <summary>
@@ -144,6 +156,7 @@ public sealed partial class RunViewModel
                 row.DurationMs = 0;
             }
 
+        RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
         TopologyChanged?.Invoke(this, EventArgs.Empty);
     }
 
