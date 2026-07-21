@@ -22,6 +22,18 @@ public class RunViewModelStateTests
         IReadOnlyList<string>? deps = null, string? layerName = null) =>
         new(id, name, id, ["Osys"], deps ?? [], buildOrder, layerName is null ? null : 0, layerName, false, willBuild);
 
+    // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 2] Parallelism, varsayılan PerfMode'dan tohumlanır
+
+    [Fact]
+    public async Task Fresh_view_model_seeds_parallelism_from_the_default_perf_mode()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        Assert.Equal("Balanced", vm.PerfMode);
+        Assert.Equal(4, vm.Parallelism); // ParallelismFor("Balanced") == 4 — Environment.ProcessorCount DEĞİL
+    }
+
     // ---------------------------------------------------------------- faz
 
     [Fact]
@@ -226,5 +238,67 @@ public class RunViewModelStateTests
         Assert.NotEqual(AppPhase.Syncing, vm.Phase); // faz Syncing'de ASILI kalmadı
         Assert.Equal(AppPhase.Boot, vm.Phase);       // topoloji hiç gelmedi → Boot
         Assert.False(vm.SyncInFlight);               // uçuştaki Sync serbest bırakıldı
+    }
+
+    // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 1] Sync sırasında Rebuild/RetryFailed engellenir, Build DEĞİL
+
+    [Fact]
+    public async Task Rebuild_and_retry_are_blocked_during_sync_but_build_stays_enabled()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        // Failed satır: RetryFailed'ın "failure var" koşulu Sync'ten BAĞIMSIZ sağlansın, yalnız sync guard'ı test edilsin.
+        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
+        Assert.True(vm.RetryFailedCommand.CanExecute(null)); // sync öncesi: etkin
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.RetryFailedCommand.CanExecute(null));
+        Assert.True(vm.BuildCommand.CanExecute(null)); // [design doBuild — kasıtlı asimetri] Build sync sırasında da etkin
+    }
+
+    [Fact]
+    public async Task Sync_completing_reenables_rebuild_and_retry_and_raises_CanExecuteChanged()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.RetryFailedCommand.CanExecute(null));
+
+        bool rebuildChanged = false, retryChanged = false;
+        vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
+        vm.RetryFailedCommand.CanExecuteChanged += (_, _) => retryChanged = true;
+
+        // [Not] WorkspaceTopologyEvent kasıtlı olarak GÖNDERİLMEZ: IsRunning false iken satır durumlarını
+        // Pending'e resetler (Sync = yeni taban) — bu testin konusu DEĞİL, Failed satırı burada KORUNMALI ki
+        // RetryFailedCommand'ın yalnız _syncInFlight guard'ı test edilsin.
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RetryFailedCommand.CanExecute(null));
+        Assert.True(rebuildChanged);
+        Assert.True(retryChanged);
+    }
+
+    [Fact]
+    public async Task Engine_death_mid_sync_reenables_rebuild_and_retry_via_release_sync_phase()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.RetryFailedCommand.CanExecute(null));
+
+        vm.OnEngineExited(1); // engine Sync ortasında öldü → ReleaseSyncPhase
+
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RetryFailedCommand.CanExecute(null));
     }
 }

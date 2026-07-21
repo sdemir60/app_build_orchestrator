@@ -1094,7 +1094,11 @@ public class RunViewModelTests
         vm.OnEvent(new ErrorEvent("planFailed", "planlama patladı"));
 
         Assert.False(vm.IsStarting);
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        // [Fix wave 1, C2 review Finding 1] _syncInFlight BİLEREK true kalır (çakışan pencere — yukarıdaki
+        // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir; RebuildCommand artık
+        // buna da bakıyor (CanRebuildOrRetry) — mid-Sync clearBuffers'ın canlı transkripti bozma riskiyle
+        // TUTARLI biçimde burada da engelli kalır.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
     }
 
@@ -1112,7 +1116,10 @@ public class RunViewModelTests
         vm.OnEvent(new ErrorEvent("runFailed", "beklenmeyen hata"));
 
         Assert.False(vm.IsRunning);
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        // [Fix wave 1, C2 review Finding 1] Sync HÂLÂ GERÇEKTEN uçuşta (Phase == Syncing, aşağıda doğrulanır) —
+        // RebuildCommand artık _syncInFlight'a da baktığından (CanRebuildOrRetry) burada BİLEREK engelli kalır:
+        // run bitmiş olsa da canlı Sync transkripti hâlâ SyncProgressEvent ile büyüyor olabilir.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Syncing, vm.Phase); // Sync HÂLÂ uçuşta — fazı bu hata bırakmaz
     }
 

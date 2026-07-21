@@ -14,6 +14,7 @@ public class DurationFormatTests
     [InlineData(null, "—")]
     [InlineData(4200L, "4.2s")]
     [InlineData(9949L, "9.9s")]     // 9950 esigi ALTI → ondalik
+    [InlineData(250L, "0.3s")]      // [Fix wave 1/C2] yarı-yukarı yuvarlama (JS toFixed(1) paritesi) — banker's rounding "0.2s" verirdi
     [InlineData(9950L, "10s")]      // esik ve USTU → tam saniye
     [InlineData(59_000L, "59s")]
     [InlineData(72_000L, "1m 12s")]

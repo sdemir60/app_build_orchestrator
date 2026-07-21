@@ -15,7 +15,11 @@ public static class DurationFormat
     public static string Duration(long? ms)
     {
         if (ms is not { } v) return "—";
-        if (v < 9950) return (v / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + "s";
+        // [Fix wave 1/C2 review Finding 3] Yuvarlama AÇIKÇA yarı-yukarı (AwayFromZero) — JS'in toFixed(1)'iyle
+        // paritede: ör. 250ms → "0.3s". ToString("0.0") biçimlendirmesine ÖRTÜK olarak bırakılmaz (implicit
+        // yuvarlama modu .NET sürümleri arasında garanti değildir); tam sayıya (0.1 birim) burada AÇIKÇA
+        // yuvarlanır, biçimlendirme yalnız GÖSTERİM içindir.
+        if (v < 9950) return Math.Round(v / 1000.0, 1, MidpointRounding.AwayFromZero).ToString("0.0", CultureInfo.InvariantCulture) + "s";
         long s = (long)Math.Round(v / 1000.0, MidpointRounding.AwayFromZero);
         return s < 60
             ? s.ToString(CultureInfo.InvariantCulture) + "s"

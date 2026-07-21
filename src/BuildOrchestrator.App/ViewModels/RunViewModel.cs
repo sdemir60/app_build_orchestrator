@@ -138,7 +138,11 @@ public sealed partial class RunViewModel : ObservableObject
 
     [ObservableProperty] private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
-    [ObservableProperty] private int _parallelism = Math.Max(1, Environment.ProcessorCount);
+
+    // [Fix wave 1, C2 review Finding 2] Parallelism artık PerfMode'un varsayılanından tohumlanır — eski
+    // Environment.ProcessorCount varsayılanı PerfMode'dan (It-2) ÖNCEYDİ ve _perfMode="Balanced"→4 (v7 plan
+    // K11: perf mode SABİT 6/4/2 tablosudur) ile çelişiyordu. TEK kaynak: her ikisi de aynı sabiti kullanır.
+    [ObservableProperty] private int _parallelism = ParallelismFor(DefaultPerfMode);
     [ObservableProperty] private long _elapsedMs;
 
     /// <summary>[Task 17] Run genelinde (RunCompletedEvent'ten) dependency-affected proje sayısı özeti.</summary>
@@ -216,8 +220,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[C2] <see cref="UseWorktree"/>=true iken worktree adı; null ⇒ Supervisor varsayılan ad türetir.</summary>
     [ObservableProperty] private string? _worktreeName;
 
+    // [Fix wave 1, C2 review Finding 2] PerfMode/Parallelism alan başlatıcılarının TEK ortak kaynağı (derleme
+    // zamanı sabiti — alan başlatma SIRASINDAN bağımsız, yukarıdaki Parallelism başlatıcısından da güvenle
+    // kullanılabilir).
+    private const string DefaultPerfMode = "Balanced";
+
     /// <summary>[C2] Perf profili: Full/Balanced/Light. <see cref="CyclePerf"/> döngüsü paralelliği de günceller.</summary>
-    [ObservableProperty] private string _perfMode = "Balanced";
+    [ObservableProperty] private string _perfMode = DefaultPerfMode;
 
     /// <summary>[C2] Proje listesi durum sayaçları — satır değişimlerinde yeniden hesaplanır.</summary>
     [ObservableProperty] private RunCounters _counters;
@@ -296,13 +305,20 @@ public sealed partial class RunViewModel : ObservableObject
         _ => "run",
     };
 
-    [RelayCommand(CanExecute = nameof(CanStartRun))]
+    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
     private Task RebuildAsync()
     {
         ClearSelectionAndFilter(); // [design doRebuild→doBuild] tam run: seçim + filtre sıfırlanır
         return BeginRunAsync(RunMode.Rebuild, clearBuffers: true);
     }
     private bool CanStartRun() => !IsRunning && !IsStarting;
+
+    // [Fix wave 1, C2 review Finding 1] Rebuild/RetryFailed, Sync uçuştayken (_syncInFlight) EK OLARAK
+    // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,
+    // ama SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
+    // Build BİLEREK bu guard'a dahil DEĞİL (prototip doBuild'in kasıtlı asimetrisi, BuildApp.jsx:1194 —
+    // doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur).
+    private bool CanRebuildOrRetry() => CanStartRun() && !_syncInFlight;
 
     [RelayCommand(CanExecute = nameof(CanStartRun))]
     private Task BuildAsync()
@@ -319,7 +335,7 @@ public sealed partial class RunViewModel : ObservableObject
     }
     // [C2] Yalnız önceki koşuda bir failure varsa etkin — CanExecute her çağrıda taze değerlendirilir; ayrıca
     // OnProjectDone/OnRunCompleted NotifyCanExecuteChanged tetikler (canlı UI için).
-    private bool CanRetryFailed() => !IsRunning && !IsStarting && Projects.Any(p => p.State == ProjectRowState.Failed);
+    private bool CanRetryFailed() => CanRebuildOrRetry() && Projects.Any(p => p.State == ProjectRowState.Failed);
 
     [RelayCommand(CanExecute = nameof(CanSync))]
     private async Task SyncAsync()
