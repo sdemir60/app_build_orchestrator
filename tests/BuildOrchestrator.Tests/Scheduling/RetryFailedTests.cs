@@ -108,6 +108,28 @@ public class RetryFailedTests
         Assert.False(transformed.Completed.ContainsKey(@"C:\r\Down.csproj"));
     }
 
+    [Fact]
+    public void Retry_requeues_the_whole_scc_and_its_downstream_when_any_member_is_affected()
+    {
+        // [A3] SCC={A,B} (A→B, B→A) + D: cycle DIŞINDA, A'ya bağımlı. Sabit-nokta döngüsü DÖNGÜSEL bir kenar
+        // kümesinde sonsuza girmeden kapanmalı ve kapanış SCC'nin TAMAMINI + downstream'ini içermeli: A
+        // etkilenmişse B (A'ya bağımlı) ve D (A'ya bağımlı) de etkilenmiştir ⇒ {A, B, D}. PİN testi: A1'in
+        // sabit-nokta kapanışı bunu zaten sağlıyor, burada SCC üzerinde bir daha bozulmasın diye sabitlenir.
+        var plan = new BuildPlan(
+            [N("A", deps: ["B"], buildOrder: 0, inCycle: true),
+             N("B", deps: ["A"], buildOrder: 1, inCycle: true),
+             N("D", deps: ["A"], buildOrder: 2)],
+            Cycles: [["A", "B"]], Configuration: "Debug");
+        var snapshot = new RunSnapshot(
+            Completed(("A", BuildResult.Failed), ("B", BuildResult.Succeeded), ("D", BuildResult.Succeeded)),
+            Queued: [], ElapsedMs: 0);
+
+        var transformed = RetryPlanning.RequeueFailedAndDependents(plan, snapshot);
+
+        Assert.Empty(transformed.Completed);
+        Assert.Equal(["A", "B", "D"], transformed.Queued.OrderBy(id => id, StringComparer.Ordinal));
+    }
+
     // ---------------------------------------------------------------- RequeueStoppedFailed (Continue re-queue)
 
     [Fact]

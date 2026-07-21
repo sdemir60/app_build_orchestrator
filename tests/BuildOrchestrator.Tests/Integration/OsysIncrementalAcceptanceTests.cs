@@ -139,11 +139,12 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // ÜZERİNDEN downstream'e yine yayılır ama KENDİLERİ derlenmez — cascade assert'inden hariç tutulur.
         var inCycle = new HashSet<string>(
             plan.Nodes.Where(n => n.InCycle).Select(n => n.Id), StringComparer.OrdinalIgnoreCase);
-        // GARANTİLİ cascade = hedefin DOĞRUDAN (cycle-dışı) dependent'ları: topological build-order'da hedef
-        // ONLARDAN ÖNCE gelir (aralarında cycle YOK), bu yüzden memo hedefin TAZE (değişmiş) imzasını görür →
-        // kesin flip=true. (Transitive cascade'in cycle-tangled path'ler üzerinden bir kısmı memoization sırası
-        // nedeniyle yayılmayabilir — IncrementalPlanner topological-memo tasarımının bilinen sınırı; aşağıda
-        // ÇOĞUNLUK olarak raporlanır, garanti DOĞRUDAN dependent'lardadır.)
+        // [A3] Cycle-tangled transitive under-build KAPANDI: bir SCC artık component başına TEK kompozit imza
+        // taşır (üyelerin kendi terimleri + SCC-dışı upstream imzaları), bu yüzden cascade cycle'ların üzerinden
+        // de EKSİKSİZ yayılır ve sonuç ziyaret sırasından bağımsızdır. It-3'te "bilinen sınır" diye kayda geçen
+        // ve aşağıda ÇOĞUNLUĞA zayıflatılmış olan iddia artık TAM eşitlik olarak koşulur. Doğrudan (cycle-dışı)
+        // dependent'lar ayrıca ayrı bir alt-küme olarak da raporlanır (regresyonda hangi katmanın kırıldığını
+        // gösterir).
         var directDependents = dependentsOf.GetValueOrDefault(targetNode.Id, [])
             .Where(id => !inCycle.Contains(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         Assert.True(dirtyById[targetNode.Id] == true, "dirty edilen hedef proje WillBuild=true olmalı.");
@@ -192,7 +193,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine(Inv($"- Dirty edilen hedef: {Path.GetFileNameWithoutExtension(targetNode.Id)} (dirty path: {dirtyRel})"));
             sb.AppendLine(Inv($"- Hedef WillBuild: {dirtyById[targetNode.Id]}"));
             sb.AppendLine(Inv($"- Doğrudan (cycle-dışı) dependent: {directDependents.Count} · flip=true olmayan (İHLAL): {cascadeMisses.Count}"));
-            sb.AppendLine(Inv($"- Transitive (cycle-dışı) dependent: {transNonCycle.Count} · flip=true olan: {transFlipped} (çoğunluk cascade)"));
+            sb.AppendLine(Inv($"- Transitive (cycle-dışı) dependent: {transNonCycle.Count} · flip=true olan: {transFlipped} ([A3] TAM cascade bekleniyor)"));
             sb.AppendLine(Inv($"- İlgisiz + skip (false) kalan proje sayısı: {unrelatedClean.Count}"));
             sb.AppendLine();
             sb.AppendLine("## Branch-bounce (A→B→A, git-no-op)");
@@ -223,8 +224,8 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 
         Assert.NotEmpty(directDependents);                               // hedefin gerçekten dependent'ı var (cascade anlamlı)
         Assert.Empty(cascadeMisses);                                     // minimal rebuild: hedef + DOĞRUDAN dependent'lar kesin true
-        Assert.True(transFlipped >= transNonCycle.Count / 2,             // transitive cascade ÇOĞUNLUĞA ulaştı
-            Inv($"transitive cascade çoğunluğa ulaşmadı: {transFlipped}/{transNonCycle.Count}"));
+        Assert.True(transFlipped == transNonCycle.Count,                 // [A3] transitive cascade TAM (cycle'lar dahil)
+            Inv($"transitive cascade eksik — cycle üzerinden yayılım kopmuş olabilir: {transFlipped}/{transNonCycle.Count}"));
         Assert.NotEmpty(unrelatedClean);                                 // ilgisiz projeler skip kaldı (over-build yok)
 
         Assert.Equal(WorktreeMode.InPlace, planA1.Mode);                 // branch-bounce matrisi

@@ -70,9 +70,10 @@ public static class BuildSignature
     internal const char ItemSeparator = (char)0x1E;
 
     /// <summary>Ayırt edici null-işareti (gerçek path/commit/imza değeriyle asla çakışmaz). <c>internal</c>:
-    /// aynı assembly içindeki <see cref="IncrementalPlanner"/>, bir cycle üyesinin (kendi kendine bağımlı)
-    /// upstream terimi için AYNI işareti döndürür — "bilinmeyen upstream" ile birebir aynı deterministik
-    /// değere düşsün diye (bkz. o sınıftaki on-stack cycle guard). DEĞERİ DEĞİŞMEZ.</summary>
+    /// aynı assembly içindeki <see cref="IncrementalPlanner"/>, döngüyü kırmak için bazı upstream terimlerini
+    /// bu işarete düşürür — kendine bağımlı (self-loop) bir düğümün on-stack guard'a çarpan kenarı ve [A3]
+    /// bir SCC'nin KOMPOZİT imzası hesaplanırken SCC-İÇİ kenarlar — "bilinmeyen upstream" ile birebir aynı
+    /// deterministik değere düşsünler diye. DEĞERİ DEĞİŞMEZ.</summary>
     internal const string NullMarker = "￿__NULL__";
 
     /// <summary>Bir yolun build-etkileyen uzantılardan biriyle bitip bitmediği (Ordinal, case-insensitive uzantı karşılaştırması).</summary>
