@@ -105,6 +105,21 @@ public class IpcMessagesTests
         Assert.False(cmd.UseWorktree);
         Assert.Null(cmd.WorktreeName);
         Assert.Equal(DependentMode.Safe, cmd.DependentMode);
+        Assert.Null(cmd.LayerPatterns); // [A1] katman ataması varsayılan olarak KAPALI (mevcut davranış)
+    }
+
+    // [A1/T15] Katman pattern'leri App'ten Supervisor'a IPC ile taşınır — Core'daki LayerEngine ancak bu
+    // alan dolu geldiğinde çalışır. Sıra ANLAMLIDIR (Order = hem eşleşme önceliği hem LayerIndex).
+    [Fact]
+    public void StartRunCommand_layerPatterns_roundtrip_preserving_order()
+    {
+        var cmd = new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 6,
+            LayerPatterns: [new LayerPattern(0, "^OSYS\\.Data", "DataLayer"), new LayerPattern(1, "^OSYS\\.Ui", "UiLayer")]);
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"layerPatterns\":", json);
+
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        Assert.Equal(cmd.LayerPatterns, back.LayerPatterns);
     }
 
     [Fact]

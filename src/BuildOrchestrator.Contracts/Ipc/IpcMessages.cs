@@ -47,8 +47,12 @@ public enum DependentMode { Safe, Fast }
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
 /// yalnız dirty, cascade yok). RetryFailed modunda ETKİSİZDİR — o mod DependentMode'dan bağımsız, her zaman
 /// failed + tüm transitive dependent'ları derler. Varsayılan Safe. [It-3]</param>
+/// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri (bkz. <see cref="LayerPattern"/>); Core'daki
+/// <c>LayerEngine</c> yalnız bu liste DOLU geldiğinde çalışır — null/boş ise katmanlama KAPALIDIR (varsayılan,
+/// mevcut davranış). Sıra anlamlıdır: <c>Order</c> hem eşleşme önceliği hem atanan LayerIndex'tir.</param>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
-    string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe) : IpcCommand;
+    string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
+    IReadOnlyList<LayerPattern>? LayerPatterns = null) : IpcCommand;
 
 /// <summary>
 /// [K1 DOC FIX] Workspace'i verilen branch'e senkronize et. Sync REF-ONLY'dir: yalnızca <c>git fetch origin

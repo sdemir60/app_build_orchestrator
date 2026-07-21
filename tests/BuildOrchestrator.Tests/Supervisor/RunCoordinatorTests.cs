@@ -1107,4 +1107,26 @@ public class RunCoordinatorTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    // ---------------------------------------------------------------- 14) katman uyarıları (A1/T15)
+
+    // Ters-katman uyarısı warn-only DATA'dır: koordinatör onu OKUYUP bloklama/yeniden sıralama YAPMAZ, yalnız
+    // run başında konsola basar — tasarımın tek gerçek düzeltmesi kullanıcının pattern'leri gözden geçirmesidir.
+    [Fact]
+    public async Task layer_warnings_carried_by_the_plan_are_printed_to_the_console_at_run_start()
+    {
+        const string Warning =
+            "reverse layer dependency: 'OSYS.Data' (layer 0 'DataLayer') depends on producer 'B.csproj' (layer 1 'UiLayer')";
+        var plan = new RunPlan(
+            new BuildPlan([Node("A") with { BuildOrder = 0 }], Cycles: [], Configuration: "Debug",
+                LayerWarnings: [Warning]),
+            EmptyRefs());
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Contains(h.ConsoleLines, l => l == "warning: " + Warning);
+    }
 }

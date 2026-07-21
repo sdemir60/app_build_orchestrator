@@ -45,11 +45,15 @@ public static class RetryPlanning
     /// <summary>
     /// [RetryFailed willBuild kümesi] snapshot'taki <see cref="BuildResult.Failed"/> projeler + <paramref
     /// name="plan"/> üzerindeki TRANSITIVE dependent'ları Completed'tan çıkarıp Queued'a taşır — Succeeded/Skipped
-    /// projeler (failed bir kökün altında OLMAYANLar) DOKUNULMAZ, yeniden derlenmez. <paramref name="plan"/>.Nodes
-    /// build-order'da (bağımlılıklar önce) olduğu için TEK geçişte hesaplanır: bir düğüm "etkilenmiş" sayılır
-    /// eğer (a) kendisi Failed'sa VEYA (b) bağımlılıklarından biri zaten etkilenmiş sayıldıysa — aynı desen
-    /// <see cref="BuildOrchestrator.Core.Incremental.IncrementalPlanner"/>'ın Safe/topological-memoization
-    /// propagation'ı ile (ayrı bir "reverse dependents" grafı KURULMAZ).
+    /// projeler (failed bir kökün altında OLMAYANLar) DOKUNULMAZ, yeniden derlenmez. Bir düğüm "etkilenmiş"
+    /// sayılır eğer (a) kendisi Failed'sa VEYA (b) bağımlılıklarından biri etkilenmişse — küme, DEĞİŞİM DURANA
+    /// kadar tekrarlanan geçişlerle (sabit nokta) kapatılır; ayrı bir "reverse dependents" grafı KURULMAZ.
+    /// <para>
+    /// [A1] Tek ileri geçiş YETMEZ: <paramref name="plan"/>.Nodes topolojik SIRALI OLMAYABİLİR — <see
+    /// cref="BuildOrchestrator.Core.Planning.LayerEngine"/>'ın sert faz bariyeri bir dependent'ı kendi
+    /// bağımlılığından ÖNCE koyabilir (warn-only, kasıtlı). O durumda tek geçiş, failed bir bağımlılığın
+    /// dependent'ını atlar ve dependent torn/eski çıktıya karşı derlenmiş hâliyle Completed'ta kalırdı.
+    /// </para>
     /// </summary>
     public static RunSnapshot RequeueFailedAndDependents(BuildPlan plan, RunSnapshot snapshot)
     {
@@ -57,12 +61,18 @@ public static class RetryPlanning
         ArgumentNullException.ThrowIfNull(snapshot);
 
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in plan.Nodes)
+        bool changed = true;
+        while (changed)
         {
-            bool isAffected =
-                (snapshot.Completed.TryGetValue(node.Id, out var result) && result == BuildResult.Failed)
-                || node.Dependencies.Any(affected.Contains);
-            if (isAffected) affected.Add(node.Id);
+            changed = false;
+            foreach (var node in plan.Nodes)
+            {
+                if (affected.Contains(node.Id)) continue;
+                bool isAffected =
+                    (snapshot.Completed.TryGetValue(node.Id, out var result) && result == BuildResult.Failed)
+                    || node.Dependencies.Any(affected.Contains);
+                if (isAffected) { affected.Add(node.Id); changed = true; }
+            }
         }
 
         var completed = new Dictionary<string, BuildResult>(snapshot.Completed, StringComparer.OrdinalIgnoreCase);

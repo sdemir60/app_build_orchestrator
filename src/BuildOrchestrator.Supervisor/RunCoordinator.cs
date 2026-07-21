@@ -434,6 +434,13 @@ public sealed class RunCoordinator(
         // taşınır; burada AYRICA hesaplanmaz.
         events.TryWrite(new BuildPreviewEvent(
             [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild))]));
+        // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
+        // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
+        // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
+        // bağımlılığından önce koyduğu plan sessizce derlenirdi — tek gerçek düzeltme pattern'leri gözden
+        // geçirmektir. Plan katmansızsa (varsayılan) LayerWarnings null/boştur → hiçbir satır basılmaz.
+        foreach (string warning in plan.LayerWarnings ?? [])
+            console("warning: " + warning);
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,

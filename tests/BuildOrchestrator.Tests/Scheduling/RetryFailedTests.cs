@@ -88,6 +88,26 @@ public class RetryFailedTests
         Assert.Equal(["F"], transformed.Queued);
     }
 
+    [Fact]
+    public void Retry_requeues_a_dependent_that_appears_before_its_failed_dependency_in_plan_order()
+    {
+        // [A1/T15] plan.Nodes TOPOLOJİK OLMAYABİLİR: LayerEngine'ın sert faz bariyeri bir projeyi kendi
+        // bağımlılığından ÖNCE koyabilir (warn-only, kasıtlı). Down (dependent) dizide Up'tan (failed
+        // dependency) ÖNCE geliyor; retry kümesi buna rağmen Down'ı içermeli — aksi halde Down, torn/eski
+        // Up çıktısına karşı derlenmiş hâliyle Completed'ta kalırdı.
+        var plan = Plan(
+            N(@"C:\r\Down.csproj", deps: [@"C:\r\Up.csproj"], buildOrder: 0),
+            N(@"C:\r\Up.csproj", buildOrder: 1));
+        var snapshot = new RunSnapshot(
+            Completed((@"C:\r\Up.csproj", BuildResult.Failed), (@"C:\r\Down.csproj", BuildResult.Succeeded)),
+            Queued: [], ElapsedMs: 0);
+
+        var transformed = RetryPlanning.RequeueFailedAndDependents(plan, snapshot);
+
+        Assert.Contains(@"C:\r\Down.csproj", transformed.Queued);
+        Assert.False(transformed.Completed.ContainsKey(@"C:\r\Down.csproj"));
+    }
+
     // ---------------------------------------------------------------- RequeueStoppedFailed (Continue re-queue)
 
     [Fact]

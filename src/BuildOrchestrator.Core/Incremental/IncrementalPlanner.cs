@@ -13,12 +13,16 @@ using BuildOrchestrator.Core.Planning;
 /// cref="BuildPreview.ComputeWillBuild"/>'e enjekte eder.
 ///
 /// <para>
-/// <b>Safe (varsayılan) — "dirty + transitive":</b> her düğümün imzası, DOĞRUDAN upstream'lerinin ZATEN
-/// hesaplanmış (bu run içindeki, taze) imzasını besler — <see cref="plan"/>.Nodes build-order'da olduğu için
-/// (bkz. <see cref="BuildPlanBuilder"/>) bu topological memoization'dır, ayrıca bir "reverse dependents" graf
-/// kurulmaz. Bir kök projenin imzası değişince bu, kendi imzasını değiştirir; imzası değişen HER düğüm,
-/// kendisine bağımlı (downstream) düğümlerin upstream teriminide değiştirir — GLOBAL propagation böyle DOĞAL
-/// olarak ortaya çıkar (bkz. <see cref="BuildSignature"/> tip özeti "Transitive upstream propagation").
+/// <b>Safe (varsayılan) — "dirty + transitive":</b> her düğümün imzası, DOĞRUDAN upstream'lerinin bu run
+/// içindeki TAZE imzasını besler; o imza gerektiğinde ÖZYİNELEMELİ (DFS + memo, on-stack cycle guard) olarak
+/// yerinde hesaplanır — ayrıca bir "reverse dependents" grafı kurulmaz. Bu, <c>plan</c>.Nodes'un topolojik
+/// SIRALI olmasına BAĞLI DEĞİLDİR [A1]: <see cref="BuildOrchestrator.Core.Planning.LayerEngine"/>'ın sert faz
+/// bariyeri bir projeyi kendi bağımlılığından ÖNCE koyabilir (warn-only, kasıtlı) — düz bir ileri geçişte o
+/// düğümün upstream terimi "bilinmeyen"e düşer ve upstream'deki değişiklik downstream'e YANSIMAZDI (dependent
+/// sessizce "up to date" sayılıp atlanırdı = under-build). Bir kök projenin imzası değişince bu, kendi imzasını
+/// değiştirir; imzası değişen HER düğüm, kendisine bağımlı (downstream) düğümlerin upstream terimini de
+/// değiştirir — GLOBAL propagation böyle DOĞAL olarak ortaya çıkar (bkz. <see cref="BuildSignature"/> tip özeti
+/// "Transitive upstream propagation").
 /// </para>
 ///
 /// <para>
@@ -55,7 +59,7 @@ using BuildOrchestrator.Core.Planning;
 /// </summary>
 public static class IncrementalPlanner
 {
-    /// <param name="plan">Build-order'da (topological) bir <see cref="BuildPlan"/>.</param>
+    /// <param name="plan">Bir <see cref="BuildPlan"/>. Nodes'un topolojik sıralı olması GEREKMEZ (bkz. tip özeti "Safe").</param>
     /// <param name="headCommit">HEAD commit SHA'sı; <c>null</c> ise hollow (tüm plan için WillBuild=null). [A6 refinement] Proje imzasına DOĞRUDAN girmez — yalnız hollow kapısı içindir, bkz. <paramref name="committedFingerprintForNode"/>.</param>
     /// <param name="dirtyFilesForNode">Düğüm → bu projeye ait working-tree dirty dosya yollarının listesi
     /// (zaten bu projeye filtrelenmiş — <see cref="BuildSignature.Compute"/>'ın beklediği gibi). Dirty yoksa boş liste.</param>
@@ -111,29 +115,43 @@ public static class IncrementalPlanner
             return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup), hollowSignatures);
         }
 
-        // Safe: bu run içinde TAZE hesaplanmış upstream imzalarını besler (topological memoization) — bir
-        // upstream'in DEĞİŞMİŞ imzası downstream'e böyle doğal biçimde yayılır (GLOBAL propagation).
+        var byId = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+        // Fast frozen-upstream imzalarını da barındırdığı için "freshMemo" değil "computedMemo" — ikisi için de
+        // tek bir isim doğru. Değerler her zaman gerçek (non-null) imzadır; tip yalnız dönüş sözleşmesi
+        // (SignatureById, hollow dalında null taşır) ile aynı kalsın diye string?'tir.
         var computedMemo = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        string? FreshUpstream(string depId) => computedMemo.TryGetValue(depId, out var sig) ? sig : null;
+        var onStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Fast: upstream'in TAZE imzası yerine STORED/frozen imzasını besler — upstream'de bu run'da oluşan
         // bir değişiklik downstream'e YANSITILMAZ (suppressed/cascade yok). Bkz. tip özeti "Fast" bölümü.
         string? FrozenUpstream(string depId) => state.TryGetValue(depId, out var st) ? st.BuiltSignature : null;
 
-        Func<string, string?> upstreamSignature = mode == DependentMode.Fast ? FrozenUpstream : FreshUpstream;
-
-        foreach (var node in plan.Nodes)
+        // Safe: upstream'in imzası ÖZYİNELEMELİ olarak (talep üzerine) hesaplanır — plan.Nodes'un topolojik
+        // SIRALI olduğu varsayımı YOKTUR. Bu bilinçlidir: LayerEngine'ın sert faz bariyeri bir projeyi kendi
+        // bağımlılığından ÖNCE koyabilir (warn-only tasarım, bkz. LayerEngine tip özeti) — düz ileri geçişte
+        // o durumda upstream memo'da bulunamaz, imza "bilinmeyen upstream"e düşer ve upstream'deki DEĞİŞİKLİK
+        // downstream'e YANSIMAZ: dependent sessizce "up to date" sayılıp ATLANIRDI (under-build).
+        string Compute(ProjectNode node)
         {
-            var dirtyFiles = dirtyFilesForNode(node);
-            string? committedFingerprint = committedFingerprintForNode(node);
+            if (computedMemo.TryGetValue(node.Id, out var done) && done is not null) return done;
+            // Cycle: üye (transitif olarak) kendi kendine bağımlı — upstream terimi "bilinmeyen" ile AYNI
+            // deterministik işarete düşer. Cycle üyeleri zaten hiç derlenmez (WillBuildEvaluator, InCycle).
+            if (!onStack.Add(node.Id)) return BuildSignature.NullMarker;
+
+            // Plan DIŞI bir bağımlılık (byId'de yok) → null: "bilinmeyen upstream", Compute'un tolere ettiği hâl.
+            string? Upstream(string depId) => byId.TryGetValue(depId, out var dep) ? Compute(dep) : null;
+
+            var upstreamSignature = mode == DependentMode.Fast ? FrozenUpstream : (Func<string, string?>)Upstream;
             string signature = BuildSignature.Compute(
-                node, plan.Configuration, committedFingerprint, dirtyFiles, readFileContent, upstreamSignature, inPlace);
-            // Safe modda sonraki düğümlerin FreshUpstream'i bu değeri okuyabilsin diye memoize edilir; Fast
-            // modda bu memo hiç okunmaz (FrozenUpstream state'ten okur) ama yine de dolduruluyor — zararsız.
-            // (Fast frozen-upstream imzalarını da barındırdığı için "freshMemo" değil "computedMemo" — ikisi
-            // için de tek bir isim doğru.)
+                node, plan.Configuration, committedFingerprintForNode(node), dirtyFilesForNode(node),
+                readFileContent, upstreamSignature, inPlace);
+
+            onStack.Remove(node.Id);
             computedMemo[node.Id] = signature;
+            return signature;
         }
+
+        foreach (var node in plan.Nodes) Compute(node);
 
         return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup), computedMemo);
     }

@@ -58,7 +58,9 @@ public static class Program
             // restore'un istediği SolutionDir için .sln YOLLARI (ProjectNode yalnız solution ADI taşır) aynı
             // scan'den (`scan.SlnPaths`) elde edilir, workspace ikinci kez taranmaz.
             var scan = scanner.Scan(cmd.RootPath);
-            var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, cmd.Configuration);
+            // [A1/T15] Katman pattern'leri komuttan Core'a AKTARILIR — null/boş ise LayerEngine devre dışıdır
+            // (varsayılan, mevcut davranış); dolu ise sert faz bariyeri + ters-katman uyarıları devreye girer.
+            var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, cmd.Configuration, cmd.LayerPatterns);
             var solutionRefs = SolutionMapper.MapRefs(scan.SlnPaths, scan.CsprojPaths);
 
             var (boundPlan, incremental) = ComputeIncremental(cmd, plan, scan, evaluator, cache, stateStore);

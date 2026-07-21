@@ -50,9 +50,10 @@ public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator e
         }
 
         // [T15][N8] Katman ataması + sert faz bariyeri: pattern yoksa (varsayılan) LayerEngine nodes'u aynen
-        // döner (mevcut davranış, regresyon yok). Warnings (ters katman bağımlılığı) burada bilinçli olarak
-        // yutulur — BuildPlan'ın henüz bir warnings alanı yok; LayerEngine.AssignLayers doğrudan test edilir.
+        // döner (mevcut davranış, regresyon yok). [A1] Warnings (ters katman bağımlılığı) artık YUTULMAZ,
+        // BuildPlan.LayerWarnings ile taşınır: warn-only tasarımın tek gerçek düzeltmesi kullanıcının
+        // pattern'leri gözden geçirmesidir, bu yüzden uyarının ona ULAŞMASI şarttır.
         var assignment = LayerEngine.AssignLayers(nodes, layerPatterns ?? []);
-        return new BuildPlan(assignment.Nodes, topo.Cycles, configuration);
+        return new BuildPlan(assignment.Nodes, topo.Cycles, configuration, assignment.Warnings);
     }
 }

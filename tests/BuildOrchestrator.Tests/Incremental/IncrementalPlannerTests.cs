@@ -492,4 +492,41 @@ public class IncrementalPlannerTests
 
         Assert.Equal(fpOnlyTracked, fpWithUncommittedExtra);
     }
+
+    // ---- [A1/T15] Sıra bağımsızlığı: plan.Nodes TOPOLOJİK OLMAYABİLİR (LayerEngine sert faz bariyeri bir
+    // projeyi kendi bağımlılığından ÖNCE koyabilir — warn-only tasarımın kasıtlı sonucu). Propagation buna
+    // rağmen doğru olmalı; aksi halde bir dependent "up to date" diye sessizce ATLANIRDI (under-build). ------
+
+    private const string UpId = @"C:\r\Up.csproj";
+    private const string DownId = @"C:\r\Down.csproj";
+    private const string UpSourcePath = @"C:\r\Up.cs";
+
+    /// <summary>Planın TÜM imzalarını hesaplayıp <paramref name="id"/>'ninkini döner. Up projesi (tek) dirty
+    /// dosyasıyla gelir ve o dosyanın içeriği <paramref name="upstreamContent"/>'tir — yani iki çağrı arasında
+    /// DEĞİŞEN tek şey upstream'in kaynağıdır.</summary>
+    private static string? SignatureOf(BuildPlan plan, string id, string upstreamContent) =>
+        IncrementalPlanner.ComputeWillBuildWithSignatures(
+            plan,
+            headCommit: "headA",
+            dirtyFilesForNode: DirtyLookup(Dirty((UpId, [UpSourcePath]))),
+            readFileContent: ContentMap((UpSourcePath, upstreamContent)),
+            committedFingerprintForNode: FingerprintLookup(Fingerprints((UpId, "fpUp"), (DownId, "fpDown"))),
+            state: new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase),
+            inPlace: true,
+            mode: DependentMode.Safe).SignatureById[id];
+
+    [Fact]
+    public void Upstream_change_propagates_even_when_plan_order_is_not_topological()
+    {
+        // LayerEngine reorder'ı bir projeyi kendi bağımlılığından ÖNCE koyabilir (LayerEngine.cs:77-81).
+        // Dependent (Down) dizide Upstream'den ÖNCE geliyor; propagation buna rağmen çalışmalı.
+        var up = Node(UpId, buildOrder: 1, inCycle: false);
+        var down = Node(DownId, buildOrder: 0, inCycle: false, UpId);
+        var plan = new BuildPlan([down, up], [], "Debug");
+
+        string? sigDownBefore = SignatureOf(plan, DownId, upstreamContent: "v1");
+        string? sigDownAfter = SignatureOf(plan, DownId, upstreamContent: "v2");
+
+        Assert.NotEqual(sigDownBefore, sigDownAfter);
+    }
 }
