@@ -56,13 +56,13 @@ public partial class GraphView : UserControl
     /// <summary>Nabzın orta noktadaki opaklığı (DS <c>@keyframes: 50% { opacity: .5 }</c>).</summary>
     public const double PulseMinOpacity = 0.5;
 
-    // lucide "package" — DS DependencyGraphNode'un çizdiği ikonun BİREBİR geometrisi (24'lük viewBox).
-    private const string PackageIconPath =
-        "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z " +
-        "M3.3 7 12 12l8.7-5 M12 22V12";
+    /// <summary>[T64] Düğüm ikonu (lucide "package", 24'lük viewBox). Path data ARTIK BURADA DEĞİL: geometri
+    /// uygulamanın TEK ikon sözlüğünden (<c>Resources/Icons.xaml</c>) çözülür. Bu sınıf yalnız ANAHTAR bilir —
+    /// aynı path'in ikinci bir kopyası kaldığı sürece iki taraf sessizce ayrışabilirdi (T64 review, fix wave 1).</summary>
+    internal const string PackageIconKey = "Icon.Package";
+    /// <summary>Dep-hata rozetinin DOLU üçgeni (lucide depWarn) — aynı gerekçe, bkz. <see cref="PackageIconKey"/>.</summary>
+    internal const string WarningTriangleIconKey = "Icon.DepWarn";
     private const double PackageIconStrokeWidth = 1.6; // viewBox birimi — Viewbox ölçeği ile birlikte küçülür
-    // lucide depWarn (DS ProjectRow/graf rozeti) — dolu üçgen, 24'lük viewBox.
-    private const string WarningTriangleIconPath = "M12 3 23 21H1Z";
 
     private readonly Dictionary<string, GraphNodeVisual> _nodes = new(StringComparer.Ordinal);
     private readonly List<GraphEdgeVisual> _edges = [];
@@ -281,12 +281,14 @@ public partial class GraphView : UserControl
 
         var icon = new Path
         {
-            Data = Geometry.Parse(PackageIconPath),
             StrokeThickness = PackageIconStrokeWidth,
             StrokeStartLineCap = PenLineCap.Round,
             StrokeEndLineCap = PenLineCap.Round,
             StrokeLineJoin = PenLineJoin.Round,
         };
+        // Fırçalarla AYNI yol (SetResourceReference = code-behind'ın DynamicResource'u): sözlük merge zincirinden
+        // gelir, kod path data TAŞIMAZ.
+        icon.SetResourceReference(Path.DataProperty, PackageIconKey);
         var iconBox = new Viewbox
         {
             Width = GraphLayout.NodeSize * 0.5, // DS: size * 0.5 → 26px düğümde 13px ikon
@@ -301,7 +303,8 @@ public partial class GraphView : UserControl
         var badgeCircle = new Ellipse { StrokeThickness = 1 };
         badgeCircle.SetResourceReference(Shape.FillProperty, "Brush.SurfaceBase");
         badgeCircle.SetResourceReference(Shape.StrokeProperty, "Brush.StatusFailBorder");
-        var badgeTriangle = new Path { Data = Geometry.Parse(WarningTriangleIconPath) };
+        var badgeTriangle = new Path();
+        badgeTriangle.SetResourceReference(Path.DataProperty, WarningTriangleIconKey);
         badgeTriangle.SetResourceReference(Shape.FillProperty, "Brush.StatusFailText");
         var badge = new Grid
         {

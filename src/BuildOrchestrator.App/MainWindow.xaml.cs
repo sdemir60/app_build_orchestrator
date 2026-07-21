@@ -38,7 +38,8 @@ public partial class MainWindow : Window
         _console = console;
         DataContext = _vm;
         _closeBalloon = new FirstCloseBalloonGate(_uiState);
-        CaptionGlyphs.BindMaxButton(this, MaxGlyph); // [K8] maximize'da restore glyph'i (çizilmiş geometri, T64)
+        // [K8] maximize'da restore glyph'i (çizilmiş geometri, T64) + butonun duruma bağlı UIA adı.
+        CaptionGlyphs.BindMaxButton(this, MaxButton, MaxGlyph);
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {

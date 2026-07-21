@@ -11,13 +11,14 @@
         * `I.*` tablosu: .claude/outputs/2026-07-15-19-00-design-v1/prototype/app/BuildApp.jsx:44-72
           (satır numarası her ikonun kendi yorumunda). Lucide geometrisi, viewBox 0 0 24 24 —
           İSTİSNA: Icon.LayQuad/LayList/LayFocus viewBox 0 0 16 16'dır.
-        * Icon.Package: aynı design-v1 DependencyGraphNode'unun lucide "package"'ı; repoda zaten
-          Graph/GraphView.xaml.cs:60-62'de inline sabit olarak duruyordu (o dördüncü kaynak).
+        * Icon.Package (ve Icon.DepWarn): aynı design-v1 DependencyGraphNode'unun lucide geometrileri; repoda
+          Graph/GraphView.xaml.cs'te inline `Geometry.Parse` sabitleri olarak duruyorlardı (o dördüncü kaynak).
+          T64 review / fix wave 1'de sabitler SİLİNDİ — GraphView artık bu iki anahtarı sözlükten çözer.
         * Caption glyph'leri: prototype/_ds/**/_ds_bundle.js:1164-1172 (WinBtn SVG'leri), viewBox 0 0 10 10,
           1px stroke. Icon.CaptionRestore tasarımda LİTERAL yoktur — aşağıda gerekçesiyle TÜRETİLMİŞTİR.
 
       BİÇİM: SVG'de birden çok <path d="…"> varsa figürler tek PathGeometry'de boşlukla birleştirilir
-      (GraphView.xaml.cs:60-62 aynı deseni kullanıyordu). <circle>/<rect>/<line> gibi path OLMAYAN öğeler
+      (GraphView'ün sildiği inline sabitler de aynı deseni kullanıyordu). <circle>/<rect>/<line> gibi path OLMAYAN öğeler
       WPF'in kendi geometri tipleriyle (Ellipse/Rectangle/LineGeometry) bir GeometryGroup içinde verilir;
       <polygon>/<polyline> nokta listeleri path'e çevrilir (tek olası karşılık) ve noktalar birebir korunur.
 
@@ -26,7 +27,7 @@
       tüketici çıkarsa x:Shared="False" GEREKİR (bugün yok).
 
       ÖLÇEK: geometriler kendi viewBox birimindedir. 24'lük bir ikonu 12px çizerken stroke da küçülmelidir —
-      Viewbox + Canvas(24x24) sarmalayıcısı kullanılır (bkz. ConsoleHeader.xaml, GraphView.xaml.cs:290-299).
+      Viewbox + Canvas(24x24) sarmalayıcısı kullanılır (bkz. ConsoleHeader.xaml, GraphView.BuildNodeVisual).
       Caption glyph'leri 10x10'da 1:1 çizilir, ölçekleme yok.
     -->
 
@@ -125,10 +126,10 @@
     <PathGeometry x:Key="Icon.AlertTri"
                   Figures="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z M12 9v4 M12 17h.01" />
 
-    <!-- BuildApp.jsx:58 depWarn — dolu üçgen -->
+    <!-- BuildApp.jsx:58 depWarn — dolu üçgen (graf dep-hata rozeti: GraphView.WarningTriangleIconKey) -->
     <PathGeometry x:Key="Icon.DepWarn" Figures="M12 3 23 21H1Z" />
 
-    <!-- GraphView.xaml.cs:60-62 lucide "package" — DS DependencyGraphNode'un çizdiği ikon -->
+    <!-- lucide "package" — DS DependencyGraphNode'un çizdiği ikon (GraphView.PackageIconKey bunu çözer) -->
     <PathGeometry x:Key="Icon.Package"
                   Figures="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12" />
 

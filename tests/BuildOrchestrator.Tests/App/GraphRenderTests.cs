@@ -52,7 +52,9 @@ public class GraphRenderTests
         // pack:// / Application.Resources olmadan (headless host) token'lar çözülmez — Tokens/Motion sözlükleri
         // dosyadan merge edilir (FontAssetTests/TokenBrushesTests ile AYNI TestAssets deseni). Böylece
         // SetResourceReference ile bağlanan fırçalar ve Duration/KeySpline token'ları gerçekten çözülür.
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml" })
+        // [T64 review · fix wave 1] Icons.xaml de merge edilir: düğüm ikonu ve dep-hata üçgeni artık kodda
+        // gömülü path DEĞİL, bu sözlükten çözülen geometrilerdir (CopyLogTests.NewHeaderWithIcons ile aynı desen).
+        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
         {
             using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
             view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
@@ -147,6 +149,22 @@ public class GraphRenderTests
         Assert.False(withBadge.BadgeTriangle.Data.IsEmpty());
 
         Assert.Equal(Visibility.Collapsed, view.NodeVisuals["OSYS.Server.Api"].Badge.Visibility);
+    }
+
+    [StaFact]
+    public void The_node_icon_and_the_dep_badge_are_the_dictionary_geometries_not_copies_parsed_in_code()
+    {
+        // [T64 review · fix wave 1] Bu iki geometri GraphView'de inline `Geometry.Parse` sabitiydi ve
+        // Icons.xaml'deki metinle KARAKTER KARAKTER aynıydı — biri düzeltilince öteki sessizce eski şekli
+        // çizmeye devam ederdi ve hiçbir test bunu görmezdi. REFERANS eşitliği tek doğruluk kaynağını pinler:
+        // kodda yeniden parse edilen bir kopya AYRI bir nesne olacağından bu iddia kırılır ("aynı metin" değil,
+        // "aynı NESNE"). Geometriler donmuş ve paylaşımlıdır (Icons.xaml başlık yorumu) — paylaşım doğrudur.
+        var view = NewView(false);
+        view.SetGraph(Nodes(portalDepIssue: true), Edges());
+
+        var visual = view.NodeVisuals["OSYS.Web.Portal"];
+        Assert.Same(view.TryFindResource(GraphView.PackageIconKey), visual.Icon.Data);
+        Assert.Same(view.TryFindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle.Data);
     }
 
     [StaFact]

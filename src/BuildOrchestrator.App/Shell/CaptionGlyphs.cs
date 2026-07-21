@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 
@@ -24,9 +26,19 @@ public static class CaptionGlyphs
     /// <summary>İki iç içe kare (Icons.xaml, K8 türetmesi).</summary>
     public const string RestoreKey = "Icon.CaptionRestore";
 
+    /// <summary>Butonun UIA adı, tek kare durumunda (kullanıcıya görünen metin → İNGİLİZCE).</summary>
+    public const string MaximizeName = "Maximize";
+
+    /// <summary>Butonun UIA adı, maximize durumunda — glyph gibi ad da duruma göre DEĞİŞİR.</summary>
+    public const string RestoreName = "Restore";
+
     /// <summary>Pencere durumuna karşılık gelen ikon anahtarı — saf fonksiyon.</summary>
     public static string MaxButtonGlyphKey(WindowState state)
         => state == WindowState.Maximized ? RestoreKey : MaximizeKey;
+
+    /// <summary>Pencere durumuna karşılık gelen UIA adı — saf fonksiyon (glyph anahtarının eşi).</summary>
+    public static string MaxButtonAutomationName(WindowState state)
+        => state == WindowState.Maximized ? RestoreName : MaximizeName;
 
     /// <summary>
     /// Pencere durumunun geometrisini <paramref name="scope"/>'un kaynak kapsamında çözer. Sözlük o
@@ -41,14 +53,23 @@ public static class CaptionGlyphs
     /// XAML'de duran <see cref="Path"/>'in yalnız <see cref="Path.Data"/>'sı değiştirilir (stroke/boyut
     /// stilini XAML sahiplenir).
     ///
+    /// <para><b>Erişilebilirlik adı da BURADA sürülür:</b> butonun içeriği artık bir karakter değil çizilmiş
+    /// bir <see cref="Shape"/>'tir ve UIA bir Shape'ten ad TÜRETEMEZ. Ad duruma bağlı olduğundan (maximize ↔
+    /// restore) statik bir XAML attribute'ü maximize edilmiş pencerede BAYATLARDI — glyph ile aynı yerde,
+    /// aynı anda güncellenir. Min/Close adları durum taşımaz, onlar XAML'de sabittir.</para>
+    ///
     /// <para><b>Neden <c>DependencyPropertyDescriptor</c>, <c>StateChanged</c> DEĞİL:</b> <c>StateChanged</c>
     /// yalnız pencere gösterildikten sonra (WM_SIZE üzerinden) tetiklenir; DP izleyicisi hem OS kaynaklı
     /// (maximize/snap/çift-tık) hem de programatik (ilk kurulum dahil) her değişimi yakalar. Abonelik güçlü
     /// referans tutar — tek ve uygulama ömrü boyunca yaşayan ana pencere için kabul edilir.</para>
     /// </summary>
-    public static void BindMaxButton(Window window, Path maxGlyph)
+    public static void BindMaxButton(Window window, Button maxButton, Path maxGlyph)
     {
-        void Update() => maxGlyph.Data = MaxButtonGlyph(maxGlyph, window.WindowState);
+        void Update()
+        {
+            maxGlyph.Data = MaxButtonGlyph(maxGlyph, window.WindowState);
+            AutomationProperties.SetName(maxButton, MaxButtonAutomationName(window.WindowState));
+        }
 
         Update();
         DependencyPropertyDescriptor.FromProperty(Window.WindowStateProperty, typeof(Window))

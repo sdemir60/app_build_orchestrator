@@ -59,14 +59,20 @@
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
           <!-- DynamicResource (StaticResource DEĞİL): merge zinciri olmayan bir bağlamda StaticResource
                yükleme anında throw ederdi; DynamicResource sessizce çözümsüz kalır (LatestPill ile aynı gerekçe). -->
-          <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Click="OnMinimize">
+          <!-- AutomationProperties.Name ZORUNLU: buton içeriği bir karakter değil çizilmiş bir Shape'tir ve
+               UIA bir Shape'ten ad TÜREMEZ — adsız bırakılırsa ekran okuyucu üçünü de yalnız "button" okur.
+               Max'ın adı duruma bağlıdır (maximize ↔ restore) ve statik kalırsa bayatlardı: onu glyph ile
+               AYNI yerde CaptionGlyphs.BindMaxButton sürer. -->
+          <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Click="OnMinimize"
+                  AutomationProperties.Name="Minimize">
             <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionMinimize}" />
           </Button>
           <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="OnMaximizeRestore">
-            <!-- Data'yı CaptionGlyphs.BindMaxButton sürer (K8: maximize'da restore glyph'i) -->
+            <!-- Data'yı VE AutomationProperties.Name'i CaptionGlyphs.BindMaxButton sürer (K8) -->
             <Path x:Name="MaxGlyph" Style="{StaticResource CaptionGlyph}" />
           </Button>
-          <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Click="OnClose">
+          <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Click="OnClose"
+                  AutomationProperties.Name="Close">
             <Path Style="{StaticResource CaptionGlyph}" Data="{DynamicResource Icon.CaptionClose}" />
           </Button>
         </StackPanel>

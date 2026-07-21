@@ -7,10 +7,12 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [T64] Uygulamanın TEK ikon stratejisi: her ikon <c>Resources/Icons.xaml</c>'de ÇİZİLMİŞ bir
 /// <see cref="Geometry"/>'dir. Öncesinde dört uyumsuz kaynak vardı — Unicode karakterler, <b>Segoe MDL2
-/// Assets</b> ikon fontu, düz semboller ve kod içine gömülü <c>Geometry.Parse</c> path'leri. Bu sınıf üç şeyi
+/// Assets</b> ikon fontu, düz semboller ve kod içine gömülü <c>Geometry.Parse</c> path'leri. Bu sınıf dört şeyi
 /// pinler: (a) sözlükteki her değer gerçekten parse edilebilir, boş olmayan bir geometridir; (b) It-4b'nin
 /// ihtiyaç duyduğu anahtarların TAMAMI tanımlıdır (eksik anahtar B3-E6'da runtime'da null Data olarak
-/// patlardı, derlemede değil); (c) kaynak ağacında hiçbir yerde MDL2 ikon fontuna bağımlılık kalmamıştır.
+/// patlardı, derlemede değil); (c) kaynak ağacında hiçbir yerde MDL2 ikon fontuna bağımlılık kalmamıştır;
+/// (d) hiçbir kontrol ikon geometrisini koda gömülü bir string'den parse ETMEZ — dördüncü kaynağın
+/// (GraphView'ün inline sabitleri) geri sızmasını kapatır (T64 review, fix wave 1).
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class IconGeometryTests
@@ -93,5 +95,16 @@ public class IconGeometryTests
         // `*.cs` de taranır (glyph sabitleri code-behind'da yaşıyordu). bin/obj hariç — bkz. RepoPaths.
         foreach (string file in RepoPaths.AppSourceFiles("*.xaml").Concat(RepoPaths.AppSourceFiles("*.cs")))
             Assert.DoesNotContain("Segoe MDL2", File.ReadAllText(file), StringComparison.Ordinal);
+    }
+
+    [StaFact]
+    public void No_control_parses_an_icon_geometry_from_a_string_embedded_in_code()
+    {
+        // [T64 review · fix wave 1] "Dört kaynağı bire indir" iddiasının GERÇEKTEN tuttuğunu pinler: T64
+        // sonrasında GraphView hâlâ Icons.xaml ile BİREBİR aynı iki path'i inline sabit olarak taşıyordu ve
+        // hiçbir test ayrışmayı görmüyordu. Geometri kodda parse edilmiyorsa ikinci bir doğruluk kaynağı da
+        // OLUŞAMAZ (koda gömülü path'in tek giriş kapısı Geometry.Parse'tır — XAML tarafı sözlüğün kendisidir).
+        foreach (string file in RepoPaths.AppSourceFiles("*.cs"))
+            Assert.DoesNotContain("Geometry.Parse", File.ReadAllText(file), StringComparison.Ordinal);
     }
 }
