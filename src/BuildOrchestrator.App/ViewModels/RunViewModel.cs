@@ -190,6 +190,13 @@ public sealed partial class RunViewModel : ObservableObject
     private int? _runParallelism;
     private readonly Dictionary<string, long> _projectStartedAtMs = new(StringComparer.OrdinalIgnoreCase);
 
+    // [D2/T38] Sticky şeridin "wb/fin/allClean"i için SABİT willBuild kümesi: prototipte (BuildApp.jsx) willBuild
+    // koşu boyunca değişmez (eng.willBuild). VM'de satırların WillBuild bayrağı succeeded olunca false'a döndüğü
+    // için CANLI sayılamaz — bu yüzden run başında BuildPreviewEvent'ten (WillBuild==true olanlar) DONDURULUR.
+    // NOT (wire gap): BuildPreviewEvent yalnız RUN başında gelir (RunCoordinator), Sync sonrası Idle'da GELMEZ —
+    // bu yüzden pre-build Idle'da bu küme boştur (allClean=true varsayılır). Bkz. task-D2-report.md.
+    private readonly HashSet<string> _willBuildIds = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>[Fix wave 1, Finding 2 regression testi] YALNIZ testler için: <see cref="OnProjectLogChunk"/>
     /// dikiş kilidinden çıkar çıkmaz (kilit ne zaman kapansa, kapandığı ANDA) senkron tetiklenir. Üretimde
     /// hep null — sıfır maliyet. Testte, kilit içinde <c>ActiveProjectId</c> atamasının GERÇEKTEN kilitle
@@ -203,7 +210,9 @@ public sealed partial class RunViewModel : ObservableObject
     // [A5/T69 · Fix wave 1 — Finding 6] Sync / branch / worktree / topoloji yüzeyi AYRI partial dosyada:
     // RunViewModel.Workspace.cs (faz, hedef commit, envanter, topoloji uzlaştırma).
 
-    [ObservableProperty] private string _rootPath = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasWorkspace))]
+    private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
 
     // [Fix wave 1, C2 review Finding 2] Parallelism artık PerfMode'un varsayılanından tohumlanır — eski
@@ -219,6 +228,25 @@ public sealed partial class RunViewModel : ObservableObject
     /// "{completed}/{total} · {elapsed}" (ilk-koşu/bilinmeyen-süre fallback'i). Her proje tamamlanışında
     /// (<see cref="OnProjectDone"/>/ProjectSkipped) ve runStarted'da (X/N fallback ile) güncellenir.</summary>
     [ObservableProperty] private string _etaText = "";
+
+    /// <summary>[D2/T70] Yumuşatılmış ETA (ms) — <see cref="RibbonText.EtaSuffix"/> bunu okuyup " · ~35s left"/
+    /// " · almost done" ekini üretir. <see cref="UpdateEta"/>'da set edilir; ETA hesaplanamıyorsa (no-history)
+    /// <c>null</c>. <see cref="EtaText"/> (string) ayrı kalır (başka tüketiciler için); şerit numeric <c>EtaMs</c>'i kullanır.</summary>
+    [ObservableProperty] private long? _etaMs;
+
+    /// <summary>[D2/T38] Bu koşuda derlenecek proje YOK (SABİT willBuild kümesi boş) — şerit faz-metni ve progress
+    /// kolu bunu okur (prototip <c>eng.allClean</c>). Bkz. <see cref="RecomputeWillBuildSurface"/>.</summary>
+    [ObservableProperty] private bool _allClean = true;
+
+    /// <summary>[D2/T38] Derlenecek (willBuild) proje sayısı — koşu boyunca SABİT (prototip <c>wb</c>).</summary>
+    [ObservableProperty] private int _willBuildCount;
+
+    /// <summary>[D2/T38] willBuild kümesinden tamamlanan (succeeded/failed/skipped) sayısı (prototip <c>fin</c>).</summary>
+    [ObservableProperty] private int _finishedOfWillBuild;
+
+    /// <summary>[D2/T38] Repo seçili mi (prototip <c>workspace</c>) — şerit "Not ready — no repository selected"
+    /// davetini bununla ayırt eder.</summary>
+    public bool HasWorkspace => RootPath.Length > 0;
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
@@ -495,8 +523,23 @@ public sealed partial class RunViewModel : ObservableObject
     private void RefreshRunSurface()
     {
         Counters = RunCounters.From(Projects);
+        RecomputeWillBuildSurface(); // [D2] wb/fin/allClean — sayaçlarla aynı tetikleyicide tazelenir
         OnPropertyChanged(nameof(VisibleProjects));
         RetryFailedCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>[D2/T38] Şeridin SABİT willBuild yüzeyini (wb/fin/allClean) <see cref="_willBuildIds"/>'ten türetir —
+    /// canlı satır bayraklarından DEĞİL (succeeded olunca WillBuild false'a döner; küme donduğu için wb sabit kalır).</summary>
+    private void RecomputeWillBuildSurface()
+    {
+        WillBuildCount = _willBuildIds.Count;
+        AllClean = _willBuildIds.Count == 0;
+        int fin = 0;
+        foreach (var row in Projects)
+            if (_willBuildIds.Contains(row.Id) &&
+                row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped)
+                fin++;
+        FinishedOfWillBuild = fin;
     }
 
     /// <summary>Engine hazır değilken (henüz başlamadı/çöktü) SendAsync SENKRON fırlar — UI tıklaması bu
@@ -533,6 +576,9 @@ public sealed partial class RunViewModel : ObservableObject
             foreach (var row in Projects)
                 if (row.State == ProjectRowState.Started && _projectStartedAtMs.TryGetValue(row.Id, out long at))
                     row.DurationMs = Math.Max(0, now - at);
+            // [D2/T70 — It-4 canlı tick] It-3'te ETA yalnız COMPLETION'da yeniden hesaplanıyordu ("live tick It-4"
+            // devir notu); şerit canlı "~Ns left"i ve building'in azalan kalanını görebilsin diye her tick'te tazelenir.
+            UpdateEta();
         }
     }
 
@@ -580,6 +626,7 @@ public sealed partial class RunViewModel : ObservableObject
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
         if (e.Mode == RunMode.Rebuild) Projects.Clear(); // Continue'da liste (önceki segmentin sonuçları) korunur
+        _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;
         _totalProjects = e.TotalProjects;
@@ -603,6 +650,7 @@ public sealed partial class RunViewModel : ObservableObject
         foreach (var item in e.Items)
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
+            if (item.WillBuild == true) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
         }
@@ -688,6 +736,7 @@ public sealed partial class RunViewModel : ObservableObject
         long? rawEstimateMs = EtaCalculator.ComputeRawEstimateMs(queuedEstimatesMs, building, _runParallelism ?? Parallelism);
         long? smoothedEtaMs = rawEstimateMs is { } raw ? EtaCalculator.Smooth(_previousEtaMs, raw) : null;
         _previousEtaMs = smoothedEtaMs;
+        EtaMs = smoothedEtaMs; // [D2/T70] şeridin numeric ETA kaynağı (RibbonText.EtaSuffix)
         EtaText = EtaCalculator.FormatDisplay(smoothedEtaMs, completed, total, ElapsedMs);
     }
 

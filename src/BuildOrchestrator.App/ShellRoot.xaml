@@ -3,7 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
-             xmlns:graph="clr-namespace:BuildOrchestrator.App.Graph">
+             xmlns:graph="clr-namespace:BuildOrchestrator.App.Graph"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
   <!--
     [T35] Pencere GÖVDESİ (design-v1 kök yerleşimi). Pencere kabuğu (WindowChrome/DWM/tray/hotkey/title bar
     + caption butonları) MainWindow'dadır; burada test edilebilir LAYOUT vardır. Kök grid = ribbon · gövde ·
@@ -17,9 +18,9 @@
       <RowDefinition Height="{DynamicResource Size.ActionBarHeight}" />  <!-- action bar (42px) -->
     </Grid.RowDefinitions>
 
-    <!-- Ribbon bölgesi — sticky durum şeridi + global progress bir sonraki task'ın (T37) işidir; burada
-         yalnız yapısal satır tutulur (içerik uydurmak YAGNI). -->
-    <Grid x:Name="RibbonHost" Grid.Row="0" />
+    <!-- [D2/T37-T39] Ribbon bölgesi: sticky durum şeridi + 2px global progress. DataContext (RunViewModel)
+         MainWindow → ShellRoot → buraya miras kalır. -->
+    <views:StickyRibbon x:Name="PART_Ribbon" Grid.Row="0" />
 
     <!-- ==================================== GÖVDE (2×2) ==================================== -->
     <Grid x:Name="Body" Grid.Row="1">

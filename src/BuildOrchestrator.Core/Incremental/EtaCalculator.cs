@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.Core.Incremental;
 
@@ -14,7 +15,7 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <item><b>Gösterim:</b> en yakın 5 saniyeye yuvarlanır; <see cref="AlmostDoneThresholdMs"/> (4000ms) ALTI →
 /// "· almost done" (numerik YOK); üstü → HAM SANİYE olarak "~Ns left" (InvariantCulture) — design-v1 prototype
 /// <c>BuildApp.jsx:761-763</c>'ün birebir portu (<c>Math.round(eta/5000)*5 + 's left'</c>, ör. 125000ms →
-/// "~125s left"); dakikaya ASLA çevrilmez — mm:ss formatı (<see cref="FormatDuration"/>) yalnız elapsed/
+/// "~125s left"); dakikaya ASLA çevrilmez — mm:ss formatı (<see cref="DurationFormat.Elapsed"/>) yalnız elapsed/
 /// no-history dalında (bkz. aşağı) kullanılır, ETA'da DEĞİL.</item>
 /// <item><b>İlk koşu / bilinmeyen süre fallback:</b> bir projenin <c>BuildState.LastDurationMs</c>'i yoksa
 /// (null) — TÜM projeler (queued+building) arasında bilinen (non-null) sürelerin ORTALAMASI o proje için
@@ -119,7 +120,7 @@ public static class EtaCalculator
     public static string FormatDisplay(long? smoothedEtaMs, int completedCount, int totalCount, long elapsedMs)
     {
         if (smoothedEtaMs is null)
-            return string.Format(CultureInfo.InvariantCulture, "{0}/{1} · {2}", completedCount, totalCount, FormatDuration(elapsedMs));
+            return string.Format(CultureInfo.InvariantCulture, "{0}/{1} · {2}", completedCount, totalCount, DurationFormat.Elapsed(elapsedMs));
 
         if (smoothedEtaMs.Value < AlmostDoneThresholdMs)
             return "· almost done";
@@ -128,22 +129,9 @@ public static class EtaCalculator
         return string.Format(CultureInfo.InvariantCulture, "~{0}s left", roundedTotalSec);
     }
 
-    /// <summary>
-    /// [Δ1 conv.] Süre formatlayıcı — design-v1 JS prototipindeki <c>fmtElapsed</c>'in (BuildApp.jsx:76-80,
-    /// CANLI/akan süreler için: yalnız elapsed — ETA DEĞİL, bkz. <see cref="FormatDisplay"/> üstteki not)
-    /// InvariantCulture C# portu: &lt;60s → "Ns"; ≥60s → "Mm SSs" (saniye 2 hane sıfır dolgulu). Codebase'de
-    /// henüz bir C# <c>fmtDur</c>/<c>fmtElapsed</c> yoktu (yalnız bu JS prototipte vardı) — burada yeniden
-    /// yazıldı, gelecekte per-project TAMAMLANMIŞ süre gösterimi ayrı bir yardımcı (<c>fmtDur</c>,
-    /// build-data.js:16-23 — &lt;9950ms için ondalık alt-saniye dalı, ör. "3.4s") ister; o BURADA YOK ve bu
-    /// görevin kapsamı dışında (bkz. task raporu "reused fmtDur?" notu).
-    /// </summary>
-    public static string FormatDuration(long ms)
-    {
-        long totalSec = Math.Max(0, ms) / 1000;
-        if (totalSec < 60) return string.Format(CultureInfo.InvariantCulture, "{0}s", totalSec);
-        long m = totalSec / 60, s = totalSec % 60;
-        return string.Format(CultureInfo.InvariantCulture, "{0}m {1:D2}s", m, s);
-    }
+    // [C2/D2 fold] Eski FormatDuration (fmtElapsed portu) SİLİNDİ: DurationFormat.Elapsed ile BİREBİR ikiz
+    // mantıktı (ikisi de <60s→"Ns", ≥60s→"Mm SSs"). TEK kanonik yer DurationFormat.Elapsed'dir (Core/Formatting);
+    // no-history dalı (FormatDisplay yukarıda) artık onu çağırır. Kopya kaldırıldı (CLAUDE.md).
 
     private static double Average(List<long> values)
     {
