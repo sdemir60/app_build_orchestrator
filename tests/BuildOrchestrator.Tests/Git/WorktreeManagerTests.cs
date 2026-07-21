@@ -428,6 +428,7 @@ public class WorktreeManagerTests
     {
         using var repo = new GitTestRepo();
         repo.WriteFile("a.txt", "v1");
+        repo.WriteFile("b.txt", "will-be-deleted"); // [Fix wave 2 — Fix 5] 2. commit'te SİLİNECEK dosya
         repo.CommitAll("c1");
         string branch = repo.CurrentBranchName();
         string poolRoot = NewPoolRoot();
@@ -437,9 +438,11 @@ public class WorktreeManagerTests
 
         var first = await Program.PrepareAsync(cmd, Runner, poolRoot, warnings.Add);
         Assert.False(first.InPlace);
+        Assert.True(File.Exists(Path.Combine(first.ScanRoot, "b.txt"))); // 1. commit'in içeriği ilk hazırlıkta orada
 
-        // Kullanıcı çalışmaya devam etti: aktif branch'e YENİ bir commit geldi.
+        // Kullanıcı çalışmaya devam etti: aktif branch'e YENİ bir commit geldi (b.txt SİLİNDİ).
         repo.WriteFile("a.txt", "v2");
+        File.Delete(Path.Combine(repo.RootPath, "b.txt"));
         repo.CommitAll("c2");
         string headBefore = GitTestRepo.RunGitAt(repo.RootPath, "rev-parse", "HEAD").Trim();
 
@@ -450,6 +453,9 @@ public class WorktreeManagerTests
         Assert.Equal(first.ScanRoot, second.ScanRoot);
         Assert.Single(Directory.EnumerateDirectories(poolRoot)); // havuz BÜYÜMEDİ
         Assert.Equal("v2", File.ReadAllText(Path.Combine(second.ScanRoot, "a.txt"))); // hedef commit'e GÜNCELLENDİ
+        // [Fix wave 2 — Fix 5] `reset --hard`'ın iddia ettiği şey TAM EŞLEŞMEDİR, iki durumun BİRLEŞİMİ DEĞİL:
+        // 1. commit'te var olup 2. commit'te silinen dosya, yeniden kullanılan worktree'de de GİTMİŞ olmalı.
+        Assert.False(File.Exists(Path.Combine(second.ScanRoot, "b.txt")));
         Assert.Equal(headBefore, GitTestRepo.RunGitAt(second.ScanRoot, "rev-parse", "HEAD").Trim());
         // K1: ana repo HEAD'i ve branch'i DEĞİŞMEDİ (güncelleme yalnız havuz worktree'sinin İÇİNDE oldu).
         Assert.Equal(headBefore, GitTestRepo.RunGitAt(repo.RootPath, "rev-parse", "HEAD").Trim());
@@ -621,6 +627,89 @@ public class WorktreeManagerTests
         Assert.Contains(targetPath.Replace('\\', '/'), ex.Message.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(warnings, w => w.Contains("falling back to in-place", StringComparison.Ordinal));
         Assert.Equal(activeBranch, repo.CurrentBranchName()); // K1 — ana repo dokunulmadı
+    }
+
+    // ---- [Fix wave 2 — Fix 2] toggle KAPALI + FARKLI branch da worktree'yi ZORUNLU kılmalı ----
+
+    [Fact]
+    public async Task PrepareAsync_still_requires_a_worktree_for_a_different_branch_even_when_the_toggle_is_off()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.CommitAll("c1");
+        string activeBranch = repo.CurrentBranchName();
+
+        repo.CreateBranch("feature-x");
+        repo.Checkout("feature-x");
+        repo.WriteFile("a.txt", "v2-feature");
+        repo.CommitAll("c2");
+        repo.Checkout(activeBranch);
+
+        string poolRoot = NewPoolRoot();
+        Directory.CreateDirectory(poolRoot);
+        // Aynı deterministik patlatma deseni (bkz. yukarıdaki Finding 3 testi) — burada tek fark UseWorktree=false.
+        string targetPath = new WorktreeManager(Runner, repo.RootPath, poolRoot)
+            .PlanWorktree(activeBranch, "feature-x", useWorktreeToggle: true, selectedSha: "0".PadLeft(40, '0')).Path!;
+        File.WriteAllText(targetPath, "bu bir dosya, dizin degil");
+
+        var warnings = new List<string>();
+        // Toggle KAPALI ama Branch DOLU (aktif branch'ten farklı): erken çıkışın ikinci yarısı
+        // (`string.IsNullOrWhiteSpace(cmd.Branch)`) yalnız Branch BOŞ iken devreye girer — burada girmemeli,
+        // aksi halde aktif branch'in kirli çalışma ağacı sessizce "feature-x" adına derlenirdi (in-place free-ride).
+        var cmd = new StartRunCommand("r1", RunMode.Rebuild, repo.RootPath, "Debug", 1,
+            Branch: "feature-x", UseWorktree: false);
+
+        var ex = await Assert.ThrowsAsync<WorktreePreparationException>(
+            () => Program.PrepareAsync(cmd, Runner, poolRoot, warnings.Add));
+
+        Assert.Contains("feature-x", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(warnings, w => w.Contains("falling back to in-place", StringComparison.Ordinal));
+        Assert.Equal(activeBranch, repo.CurrentBranchName()); // K1 — ana repo dokunulmadı
+    }
+
+    // ---- [Fix wave 2 — Fix 1] aktif branch okunurken THROW (result-failure değil) da zorunlu-worktree yolunu tetiklemeli ----
+
+    [Fact]
+    public async Task PrepareAsync_fails_the_run_when_reading_the_active_branch_throws_instead_of_returning_a_failure_result()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.CommitAll("c1");
+        string activeBranch = repo.CurrentBranchName();
+        string poolRoot = NewPoolRoot();
+
+        var warnings = new List<string>();
+        // "feature-x" gerçekten var olmak ZORUNDA DEĞİL: aktif branch okuma adımı throw ettiği için akış
+        // hiçbir zaman branch'in var olup olmadığını sorgulayacak noktaya ulaşmıyor — tek gereken, isteğin
+        // AÇIKÇA bir branch adlandırmış olması (mandatory henüz atanmadan önceki tek güvenilir sinyal).
+        var cmd = new StartRunCommand("r1", RunMode.Rebuild, repo.RootPath, "Debug", 1,
+            Branch: "feature-x", UseWorktree: true);
+
+        var ex = await Assert.ThrowsAsync<WorktreePreparationException>(
+            () => Program.PrepareAsync(cmd, new ThrowingOnCurrentBranchReadProcessRunner(), poolRoot, warnings.Add));
+
+        Assert.Contains("feature-x", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(warnings, w => w.Contains("falling back to in-place", StringComparison.Ordinal));
+        Assert.Equal(activeBranch, repo.CurrentBranchName()); // K1 — ana repo dokunulmadı
+    }
+
+    /// <summary>
+    /// [Fix wave 2 — Fix 1] <c>GitService.GetCurrentBranchAsync</c>'in kullandığı <c>symbolic-ref</c> komutunda
+    /// GERÇEK bir exception (Win32Exception/InvalidOperationException DEĞİL — <see cref="GitCommandExecutor"/>
+    /// bu ikisini zaten <c>Fail</c>'e çevirir; burada hung-repo/timeout/iptal sınıfını temsilen <see
+    /// cref="IOException"/> kullanılır) fırlatır. Diğer TÜM komutlar gerçek <see cref="ProcessRunner"/>'a
+    /// delege edilir — bu test yalnız "aktif branch okuma THROW ederse" seam'ini izole eder.
+    /// </summary>
+    private sealed class ThrowingOnCurrentBranchReadProcessRunner : IProcessRunner
+    {
+        private readonly ProcessRunner _inner = new();
+
+        public Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
+        {
+            if (spec.Arguments.Contains("symbolic-ref"))
+                throw new IOException("simulated hung-repo stream failure while reading the active branch");
+            return _inner.RunAsync(spec, ct);
+        }
     }
 
     private sealed class RecordingProcessRunner : IProcessRunner

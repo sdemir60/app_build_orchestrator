@@ -238,7 +238,17 @@ public static class Program
             // Worktree bir OPTİMİZASYON/İZOLASYONDUR: hazırlık yolundaki HERHANGİ bir beklenmeyen hata (I/O,
             // erişim, bozuk havuz dizini) run'ı ÖLDÜRMEMELİ — AMA yalnız aktif branch yolunda. Farklı branch
             // seçiliyken güvenli taraf in-place DEĞİL, run'ı durdurmaktır (Finding 3).
-            if (mandatory) throw new WorktreePreparationException(MandatoryWorktreeFailure(selectedBranch, ex.Message), ex);
+            //
+            // [Fix wave 2 — Fix 1] `mandatory` TEK BAŞINA yeterli değil: aktif branch okunurken (yukarıdaki
+            // `git.GetCurrentBranchAsync`) `mandatory` HENÜZ atanmamışken (hâlâ `false`) bir exception (result-
+            // failure değil, GERÇEK throw — ör. timeout/cancellation/hung-repo IOException; Win32Exception ve
+            // InvalidOperationException zaten GitCommandExecutor içinde Fail'e çevrilir, buraya sızmaz) fırlarsa
+            // kontrol doğrudan buraya düşer ve `mandatory` yanlışlıkla false kalırdı — kullanıcı açıkça farklı
+            // bir branch istemişken sessizce aktif branch'in kirli çalışma ağacı derlenirdi. `cmd.Branch` dolu
+            // olması, birkaç satır yukarıdaki `if (!string.IsNullOrWhiteSpace(cmd.Branch)) throw ...` guard'ıyla
+            // AYNI sinyaldir (o noktada da `mandatory` henüz güvenilir değildi) — burada da aynı karar tekrarlanır.
+            if (mandatory || !string.IsNullOrWhiteSpace(cmd.Branch))
+                throw new WorktreePreparationException(MandatoryWorktreeFailure(selectedBranch, ex.Message), ex);
             warn($"warning: worktree preparation failed ({ex.Message}) — falling back to in-place build");
             return inPlace;
         }

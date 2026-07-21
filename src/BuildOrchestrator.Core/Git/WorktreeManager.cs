@@ -248,6 +248,13 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     /// worktree'nin HEAD'inin DETACHED olduğu doğrulanır: attached bir HEAD'e <c>reset --hard</c> atmak bir
     /// BRANCH ref'ini oynatırdı — o durumda yeniden kullanım yapılmaz (çağıran yeni worktree açar).
     /// </para>
+    /// <para>
+    /// [Fix wave 2 — Fix 4] <b>Kullanıcıya görünen sonuç:</b> <c>reset --hard</c> havuz worktree'sindeki
+    /// TRACKED dosyalardaki değişiklikleri sessizce ve geri döndürülemez şekilde atar. Bu, app'in kendi
+    /// scratch ağacı için doğru davranıştır (obj sıcak kalır, kaynaklar hedef commit'e eşitlenir) — ama bir
+    /// kullanıcı bir havuz worktree'sini editörde açıp orada elle düzenleme yaparsa, bir sonraki yeniden
+    /// kullanımda o değişiklikler kaybolur.
+    /// </para>
     /// </summary>
     /// <param name="preferredName">Kullanıcının açıkça istediği havuz worktree'si (<c>StartRunCommand.WorktreeName</c>);
     /// verilirse ve o ad aynı branch'in adayları arasındaysa O seçilir, aksi halde yok sayılır.</param>
@@ -272,6 +279,13 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
         var chosen = (PathSanitizer.IsSafeSegment(preferredName ?? string.Empty)
             ? candidates.FirstOrDefault(e => string.Equals(e.Name, preferredName, StringComparison.OrdinalIgnoreCase))
             : null) ?? candidates[0];
+
+        // [Fix wave 2 — Fix 3] Belt-and-braces: ListPoolEntriesAsync'in havuz-üyeliği kontrolü `Path.GetFullPath`
+        // ile normalize eder — bu, symlink/junction ÇÖZMEZ. Havuz kökü altına konan bir junction ana repoyu
+        // GÖSTERİYORSA metinsel prefix kontrolünü geçer ve aşağıdaki `reset --hard` ANA REPO'nun içinde koşardı
+        // (K1 ihlali). App'in kendi ürettiği yollarla bu ERİŞİLMEZ — savunma amaçlı son bir kapı.
+        if (string.Equals(NormalizeForCompare(chosen.Path), NormalizeForCompare(_repoRoot), StringComparison.OrdinalIgnoreCase))
+            return GitResult<string?>.Fail($"havuz worktree'si ('{chosen.Name}') ana repo köküyle çakışıyor — güvenlik için yeniden kullanılmıyor.");
 
         // K1 güvenlik kapısı — bkz. tip özeti: attached HEAD'e reset atmak bir branch ref'ini oynatırdı.
         var branchAtWorktree = await new GitService(_runner, chosen.Path, _gitExecutable).GetCurrentBranchAsync(ct);
