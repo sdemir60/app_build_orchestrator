@@ -41,7 +41,10 @@ public sealed class DsSplitter : GridSplitter
 
     public DsSplitter()
     {
-        // Şablonu bırakmıyoruz: tüm 7px'i hit-test edilebilir kılan saydam zemin + tek çizgi child.
+        // Şablon YOK: <see cref="OnRender"/> tüm RenderSize'ı Background (saydam) ile ÇİZER — Control'ün
+        // varsayılan render'ı YOKTUR (boyama normalde yalnız bir ControlTemplate'ten gelir), bu yüzden
+        // Background atamak TEK BAŞINA hiçbir şeyi hit-test edilebilir yapmaz (C1 review I-1). Aşağıdaki
+        // OnRender override'ı olmadan yalnız 1px'lik Line child'ı tıklanabilir kalırdı.
         Template = null;
         Background = Brushes.Transparent;
         Focusable = false;
@@ -78,6 +81,16 @@ public sealed class DsSplitter : GridSplitter
             Line.Height = LineThickness; Line.Width = double.NaN;
             Line.HorizontalAlignment = HorizontalAlignment.Stretch; Line.VerticalAlignment = VerticalAlignment.Center;
         }
+    }
+
+    /// <summary>[C1 review I-1] Control'ün kendi render'ı yoktur (şablon YOK) — bu override olmadan
+    /// <see cref="Background"/> hiç ÇİZİLMEZ, dolayısıyla hit test edilemez; yalnız <see cref="Line"/>
+    /// (1px) tıklanabilir kalırdı. Saydam da olsa ÇİZİLMİŞ bir <see cref="Brush"/> hit-testable'dır —
+    /// bu yüzden tüm 7px kavrama bandı burada RenderSize kadar doldurulur.</summary>
+    protected override void OnRender(DrawingContext dc)
+    {
+        if (Background is not null)
+            dc.DrawRectangle(Background, null, new Rect(RenderSize));
     }
 
     protected override int VisualChildrenCount => 1;

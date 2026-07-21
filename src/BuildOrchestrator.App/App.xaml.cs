@@ -19,7 +19,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // [It-4a Foundation / Global Constraints — reduced-motion] Tüm yollarda (font-ab/it4a-lab/normal) TEK
+        // [It-4a Foundation / Global Constraints — reduced-motion] Tüm yollarda (font-ab/normal) TEK
         // instance: Resources (Application.Resources, App.xaml'de merge edilen Motion.xaml) içindeki Duration.*
         // kaynaklarını OS "animasyonları göster" sinyaline göre canlı 0'a çevirir / geri yükler.
         var motion = new MotionSettings(new SystemParametersMotionSignal());

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Markup;
+using System.Windows.Controls;
+using System.Windows.Media;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Shell;
@@ -76,6 +77,47 @@ public class ShellLayoutTests
         Assert.Equal(DsSplitter.LineThickness, row.Line.Height);
     }
 
+    /// <summary>
+    /// [C1 review I-1] Sadece boyutları (Width/Height) doğrulamak yetmez: <c>Template = null</c> +
+    /// <c>Background</c> ikilisi bir <see cref="System.Windows.Controls.Control"/> türevinde KENDİLİĞİNDEN hit
+    /// test edilebilir bir yüzey ÜRETMEZ (Control'ün varsayılan <c>OnRender</c>'ı yoktur — boyama yalnız bir
+    /// ControlTemplate üzerinden gelir). Bu test 7px kavrama bandının, ortadaki 1px görünür çizginin TAM
+    /// ÜZERİNDE olmayan bir noktasını (~2px uzağı) hit-test eder: bant GERÇEKTEN tıklanabilir mi, yoksa yalnız
+    /// 1px'lik çizgi mi tıklanabilir, ayırt eder.
+    /// </summary>
+    [StaFact]
+    public void Grab_band_is_hit_testable_a_couple_pixels_off_the_visible_line_not_only_on_it()
+    {
+        var host = new Grid { Width = 200, Height = 100 };
+        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        host.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var splitter = new DsSplitter { LineOrientation = SplitterLine.Vertical };
+        Grid.SetColumn(splitter, 1);
+        host.Children.Add(splitter);
+
+        host.Measure(new Size(200, 100));
+        host.Arrange(new Rect(0, 0, 200, 100));
+
+        // Auto kolon, splitter'ın kendi Width'ine (7px) daralır; x = (200-7)/2 = 96.5'te başlar. Ortadaki 1px
+        // görünür çizgi bu 7px'in TAM ortasındadır (x ~= 99.5..100.5). Bandın yakın kenarına 2px içeriden
+        // (x = 98.5) — çizginin ÜZERİNDE değil, ama 7px bandın İÇİNDE — bir nokta prob'luyoruz.
+        var probePoint = new Point(98.5, 50);
+        var result = VisualTreeHelper.HitTest(host, probePoint);
+
+        Assert.True(IsSplitterOrDescendant(result?.VisualHit, splitter),
+            $"Nokta {probePoint} 7px kavrama bandı içinde ama DsSplitter yerine " +
+            $"{result?.VisualHit?.GetType().Name ?? "hiçbir şey"} hit-test edildi.");
+    }
+
+    private static bool IsSplitterOrDescendant(DependencyObject? hit, DsSplitter splitter)
+    {
+        for (var d = hit; d is not null; d = VisualTreeHelper.GetParent(d))
+            if (ReferenceEquals(d, splitter)) return true;
+        return false;
+    }
+
     [StaFact]
     public void Applying_a_layout_records_it_and_leaves_the_graph_visible_in_quad()
     {
@@ -94,6 +136,7 @@ public class ShellLayoutTests
 /// kod-tarafı (MainWindow ctor) o token'dan sürülür. Bu, B1'de tespit edilen "unpinned third definition site"ı
 /// kapatır (token değeri DesignTokenScaleTests'te 40'a pinlidir).
 /// </summary>
+[Collection("Console UI (serial)")]
 public sealed class TitleBarHeightSingleSourceTests
 {
     private static string ReadAppSource(string relative)
@@ -112,16 +155,16 @@ public sealed class TitleBarHeightSingleSourceTests
     {
         string cs = ReadAppSource("MainWindow.xaml.cs");
         Assert.Contains("Size.TitleBarHeight", cs);   // tek kaynak token
-        Assert.Contains("TitleRow.Height", cs);       // satır ondan sürülür
+        // [C1 review I-3] Tam türetim ifadesi pinlenir — yalnız "TitleRow.Height" aranırsa
+        // "TitleRow.Height = new GridLength(40)" gibi bir hardcode de testi GEÇERDİ (vacuous pin).
+        Assert.Contains("TitleRow.Height = new GridLength(titleBarHeight)", cs); // satır ondan sürülür, literal DEĞİL
         Assert.Contains("CaptionHeight = titleBarHeight", cs); // WindowChrome ondan sürülür
     }
 
-    [Fact]
+    [StaFact]
     public void The_title_bar_height_token_is_forty()
-    {
-        string path = Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Tokens.xaml");
-        using var stream = File.OpenRead(path);
-        var tokens = (ResourceDictionary)XamlReader.Load(stream);
-        Assert.Equal(40.0, (double)tokens["Size.TitleBarHeight"]);
-    }
+        // [C1 review I-2] Aynı XamlReader.Load(Tokens.xaml) yükleme deseni DesignTokenScaleTests içinde de
+        // ayrıca duruyordu (kopya YASAK, CLAUDE.md) — üçüncü bir kopya açmak yerine ortak DsResources.Load
+        // yardımcısı (T60) kullanılır.
+        => Assert.Equal(40.0, (double)DsResources.Load("Tokens.xaml")["Size.TitleBarHeight"]);
 }

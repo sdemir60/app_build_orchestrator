@@ -13,8 +13,8 @@ namespace BuildOrchestrator.App.Controls;
 public partial class StickyLayerList : UserControl
 {
     /// <summary>Sıralı bir katman: adı (boş → başlıksız, sticky devrede değil) + satır nesneleri (RowTemplate
-    /// <c>{Binding Name}</c>'e bağlanır — <see cref="ViewModels.ProjectRowViewModel"/> / SampleGraphData.Node
-    /// gibi bir <c>Name</c> taşıyan her nesne).</summary>
+    /// <c>{Binding Name}</c>'e bağlanır — <see cref="ViewModels.ProjectRowViewModel"/> gibi bir <c>Name</c>
+    /// taşıyan her nesne).</summary>
     public sealed record LayerGroup(string Name, IReadOnlyList<object> Rows);
 
     /// <summary>In-flow başlık entry'si — <see cref="LayoutMetrics.HeaderInfo"/>'nun WPF-binding karşılığı;
@@ -77,7 +77,7 @@ public partial class StickyLayerList : UserControl
     public void FollowRow(int rowIndex) => _follow?.FollowRow(rowIndex, ScrollAnimator.GetIsUserSuppressed(Scroll));
 
     /// <summary>[T59] Kullanıcı tekerleği çevirerek follow'u en son iptal etti mi — çağıranın (ör. bir "geri frontier'e
-    /// dön" affordance'ı, --it4a-lab demosundaki gibi) bunu gösterip göstermeyeceğine karar vermesi için.</summary>
+    /// dön" affordance'ı) bunu gösterip göstermeyeceğine karar vermesi için.</summary>
     public bool IsFollowSuppressedByUser => ScrollAnimator.GetIsUserSuppressed(Scroll);
 
     /// <summary>[T59] Kullanıcı-suppress bayrağını YOK SAYARAK satırı zorla görünür kılar ("frontier'e dön" tıklaması) —
