@@ -2,8 +2,10 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
-        Title="Build Orchestrator" Width="1400" Height="800" MinWidth="1240" MinHeight="620"
-        WindowStyle="SingleBorderWindow" Background="#0F1115" Foreground="#D7DBE0"
+        Title="Build Orchestrator" Width="1400" Height="800"
+        MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
+        WindowStyle="SingleBorderWindow"
+        Background="{DynamicResource Brush.SurfaceBase}" Foreground="{DynamicResource Brush.TextPrimary}"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="Grayscale">
   <WindowChrome.WindowChrome>
@@ -41,7 +43,7 @@
       <Grid.RowDefinitions>
         <RowDefinition Height="40" /><RowDefinition Height="*" />
       </Grid.RowDefinitions>
-      <DockPanel Grid.Row="0" Background="#14171C">
+      <DockPanel Grid.Row="0" Background="{DynamicResource Brush.Surface}">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
           <Button x:Name="MinButton" Content="&#x2013;" Style="{StaticResource CaptionButton}" Click="OnMinimize" />
           <!-- Content'i CaptionGlyphs.BindMaxButton sürer (K8: maximize'da restore glyph'i) -->

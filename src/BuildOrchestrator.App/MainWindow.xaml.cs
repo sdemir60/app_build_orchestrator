@@ -202,7 +202,11 @@ public partial class MainWindow : Window
     {
         base.OnSourceInitialized(e);
         nint hwnd = new WindowInteropHelper(this).Handle;
-        int on = 1, round = 2, border = 0x002A2A2A; // COLORREF 0x00BBGGRR
+        // [T49] Pencere kenarlığı rengi TOKEN'dan gelir (hardcode YASAK): Brush.Border → COLORREF 0x00BBGGRR.
+        // FindResource kasıtlı: sözlük merge edilmemişse sessiz yanlış-renk yerine anlaşılır hata (ConsolePalette
+        // ile aynı desen); merge'ü AppResourcesMergeTests pinler.
+        int on = 1, round = 2;
+        int border = Dwm.ColorRefFrom(((SolidColorBrush)FindResource("Brush.Border")).Color);
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
