@@ -27,9 +27,11 @@ public class RunCoordinatorTests
     private static string Id(string name) => Path.Combine(PlanRoot, name, name + ".csproj");
     private static string NameOf(string projectId) => Path.GetFileNameWithoutExtension(projectId);
 
-    private static ProjectNode Node(string name, string[]? deps = null, bool inCycle = false) =>
+    // willBuild: varsayılan null = "imza yok / pre-Sync" (mevcut çağrıların tamamı); yalnız [Task 19] Build
+    // pre-skip'ini kuran testler false/true verir.
+    private static ProjectNode Node(string name, string[]? deps = null, bool inCycle = false, bool? willBuild = null) =>
         new(Id(name), name, Id(name), SolutionNames: [], Dependencies: [.. (deps ?? []).Select(Id)],
-            BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: inCycle, WillBuild: null);
+            BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: inCycle, WillBuild: willBuild);
 
     private static RunPlan PlanOf(params ProjectNode[] nodes) => PlanOf(EmptyRefs(), nodes);
 
@@ -1128,5 +1130,81 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Contains(h.ConsoleLines, l => l == "warning: " + Warning);
+    }
+
+    // ---------------------------------------------------------------- 15) depIssue-persist penceresi (A2)
+
+    private static string NewCacheRoot() =>
+        Path.Combine(Path.GetTempPath(), "bo-coord-state-" + Guid.NewGuid().ToString("N"));
+
+    private static IncrementalPlan Incremental(params string[] names) =>
+        new(names.ToDictionary(Id, _ => "sig", StringComparer.OrdinalIgnoreCase), "headsha", "main");
+
+    [Fact]
+    public async Task A_success_carrying_a_dep_issue_does_not_persist_build_state()
+    {
+        // [A2] Up fail eder, Down (Up'a bağımlı) BAŞARILI olur → Down depIssue taşır, yani Up'ın BAYAT (önceki)
+        // çıktısına link'lidir. Böyle bir success için taze imza persist edilirse, Up kaynak DEĞİŞMEDEN
+        // düzeldiğinde (zehirli obj temizliği sınıfı) Down'ın imzası da değişmez → sonraki Build onu "güncel"
+        // sayıp pre-skip eder ve Down sonsuza dek bayat binary'e link'li kalır. Solo kontrol grubudur:
+        // depIssue TAŞIMAYAN bir success persist edilmeye devam etmeli (aksi halde test önemsizce geçerdi).
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(
+                new BuildPlan([Node("Up") with { BuildOrder = 0 }, Node("Down", deps: ["Up"]) with { BuildOrder = 1 },
+                               Node("Solo") with { BuildOrder = 2 }],
+                    Cycles: [], Configuration: "Debug"),
+                EmptyRefs(),
+                Incremental: Incremental("Up", "Down", "Solo"));
+            var invoker = new FakeInvoker((req, _, _) =>
+                Task.FromResult(NameOf(req.ProjectId) == "Up" ? Exit(1) : Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var down = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "Down");
+            Assert.Equal(["Up"], down.DepIssues); // sanity: Down gerçekten depIssue taşıyan bir success
+
+            Assert.DoesNotContain(store.Load().Values, s => s.ProjectId == Id("Down"));
+            Assert.Contains(store.Load().Values, s => s.ProjectId == Id("Solo")); // temiz success persist EDİLİR
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Build_mode_pre_skips_up_to_date_nodes_without_invoking_msbuild_and_persists_the_built_ones()
+    {
+        // [Task 19/A2] RunMode.Build pre-skip yolunun ilk DETERMİNİSTİK (acceptance dışı, in-process) kanıtı:
+        // WillBuild==false olan düğüm için MSBuild HİÇ çağrılmaz (yalnız "skipped — up to date" olayı yeterli
+        // kanıt değildir — WillBuild'i yok sayıp yine de derleyen bir koordinatör de o olayı üretebilirdi),
+        // WillBuild==true olan ise derlenir ve BuildState'i persist edilir.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(
+                new BuildPlan([Node("Clean", willBuild: false) with { BuildOrder = 0 },
+                               Node("Dirty", willBuild: true) with { BuildOrder = 1 }],
+                    Cycles: [], Configuration: "Debug"),
+                EmptyRefs(),
+                Incremental: Incremental("Dirty"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+            Assert.Equal(Id("Clean"), skipped.ProjectId);
+            Assert.Equal("skipped — up to date", skipped.Reason);
+            Assert.DoesNotContain(invoker.Requests, r => r.ProjectId == Id("Clean")); // MSBuild ÇAĞRILMADI
+            Assert.Equal([Id("Dirty")], invoker.Requests.Select(r => r.ProjectId));   // yalnız dirty derlendi
+            Assert.Contains(store.Load().Values, s => s.ProjectId == Id("Dirty"));
+            Assert.DoesNotContain(store.Load().Values, s => s.ProjectId == Id("Clean")); // derlenmedi → persist yok
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 }

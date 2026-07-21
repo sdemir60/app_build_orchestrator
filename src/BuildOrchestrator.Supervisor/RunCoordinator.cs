@@ -626,7 +626,15 @@ public sealed class RunCoordinator(
             {
                 result = BuildResult.Succeeded;
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
-                PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
+                // [A2] depIssue TAŞIYAN bir success, bağımlılığının BAYAT (bu run'da derlenmemiş, önceki) çıktısına
+                // link'lidir — "başarılı" olması binary'nin güncel olduğu anlamına GELMEZ. Buna rağmen taze imza
+                // persist edilirse, failed upstream KAYNAK DEĞİŞMEDEN düzeldiğinde (ör. zehirli obj temizliği) bu
+                // projenin imzası da değişmez ve bir sonraki incremental Build onu "güncel" sayıp pre-skip eder;
+                // proje sonsuza dek bayat binary'e link'li kalır. §4 gereği DLL/bin timestamp'i OKUNMADIĞI için
+                // bunu yakalayabilecek başka bir mekanizma yoktur. Persist etmemenin bedeli "gereksiz bir kez daha
+                // derlemek", persist etmenin bedeli "sessizce yanlış çıktı" — güvenli taraf seçilir.
+                if (depIssues.All.Count == 0)
+                    PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: başarılı ({1}ms)", name, invoke.DurationMs));
@@ -708,7 +716,8 @@ public sealed class RunCoordinator(
     /// [Task 19] Bir proje BAŞARIYLA derlendiğinde <see cref="BuildState"/> persist eder — BİR SONRAKİ Build
     /// koşusu bunu okuyup (imza eşit + Succeeded ⇒ skip) incremental olur. Persist YALNIZ hem <see
     /// cref="RunContext.StateStore"/> hem de bu proje için non-null bir imza (<see cref="IncrementalPlan"/>)
-    /// varsa yapılır (testlerdeki basit planner → Incremental null → persist YOK, davranış nötr). §4: yalnız
+    /// varsa yapılır (testlerdeki basit planner → Incremental null → persist YOK, davranış nötr). [A2] Çağıran
+    /// AYRICA "depIssue taşımayan success" koşulunu uygular (bkz. BuildProjectAsync'teki gerekçe). §4: yalnız
     /// build-state.json'a yazılır, DLL/bin/obj'ye dokunulmaz. Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// </summary>
     private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs)
