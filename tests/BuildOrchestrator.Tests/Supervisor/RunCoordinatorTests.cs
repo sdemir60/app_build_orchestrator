@@ -458,6 +458,31 @@ public class RunCoordinatorTests
     }
 
     [Fact]
+    public async Task worktree_preparation_failure_on_a_different_branch_ends_the_run_as_planFailed_and_never_starts_it()
+    {
+        // [Fix wave 1 — Finding 3] Seçili branch aktif branch'ten FARKLIYSA worktree ZORUNLUDUR (K1): hazırlık
+        // başarısız olursa in-place'e DÜŞÜLEMEZ — aksi halde "X'i derle" denmişken sessizce kullanıcının kirli
+        // aktif branch'i derlenirdi. Program.PrepareAsync bunu WorktreePreparationException ile bildirir; burada
+        // kanıtlanan, koordinatörün onu MEVCUT run-bitiren hata kanalına (planFailed — App'in
+        // RunEndingErrorCodes kümesindeki kod) çevirdiği ve run'ın HİÇ başlamadığıdır.
+        const string message = "Cannot build branch 'feature-x': it is not the branch checked out in the workspace, "
+            + "so it must be built in an isolated worktree (the active branch is never checked out). "
+            + "Worktree preparation failed: fatal: 'C:/pool/feature-x-1' already exists";
+        Func<StartRunCommand, RunPlan> failingPlanner = _ => throw new WorktreePreparationException(message);
+        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())), failingPlanner);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
+        Assert.Equal("planFailed", err.Code); // "runFailed" (beklenmeyen iç hata) DEĞİL — kasıtlı, tanımlı red
+        Assert.Equal(message, err.Message);   // kullanıcı hangi branch'in ve NEDEN derlenmediğini görür
+        Assert.Empty(h.Events.OfType<RunStartedEvent>());   // run hiç başlamadı → yanlış branch DERLENMEDİ
+        Assert.Empty(h.Events.OfType<RunCompletedEvent>());
+        Assert.False(h.Sut.HasResumableRun);
+    }
+
+    [Fact]
     public async Task continue_without_a_resumable_run_errors()
     {
         using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())));

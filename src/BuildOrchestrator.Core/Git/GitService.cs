@@ -227,6 +227,34 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
     }
 
+    /// <summary>
+    /// [Fix wave 1 — Finding 4] YEREL branch (<c>refs/heads/&lt;branch&gt;</c>) SHA'sı — <see
+    /// cref="GetRemoteTrackingShaAsync"/>'in birebir aynı desendeki (salt-okur <c>rev-parse --verify -q</c>)
+    /// yerel karşılığı. Gerekçe: <see cref="ListBranchesAsync"/> kullanıcıya <c>refs/heads/*</c>'ı da listeler,
+    /// yani UI yalnız yerelde var olan (henüz push edilmemiş) branch'leri de seçilebilir kılar; hedef commit'i
+    /// SADECE remote-tracking ref'ten çözen bir okuyucu tam olarak o branch'leri çözemez. Ref yoksa
+    /// <c>Ok(null)</c> döner (hata DEĞİL, edge — çağıran remote-tracking'e düşebilsin diye).
+    /// <para><b>K1:</b> salt-okur — checkout/switch/reset YOK, aktif branch ve working tree DEĞİŞMEZ.</para>
+    /// </summary>
+    public async Task<GitResult<string?>> GetLocalBranchShaAsync(string branch, CancellationToken ct = default)
+    {
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["rev-parse", "--verify", "-q", $"refs/heads/{branch}"], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode == 0)
+        {
+            string sha = r.StandardOutput.Trim();
+            return IsFortyHexSha(sha)
+                ? GitResult<string?>.Ok(sha)
+                : GitResult<string?>.Fail($"beklenmeyen 'git rev-parse refs/heads/{branch}' çıktısı: '{sha}'");
+        }
+
+        if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // yerel ref yok — branch yalnız remote'ta olabilir
+
+        return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+    }
+
     /// <summary>K1 fallback: fetch başarısız olduğunda hedef SHA yerel HEAD'e düşer; HEAD de okunamazsa null (güvenli taraf, throw yok).</summary>
     private async Task<FetchResult> DegradeToLocalHeadAsync(string warning, CancellationToken ct)
     {

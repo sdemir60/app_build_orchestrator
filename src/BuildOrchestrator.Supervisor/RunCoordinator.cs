@@ -369,8 +369,14 @@ public sealed class RunCoordinator(
         }
         else
         {
+            // [Fix wave 1 — Finding 3] WorktreePreparationException: planner (Program.BuildRunPlan) seçili
+            // branch AKTİF branch'ten farklıyken worktree'yi hazırlayamadı. Worktree o durumda zorunludur
+            // (K1) — in-place'e düşmek YANLIŞ branch'i derlemek olurdu, bu yüzden run HİÇ BAŞLAMAZ. Ayrı bir
+            // kanal AÇILMAZ: mevcut planlama-hatası kodu (planFailed) kullanılır — App'in RunEndingErrorCodes
+            // kümesi onu zaten tanır (mesaj kullanıcıya gösterilir, Build butonu geri açılır).
             try { runPlan = planner(cmd); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                or WorktreePreparationException)
             { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }
 
             // [I2-K2/Task 10 · A4] cmd.UseWorktree=false → HER ZAMAN null (in-place, VS-parity). true iken
@@ -781,7 +787,7 @@ public sealed class RunCoordinator(
     /// Kayıt YOKSA hiçbir şey yazılmaz: "kayıt yok" ile "imzası olmayan kayıt" tüm tüketiciler için AYNI anlama
     /// gelir (WillBuild=true) — boş satır eklemek store'u şişirmekten başka bir şey yapmaz.
     /// </para>
-    /// Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only, <see cref="PersistBuildStateOnSuccess"/> ile aynı sözleşme).
+    /// Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// <para>
     /// [A4 review fix] Bu metot <see cref="BuildProjectAsync"/>'in <c>finally</c>'sinden çağrılır ve
     /// <see cref="WorkerAsync"/>'in <c>try/finally</c>'sinin ÜSTÜNDE hiçbir umbrella <c>catch</c> yoktur —

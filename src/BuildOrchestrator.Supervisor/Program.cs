@@ -28,6 +28,24 @@ namespace BuildOrchestrator.Supervisor;
 /// edilirdi (yanlış pre-skip).</param>
 public sealed record PreparedWorkspace(string ScanRoot, string? WorktreeObjRoot, bool InPlace);
 
+/// <summary>
+/// [Fix wave 1 — Finding 3] Seçili branch AKTİF branch'ten FARKLI iken worktree hazırlığı başarısız oldu:
+/// bu durumda in-place'e DÜŞÜLEMEZ. Worktree, farklı bir branch'i derlemenin TEK mekanizmasıdır (K1 — aktif
+/// branch asla checkout edilmez); in-place fallback sessizce YANLIŞ branch'i (kullanıcının kirli çalışma
+/// ağacını) derlerdi. Bu exception <see cref="Program.PrepareAsync"/>'ten planner yoluyla yukarı çıkar ve
+/// <see cref="RunCoordinator"/>'ın mevcut planlama-hatası kanalına (<c>error(planFailed)</c>) dönüşür; run
+/// hiç başlamaz. <see cref="Exception.Message"/> KULLANICIYA GÖSTERİLİR — İngilizce, branch adını ve asıl
+/// sebebi taşır.
+/// </summary>
+public sealed class WorktreePreparationException : Exception
+{
+    public WorktreePreparationException(string message) : base(message) { }
+
+    public WorktreePreparationException(string message, Exception innerException) : base(message, innerException) { }
+
+    public WorktreePreparationException() { }
+}
+
 public static class Program
 {
     /// <summary>
@@ -107,9 +125,10 @@ public static class Program
     /// [A4/K3] Build ANINDA workspace'i çözer: <paramref name="cmd"/> worktree istemiyorsa in-place; istiyorsa
     /// <see cref="WorktreeManager"/> ile havuzda <c>git worktree add --detach</c> ile gerçek bir worktree açar.
     /// <para>
-    /// <b>K1:</b> aktif branch ASLA checkout/switch/pull/reset edilmez — buradan çıkan TEK mutasyon
+    /// <b>K1:</b> aktif branch ASLA checkout/switch/pull/reset edilmez — ANA REPO üzerindeki tek mutasyon
     /// <c>worktree add</c>'dir; seçilen branch'in COMMITTED hâli ayrı bir dizinde açılır, kullanıcının çalışma
-    /// ağacına dokunulmaz.
+    /// ağacına dokunulmaz. [Fix wave 1] Yeniden kullanım yolundaki <c>reset --hard</c> ise HAVUZ WORKTREE'SİNİN
+    /// İÇİNDE (daima detached, bizim dizinimiz) koşar — bkz. <see cref="WorktreeManager.ReuseWorktreeAsync"/>.
     /// </para>
     /// <para>
     /// <b>Başarısızlık = in-place fallback + uyarı, run ÖLMEZ</b> (git yok / branch çözülemedi / worktree add
@@ -124,10 +143,24 @@ public static class Program
     /// açılacaksa yeni worktree diski doldurmadan ÖNCE açılmalıdır. Prune best-effort'tur — başarısızlığı
     /// yalnız uyarıya dönüşür, build'i engellemez.
     /// </para>
+    /// <para>
+    /// [Fix wave 1 — Finding 3] <b>Ancak fallback SADECE aktif branch için geçerlidir.</b> Seçili branch
+    /// aktif branch'ten FARKLIYSA worktree ZORUNLUDUR (K1 — aktif branch asla checkout edilmez): orada
+    /// in-place'e düşmek "X'i derle" denmişken sessizce Y'yi (kullanıcının kirli çalışma ağacını) derlemek
+    /// olurdu. O yolda hazırlığın HER başarısızlığı <see cref="WorktreePreparationException"/> fırlatır ve run
+    /// <c>error(planFailed)</c> ile hiç başlamaz.
+    /// </para>
+    /// <para>
+    /// [Fix wave 1 — Finding 2] Havuzda seçili branch'in bir worktree'si zaten varsa YENİDEN KULLANILIR
+    /// (<see cref="WorktreeManager.ReuseWorktreeAsync"/>) — yenisi ancak aday yoksa ya da yeniden kullanım
+    /// başarısız olursa açılır. Havuzun kalıcı olmasının amacı budur: aynı dizin ⇒ aynı obj ⇒ SICAK cache.
+    /// </para>
     /// </summary>
     /// <param name="poolRoot">Worktree havuzunun kökü (üretimde <see cref="WorktreeManager.DefaultPoolRoot"/>;
     /// testler izole bir temp dizin verir — kullanıcının gerçek havuzu kirletilmez).</param>
     /// <param name="warn">Uyarı kanalı (üretimde <c>Console.Error.WriteLine</c> — stdout YALNIZ NDJSON'dır [D4]).</param>
+    /// <exception cref="WorktreePreparationException">Seçili branch aktif branch'ten farklıyken worktree
+    /// hazırlanamadıysa (bkz. yukarıdaki Finding 3 notu).</exception>
     public static async Task<PreparedWorkspace> PrepareAsync(
         StartRunCommand cmd, IProcessRunner runner, string poolRoot, Action<string> warn, CancellationToken ct = default)
     {
@@ -136,7 +169,21 @@ public static class Program
         ArgumentNullException.ThrowIfNull(warn);
 
         var inPlace = new PreparedWorkspace(cmd.RootPath, null, InPlace: true);
-        if (!cmd.UseWorktree) return inPlace;
+        // Toggle KAPALI ve branch SEÇİLMEMİŞ (App'in bugünkü in-place Build'i) → tek bir git çağrısı bile
+        // yapılmadan in-place. Branch DOLU ise toggle'a bakılmaz: farklı bir branch, toggle kapalı olsa bile
+        // worktree'yi ZORUNLU kılar (PlanWorktree'nin 3-durum matrisi, K1).
+        if (!cmd.UseWorktree && string.IsNullOrWhiteSpace(cmd.Branch)) return inPlace;
+
+        string selectedBranch = cmd.Branch;
+        bool mandatory = false; // seçili branch ≠ aktif branch ⇒ in-place'e düşme HAKKI YOK
+
+        // Başarısızlığın TEK karar noktası: zorunlu worktree yolunda fırlat, aksi halde uyar + in-place.
+        PreparedWorkspace FailOrFallback(string reason)
+        {
+            if (mandatory) throw new WorktreePreparationException(MandatoryWorktreeFailure(selectedBranch, reason));
+            warn($"warning: worktree preparation failed ({reason}) — falling back to in-place build");
+            return inPlace;
+        }
 
         try
         {
@@ -145,51 +192,74 @@ public static class Program
             // Detached HEAD (Ok(null)) da dahil: "aktif branch" bilinmeden 3-durum matrisi kurulamaz.
             if (!activeBranchResult.Success || activeBranchResult.Value is not { } activeBranch)
             {
-                warn("warning: worktree preparation failed (aktif branch okunamadı: "
-                    + (activeBranchResult.Error ?? "HEAD detached") + ") — falling back to in-place build");
+                string reason = "the active branch could not be determined: "
+                    + (activeBranchResult.Error ?? "HEAD is detached");
+                // Kullanıcı AÇIKÇA bir branch seçtiyse, onun aktif branch'le aynı olduğu İSPATLANAMAZ →
+                // güvenli yön, sessizce yanlış ağacı derlemek değil, run'ı durdurmaktır.
+                if (!string.IsNullOrWhiteSpace(cmd.Branch))
+                    throw new WorktreePreparationException(MandatoryWorktreeFailure(cmd.Branch, reason));
+                warn($"warning: worktree preparation failed ({reason}) — falling back to in-place build");
                 return inPlace;
             }
 
             // Branch boş gelirse (App bugün böyle yolluyor) niyet "aktif branch'in COMMITTED hâli"dir.
-            string selectedBranch = string.IsNullOrWhiteSpace(cmd.Branch) ? activeBranch : cmd.Branch;
+            if (string.IsNullOrWhiteSpace(selectedBranch)) selectedBranch = activeBranch;
+            mandatory = !string.Equals(selectedBranch, activeBranch, StringComparison.Ordinal);
+            if (!mandatory && !cmd.UseWorktree) return inPlace; // 3-durum matrisi: aktif branch + toggle kapalı
+
             string? sha = await ResolveSelectedShaAsync(git, activeBranch, selectedBranch, ct);
-            if (sha is null)
-            {
-                warn($"warning: worktree preparation failed ('{selectedBranch}' için commit çözülemedi) — falling back to in-place build");
-                return inPlace;
-            }
+            if (sha is null) return FailOrFallback($"no commit could be resolved for branch '{selectedBranch}'");
 
             var manager = new WorktreeManager(runner, cmd.RootPath, poolRoot);
-            // useWorktreeToggle: buraya YALNIZ cmd.UseWorktree=true iken gelinir; farklı branch seçiliyse
-            // PlanWorktree zaten toggle'dan bağımsız olarak Worktree modunu ZORUNLU kılar (K1).
-            var plan = manager.PlanWorktree(activeBranch, selectedBranch, useWorktreeToggle: true, selectedSha: sha);
 
-            var prune = await manager.PruneToCapAsync(WorktreePoolCapBytes, ct); // [T14] cap, EKLEMEDEN önce
+            // [Finding 2] ÖNCE yeniden kullanım: havuzdaki aynı branch worktree'si hedef commit'e güncellenir.
+            // Başarısızlık BUILD'İ ÖLDÜRMEZ (zorunlu yolda bile) — yalnız yeni bir worktree açılır.
+            string? reusedPath = null;
+            var reuse = await manager.ReuseWorktreeAsync(selectedBranch, sha, cmd.WorktreeName, ct);
+            if (reuse.Success) reusedPath = reuse.Value;
+            else warn($"warning: worktree reuse failed ({reuse.Error}) — a new pool worktree will be created");
+
+            // [T14] Cap: KULLANIMDAKİ worktree hariç budanır. Yeni açılacaksa (reusedPath null) korunacak bir şey
+            // yoktur — tek seferde tek run (A6) olduğu için başka bir run'ın worktree'si kullanımda olamaz.
+            var prune = await manager.PruneToCapAsync(WorktreePoolCapBytes,
+                reusedPath is null ? null : Path.GetFileName(reusedPath), ct);
             if (!prune.Success) warn("warning: worktree havuzu budanamadı (cap uygulanmadı): " + prune.Error);
 
+            if (reusedPath is not null) return new PreparedWorkspace(reusedPath, reusedPath, InPlace: false);
+
+            var plan = manager.PlanWorktree(activeBranch, selectedBranch, useWorktreeToggle: cmd.UseWorktree, selectedSha: sha);
             var result = await manager.PrepareWorktreeAsync(plan, ct);
-            if (!result.Success)
-            {
-                warn($"warning: worktree preparation failed ({result.Error}) — falling back to in-place build");
-                return inPlace;
-            }
+            if (!result.Success) return FailOrFallback(result.Error!);
 
             return new PreparedWorkspace(result.Value!, result.Value, InPlace: false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not WorktreePreparationException)
         {
             // Worktree bir OPTİMİZASYON/İZOLASYONDUR: hazırlık yolundaki HERHANGİ bir beklenmeyen hata (I/O,
-            // erişim, bozuk havuz dizini) run'ı ÖLDÜRMEMELİ. Güvenli taraf = in-place + DOĞRU etiket.
+            // erişim, bozuk havuz dizini) run'ı ÖLDÜRMEMELİ — AMA yalnız aktif branch yolunda. Farklı branch
+            // seçiliyken güvenli taraf in-place DEĞİL, run'ı durdurmaktır (Finding 3).
+            if (mandatory) throw new WorktreePreparationException(MandatoryWorktreeFailure(selectedBranch, ex.Message), ex);
             warn($"warning: worktree preparation failed ({ex.Message}) — falling back to in-place build");
             return inPlace;
         }
     }
 
+    /// <summary>[Fix wave 1 — Finding 3] Zorunlu-worktree yolunun KULLANICIYA GÖSTERİLEN hata metni (İngilizce, [Global] UI-metni kuralı): hangi branch, neden.</summary>
+    private static string MandatoryWorktreeFailure(string selectedBranch, string reason) =>
+        $"Cannot build branch '{selectedBranch}': it is not the branch checked out in the workspace, so it must be "
+        + $"built in an isolated worktree (the active branch is never checked out). Worktree preparation failed: {reason}";
+
     /// <summary>
     /// [A4] Worktree'nin detach edileceği commit. Aktif branch seçiliyse (toggle senaryosu) yerel HEAD —
-    /// kullanıcının gördüğü commit. FARKLI bir branch seçiliyse Sync'in (K1, ref-only fetch) güncellediği
-    /// remote-tracking ref (<c>refs/remotes/origin/&lt;branch&gt;</c>): aktif branch checkout EDİLMEDİĞİ için
-    /// hedef commit'in tek meşru kaynağı odur. Çözülemezse <c>null</c> → çağıran in-place'e düşer (throw yok).
+    /// kullanıcının gördüğü commit.
+    /// <para>
+    /// [Fix wave 1 — Finding 4] FARKLI bir branch seçiliyse ÖNCE YEREL ref (<c>refs/heads/&lt;branch&gt;</c>) —
+    /// kullanıcının UI'da gördüğü branch listesi <c>refs/heads/*</c>'ı da içerir, yani yalnız remote-tracking
+    /// ref'e bakan bir çözücü tam olarak o (henüz push edilmemiş) branch'leri çözemez ve run sessizce
+    /// başarısız olurdu. Yerel ref yoksa <c>refs/remotes/origin/&lt;branch&gt;</c>'e düşülür: yalnız bir fetch'ten
+    /// (Sync — K1, ref-only) bilinen branch'lerin tek meşru kaynağı odur. Çözülemezse <c>null</c> → çağıran
+    /// karar verir (aktif branch: in-place fallback; farklı branch: run durur).
+    /// </para>
     /// </summary>
     private static async Task<string?> ResolveSelectedShaAsync(
         GitService git, string activeBranch, string selectedBranch, CancellationToken ct)
@@ -199,6 +269,9 @@ public static class Program
             var head = await git.GetHeadCommitAsync(ct);
             return head.Success ? head.Value : null; // unborn HEAD → Ok(null) → detach edilecek commit YOK
         }
+
+        var local = await git.GetLocalBranchShaAsync(selectedBranch, ct);
+        if (local.Success && local.Value is { } localSha) return localSha;
 
         var remote = await git.GetRemoteTrackingShaAsync(selectedBranch, ct);
         return remote.Success ? remote.Value : null;

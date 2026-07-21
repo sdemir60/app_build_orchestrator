@@ -104,6 +104,41 @@ public class SyncFetchTests
     }
 
     [Fact]
+    public async Task GetLocalBranchShaAsync_resolves_a_local_only_branch_and_returns_null_for_an_unknown_one()
+    {
+        // [Fix wave 1 — Finding 4] UI'daki branch listesi refs/heads/*'ı da gösterir (ListBranchesAsync), yani
+        // kullanıcı hiç push edilmemiş bir branch seçebilir. Yalnız remote-tracking ref'e bakan bir çözücü tam
+        // olarak O branch'leri çözemez — bu, YEREL ref'in salt-okur karşılığıdır.
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "v1");
+        repo.CommitAll("c1");
+        string activeBranch = repo.CurrentBranchName();
+
+        repo.CreateBranch("feature-local");
+        repo.Checkout("feature-local");
+        repo.WriteFile("a.txt", "v2");
+        string featureSha = repo.CommitAll("c2");
+        repo.Checkout(activeBranch);
+
+        var svc = new GitService(Runner, repo.RootPath);
+
+        var local = await svc.GetLocalBranchShaAsync("feature-local");
+        Assert.True(local.Success);
+        Assert.Equal(featureSha, local.Value);
+
+        // Repo'nun HİÇ remote'u yok: aynı branch remote-tracking yoldan ÇÖZÜLEMEZ (fix'in gerekçesi).
+        var remote = await svc.GetRemoteTrackingShaAsync("feature-local");
+        Assert.True(remote.Success);
+        Assert.Null(remote.Value);
+
+        var unknown = await svc.GetLocalBranchShaAsync("no-such-branch");
+        Assert.True(unknown.Success); // yok = tanımlı edge, hata DEĞİL
+        Assert.Null(unknown.Value);
+
+        Assert.Equal(activeBranch, repo.CurrentBranchName()); // K1 — salt-okur
+    }
+
+    [Fact]
     public async Task FetchRefOnlyAsync_degrades_gracefully_when_remote_unreachable_falls_back_to_local_head()
     {
         using var origin = new GitTestRepo();
