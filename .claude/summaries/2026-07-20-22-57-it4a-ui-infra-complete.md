@@ -38,11 +38,17 @@ tek MotionSettings), scope kayması yok.
 3. **Task 0'ın catch'i her IOException'ı yutuyordu** → editörün kilitlediği bir csproj **sessizce plandan düşüp**
    build eksik grafla koşabilirdi. Filtre kayboluş vakasına daraltıldı; gerçek IO hataları artık yukarı sızıyor.
 
-## Kullanıcıdan bekleyenler
-1. **Gözle görsel doğrulama** (harness ekran görüntüsü alamıyor): `--it4a-lab` → graf akan dash/faz/pulse/kamera,
-   sticky başlıklar, follow+pill; normal çalıştırma → konsol renk/typewriter/seçim/kaskat + **T62 pencere kabuğu**
-   (Snap Layouts uçbirimi, restore glyph, X→tray + ilk balloon, ikinci instance öne getirme, Alt+B, tray Exit).
-2. **Merge/push onayı** — main + origin'e hâlâ dokunulmadı.
+## Kapanış (2026-07-21)
+1. **Gözle görsel doğrulama YAPILDI (kullanıcı).** Konsol renk/seçim/kaskat, Snap Layouts, restore glyph, X→tray +
+   ilk balloon, ikinci instance'ın pencereyi öne getirmesi, Alt+B — hepsi çalışıyor.
+   **Bulunan bug:** tray→Exit'te ikon kayboluyor ama process yaşıyordu → kök neden `App.OnExit`'in UI thread'ini
+   `EngineHost.DisposeAsync` üzerinde bloklaması + dispose yolunda `ConfigureAwait(false)` olmaması =
+   **sync-over-async deadlock**; deadlock `_outerJob.Dispose()`'dan önce olduğu için supervisor da ölmüyordu
+   (§3/D8 ihlali). It-0/It-2'den **latent**; T62 görünür kıldı. TDD ile düzeltildi (`a7ac3ca`).
+   **Kullanıcı yeniden doğruladı:** Exit artık process'i sonlandırıyor ve uygulama sonrasında tekrar açılabiliyor
+   (ikincisi `SingleInstanceGuard.Dispose()`'un mutex'i temiz bıraktığının kanıtı — M-6 senaryosu oluşmuyor).
+2. **Merge + push YAPILDI:** `main` @ `d1c1912` (`--no-ff`), `it4a-ui-infra` silindi, origin'e push edildi.
+   Merge edilen kod, doğrulanmış `a7ac3ca` ağacıyla **birebir aynı** (aradaki tek fark `.claude/` dokümanları).
 
 ## It-4b'ye devredilenler (final review triyajı — hiçbiri merge'ü bloke etmiyor)
 Gerçek 2×2 layout (T35), tam token çevirisi (T49) + MainWindow kökündeki eski hardcoded hex, DS kontrol kütüphanesi
