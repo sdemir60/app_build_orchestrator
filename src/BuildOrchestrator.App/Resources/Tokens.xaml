@@ -183,6 +183,14 @@
     <!-- ================================ Gölge (effects.css) ================================ -->
     <!-- DropShadowEffect'te spread parametresi YOKtur (feasibility §3.2/§5-2, A13.1-2) — CSS'in çift katmanlı
          gölgesi tek katmanla yakınsanır: Direction=270 (düz aşağı) + ShadowDepth=|Y| + BlurRadius=blur. -->
+    <!--
+      [T60 · B2 review carried-forward #2] BU İKİ EFEKT PAYLAŞILIR ve WPF tarafından PARSE ANINDA DONDURULUR.
+      Paylaşmak DOĞRUdur: bir Effect birden çok öğeye statik olarak verilebilir (Ds.Popover / Ds.Dialog öyle
+      yapar). Ama gölgenin `Opacity`/`BlurRadius`'unu ANIMATE etmek isteyen bir tüketici, A13.2'nin fırçalar
+      için yazdığı duvara ÇARPAR (donmuş nesne animasyon hedefi olamaz; olsa bile TÜM tüketicileri birden
+      oynatırdı). Çözüm de aynıdır: o tüketici kendi (donmamış) KOPYASINI kurup onu sürmelidir —
+      Controls/DsTransition.cs'in fırçalar için yaptığının aynısı.
+    -->
     <!-- effects.css:5 elevation-overlay: `0 10px 28px -10px rgba(0,0,0,.66)` (dialog/menü/toast). -->
     <DropShadowEffect x:Key="Effect.OverlayShadow" Color="Black" Direction="270" ShadowDepth="10" BlurRadius="28" Opacity="0.66" />
     <!-- effects.css:6 elevation-popover: `0 6px 18px -8px rgba(0,0,0,.6)` (tooltip; [T59] `⌄ latest` pill). -->

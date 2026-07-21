@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
     <!--
       [T64] Uygulamanın TEK ikon sözlüğü. Öncesinde dört uyumsuz kaynak vardı: Unicode karakterler
       (CaptionGlyphs), Windows'un sistem ikon FONTU (ConsoleHeader), düz semboller ve koda gömülü
@@ -29,6 +30,20 @@
       ÖLÇEK: geometriler kendi viewBox birimindedir. 24'lük bir ikonu 12px çizerken stroke da küçülmelidir —
       Viewbox + Canvas(24x24) sarmalayıcısı kullanılır (bkz. ConsoleHeader.xaml, GraphView.BuildNodeVisual).
       Caption glyph'leri 10x10'da 1:1 çizilir, ölçekleme yok.
+
+      [T60 · B2 review carried-forward #1] BOYA SEMANTİĞİ ARTIK BURADA. Bir ikonu doğru çizmek için geometri
+      YETMEZ: tasarım kaynağı her ikon için ayrıca bir `strokeWidth` ve bir "dolgu mu kontur mu" kipi taşır
+      (BuildApp.jsx:45-72 / _ds_bundle.js:1162 / :1633). B2'den sonra bu iki bilgi sözlükte YOKTU ve iki
+      tüketici (ConsoleHeader.xaml.cs, GraphView.xaml.cs) sayıları ELLE yeniden yazmıştı. Tek tanım yeri:
+      her `Icon.X` için kardeş bir `Icon.X.StrokeThickness` double'ı.
+
+        * DEĞER > 0  → ikon KONTURLUDUR: geometri Stroke ile bu kalınlıkta çizilir, Fill YOK.
+        * DEĞER == 0 → ikon DOLUDUR (`fill="currentColor" stroke="none"`): Fill ile boyanır, Stroke YOK.
+          (Sıfır kalınlık "kontur yok" demektir — kip için ayrı bir anahtar tutmaya gerek bırakmaz.)
+
+      Kalınlık ikonun KENDİ viewBox birimindedir (Viewbox ölçeği ile birlikte küçülür). Kod tarafında tek
+      uygulayıcı Controls/IconPaint.cs'tir; XAML tarafında `{DynamicResource Icon.X.StrokeThickness}` ile
+      okunur. IconGeometryTests her bildirilen ikonun sınıflandırıldığını pinler.
     -->
 
     <!-- ============================ eylem / durum ikonları (viewBox 0 0 24 24) ============================ -->
@@ -133,6 +148,33 @@
     <PathGeometry x:Key="Icon.Package"
                   Figures="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12" />
 
+    <!-- ================= statü glyph'leri + spinner (viewBox 0 0 16 16) ================= -->
+    <!-- [T60] DS `StatusGlyph` (_ds_bundle.js:1446-1524) ve `Spinner` (:1385-1392) çizimleri. StatusGlyph'in
+         gövdesi ince bir HALKA + içine 1.5px'lik bir glyph'tir; `discovered` aynı halkanın KESİKLİSİDİR ve
+         `building` 270°'lik bir yaydır. Geometriler kodda parse EDİLMEZ (bkz. IconGeometryTests). -->
+
+    <!-- _ds_bundle.js:1446-1452 RING — <circle cx="8" cy="8" r="6.7" fill="none" strokeWidth="1" opacity=".6"/> -->
+    <EllipseGeometry x:Key="Icon.StatusRing" Center="8,8" RadiusX="6.7" RadiusY="6.7" />
+    <!-- _ds_bundle.js:1515-1518 discovered — AYNI halka, strokeDasharray "2.3 2.5". WPF'te dash birimi
+         StrokeThickness ÇARPANIDIR; halkanın kalınlığı 1 olduğu için sayılar birebir geçerlidir. -->
+    <DoubleCollection x:Key="Icon.StatusRing.DashArray">2.3 2.5</DoubleCollection>
+
+    <!-- _ds_bundle.js:1460 succeeded — <path d="M5.1 8.4l2 2 3.8-4.6"/> -->
+    <PathGeometry x:Key="Icon.StatusCheck" Figures="M5.1 8.4l2 2 3.8-4.6" />
+    <!-- _ds_bundle.js:1464-1466 failed — iki path -->
+    <PathGeometry x:Key="Icon.StatusCross" Figures="M5.7 5.7l4.6 4.6 M10.3 5.7l-4.6 4.6" />
+    <!-- _ds_bundle.js:1470 skipped — <path d="M5.1 8h5.8"/> -->
+    <PathGeometry x:Key="Icon.StatusDash" Figures="M5.1 8h5.8" />
+    <!-- _ds_bundle.js:1474 queued — saat ibresi <path d="M8 4.8v3.4l2.1 1.3"/> -->
+    <PathGeometry x:Key="Icon.StatusClock" Figures="M8 4.8v3.4l2.1 1.3" />
+    <!-- _ds_bundle.js:1509-1513 cycle — uyarı üçgeni + ünlem (üç path) -->
+    <PathGeometry x:Key="Icon.StatusCycle" Figures="M8 2.7 14.4 13.2H1.6Z M8 6.6v3 M8 11.4h.01" />
+    <!-- _ds_bundle.js:1392 (Spinner) / :1505 (StatusGlyph building) — 270° yay, AYNI path -->
+    <PathGeometry x:Key="Icon.Spinner" Figures="M8 1.3a6.7 6.7 0 1 1-6.7 6.7" />
+
+    <!-- _ds_bundle.js:143 Chip chevron — <path d="M4.5 6.5 8 10l3.5-3.5"/> (Select'in ok'u da AYNI, :831) -->
+    <PathGeometry x:Key="Icon.Chevron" Figures="M4.5 6.5 8 10l3.5-3.5" />
+
     <!-- ============================ layout seçici ikonları (viewBox 0 0 16 16) ============================ -->
 
     <!-- BuildApp.jsx:70 layQuad — 4x <rect rx="1"/> -->
@@ -183,5 +225,67 @@
 
     <!-- _ds_bundle.js:1164-1172 WinBtn kind='close' — <path d="M1 1l8 8M9 1l-8 8"/> -->
     <PathGeometry x:Key="Icon.CaptionClose" Figures="M1 1l8 8M9 1l-8 8" />
+
+    <!--
+      ======================= BOYA SEMANTİĞİ: Icon.X.StrokeThickness =======================
+      Kural yukarıdaki başlıkta: >0 = konturlu (bu kalınlıkta), 0 = DOLU (Fill, kontur yok).
+      Değerler tasarım kaynağından alınmıştır — mevcut elle-kopyalardan DEĞİL.
+      Gruplar kaynaktaki `strokeWidth` değerine göre; satır numarası grubun başında.
+    -->
+
+    <!-- DOLU (BuildApp.jsx:47/48/67 ve :58 — hepsi `fill="currentColor" stroke="none"`) -->
+    <sys:Double x:Key="Icon.Play.StrokeThickness">0</sys:Double>
+    <sys:Double x:Key="Icon.Stop.StrokeThickness">0</sys:Double>
+    <sys:Double x:Key="Icon.Grip.StrokeThickness">0</sys:Double>
+    <sys:Double x:Key="Icon.DepWarn.StrokeThickness">0</sys:Double>
+
+    <!-- strokeWidth="2" (BuildApp.jsx:45, :46, :49, :50, :54, :56, :62, :64, :65, :66, :69) -->
+    <sys:Double x:Key="Icon.Branch.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Tree.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Sync.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Search.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Back.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Check.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.ChevUp.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Down.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Plus.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Rot.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Redo.StrokeThickness">2</sys:Double>
+
+    <!-- strokeWidth="1.8" (BuildApp.jsx:51, :52, :53, :55, :61, :68) -->
+    <sys:Double x:Key="Icon.Folder.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.FolderOpen.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Vs.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Trash.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Sigma.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Copy.StrokeThickness">1.8</sys:Double>
+
+    <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60) -->
+    <sys:Double x:Key="Icon.AlertTri.StrokeThickness">1.7</sys:Double>
+    <sys:Double x:Key="Icon.Gear.StrokeThickness">1.7</sys:Double>
+
+    <!-- strokeWidth="1.6" (_ds_bundle.js:1633 DependencyGraphNode paket ikonu) -->
+    <sys:Double x:Key="Icon.Package.StrokeThickness">1.6</sys:Double>
+
+    <!-- strokeWidth="1.5" (_ds_bundle.js:143 chevron · :1457 StatusGlyph gövdesi · :1389 Spinner) -->
+    <sys:Double x:Key="Icon.Chevron.StrokeThickness">1.5</sys:Double>
+    <sys:Double x:Key="Icon.StatusCheck.StrokeThickness">1.5</sys:Double>
+    <sys:Double x:Key="Icon.StatusCross.StrokeThickness">1.5</sys:Double>
+    <sys:Double x:Key="Icon.StatusDash.StrokeThickness">1.5</sys:Double>
+    <sys:Double x:Key="Icon.StatusClock.StrokeThickness">1.5</sys:Double>
+    <sys:Double x:Key="Icon.StatusCycle.StrokeThickness">1.5</sys:Double>
+    <sys:Double x:Key="Icon.Spinner.StrokeThickness">1.5</sys:Double>
+
+    <!-- strokeWidth="1.1" (BuildApp.jsx:70, :71, :72) -->
+    <sys:Double x:Key="Icon.LayQuad.StrokeThickness">1.1</sys:Double>
+    <sys:Double x:Key="Icon.LayList.StrokeThickness">1.1</sys:Double>
+    <sys:Double x:Key="Icon.LayFocus.StrokeThickness">1.1</sys:Double>
+
+    <!-- strokeWidth="1" (_ds_bundle.js:1162 WinBtn · :1450 StatusGlyph halkası) -->
+    <sys:Double x:Key="Icon.CaptionMinimize.StrokeThickness">1</sys:Double>
+    <sys:Double x:Key="Icon.CaptionMaximize.StrokeThickness">1</sys:Double>
+    <sys:Double x:Key="Icon.CaptionRestore.StrokeThickness">1</sys:Double>
+    <sys:Double x:Key="Icon.CaptionClose.StrokeThickness">1</sys:Double>
+    <sys:Double x:Key="Icon.StatusRing.StrokeThickness">1</sys:Double>
 
 </ResourceDictionary>

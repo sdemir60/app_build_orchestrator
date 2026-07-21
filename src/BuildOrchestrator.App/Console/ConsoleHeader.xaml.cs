@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Console;
@@ -20,12 +21,11 @@ public partial class ConsoleHeader : UserControl
 {
     public enum HeaderMode { Narrative, ProjectLog }
 
-    // [T64] Çizilmiş ikonlar (Icons.xaml) — ikon fontu YOK. Stroke kalınlığı kaynağın kendi değeri:
-    // copy 1.8 (BuildApp.jsx:68), check 2 (BuildApp.jsx:56); 24'lük viewBox birimindedir, Viewbox küçültür.
+    // [T64] Çizilmiş ikonlar (Icons.xaml) — ikon fontu YOK.
+    // [T60] Stroke kalınlığı ARTIK BURADA YAZILI DEĞİL: sözlüğün kardeş Icon.X.StrokeThickness anahtarından
+    // gelir (IconPaint). Önceden buradaki 1.8/2.0 sabitleri sözlükten bağımsız ikinci bir otoriteydi.
     private const string CopyIconKey = "Icon.Copy";
-    private const double CopyIconStrokeWidth = 1.8;
     private const string CheckIconKey = "Icon.Check";
-    private const double CheckIconStrokeWidth = 2.0;
 
     private readonly CopyLogFeedback _copyFeedback = new();
     private DispatcherTimer? _copyRevertTimer;
@@ -137,7 +137,7 @@ public partial class ConsoleHeader : UserControl
         return timer;
     }
 
-    private void ShowCopiedVisual() => SetCopyIcon(CheckIconKey, CheckIconStrokeWidth, "Copied", "Brush.StatusSuccessText");
+    private void ShowCopiedVisual() => SetCopyIcon(CheckIconKey, "Copied", "Brush.StatusSuccessText");
 
     private void ResetCopyVisual()
     {
@@ -145,15 +145,15 @@ public partial class ConsoleHeader : UserControl
         _copyClock?.Stop();
         _copyClock = null;
         _copyFeedback.Revert();
-        SetCopyIcon(CopyIconKey, CopyIconStrokeWidth, "Copy log", "Brush.TextSecondary");
+        SetCopyIcon(CopyIconKey, "Copy log", "Brush.TextSecondary");
     }
 
-    /// <summary>Copy-log butonunun görselini (ikon geometrisi + stroke + tooltip + renk) tek yerden sürer.
-    /// Geometri <c>SetResourceReference</c> ile bağlanır: sözlük merge edilmemişse sessizce çözümsüz kalır.</summary>
-    private void SetCopyIcon(string iconKey, double strokeWidth, string tooltip, string foregroundKey)
+    /// <summary>Copy-log butonunun görselini (ikon geometrisi + boya + tooltip + renk) tek yerden sürer.
+    /// [T60] Geometri VE boya semantiği (kontur/dolgu + kalınlık) <see cref="IconPaint"/> üzerinden sözlükten
+    /// gelir: sözlük merge edilmemişse sessizce çözümsüz kalır (<c>SetResourceReference</c> deseni).</summary>
+    private void SetCopyIcon(string iconKey, string tooltip, string foregroundKey)
     {
-        CopyLogGlyph.SetResourceReference(System.Windows.Shapes.Path.DataProperty, iconKey);
-        CopyLogGlyph.StrokeThickness = strokeWidth;
+        IconPaint.Apply(CopyLogGlyph, this, iconKey, foregroundKey);
         CopyLogButton.ToolTip = tooltip;
         CopyLogButton.SetResourceReference(ForegroundProperty, foregroundKey);
     }

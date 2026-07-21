@@ -15,6 +15,12 @@ namespace BuildOrchestrator.App.Services;
 /// <item>Saf-XAML Storyboard'lar bir duration token'ı tüketiyorsa <c>{DynamicResource Duration.X}</c>
 /// kullanmalı (ASLA <c>{StaticResource}</c> değil) — yalnız <c>DynamicResource</c>, <c>Attach</c>'in
 /// yaptığı canlı sıfırlamayı yeni tetiklenen animasyonlara ulaştırır.</item>
+/// <item><b>[T60 — ölçülmüş kısıt]</b> Bir <c>ControlTemplate.Triggers</c> Storyboard'u bu maddeyi
+/// UYGULAYAMAZ: şablon mühürlenirken (Seal) zaman çizelgesi ağacı DONDURULMAK zorundadır ve
+/// <c>{DynamicResource}</c> taşıyan bir <c>Freezable</c> dondurulamaz — XAML yükleme anında
+/// <c>XamlParseException</c> alınır. Yani şablon durum geçişleri için saf-XAML yolu YOKTUR; kod-tarafı
+/// yazılmalıdır (<c>Controls/MotionTokens.TransitionColor</c>). Kanıt: <c>MotionResourcesTests</c>'teki
+/// iki spike testi; kararın kaydı <c>Resources/Controls.xaml</c> başındadır.</item>
 /// </list>
 /// </summary>
 public interface IMotionSettings

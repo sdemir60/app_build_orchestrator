@@ -62,7 +62,6 @@ public partial class GraphView : UserControl
     internal const string PackageIconKey = "Icon.Package";
     /// <summary>Dep-hata rozetinin DOLU üçgeni (lucide depWarn) — aynı gerekçe, bkz. <see cref="PackageIconKey"/>.</summary>
     internal const string WarningTriangleIconKey = "Icon.DepWarn";
-    private const double PackageIconStrokeWidth = 1.6; // viewBox birimi — Viewbox ölçeği ile birlikte küçülür
 
     private readonly Dictionary<string, GraphNodeVisual> _nodes = new(StringComparer.Ordinal);
     private readonly List<GraphEdgeVisual> _edges = [];
@@ -279,16 +278,10 @@ public partial class GraphView : UserControl
             StrokeThickness = NodeBorderThickness, // seçiliyken 2px — bkz. ApplySelection (DS: selected ? 2 : 1.5)
         };
 
-        var icon = new Path
-        {
-            StrokeThickness = PackageIconStrokeWidth,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            StrokeLineJoin = PenLineJoin.Round,
-        };
-        // Fırçalarla AYNI yol (SetResourceReference = code-behind'ın DynamicResource'u): sözlük merge zincirinden
-        // gelir, kod path data TAŞIMAZ.
-        icon.SetResourceReference(Path.DataProperty, PackageIconKey);
+        // [T60] Geometri + boya (kontur mu dolgu mu, hangi kalınlıkta) TEK yerden: Icons.xaml'in kardeş
+        // Icon.X.StrokeThickness anahtarı. Kalınlık burada ARTIK YAZILI DEĞİL — ApplyNodeStatus statüye göre
+        // fırçayı da verdiği için ikonun boyası oradan sürülür (bkz. IconPaint.Apply).
+        var icon = new Path();
         var iconBox = new Viewbox
         {
             Width = GraphLayout.NodeSize * 0.5, // DS: size * 0.5 → 26px düğümde 13px ikon
@@ -304,8 +297,7 @@ public partial class GraphView : UserControl
         badgeCircle.SetResourceReference(Shape.FillProperty, "Brush.SurfaceBase");
         badgeCircle.SetResourceReference(Shape.StrokeProperty, "Brush.StatusFailBorder");
         var badgeTriangle = new Path();
-        badgeTriangle.SetResourceReference(Path.DataProperty, WarningTriangleIconKey);
-        badgeTriangle.SetResourceReference(Shape.FillProperty, "Brush.StatusFailText");
+        IconPaint.Apply(badgeTriangle, this, WarningTriangleIconKey, "Brush.StatusFailText"); // DOLU üçgen — kip sözlükten
         var badge = new Grid
         {
             Width = 13,
@@ -418,7 +410,7 @@ public partial class GraphView : UserControl
 
         visual.Square.SetResourceReference(Shape.StrokeProperty, border);
         visual.Square.SetResourceReference(Shape.FillProperty, background);
-        visual.Icon.SetResourceReference(Shape.StrokeProperty, iconColor);
+        IconPaint.Apply(visual.Icon, this, PackageIconKey, iconColor);
         // WPF Border dashed desteklemez → kesikli çerçeve Rectangle.StrokeDashArray ile (feasibility §3.5).
         // Dash birimi StrokeThickness çarpanı: 1.5px'lik çerçevede {2,2} = 3px dolu / 3px boş — CSS'in
         // `1.5px dashed` varsayılanının karşılığı (tasarımda ayrı bir sayısal değer verilmemiştir).

@@ -1,6 +1,4 @@
-using System.IO;
 using System.Windows;
-using System.Windows.Markup;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -13,10 +11,6 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 internal static class IconResources
 {
-    public static ResourceDictionary Load()
-    {
-        string path = Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Icons.xaml");
-        using var stream = File.OpenRead(path);
-        return (ResourceDictionary)XamlReader.Load(stream);
-    }
+    // [T60] Yükleme mekaniği DsResources'a taşındı — B3 dördüncü bir kopyasını yazacaktı (kopya YASAK).
+    public static ResourceDictionary Load() => DsResources.Load("Icons.xaml");
 }

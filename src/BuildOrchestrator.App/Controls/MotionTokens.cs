@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 
 namespace BuildOrchestrator.App.Controls;
@@ -34,6 +35,61 @@ internal static class MotionTokens
         var animation = new DoubleAnimationUsingKeyFrames();
         animation.KeyFrames.Add(new SplineDoubleKeyFrame(to, KeyTime.FromTimeSpan(duration), keySpline));
         return animation;
+    }
+
+    /// <summary>
+    /// [T60] CSS <c>transition: &lt;renk&gt; var(--duration-fast) var(--ease-standard)</c> paritesi — DS'in
+    /// TÜM 120ms renk geçişlerinin TEK yolu (Button/Chip/IconButton/Segment/Switch/Input ve
+    /// <see cref="LatestPill"/> aynı metodu çağırır; kopya YASAK, CLAUDE.md).
+    ///
+    /// <para><b>A13.2 — hedef ZORUNLU olarak template-lokal bir brush'tır:</b> Tokens.xaml'deki brush'lar
+    /// PAYLAŞILIR ve donmuştur; onları animate etmek hem imkânsızdır hem de tüm tüketicileri etkilerdi.
+    /// Çağıran, kendi (donmamış) kopyasını verir — bkz. <see cref="DsTransition"/>.</para>
+    ///
+    /// <para><b>Neden kod-tarafı (T60 Step 1 kararı):</b> saf-XAML yolu ÖLÇÜLDÜ ve kapalı çıktı —
+    /// <c>ControlTemplate.Triggers</c> içindeki bir <c>Storyboard</c> şablon mühürlenirken (Seal) DONDURULMAK
+    /// ZORUNDADIR ve <c>{DynamicResource Duration.Fast}</c> bunu imkânsız kılar (InvalidOperationException:
+    /// "Bu Storyboard zaman çizelgesi ağacı iş parçacıkları arasında kullanılmak üzere dondurulamıyor").
+    /// Kanıt testleri: MotionResourcesTests'teki iki spike.</para>
+    ///
+    /// <para>Süre/eğri ve <c>AnimationsEnabled</c> BAŞLATMA ANINDA taze okunur (motion sözleşmesi);
+    /// <see cref="HandoffBehavior.SnapshotAndReplace"/> uçuştaki bir geçişi O ANKİ renginden devraldırır
+    /// (CSS'in yeni bir hedefe geçişiyle aynı davranış).</para>
+    /// </summary>
+    public static void TransitionColor(FrameworkElement host, SolidColorBrush brush, Color to)
+    {
+        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        var duration = ResolveDuration(host, "Duration.Fast", 120.0);          // prototip: --duration-fast
+        var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1)); // --ease-standard
+
+        if (!animationsEnabled || duration.TimeSpan <= TimeSpan.Zero)
+        {
+            brush.BeginAnimation(SolidColorBrush.ColorProperty, null);
+            brush.Color = to;
+            return;
+        }
+
+        var animation = new ColorAnimationUsingKeyFrames();
+        animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(duration.TimeSpan), spline));
+        brush.BeginAnimation(SolidColorBrush.ColorProperty, animation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    /// <summary>[T60] <see cref="TransitionColor"/>'ın double karşılığı — Switch başparmağının 120ms'lik
+    /// <c>translateX</c> geçişi (_ds_bundle.js:900-903) gibi konum/opaklık geçişleri için.</summary>
+    public static void TransitionDouble(FrameworkElement host, Animatable target, DependencyProperty property, double to)
+    {
+        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        var duration = ResolveDuration(host, "Duration.Fast", 120.0);
+        var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+
+        if (!animationsEnabled || duration.TimeSpan <= TimeSpan.Zero)
+        {
+            target.BeginAnimation(property, null);
+            target.SetValue(property, to);
+            return;
+        }
+
+        target.BeginAnimation(property, SplineTo(to, duration.TimeSpan, spline), HandoffBehavior.SnapshotAndReplace);
     }
 
     /// <summary>[M-1] <see cref="Console.ConsoleView.AnimateToBottom"/> ve

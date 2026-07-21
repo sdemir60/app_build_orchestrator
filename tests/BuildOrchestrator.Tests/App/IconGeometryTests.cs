@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -26,7 +27,14 @@ public class IconGeometryTests
         "Icon.Trash", "Icon.Plus", "Icon.Back", "Icon.Grip", "Icon.Gear", "Icon.Sigma", "Icon.ChevUp",
         "Icon.AlertTri", "Icon.DepWarn", "Icon.LayQuad", "Icon.LayList", "Icon.LayFocus", "Icon.Package",
         "Icon.CaptionMinimize", "Icon.CaptionMaximize", "Icon.CaptionRestore", "Icon.CaptionClose",
+        // [T60] DS kontrol kütüphanesinin ihtiyaç duyduğu çizimler (StatusGlyph gövdesi + Spinner + chevron)
+        "Icon.StatusRing", "Icon.StatusCheck", "Icon.StatusCross", "Icon.StatusDash", "Icon.StatusClock",
+        "Icon.StatusCycle", "Icon.Spinner", "Icon.Chevron",
     ];
+
+    /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
+    /// BuildApp.jsx:47 play · :48 stop · :67 grip · :58 depWarn. Geri kalan her ikon KONTURLUDUR.</summary>
+    public static readonly string[] FilledKeys = ["Icon.Play", "Icon.Stop", "Icon.Grip", "Icon.DepWarn"];
 
     [StaFact]
     public void Every_declared_icon_parses_to_a_non_empty_geometry()
@@ -34,10 +42,38 @@ public class IconGeometryTests
         var icons = IconResources.Load();
 
         Assert.NotEmpty(icons.Keys);
+        // [T60] Sözlük artık geometrinin YANINDA boya semantiğini de taşır (Icon.X.StrokeThickness double'ı,
+        // Icon.StatusRing.DashArray). "Her değer bir Geometry'dir" iddiası bu yüzden ANAHTAR ADINA göre
+        // ayrışır — sessizce atlamak yerine: nokta-son-ek taşımayan HER anahtar bir geometri OLMALIDIR.
         foreach (var key in icons.Keys.Cast<object>().Select(k => k.ToString()!))
         {
+            if (key.EndsWith(".StrokeThickness", StringComparison.Ordinal)) { Assert.IsType<double>(icons[key]); continue; }
+            if (key.EndsWith(".DashArray", StringComparison.Ordinal)) { Assert.NotEmpty(Assert.IsType<DoubleCollection>(icons[key])); continue; }
+
             var g = Assert.IsAssignableFrom<Geometry>(icons[key]);
             Assert.False(g.Bounds.IsEmpty, $"{key} boş geometri");
+        }
+    }
+
+    [StaFact]
+    public void Every_declared_icon_also_declares_how_it_is_painted()
+    {
+        // [T60 · B2 review carried-forward #1] Geometri TEK BAŞINA bir ikonu çizmeye yetmez: tasarım kaynağı
+        // her ikon için ayrıca bir strokeWidth ve "dolgu mu kontur mu" kipi taşır. B2 sonrasında bu bilgi
+        // sözlükte YOKTU ve iki tüketici (ConsoleHeader, GraphView) sayıları elle yeniden yazmıştı. Bu test
+        // sınıflandırmanın TAM olduğunu pinler: her geometrinin kardeş bir .StrokeThickness'ı var ve dolu/
+        // konturlu ayrımı 0 / >0 ile doğru kodlanmış.
+        var icons = IconResources.Load();
+
+        var missing = RequiredKeys.Where(k => !icons.Contains(k + ".StrokeThickness")).ToList();
+        Assert.Empty(missing);
+
+        foreach (string key in RequiredKeys)
+        {
+            double thickness = Assert.IsType<double>(icons[key + ".StrokeThickness"]);
+            bool expectedFilled = FilledKeys.Contains(key);
+            Assert.True(expectedFilled == (thickness == 0),
+                $"{key}: dolu={expectedFilled} ama StrokeThickness={thickness.ToString(CultureInfo.InvariantCulture)}");
         }
     }
 

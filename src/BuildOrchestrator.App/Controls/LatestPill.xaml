@@ -9,7 +9,11 @@
        border-strong, radius-md (=overlay 8), popover gölgesi. Hover'da yüzey/metin bir adım açılır
        (surface-overlay→surface-raised, text-secondary→text-primary). Host (ConsoleView vb.) Visibility'yi
        BottomAnchorBehavior.ShowPill'e bağlar; Click → JumpToBottom (bkz. LatestPill.xaml.cs). -->
-  <Button x:Name="PillButton" Click="OnClick" Cursor="Hand" Focusable="False"
+  <!-- [T60] Style="{x:Null}": Controls.xaml artık stilsiz HER Button'a DS secondary görünümünü verir; bu
+       buton ise TAM ÖZEL bir şablona sahiptir (kabuk aşağıda, renkleri code-behind sürer). Style'a yerel bir
+       değer atamak implicit style aramasını kapatır — aksi halde DS'in yükseklik/zemin setter'ları pill'in
+       kendi 22px kabuğunun üstüne binerdi. -->
+  <Button x:Name="PillButton" Style="{x:Null}" Click="OnClick" Cursor="Hand" Focusable="False"
           Padding="0" BorderThickness="0" Background="Transparent">
     <Button.Template>
       <ControlTemplate TargetType="Button">
