@@ -50,6 +50,12 @@ public partial class ConsoleView : UserControl
     private string _activeText = "";
     private bool _cursorFading; // imleç fade-out animasyonu uçuşta mı (Minor 3)
 
+    // [D4/T34] Anlatı en-yeni-satır daktilo degradation kararı (drop-to-latest / throughput-suspend / hata /
+    // ham-MSBuild) — SAF çekirdek, yalnız UI thread'inden çağrılır (AppendNarrativeBatch).
+    private readonly ConsoleTypingGate _typingGate = new();
+    // [D4/T56-UI] Boşta (idle/boot) "ready" (dim) satırı overlay'de gösteriliyor mu — doküman satırı DEĞİL.
+    private bool _idleReady;
+
     // Kaskat durumu (yalnız UI thread'inde).
     private DispatcherTimer? _cascadeTimer;
     private Stopwatch? _cascadeClock;
@@ -169,6 +175,15 @@ public partial class ConsoleView : UserControl
         if (_colorizer is not null) return;
         object? Probe(string key) => TryFindResource(key);
         if (Probe("Brush.TextFaint") is null) return; // token'lar henüz yok — üretimde Loaded'da hazırdır
+        // [B1→D4 fold] Konsol puntosu TEK kaynaktır (design-v1 §2.5 "mono 12px" = FontSize.Xs token'ı). XAML'deki
+        // DynamicResource FontSize.Xs bir anahtar typo'sunda WPF'in SESSİZ 12px varsayılanına düşerdi (token da 12
+        // → hata GÖRÜNMEZ). ConsolePalette.FromLookup ile AYNI fail-fast: token'lar merge edilmişken anahtar YOKSA
+        // anlaşılır bir hata fırlatılır (sessiz drift yerine) ve punto koda TEK yerden bağlanır (editör + overlay'ler drift edemez).
+        double fontSize = Probe("FontSize.Xs") as double?
+            ?? throw new InvalidOperationException("Konsol: 'FontSize.Xs' punto kaynağı bulunamadı (Tokens.xaml).");
+        EditorControl.FontSize = fontSize;
+        ActiveLineText.FontSize = fontSize;
+        BuildProgressText.FontSize = fontSize;
         EnableColorizer(ConsolePalette.FromLookup(Probe));
     }
 
@@ -185,6 +200,81 @@ public partial class ConsoleView : UserControl
             EditorControl.TextArea.TextView.LineTransformers.Insert(cascadeIndex, _colorizer);
         else
             EditorControl.TextArea.TextView.LineTransformers.Add(_colorizer);
+    }
+
+    // ---------------------------------------------------------------- [D4] anlatı batch'i (en yeni satır daktilo)
+
+    /// <summary>
+    /// [D4/T56-UI + T34] Run/anlatı modu batch'i. Batch'in TÜM satırları anında commit edilir; YALNIZ EN YENİ
+    /// satır — degradation kuralları izin verirse (<see cref="ConsoleTypingGate"/>) — hibrit daktiloyla yazılır
+    /// (<see cref="TypeActiveLine"/>). Aksi halde (ham MSBuild / hata / fırtına / yüksek throughput / reduced-motion)
+    /// tüm batch <see cref="AppendBatch"/> ile instant basılır. Proje-log modu BU yoldan GEÇMEZ — MainWindow orada
+    /// doğrudan <see cref="AppendBatch"/> çağırır (ham çıktı asla daktilolanmaz — DD2). Batch sözleşmesi: metin
+    /// '\n' SONEKLİ tam satırlarla biter (<see cref="ConsoleBatcher"/>).
+    /// </summary>
+    public void AppendNarrativeBatch(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        HideReadyIfShown();
+        EnsureColorizer();
+
+        // Son tam satırı ayır: newest = son satır (soneksiz); prefix = ondan önceki her şey ('\n' sonekli).
+        string body = text[^1] == '\n' ? text[..^1] : text;
+        int lastNl = body.LastIndexOf('\n');
+        string newest = lastNl < 0 ? body : body[(lastNl + 1)..];
+        string prefix = lastNl < 0 ? "" : text[..(lastNl + 1)];
+        int lineCount = 1;
+        for (int i = 0; i < body.Length; i++) if (body[i] == '\n') lineCount++;
+
+        var type = ConsoleLineClassifier.Classify(newest);
+        // Ham MSBuild anlatı değildir → zaman damgası (HH:MM:SS öneki) YOKtur. Anlatı satırları AppendRunLine'da
+        // damgalanır; damga yoksa satır ham sayılır ve ASLA daktilolanmaz (T34).
+        bool isRaw = ConsoleLineParser.Layout(newest).Clock is null;
+
+        if (_typingGate.ShouldType(isRaw, type, lineCount, Environment.TickCount64))
+        {
+            if (prefix.Length > 0) AppendBatch(prefix); // en yeniden önceki satırlar anında
+            TypeActiveLine(newest);                     // en yeni satır hibrit daktiloyla
+        }
+        else
+        {
+            if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true); // uçuştaki daktilo varsa kapat
+            AppendBatch(text); // tüm batch instant
+        }
+    }
+
+    /// <summary>[D4] Uçuştaki anlatı daktilosunu (varsa) anında commit eder — yoksa no-op. Mod değişiminde
+    /// (proje-loguna geçiş) çağrılabilir; <see cref="PlayCascade"/> zaten <c>FinishActiveLine(commit:false)</c> ile
+    /// overlay'i temizler, bu daktiloyu KAYBETMEDEN commit etmek isteyen yol için ayrı tutulur.</summary>
+    public void CommitActiveLine()
+    {
+        if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true);
+    }
+
+    /// <summary>[D4/T56-UI] Boşta (idle/boot) tek satır: <c>ready</c> (dim) + yanıp sönen blok imleç (design-v1
+    /// §2.5). Doküman satırı DEĞİLdir — overlay'de canlı gösterilir; içerik gelince (AppendNarrativeBatch /
+    /// PlayCascade) temizlenir. Uçuştaki daktilo varsa önce commit edilir. Reduced-motion iken imleç statiktir.</summary>
+    public void ShowReady()
+    {
+        EnsureColorizer();
+        if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true);
+        _idleReady = true;
+        Brush dim = _palette?.Dim ?? EditorControl.Foreground;
+        ActiveLineText.Foreground = dim;
+        ActiveLineText.Text = ConsoleEmptyState.Idle; // "ready"
+        ActiveCursor.Fill = dim;
+        ActiveCursor.Opacity = 1.0;
+        ActiveLineOverlay.Visibility = Visibility.Visible;
+        if (BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false) StartBlink(); else StopBlink();
+    }
+
+    private void HideReadyIfShown()
+    {
+        if (!_idleReady) return;
+        _idleReady = false;
+        StopBlink();
+        ActiveLineOverlay.Visibility = Visibility.Collapsed;
+        ActiveLineText.Text = "";
     }
 
     // ---------------------------------------------------------------- hibrit aktif satır (typewriter)
@@ -325,6 +415,7 @@ public partial class ConsoleView : UserControl
         HideBuildInProgress();
         // [T59] design-v1 §2.5: "konsol↔proje-log geçişinde dibe sabitlenir" — bkz. ShowRunDocument'taki aynı gerekçe.
         _bottomAnchor.ForceStuck(true);
+        HideReadyIfShown();              // [D4] boşta "ready" gösteriliyorsa temizle (proje-loguna geçiş)
         FinishActiveLine(commit: false); // narrative typewriter varsa temizle (mod değişimi)
 
         allLines ??= [];

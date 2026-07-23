@@ -50,8 +50,14 @@
                    FontSize="11" />
         <StackPanel x:Name="DepIssueBadge" Orientation="Horizontal" Visibility="Collapsed"
                     Margin="10,0,0,0" VerticalAlignment="Center">
-          <TextBlock Text="&#x25B2;" FontSize="10" VerticalAlignment="Center"
-                     Foreground="{DynamicResource Brush.StatusFailText}" />
+          <!-- [B2→D4 fold] ▲ artık düz Unicode karakter DEĞİL — çizilmiş Icon.DepWarn geometrisi (Icons.xaml,
+               StrokeThickness 0 → dolgu). 24'lük viewBox 10px'e Viewbox ile küçültülür (kart/graf dep uyarısıyla
+               AYNI geometri). DynamicResource: headless test host'unda merge zinciri yoksa sessizce çözümsüz. -->
+          <Viewbox Width="10" Height="10" VerticalAlignment="Center">
+            <Canvas Width="24" Height="24">
+              <Path Data="{DynamicResource Icon.DepWarn}" Fill="{DynamicResource Brush.StatusFailText}" />
+            </Canvas>
+          </Viewbox>
           <TextBlock Text="dependency issue" Margin="5,0,0,0" FontSize="11" VerticalAlignment="Center"
                      Foreground="{DynamicResource Brush.StatusFailText}" />
         </StackPanel>

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using BuildOrchestrator.App.Console;
@@ -864,14 +865,25 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void AppendRunLine(string text)
     {
+        // [D4/T56-UI] Anlatı satırı design-v1 §2.5 diliyle bileşilir: "HH:MM:SS" (sahte duvar saati, text-faint) +
+        // metin (cmd satırındaki amber ▸, satırın kendisinde zaten var — SyncProgressEvent). Renkler
+        // ConsoleColorizer'ın zaman-damgasını + ▸'yi çözmesiyle gelir (kopyalanan metin de anlamlı; markup YOK).
+        // Saat kaynağı WallClock (stream ile ORTAK; testte deterministik). Ham MSBuild (OnProjectLog) BU yoldan
+        // GEÇMEZ → zaman damgası ALMAZ → daktilo edilmez (T34: ham asla harf-harf).
+        string composed = ComposeNarrativeLine(text);
         // [Fix wave 1, Finding 3] OnProjectLog ile aynı gerekçeyle Post kilit İÇİNE alındı.
         lock (_gate)
         {
-            _runText.Append(text).Append('\n');
+            _runText.Append(composed).Append('\n');
             _runLineCount++;
-            if (ActiveProjectId is null) _console.Post(text);
+            if (ActiveProjectId is null) _console.Post(composed);
         }
     }
+
+    /// <summary>[D4/T56-UI] Bir anlatı satırının önüne "HH:MM:SS " (InvariantCulture — Global Constraint) ekler.
+    /// design-v1 §2.5 / plan §222: satırlar düz metin <c>HH:MM:SS ▸ metin</c>. Saat WallClock'tan (stream'le ORTAK).</summary>
+    private string ComposeNarrativeLine(string text) =>
+        $"{WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture)} {text}";
 
     /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
     /// TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). UI thread'inde çağrılır; sayaçlar arka plandan
@@ -898,32 +910,39 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate) return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
     }
 
-    /// <summary>[Fix wave 1, Finding 3 → 3b: tek-okuyucudan geçen reseed] MainWindow'un "Back" akışının
-    /// kullandığı tohumlama metodu: run dokümanının metnini AYNI _gate kilidi altında okur ve
-    /// <see cref="ConsoleBatcher.PostReseed"/> ile kanala bir reseed sentinel'i yazar. <paramref name="apply"/>,
-    /// pump tarafından (sentinel'e uğrayınca) çağrılır ve TAZE snapshot'ı UI dokümanına kurar (marshal ETME
-    /// çağıranın işi).
+    /// <summary>[D4/Solution B — reseed flicker] MainWindow'un "Back" akışının kullandığı tohumlama metodu.
+    /// Doküman TIKLAMA ANINDA UI thread'inde SENKRON kurulur (başlık ve gövde AYNI karede değişir): bu metot UI
+    /// thread'inde çağrılır ve <paramref name="applyNow"/>'ı run dokümanının TAZE snapshot'ıyla senkron çağırır
+    /// (çağıran doğrudan <c>ConsoleView.ShowRunDocument</c>'a verir). Ayrıca <see cref="ConsoleBatcher.PostReseedDrop"/>
+    /// ile bir drop-only sentinel yazar: pump, snapshot'a zaten dahil olan uçuştaki satırları atar (doküman-set
+    /// yapmaz — o zaten senkron olduğundan).
     ///
-    /// <para><b>Neden kilit altında snapshot + PostReseed birlikte:</b> OnProjectLog da _runText yazımını ve
-    /// <c>_console.Post</c>'unu AYNI _gate altında yapar. Bu yüzden snapshot okunurken bir OnProjectLog araya
-    /// giremez: snapshot'a giren her satır, sentinel'den ÖNCE kanala girmiştir; snapshot'a girmeyen her satır
-    /// sentinel'den SONRA girer. Pump tek okuyucudur → sentinel'e kadarki satırları (snapshot'ta zaten var) atar,
-    /// sonrakileri yeni dokümana akıtır. Eski <c>DiscardPending</c>'in bıraktığı "pump satırı TryRead'le çekti ama
-    /// henüz flush etmedi" Dispatcher-gecikmesi artık penceresi KAPANIR (It-4 backlog kalemi — task-12 Fix wave 1
-    /// residual'ı).</para></summary>
-    public void SeedRunDocument(Action<string> apply)
+    /// <para><b>Sıralama (atomiklik) — DEĞİŞMEZ:</b> her şey TEK _gate kilidi altında ve şu sırada:
+    /// <c>PostReseedDrop</c> (sentinel ÖNCE — pump-drain yarış penceresini asgariye indirir) → snapshot oku →
+    /// <c>applyNow(snapshot)</c>. OnProjectLog da _runText yazımını ve <c>_console.Post</c>'unu AYNI _gate altında
+    /// yaptığından bu bölüm sırasında araya GİREMEZ: (a) snapshot'a giren her satır sentinel'den ÖNCE kanala
+    /// girmiştir → pump onu atar (yeni dokümana TEKRAR eklenmez); (b) applyNow kilit altında koştuğundan, doküman
+    /// senkron kurulana kadar HİÇBİR post-snapshot satır post edilemez → sonraki satırlar YALNIZ taze dokümana
+    /// akar (post-snapshot satır DÜŞMEZ).</para></summary>
+    public void SeedRunDocument(Action<string> applyNow)
     {
         lock (_gate)
-            _console.PostReseed(_runText.ToString(), apply);
+        {
+            _console.PostReseedDrop();
+            applyNow(_runText.ToString());
+        }
     }
 
-    /// <summary>[3b] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın XML
-    /// yorumu (aynı gerekçe, proje dokümanı için). Log yoksa boş snapshot ile çağrılır (çağıran boş-durum metnini
-    /// uygular).</summary>
-    public void SeedProjectDocument(string projectId, Action<string> apply)
+    /// <summary>[D4/Solution B] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın
+    /// XML yorumu (aynı senkron doküman-set + drop-only sentinel gerekçesi, proje dokümanı için). Log yoksa boş
+    /// snapshot ile çağrılır (çağıran boş-durum metnini uygular).</summary>
+    public void SeedProjectDocument(string projectId, Action<string> applyNow)
     {
         lock (_gate)
-            _console.PostReseed(_projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "", apply);
+        {
+            _console.PostReseedDrop();
+            applyNow(_projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "");
+        }
     }
 
     /// <summary>Konsolu run dokümanına döndürür (MainWindow'daki "Back").</summary>

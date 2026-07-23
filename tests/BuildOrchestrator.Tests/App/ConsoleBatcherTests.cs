@@ -177,4 +177,33 @@ public class ConsoleBatcherTests
 
         Assert.Equal("SNAPSHOT\n", doc.ToString()); // old1/old2 flush EDİLMEDİ (snapshot'ta zaten var)
     }
+
+    [Fact]
+    public async Task Drop_only_reseed_discards_prior_lines_without_setting_the_document()
+    {
+        // [D4/Solution B] Doküman TIKLAMA ANINDA senkron kurulur (burada test dışında); pump'a düşen drop-only
+        // sentinel yalnız sentinel'den ÖNCEki (snapshot'a zaten dahil) satırları ATAR — doküman-set YAPMAZ.
+        // Sonrasındaki satırlar (senkron kurulan dokümana) akmaya devam eder.
+        var appended = new System.Text.StringBuilder();
+        ConsoleBatcher? batcher = null;
+        int callCount = 0;
+        Task Tick(CancellationToken ct)
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                batcher!.Post("stale1");
+                batcher!.Post("stale2");
+                batcher!.PostReseedDrop();  // doküman senkron kuruldu; bunlar atılmalı
+                batcher!.Post("fresh1");    // reseed'den SONRA — akmaya devam
+            }
+            else if (callCount == 2) batcher!.Complete();
+            return Task.CompletedTask;
+        }
+        batcher = new ConsoleBatcher(Tick);
+
+        await batcher.PumpAsync(text => appended.Append(text), CancellationToken.None);
+
+        Assert.Equal("fresh1\n", appended.ToString()); // stale1/stale2 atıldı; doküman-set çağrısı YOK
+    }
 }

@@ -281,4 +281,35 @@ public class ConsoleViewTests
         // ÇELİŞirdi (ve bir sonraki içerik büyümesinde konsol onu TEKRAR dibe fırlatırdı).
         Assert.False(view.StickToBottom);
     }
+
+    // ---------------------------------------------------------------- [D4] anlatı batch'i + idle "ready"
+
+    [StaFact]
+    public void AppendNarrativeBatch_commits_every_line_including_the_newest_when_reduced_motion()
+    {
+        // Headless: App.Motion null → animationsEnabled=false → en yeni satır daktilosu INSTANT'a düşer, yani
+        // batch'in TÜM satırları (en yeni dahil) dokümana girer — hiçbir satır overlay'de asılı kalmaz/kaybolmaz.
+        var view = new ConsoleView();
+
+        view.AppendNarrativeBatch("12:00:01 ▸ git fetch origin main\n12:00:02 Sync complete — 7 changed projects\n");
+
+        Assert.Contains("git fetch origin main", view.Document.Text);
+        Assert.Contains("Sync complete — 7 changed projects", view.Document.Text);
+    }
+
+    [StaFact]
+    public void ShowReady_displays_the_idle_prompt_until_narrative_content_arrives()
+    {
+        // design-v1 §2.5: boşta/boot tek satır "ready" (dim) + imleç — doküman satırı DEĞİL (overlay). İçerik
+        // gelince temizlenir.
+        var view = new ConsoleView();
+
+        view.ShowReady();
+        Assert.Equal("ready", view.ActiveLineText.Text);
+        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
+
+        view.AppendNarrativeBatch("12:00:03 Sync complete — 0 changed projects\n");
+        Assert.Equal(Visibility.Collapsed, view.ActiveLineOverlay.Visibility); // "ready" temizlendi
+        Assert.Contains("Sync complete", view.Document.Text);
+    }
 }

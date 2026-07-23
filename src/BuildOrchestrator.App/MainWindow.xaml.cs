@@ -96,15 +96,28 @@ public partial class MainWindow : Window
         };
         _elapsedTimer.Start();
 
-        // [T56/3a] Konsol modu ActiveProjectId'yi izler: null → anlatı başlığı.
+        // [T56/3a] Konsol modu ActiveProjectId'yi izler: null → anlatı başlığı. (Proje-loguna geçiş başlığı
+        // OnSelectedProjectChanged'de senkron kurulur — bkz. reseed flicker / Solution B.)
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName != nameof(RunViewModel.ActiveProjectId)) return;
             if (_vm.ActiveProjectId is null) Shell.ConsoleHeaderControl.ShowNarrative(_vm.GetActiveLineCount());
         };
+        // [D4] Kart seçimi konsol modunu sürer: seçilen proje logunu (dikişli) yükle → başlık+gövde SENKRON
+        // proje-loguna geçir; seçim kalkınca run anlatısına dön. Kart vurgusu ayrı akar (OnSelectedProjectIdChanged).
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) _ = OnSelectedProjectChangedAsync();
+        };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
 
-        Loaded += async (_, _) => await StartEngineAsync();
+        Loaded += async (_, _) =>
+        {
+            // [D4/T56-UI] Boşta (idle/boot) konsol tek satır "ready" (dim) gösterir — ilk anlatı satırı gelince
+            // (AppendNarrativeBatch) temizlenir.
+            if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
+            await StartEngineAsync();
+        };
         Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
 
         // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
@@ -123,7 +136,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            await _console.PumpAsync(text => Dispatcher.InvokeAsync(() => Shell.ConsoleViewControl.AppendBatch(text)), _consoleCts.Token);
+            await _console.PumpAsync(text => Dispatcher.InvokeAsync(() => AppendConsoleBatch(text)), _consoleCts.Token);
         }
         catch (OperationCanceledException) { /* pencere kapanıyor — beklenen */ }
         catch (Exception ex)
@@ -134,13 +147,64 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>[3b] ConsoleHeader.BackRequested'tan çağrılır: run belgesine döner; başlık anlatı moduna
-    /// ActiveProjectId=null PropertyChanged'ı üzerinden döner (bkz. constructor).</summary>
-    private void OnBack()
+    /// <summary>[Kısıt 1/A13.2] Pump flush'ının hedefi: modu ActiveProjectId'den okuyarak yönlendirir. Anlatı
+    /// modunda (null) <see cref="ConsoleView.AppendNarrativeBatch"/> — en yeni satır degradation kurallarıyla
+    /// (T34) hibrit daktilo. Proje-log modunda ham MSBuild <see cref="ConsoleView.AppendBatch"/> ile instant
+    /// (ham çıktı ASLA harf-harf — DD2).</summary>
+    private void AppendConsoleBatch(string text)
     {
-        _vm.ShowRun();
-        _vm.SeedRunDocument(text => Dispatcher.InvokeAsync(() => Shell.ConsoleViewControl.ShowRunDocument(text)));
+        if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.AppendNarrativeBatch(text);
+        else Shell.ConsoleViewControl.AppendBatch(text);
     }
+
+    /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
+    /// (dikişli) YÜKLE, sonra başlık + gövde AYNI UI turunda proje-loguna geçir (reseed flicker YOK). Seçim
+    /// kalkınca (null): run anlatısına dön. logNotFound/skipped gibi durumlarda ActiveProjectId kurulmaz →
+    /// run modunda kalınır.</summary>
+    private async Task OnSelectedProjectChangedAsync()
+    {
+        try
+        {
+            string? id = _vm.SelectedProjectId;
+            if (id is null) { ShowRunConsole(); return; }
+
+            await _vm.LoadProjectLogAsync(id);
+            // Yükleme proje modunu kurmadıysa (hata/log yok — ActiveProjectId değişmedi) run modunda kal.
+            if (!string.Equals(_vm.ActiveProjectId, id, StringComparison.OrdinalIgnoreCase)) return;
+            if (!string.Equals(_vm.SelectedProjectId, id, StringComparison.OrdinalIgnoreCase)) return; // arada seçim değişti
+            var row = _vm.Projects.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (row is null) return;
+
+            Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id);
+            Shell.ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
+            // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
+            _vm.SeedProjectDocument(id, text => Shell.ConsoleViewControl.PlayCascade(
+                SplitLogLines(text), buildInProgress: row.State == ProjectRowState.Started));
+        }
+        catch (Exception ex)
+        {
+            // [RunConsolePumpAsync deseni] fire-and-forget yol gözlenmemiş bir exception'la sessizce ölmesin.
+            System.Diagnostics.Debug.WriteLine($"[console mode switch] gözlenmeyen hata: {ex}");
+        }
+    }
+
+    /// <summary>[3b → D4/Solution B] Run belgesine döner; başlık anlatı moduna ActiveProjectId=null
+    /// PropertyChanged'ı üzerinden döner (bkz. constructor). Doküman SENKRON kurulur (reseed flicker YOK).</summary>
+    private void ShowRunConsole()
+    {
+        _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
+        _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
+        if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
+    }
+
+    /// <summary>[3b] ConsoleHeader.BackRequested'tan çağrılır: kart seçimini kaldırır → konsol run anlatısına
+    /// döner (bkz. <see cref="OnSelectedProjectChangedAsync"/>).</summary>
+    private void OnBack() => _vm.SelectProject(null);
+
+    /// <summary>Dikilmiş proje-log metnini ('\n' sonekli) kaskat için satırlara böler; boş metin → boş dizi
+    /// (boş-durum metni ileride buradan gelebilir).</summary>
+    private static IReadOnlyList<string> SplitLogLines(string text) =>
+        text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n');
 
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te

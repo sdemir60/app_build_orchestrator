@@ -90,6 +90,45 @@ public class ConsoleModesTests
         Assert.Equal("1440 lines", header.LinesText.Text);
     }
 
+    // ---------------------------------------------------------------- [D4/Solution B] reseed flicker: senkron doc-set
+
+    [StaFact]
+    public async Task Switching_to_a_project_log_swaps_the_document_in_the_same_ui_turn_as_the_header()
+    {
+        // [D4 Step 1] Mod değişiminde konsol dokümanı TIKLAMA ANINDA (senkron, pump'a bağlı DEĞİL) kurulur —
+        // başlık ile gövde AYNI UI turunda değişir. Kanıt: pump HİÇ tick atmayan bir batcher. Eski (pump-apply)
+        // reseed yolunda apply yalnız pump sentinel'e uğrayınca çağrılırdı → gövde eski içeriği gösterirdi (RED);
+        // Solution B'de doküman senkron kurulur → gövde eski içeriği ARTIK göstermez (GREEN).
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var batcher = new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)); // pump asla ilerlemez
+        var vm = new RunViewModel(engine, batcher, () => "r1");
+        var view = new ConsoleView();
+        var header = new ConsoleHeader();
+
+        // Önceki anlatı/run içeriği + gövdeye senkron kur.
+        vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
+        view.ShowRunDocument(vm.GetRunDocumentText());
+        const string previousRunText = "Sync complete — 7 changed projects";
+        Assert.Contains(previousRunText, view.Document.Text);
+
+        // Bir kart seçilmiş gibi: canlı log tamponlanır ve dikişle ActiveProjectId kurulur (kart-tıklaması yolu).
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "Determining projects to restore..."));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "Restored A.csproj"));
+        var load = vm.LoadProjectLogAsync(projectId);
+        vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "", IsLast: true, ThroughLineNumber: 0));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
+        header.ShowProjectLog("A", ProjectRowState.Started, hasDepIssue: false, vm.GetActiveLineCount());
+        vm.SeedProjectDocument(projectId, text =>
+            view.PlayCascade(text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n'), buildInProgress: true));
+
+        Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
+        Assert.DoesNotContain(previousRunText, view.Document.Text, StringComparison.Ordinal);
+    }
+
     // ---------------------------------------------------------------- boş-durum metinleri (verbatim §2.5)
 
     [Fact]

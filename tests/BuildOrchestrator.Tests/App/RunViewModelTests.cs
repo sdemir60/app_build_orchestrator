@@ -1270,7 +1270,11 @@ public class RunViewModelTests
         }
         batcher = new ConsoleBatcher(Tick);
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, batcher, () => "r1");
+        var vm = new RunViewModel(engine, batcher, () => "r1")
+        {
+            // [D4/T56-UI] Anlatı satırı "HH:MM:SS " damgasıyla bileşilir (design-v1 §2.5); saat deterministik enjekte.
+            WallClock = () => new DateTimeOffset(2026, 7, 23, 12, 4, 7, TimeSpan.Zero),
+        };
 
         vm.OnEvent(new SyncProgressEvent("▸ git fetch origin main", "cmd"));
         vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
@@ -1278,8 +1282,11 @@ public class RunViewModelTests
         var flushes = new List<string>();
         await batcher.PumpAsync(text => flushes.Add(text), CancellationToken.None);
 
-        Assert.Equal(["▸ git fetch origin main\nSync complete — 7 changed projects, 14 to build\n"], flushes);
+        // Batcher'a düşen satırlar artık "HH:MM:SS " önekli (ham ▸ satırı ONUN İÇİNDE — colorizer damga+▸'yi çözer).
+        Assert.Equal(
+            ["12:04:07 ▸ git fetch origin main\n12:04:07 Sync complete — 7 changed projects, 14 to build\n"],
+            flushes);
         // Konsol dokümanına da düşer (run dokümanı aktifken)
-        Assert.Contains("▸ git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Contains("12:04:07 ▸ git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 }
