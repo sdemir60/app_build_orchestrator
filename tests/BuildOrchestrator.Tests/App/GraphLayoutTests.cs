@@ -112,9 +112,11 @@ public class GraphLayoutTests
     }
 
     [Fact]
-    public void The_OSYS_prefix_is_stripped_from_node_labels()
+    public void The_common_prefix_is_stripped_from_node_labels_and_a_non_matching_name_is_left_intact()
     {
-        Assert.Equal("Domain.Vehicle", GraphNode.ShortLabel("OSYS.Domain.Vehicle"));
-        Assert.Equal("Foo.Bar", GraphNode.ShortLabel("Foo.Bar"));
+        // [D5] ShortLabel artık 2-arg: önek VERİ-TÜREVLİ (hardcode "OSYS." değil, bkz. GraphBinderTests) — burada
+        // yalnız kırpma mekaniği pinlenir: önekle başlayan kırpılır, başlamayan aynen kalır.
+        Assert.Equal("Domain.Vehicle", GraphNode.ShortLabel("OSYS.Domain.Vehicle", "OSYS."));
+        Assert.Equal("Foo.Bar", GraphNode.ShortLabel("Foo.Bar", "OSYS."));
     }
 }

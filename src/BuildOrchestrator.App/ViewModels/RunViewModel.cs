@@ -58,6 +58,12 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// genişliği (2→3), iç sarmalayıcı <c>TranslateX 4</c> ve <c>Brush.SurfaceRaised</c> zemini için okur.</summary>
     [ObservableProperty] private bool _isSelected;
 
+    /// <summary>[D5] Kısa-ad öneki (ör. <c>"OSYS."</c>) — dep-issue tooltip'i tam proje adlarını gösterirken bu
+    /// öneki atar. HARDCODE DEĞİL: <see cref="RunViewModel"/> topoloji adlarından türetip (tek otorite,
+    /// <see cref="Graph.GraphNode.CommonDotPrefix"/>) her satıra iter (<see cref="IsRunActive"/> deseni). Önek
+    /// yoksa boş — kırpma yapılmaz.</summary>
+    [ObservableProperty] private string _namePrefix = "";
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DurationMsText))]
     private long _durationMs;
@@ -705,7 +711,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var existing = Projects.FirstOrDefault(p => p.Id == id);
         if (existing is not null) return existing;
-        var row = new ProjectRowViewModel(id, name, initialState) { IsRunActive = RunActive };
+        var row = new ProjectRowViewModel(id, name, initialState) { IsRunActive = RunActive, NamePrefix = _graphNamePrefix };
         Projects.Add(row);
         return row;
     }

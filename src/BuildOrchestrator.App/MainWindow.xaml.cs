@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Interop;
@@ -30,6 +31,13 @@ public partial class MainWindow : Window
     private AppTrayIcon? _tray;
     private HotkeyRegistration? _hotkey;
     private bool _exiting; // tepsi Exit'i (gerçek çıkış) ile X'i (tepsiye küçült) ayıran TEK bayrak
+
+    // [D5/T50] Graf ↔ VM köprüsü. GraphView düğümleri AD ile anahtarlar, VM seçimi ID (yol) ile; iki yönlü ad↔id
+    // haritası topoloji değişince yeniden kurulur. _suppressGraphSelection: VM→view seçim itişinin GraphView'de
+    // uyandırdığı SelectionChanged echo'sunu view→VM dalında yok sayar (aksi halde döngü seçimi geri alırdı).
+    private readonly Dictionary<string, string> _graphIdByName = new(StringComparer.Ordinal);          // Ad → Id
+    private readonly Dictionary<string, string> _graphNameById = new(StringComparer.OrdinalIgnoreCase); // Id → Ad
+    private bool _suppressGraphSelection;
 
     public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console)
     {
@@ -69,8 +77,15 @@ public partial class MainWindow : Window
 
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
-        _vm.TopologyChanged += (_, _) => RefreshProjectGroups();
+        // [D5] Aynı topoloji sinyalinde grafı da yeniden kur (SetGraph = tam yeniden inşa + reveal stagger).
+        _vm.TopologyChanged += (_, _) => { RefreshProjectGroups(); RebuildGraph(); };
         RefreshProjectGroups();
+        RebuildGraph();
+
+        // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
+        // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
+        Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
+        _vm.PropertyChanged += OnVmPropertyChangedForGraph;
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
@@ -93,6 +108,10 @@ public partial class MainWindow : Window
             // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
             // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
             Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
+            // [D5] Koşarken grafı düzenli besle: kamera frontier'i yumuşak takip etsin, queued→building→done
+            // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
+            // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
+            if (_vm.IsMidRunLocked) PushGraphStatuses();
         };
         _elapsedTimer.Start();
 
@@ -223,6 +242,83 @@ public partial class MainWindow : Window
             .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
             .ToList();
         Shell.ProjectsList.SetGroups(groups);
+    }
+
+    // ==================================== [D5/T50] Graf beslemesi ====================================
+
+    /// <summary>[D5] Topoloji değişince grafı YENİDEN kurar (<see cref="Graph.GraphView.SetGraph"/> = tam inşa +
+    /// reveal stagger). Ad↔Id haritası tazelenir; <c>SetGraph</c> düğüm statülerini zaten uygular (GraphNode.Status
+    /// GraphBinder'dan gelir) → ayrıca UpdateStatuses gerekmez. Settled durumu + mevcut seçim de yansıtılır.</summary>
+    private void RebuildGraph()
+    {
+        var topology = _vm.Topology;
+        _graphIdByName.Clear();
+        _graphNameById.Clear();
+        foreach (var node in topology)
+        {
+            _graphIdByName[node.Name] = node.Id;
+            _graphNameById[node.Id] = node.Name;
+        }
+
+        Shell.GraphHost.SetGraph(GraphBinder.Nodes(topology, RowsById()), GraphBinder.Edges(topology));
+        Shell.GraphHost.IsSettled = !_vm.IsMidRunLocked; // koşarken frontier-follow, boşta/bitince merkeze otur
+        PushGraphSelection();                            // mevcut seçim taze grafa yansısın
+    }
+
+    /// <summary>[D5] Statü/dep-badge/kenar/kamera'yı YERİNDE günceller (geometri korunur, stagger tekrar oynamaz).
+    /// Topoloji yokken no-op.</summary>
+    private void PushGraphStatuses()
+    {
+        if (_vm.Topology.Count == 0) return;
+        Shell.GraphHost.UpdateStatuses(GraphBinder.Nodes(_vm.Topology, RowsById()));
+    }
+
+    /// <summary>[D5] Id → satır VM haritası (GraphBinder statü/dep-badge'i buradan okur). Id'ler Windows yolu → OIC.</summary>
+    private IReadOnlyDictionary<string, ProjectRowViewModel> RowsById()
+    {
+        var dict = new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in _vm.Projects) dict[row.Id] = row;
+        return dict;
+    }
+
+    /// <summary>[D5] VM seçimini (Id) grafa (AD) iter. Echo koruması: itiş sırasında GraphView SelectionChanged
+    /// yayınlar → <see cref="OnGraphSelectionChanged"/> bunu bayrakla yok sayar (aksi halde SelectProject toggle'ı
+    /// seçimi geri alırdı).</summary>
+    private void PushGraphSelection()
+    {
+        string? name = _vm.SelectedProjectId is { } id && _graphNameById.TryGetValue(id, out var n) ? n : null;
+        _suppressGraphSelection = true;
+        try { Shell.GraphHost.SelectedNode = name; }
+        finally { _suppressGraphSelection = false; }
+    }
+
+    /// <summary>[D5] Graf seçimi (AD; boşluğa tıklama = null) → VM seçimi (Id). Kendi push'umuzun echo'su
+    /// (<see cref="_suppressGraphSelection"/>) yok sayılır.</summary>
+    private void OnGraphSelectionChanged(object? sender, string? name)
+    {
+        if (_suppressGraphSelection) return;
+        string? id = name is { } nm && _graphIdByName.TryGetValue(nm, out var i) ? i : null;
+        _vm.SelectProject(id);
+    }
+
+    /// <summary>[D5] VM sinyalleri → graf: statü tikleri (Counters), run başlangıç/bitiş (IsSettled + statü),
+    /// seçim değişimi (view'e iter).</summary>
+    private void OnVmPropertyChangedForGraph(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(RunViewModel.Counters):
+                PushGraphStatuses();
+                break;
+            case nameof(RunViewModel.IsRunning):
+            case nameof(RunViewModel.IsStarting):
+                Shell.GraphHost.IsSettled = !_vm.IsMidRunLocked; // run bitince true → kamera merkeze oturur
+                PushGraphStatuses();
+                break;
+            case nameof(RunViewModel.SelectedProjectId):
+                PushGraphSelection();
+                break;
+        }
     }
 
     private async Task StartEngineAsync()

@@ -316,7 +316,7 @@ public partial class StickyRibbon : UserControl
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal };
             content.Children.Add(new BuildingSpinner { Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
-            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name, row.NamePrefix), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var chip = MakeChip(content, brushKey: null);
             if (chips.Count > 0) chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:783 flex gap:4 — ilk chip HARİÇ
             string id = row.Id;
@@ -386,7 +386,7 @@ public partial class StickyRibbon : UserControl
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal };
             content.Children.Add(new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
-            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name, row.NamePrefix), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var chip = MakeChip(content, brushKey: null);
             if (chipStrip.Children.Count > 0) chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:801 flex gap:4 — ilk chip HARİÇ
             string id = row.Id;

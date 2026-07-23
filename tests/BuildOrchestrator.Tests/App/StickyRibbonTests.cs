@@ -7,6 +7,7 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -38,6 +39,12 @@ public class StickyRibbonTests
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, projects.Length, 4, "Debug", 0));
         vm.OnEvent(new BuildPreviewEvent([.. projects.Select(p => new BuildPreviewItem(p.id, p.name, true))]));
     }
+
+    /// <summary>[D5] Topolojiyi kurar → kısa-ad öneki (NamePrefix) satırlara itilir; chip'ler onu okur.</summary>
+    private static void SetTopology(RunViewModel vm, params (string id, string name)[] projects) =>
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [.. projects.Select(p => new ProjectNode(p.id, p.name, p.id, [], [], 0, null, null, false, null))],
+            [], [], []));
 
     /// <summary>[D2 review fix, Finding 4] Bir chip'in görünür etiketi — Content her zaman [ikon, TextBlock] StackPanel'i.</summary>
     private static string ChipLabel(ToggleButton chip) =>
@@ -128,10 +135,12 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
-    [StaFact] // [D2 review fix, Finding 4] design-v1 label={BO.shortName(n)} — "OSYS." önekini atar.
+    [StaFact] // [D2 review fix, Finding 4 · D5] design-v1 label={BO.shortName(n)} — veri-türevli ortak öneki atar.
     public void Building_and_failure_chip_labels_use_the_short_project_name()
     {
+        // [D5] Önek artık hardcode değil: topoloji (OSYS.Foo) → NamePrefix "OSYS." satıra itilir → chip kırpar.
         var vmBuilding = NewVm();
+        SetTopology(vmBuilding, (@"C:\p\OSYS.Foo.csproj", "OSYS.Foo"));
         StartRun(vmBuilding, (@"C:\p\OSYS.Foo.csproj", "OSYS.Foo"));
         vmBuilding.OnEvent(new ProjectStartedEvent("r1", @"C:\p\OSYS.Foo.csproj", "OSYS.Foo"));
         var (buildingRibbon, buildingWindow) = Realize(vmBuilding);
@@ -139,6 +148,7 @@ public class StickyRibbonTests
         GC.KeepAlive(buildingWindow);
 
         var vmFailed = NewVm();
+        SetTopology(vmFailed, (@"C:\p\OSYS.Bar.csproj", "OSYS.Bar"));
         StartRun(vmFailed, (@"C:\p\OSYS.Bar.csproj", "OSYS.Bar"));
         vmFailed.OnEvent(new ProjectStartedEvent("r1", @"C:\p\OSYS.Bar.csproj", "OSYS.Bar"));
         vmFailed.OnEvent(new ProjectFailedEvent("r1", @"C:\p\OSYS.Bar.csproj", 100, "exit 1"));

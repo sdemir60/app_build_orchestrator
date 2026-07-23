@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -36,6 +37,11 @@ public sealed partial class RunViewModel
     /// <summary>Son <c>workspaceTopology</c>'nin düğümleri (build-order) — bağımlılık, katman ve solution
     /// bilgisinin TEK kaynağı; graf paneli (D5) ve katman gruplaması (D1) bunu okur.</summary>
     public IReadOnlyList<ProjectNode> Topology { get; private set; } = [];
+
+    /// <summary>[D5] Topoloji adlarından türetilen kısa-ad öneki (tek otorite, <see cref="GraphNode.CommonDotPrefix"/>) —
+    /// her <see cref="ProjectRowViewModel.NamePrefix"/>'e itilir (şerit chip'i + dep-tooltip bunu okur; graf tarafı
+    /// aynı öneki <see cref="GraphBinder"/> içinde kendi türetir).</summary>
+    private string _graphNamePrefix = "";
 
     /// <summary>Workspace'teki .sln'ler (ad + tam yol) — Open-in-VS (E1) <see cref="ProjectNode.SolutionNames"/>'i buradan çözer.</summary>
     public IReadOnlyList<SolutionRef> Solutions { get; private set; } = [];
@@ -157,6 +163,8 @@ public sealed partial class RunViewModel
     {
         Topology = e.Nodes;
         Solutions = e.Solutions;
+        // [D5] Kısa-ad öneki topoloji adlarından türetilir (tek otorite) — aşağıda her satıra itilir.
+        _graphNamePrefix = GraphNode.CommonDotPrefix(e.Nodes.Select(n => n.Name).ToList());
 
         var wanted = e.Nodes.Select(n => n.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         for (int i = Projects.Count - 1; i >= 0; i--)
@@ -191,6 +199,9 @@ public sealed partial class RunViewModel
                 row.DepIssues = null;
                 row.DurationMs = 0;
             }
+
+        // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
+        foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
         TopologyChanged?.Invoke(this, EventArgs.Empty);

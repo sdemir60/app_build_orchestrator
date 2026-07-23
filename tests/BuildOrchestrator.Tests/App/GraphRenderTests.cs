@@ -29,10 +29,12 @@ public class GraphRenderTests
         GraphStatus portalStatus = GraphStatus.Discovered,
         bool portalDepIssue = false) =>
     [
-        new("OSYS.Base", 0, baseStatus),
-        new("OSYS.Data.Core", 1, dataStatus),
-        new("OSYS.Server.Api", 2, apiStatus),
-        new("OSYS.Web.Portal", 2, portalStatus, HasDepIssue: portalDepIssue),
+        // [D5] Prefix "OSYS." — GraphNode.ShortName artık veri-türevli öneki taşır (GraphBinder üretir); bu
+        // izole render testinde önek elle verilir ki etiket kısa adı ("Base"/"Server.Api") göstersin.
+        new("OSYS.Base", 0, baseStatus, Prefix: "OSYS."),
+        new("OSYS.Data.Core", 1, dataStatus, Prefix: "OSYS."),
+        new("OSYS.Server.Api", 2, apiStatus, Prefix: "OSYS."),
+        new("OSYS.Web.Portal", 2, portalStatus, HasDepIssue: portalDepIssue, Prefix: "OSYS."),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>
@@ -164,6 +166,10 @@ public class GraphRenderTests
         view.SetGraph(Nodes(portalDepIssue: true), Edges());
 
         var visual = view.NodeVisuals["OSYS.Web.Portal"];
+        // [B2→D5 fold] Aynı anahtar iki tarafta da çözülemeseydi ikisi de null olur ve Assert.Same(null, null)
+        // BOŞUNA geçerdi (sahte pass) — önce geometrilerin GERÇEKTEN çözüldüğünü pinle, sonra referans eşitliğini.
+        Assert.NotNull(visual.Icon.Data);
+        Assert.NotNull(visual.BadgeTriangle.Data);
         Assert.Same(view.TryFindResource(GraphView.PackageIconKey), visual.Icon.Data);
         Assert.Same(view.TryFindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle.Data);
     }

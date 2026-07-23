@@ -206,12 +206,15 @@ public class ProjectRowTests
     }
 
     [StaFact]
-    public void Dep_tooltip_is_the_verbatim_brief_text_with_the_osys_prefix_stripped()
+    public void Dep_tooltip_is_the_verbatim_brief_text_with_the_common_prefix_stripped()
     {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed);
+        // [D5] Kısa-ad öneki artık VERİ-TÜREVLİ ve satıra RunViewModel'den itilir (NamePrefix) — hardcode "OSYS."
+        // yok. İzole kart testinde ata RunViewModel olmadığından öneki doğrudan satıra veririz (Sha testindeki
+        // "izole kartta run VM yok" deseninin eşi).
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed) { NamePrefix = "OSYS." };
         var (row, window, _) = Realize(vm);
 
-        // Tek dep: OSYS. öneki atılır.
+        // Tek dep: ortak önek atılır.
         vm.DepIssues = new[] { "OSYS.Sales.Core" };
         row.UpdateLayout();
         Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);

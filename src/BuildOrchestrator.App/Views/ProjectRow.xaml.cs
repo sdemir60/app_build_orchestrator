@@ -147,6 +147,7 @@ public partial class ProjectRow : UserControl
                 break;
             case nameof(ProjectRowViewModel.DepIssues):
             case nameof(ProjectRowViewModel.HasDepIssue):
+            case nameof(ProjectRowViewModel.NamePrefix): // [D5] önek sonradan değişirse dep-tooltip'i tazele
                 ApplyDep();
                 break;
             case nameof(ProjectRowViewModel.DurationMs):
@@ -246,8 +247,10 @@ public partial class ProjectRow : UserControl
         PART_DepIcon.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         if (has && _vm?.DepIssues is { } issues)
         {
-            // Kısa adlar (OSYS. atılmış), virgülle — tooltip BİREBİR (brief slot 6).
-            string names = string.Join(", ", issues.Select(GraphNode.ShortLabel));
+            // Kısa adlar (veri-türevli ortak önek atılmış — D5, artık hardcode "OSYS." değil), virgülle;
+            // önek satıra RunViewModel'den itilir (NamePrefix). Tooltip BİREBİR (brief slot 6).
+            string prefix = _vm?.NamePrefix ?? "";
+            string names = string.Join(", ", issues.Select(n => GraphNode.ShortLabel(n, prefix)));
             PART_DepTip.Content = $"Failed dependency: {names} — last successful output referenced";
         }
         UpdateGlyphTooltip(); // depIssue eki glyph tooltip'ini de değiştirir
