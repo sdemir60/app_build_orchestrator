@@ -92,8 +92,9 @@ public class ConsoleModesTests
 
     // ---------------------------------------------------------------- [D4/Solution B] reseed flicker: senkron doc-set
 
-    [StaFact]
-    public async Task Switching_to_a_project_log_swaps_the_document_in_the_same_ui_turn_as_the_header()
+    [StaFact] // [D4 review §3] gerçek adıyla: SeedProjectDocument'ın SENKRON doküman-set'ini doğrular (tam
+              // orchestration/guard dizisi ConsoleForwardWiringTests seam testlerinde ayrıca sürülür).
+    public async Task SeedProjectDocument_swaps_the_body_synchronously_in_the_same_ui_turn_as_the_header()
     {
         // [D4 Step 1] Mod değişiminde konsol dokümanı TIKLAMA ANINDA (senkron, pump'a bağlı DEĞİL) kurulur —
         // başlık ile gövde AYNI UI turunda değişir. Kanıt: pump HİÇ tick atmayan bir batcher. Eski (pump-apply)
@@ -116,6 +117,7 @@ public class ConsoleModesTests
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, "Determining projects to restore..."));
         vm.OnEvent(new ProjectLogEvent("r1", projectId, 2, "Restored A.csproj"));
+        vm.SelectProject(projectId); // [D4 review §2] üretimde seçim load'dan önce kurulur (proje modu koşulu)
         var load = vm.LoadProjectLogAsync(projectId);
         vm.OnEvent(new ProjectLogChunkEvent(projectId, 0, "", IsLast: true, ThroughLineNumber: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));

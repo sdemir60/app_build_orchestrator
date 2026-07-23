@@ -122,6 +122,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
 public enum ProjectRowState { Pending, Started, Succeeded, Failed, Skipped }
 
+/// <summary>[D4 review §3] Kart seçimi değişiminde konsolun izleyeceği aksiyon (<see cref="RunViewModel.NextConsoleSelection"/>
+/// kararı) — MainWindow yalnız uygular.</summary>
+public enum ConsoleSelection { ShowRun, LoadProjectLog }
+
 /// <summary>
 /// [Task 12] Event → proje satırı/elapsed/log durumu. **UI-thread-agnostic çekirdek:** hiçbir yerde
 /// Dispatcher/AvalonEdit türü kullanılmaz — <see cref="OnEvent"/> HANGİ THREAD'DEN çağrılırsa çağrılsın
@@ -917,36 +921,61 @@ public sealed partial class RunViewModel : ObservableObject
     /// ile bir drop-only sentinel yazar: pump, snapshot'a zaten dahil olan uçuştaki satırları atar (doküman-set
     /// yapmaz — o zaten senkron olduğundan).
     ///
-    /// <para><b>Sıralama (atomiklik) — DEĞİŞMEZ:</b> her şey TEK _gate kilidi altında ve şu sırada:
-    /// <c>PostReseedDrop</c> (sentinel ÖNCE — pump-drain yarış penceresini asgariye indirir) → snapshot oku →
-    /// <c>applyNow(snapshot)</c>. OnProjectLog da _runText yazımını ve <c>_console.Post</c>'unu AYNI _gate altında
-    /// yaptığından bu bölüm sırasında araya GİREMEZ: (a) snapshot'a giren her satır sentinel'den ÖNCE kanala
-    /// girmiştir → pump onu atar (yeni dokümana TEKRAR eklenmez); (b) applyNow kilit altında koştuğundan, doküman
-    /// senkron kurulana kadar HİÇBİR post-snapshot satır post edilemez → sonraki satırlar YALNIZ taze dokümana
-    /// akar (post-snapshot satır DÜŞMEZ).</para></summary>
+    /// <para><b>Sıralama (atomiklik):</b> snapshot okuma + <c>PostReseedDrop</c> (nesli ilerletir → sentinel) TEK
+    /// _gate kilidi altında ATOMİKTİR — OnProjectLog da _runText yazımını ve <c>_console.Post</c>'unu AYNI _gate
+    /// altında yaptığından, snapshot'a giren her satır sentinel'den ÖNCE kanaldadır. <b>[D4 review §1]</b>
+    /// <paramref name="applyNow"/> (WPF doküman rebuild'i) artık _gate DIŞINDA çağrılır: generation guard,
+    /// correctness'i "applyNow boyunca kilidi tutup post'ları bloke etme"den AYIRDIĞINDAN marshal-free OnProjectLog
+    /// hot-path'i WPF rebuild süresince bloklanmaz. Güvenlik: reseed'den ÖNCE drenajlanan (eski nesil) satırlar,
+    /// koşullarına bakılmaksızın MainWindow.AppendConsoleBatch'te <c>batchGen &lt; CurrentReseedGen</c> ile ATILIR;
+    /// applyNow sonrası Post edilen (yeni nesil) satırların flush'ı UI thread'inde applyNow'ın ARDINA sıralanır
+    /// (Dispatcher.InvokeAsync tek-thread FIFO — applyNow'ı ÖNceleyemez) → taze dokümana akar (dup/kayıp yok).</para></summary>
     public void SeedRunDocument(Action<string> applyNow)
     {
+        string snapshot;
         lock (_gate)
         {
+            snapshot = _runText.ToString();
             _console.PostReseedDrop();
-            applyNow(_runText.ToString());
         }
+        applyNow(snapshot); // [D4 review §1] _gate DIŞINDA — hot-path'i WPF rebuild boyunca bloklamaz (guard güvenli kılar)
     }
 
     /// <summary>[D4/Solution B] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın
-    /// XML yorumu (aynı senkron doküman-set + drop-only sentinel gerekçesi, proje dokümanı için). Log yoksa boş
-    /// snapshot ile çağrılır (çağıran boş-durum metnini uygular).</summary>
+    /// XML yorumu (aynı senkron doküman-set + drop-only sentinel + generation guard gerekçesi, proje dokümanı için).
+    /// Log yoksa boş snapshot ile çağrılır (çağıran boş-durum metnini uygular).</summary>
     public void SeedProjectDocument(string projectId, Action<string> applyNow)
     {
+        string snapshot;
         lock (_gate)
         {
+            snapshot = _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
             _console.PostReseedDrop();
-            applyNow(_projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "");
         }
+        applyNow(snapshot); // [D4 review §1] _gate DIŞINDA — bkz. SeedRunDocument gerekçesi
     }
 
     /// <summary>Konsolu run dokümanına döndürür (MainWindow'daki "Back").</summary>
     public void ShowRun() => ActiveProjectId = null;
+
+    /// <summary>[D4 review §3] Kart seçimi değiştiğinde konsolun izleyeceği aksiyonun SAF kararı — MainWindow'un
+    /// <c>OnSelectedProjectChangedAsync</c> orkestrasyonundan çıkarılan test edilebilir seam (Window DI olmadan
+    /// kurulamaz). Seçim yoksa run anlatısına dön; varsa o projenin logunu yükle.</summary>
+    public ConsoleSelection NextConsoleSelection(out string? projectId)
+    {
+        projectId = SelectedProjectId;
+        return projectId is null ? ConsoleSelection.ShowRun : ConsoleSelection.LoadProjectLog;
+    }
+
+    /// <summary>[D4 review §2/§3] <see cref="LoadProjectLogAsync"/> bittikten sonra proje-log gösterilmeli mi:
+    /// yalnız (guard1) yükleme proje modunu GERÇEKTEN kurduysa — <see cref="ActiveProjectId"/>==<paramref name="projectId"/>,
+    /// yani log vardı ve §2 koşullu-set'i modu kurdu (no-log/skipped/deselect-mid-load'da kurulmaz) — VE (guard2)
+    /// seçim HÂLÂ o projede ise (arada başka karta/deselect'e geçilmedi). §2 donma yarışı: deselect'te ActiveProjectId
+    /// zaten null kaldığından guard1 tek başına da yakalar; iki guard MainWindow'daki üretim sırasını birebir yansıtır
+    /// (guard'lar burada toplanır — caller yalnız kararı uygular).</summary>
+    public bool ShouldShowLoadedProject(string projectId)
+        => string.Equals(ActiveProjectId, projectId, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(SelectedProjectId, projectId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// [T28 dikişi] <c>getProjectLog</c> gönderir; gelen chunk'lar sırayla biriktirilir. SON chunk'ta
@@ -1002,9 +1031,18 @@ public sealed partial class RunViewModel : ObservableObject
             if (_liveLines.TryGetValue(e.ProjectId, out var buffered))
                 foreach (var line in buffered.Where(l => l.LineNumber > e.ThroughLineNumber).OrderBy(l => l.LineNumber))
                     stitched.Append(line.Text).Append('\n');
+            // Dikiş HER ZAMAN yapılır (log re-select için hazır kalsın — deselect edilmiş olsa bile).
             _projectText[e.ProjectId] = stitched;
             _projectLineCount[e.ProjectId] = CountLines(stitched); // [T56/3a] dikilmiş tam log satır sayısı
-            ActiveProjectId = e.ProjectId;
+            // [D4 review §2] ActiveProjectId (mod) YALNIZCA yükleme HÂLÂ isteniyorsa — kart hâlâ seçiliyse — kurulur.
+            // Hızlı select→deselect'te (kart A seç → IPC dönmeden bırak/geri) gecikmiş chunk eskiden ActiveProjectId'yi
+            // "A"ya set edip TAKILI bırakıyordu; AppendRunLine (ActiveProjectId null gate'i, ~satır 879) sonrasında
+            // HİÇBİR anlatı satırını post edemez → run konsolu SESSİZCE DONARDI. SelectedProjectId UI-thread değeri,
+            // OnProjectLogChunk da (marshal'lı) UI thread'inde → _gate altında okumak tutarlı (concurrency yok). Set
+            // HÂLÂ aynı _gate + _projectText snapshot'ıyla birlikte → T3b üçüncü-aralık atomikliği KORUNUR (OnProjectLog
+            // ya bu bloktan ÖNCE [satır snapshot'ta] ya da SONRA [ActiveProjectId güncel] koşar — üçüncü aralık yok).
+            if (string.Equals(SelectedProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
+                ActiveProjectId = e.ProjectId;
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
         _pendingLoad = null;

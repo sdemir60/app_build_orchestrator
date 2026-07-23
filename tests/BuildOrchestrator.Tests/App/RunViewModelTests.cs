@@ -220,6 +220,10 @@ public class RunViewModelTests
         for (int i = 1; i <= 4; i++)
             vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"line{i}"));
 
+        // [D4 review §2] Üretimde kart seçimi (SelectedProjectId) LoadProjectLogAsync'ten ÖNCE kurulur
+        // (OnSelectedProjectChangedAsync onu SelectedProjectId değişimiyle tetikler); proje modu ancak seçim hâlâ
+        // o projedeyse kurulur. Testler bu koşulu birebir modellemeli.
+        vm.SelectProject(projectId);
         var load = vm.LoadProjectLogAsync(projectId); // pending state SENKRON kurulur (ilk await'e kadar)
         vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "line1\nline2\n", IsLast: true, ThroughLineNumber: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
@@ -247,6 +251,9 @@ public class RunViewModelTests
 
         vm.DebugAfterStitchLockExited = () => vm.OnEvent(new ProjectLogEvent("r1", projectId, 3, "race-line3"));
 
+        // [D4 review §2] Seçim üretimde load'dan önce kurulur; proje modu (ActiveProjectId) ancak seçim hâlâ
+        // o projedeyken kurulur — bu test tam da o modun kurulduğunu (race-line3'ün projeye düşmesi) doğrular.
+        vm.SelectProject(projectId);
         // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE tamponlanmış canlı satırlardan (line1, line2 —
         // kilit çalıştığı ANDA _liveLines'ta zaten var) üretilir; race-line3 kanca ile kilit KAPANDIKTAN SONRA
         // enjekte edilir — snapshot'ın parçası DEĞİLDİR, yalnız (fix ile) güncel ActiveProjectId sayesinde canlı eklenir.
@@ -350,6 +357,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
+        vm.SelectProject(a); // [D4 review §2] proje modu ancak seçim o projedeyken kurulur
         var load = vm.LoadProjectLogAsync(a);
         vm.OnEvent(new ProjectLogChunkEvent(a, 0, "", IsLast: true, ThroughLineNumber: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
@@ -358,6 +366,47 @@ public class RunViewModelTests
         vm.ShowRun();
 
         Assert.Null(vm.ActiveProjectId);
+    }
+
+    [Fact] // [D4 review §2] Hızlı select→deselect: gecikmiş chunk ActiveProjectId'yi TAKMAMALI → konsol donmamalı
+    public async Task Deselecting_before_the_project_log_chunk_arrives_does_not_freeze_the_run_console()
+    {
+        // Kanala düşen anlatı satırlarını gözlemlemek için: tüm VM işlemleri ÖNCE (kanala Post eder), sonra pump'ı
+        // TEK completing-tick ile boşalt (ConsoleBatcherTests deseni — gerçek 50ms/sleep YOK, D8). Fix ÖNCESİ
+        // OnProjectLogChunk ActiveProjectId'yi KOŞULSUZ "a"ya set eder → deselect'ten sonra "a"da TAKILI kalır →
+        // AppendRunLine (ActiveProjectId null gate'i) sonraki anlatı satırlarını post EDEMEZ → konsol sessizce DONAR.
+        ConsoleBatcher? batcher = null;
+        Task Tick(CancellationToken ct) { batcher!.Complete(); return Task.CompletedTask; }
+        batcher = new ConsoleBatcher(Tick);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı → SendAsync senkron fırlar
+        var vm = new RunViewModel(engine, batcher, () => "r1")
+        {
+            WallClock = () => new DateTimeOffset(2026, 7, 23, 9, 0, 0, TimeSpan.Zero),
+        };
+        const string a = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
+
+        // (1) kart A seç → yükleme uçuşta (engine ölü → SendAsync senkron fırlar; pending yine de kurulur ve
+        //     SendAsync-throws yolu onu BİLEREK null'LAMAZ — gecikmiş bir chunk hâlâ eşleşip dikişi tamamlayabilsin).
+        vm.SelectProject(a);
+        var load = vm.LoadProjectLogAsync(a);
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // (2) IPC dönmeden kullanıcı A'yı bırakır.
+        vm.SelectProject(null);
+        Assert.Null(vm.SelectedProjectId);
+
+        // (3) A'nın gecikmiş IsLast chunk'ı gelir — dikiş HER ZAMAN yapılır AMA seçim artık A değil → mod KURULMAZ.
+        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "disk\n", IsLast: true, ThroughLineNumber: 0));
+        Assert.Null(vm.ActiveProjectId);                            // TAKILI DEĞİL (fix'siz kod burada "a" bırakır)
+        Assert.Equal("disk\n", vm.GetProjectDocumentText(a));       // dikiş yine de hazır (re-select için)
+
+        // (4) sonraki bir anlatı satırı YİNE konsol kanalına post edilir (donma yok).
+        vm.OnEvent(new SyncProgressEvent("Sync complete — all good", "info"));
+
+        var flushes = new List<string>();
+        await batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
+        Assert.Contains("Sync complete — all good", string.Concat(flushes)); // anlatı kanala ulaştı → DONMADI
     }
 
     // ---------------------------------------------------------------- 5) hata-yalnız outcome'lar runCompleted BEKLEMEZ
@@ -1280,7 +1329,7 @@ public class RunViewModelTests
         vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
 
         var flushes = new List<string>();
-        await batcher.PumpAsync(text => flushes.Add(text), CancellationToken.None);
+        await batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
 
         // Batcher'a düşen satırlar artık "HH:MM:SS " önekli (ham ▸ satırı ONUN İÇİNDE — colorizer damga+▸'yi çözer).
         Assert.Equal(

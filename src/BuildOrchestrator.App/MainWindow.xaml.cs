@@ -136,7 +136,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            await _console.PumpAsync(text => Dispatcher.InvokeAsync(() => AppendConsoleBatch(text)), _consoleCts.Token);
+            await _console.PumpAsync((text, gen) => Dispatcher.InvokeAsync(() => AppendConsoleBatch(text, gen)), _consoleCts.Token);
         }
         catch (OperationCanceledException) { /* pencere kapanıyor — beklenen */ }
         catch (Exception ex)
@@ -147,14 +147,21 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>[Kısıt 1/A13.2] Pump flush'ının hedefi: modu ActiveProjectId'den okuyarak yönlendirir. Anlatı
-    /// modunda (null) <see cref="ConsoleView.AppendNarrativeBatch"/> — en yeni satır degradation kurallarıyla
-    /// (T34) hibrit daktilo. Proje-log modunda ham MSBuild <see cref="ConsoleView.AppendBatch"/> ile instant
-    /// (ham çıktı ASLA harf-harf — DD2).</summary>
-    private void AppendConsoleBatch(string text)
+    /// <summary>[Kısıt 1/A13.2 · D4 review §1] Pump flush'ının hedefi. Kararı SAF <see cref="ConsoleBatchRouter"/>
+    /// verir (test edilebilir seam); Window yalnız uygular. <paramref name="batchGen"/>, pump'ın bu batch'i
+    /// okuduğu reseed nesli: aradan bir reseed geçtiyse (<c>batchGen &lt; _console.CurrentReseedGen</c>) batch
+    /// BAYATTIR ve ATILIR — Solution B'nin senkron doküman-set'inin ardından koşan bir bayat flush'ın taze
+    /// dokümana sızmasını (dup/cross-doc) kapatır. Aksi halde: anlatı (null) →
+    /// <see cref="ConsoleView.AppendNarrativeBatch"/> (en yeni satır T34 hibrit daktilo); proje-log → ham MSBuild
+    /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).</summary>
+    private void AppendConsoleBatch(string text, long batchGen)
     {
-        if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.AppendNarrativeBatch(text);
-        else Shell.ConsoleViewControl.AppendBatch(text);
+        switch (ConsoleBatchRouter.Decide(batchGen, _console.CurrentReseedGen, _vm.ActiveProjectId))
+        {
+            case ConsoleBatchRouter.Route.Drop: return; // aradan reseed geçti → bayat batch, at
+            case ConsoleBatchRouter.Route.Narrative: Shell.ConsoleViewControl.AppendNarrativeBatch(text); break;
+            default: Shell.ConsoleViewControl.AppendBatch(text); break; // Route.Raw
+        }
     }
 
     /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
@@ -165,20 +172,21 @@ public partial class MainWindow : Window
     {
         try
         {
-            string? id = _vm.SelectedProjectId;
-            if (id is null) { ShowRunConsole(); return; }
+            // [D4 review §3] Karar VM seam'inde (test edilebilir); Window yalnız uygular.
+            if (_vm.NextConsoleSelection(out var id) == ConsoleSelection.ShowRun) { ShowRunConsole(); return; }
 
-            await _vm.LoadProjectLogAsync(id);
-            // Yükleme proje modunu kurmadıysa (hata/log yok — ActiveProjectId değişmedi) run modunda kal.
-            if (!string.Equals(_vm.ActiveProjectId, id, StringComparison.OrdinalIgnoreCase)) return;
-            if (!string.Equals(_vm.SelectedProjectId, id, StringComparison.OrdinalIgnoreCase)) return; // arada seçim değişti
+            await _vm.LoadProjectLogAsync(id!);
+            // [D4 review §2/§3] Proje-log yalnız yükleme modu kurduysa (log vardı — guard1) VE seçim hâlâ o
+            // projedeyse (guard2, arada select→deselect/başka-id olmadı) gösterilir; aksi halde run modunda kal
+            // (§2 donma: deselect-mid-load'da ActiveProjectId zaten null kaldığından burada erken dönülür).
+            if (!_vm.ShouldShowLoadedProject(id!)) return;
             var row = _vm.Projects.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
             if (row is null) return;
 
-            Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id);
+            Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
             Shell.ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
-            _vm.SeedProjectDocument(id, text => Shell.ConsoleViewControl.PlayCascade(
+            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(
                 SplitLogLines(text), buildInProgress: row.State == ProjectRowState.Started));
         }
         catch (Exception ex)
