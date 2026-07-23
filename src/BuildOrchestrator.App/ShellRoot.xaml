@@ -99,10 +99,8 @@
     </Grid>
 
     <!-- ==================================== ACTION BAR (42px) ==================================== -->
-    <!-- Build/Sync/Continue kontrolleri (design-v1 action bar) bir sonraki it4b task'ının kapsamıdır;
-         burada yalnız yapısal bölge tutulur. -->
-    <Border x:Name="ActionBar" Grid.Row="2"
-            Background="{DynamicResource Brush.Surface}"
-            BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0" />
+    <!-- [D6/T40] Sync · sayaç chip'leri · branch/worktree popover'ları · Debug|Release · perf · Build split-button.
+         DataContext (RunViewModel) MainWindow → ShellRoot → buraya miras kalır. -->
+    <views:ActionBar x:Name="PART_ActionBar" Grid.Row="2" />
   </Grid>
 </UserControl>

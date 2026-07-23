@@ -1,0 +1,10 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.BuildMenu"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- [D6/T40] Build split-button menüsü (BuildApp.jsx:1599-1612). İçerik SplitButton şablonundaki Ds.Popover
+       (Radius.Lg + Effect.OverlayShadow + padding 8) İÇİNE oturur; bu kontrol yalnız satırları üretir. Genişlik
+       258 → Ds.Popover'ın 8px padding + 1px border'ı ile dış popover ~276 olur (brief: menü width 276).
+       Maddeler koşulludur (Continue yalnız stopped; Retry yalnız failed>0) ve kod-tarafı (BuildMenu.xaml.cs)
+       VM durumundan kurulur; F5 rozeti stopped'ta Build'den Continue'ya taşınır. -->
+  <StackPanel x:Name="PART_Rows" Width="258" />
+</UserControl>

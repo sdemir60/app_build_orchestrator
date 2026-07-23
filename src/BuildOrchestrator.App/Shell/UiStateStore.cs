@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BuildOrchestrator.App.Shell;
 
@@ -29,12 +30,48 @@ public sealed class UiState
     // ---- İş akışı tercihleri (ileride Settings/action-bar task'larının bağlayacağı yüzey) ----
     public string? RepositoryRoot { get; set; }
     public string? Configuration { get; set; }
-    public bool PerfMode { get; set; }
+
+    /// <summary>[D6 fold — C2] Perf profili ("Full"/"Balanced"/"Light"); <c>null</c> ⇒ VM varsayılanı (Balanced/4).
+    /// <b>Şema göçü:</b> bu alan eskiden <c>bool</c>'du. Diskte kalmış eski bir <c>bool</c> token'ı
+    /// (<c>"PerfMode": false</c>) tüm <see cref="UiState.Load"/>'u DEVİRMEMELİ (aksi halde kalıcı yerleşim de bir
+    /// kez sıfırlanırdı — startup wipe) → <see cref="LegacyTolerantStringConverter"/> onu sessizce <c>null</c>'a
+    /// çözer; kalan alanlar korunur ve bir sonraki Save yeni (string) şemayı yazar.</summary>
+    [JsonConverter(typeof(LegacyTolerantStringConverter))]
+    public string? PerfMode { get; set; }
+
     public string? Branch { get; set; }
     public bool UseWorktree { get; set; }
     public string? WorktreeName { get; set; }
     public List<string> LayerPatterns { get; set; } = [];
     public bool Autostart { get; set; }
+}
+
+/// <summary>
+/// [D6 fold] Bir <c>string?</c> alanı, eski şemadan kalan farklı-tipli bir token'a KARŞI toleranslı okur:
+/// String → değer; Null/True/False/Number → <c>null</c> (eski <c>bool</c> PerfMode buradan geçer). Amaç: tek bir
+/// bayat token'ın (ör. <c>"PerfMode": false</c>) <see cref="JsonUiStateStore.Load"/>'un TAMAMINI devirip kalıcı
+/// yerleşimi de sıfırlamasını önlemek. Yazımda düz string/null davranır.
+/// </summary>
+internal sealed class LegacyTolerantStringConverter : JsonConverter<string?>
+{
+    public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.String: return reader.GetString();
+            case JsonTokenType.Null:
+            case JsonTokenType.True:
+            case JsonTokenType.False:
+            case JsonTokenType.Number: return null; // eski bool / beklenmeyen skaler → null
+            default: reader.Skip(); return null;    // (savunmacı) obje/dizi gelirse tüket ve null
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+    {
+        if (value is null) writer.WriteNullValue();
+        else writer.WriteStringValue(value);
+    }
 }
 
 public interface IUiStateStore

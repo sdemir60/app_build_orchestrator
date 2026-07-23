@@ -75,6 +75,16 @@ public partial class MainWindow : Window
         SyncModeButtons(layout.Mode);
         Shell.LayoutChanged += OnShellLayoutChanged;
 
+        // [D6 fold — C2] İş akışı tercihlerini kalıcı durumdan SEED et; sonra değişimlerini persist et. Seed ÖNCE,
+        // abonelik SONRA — seed'in kendisi kaydetme fırtınası tetiklemesin. Perf'te kalıcı değer yoksa VM varsayılanı
+        // (Balanced/4, C2 F2) KORUNUR (SetPerfMode PerfMode + Parallelism'i birlikte tutar).
+        if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
+        if (saved.Branch is { } br) _vm.Branch = br;
+        _vm.UseWorktree = saved.UseWorktree;
+        _vm.WorktreeName = saved.WorktreeName;
+        if (saved.PerfMode is { } perf) _vm.SetPerfMode(perf);
+        _vm.PropertyChanged += OnWorkflowPreferenceChanged;
+
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
         // [D5] Aynı topoloji sinyalinde grafı da yeniden kur (SetGraph = tam yeniden inşa + reveal stagger).
@@ -350,6 +360,28 @@ public partial class MainWindow : Window
         s.LayoutMode = state.Mode; s.ColPct = state.ColPct; s.LeftPct = state.LeftPct; s.RightPct = state.RightPct;
         _uiState.Save(s);
         SyncModeButtons(state.Mode);
+    }
+
+    /// <summary>[D6 fold] İş akışı tercihi (Configuration/Branch/UseWorktree/WorktreeName/PerfMode) değişince kalıcı
+    /// duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).</summary>
+    private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(RunViewModel.Configuration):
+            case nameof(RunViewModel.Branch):
+            case nameof(RunViewModel.UseWorktree):
+            case nameof(RunViewModel.WorktreeName):
+            case nameof(RunViewModel.PerfMode):
+                var s = _uiState.Load();
+                s.Configuration = _vm.Configuration;
+                s.Branch = _vm.Branch;
+                s.UseWorktree = _vm.UseWorktree;
+                s.WorktreeName = _vm.WorktreeName;
+                s.PerfMode = _vm.PerfMode;
+                _uiState.Save(s);
+                break;
+        }
     }
 
     private void SyncModeButtons(LayoutMode mode)

@@ -45,7 +45,7 @@ public class UiStateStoreTests
         string path = Path.Combine(temp.Path, "ui-state.json");
         var store = new JsonUiStateStore(path);
         var state = store.Load();
-        state.RepositoryRoot = @"D:\src\osys"; state.Configuration = "Debug"; state.PerfMode = true;
+        state.RepositoryRoot = @"D:\src\osys"; state.Configuration = "Debug"; state.PerfMode = "Full";
         state.Branch = "feature/x"; state.UseWorktree = true; state.WorktreeName = "feature-x-1";
         state.LayerPatterns = ["OSYS.*.Core", "OSYS.Web.*"]; state.Autostart = true;
         store.Save(state);
@@ -53,11 +53,29 @@ public class UiStateStoreTests
         var reloaded = new JsonUiStateStore(path).Load();
         Assert.Equal(@"D:\src\osys", reloaded.RepositoryRoot);
         Assert.Equal("Debug", reloaded.Configuration);
-        Assert.True(reloaded.PerfMode);
+        Assert.Equal("Full", reloaded.PerfMode); // [D6] PerfMode artık string ("Full"/"Balanced"/"Light")
         Assert.Equal("feature/x", reloaded.Branch);
         Assert.True(reloaded.UseWorktree);
         Assert.Equal("feature-x-1", reloaded.WorktreeName);
         Assert.Equal(["OSYS.*.Core", "OSYS.Web.*"], reloaded.LayerPatterns);
         Assert.True(reloaded.Autostart);
+    }
+
+    [Fact] // [D6 fold] PerfMode bool→string? göçü: diskteki eski bool token'ı TÜM Load'u devirmemeli (startup wipe YOK).
+    public void A_legacy_boolean_perf_mode_on_disk_is_tolerated_and_the_rest_survives()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        // Eski şema (PerfMode bir BOOL'du) + kalıcı yerleşim/tercih alanları:
+        File.WriteAllText(path,
+            """{ "ColPct": 61, "LeftPct": 33, "PerfMode": false, "Branch": "feature/x", "UseWorktree": true }""");
+
+        var reloaded = new JsonUiStateStore(path).Load();
+
+        Assert.Equal(61, reloaded.ColPct);        // yerleşim korundu (bayat token Load'u DEVİRMEDİ)
+        Assert.Equal(33, reloaded.LeftPct);
+        Assert.Null(reloaded.PerfMode);           // legacy bool → null (VM Balanced/4 varsayılanı korunur)
+        Assert.Equal("feature/x", reloaded.Branch);
+        Assert.True(reloaded.UseWorktree);
     }
 }

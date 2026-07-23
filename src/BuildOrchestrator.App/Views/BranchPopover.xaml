@@ -1,0 +1,49 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.BranchPopover"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+  <!-- [D6/T40] Branch popover (BuildApp.jsx:830-852). İçerik Ds.Popover (272px) İÇİNE oturur; bu kontrol yalnız
+       gövdeyi üretir: caps başlık · arama · 28px satırlar (kod-tarafı) · alt not. Ölçü/renk token'dan. -->
+  <StackPanel Width="256">
+    <!-- caps SWITCH BRANCH — text-2xs, weight 500, text-faint, padding '2px 4px 8px' (BuildApp.jsx:837) -->
+    <TextBlock Text="SWITCH BRANCH" Margin="4,2,4,8"
+               FontFamily="{x:Static controls:AppFonts.Ui}"
+               FontSize="{DynamicResource FontSize.2xs}"
+               FontWeight="{DynamicResource FontWeight.Emphasis}"
+               Foreground="{DynamicResource Brush.TextFaint}" />
+
+    <!-- Ds.Input (implicit TextBox) + büyüteç prefix + watermark "Search branches…" -->
+    <TextBox x:Name="PART_Search" controls:DsChrome.Watermark="Search branches…">
+      <controls:DsChrome.Prefix>
+        <Viewbox Width="14" Height="14">
+          <Canvas Width="24" Height="24">
+            <Path Data="{DynamicResource Icon.Search}"
+                  StrokeThickness="{DynamicResource Icon.Search.StrokeThickness}"
+                  Stroke="{DynamicResource Brush.TextDim}"
+                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+          </Canvas>
+        </Viewbox>
+      </controls:DsChrome.Prefix>
+    </TextBox>
+
+    <!-- satırlar: maxHeight 196, dikey scroll (BuildApp.jsx:839) -->
+    <ScrollViewer MaxHeight="196" Margin="0,6,0,0" VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+      <Grid>
+        <StackPanel x:Name="PART_Rows" />
+        <!-- boş sonuç: "No branches match “{q}”." (BuildApp.jsx:846) -->
+        <TextBlock x:Name="PART_Empty" Margin="10" Visibility="Collapsed"
+                   FontSize="{DynamicResource FontSize.Xs}"
+                   Foreground="{DynamicResource Brush.TextDim}" />
+      </Grid>
+    </ScrollViewer>
+
+    <!-- alt not (BİREBİR, BuildApp.jsx:848-850) — text-2xs, text-faint, üstte 1px border-subtle -->
+    <Border BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,6,0,0">
+      <TextBlock Margin="4,8,4,2" TextWrapping="Wrap"
+                 FontSize="{DynamicResource FontSize.2xs}"
+                 Foreground="{DynamicResource Brush.TextFaint}"
+                 Text="Picking a non-active branch requires a worktree; the active branch stays untouched." />
+    </Border>
+  </StackPanel>
+</UserControl>
