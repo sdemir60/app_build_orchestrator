@@ -83,6 +83,9 @@ public partial class MainWindow : Window
         _vm.UseWorktree = saved.UseWorktree;
         _vm.WorktreeName = saved.WorktreeName;
         if (saved.PerfMode is { } perf) _vm.SetPerfMode(perf);
+        // [D7] Kalıcı katman tanımlarını seed et (D7 bu alanın ilk yazıcısı — diskte bugüne dek hep boş). Boşsa
+        // LayerPatterns null kalır (motor Count==0'ı "katman yok" olarak ele alır); Settings Save bunu doldurur.
+        if (saved.LayerPatterns.Count > 0) _vm.LayerPatterns = saved.LayerPatterns;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
@@ -350,8 +353,19 @@ public partial class MainWindow : Window
     private void OnLayoutList(object sender, RoutedEventArgs e) => Shell.SetMode(LayoutMode.List);
     private void OnLayoutFocus(object sender, RoutedEventArgs e) => Shell.SetMode(LayoutMode.Focus);
 
-    // Gear: layer-definitions Settings diyaloğu bir sonraki task'ın kapsamıdır (C1'de inert).
-    private void OnSettings(object sender, RoutedEventArgs e) { /* Settings dialog — sonraki task */ }
+    /// <summary>[D7/T66] Dişli → Settings modal diyaloğunu açar: canlı katman pattern'lerinin bir taslak
+    /// kopyasını kurar + repo yolunu gösterir. Klasör seçici (<see cref="PickFolder"/>) enjekte edilir (E1'in
+    /// IOsActions.PickFolder'ı gelene dek <c>OpenFolderDialog</c> doğrudan; testler bu seam'i by-pass eder).</summary>
+    private void OnSettings(object sender, RoutedEventArgs e) => SettingsOverlay.Open(_vm, _uiState, PickFolder);
+
+    /// <summary>[D7 · K10] Repo kökü seçici — <c>Microsoft.Win32.OpenFolderDialog</c> (E1'den önce doğrudan).
+    /// İptal edilirse null.</summary>
+    private string? PickFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Select repository root" };
+        if (_vm.RootPath.Length > 0) dialog.InitialDirectory = _vm.RootPath;
+        return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
+    }
 
     /// <summary>Split sürükleme sonu ya da mod değişimi → kalıcı UiState'e yaz + aktif mod düğmesini eşle.</summary>
     private void OnShellLayoutChanged(object? sender, LayoutState state)

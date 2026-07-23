@@ -1,5 +1,6 @@
 using System.IO;
 using BuildOrchestrator.App.Shell;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -47,7 +48,9 @@ public class UiStateStoreTests
         var state = store.Load();
         state.RepositoryRoot = @"D:\src\osys"; state.Configuration = "Debug"; state.PerfMode = "Full";
         state.Branch = "feature/x"; state.UseWorktree = true; state.WorktreeName = "feature-x-1";
-        state.LayerPatterns = ["OSYS.*.Core", "OSYS.Web.*"]; state.Autostart = true;
+        // [D7] LayerPatterns artık List<LayerPattern> (Order/Regex/Name) — eskiden List<string>'ti.
+        state.LayerPatterns = [new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")];
+        state.Autostart = true;
         store.Save(state);
 
         var reloaded = new JsonUiStateStore(path).Load();
@@ -57,7 +60,7 @@ public class UiStateStoreTests
         Assert.Equal("feature/x", reloaded.Branch);
         Assert.True(reloaded.UseWorktree);
         Assert.Equal("feature-x-1", reloaded.WorktreeName);
-        Assert.Equal(["OSYS.*.Core", "OSYS.Web.*"], reloaded.LayerPatterns);
+        Assert.Equal([new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")], reloaded.LayerPatterns);
         Assert.True(reloaded.Autostart);
     }
 
@@ -77,5 +80,20 @@ public class UiStateStoreTests
         Assert.Null(reloaded.PerfMode);           // legacy bool → null (VM Balanced/4 varsayılanı korunur)
         Assert.Equal("feature/x", reloaded.Branch);
         Assert.True(reloaded.UseWorktree);
+    }
+
+    [Fact] // [D7 şema göçü] LayerPatterns List<string>→List<LayerPattern>: diskteki eski değer HEP boş `[]`'ti
+    public void A_legacy_empty_layer_patterns_array_on_disk_round_trips_without_wiping_the_rest()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        // Eski şemada yazılmış (LayerPatterns hep boş kalmıştı) + kalıcı yerleşim:
+        File.WriteAllText(path, """{ "ColPct": 61, "LayerPatterns": [], "Branch": "feature/x" }""");
+
+        var reloaded = new JsonUiStateStore(path).Load();
+
+        Assert.Equal(61, reloaded.ColPct);         // boş dizi Load'u DEVİRMEDİ (startup wipe YOK)
+        Assert.Empty(reloaded.LayerPatterns);      // [] → boş List<LayerPattern>
+        Assert.Equal("feature/x", reloaded.Branch);
     }
 }

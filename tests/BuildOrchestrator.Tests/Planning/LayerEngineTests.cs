@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
 
@@ -113,6 +114,29 @@ public class LayerEngineTests
         Assert.All(result.Nodes, n => Assert.Null(n.LayerIndex));
         Assert.All(result.Nodes, n => Assert.Null(n.LayerName));
         Assert.Equal([0, 1], result.Nodes.Select(n => n.BuildOrder));
+    }
+
+    // [A1→D7 fold] Settings editörü kullanıcıya pattern yazdırır; katastrofik-backtracking bir pattern
+    // (ör. (a+)+$) sınırlı bir matchTimeout OLMADAN IsMatch'te planlamayı SONSUZA DEK ASAR. Sınırlı timeout +
+    // RegexMatchTimeoutException'ın non-match olarak ele alınması: pattern patlamamalı, proje Other'a düşmeli,
+    // warn-only bir uyarı çıkmalı. (Geçersiz-regex → planFailed yolu ayrıca korunur — o RegexParseException'dır,
+    // burada test edilen timeout'tan farklı.)
+    [Fact]
+    public void catastrophic_backtracking_pattern_completes_quickly_falls_to_other_and_warns_but_never_hangs()
+    {
+        // '(a+)+$' 40 'a' + eşleşmeyen kuyruk ('!') karşısında exponential backtracking'e girer; matchTimeout
+        // olmadan pratikte SONSUZA kadar sürer. Regex'in KENDİSİ geçerlidir (derlenir) — bu yüzden planFailed
+        // yolu tetiklenmez; tehlike IsMatch'in asmasıdır.
+        LayerPattern[] patterns = [new(Order: 0, Regex: "(a+)+$", Name: "Catastrophic")];
+        var nodes = new[] { N("A", new string('a', 40) + "!") };
+
+        var sw = Stopwatch.StartNew();
+        var result = LayerEngine.AssignLayers(nodes, patterns); // ASMAMALI / FIRLATMAMALI
+        sw.Stop();
+
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"planlama {sw.Elapsed} sürdü — matchTimeout sınırlamadı");
+        Assert.Equal(LayerEngine.OtherLayerName, result.Nodes[0].LayerName); // timeout = non-match → Other
+        Assert.NotEmpty(result.Warnings);                                    // warn-only: timeout uyarısı
     }
 
     [Fact]

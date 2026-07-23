@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.App.Shell;
 
@@ -42,7 +43,15 @@ public sealed class UiState
     public string? Branch { get; set; }
     public bool UseWorktree { get; set; }
     public string? WorktreeName { get; set; }
-    public List<string> LayerPatterns { get; set; } = [];
+
+    /// <summary>[D7] Settings editörünün katman tanımları (Order/Regex/Name) — Save'de yazılır, startup'ta
+    /// <see cref="ViewModels.RunViewModel.LayerPatterns"/>'a seed edilir.
+    /// <para><b>Şema göçü:</b> bu alan eskiden <c>List&lt;string&gt;</c>'ti. D7, bu alanın İLK yazıcısıdır —
+    /// diskteki değer BUGÜNE DEK hep <c>[]</c> (boş) kalmıştır (hiçbir kod yazmadı), bu yüzden şekil değişimi
+    /// güvenlidir: boş bir JSON dizisi <c>[]</c> eleman tipinden bağımsız olarak boş
+    /// <see cref="List{LayerPattern}"/>'e round-trip eder (startup wipe YOK). Diskte boş-OLMAYAN eski bir
+    /// <c>List&lt;string&gt;</c> hiç var olmadı (PerfMode'daki gibi bir toleranslı converter GEREKMEZ).</para></summary>
+    public List<LayerPattern> LayerPatterns { get; set; } = [];
     public bool Autostart { get; set; }
 }
 

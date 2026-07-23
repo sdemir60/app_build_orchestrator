@@ -48,13 +48,7 @@ public sealed partial class RunViewModel
 
         WorktreeName = null;  // seçili hedef worktree'yi auto'ya döndür (BuildApp.jsx:1340)
         UseWorktree = true;   // aktif-olmayan branch → worktree zorunlu (BuildApp.jsx:1342)
-        foreach (var row in Projects)
-        {
-            row.State = ProjectRowState.Pending; // BuildApp.jsx:1345 status='discovered' → Pending
-            row.WillBuild = null;                // will='unknown' → hollow
-            row.DepIssues = null;
-            row.DurationMs = 0;
-        }
+        ResetRowsToHollow();  // BuildApp.jsx:1345 status='discovered' → Pending, will='unknown' → hollow
         _willBuildIds.Clear();       // BuildApp.jsx:1346 eng.willBuild = new Set()
         Phase = AppPhase.Boot;       // BuildApp.jsx:1347
         string sha7 = Short7(branch.Sha);
@@ -102,5 +96,48 @@ public sealed partial class RunViewModel
         if (mode is not ("Full" or "Balanced" or "Light")) return;
         PerfMode = mode;
         Parallelism = ParallelismFor(mode);
+    }
+
+    // ---------------------------------------------------------------- [D7/T66] Settings — layers + repository
+
+    /// <summary>[D7] Settings Save: yeni katman pattern'lerini uygular. <see cref="LayerPatterns"/> set edilir
+    /// (sonraki Sync/Build komutlarıyla motora gider — A1/A5) ve konsola BİREBİR dim not yazılır
+    /// (BuildApp.jsx:1423): katman kaldıysa <c>Layer definitions updated — {n} layers</c>, liste boşaltıldıysa
+    /// <c>Layers removed — single project list</c>. Yeniden gruplama Core'dan <c>LayerName</c> olarak geri döner
+    /// (App'te regex YOK — mimari kural).</summary>
+    public void ApplyLayerPatterns(IReadOnlyList<LayerPattern> patterns)
+    {
+        LayerPatterns = patterns;
+        AppendRunLine(patterns.Count > 0
+            ? $"Layer definitions updated — {patterns.Count} layers"
+            : "Layers removed — single project list");
+    }
+
+    /// <summary>[D7 · K10] Settings "Change…": yeni bir repo kökü seçilince kökü değiştirir, proje durumlarını
+    /// sıfırlar (yeni repo = yeni taban) ve OTOMATİK Sync başlatır. Klasör seçici çağıranın (dialog) enjekte
+    /// ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır, böylece testler gerçek diyalog açmaz.
+    /// <see cref="OnRootPathChanged"/> Empty→Boot geçişini zaten sürer.</summary>
+    public async Task ChangeRepositoryAsync(string path)
+    {
+        if (IsMidRunLocked || string.IsNullOrEmpty(path)) return;
+        RootPath = path;         // OnRootPathChanged Empty→Boot geçişini sürer
+        ResetRowsToHollow();     // yeni repo: önceki repo'nun sonuçları artık geçersiz (SelectBranch ile aynı reset)
+        _willBuildIds.Clear();
+        RefreshRunSurface();
+        await SyncAsync();       // otomatik Sync (aynı gönderim yolu; SelectedProjectId'yi temizler)
+    }
+
+    /// <summary>[D7] Satırları yeni bir taban için "hollow"a sıfırlar (durum Pending, will bilinmiyor, süre/dep
+    /// temizli). Branch değişimi (<see cref="SelectBranch"/>) ve repo değişimi (<see cref="ChangeRepositoryAsync"/>)
+    /// AYNI reset'i paylaşır — tek yer (kopya YASAK).</summary>
+    private void ResetRowsToHollow()
+    {
+        foreach (var row in Projects)
+        {
+            row.State = ProjectRowState.Pending;
+            row.WillBuild = null;
+            row.DepIssues = null;
+            row.DurationMs = 0;
+        }
     }
 }

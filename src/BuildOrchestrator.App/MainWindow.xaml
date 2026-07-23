@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:BuildOrchestrator.App"
         xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+        xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
         Title="Build Orchestrator" Width="1400" Height="800"
         Icon="pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
@@ -166,6 +167,11 @@
 
       <!-- ==================================== GÖVDE ==================================== -->
       <local:ShellRoot x:Name="Shell" Grid.Row="1" WindowChrome.IsHitTestVisibleInChrome="True" />
+
+      <!-- [D7/T66] İlk modal: Settings diyaloğu. Scrim tüm pencereyi (başlık bandı dahil) kaplar; caption
+           bölgesi üzerinde de tıklama alsın diye IsHitTestVisibleInChrome=True. Varsayılan Collapsed. -->
+      <views:SettingsDialog x:Name="SettingsOverlay" Grid.Row="0" Grid.RowSpan="2"
+                            WindowChrome.IsHitTestVisibleInChrome="True" />
     </Grid>
   </Border>
 </Window>
