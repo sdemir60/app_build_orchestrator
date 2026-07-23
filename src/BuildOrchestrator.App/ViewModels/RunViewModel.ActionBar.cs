@@ -120,6 +120,10 @@ public sealed partial class RunViewModel
     public async Task ChangeRepositoryAsync(string path)
     {
         if (IsMidRunLocked || string.IsNullOrEmpty(path)) return;
+        // [D7 re-review][Fix3] Aynı kökü YENİDEN seçmek (klasör seçicide iptal etmeden aynı klasöre tekrar
+        // gidilmesi) no-op olmalı — Windows yolları case-insensitive; aksi halde her satır boşuna hollow'a
+        // sıfırlanır ve gereksiz bir Sync gönderilir.
+        if (string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase)) return;
         RootPath = path;         // OnRootPathChanged Empty→Boot geçişini sürer
         ResetRowsToHollow();     // yeni repo: önceki repo'nun sonuçları artık geçersiz (SelectBranch ile aynı reset)
         _willBuildIds.Clear();

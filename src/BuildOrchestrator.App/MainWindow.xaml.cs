@@ -85,7 +85,11 @@ public partial class MainWindow : Window
         if (saved.PerfMode is { } perf) _vm.SetPerfMode(perf);
         // [D7] Kalıcı katman tanımlarını seed et (D7 bu alanın ilk yazıcısı — diskte bugüne dek hep boş). Boşsa
         // LayerPatterns null kalır (motor Count==0'ı "katman yok" olarak ele alır); Settings Save bunu doldurur.
-        if (saved.LayerPatterns.Count > 0) _vm.LayerPatterns = saved.LayerPatterns;
+        // [D7 re-review][Fix2] System.Text.Json bir açık JSON "null" token'ı için `= []` initializer'ını EZER ve
+        // alanı gerçek null yapar (JsonUiStateStore.Load yalnız JsonException'ı yutar — bu bir NRE, App'i AÇILIŞTA
+        // çökertirdi). Null-safe desen (kardeş guard'larla — saved.Configuration is { }/saved.PerfMode is { } —
+        // hizalı).
+        if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam

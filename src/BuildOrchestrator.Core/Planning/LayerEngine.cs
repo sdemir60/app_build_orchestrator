@@ -98,6 +98,10 @@ public static class LayerEngine
             foreach (var c in compiled)
             {
                 if (c.Regex is null) continue; // [D7 fix-wave][Fix1] boş/whitespace pattern → inert, asla eşleşmez
+                // [D7 re-review][Fix4] Daha önce timeout olmuş bir pattern bu noktadan sonra HER node için tekrar
+                // 100ms'lik matchTimeout'u ödemesin — bir kez timeout olan pattern, kalan çalışma boyunca
+                // non-match kabul edilir (uyarı zaten timedOutPatterns'a eklenmişti, davranış AYNI kalır).
+                if (timedOutPatterns.Contains(c.Name)) continue;
                 bool isMatch;
                 try { isMatch = c.Regex.IsMatch(n.Name); }
                 catch (RegexMatchTimeoutException)

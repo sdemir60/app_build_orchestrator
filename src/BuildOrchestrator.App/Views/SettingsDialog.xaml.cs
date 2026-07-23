@@ -36,7 +36,10 @@ public partial class SettingsDialog : UserControl
         DataContext = _editor;
         UpdateRepoLabel();
         Visibility = Visibility.Visible;
-        Focus(); // Esc yakalanabilsin
+        Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bulamazsa bile odak burada kalır)
+        // [D7 re-review][Fix1] Odağı UserControl'ün KENDİSİNDEN diyaloğun İÇİNE taşı (ilk input tercih edilir) —
+        // Scrim bir FocusManager.IsFocusScope olduğundan bu arama diyalog alt-ağacıyla SINIRLIdır.
+        Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
     }
 
     private void Close() => Visibility = Visibility.Collapsed;

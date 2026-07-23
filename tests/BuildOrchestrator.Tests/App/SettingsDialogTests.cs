@@ -30,7 +30,18 @@ public class SettingsDialogTests
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
     {
         var editor = new LayerEditorViewModel(null);
+
+        // [D7 re-review][Fix6] Save butonunun IsEnabled bağlaması CanSave'in PropertyChanged YAYIMLADIĞINA
+        // dayanır (XAML: IsEnabled="{Binding CanSave}") — bu olmadan buton canlı GÜNCELLENMEZ (yalnız ilk
+        // bind anındaki değerde donar). Her tetikleyicide (Add/Name/Regex-geçersiz/Remove) bir bildirim sayılır.
+        int canSaveNotifications = 0;
+        editor.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LayerEditorViewModel.CanSave)) canSaveNotifications++;
+        };
+
         editor.AddLayer(); // "Layer 1", regex boş
+        Assert.True(canSaveNotifications > 0, "Add layer sonrası CanSave bildirimi YOK");
         var row = Assert.Single(editor.Layers);
 
         // Boş regex GEÇERLİdir → Save bloklanMAZ.
@@ -39,19 +50,27 @@ public class SettingsDialogTests
         Assert.True(editor.CanSave);
 
         // Boş ad → bloklar (yalnız boşluk da boş sayılır — trim).
+        canSaveNotifications = 0;
         row.Name = "   ";
+        Assert.True(canSaveNotifications > 0, "Name değişimi sonrası CanSave bildirimi YOK");
         Assert.False(editor.CanSave);
 
         // Ad dolu + derlenemeyen regex → bloklar (input invalid).
         row.Name = "Core";
+        canSaveNotifications = 0;
         row.Regex = "([";
         Assert.True(row.RegexInvalid);
         Assert.False(editor.CanSave);
+        Assert.True(canSaveNotifications > 0, "Regex geçersize dönünce CanSave bildirimi YOK");
 
         // Regex tekrar boş → yine GEÇERLİ (boş pattern asla bloklamaz).
         row.Regex = "";
         Assert.False(row.RegexInvalid);
         Assert.True(editor.CanSave);
+
+        canSaveNotifications = 0;
+        editor.RemoveLayer(row);
+        Assert.True(canSaveNotifications > 0, "Remove layer sonrası CanSave bildirimi YOK");
     }
 
     [Fact]
@@ -59,6 +78,7 @@ public class SettingsDialogTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var store = new FakeStore();
         IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
         run.LayerPatterns = live;
 
@@ -73,6 +93,15 @@ public class SettingsDialogTests
         Assert.Single(run.LayerPatterns!);
         Assert.Equal("Alpha", run.LayerPatterns![0].Name);
         Assert.Equal("^A", run.LayerPatterns[0].Regex);
+
+        // [D7 re-review][Fix5] Ayrımcı güç kanıtı: AYNI (mutasyona uğramış) taslak ŞİMDİ commit edilirse canlı
+        // GERÇEKTEN değişmeli — bu, yukarıdaki "değişmedi" iddiasının taslak/canlı izolasyonunu (Cancel = bu
+        // Commit'in YOKLUĞU) test ettiğini kanıtlar; aksi halde ctor'un yeni satır VM'leri kurması nedeniyle
+        // aliasing zaten fiziksel olarak imkânsız olduğundan iddia hep-doğru (anlamsız) kalırdı.
+        editor.Commit(run, store);
+        Assert.Equal(2, run.LayerPatterns!.Count);
+        Assert.Equal("CHANGED", run.LayerPatterns[0].Name);
+        Assert.Equal("^B", run.LayerPatterns[0].Regex);
     }
 
     [Fact]
@@ -129,5 +158,23 @@ public class SettingsDialogTests
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State)); // durumlar sıfırlandı (hollow)
         var sync = Assert.IsType<SyncWorkspaceCommand>(sent);                          // otomatik Sync gönderildi
         Assert.Equal(@"D:\new\repo", sync.RootPath);                                   // yeni kökte
+    }
+
+    [Fact] // [D7 re-review][Fix3] Aynı kökü (case-insensitive — Windows yolu) YENİDEN seçmek no-op olmalı.
+    public async Task Repicking_the_current_repository_root_is_a_no_op()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        run.OnEvent(new ProjectStartedEvent("r1", @"D:\repo\a.csproj", "A")); // aktif bir satır (Started)
+        Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
+
+        IpcCommand? sent = null;
+        run.DebugOnCommandSent = c => sent = c;
+
+        await run.ChangeRepositoryAsync(@"d:\REPO"); // aynı kök, farklı harf durumu
+
+        Assert.Equal(@"D:\repo", run.RootPath);                                    // kök değişmedi
+        Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);  // satırlar sıfırlanmadı (hollow YOK)
+        Assert.Null(sent);                                                         // yeniden Sync GÖNDERİLMEDİ
     }
 }

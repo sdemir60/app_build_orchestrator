@@ -96,4 +96,42 @@ public class UiStateStoreTests
         Assert.Empty(reloaded.LayerPatterns);      // [] → boş List<LayerPattern>
         Assert.Equal("feature/x", reloaded.Branch);
     }
+
+    [Fact] // [D7 re-review][Fix7] Yukarıdaki test yalnız boş `[]`'ı sınar (List<string> ve List<LayerPattern>
+    // için AYNI şekilde deserialize olur — göçü GERÇEKTEN egzersiz etmez). Diskte DOLU bir eski
+    // List<string> HİÇ var olmadı (D7, alanın İLK yazıcısı — yukarıdaki test bunu belgeler); burada
+    // varsayımsal olarak öyle bir değer olsaydı GERÇEK davranış PİNLENİR: string dizisi elemanları
+    // List<LayerPattern>'e (obje bekleyen) deserialize edilemez → JsonException → Load() TÜM state'i
+    // varsayılana DÜŞÜRÜR (PerfMode'daki gibi toleranslı bir converter YOK — kapsam dışı, brief D7).
+    public void A_legacy_non_empty_string_array_layer_patterns_on_disk_is_a_type_mismatch_and_wipes_the_whole_state()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path,
+            """{ "ColPct": 61, "LayerPatterns": ["OSYS.*.Core"], "Branch": "feature/x" }""");
+
+        var reloaded = new JsonUiStateStore(path).Load();
+
+        // Wipe: JsonException devraldı → varsayılan UiState (kalıcı yerleşim/tercih KAYBOLDU).
+        Assert.Equal(50, reloaded.ColPct);       // varsayılan (61 DEĞİL — Load() new UiState() döndü)
+        Assert.Null(reloaded.Branch);            // varsayılan (feature/x DEĞİL)
+        Assert.Empty(reloaded.LayerPatterns);    // varsayılan (= [])
+    }
+
+    [Fact] // [D7 re-review][Fix2] Açık bir JSON "null" token'ı System.Text.Json'da `= []` initializer'ını EZER
+    // ve alanı GERÇEK null yapar (JsonException FIRLAMAZ — Load() kendisi güvenli). Çöken taraf MainWindow'un
+    // `saved.LayerPatterns.Count` null-safe OLMAYAN okumasıydı (ayrı satır düzeltmesi — burada yalnız Load()'un
+    // kendisinin patlamadığı belgelenir).
+    public void A_null_layer_patterns_token_loads_without_throwing_and_the_field_is_null()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path, """{ "ColPct": 61, "LayerPatterns": null, "Branch": "feature/x" }""");
+
+        var reloaded = new JsonUiStateStore(path).Load(); // FIRLAMAMALI
+
+        Assert.Equal(61, reloaded.ColPct);      // diğer alanlar korunur (Load() TÜM state'i devirmedi)
+        Assert.Equal("feature/x", reloaded.Branch);
+        Assert.Null(reloaded.LayerPatterns);    // açık null → alan GERÇEKTEN null (initializer EZİLDİ)
+    }
 }

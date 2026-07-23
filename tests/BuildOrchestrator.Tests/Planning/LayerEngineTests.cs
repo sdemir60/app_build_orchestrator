@@ -147,7 +147,7 @@ public class LayerEngineTests
     // BuildApp.jsx:977) tam tersini yapar: boş/whitespace pattern → null (asla eşleşmeyen/inert). Bu test önce
     // MEVCUT koda karşı RED olmalı (EmptyLayer/WhitespaceLayer her projeyi yutar), fix sonrası GREEN.
     [Fact]
-    public void Empty_or_whitespace_regex_layer_never_matches_and_a_later_real_pattern_or_other_still_applies()
+    public void empty_or_whitespace_regex_layer_never_matches_and_a_later_real_pattern_or_other_still_applies()
     {
         LayerPattern[] patterns =
         [
@@ -179,7 +179,7 @@ public class LayerEngineTests
     // kullanıyordu (case-sensitive) — bu test MEVCUT koda karşı RED, fix (RegexOptions.IgnoreCase) sonrası
     // GREEN olmalı.
     [Fact]
-    public void User_pattern_matches_regardless_of_casing_against_the_project_name()
+    public void user_pattern_matches_regardless_of_casing_against_the_project_name()
     {
         LayerPattern[] patterns = [new(Order: 0, Regex: "^osys\\.web", Name: "WebLayer")];
         var nodes = new[] { N("A", "OSYS.Web.Portal") };
