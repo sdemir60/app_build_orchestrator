@@ -6,6 +6,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Views;
@@ -37,6 +38,12 @@ public partial class StickyRibbon : UserControl
     private const double FailureGlyphSize = 13;      // BuildApp.jsx:793
     private const int MaxBuildingChips = 4;          // BuildApp.jsx:784 building.slice(0,4)
     private const int MaxFailedChips = 3;            // BuildApp.jsx:797 failed.slice(0,3)
+    private const double RibbonChipGap = 4;          // BuildApp.jsx:783/801 flex gap:4
+
+    // [D2 review fix, Finding 5] glyph→faz-metni gap — glyph görünürken 10 (BuildApp.jsx content row gap:10),
+    // glyph collapsed olunca 0 (metin ilk flex item olur, leading gap yok). RefreshText'in iki dalı da yazar.
+    private static readonly Thickness PhaseTextMarginWithGlyph = new(10, 0, 0, 0);
+    private static readonly Thickness PhaseTextMarginNoGlyph = new(0);
 
     // Belirsiz (indeterminate) sweep — _ds_bundle.js:493-495 (ds-progress-indet 1.4s ease-in-out; width 35%;
     // translateX -110%→320%). Süre/oran DS'ten birebir; token DEĞİL (bileşenin kendi ölçüsü) → kaynak satırıyla yazılır.
@@ -83,6 +90,7 @@ public partial class StickyRibbon : UserControl
     internal TextBlock? BuildingOverflow { get; private set; }
     internal IReadOnlyList<ToggleButton> FailureChips { get; private set; } = [];
     internal ToggleButton? FailureMoreChip { get; private set; }
+    internal StackPanel FailureCluster => PART_FailureCluster; // [6b fold] testler "N failed"/"dependency-affected" metnini buradan pinler
 
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -136,12 +144,17 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.AllClean):
             case nameof(RunViewModel.WillBuildCount):
             case nameof(RunViewModel.FinishedOfWillBuild):
-            case nameof(RunViewModel.ElapsedMs):
-            case nameof(RunViewModel.EtaMs):
             case nameof(RunViewModel.HasWorkspace):
             case nameof(RunViewModel.RootPath):
                 RefreshText();
                 RefreshProgress();
+                break;
+            // [D2 review fix, Finding 2] ElapsedMs/EtaMs KENDİ case'inde: yalnız faz-metninde görünürler
+            // (RibbonText.Progress/ProgressStatus girdileri elapsed/ETA İÇERMEZ) — koşarken 200ms'de bir tick
+            // eden bu ikisi RefreshProgress'i çağırırsa AYNI hedefe gereksiz BeginAnimation churn'ü olurdu.
+            case nameof(RunViewModel.ElapsedMs):
+            case nameof(RunViewModel.EtaMs):
+                RefreshText();
                 break;
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.DepIssueCount):
@@ -178,8 +191,13 @@ public partial class StickyRibbon : UserControl
         {
             PART_PhaseGlyph.Status = status;
             PART_PhaseGlyph.Visibility = Visibility.Visible;
+            PART_PhaseText.Margin = PhaseTextMarginWithGlyph; // glyph→metin gap:10 (BuildApp.jsx content row gap:10)
         }
-        else PART_PhaseGlyph.Visibility = Visibility.Collapsed;
+        else
+        {
+            PART_PhaseGlyph.Visibility = Visibility.Collapsed;
+            PART_PhaseText.Margin = PhaseTextMarginNoGlyph; // glyph yok → metin ilk flex item, leading gap yok
+        }
     }
 
     private static GraphStatus? GlyphStatus(string glyph) => glyph switch
@@ -298,8 +316,9 @@ public partial class StickyRibbon : UserControl
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal };
             content.Children.Add(new BuildingSpinner { Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
-            content.Children.Add(new TextBlock { Text = row.Name, Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var chip = MakeChip(content, brushKey: null);
+            if (chips.Count > 0) chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:783 flex gap:4 — ilk chip HARİÇ
             string id = row.Id;
             chip.Click += (_, _) => { _vm?.SelectProject(id); ResetChip(chip); };
             PART_BuildingChips.Children.Add(chip);
@@ -367,8 +386,9 @@ public partial class StickyRibbon : UserControl
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal };
             content.Children.Add(new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
-            content.Children.Add(new TextBlock { Text = row.Name, Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var chip = MakeChip(content, brushKey: null);
+            if (chipStrip.Children.Count > 0) chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:801 flex gap:4 — ilk chip HARİÇ
             string id = row.Id;
             chip.Click += (_, _) => { _vm?.SelectProject(id); ResetChip(chip); };
             chipStrip.Children.Add(chip);
@@ -384,6 +404,7 @@ public partial class StickyRibbon : UserControl
                 VerticalAlignment = VerticalAlignment.Center,
             };
             var more = MakeChip(moreText, brushKey: "Brush.StatusFailText"); // "+N more" StatusFailText renkli (BuildApp.jsx:803)
+            if (chipStrip.Children.Count > 0) more.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:801 flex gap:4
             more.Click += (_, _) => { if (_vm is not null) _vm.ActiveFilter = ProjectFilter.Failed; ResetChip(more); };
             chipStrip.Children.Add(more);
             FailureMoreChip = more;

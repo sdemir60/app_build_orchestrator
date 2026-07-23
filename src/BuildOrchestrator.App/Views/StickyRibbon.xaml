@@ -27,7 +27,9 @@
         <controls:StatusGlyph x:Name="PART_PhaseGlyph" Grid.Column="0" Size="13"
                               VerticalAlignment="Center" Visibility="Collapsed" />
 
-        <TextBlock x:Name="PART_PhaseText" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
+        <!-- Margin kod-tarafında (RefreshText) glyph görünürlüğüne koşullu set edilir — D2 review fix Finding 5:
+             glyph varken 10 (glyph→metin gap), glyph collapsed olunca 0 (metin ilk flex item, leading gap yok). -->
+        <TextBlock x:Name="PART_PhaseText" Grid.Column="1" VerticalAlignment="Center"
                    FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
                    Typography.NumeralAlignment="Tabular" TextWrapping="NoWrap" />
 

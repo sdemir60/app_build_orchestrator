@@ -47,11 +47,18 @@ public sealed partial class RunViewModel
     /// <para>[Fix wave 1, C2 review Finding 1] <see cref="RunViewModel.RebuildCommand"/>/<see cref="RunViewModel.RetryFailedCommand"/>
     /// artık <c>_syncInFlight</c>'a da bakıyor (<see cref="RunViewModel.CanRebuildOrRetry"/>) — bu geçişte CanExecuteChanged
     /// elle tetiklenmezse [NotifyCanExecuteChangedFor] zinciri (yalnız IsRunning/IsStarting'e bağlı) bu iki
-    /// butonun gerçek pencerede Sync başlar başlamaz disabled görünmesini SAĞLAMAZ.</para></summary>
+    /// butonun gerçek pencerede Sync başlar başlamaz disabled görünmesini SAĞLAMAZ.</para>
+    /// <para>[D2 review fix, Finding 1] <see cref="RunViewModel._willBuildIds"/> BURADA temizlenir: küme ADD-ONLY
+    /// olduğundan (yalnız <see cref="RunViewModel.OnBuildPreview"/> ekler) ve önceki Clear noktası yalnız
+    /// <see cref="RunViewModel.OnRunStarted"/> olduğundan, ikinci (run'sız) bir Sync kendi <c>BuildPreviewEvent</c>'ini
+    /// (A5 amendment — her Sync bunu yayınlar) hiç temizlik olmadan üzerine yazardı: dirty=false gelen satırlar
+    /// kümeden ÇIKARILMAZ (yalnız true eklenir), bu yüzden önceki Sync'in willBuild'i BİRİKİRDİ ve Idle şeridi
+    /// bayat "N to build" gösterirdi.</para></summary>
     private void OnSyncStarted()
     {
         _syncInFlight = true;
         Phase = AppPhase.Syncing;
+        _willBuildIds.Clear(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
         RebuildCommand.NotifyCanExecuteChanged();
         RetryFailedCommand.NotifyCanExecuteChanged();
     }

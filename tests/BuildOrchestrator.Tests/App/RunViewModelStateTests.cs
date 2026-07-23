@@ -224,6 +224,37 @@ public class RunViewModelStateTests
         Assert.Contains("Configuration → Release — all projects will rebuild", vm.GetRunDocumentText());
     }
 
+    [Fact] // [D2 fix wave, Finding 1] OnSyncStarted _willBuildIds'i temizlemeli — aksi halde ikinci Sync bayat "N to build" gösterir.
+    public async Task Second_sync_clears_the_stale_will_build_set_from_the_first_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        // Sync 1: A dirty, B clean → wb=1
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", false),
+        ]));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1", false, 2, 0));
+        Assert.Equal(1, vm.WillBuildCount);
+        Assert.False(vm.AllClean);
+
+        // Sync 2: her şey artık clean — bayat "1 to build" YANSIMAMALI
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", false),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", false),
+        ]));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha2", false, 2, 0));
+
+        Assert.Equal(0, vm.WillBuildCount); // bayat küme temizlenmiş olmalı
+        Assert.True(vm.AllClean);
+    }
+
     [Fact] // [A5-review fold] Engine Sync ORTASINDA ölürse faz Syncing'de asılı kalamaz + _syncInFlight serbest.
     public async Task Engine_death_mid_sync_leaves_the_syncing_phase_and_releases_the_sync_flag()
     {
