@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
@@ -15,6 +16,11 @@ public partial class App : Application
     /// normal ikinci-instance (başarıyla öne getirdi → 0) ile ayırt edilebilsin ve kullanıcı SESSİZ kalmasın
     /// (ayrıca bir tray balloon gösterilir).</summary>
     public const int SecondInstanceActivationFailedExitCode = 3;
+
+    /// <summary>[E2/FIX1] İkinci-instance balloon'unu shell (explorer.exe) RENDER edene kadar geçici tray'in
+    /// yaşadığı süre. Balloon isteğiyle AYNI dispatcher turn'ünde tray'i yıkmak (NIM_DELETE) balloon'u iptal
+    /// eder → kullanıcı hiçbir şey görmez; bu gecikmeden sonra tray bırakılır ve süreç AYRIŞAN kodla kapanır.</summary>
+    private static readonly TimeSpan SecondInstanceBalloonLinger = TimeSpan.FromSeconds(2.5);
 
     /// <summary>[E2/T16] Registry autostart komutunun exe'ye eklediği argüman — bu argümanla açılan uygulama
     /// tepside (gizli) temiz başlar (bkz. <see cref="MainWindow.StartInTray"/>).</summary>
@@ -53,16 +59,22 @@ public partial class App : Application
             // SingleInstanceProtocol garanti eder). [E2/triaj-f] Dönüş ARTIK yakalanır: öne getirilebildiyse
             // sessizce kapan (mevcut davranış); GETİRİLEMEDİYSE (pipe cevapsız/hata) SESSİZ KALMA — kullanıcıya
             // tek-satırlık tray balloon göster ve AYRIŞAN bir çıkış koduyla kapan.
-            if (_singleInstance.ActivateExistingInstance(TimeSpan.FromSeconds(3)))
+            // [E2/FIX1] Karar (balloon?/çıkış kodu) saf, WPF'siz dikişe (SecondInstanceGate) taşındı — iki dalı da
+            // test edilir. Öne getirildiyse: sessiz ve temiz kapan (kod 0).
+            var outcome = SecondInstanceGate.Decide(_singleInstance.ActivateExistingInstance(TimeSpan.FromSeconds(3)));
+            if (!outcome.ShowBalloon)
             {
-                Shutdown();
+                Shutdown(outcome.ExitCode);
                 return;
             }
+            // Öne getirilemedi → SESSİZ KALMA: tek-satırlık OS balloon göster. ShowNotification balloon'u
+            // explorer.exe'ye ASENKRON teslim eder; tray'i AYNI dispatcher turn'ünde yıkarsak (Shutdown → OnExit →
+            // Dispose → NIM_DELETE) balloon milisaniyeler içinde iptal olur. Bu yüzden yıkımı ERTELE (aşağıda).
             _secondInstanceTray = new AppTrayIcon();
             _secondInstanceTray.ShowNotification(
                 "Build Orchestrator",
                 "Already running — could not bring the existing window forward. Use the tray icon or Alt+B.");
-            Shutdown(SecondInstanceActivationFailedExitCode);
+            ScheduleSecondInstanceShutdown(outcome.ExitCode);
             return;
         }
 
@@ -93,6 +105,23 @@ public partial class App : Application
         // açılışta da yok); aksi halde bugünkü davranış (normal göster).
         if (e.Args.Contains(AutostartArg)) window.StartInTray();
         else window.Show();
+    }
+
+    /// <summary>[E2/FIX1] İkinci-instance balloon'unun explorer tarafından RENDER edilmesine zaman tanır: geçici
+    /// tray'i balloon isteğiyle AYNI dispatcher turn'ünde YIKMAK yerine kısa bir <see cref="DispatcherTimer"/>
+    /// gecikmesiyle bırakır, sonra AYRIŞAN çıkış koduyla kapanır. Tick'te tray null'lanır → sonraki
+    /// <see cref="OnExit"/>'in Dispose'u no-op olur (çift-dispose yok).</summary>
+    private void ScheduleSecondInstanceShutdown(int exitCode)
+    {
+        var timer = new DispatcherTimer { Interval = SecondInstanceBalloonLinger };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            _secondInstanceTray?.Dispose();
+            _secondInstanceTray = null;
+            Shutdown(exitCode);
+        };
+        timer.Start();
     }
 
     /// <summary>[E2/T16] Registry autostart değerine yazılacak komut: mevcut exe'nin tam yolu + <see cref="AutostartArg"/>.</summary>

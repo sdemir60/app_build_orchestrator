@@ -227,12 +227,18 @@ public sealed partial class RunViewModel
         }
     }
 
-    /// <summary>[E2/§5-b] Grafın GEOMETRİSİNİ belirleyen alanların (düğüm Id/Ad/katman + kenarlar) sıralı imzası.
-    /// Statü alanları (InCycle/WillBuild) BİLEREK dışarıda — onlar geometri değil renk/rozet, ayrı yoldan (UpdateStatuses)
-    /// akar; imzaya girseler her mid-run Sync gereksiz bir tam yeniden-inşa tetiklerdi.</summary>
+    /// <summary>[E2/§5-b] Grafın GEOMETRİSİNİ belirleyen alanların (düğüm Id/Ad/<b>LayerIndex</b>/LayerName + kenarlar)
+    /// sıralı imzası. <see cref="ProjectNode.LayerIndex"/> grafın satır/sütun yerleşiminin GERÇEK sürücüsüdür
+    /// (<c>GraphBinder.LayerOf = node.LayerIndex ?? topoDepth</c>, <c>GraphLayout</c> Y = TopMargin + Layer*RowHeight,
+    /// mutlak satırlar) ve <see cref="ProjectNode.LayerName"/> onun VEKİLİ DEĞİLDİR (D7 katman düzeni LayerName aynıyken
+    /// LayerIndex'i kaydırabilir — ör. ortaya boş katman ekleme / Other kovasını iten pattern). İmzaya girmezse
+    /// böyle bir kayma kaçırılıp graf bayat satırlarda kalırdı ([E2/FIX2]). Statü alanları (InCycle/WillBuild)
+    /// BİLEREK dışarıda — onlar geometri değil renk/rozet, ayrı yoldan (UpdateStatuses) akar; imzaya girseler her
+    /// mid-run Sync gereksiz bir tam yeniden-inşa tetiklerdi. LayerIndex aynıyken token da aynıdır → sahte
+    /// yeniden-inşa OLMAZ.</summary>
     private static string TopologySignature(IReadOnlyList<ProjectNode> nodes) =>
         string.Join(";", nodes.Select(n =>
-            $"{n.Id}|{n.Name}|{n.LayerName}|{string.Join(",", n.Dependencies)}"));
+            $"{n.Id}|{n.Name}|{n.LayerIndex}|{n.LayerName}|{string.Join(",", n.Dependencies)}"));
 
     private int IndexOf(string projectId)
     {

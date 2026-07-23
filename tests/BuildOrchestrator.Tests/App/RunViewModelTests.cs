@@ -788,7 +788,10 @@ public class RunViewModelTests
         vm.OnEngineExited(139);
 
         Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
-        Assert.Contains("139", vm.EngineDiedMessage);
+        // [E2/FIX3] Gevşek Contains("139") tek başına Türkçe bir regresyonu (ör. "Motor beklenmedik…") yine
+        // GEÇİRİRDİ (İngilizce-sweep folder'ını boşa çıkarır). Üretim literaline (OnEngineExited) TAM pinle.
+        Assert.StartsWith("Engine stopped unexpectedly", vm.EngineDiedMessage, StringComparison.Ordinal);
+        Assert.Contains("139", vm.EngineDiedMessage); // exit kodu korunur
     }
 
     [Fact] // [Review fix, Task 16] EngineDiedMessage engine ölümünden sonra KALICI kalmamalı — sonraki run gerçekten
@@ -818,6 +821,7 @@ public class RunViewModelTests
 
         Assert.Equal(AppPhase.Stopped, vm.Phase);                 // [F3] terminal Phase (Running'de asılı kalmaz)
         Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
+        Assert.StartsWith("Engine stopped unexpectedly", vm.EngineDiedMessage, StringComparison.Ordinal); // [E2/FIX3] İngilizce pinlenir
         Assert.Contains("139", vm.EngineDiedMessage);             // exit kodu korunur
         Assert.False(vm.IsRunning);
         Assert.False(vm.IsStarting);
@@ -1194,6 +1198,37 @@ public class RunViewModelTests
         // Yapı GERÇEKTEN değişir (yeni düğüm eklenir) — yeniden kurulmalı.
         vm.OnEvent(Topo(Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"]),
             Node(@"C:\p\c.csproj", "C", 2)));
+        Assert.Equal(2, topologyChanged);
+    }
+
+    // [E2/FIX2] §5b imzası grafın GEOMETRİ sürücüsünü (LayerIndex) İÇERMELİDİR. LayerName, LayerIndex'in vekili
+    // DEĞİLDİR: kullanıcı D7 katman pattern'lerini düzenleyip (ör. ortaya boş katman ekleyip / Other kovasını
+    // iten eşleşmeyen bir pattern ekleyip) bir grup düğümün LayerIndex'ini kaydırdığında Id/Ad/LayerName/
+    // Dependencies VE OrderBy(LayerIndex) yayın sırası BYTE-AYNI kalabilir. LayerIndex imzada yoksa
+    // TopologyChanged ateşlenmez → SetGraph koşmaz → düğümler bayat satırlarda (bir tam satır kayması +
+    // eksik/fazla boş katman bandı) kalır. SADECE LayerIndex değişince de yeniden kurulmalı.
+    [Fact]
+    public async Task A_layer_index_only_shift_re_raises_TopologyChanged()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        int topologyChanged = 0;
+        vm.TopologyChanged += (_, _) => topologyChanged++;
+
+        // Aynı Id/Ad/LayerName/Dependencies + AYNI yayın sırası; SADECE LayerIndex farklı.
+        ProjectNode NodeAt(int layerIndex) => new(
+            @"C:\p\a.csproj", "A", @"C:\p\a.csproj",
+            SolutionNames: ["Osys"], Dependencies: [], BuildOrder: 0,
+            LayerIndex: layerIndex, LayerName: "Edge", InCycle: false, WillBuild: null);
+        WorkspaceTopologyEvent Topo(ProjectNode n) => new([n], [], [], []);
+
+        vm.OnEvent(Topo(NodeAt(0)));
+        Assert.Equal(1, topologyChanged); // ilk topoloji: graf ilk kez kurulur
+
+        vm.OnEvent(Topo(NodeAt(0))); // hiçbir şey değişmedi — ateşlenmez
+        Assert.Equal(1, topologyChanged);
+
+        vm.OnEvent(Topo(NodeAt(1))); // SADECE LayerIndex kaydı → graf satırı yer değiştirir → yeniden kurulmalı
         Assert.Equal(2, topologyChanged);
     }
 
