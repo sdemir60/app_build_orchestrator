@@ -13,7 +13,7 @@ namespace BuildOrchestrator.App.Views;
 /// <see cref="RunViewModel.Branches"/>'ten okunur. Arama BÜYÜK/küçük harf duyarsız alt-dize filtreler; kapanınca
 /// (<see cref="IsOpen"/>=false) sorgu SIFIRLANIR. Bir satıra tıklamak <see cref="RunViewModel.SelectBranch"/>'i
 /// çağırır (K3: worktree zorlama + niyet satırı — <c>git switch</c> DEĞİL) ve <see cref="BranchPicked"/>'i yayar
-/// (ActinBar popover'ı kapatır).
+/// (ActionBar popover'ı kapatır).
 /// </summary>
 public partial class BranchPopover : UserControl
 {

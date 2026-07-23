@@ -42,13 +42,19 @@ public partial class ActionBarTests
         ]));
         vm.Branch = "main";
 
+        // [D6 fix-wave] Satırı ÖNCE terminal (Succeeded) bir duruma sürükle — SelectBranch'in reset döngüsünün
+        // GERÇEKTEN çalıştığını kanıtlamak için (aksi halde satır zaten Pending'den geldiği için Assert.All
+        // hiçbir şey ispatlamaz). SelectBranch RunId/IsRunning kontrolü yapmaz, bu yüzden run BAŞLATMAYA gerek yok.
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        Assert.Equal(ProjectRowState.Succeeded, vm.Projects.Single().State); // ön-koşul: satır gerçekten terminal
+
         vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, true));
 
         Assert.Equal("feature/x", vm.Branch);
         Assert.True(vm.UseWorktree);      // aktif-olmayan branch → worktree ZORUNLU ON
         Assert.True(vm.IsWorktreeForced);
         Assert.Equal(AppPhase.Boot, vm.Phase);
-        Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
+        Assert.Equal(ProjectRowState.Pending, vm.Projects.Single().State); // reset döngüsü GERÇEKTEN çalıştı (Succeeded→Pending)
 
         string doc = vm.GetRunDocumentText();
         Assert.Contains("branch target: feature/x (bbbbbbb) — worktree will be used at Build", doc);
@@ -87,6 +93,8 @@ public partial class ActionBarTests
         Assert.Equal("feature-foo-2", RunViewModel.AutoWorktreeName("feature/foo", worktrees)); // slug + (mevcut 1)+1
         Assert.Equal("main-2", RunViewModel.AutoWorktreeName("main", worktrees));
         Assert.Equal("release-hotfix-1", RunViewModel.AutoWorktreeName("release/hotfix", worktrees)); // eşleşen yok → 1
+        // [D6 fix-wave] çok-slash'lı branch: Replace('/','-') TÜM slash'ları değiştirmeli (yalnız ilkini DEĞİL).
+        Assert.Equal("feature-foo-bar-1", RunViewModel.AutoWorktreeName("feature/foo/bar", worktrees));
     }
 
     // ---------------------------------------------------------------- görünüm kablajı (GERÇEK ActionBar/BuildMenu)
@@ -128,6 +136,26 @@ public partial class ActionBarTests
         Click(bar.SigmaChip);                                   // Σ HER ZAMAN temizler
         Assert.Null(vm.ActiveFilter);
         Assert.False(bar.SigmaChip.IsChecked);                  // Σ hiç aktif olmaz
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Sigma_chip_click_with_no_active_filter_still_ends_up_unchecked()
+    {
+        // [D6 fix-wave] ActiveFilter zaten null iken Σ'ya tık: ToggleFilter(null) no-op'tur (null→null), bu
+        // yüzden PropertyChanged YAYINLAMAZ (CommunityToolkit eşitlik kontrolü) → RefreshChips ÇALIŞMAZ.
+        // WPF'in native ToggleButton.OnClick'i (OnToggle → IsChecked=true, SONRA Click event) burada
+        // RaiseEvent ile bypass edildiğinden, native davranışı simüle etmek için tık ÖNCESİ IsChecked
+        // elle true'ya çekilir — gerçek bir tıkta olacağı gibi.
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Null(vm.ActiveFilter);       // hiçbir filtre aktif değilken başla
+        bar.SigmaChip.IsChecked = true;     // native toggle-on-click'i simüle et
+        Click(bar.SigmaChip);
+
+        Assert.Null(vm.ActiveFilter);       // ToggleFilter(null) no-op kalır
+        Assert.False(bar.SigmaChip.IsChecked); // Σ HER ZAMAN unchecked bitmeli — amber'da takılı kalmamalı
         GC.KeepAlive(window);
     }
 

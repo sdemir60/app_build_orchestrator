@@ -166,7 +166,7 @@ public partial class ActionBar : UserControl
     {
         _sigmaChip = AddCounterChip(IconVisual.Make(this, "Icon.Sigma", "Brush.TextDim", ChipIconSize), out _sigmaValue,
             "All projects — clear filter", first: true);
-        _sigmaChip.Click += (_, _) => _vm?.ToggleFilter(null); // Σ HER ZAMAN temizler
+        _sigmaChip.Click += (_, _) => { _vm?.ToggleFilter(null); _sigmaChip.IsChecked = false; }; // Σ HER ZAMAN temizler (ActiveFilter zaten null'sa ToggleFilter no-op'tur → PropertyChanged gelmez → burada zorla)
 
         _buildingChip = AddCounterChip(BuildingIcon(), out _buildingValue, "Building now — filter");
         _buildingChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Building);
