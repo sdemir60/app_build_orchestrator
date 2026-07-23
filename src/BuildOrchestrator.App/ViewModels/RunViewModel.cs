@@ -168,6 +168,7 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly ConsoleBatcher _console;
     private readonly Func<string> _newRunId;
     private readonly Func<long> _nowMs; // [Minor/Fix wave 1] elapsed hesap kaynağı — testte deterministik saat enjekte edilir (D8)
+    private readonly Services.IOsActions? _osActions; // [E1/T67] satır hover ikonlarının OS eylemleri (Reveal/Open-in-VS); üretimde daima enjekte, testte null default = güvenli no-op
 
     // [Kısıt 4] _runText/_projectText/_liveLines HEM arka plan thread'inden (OnProjectLog — marshal YOK,
     // A13.2) HEM UI thread'inden (chunk/Get*DocumentText) dokunulur — düz Dictionary/StringBuilder thread-safe
@@ -359,12 +360,14 @@ public sealed partial class RunViewModel : ObservableObject
         if (Phase == AppPhase.Empty && !string.IsNullOrEmpty(value)) Phase = AppPhase.Boot;
     }
 
-    public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null)
+    public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null,
+        Services.IOsActions? osActions = null)
     {
         _engine = engine;
         _console = console;
         _newRunId = newRunId;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
+        _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
     }
 
     // ---------------------------------------------------------------- komutlar
@@ -971,6 +974,78 @@ public sealed partial class RunViewModel : ObservableObject
     {
         projectId = SelectedProjectId;
         return projectId is null ? ConsoleSelection.ShowRun : ConsoleSelection.LoadProjectLog;
+    }
+
+    // ---------------------------------------------------------------- [E1/T67] OS eylemleri (Reveal / Open-in-VS)
+
+    /// <summary>[E1/T67] Bir projenin Open-in-VS adaylarını çözer: kart yalnız İLK sln adını saklar (T32), Open-in-VS
+    /// ise projenin TÜM <see cref="ProjectNode.SolutionNames"/>'ini topolojiden çözüp eşleşen <see cref="Solutions"/>
+    /// girdilerini döndürür. Bilinmeyen proje / sln'i olmayan proje → boş.</summary>
+    public IReadOnlyList<SolutionRef> SolutionCandidatesFor(string projectId)
+    {
+        var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        if (node is null || node.SolutionNames.Count == 0) return [];
+        var names = new HashSet<string>(node.SolutionNames, StringComparer.OrdinalIgnoreCase);
+        return Solutions.Where(s => names.Contains(s.Name)).ToList();
+    }
+
+    /// <summary>[E1/T67] Satırın klasör ikonunun eylemi: dosyayı Explorer'da seçili açar (satır Id'si = csproj yolu)
+    /// + verbatim dim not. <see cref="_osActions"/> null ise güvenle no-op.</summary>
+    public void RevealProjectInExplorer(string projectId)
+    {
+        if (_osActions is null) return;
+        _osActions.RevealInExplorer(projectId);
+        AppendRunLine($"{ShortNameFor(projectId)}.csproj revealed in Explorer"); // BİREBİR (brief §4)
+    }
+
+    /// <summary>[E1/T67] Satırın VS ikonunun eylemi. Adaylar çözülüp <see cref="IOsActions.OpenInVisualStudio"/>'ya
+    /// delege edilir:
+    /// <list type="bullet">
+    /// <item><b>Opened</b> → verbatim opened not, <c>null</c> döner (chooser gerekmez).</item>
+    /// <item><b>NeedsChoice</b> → chooser adayları döner (ProjectRow popover'ı açar), not YAZILMAZ.</item>
+    /// <item><b>NoSolution</b> → <c>null</c>, not YAZILMAZ.</item>
+    /// <item><b>VisualStudioNotFound</b> → <c>null</c>, opened notu YAZILMAZ; makul bir dim başarısızlık notu (pinlenmemiş).</item>
+    /// </list></summary>
+    public IReadOnlyList<SolutionRef>? OpenProjectInVisualStudio(string projectId)
+    {
+        if (_osActions is null) return null;
+        var result = _osActions.OpenInVisualStudio(SolutionCandidatesFor(projectId));
+        switch (result.Outcome)
+        {
+            case Services.OpenInVsOutcome.Opened:
+                AppendOpenedNote(projectId);
+                return null;
+            case Services.OpenInVsOutcome.NeedsChoice:
+                return result.Candidates;
+            case Services.OpenInVsOutcome.VisualStudioNotFound:
+                AppendRunLine($"Visual Studio not found — install it to open {ShortNameFor(projectId)}");
+                return null;
+            default: // NoSolution
+                return null;
+        }
+    }
+
+    /// <summary>[E1/T67] Chooser'dan seçim: seçilen tek solution VS'de açılır + Opened ise verbatim opened not.</summary>
+    public void OpenSolutionInVisualStudio(string projectId, SolutionRef chosen)
+    {
+        if (_osActions is null) return;
+        var result = _osActions.OpenInVisualStudio([chosen]);
+        if (result.Outcome == Services.OpenInVsOutcome.Opened)
+            AppendOpenedNote(projectId);
+        else if (result.Outcome == Services.OpenInVsOutcome.VisualStudioNotFound)
+            AppendRunLine($"Visual Studio not found — install it to open {ShortNameFor(projectId)}");
+    }
+
+    private void AppendOpenedNote(string projectId) =>
+        AppendRunLine($"{ShortNameFor(projectId)} opened in Visual Studio"); // BİREBİR (brief §4 — .csproj YOK)
+
+    /// <summary>Projenin kısa adı (kart <c>Name</c>'i): önce açık satır, sonra topoloji düğümü, yoksa dosya adı.</summary>
+    private string ShortNameFor(string projectId)
+    {
+        var row = Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        if (row is not null) return row.Name;
+        var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        return node?.Name ?? Path.GetFileNameWithoutExtension(projectId);
     }
 
     /// <summary>[D4 review §2/§3] <see cref="LoadProjectLogAsync"/> bittikten sonra proje-log gösterilmeli mi:

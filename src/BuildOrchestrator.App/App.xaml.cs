@@ -4,6 +4,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Core.Processes;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BuildOrchestrator.App;
@@ -50,8 +51,11 @@ public partial class App : Application
             Path.Combine(AppContext.BaseDirectory, "supervisor", "BuildOrchestrator.Supervisor.exe")));
         // Üretimde ~50ms tick — Task 11'in kanıtladığı batching davranışı; test'te enjekte edilen tick kullanılır.
         sc.AddSingleton(_ => new ConsoleBatcher(ct => Task.Delay(50, ct)));
+        // [E1/T67] Satır hover ikonlarının OS eylemleri: gerçek Process.Start başlatıcısı + gerçek ProcessRunner
+        // (vswhere→devenv). Testler osActions=null default'u kullanır (VM eylemleri güvenle no-op).
         sc.AddSingleton(sp => new RunViewModel(
-            sp.GetRequiredService<EngineHost>(), sp.GetRequiredService<ConsoleBatcher>(), () => Guid.NewGuid().ToString()));
+            sp.GetRequiredService<EngineHost>(), sp.GetRequiredService<ConsoleBatcher>(), () => Guid.NewGuid().ToString(),
+            osActions: new OsActions(new ProcessLauncher(), new ProcessRunner())));
         sc.AddSingleton<MainWindow>();
         Services = sc.BuildServiceProvider();
         var window = Services.GetRequiredService<MainWindow>();

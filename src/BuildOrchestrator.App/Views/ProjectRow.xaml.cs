@@ -8,6 +8,7 @@ using System.Windows.Shapes;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.Views;
@@ -63,6 +64,11 @@ public partial class ProjectRow : UserControl
         KeyDown += OnRowKeyDown;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+
+        // [E1/T67] Hover ikonları → OS eylemleri (VM üzerinden). Chooser popover'ı D6 deseni: açılışta PopIn.
+        PART_RevealButton.Click += OnRevealClick;
+        PART_VsButton.Click += OnVsClick;
+        PART_VsChooser.Opened += (_, _) => PopIn.Play(PART_VsChooserContent);
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -388,6 +394,62 @@ public partial class ProjectRow : UserControl
             FindRunViewModel()?.SelectProject(vm.Id);
             e.Handled = true;
         }
+    }
+
+    // ---------------------------------------------------------------- [E1/T67] hover ikon eylemleri
+    /// <summary>Klasör ikonu → dosyayı Explorer'da seçili aç (satır Id'si = csproj yolu). Buton mouse event'i
+    /// handled ettiğinden satır seçimi (OnRowClicked) tetiklenmez.</summary>
+    private void OnRevealClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm is { } vm) FindRunViewModel()?.RevealProjectInExplorer(vm.Id);
+    }
+
+    /// <summary>VS ikonu → bağlı solution'ı VS'de aç. Birden çok solution varsa VM chooser adaylarını döndürür →
+    /// küçük seçim popover'ı açılır (D6 deseni). Tek/sıfır solution'da (chooser null/boş) hiçbir şey açılmaz —
+    /// eylem zaten VM içinde tamamlandı (opened / no-sln / VS-not-found).</summary>
+    private void OnVsClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm is not { } vm) return;
+        var chooser = FindRunViewModel()?.OpenProjectInVisualStudio(vm.Id);
+        if (chooser is not { Count: > 0 }) return;
+        BuildVsChooserRows(chooser);
+        PART_VsChooser.IsOpen = true;
+    }
+
+    private void BuildVsChooserRows(IReadOnlyList<SolutionRef> candidates)
+    {
+        PART_VsChooserRows.Children.Clear(); // minik non-virtualized liste (BranchPopover deseni)
+        foreach (var sln in candidates) PART_VsChooserRows.Children.Add(BuildVsRow(sln));
+    }
+
+    private Border BuildVsRow(SolutionRef sln)
+    {
+        var name = new TextBlock
+        {
+            Text = sln.Name,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontFamily = AppFonts.Mono,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap,
+        };
+        name.SetResourceReference(FontSizeProperty, "FontSize.Xs");
+        name.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
+
+        var row = new Border
+        {
+            Height = 28,
+            Padding = new Thickness(6, 0, 6, 0),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Child = name,
+        };
+        row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
+        HoverBackground.Attach(row);
+        row.MouseLeftButtonUp += (_, _) =>
+        {
+            PART_VsChooser.IsOpen = false; // seçince kapan (BranchPopover.Pick deseni)
+            if (_vm is { } vm) FindRunViewModel()?.OpenSolutionInVisualStudio(vm.Id, sln);
+        };
+        return row;
     }
 
     /// <summary>[C1 debt] Seçim RunViewModel'de yaşar; kartın DataContext'i satır VM'idir → ata ağaçta
