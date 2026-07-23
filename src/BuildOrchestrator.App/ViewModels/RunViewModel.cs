@@ -302,6 +302,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// dek stale kalıp, tamamen başarılı sonraki run'larda bile güncel engine sağlığını yanlış yansıtırdı.</summary>
     [ObservableProperty] private string? _engineDiedMessage;
 
+    /// <summary>[E2/T10] Son Sync başarısız olduysa hata gerekçesi (ErrorEvent.Message) — şerit bunu KIRMIZI
+    /// <c>Sync failed — {reason}</c> faz-metnine çevirir (<see cref="RibbonText.Compose"/>). Bir sonraki Sync
+    /// (<see cref="OnSyncStarted"/> retry) ya da başarılı tamamlanma (<see cref="OnSyncCompleted"/>) temizler.
+    /// Sync SALT-OKUR olduğundan Sync ile retry her zaman mümkündür (butonlar kilitlenmez).</summary>
+    [ObservableProperty] private string? _syncErrorMessage;
+
     // ---------------------------------------------------------------- [C2] seçim / filtre / workspace hedefi / perf
 
     /// <summary>[C2] Proje listesinde seçili satırın Id'si (yol) — null = seçim yok. <see cref="SelectProject"/>
@@ -466,6 +472,26 @@ public sealed partial class RunViewModel : ObservableObject
     private Task ContinueAsync() => BeginRunAsync(RunMode.Continue, clearBuffers: false); // [design doContinue] seçim/filtre KORUNUR
     private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue;
 
+    /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
+    /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
+    /// (engine geri geldi — bir sonraki runStarted'ı beklemeden, çünkü Restart tek başına da engine sağlığını
+    /// kanıtlar). MainWindow'un <c>_engine.EventReceived</c>/<c>EngineExited</c> abonelikleri AYNI EngineHost
+    /// instance'ında kaldığından yeniden kablolama gerekmez. Gönderim başarısız olursa gerekçe konsola düşer ve
+    /// hata modu KALIR (kullanıcı tekrar deneyebilir).</summary>
+    [RelayCommand]
+    private async Task RestartEngineAsync()
+    {
+        try
+        {
+            await _engine.RestartAsync();
+            EngineDiedMessage = null;
+        }
+        catch (Exception ex)
+        {
+            AppendRunLine($"[error] engine restart failed: {ex.Message}");
+        }
+    }
+
     /// <summary>[C2] Aynı projeye tekrar tıklamak seçimi kaldırır (kanonik deselect, BuildApp.jsx). Proje
     /// Id'leri Windows dosya yollarıdır → <see cref="StringComparison.OrdinalIgnoreCase"/>.</summary>
     public void SelectProject(string? id) =>
@@ -565,7 +591,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         DebugOnCommandSent?.Invoke(cmd);
         try { await _engine.SendAsync(cmd); return true; }
-        catch (Exception ex) { AppendRunLine($"[hata] {what} gönderilemedi: {ex.Message}"); return false; }
+        catch (Exception ex) { AppendRunLine($"[error] failed to send {what}: {ex.Message}"); return false; }
     }
 
     /// <summary>[C2 testleri] YALNIZ testler ayarlar (bkz. <see cref="DebugAfterStitchLockExited"/> deseni):
@@ -782,7 +808,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnError(ErrorEvent e)
     {
-        AppendRunLine($"[hata] {e.Code}: {e.Message}");
+        AppendRunLine($"[error] {e.Code}: {e.Message}");
         // [Fix wave 1(It-3), Finding 2] logNotFound (ör. Skipped/cycle üyesi proje kartına tıklama — hiç log
         // dosyası yok) OnError'da hiç ele alınmıyordu: bekleyen LoadProjectLogAsync'in Completion'ı asla
         // tamamlanmaz, await SONSUZA DEK asılı kalırdı. ErrorEvent'te ProjectId yok (kontrat sabit) — eldeki
@@ -797,7 +823,7 @@ public sealed partial class RunViewModel : ObservableObject
         // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten
         // geldiyse (uçuşta bir Sync var ve run planlama penceresinde DEĞİL) run state'ine DOKUNULMAZ — Sync
         // salt-okurdur ve koşan bir run sırasında da tetiklenebilir. Gerekçe: RunViewModel.Workspace.cs.
-        if (TryConsumeSyncFailure(e.Code)) return;
+        if (TryConsumeSyncFailure(e.Code, e.Message)) return;
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
         CanContinue = false;
@@ -824,9 +850,17 @@ public sealed partial class RunViewModel : ObservableObject
     /// — çağıran (MainWindow) bu sorumluluğu taşır, VM'in kendisi Dispatcher TÜRÜ TAŞIMAZ (test edilebilirlik).</para></summary>
     public void OnEngineExited(int? exitCode)
     {
+        // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
+        // Exit kodu (varsa) KORUNUR — test bu sayıyı pinler.
         EngineDiedMessage = exitCode is { } code
-            ? $"engine öldü (exit {code})"
-            : "engine öldü (framing hatası)";
+            ? $"Engine stopped unexpectedly (exit {code})"
+            : "Engine stopped unexpectedly (protocol error)";
+        // [E2/F3 fold] Terminal Phase kararı: engine run ORTASINDA (Phase=Running) ölürse Phase Running'de asılı
+        // kalıp IsRunning=false ile çelişik bir resting state bırakıyordu. Şerit kalıcı-hata modu EngineDiedMessage
+        // != null ÖNCELİĞİYLE Phase'i YOK SAYAR (bkz. RibbonText.Compose), yani terminal Phase seçimi KOZMETİKtir;
+        // yine de tutarlılık için Running → Stopped'a çekilir. YALNIZ Running'e dokunulur: Idle/Boot/Empty gibi
+        // resting fazlar (engine repo seçili değilken de ölebilir) Stopped'a çekilmez — yanıltıcı olurdu.
+        if (Phase == AppPhase.Running) Phase = AppPhase.Stopped;
         IsRunning = false;
         IsStarting = false;
         CanContinue = false;
@@ -1075,7 +1109,7 @@ public sealed partial class RunViewModel : ObservableObject
         try { await _engine.SendAsync(new GetProjectLogCommand(projectId)); }
         catch (Exception ex)
         {
-            AppendRunLine($"[hata] proje logu istenemedi: {ex.Message}");
+            AppendRunLine($"[error] could not load project log: {ex.Message}");
             // [Fix wave 2, Finding 2] SendAsync engine ölüyken/hiç başlamamışken SENKRON fırlar (writer null) —
             // bu catch `await` HİÇBİR suspension olmadan senkron çalışır. Önceden Completion burada asla
             // tamamlanmıyordu: hiçbir yanıt/event gelmeyeceğinden aşağıdaki `await pending.Completion.Task`

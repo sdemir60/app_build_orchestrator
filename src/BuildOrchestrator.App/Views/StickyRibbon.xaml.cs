@@ -146,6 +146,10 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.FinishedOfWillBuild):
             case nameof(RunViewModel.HasWorkspace):
             case nameof(RunViewModel.RootPath):
+            // [E2/T37+T10] Engine-died kalıcı hata modu ve Sync-failed KIRMIZI metni faz-metnini EZER (RibbonText
+            // öncelik sırası) → değiştiklerinde metni yeniden kur (Restart engine butonu görünürlüğü de RefreshText'te).
+            case nameof(RunViewModel.EngineDiedMessage):
+            case nameof(RunViewModel.SyncErrorMessage):
                 RefreshText();
                 RefreshProgress();
                 break;
@@ -181,8 +185,12 @@ public partial class StickyRibbon : UserControl
         var c = _vm.Counters;
         var line = RibbonText.Compose(_vm.Phase, _vm.HasWorkspace, _vm.AllClean, c,
             _vm.WillBuildCount, _vm.FinishedOfWillBuild, c.Total,
-            _vm.ElapsedMs, _vm.EtaMs, checkDurMs: _vm.ElapsedMs, warnings: 0);
+            _vm.ElapsedMs, _vm.EtaMs, checkDurMs: _vm.ElapsedMs, warnings: 0,
+            engineDiedMessage: _vm.EngineDiedMessage, syncError: _vm.SyncErrorMessage);
         // NOT (wire gap): warnings=0 — App derleyici-warning sayısını izlemiyor (RunCompletedEvent'te yok). Bkz. report.
+
+        // [E2/T37] "Restart engine" YALNIZ engine-died kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
+        PART_RestartEngine.Visibility = string.IsNullOrEmpty(_vm.EngineDiedMessage) ? Visibility.Collapsed : Visibility.Visible;
 
         PART_PhaseText.Text = line.Text;
         PART_PhaseText.SetResourceReference(TextBlock.ForegroundProperty, line.BrushKey);

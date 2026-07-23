@@ -60,5 +60,11 @@ internal sealed class AppTrayIcon : IDisposable
         message: "Still running in the tray. Right-click the tray icon and choose Exit to quit.",
         icon: NotificationIcon.Info);
 
+    /// <summary>[E2/triaj-f] Genel OS tray balloon'u — ikinci instance mevcut pencereyi öne getiremediğinde
+    /// (SESSİZ kalmamak için) tek-satırlık bilgilendirme gösterir. Uygulama-içi toast değil (design §8 yasağı) —
+    /// bilinçli olarak OS bildirimi.</summary>
+    public void ShowNotification(string title, string message) =>
+        _icon.ShowNotification(title: title, message: message, icon: NotificationIcon.Warning);
+
     public void Dispose() => _icon.Dispose();
 }

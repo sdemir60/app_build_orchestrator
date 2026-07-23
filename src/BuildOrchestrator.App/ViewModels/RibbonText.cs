@@ -40,10 +40,25 @@ public static class RibbonText
     /// <param name="warnings">Derleyici warning sayısı (done satırlarında, dep-uyarıları HARİÇ).</param>
     public static RibbonLine Compose(AppPhase phase, bool hasWorkspace, bool allClean, RunCounters c,
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
-                                     long elapsedMs, long? etaMs, long? checkDurMs, int warnings)
+                                     long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
+                                     string? engineDiedMessage = null, string? syncError = null)
     {
+        // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
+        // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
+        // Phase YOK SAYILIR. En yüksek öncelik. Banner/toast YOK: kalıcı mod şerit-içidir, "Restart engine"
+        // aksiyonu görünümde (StickyRibbon) eklenir.
+        if (engineDiedMessage is { Length: > 0 })
+            return new RibbonLine(engineDiedMessage, "Brush.StatusFailText", "failed");
+
         if (!hasWorkspace)
             return new RibbonLine("Not ready — no repository selected", "Brush.TextFaint", null);
+
+        // [E2/T10] Son Sync başarısız oldu (repo seçili): KIRMIZI "Sync failed — {reason}" — faz-metninin önüne
+        // geçer (retry = Sync; başarılı Sync ya da yeni Sync başlangıcı temizler). Engine-died'dan sonra gelir.
+        if (syncError is { Length: > 0 })
+            return new RibbonLine(
+                string.Format(CultureInfo.InvariantCulture, "Sync failed — {0}", syncError),
+                "Brush.StatusFailText", "failed");
 
         switch (phase)
         {
@@ -54,6 +69,8 @@ public static class RibbonText
                 return new RibbonLine("▸ Sync — git fetch origin…", "Brush.TextSecondary", null);
 
             case AppPhase.Idle:
+                if (totalProjects == 0) // [E2/T10] repo Sync'lendi ama hiç proje yok (0-proje state)
+                    return new RibbonLine("Ready — nothing to build", "Brush.TextSecondary", null);
                 return new RibbonLine(
                     allClean
                         ? "▸ Ready — everything looks up to date"

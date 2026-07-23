@@ -4,7 +4,8 @@
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:appConsole="clr-namespace:BuildOrchestrator.App.Console"
              xmlns:graph="clr-namespace:BuildOrchestrator.App.Graph"
-             xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
+             xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels">
   <!--
     [T35] Pencere GÖVDESİ (design-v1 kök yerleşimi). Pencere kabuğu (WindowChrome/DWM/tray/hotkey/title bar
     + caption butonları) MainWindow'dadır; burada test edilebilir LAYOUT vardır. Kök grid = ribbon · gövde ·
@@ -69,6 +70,29 @@
           </controls:PanelHeader>
           <Grid>
             <controls:StickyLayerList x:Name="PART_Projects" />
+
+            <!-- [E2/T10] Boş-durum davetleri (liste üstünde overlay; görünürlük MainWindow'da ListInvite.Resolve ile).
+                 Metinler tek kaynaktan (InteractionText, x:Static) — verbatim. Repo yokken PickRepository daveti +
+                 Choose Folder; repo Sync'lendi ama 0 proje ise "No projects found under this folder." -->
+            <StackPanel x:Name="PART_ListInvite" Visibility="Collapsed"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="280" Margin="24">
+              <TextBlock Text="{x:Static vm:InteractionText.PickRepositoryTitle}"
+                         HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                         FontSize="{DynamicResource FontSize.Sm}" FontWeight="{DynamicResource FontWeight.Emphasis}"
+                         Foreground="{DynamicResource Brush.TextPrimary}" />
+              <TextBlock Text="{x:Static vm:InteractionText.PickRepositorySubtitle}" Margin="0,8,0,0"
+                         HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                         FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}" />
+              <Button x:Name="PART_ChooseFolder" Content="{x:Static vm:InteractionText.ChooseFolderButton}"
+                      Margin="0,14,0,0" HorizontalAlignment="Center"
+                      Style="{DynamicResource Ds.Button.Primary.Md}" />
+            </StackPanel>
+
+            <TextBlock x:Name="PART_NoProjects" Text="{x:Static vm:InteractionText.NoProjectsFound}"
+                       Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextAlignment="Center" TextWrapping="Wrap" MaxWidth="280"
+                       FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}" />
+
             <controls:LatestPill x:Name="PART_ProjectsPill" Visibility="Collapsed" />
           </Grid>
         </DockPanel>

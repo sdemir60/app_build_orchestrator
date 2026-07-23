@@ -99,6 +99,18 @@ public partial class MainWindow : Window
         RefreshProjectGroups();
         RebuildGraph();
 
+        // [E2/T10] Proje listesi boş-durum davetleri: repo yok → "Pick a repository…" + Choose Folder; repo
+        // Sync'lendi ama 0 proje → "No projects found under this folder." Karar SAF (ListInvite.Resolve); burada
+        // yalnız tetik + uygulama. Choose Folder aynı repo-değiştir yolunu kullanır (PickFolder → ChangeRepositoryAsync).
+        Shell.ChooseFolderButton.Click += OnChooseFolder;
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(RunViewModel.Phase) or nameof(RunViewModel.HasWorkspace)
+                or nameof(RunViewModel.RootPath)) RefreshListInvite();
+        };
+        _vm.Projects.CollectionChanged += (_, _) => RefreshListInvite();
+        RefreshListInvite();
+
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
         // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
@@ -286,7 +298,11 @@ public partial class MainWindow : Window
     /// Topoloji yokken no-op.</summary>
     private void PushGraphStatuses()
     {
-        if (_vm.Topology.Count == 0) return;
+        // [E2/§5-a] Projects boşken (ör. Rebuild başında OnRunStarted listeyi BuildPreview'dan ÖNCE boşaltır) push
+        // ETME: RowsById() boş olurdu ve GraphBinder her topoloji düğümünü bir kare Discovered'a "flash" ederdi
+        // (queued/dirty statüleri kaybolur, sonra BuildPreview yeniden doldurunca geri gelir). Guard no-op'tur —
+        // A13.2 Clear/reset EKLEMEZ; yalnız statü itişini Projects yeniden dolana dek erteler.
+        if (_vm.Topology.Count == 0 || _vm.Projects.Count == 0) return;
         Shell.GraphHost.UpdateStatuses(GraphBinder.Nodes(_vm.Topology, RowsById()));
     }
 
@@ -370,6 +386,18 @@ public partial class MainWindow : Window
         if (_vm.RootPath.Length > 0) dialog.InitialDirectory = _vm.RootPath;
         return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
     }
+
+    /// <summary>[E2/T10] Boş-durum daveti içindeki "Choose Folder": Settings "Change…" ile AYNI yol —
+    /// <see cref="PickFolder"/> → <see cref="RunViewModel.ChangeRepositoryAsync"/> (kök değişir, durumlar sıfırlanır,
+    /// otomatik Sync). Diyalog iptal edilirse no-op.</summary>
+    private async void OnChooseFolder(object sender, RoutedEventArgs e)
+    {
+        if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);
+    }
+
+    /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
+    private void RefreshListInvite() =>
+        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count));
 
     /// <summary>Split sürükleme sonu ya da mod değişimi → kalıcı UiState'e yaz + aktif mod düğmesini eşle.</summary>
     private void OnShellLayoutChanged(object? sender, LayoutState state)
@@ -482,6 +510,13 @@ public partial class MainWindow : Window
         Hide();
         if (_closeBalloon.ClaimShow()) _tray?.ShowClosedToTrayNotification();
     }
+
+    /// <summary>[E2/T16] Autostart ile açılış: pencere GÖSTERİLMEDEN tepside (gizli) başlar. HWND'i erkenden
+    /// oluşturmak (<see cref="System.Windows.Interop.WindowInteropHelper.EnsureHandle"/>) <see cref="OnSourceInitialized"/>'ı
+    /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
+    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Oto-Sync YOKtur (normal açılışta da yok — RepositoryRoot
+    /// açılışta restore edilmez; autostart yolu bugünkü "temiz" başlangıcı tepside korur).</summary>
+    public void StartInTray() => new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
 
     /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.</summary>
     public void ShowFromTray()

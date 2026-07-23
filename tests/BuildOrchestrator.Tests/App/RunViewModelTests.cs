@@ -805,6 +805,38 @@ public class RunViewModelTests
         Assert.Null(vm.EngineDiedMessage); // eski ölüm mesajı artık geçerli engine durumunu YANLIŞ yansıtmamalı
     }
 
+    [Fact] // [E2/F3 fold] Engine run ORTASINDA ölürse: Phase Running'de asılı kalmamalı → tutarlı bir terminale (Stopped)
+    // çekilir VE EngineDiedMessage kurulur (İngilizce, exit kodu KORUNUR). İkisi de tek atımda pinlenir.
+    public async Task OnEngineExited_mid_run_pulls_phase_to_a_terminal_stopped_and_sets_the_message()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        Assert.Equal(AppPhase.Running, vm.Phase); // gerçekten mid-run
+
+        vm.OnEngineExited(139);
+
+        Assert.Equal(AppPhase.Stopped, vm.Phase);                 // [F3] terminal Phase (Running'de asılı kalmaz)
+        Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
+        Assert.Contains("139", vm.EngineDiedMessage);             // exit kodu korunur
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.IsStarting);
+    }
+
+    [Fact] // [E2/F3] Engine RESTING bir fazda (Idle) ölürse Phase'i Stopped'a çekmek YANILTICI olurdu — dokunulmaz.
+    public async Task OnEngineExited_while_idle_leaves_the_resting_phase_untouched()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new SyncCompletedEvent("main", "abc1234", FetchDegraded: false, 3, 0)); // Phase → Idle
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+
+        vm.OnEngineExited(1);
+
+        Assert.Equal(AppPhase.Idle, vm.Phase); // resting faz korunur
+        Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
+    }
+
     [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
     public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
     {
@@ -1136,6 +1168,33 @@ public class RunViewModelTests
         Assert.DoesNotContain(NotifyCollectionChangedAction.Reset, resets);                // [A13.2]
         Assert.Equal(1, topologyChanged);
         Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));      // Sync = yeni taban
+    }
+
+    // [E2/§5-b verify-then-fix] AYNI graf yapısının yeniden yayınlanması (mid-run Sync gibi) TopologyChanged'i
+    // YENİDEN ateşlememeli (SetGraph = tam inşa + reveal stagger + kamera re-home; koşan grafı bozar). YALNIZ
+    // düğüm/kenar YAPISI değişince ateşlenir; statü (InCycle/WillBuild) değişimi ateşlemez (o UpdateStatuses'tan akar).
+    [Fact]
+    public async Task Identical_workspace_topology_does_not_re_raise_TopologyChanged_but_a_structural_change_does()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        int topologyChanged = 0;
+        vm.TopologyChanged += (_, _) => topologyChanged++;
+
+        WorkspaceTopologyEvent Topo(params ProjectNode[] nodes) =>
+            new(Nodes: nodes, Cycles: [], Solutions: [], LayerWarnings: []);
+
+        vm.OnEvent(Topo(Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"])));
+        Assert.Equal(1, topologyChanged); // ilk topoloji: graf ilk kez kurulur
+
+        // AYNI yapı yeniden gelir (yeni ProjectNode örnekleri, aynı Id/Ad/kenar) — re-reveal YOK.
+        vm.OnEvent(Topo(Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"])));
+        Assert.Equal(1, topologyChanged);
+
+        // Yapı GERÇEKTEN değişir (yeni düğüm eklenir) — yeniden kurulmalı.
+        vm.OnEvent(Topo(Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"]),
+            Node(@"C:\p\c.csproj", "C", 2)));
+        Assert.Equal(2, topologyChanged);
     }
 
     // Topolojinin hemen ardından gelen buildPreview, satırların will-dot'unu kurar (mevcut handler — İKİNCİ

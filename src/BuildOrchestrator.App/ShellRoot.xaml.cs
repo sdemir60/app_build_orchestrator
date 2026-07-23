@@ -42,6 +42,22 @@ public partial class ShellRoot : UserControl
     public ConsoleView ConsoleViewControl => PART_ConsoleView;
     public StickyLayerList ProjectsList => PART_Projects;
 
+    // ---- [E2/T10] Proje listesi boş-durum davetleri (görünürlük + Choose Folder kablajı MainWindow'da) ----
+    /// <summary>[E2/T10] "Pick a repository…" daveti (title + subtitle + Choose Folder) — repo seçilmemişken.</summary>
+    public UIElement ListInviteOverlay => PART_ListInvite;
+    /// <summary>[E2/T10] "No projects found under this folder." — repo Sync'lendi ama 0 proje.</summary>
+    public UIElement NoProjectsOverlay => PART_NoProjects;
+    /// <summary>[E2/T10] Boş-durum daveti primary butonu — MainWindow klasör seçiciyi buna bağlar.</summary>
+    public Button ChooseFolderButton => PART_ChooseFolder;
+
+    /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü uygular (karar <see cref="ViewModels.ListInvite"/>'te
+    /// verilir — SAF; burada YALNIZ uygulanır). PickRepository → invite paneli; NoProjects → 0-proje metni; None → ikisi de gizli.</summary>
+    public void SetListInvite(ViewModels.ListInviteState state)
+    {
+        PART_ListInvite.Visibility = state == ViewModels.ListInviteState.PickRepository ? Visibility.Visible : Visibility.Collapsed;
+        PART_NoProjects.Visibility = state == ViewModels.ListInviteState.NoProjects ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     /// <summary>Yerleşim durumunu görsele uygular: kolon/satır star oranları + graf/ayraç görünürlüğü.
     /// list/focus modunda graf VE onun altındaki yatay ayraç gizlenir (satırları 0'a çöker).</summary>
     public void ApplyLayout(LayoutState state)

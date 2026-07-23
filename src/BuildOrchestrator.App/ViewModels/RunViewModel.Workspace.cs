@@ -49,6 +49,14 @@ public sealed partial class RunViewModel
     /// <summary>Topoloji DEĞİŞTİĞİNDE (her statü güncellemesinde DEĞİL) tetiklenir — D5 grafı yalnız bunda yeniden kurar.</summary>
     public event EventHandler? TopologyChanged;
 
+    /// <summary>[E2/§5-b verify-then-fix] Son yayınlanan topolojinin YAPI imzası (düğüm Id/Ad/katman + kenarlar) —
+    /// <see cref="OnWorkspaceTopology"/> her <c>workspaceTopology</c>'de değil, YALNIZ bu imza değiştiğinde
+    /// <see cref="TopologyChanged"/> ateşler. Aksi halde mid-run bir Sync (node seti değişmese de) koşan grafı
+    /// yeniden-reveal edip kamerayı re-home ediyordu (SetGraph = tam inşa + stagger). Statü değişimleri (InCycle/
+    /// WillBuild) BURAYA girmez — onlar zaten <c>UpdateStatuses</c> (PushGraphStatuses) yoluyla akar. <c>null</c> =
+    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur).</summary>
+    private string? _lastTopologySignature;
+
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
     /// <para>[Fix wave 1, C2 review Finding 1] <see cref="RunViewModel.RebuildCommand"/>/<see cref="RunViewModel.RetryFailedCommand"/>
     /// artık <c>_syncInFlight</c>'a da bakıyor (<see cref="RunViewModel.CanRebuildOrRetry"/>) — bu geçişte CanExecuteChanged
@@ -63,6 +71,7 @@ public sealed partial class RunViewModel
     private void OnSyncStarted()
     {
         _syncInFlight = true;
+        SyncErrorMessage = null; // [E2/T10] retry başladı — önceki Sync hatası şeritten kalkar
         Phase = AppPhase.Syncing;
         _willBuildIds.Clear(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
         RebuildCommand.NotifyCanExecuteChanged();
@@ -75,6 +84,7 @@ public sealed partial class RunViewModel
     {
         TargetSha = e.TargetSha;
         FetchDegraded = e.FetchDegraded;
+        SyncErrorMessage = null; // [E2/T10] Sync başarıyla bitti — varsa önceki hata metni temizlenir
         ReleaseSyncPhase();    // [C2 fold] uçuş bayrağını normal yoldan da BURADAN temizle (tek yer)
         Phase = AppPhase.Idle; // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil)
     }
@@ -123,7 +133,7 @@ public sealed partial class RunViewModel
     /// <see cref="_syncInFlight"/> BİLEREK temizlenmez: hata gerçekte run'a aitse Sync hâlâ uçuştadır ve bir
     /// sonraki başarısızlığı yine Sync'e atfedilebilmelidir.</para>
     /// </summary>
-    private bool TryConsumeSyncFailure(string code)
+    private bool TryConsumeSyncFailure(string code, string message)
     {
         if (!SyncErrorCodes.Contains(code) || !_syncInFlight) return false;
         // Faz her iki dalda da bırakılır: hata Sync'e aitse syncCompleted GELMEYECEK (asılı kalırdı); run'a
@@ -131,6 +141,7 @@ public sealed partial class RunViewModel
         if (Phase == AppPhase.Syncing) Phase = Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
         if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
+        SyncErrorMessage = message;   // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)
         // [re-review C2, Finding 4] OnSyncStarted'ın simetriği burada da gerekir: bu, _syncInFlight'ı false'a
         // çeken 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
         // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
@@ -204,8 +215,24 @@ public sealed partial class RunViewModel
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
-        TopologyChanged?.Invoke(this, EventArgs.Empty);
+
+        // [E2/§5-b] TopologyChanged (→ D5 SetGraph = tam inşa + reveal stagger + kamera re-home) YALNIZ graf YAPISI
+        // (düğüm Id/Ad/katman + kenar seti) değiştiğinde ateşlenir. Aynı yapının yeniden yayınlanması (ör. mid-run
+        // Sync) koşan grafı yeniden-reveal ETMEZ; statü/dep tikleri zaten UpdateStatuses'tan (PushGraphStatuses) akar.
+        string signature = TopologySignature(e.Nodes);
+        if (signature != _lastTopologySignature)
+        {
+            _lastTopologySignature = signature;
+            TopologyChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
+
+    /// <summary>[E2/§5-b] Grafın GEOMETRİSİNİ belirleyen alanların (düğüm Id/Ad/katman + kenarlar) sıralı imzası.
+    /// Statü alanları (InCycle/WillBuild) BİLEREK dışarıda — onlar geometri değil renk/rozet, ayrı yoldan (UpdateStatuses)
+    /// akar; imzaya girseler her mid-run Sync gereksiz bir tam yeniden-inşa tetiklerdi.</summary>
+    private static string TopologySignature(IReadOnlyList<ProjectNode> nodes) =>
+        string.Join(";", nodes.Select(n =>
+            $"{n.Id}|{n.Name}|{n.LayerName}|{string.Join(",", n.Dependencies)}"));
 
     private int IndexOf(string projectId)
     {

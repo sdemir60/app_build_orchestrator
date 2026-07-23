@@ -1,7 +1,8 @@
 <UserControl x:Class="BuildOrchestrator.App.Views.EventStreamView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels">
   <!-- [D3/T?] design-v1 Event stream paneli (BuildApp.jsx:639-737). DataContext bir RunViewModel'dir
        (ShellRoot'tan miras). Panel = PanelHead ("{n} events" sayacı) + kaydırılan tampon (render dilimi 150,
        satırlar KOD-tarafı EventStreamRow — parıltı/seçim/daktilo motion sözleşmesince kod-tarafı) + altta canlı
@@ -17,7 +18,7 @@
         <StackPanel>
           <!-- Boş-durum: hiç tampon satırı ve canlı aktif satır yokken "No events yet." (BuildApp.jsx:705-707).
                Görünürlük kod-tarafı yönetilir (RefreshEmptyState). Idle-cursor prompt (proto 726-735) BU DALGADA YOK. -->
-          <TextBlock x:Name="PART_Empty" Text="No events yet." Margin="10,6" Visibility="Collapsed"
+          <TextBlock x:Name="PART_Empty" Text="{x:Static vm:InteractionText.StreamEmpty}" Margin="10,6" Visibility="Collapsed"
                      FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
                      Foreground="{DynamicResource Brush.TextFaint}" />
 

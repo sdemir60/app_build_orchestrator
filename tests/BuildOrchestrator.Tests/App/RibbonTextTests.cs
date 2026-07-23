@@ -60,6 +60,42 @@ public class RibbonTextTests
         Assert.Equal("▸ Ready — 7 to build · 7 up to date", line.Text);
     }
 
+    // [E2/T10] Repo Sync'lendi ama hiç proje yok (0-proje state) → şerit "Ready — nothing to build".
+    [Fact]
+    public void Idle_with_zero_projects_says_nothing_to_build()
+    {
+        var line = RibbonText.Compose(AppPhase.Idle, true, allClean: true, Counters(total: 0),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 0, elapsedMs: 0, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("Ready — nothing to build", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
+    // [E2/T10] Son Sync başarısız oldu → şerit KIRMIZI "Sync failed — {reason}" (faz-metnini EZER).
+    [Fact]
+    public void Sync_failed_shows_a_red_reason_line_over_the_phase_text()
+    {
+        var line = RibbonText.Compose(AppPhase.Idle, hasWorkspace: true, allClean: false, Counters(),
+            willBuild: 3, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 0, etaMs: null, checkDurMs: null,
+            warnings: 0, engineDiedMessage: null, syncError: "fatal: could not read from remote repository");
+        Assert.Equal("Sync failed — fatal: could not read from remote repository", line.Text);
+        Assert.Equal("Brush.StatusFailText", line.BrushKey);
+        Assert.Equal("failed", line.Glyph);
+    }
+
+    // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine öldüyse şerit, HANGİ Phase'de olursa olsun KIRMIZI ölüm metnini
+    // gösterir — Phase (burada Running) ve hatta bir Sync hatası bile YOK SAYILIR (en yüksek öncelik).
+    [Fact]
+    public void Engine_died_message_overrides_every_phase_and_takes_priority_over_sync_error()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, hasWorkspace: true, allClean: false, Counters(building: 2),
+            willBuild: 5, finishedOfWillBuild: 1, totalProjects: 14, elapsedMs: 1234, etaMs: 8000, checkDurMs: null,
+            warnings: 0, engineDiedMessage: "Engine stopped unexpectedly (exit 139)", syncError: "some sync error");
+        Assert.Equal("Engine stopped unexpectedly (exit 139)", line.Text);
+        Assert.Equal("Brush.StatusFailText", line.BrushKey);
+        Assert.Equal("failed", line.Glyph);
+    }
+
     [Fact]
     public void Running_all_clean_line_says_checking()
     {
