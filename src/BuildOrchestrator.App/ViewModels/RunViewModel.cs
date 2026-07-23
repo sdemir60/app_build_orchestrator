@@ -464,6 +464,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         foreach (var row in Projects)
             row.IsSelected = string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
+        PropagateSelectionToStream(value); // [D3] stream satırları da tek seçim kaynağından tazelenir
     }
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı — <see cref="ProjectRowViewModel.Status"/>'un
@@ -607,6 +608,11 @@ public sealed partial class RunViewModel : ObservableObject
             case BranchListEvent e: Replace(Branches, e.Branches); break;
             case WorktreeListEvent e: Replace(Worktrees, e.Worktrees); break;
         }
+
+        // [D3] Event stream (tampon anlatı + aktif satır) — proje satırları/sayaçlar YUKARIDA güncellendikten
+        // SONRA türetilir (ad çözümü + done-glyph'in Counters.Failed'i doğru okunsun). Marshal-free ProjectLogEvent
+        // hot-path'ine (Ek A13.2) DOKUNMAZ: yalnız zaten UI-thread'inde olan OnEvent dalından çağrılır.
+        AppendStreamFor(ev);
     }
 
     private void OnRunStarted(RunStartedEvent e)

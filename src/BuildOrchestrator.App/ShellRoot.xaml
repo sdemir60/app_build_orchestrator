@@ -93,13 +93,8 @@
 
         <controls:DsSplitter x:Name="PART_RightSplitter" Grid.Row="1" LineOrientation="Horizontal" />
 
-        <!-- Event stream paneli: PanelHeader + geçici boş ItemsControl (D3 dolduracak) -->
-        <DockPanel Grid.Row="2">
-          <controls:PanelHeader DockPanel.Dock="Top" Text="EVENT STREAM" />
-          <ScrollViewer VerticalScrollBarVisibility="Auto" Background="{DynamicResource Brush.SurfaceBase}">
-            <ItemsControl x:Name="PART_EventStream" />
-          </ScrollViewer>
-        </DockPanel>
+        <!-- [D3] Event stream paneli: PanelHead ("{n} events") + tampon (render dilimi 150) + aktif satır + pill. -->
+        <views:EventStreamView x:Name="PART_EventStream" Grid.Row="2" />
       </Grid>
     </Grid>
 
