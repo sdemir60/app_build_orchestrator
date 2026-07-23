@@ -130,4 +130,99 @@ public class EventStreamTests
         Assert.Equal(1, row.GlowPlayCount);
         GC.KeepAlive(window);
     }
+
+    // ============================================================ §9 — aktif satır jump'ta daktilo eder (gerçek yol)
+
+    [StaFact]
+    public void Active_line_types_when_it_jumps_on_a_real_completion_path()
+    {
+        const string a = @"C:\p\a.csproj";
+        const string b = @"C:\p\b.csproj";
+        var vm = NewVm();
+        var (view, window, _) = Realize(vm, forceAnimations: true);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));    // aktif satır → "B building…"
+        // Gerçek yol: ProjectSucceeded ÖNCE PushStream (fırtına penceresi açılır) SONRA FinishBuilding çağırır.
+        // Aktif proje (B) bittiği için aktif satır "A building…"e ATLAR — bu SetActive Push'tan µs sonra olduğundan
+        // ESKİ kod burst=true hesaplar ve satırı instant basar (bug). Fix sonrası burst kapısı yok → daktilo koşar.
+        vm.OnEvent(new ProjectSucceededEvent("r1", b, 1200));
+
+        Assert.Equal("A building…", vm.ActiveLineText);        // aktif satır gerçekten atladı
+        Assert.False(view.ActiveLineInstant);                  // ESKİ kod: instant (RED) — fix sonrası: daktilo (GREEN)
+        GC.KeepAlive(window);
+    }
+
+    // ============================================================ §10 — "Build started" will-build sayısı (skip'li)
+
+    [Fact]
+    public void Build_started_line_uses_the_will_build_count_not_the_full_plan()
+    {
+        var vm = NewVm();
+        var items = new List<BuildPreviewItem>();
+        for (int i = 0; i < 8; i++) items.Add(new BuildPreviewItem($@"C:\p\build{i}.csproj", $"B{i}", true));
+        for (int i = 0; i < 28; i++) items.Add(new BuildPreviewItem($@"C:\p\skip{i}.csproj", $"S{i}", false));
+
+        // TotalProjects=36 (plan.Nodes.Count, skip'ler DAHİL) ama yalnız 8 proje will-build.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 36, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([.. items]));
+
+        var line = vm.StreamEvents.Single(s => s.Text.StartsWith("Build started"));
+        // ESKİ kod: "Build started — 36 projects…" (RED). Fix sonrası: will-build sayısı 8 (GREEN).
+        Assert.Equal("Build started — 8 projects, parallelism 4", line.Text);
+    }
+
+    [Fact]
+    public void Continue_line_uses_remaining_will_build_count()
+    {
+        const string x = @"C:\p\x.csproj";
+        const string y = @"C:\p\y.csproj";
+        var vm = NewVm();
+        BuildPreviewItem[] plan = [new(x, "X", true), new(y, "Y", true)];
+
+        // Segment 1: iki proje will-build; X biter (1 tamamlandı).
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(plan));
+        vm.OnEvent(new ProjectStartedEvent("r1", x, "X"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", x, 900));
+
+        // Segment 2 (Continue): aynı dondurulmuş plan yeniden yayınlanır — kalan = 2 - 1 = 1.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Continue, 2, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(plan));
+
+        var line = vm.StreamEvents.Last(s => s.Text.StartsWith("Continue"));
+        Assert.Equal("Continue — 1 remaining, parallelism 4", line.Text);
+    }
+
+    // ============================================================ §11 — StreamText 9 şablonu (birebir fidelity)
+
+    [Fact]
+    public void StreamText_templates_match_the_prototype_verbatim()
+    {
+        Assert.Equal("A built (1.2s)", StreamText.Built("A", 1200));
+        Assert.Equal("B built — dependency issue (3.4s)", StreamText.BuiltDependencyIssue("B", 3400));
+        Assert.Equal("C failed — exit 1 (0.8s)", StreamText.Failed("C", "exit 1", 800));
+        Assert.Equal("D skipped — up to date", StreamText.Skipped("D"));
+        Assert.Equal("Sync — 8 to build, 28 up to date", StreamText.Sync(8, 28));
+        Assert.Equal("Build started — 8 projects, parallelism 4", StreamText.BuildStarted(8, 4));
+        Assert.Equal("Stopped — 5 remaining projects queued", StreamText.Stopped(5));
+        Assert.Equal("Continue — 3 remaining, parallelism 4", StreamText.Continue(3, 4));
+        Assert.Equal("Completed — 12 succeeded · 3 skipped · 45s", StreamText.Completed(0, 12, 3, 0, 45000));
+        Assert.Equal("Completed — 2 failed · 10 succeeded · 1 skipped · 1m 12s · 3 dependency-affected",
+            StreamText.Completed(2, 10, 1, 3, 72000));
+    }
+
+    // ============================================================ §12 — tampon cap 260 doyumu
+
+    [Fact]
+    public void Buffer_count_saturates_at_the_two_hundred_sixty_cap()
+    {
+        var c = new StreamComposer();
+        for (int i = 0; i < 300; i++) c.Push(isFail: false, nowMs: i * 1000L); // 300 > 260
+
+        Assert.Equal(260, c.Count);                 // tampon cap'te doyar (mevcut testler ≤160'ta kalıyordu)
+        Assert.Equal(260, StreamComposer.BufferCap); // cap literal (300'e çıkarsa bu düşer)
+        Assert.Equal(150, StreamComposer.RenderSlice); // render dilimi literal
+    }
 }

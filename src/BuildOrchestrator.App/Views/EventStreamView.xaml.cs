@@ -68,7 +68,9 @@ public partial class EventStreamView : UserControl
         PART_ActiveLine.MouseLeftButtonUp += OnActiveLineClicked;
 
         DataContextChanged += OnDataContextChanged;
-        Unloaded += (_, _) => StopActiveTypewriter();
+        // [D3 §5] Unload'da daktilo saatiyle BİRLİKTE imlecin RepeatBehavior.Forever blink clock'unu da durdur
+        // (aksi halde sonsuz clock unload'da terk edilirdi — StopActiveTypewriter yalnız type-timer'ı söküyordu).
+        Unloaded += (_, _) => { StopActiveTypewriter(); StopCursorBlink(); };
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -77,6 +79,10 @@ public partial class EventStreamView : UserControl
     internal IReadOnlyList<EventStreamRow> Rows => [.. PART_Rows.Children.OfType<EventStreamRow>()];
     internal FrameworkElement ActiveLine => PART_ActiveLine;
     internal TextBlock ActiveText => PART_ActiveText;
+    /// <summary>[Test · D3 §9] Aktif satır için SON kurulan daktilo zamanlayıcısı instant mı — §1 regresyon
+    /// guard'ı (eski kod burst yüzünden instant kurardı; fix sonrası gerçek Push→FinishBuilding jump'ında
+    /// daktilo koşar). Hiç kurulmadıysa true varsayılır (satır gizli).</summary>
+    internal bool ActiveLineInstant => _activeScheduler?.Instant ?? true;
     internal LatestPill Pill => PART_Pill;
     internal ScrollViewer Scroll => PART_Scroll;
 
@@ -97,6 +103,15 @@ public partial class EventStreamView : UserControl
         RebuildRows();
         RefreshCounter();
         UpdateActiveLine();
+        RefreshEmptyState();
+    }
+
+    /// <summary>[D3 §8] "No events yet." boş-durumu — hiç tampon satırı YOK ve canlı aktif satır (building) YOK
+    /// iken görünür (prototip BuildApp.jsx:705-707). Satır sayısı veya aktif satır görünürlüğü değişince tazelenir.</summary>
+    private void RefreshEmptyState()
+    {
+        bool empty = (_vm?.StreamEvents.Count ?? 0) == 0 && PART_ActiveLine.Visibility != Visibility.Visible;
+        PART_Empty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -131,6 +146,7 @@ public partial class EventStreamView : UserControl
         }
         // Alta yapışıksa yeni satır dibe çeker (BottomAnchorBehavior içerik-büyümesi yakalaması).
         if (_bottomAnchor.IsStuck) _bottomAnchor.OnScrollChanged(1);
+        RefreshEmptyState();
     }
 
     private void RebuildRows()
@@ -170,15 +186,19 @@ public partial class EventStreamView : UserControl
         {
             PART_ActiveLine.Visibility = Visibility.Collapsed;
             StopCursorBlink();
+            RefreshEmptyState(); // [D3 §8] aktif satır gizlendi — tampon da boşsa "No events yet." belirir
             return;
         }
 
         PART_ActiveLine.Visibility = Visibility.Visible;
+        RefreshEmptyState(); // [D3 §8] canlı aktif satır var → boş-durum gizli
         PART_ActiveTime.Text = _vm.WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         StartCursorBlink();
 
-        // Aktif satır isFail=false; fırtınada/reduced-motion'da instant (brief: animationsEnabled && !burst && !isFail).
-        bool animate = AnimationsEnabledProvider() && !_vm.ActiveLineBurst;
+        // [D3 §1] Aktif satır KOŞULSUZ daktilo eder (prototip BuildApp.jsx:723 `<TypingLine instant={false} />`).
+        // Yalnız reduced-motion instant yapar (TypewriterScheduler animationsEnabled ctor arg'ı üzerinden). Fırtına
+        // (burst) YALNIZ tampon satırlarına aittir (Emission.Instant) — aktif satırı ASLA gate etmez.
+        bool animate = AnimationsEnabledProvider();
         _activeScheduler = new TypewriterScheduler(text.Length, animationsEnabled: animate);
         if (_activeScheduler.Instant)
         {
@@ -221,18 +241,12 @@ public partial class EventStreamView : UserControl
         _activeScheduler = null;
     }
 
-    // [ConsoleView.CreateBlinkAnimation deseni] aktif imleç 1.0→0.1, 0.55s, SineEase in/out, 30fps, sonsuz.
+    // [D3 §3] aktif imleç blink'i — ortak MotionTokens.CreateBlinkAnimation (1.0→0.1, 0.55s, SineEase in/out,
+    // 30fps, sonsuz). Reduced-motion'da hiç oynamaz (imleç steady 1.0).
     private void StartCursorBlink()
     {
         if (!AnimationsEnabledProvider()) { PART_ActiveCursor.BeginAnimation(OpacityProperty, null); PART_ActiveCursor.Opacity = 1.0; return; }
-        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromSeconds(0.55)))
-        {
-            AutoReverse = true,
-            RepeatBehavior = RepeatBehavior.Forever,
-            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-        };
-        Timeline.SetDesiredFrameRate(blink, 30);
-        PART_ActiveCursor.BeginAnimation(OpacityProperty, blink);
+        PART_ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
     }
 
     private void StopCursorBlink()
@@ -312,8 +326,11 @@ public sealed class EventStreamRow : Border
         _text.TextWrapping = TextWrapping.NoWrap;
         _text.SetValue(System.Windows.Documents.Typography.NumeralAlignmentProperty, FontNumeralAlignment.Tabular);
         _text.SetResourceReference(TextBlock.FontSizeProperty, "FontSize.Xs");
+        _text.SetResourceReference(TextBlock.LineHeightProperty, "LineHeight.Mono12"); // [D3 §7] prototip lineHeight var(--leading-mono), BuildApp.jsx:646
 
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        // [D3 §6] içerik iki-yan 10px padding (prototip padding '0 10px', BuildApp.jsx:645) — sağ nefes (NoWrap+
+        // ellipsis metin sağ kenara dayanmasın); aktif satır zaten Margin='10,0' ile doğru.
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
         content.Children.Add(_time);
         content.Children.Add(_glyphHost);
         content.Children.Add(_text);

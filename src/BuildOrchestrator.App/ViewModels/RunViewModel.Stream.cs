@@ -17,6 +17,10 @@ public sealed partial class RunViewModel
     private readonly StreamComposer _stream = new();
     // BuildApp.jsx:677 — ilk newest satır daktilo ETMEZ (prevNewest==null); sonrakiler (fırtına/hata değilse) eder.
     private bool _streamHadNewest;
+    // [D3 §2] "Build started"/"Continue" anlatı satırı RunStarted'dan BuildPreview'a ERTELENİR — will-build sayısı
+    // (RunStartedEvent.TotalProjects DEĞİL, o skip'leri de sayar) ancak BuildPreview işlendikten SONRA hazırdır.
+    // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (Continue re-emit'te çift satır olmaz).
+    private RunMode? _pendingRunStartMode;
 
     /// <summary>[D8] Duvar-saati zaman damgası kaynağı (stream satırı "HH:mm:ss") — testte deterministik enjekte
     /// edilebilir; üretimde <see cref="DateTimeOffset.Now"/>. Fırtına/elapsed saati (<c>_nowMs</c>) AYRIDIR
@@ -34,8 +38,6 @@ public sealed partial class RunViewModel
     [ObservableProperty] private string? _activeLineProjectId;
     /// <summary>Aktif satır metni "<c>{name} building…</c>" ya da null (satır gizli).</summary>
     [ObservableProperty] private string? _activeLineText;
-    /// <summary>Aktif satır SON değiştiğinde fırtına penceresindeydiyse true — görünüm daktiloyu instant kurar.</summary>
-    [ObservableProperty] private bool _activeLineBurst;
     /// <summary>Aktif proje her DEĞİŞTİĞİNDE artar — görünüm daktiloyu yeniden başlatır (prototip activeLine.id).</summary>
     [ObservableProperty] private long _activeLineGeneration;
 
@@ -44,15 +46,35 @@ public sealed partial class RunViewModel
     /// bu yüzden ad çözümü ve done-glyph'in yeşil/kırmızı kararı (Counters.Failed) doğru okunur.</summary>
     private void AppendStreamFor(IpcEvent ev)
     {
+        // [D3 §4] Marshal-free ProjectLogEvent (saniyede binlerce) + ProjectLogChunkEvent akışı stream'e HİÇBİR
+        // satır katmaz — 7-yollu type-switch'i boşuna koşturup no-op'a düşme; switch'ten ÖNCE erken dön.
+        if (ev is ProjectLogEvent or ProjectLogChunkEvent) return;
+
         switch (ev)
         {
             case RunStartedEvent e:
                 _stream.EndRun(); // yeni koşu/segment: aktif + building sıfırlanır (tampon sayacı KORUNUR)
                 SyncActiveLine();
-                PushStream(StreamKind.Info, null,
-                    e.Mode == RunMode.Continue
-                        ? StreamText.Continue(e.TotalProjects, e.Parallelism)
-                        : StreamText.BuildStarted(e.TotalProjects, e.Parallelism));
+                // [D3 §2] "Build started"/"Continue" satırını BuildPreviewEvent'e ERTELE — will-build sayısı orada
+                // hazır (BuildPreview deterministik olarak RunStarted'ı hemen izler, RunCoordinator.cs:456). Burada
+                // YAYMA; yalnız mode'u işaretle.
+                _pendingRunStartMode = e.Mode;
+                break;
+
+            case BuildPreviewEvent:
+                // [D3 §2] Ertelenen run-start satırını burada yay — OnBuildPreview (OnEvent'te BUNDAN ÖNCE) hem
+                // _willBuildIds'i doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Build → will-build
+                // sayısı; Continue → kalan (prototip build-data.js:327 `remain = willBuild.size - finishedWB`). Pending'i
+                // TEMİZLE ki Continue segmentlerinde re-emit edilen BuildPreview çift satır yaymasın.
+                if (_pendingRunStartMode is { } mode)
+                {
+                    int parallelism = _runParallelism ?? Parallelism;
+                    PushStream(StreamKind.Info, null,
+                        mode == RunMode.Continue
+                            ? StreamText.Continue(_willBuildIds.Count - FinishedOfWillBuild, parallelism)
+                            : StreamText.BuildStarted(_willBuildIds.Count, parallelism));
+                    _pendingRunStartMode = null;
+                }
                 break;
 
             case ProjectStartedEvent e:
@@ -112,10 +134,9 @@ public sealed partial class RunViewModel
 
     private void SyncActiveLine()
     {
-        // Metin/burst'ü generation'DAN ÖNCE yaz — görünüm generation değişimini izleyip taze metinle daktilo koşar.
+        // Metni generation'DAN ÖNCE yaz — görünüm generation değişimini izleyip taze metinle daktilo koşar.
         ActiveLineProjectId = _stream.ActiveProjectId;
         ActiveLineText = _stream.ActiveText;
-        ActiveLineBurst = _stream.ActiveBurst;
         ActiveLineGeneration = _stream.ActiveGeneration;
     }
 

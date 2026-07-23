@@ -282,21 +282,9 @@ public partial class ConsoleView : UserControl
         if (commit && pending.Length > 0) AppendBatch(pending + "\n");
     }
 
-    // [3b M-4] Aktif-satır imleci ile "build in progress" imlecinin ORTAK blink animasyonu (design-v1 §2.5:
-    // 1.0→0.1, 0.55s, SineEase in/out, 30fps). Tek kaynak — iki başlatıcı bunu paylaşır (kopya yok).
-    private static DoubleAnimation CreateBlinkAnimation()
-    {
-        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromSeconds(0.55)))
-        {
-            AutoReverse = true,
-            RepeatBehavior = RepeatBehavior.Forever,
-            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-        };
-        Timeline.SetDesiredFrameRate(blink, 30);
-        return blink;
-    }
-
-    private void StartBlink() => ActiveCursor.BeginAnimation(OpacityProperty, CreateBlinkAnimation());
+    // [3b M-4 · D3 §3] Aktif-satır imleci ile "build in progress" imlecinin ORTAK blink animasyonu — artık
+    // EventStreamView'ın imleci de dahil ÜÇ başlatıcı MotionTokens.CreateBlinkAnimation'ı paylaşır (kopya YASAK).
+    private void StartBlink() => ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
 
     private void StopBlink()
     {
@@ -418,7 +406,7 @@ public partial class ConsoleView : UserControl
         BuildProgressOverlay.Visibility = Visibility.Collapsed;
     }
 
-    private void StartBuildBlink() => BuildProgressCursor.BeginAnimation(OpacityProperty, CreateBlinkAnimation());
+    private void StartBuildBlink() => BuildProgressCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
 
     private void StopBuildBlink()
     {

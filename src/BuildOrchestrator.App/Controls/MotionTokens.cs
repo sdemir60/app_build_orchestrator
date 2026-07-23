@@ -18,6 +18,22 @@ internal static class MotionTokens
     public static Duration ResolveDuration(FrameworkElement host, string key, double fallbackMs)
         => host.TryFindResource(key) is Duration d ? d : new Duration(TimeSpan.FromMilliseconds(fallbackMs));
 
+    /// <summary>[3b M-4 · D3 §3] Aktif-satır / build-in-progress / event-stream imleçlerinin ORTAK blink
+    /// animasyonu (design-v1 §2.5: 1.0→0.1, 0.55s, SineEase in/out, 30fps, sonsuz). Tek kaynak — üç başlatıcı
+    /// (<see cref="Console.ConsoleView"/> StartBlink/StartBuildBlink + <see cref="Views.EventStreamView"/>
+    /// StartCursorBlink) bunu paylaşır (verbatim kopya YASAK, CLAUDE.md).</summary>
+    public static DoubleAnimation CreateBlinkAnimation()
+    {
+        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromSeconds(0.55)))
+        {
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        };
+        Timeline.SetDesiredFrameRate(blink, 30);
+        return blink;
+    }
+
     public static KeySpline ResolveKeySpline(FrameworkElement host, string key, KeySpline fallback)
         => host.TryFindResource(key) is KeySpline k ? k : fallback;
 

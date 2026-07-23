@@ -40,7 +40,6 @@ public sealed class StreamComposer
     private string? _activeId;
     private string? _activeName;
     private long _activeGeneration;
-    private bool _activeBurst;
 
     /// <summary>Tam tampon uzunluğu (≤260) — "{n} events" sayacı.</summary>
     public int Count => _count;
@@ -52,9 +51,6 @@ public sealed class StreamComposer
     /// <summary>Aktif proje her DEĞİŞTİĞİNDE artar — görünüm bunu izleyip daktiloyu yeniden başlatır
     /// (prototip <c>activeLine.id</c> anahtarı).</summary>
     public long ActiveGeneration => _activeGeneration;
-    /// <summary>Aktif satır SON değiştiğinde fırtına penceresi içindeydiyse true — görünüm daktiloyu instant kurar
-    /// (brief: aktif satır TypewriterScheduler'ı <c>animationsEnabled &amp;&amp; !burst &amp;&amp; !isFail</c>).</summary>
-    public bool ActiveBurst => _activeBurst;
 
     /// <summary>Bir emit'in çıktısı: kalıcı id + instant kararı (<c>burst || isFail</c>).</summary>
     public readonly record struct Emission(long Id, bool Instant);
@@ -97,14 +93,16 @@ public sealed class StreamComposer
         ClearActive();
     }
 
+    // [D3 §1] nowMs artık kullanılmıyor (fırtına aktif satırı GATE ETMEZ — yalnız tampon satırları, bkz. Push);
+    // parametre StartBuilding/FinishBuilding'in zaman API sözleşmesiyle uyum için korunur.
     private void SetActive(string id, string name, long nowMs)
     {
+        _ = nowMs;
         // Aktif proje DEĞİŞMİYORSA (aynı id+ad) generation artırma — daktilo boş yere yeniden koşmasın.
         if (_activeId is not null && IdEq(_activeId, id) && _activeName == name) return;
         _activeId = id;
         _activeName = name;
         _activeGeneration++;
-        _activeBurst = _lastEmitMs is { } last && (nowMs - last) < BurstWindowMs;
     }
 
     private void ClearActive()
@@ -113,7 +111,6 @@ public sealed class StreamComposer
         _activeId = null;
         _activeName = null;
         _activeGeneration++;
-        _activeBurst = false;
     }
 
     private static bool IdEq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
