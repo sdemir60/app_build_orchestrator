@@ -100,16 +100,20 @@ public sealed class DsSplitter : GridSplitter
     }
 
     /// <summary>[E5/T47 fold — a11y] Klavye resize'ının PERSIST'ini mevcut sürükleme yoluna bağlar: taban
-    /// <see cref="GridSplitter"/> ok tuşuyla split'i taşır (e.Handled=true); ardından <see cref="Thumb.DragCompletedEvent"/>
-    /// yükseltilir ki ShellRoot'un DragCompleted persist handler'ı (fare sürüklemesiyle AYNI) çalışsın — kopya
-    /// mantık YOK. Görsel amber çizgi flaş'ı da mouse yoluyla hizalı (kısa vurgu).</summary>
+    /// <see cref="GridSplitter"/> ok tuşuyla split'i taşır (e.Handled=true) ama YALNIZ async (render-öncelikli)
+    /// bir arrange planlar — senkron layout KOŞMAZ. Bu yüzden önce <see cref="UIElement.UpdateLayout"/> ile
+    /// arrange'i TAZELE (fare yolunda bu, DragDelta mesajları arasında zaten koşar), sonra
+    /// <see cref="Thumb.DragCompletedEvent"/> yükselt ki ShellRoot'un DragCompleted persist handler'ı
+    /// (fare sürüklemesiyle AYNI) <c>ActualWidth</c>/<c>ActualHeight</c>'i BAYAT değil TAZE okusun — kopya
+    /// mantık YOK. Klavye görsel geri-bildirimi odaktaki amber DS focus halkasıdır (<c>Ds.FocusVisual</c>,
+    /// ctor); tasarım ayraç ÇİZGİSİ için bir geçiş TANIMLAMAZ (uydurma flaş/animasyon eklenmez — brief).</summary>
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
         if (e.Handled && e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
         {
-            Line.SetResourceReference(Shape.FillProperty, "Brush.AmberBorder");
-            Line.SetResourceReference(Shape.FillProperty, "Brush.Border");
+            UpdateLayout(); // taban definition DP'sini değiştirdi ama arrange async — persist ActualWidth/Height'i
+                            // TAZE okusun diye senkron layout (fare yolunda drag mesajları arasında zaten çalışır)
             RaiseEvent(new DragCompletedEventArgs(0, 0, false) { RoutedEvent = Thumb.DragCompletedEvent });
         }
     }

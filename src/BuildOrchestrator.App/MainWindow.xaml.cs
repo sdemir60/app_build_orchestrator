@@ -205,16 +205,18 @@ public partial class MainWindow : Window
     /// ÜST açık katmanı kapatır. Otorite: <see cref="KeyboardShortcuts"/> (SAF karar) + BuildApp.jsx:1302-1319.</summary>
     private void SetupKeyboardShortcuts()
     {
-        var rebuild = _vm.RebuildCommand;                                  // Ctrl/Shift+F5 → doğrudan (CanExecute onurlanır)
-        var f5 = new RelayCommand(OnF5Pressed);                            // çıplak F5 → Stop/Continue/Build (duruma göre)
-        var focusFilter = new RelayCommand(() => Shell.FocusProjectFilter());
-        var escape = new RelayCommand(OnEscapePressed);
-
-        InputBindings.Add(new KeyBinding(rebuild, Key.F5, ModifierKeys.Control));
-        InputBindings.Add(new KeyBinding(rebuild, Key.F5, ModifierKeys.Shift));
-        InputBindings.Add(new KeyBinding(f5, Key.F5, ModifierKeys.None));
-        InputBindings.Add(new KeyBinding(focusFilter, Key.F, ModifierKeys.Control));
-        InputBindings.Add(new KeyBinding(escape, Key.Escape, ModifierKeys.None));
+        // NİYET → ICommand: Rebuild doğrudan VM komutu (CanExecute onurlanır); diğerleri kod-tarafı aksiyonlar.
+        // TUŞ→NİYET eşlemesi SAF <see cref="KeyboardShortcuts.WindowBindings"/>'te (test pinler) — burada yalnız
+        // niyetleri komutlara bağlar ve tabloyu iterasyonla KeyBinding'lere çeviririz (kablaj tek yerde).
+        var commandForIntent = new Dictionary<WindowIntent, ICommand>
+        {
+            [WindowIntent.Rebuild] = _vm.RebuildCommand,                    // Ctrl/Shift+F5 → doğrudan
+            [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Continue/Build (duruma göre)
+            [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
+            [WindowIntent.Escape] = new RelayCommand(OnEscapePressed),
+        };
+        foreach (var b in KeyboardShortcuts.WindowBindings)
+            InputBindings.Add(new KeyBinding(commandForIntent[b.Intent], b.Key, b.Modifiers));
     }
 
     /// <summary>Çıplak F5: koşarken → Stop, stopped'ta → Continue, aksi → Build (v7 K6). Karar SAF
@@ -224,14 +226,9 @@ public partial class MainWindow : Window
 
     private void DispatchShortcut(ShortcutAction action)
     {
-        System.Windows.Input.ICommand? command = action switch
-        {
-            ShortcutAction.Build => _vm.BuildCommand,
-            ShortcutAction.Rebuild => _vm.RebuildCommand,
-            ShortcutAction.Stop => _vm.StopCommand,
-            ShortcutAction.Continue => _vm.ContinueCommand,
-            _ => null,
-        };
+        // ShortcutAction→ICommand eşlemesi SAF <see cref="KeyboardShortcuts.CommandFor"/>'da (test pinler); burada
+        // yalnız uygulanır (CanExecute reddederse no-op).
+        var command = KeyboardShortcuts.CommandFor(action, _vm);
         if (command is not null && command.CanExecute(null)) command.Execute(null); // CanExecute'i onurlandır
     }
 

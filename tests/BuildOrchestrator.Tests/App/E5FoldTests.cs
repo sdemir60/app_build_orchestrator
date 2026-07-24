@@ -87,8 +87,19 @@ public class E5FoldTests
         var host = DsResources.NewHost();
         var window = DsResources.Realize(host, grid);
 
+        // Basıştan ÖNCEKİ sol-kolon genişliği (ShellRoot persist'i ActualWidth okur). 2 star-kolon 400px'i
+        // ~yarı yarıya paylaşır (ayraç Auto ~7px) → başlangıçta > 0 ve iki taraf ~eşit.
+        double prePress = grid.ColumnDefinitions[0].ActualWidth;
+        Assert.True(prePress > 0);
+
         bool committed = false;
-        splitter.DragCompleted += (_, _) => committed = true; // ShellRoot'un persist yolunun bağlandığı olay
+        double atCompletion = double.NaN;
+        splitter.DragCompleted += (_, _) =>
+        {
+            committed = true;
+            // ShellRoot'un persist yolu TAM BURADA ActualWidth okur — ayırt edici gerçek: bu okuma TAZE mi?
+            atCompletion = grid.ColumnDefinitions[0].ActualWidth;
+        };
 
         splitter.Focus();
         var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(splitter)!, 0, Key.Left)
@@ -97,6 +108,11 @@ public class E5FoldTests
 
         Assert.True(key.Handled);   // taban GridSplitter ok-tuşuyla resize etti
         Assert.True(committed);     // ...ve DsSplitter persist'i DragCompleted ile tetikledi
+        // AYIRT EDİCİ: Sol ok sol-kolonu KÜÇÜLTÜR; DragCompleted anında okunan ActualWidth resize'ı YANSITMALI
+        // (basıştan küçük). UpdateLayout() olmadan taban yalnız async arrange planlar → okuma BAYAT kalır
+        // (atCompletion == prePress) → persist stale oranı yazar. Bu assert o hatayı yakalar.
+        Assert.True(atCompletion < prePress,
+            $"DragCompleted anında ActualWidth taze olmalı (resize sonrası küçülmüş): prePress={prePress}, atCompletion={atCompletion}");
         GC.KeepAlive(window);
     }
 }
