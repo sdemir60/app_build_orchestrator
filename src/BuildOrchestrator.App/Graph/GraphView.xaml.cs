@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
@@ -80,6 +81,8 @@ public partial class GraphView : UserControl
     private bool _edgesAnimated;
     private bool _hasCamera;
     private IDisposable? _revealHero;
+    private int _revealGen; // [E3/T41] her PlayRevealStagger yeni bir reveal kuşağıdır — stale release'i eleyen damga
+    private DispatcherTimer? _revealReleaseTimer;
 
     public GraphView()
     {
@@ -643,13 +646,14 @@ public partial class GraphView : UserControl
 
     private void PlayRevealStagger()
     {
-        // Önceki reveal hero'su (varsa) bırak — yeni bir SetGraph yeni bir reveal başlatır.
+        // Önceki reveal hero'su + varsa bekleyen release timer'ı bırak — yeni bir SetGraph yeni bir reveal başlatır.
         ReleaseRevealHero();
+        int gen = ++_revealGen; // bu reveal kuşağı — release yalnız bu kuşak hâlâ geçerliyken uygulanır
 
         bool animate = AnimationsEnabledProvider();
         // [E3/T41/DD9] Reveal bir HERO'dur. Başka bir hero sürerken (Hero null döner) dekoratif stagger ATLANIR —
-        // düğümler ani yerleştirilir (reduced-motion yolu). Aksi halde hero TUTULUR ve en son düğümün reveal'i
-        // bitince bırakılır (aşağıda Completed). Coordinator yoksa (headless, enjekte edilmemiş) davranış eskisi gibi.
+        // düğümler ani yerleştirilir (reduced-motion yolu). Aksi halde hero TUTULUR ve reveal tamamlanınca (aşağıda
+        // generation-guarded timer) bırakılır. Coordinator yoksa (headless, enjekte edilmemiş) davranış eskisi gibi.
         if (animate)
         {
             _revealHero = ActiveHeroCoordinator?.Hero(RevealHeroKey);
@@ -658,7 +662,6 @@ public partial class GraphView : UserControl
         }
 
         double maxDelay = -1;
-        DoubleAnimationUsingKeyFrames? lastFade = null; // en geç biten reveal → hero'yu o bırakır
         foreach (var visual in _nodes.Values)
         {
             visual.Cell.BeginAnimation(OpacityProperty, null);
@@ -689,23 +692,51 @@ public partial class GraphView : UserControl
             slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
             rise.BeginAnimation(TranslateTransform.YProperty, slide);
 
-            if (delayMs > maxDelay) { maxDelay = delayMs; lastFade = fade; }
+            if (delayMs > maxDelay) maxDelay = delayMs;
         }
 
-        // Hero'yu tut: en geç biten düğümün reveal'i tamamlanınca bırak. (Headless/HWND'siz Completed hiç
-        // ateşlenmez — orada da güvenli: bir sonraki SetGraph ya da Unloaded reveal hero'sunu zaten bırakır.)
-        if (_revealHero is not null && lastFade is not null)
-            lastFade.Completed += OnRevealCompleted;
-        else if (_revealHero is not null)
-            ReleaseRevealHero(); // animate ama düğüm yok (savunmacı) — hero'yu bekletme
+        // [E3/T41 — release fix] Hero, reveal PENCERESİ boyunca tutulur ve en geç biten düğümün reveal'i
+        // (maxDelay + RevealMs) tamamlanınca bırakılır. Tetik bir DispatcherTimer'dır: bir fade'in clock'u
+        // BeginAnimation ile üretildikten SONRA eklenen Completed handler'ı HİÇ ateşlenmez (gerçek-HWND WPF
+        // harness ile doğrulandı) — dolayısıyla eski Completed yolu ÖLÜ koddu. Timer, generation-guarded bir
+        // release'e (ReleaseRevealHeroIfCurrent) bağlanır: reveal #1 sürerken hızlı bir ikinci SetGraph gelirse
+        // #1'in timer'ı ateşlense bile #2'nin taze hero'suna DOKUNMAZ (gen != _revealGen). Headless testte timer
+        // tick etmez; test release'i doğrudan bu kuşak damgasıyla çağırır (bkz. ReleaseRevealHeroIfCurrent).
+        if (_revealHero is not null)
+        {
+            if (maxDelay < 0)
+            {
+                ReleaseRevealHero(); // animate ama düğüm yok (savunmacı) — hero'yu bekletme
+            }
+            else
+            {
+                var releaseAfter = TimeSpan.FromMilliseconds(maxDelay + RevealMs);
+                _revealReleaseTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = releaseAfter };
+                _revealReleaseTimer.Tick += (_, _) => ReleaseRevealHeroIfCurrent(gen);
+                _revealReleaseTimer.Start();
+            }
+        }
     }
 
-    private void OnRevealCompleted(object? sender, EventArgs e) => ReleaseRevealHero();
+    /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakan generation-guarded karar: YALNIZ tetikleyen reveal
+    /// hâlâ geçerliyse (<paramref name="gen"/> == <see cref="RevealGeneration"/>) bırakır. Superseded bir reveal'in
+    /// gecikmiş release'i (rapid ikinci SetGraph) mevcut reveal'in taze hero'sunu düşürmez. Test bunu doğrudan
+    /// çağırır (gerçek timer tick'i beklemeden).</summary>
+    internal void ReleaseRevealHeroIfCurrent(int gen)
+    {
+        if (gen != _revealGen) return; // stale kuşak — mevcut hero'ya dokunma
+        ReleaseRevealHero();
+    }
 
-    /// <summary>[E3/T41] Reveal hero'sunu (varsa) bırakır — yeni bir hero girebilir. Çift-bırakma güvenli
-    /// (HeroScope.Dispose idempotent).</summary>
+    /// <summary>[E3/T41] Reveal hero'sunu (varsa) ve bekleyen release timer'ını bırakır — yeni bir hero girebilir.
+    /// Çift-bırakma güvenli (HeroScope.Dispose idempotent).</summary>
     private void ReleaseRevealHero()
     {
+        if (_revealReleaseTimer is not null)
+        {
+            _revealReleaseTimer.Stop();
+            _revealReleaseTimer = null;
+        }
         _revealHero?.Dispose();
         _revealHero = null;
     }
@@ -779,6 +810,11 @@ public partial class GraphView : UserControl
 
     internal IReadOnlyDictionary<string, GraphNodeVisual> NodeVisuals => _nodes;
     internal IReadOnlyList<GraphEdgeVisual> EdgeVisuals => _edges;
+    /// <summary>[E3/T41] Aktif reveal kuşağının damgası — test, doğru kuşakla release'i tetiklemek için okur.</summary>
+    internal int RevealGeneration => _revealGen;
+    /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakacak CANLI bir release zamanlandı mı — ölü Completed
+    /// yolunun aksine gerçek bir tetik kuruldu mu (test ayırt edici olarak okur).</summary>
+    internal bool HasPendingRevealRelease => _revealReleaseTimer is { IsEnabled: true };
     /// <summary>O an akan (hedefi building) kenarların Path'leri — paylaşılan clock TAM BU kümeye uygulanır.</summary>
     internal IReadOnlyList<Path> FlowingEdgePaths => _flowingEdges;
     /// <summary>Akan dash'in TEK kök clock'u (null = hiç akan kenar yok / motion kapalı).</summary>

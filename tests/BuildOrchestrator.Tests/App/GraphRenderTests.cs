@@ -234,9 +234,52 @@ public class GraphRenderTests
 
         view.SetGraph(Nodes(), Edges());
 
-        // Reveal animate modunda hero'ya girdi ve TUTUYOR (HWND'siz Completed ateşlenmez → serbest bırakılmadı).
+        // Reveal animate modunda hero'ya girdi ve reveal PENCERESİ boyunca TUTUYOR — release henüz tetiklenmedi
+        // (canlı bir DispatcherTimer'a bağlı; senkron bu noktada tick etmemiştir). Bkz.
+        // The_reveal_releases_the_sync_reveal_hero_when_it_completes: release GERÇEKTEN çalışır.
         Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
         Assert.All(view.NodeVisuals.Values, v => Assert.Equal(0.0, v.Cell.Opacity)); // stagger oynuyor (gecikme boyunca 0)
+    }
+
+    [StaFact]
+    public void The_reveal_releases_the_sync_reveal_hero_when_it_completes()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());
+        Assert.True(coordinator.IsHeroActive);
+        // (1) CANLI bir release ZAMANLANDI — ölü Completed-after-BeginAnimation yolu DEĞİL. (Fix'in özü: eski kod
+        // burada hiçbir tetik kurmuyordu; hero bir sonraki SetGraph/Unloaded'a kadar sonsuza dek tutuluyordu.)
+        Assert.True(view.HasPendingRevealRelease);
+
+        // (2) Reveal tamamlandığında release tetiklenir (gerçek tick beklemeden, mevcut kuşak damgasıyla) → hero BIRAKILIR.
+        view.ReleaseRevealHeroIfCurrent(view.RevealGeneration);
+
+        Assert.False(coordinator.IsHeroActive);
+        Assert.False(view.HasPendingRevealRelease);
+    }
+
+    [StaFact]
+    public void A_stale_reveal_completion_does_not_release_the_current_reveal_hero()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());          // reveal kuşağı #1
+        int gen1 = view.RevealGeneration;
+
+        view.SetGraph(Nodes(), Edges());          // hızlı ikinci SetGraph → #1'i bırakır ve #2'yi yeniden alır
+        Assert.NotEqual(gen1, view.RevealGeneration);
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+
+        // #1'in gecikmiş (stale) release'i ateşlense bile #2'nin TAZE hero'suna dokunmaz (gen1 != mevcut kuşak).
+        view.ReleaseRevealHeroIfCurrent(gen1);
+
+        Assert.True(coordinator.IsHeroActive);
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
     }
 
     [StaFact]
