@@ -36,6 +36,14 @@ public partial class ProjectRow : UserControl
     private const double StripeWidthNormal = 2;    // BuildApp.jsx:373
     private const double StripeWidthSelected = 3;
 
+    // [E3/T42] design-v1 bo-reveal (BuildApp.jsx:15/:27): opacity 0→1 + translateY(-5px)→0, .3s, ease-out —
+    // GraphView katman reveal'iyle AYNI animasyon ailesi (GraphView.RevealMs/RevealRisePx). Liste satırı gecikmesi
+    // graf'tan FARKLI formül: 10ms/satır, 380ms tavan (BuildApp.jsx:367 `Math.min(revealIndex*10, 380)`).
+    private const double RevealMs = 300;           // BuildApp.jsx:15 `bo-reveal .3s`
+    private const double RevealRisePx = 5;         // BuildApp.jsx:27 translateY(-5px)
+    internal const double RowStaggerMs = 10;       // BuildApp.jsx:367 revealIndex*10
+    internal const double RowStaggerCapMs = 380;   // BuildApp.jsx:367 tavan 380
+
     private readonly SolidColorBrush _bgBrush = new(Colors.Transparent);
     private ProjectRowViewModel? _vm;
     private bool _hover;
@@ -82,6 +90,8 @@ public partial class ProjectRow : UserControl
     internal FrameworkElement BreathLayer => PART_Breath;
     internal void SimulateHover(bool hover) => SetHover(hover);
     internal TranslateTransform InnerTranslate => PART_InnerTranslate;
+    internal Border Root => PART_Root;                              // [T42] reveal opacity taşıyıcısı
+    internal TranslateTransform ShakeTranslate => PART_ShakeTranslate; // [T42] reveal kayması Y'de akar (shake X)
     internal StatusGlyph Glyph => PART_Glyph;
     internal string? DepTooltip => PART_DepTip.Content as string;   // [Fix wave 1, Finding 3] birebir metin testi
     internal string? GlyphTooltip => PART_GlyphTip.Content as string;
@@ -341,6 +351,45 @@ public partial class ProjectRow : UserControl
         _isBreathing = false;
         PART_Breath.BeginAnimation(OpacityProperty, null);
         PART_Breath.Opacity = 0;
+    }
+
+    // ---------------------------------------------------------------- [E3/T42] liste mount reveal (bo-reveal)
+
+    /// <summary>[T42] Liste satırı reveal gecikmesi — 10ms/satır, 380ms'de tavan (BuildApp.jsx:367). Saf/pinli;
+    /// graf katman stagger'ı (<see cref="Graph.GraphView.RevealDelayMs"/>, 55ms/330ms) ile AYNI aile, FARKLI formül.</summary>
+    internal static double RevealDelayMs(int index) => Math.Min(Math.Max(index, 0) * RowStaggerMs, RowStaggerCapMs);
+
+    /// <summary>[T42/bo-reveal] Satırı KADEMELİ belirt: opacity 0→1 + translateY(-5→0), 300ms ease-out, gecikme =
+    /// <see cref="RevealDelayMs"/>(index). Reduced-motion (AnimationsEnabled false) iken ANİ — opacity 1, kayma yok.
+    /// Gecikme boyunca opacity 0 TUTULUR (flash yok) — <see cref="Graph.GraphView"/> per-node reveal deseni. Kayma
+    /// PART_ShakeTranslate'in Y ekseninde akar (shake X'i kullanır — çakışma yok).</summary>
+    internal void PlayReveal(int index)
+    {
+        PART_Root.BeginAnimation(OpacityProperty, null);
+        PART_ShakeTranslate.BeginAnimation(TranslateTransform.YProperty, null);
+        if (!AnimationsEnabledProvider())
+        {
+            PART_Root.Opacity = 1.0;
+            PART_ShakeTranslate.Y = 0;
+            return;
+        }
+
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+        var begin = TimeSpan.FromMilliseconds(RevealDelayMs(index));
+        var duration = TimeSpan.FromMilliseconds(RevealMs);
+
+        // CSS `both` fill paritesi: gecikme boyunca 0 tutulur (Discrete 0 @ t=0), sonra hedefe ramp.
+        PART_Root.Opacity = 0.0;
+        var fade = MotionTokens.SplineTo(1.0, duration, spline);
+        fade.BeginTime = begin;
+        fade.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        PART_Root.BeginAnimation(OpacityProperty, fade);
+
+        PART_ShakeTranslate.Y = -RevealRisePx;
+        var slide = MotionTokens.SplineTo(0.0, duration, spline);
+        slide.BeginTime = begin;
+        slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        PART_ShakeTranslate.BeginAnimation(TranslateTransform.YProperty, slide);
     }
 
     private void PlayShake()

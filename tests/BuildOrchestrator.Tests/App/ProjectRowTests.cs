@@ -174,6 +174,49 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- [E3/T42] liste mount reveal (bo-reveal)
+
+    [Fact]
+    public void The_list_row_reveal_delay_is_10ms_per_row_capped_at_380ms()
+    {
+        Assert.Equal(0.0, ProjectRow.RevealDelayMs(0));
+        Assert.Equal(10.0, ProjectRow.RevealDelayMs(1));
+        Assert.Equal(370.0, ProjectRow.RevealDelayMs(37));
+        Assert.Equal(380.0, ProjectRow.RevealDelayMs(38));   // tavana ilk ulaşım
+        Assert.Equal(380.0, ProjectRow.RevealDelayMs(1000)); // tavan (BuildApp.jsx:367 min(i*10, 380))
+    }
+
+    [StaFact]
+    public void A_reveal_holds_opacity_at_zero_during_the_delay_and_runs_a_real_clock()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending);
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        row.PlayReveal(5);
+
+        // Gecikme boyunca opacity 0 TUTULUR (flash yok) + kayma -5px'ten başlar; ikisi de GERÇEK saatler.
+        Assert.Equal(0.0, row.Root.Opacity);
+        Assert.True(row.Root.HasAnimatedProperties);
+        Assert.True(row.ShakeTranslate.HasAnimatedProperties);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Reduced_motion_places_the_row_instantly_with_no_reveal_clock()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending);
+        var (row, window, _) = Realize(vm); // headless App.Motion null → reduced-motion
+
+        row.PlayReveal(5);
+
+        Assert.Equal(1.0, row.Root.Opacity);
+        Assert.False(row.Root.HasAnimatedProperties);
+        Assert.Equal(0.0, row.ShakeTranslate.Y);
+        GC.KeepAlive(window);
+    }
+
     // [Fix wave 1, Finding 1 + lens-3 Minor] Şerit rengi TÜM statüler için pinlenir (cycle + queued dahil) —
     // satır gerçekten kurulur, Stripe.Fill'in çözdüğü fırça statü başına doğru token'dır. Discovered → transparent
     // (token DEĞİL) ayrı test edilir.
