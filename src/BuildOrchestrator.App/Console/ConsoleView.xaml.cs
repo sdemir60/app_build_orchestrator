@@ -562,6 +562,10 @@ public partial class ConsoleView : UserControl
     /// offset, eklenen dilimin piksel yüksekliği (delta) ve uygulanan yeni offset. Yalnız test okur.</summary>
     internal (double Before, double Delta, double Applied)? LastPrepend { get; private set; }
 
+    /// <summary>[E3/T36 reduced-motion kapsama] İdle "ready" / aktif-satır imleci — blink'in DURDUĞUNU
+    /// (<c>HasAnimatedProperties==false</c>) reduced-motion'da doğrulamak için.</summary>
+    internal System.Windows.UIElement ActiveCursorGlyph => ActiveCursor;
+
     /// <summary>Belgede yüklü ilk satırdan ÖNCEKİ ~<see cref="RenderSliceLines"/> satırı (contiguous, sequence-id
     /// bitişik → tekrar/kayıp yok) tepeye prepend eder ve <c>VerticalOffset</c>'i prepend edilen içeriğin piksel
     /// yüksekliği kadar artırır (<see cref="ChunkStitch.CompensatedOffset"/>) → viewport zıplamaz.</summary>

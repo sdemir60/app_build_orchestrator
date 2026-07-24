@@ -61,7 +61,13 @@ public class BuildingSpinner : Control
 
     private void HookMotionSignal()
     {
-        if (App.Motion is { } motion) motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        // [E3 fold — subscribe-once] İdempotent abonelik (ProjectRow deseni): -= sonra += — bir kontrol
+        // unload/reload olur ya da Loaded iki kez ateşlenirse çift-abonelik (çift Refresh) birikmesin.
+        if (App.Motion is { } motion)
+        {
+            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        }
     }
 
     private void UnhookMotionSignal()
@@ -72,6 +78,9 @@ public class BuildingSpinner : Control
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => Refresh();
 
     private bool _isSpinning;
+
+    /// <summary>[Test] Dönüş saati o an CANLI mı — reduced-motion kapsama testi bunun false olduğunu doğrular.</summary>
+    internal bool IsRotating => _rotation?.HasAnimatedProperties ?? false;
 
     /// <summary>[Motion sözleşmesi] Sinyal TAZE okunur — cache'lenmiş bir bayrak DEĞİL.
     /// [GraphView.ApplyBuildingPulse ile AYNI kural] Zaten dönen bir animasyon YENİDEN BAŞLATILMAZ; aksi
@@ -85,15 +94,24 @@ public class BuildingSpinner : Control
         if (shouldSpin) Start(); else Stop();
     }
 
-    private void Start()
+    /// <summary>[E3 fold — C-2 pin] Dönüş animasyonunu üreten TEK yer — kontrol ve test AYNI fabrikayı kullanır
+    /// (ProjectRow.BuildBreathingAnimation deseni): 270°'lik YAY görselini 0→360° tam tur, <see cref="RotationMs"/>
+    /// (900ms, C-2: bundle — README'nin 1.4s'i DEĞİL), lineer, sonsuz, 30fps döndürür. Sayısal değerler burada
+    /// pinlenir (inline magic number YOK).</summary>
+    internal static DoubleAnimation BuildSpinAnimation()
     {
-        if (_rotation is null) return;
         var spin = new DoubleAnimation(0, 360, new Duration(TimeSpan.FromMilliseconds(RotationMs)))
         {
             RepeatBehavior = RepeatBehavior.Forever,
         };
         Timeline.SetDesiredFrameRate(spin, DecorativeFrameRate);
-        _rotation.BeginAnimation(RotateTransform.AngleProperty, spin);
+        return spin;
+    }
+
+    private void Start()
+    {
+        if (_rotation is null) return;
+        _rotation.BeginAnimation(RotateTransform.AngleProperty, BuildSpinAnimation());
     }
 
     private void Stop()

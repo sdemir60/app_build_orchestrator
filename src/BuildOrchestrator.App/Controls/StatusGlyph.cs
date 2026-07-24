@@ -80,7 +80,13 @@ public class StatusGlyph : Control
 
     private void HookMotionSignal()
     {
-        if (App.Motion is { } motion) motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        // [E3 fold — subscribe-once] İdempotent abonelik (ProjectRow deseni): -= sonra += — Loaded iki kez
+        // ateşlenirse çift-abonelik (çift ApplyPulse) birikmesin.
+        if (App.Motion is { } motion)
+        {
+            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        }
     }
 
     private void UnhookMotionSignal()
@@ -147,6 +153,9 @@ public class StatusGlyph : Control
     }
 
     private bool _isPulsing;
+
+    /// <summary>[Test] Nabız o an dönüyor mu — reduced-motion kapsama testi bunun false olduğunu doğrular.</summary>
+    internal bool IsPulsing => _isPulsing;
 
     /// <summary>[GraphView.ApplyBuildingPulse ile AYNI kural] Zaten dönen bir nabız YENİDEN BAŞLATILMAZ —
     /// aksi halde her statü güncellemesinde nabız baştan alır ve "takılı" görünür.</summary>

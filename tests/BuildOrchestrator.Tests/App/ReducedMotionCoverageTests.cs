@@ -1,0 +1,232 @@
+using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Markup;
+using System.Windows.Media;
+using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Tests.Supervisor;
+using IoPath = System.IO.Path;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [E3/T36] REDUCED-MOTION TAM KAPSAM: motion envanterindeki (brief §0) HER sahibi dolaşıp
+/// <c>AnimationsEnabled=false</c> iken (a) efektif sürelerin SIFIR olduğunu ve (b) dekoratif sonsuz
+/// animasyonların (spinner dönüşü, nefes/nabız, graf dash-flow, imleç blink, belirsiz sweep) DURDUĞUNU /
+/// hiç kurulmadığını kanıtlar. Bu test-suite'in amacı EKSİKSİZLİK: bir sahibin reduced-motion kablajı
+/// düşerse (ya da yeni bir dekoratif animasyon eklenip bağlanmazsa) burada yakalanır.
+///
+/// <para><b>Sinyal kaynağı:</b> seam'li sahipler (GraphView/ProjectRow/StickyRibbon/EventStreamView) için
+/// AÇIK bir kapalı <see cref="IMotionSettings"/> (<see cref="Off"/>) + <c>AnimationsEnabledProvider=()=&gt;false</c>
+/// enjekte edilir (AnimationsEnabled=FALSE yolu kanıtlanır). Seam'siz sahipler (BuildingSpinner/StatusGlyph/
+/// ConsoleView/PopIn/HoverBackground/LatestPill) doğrudan <c>App.Motion</c> okur — headless'ta o null'dur
+/// (AnimationsEnabled=false), yani realize etmek zaten reduced-motion durumudur.</para>
+/// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
+public class ReducedMotionCoverageTests
+{
+    /// <summary>Kapalı reduced-motion sinyali — gerçek <see cref="MotionSettings"/>, kapalı bir sinyalle sarılı
+    /// (sahte bir IMotionSettings gerekmez; Effective/AnimationsEnabled gerçek koddan gelir).</summary>
+    private static IMotionSettings Off() => new MotionSettings(new FakeMotionSignal { AnimationsEnabled = false });
+
+    // ================================================================ 0) TEK SÜRE KAPISI
+    // Tüm kod-tarafı animasyonlar süreyi bu kapıdan (Effective) TAZE okur — kapalıyken her token 0'a çöker.
+
+    [Fact]
+    public void The_single_duration_gate_collapses_every_token_to_zero_when_animations_are_off()
+    {
+        var m = Off();
+        Assert.False(m.AnimationsEnabled);
+        foreach (var ms in new[] { 80.0, 120.0, 180.0, 280.0, 900.0 }) // Instant/Fast/Base/Slow + spinner
+            Assert.Equal(TimeSpan.Zero, m.Effective(TimeSpan.FromMilliseconds(ms)));
+    }
+
+    // ================================================================ 1) BuildingSpinner (900ms/270° dönüş)
+
+    [StaFact]
+    public void BuildingSpinner_never_starts_its_rotation_clock_under_reduced_motion()
+    {
+        var host = DsResources.NewHost();
+        var spinner = new BuildingSpinner();
+        var window = DsResources.Realize(host, spinner); // headless App.Motion null → reduced
+
+        Assert.False(spinner.IsRotating); // dönüş saati HİÇ kurulmaz
+        GC.KeepAlive(window);
+    }
+
+    // ================================================================ 2) StatusGlyph (1.6s nabız)
+
+    [StaFact]
+    public void StatusGlyph_never_starts_its_building_pulse_under_reduced_motion()
+    {
+        var host = DsResources.NewHost();
+        var glyph = new StatusGlyph { Status = GraphStatus.Building };
+        var window = DsResources.Realize(host, glyph);
+
+        Assert.False(glyph.IsPulsing); // nabız durur
+        GC.KeepAlive(window);
+    }
+
+    // ================================================================ 3) GraphView (dash-flow + düğüm nabzı + reveal)
+
+    [StaFact]
+    public void GraphView_keeps_no_dash_clock_no_pulse_and_an_instant_reveal_under_reduced_motion()
+    {
+        var view = NewGraphView();
+        view.SetGraph(
+            [new("OSYS.Base", 0, GraphStatus.Building, Prefix: "OSYS."),
+             new("OSYS.Data", 1, GraphStatus.Discovered, Prefix: "OSYS.")],
+            [new("OSYS.Base", "OSYS.Data")]);
+
+        Assert.Null(view.SharedDashClock);                                  // akan dash saati yok
+        Assert.False(view.NodeVisuals["OSYS.Base"].IsPulsing);             // building nabzı yok
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity)); // reveal ANİ (stagger yok)
+    }
+
+    // ================================================================ 4) ProjectRow (3.8s nefes + mount reveal)
+
+    [StaFact]
+    public void ProjectRow_stops_breathing_and_reveals_instantly_under_reduced_motion()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started); // building
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => false, MotionSettings = Off(), DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        Assert.False(row.BreathLayer.HasAnimatedProperties); // nefes saati yok
+
+        row.PlayReveal(9);
+        Assert.Equal(1.0, row.Root.Opacity);                 // reveal ANİ (opacity 1)
+        Assert.False(row.Root.HasAnimatedProperties);
+        GC.KeepAlive(window);
+    }
+
+    // ================================================================ 5) StickyRibbon (1.4s belirsiz sweep)
+
+    [StaFact]
+    public void StickyRibbon_keeps_indeterminate_mode_but_never_sweeps_under_reduced_motion()
+    {
+        var vm = NewVm();
+        var host = DsResources.NewHost();
+        var ribbon = new StickyRibbon { AnimationsEnabledProvider = () => false, MotionSettings = Off(), DataContext = vm };
+        var window = DsResources.Realize(host, ribbon);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // → Syncing (belirsiz mod)
+        Assert.True(ribbon.IsIndeterminate);                  // MOD hâlâ belirsiz (statik %35 bar)
+        Assert.False(ribbon.IndicatorTranslate.HasAnimatedProperties); // ama sweep saati YOK
+        GC.KeepAlive(window);
+    }
+
+    // ================================================================ 6) EventStreamView (aktif satır daktilosu + imleç)
+
+    [StaFact]
+    public void EventStreamView_types_the_active_line_instantly_under_reduced_motion()
+    {
+        var vm = NewVm();
+        var host = DsResources.NewHost();
+        var view = new EventStreamView { AnimationsEnabledProvider = () => false, DataContext = vm };
+        var window = DsResources.Realize(host, view);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B")); // aktif satır "B building…"
+
+        Assert.True(view.ActiveLineInstant); // daktilo INSTANT (harf-harf YOK), imleç blink kurulmaz
+        GC.KeepAlive(window);
+    }
+
+    // ================================================================ 7) ConsoleView (idle "ready" imleç blink)
+
+    [StaFact]
+    public void ConsoleView_ready_cursor_does_not_blink_under_reduced_motion()
+    {
+        var view = new ConsoleView();
+
+        view.ShowReady(); // headless App.Motion null → StopBlink
+
+        Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties); // imleç blink saati yok
+    }
+
+    // ================================================================ 8) Typewriter / cascade tempo (ConsoleView + EventStreamView ORTAK gate)
+
+    [Fact]
+    public void The_typewriter_and_cascade_schedulers_are_instant_with_zero_duration_when_off()
+    {
+        // ConsoleView aktif-satır daktilosu + EventStreamView daktilosu bu SAF zamanlayıcıyla gate'lenir.
+        var typewriter = new TypewriterScheduler(textLength: 120, animationsEnabled: false);
+        Assert.True(typewriter.Instant);
+        Assert.Equal(TimeSpan.Zero, typewriter.Duration);
+
+        // ConsoleView proje-log kaskatı bu SAF zamanlayıcıyla gate'lenir.
+        var cascade = new CascadeScheduler(totalLines: 200, animationsEnabled: false);
+        Assert.True(cascade.Instant);
+        Assert.Equal(TimeSpan.Zero, cascade.Duration);
+        Assert.Equal(200, cascade.RevealedAt(TimeSpan.Zero)); // her satır t=0'da tam açık
+    }
+
+    // ================================================================ 9) Paylaşılan geçiş kapıları (HoverBackground/LatestPill/DS chip + PopIn + scroll)
+
+    [StaFact]
+    public void The_shared_colour_transition_snaps_with_no_clock_when_off()
+    {
+        // MotionTokens.TransitionColor — HoverBackground, LatestPill ve TÜM DS 120ms renk geçişlerinin TEK yolu.
+        var host = DsResources.NewHost();
+        var brush = new SolidColorBrush(Colors.Black);
+        MotionTokens.TransitionColor(host, brush, Colors.Red); // headless App.Motion null → snap
+
+        Assert.False(brush.HasAnimatedProperties);
+        Assert.Equal(Colors.Red, brush.Color);
+        GC.KeepAlive(host);
+    }
+
+    [StaFact]
+    public void PopIn_snaps_the_element_to_its_final_state_with_no_clock_when_off()
+    {
+        var el = new Border();
+
+        PopIn.Play(el); // headless App.Motion null → snap
+
+        Assert.Equal(1.0, el.Opacity);
+        Assert.False(el.HasAnimatedProperties);
+    }
+
+    [StaFact]
+    public void The_scroll_animator_snaps_instead_of_animating_when_off()
+    {
+        // ScrollAnimator — frontier-follow / alta-yapışma / seçim-scroll'unun ortak motoru; çağıran kapalı sinyali
+        // TAZE geçirir → animasyon BAŞLATILMAZ (false döner), offset anında oturur.
+        var scroll = new ScrollViewer();
+        bool started = ScrollAnimator.AnimateTo(
+            scroll, currentOffset: 0, targetOffset: 500,
+            animationsEnabled: false, effectiveDuration: TimeSpan.Zero, keySpline: new System.Windows.Media.Animation.KeySpline(0.65, 0, 0.35, 1));
+
+        Assert.False(started); // anlık atlandı — hiç clock kurulmadı
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    private static GraphView NewGraphView()
+    {
+        var view = new GraphView { AnimationsEnabledProvider = () => false, MotionSettings = Off() };
+        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
+        {
+            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
+            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
+        }
+        view.Measure(new Size(600, 400));
+        view.Arrange(new Rect(0, 0, 600, 400));
+        return view;
+    }
+
+    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
+
+    private static RunViewModel NewVm() =>
+        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+}
