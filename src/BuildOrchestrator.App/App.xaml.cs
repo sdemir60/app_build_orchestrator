@@ -29,6 +29,11 @@ public partial class App : Application
     public static ServiceProvider Services { get; private set; } = null!;
     public static IMotionSettings Motion { get; private set; } = null!;
 
+    /// <summary>[E3/T41/DD9] Uygulama ömrü boyunca TEK motion-budget kapısı: aynı anda EN FAZLA 1 hero motion
+    /// oynar (graf reveal + liste reveal AYNI hero). Sahipler bunu TAZE okur (statik <c>App.Motion</c> deseni);
+    /// headless testlerde null kalır → sahipler kendi <c>MotionCoordinator</c> fake'ini enjekte eder.</summary>
+    public static MotionCoordinator HeroMotion { get; private set; } = null!;
+
     private SingleInstanceGuard? _singleInstance;
     private AppTrayIcon? _secondInstanceTray; // yalnız ikinci-instance-aktive-edilemedi yolunda geçici olarak yaşar
 
@@ -42,6 +47,7 @@ public partial class App : Application
         var motion = new MotionSettings(new SystemParametersMotionSignal());
         motion.Attach(Resources);
         Motion = motion;
+        HeroMotion = new MotionCoordinator();
 
         if (e.Args.Contains("--font-ab"))
         {

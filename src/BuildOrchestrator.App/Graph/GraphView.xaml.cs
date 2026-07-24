@@ -79,6 +79,7 @@ public partial class GraphView : UserControl
     private IMotionSettings? _subscribedMotion;
     private bool _edgesAnimated;
     private bool _hasCamera;
+    private IDisposable? _revealHero;
 
     public GraphView()
     {
@@ -109,6 +110,17 @@ public partial class GraphView : UserControl
     /// Testler kendi sahtesini enjekte eder (abonelik <c>Loaded</c>'da kurulur, <c>Unloaded</c>'da bırakılır).</summary>
     public IMotionSettings? MotionSettings { get; set; }
 
+    /// <summary>[E3/T41/DD9] Reveal stagger'ının içine girdiği hero-mutex; null ise <c>App.HeroMotion</c> (TAZE).
+    /// Graf reveal ile liste reveal AYNI hero'dur (<see cref="RevealHeroKey"/>) — başka bir hero sürüyorsa graf
+    /// reveal dekoratif yolu atlayıp düğümleri ani yerleştirir. Testler kendi <c>MotionCoordinator</c>'ını enjekte
+    /// eder.</summary>
+    public MotionCoordinator? HeroCoordinator { get; set; }
+
+    /// <summary>Graf reveal + liste reveal ORTAK hero anahtarı (co-tetiklenir → aynı hero, birlikte oynar).</summary>
+    internal const string RevealHeroKey = "sync-reveal";
+
+    private MotionCoordinator? ActiveHeroCoordinator => HeroCoordinator ?? BuildOrchestrator.App.App.HeroMotion;
+
     private void OnLoadedSubscribeMotion(object? sender, RoutedEventArgs e)
     {
         if (_subscribedMotion is not null) return;
@@ -127,6 +139,8 @@ public partial class GraphView : UserControl
         // [M-d] View unload olurken paylaşımlı dash clock'u da bırak — aksi halde (M-3'ün kapsamadığı bu yol
         // için) timing engine, view artık ağaçta olmasa bile 30fps'te uyanık kalırdı.
         ReleaseDashClock();
+        // [E3/T41] Reveal ortasında unload olursa hero'yu bırak — aksi halde bir sonraki hero sonsuza dek bloke olurdu.
+        ReleaseRevealHero();
     }
 
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
@@ -629,7 +643,22 @@ public partial class GraphView : UserControl
 
     private void PlayRevealStagger()
     {
+        // Önceki reveal hero'su (varsa) bırak — yeni bir SetGraph yeni bir reveal başlatır.
+        ReleaseRevealHero();
+
         bool animate = AnimationsEnabledProvider();
+        // [E3/T41/DD9] Reveal bir HERO'dur. Başka bir hero sürerken (Hero null döner) dekoratif stagger ATLANIR —
+        // düğümler ani yerleştirilir (reduced-motion yolu). Aksi halde hero TUTULUR ve en son düğümün reveal'i
+        // bitince bırakılır (aşağıda Completed). Coordinator yoksa (headless, enjekte edilmemiş) davranış eskisi gibi.
+        if (animate)
+        {
+            _revealHero = ActiveHeroCoordinator?.Hero(RevealHeroKey);
+            if (ActiveHeroCoordinator is not null && _revealHero is null)
+                animate = false; // başka bir hero aktif → ani sonuç
+        }
+
+        double maxDelay = -1;
+        DoubleAnimationUsingKeyFrames? lastFade = null; // en geç biten reveal → hero'yu o bırakır
         foreach (var visual in _nodes.Values)
         {
             visual.Cell.BeginAnimation(OpacityProperty, null);
@@ -645,7 +674,8 @@ public partial class GraphView : UserControl
             var rise = new TranslateTransform(0, -RevealRisePx);
             visual.Cell.RenderTransform = rise;
 
-            var begin = TimeSpan.FromMilliseconds(RevealDelayMs(visual.Model.Layer));
+            double delayMs = RevealDelayMs(visual.Model.Layer);
+            var begin = TimeSpan.FromMilliseconds(delayMs);
             var duration = TimeSpan.FromMilliseconds(RevealMs);
             var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
 
@@ -658,7 +688,26 @@ public partial class GraphView : UserControl
             slide.BeginTime = begin;
             slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
             rise.BeginAnimation(TranslateTransform.YProperty, slide);
+
+            if (delayMs > maxDelay) { maxDelay = delayMs; lastFade = fade; }
         }
+
+        // Hero'yu tut: en geç biten düğümün reveal'i tamamlanınca bırak. (Headless/HWND'siz Completed hiç
+        // ateşlenmez — orada da güvenli: bir sonraki SetGraph ya da Unloaded reveal hero'sunu zaten bırakır.)
+        if (_revealHero is not null && lastFade is not null)
+            lastFade.Completed += OnRevealCompleted;
+        else if (_revealHero is not null)
+            ReleaseRevealHero(); // animate ama düğüm yok (savunmacı) — hero'yu bekletme
+    }
+
+    private void OnRevealCompleted(object? sender, EventArgs e) => ReleaseRevealHero();
+
+    /// <summary>[E3/T41] Reveal hero'sunu (varsa) bırakır — yeni bir hero girebilir. Çift-bırakma güvenli
+    /// (HeroScope.Dispose idempotent).</summary>
+    private void ReleaseRevealHero()
+    {
+        _revealHero?.Dispose();
+        _revealHero = null;
     }
 
     // ---------------------------------------------------------------- kamera

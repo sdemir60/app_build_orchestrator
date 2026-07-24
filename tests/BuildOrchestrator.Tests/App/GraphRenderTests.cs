@@ -223,6 +223,54 @@ public class GraphRenderTests
         Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity));
     }
 
+    // ---------------------------------------------------------------- [E3/T41/DD9] reveal = hero
+
+    [StaFact]
+    public void The_reveal_stagger_takes_the_sync_reveal_hero_while_it_plays()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());
+
+        // Reveal animate modunda hero'ya girdi ve TUTUYOR (HWND'siz Completed ateşlenmez → serbest bırakılmadı).
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(0.0, v.Cell.Opacity)); // stagger oynuyor (gecikme boyunca 0)
+    }
+
+    [StaFact]
+    public void A_reveal_yields_to_an_already_running_hero_and_places_the_nodes_instantly()
+    {
+        var coordinator = new MotionCoordinator();
+        Assert.True(coordinator.TryBeginHero("frontier")); // DD9: başka bir hero zaten oynuyor
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());
+
+        // Reveal reddedildi → düğümler ANİ yerleşir (Opacity 1, stagger yok); aktif hero DEĞİŞMEDİ.
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity));
+        Assert.Equal("frontier", coordinator.CurrentHeroKey);
+    }
+
+    [StaFact]
+    public void Re_SetGraph_releases_the_previous_reveal_hero_before_taking_it_again()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+        view.SetGraph(Nodes(), Edges());
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+
+        // İkinci SetGraph önceki reveal hero'sunu bırakıp yeniden alır — ref-count sızmaz (hero tek girişte kalır).
+        view.SetGraph(Nodes(), Edges());
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent)); // unload reveal hero'sunu bırakmalı
+        Assert.False(coordinator.IsHeroActive);
+    }
+
     // ---------------------------------------------------------------- akan dash — TEK paylaşımlı clock
 
     [StaFact]
