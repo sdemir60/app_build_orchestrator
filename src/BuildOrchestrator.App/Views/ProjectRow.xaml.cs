@@ -187,6 +187,9 @@ public partial class ProjectRow : UserControl
     {
         _prevState = _vm?.State;
         PART_Name.Text = _vm?.Name;
+        // [E5/T47] Kart klavye ile odaklanınca ekran okuyucu proje ADINI okusun (ikon/şerit/glyph görselleri SR'a
+        // bir şey söylemez). Ad, satır VM'inden gelir (İngilizce proje adı).
+        System.Windows.Automation.AutomationProperties.SetName(this, _vm?.Name ?? "");
         PART_Sln.Text = _vm?.SolutionName;
         PART_Dot.State = _vm?.WillBuild;
         ApplyStatusVisuals(); // glyph/ad-rengi/şerit/tooltip (Status'tan)

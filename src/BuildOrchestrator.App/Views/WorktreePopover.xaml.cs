@@ -2,8 +2,10 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
@@ -32,8 +34,13 @@ public partial class WorktreePopover : UserControl
         DataContextChanged += OnDataContextChanged;
         PART_Switch.Checked += OnSwitchToggled;
         PART_Switch.Unchecked += OnSwitchToggled;
+        AutomationProperties.SetName(PART_Switch, AccessibilityNames.WorktreeSwitch);
         Loaded += (_, _) => Refresh();
     }
+
+    /// <summary>[E5/T46] Popover içinde Esc — ActionBar popover'ı kapatır + odağı chip'e döndürür (ayrı HWND →
+    /// pencere Esc zinciri buraya ulaşmaz).</summary>
+    public event Action? CloseRequested;
 
     public static readonly DependencyProperty IsOpenProperty = DependencyProperty.Register(
         nameof(IsOpen), typeof(bool), typeof(WorktreePopover),
@@ -41,12 +48,21 @@ public partial class WorktreePopover : UserControl
 
     public bool IsOpen { get => (bool)GetValue(IsOpenProperty); set => SetValue(IsOpenProperty, value); }
 
+    /// <summary>[E5/T46] Esc → popover'ı kapat (BranchPopover deseni).</summary>
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape) { CloseRequested?.Invoke(); e.Handled = true; return; }
+        base.OnKeyDown(e);
+    }
+
     private static void OnIsOpenChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         var popover = (WorktreePopover)d;
         if (e.NewValue is not true) return;
         popover.Refresh();
         PopIn.Play(popover);
+        // [E5/T47] Açılınca odak İÇERİ (ilk etkileşimli öğe = "Build in worktree" switch'i) — BranchPopover deseni.
+        popover.Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => popover.PART_Switch.Focus()));
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)

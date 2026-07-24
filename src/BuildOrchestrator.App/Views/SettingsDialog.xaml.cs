@@ -44,6 +44,10 @@ public partial class SettingsDialog : UserControl
 
     private void Close() => Visibility = Visibility.Collapsed;
 
+    /// <summary>[E5/T46] Esc zincirinin dialog katmanı için dışarıdan kapatma (MainWindow güvenlik ağı — odak
+    /// dialog dışındayken). Dialog odaklıyken Esc'i zaten <see cref="OnKeyDown"/> yakalar (handled).</summary>
+    public void CloseDialog() => Close();
+
     private void UpdateRepoLabel() =>
         RepoPathText.Text = _run is { RootPath.Length: > 0 } r ? r.RootPath : "no repository";
 

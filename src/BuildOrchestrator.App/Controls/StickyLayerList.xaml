@@ -32,7 +32,11 @@
   <Grid Background="{DynamicResource Brush.SurfaceBase}">
     <!-- Liste: virtualization KAPALI (§4.1), pixel scroll → VerticalOffset(px) = LayoutMetrics içerik Y'si. -->
     <ScrollViewer x:Name="Scroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <!-- [E5/T47] Satırlar (ProjectRow, Focusable) Tab ile ulaşılır; ok tuşları satırlar arası gezinir
+           (DirectionalNavigation=Contained → odak liste içinde kalır, başlıklar odaklanamaz → atlanır). -->
       <ItemsControl x:Name="Flow"
+                    KeyboardNavigation.DirectionalNavigation="Contained"
+                    KeyboardNavigation.TabNavigation="Continue"
                     VirtualizingPanel.IsVirtualizing="False" VirtualizingPanel.ScrollUnit="Pixel">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>

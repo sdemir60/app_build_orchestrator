@@ -45,7 +45,7 @@
 
         <!-- Projects paneli: PanelHeader + StickyLayerList + LatestPill (aynı Grid'de üst üste) -->
         <DockPanel Grid.Row="2">
-          <controls:PanelHeader DockPanel.Dock="Top" Text="PROJECTS">
+          <controls:PanelHeader x:Name="PART_ProjectsHeader" DockPanel.Dock="Top" Text="PROJECTS">
             <controls:PanelHeader.LeftContent>
               <TextBlock Text="build-order" VerticalAlignment="Center"
                          FontFamily="{x:Static controls:AppFonts.Mono}"
@@ -53,8 +53,15 @@
                          Foreground="{DynamicResource Brush.TextFaint}" />
             </controls:PanelHeader.LeftContent>
             <controls:PanelHeader.RightContent>
-              <!-- Ds.Input (implicit TextBox) + büyüteç prefix (paddingLeft 26) + watermark -->
-              <TextBox Width="160" controls:DsChrome.Watermark="Filter…">
+              <!-- Ds.Input (implicit TextBox) + büyüteç prefix (paddingLeft 26) + watermark.
+                   [E5/T46] Ctrl+F bunu odaklar (MainWindow → Shell.FocusProjectFilter); içindeki Esc yalnız
+                   sorguyu temizler + blur eder (OnFilterKeyDown, handled) — global Esc zincirine SIZMAZ. Text
+                   iki-yönlü ProjectQuery'ye bağlı (filtre kaynağı — VisibleProjects bunu okur). PanelHeader.
+                   RightContent bir alt-namescope olduğundan buraya x:Name/handler XAML'de YAZILAMAZ (MC3093) →
+                   referans + PreviewKeyDown kod-tarafı bağlanır (ShellRoot ctor), erişim RightContent üzerinden. -->
+              <TextBox Width="160" controls:DsChrome.Watermark="Filter…"
+                       Text="{Binding ProjectQuery, UpdateSourceTrigger=PropertyChanged}"
+                       AutomationProperties.Name="Filter projects">
                 <controls:DsChrome.Prefix>
                   <Viewbox Width="14" Height="14">
                     <Canvas Width="24" Height="24">

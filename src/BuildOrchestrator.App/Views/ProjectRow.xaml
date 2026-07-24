@@ -2,7 +2,8 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
-             Focusable="True">
+             Focusable="True" IsTabStop="True"
+             FocusVisualStyle="{DynamicResource Ds.FocusVisual}"><!-- [E5/T47] Tab/ok ile ulaşılır + amber DS focus halkası -->
   <!-- [T53/T54-UI] design-v1 proje kartı (BuildApp.jsx:355-416 — birebir). Yükseklik LayoutMetrics sabitine
        bağlı (sticky aritmetiği bunu varsayar); geçiş/durum renkleri kod-tarafı (ProjectRow.xaml.cs) — saf-XAML
        Storyboard motion sözleşmesince İMKANSIZ (MotionTokens.cs). Sol padding YOK: şerit kenara yapışır. -->

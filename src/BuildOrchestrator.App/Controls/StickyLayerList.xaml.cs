@@ -304,6 +304,8 @@ public partial class StickyLayerList : UserControl
     internal int RevealGeneration => _revealGen;
     internal bool HasPendingRevealRelease => _revealReleaseTimer is { IsEnabled: true };
     internal IReadOnlyList<ProjectRow> RevealRows => CollectRows();
+    /// <summary>[E5/T47 test yüzeyi] Satır akışı paneli — ok-tuşu gezinme modu (DirectionalNavigation) buradan pinlenir.</summary>
+    internal ItemsControl RowFlow => Flow;
 
     private sealed class EntrySelector(StickyLayerList owner) : DataTemplateSelector
     {

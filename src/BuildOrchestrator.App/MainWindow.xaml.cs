@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shell;
 using System.Windows.Threading;
+using CommunityToolkit.Mvvm.Input;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -191,7 +193,61 @@ public partial class MainWindow : Window
         // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
         Application.Current.SessionEnding += OnSessionEnding;
 
+        SetupKeyboardShortcuts();
         _ = RunConsolePumpAsync();
+    }
+
+    // ==================================== [E5/T46] Klavye kısayolları (K6) ====================================
+
+    /// <summary>[E5/T46 · K6 birebir] Pencere geneli InputBinding'leri kurar. Ctrl/Shift+F5 doğrudan
+    /// <see cref="RunViewModel.RebuildCommand"/>'a bağlanır (KeyBinding CanExecute'i ONURLANDIRIR); çıplak F5 durum-
+    /// dallı (<see cref="OnF5Pressed"/>); Ctrl+F filtreyi odaklar; Esc zinciri (<see cref="OnEscapePressed"/>) EN
+    /// ÜST açık katmanı kapatır. Otorite: <see cref="KeyboardShortcuts"/> (SAF karar) + BuildApp.jsx:1302-1319.</summary>
+    private void SetupKeyboardShortcuts()
+    {
+        var rebuild = _vm.RebuildCommand;                                  // Ctrl/Shift+F5 → doğrudan (CanExecute onurlanır)
+        var f5 = new RelayCommand(OnF5Pressed);                            // çıplak F5 → Stop/Continue/Build (duruma göre)
+        var focusFilter = new RelayCommand(() => Shell.FocusProjectFilter());
+        var escape = new RelayCommand(OnEscapePressed);
+
+        InputBindings.Add(new KeyBinding(rebuild, Key.F5, ModifierKeys.Control));
+        InputBindings.Add(new KeyBinding(rebuild, Key.F5, ModifierKeys.Shift));
+        InputBindings.Add(new KeyBinding(f5, Key.F5, ModifierKeys.None));
+        InputBindings.Add(new KeyBinding(focusFilter, Key.F, ModifierKeys.Control));
+        InputBindings.Add(new KeyBinding(escape, Key.Escape, ModifierKeys.None));
+    }
+
+    /// <summary>Çıplak F5: koşarken → Stop, stopped'ta → Continue, aksi → Build (v7 K6). Karar SAF
+    /// <see cref="KeyboardShortcuts.Resolve"/>'te; burada yalnız uygulanır (CanExecute reddederse no-op).</summary>
+    private void OnF5Pressed() =>
+        DispatchShortcut(KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, _vm.IsMidRunLocked, _vm.Phase == AppPhase.Stopped));
+
+    private void DispatchShortcut(ShortcutAction action)
+    {
+        System.Windows.Input.ICommand? command = action switch
+        {
+            ShortcutAction.Build => _vm.BuildCommand,
+            ShortcutAction.Rebuild => _vm.RebuildCommand,
+            ShortcutAction.Stop => _vm.StopCommand,
+            ShortcutAction.Continue => _vm.ContinueCommand,
+            _ => null,
+        };
+        if (command is not null && command.CanExecute(null)) command.Execute(null); // CanExecute'i onurlandır
+    }
+
+    /// <summary>Esc zinciri: EN ÜST açık katmanı kapatır (dialog &gt; popover/menü &gt; seçim), alta sızmaz.
+    /// Dialog KATMANI çoğu zaman SettingsDialog'un KENDİ Esc'iyle (odak-tuzağı içinde, handled) kapanır; bu
+    /// pencere-seviyesi güvenlik ağı odak dialog dışındayken de doğru katmanı seçer. Filtre input'undaki Esc
+    /// buraya HİÇ ULAŞMAZ (ShellRoot.OnFilterKeyDown handled eder).</summary>
+    private void OnEscapePressed()
+    {
+        bool dialogOpen = SettingsOverlay.Visibility == Visibility.Visible;
+        switch (KeyboardShortcuts.ResolveEsc(dialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null))
+        {
+            case EscAction.CloseDialog: SettingsOverlay.CloseDialog(); break;
+            case EscAction.ClosePopovers: Shell.CloseAllPopovers(); break;
+            case EscAction.ClearSelection: _vm.SelectProject(null); break;
+        }
     }
 
     /// <summary>

@@ -1,7 +1,11 @@
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
@@ -27,12 +31,52 @@ public partial class BranchPopover : UserControl
     /// <summary>Bir branch seçildiğinde — ActionBar popover'ı kapatır.</summary>
     public event Action? BranchPicked;
 
+    /// <summary>[E5/T46] Popover içinde Esc — ActionBar popover'ı kapatır + odağı tetikleyici chip'e döndürür.
+    /// (Popover ayrı bir HWND olduğundan pencere-seviyesi Esc zinciri buraya ULAŞMAZ; odak açılışta içeri
+    /// taşındığından Esc'i popover'ın KENDİSİ yakalamalı.)</summary>
+    public event Action? CloseRequested;
+
     public BranchPopover()
     {
         InitializeComponent();
-        DataContextChanged += (_, e) => { _vm = e.NewValue as RunViewModel; RefreshRows(); };
+        DataContextChanged += OnDataContextChanged;
         PART_Search.TextChanged += (_, _) => RefreshRows();
+        AutomationProperties.SetName(PART_Search, AccessibilityNames.BranchFilter);
         Loaded += (_, _) => RefreshRows();
+    }
+
+    // [E5/final fold — latent] Popover AÇIKKEN Branches envanteri değişirse liste bayat kalmasın: WorktreePopover
+    // deseniyle CollectionChanged'e (+ Branch değişimine, seçili ✓ için) abone ol; eski VM'den çöz. Böylece açık/
+    // kapalı fark etmeksizin CANLI kalır (fetch tamamlanınca gelen yeni branch listesi anında yansır).
+    private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (_vm is not null)
+        {
+            _vm.Branches.CollectionChanged -= OnBranchesChanged;
+            _vm.PropertyChanged -= OnVmPropertyChanged;
+        }
+        _vm = e.NewValue as RunViewModel;
+        if (_vm is not null)
+        {
+            _vm.Branches.CollectionChanged += OnBranchesChanged;
+            _vm.PropertyChanged += OnVmPropertyChanged;
+        }
+        RefreshRows();
+    }
+
+    private void OnBranchesChanged(object? sender, NotifyCollectionChangedEventArgs e) => RefreshRows();
+
+    private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(RunViewModel.Branch)) RefreshRows(); // seçili branch ✓ tazelensin
+    }
+
+    /// <summary>[E5/T46] Esc → popover'ı kapat (arama kutusundan bubble eder; TextBox Esc'i yemez). Prototip
+    /// BuildApp.jsx:1313 gibi popover katmanı: Esc branch aramasını TEMİZLEMEZ, popover'ı KAPATIR.</summary>
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape) { CloseRequested?.Invoke(); e.Handled = true; return; }
+        base.OnKeyDown(e);
     }
 
     /// <summary>[D6] Popover açık mı — ActionBar, Popup.IsOpen ile iki-yönlü bağlar. false'a düşünce sorgu sıfırlanır
@@ -50,6 +94,9 @@ public partial class BranchPopover : UserControl
         {
             popover.RefreshRows();
             PopIn.Play(popover);
+            // [E5/T47] Açılınca odak İÇERİ (ilk etkileşimli öğe = arama kutusu). Popup içeriği bu an henüz
+            // realize olmamış olabilir → layout tamamlanınca odakla (Input önceliği).
+            popover.Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => popover.PART_Search.Focus()));
         }
         else
         {

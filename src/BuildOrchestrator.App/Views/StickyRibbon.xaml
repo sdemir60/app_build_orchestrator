@@ -29,7 +29,11 @@
 
         <!-- Margin kod-tarafında (RefreshText) glyph görünürlüğüne koşullu set edilir — D2 review fix Finding 5:
              glyph varken 10 (glyph→metin gap), glyph collapsed olunca 0 (metin ilk flex item, leading gap yok). -->
+        <!-- [E5/T47] Faz metni bir LIVE REGION'dur: ekran okuyucu faz değişimini (empty→boot→…→done|stopped)
+             duyurur. Duyuru YALNIZ faz/hata değişiminde tetiklenir (elapsed tick'te DEĞİL — spam olmasın);
+             bkz. StickyRibbon.AnnouncePhase. -->
         <TextBlock x:Name="PART_PhaseText" Grid.Column="1" VerticalAlignment="Center"
+                   AutomationProperties.LiveSetting="Assertive"
                    FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
                    Typography.NumeralAlignment="Tabular" TextWrapping="NoWrap" />
 

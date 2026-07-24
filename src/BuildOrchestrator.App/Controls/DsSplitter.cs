@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -47,7 +48,12 @@ public sealed class DsSplitter : GridSplitter
         // OnRender override'ı olmadan yalnız 1px'lik Line child'ı tıklanabilir kalırdı.
         Template = null;
         Background = Brushes.Transparent;
-        Focusable = false;
+        // [E5/T47 fold — a11y kararı] Ayraç bir resize separator'dır → KLAVYE ile odaklanabilir ve ok tuşlarıyla
+        // resize edilebilir (taban GridSplitter'ın kendi ok-tuşu resize'ı). Odakta amber DS focus halkası (Ds.
+        // FocusVisual) çizilir. Ad, semantiği bilen ShellRoot'tan AutomationProperties.Name ile verilir.
+        Focusable = true;
+        IsTabStop = true;
+        SetResourceReference(FocusVisualStyleProperty, "Ds.FocusVisual");
         ShowsPreview = false;
         ResizeBehavior = GridResizeBehavior.PreviousAndNext;
 
@@ -91,6 +97,21 @@ public sealed class DsSplitter : GridSplitter
     {
         if (Background is not null)
             dc.DrawRectangle(Background, null, new Rect(RenderSize));
+    }
+
+    /// <summary>[E5/T47 fold — a11y] Klavye resize'ının PERSIST'ini mevcut sürükleme yoluna bağlar: taban
+    /// <see cref="GridSplitter"/> ok tuşuyla split'i taşır (e.Handled=true); ardından <see cref="Thumb.DragCompletedEvent"/>
+    /// yükseltilir ki ShellRoot'un DragCompleted persist handler'ı (fare sürüklemesiyle AYNI) çalışsın — kopya
+    /// mantık YOK. Görsel amber çizgi flaş'ı da mouse yoluyla hizalı (kısa vurgu).</summary>
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Handled && e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
+        {
+            Line.SetResourceReference(Shape.FillProperty, "Brush.AmberBorder");
+            Line.SetResourceReference(Shape.FillProperty, "Brush.Border");
+            RaiseEvent(new DragCompletedEventArgs(0, 0, false) { RoutedEvent = Thumb.DragCompletedEvent });
+        }
     }
 
     protected override int VisualChildrenCount => 1;

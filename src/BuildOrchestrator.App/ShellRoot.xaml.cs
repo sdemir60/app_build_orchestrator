@@ -1,5 +1,7 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -16,12 +18,24 @@ namespace BuildOrchestrator.App;
 /// </summary>
 public partial class ShellRoot : UserControl
 {
+    // [E5/T46] Proje filtre input'u — PanelHeader.RightContent alt-namescope'unda olduğundan XAML'de adlanamaz;
+    // referans RightContent DP'sinden alınır, Esc handler'ı kod-tarafı bağlanır.
+    private readonly TextBox _projectFilter;
+
     public ShellRoot()
     {
         InitializeComponent();
+        _projectFilter = (TextBox)PART_ProjectsHeader.RightContent!; // XAML'de sabit atanır (InitializeComponent'te kurulur)
+        _projectFilter.PreviewKeyDown += OnFilterKeyDown;
         PART_ColumnSplitter.DragCompleted += (_, _) => OnColumnDragCompleted();
         PART_LeftSplitter.DragCompleted += (_, _) => OnLeftDragCompleted();
         PART_RightSplitter.DragCompleted += (_, _) => OnRightDragCompleted();
+        // [E5/T47] Ayraçlar bir "resize separator"dır — ekran okuyucuya işlevleriyle adlanır (klavye ile
+        // odaklanıp ok tuşlarıyla resize edilirler; bkz. DsSplitter a11y kararı). Ad, semantiği BİLEN katmanda
+        // (burada) verilir — DsSplitter kendi rolünü bilmez.
+        AutomationProperties.SetName(PART_ColumnSplitter, AccessibilityNames.ColumnSplitter);
+        AutomationProperties.SetName(PART_LeftSplitter, AccessibilityNames.GraphListSplitter);
+        AutomationProperties.SetName(PART_RightSplitter, AccessibilityNames.ConsoleStreamSplitter);
         ApplyLayout(LayoutState.Default);
     }
 
@@ -42,6 +56,31 @@ public partial class ShellRoot : UserControl
     public ConsoleView ConsoleViewControl => PART_ConsoleView;
     public Views.EventStreamView EventStreamControl => PART_EventStream; // [E4/T48] arbiter kablajı
     public StickyLayerList ProjectsList => PART_Projects;
+
+    // ---- [E5/T46] Klavye kısayolları: filtre odağı (Ctrl+F) + popover Esc katmanı (MainWindow'un Esc zinciri) ----
+    /// <summary>[test yüzeyi] Proje filtre input'u (Ctrl+F bunu odaklar; içindeki Esc yereldir).</summary>
+    internal TextBox ProjectFilterBox => _projectFilter;
+
+    /// <summary>[E5/T46] Ctrl+F → proje filtre input'una odak (BuildApp.jsx:1306-1309). Odak başarılıysa true.</summary>
+    public bool FocusProjectFilter() => _projectFilter.Focus();
+
+    /// <summary>[E5/T46] Açık bir branch/worktree popover'ı ya da build menüsü var mı — Esc zincirinin popover
+    /// katmanı (MainWindow bunu <see cref="Shell.KeyboardShortcuts.ResolveEsc"/>'e verir).</summary>
+    public bool AnyPopoverOpen => PART_ActionBar.AnyPopoverOpen;
+
+    /// <summary>[E5/T46] Açık tüm popover/menüleri kapatır (Esc'in popover katmanı; BuildApp.jsx:1313).</summary>
+    public void CloseAllPopovers() => PART_ActionBar.CloseAllPopovers();
+
+    /// <summary>[E5/T46] Filtre input'undaki Esc YALNIZ sorguyu temizler + blur eder (BuildApp.jsx:1487
+    /// <c>setQuery(''); blur(); stopPropagation()</c>) — global Esc zincirine SIZMAZ (handled). PreviewKeyDown'da
+    /// yakalanır ki tuş hiç bubble etmesin.</summary>
+    private void OnFilterKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        _projectFilter.Clear();  // Text="" → iki-yönlü binding ProjectQuery'yi temizler
+        Keyboard.ClearFocus();   // blur — sonraki Esc artık global zincire (seçim temizleme) düşebilir
+        e.Handled = true;        // stopPropagation: bu Esc dialog/popover/seçim katmanına ULAŞMAZ
+    }
 
     // ---- [E2/T10] Proje listesi boş-durum davetleri (görünürlük + Choose Folder kablajı MainWindow'da) ----
     /// <summary>[E2/T10] "Pick a repository…" daveti (title + subtitle + Choose Folder) — repo seçilmemişken.</summary>

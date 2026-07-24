@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -57,6 +58,9 @@ public partial class ActionBar : UserControl
         PART_CfgDebug.Checked += OnConfigChecked;
         PART_CfgRelease.Checked += OnConfigChecked;
         PART_BranchPopover.BranchPicked += () => PART_BranchChip.IsChecked = false; // seçince popover kapanır
+        // [E5/T46] Esc popover içinde → kapat + odağı tetikleyici chip'e döndür (return-to-trigger).
+        PART_BranchPopover.CloseRequested += () => { PART_BranchChip.IsChecked = false; PART_BranchChip.Focus(); };
+        PART_WorktreePopover.CloseRequested += () => { PART_WorktreeChip.IsChecked = false; PART_WorktreeChip.Focus(); };
         PART_BuildMenu.ItemInvoked += () => PART_Split.IsMenuOpen = false;
         PART_PerfChip.Click += (_, _) => { _vm?.CyclePerf(); PART_PerfChip.IsChecked = false; }; // perf momentary
         DependencyPropertyDescriptor.FromProperty(SplitButton.IsMenuOpenProperty, typeof(SplitButton))
@@ -80,6 +84,27 @@ public partial class ActionBar : UserControl
     internal BuildMenu BuildMenuControl => PART_BuildMenu;
     internal BranchPopover BranchPopoverControl => PART_BranchPopover;
     internal WorktreePopover WorktreePopoverControl => PART_WorktreePopover;
+
+    // ---------------------------------------------------------------- [E5/T46] Esc zinciri: popover katmanı
+    /// <summary>Açık bir branch/worktree popover'ı ya da build menüsü var mı (Esc'in popover katmanı,
+    /// BuildApp.jsx:1313 <c>branchPop || wtPop || buildMenu</c>).</summary>
+    public bool AnyPopoverOpen =>
+        PART_BranchChip.IsChecked == true || PART_WorktreeChip.IsChecked == true || PART_Split.IsMenuOpen;
+
+    /// <summary>Açık tüm popover/menüleri kapatır (BuildApp.jsx:1313 <c>setBranchPop(false); setWtPop(false);
+    /// setBuildMenu(false)</c>). Chip'lerin IsChecked'ı popup'ların IsOpen'ına iki-yönlü bağlı → false yapmak kapatır.
+    /// [E5/T47] Kapanınca odak TETİKLEYİCİYE döner (açık olan chip / build split-button'a).</summary>
+    public void CloseAllPopovers()
+    {
+        Control? trigger = PART_BranchChip.IsChecked == true ? PART_BranchChip
+            : PART_WorktreeChip.IsChecked == true ? PART_WorktreeChip
+            : PART_Split.IsMenuOpen ? PART_Split
+            : null;
+        PART_BranchChip.IsChecked = false;
+        PART_WorktreeChip.IsChecked = false;
+        PART_Split.IsMenuOpen = false;
+        trigger?.Focus();
+    }
 
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -165,36 +190,39 @@ public partial class ActionBar : UserControl
     private void BuildCounterChips()
     {
         _sigmaChip = AddCounterChip(IconVisual.Make(this, "Icon.Sigma", "Brush.TextDim", ChipIconSize), out _sigmaValue,
-            "All projects — clear filter", first: true);
+            AccessibilityNames.FilterAll, first: true);
         _sigmaChip.Click += (_, _) => { _vm?.ToggleFilter(null); _sigmaChip.IsChecked = false; }; // Σ HER ZAMAN temizler (ActiveFilter zaten null'sa ToggleFilter no-op'tur → PropertyChanged gelmez → burada zorla)
 
-        _buildingChip = AddCounterChip(BuildingIcon(), out _buildingValue, "Building now — filter");
+        _buildingChip = AddCounterChip(BuildingIcon(), out _buildingValue, AccessibilityNames.FilterBuilding);
         _buildingChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Building);
 
         _succeededChip = AddCounterChip(new StatusGlyph { Status = GraphStatus.Succeeded, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _succeededValue, "Succeeded — filter");
+            out _succeededValue, AccessibilityNames.FilterSucceeded);
         _succeededChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Succeeded);
 
         _failedChip = AddCounterChip(new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _failedValue, "Failed — filter");
+            out _failedValue, AccessibilityNames.FilterFailed);
         _failedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Failed);
 
         _skippedChip = AddCounterChip(new StatusGlyph { Status = GraphStatus.Skipped, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _skippedValue, "Skipped — filter");
+            out _skippedValue, AccessibilityNames.FilterSkipped);
         _skippedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Skipped);
 
-        _depChip = AddCounterChip(DepIcon(), out _depValue, "Dependency-affected — filter");
+        _depChip = AddCounterChip(DepIcon(), out _depValue, AccessibilityNames.FilterDep);
         _depChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Dep);
     }
 
-    private ToggleButton AddCounterChip(UIElement icon, out TextBlock value, string tooltip, bool first = false)
+    // [E5/T47] AYNI metin hem tooltip hem UIA-adı (ikon-yalnız chip'in görsel içeriği ekran okuyucuya bir şey
+    // söylemez) — tek kaynak AccessibilityNames.
+    private ToggleButton AddCounterChip(UIElement icon, out TextBlock value, string label, bool first = false)
     {
         var content = new StackPanel { Orientation = Orientation.Horizontal };
         content.Children.Add(icon);
         value = CounterValue();
         content.Children.Add(value);
 
-        var chip = new ToggleButton { Content = content, ToolTip = tooltip, VerticalAlignment = VerticalAlignment.Center };
+        var chip = new ToggleButton { Content = content, ToolTip = label, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(chip, label);
         if (TryFindResource("Ds.Chip") is Style s) chip.Style = s;
         if (!first) chip.Margin = new Thickness(ChipStripGap, 0, 0, 0); // bar gap 8 (ilk chip HARİÇ)
         PART_CounterChips.Children.Add(chip);
@@ -275,6 +303,8 @@ public partial class ActionBar : UserControl
     {
         _branchValue = LabelChipContent(PART_BranchChip, "Icon.Branch", "branch", chevron: true);
         _worktreeValue = LabelChipContent(PART_WorktreeChip, "Icon.Tree", "worktree", chevron: true);
+        AutomationProperties.SetName(PART_BranchChip, AccessibilityNames.BranchChip);
+        AutomationProperties.SetName(PART_WorktreeChip, AccessibilityNames.WorktreeChip);
     }
 
     private void BuildPerfChip()
@@ -284,6 +314,7 @@ public partial class ActionBar : UserControl
         _perfValue = ChipMonoValue(PART_PerfChip);
         content.Children.Add(_perfValue);
         PART_PerfChip.Content = content;
+        AutomationProperties.SetName(PART_PerfChip, AccessibilityNames.PerfChip);
     }
 
     private TextBlock LabelChipContent(ToggleButton chip, string iconKey, string label, bool chevron)
@@ -358,6 +389,8 @@ public partial class ActionBar : UserControl
     {
         PART_Sync.Content = ButtonContent("Icon.Sync", "Sync", "Brush.TextPrimary", 24);
         PART_Stop.Content = ButtonContent("Icon.Stop", "Stop", "Brush.StatusFailText", 24);
+        AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
+        AutomationProperties.SetName(PART_Stop, AccessibilityNames.StopButton);
     }
 
     private void RefreshBuildArea()

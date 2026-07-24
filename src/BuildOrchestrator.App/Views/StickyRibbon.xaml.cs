@@ -59,6 +59,7 @@ public partial class StickyRibbon : UserControl
     private double _lastFraction; // determinate hedef (0..1) — resize'da yeniden uygulanır
     private string? _lastBuildingSig;
     private string? _lastFailedSig;
+    private AppPhase? _lastAnnouncedPhase; // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil)
     private BuildOrchestrator.App.Services.IMotionSettings? _subscribedMotion;
 
     /// <summary>[ProjectRow deseni · D8] Motion sinyalinin TAZE okunduğu kapı — headless'ta <c>App.Motion</c> null
@@ -101,6 +102,9 @@ public partial class StickyRibbon : UserControl
             motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
             motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
         }
+        // [E5/temizlik — L2 M2] Unloaded'da VM aboneliği bırakıldığından (leak fix), reload olursa (DataContext
+        // değişmeden) burada geri kurulur — idempotent (ProjectRow subscribe-once deseni).
+        if (_vm is { } vm) SubscribeVm(vm);
         RefreshAll();
     }
 
@@ -108,6 +112,9 @@ public partial class StickyRibbon : UserControl
     {
         if (_subscribedMotion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
         _subscribedMotion = null;
+        // [E5/temizlik — L2 M2] LEAK FIX: OnUnloaded VM PropertyChanged/CollectionChanged aboneliğini de BIRAKIR
+        // (önceden yalnız motion bırakılıyordu → şerit unload olsa bile VM'e asılı kalıyordu). E3 unsubscribe deseni.
+        if (_vm is { } vm) UnsubscribeVm(vm);
         StopIndeterminate(); // clock serbest — sweep unload'da bırakılır
     }
 
@@ -119,19 +126,26 @@ public partial class StickyRibbon : UserControl
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        if (_vm is not null)
-        {
-            _vm.PropertyChanged -= OnVmPropertyChanged;
-            _vm.Projects.CollectionChanged -= OnProjectsChanged;
-        }
+        if (_vm is not null) UnsubscribeVm(_vm);
         _vm = e.NewValue as RunViewModel;
         _lastBuildingSig = _lastFailedSig = null; // yeni VM → chip imzalarını sıfırla (ilk kurulumda yeniden kur)
-        if (_vm is not null)
-        {
-            _vm.PropertyChanged += OnVmPropertyChanged;
-            _vm.Projects.CollectionChanged += OnProjectsChanged;
-        }
+        if (_vm is not null) SubscribeVm(_vm);
         RefreshAll();
+    }
+
+    // [E5 fold] VM aboneliğinin TEK giriş/çıkış kapısı (idempotent -= sonra += — çift-abonelik birikmez).
+    private void SubscribeVm(RunViewModel vm)
+    {
+        vm.PropertyChanged -= OnVmPropertyChanged;
+        vm.PropertyChanged += OnVmPropertyChanged;
+        vm.Projects.CollectionChanged -= OnProjectsChanged;
+        vm.Projects.CollectionChanged += OnProjectsChanged;
+    }
+
+    private void UnsubscribeVm(RunViewModel vm)
+    {
+        vm.PropertyChanged -= OnVmPropertyChanged;
+        vm.Projects.CollectionChanged -= OnProjectsChanged;
     }
 
     private void OnProjectsChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildChipsIfChanged();
@@ -152,6 +166,7 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.SyncErrorMessage):
                 RefreshText();
                 RefreshProgress();
+                AnnouncePhaseIfChanged(); // [E5/T47] faz değişimini ekran okuyucuya duyur (live region)
                 break;
             // [D2 review fix, Finding 2] ElapsedMs/EtaMs KENDİ case'inde: yalnız faz-metninde görünürler
             // (RibbonText.Progress/ProgressStatus girdileri elapsed/ETA İÇERMEZ) — koşarken 200ms'de bir tick
@@ -214,6 +229,18 @@ public partial class StickyRibbon : UserControl
         "failed" => GraphStatus.Failed,
         _ => null,
     };
+
+    /// <summary>[E5/T47] Faz metni bir live region'dır: faz ENUM'u DEĞİŞTİĞİNDE (elapsed/ETA tick'inde DEĞİL)
+    /// ekran okuyucuya <c>LiveRegionChanged</c> yükselt — SR yeni faz metnini duyurur. Peer yoksa (henüz realize
+    /// olmamış) sessizce atlanır; dinleyici yoksa raise güvenli (no-op).</summary>
+    private void AnnouncePhaseIfChanged()
+    {
+        if (_vm is null || _vm.Phase == _lastAnnouncedPhase) return;
+        _lastAnnouncedPhase = _vm.Phase;
+        var peer = System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(PART_PhaseText)
+                   ?? System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(PART_PhaseText);
+        peer?.RaiseAutomationEvent(System.Windows.Automation.Peers.AutomationEvents.LiveRegionChanged);
+    }
 
     // ---------------------------------------------------------------- progress
     private void RefreshProgress()
