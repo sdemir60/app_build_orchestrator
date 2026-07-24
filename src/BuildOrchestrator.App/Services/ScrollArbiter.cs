@@ -40,6 +40,17 @@ public readonly record struct ScrollGrant(bool Granted, ScrollPanel Panel, Scrol
 /// </list></para>
 ///
 /// <para>Kullanım UI thread'ine bağlıdır (tüm scroll UI thread'inde tetiklenir); durum kilit gerektirmez.</para>
+///
+/// <para><b>[E4 fix] SPEC-yüzeyi vs CANLI yol (dürüstlük notu):</b> <see cref="Arbitrate"/>, <see cref="ScrollGrant.Epoch"/>
+/// (devir) ve panel öncelik-sıralaması, paneller-arası VE panel-içi (follow-vs-bottom-anchor) çekişmenin
+/// SÖZLEŞME-OTORİTE yüzeyidir — ama mevcut bağımsız-panel wiring'i bu çekişmeyi ÜRETMEZ: frontier yalnız
+/// follow/selection, console/stream yalnız bottom-anchor yükseltir; ortak/çekişen bir viewport yoktur. Dolayısıyla
+/// <see cref="Arbitrate"/>/epoch/öncelik'i doğrulayan SAF testler CANLI bir yolu değil SPEC'i belgeler (ileriye
+/// dönük: merkezi bir Arbitrate route açılırsa hazır). CANLI tüketilen yol ise <see cref="CanFollowFrontier"/>
+/// (frontier follow gate; <c>FollowFrontier</c> her tick okur) + <see cref="IsSuppressed"/>/<see cref="NotifyUserScroll"/>/
+/// <see cref="Resume"/> (frontier regional wheel-suppress; liste wheel set eder, near-bottom'a dönüş temizler) +
+/// <see cref="SetSelection"/>/<see cref="HasSelection"/> (seçim &gt; follow). Bu API brief §1/§4 zorunluluğudur —
+/// silinmez; <see cref="ScrollGrant.Epoch"/> şu an hiçbir yerde TÜKETİLMEZ (spec-forward, bu notla belgeli).</para>
 /// </summary>
 public sealed class ScrollArbiter
 {
@@ -52,6 +63,14 @@ public sealed class ScrollArbiter
     /// <summary>Frontier'de bir kart seçili mi — <see cref="ScrollKind.Follow"/> bu true iken reddedilir (seçim
     /// &gt; follow, <c>BuildApp.jsx:1388</c> <c>follow = running &amp;&amp; !selected</c>).</summary>
     public bool HasSelection => _hasSelection;
+
+    /// <summary>[E4 fix] Frontier follow ŞU AN devreye girebilir mi — bir kart seçili DEĞİL <b>ve</b> frontier
+    /// bölgesel wheel-suppress altında DEĞİL. <c>MainWindow.FollowFrontier</c> bunu HER tick'te CANLI tüketir; böylece
+    /// <see cref="IsSuppressed"/>(Frontier) yalnız YAZILAN değil OKUNAN bir bit olur: kullanıcı listeyi kaydırınca
+    /// (<see cref="NotifyUserScroll"/>) follow duraklar, near-bottom'a dönünce (<see cref="Resume"/>) sürer; seçim de
+    /// (<see cref="SetSelection"/>) duraklatır. <c>BuildApp.jsx:1388</c> <c>follow = running &amp;&amp; !selected</c>'ın
+    /// regional-suppress'le genişletilmiş CANLI hâli.</summary>
+    public bool CanFollowFrontier => !_hasSelection && !_suppressed[(int)ScrollPanel.Frontier];
 
     /// <summary>Seçim durumunu kurar (SelectedProjectId değişiminde). true iken frontier follow duraklatılır;
     /// false olunca follow kaldığı yerden sürebilir.</summary>

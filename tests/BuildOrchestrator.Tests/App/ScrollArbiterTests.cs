@@ -82,15 +82,63 @@ public class ScrollArbiterTests
     }
 
     [Fact]
-    public void Each_grant_advances_the_panel_epoch_so_a_stale_in_flight_scroll_is_invalidated()
+    public void Each_grant_advances_the_panel_epoch_by_one()
     {
+        // [E4 fix] Ad gövdeye göre düzeltildi: bu test YALNIZ devrin +1 ilerlediğini doğrular. Epoch'u TÜKETİP bir
+        // şeyi geçersiz kılan CANLI (ya da test) bir yol YOKTUR — yo-yo koruması Arbitrate'in panel başına tek-grant
+        // `break`'inden gelir, epoch'tan değil. Epoch spec-forward bir yüzeydir (bkz. ScrollArbiter sınıf XML notu).
         var a = new ScrollArbiter();
         var g1 = a.Request(ScrollPanel.Console, ScrollKind.BottomAnchor);
         var g2 = a.Request(ScrollPanel.Console, ScrollKind.BottomAnchor);
 
         Assert.True(g1.Granted);
         Assert.True(g2.Granted);
-        Assert.Equal(g1.Epoch + 1, g2.Epoch); // yeni grant eskisini geçersiz kılar (devir ilerler)
+        Assert.Equal(g1.Epoch + 1, g2.Epoch); // her grant devri tam BİR artırır
+    }
+
+    // ================================================================ (5) [E4 fix] CANLI frontier follow gate
+    // CanFollowFrontier, MainWindow.FollowFrontier'ın HER tick okuduğu CANLI karardır — regional wheel-suppress bit'i
+    // (IsSuppressed[Frontier]) artık yalnız yazılan değil OKUNAN bir bit'tir (FIX 2.1).
+
+    [Fact]
+    public void CanFollowFrontier_is_true_by_default_running_and_unselected()
+    {
+        Assert.True(new ScrollArbiter().CanFollowFrontier);
+    }
+
+    [Fact]
+    public void CanFollowFrontier_pauses_on_a_frontier_wheel_and_resumes_when_the_user_returns()
+    {
+        var a = new ScrollArbiter();
+
+        a.NotifyUserScroll(ScrollPanel.Frontier);           // kullanıcı listeyi kaydırdı (liste wheel'i)
+        Assert.False(a.CanFollowFrontier);                  // follow duraklar (regional suppress CANLI okunur)
+
+        a.Resume(ScrollPanel.Frontier);                     // near-bottom'a dönüş (StickyLayerList.ResumeFrontierIfNearBottom)
+        Assert.True(a.CanFollowFrontier);                   // follow sürer
+    }
+
+    [Fact]
+    public void CanFollowFrontier_pauses_while_a_card_is_selected()
+    {
+        var a = new ScrollArbiter();
+
+        a.SetSelection(true);
+        Assert.False(a.CanFollowFrontier);                  // seçim > follow (BuildApp.jsx:1388)
+
+        a.SetSelection(false);
+        Assert.True(a.CanFollowFrontier);                   // seçim kalkınca follow kaldığı yerden sürer
+    }
+
+    [Fact]
+    public void CanFollowFrontier_ignores_other_panels_suppression()
+    {
+        var a = new ScrollArbiter();
+
+        a.NotifyUserScroll(ScrollPanel.Console);            // başka panelin wheel'i frontier follow'u ETKİLEMEZ (regional)
+        a.NotifyUserScroll(ScrollPanel.Stream);
+
+        Assert.True(a.CanFollowFrontier);
     }
 
     [Fact]

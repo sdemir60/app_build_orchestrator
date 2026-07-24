@@ -132,11 +132,19 @@ public class ReducedMotionCoverageTests
         var window = DsResources.Realize(host, list);
         DispatcherPump.PumpUntil(() => list.RevealRows.Count == 2, TimeSpan.FromSeconds(2));
 
+        // [E4 fix — FIX 3, İZOLASYON] İlk satıra KENDİ sinyali `() => true` ver: bu satır kendi başına animasyona
+        // GİRERDİ (opacity 0'da başlar). Opacity 1 assertion'ı ancak LİSTE kararının (animate=false) satırın sinyalini
+        // EZDİĞİNİ kanıtlarsa anlamlıdır — aksi halde her satırın kendi headless-reduced varsayılanı (App.Motion null)
+        // opacity'yi zaten 1'e çeker ve assertion bir wiring regresyonundan ASLA kırılamaz (non-isolating). Wiring
+        // düşer de PlayRevealStagger satır kararı yerine satırın kendi sinyalini okursa, bu satır opacity 0'da kalır → RED.
+        var rows = list.RevealRows;
+        rows[0].AnimationsEnabledProvider = () => true;
+
         list.PlayRevealStagger();
 
         Assert.False(coordinator.IsHeroActive);                             // reduced → hero TUTULMAZ
         Assert.False(list.HasPendingRevealRelease);                         // release timer YOK
-        Assert.All(list.RevealRows, r => Assert.Equal(1.0, r.Root.Opacity)); // satırlar ANİ (opacity 1, kayma yok)
+        Assert.All(rows, r => Assert.Equal(1.0, r.Root.Opacity));          // LİSTE kararı satır sinyalini EZER → hepsi ANİ (opacity 1)
         GC.KeepAlive(window);
     }
 

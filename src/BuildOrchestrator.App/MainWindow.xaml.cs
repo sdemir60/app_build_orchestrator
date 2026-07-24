@@ -311,6 +311,10 @@ public partial class MainWindow : Window
         string? id = _vm.SelectedProjectId;
         _scrollArbiter.SetSelection(id is not null);
         if (id is null) { Shell.ProjectsList.ClearSelection(); return; }
+        // [E4 fix] AÇIK seçim-scroll frontier'i yeniden devreye alır (ScrollArbiter.Request(Selection) / ScrollAnimator.
+        // AnimateTo suppress-temizleme paritesi) — seçimden ÖNCE kurulmuş bir wheel-suppress, kart bırakılınca follow'u
+        // bloke etmeye devam etmesin (kart seçmek FollowRow'un ScrollAnimator bayrağını zaten SelectRow→AnimateTo ile temizler).
+        _scrollArbiter.Resume(ScrollPanel.Frontier);
         int row = FrontierRowIndex(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
         if (row >= 0) Shell.ProjectsList.SelectRow(row);
     }
@@ -320,7 +324,10 @@ public partial class MainWindow : Window
     /// kararı <see cref="Controls.FollowScrollController"/>'a aittir (StickyLayerList.FollowRow onu uygular).</summary>
     private void FollowFrontier()
     {
-        if (_scrollArbiter.HasSelection) return;
+        // [E4 fix] Arbiter'ın CANLI frontier gate'i: seçim YOK **ve** frontier bölgesel wheel-suppress YOK. Böylece
+        // arbiter'ın _suppressed[Frontier] bit'i yalnız yazılan değil OKUNAN olur — liste wheel'i onu kurar
+        // (NotifyUserScroll), near-bottom'a dönüş temizler (StickyLayerList.ResumeFrontierIfNearBottom → Resume).
+        if (!_scrollArbiter.CanFollowFrontier) return;
         int row = FrontierRowIndex(p => p.State == ProjectRowState.Started);
         if (row >= 0) Shell.ProjectsList.FollowRow(row);
     }
