@@ -40,6 +40,7 @@ public partial class ShellRoot : UserControl
     public DsSplitter ColumnSplitter => PART_ColumnSplitter;
     public ConsoleHeader ConsoleHeaderControl => PART_ConsoleHeader;
     public ConsoleView ConsoleViewControl => PART_ConsoleView;
+    public Views.EventStreamView EventStreamControl => PART_EventStream; // [E4/T48] arbiter kablajı
     public StickyLayerList ProjectsList => PART_Projects;
 
     // ---- [E2/T10] Proje listesi boş-durum davetleri (görünürlük + Choose Folder kablajı MainWindow'da) ----

@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 
@@ -87,8 +88,24 @@ public partial class ConsoleView : UserControl
             getViewport: () => EditorControl.ViewportHeight,
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
             scrollSmooth: AnimateToBottom);
-        _bottomAnchor.Changed += (_, _) => Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+        _bottomAnchor.Changed += OnBottomAnchorChanged;
     }
+
+    /// <summary>[E4/T48] Konsolun bottom-anchor'ının merkezi arbiter'a bölgesel suppress bildirimi + pill görünürlüğü.
+    /// Dibe yapışıksa arbiter'da bu panel yeniden devrede (<see cref="ScrollArbiter.Resume"/>); kullanıcı dipten
+    /// uzaklaşınca duraklı (<see cref="ScrollArbiter.NotifyUserScroll"/>) — YALNIZ konsol paneli (stream/frontier
+    /// akmaya devam). <see cref="Arbiter"/> null ise (izole test) yalnız pill güncellenir.</summary>
+    private void OnBottomAnchorChanged(object? sender, EventArgs e)
+    {
+        Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+        if (Arbiter is null) return;
+        if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Console);
+        else Arbiter.NotifyUserScroll(ScrollPanel.Console);
+    }
+
+    /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
+    /// MainWindow enjekte eder.</summary>
+    public ScrollArbiter? Arbiter { get; set; }
 
     /// <summary>Test/host erişimi için altındaki AvalonEdit kontrolü.</summary>
     public TextEditor Editor => EditorControl;

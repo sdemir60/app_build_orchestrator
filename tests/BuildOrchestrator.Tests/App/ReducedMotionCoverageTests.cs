@@ -113,6 +113,33 @@ public class ReducedMotionCoverageTests
         GC.KeepAlive(window);
     }
 
+    // ============================================ 4b) StickyLayerList reveal wiring (E3 fold — liste-frontier reveal CANLI)
+
+    [StaFact]
+    public void StickyLayerList_reveal_wiring_holds_no_hero_and_snaps_rows_under_reduced_motion()
+    {
+        // [E4/T48] Liste reveal-hero wiring'i reduced-motion'da: HERO TUTULMAZ (graf reveal deseni — GraphView'ın
+        // reduced yolu da hero almaz), release timer kurulmaz, satırlar ANİ (opacity 1). ProjectRow.PlayReveal'ın
+        // reduced yolu §4'te ayrıca; bu, StickyLayerList SUBSYSTEM'inin (E3'ün buraya ertelediği) wiring'ini kanıtlar.
+        var coordinator = new MotionCoordinator();
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => false, HeroCoordinator = coordinator };
+        list.SetGroups([new StickyLayerList.LayerGroup("",
+        [
+            new ProjectRowViewModel("a", "A", ProjectRowState.Pending),
+            new ProjectRowViewModel("b", "B", ProjectRowState.Pending),
+        ])]);
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, list);
+        DispatcherPump.PumpUntil(() => list.RevealRows.Count == 2, TimeSpan.FromSeconds(2));
+
+        list.PlayRevealStagger();
+
+        Assert.False(coordinator.IsHeroActive);                             // reduced → hero TUTULMAZ
+        Assert.False(list.HasPendingRevealRelease);                         // release timer YOK
+        Assert.All(list.RevealRows, r => Assert.Equal(1.0, r.Root.Opacity)); // satırlar ANİ (opacity 1, kayma yok)
+        GC.KeepAlive(window);
+    }
+
     // ================================================================ 5) StickyRibbon (1.4s belirsiz sweep)
 
     [StaFact]

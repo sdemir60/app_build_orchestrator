@@ -39,6 +39,13 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, string> _graphNameById = new(StringComparer.OrdinalIgnoreCase); // Id → Ad
     private bool _suppressGraphSelection;
 
+    // [E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter (frontier follow'u seçime göre gate eder;
+    // paneller bölgesel suppress'lerini buna bildirir — bir panelde kaydırmak diğerlerini duraklatmaz).
+    private readonly ScrollArbiter _scrollArbiter = new();
+    // [E4/T48] Liste satır sırası (başlık hariç) — SetGroups ile AYNI sıra; FollowRow/SelectRow satır index'i buradan
+    // (her 200ms tick'te BuildLayerGroups'u yeniden kurmamak için yalnız topoloji değişiminde tazelenir).
+    private IReadOnlyList<ProjectRowViewModel> _orderedRows = [];
+
     public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console)
     {
         InitializeComponent();
@@ -69,6 +76,12 @@ public partial class MainWindow : Window
         // [T35] Kalıcı yerleşimi geri yükle; kullanıcı değişiklikleri (mod düğmesi / split sürükleme sonu) persist.
         // GraphView'ın MotionSettings'i Loaded'dan ÖNCE atanmalı (GraphView.xaml.cs:111-119 sözleşmesi).
         Shell.GraphHost.MotionSettings = App.Motion;
+        // [E4/T48] Üç paneli merkezi scroll arbiter'a bağla: frontier follow'u seçime göre gate eder, konsol/stream
+        // bölgesel suppress'lerini (dibe yapışık mı) bildirir. StickyLayerList reveal-hero'su App.HeroMotion/App.Motion'ı
+        // TAZE okur (enjeksiyon gerekmez — üretimde ikisi de kurulu).
+        Shell.ProjectsList.Arbiter = _scrollArbiter;
+        Shell.ConsoleViewControl.Arbiter = _scrollArbiter;
+        Shell.EventStreamControl.Arbiter = _scrollArbiter;
         var saved = _uiState.Load();
         var layout = new LayoutState(saved.LayoutMode, saved.ColPct, saved.LeftPct, saved.RightPct);
         Shell.ApplyLayout(layout);
@@ -140,7 +153,8 @@ public partial class MainWindow : Window
             // [D5] Koşarken grafı düzenli besle: kamera frontier'i yumuşak takip etsin, queued→building→done
             // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
             // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
-            if (_vm.IsMidRunLocked) PushGraphStatuses();
+            // [E4/T48] Koşarken frontier'i (ilk building satır) yumuşak takip et (arbiter seçim varken reddeder).
+            if (_vm.IsMidRunLocked) { PushGraphStatuses(); FollowFrontier(); }
         };
         _elapsedTimer.Start();
 
@@ -156,6 +170,11 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) _ = OnSelectedProjectChangedAsync();
+        };
+        // [E4/T48] Seçim → frontier arbiter (seçim > follow) + liste seçim-scroll (SelectRow 90ms / ClearSelection).
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
 
@@ -271,6 +290,39 @@ public partial class MainWindow : Window
             .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
             .ToList();
         Shell.ProjectsList.SetGroups(groups);
+        // [E4/T48] Satır sırasını (başlık hariç) önbelleğe al — FollowRow/SelectRow global satır index'i buradan;
+        // SetGroups'un kurduğu LayoutMetrics satır sırasıyla BİREBİR (aynı groups kaynağı).
+        _orderedRows = groups.SelectMany(g => g.Rows).OfType<ProjectRowViewModel>().ToList();
+    }
+
+    /// <summary>[E4/T48] Liste sırasındaki (başlık hariç) İLK eşleşen satırın global index'i — <see cref="Controls.LayoutMetrics"/>
+    /// satır index'iyle birebir (StickyLayerList.FollowRow/SelectRow bunu bekler). Eşleşme yoksa -1.</summary>
+    private int FrontierRowIndex(Func<ProjectRowViewModel, bool> match)
+    {
+        for (int i = 0; i < _orderedRows.Count; i++)
+            if (match(_orderedRows[i])) return i;
+        return -1;
+    }
+
+    /// <summary>[E4/T48] Seçim değişince: arbiter'a bildir (seçim &gt; follow) + liste seçim-scroll'unu sür (SelectRow
+    /// 90ms gecikmeli %35 üst-marjla / ClearSelection follow'u geri açar). design-v1 §2.4/§3.3.</summary>
+    private void UpdateFrontierSelection()
+    {
+        string? id = _vm.SelectedProjectId;
+        _scrollArbiter.SetSelection(id is not null);
+        if (id is null) { Shell.ProjectsList.ClearSelection(); return; }
+        int row = FrontierRowIndex(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (row >= 0) Shell.ProjectsList.SelectRow(row);
+    }
+
+    /// <summary>[E4/T48] Koşarken frontier'i (ilk <c>Started</c> satır) yumuşak takip et — arbiter seçim aktifken
+    /// bunu reddeder (seçim &gt; follow, <c>BuildApp.jsx:1388</c>). Bölgesel wheel-suppress + throttle/dead-band
+    /// kararı <see cref="Controls.FollowScrollController"/>'a aittir (StickyLayerList.FollowRow onu uygular).</summary>
+    private void FollowFrontier()
+    {
+        if (_scrollArbiter.HasSelection) return;
+        int row = FrontierRowIndex(p => p.State == ProjectRowState.Started);
+        if (row >= 0) Shell.ProjectsList.FollowRow(row);
     }
 
     // ==================================== [D5/T50] Graf beslemesi ====================================

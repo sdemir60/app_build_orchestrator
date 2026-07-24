@@ -11,6 +11,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Views;
@@ -43,6 +44,10 @@ public partial class EventStreamView : UserControl
     /// ile enjekte eder. Oluşturulan her <see cref="EventStreamRow"/>'a da geçirilir.</summary>
     public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
 
+    /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
+    /// MainWindow enjekte eder.</summary>
+    public ScrollArbiter? Arbiter { get; set; }
+
     public EventStreamView()
     {
         InitializeComponent();
@@ -60,7 +65,7 @@ public partial class EventStreamView : UserControl
             getViewport: () => PART_Scroll.ViewportHeight,
             scrollInstant: v => PART_Scroll.ScrollToVerticalOffset(v),
             scrollSmooth: AnimateToBottom);
-        _bottomAnchor.Changed += (_, _) => PART_Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+        _bottomAnchor.Changed += OnBottomAnchorChanged;
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
         ScrollAnimator.EnableUserCancellation(PART_Scroll);
         PART_Pill.Click += (_, _) => _bottomAnchor.JumpToBottom();
@@ -260,6 +265,16 @@ public partial class EventStreamView : UserControl
     }
 
     // ---------------------------------------------------------------- alta-yapışma
+    /// <summary>[E4/T48] Stream'in bottom-anchor'ının merkezi arbiter'a bölgesel suppress bildirimi + pill görünürlüğü
+    /// (ConsoleView.OnBottomAnchorChanged deseni — YALNIZ stream paneli duraklar/döner). Arbiter null ise yalnız pill.</summary>
+    private void OnBottomAnchorChanged(object? sender, EventArgs e)
+    {
+        PART_Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+        if (Arbiter is null) return;
+        if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Stream);
+        else Arbiter.NotifyUserScroll(ScrollPanel.Stream);
+    }
+
     private bool AnimateToBottom(double target) =>
         MotionTokens.AnimateSlowEaseInOut(this, PART_Scroll, PART_Scroll.VerticalOffset, target);
 }

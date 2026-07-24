@@ -39,7 +39,7 @@ public partial class ProjectRow : UserControl
     // [E3/T42] design-v1 bo-reveal (BuildApp.jsx:15/:27): opacity 0→1 + translateY(-5px)→0, .3s, ease-out —
     // GraphView katman reveal'iyle AYNI animasyon ailesi (GraphView.RevealMs/RevealRisePx). Liste satırı gecikmesi
     // graf'tan FARKLI formül: 10ms/satır, 380ms tavan (BuildApp.jsx:367 `Math.min(revealIndex*10, 380)`).
-    private const double RevealMs = 300;           // BuildApp.jsx:15 `bo-reveal .3s`
+    internal const double RevealMs = 300;          // BuildApp.jsx:15 `bo-reveal .3s` — [E4] StickyLayerList release penceresi de kullanır
     private const double RevealRisePx = 5;         // BuildApp.jsx:27 translateY(-5px)
     internal const double RowStaggerMs = 10;       // BuildApp.jsx:367 revealIndex*10
     internal const double RowStaggerCapMs = 380;   // BuildApp.jsx:367 tavan 380
@@ -362,12 +362,16 @@ public partial class ProjectRow : UserControl
     /// <summary>[T42/bo-reveal] Satırı KADEMELİ belirt: opacity 0→1 + translateY(-5→0), 300ms ease-out, gecikme =
     /// <see cref="RevealDelayMs"/>(index). Reduced-motion (AnimationsEnabled false) iken ANİ — opacity 1, kayma yok.
     /// Gecikme boyunca opacity 0 TUTULUR (flash yok) — <see cref="Graph.GraphView"/> per-node reveal deseni. Kayma
-    /// PART_ShakeTranslate'in Y ekseninde akar (shake X'i kullanır — çakışma yok).</summary>
-    internal void PlayReveal(int index)
+    /// PART_ShakeTranslate'in Y ekseninde akar (shake X'i kullanır — çakışma yok).
+    ///
+    /// <para>[E4/T48] <paramref name="animate"/> verilirse satırın kendi <see cref="AnimationsEnabledProvider"/>'ı
+    /// YERİNE onu kullanır — StickyLayerList reveal-hero wiring'i (bir hero bloke ederse ani sonuç) tüm satırların
+    /// AYNI kararla oynamasını böyle garanti eder. null (varsayılan) → satır kendi sinyalini okur (mevcut davranış).</para></summary>
+    internal void PlayReveal(int index, bool? animate = null)
     {
         PART_Root.BeginAnimation(OpacityProperty, null);
         PART_ShakeTranslate.BeginAnimation(TranslateTransform.YProperty, null);
-        if (!AnimationsEnabledProvider())
+        if (!(animate ?? AnimationsEnabledProvider()))
         {
             PART_Root.Opacity = 1.0;
             PART_ShakeTranslate.Y = 0;
