@@ -53,6 +53,7 @@ public class ReducedMotionCoverageTests
     [StaFact]
     public void BuildingSpinner_never_starts_its_rotation_clock_under_reduced_motion()
     {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz sahip: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
         var host = DsResources.NewHost();
         var spinner = new BuildingSpinner();
         var window = DsResources.Realize(host, spinner); // headless App.Motion null → reduced
@@ -66,11 +67,15 @@ public class ReducedMotionCoverageTests
     [StaFact]
     public void StatusGlyph_never_starts_its_building_pulse_under_reduced_motion()
     {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz sahip: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
         var host = DsResources.NewHost();
         var glyph = new StatusGlyph { Status = GraphStatus.Building };
         var window = DsResources.Realize(host, glyph);
 
-        Assert.False(glyph.IsPulsing); // nabız durur
+        // GERÇEK saat (BuildingSpinner.IsRotating kardeşi): nabız Opacity clock'u glyph'te HİÇ kurulmaz. İç
+        // _isPulsing bayrağı yalan söyleyebilir (bookkeeping) — asıl kanıt HasAnimatedProperties'tir.
+        Assert.False(glyph.HasAnimatedProperties); // nabız Opacity saati YOK
+        Assert.False(glyph.IsPulsing);             // ikincil: iç bayrak da kapalı
         GC.KeepAlive(window);
     }
 
@@ -138,7 +143,10 @@ public class ReducedMotionCoverageTests
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B")); // aktif satır "B building…"
 
-        Assert.True(view.ActiveLineInstant); // daktilo INSTANT (harf-harf YOK), imleç blink kurulmaz
+        Assert.True(view.ActiveLineInstant); // daktilo INSTANT (harf-harf YOK)
+        // [fix] ActiveLineInstant yalnız daktilo zamanlayıcısını gözler (scheduler yoksa vacuously true). İmlecin
+        // blink saatinin GERÇEKTEN kurulmadığını ayrı kanıtla (ConsoleView.ActiveCursorGlyph deseni).
+        Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties); // imleç blink saati YOK
         GC.KeepAlive(window);
     }
 
@@ -147,6 +155,7 @@ public class ReducedMotionCoverageTests
     [StaFact]
     public void ConsoleView_ready_cursor_does_not_blink_under_reduced_motion()
     {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz sahip: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
         var view = new ConsoleView();
 
         view.ShowReady(); // headless App.Motion null → StopBlink
@@ -177,6 +186,7 @@ public class ReducedMotionCoverageTests
     public void The_shared_colour_transition_snaps_with_no_clock_when_off()
     {
         // MotionTokens.TransitionColor — HoverBackground, LatestPill ve TÜM DS 120ms renk geçişlerinin TEK yolu.
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz kapı: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
         var host = DsResources.NewHost();
         var brush = new SolidColorBrush(Colors.Black);
         MotionTokens.TransitionColor(host, brush, Colors.Red); // headless App.Motion null → snap
@@ -189,6 +199,7 @@ public class ReducedMotionCoverageTests
     [StaFact]
     public void PopIn_snaps_the_element_to_its_final_state_with_no_clock_when_off()
     {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz kapı: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
         var el = new Border();
 
         PopIn.Play(el); // headless App.Motion null → snap

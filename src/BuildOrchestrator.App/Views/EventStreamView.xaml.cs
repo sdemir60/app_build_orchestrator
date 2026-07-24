@@ -83,6 +83,10 @@ public partial class EventStreamView : UserControl
     /// guard'ı (eski kod burst yüzünden instant kurardı; fix sonrası gerçek Push→FinishBuilding jump'ında
     /// daktilo koşar). Hiç kurulmadıysa true varsayılır (satır gizli).</summary>
     internal bool ActiveLineInstant => _activeScheduler?.Instant ?? true;
+    /// <summary>[E3/T36 reduced-motion kapsama] Aktif satır imleci — blink'in DURDUĞUNU
+    /// (<c>HasAnimatedProperties==false</c>) reduced-motion'da doğrulamak için (ConsoleView.ActiveCursorGlyph deseni).
+    /// <see cref="ActiveLineInstant"/> yalnız DAKTİLO zamanlayıcısını gözler; imleç blink saatini ayrı bu yüzey kanıtlar.</summary>
+    internal UIElement ActiveCursorGlyph => PART_ActiveCursor;
     internal LatestPill Pill => PART_Pill;
     internal ScrollViewer Scroll => PART_Scroll;
 

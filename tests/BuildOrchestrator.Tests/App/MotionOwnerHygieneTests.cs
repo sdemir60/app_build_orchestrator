@@ -45,6 +45,36 @@ public class MotionOwnerHygieneTests
         Assert.Equal(1, motion.SubscriberCount);
     }
 
+    [StaFact]
+    public void The_building_spinner_subscribes_to_the_static_signal_exactly_once_across_repeated_loads()
+        => AssertSubscribesOnce(new BuildingSpinner());
+
+    [StaFact]
+    public void The_status_glyph_subscribes_to_the_static_signal_exactly_once_across_repeated_loads()
+        => AssertSubscribesOnce(new StatusGlyph());
+
+    /// <summary>[fix — #3/#5] BuildingSpinner/StatusGlyph seam'li DEĞİL: motion sinyalini statik <c>App.Motion</c>'dan
+    /// DOĞRUDAN okur → subscribe-once guard'ının gövdesi yalnız <c>App.Motion</c> null DEĞİLKEN koşar. Headless'ta
+    /// null olduğundan guard hiç çalışmaz ve plain <c>+=</c>'e geri dönmek HİÇBİR testi düşürmezdi. Bu yüzden
+    /// static'i geçici set/restore et (Console UI serial collection → mutasyon serileştirilir) ve Loaded'ı iki kez
+    /// ateşle: guard varsa abonelik TEK kalır, olmasa 2 olurdu.</summary>
+    private static void AssertSubscribesOnce(FrameworkElement owner)
+    {
+        var motion = new CountingMotion();
+        var original = BuildOrchestrator.App.App.Motion;
+        BuildOrchestrator.App.App.Motion = motion;
+        try
+        {
+            owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            Assert.Equal(1, motion.SubscriberCount);
+        }
+        finally
+        {
+            BuildOrchestrator.App.App.Motion = original; // headless varsayılanı (null) geri yükle
+        }
+    }
+
     /// <summary>Abone olan delege SAYISINI (guard'ı) gözlemleyen IMotionSettings — çift-abonelik burada görünür.</summary>
     private sealed class CountingMotion : IMotionSettings
     {

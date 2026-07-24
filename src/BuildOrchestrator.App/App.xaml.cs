@@ -27,7 +27,10 @@ public partial class App : Application
     public const string AutostartArg = "--autostart";
 
     public static ServiceProvider Services { get; private set; } = null!;
-    public static IMotionSettings Motion { get; private set; } = null!;
+    /// <summary>Uygulama ömrü boyunca reduced-motion sinyali. Setter <c>internal</c>: <c>App.Motion</c>'u DOĞRUDAN
+    /// okuyan seam'siz sahiplerin (BuildingSpinner/StatusGlyph subscribe-once guard'ı) testleri bunu try/finally ile
+    /// geçici set/restore eder (headless'ta varsayılan null kalır).</summary>
+    public static IMotionSettings Motion { get; internal set; } = null!;
 
     /// <summary>[E3/T41/DD9] Uygulama ömrü boyunca TEK motion-budget kapısı: aynı anda EN FAZLA 1 hero motion
     /// oynar (graf reveal + liste reveal AYNI hero). Sahipler bunu TAZE okur (statik <c>App.Motion</c> deseni);
