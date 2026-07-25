@@ -10,11 +10,18 @@ namespace BuildOrchestrator.Tests.App;
 /// OKUNUR — drift ederlerse test kırılır.
 ///
 /// <para><b>GÖVDE metni (anlamlı bilgi taşıyan tonlar) ≥4.5:1</b> her uygulama yüzeyinde geçer: TextPrimary/
-/// TextSecondary + statü-text tonları + accent buton metni. <b>Brush.TextDim/TextFaint BİLİNÇLİ DEKORATİF</b>
-/// (de-emphasized) tonlardır (adları "Dim"/"Faint") — WCAG 1.4.3 "incidental/decorative" istisnasına girerler
-/// ve design-v1 görsel otoritesi (renk BİREBİR) bunları sabitler; 4.5 çubuğuna TABİ DEĞİLLER. Bilinen risk çifti
-/// <c>TextFaint</c>-üstünde-<c>SurfaceBase</c> AYRICA hesaplanıp DOKÜMANLI bir alt-eşik istisnası olarak pinlenir
-/// (kaza değil, kasıt). Token DÜZELTİLMEDİ: bir gövde çifti eşiğin altına düşseydi düzeltilirdi — düşmedi.</para>
+/// TextSecondary + statü-text tonları + accent buton metni.</para>
+///
+/// <para><b>Brush.TextDim/TextFaint = design-v1'in KASTEN SÖNÜK (de-emphasized) tonları</b> — <c>colors.css:22</c>
+/// <c>--text-dim:#76767e</c> / <c>--text-faint:#54545c</c>. Bunlar "görünmez/incidental dekorasyon" DEĞİLdir:
+/// design-v1 bunları LOW-EMPHASIS / DİNLENME-DURUMU metninde bilinçle kullanır — şeridin boot/stopped faz satırları
+/// (<c>BuildApp.jsx:754/765</c> AÇIKÇA <c>text-dim</c>), sönük proje <c>sln</c>/<c>sha</c>, "no repository"/watermark
+/// etiketleri. Aktif/önemli durumlar (Building, hata, birincil metin) ≥4.5 gövde tonlarını kullanır. Bu iki ton
+/// design-v1 "renk BİREBİR" (bağlayıcı görsel otorite) gereği TAM bu değerlerde sabittir → 4.5 çubuğuna TABİ DEĞİL.
+/// <b>Kullanıcı kararı (2026-07-25, E6 batch — RATIFY):</b> bu sönük dinlenme-durumu tonları için design fidelity
+/// WCAG-AA'nın önünde gelir (SurfaceBase üstünde TextDim=4.28 / TextFaint=2.57 bilinçli, dokümanlı sub-AA istisna).
+/// Değerler VEYA rol drift ederse aşağıdaki pinler kırılır ve a11y kararı BİLİNÇLİ olarak yeniden gözden geçirilir.
+/// Token DÜZELTİLMEDİ: bir GÖVDE çifti eşiğin altına düşseydi düzeltilirdi — düşmedi.</para>
 /// </summary>
 public sealed class ContrastTests
 {
@@ -34,8 +41,10 @@ public sealed class ContrastTests
         "Brush.StatusCycleText", "Brush.StatusQueuedText", "Brush.StatusSkippedText",
     ];
 
-    // Bilinçli DEKORATİF (de-emphasized) tonlar — 4.5 çubuğuna tabi DEĞİL (WCAG incidental istisnası + design-v1).
-    private static readonly string[] DecorativeTones = ["Brush.TextDim", "Brush.TextFaint"];
+    // design-v1'in KASTEN SÖNÜK (de-emphasized, dinlenme-durumu) tonları — 4.5 çubuğuna tabi DEĞİL (design-v1 renk
+    // BİREBİR + kullanıcı-ratify 2026-07-25). "Dekoratif/incidental" DEĞİL: gerçek low-emphasis metinde kullanılır
+    // (bkz. sınıf <summary>: şerit boot/stopped, sönük sln/sha, watermark).
+    private static readonly string[] MutedTones = ["Brush.TextDim", "Brush.TextFaint"];
 
     [Fact]
     public void Body_and_status_text_meets_wcag_aa_on_every_app_surface()
@@ -67,15 +76,16 @@ public sealed class ContrastTests
         // ve a11y kararı BİLİNÇLİ olarak yeniden gözden geçirilir.
         double faint = Contrast("Brush.TextFaint", "Brush.SurfaceBase");
         Assert.True(faint < AaNormalText,
-            $"TextFaint-on-SurfaceBase artık {faint:N2}:1 — dekoratif istisna varsayımı geçersizleşti, a11y kararını gözden geçir.");
+            $"TextFaint-on-SurfaceBase artık {faint:N2}:1 — sönük-ton istisnası varsayımı geçersizleşti, a11y kararını gözden geçir.");
     }
 
     [Fact]
-    public void Decorative_tones_are_deliberately_muted_below_the_body_bar()
+    public void The_muted_resting_state_tones_stay_below_the_body_bar_by_design()
     {
-        // Dekoratif tonlar TANIMLARI GEREĞİ gövde çubuğunun altındadır (SurfaceBase üstünde) — "Dim/Faint"
-        // adlarının görsel karşılığı. (Kaza değil kasıt: biri 4.5'i geçseydi aslında gövde tonu olurdu.)
-        foreach (string tone in DecorativeTones)
+        // design-v1'in kasten-sönük tonları (TextDim şeridin boot/stopped status metninde — BuildApp.jsx:754/765;
+        // TextFaint watermark/sönük sha) SurfaceBase üstünde gövde çubuğunun ALTINDADIR — design-v1 renk-birebir
+        // gereği bilinçli (kullanıcı-ratify). Biri 4.5'i geçseydi aslında bir gövde tonu olurdu → pin kırılır.
+        foreach (string tone in MutedTones)
             Assert.True(Contrast(tone, "Brush.SurfaceBase") < AaNormalText, $"{tone} beklenmedik şekilde gövde eşiğini geçti");
     }
 
@@ -83,7 +93,7 @@ public sealed class ContrastTests
     public void The_guard_actually_loaded_the_token_colours_it_claims_to()
     {
         // Parse boş dönerse yukarıdaki testler SESSİZCE yeşil kalırdı (yol/regex bozulması).
-        foreach (string key in BodyTextTones.Concat(DecorativeTones).Concat(Surfaces).Append("Brush.TextOnAccent").Append("Brush.Amber"))
+        foreach (string key in BodyTextTones.Concat(MutedTones).Concat(Surfaces).Append("Brush.TextOnAccent").Append("Brush.Amber"))
             Assert.True(Tokens.ContainsKey(key), $"token bulunamadı: {key}");
     }
 

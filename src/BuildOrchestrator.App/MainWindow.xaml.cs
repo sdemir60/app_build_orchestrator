@@ -93,6 +93,11 @@ public partial class MainWindow : Window
         // [D6 fold — C2] İş akışı tercihlerini kalıcı durumdan SEED et; sonra değişimlerini persist et. Seed ÖNCE,
         // abonelik SONRA — seed'in kendisi kaydetme fırtınası tetiklemesin. Perf'te kalıcı değer yoksa VM varsayılanı
         // (Balanced/4, C2 F2) KORUNUR (SetPerfMode PerfMode + Parallelism'i birlikte tutar).
+        // [D7 M3] Son repo'yu SEED et — açılışta hatırlanır ama SEED-BUT-IDLE: DOĞRUDAN RootPath set'i yalnız
+        // OnRootPathChanged'i (Empty→Boot) sürer, otomatik Sync YOKtur (ChangeRepositoryAsync DEĞİL — o SyncAsync
+        // tetikler). Repo bilinir, kullanıcı hazır olunca Sync/Build'e basar. İlk-koşuda (kayıtlı repo yok →
+        // { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository" daveti korunur.
+        if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
         if (saved.Branch is { } br) _vm.Branch = br;
         _vm.UseWorktree = saved.UseWorktree;
@@ -520,18 +525,22 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (Configuration/Branch/UseWorktree/WorktreeName/PerfMode) değişince kalıcı
-    /// duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).</summary>
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/Branch/UseWorktree/WorktreeName/PerfMode)
+    /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
+    /// [D7 M3] RootPath değişimi (ilk klasör seçimi, Settings→Change, Choose Folder — hepsi RootPath'i set eder)
+    /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
     private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
     {
         switch (e.PropertyName)
         {
+            case nameof(RunViewModel.RootPath):
             case nameof(RunViewModel.Configuration):
             case nameof(RunViewModel.Branch):
             case nameof(RunViewModel.UseWorktree):
             case nameof(RunViewModel.WorktreeName):
             case nameof(RunViewModel.PerfMode):
                 var s = _uiState.Load();
+                s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
                 s.Branch = _vm.Branch;
                 s.UseWorktree = _vm.UseWorktree;
@@ -626,8 +635,9 @@ public partial class MainWindow : Window
     /// <summary>[E2/T16] Autostart ile açılış: pencere GÖSTERİLMEDEN tepside (gizli) başlar. HWND'i erkenden
     /// oluşturmak (<see cref="System.Windows.Interop.WindowInteropHelper.EnsureHandle"/>) <see cref="OnSourceInitialized"/>'ı
     /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
-    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Oto-Sync YOKtur (normal açılışta da yok — RepositoryRoot
-    /// açılışta restore edilmez; autostart yolu bugünkü "temiz" başlangıcı tepside korur).</summary>
+    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Oto-Sync YOKtur (normal açılışta da yok — [D7 M3]
+    /// RepositoryRoot açılışta SEED edilir/hatırlanır ama SEED-BUT-IDLE: doğrudan RootPath set'i yalnız Empty→Boot
+    /// sürer, Sync tetiklemez; autostart yolu bugünkü "temiz" başlangıcı tepside korur).</summary>
     public void StartInTray() => new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
 
     /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.</summary>

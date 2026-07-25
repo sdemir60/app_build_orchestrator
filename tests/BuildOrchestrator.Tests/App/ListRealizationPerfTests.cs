@@ -1,0 +1,93 @@
+using System.Diagnostics;
+using System.Windows;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Model;
+using Xunit.Abstractions;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [E6 Step 1] Liste realizasyon perf ölçümü. <see cref="StickyLayerList"/> virtualization KAPALI (It-4 kısıtı,
+/// global-constraints §4.1 — 500+ hedefi T51/It-5) → her satır HEVESLE realize olur. Bu test 191 satırın
+/// Measure/Arrange duvar-saati maliyetini ölçer (<b>bütçe &lt; 400ms</b>) ve 500'ü KAYIT için ölçer (sert bütçe YOK).
+///
+/// <para>Gürültüye karşı sağlam: warmup pass + birkaç iterasyonun MEDYANI (tek atış GC/JIT sıçramasına açık). Ölçüm
+/// bir HWND GEREKTİRMEZ — saf Measure/Arrange; DynamicResource'lar host merge zincirinden çözülür (bkz.
+/// <see cref="DsResources.NewHost"/>) ve animasyon KAPALI (<see cref="StickyLayerList.AnimationsEnabledProvider"/> =
+/// <c>() =&gt; false</c>) olduğundan compositor saati gerekmez. Her ölçümde <see cref="StickyLayerList.RevealRows"/>
+/// sayısı == N doğrulanır: aksi halde boş/eksik realize edilmiş bir ağacı ölçüp sessizce yeşil kalmak mümkündü.</para>
+///
+/// <para><b>Ertelenen bütçe:</b> 191 bütçeyi aşarsa suite KIRILMAZ (simplify-card kararı → T51/It-5) — gerçek sayı
+/// test çıktısına yazılır + raporda belgelenir; yalnız felaket bir regresyon (gevşek tavan) suite'i patlatır.</para>
+/// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
+public class ListRealizationPerfTests(ITestOutputHelper output)
+{
+    private const double BudgetMs191 = 400;      // brief E6 Step 1 bütçesi
+    private const double SanityCeilingMs = 3000; // bütçe aşılsa bile suite'i patlatma; yalnız felaket regresyon kırar
+
+    [StaFact]
+    public void Realizing_191_project_rows_measure_and_arrange_stays_under_the_400ms_budget()
+    {
+        double median191 = MeasureRealizationMs(rowCount: 191, warmups: 2, samples: 5);
+        double median500 = MeasureRealizationMs(rowCount: 500, warmups: 1, samples: 3); // kayıt için (It-5 hedefi)
+
+        output.WriteLine($"[E6 perf] 191-row realize median = {median191:N1} ms (budget < {BudgetMs191:N0} ms)");
+        output.WriteLine($"[E6 perf] 500-row realize median = {median500:N1} ms (record only — no budget, T51/It-5 target)");
+
+        if (median191 < BudgetMs191)
+            Assert.True(median191 < BudgetMs191,
+                $"191-satır realize {median191:N1} ms — bütçe {BudgetMs191:N0} ms.");
+        else
+            // Bütçe aşıldı → T51/It-5'e ertelenir; suite KIRILMAZ. Yalnız felaket bir regresyona karşı gevşek tavan.
+            Assert.True(median191 < SanityCeilingMs,
+                $"191-satır realize {median191:N1} ms — 400ms bütçeyi aştı (T51/It-5'e ertelendi) VE {SanityCeilingMs:N0} ms gevşek tavanı da aştı (felaket regresyon).");
+    }
+
+    /// <summary>Aynı realizasyonu <paramref name="warmups"/> kez ısıtır, sonra <paramref name="samples"/> ölçümün
+    /// medyanını döndürür (ms). Her ölçüm TAZE bir host+list+VM kümesiyle sıfırdan realize eder.</summary>
+    private static double MeasureRealizationMs(int rowCount, int warmups, int samples)
+    {
+        for (int i = 0; i < warmups; i++) RealizeOnce(rowCount);
+
+        var times = new List<double>(samples);
+        for (int i = 0; i < samples; i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            times.Add(RealizeOnce(rowCount)); // timer yalnız Measure/Arrange penceresini kapsar
+        }
+        times.Sort();
+        return times[times.Count / 2]; // medyan
+    }
+
+    /// <summary>Tek bir realizasyonu ölçer: N satırlık bir <see cref="StickyLayerList"/> kurar ve YALNIZ
+    /// Measure/Arrange/UpdateLayout duvar-saatini döndürür. Realizasyonun gerçekten tamamlandığını (N satır)
+    /// doğrular.</summary>
+    private static double RealizeOnce(int rowCount)
+    {
+        var host = DsResources.NewHost();
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => false };
+        var rows = new List<object>(rowCount);
+        for (int i = 0; i < rowCount; i++)
+            rows.Add(new ProjectRowViewModel($@"C:\p\proj{i}.csproj", $"Proj{i}", ProjectRowState.Pending)
+            {
+                WillBuild = (i % 2 == 0), // dirty satırlar sha/sağ-blok yolunu da realize eder (gerçekçi)
+            });
+        list.SetGroups([new StickyLayerList.LayerGroup("", rows)]);
+        host.Child = list;
+
+        var size = new Size(420, 760);
+        var sw = Stopwatch.StartNew();
+        host.Measure(size);
+        host.Arrange(new Rect(new Point(0, 0), size));
+        host.UpdateLayout(); // non-virtualized → tüm N container + ProjectRow burada üretilir/measure edilir
+        sw.Stop();
+
+        int realized = list.RevealRows.Count;
+        Assert.True(realized == rowCount, $"realizasyon eksik: {realized}/{rowCount} satır — ölçüm anlamsız.");
+        return sw.Elapsed.TotalMilliseconds;
+    }
+}

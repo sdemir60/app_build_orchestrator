@@ -279,9 +279,11 @@ public partial class ProjectRow : UserControl
     {
         // {CurrentSha} → {TargetSha}. TargetSha run-geneli (RunViewModel) — atalardan çözülür; CurrentSha per-proje
         // (henüz IPC'de yok — bkz. ProjectRowViewModel.CurrentSha). Görünürlük ApplyRightBlock'ta.
+        // [E6 interim] BuiltCommit wire It-5'e ertelendiğinden CurrentSha bugüne dek HEP boş gelir → yalın-ok pürüzü
+        // (" → a3f81c2", boş sol yarı). cur boşken TARGET'ı YALNIZ göster; cur dolunca (It-5) çift geri gelir.
         string cur = _vm?.CurrentSha ?? "";
         string target = FindRunViewModel()?.TargetSha ?? "";
-        PART_Sha.Text = $"{cur} → {target}";
+        PART_Sha.Text = cur.Length == 0 ? target : $"{cur} → {target}";
     }
 
     /// <summary>Sağ blok: hover'da aç-ikonları, değilse (will==dirty) sha çifti (BuildApp.jsx:387-403).</summary>

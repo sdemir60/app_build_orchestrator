@@ -3,10 +3,13 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Core.Formatting;
+using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -25,6 +28,8 @@ public class ProjectRowTests
         var window = DsResources.Realize(host, row);
         return (row, window, host);
     }
+
+    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     [StaFact]
     public void Row_is_thirtysix_pixels_with_a_two_pixel_status_stripe_that_becomes_three_when_selected()
@@ -299,6 +304,25 @@ public class ProjectRowTests
         var (row, window, _) = Realize(vm);
 
         Assert.Equal("a3f81c2 → ", row.ShaText.Text);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public async Task Sha_shows_the_target_alone_when_the_current_commit_is_not_yet_known()
+    {
+        // [E6 interim guard] Per-proje CurrentSha HENÜZ hiçbir IPC event'inde YOK (BuiltCommit wire It-5'e ertelendi)
+        // → dirty satırlarda cur BOŞ gelir. ApplySha o durumda yalın-ok pürüzü ("  → a3f81c2", boş sol yarı)
+        // yerine TARGET'ı YALNIZ göstermeli. Target run-genelidir → ata RunViewModel'den (host.DataContext) çözülür;
+        // cur-dolu yol (yukarıdaki test) DEĞİŞMEZ.
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { TargetSha = "a3f81c2" };
+        var host = DsResources.NewHost();
+        host.DataContext = run; // FindRunViewModel ata ağaçta bunu bulur → target = "a3f81c2"
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true }; // CurrentSha boş
+        var row = new ProjectRow { DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        Assert.Equal("a3f81c2", row.ShaText.Text); // yalın target — " → a3f81c2" (lone-arrow) DEĞİL
         GC.KeepAlive(window);
     }
 }

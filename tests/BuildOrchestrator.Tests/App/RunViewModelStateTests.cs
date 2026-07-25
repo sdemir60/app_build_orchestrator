@@ -60,6 +60,24 @@ public class RunViewModelStateTests
         Assert.Equal(AppPhase.Done, vm.Phase);
     }
 
+    [Fact] // [E6/D7 M3] Açılış seed'i = DOĞRUDAN RootPath set (Empty→Boot) — ChangeRepositoryAsync DEĞİL: kayıtlı repo
+    // seed edilir, repo BİLİNİR ama hiçbir Sync GÖNDERİLMEZ (seed-but-idle; kullanıcı hazır olunca Sync/Build'e basar).
+    // Bu "seed ≠ ChangeRepositoryAsync" pini: ChangeRepositoryAsync bir SyncWorkspaceCommand GÖNDERİRDİ (bkz.
+    // SettingsDialogTests.Changing_the_repository_...); doğrudan set HİÇBİR komut göndermez.
+    public async Task Seeding_the_root_path_directly_lands_in_boot_without_starting_a_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        IpcCommand? sent = null;
+        vm.DebugOnCommandSent = c => sent = c;
+
+        vm.RootPath = @"D:\repo"; // MainWindow'un açılış seed'i (doğrudan set — ChangeRepositoryAsync DEĞİL)
+
+        Assert.Equal(AppPhase.Boot, vm.Phase); // repo bilinir → Boot
+        Assert.Null(sent);                     // hiçbir komut/Sync gönderilmedi (seed-but-idle)
+        Assert.False(vm.SyncInFlight);         // uçuşta Sync yok
+    }
+
     // ---------------------------------------------------------------- seçim / filtre asimetrisi
 
     [Fact]
