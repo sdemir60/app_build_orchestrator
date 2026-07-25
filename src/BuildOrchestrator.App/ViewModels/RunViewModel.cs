@@ -552,12 +552,16 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>
-    /// [T20-b/K11] Perf profilinin App-tarafı TEK kapısı. Tablo App'te DEĞİL Core'dadır (<see cref="PerfProfile"/>):
-    /// paralellik + CPU cap + priority üçlüsünü Supervisor da AYNI satırdan okur, iki tablo tutulmaz.
-    /// <para>Tanınmayan metin (ör. bayat bir UiState değeri) <see cref="PerfProfile.TryParse"/>'ta <c>null</c>
-    /// olur; burada App'in ESKİ davranışına (Balanced/4) düşülür — kaldırılan <c>ParallelismFor</c> tablosunun
-    /// <c>_ =&gt; 4</c> dalının birebir karşılığı. <c>internal</c>: yalnız o savunma dalını pinleyen test doğrudan
-    /// çağırır (public yollar her zaman geçerli bir profil adı verir).</para>
+    /// [T20-b/K11] Perf profilini App tarafında TÜRETMENİN tek kapısı — üç tüketicisi de buradan geçer:
+    /// <see cref="Parallelism"/> alan başlatıcısı, <see cref="CyclePerfAsync"/> ve <see cref="SetPerfMode"/>.
+    /// Tablo App'te DEĞİL Core'dadır (<see cref="PerfProfile"/>): paralellik + CPU cap + priority üçlüsünü
+    /// Supervisor da AYNI satırdan okur, iki tablo tutulmaz.
+    /// <para><b>Türetme ≠ geçerlilik.</b> Tanınmayan metin (ör. bayat bir UiState değeri)
+    /// <see cref="PerfProfile.TryParse"/>'ta <c>null</c> olur; burada App'in ESKİ davranışına (Balanced/4)
+    /// düşülür — kaldırılan <c>ParallelismFor</c> tablosunun <c>_ =&gt; 4</c> dalının birebir karşılığı.
+    /// <see cref="SetPerfMode"/> ise geçersiz bir SEED'i kabul etmez (no-op) — o kapı ayrıdır ve bu fallback'i
+    /// KULLANMAZ. Bu yüzden fallback dalı üretimden erişilemez, yalnız savunma amaçlıdır ve
+    /// <c>internal</c>'dır: onu pinleyen test doğrudan çağırır.</para>
     /// </summary>
     internal static PerfProfile ProfileFor(string perfMode) =>
         PerfProfile.TryParse(perfMode) ?? PerfProfile.For(CorePerfMode.Balanced);
@@ -566,29 +570,30 @@ public sealed partial class RunViewModel : ObservableObject
     /// [T43 · T20-b/K11] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
     /// CANLI (kilitlenmez) — ve artık koşan run'a GERÇEKTEN etki eder: <see cref="SetPerfModeCommand"/> gönderilir.
     /// <para><b>Canlı değişen YALNIZ CPU cap + priority'dir.</b> Worker'lar run başında bir kez yaratılır
-    /// (Supervisor'ın <c>RunCoordinator</c>'ı), bu yüzden yeni paralellik ancak bir sonraki run'da geçerli olur;
-    /// konsol notunun ikinci satırı bunu kullanıcıya SÖYLER. Aynı sebeple ETA de dokunulmadan bırakılır: ETA
-    /// modeli run'ın BAŞLANGIÇ paralelliğini <c>runStarted</c>'dan dondurur (<c>_runParallelism</c>) ve canlı cap
-    /// değişimi onu BİLİNÇLİ olarak güncellemez (tahmin gürültüsü &lt; karmaşıklık maliyeti).</para>
-    /// <para>Koşmuyorken ne komut ne not vardır: profil zaten bir sonraki <see cref="StartRunCommand.PerfMode"/>
-    /// ile motora gider (bkz. <see cref="BeginRunAsync"/>).</para>
+    /// (Supervisor'ın <c>RunCoordinator</c>'ı) ve dinamik bir slot mekanizması yoktur, bu yüzden yeni profilin
+    /// PARALELLİĞİ ancak BİR SONRAKİ run'da geçerli olur. Bu, K11'in "çalışırken değiştirilebilir" ifadesinin
+    /// dürüst yorumudur. Konsola yalnız K11'in kendi satırı (<see cref="PerfNoteText.Note"/>) yazılır —
+    /// açıklayıcı ikinci bir cümle YOK (design-v1'in konsol dili: sakin, kesin, tekrarsız).</para>
+    /// <para>Aynı sebeple ETA de dokunulmadan bırakılır: ETA modeli run'ın BAŞLANGIÇ paralelliğini
+    /// <c>runStarted</c>'dan dondurur (<c>_runParallelism</c>) ve canlı cap değişimi onu BİLİNÇLİ olarak
+    /// güncellemez (tahmin gürültüsü &lt; karmaşıklık maliyeti).</para>
+    /// <para>[Fix round 1 — KÖK 1] Kapı <see cref="IsRunning"/> DEĞİL <see cref="IsMidRunLocked"/>'dır: Build'e
+    /// basıldıktan sonra <c>runStarted</c> gelene kadar geçen PLANLAMA PENCERESİ (177 projede saniyeler) de
+    /// run'ın uçuşta olduğu bir aralıktır ve chip o sırada canlıdır. <c>IsRunning</c> kapısı o pencerede gelen
+    /// değişimi sessizce yutuyordu (run tüm ömrü boyunca eski cap'le koşardı). Supervisor tarafı komutu
+    /// planlama bitene kadar bekletir ve run başlarken uygular.</para>
+    /// <para>Hiç run uçuşta değilken ne komut ne not vardır: profil zaten bir sonraki
+    /// <see cref="StartRunCommand.PerfMode"/> ile motora gider (bkz. <see cref="BeginRunAsync"/>).</para>
     /// </summary>
     public async Task CyclePerfAsync()
     {
         PerfMode = PerfMode switch { "Full" => "Balanced", "Balanced" => "Light", "Light" => "Full", _ => "Balanced" };
         var profile = ProfileFor(PerfMode);
         Parallelism = profile.Parallelism;
-        if (!IsRunning) return;
-        AppendRunLine(PerfNote(profile)); // BuildApp.jsx:1366-1372'nin K11 karşılığı
-        AppendRunLine("parallelism applies to the next run — cpu cap and priority change live");
+        if (!IsMidRunLocked) return;
+        AppendRunLine(PerfNoteText.Note(profile)); // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da)
         await TrySendAsync(new SetPerfModeCommand(PerfMode), "setPerfMode");
     }
-
-    /// <summary>[K11] Koşarken perf değişiminin konsol notu — BİREBİR <c>parallelism: 4 · cpu cap 70%</c> /
-    /// cap'siz (Full) profilde <c>parallelism: 6 · cpu cap off</c>. Ayraç U+00B7 (boşluklu).</summary>
-    private static string PerfNote(PerfProfile profile) => string.Format(CultureInfo.InvariantCulture,
-        "parallelism: {0} · cpu cap {1}", profile.Parallelism,
-        profile.CpuCapPercent is { } cap ? string.Format(CultureInfo.InvariantCulture, "{0}%", cap) : "off");
 
     /// <summary>[C2] Satır durumu değişimlerinde türev yüzeyi tazeler: sayaçlar, görünür liste, RetryFailed
     /// etkinliği.</summary>

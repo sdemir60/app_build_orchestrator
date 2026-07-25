@@ -7,13 +7,13 @@ using BuildOrchestrator.Tests.Supervisor;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [T20-a] Core'daki <see cref="PerfProfile"/> tablosu ile App'in perf chip'inin ürettiği paralellik
-/// DEĞERLERİNİN aynı olduğunu doğrular.
+/// [T20-a/T20-b] App'in perf yüzeyinin Core'daki <see cref="PerfProfile"/> tablosuyla uyumu.
 ///
-/// <para>[T20-b] P2'den sonra iki tablo değil TEK tablo var (<c>RunViewModel.ParallelismFor</c> kaldırıldı,
-/// App doğrudan <see cref="PerfProfile"/>'ı okuyor) — bu yüzden test artık "ayrışmayı yakalayan" değil,
-/// <b>chip döngüsünün gerçekten o tablodan beslendiğini</b> pinleyen bir testtir: döngünün sırası (Balanced →
-/// Light → Full) ve her adımda <c>Parallelism</c>'in profille aynı satırdan gelmesi.</para>
+/// <para>[Fix round 1 — minor 4] P2'den sonra App'in KENDİ tablosu yok (<c>ParallelismFor</c> kaldırıldı), bu
+/// yüzden buradaki iddia artık "iki tablo eşit mi" DEĞİLDİR (o soru totolojiye dönüştü). Pinlenen şey App'in
+/// İKİ giriş yolunun o tablodan doğru satırı çekmesidir: kalıcı <b>seed</b> (<see cref="RunViewModel.SetPerfMode"/>,
+/// UiState'ten) ve <b>chip döngüsü</b> (<see cref="RunViewModel.CyclePerfAsync"/>). Seed yolunun geçersiz-değer
+/// guard'ı da burada pinlenir — o guard P2'de değişti ve testsiz kalmıştı.</para>
 ///
 /// <para>App VM'ini (dolayısıyla <c>EngineHost</c> harness'ını) sürdüğü için Core'un saf
 /// <c>ProcessControl</c> testlerinin yanında değil, <b>App tarafında</b> durur — saf tablo testleri
@@ -21,22 +21,59 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class PerfProfileParityTests
 {
-    [Fact]
-    public async Task Parallelism_table_matches_the_perf_chip_cycle_in_the_app()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe); // başlatılmaz — VM harness'ı (RunViewModelStateTests deseni)
-        var vm = new RunViewModel(engine, new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1");
+    // Başlatılmaz — VM harness'ı (RunViewModelStateTests deseni).
+    private static RunViewModel NewVm(EngineHost engine) =>
+        new(engine, new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1");
 
-        // Chip döngüsü Balanced → Light → Full → Balanced: üç modun da App-tarafı paralelliği okunur.
+    // [D6 persistence] Seed yolu: UiState'ten okunan her profil adı Core tablosunun O satırını uygular.
+    [Theory]
+    [InlineData("Full")]
+    [InlineData("Balanced")]
+    [InlineData("Light")]
+    public async Task The_persisted_seed_path_applies_the_core_table_row_for_every_profile_name(string mode)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = NewVm(engine);
+
+        vm.SetPerfMode(mode);
+
+        Assert.Equal(mode, vm.PerfMode);
+        Assert.Equal(PerfProfile.TryParse(mode)!.Value.Parallelism, vm.Parallelism);
+    }
+
+    // [Fix round 1 — minor 3] Seed guard'ı: tanınmayan değer (bayat/bozuk UiState) NO-OP'tur — son geçerli
+    // profil korunur. Bu, <see cref="RunViewModel.ProfileFor"/>'un Balanced fallback'inden BİLEREK farklı bir
+    // karardır: bir seed sessizce BAŞKA bir profile kaymamalıdır (kullanıcı öyle bir şey seçmedi).
+    [Fact]
+    public async Task An_invalid_persisted_seed_is_ignored_instead_of_falling_back()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = NewVm(engine);
+        vm.SetPerfMode("Light");
+
+        vm.SetPerfMode("Turbo");
+
+        Assert.Equal("Light", vm.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Light).Parallelism, vm.Parallelism);
+    }
+
+    [Fact]
+    public async Task The_perf_chip_cycles_balanced_light_full_and_tracks_the_table_at_every_step()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = NewVm(engine);
+
         var seen = new List<string>();
+        var parallelisms = new List<int>();
         for (int i = 0; i < 3; i++)
         {
-            var profile = PerfProfile.TryParse(vm.PerfMode);
-            Assert.NotNull(profile);
-            Assert.Equal(profile.Value.Parallelism, vm.Parallelism);
             seen.Add(vm.PerfMode);
+            parallelisms.Add(vm.Parallelism);
             await vm.CyclePerfAsync();
         }
+
         Assert.Equal(["Balanced", "Light", "Full"], seen);
+        // Beklenen paralellikler TABLODAN türetilir (literal 4/2/6 yazılmaz): chip her adımda o satırı çekmeli.
+        Assert.Equal([.. seen.Select(m => PerfProfile.TryParse(m)!.Value.Parallelism)], parallelisms);
     }
 }

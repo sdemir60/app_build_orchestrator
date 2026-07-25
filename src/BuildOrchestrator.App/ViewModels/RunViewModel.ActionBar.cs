@@ -95,9 +95,12 @@ public sealed partial class RunViewModel
     /// aksiyonu değil — ayrıca seed anında koşan bir run da olamaz). Geçersiz değer no-op (varsayılan korunur).</summary>
     public void SetPerfMode(string mode)
     {
-        if (PerfProfile.TryParse(mode) is not { } profile) return;
+        // [Fix round 1 — minor 3] İki ayrı soru, iki ayrı kapı: GEÇERLİLİK burada (tanınmayan seed = no-op,
+        // bkz. yukarıdaki not — bir seed sessizce BAŞKA bir profile kaymamalı), TÜRETME ise tek yerde
+        // (<see cref="RunViewModel.ProfileFor"/>). Bu yüzden ProfileFor'un Balanced fallback'i BURADA İSTENMEZ.
+        if (PerfProfile.TryParse(mode) is null) return;
         PerfMode = mode;
-        Parallelism = profile.Parallelism;
+        Parallelism = ProfileFor(mode).Parallelism;
     }
 
     // ---------------------------------------------------------------- [D7/T66] Settings — layers + repository

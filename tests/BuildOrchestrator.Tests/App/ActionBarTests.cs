@@ -6,6 +6,7 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -223,6 +224,32 @@ public partial class ActionBarTests
         Assert.False(bar.WorktreeChip.IsEnabled);
         Assert.False(bar.Segment.IsEnabled);
         Assert.True(bar.PerfChip.IsEnabled);       // perf CANLI kalır
+        GC.KeepAlive(window);
+    }
+
+    // [Fix round 1 — KÖK 5] K11'in TEK kullanıcı giriş noktası: perf chip'i. Kablaj bu iterasyonda değişti
+    // (`_vm?.CyclePerf()` → `_ = _vm?.CyclePerfAsync()`, fire-and-forget) ve görsel pas en sona ertelendiği
+    // için (It-4b dersi c6e9a21) bu testten başka güvenlik ağı YOK. Tıklamanın SENKRON kısmı (PerfMode +
+    // Parallelism güncellemesi, chip'in momentary kalması) burada pinlenir — gönderim/IPC yarısı VM
+    // testlerindedir (RunViewModelStateTests), bu yüzden burada pump/bekleme GEREKMEZ.
+    [StaFact]
+    public void Perf_chip_click_cycles_the_profile_and_stays_momentary()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Equal("Balanced", vm.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Balanced).Parallelism, vm.Parallelism);
+
+        Click(bar.PerfChip);
+        Assert.Equal("Light", vm.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Light).Parallelism, vm.Parallelism);
+        Assert.False(bar.PerfChip.IsChecked); // momentary: chip basılı KALMAZ
+
+        Click(bar.PerfChip);
+        Assert.Equal("Full", vm.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Full).Parallelism, vm.Parallelism);
+        Assert.False(bar.PerfChip.IsChecked);
         GC.KeepAlive(window);
     }
 }

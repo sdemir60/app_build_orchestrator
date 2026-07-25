@@ -241,7 +241,7 @@ public class RunViewModelStateTests
     /// yalnız cap+priority'dir — paralellik bir sonraki run'da geçerli olur ve kullanıcı bunu bilmelidir.
     /// </summary>
     [Fact]
-    public async Task Perf_change_while_running_sends_setPerfMode_and_says_parallelism_waits_for_the_next_run()
+    public async Task Perf_change_while_running_sends_setPerfMode_and_writes_the_k11_note()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { PerfMode = "Balanced" };
@@ -258,7 +258,29 @@ public class RunViewModelStateTests
         string text = vm.GetRunDocumentText();
         Assert.Contains("parallelism: 2 · cpu cap 40%", text);
         Assert.Contains("parallelism: 6 · cpu cap off", text);
-        Assert.Contains("parallelism applies to the next run — cpu cap and priority change live", text);
+        // K11 kopyası TEK satırdır: prototipte her chip tıklamasında tekrarlanan açıklayıcı cümle YOKTUR
+        // (canlı-değişim semantiği XML-doc + README'de anlatılır, konsolda değil).
+        Assert.DoesNotContain("applies to the next run", text);
+    }
+
+    // [Fix round 1 — KÖK 1] Planlama penceresi: Build'e basıldı, startRun gönderildi, ama runStarted HENÜZ
+    // gelmedi (177 projede SANİYELER). Perf chip'i o pencerede canlıdır (IsMidRunLocked kilidi onu kapsamaz) —
+    // değişim SESSİZCE KAYBOLMAMALI: komut gitmeli ve not yazılmalı. Kapı IsRunning DEĞİL IsMidRunLocked'dır.
+    [Fact]
+    public async Task Perf_change_during_the_planning_window_still_reaches_the_engine()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { PerfMode = "Balanced", IsStarting = true };
+        Assert.False(vm.IsRunning);       // runStarted gelmedi
+        Assert.True(vm.IsMidRunLocked);   // ama run UÇUŞTA
+
+        var sent = new List<SetPerfModeCommand>();
+        vm.DebugOnCommandSent = c => { if (c is SetPerfModeCommand s) sent.Add(s); };
+
+        await vm.CyclePerfAsync();
+
+        Assert.Equal("Light", Assert.Single(sent).PerfMode);
+        Assert.Contains("parallelism: 2 · cpu cap 40%", vm.GetRunDocumentText());
     }
 
     // Koşmuyorken: tablo güncellenir ama NE komut gönderilir NE de konsola not yazılır — profil zaten bir

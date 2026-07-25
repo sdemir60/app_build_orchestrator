@@ -143,9 +143,11 @@ public sealed record DebugChildrenSpawnedEvent(int[] Pids) : IpcEvent;
 
 public enum RunOutcome { Completed, Stopped }
 /// <param name="CpuCapPercent">[T20-b/K11] Bu run BAŞLARKEN inner Job'a GERÇEKTEN uygulanmış hard CPU cap'i
-/// (Balanced 70 · Light 40); cap yoksa (Full ya da <see cref="StartRunCommand.PerfMode"/> hiç gelmediyse)
-/// <c>null</c> — o durumda JSON'a da yazılmaz. Run ORTASINDA <see cref="SetPerfModeCommand"/> ile değişen
-/// cap'i İZLEMEZ: bu, run'ın başlangıç durumunun kaydıdır.</param>
+/// (Balanced 70 · Light 40). <c>null</c> demek "cap YOK" demektir; üç sebebi olabilir: Full profili,
+/// <see cref="StartRunCommand.PerfMode"/>'un hiç gelmemesi, ya da cap yazımının Win32 seviyesinde
+/// BAŞARISIZ olması (o durumda Supervisor konsoluna bir uyarı da düşer). Yani bu alan İSTENEN değil
+/// YÜRÜRLÜKTEKİ değeri taşır. Run ORTASINDA <see cref="SetPerfModeCommand"/> ile değişen cap'i İZLEMEZ:
+/// bu, run'ın başlangıç durumunun kaydıdır.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
     string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;

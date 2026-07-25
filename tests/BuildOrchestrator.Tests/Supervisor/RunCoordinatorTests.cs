@@ -1360,8 +1360,13 @@ public class RunCoordinatorTests
 
         public IReadOnlyList<string> Calls { get { lock (_calls) return [.. _calls]; } }
 
+        /// <summary>[Fix round 1 — KÖK 2] Cap yazımını gerçek job'ın hata yolundaki gibi patlatır
+        /// (<c>SetInformationJobObject</c> başarısızlığı <see cref="System.ComponentModel.Win32Exception"/>'dır).</summary>
+        public bool FailCapWithWin32 { get; init; }
+
         public void ApplyCap(int? percent)
         {
+            if (FailCapWithWin32) throw new System.ComponentModel.Win32Exception(87); // ERROR_INVALID_PARAMETER
             lock (_calls) _calls.Add(percent is { } p ? $"cap:{p}" : "cap:off");
         }
 
@@ -1370,6 +1375,17 @@ public class RunCoordinatorTests
             lock (_calls) _calls.Add("prio:" + kind);
         }
     }
+
+    /// <summary>[T20-b] Bir profilin governor'da bırakacağı İZ — yüzdeler testlerde LİTERAL yazılmaz
+    /// (P1 review dersi): tek doğruluk kaynağı <see cref="PerfProfile"/> tablosudur.</summary>
+    private static string[] Applied(PerfMode mode)
+    {
+        var p = PerfProfile.For(mode);
+        return [p.CpuCapPercent is { } cap ? $"cap:{cap}" : "cap:off", "prio:" + p.Priority];
+    }
+
+    /// <summary>Run sonu geri alma izi = Full profili (cap yok + Normal priority).</summary>
+    private static string[] Released() => Applied(PerfMode.Full);
 
     [Fact]
     public async Task Light_perf_mode_caps_the_inner_job_at_run_start_and_the_cap_is_released_when_the_run_ends()
@@ -1383,10 +1399,11 @@ public class RunCoordinatorTests
 
         // Light = %40 + Idle (PerfProfile tablosu); run bitince cap KALDIRILIR ve priority Normal'e döner —
         // inner job Supervisor ömrü boyunca yaşadığı için cap orada BIRAKILAMAZ.
-        Assert.Equal(["cap:40", "prio:Idle", "cap:off", "prio:Normal"], governor.Calls);
+        Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls);
         var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
-        Assert.Equal(40, started.CpuCapPercent);  // runStarted uygulanan cap'i taşır
+        Assert.Equal(PerfProfile.For(PerfMode.Light).CpuCapPercent, started.CpuCapPercent); // runStarted uygulanan cap'i taşır
         Assert.Equal(2, started.Parallelism);     // paralellik KOMUTTAN gelir, profilden yeniden türetilmez
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap 40%", StringComparison.Ordinal)); // run-başı satırı cap'i yazar
     }
 
     [Fact]
@@ -1399,12 +1416,14 @@ public class RunCoordinatorTests
         await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(["cap:off", "prio:Normal", "cap:off", "prio:Normal"], governor.Calls);
+        Assert.Equal([.. Applied(PerfMode.Full), .. Released()], governor.Calls);
         Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap off", StringComparison.Ordinal));
     }
 
     // Geriye dönük uyum: PerfMode taşımayan (P2 öncesi ya da harness) komutlar job'a HİÇ dokunmamalı —
-    // aksi halde bu değişiklik mevcut tüm run'lara sessizce bir priority/cap yazımı eklerdi.
+    // aksi halde bu değişiklik mevcut tüm run'lara sessizce bir priority/cap yazımı eklerdi. Run-başı satırı
+    // da "off" DEMEZ ("kapatıldı" ≠ "hiç istenmedi").
     [Fact]
     public async Task A_start_command_without_a_perf_mode_never_touches_the_cpu_governor()
     {
@@ -1417,6 +1436,7 @@ public class RunCoordinatorTests
 
         Assert.Empty(governor.Calls);
         Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap unset", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1429,6 +1449,69 @@ public class RunCoordinatorTests
         h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // koşan run yok → kısılacak MSBuild de yok
 
         Assert.Empty(governor.Calls);
+    }
+
+    // [Fix round 1 — KÖK 3] Kapının İKİNCİ dalı: run AKTİF ama bu run hiç PerfMode taşımıyor (P2 öncesi şekil).
+    // Canlı setPerfMode o run'a uygulanmaz (cap sahibi yok, run sonunda geri alacak kimse yok) — ve niyet
+    // SONRAKİ run'a da SIZMAZ. `if (!_runActive) return;` mutasyonu bu testte kırmızıya döner.
+    [Fact]
+    public async Task A_live_perf_change_during_a_run_that_declared_no_perf_mode_is_ignored_and_does_not_leak_to_the_next_run()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            inFlight.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(runId: "r1"), default); // PerfMode YOK
+        await inFlight.Task.WaitAsync(Limit);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // run uçuşta, ama cap sahibi yok
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Empty(governor.Calls);
+
+        // İkinci run (yine PerfMode'suz): bir önceki niyetin ARTIĞI uygulanmamalı.
+        release = Signal();
+        release.TrySetResult();
+        await h.Sut.StartAsync(Start(runId: "r2"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Empty(governor.Calls);
+    }
+
+    // [Fix round 1 — KÖK 1] Planlama penceresi: startRun kabul edildi ama plan hâlâ kuruluyor (177 projede
+    // SANİYELER). Perf chip'i o pencerede canlıdır; gelen setPerfMode SESSİZCE KAYBOLMAMALI, run başlarken
+    // komuttaki profili EZMELİDİR (kullanıcının SON niyeti).
+    [Fact]
+    public async Task A_perf_change_arriving_while_the_plan_is_still_being_built_wins_when_the_run_starts()
+    {
+        var planningStarted = Signal();
+        var releasePlanning = Signal();
+        var plan = PlanOf(Node("A"));
+        RunPlan GatedPlanner(StartRunCommand _)
+        {
+            planningStarted.TrySetResult();
+            releasePlanning.Task.GetAwaiter().GetResult(); // run task'ını bloklar, test thread'ini DEĞİL [D8]
+            return plan;
+        }
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, planner: GatedPlanner, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await planningStarted.Task.WaitAsync(Limit);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // henüz hiçbir şey uygulanmadı
+        Assert.Empty(governor.Calls);                          // planlama sırasında job'a dokunulmaz
+        releasePlanning.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls); // Full DEĞİL Light uygulandı
+        Assert.Equal(PerfProfile.For(PerfMode.Light).CpuCapPercent,
+            Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
     }
 
     [Fact]
@@ -1457,7 +1540,7 @@ public class RunCoordinatorTests
         release.TrySetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(["cap:40", "prio:Idle", "cap:70", "prio:BelowNormal", "cap:off", "prio:Normal"], governor.Calls);
+        Assert.Equal([.. Applied(PerfMode.Light), .. Applied(PerfMode.Balanced), .. Released()], governor.Calls);
         Assert.Equal(2, invoker.MaxConcurrent); // worker sayısı DEĞİŞMEDİ
         Assert.Equal(4, h.Events.OfType<ProjectSucceededEvent>().Count());
     }
@@ -1484,6 +1567,25 @@ public class RunCoordinatorTests
         release.TrySetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(["cap:40", "prio:Idle", "cap:off", "prio:Normal"], governor.Calls);
+        Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls);
+    }
+
+    // [Fix round 1 — KÖK 2] Cap yazımı patlarsa priority yazımı YİNE denenmeli (iki yarı bağımsız değerlidir)
+    // ve run ÖLMEMELİ; runStarted da olmayan bir cap'i RAPOR ETMEMELİ (yalnız GERÇEKTEN uygulanan taşınır).
+    [Fact]
+    public async Task A_failing_cap_write_still_lets_the_priority_write_through_and_is_reported_as_no_cap()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor { FailCapWithWin32 = true };
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // cap çağrıları FIRLADI (kaydedilmedi) ama priority'ler hem run başında hem run sonunda yazıldı.
+        Assert.Equal(["prio:Idle", "prio:Normal"], governor.Calls);
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap uygulanamadı", StringComparison.Ordinal));
+        Assert.Equal(RunOutcome.Completed, h.Events.OfType<RunCompletedEvent>().Single().Outcome); // run ÖLMEDİ
     }
 }
