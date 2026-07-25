@@ -56,6 +56,10 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
         output.WriteLine(Format(DesignNodes, design) + $"  (budget < {BudgetMs36:N0} ms)");
         output.WriteLine(Format(500, five) + "  (record only — G2 target)");
         output.WriteLine(Format(1000, thousand) + "  (record only — G2 target)");
+        foreach (int n in new[] { DesignNodes, 500, 1000 })
+            output.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "[G1 canvas] {0,4} nodes → canvas {1,8:N0} px (base {2:N0})",
+                n, GraphLayout.Compute(SyntheticGraph.Build(n, Layers, AvgFanIn).Nodes).Width, GraphLayout.CanvasWidth));
 
         Assert.True(design.TotalMs < BudgetMs36,
             $"36-düğüm graf realize {design.TotalMs:N1} ms — bütçe {BudgetMs36:N0} ms.");

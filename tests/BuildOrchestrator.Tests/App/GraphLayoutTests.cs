@@ -127,6 +127,23 @@ public class GraphLayoutTests
     }
 
     [Fact]
+    public void The_design_sized_36_node_graph_still_lays_out_on_the_original_880px_canvas()
+    {
+        // [G1] Görsel otorite (design-v1 §2.3 / prototip) 36 düğüm / 6 katmandır. Bu boyutta en kalabalık katman
+        // 9 düğümdür → aralık (880-70)/8.5 ≈ 95.3px, tabana (34px) hiç yaklaşmaz. Tuval de 880'de kalır: BUGÜNKÜ
+        // graf görünümü ölçek düzeltmesinden ETKİLENMEZ.
+        var (nodes, _) = SyntheticGraph.Build(36, layerCount: 6, avgFanIn: 1.6);
+
+        var layout = GraphLayout.Compute(nodes);
+
+        Assert.Equal(880.0, layout.Width);
+        var fattest = nodes.GroupBy(n => n.Layer).OrderByDescending(g => g.Count()).First().ToList();
+        double spacing = layout.Positions[fattest[1].Name].X - layout.Positions[fattest[0].Name].X;
+        Assert.Equal((GraphLayout.CanvasWidth - GraphLayout.SideInset) / (fattest.Count - 0.5), spacing, 10);
+        Assert.True(spacing > GraphLayout.MinNodeSpacing);
+    }
+
+    [Fact]
     public void Compute_on_an_empty_node_set_still_returns_a_usable_canvas()
     {
         var layout = GraphLayout.Compute([]);
