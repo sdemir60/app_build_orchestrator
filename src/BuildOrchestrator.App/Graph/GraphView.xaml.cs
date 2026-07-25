@@ -14,7 +14,7 @@ namespace BuildOrchestrator.App.Graph;
 /// <summary>
 /// [T63] design-v1 §2.3 dependency graph — <b>Shapes yolu</b>: her düğüm ve kenar birer UIElement
 /// (<see cref="Rectangle"/>/<see cref="Path"/>), hit-test ve tooltip native. Tasarımın 36 düğüm / 58 kenarı bu
-/// bandın (≲<see cref="ShapesPathMaxNodes"/>) çok içinde (feasibility §3.5).
+/// bandın (≲<see cref="FullDetailMaxNodes"/>) çok içinde (feasibility §3.5).
 ///
 /// <para><b>[G2/It-5] Ölçek, katman göçüyle DEĞİL nesne sayısıyla çözüldü.</b> G1'in ölçümü darboğazın çizim
 /// olmadığını gösterdi: maliyetin %64-72'si <see cref="SetGraph"/>'ın görsel-ağaç KURULUMU, %28-36'sı WPF'in aynı
@@ -23,8 +23,7 @@ namespace BuildOrchestrator.App.Graph;
 /// YAPILMADI</b> (o göç ÇİZİM maliyetini hedefler, ölçülen darboğazı değil):
 /// <list type="number">
 ///   <item><b>Viewport cull</b> (<see cref="GraphCulling"/>): görünür dünya dikdörtgenine değmeyen düğüm/kenarın
-///     ağacı HİÇ kurulmaz; görünür alana girince kurulur. <see cref="ShapesPathMaxNodes"/> düğümün ALTINDA cull
-///     hiç devreye girmez — bugünkü tipik graf (onlarca düğüm) birebir eskisi gibi kurulur.</item>
+///     ağacı HİÇ kurulmaz; görünür alana girince kurulur.</item>
 ///   <item><b>Tembel rozet + LOD etiket</b> (<see cref="GraphNodeVisual"/>): düğüm başına 17 → 9 nesne.</item>
 ///   <item><b>Statü fast-path'i + paylaşılan frozen dash koleksiyonları</b>: 200ms'lik tick artık değişmemiş
 ///     düğüme hiç dokunmaz ve her çağrıda yeni <see cref="DoubleCollection"/> üretmez.</item>
@@ -37,11 +36,19 @@ namespace BuildOrchestrator.App.Graph;
 /// </summary>
 public partial class GraphView : UserControl
 {
-    /// <summary>[G2] Shapes yolunun EAGER bandının üst sınırı. Bu sayıya kadar (dahil) her düğüm/kenar koşulsuz
-    /// kurulur — bugünkü graf görünümü ve tüm render testleri bu banttadır. Üstünde <see cref="GraphCulling"/>
-    /// devreye girer ve yalnız görünür alandaki ağaç materyalize edilir. (G1'e kadar ölü bir sabitti; T51'in
-    /// DrawingVisual göçü yerine cull eşiği olarak CANLANDIRILDI.)</summary>
-    public const int ShapesPathMaxNodes = 150;
+    /// <summary>
+    /// [G2 · fix round 1 C3] <b>TAM DETAY</b> bandının üst sınırı: bu sayıya kadar (dahil) graf birebir G2
+    /// öncesindeki gibi kurulur — <b>cull YOK, LOD YOK</b>, her düğüm/kenar koşulsuz materyalize edilir ve her
+    /// düğümde etiket bulunur. Bugünkü graf görünümü ve tüm render testleri bu banttadır; "küçük grafta hiçbir
+    /// şey değişmesin" güvencesi bu yüzden bir davranış varsayımı değil YAPISAL bir garantidir.
+    ///
+    /// <para>Üstünde <see cref="GraphCulling"/> ve etiket LOD'u birlikte devreye girer.</para>
+    ///
+    /// <para><b>Adın geçmişi:</b> sabit T51'de <c>ShapesPathMaxNodes</c> adıyla "Shapes yolunun üst sınırı"
+    /// olarak tanımlanmış ama HİÇ okunmamıştı (ölü sabit). G2 onu DrawingVisual göçü yerine tam-detay eşiği
+    /// olarak canlandırdı; ad da yeni anlamını taşısın diye değiştirildi.</para>
+    /// </summary>
+    public const int FullDetailMaxNodes = 150;
 
     /// <summary>Katman başına açılış gecikmesi (design-v1 §2.3: "katman başına 55ms").</summary>
     public const double LayerStaggerMs = 55.0;
@@ -130,10 +137,17 @@ public partial class GraphView : UserControl
     private bool _edgesAnimated;
     private bool _hasCamera;
     private bool _cullEnabled;
-    /// <summary>[G2] O ana kadar materyalize edilmiş dünya bölgesi (kümülatif). Cull tek yönlü olduğu için bu
-    /// dikdörtgen yalnız BÜYÜR; yeni bir görünür dikdörtgen bunun içindeyse tarama hiç yapılmaz.</summary>
-    private Rect _materializedRect = Rect.Empty;
+    /// <summary>[G2 · fix round 1 B1] EN SON taranmış dünya bölgesi — <b>kümülatif DEĞİL</b>, her taramada
+    /// DEĞİŞTİRİLİR. Yalnız gereksiz taramayı eler: bu bölgedeki her şey materyalize edilmiş olduğundan, onun
+    /// İÇİNDE kalan yeni bir bölge için tekrar gezinmeye gerek yoktur. (İlk turda burada kümülatif bir birleşim
+    /// tutuluyordu; o, uzak iki görünüm arasında HİÇ GÖRÜLMEMİŞ düğümleri de materyalize ediyordu.)</summary>
+    private Rect _scannedRegion = Rect.Empty;
     private IDisposable? _revealHero;
+    /// <summary>[G2 · fix round 1 B2] Açılış stagger'ı ŞU AN oynuyor mu + penceresi. Bu pencere içinde
+    /// materyalize olan düğüm de stagger'a katılır (motion sözleşmesi: düğüm animasyonu ATLAYARAK belirmez).</summary>
+    private bool _revealPlaying;
+    private long _revealStartTicks;
+    private long _revealEndTicks;
     private int _revealGen; // [E3/T41] her PlayRevealStagger yeni bir reveal kuşağıdır — stale release'i eleyen damga
     private DispatcherTimer? _revealReleaseTimer;
 
@@ -287,7 +301,8 @@ public partial class GraphView : UserControl
         _previousFocus = null;
         _hasCamera = false; // yeni topoloji → kamera hedefi baştan hesaplanır
         CurrentCamera = default;
-        _materializedRect = Rect.Empty;
+        _scannedRegion = Rect.Empty;
+        _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
 
         // [M-4] Global Constraint: sayı biçimlemesi InvariantCulture.
         CountsText.Text = string.Format(
@@ -298,9 +313,14 @@ public partial class GraphView : UserControl
         _layout = GraphLayout.Compute(nodes);
         World.Width = _layout.Width;
         World.Height = _layout.Height;
-        // [G2] Eager bant: bugünkü graf boyutlarında (onlarca düğüm) cull HİÇ devreye girmez ⇒ görünüm ve
-        // nesne kurulumu birebir eskisi gibidir.
-        _cullEnabled = nodes.Count > ShapesPathMaxNodes;
+        // [G2 · fix round 1 A2] TAM DETAY bandı: bugünkü graf boyutlarında (onlarca düğüm) NE cull NE LOD
+        // devreye girer ⇒ görünüm ve nesne kurulumu birebir eskisi gibidir. İki mekanizma da AYNI kapıya
+        // bağlıdır — LOD'un ayrı bir eşikten kaçıp küçük grafta etiket düşürmesi mümkün değildir.
+        bool fullDetail = nodes.Count <= FullDetailMaxNodes;
+        _cullEnabled = !fullDetail;
+        // [fix round 1 A1] LOD eşiği katmanın EN GENİŞ etiketinin ÇİZİLEN genişliğinden türetilir (kelepçeden
+        // değil). Ölçüm katman başına TEK kez yapılır ve yalnız tam-detay bandının DIŞINDA gerekir.
+        var labelWidths = fullDetail ? null : MeasureLayerLabelWidths(nodes);
 
         foreach (var node in nodes)
         {
@@ -310,8 +330,9 @@ public partial class GraphView : UserControl
                 Model = node,
                 Center = center,
                 Bounds = GraphCulling.NodeBounds(center),
-                ShowsLabel = GraphLayout.LabelsFit(
-                    _layout.LayerSpacing.TryGetValue(node.Layer, out double s) ? s : GraphLayout.MaxNodeSpacing),
+                ShowsLabel = labelWidths is null || GraphLayout.LabelsFit(
+                    _layout.LayerSpacing.TryGetValue(node.Layer, out double s) ? s : GraphLayout.MaxNodeSpacing,
+                    labelWidths.GetValueOrDefault(node.Layer, GraphLayout.NodeCellWidth)),
             };
             _slots[node.Name] = slot;
             _slotOrder.Add(slot);
@@ -341,6 +362,27 @@ public partial class GraphView : UserControl
         ApplyEdgeStyles();
         PlayRevealStagger();
     }
+
+    /// <summary>[G2 · fix round 1 A1] Katman → o katmandaki EN GENİŞ etiketin çizilen genişliği. Katman başına
+    /// tek ölçüm (<see cref="GraphLabelMetrics"/>); LOD kararı bunu aralıkla karşılaştırır.</summary>
+    private Dictionary<int, double> MeasureLayerLabelWidths(IReadOnlyList<GraphNode> nodes)
+    {
+        var byLayer = new Dictionary<int, string>();
+        foreach (var node in nodes)
+            if (!byLayer.TryGetValue(node.Layer, out string? longest) || node.ShortName.Length > longest.Length)
+                byLayer[node.Layer] = node.ShortName;
+
+        var widths = new Dictionary<int, double>(byLayer.Count);
+        foreach (var (layer, longest) in byLayer)
+            widths[layer] = GraphLabelMetrics.WidestLabelWidth([longest], LabelFontFamily);
+        return widths;
+    }
+
+    /// <summary>[G2 fix round 1 · A1] Etiket ölçümünde kullanılan aile; null ise <see cref="AppFonts.Mono"/>.
+    /// TEST SEAM'i: <c>pack://</c> aileler gerçek bir <c>Application</c> olmadan çözülmez, testler
+    /// <c>TestAssets/Fonts</c>'a <c>file://</c> tabanlı bir aile enjekte eder (<c>TrackedTextBlockTests</c>
+    /// deseni). Üretimde ASLA set edilmez — etiketin kendisi her zaman <see cref="AppFonts.Mono"/> çizer.</summary>
+    internal FontFamily? LabelFontFamily { get; set; }
 
     private void AddNeighbour(string from, string to)
     {
@@ -375,14 +417,19 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- [G2] cull / materyalizasyon
 
-    /// <summary>Görünür dünya dikdörtgenine (± <see cref="GraphCulling.MarginPx"/>) değen henüz kurulmamış
-    /// düğüm ve kenarları kurar.
+    /// <summary>
+    /// [fix round 1 · B1] Materyalizasyon kararı <b>ŞU ANKİ görünür alana</b> göre verilir; görülmüş tüm
+    /// alanların kümülatif birleşimine göre DEĞİL. Uzak iki görünüm arasında gezinmek, aralarında kalan ve hiç
+    /// görülmemiş düğümleri artık materyalize etmez.
     ///
-    /// <para>Materyalize edilen bölge KÜMÜLATİFTİR (<see cref="_materializedRect"/> yalnız büyür): kamera
-    /// geçişi 460ms sürer ve ara karelerde görünen dikdörtgen başlangıç ile hedefin ARASINDADIR — ikisinin
-    /// sınır kutusu bu ara kareleri kapsadığı için geçiş boyunca pop-in olmaz. Yeni dikdörtgen zaten
-    /// kapsanıyorsa tarama hiç yapılmaz (200ms'lik tick'te boşa O(N) gezinme yok).</para></summary>
-    private void UpdateMaterialization()
+    /// <para><paramref name="traversing"/>, kameranın hedefe <b>animasyonla</b> gideceğini söyler: 460ms'lik
+    /// geçişin ara karelerinde görünen dikdörtgen, mevcut görünüm ile hedefin ARASINDADIR, dolayısıyla o iki
+    /// dikdörtgenin sınır kutusu taranır (yalnız BU İKİSİ — birikim yok). Kamera anlık oturuyorsa (reduced
+    /// motion, ilk yerleşim, panel yeniden boyutlanması) ara kare yoktur ve yalnız hedef taranır.</para>
+    ///
+    /// <para>Cull tek yönlüdür: bir kez kurulan görsel sökülmez, yalnız yenisi eklenir.</para>
+    /// </summary>
+    private void UpdateMaterialization(bool traversing = false)
     {
         if (_slotOrder.Count == 0) return;
 
@@ -398,17 +445,27 @@ public partial class GraphView : UserControl
         var viewport = ViewportSize;
         if (viewport.Width <= 0 || viewport.Height <= 0) return; // henüz ölçülmedi — SizeChanged yeniden sorar
 
-        var visible = GraphCulling.VisibleWorldRect(viewport, CurrentCamera);
-        if (visible.IsEmpty) return;
-        if (!_materializedRect.IsEmpty && _materializedRect.Contains(visible)) return;
+        var region = GraphCulling.VisibleWorldRect(viewport, CurrentCamera);
+        if (region.IsEmpty) return;
 
-        _materializedRect = _materializedRect.IsEmpty ? visible : Rect.Union(_materializedRect, visible);
+        if (traversing)
+        {
+            var live = GraphCulling.VisibleWorldRect(viewport, LiveCamera);
+            if (!live.IsEmpty) region = Rect.Union(live, region);
+        }
+
+        // Bu bölge en son taranan bölgenin İÇİNDEYSE her şeyi zaten kurmuşuz — O(N) gezinmeye gerek yok.
+        if (!_scannedRegion.IsEmpty && _scannedRegion.Contains(region)) return;
+        _scannedRegion = region; // DEĞİŞTİRİLİR, birleştirilmez
 
         foreach (var slot in _slotOrder)
-            if (slot.Visual is null && _materializedRect.IntersectsWith(slot.Bounds)) MaterializeNode(slot);
+            if (slot.Visual is null && region.IntersectsWith(slot.Bounds)) MaterializeNode(slot);
         foreach (var edge in _edgeSlots)
-            if (edge.Visual is null && _materializedRect.IntersectsWith(edge.Bounds)) MaterializeEdge(edge);
+            if (edge.Visual is null && region.IntersectsWith(edge.Bounds)) MaterializeEdge(edge);
     }
+
+    /// <summary>Kameranın O ANDA ekrana uygulanmış (animasyon sürüyorsa ara karedeki) hâli — hedefi değil.</summary>
+    private CameraTransform LiveCamera => new(_cameraScale.ScaleX, _cameraTranslate.X, _cameraTranslate.Y);
 
     /// <summary>Seçili düğümü, DOĞRUDAN komşularını ve seçime değen kenarları — nerede olurlarsa olsunlar —
     /// materyalize eder. Seçim ekranın tamamen dışından gelebilir (liste tıklaması) ve kamera oraya ancak
@@ -442,9 +499,35 @@ public partial class GraphView : UserControl
         slot.Visual = visual;
         _nodes[slot.Model.Name] = visual;
         _nodeLayer.Children.Add(visual.Cell);
-        // Reveal stagger'ı SetGraph'ta ve YALNIZ o anda görünür olan düğümlere oynar; sonradan (kamera hareketiyle)
-        // giren düğüm dekoratif bir "beliriş" değil, zaten var olan bir düğümün görünür olmasıdır → ani yerleşir.
         ApplyNodeSelection(visual, animate: false);
+        JoinRevealIfPlaying(visual);
+    }
+
+    /// <summary>
+    /// [G2 · fix round 1 B2] Açılış stagger'ı SÜRERKEN materyalize olan düğüm de stagger'a KATILIR.
+    ///
+    /// <para>MOTION SÖZLEŞMESİ bağlayıcıdır: düğüm animasyonu atlayarak, tam opaklıkta belirmez. Bu yol gerçek
+    /// bir senaryodur — <c>MainWindow</c> her büyük graf rebuild'inde <c>SetGraph</c>'ın hemen ardından
+    /// <c>IsSettled</c>'ı iter ve kamera yeniden hedeflenir, yani reveal penceresinin İÇİNDE yeni düğümler
+    /// materyalize olur.</para>
+    ///
+    /// <para>Gecikme, kuşağın başlangıcından bu yana GEÇEN süre düşülerek verilir ⇒ geç gelen düğüm kendi
+    /// katmanının zamanlamasına oturur, sıfırdan yeni bir gecikme başlatmaz. Pencere kapandıysa (veya reduced
+    /// motion) düğüm zaten ani yerleşir.</para>
+    /// </summary>
+    private void JoinRevealIfPlaying(GraphNodeVisual visual)
+    {
+        if (!_revealPlaying) return;
+
+        long now = Environment.TickCount64;
+        if (now >= _revealEndTicks || !AnimationsEnabledProvider())
+        {
+            _revealPlaying = false;
+            return;
+        }
+
+        double remaining = Math.Max(0, RevealDelayMs(visual.Model.Layer) - (now - _revealStartTicks));
+        ApplyRevealTo(visual, remaining);
     }
 
     private void MaterializeEdge(GraphEdgeSlot slot)
@@ -555,6 +638,15 @@ public partial class GraphView : UserControl
             TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
             label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim"); // seçiliyken text-primary (DS)
             body.Children.Add(label);
+        }
+        else
+        {
+            // [G2 · fix round 1 A3] Etiketi düşen düğüm ANONİM KALMAZ: tam proje adını veren bir tooltip
+            // taşır ve hedefi düğüm karesinin TAMAMIDIR (body = tıklama alanının kendisi). Tooltip DÜZ METİN
+            // atanır — WPF, ToolTip kontrolünü ancak gösterilirken kurar, dolayısıyla düğüm başına HİÇBİR ek
+            // nesne kurulmaz (WillBuildDot.cs:66 ile aynı desen; Controls.xaml'deki implicit ToolTip stili —
+            // InitialShowDelay=0 + CustomPopupPlacementCallback, A13.2 — otomatik sarılan tooltip'e de uygulanır).
+            body.ToolTip = node.Name;
         }
 
         var cell = new Grid { Width = GraphLayout.NodeCellWidth, Children = { body } };
@@ -902,9 +994,20 @@ public partial class GraphView : UserControl
                 animate = false; // başka bir hero aktif → ani sonuç
         }
 
-        double maxDelay = -1;
         // [G2] Cull edilmiş düğümün reveal'i ATLANIR; gecikme KATMAN indeksinden türetildiği (koşan bir sayaçtan
-        // değil) için kalan düğümlerin zamanlaması KAYMAZ.
+        // değil) için kalan düğümlerin zamanlaması KAYMAZ. Pencerenin uzunluğu ise TÜM katmanlardan hesaplanır
+        // (yalnız materyalize olanlardan değil) — sonradan görünür olan bir düğüm de pencereye girebilmeli.
+        double maxDelay = -1;
+        foreach (var slot in _slotOrder)
+        {
+            double d = RevealDelayMs(slot.Model.Layer);
+            if (d > maxDelay) maxDelay = d;
+        }
+
+        _revealPlaying = animate && maxDelay >= 0;
+        _revealStartTicks = Environment.TickCount64;
+        _revealEndTicks = _revealStartTicks + (long)(maxDelay + RevealMs);
+
         foreach (var visual in _nodes.Values)
         {
             visual.Cell.BeginAnimation(OpacityProperty, null);
@@ -915,27 +1018,7 @@ public partial class GraphView : UserControl
                 continue;
             }
 
-            // CSS `both` fill paritesi: gecikme boyunca opaklık 0 TUTULUR — flash yok (feasibility §3.4).
-            visual.Cell.Opacity = 0.0;
-            var rise = new TranslateTransform(0, -RevealRisePx);
-            visual.Cell.RenderTransform = rise;
-
-            double delayMs = RevealDelayMs(visual.Model.Layer);
-            var begin = TimeSpan.FromMilliseconds(delayMs);
-            var duration = TimeSpan.FromMilliseconds(RevealMs);
-            var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
-
-            var fade = MotionTokens.SplineTo(1.0, duration, spline);
-            fade.BeginTime = begin;
-            fade.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            visual.Cell.BeginAnimation(OpacityProperty, fade);
-
-            var slide = MotionTokens.SplineTo(0.0, duration, spline);
-            slide.BeginTime = begin;
-            slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            rise.BeginAnimation(TranslateTransform.YProperty, slide);
-
-            if (delayMs > maxDelay) maxDelay = delayMs;
+            ApplyRevealTo(visual, RevealDelayMs(visual.Model.Layer));
         }
 
         // [E3/T41 — release fix] Hero, reveal PENCERESİ boyunca tutulur ve en geç biten düğümün reveal'i
@@ -959,6 +1042,32 @@ public partial class GraphView : UserControl
                 _revealReleaseTimer.Start();
             }
         }
+    }
+
+    /// <summary>[G2 · fix round 1 B2] Tek bir düğümün beliriş animasyonu (opaklık 0→1 + 5px yukarıdan).
+    /// <see cref="PlayRevealStagger"/> (açılış) ve <see cref="JoinRevealIfPlaying"/> (pencere içinde sonradan
+    /// materyalize olan düğüm) AYNI yolu kullanır — kopya YASAK.</summary>
+    private void ApplyRevealTo(GraphNodeVisual visual, double delayMs)
+    {
+        visual.Cell.BeginAnimation(OpacityProperty, null);
+        // CSS `both` fill paritesi: gecikme boyunca opaklık 0 TUTULUR — flash yok (feasibility §3.4).
+        visual.Cell.Opacity = 0.0;
+        var rise = new TranslateTransform(0, -RevealRisePx);
+        visual.Cell.RenderTransform = rise;
+
+        var begin = TimeSpan.FromMilliseconds(delayMs);
+        var duration = TimeSpan.FromMilliseconds(RevealMs);
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+
+        var fade = MotionTokens.SplineTo(1.0, duration, spline);
+        fade.BeginTime = begin;
+        fade.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        visual.Cell.BeginAnimation(OpacityProperty, fade);
+
+        var slide = MotionTokens.SplineTo(0.0, duration, spline);
+        slide.BeginTime = begin;
+        slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        rise.BeginAnimation(TranslateTransform.YProperty, slide);
     }
 
     /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakan generation-guarded karar: YALNIZ tetikleyen reveal
@@ -1013,15 +1122,17 @@ public partial class GraphView : UserControl
         // "yeniden doğurur" (Zeno etkisi — kamera hedefe hiç oturmaz).
         if (_hasCamera && camera == CurrentCamera)
         {
-            UpdateMaterialization(); // hedef aynı ama viewport büyümüş olabilir (SizeChanged)
+            // Hedef aynı ⇒ kamera hareket etmiyor (ara kare yok); yalnız viewport büyümüş olabilir (SizeChanged).
+            UpdateMaterialization();
             return;
         }
         CurrentCamera = camera;
         _hasCamera = true;
-        UpdateMaterialization();
 
         bool animationsEnabled = animate && AnimationsEnabledProvider();
         LastCameraAnimated = animationsEnabled;
+        // Kamera animasyonla gidecekse ARA KARELER de görünür ⇒ mevcut görünüm + hedef taranır (bkz. B1).
+        UpdateMaterialization(traversing: animationsEnabled);
 
         if (!animationsEnabled)
         {

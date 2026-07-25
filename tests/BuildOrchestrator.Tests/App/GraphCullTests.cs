@@ -15,7 +15,7 @@ namespace BuildOrchestrator.Tests.App;
 /// düğümler, seçili düğümün ve komşularının asla cull edilmemesi, cull edilmişken değişen statünün geri görünür
 /// olunca doğru çıkması ve kenarların düğümü cull edilmişken de doğru çizilmesi.
 ///
-/// <para><b>Küçük graf güvencesi</b> (<see cref="GraphView.ShapesPathMaxNodes"/> ve altı) ayrıca pinlenir:
+/// <para><b>Küçük graf güvencesi</b> (<see cref="GraphView.FullDetailMaxNodes"/> ve altı) ayrıca pinlenir:
 /// bugünkü tipik boyutta cull HİÇ devreye girmez, hiçbir etiket kaybolmaz, rozetler aynı görünür.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
@@ -25,9 +25,21 @@ public class GraphCullTests
     private const double AvgFanIn = 1.6;
     private static readonly Size Panel = new(600, 400);
 
-    private static GraphView NewView(Size size)
+    /// <summary>Adları KISA olan, verilen katman yapısında bir graf (LOD eşiğinin ad genişliğine gerçekten
+    /// duyarlı olduğunu göstermek için — <c>SyntheticGraph</c>'ın adları uzundur).</summary>
+    private static IReadOnlyList<GraphNode> ShortNamedNodes(int perLayer, int layers, string prefix = "P") =>
+        [.. Enumerable.Range(0, perLayer * layers)
+            .Select(i => new GraphNode($"{prefix}{i}", i / perLayer, GraphStatus.Discovered))];
+
+    private static GraphView NewView(Size size, bool animations = false)
     {
-        var view = new GraphView { AnimationsEnabledProvider = () => false };
+        var view = new GraphView
+        {
+            AnimationsEnabledProvider = () => animations,
+            // pack:// aileler gerçek bir Application olmadan çözülmez → LOD ölçümü için file:// aile enjekte
+            // edilir (TrackedTextBlockTests deseni). Üretimde bu seam ASLA set edilmez.
+            LabelFontFamily = DsResources.MonoFontFamily,
+        };
         foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
         {
             using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
@@ -51,7 +63,7 @@ public class GraphCullTests
     {
         // [G2] Cull yalnız ShapesPathMaxNodes'un ÜSTÜNDE devreye girer — bugünkü graf (onlarca düğüm) birebir
         // eskisi gibi kurulur. Sınır İKİ TARAFTAN da pinlenir ki eşik sessizce kaymasın.
-        var (nodes, edges) = SyntheticGraph.Build(GraphView.ShapesPathMaxNodes, Layers, AvgFanIn);
+        var (nodes, edges) = SyntheticGraph.Build(GraphView.FullDetailMaxNodes, Layers, AvgFanIn);
         var view = NewView(Panel);
 
         view.SetGraph(nodes, edges);
@@ -60,7 +72,7 @@ public class GraphCullTests
         Assert.Equal(nodes.Count, view.NodeVisuals.Count);
         Assert.Equal(edges.Count, view.EdgeVisuals.Count);
 
-        var (more, moreEdges) = SyntheticGraph.Build(GraphView.ShapesPathMaxNodes + 1, Layers, AvgFanIn);
+        var (more, moreEdges) = SyntheticGraph.Build(GraphView.FullDetailMaxNodes + 1, Layers, AvgFanIn);
         view.SetGraph(more, moreEdges);
         Assert.True(view.IsCullEnabled);
         Assert.Equal(more.Count, view.NodeCount);
@@ -92,6 +104,73 @@ public class GraphCullTests
             else
                 Assert.Null(visual.Badge); // ölü rozet alt-ağacı YOK
         }
+    }
+
+    // ---------------------------------------------------------------- [fix round 1] etiket LOD
+
+    [StaFact]
+    public void A_small_but_crowded_graph_keeps_every_label_because_LOD_shares_the_full_detail_gate()
+    {
+        // [fix round 1 · A2] LOD, cull ile AYNI kapıya bağlıdır. 30 düğümlük bir grafta 15 düğümlü bir katman
+        // olsa bile (aralık (880−70)/14,5 ≈ 55,9px) hiçbir etiket düşmez — "küçük grafta görünüm BİREBİR aynı"
+        // pazarlık dışı kısıtı. (İlk turda LOD ayrı bir eşikten koştuğu için bu graf etiketlerini kaybediyordu.)
+        var nodes = ShortNamedNodes(perLayer: 15, layers: 2, prefix: "Domain.Vehicle.Registration.Long");
+        var view = NewView(Panel);
+
+        view.SetGraph(nodes, []);
+
+        Assert.False(view.IsCullEnabled);
+        Assert.True(GraphLayout.NodeSpacingFor(15) < GraphLayout.NodeCellWidth, "fixture kalabalık değil");
+        Assert.Equal(nodes.Count, view.NodeVisuals.Count);
+        Assert.All(view.NodeVisuals.Values, v => Assert.NotNull(v.Label));
+        Assert.All(view.NodeVisuals.Values, v => Assert.Null(v.Body.ToolTip)); // etiket var → tooltip gereksiz
+    }
+
+    [StaFact]
+    public void Above_the_gate_short_labels_survive_a_crowded_layer_and_long_ones_do_not()
+    {
+        // [fix round 1 · A1] Eşik, etiketin ÇİZİLEN genişliğidir — hücre kelepçesi (88,4px) DEĞİL. Katman
+        // başına 10 düğüm ⇒ aralık ≈ 85,3px. Kısa adlar (≈4 karakter, ≈24px) HİÇ örtüşmez ⇒ etiket KALIR;
+        // aynı yapıda uzun adlar gerçekten örtüşür ⇒ DÜŞER. Kelepçeye dayalı eski eşik İKİSİNİ DE düşürürdü.
+        Assert.True(GraphLayout.NodeSpacingFor(10) < GraphLayout.NodeCellWidth);
+
+        var shortNamed = ShortNamedNodes(perLayer: 10, layers: 20);
+        var shortView = NewView(Panel);
+        shortView.SetGraph(shortNamed, []);
+
+        Assert.True(shortView.IsCullEnabled); // 200 düğüm — tam detay bandının DIŞINDA
+        Assert.NotEmpty(shortView.NodeVisuals);
+        Assert.All(shortView.NodeVisuals.Values, v => Assert.NotNull(v.Label));
+
+        var longNamed = ShortNamedNodes(perLayer: 10, layers: 20, prefix: "Domain.Vehicle.Registration.Long");
+        var longView = NewView(Panel);
+        longView.SetGraph(longNamed, []);
+
+        Assert.True(longView.IsCullEnabled);
+        Assert.NotEmpty(longView.NodeVisuals);
+        Assert.All(longView.NodeVisuals.Values, v => Assert.Null(v.Label));
+    }
+
+    [StaFact]
+    public void A_node_that_lost_its_label_carries_the_full_project_name_as_a_tooltip_without_building_objects()
+    {
+        // [fix round 1 · A3] Etiketi düşen düğüm ANONİM KALMAZ. Tooltip DÜZ METİNDİR: WPF ToolTip kontrolünü
+        // ancak gösterirken kurar ⇒ düğüm başına nesne sayısı ARTMAZ (bu task'ın kazancı geri verilmez).
+        var nodes = ShortNamedNodes(perLayer: 10, layers: 20, prefix: "OSYS.Domain.Vehicle.Registration");
+        var view = NewView(Panel);
+        view.SetGraph(nodes, []);
+
+        var (name, visual) = view.NodeVisuals.First();
+        Assert.Null(visual.Label);
+        // Hedef, tıklama alanının KENDİSİDİR (düğüm karesinin tamamı) — etiket düşünce daralan hedefi telafi eder.
+        Assert.Same(visual.Body, visual.Cell.Children[0]);
+        Assert.Equal(name, visual.Body.ToolTip);
+        Assert.Contains(visual.SquareHost, visual.Body.Children.Cast<UIElement>());
+
+        // Nesne tavanı hâlâ geçerli: tooltip HİÇBİR nesne eklemez (etiketsiz düğüm 8 + hücre = 9'un altında).
+        Layout(view, Panel);
+        int objects = DsResources.RealizedObjects(visual.Cell).Count + 1;
+        Assert.True(objects <= 9, $"tooltip'li etiketsiz düğüm {objects} nesne kuruyor.");
     }
 
     // ---------------------------------------------------------------- cull
@@ -212,6 +291,74 @@ public class GraphCullTests
         Assert.Equal(view.TryFindResource(edge.Style.BrushKey), edge.Path.Stroke);
     }
 
+    [StaFact]
+    public void Jumping_to_a_far_viewport_never_materialises_the_nodes_in_between()
+    {
+        // [fix round 1 · B1] Materyalizasyon kararı ŞU ANKİ görünür alana göre verilir; görülmüş tüm alanların
+        // KÜMÜLATİF birleşimine göre değil. İlk turda birleşim tutuluyordu ⇒ uzak bir görünüme atlamak aradaki
+        // HİÇ GÖRÜLMEMİŞ düğümleri de kuruyordu.
+        var (nodes, edges) = SyntheticGraph.Build(500, Layers, AvgFanIn);
+        var view = NewView(Panel); // animasyon KAPALI ⇒ kamera anlık oturur, ara kare yok
+        view.SetGraph(nodes, edges);
+        var firstRegion = GraphCulling.VisibleWorldRect(view.ViewportSize, view.CurrentCamera);
+
+        // Grafın en sağındaki düğümü seç → kamera oraya ATLAR.
+        var far = nodes.OrderByDescending(n => view.NodeCenter(n.Name).X).First();
+        view.SelectedNode = far.Name;
+        var secondRegion = GraphCulling.VisibleWorldRect(view.ViewportSize, view.CurrentCamera);
+        Assert.True(secondRegion.Left > firstRegion.Right, "iki görünüm örtüşüyor — fixture ayırt edici değil");
+
+        // Seçim ve komşuları kasıtlı olarak her zaman materyalize edilir; onlar dışında materyalize olan HER
+        // düğüm iki görünümden BİRİNİN içinde olmalı — arada kalan hiçbir düğüm kurulmamalı.
+        var pinned = new HashSet<string>(StringComparer.Ordinal) { far.Name };
+        foreach (var e in edges.Where(e => e.From == far.Name || e.To == far.Name))
+            pinned.Add(e.From == far.Name ? e.To : e.From);
+
+        var between = new List<string>();
+        foreach (var (name, _) in view.NodeVisuals)
+        {
+            if (pinned.Contains(name)) continue;
+            var bounds = GraphCulling.NodeBounds(view.NodeCenter(name));
+            if (!firstRegion.IntersectsWith(bounds) && !secondRegion.IntersectsWith(bounds)) between.Add(name);
+        }
+
+        Assert.True(between.Count == 0,
+            $"iki görünümün ARASINDA kalan {between.Count} düğüm boşuna materyalize oldu: " +
+            string.Join(", ", between.Take(3)));
+        // ...ve arada gerçekten materyalize EDİLMEMİŞ düğümler var (test tautoloji değil).
+        Assert.Contains(nodes, n =>
+            !view.NodeVisuals.ContainsKey(n.Name) &&
+            !firstRegion.IntersectsWith(GraphCulling.NodeBounds(view.NodeCenter(n.Name))) &&
+            !secondRegion.IntersectsWith(GraphCulling.NodeBounds(view.NodeCenter(n.Name))));
+    }
+
+    [StaFact]
+    public void A_node_materialised_while_the_reveal_is_playing_joins_the_stagger_instead_of_popping_in()
+    {
+        // [fix round 1 · B2] MOTION SÖZLEŞMESİ: düğüm animasyonu ATLAYARAK, tam opaklıkta belirmez. Bu yol
+        // gerçek bir senaryodur — MainWindow her büyük rebuild'de SetGraph'ın ardından IsSettled'ı iter ve
+        // kamera yeniden hedeflenir, yani reveal penceresi İÇİNDE yeni düğümler materyalize olur.
+        var (nodes, edges) = SyntheticGraph.Build(500, Layers, AvgFanIn);
+        var view = NewView(Panel, animations: true);
+        view.SetGraph(nodes, edges);
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(0.0, v.Cell.Opacity)); // stagger oynuyor
+
+        var culled = nodes.First(n => !view.NodeVisuals.ContainsKey(n.Name));
+        view.SelectedNode = culled.Name; // reveal penceresinin İÇİNDE materyalize olur
+
+        var late = view.NodeVisuals[culled.Name];
+        Assert.Equal(0.0, late.Cell.Opacity);                       // gecikme boyunca 0 — flash yok
+        Assert.IsType<TranslateTransform>(late.Cell.RenderTransform); // 5px yukarıdan gelir
+        Assert.True(late.Cell.HasAnimatedProperties, "geç gelen düğüm stagger'a katılmadı");
+
+        // Reduced-motion'da (stagger hiç oynamaz) geç gelen düğüm ANİ yerleşir — sözleşme oradaki gibi kalır.
+        var still = NewView(Panel);
+        still.SetGraph(nodes, edges);
+        var stillCulled = nodes.First(n => !still.NodeVisuals.ContainsKey(n.Name));
+        still.SelectedNode = stillCulled.Name;
+        Assert.Equal(1.0, still.NodeVisuals[stillCulled.Name].Cell.Opacity);
+    }
+
     // ---------------------------------------------------------------- tick maliyeti
 
     [StaFact]
@@ -273,15 +420,23 @@ public class GraphCullTests
         // sonra tembel yolları TETİKLER ve fırça/geometrinin gerçekten çözüldüğünü doğrular.
         var (nodes, edges) = SyntheticGraph.Build(500, Layers, AvgFanIn);
         var host = DsResources.NewHost();
-        var view = new GraphView { AnimationsEnabledProvider = () => false };
+        var view = new GraphView
+        {
+            AnimationsEnabledProvider = () => false,
+            LabelFontFamily = DsResources.MonoFontFamily,
+        };
         var window = DsResources.Realize(host, view);
 
         view.SetGraph(nodes, edges);
         view.UpdateLayout();
         Assert.True(view.IsCullEnabled);
+        var edgesBefore = new HashSet<GraphEdge>(view.EdgeVisuals.Select(e => e.Model));
 
         // (1) Cull edilmiş bir düğüm SONRADAN materyalize edilir (seçim yoluyla) — token'ları çözülmeli.
-        var culled = nodes.First(n => !view.NodeVisuals.ContainsKey(n.Name) && n.Status == GraphStatus.Succeeded);
+        var culled = nodes.First(n =>
+            !view.NodeVisuals.ContainsKey(n.Name) &&
+            n.Status == GraphStatus.Succeeded &&
+            edges.Any(e => e.From == n.Name || e.To == n.Name));
         view.SelectedNode = culled.Name;
         view.UpdateLayout();
 
@@ -291,8 +446,20 @@ public class GraphCullTests
         Assert.Same(host.FindResource(GraphView.PackageIconKey), visual.Icon.Data);
         Assert.Equal(Visibility.Visible, visual.SelectionRing.Visibility);
         Assert.Equal(host.FindResource("Brush.FocusRing"), visual.SelectionRing.Stroke);
-        // [G2/LOD] Bu ölçekte (katman başına ≫9 düğüm) etiketler zaten üst üste binerdi → hiç kurulmaz.
+        // [G2/LOD] Bu ölçekte (katman başına ≫9 düğüm, uzun adlar) etiketler zaten üst üste binerdi → hiç
+        // kurulmaz; kimlik yerine TOOLTIP taşınır (fix round 1 · A3).
         Assert.Null(visual.Label);
+        Assert.Equal(culled.Name, visual.Body.ToolTip);
+
+        // (1b) [fix round 1 · C2] Seçimle birlikte TEMBEL materyalize edilen KENARLAR da kaynak zincirini
+        // çözmeli — MaterializeEdge, Stroke'u SetResourceReference ile bağlar ve bu tam c6e9a21'in sınıfıdır
+        // (headless suite XAML/kaynak çözümlemesini görmez).
+        var lazyEdge = view.EdgeVisuals.First(e => !edgesBefore.Contains(e.Model));
+        Assert.NotNull(lazyEdge.Style);
+        Assert.Equal(host.FindResource(lazyEdge.Style.BrushKey), lazyEdge.Path.Stroke);
+        Assert.Equal(lazyEdge.Style.Thickness, lazyEdge.Path.StrokeThickness);
+        Assert.Equal(lazyEdge.Style.Opacity, lazyEdge.Path.Opacity);
+        Assert.False(lazyEdge.Path.Data.IsEmpty());
 
         // (2) Rozet de TEMBEL kurulur: dep-hatası sonradan gelir, alt-ağaç canlı ağaçta doğar.
         var updated = nodes.Select(n => n.Name == culled.Name ? n with { HasDepIssue = true } : n).ToList();

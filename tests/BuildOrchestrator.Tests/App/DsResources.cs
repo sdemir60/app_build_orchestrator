@@ -29,6 +29,14 @@ internal static class DsResources
     public static string AssetPath(string fileName)
         => Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", fileName);
 
+    /// <summary>[G2 fix round 1] Gömülü Geist Mono'nun test karşılığı: <c>pack://</c> aileler gerçek bir
+    /// <see cref="Application"/> olmadan çözülmez, bu yüzden AYNI OTF dosyalarına <c>file://</c> tabanlı bir
+    /// aile kurulur. Desen <c>TrackedTextBlockTests</c>'te (T57) kuruldu; oradaki sans karşılığıyla birlikte
+    /// tek doğruluk kaynağı burasıdır (kopya YASAK, CLAUDE.md).</summary>
+    public static FontFamily MonoFontFamily => new(
+        new Uri(Path.Combine(AppContext.BaseDirectory, "TestAssets", "Fonts") + Path.DirectorySeparatorChar),
+        "./#Geist Mono");
+
     public static ResourceDictionary Load(string fileName)
     {
         string xaml = File.ReadAllText(AssetPath(fileName))

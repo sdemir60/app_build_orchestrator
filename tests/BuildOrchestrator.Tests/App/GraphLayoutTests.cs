@@ -146,28 +146,46 @@ public class GraphLayoutTests
     // ---------------------------------------------------------------- [G2/It-5] LOD (etiket eşiği)
 
     [Fact]
-    public void The_label_LOD_threshold_is_exactly_the_label_cell_width_not_a_chosen_number()
+    public void The_label_LOD_threshold_is_the_drawn_label_width_not_the_max_width_clamp()
     {
-        // [G2] Etiket hücresi 88,4px geniştir ve etiket o genişlikte kırpılır; iki komşu hücrenin ÖRTÜŞMEME
-        // koşulu tam olarak "aralık ≥ hücre genişliği"dir. Eşik bu geometriden TÜRETİLİR, seçilmez.
-        Assert.Equal(GraphLayout.NodeSize * 3.4, GraphLayout.NodeCellWidth);
-        Assert.True(GraphLayout.LabelsFit(GraphLayout.NodeCellWidth));           // tam sınır: sığar
-        Assert.False(GraphLayout.LabelsFit(GraphLayout.NodeCellWidth - 0.001));  // altı: örtüşür → kurulmaz
+        // [G2 fix round 1 · A1] Eşik, etiketin ÇİZİLEN genişliğidir; hücre kelepçesi (88,4px) DEĞİL. Kelepçe
+        // yalnız bir üst sınırdır — onu eşik saymak, kısa adlı graflarda hiç örtüşmeyen etiketleri düşürürdü.
+        Assert.True(GraphLayout.LabelsFit(spacing: 40, widestLabelWidth: 40));      // tam sınır: örtüşme YOK
+        Assert.False(GraphLayout.LabelsFit(spacing: 39.999, widestLabelWidth: 40)); // altı: örtüşür → kurulmaz
+        // Kelepçenin ALTINDA kalan kısa etiketler dar aralıkta da sığar (eski eşik bunları düşürürdü).
+        Assert.True(GraphLayout.LabelsFit(spacing: 40, widestLabelWidth: 24));
+        Assert.False(GraphLayout.LabelsFit(spacing: 40, widestLabelWidth: GraphLayout.NodeCellWidth));
     }
 
-    [Fact]
-    public void Labels_survive_up_to_nine_nodes_per_layer_which_is_exactly_the_design_graphs_widest_layer()
+    [StaFact]
+    public void The_measured_label_width_is_the_real_drawn_width_and_never_exceeds_the_cell_clamp()
     {
-        // (880−70)/(n−0,5) ≥ 88,4 ⇔ n ≤ 9. design-v1 §2.3 referans grafının en kalabalık katmanı TAM 9'dur —
-        // yani tasarımın kendi boyutu eşiğin güvenli tarafındadır ve bugünkü graf LOD'dan ETKİLENMEZ.
-        for (int n = 1; n <= 9; n++)
-            Assert.True(GraphLayout.LayerShowsLabels(n), $"{n} düğümlük katmanda etiket düşmemeliydi");
-        Assert.False(GraphLayout.LayerShowsLabels(10));
+        // Ölçüm gerçek advance-width matematiğinden gelir (TrackedGlyphs, T57) — uzun ad daha geniştir ve
+        // hücre kelepçesini asla aşmaz (etiket orada CharacterEllipsis ile kırpılır).
+        var mono = DsResources.MonoFontFamily;
+        double shortName = GraphLabelMetrics.WidestLabelWidth(["Api"], mono);
+        double longName = GraphLabelMetrics.WidestLabelWidth(["Domain.Vehicle.Registration"], mono);
 
-        var (nodes, _) = SyntheticGraph.Build(36, layerCount: 6, avgFanIn: 1.6);
-        Assert.All(
-            nodes.GroupBy(n => n.Layer),
-            layer => Assert.True(GraphLayout.LayerShowsLabels(layer.Count())));
+        Assert.True(shortName > 0, "kısa ad ölçülemedi");
+        Assert.True(shortName < longName, $"uzun ad daha dar ölçüldü: {shortName} vs {longName}");
+        Assert.True(shortName < GraphLayout.NodeCellWidth, $"3 harflik ad kelepçeye dayandı: {shortName}");
+        Assert.Equal(GraphLayout.NodeCellWidth, longName, 10); // kelepçeye oturur
+        // Katmanın EN UZUN adı seçilir (katman başına tek ölçüm).
+        Assert.Equal(longName, GraphLabelMetrics.WidestLabelWidth(["Api", "Domain.Vehicle.Registration", "Base"], mono), 10);
+        // Çözülemeyen bir aile → kelepçeye (muhafazakâr) düşer, çökmez.
+        Assert.Null(GraphLabelMetrics.TryMeasure("Api", new FontFamily("#No Such Family")));
+    }
+
+    [StaFact] // GlyphTypeface çözümü (bkz. kardeş ölçüm testi)
+    public void A_short_named_layer_of_twelve_keeps_its_labels_because_they_do_not_actually_overlap()
+    {
+        // [A1] 12 düğümlük katmanda aralık (880−70)/11,5 ≈ 70,4px. Kısa adlarda (ör. "Api" ≈ 18px) etiketler
+        // HİÇ örtüşmez ⇒ düşmemeli. Eski (kelepçeye dayalı) eşik bunları düşürürdü.
+        var mono = DsResources.MonoFontFamily;
+        double spacing = GraphLayout.NodeSpacingFor(12);
+        Assert.True(GraphLayout.LabelsFit(spacing, GraphLabelMetrics.WidestLabelWidth(["Api"], mono)));
+        // Aynı katman UZUN adlarla gerçekten örtüşür ⇒ düşer.
+        Assert.False(GraphLayout.LabelsFit(spacing, GraphLabelMetrics.WidestLabelWidth(["Domain.Vehicle.Registration"], mono)));
     }
 
     [Fact]

@@ -72,24 +72,20 @@ public static class GraphLayout
     public const double LabelHeight = 14.0;
 
     /// <summary>
-    /// [G2/LOD] Verilen aralıkta düğüm ETİKETLERİ kurulur mu.
+    /// [G2/LOD · fix round 1] Bir katmanın ETİKETLERİ kurulur mu: komşu iki etiket <b>gerçekten</b> örtüşüyor
+    /// mu.
     ///
-    /// <para>Etiket, hücresinin (<see cref="NodeCellWidth"/> = 88,4px) içinde ortalanır ve o genişlikte
-    /// kırpılır (<c>CharacterEllipsis</c>). Dolayısıyla iki komşu hücrenin FİZİKSEL olarak örtüşmemesinin
-    /// koşulu tam olarak <c>aralık ≥ hücre genişliği</c>'dir; aralık bunun altına düştüğünde bir düğümün
-    /// etiketi komşusunun etiketinin üstüne biner ve İKİSİ DE okunmaz olur. Bu durumda etiket
-    /// <b>hiç kurulmaz</b> — hem görsel kusur kapanır hem düğüm başına bir nesne daha düşer.</para>
+    /// <para>Etiketler düğüm merkezinde ortalanır, dolayısıyla iki komşu etiket ancak
+    /// <c>aralık &lt; çizilen genişlik</c> olduğunda üst üste biner. <paramref name="widestLabelWidth"/> o
+    /// katmanın EN GENİŞ etiketinin <b>çizilen</b> (ölçülen) genişliğidir — <see cref="NodeCellWidth"/>
+    /// kelepçesi DEĞİL. Kelepçe yalnız bir üst sınırdır (etiket orada <c>CharacterEllipsis</c> ile kırpılır);
+    /// onu eşik olarak kullanmak, kısa adlı graflarda hiç örtüşmeyen etiketleri de düşürürdü
+    /// (fix round 1 · A1). Ölçüm <see cref="GraphLabelMetrics"/>'tedir; burası saf karşılaştırmadır.</para>
     ///
-    /// <para><b>Eşik türetilmiştir, seçilmemiştir:</b> <c>NodeSpacingFor(n) ≥ NodeCellWidth</c> ⇔
-    /// <c>810/(n−0,5) ≥ 88,4</c> ⇔ <c>n ≤ 9</c>. design-v1 §2.3 referans grafının EN KALABALIK katmanı tam
-    /// 9 düğümdür (aralık 95,3px) — yani tasarımın kendi boyutu eşiğin güvenli tarafında kalır ve bugünkü
-    /// graf görünümü LOD'dan etkilenmez.</para>
+    /// <para>Etiket düşen düğüm anonim kalmaz: o düğüme proje adını veren bir tooltip kurulur
+    /// (<c>GraphView.BuildNodeVisual</c>).</para>
     /// </summary>
-    public static bool LabelsFit(double spacing) => spacing >= NodeCellWidth;
-
-    /// <summary>[G2/LOD] <paramref name="count"/> düğümlü bir katmanın etiketleri kurulur mu (<see cref="LabelsFit"/>
-    /// + <see cref="NodeSpacingFor"/> bileşimi — çağıranların aralığı elle hesaplamasını önler).</summary>
-    public static bool LayerShowsLabels(int count) => LabelsFit(NodeSpacingFor(count));
+    public static bool LabelsFit(double spacing, double widestLabelWidth) => spacing >= widestLabelWidth;
 
     /// <summary>[G1] <paramref name="count"/> düğümlü bir katmanın düğüm aralığı. Prototipin formülü TABAN
     /// tuvalden hesaplanır (<c>(880-70)/(n-0.5)</c>) ve <see cref="MinNodeSpacing"/>–<see cref="MaxNodeSpacing"/>

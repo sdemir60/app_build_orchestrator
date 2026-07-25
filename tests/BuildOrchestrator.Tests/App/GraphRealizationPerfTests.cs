@@ -81,6 +81,12 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
                 "[G2 cull]   {0,4} nodes → cull {1,-3} · materialised {2,4}/{3,4} nodes ({4,5:P1}) · {5,4}/{6,4} edges",
                 n, view.IsCullEnabled ? "ON" : "OFF", view.NodeVisuals.Count, view.NodeCount,
                 (double)view.NodeVisuals.Count / view.NodeCount, view.EdgeVisuals.Count, view.EdgeCount));
+
+            // [G2 fix round 1 · C1] Başlık rakamı YALNIZ ilk görünür alanı ölçer. Kullanıcı grafın TAMAMINI
+            // gezerse her düğüm er geç materyalize olur — o senaryonun maliyeti de ölçülür ve raporlanır.
+            output.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "[G2 full]   {0,4} nodes → whole-graph materialisation median = {1,8:N1} ms",
+                n, PerfMeasure.MedianOf(() => MeasureFullMaterializationMs(nodes, edges), warmups: 1, samples: 3)));
         }
 
         // [G1 review round 1] Sert ms eşiği makineye bağlı kırılganlıktır — kardeş testin (ListRealizationPerfTests
@@ -148,6 +154,31 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
     // ---------------------------------------------------------------- ölçüm altyapısı
 
     private static Size ViewportSize => new(600, 400);
+
+    /// <summary>[G2 fix round 1 · C1] Grafın TAMAMININ görünür olduğu panel ölçüsü — 1000 düğümde tuval
+    /// 8.553px ve kamera tabanı <c>MinScale</c> 0,68 olduğu için 5.816px'ten geniş her panel yeter; 12.000
+    /// rahat bir paydır.</summary>
+    private static Size FullViewportSize => new(12000, 4000);
+
+    /// <summary>[G2 fix round 1 · C1] "Kullanıcı grafın tamamını gezdi" senaryosunun duvar saati: <c>SetGraph</c>
+    /// + ilk yerleşim + panel grafın tamamını gösterecek kadar büyüdüğünde KALAN her düğüm/kenarın
+    /// materyalizasyonu ve yeniden yerleşimi. Cull'suz koda kıyaslanırken bu, cull'un ÜST sınır maliyetidir
+    /// (ikinci bir tam <c>Measure/Arrange</c> geçişini de içerir — yani ölçüm G2'nin ALEYHİNE muhafazakârdır).</summary>
+    private static double MeasureFullMaterializationMs(
+        IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges)
+    {
+        var view = NewHeadlessView(ViewportSize);
+
+        var sw = Stopwatch.StartNew();
+        view.SetGraph(nodes, edges);
+        Layout(view, ViewportSize);
+        Layout(view, FullViewportSize); // tüm graf görünür → cull edilmiş ne varsa şimdi kurulur
+        sw.Stop();
+
+        Assert.Equal(nodes.Count, view.NodeVisuals.Count);
+        Assert.Equal(edges.Count, view.EdgeVisuals.Count);
+        return sw.Elapsed.TotalMilliseconds;
+    }
 
     /// <summary>Bir realizasyonun üç fazının duvar saati (ms). <see cref="ComputeMs"/>, <see cref="BuildMs"/>'in
     /// İÇİNDEDİR — toplam bu yüzden build + layout'tur.</summary>

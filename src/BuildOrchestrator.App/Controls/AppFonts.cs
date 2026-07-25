@@ -18,8 +18,23 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 public static class AppFonts
 {
-    private static readonly Uri FontsBase =
-        new("pack://application:,,,/BuildOrchestrator.App;component/Fonts/");
+    private static readonly Uri FontsBase = CreateFontsBase();
+
+    /// <summary>
+    /// [G2 fix round 1] <c>pack://</c> şeması, packaging altyapısına ilk kez dokunulana kadar
+    /// <b>KAYITLI DEĞİLDİR</b>. Bu tip, WPF'ten (XAML yükleme / <c>Application</c>) ÖNCE initialize olursa
+    /// <c>new Uri(...)</c> "Invalid port specified" ile patlar ve type initializer'ı KALICI olarak zehirler —
+    /// aynı process'teki her XAML yüklemesi de peşinden düşer. Şema bu yüzden Uri kurulmadan ÖNCE garanti
+    /// altına alınır (tek satır, davranışı değiştirmez).
+    ///
+    /// <para>Tetikleyici: <see cref="BuildOrchestrator.App.Graph.GraphLabelMetrics"/> etiket genişliğini
+    /// ölçmek için <see cref="Mono"/>'yu WPF ağacı kurulmadan da okuyabilir.</para>
+    /// </summary>
+    private static Uri CreateFontsBase()
+    {
+        _ = System.IO.Packaging.PackUriHelper.UriSchemePack;
+        return new Uri("pack://application:,,,/BuildOrchestrator.App;component/Fonts/");
+    }
 
     /// <summary>Gömülü Geist (sans) — UI yüzü: caps panel/popover başlıkları, etiketler, gövde metni.</summary>
     public static FontFamily Ui { get; } = new(FontsBase, "./#Geist");
