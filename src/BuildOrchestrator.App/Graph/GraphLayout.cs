@@ -4,7 +4,14 @@ using System.Windows.Media;
 namespace BuildOrchestrator.App.Graph;
 
 /// <summary>[T63] Yerleşim sonucu: düğüm MERKEZLERİ (ad → nokta) + graf tuvalinin ölçüsü.</summary>
-public sealed record GraphLayoutResult(IReadOnlyDictionary<string, Point> Positions, double Width, double Height)
+/// <param name="LayerSpacing">[G2] Katman → o katmanda kullanılan düğüm aralığı. LOD kararı (etiket kurulacak mı)
+/// bu aralıktan türetilir — bkz. <see cref="GraphLayout.LabelsFit"/>. Aralık katman başına farklı olduğundan
+/// (kalabalık katman daralır) karar da katman başınadır.</param>
+public sealed record GraphLayoutResult(
+    IReadOnlyDictionary<string, Point> Positions,
+    double Width,
+    double Height,
+    IReadOnlyDictionary<int, double> LayerSpacing)
 {
     public Size Size => new(Width, Height);
 }
@@ -59,6 +66,30 @@ public static class GraphLayout
     public const double NodeCellWidth = NodeSize * 3.4;
     /// <summary>Kare ile etiket arasındaki boşluk (DS <c>gap: 5</c>).</summary>
     public const double LabelGap = 5.0;
+    /// <summary>[G2] 10px mono etiket satırının yükseklik ÜST SINIRI — yalnız cull sınırlarını (GraphCulling)
+    /// hesaplamak için kullanılır, yerleşimi etkilemez. Gerçek satır kutusundan büyük tutulur ki cull bir düğümü
+    /// erken atmasın.</summary>
+    public const double LabelHeight = 14.0;
+
+    /// <summary>
+    /// [G2/LOD] Verilen aralıkta düğüm ETİKETLERİ kurulur mu.
+    ///
+    /// <para>Etiket, hücresinin (<see cref="NodeCellWidth"/> = 88,4px) içinde ortalanır ve o genişlikte
+    /// kırpılır (<c>CharacterEllipsis</c>). Dolayısıyla iki komşu hücrenin FİZİKSEL olarak örtüşmemesinin
+    /// koşulu tam olarak <c>aralık ≥ hücre genişliği</c>'dir; aralık bunun altına düştüğünde bir düğümün
+    /// etiketi komşusunun etiketinin üstüne biner ve İKİSİ DE okunmaz olur. Bu durumda etiket
+    /// <b>hiç kurulmaz</b> — hem görsel kusur kapanır hem düğüm başına bir nesne daha düşer.</para>
+    ///
+    /// <para><b>Eşik türetilmiştir, seçilmemiştir:</b> <c>NodeSpacingFor(n) ≥ NodeCellWidth</c> ⇔
+    /// <c>810/(n−0,5) ≥ 88,4</c> ⇔ <c>n ≤ 9</c>. design-v1 §2.3 referans grafının EN KALABALIK katmanı tam
+    /// 9 düğümdür (aralık 95,3px) — yani tasarımın kendi boyutu eşiğin güvenli tarafında kalır ve bugünkü
+    /// graf görünümü LOD'dan etkilenmez.</para>
+    /// </summary>
+    public static bool LabelsFit(double spacing) => spacing >= NodeCellWidth;
+
+    /// <summary>[G2/LOD] <paramref name="count"/> düğümlü bir katmanın etiketleri kurulur mu (<see cref="LabelsFit"/>
+    /// + <see cref="NodeSpacingFor"/> bileşimi — çağıranların aralığı elle hesaplamasını önler).</summary>
+    public static bool LayerShowsLabels(int count) => LabelsFit(NodeSpacingFor(count));
 
     /// <summary>[G1] <paramref name="count"/> düğümlü bir katmanın düğüm aralığı. Prototipin formülü TABAN
     /// tuvalden hesaplanır (<c>(880-70)/(n-0.5)</c>) ve <see cref="MinNodeSpacing"/>–<see cref="MaxNodeSpacing"/>
@@ -104,7 +135,7 @@ public static class GraphLayout
             maxLayer = Math.Max(maxLayer, node.Layer);
         }
 
-        return new GraphLayoutResult(positions, width, TopMargin + maxLayer * RowHeight + BottomMargin);
+        return new GraphLayoutResult(positions, width, TopMargin + maxLayer * RowHeight + BottomMargin, spacings);
     }
 
     /// <summary>Kenarın kübik bezier kontrol noktaları (saf) — prototip:

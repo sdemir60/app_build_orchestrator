@@ -43,11 +43,18 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
     private const double SanityCeilingMs500 = 6000;   // felaket regresyon tavanı (bütçe DEĞİL)
     private const double SanityCeilingMs1000 = 15000; // felaket regresyon tavanı (bütçe DEĞİL)
 
-    /// <summary>[G1] Bir graf düğümünün kurduğu nesne tavanı (<see cref="DsResources.RealizedObjects"/> + hücrenin
-    /// kendisi). Bugün: 15 declared UIElement + iki <see cref="System.Windows.Controls.Viewbox"/>'ın iç container
-    /// visual'ları. Bunun ~5'i (dep-hata rozeti alt-ağacı) <c>HasDepIssue=false</c> olsa bile kurulur — G2'nin
-    /// hedefi tam olarak bu sayıyı düşürmektir. Tavan DAR tutulur ki eager bir alt-ağaç geri sızarsa test kırılsın.</summary>
-    private const int NodeObjectCeiling = 18;
+    /// <summary>[G1→G2] Bir graf düğümünün kurduğu nesne tavanı (<see cref="DsResources.RealizedObjects"/> +
+    /// hücrenin kendisi). G1'de <b>17</b>'ydi (tavan 18); G2 üç kalemle <b>9</b>'a indirdi:
+    /// <list type="bullet">
+    ///   <item>dep-hata rozeti alt-ağacı (6 nesne) artık yalnız <c>HasDepIssue</c> olan düğümde kurulur — sentetik
+    ///     profilde düğümlerin ~%97'sinde ÖLÜYDÜ;</item>
+    ///   <item>ikonu 24 → 13px indiren <c>Viewbox</c> (+ iç <c>ContainerVisual</c>'ı, 2 nesne) yerine PAYLAŞILAN
+    ///     donmuş bir <c>ScaleTransform</c> — geometrik sonuç birebir aynı (bkz. GraphRenderTests karakterizasyonu);</item>
+    ///   <item>etiket, katmanın aralığı etiket hücresinin altına düştüğünde hiç kurulmaz (LOD) — bu boyutta
+    ///     kurulduğu için aşağıdaki sayıya DAHİLDİR.</item>
+    /// </list>
+    /// Tavan DAR tutulur ki eager bir alt-ağaç geri sızarsa test kırılsın.</summary>
+    private const int NodeObjectCeiling = 10;
 
     [StaFact]
     public void Realizing_the_design_sized_graph_stays_under_the_budget_and_500_and_1000_are_recorded()
@@ -60,9 +67,21 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
         output.WriteLine(Format(500, five) + "  (record only — G2 target)");
         output.WriteLine(Format(1000, thousand) + "  (record only — G2 target)");
         foreach (int n in new[] { DesignNodes, 500, 1000 })
+        {
+            var (nodes, edges) = SyntheticGraph.Build(n, Layers, AvgFanIn);
             output.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "[G1 canvas] {0,4} nodes → canvas {1,8:N0} px (base {2:N0})",
-                n, GraphLayout.Compute(SyntheticGraph.Build(n, Layers, AvgFanIn).Nodes).Width, GraphLayout.CanvasWidth));
+                n, GraphLayout.Compute(nodes).Width, GraphLayout.CanvasWidth));
+
+            // [G2] Cull'un GERÇEK kazancı: kaç düğüm/kenarın ağacı hiç kurulmadı.
+            var view = NewHeadlessView(ViewportSize);
+            view.SetGraph(nodes, edges);
+            Layout(view, ViewportSize);
+            output.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "[G2 cull]   {0,4} nodes → cull {1,-3} · materialised {2,4}/{3,4} nodes ({4,5:P1}) · {5,4}/{6,4} edges",
+                n, view.IsCullEnabled ? "ON" : "OFF", view.NodeVisuals.Count, view.NodeCount,
+                (double)view.NodeVisuals.Count / view.NodeCount, view.EdgeVisuals.Count, view.EdgeCount));
+        }
 
         // [G1 review round 1] Sert ms eşiği makineye bağlı kırılganlıktır — kardeş testin (ListRealizationPerfTests
         // :48-54) ERTELENEBİLİR bütçe deseni AYNEN uygulanır: bütçe aşılırsa gerçek sayı çıktıya yazılır ve iş
@@ -114,8 +133,8 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
         view.SetGraph(nodes, edges);
         view.UpdateLayout();
 
-        Assert.Equal(nodes.Count, view.NodeVisuals.Count);
-        Assert.Equal(edges.Count, view.EdgeVisuals.Count);
+        Assert.Equal(nodes.Count, view.NodeCount);
+        Assert.Equal(edges.Count, view.EdgeCount);
         Assert.False(view.IsEmptyStateVisible);
         Assert.Equal(
             string.Format(CultureInfo.InvariantCulture, "{0} projects · {1} dependencies", nodes.Count, edges.Count),
@@ -179,8 +198,16 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
         Layout(view, ViewportSize);
         sw.Stop();
 
-        Assert.Equal(nodes.Count, view.NodeVisuals.Count);
-        Assert.Equal(edges.Count, view.EdgeVisuals.Count);
+        // [G2] Cull tembel materyalizasyondur: TOPLAM düğüm/kenar sayısı her zaman tamdır, MATERYALİZE olan küme
+        // ise görünür alanla sınırlıdır (küçük grafta ikisi eşittir — cull hiç devreye girmez).
+        Assert.Equal(nodes.Count, view.NodeCount);
+        Assert.Equal(edges.Count, view.EdgeCount);
+        Assert.InRange(view.NodeVisuals.Count, 1, nodes.Count);
+        if (!view.IsCullEnabled)
+        {
+            Assert.Equal(nodes.Count, view.NodeVisuals.Count);
+            Assert.Equal(edges.Count, view.EdgeVisuals.Count);
+        }
         return new GraphRealizeSample(computeMs, buildMs, sw.Elapsed.TotalMilliseconds);
     }
 

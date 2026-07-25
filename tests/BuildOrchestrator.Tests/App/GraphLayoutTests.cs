@@ -143,6 +143,45 @@ public class GraphLayoutTests
         Assert.True(spacing > GraphLayout.MinNodeSpacing);
     }
 
+    // ---------------------------------------------------------------- [G2/It-5] LOD (etiket eşiği)
+
+    [Fact]
+    public void The_label_LOD_threshold_is_exactly_the_label_cell_width_not_a_chosen_number()
+    {
+        // [G2] Etiket hücresi 88,4px geniştir ve etiket o genişlikte kırpılır; iki komşu hücrenin ÖRTÜŞMEME
+        // koşulu tam olarak "aralık ≥ hücre genişliği"dir. Eşik bu geometriden TÜRETİLİR, seçilmez.
+        Assert.Equal(GraphLayout.NodeSize * 3.4, GraphLayout.NodeCellWidth);
+        Assert.True(GraphLayout.LabelsFit(GraphLayout.NodeCellWidth));           // tam sınır: sığar
+        Assert.False(GraphLayout.LabelsFit(GraphLayout.NodeCellWidth - 0.001));  // altı: örtüşür → kurulmaz
+    }
+
+    [Fact]
+    public void Labels_survive_up_to_nine_nodes_per_layer_which_is_exactly_the_design_graphs_widest_layer()
+    {
+        // (880−70)/(n−0,5) ≥ 88,4 ⇔ n ≤ 9. design-v1 §2.3 referans grafının en kalabalık katmanı TAM 9'dur —
+        // yani tasarımın kendi boyutu eşiğin güvenli tarafındadır ve bugünkü graf LOD'dan ETKİLENMEZ.
+        for (int n = 1; n <= 9; n++)
+            Assert.True(GraphLayout.LayerShowsLabels(n), $"{n} düğümlük katmanda etiket düşmemeliydi");
+        Assert.False(GraphLayout.LayerShowsLabels(10));
+
+        var (nodes, _) = SyntheticGraph.Build(36, layerCount: 6, avgFanIn: 1.6);
+        Assert.All(
+            nodes.GroupBy(n => n.Layer),
+            layer => Assert.True(GraphLayout.LayerShowsLabels(layer.Count())));
+    }
+
+    [Fact]
+    public void The_layout_reports_the_spacing_of_every_layer_so_the_LOD_decision_has_a_single_source()
+    {
+        var layout = GraphLayout.Compute(SampleNodes());
+
+        Assert.Equal(GraphLayout.NodeSpacingFor(2), layout.LayerSpacing[0], 10);
+        Assert.Equal(GraphLayout.NodeSpacingFor(1), layout.LayerSpacing[1], 10);
+        // Aralık, konumlardan okunanla AYNI olmalı (iki ayrı hesap değil, tek kaynak).
+        double measured = layout.Positions["OSYS.Common.Contracts"].X - layout.Positions["OSYS.Base"].X;
+        Assert.Equal(Math.Abs(measured), layout.LayerSpacing[0], 10);
+    }
+
     [Fact]
     public void Compute_on_an_empty_node_set_still_returns_a_usable_canvas()
     {
