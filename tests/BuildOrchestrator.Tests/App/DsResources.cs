@@ -65,6 +65,34 @@ internal static class DsResources
 
     public static Color ColorOf(Brush? brush) => ((SolidColorBrush)brush!).Color;
 
+    /// <summary>[L1/It-5 perf] Bir kökün GERÇEKTEN kurduğu nesneler — görsel VE mantıksal ağacın birleşimi
+    /// (tekilleştirilmiş). Yalnız görsel ağacı saymak perf metriği olarak yanıltıcıdır: Collapsed bir dalın
+    /// şablonu genişlemez, bu yüzden <c>Button.Content</c> (Viewbox/Canvas/Path) ve <c>Popup.Child</c> alt-ağacı
+    /// görsel ağaca hiç girmez — ama nesne olarak kurulmuş ve satır başına ödenmiştir. Ölçüm bu yüzden mantıksal
+    /// çocukları da gezer. (Tooltip'ler hiçbir ağaca girmez → bu sayıya dahil DEĞİLDİR.)</summary>
+    public static IReadOnlyCollection<DependencyObject> RealizedObjects(DependencyObject root)
+    {
+        var seen = new HashSet<DependencyObject>();
+        var stack = new Stack<DependencyObject>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            if (node is Visual)
+            {
+                int count = VisualTreeHelper.GetChildrenCount(node);
+                for (int i = 0; i < count; i++)
+                {
+                    var child = VisualTreeHelper.GetChild(node, i);
+                    if (seen.Add(child)) stack.Push(child);
+                }
+            }
+            foreach (object child in LogicalTreeHelper.GetChildren(node))
+                if (child is DependencyObject d && seen.Add(d)) stack.Push(d);
+        }
+        return seen;
+    }
+
     /// <summary>Görsel ağacın tamamı — şablon içindeki şablonlara da iner (split button'ın yarımları gibi).</summary>
     public static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {

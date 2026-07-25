@@ -46,6 +46,8 @@ public partial class ProjectRow : UserControl
 
     private readonly SolidColorBrush _bgBrush = new(Colors.Transparent);
     private ProjectRowViewModel? _vm;
+    private ProjectRowActions? _actions; // [L1] ilk hover'da kurulur (bkz. EnsureActions)
+    private bool _applied;               // [L1] ApplyAll bu DataContext için koştu mu (çift koşum guard'ı)
     private bool _hover;
     private bool _isBreathing;
     private ProjectRowState? _prevState;
@@ -72,11 +74,26 @@ public partial class ProjectRow : UserControl
         KeyDown += OnRowKeyDown;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        // [L1] Hover ikonlarının kablajı ctor'dan EnsureActions'a taşındı — ikonlar artık ilk hover'da doğuyor.
+    }
 
+    /// <summary>[L1/It-5 perf] Hover eylem bloğunu (folder + VS ikonları, VS-chooser popover'ı) İLK HOVER'da bir
+    /// kez kurar ve sağ bloğa ekler. Öncesinde bu 16 nesne her satırda hevesle kuruluyordu (191 satırda ~3056),
+    /// hiç hover edilmese bile. Kurulduktan sonra satır ömrü boyunca kalır (hover-out yalnız Collapse eder) —
+    /// böylece hover/leave döngüsü tekrar tekrar inşa etmez. Kablaj (Click/Opened) burada, çünkü öğeler ancak
+    /// burada var olur; DAVRANIŞ (OnRevealClick/OnVsClick/PopIn) satırda kalır.</summary>
+    private ProjectRowActions EnsureActions()
+    {
+        if (_actions is { } existing) return existing;
+
+        var actions = new ProjectRowActions();
         // [E1/T67] Hover ikonları → OS eylemleri (VM üzerinden). Chooser popover'ı D6 deseni: açılışta PopIn.
-        PART_RevealButton.Click += OnRevealClick;
-        PART_VsButton.Click += OnVsClick;
-        PART_VsChooser.Opened += (_, _) => PopIn.Play(PART_VsChooserContent);
+        actions.RevealButton.Click += OnRevealClick;
+        actions.VsButton.Click += OnVsClick;
+        actions.VsChooser.Opened += (_, _) => PopIn.Play(actions.VsChooserContent);
+        PART_RightBlock.Children.Add(actions); // sha ile AYNI blok (üstünde) — eski XAML sırasıyla birebir
+        _actions = actions;
+        return actions;
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -84,7 +101,11 @@ public partial class ProjectRow : UserControl
     internal WillBuildDot Dot => PART_Dot;
     internal TextBlock DurationText => PART_Duration;
     internal TextBlock ShaText => PART_Sha;
-    internal FrameworkElement HoverIcons => PART_HoverIcons;
+    /// <summary>[L1] Hover eylem bloğu — İLK HOVER'a kadar <c>null</c> (hiç kurulmaz).</summary>
+    internal FrameworkElement? HoverIcons => _actions?.HoverIcons;
+    internal ProjectRowActions? Actions => _actions;
+    /// <summary>[L1] <see cref="ApplyAll"/> çağrı sayacı — satır başına BİR kez koştuğunu pinleyen test seam'i.</summary>
+    internal int ApplyAllCount { get; private set; }
     internal FrameworkElement DepSlot => PART_DepSlot;
     internal FrameworkElement DepIcon => PART_DepIcon;
     internal FrameworkElement BreathLayer => PART_Breath;
@@ -120,7 +141,16 @@ public partial class ProjectRow : UserControl
             motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
             motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
         }
-        ApplyAll();
+
+        // [L1/It-5 perf] ApplyAll BURADA TEKRAR koşmaz. Üretimde satır, DataContext'i miras aldığı anda ZATEN
+        // ağaçtadır (ItemsControl önce container'ı ağaca ekler, sonra şablonu uygular) → ilk ApplyAll eksiksizdir
+        // ve Loaded'daki ikinci koşum satır başına ~10 SetResourceReference + 3 animasyon kurulumunu boşuna
+        // tekrarlıyordu. Geriye yalnız Loaded'ın GERÇEKTEN değiştirebildiği iki şey kalır:
+        //   · sha — TargetSha ATA ağaçtaki RunViewModel'den çözülür (satır ağaç dışında kurulduysa boş kalmıştı),
+        //   · nefes — Unloaded StopBreathing çağırır, yeniden yüklenen satırda saat geri kurulmalı.
+        if (!_applied) { ApplyAll(); return; }
+        ApplyRightBlock();
+        ApplyBreathing();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -137,6 +167,7 @@ public partial class ProjectRow : UserControl
         if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm = e.NewValue as ProjectRowViewModel;
         _prevState = null;
+        _applied = false; // yeni VM → tam tazeleme yeniden gerekir (container yeniden kullanımı dahil)
         if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
         ApplyAll();
     }
@@ -185,6 +216,8 @@ public partial class ProjectRow : UserControl
     // ---------------------------------------------------------------- toplu tazeleme
     private void ApplyAll()
     {
+        _applied = true;
+        ApplyAllCount++;
         _prevState = _vm?.State;
         PART_Name.Text = _vm?.Name;
         // [E5/T47] Kart klavye ile odaklanınca ekran okuyucu proje ADINI okusun (ikon/şerit/glyph görselleri SR'a
@@ -286,12 +319,14 @@ public partial class ProjectRow : UserControl
         PART_Sha.Text = cur.Length == 0 ? target : $"{cur} → {target}";
     }
 
-    /// <summary>Sağ blok: hover'da aç-ikonları, değilse (will==dirty) sha çifti (BuildApp.jsx:387-403).</summary>
+    /// <summary>Sağ blok: hover'da aç-ikonları, değilse (will==dirty) sha çifti (BuildApp.jsx:387-403).
+    /// [L1] İkon bloğu hover'da TALEP ÜZERİNE kurulur; hover yokken kurulmamışsa dokunulacak bir şey de yoktur.</summary>
     private void ApplyRightBlock()
     {
         bool showIcons = _hover;
         bool showSha = !_hover && _vm?.WillBuild == true;
-        PART_HoverIcons.Visibility = showIcons ? Visibility.Visible : Visibility.Collapsed;
+        if (showIcons) EnsureActions().HoverIcons.Visibility = Visibility.Visible;
+        else if (_actions is { } actions) actions.HoverIcons.Visibility = Visibility.Collapsed;
         PART_Sha.Visibility = showSha ? Visibility.Visible : Visibility.Collapsed;
         if (showSha) ApplySha();
     }
@@ -321,6 +356,9 @@ public partial class ProjectRow : UserControl
         Color target = selected ? ResolveColor("Brush.SurfaceRaised", Colors.Transparent)
             : _hover ? ResolveColor("Brush.SurfaceHover", Colors.Transparent)
             : Colors.Transparent;
+        // [L1/It-5 perf] Zemin zaten hedef renkteyse geçiş kurma (ilk uygulamada HER satırda Transparent→Transparent
+        // idi → satır başına iki kaynak-zinciri yürüyüşü + bir renk saati). Uçuşta saat varsa atlanmaz (bkz. AnimateDouble).
+        if (!_bgBrush.HasAnimatedProperties && _bgBrush.Color == target) return;
         MotionTokens.TransitionColor(this, _bgBrush, target);
     }
 
@@ -427,6 +465,13 @@ public partial class ProjectRow : UserControl
     private void AnimateDouble(IAnimatable target, DependencyProperty prop, double to,
         string durKey, double durFallback, string splineKey, KeySpline splineFallback)
     {
+        // [L1/It-5 perf] Hedef zaten sağlanmışsa hiçbir şey yapma. İlk uygulamada (ApplyAll) satır seçili DEĞİLDİR:
+        // şerit zaten 2, iç-sarmalayıcı zaten 0 — yine de iki animasyon kurulumu ve dört kaynak-zinciri yürüyüşü
+        // (ResolveDuration + ResolveKeySpline) satır başına ödeniyordu. Uçuşta bir saat varsa ATLANMAZ: o durumda
+        // okunan değer animasyonun ANLIK değeridir, hedefe eşit görünse bile devam ediyor olabilir.
+        if (!target.HasAnimatedProperties && ((DependencyObject)target).GetValue(prop) is double current && current == to)
+            return;
+
         bool enabled = AnimationsEnabledProvider();
         var duration = MotionTokens.ResolveDuration(this, durKey, durFallback);
         var spline = MotionTokens.ResolveKeySpline(this, splineKey, splineFallback);
@@ -467,20 +512,21 @@ public partial class ProjectRow : UserControl
     /// eylem zaten VM içinde tamamlandı (opened / no-sln / VS-not-found).</summary>
     private void OnVsClick(object sender, RoutedEventArgs e)
     {
-        if (_vm is not { } vm) return;
+        // [L1] Tıklama ancak KURULMUŞ bloktan gelebilir (buton onun içinde doğar) — burada yeniden inşa YOK.
+        if (_vm is not { } vm || _actions is not { } actions) return;
         var chooser = FindRunViewModel()?.OpenProjectInVisualStudio(vm.Id);
         if (chooser is not { Count: > 0 }) return;
-        BuildVsChooserRows(chooser);
-        PART_VsChooser.IsOpen = true;
+        BuildVsChooserRows(actions, chooser);
+        actions.VsChooser.IsOpen = true;
     }
 
-    private void BuildVsChooserRows(IReadOnlyList<SolutionRef> candidates)
+    private void BuildVsChooserRows(ProjectRowActions actions, IReadOnlyList<SolutionRef> candidates)
     {
-        PART_VsChooserRows.Children.Clear(); // minik non-virtualized liste (BranchPopover deseni)
-        foreach (var sln in candidates) PART_VsChooserRows.Children.Add(BuildVsRow(sln));
+        actions.VsChooserRows.Children.Clear(); // minik non-virtualized liste (BranchPopover deseni)
+        foreach (var sln in candidates) actions.VsChooserRows.Children.Add(BuildVsRow(actions, sln));
     }
 
-    private Border BuildVsRow(SolutionRef sln)
+    private Border BuildVsRow(ProjectRowActions actions, SolutionRef sln)
     {
         var name = new TextBlock
         {
@@ -504,7 +550,7 @@ public partial class ProjectRow : UserControl
         HoverBackground.Attach(row);
         row.MouseLeftButtonUp += (_, _) =>
         {
-            PART_VsChooser.IsOpen = false; // seçince kapan (BranchPopover.Pick deseni)
+            actions.VsChooser.IsOpen = false; // seçince kapan (BranchPopover.Pick deseni)
             if (_vm is { } vm) FindRunViewModel()?.OpenSolutionInVisualStudio(vm.Id, sln);
         };
         return row;

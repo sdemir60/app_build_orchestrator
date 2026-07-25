@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Windows;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Model;
 using Xunit.Abstractions;
 
@@ -27,6 +28,14 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
     private const double BudgetMs191 = 400;      // brief E6 Step 1 bütçesi
     private const double SanityCeilingMs = 3000; // bütçe aşılsa bile suite'i patlatma; yalnız felaket regresyon kırar
 
+    /// <summary>[L1/It-5] Hover EDİLMEMİŞ bir satırın kurabileceği nesne tavanı (görsel+mantıksal ağaç birleşimi,
+    /// bkz. <see cref="DsResources.RealizedObjects"/>). Duvar saati makineye göre oynaktır; sadeleştirmenin
+    /// kalıcılığını KORUYAN şey bu deterministik sayımdır. [L1] Kart sadeleştirmesi ÖNCESİ 55, SONRASI 39 nesne
+    /// (hover ikonları + VS-chooser artık ilk hover'da kurulur: StackPanel + 2 Button + 2 Viewbox + 2 Canvas +
+    /// 2 Path + Popup + Border + StackPanel + TextBlock + StackPanel = 16). Tavan dar tutuldu (39 + 1) ki eager
+    /// bir alt-ağaç geri sızarsa test kırılsın.</summary>
+    private const int UnhoveredRowObjectCeiling = 40;
+
     [StaFact]
     public void Realizing_191_project_rows_measure_and_arrange_stays_under_the_400ms_budget()
     {
@@ -43,6 +52,25 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
             // Bütçe aşıldı → T51/It-5'e ertelenir; suite KIRILMAZ. Yalnız felaket bir regresyona karşı gevşek tavan.
             Assert.True(median191 < SanityCeilingMs,
                 $"191-satır realize {median191:N1} ms — 400ms bütçeyi aştı (T51/It-5'e ertelendi) VE {SanityCeilingMs:N0} ms gevşek tavanı da aştı (felaket regresyon).");
+    }
+
+    [StaFact]
+    public void An_unhovered_project_row_builds_no_more_than_the_per_row_object_ceiling()
+    {
+        // [L1] Sadeleştirmenin DETERMİNİSTİK kanıtı (duvar saati değil): hover edilmemiş bir satırın kurduğu
+        // nesne sayısı. dirty satır seçilir — sha/sağ-blok yolu da kurulur (perf ölçümündeki satırların yarısı).
+        var vm = new ProjectRowViewModel(@"C:\p\Foo.csproj", "Foo", ProjectRowState.Pending) { WillBuild = true };
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => false, DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        var realized = DsResources.RealizedObjects(row);
+        int objects = realized.Count;
+        output.WriteLine($"[L1] hover edilmemiş ProjectRow nesne sayısı = {objects} (tavan {UnhoveredRowObjectCeiling}) :: " +
+            string.Join(", ", realized.GroupBy(o => o.GetType().Name).OrderByDescending(g => g.Count()).Select(g => $"{g.Key}×{g.Count()}")));
+        Assert.True(objects <= UnhoveredRowObjectCeiling,
+            $"hover edilmemiş satır {objects} nesne kuruyor — tavan {UnhoveredRowObjectCeiling}. Eager bir alt-ağaç geri sızmış olabilir.");
+        GC.KeepAlive(window);
     }
 
     /// <summary>Aynı realizasyonu <paramref name="warmups"/> kez ısıtır, sonra <paramref name="samples"/> ölçümün

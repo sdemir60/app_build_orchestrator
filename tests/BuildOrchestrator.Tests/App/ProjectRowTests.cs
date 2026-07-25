@@ -1,5 +1,7 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
@@ -100,23 +102,118 @@ public class ProjectRowTests
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
         var (row, window, _) = Realize(vm);
 
-        // dirty + hover yok → sha çifti görünür, aç-ikonları gizli.
+        // dirty + hover yok → sha çifti görünür, aç-ikonları YOK ([L1] artık Collapsed bile değil: hiç kurulmamış).
         Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.HoverIcons.Visibility);
+        Assert.Null(row.HoverIcons);
 
         // hover → sha yerini folder + VS ikonlarına bırakır (aynı 118px blok).
         row.SimulateHover(true);
         Assert.Equal(Visibility.Collapsed, row.ShaText.Visibility);
-        Assert.Equal(Visibility.Visible, row.HoverIcons.Visibility);
+        Assert.Equal(Visibility.Visible, row.HoverIcons!.Visibility);
 
-        // hover biter → yine sha.
+        // hover biter → yine sha (ikon bloğu kurulu kalır, yalnız gizlenir → hover/leave döngüsü yeniden inşa etmez).
         row.SimulateHover(false);
         Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.HoverIcons!.Visibility);
 
         // clean/unknown satır → sha ASLA gösterilmez (yalnız WillBuild==true).
         vm.WillBuild = false;
         row.UpdateLayout();
         Assert.Equal(Visibility.Collapsed, row.ShaText.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [L1/It-5 perf] lazy hover eylem bloğu
+
+    [StaFact]
+    public void The_hover_actions_are_not_built_until_the_row_is_hovered_for_the_first_time()
+    {
+        var vm = new ProjectRowViewModel(@"C:\p\Foo.csproj", "Foo", ProjectRowState.Pending) { WillBuild = true };
+        var (row, window, _) = Realize(vm);
+
+        // Hover ÖNCESİ: ikon butonları ve chooser popup'ı satırın ağacında (görsel VEYA mantıksal) HİÇ YOK —
+        // eskiden Collapsed olarak her satırda kuruluyorlardı (191 satırda ~3056 nesne).
+        Assert.Null(row.Actions);
+        var before = DsResources.RealizedObjects(row);
+        Assert.Empty(before.OfType<Button>());
+        Assert.Empty(before.OfType<Popup>());
+
+        row.SimulateHover(true);
+        row.UpdateLayout();
+
+        // Hover SONRASI: blok var, görünür ve satırın sağ bloğunun İÇİNDE (sha ile aynı 118px slot).
+        Assert.NotNull(row.Actions);
+        Assert.Equal(Visibility.Visible, row.HoverIcons!.Visibility);
+        var after = DsResources.RealizedObjects(row);
+        Assert.Equal(2, after.OfType<Button>().Count());
+        Assert.Single(after.OfType<Popup>());
+
+        // İkinci hover YENİDEN İNŞA ETMEZ (aynı instance).
+        var built = row.Actions;
+        row.SimulateHover(false);
+        row.SimulateHover(true);
+        Assert.Same(built, row.Actions);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void The_lazily_built_hover_actions_realize_their_icons_tooltips_and_tokens()
+    {
+        // [It-4b dersi / realize testi zorunlu] Yeni bir XAML kökü (Views/ProjectRowActions.xaml) eklendi. Nesnenin
+        // VAR olması yetmez: headless suite XAML runtime çözümlemesini görmez → ilk hover'da kurulan ağacın
+        // GERÇEKTEN realize olduğu ve token'larını (ikon geometrisi, kalınlık, stil, tooltip metni) çözdüğü pinlenir.
+        var vm = new ProjectRowViewModel(@"C:\p\Foo.csproj", "Foo", ProjectRowState.Pending);
+        var (row, window, host) = Realize(vm);
+
+        row.SimulateHover(true);
+        row.UpdateLayout();
+        var actions = row.Actions!;
+
+        // Erişilebilirlik adları + tooltip metinleri BİREBİR (design-v1) — kopya metinler değişmedi.
+        Assert.Equal("Reveal in Explorer", AutomationProperties.GetName(actions.RevealButton));
+        Assert.Equal("Open in Visual Studio", AutomationProperties.GetName(actions.VsButton));
+        Assert.Equal("Reveal in Explorer", ((ToolTip)actions.RevealButton.ToolTip).Content);
+        Assert.Equal("Open in Visual Studio", ((ToolTip)actions.VsButton.ToolTip).Content);
+
+        // Ds.IconButton stili çözüldü (şablon genişledi → Foreground'a bağlı ikon konturu boyanabilir).
+        Assert.NotNull(actions.RevealButton.Style);
+        Assert.NotNull(actions.VsButton.Style);
+
+        // İkon geometrileri PAYLAŞILAN token nesneleridir (Icons.xaml) — kalınlık da token'dan.
+        AssertIcon(host, actions.RevealButton, "Icon.FolderOpen");
+        AssertIcon(host, actions.VsButton, "Icon.Vs");
+
+        // VS-chooser popover'ı: kapalı doğar, chrome stili (Ds.Popover) çözülür, satır kabı boş başlar.
+        Assert.False(actions.VsChooser.IsOpen);
+        Assert.NotNull(actions.VsChooserContent.Style);
+        Assert.Empty(actions.VsChooserRows.Children);
+        GC.KeepAlive(window);
+    }
+
+    private static void AssertIcon(FrameworkElement host, Button button, string iconKey)
+    {
+        var path = DsResources.RealizedObjects(button).OfType<Path>().Single();
+        Assert.Same(host.FindResource(iconKey), path.Data);
+        Assert.Equal((double)host.FindResource(iconKey + ".StrokeThickness"), path.StrokeThickness);
+        Assert.NotNull(path.Stroke); // {Binding Foreground, AncestorType=Button} çözüldü (kontur görünür)
+    }
+
+    [StaFact]
+    public void The_row_applies_its_full_state_once_per_data_context_not_twice()
+    {
+        // [L1] Eskiden ApplyAll üretimde satır başına İKİ kez koşuyordu (DataContextChanged + Loaded) → ~10
+        // SetResourceReference ve 3 animasyon kurulumu boşuna tekrarlanıyordu. Artık "hazır olduğunda bir kez".
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending);
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => false, DataContext = vm };
+        Assert.Equal(1, row.ApplyAllCount);
+
+        var window = DsResources.Realize(host, row); // Loaded → TEKRAR ETMEZ
+        Assert.Equal(1, row.ApplyAllCount);
+
+        // Yeni bir VM (container yeniden kullanımı) → tam tazeleme yeniden gerekir.
+        row.DataContext = new ProjectRowViewModel("id2", "Bar", ProjectRowState.Pending);
+        Assert.Equal(2, row.ApplyAllCount);
         GC.KeepAlive(window);
     }
 

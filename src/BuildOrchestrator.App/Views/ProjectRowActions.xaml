@@ -1,0 +1,65 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.ProjectRowActions"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             HorizontalAlignment="Right" VerticalAlignment="Center">
+  <!-- [L1/It-5 perf] Proje kartının hover eylemleri (folder + VS ikonları) ve VS seçim popover'ı. Markup
+       ProjectRow.xaml'den BİREBİR taşındı — görsel/davranış AYNI, değişen tek şey NE ZAMAN kurulduğu:
+       ProjectRow bu kökü İLK HOVER'da bir kez inşa edip sağ bloğa ekler (ProjectRow.xaml.cs EnsureActions).
+       Öncesinde her satırda hevesle kurulan 16 nesne (2 Button + 2 ToolTip + 2 Viewbox/Canvas/Path + Popup
+       alt-ağacı) hiç hover edilmese bile ödeniyordu; 191 satırda ~3056 nesne. Sticky/follow aritmetiğine
+       (LayoutMetrics/FollowScrollController/ScrollArbiter) HİÇ girmez: hover bloğu Collapsed doğar ve satır
+       yüksekliği (36px) PART_Root'ta sabittir. -->
+  <Grid>
+    <!-- Hover ikonları (sha'nın YERİNE aynı blokta): folder + VS, 13px. -->
+    <StackPanel x:Name="PART_HoverIcons" Orientation="Horizontal" HorizontalAlignment="Right"
+                VerticalAlignment="Center" Visibility="Collapsed">
+      <Button x:Name="PART_RevealButton" Style="{DynamicResource Ds.IconButton}"
+              AutomationProperties.Name="Reveal in Explorer">
+        <Button.ToolTip>
+          <ToolTip controls:AppTooltip.Side="Left">Reveal in Explorer</ToolTip>
+        </Button.ToolTip>
+        <Viewbox Width="13" Height="13">
+          <Canvas Width="24" Height="24">
+            <Path Data="{DynamicResource Icon.FolderOpen}"
+                  StrokeThickness="{DynamicResource Icon.FolderOpen.StrokeThickness}"
+                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+          </Canvas>
+        </Viewbox>
+      </Button>
+      <Button x:Name="PART_VsButton" Style="{DynamicResource Ds.IconButton}" Margin="2,0,0,0"
+              AutomationProperties.Name="Open in Visual Studio">
+        <Button.ToolTip>
+          <ToolTip controls:AppTooltip.Side="Left">Open in Visual Studio</ToolTip>
+        </Button.ToolTip>
+        <Viewbox Width="13" Height="13">
+          <Canvas Width="24" Height="24">
+            <Path Data="{DynamicResource Icon.Vs}"
+                  StrokeThickness="{DynamicResource Icon.Vs.StrokeThickness}"
+                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+          </Canvas>
+        </Viewbox>
+      </Button>
+    </StackPanel>
+
+    <!-- [E1/T67] Birden çok solution içeren proje için Open-in-VS seçim popover'ı (D6 popover deseni:
+         Ds.Popover chrome · StaysOpen=False dışa-tık-kapan · PopIn 140ms). Satırlar kod-tarafı kurulur
+         (BranchPopover deseni). Tek/sıfır solution'da açılmaz. -->
+    <Popup x:Name="PART_VsChooser" StaysOpen="False" AllowsTransparency="True"
+           Placement="Bottom" PlacementTarget="{Binding ElementName=PART_VsButton}"
+           PopupAnimation="None" VerticalOffset="4">
+      <Border x:Name="PART_VsChooserContent" Style="{DynamicResource Ds.Popover}" MinWidth="220" MaxWidth="360">
+        <StackPanel>
+          <TextBlock Text="OPEN IN VISUAL STUDIO" Margin="4,2,4,8"
+                     FontFamily="{x:Static controls:AppFonts.Ui}"
+                     FontSize="{DynamicResource FontSize.2xs}"
+                     FontWeight="{DynamicResource FontWeight.Emphasis}"
+                     Foreground="{DynamicResource Brush.TextFaint}" />
+          <StackPanel x:Name="PART_VsChooserRows" />
+        </StackPanel>
+      </Border>
+    </Popup>
+  </Grid>
+</UserControl>
