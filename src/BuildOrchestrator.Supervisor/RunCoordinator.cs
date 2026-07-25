@@ -324,11 +324,25 @@ public sealed class RunCoordinator(
     /// </summary>
     private void DrainCapLocked(List<string> warnings)
     {
-        // PerfMode taşımayan run'ın job'ına DOKUNULMAZ; cap'siz (Full) profilde de kaldırılacak bir şey yoktur.
-        if (_capDrained || !_perfApplied || _activePerf is not { CpuCapPercent: not null }) return;
+        // PerfMode taşımayan run'ın job'ına DOKUNULMAZ.
+        if (!CapWritableLocked) return;
+        // [Fix round 1] KARAR her zaman kaydedilir, YAZIM yalnız gerçekten bir cap varsa yapılır. Bayrağı
+        // cap'siz (Full) profilde atlamak, drain sürerken gelen canlı bir setPerfMode("Light")'ın cap:40 yazıp
+        // "torn DLL yok" penceresini geri açmasına izin verirdi — kaldırılacak bir şey olmaması, kararın
+        // geçersiz olduğu anlamına gelmez.
         _capDrained = true;
-        TryWriteCapLocked(null, warnings);
+        if (_activePerf is { CpuCapPercent: not null }) TryWriteCapLocked(null, warnings);
     }
+
+    /// <summary>
+    /// [T20-b/P3 · fix round 1] "Cap'e ŞU AN yazılabilir mi" kuralının TEK yeri. Eskiden aynı kural dört ayrı
+    /// noktada (drain · efektif cap · pencere aç/kapa · cap-aktif sorgusu) üç farklı biçimde yazılıydı ve biri
+    /// güncellenirken diğerlerinin sessizce ayrışması işten değildi. İki koşul: (1) bu run cap/priority'yi
+    /// GERÇEKTEN uygulamış olmalı — PerfMode taşımayan run job'a hiç dokunmaz ve run sınırını geçen bir yazım
+    /// sonraki run'ın profilini ezerdi; (2) graceful drain başlamamış olmalı — o karar run'ın geri kalanı için
+    /// bağlayıcıdır.
+    /// </summary>
+    private bool CapWritableLocked => _perfApplied && !_capDrained;
 
     /// <summary>
     /// [T20-b/K11] KOŞARKEN perf profilini değiştirir (<c>setPerfMode</c>). <b>Canlı değişen YALNIZ CPU cap +
@@ -364,9 +378,20 @@ public sealed class RunCoordinator(
     private int? ApplyPerfLocked(PerfProfile profile, List<string> warnings)
     {
         _activePerf = profile; // [P3] copy penceresi kapanınca buraya dönülür
+        return WritePerfLocked(profile, warnings);
+    }
+
+    /// <summary>
+    /// [T20-b/P3 · fix round 1] Bir profili TABAN SÜZGECİNDEN geçirip job'a yazan TEK nokta (run başı + canlı
+    /// <c>setPerfMode</c> + copy penceresinin açılışı ve kapanışı aynı buradan geçer). Yazım sırası cap → priority
+    /// olarak SABİTTİR ve dönen değer GERÇEKTEN yürürlükte olan cap'tir (yazım patlarsa <c>null</c>):
+    /// <c>runStarted</c> ve konsol satırı istenen değeri değil bunu raporlar.
+    /// </summary>
+    private int? WritePerfLocked(PerfProfile profile, List<string> warnings)
+    {
         int? effectiveCap = EffectiveCapLocked(profile.CpuCapPercent);
         bool capWritten = TryWriteCapLocked(effectiveCap, warnings);
-        TryWritePriorityLocked(profile.Priority, warnings);
+        TryWritePriorityLocked(EffectivePriorityLocked(profile.Priority), warnings);
         return capWritten ? effectiveCap : null;
     }
 
@@ -378,17 +403,30 @@ public sealed class RunCoordinator(
     /// </summary>
     private int? EffectiveCapLocked(int? capPercent)
     {
-        if (_capDrained) return null;
+        if (!CapWritableLocked) return null;
         return _copyFloorDepth > 0 && capPercent is { } cap && cap < PerfProfile.CopyPhaseFloorPercent
             ? PerfProfile.CopyPhaseFloorPercent
             : capPercent;
     }
 
     /// <summary>
+    /// [T20-b/P3 · fix round 1] <see cref="EffectiveCapLocked"/>'ın priority SİMETRİĞİ: açık bir pencerede
+    /// priority de taban değerin (<see cref="PerfProfile.CopyPhaseFloorPriority"/>) altına indirilmez. Tavanı
+    /// gevşetip child'ı Idle'da bırakmak floor'un yarısını etkisiz kılardı — yüklü bir makinede Idle bir
+    /// process, tavanı serbest olsa bile zamanlayıcıdan sıra alamaz.
+    /// <para>Karşılaştırma enum'un SIRASINA dayanır: <see cref="ProcessPriorityClassKind"/> yüksekten alçağa
+    /// bildirilmiştir (Normal &lt; BelowNormal &lt; Idle), yani "daha büyük" = "daha düşük öncelik".</para>
+    /// </summary>
+    private ProcessPriorityClassKind EffectivePriorityLocked(ProcessPriorityClassKind kind) =>
+        _copyFloorDepth > 0 && kind > PerfProfile.CopyPhaseFloorPriority
+            ? PerfProfile.CopyPhaseFloorPriority
+            : kind;
+
+    /// <summary>
     /// [T20-b/P3] <see cref="ICopyPhaseCpuFloor.Enter"/>: copy-contention penceresi açar. Cap taban değerin
-    /// altındaysa oraya yükseltilir — ve YALNIZ ilk girişte yazılır (<see cref="_copyFloorDepth"/> ref-count).
-    /// Cap yoksa (Full / PerfMode'suz run) ya da zaten tabanın üstündeyse <c>null</c> döner: job'a HİÇ
-    /// dokunulmaz. Konsol uyarısı kilit DIŞINDA yazılır.
+    /// altındaysa cap DE priority DE tabana çekilir — ve YALNIZ ilk girişte yazılır
+    /// (<see cref="_copyFloorDepth"/> ref-count). Cap yoksa (Full / PerfMode'suz run) ya da zaten tabanın
+    /// üstündeyse <c>null</c> döner: job'a HİÇ dokunulmaz. Konsol uyarısı kilit DIŞINDA yazılır.
     /// </summary>
     private IDisposable? EnterCopyFloor()
     {
@@ -396,12 +434,13 @@ public sealed class RunCoordinator(
         bool opened = false;
         lock (_gate)
         {
-            if (_perfApplied && !_capDrained
-                && _activePerf is { CpuCapPercent: { } cap } && cap < PerfProfile.CopyPhaseFloorPercent)
+            if (CapWritableLocked
+                && _activePerf is { CpuCapPercent: { } cap } profile && cap < PerfProfile.CopyPhaseFloorPercent)
             {
                 opened = true;
-                if (_copyFloorDepth++ == 0)
-                    TryWriteCapLocked(PerfProfile.CopyPhaseFloorPercent, warnings);
+                // Sayaç ÖNCE artar: yazımı yapan <see cref="WritePerfLocked"/> aynı profili artık AÇIK pencere
+                // kuralıyla (taban süzgeci) değerlendirir — taban değeri burada AYRICA yazılmaz.
+                if (_copyFloorDepth++ == 0) WritePerfLocked(profile, warnings);
             }
         }
         Warn(warnings);
@@ -409,9 +448,11 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [T20-b/P3] Pencereyi kapatır: cap ancak SON çıkışta run profiline döner. Drain sonrası hiçbir şey
-    /// yazılmaz (cap zaten kalkmıştır ve geri konmamalıdır); <see cref="_perfApplied"/> düşmüşse (run kapanışı)
-    /// de yazılmaz — run sınırını geçen bir cap yazımı, sonraki run'ın profilini ezerdi.
+    /// [T20-b/P3] Pencereyi kapatır: cap ve priority ancak SON çıkışta run profiline döner (sayaç sıfırlandığı
+    /// için taban süzgeci artık uygulanmaz). Drain sonrası hiçbir şey yazılmaz — cap zaten kalkmıştır ve geri
+    /// konmamalıdır; priority'nin tabanda kalması zararsızdır, drain'in tamamı zaten "copy bitsin" penceresidir
+    /// ve run sonu geri alma onu Normal'e pinler. <see cref="_perfApplied"/> düşmüşse (run kapanışı) de
+    /// yazılmaz: run sınırını geçen bir yazım, sonraki run'ın profilini ezerdi.
     /// </summary>
     private void ExitCopyFloor()
     {
@@ -419,8 +460,8 @@ public sealed class RunCoordinator(
         lock (_gate)
         {
             if (_copyFloorDepth > 0 && --_copyFloorDepth == 0
-                && _perfApplied && !_capDrained && _activePerf is { } profile)
-                TryWriteCapLocked(profile.CpuCapPercent, warnings);
+                && CapWritableLocked && _activePerf is { } profile)
+                WritePerfLocked(profile, warnings);
         }
         Warn(warnings);
     }
@@ -429,7 +470,7 @@ public sealed class RunCoordinator(
     /// pencerede de <c>true</c>'dur (taban da bir cap'tir), drain'den sonra <c>false</c>.</summary>
     private bool IsCapActiveNow
     {
-        get { lock (_gate) return _perfApplied && !_capDrained && _activePerf is { CpuCapPercent: not null }; }
+        get { lock (_gate) return CapWritableLocked && _activePerf is { CpuCapPercent: not null }; }
     }
 
     /// <summary>

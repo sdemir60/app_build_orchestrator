@@ -22,6 +22,19 @@ public class PerfProfileTests
         Assert.Equal(new PerfProfile(2, 40, ProcessPriorityClassKind.Idle), PerfProfile.For(PerfMode.Light));
     }
 
+    /// <summary>
+    /// [T20-b/P3] Copy fazı tabanının DEĞERİ pinlenir — türetme zinciri (<c>For(Balanced)</c>) DEĞİL. Gerekçe
+    /// K11 kopya pini ile aynıdır: türetmeyi doğrulamak totolojidir, oysa burada korunan şey "sıkışan copy'yi
+    /// açmak için job'ı ne kadar gevşetiyoruz" KARARIdır. Tablo değişirse bu assert bilerek kırılır ve karar
+    /// yeniden gözden geçirilir.
+    /// </summary>
+    [Fact]
+    public void Copy_phase_floor_is_70_percent_and_below_normal()
+    {
+        Assert.Equal(70, PerfProfile.CopyPhaseFloorPercent);
+        Assert.Equal(ProcessPriorityClassKind.BelowNormal, PerfProfile.CopyPhaseFloorPriority);
+    }
+
     [Theory]
     [InlineData("Full")]
     [InlineData("Balanced")]

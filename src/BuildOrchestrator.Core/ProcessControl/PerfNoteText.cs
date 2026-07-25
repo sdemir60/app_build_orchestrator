@@ -29,14 +29,6 @@ public static class PerfNoteText
     public static string CapTextUnset => "cpu cap " + CapValueUnset;
 
     /// <summary>
-    /// [T20-b/P3] Copy-contention penceresinde cap'in geçici olarak tabana yükseltildiğini bildiren TANI notu
-    /// (retry satırının sonuna eklenir → proje logu + konsol). Yüzde <see cref="PerfProfile.CopyPhaseFloorPercent"/>
-    /// üzerinden TÜRETİLİR: cap metninin ikinci bir formatlayıcısı yoktur.
-    /// </summary>
-    public static string CopyFloorNote => string.Format(CultureInfo.InvariantCulture,
-        "Copy fazı için cpu cap geçici olarak {0} tabanına yükseltildi.", CapValue(PerfProfile.CopyPhaseFloorPercent));
-
-    /// <summary>
     /// [K11 BİREBİR] Perf chip'inin konsol notu: <c>parallelism: 4 · cpu cap 70%</c> · cap'siz (Full) profilde
     /// <c>parallelism: 6 · cpu cap off</c>. Ayraç U+00B7 (boşluklu).
     /// </summary>

@@ -18,7 +18,10 @@ public interface ICopyPhaseCpuFloor
 {
     /// <summary>
     /// Copy-contention penceresi AÇAR: yürürlükteki cap <see cref="PerfProfile.CopyPhaseFloorPercent"/>
-    /// tabanının altındaysa oraya yükseltilir. Dönen handle pencereyi KAPATIR (cap run profiline döner) ve
+    /// tabanının altındaysa oraya yükseltilir — priority de aynı anda
+    /// <see cref="PerfProfile.CopyPhaseFloorPriority"/> tabanına çekilir (tavanı gevşetip child'ı Idle'da
+    /// bırakmak floor'un yarısını etkisiz kılardı). Dönen handle pencereyi KAPATIR (ikisi de run profiline
+    /// döner) ve
     /// çağıran onu HER yoldan (başarı, retry'ların tükenmesi, iptal/exception) dispose etmelidir — aksi halde
     /// tek bir contention, Light bir run'ı kalıcı olarak tabana çıkarır.
     /// <para>Yükseltilecek bir şey yoksa (cap hiç yok ya da zaten tabanın üstünde) <c>null</c> döner ve

@@ -127,6 +127,11 @@ public class RunCoordinatorTests
         public JobObject Job { get; } = JobObject.CreateKillOnClose();
         public string LogsRoot { get; } = Directory.CreateTempSubdirectory("bo-coord-").FullName;
         public List<string> ConsoleLines { get; } = [];
+
+        /// <summary>[P3] Copy-contention retry'ının İSTENEN backoff süreleri. Cap-farkındalı backoff'un
+        /// GERÇEK kablajını (koordinatör → <c>CoordinatorCpuFloor</c> → decorator) buradan doğrularız;
+        /// decorator testlerindeki el yazması fake bu zinciri göremez.</summary>
+        public List<TimeSpan> RetryDelays { get; } = [];
         public RunCoordinator Sut { get; }
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
@@ -152,8 +157,8 @@ public class RunCoordinatorTests
                 stateStore: stateStore,
                 cpuGovernor: cpuGovernor, // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
                 // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
-                // Task.Delay olan seam burada anında tamamlanır (retry SIRASI korunur, süre beklenmez).
-                retryDelay: (_, _) => Task.CompletedTask);
+                // Task.Delay olan seam burada anında tamamlanır — istenen süre yalnız KAYDEDİLİR.
+                retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; });
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -1679,12 +1684,13 @@ public class RunCoordinatorTests
     /// <summary>Cap'i olmayan (Full / geri alınmış) hâlin <see cref="RecordingGovernor"/> izi.</summary>
     private const string CapOff = "cap:off";
 
-    /// <summary>Bir profilin cap izi (literal yüzde YOK — tek doğruluk kaynağı <see cref="PerfProfile"/>).</summary>
-    private static string Cap(PerfMode mode) =>
-        PerfProfile.For(mode).CpuCapPercent is { } percent ? $"cap:{percent}" : CapOff;
+    /// <summary>Bir profilin priority izi.</summary>
+    private static string Prio(PerfMode mode) => "prio:" + PerfProfile.For(mode).Priority;
 
-    /// <summary>Copy-contention penceresinin cap izi (<see cref="PerfProfile.CopyPhaseFloorPercent"/>).</summary>
-    private static string Floor() => $"cap:{PerfProfile.CopyPhaseFloorPercent}";
+    /// <summary>Copy-contention penceresinin izi: cap VE priority tabanı (ikisi de Balanced'dan türetilir —
+    /// cap'i gevşetip priority'yi Idle'da bırakmak floor'un yarısını etkisiz kılardı).</summary>
+    private static string[] FloorApplied() =>
+        [$"cap:{PerfProfile.CopyPhaseFloorPercent}", "prio:" + PerfProfile.CopyPhaseFloorPriority];
 
     /// <summary>Tek bir contention'ı senaryolayan invoker: 1. deneme MSB3021 + exit 1, sonraki denemeler OK.</summary>
     private static FakeInvoker ContendingOnce()
@@ -1707,12 +1713,15 @@ public class RunCoordinatorTests
         // Post-build copy MSBuild child'ının İÇİNDE olur; "copy başlıyor" sinyali yoktur. Elde olan tek sinyal
         // GERİYE DÖNÜKTÜR (MSB302x) — taban tam o pencerede uygulanır, retry bitince run profiline dönülür.
         var governor = new RecordingGovernor();
-        using var h = new Harness(PlanOf(Node("A")), ContendingOnce(), cpuGovernor: governor);
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
 
         await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal([.. Applied(PerfMode.Light), Floor(), Cap(PerfMode.Light), .. Released()], governor.Calls);
+        Assert.Equal(2, invoker.Requests.Count); // tetikleyici GERÇEKTEN ateşledi (retry oldu)
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. Applied(PerfMode.Light), .. Released()],
+            governor.Calls);
         Assert.Equal(RunOutcome.Completed, h.Events.OfType<RunCompletedEvent>().Single().Outcome); // retry geçti
     }
 
@@ -1721,11 +1730,15 @@ public class RunCoordinatorTests
     {
         // Cap yoksa gevşetilecek bir şey de yok: governor'a apply+release DIŞINDA hiçbir yazım gitmemeli.
         var governor = new RecordingGovernor();
-        using var h = new Harness(PlanOf(Node("A")), ContendingOnce(), cpuGovernor: governor);
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
 
         await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
+        // POZİTİF KONTROL önce: contention gerçekten retry ürettiyse "dokunulmadı" iddiası anlamlıdır —
+        // aksi halde tetikleyici bozulduğunda bu test sessizce yeşil kalırdı.
+        Assert.Equal(2, invoker.Requests.Count);
         Assert.Equal([.. Applied(PerfMode.Full), .. Released()], governor.Calls);
     }
 
@@ -1733,12 +1746,74 @@ public class RunCoordinatorTests
     public async Task A_copy_contention_in_a_run_without_a_perf_mode_never_touches_the_governor()
     {
         var governor = new RecordingGovernor();
-        using var h = new Harness(PlanOf(Node("A")), ContendingOnce(), cpuGovernor: governor);
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
 
         await h.Sut.StartAsync(Start(), default); // PerfMode YOK → job'a hiç dokunulmaz
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
+        Assert.Equal(2, invoker.Requests.Count); // pozitif kontrol (yukarıdaki gerekçe)
         Assert.Empty(governor.Calls);
+    }
+
+    [Fact]
+    public async Task The_capped_backoff_is_wired_to_the_live_run_profile()
+    {
+        // GERÇEK kablaj: RunCoordinator.IsCapActiveNow → CoordinatorCpuFloor.IsCapActive → decorator.
+        // Decorator testlerindeki el yazması fake bu zinciri göremez; kablaj kopsa yalnız bu test kırılır.
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: new RecordingGovernor());
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, invoker.Requests.Count);
+        Assert.Equal([TimeSpan.FromMilliseconds(300)], h.RetryDelays); // 200ms × 1.5 (cap aktif)
+    }
+
+    [Fact]
+    public async Task The_backoff_is_not_stretched_in_a_run_without_a_perf_mode()
+    {
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: new RecordingGovernor());
+
+        await h.Sut.StartAsync(Start(), default); // cap yok → dizi AYNEN
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, invoker.Requests.Count);
+        Assert.Equal([TimeSpan.FromMilliseconds(200)], h.RetryDelays);
+    }
+
+    [Fact]
+    public async Task A_live_perf_change_during_a_copy_window_cannot_push_the_cap_or_priority_below_the_floor()
+    {
+        // Sıkışmış bir post-build copy, tam ortasında yeniden kısılamaz: pencere açıkken gelen setPerfMode
+        // cap'i de priority'yi de TABAN'ın altına yazamaz (yeni profil ancak pencere kapanınca yürürlüğe girer).
+        var retrying = Signal();
+        var release = Signal();
+        int attempts = 0;
+        var invoker = new FakeInvoker(async (_, onLine, _) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1) { onLine(ContentionLine); return Exit(1); }
+            retrying.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await retrying.Task.WaitAsync(Limit); // pencere AÇIK
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. FloorApplied()], governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Pencere kapanınca profil (Light) yürürlüğe girer.
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. FloorApplied(),
+            .. Applied(PerfMode.Light), .. Released()], governor.Calls);
     }
 
     [Fact]
@@ -1775,12 +1850,13 @@ public class RunCoordinatorTests
         await h.Sut.StartAsync(Start(parallelism: 2) with { PerfMode = "Light" }, default);
         await bothRetrying.Task.WaitAsync(Limit);
 
-        Assert.Equal([.. Applied(PerfMode.Light), Floor()], governor.Calls); // İKİ pencere, TEK yükseltme
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied()], governor.Calls); // İKİ pencere, TEK yükseltme
 
         releaseRetries.TrySetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal([.. Applied(PerfMode.Light), Floor(), Cap(PerfMode.Light), .. Released()], governor.Calls);
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. Applied(PerfMode.Light), .. Released()],
+            governor.Calls);
     }
 
     [Fact]
@@ -1844,13 +1920,39 @@ public class RunCoordinatorTests
 
         await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
         await retrying.Task.WaitAsync(Limit);
-        Assert.Equal([.. Applied(PerfMode.Light), Floor()], governor.Calls); // pencere açık
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied()], governor.Calls); // pencere açık
 
         Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
         release.TrySetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // Pencere kapanışı hiçbir şey yazmaz — cap zaten kalkmıştır.
-        Assert.Equal([.. Applied(PerfMode.Light), Floor(), CapOff, .. Released()], governor.Calls);
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), CapOff, .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_binds_the_run_even_when_the_active_profile_has_no_cap()
+    {
+        // [Fix round 1] Drain KARARI cap'i olmayan (Full) profilde de kaydedilmelidir. Aksi halde bayrak hiç
+        // set edilmez ve drain sürerken gelen canlı bir setPerfMode("Light") cap:40 yazarak "ortak bin'de torn
+        // DLL yok" penceresini geri açardı — kaldıracak bir cap olmaması, kararın geçersiz olduğu anlamına gelmez.
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.Equal([.. Applied(PerfMode.Full)], governor.Calls); // cap yok → drain hiçbir şey YAZMAZ
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 isterdi — drain kararı BAĞLAR
+        Assert.Equal([.. Applied(PerfMode.Full), CapOff, Prio(PerfMode.Light)], governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Full), CapOff, Prio(PerfMode.Light), .. Released()], governor.Calls);
     }
 }

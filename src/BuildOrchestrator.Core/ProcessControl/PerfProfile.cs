@@ -43,6 +43,14 @@ public readonly record struct PerfProfile(int Parallelism, int? CpuCapPercent, P
     /// </summary>
     public static int CopyPhaseFloorPercent => For(PerfMode.Balanced).CpuCapPercent!.Value;
 
+    /// <summary>
+    /// [T20-b/P3] Aynı pencerenin priority TABANI — cap tabanıyla AYNI profilden (Balanced) türetilir. İki yarı
+    /// birlikte gitmek zorundadır: tavanı %70'e çıkarıp priority'yi Idle'da bırakmak, sıkışan copy'yi yüklü bir
+    /// makinede yine zamanlayıcı kuyruğunun sonunda tutardı (Idle bir child, tavanı serbest olsa bile sıra
+    /// alamaz) — yani floor'un yarısı etkisiz kalırdı.
+    /// </summary>
+    public static ProcessPriorityClassKind CopyPhaseFloorPriority => For(PerfMode.Balanced).Priority;
+
     /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü. Eşleşme ORDINAL'dir (App her zaman
     /// "Full"/"Balanced"/"Light" yazar); tanınmayan metin ⇒ <c>null</c>, çağıran kendi varsayılanına düşer.</summary>
     public static PerfProfile? TryParse(string perfModeText) => perfModeText switch

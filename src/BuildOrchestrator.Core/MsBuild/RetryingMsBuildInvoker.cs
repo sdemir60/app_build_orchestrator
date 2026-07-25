@@ -14,7 +14,7 @@ namespace BuildOrchestrator.Core.MsBuild;
 /// isteği (<see cref="MsBuildInvokeRequest"/>) HİÇBİR şekilde değiştirmez [§3.4].
 /// <para>[T20-b/P3] Bir contention penceresi AYNI ZAMANDA copy fazının CPU cap altında starve olduğu tek
 /// gözlemlenebilir andır (copy, child'ın içindedir — "başlıyor" sinyali YOKTUR). Bu yüzden opsiyonel bir
-/// <see cref="ICopyPhaseCpuFloor"/> verilirse: (1) retry'lar boyunca cap geçici olarak tabana yükseltilir,
+/// <see cref="ICopyPhaseCpuFloor"/> verilirse: (1) retry'lar boyunca cap ve priority geçici olarak tabana çekilir,
 /// (2) backoff <see cref="CappedBackoffFactor"/> ile uzar. Seam verilmezse davranış P3 öncesiyle aynıdır.</para>
 /// </summary>
 public sealed class RetryingMsBuildInvoker(
@@ -87,10 +87,12 @@ public sealed class RetryingMsBuildInvoker(
 
                 var wait = _backoff[attempt - 1];
                 if (_floor?.IsCapActive == true) wait *= CappedBackoffFactor; // [P3] cap-farkındalı backoff
+                // Satırın metni K11 sözleşmesindeki retry/backoff bilgisinden İBARETTİR: cap tabanının açılması
+                // motorun iç kararıdır, kullanıcıya görünen yeni bir cümle üretmez (o pencere zaten run-başı cap
+                // satırıyla ve konsol notlarıyla anlatılan davranışın parçasıdır).
                 _onRetry?.Invoke(string.Format(CultureInfo.InvariantCulture,
-                    "Copy contention algılandı ({0}), deneme {1}/{2} başarısız — {3}ms sonra yeniden denenecek.{4}",
-                    req.ProjectId, attempt, totalAttempts, wait.TotalMilliseconds,
-                    floorWindow is null ? "" : " " + PerfNoteText.CopyFloorNote));
+                    "Copy contention algılandı ({0}), deneme {1}/{2} başarısız — {3}ms sonra yeniden denenecek.",
+                    req.ProjectId, attempt, totalAttempts, wait.TotalMilliseconds));
 
                 await _delay(wait, ct); // ct mid-backoff iptal edilirse delay OperationCanceledException fırlatır — döngü burada aynen yukarı fırlatır.
             }
