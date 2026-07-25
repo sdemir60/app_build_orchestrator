@@ -355,24 +355,84 @@ Her task sonunda uygulamayı çalıştırıp ilgili davranışı gözle doğrula
 
 ## A10 — It-5: Perf + dağıtım + docs · Model: **Opus** · Effort: **medium**
 
+> **REVİZE EDİLDİ (2026-07-25, It-4b kapanışından sonra).** Değişenler: (a) okuma listesi 2→6 dosya + DURUM bloğu; (b) **T44 görev listesinden ÇIKARILDI** — D3'te zaten teslim edildi (`EventStreamView.xaml.cs:291`, glow-once 1.1s, per-instance brush, testli), yeniden yazılmamalı; (c) It-4b'den devredilen 4 kayıtlı kalem eklendi; (d) **ertelenen GÖZLE KONTROL pası son faz olarak eklendi** (It-5 son iterasyon — bu pas burada yapılmazsa kaybolur); (e) commit kuralı CLAUDE.md'nin 2026-07-21 kararına göre düzeltildi ("commit etme" → branch + task-başı commit + merge/push); (f) yöntem (TDD dökümü + subagent-driven-development + per-task 3-lens review) ve realize-test kuralı bağlayıcı yazıldı.
+
 **PROMPT — yapıştır:**
 
 ```
 Şu dosyaları oku:
-1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (v7 — Part C It-5)
-2. .claude/handoffs/ altındaki EN YENİ handoff
+1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (v7 — Part C It-5 + K11 + A13 BAĞLAYICI)
+2. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite — T49 drift kontrolü + perf sonrası görsel eşdeğerlik)
+3. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (§3-§5 + Ek A; graf hibrit render kararları)
+4. .claude/outputs/2026-07-25-04-12-it4-records.md (It-4 acceptance matrisi §1 · ERTELENEN GÖZLE KONTROL tek listesi §2 · kararlar §3)
+5. .claude/handoffs/ altındaki EN YENİ handoff (2026-07-25-13-08-... → It-4b doğrulandı, It-5 hazır)
+6. .superpowers/sdd/progress.md en üstteki ">>> RESUME HERE <<<" (durable ledger; git-ignored, yalnız lokal — çelişkide ledger kazanır)
 
-Görev: It-5'i uygula: T20 (CPU-cap × copy/git/IPC + copy rate floor), T33 (yalnız spike kanıtladıysa), T44 (success flourish — YALNIZ stream done glow), T51+T63 (graf 500–1000 node perf: DrawingVisual katmanları + cull; sentetik büyük graf ile ölç), T49 (token son geçiş), T17 (trust-boundary doc), README, dotnet publish.
+DURUM: It-0..It-4b main'de ve origin'de (HEAD 133e385, tek dal, kaçak commit yok). Build 0/0, suite 1200 PASS + 1 SKIP (CompositeFont), acceptance (canlı OSYS) 3/3. UI tam: 2x2 layout, kart/şerit/stream/konsol/graf/action-bar/Settings, OS eylemleri, motion, scroll arbitration, klavye/a11y. Bu iterasyona main'den başla.
+
+Görev: v7 Part C It-5'i uygula: T20 (CPU-cap × copy/git/IPC etkileşimi + copy fazına rate floor), T33 (KOŞULLU — aşağıya bak), T51+T63-perf (graf 500-1000 node: DrawingVisual katmanları + cull + GlyphRun cache; sentetik büyük grafla ölç), T49 (token SON GEÇİŞ = drift denetimi, yeniden yazma), T17 (trust-boundary doc), README, dotnet publish.
+
+⛔ T44 YAPILMIŞ — TEKRAR YAZMA: success flourish (yalnız stream done satırı glow-once) D3'te teslim edildi
+   (EventStreamView.xaml.cs:291 GlowMs=1100, StatusSuccessSoft→şeffaf, per-instance brush, EventStreamTests'te testli).
+   Yalnız DOĞRULA: liste/graf dalgası YOK, tek satır, bir kez.
+
+⛔ T33 KOŞULLU — spike zaten karar verdi (D9/S5): v1 flag'leri (-p:UseSharedCompilation=false -nodeReuse:false)
+   KORUNUR. Ölçüm: kapalıyken ≈2.9× yavaş (47-50s ↔ 16-21s); kazanç TAMAMEN shared compilation'dan (nodeReuse tek
+   başına ≈0); AMA shared compilation açıkken emit job-DIŞI VBCSCompiler'da olur → torn-DLL riski (§3 cascade-kill
+   garantisini kırar). T33'ü ancak torn-DLL'i kapatan bir mekanizma kanıtlarsan aç; kanıtlayamıyorsan KAPALI bırak
+   ve gerekçeyi kayda geç. Varsayılan = KAPALI.
+
+It-4b'den DEVREDEN KAYITLI KALEMLER (bu iterasyonda kapat — ledger + it4-records §3):
+a) Liste virtualization / kart-sadeleştirme — ÖLÇÜLDÜ: 191 satır ~660-730ms MEDIAN (bütçe 400ms), 500 satır ~1200ms.
+   Bu, It-4 acceptance maddesi #5'in ("500-1000 kart+node akıcı") AÇIK kalan tek kalemidir; T51'in liste-tarafı ikizi.
+   ⚠️ RİSK: virtualization'ı AÇMAK StickyLayerList'in birikimli sticky overlay'i + LayoutMetrics kümülatif offset
+   tablosu + FollowScrollController.ScrollTargetForRow + ScrollArbiter ile etkileşir (It-4a/It-4b bunları
+   virtualization KAPALI varsayımıyla kurdu). Önce kart-sadeleştirmeyi ölç — bütçeyi tek başına tutturuyorsa
+   virtualization'a hiç girme. Girersen sticky/follow/arbiter regresyon testleri ZORUNLU.
+b) CurrentSha tam BuiltCommit wire (cross-boundary Contracts + never-built display kararı). It-4b'de yalnız
+   App-tarafı interim guard var: ProjectRow.ApplySha cur boşken yalnız target gösterir.
+c) Motion seam-helper fold: PopoverBase / MotionGate / PlayRevealStagger tek helper'a (tekrar temizliği).
+d) E4 full-arbiter routing (İSTEĞE BAĞLI — kullanıcı "BIRAK" dedi, belgeli spec-surface; yalnız perf işi gerektirirse).
 
 Kurallar:
-- Perf modları K11'e birebir: sabit 6/4/2 + priority + inner Job CPU cap (∞/%70/%40); cap tavanı ölçümle kanıtla.
-- 500–1000 kart + node akıcılık ölçümü (v7 A8 perf kalemleri); takılma varsa profiling sonucunu raporla — çözümü büyükse durup bana bildir (effort'u xhigh'a çıkarır ya da ayrı oturumda ele alırız).
-- Commit'leri ben istemeden yapma.
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-it5-tdd-plan.md, gerçek zaman Bash date ile; yukarıdaki
+  devir kalemlerini ve GÖZLE fazını task olarak dahil et), sonra superpowers:subagent-driven-development ile task-by-task.
+- PER-TASK METOD (ledger'da bağlayıcı): taze implementer → scripts/review-package BASE HEAD → 3-lens paralel review
+  (spec/design-fidelity · WPF/threading+A13.2 · tests/yapı) + her Critical/Important'a 3-açılı adversarial
+  (reproduce/code-reading/severity, ≥2 onay = hayatta kalır) → tek fix wave → re-review → ledger.
+- Perf modları K11'e birebir: sabit Full(6)/Balanced(4)/Light(2) + process priority + inner Job CPU rate cap
+  (∞/%70/%40); konsol notu cap'i de yazar (`parallelism: 4 · cpu cap 70%`). Cap tavanını ÖLÇÜMLE kanıtla.
+- REALIZE TESTİ ZORUNLU (It-4b dersi, bağlayıcı): yeni XAML kökü/şablonu ekleyen her task DsResources.Realize ile
+  bir realize testi de ekler. Gerekçe: c6e9a21 — ShellRoot'ta Double token GridLength'e veriliyordu, 1198 test
+  yeşilken uygulama HİÇ açılmıyordu; headless suite XAML runtime çözümlemesini görmez. Kullanıcının görsel pası
+  en sona ertelendiği için bu testler tek güvenlik ağıdır.
+- MOTION SÖZLEŞMESİ + A13.2 aynen geçerli: code-driven animasyonlar MotionSettings.Effective/AnimationsEnabled'ı
+  animasyon BAŞINDA taze okur; saf-XAML Storyboard süreleri {DynamicResource Duration.X} (StaticResource ASLA);
+  koleksiyon reset YASAK; frozen/paylaşılan brush anime edilemez; ContainerVisual.Opacity animate edilemez;
+  hardcoded hex/ms YASAK; Window'da AllowsTransparency ASLA.
+- v7 yasakları değişmedi: in-process MSBuild yok, OutDir okunmaz, stdout yalnız NDJSON, D8 (sleep-poll yasak), K1
+  (git salt-okur — checkout/pull/reset ASLA).
+- Git (CLAUDE.md 2026-07-21 kararı): it5 çalışma branch'i aç, task başına commit at, iş bitince main'e merge +
+  push, merge'ü DOĞRULADIKTAN sonra branch'i local+remote sil, oturumu main'de bitir.
+- Takılma/perf sorunu çözümü büyükse durup bana bildir (effort'u xhigh'a çıkarırız ya da ayrı oturuma alırız).
 
-It-5 acceptance'ını kanıtla (publish çalışır exe dahil); bitince aşamamızı kaydet.
+SON FAZ — ERTELENEN GÖZLE KONTROL PASI (atlanamaz; It-5 SON iterasyon):
+Kullanıcı It-4'ün tüm görsel doğrulama borcunu bilinçli olarak buraya erteledi. Kod task'ları bittikten SONRA:
+1. it4-records.md §2'deki tek listeyi (18 task ~81 madde, B1→E5) uygulama açıkken tek tek yürütülebilir hale getir;
+   maddeleri panelden panele sıralı, kullanıcının tek oturumda yürüyebileceği bir kontrol listesi olarak sun.
+   D4 (konsol gerçek akışı) ZORUNLU — headless imkansız.
+2. E6 Step 3: prototype/Build Orchestrator (standalone).html tarayıcıda ↔ uygulama yan yana, README §2.1-§2.9 tek tek.
+   Sapmalar ya düzeltilir ya A13.1 "algısal eşdeğer" sınıfına GEREKÇESİYLE yazılır.
+3. It-5'in kendi görsel kalemlerini (perf modu chip'i + cpu cap notu, graf 500+ akıcılık, publish edilmiş exe'nin
+   ilk açılışı) bu listeye ekle.
+Kullanıcı listeyi yürüyüp bulguları bildirecek; çıkan sapmalar için fix wave aç.
+
+It-5 acceptance'ının her maddesini kanıtla (CPU cap tavanı tutar · copy fazı starve olmaz · graf 500-1000 akıcı +
+cull · publish çalışır exe · flourish yalnız stream glow · README + trust-boundary) VE It-4 acceptance #5'in
+kapandığını göster. Bitince aşamamızı kaydet.
 ```
 
-**Bitti kriteri:** It-5 acceptance tam; `dotnet publish` çıktısı çalışıyor. Son **R promptu (Opus)** + istersen `/code-review ultra` ile kapanış denetimi.
+**Bitti kriteri:** It-5 acceptance tam; `dotnet publish` çıktısı çalışıyor; **ertelenen GÖZLE KONTROL pası + tasarım yan-yana karşılaştırması yapıldı** (It-4 acceptance'ının 26 👁 VISUAL satırı burada kapanır). Son **R promptu (Opus)** + istersen `/code-review ultra` ile kapanış denetimi.
 
 ---
 
