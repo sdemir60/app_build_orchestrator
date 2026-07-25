@@ -35,6 +35,14 @@ public readonly record struct PerfProfile(int Parallelism, int? CpuCapPercent, P
         _ => throw new ArgumentOutOfRangeException(nameof(mode)),
     };
 
+    /// <summary>
+    /// [T20-b/P3] Post-build copy sıkıştığında (MSB302x) cap'in geçici olarak yükseltileceği TABAN. Değer
+    /// tesadüfen değil, KASITLI olarak Balanced'ın cap'idir: "kullanıcı makineyi kullanmaya devam edebilir"
+    /// sözünü veren en düşük profil odur, yani sıkışan copy'yi açmak için gereken en küçük gevşetme zaten
+    /// bilinen ve kabul edilmiş bir noktadır. Ayrı bir sabit yazmak, tablo değiştiği gün sessizce ayrışırdı.
+    /// </summary>
+    public static int CopyPhaseFloorPercent => For(PerfMode.Balanced).CpuCapPercent!.Value;
+
     /// <summary>App/IPC tarafındaki perf-mode string'i ile köprü. Eşleşme ORDINAL'dir (App her zaman
     /// "Full"/"Balanced"/"Light" yazar); tanınmayan metin ⇒ <c>null</c>, çağıran kendi varsayılanına düşer.</summary>
     public static PerfProfile? TryParse(string perfModeText) => perfModeText switch

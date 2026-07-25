@@ -23,6 +23,11 @@ public class RunCoordinatorTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(30); // hang'i sonsuz bekleme değil, test hatası yapar
     private const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
+
+    // [T20-b/P3] Gerçek MSBuild'in post-build copy çakışma satırı (MSB3021) — RetryingMsBuildInvoker'ın retry
+    // kapısı ve copy-floor penceresinin TEK tetikleyicisi budur (copy'nin "başlıyor" sinyali YOKTUR).
+    private const string ContentionLine =
+        "A.csproj : error MSB3021: Unable to copy file \"obj\\A.dll\" to \"bin\\A.dll\". The process cannot access the file because it is being used by another process.";
     private static readonly string PlanRoot = Path.Combine(Path.GetTempPath(), "bo-coord-plan");
 
     private static string Id(string name) => Path.Combine(PlanRoot, name, name + ".csproj");
@@ -145,7 +150,10 @@ public class RunCoordinatorTests
                 console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
                 worktreeObjRootResolver: worktreeObjRootResolver,
                 stateStore: stateStore,
-                cpuGovernor: cpuGovernor); // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
+                cpuGovernor: cpuGovernor, // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
+                // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
+                // Task.Delay olan seam burada anında tamamlanır (retry SIRASI korunur, süre beklenmez).
+                retryDelay: (_, _) => Task.CompletedTask);
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -1664,5 +1672,185 @@ public class RunCoordinatorTests
         Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
         Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap uygulanamadı", StringComparison.Ordinal));
         Assert.Equal(RunOutcome.Completed, h.Events.OfType<RunCompletedEvent>().Single().Outcome); // run ÖLMEDİ
+    }
+
+    // ------------------------------------------- [T20-b/P3] copy fazı: cap taban değeri + graceful-stop drain
+
+    /// <summary>Cap'i olmayan (Full / geri alınmış) hâlin <see cref="RecordingGovernor"/> izi.</summary>
+    private const string CapOff = "cap:off";
+
+    /// <summary>Bir profilin cap izi (literal yüzde YOK — tek doğruluk kaynağı <see cref="PerfProfile"/>).</summary>
+    private static string Cap(PerfMode mode) =>
+        PerfProfile.For(mode).CpuCapPercent is { } percent ? $"cap:{percent}" : CapOff;
+
+    /// <summary>Copy-contention penceresinin cap izi (<see cref="PerfProfile.CopyPhaseFloorPercent"/>).</summary>
+    private static string Floor() => $"cap:{PerfProfile.CopyPhaseFloorPercent}";
+
+    /// <summary>Tek bir contention'ı senaryolayan invoker: 1. deneme MSB3021 + exit 1, sonraki denemeler OK.</summary>
+    private static FakeInvoker ContendingOnce()
+    {
+        int attempts = 0;
+        return new FakeInvoker((_, onLine, _) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                onLine(ContentionLine);
+                return Task.FromResult(Exit(1));
+            }
+            return Task.FromResult(Ok());
+        });
+    }
+
+    [Fact]
+    public async Task A_copy_contention_lifts_the_cap_to_the_copy_phase_floor_and_puts_the_run_profile_back()
+    {
+        // Post-build copy MSBuild child'ının İÇİNDE olur; "copy başlıyor" sinyali yoktur. Elde olan tek sinyal
+        // GERİYE DÖNÜKTÜR (MSB302x) — taban tam o pencerede uygulanır, retry bitince run profiline dönülür.
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), ContendingOnce(), cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), Floor(), Cap(PerfMode.Light), .. Released()], governor.Calls);
+        Assert.Equal(RunOutcome.Completed, h.Events.OfType<RunCompletedEvent>().Single().Outcome); // retry geçti
+    }
+
+    [Fact]
+    public async Task A_copy_contention_under_the_uncapped_Full_profile_never_touches_the_cap()
+    {
+        // Cap yoksa gevşetilecek bir şey de yok: governor'a apply+release DIŞINDA hiçbir yazım gitmemeli.
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), ContendingOnce(), cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Full), .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_copy_contention_in_a_run_without_a_perf_mode_never_touches_the_governor()
+    {
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), ContendingOnce(), cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(), default); // PerfMode YOK → job'a hiç dokunulmaz
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(governor.Calls);
+    }
+
+    [Fact]
+    public async Task Two_workers_in_a_copy_window_lift_the_cap_once_and_restore_it_only_when_the_last_one_leaves()
+    {
+        // Paralel build'de İKİ worker aynı anda contention görebilir. Ref-count yoksa erken çıkan worker, diğeri
+        // hâlâ kopyalarken cap'i geri kısar (izde cap:70·cap:70·cap:40·cap:40 görünürdü).
+        var plan = PlanOf(Node("A"), Node("B"));
+        var attemptsById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int Attempt(string id) { lock (attemptsById) { attemptsById.TryGetValue(id, out int n); return attemptsById[id] = n + 1; } }
+
+        var bothFirstAttempts = Signal();
+        var bothRetrying = Signal();
+        var releaseRetries = Signal();
+        int firstArrived = 0, retryArrived = 0;
+        var invoker = new FakeInvoker(async (req, onLine, _) =>
+        {
+            if (Attempt(req.ProjectId) == 1)
+            {
+                // İki projenin İLK denemesi de contention'a düşsün (randevu: ikisi de uçuşta) [D8].
+                if (Interlocked.Increment(ref firstArrived) == 2) bothFirstAttempts.TrySetResult();
+                await bothFirstAttempts.Task;
+                onLine(ContentionLine);
+                return Exit(1);
+            }
+            // 2. deneme = pencere AÇIK (Enter, backoff'tan ÖNCE olur) — ikisi de burada tutulur.
+            if (Interlocked.Increment(ref retryArrived) == 2) bothRetrying.TrySetResult();
+            await releaseRetries.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(parallelism: 2) with { PerfMode = "Light" }, default);
+        await bothRetrying.Task.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), Floor()], governor.Calls); // İKİ pencere, TEK yükseltme
+
+        releaseRetries.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), Floor(), Cap(PerfMode.Light), .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_lifts_the_cap_so_the_in_flight_post_build_copy_can_drain()
+    {
+        // Graceful stop, in-flight child'ların post-build copy'lerini TAMAMLAMASINA dayanır ("ortak bin'de torn
+        // DLL yok", §3). O pencereyi %40'lık bir HARD_CAP ile uzatmak garantiyi zamanlama yarışına çevirirdi.
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+
+        // Cap ANINDA kalkar; priority'ye DOKUNULMAZ (Idle yalnız öncelik verir, HARD_CAP mutlak tavandır).
+        Assert.Equal([.. Applied(PerfMode.Light), CapOff], governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Equal([.. Applied(PerfMode.Light), CapOff, .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_in_a_run_without_a_perf_mode_still_never_touches_the_governor()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(), default); // PerfMode YOK
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_during_a_copy_window_is_not_undone_when_that_window_closes()
+    {
+        // Drain kararı run'ın GERİ KALANI için bağlayıcıdır: kapanan copy penceresi cap'i geri KOYAMAZ, aksi
+        // halde drain'in tam ortasında job yeniden %40'a kısılırdı.
+        var retrying = Signal();
+        var release = Signal();
+        int attempts = 0;
+        var invoker = new FakeInvoker(async (_, onLine, _) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1) { onLine(ContentionLine); return Exit(1); }
+            retrying.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await retrying.Task.WaitAsync(Limit);
+        Assert.Equal([.. Applied(PerfMode.Light), Floor()], governor.Calls); // pencere açık
+
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Pencere kapanışı hiçbir şey yazmaz — cap zaten kalkmıştır.
+        Assert.Equal([.. Applied(PerfMode.Light), Floor(), CapOff, .. Released()], governor.Calls);
     }
 }

@@ -93,6 +93,12 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// bir Win32 job üzerinden gözlenemez. Terminate hâlâ <paramref name="innerJob"/>'ın işidir — o, cap'ten
 /// bağımsız bir yaşam-döngüsü yetkisidir.
 /// </param>
+/// <param name="retryDelay">
+/// [T20-b/P3 · D8] Copy-contention retry'ının backoff bekleyişi (bkz. <see cref="RetryingMsBuildInvoker"/>).
+/// Üretimde <c>Task.Delay</c>'dir; testlerde anında tamamlanan bir callback verilir — retry SIRASI (ve onunla
+/// birlikte cap taban penceresinin açılıp kapanması) gerçek zaman beklenmeden doğrulanabilsin diye. Varsayılan
+/// (null) ⇒ <c>Task.Delay</c>.
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -103,7 +109,8 @@ public sealed class RunCoordinator(
     Action<string> console,
     Func<StartRunCommand, string?>? worktreeObjRootResolver = null,
     BuildStateStore? stateStore = null,
-    ICpuGovernor? cpuGovernor = null) : IDisposable
+    ICpuGovernor? cpuGovernor = null,
+    Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
@@ -127,6 +134,15 @@ public sealed class RunCoordinator(
     // kapanışında İKİ kez temizlenir (ReleasePerf + son kilit), çünkü ikisinin arasındaki `await pump`
     // penceresinde _runActive hâlâ true'dur ve oraya düşen bir niyeti başka temizleyen olmazdı.
     private PerfProfile? _pendingPerf;
+    // [T20-b/P3] Bu run'da YÜRÜRLÜKTEKİ profil — copy-contention penceresi kapanınca cap buraya döner.
+    // (_perfApplied false iken anlamsızdır; ikisi de run sınırında birlikte sıfırlanır.)
+    private PerfProfile? _activePerf;
+    // [T20-b/P3] Şu an KAÇ worker copy-contention penceresinde. Ref-count zorunludur: paralel build'de birden
+    // çok worker aynı anda MSB302x görebilir ve erken çıkan biri, diğeri hâlâ kopyalarken cap'i geri kısardı.
+    private int _copyFloorDepth;
+    // [T20-b/P3] Graceful drain başladı ⇒ bu run'da cap bir daha YAZILMAZ (pencere kapanışı ve canlı
+    // setPerfMode dahil). "torn DLL yok" garantisi, sonradan geri konan bir cap ile pazarlık edilemez.
+    private bool _capDrained;
 
     // --- Continue için devredilen state (run'lar ARASINDA yaşar) ---
     private RunPlan? _plan;
@@ -268,23 +284,50 @@ public sealed class RunCoordinator(
     /// raporlandıktan SONRA) bu koordinatör yazar. <c>false</c> → sahiplenilecek run yok; çağıran (host) kendi
     /// ack'ini vermelidir.
     ///
-    /// <para><b>Graceful:</b> yalnız <see cref="ReadySetScheduler.RequestStop"/> — yeni dispatch yok, in-flight
+    /// <para><b>Graceful:</b> <see cref="ReadySetScheduler.RequestStop"/> — yeni dispatch yok, in-flight
     /// <c>MSBuild.exe</c> child'ları post-build copy DAHİL kendi tamamlanmalarını yapar (ortak çıktı dizini
-    /// yarım yazılmış kalmaz). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
+    /// yarım yazılmış kalmaz); [P3] bu drain penceresi boyunca CPU cap KALDIRILIR (bkz.
+    /// <see cref="DrainCapLocked"/>). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
     /// <c>projectFailed("stopped")</c> raporlanır. Terminate edilmiş Job yeni process kabul ettiği için ikisi de
     /// Continue'ya açıktır.</para>
     /// </summary>
     public bool TryRequestStop(StopKind kind)
     {
+        var warnings = new List<string>(); // [minor 1] konsol yazımı KİLİT DIŞINDA
+        bool owned = false;
         lock (_gate)
         {
-            if (!_runActive || _finishing) return false;
-            _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
-            if (kind == StopKind.Hard) innerJob.Terminate();
-            _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
-            _wake?.WakeAll();          // parked worker'lar IsDone'ı yeniden değerlendirsin
-            return true;
+            if (_runActive && !_finishing)
+            {
+                owned = true;
+                _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
+                if (kind == StopKind.Hard) innerJob.Terminate();
+                else if (_stopKind == StopKind.Graceful) DrainCapLocked(warnings); // [P3] Hard'dan SONRA gelen graceful'da anlamsız
+                _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
+                _wake?.WakeAll();          // parked worker'lar IsDone'ı yeniden değerlendirsin
+            }
         }
+        Warn(warnings);
+        return owned;
+    }
+
+    /// <summary>
+    /// [T20-b/P3 · §3] Graceful drain: cap KALDIRILIR. Graceful stop, in-flight <c>MSBuild.exe</c> child'larının
+    /// post-build copy'lerini TAMAMLAMASINA dayanır (ortak çıktı dizininde yarım yazılmış/torn DLL kalmaz) —
+    /// o pencereyi %40'lık bir HARD_CAP ile uzatmak, bir doğruluk garantisini zamanlama yarışına çevirirdi.
+    /// <para><b>Priority'ye DOKUNULMAZ:</b> priority yalnız öncelik sırasını değiştirir (boşta bir makinede
+    /// Idle bir process tam hızda koşar), HARD_CAP ise MUTLAK bir tavandır — drain'i uzatan yarı budur.</para>
+    /// <para><b>Hard stop yolunda çağrılmaz:</b> orada job zaten <see cref="JobObject.Terminate"/> edilmiştir,
+    /// tamamlanacak bir copy yoktur.</para>
+    /// <para>Karar run'ın GERİ KALANI için bağlayıcıdır (<see cref="_capDrained"/>): kapanan bir copy-floor
+    /// penceresi de, o sırada gelen bir <c>setPerfMode</c> de cap'i geri koyamaz.</para>
+    /// </summary>
+    private void DrainCapLocked(List<string> warnings)
+    {
+        // PerfMode taşımayan run'ın job'ına DOKUNULMAZ; cap'siz (Full) profilde de kaldırılacak bir şey yoktur.
+        if (_capDrained || !_perfApplied || _activePerf is not { CpuCapPercent: not null }) return;
+        _capDrained = true;
+        TryWriteCapLocked(null, warnings);
     }
 
     /// <summary>
@@ -320,9 +363,97 @@ public sealed class RunCoordinator(
     /// </summary>
     private int? ApplyPerfLocked(PerfProfile profile, List<string> warnings)
     {
-        bool capWritten = TryWriteCapLocked(profile.CpuCapPercent, warnings);
+        _activePerf = profile; // [P3] copy penceresi kapanınca buraya dönülür
+        int? effectiveCap = EffectiveCapLocked(profile.CpuCapPercent);
+        bool capWritten = TryWriteCapLocked(effectiveCap, warnings);
         TryWritePriorityLocked(profile.Priority, warnings);
-        return capWritten ? profile.CpuCapPercent : null;
+        return capWritten ? effectiveCap : null;
+    }
+
+    /// <summary>
+    /// [T20-b/P3] Job'a GERÇEKTEN yazılacak cap. İki kural: (1) graceful drain'den sonra cap YOKTUR; (2) açık
+    /// bir copy-contention penceresinde taban değerin ALTINA inilmez — canlı bir <c>setPerfMode</c>, sıkışmış
+    /// bir post-build copy'yi tam ortasında yeniden kısamaz (o copy zaten MSB3027 sınırına yaklaşmıştır).
+    /// Pencere kapalıyken (normal hâl) istenen değeri AYNEN döndürür.
+    /// </summary>
+    private int? EffectiveCapLocked(int? capPercent)
+    {
+        if (_capDrained) return null;
+        return _copyFloorDepth > 0 && capPercent is { } cap && cap < PerfProfile.CopyPhaseFloorPercent
+            ? PerfProfile.CopyPhaseFloorPercent
+            : capPercent;
+    }
+
+    /// <summary>
+    /// [T20-b/P3] <see cref="ICopyPhaseCpuFloor.Enter"/>: copy-contention penceresi açar. Cap taban değerin
+    /// altındaysa oraya yükseltilir — ve YALNIZ ilk girişte yazılır (<see cref="_copyFloorDepth"/> ref-count).
+    /// Cap yoksa (Full / PerfMode'suz run) ya da zaten tabanın üstündeyse <c>null</c> döner: job'a HİÇ
+    /// dokunulmaz. Konsol uyarısı kilit DIŞINDA yazılır.
+    /// </summary>
+    private IDisposable? EnterCopyFloor()
+    {
+        var warnings = new List<string>();
+        bool opened = false;
+        lock (_gate)
+        {
+            if (_perfApplied && !_capDrained
+                && _activePerf is { CpuCapPercent: { } cap } && cap < PerfProfile.CopyPhaseFloorPercent)
+            {
+                opened = true;
+                if (_copyFloorDepth++ == 0)
+                    TryWriteCapLocked(PerfProfile.CopyPhaseFloorPercent, warnings);
+            }
+        }
+        Warn(warnings);
+        return opened ? new CopyFloorWindow(this) : null;
+    }
+
+    /// <summary>
+    /// [T20-b/P3] Pencereyi kapatır: cap ancak SON çıkışta run profiline döner. Drain sonrası hiçbir şey
+    /// yazılmaz (cap zaten kalkmıştır ve geri konmamalıdır); <see cref="_perfApplied"/> düşmüşse (run kapanışı)
+    /// de yazılmaz — run sınırını geçen bir cap yazımı, sonraki run'ın profilini ezerdi.
+    /// </summary>
+    private void ExitCopyFloor()
+    {
+        var warnings = new List<string>();
+        lock (_gate)
+        {
+            if (_copyFloorDepth > 0 && --_copyFloorDepth == 0
+                && _perfApplied && !_capDrained && _activePerf is { } profile)
+                TryWriteCapLocked(profile.CpuCapPercent, warnings);
+        }
+        Warn(warnings);
+    }
+
+    /// <summary>[T20-b/P3] Cap-farkındalı backoff'un girdisi: run'da gerçekten bir cap yürürlükte mi. Açık bir
+    /// pencerede de <c>true</c>'dur (taban da bir cap'tir), drain'den sonra <c>false</c>.</summary>
+    private bool IsCapActiveNow
+    {
+        get { lock (_gate) return _perfApplied && !_capDrained && _activePerf is { CpuCapPercent: not null }; }
+    }
+
+    /// <summary>
+    /// [T20-b/P3] Core'un retry decorator'ına verilen seam. Koordinatörün KENDİSİ bu arayüzü implement etmez:
+    /// <c>Enter</c>/<c>IsCapActive</c> public bir yaşam-döngüsü yetkisi değil, tek bir run'ın iç mekanizmasıdır.
+    /// </summary>
+    private sealed class CoordinatorCpuFloor(RunCoordinator owner) : ICopyPhaseCpuFloor
+    {
+        public bool IsCapActive => owner.IsCapActiveNow;
+
+        public IDisposable? Enter() => owner.EnterCopyFloor();
+    }
+
+    /// <summary>[T20-b/P3] Tek bir copy-contention penceresinin sahibi. Dispose İDEMPOTENT'tir: aynı handle
+    /// iki kez kapatılsa bile ref-count TAM BİR KEZ düşer (aksi halde bir çift-kapatma, hâlâ kopyalayan
+    /// worker'ın tabanını altından çekerdi).</summary>
+    private sealed class CopyFloorWindow(RunCoordinator owner) : IDisposable
+    {
+        private int _closed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) == 0) owner.ExitCopyFloor();
+        }
     }
 
     // Cap/priority bir OPTİMİZASYONDUR: yazım hatası (ör. rate control desteklenmiyor) run'ı ÖLDÜRMEZ.
@@ -375,6 +506,12 @@ public sealed class RunCoordinator(
         lock (_gate)
         {
             _pendingPerf = null;
+            // [P3] Copy-floor defteri de run'a AİTTİR ve run sınırını geçmez: bu noktada tüm worker'lar join
+            // olmuştur (bkz. ExecuteRunAsync'in finally'si), yani açık kalmış bir pencere olamaz — sıfırlama,
+            // beklenmedik bir yol (worker exception'ı) sayacı asılı bıraksa bile sonraki run'ı korur.
+            _activePerf = null;
+            _copyFloorDepth = 0;
+            _capDrained = false;
             if (_perfApplied)
             {
                 var full = PerfProfile.For(PerfMode.Full); // cap yok + Normal priority
@@ -439,6 +576,11 @@ public sealed class RunCoordinator(
                 // sessizce ezerdi (cap'siz olması gereken bir run capli başlardı).
                 _pendingPerf = null;
                 _perfApplied = false;
+                // [P3] ReleasePerf ile AYNI defter; o çağrı ile bu kilit arasındaki `await pump` penceresinde
+                // (_runActive hâlâ true) yeni bir pencere açılamaz — _perfApplied düştüğü için Enter NO-OP'tur.
+                _activePerf = null;
+                _copyFloorDepth = 0;
+                _capDrained = false;
             }
         }
     }
@@ -642,9 +784,12 @@ public sealed class RunCoordinator(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs, nodeById,
                 scheduler, wake, logs, events,
                 // Retry politikası Core'un [T8]; burada yalnız run'a bağlanır: onRetry hem decision.log'a hem konsola.
+                // [T20-b/P3] cpuFloor: contention penceresinde cap'i tabana yükseltir — cap'in TEK yazıcısı
+                // bu koordinatör olduğu için seam de buraya bağlanır (bkz. EnterCopyFloor/ExitCopyFloor).
                 new RetryingMsBuildInvoker(toolset.Invoker, RetryingMsBuildInvoker.DefaultBackoff,
-                    (delay, token) => Task.Delay(delay, token),
-                    onRetry: message => { Decide(logs, message); console(message); }),
+                    retryDelay ?? ((delay, token) => Task.Delay(delay, token)),
+                    onRetry: message => { Decide(logs, message); console(message); },
+                    cpuFloor: new CoordinatorCpuFloor(this)),
                 toolset.MsBuildExePath,
                 worktreeObjRoot,
                 depIssuesById, // [T54]
