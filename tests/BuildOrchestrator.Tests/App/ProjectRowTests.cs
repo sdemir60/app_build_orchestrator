@@ -1,0 +1,328 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
+using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Core.Formatting;
+using BuildOrchestrator.Tests.Supervisor;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [T53] design-v1 proje kartı (Views/ProjectRow, BuildApp.jsx:355-416): 7 slot + geometri. Kart GERÇEKTEN
+/// kurulur (ekran dışı pencere + merge zinciri) — bir setter'ı okumak değeri şablona ulaştırdığını kanıtlamaz.
+/// Headless'ta <c>App.Motion</c> null → animasyonlar INSTANT (nihai değerler sleep/poll olmadan görünür, D8).
+/// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
+public class ProjectRowTests
+{
+    private static (ProjectRow row, Window window, Border host) Realize(ProjectRowViewModel vm)
+    {
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { DataContext = vm };
+        var window = DsResources.Realize(host, row);
+        return (row, window, host);
+    }
+
+    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
+
+    [StaFact]
+    public void Row_is_thirtysix_pixels_with_a_two_pixel_status_stripe_that_becomes_three_when_selected()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending);
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(LayoutMetrics.DefaultRowHeight, ((Border)row.Content).Height); // 36 (sticky aritmetiği varsayar)
+        Assert.Equal(2.0, row.Stripe.Width);
+
+        vm.IsSelected = true;
+        row.UpdateLayout();
+        Assert.Equal(3.0, row.Stripe.Width);
+
+        vm.IsSelected = false;
+        row.UpdateLayout();
+        Assert.Equal(2.0, row.Stripe.Width);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Dep_issue_slot_is_fourteen_pixels_even_when_empty_so_columns_never_shift()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded);
+        var (row, window, _) = Realize(vm);
+
+        // Boşken: slot 14px durur, ikon gizli.
+        Assert.Equal(14.0, row.DepSlot.Width);
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+
+        // Doluyken: slot HÂLÂ 14px (hiza kaymaz), ikon görünür.
+        vm.DepIssues = new[] { "OSYS.Sales.Core" };
+        row.UpdateLayout();
+        Assert.Equal(14.0, row.DepSlot.Width);
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Will_build_dot_is_amber_when_dirty_grey_when_clean_and_a_hollow_ring_when_unknown()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true };
+        var (row, window, host) = Realize(vm);
+        var dot = DsResources.Descendants(row.Dot).OfType<Ellipse>().Single();
+
+        // dirty → dolu amber (DS WillBuildDot, olduğu gibi tüketilir).
+        Assert.Equal(DsResources.TokenColor(host, "Brush.DotDirty"), DsResources.ColorOf(dot.Fill));
+        Assert.Null(dot.Stroke);
+
+        // clean → dolu gri, kontursuz.
+        vm.WillBuild = false;
+        row.UpdateLayout();
+        Assert.Equal(DsResources.TokenColor(host, "Brush.DotClean"), DsResources.ColorOf(dot.Fill));
+        Assert.Null(dot.Stroke);
+
+        // unknown(null) → içi boş + halka. Halka fırçası kontrolün KENDİ kararıdır (Brush.DotOutline, hakemlik
+        // bekleyen Ç-1) — kart onu EZMEZ, olduğu gibi tüketir.
+        vm.WillBuild = null;
+        row.UpdateLayout();
+        Assert.Equal(DsResources.TokenColor(host, "Brush.DotUnknown"), DsResources.ColorOf(dot.Fill));
+        Assert.Equal(DsResources.TokenColor(host, "Brush.DotOutline"), DsResources.ColorOf(dot.Stroke));
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Sha_pair_is_shown_only_for_dirty_rows_and_is_replaced_by_the_two_hover_icons()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
+        var (row, window, _) = Realize(vm);
+
+        // dirty + hover yok → sha çifti görünür, aç-ikonları gizli.
+        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.HoverIcons.Visibility);
+
+        // hover → sha yerini folder + VS ikonlarına bırakır (aynı 118px blok).
+        row.SimulateHover(true);
+        Assert.Equal(Visibility.Collapsed, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Visible, row.HoverIcons.Visibility);
+
+        // hover biter → yine sha.
+        row.SimulateHover(false);
+        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+
+        // clean/unknown satır → sha ASLA gösterilmez (yalnız WillBuild==true).
+        vm.WillBuild = false;
+        row.UpdateLayout();
+        Assert.Equal(Visibility.Collapsed, row.ShaText.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Duration_column_uses_the_shared_formatter_and_turns_red_on_failure()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { DurationMs = 4200 };
+        var (row, window, host) = Realize(vm);
+
+        // Paylaşılan DurationFormat (C2) — kart kendi biçimlemesini uydurmaz.
+        Assert.Equal(DurationFormat.Duration(4200), row.DurationText.Text); // "4.2s"
+        Assert.Equal(DsResources.TokenColor(host, "Brush.TextDim"), DsResources.ColorOf(row.DurationText.Foreground));
+
+        // Failed → kırmızı (Brush.StatusFailText), metin yine paylaşılan biçimleyiciden.
+        vm.State = ProjectRowState.Failed;
+        row.UpdateLayout();
+        Assert.Equal(DurationFormat.Duration(4200), row.DurationText.Text);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusFailText"), DsResources.ColorOf(row.DurationText.Foreground));
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Breathing_runs_a_real_opacity_clock_while_building_and_releases_it_after()
+    {
+        // [Fix wave 1, Finding 2] Görünürlük saatin sahte proxy'siydi: StopBreathing silinse bile Visibility
+        // testi yeşil kalırdı (Visibility ApplyBreathing'in EN BAŞINDA koşulsuz set edilir). GraphRenderTests
+        // (nabız) deseniyle: gerçek 30fps opaklık saatini HasAnimatedProperties ile ölç — motion enjekte edilir
+        // (headless'ta App.Motion null → hiç saat başlamazdı; GraphView.AnimationsEnabledProvider deseni).
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        // Building iken: nefes katmanında GERÇEK bir (dönen) opaklık saati var.
+        Assert.True(row.BreathLayer.HasAnimatedProperties);
+
+        // Building'i terk edince saat SERBEST kalır (yalnız Visibility'yi Collapse etmek yetmez).
+        vm.State = ProjectRowState.Succeeded;
+        row.UpdateLayout();
+        Assert.False(row.BreathLayer.HasAnimatedProperties);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Breathing_layer_only_shows_while_building_and_is_capped_at_thirty_fps()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
+        var (row, window, _) = Realize(vm);
+
+        // Yalnız building iken katman görünür; durum building'i terk edince gizlenir.
+        Assert.Equal(Visibility.Visible, row.BreathLayer.Visibility);
+        vm.State = ProjectRowState.Succeeded;
+        row.UpdateLayout();
+        Assert.Equal(Visibility.Collapsed, row.BreathLayer.Visibility);
+
+        // 30fps sınırı + 3.8s süre — kontrolün kullandığı AYNI fabrika.
+        var anim = ProjectRow.BuildBreathingAnimation(row);
+        Assert.Equal(30, Timeline.GetDesiredFrameRate(anim));
+        Assert.Equal(TimeSpan.FromMilliseconds(3800), anim.KeyFrames[^1].KeyTime.TimeSpan);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [E3/T42] liste mount reveal (bo-reveal)
+
+    [Fact]
+    public void The_list_row_reveal_delay_is_10ms_per_row_capped_at_380ms()
+    {
+        Assert.Equal(0.0, ProjectRow.RevealDelayMs(0));
+        Assert.Equal(10.0, ProjectRow.RevealDelayMs(1));
+        Assert.Equal(370.0, ProjectRow.RevealDelayMs(37));
+        Assert.Equal(380.0, ProjectRow.RevealDelayMs(38));   // tavana ilk ulaşım
+        Assert.Equal(380.0, ProjectRow.RevealDelayMs(1000)); // tavan (BuildApp.jsx:367 min(i*10, 380))
+    }
+
+    [StaFact]
+    public void A_reveal_holds_opacity_at_zero_during_the_delay_and_runs_a_real_clock()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending);
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        row.PlayReveal(5);
+
+        // Gecikme boyunca opacity 0 TUTULUR (flash yok) + kayma -5px'ten başlar; ikisi de GERÇEK saatler.
+        Assert.Equal(0.0, row.Root.Opacity);
+        Assert.True(row.Root.HasAnimatedProperties);
+        Assert.True(row.ShakeTranslate.HasAnimatedProperties);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Reduced_motion_places_the_row_instantly_with_no_reveal_clock()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending);
+        var (row, window, _) = Realize(vm); // headless App.Motion null → reduced-motion
+
+        row.PlayReveal(5);
+
+        Assert.Equal(1.0, row.Root.Opacity);
+        Assert.False(row.Root.HasAnimatedProperties);
+        Assert.Equal(0.0, row.ShakeTranslate.Y);
+        GC.KeepAlive(window);
+    }
+
+    // [Fix wave 1, Finding 1 + lens-3 Minor] Şerit rengi TÜM statüler için pinlenir (cycle + queued dahil) —
+    // satır gerçekten kurulur, Stripe.Fill'in çözdüğü fırça statü başına doğru token'dır. Discovered → transparent
+    // (token DEĞİL) ayrı test edilir.
+    [StaTheory]
+    [InlineData(ProjectRowState.Started, false, false, "Brush.Amber")]
+    [InlineData(ProjectRowState.Succeeded, false, false, "Brush.StatusSuccess")]
+    [InlineData(ProjectRowState.Failed, false, false, "Brush.StatusFail")]
+    [InlineData(ProjectRowState.Skipped, false, false, "Brush.StatusSkipped")]
+    [InlineData(ProjectRowState.Pending, true, false, "Brush.StatusCycle")]   // InCycle → cycle (skipped/pending'i ezer)
+    [InlineData(ProjectRowState.Pending, false, true, "Brush.StatusQueued")]  // willBuild + run uçuşta → queued
+    public void Status_stripe_uses_the_right_token_brush_per_status(
+        ProjectRowState state, bool inCycle, bool queued, string expectedKey)
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", state) { InCycle = inCycle };
+        if (queued) { vm.WillBuild = true; vm.IsRunActive = true; }
+        var (row, window, host) = Realize(vm);
+
+        Assert.Equal(DsResources.TokenColor(host, expectedKey), DsResources.ColorOf(row.Stripe.Fill));
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Discovered_stripe_is_transparent_not_a_token_brush()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending); // pending, no run, no cycle
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Colors.Transparent, DsResources.ColorOf(row.Stripe.Fill));
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Dep_tooltip_is_the_verbatim_brief_text_with_the_common_prefix_stripped()
+    {
+        // [D5] Kısa-ad öneki artık VERİ-TÜREVLİ ve satıra RunViewModel'den itilir (NamePrefix) — hardcode "OSYS."
+        // yok. İzole kart testinde ata RunViewModel olmadığından öneki doğrudan satıra veririz (Sha testindeki
+        // "izole kartta run VM yok" deseninin eşi).
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed) { NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+
+        // Tek dep: ortak önek atılır.
+        vm.DepIssues = new[] { "OSYS.Sales.Core" };
+        row.UpdateLayout();
+        Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);
+
+        // İki dep: ", " ile birleşir (brief slot 6 birebir).
+        vm.DepIssues = new[] { "OSYS.Sales.Core", "OSYS.Billing.Core" };
+        row.UpdateLayout();
+        Assert.Equal("Failed dependency: Sales.Core, Billing.Core — last successful output referenced", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Glyph_tooltip_is_the_status_label_with_building_elapsed_and_dependency_issue_suffix()
+    {
+        // Building: "Building — {Elapsed}" (paylaşılan biçimleyici).
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started) { DurationMs = 5000 };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal($"Building — {DurationFormat.Elapsed(5000)}", row.GlyphTooltip);
+
+        // Non-building, dep sorunsuz: yalın etiket.
+        vm.State = ProjectRowState.Succeeded;
+        row.UpdateLayout();
+        Assert.Equal("Succeeded", row.GlyphTooltip);
+
+        // Non-building + dep sorunu: " — dependency issue" eki.
+        vm.State = ProjectRowState.Failed;
+        vm.DepIssues = new[] { "OSYS.Sales.Core" };
+        row.UpdateLayout();
+        Assert.Equal("Failed — dependency issue", row.GlyphTooltip);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Sha_text_interpolates_current_and_target_with_an_arrow()
+    {
+        // [lens Minor] "{cur} → {target}". TargetSha run-genelidir (RunViewModel'den) — bu izole kart testinde
+        // ata RunViewModel yok, target boş; ok + cur yarısı yine de pinlenir.
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal("a3f81c2 → ", row.ShaText.Text);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public async Task Sha_shows_the_target_alone_when_the_current_commit_is_not_yet_known()
+    {
+        // [E6 interim guard] Per-proje CurrentSha HENÜZ hiçbir IPC event'inde YOK (BuiltCommit wire It-5'e ertelendi)
+        // → dirty satırlarda cur BOŞ gelir. ApplySha o durumda yalın-ok pürüzü ("  → a3f81c2", boş sol yarı)
+        // yerine TARGET'ı YALNIZ göstermeli. Target run-genelidir → ata RunViewModel'den (host.DataContext) çözülür;
+        // cur-dolu yol (yukarıdaki test) DEĞİŞMEZ.
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { TargetSha = "a3f81c2" };
+        var host = DsResources.NewHost();
+        host.DataContext = run; // FindRunViewModel ata ağaçta bunu bulur → target = "a3f81c2"
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true }; // CurrentSha boş
+        var row = new ProjectRow { DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        Assert.Equal("a3f81c2", row.ShaText.Text); // yalın target — " → a3f81c2" (lone-arrow) DEĞİL
+        GC.KeepAlive(window);
+    }
+}

@@ -1,0 +1,867 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+  <!--
+    ============================ [T60] DS KONTROL KÜTÜPHANESİ ============================
+
+    Uygulamanın TEK kontrol görünüm kaynağı. Buraya kadar uygulamada TEK BİR implicit style yoktu; stil
+    verilmemiş Button/TextBox/ListBox WPF'in AÇIK-TEMA chrome'uyla çiziliyordu. Anahtar adları C/D/E
+    fazlarının TÜKETTİĞİ bir SÖZLEŞMEDİR — yeniden adlandırmak pahalıdır.
+
+    Değerler design-v1'den BİREBİR; her stilin başında kaynak satır numarası vardır
+    (prototype/_ds/**/_ds_bundle.js ve prototype/app/BuildApp.jsx). Ham renk/ölçü literali YAZILMAZ:
+    renk/boşluk/yarıçap Tokens.xaml'den, süre/eğri Motion.xaml'den, ikon + boyası Icons.xaml'den gelir.
+    (İSTİSNA: bileşenin KENDİ ölçüleri — `height: 24`, `padding: '0 12px'` gibi kaynakta da token OLMAYAN
+    sayılar — kaynak satırıyla birlikte doğrudan yazılır; bunlar token değil bileşen değerleridir.)
+
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    STEP 1 KARARI — 120ms geçişler KOD TARAFINDA yazılır (saf-XAML Storyboard DEĞİL)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Soru: bir Storyboard'un animasyonuna `{DynamicResource Duration.Fast}` bağlanabilir mi ve reduced-motion'ın
+    canlı sıfırlamasını görür mü?
+
+    ÖLÇÜM (MotionResourcesTests, iki test — ikisi de GEÇİYOR):
+      (a) BAŞIBOŞ bir Storyboard (bir FrameworkElement'in Resources'ında duran) için EVET: DynamicResource
+          çözülür ve sözlükteki canlı değişimi izler.
+          `A_xaml_storyboard_duration_bound_with_DynamicResource_follows_a_live_dictionary_change`
+      (b) Ama ASIL İHTİYAÇ DUYULAN biçim — `ControlTemplate.Triggers` içindeki bir Storyboard — İMKÂNSIZ:
+          şablon mühürlenirken (FrameworkTemplate.Seal → EventTrigger.Seal → BeginStoryboard.Seal) zaman
+          çizelgesi ağacı DONDURULMAK ZORUNDADIR ve DynamicResource taşıyan bir Freezable dondurulamaz.
+          Sonuç, XAML YÜKLEME ANINDA bir XamlParseException'dır: "Bu Storyboard zaman çizelgesi ağacı iş
+          parçacıkları arasında kullanılmak üzere dondurulamıyor."
+          `A_control_template_trigger_storyboard_cannot_carry_a_DynamicResource_duration`
+      `{StaticResource Duration.Fast}` dondurulabilir ama BİR KEZ çözülür — reduced-motion'ın canlı
+      sıfırlamasını hiç görmez, yani motion sözleşmesini ihlal ederdi.
+
+    KARAR: tüm 120ms durum geçişleri It-4a'nın KANITLI yolundan gider — trigger yalnız HEDEF FIRÇAYI ilan
+    eder (`controls:DsTransition.Animated*`), geçişi kod sürer: `MotionTokens.TransitionColor` →
+    `BeginAnimation(..., HandoffBehavior.SnapshotAndReplace)`; süre/eğri ve `AnimationsEnabled` BAŞLATMA
+    ANINDA taze okunur (referans implementasyon: Controls/LatestPill.xaml.cs).
+    Bu yüzden aşağıdaki şablonlarda TEK BİR Storyboard yoktur.
+
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    A13.2 — ANİMASYON HEDEFİ ASLA PAYLAŞILAN TOKEN FIRÇASI DEĞİLDİR
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Tokens.xaml'deki fırçalar paylaşılır ve donmuştur. `DsTransition` her öğeye KENDİ (donmamış) kopyasını
+    kurar ve rengi O kopyada akıtır. Bu yüzden `Background`/`Foreground`/`BorderBrush` için doğrudan Setter
+    KULLANILMAZ — tek yetkili `DsTransition.Animated*`'tır.
+
+    NOT (gölgeler — B2 review carried-forward #2): `Effect.OverlayShadow` / `Effect.PopoverShadow` de
+    PAYLAŞILAN ve DONMUŞ nesnelerdir. Paylaşmak doğrudur; ama gölgenin `Opacity`/`BlurRadius`'unu ANIMATE
+    etmek isteyen bir tüketici fırçalarla AYNI duvara çarpar ve aynı çözümü uygulamalıdır: kendi (donmamış)
+    kopyasını kurup onu sürmek. Popover/Dialog gölgeyi statik kullanır.
+
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    KAYNAK BİÇİMİ: bu sözlük headless testlerde TEK BAŞINA (XamlReader ile) yüklenir. Token/ikon anahtarları
+    bu yüzden HER ZAMAN `{DynamicResource}` ile çözülür (`{StaticResource}` yükleme anında patlardı).
+    `{StaticResource}` yalnız `BasedOn`'da ve YALNIZ BU DOSYADA daha ÖNCE tanımlı anahtarlar için kullanılır —
+    WPF `BasedOn`'da DynamicResource'u desteklemez, dosya içi geriye referans ise tek başına da çözülür.
+  -->
+
+  <!-- ==================================== FOCUS HALKASI ==================================== -->
+  <!--
+    README:44 — "Focus: 2px rgba(237,161,15,.50) halka, offset 1px". WPF'in FocusVisualStyle'ı bir ADORNER'dır
+    ve öğenin sınırlarına birebir oturur; "1px dışarıda" ancak negatif margin ile olur ve gereken değer
+    -(offset + kalınlık/2)'dir (kontur çizgisi ORTALANIR). XAML aritmetik yapamaz, token'ı literal olarak
+    yeniden yazmak YASAK → hesap tek yerde: controls:DsChrome.FocusRingOffset (köşe yarıçapını da o türetir).
+  -->
+  <Style x:Key="Ds.FocusVisual" TargetType="Control">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate>
+          <Rectangle x:Name="Ring" SnapsToDevicePixels="True"
+                     Stroke="{DynamicResource Brush.FocusRing}"
+                     StrokeThickness="{DynamicResource Size.FocusRingWidth}"
+                     controls:DsChrome.FocusRingOffset="{DynamicResource Size.FocusRingOffset}" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ======================================= BUTTON ======================================= -->
+  <!--
+    _ds_bundle.js:14-17 boy (sm 24 / md 28 / lg 32) · :104 gap 6 · :106 padding (sm '0 10px', diğerleri
+    '0 12px') · :107 radius-sm · :110 fontSize (sm text-xs, diğerleri text-sm) · :111 fontWeight 500
+    · :115 disabled opacity .45 · :114 transition background/color duration-fast ease-standard.
+
+    Şablon TRIGGER TAŞIMAZ: durumlar Style.Triggers'ta `DsTransition.Animated*` ile ilan edilir (Step 1
+    kararı). Böylece AYNI şablonu dört varyant, üç boy ve split button'ın iki yarısı paylaşır.
+    Zincir: Base (kabuk) → <Varyant>.Md (renk + md ölçü) → <Varyant>.Sm/.Lg (yalnız ölçü farkı).
+    Md, DS'in varsayılan boyudur (_ds_bundle.js:78 `size = 'md'`), bu yüzden zincirin çıpası odur.
+  -->
+  <ControlTemplate x:Key="Ds.Button.Template" TargetType="ButtonBase">
+    <Border Background="{TemplateBinding Background}"
+            BorderBrush="{TemplateBinding BorderBrush}"
+            BorderThickness="{TemplateBinding BorderThickness}"
+            CornerRadius="{Binding Path=(controls:DsChrome.CornerRadius), RelativeSource={RelativeSource TemplatedParent}}"
+            Padding="{TemplateBinding Padding}"
+            SnapsToDevicePixels="True">
+      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                        RecognizesAccessKey="True" SnapsToDevicePixels="True" />
+    </Border>
+  </ControlTemplate>
+
+  <Style x:Key="Ds.Button.Base" TargetType="ButtonBase">
+    <Setter Property="Template" Value="{DynamicResource Ds.Button.Template}" />
+    <Setter Property="FocusVisualStyle" Value="{DynamicResource Ds.FocusVisual}" />
+    <Setter Property="controls:DsChrome.CornerRadius" Value="{DynamicResource Radius.Sm}" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Emphasis}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Style.Triggers>
+      <!-- _ds_bundle.js:112/:115 — disabled: opaklık .45, imleç ok. -->
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Opacity" Value="0.45" />
+        <Setter Property="Cursor" Value="Arrow" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!-- _ds_bundle.js:20-31 primary: amber zemin + text-on-accent metin + saydam kenar;
+       hover amber-bright (:26), press amber-dim (:29). -->
+  <Style x:Key="Ds.Button.Primary.Md" TargetType="Button" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="12,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Amber}" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextOnAccent}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberBright}" />
+      </Trigger>
+      <Trigger Property="IsPressed" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberDim}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style x:Key="Ds.Button.Primary.Sm" TargetType="Button" BasedOn="{StaticResource Ds.Button.Primary.Md}">
+    <Setter Property="Height" Value="24" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+  </Style>
+  <Style x:Key="Ds.Button.Primary.Lg" TargetType="Button" BasedOn="{StaticResource Ds.Button.Primary.Md}">
+    <Setter Property="Height" Value="32" />
+  </Style>
+
+  <!-- _ds_bundle.js:33-45 secondary: surface-raised + 1px border-strong; hover surface-overlay (:39),
+       press surface (:42). -->
+  <Style x:Key="Ds.Button.Secondary.Md" TargetType="Button" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="12,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+      </Trigger>
+      <Trigger Property="IsPressed" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Surface}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style x:Key="Ds.Button.Secondary.Sm" TargetType="Button" BasedOn="{StaticResource Ds.Button.Secondary.Md}">
+    <Setter Property="Height" Value="24" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+  </Style>
+  <Style x:Key="Ds.Button.Secondary.Lg" TargetType="Button" BasedOn="{StaticResource Ds.Button.Secondary.Md}">
+    <Setter Property="Height" Value="32" />
+  </Style>
+
+  <!-- _ds_bundle.js:46-58 ghost: saydam zemin + text-secondary; hover surface-raised + text-primary (:52-53),
+       press surface-overlay (:56). -->
+  <Style x:Key="Ds.Button.Ghost.Md" TargetType="Button" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="12,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+      <Trigger Property="IsPressed" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style x:Key="Ds.Button.Ghost.Sm" TargetType="Button" BasedOn="{StaticResource Ds.Button.Ghost.Md}">
+    <Setter Property="Height" Value="24" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+  </Style>
+  <Style x:Key="Ds.Button.Ghost.Lg" TargetType="Button" BasedOn="{StaticResource Ds.Button.Ghost.Md}">
+    <Setter Property="Height" Value="32" />
+  </Style>
+
+  <!--
+    _ds_bundle.js:60-72 danger: status-fail-soft zemin + status-fail-text metin + 1px status-fail-border.
+    SAPMA (kayıtlı): hover `rgba(238,90,82,0.18)` (:66) ve press `rgba(238,90,82,0.08)` (:69) tasarımda
+    TOKEN DEĞİL, ham rgba'dır (aynı ailenin -soft'u %12'dir) ve Tokens.xaml bu iki tonu TAŞIMAZ. Ham renk
+    yazmak YASAK, yeni token eklemek B1 kapsamıdır → hover/press zemini -soft'ta KALIR ve durum, mevcut
+    aileden bir adım parlayan KENAR/METİN ile taşınır (status-fail). Ton eklenirse burası tek satırda döner.
+  -->
+  <Style x:Key="Ds.Button.Danger.Md" TargetType="Button" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="12,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.StatusFailSoft}" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.StatusFailText}" />
+    <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.StatusFailBorder}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.StatusFail}" />
+      </Trigger>
+      <Trigger Property="IsPressed" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.StatusFail}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style x:Key="Ds.Button.Danger.Sm" TargetType="Button" BasedOn="{StaticResource Ds.Button.Danger.Md}">
+    <Setter Property="Height" Value="24" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+  </Style>
+  <Style x:Key="Ds.Button.Danger.Lg" TargetType="Button" BasedOn="{StaticResource Ds.Button.Danger.Md}">
+    <Setter Property="Height" Value="32" />
+  </Style>
+
+  <!-- ==================================== SPLIT BUTTON ==================================== -->
+  <!--
+    BuildApp.jsx:1591-1598. İki yarım AYNI primary gövdeyi paylaşır; birleşik görünüm yalnız İÇ köşelerin
+    düzleştirilmesiyle (:1594 sağ köşeler 0 · :1596 sol köşeler 0) ve aradaki 1px amber-dim çizgiyle kurulur.
+    Köşeleri SplitButton.SplitCorners gövdenin `Radius.Sm` token'ından TÜRETİR (literal köşe yazılmaz).
+  -->
+  <Style x:Key="Ds.SplitButton.MenuHalf" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="28" />
+    <!-- BuildApp.jsx:1596 `padding: '0 5px'` -->
+    <Setter Property="Padding" Value="5,0" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Amber}" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextOnAccent}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberBright}" />
+      </Trigger>
+      <Trigger Property="IsPressed" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberDim}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <Style x:Key="Ds.SplitButton" TargetType="controls:SplitButton">
+    <Setter Property="controls:DsChrome.CornerRadius" Value="{DynamicResource Radius.Sm}" />
+    <Setter Property="HorizontalAlignment" Value="Left" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="controls:SplitButton">
+          <Grid>
+            <StackPanel Orientation="Horizontal">
+              <Button x:Name="PART_Primary" Style="{DynamicResource Ds.Button.Primary.Md}"
+                      Content="{TemplateBinding PrimaryContent}"
+                      Command="{TemplateBinding PrimaryCommand}" />
+              <!-- BuildApp.jsx:1596 `borderLeft: 1px solid CSS `amber-dim`` — iki yarımın ayracı. -->
+              <Rectangle Width="1" Fill="{DynamicResource Brush.AmberDim}" />
+              <ToggleButton x:Name="PART_Menu" Style="{DynamicResource Ds.SplitButton.MenuHalf}"
+                            AutomationProperties.Name="Build options"
+                            IsChecked="{Binding IsMenuOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                <!-- BuildApp.jsx:1597 `<I.chevUp/>` — 11px çizim; 24'lük viewBox Viewbox ile küçülür
+                     (Path.Stretch stroke'u ölçeklemez, Viewbox ölçekler). Şablonun İÇİNDE durur:
+                     bir Style Setter'ında paylaşılan UIElement iki örnek arasında çakışırdı. -->
+                <Viewbox Width="11" Height="11">
+                  <Canvas Width="24" Height="24">
+                    <Path Data="{DynamicResource Icon.ChevUp}"
+                          StrokeThickness="{DynamicResource Icon.ChevUp.StrokeThickness}"
+                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                  </Canvas>
+                </Viewbox>
+              </ToggleButton>
+            </StackPanel>
+            <!-- BuildApp.jsx:1599 Popover — gövdenin ÜSTÜNDE, 8px boşlukla (BuildApp.jsx:821). -->
+            <Popup x:Name="PART_MenuPopup" AllowsTransparency="True" StaysOpen="False"
+                   Placement="Top" PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                   VerticalOffset="-8"
+                   IsOpen="{Binding IsMenuOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+              <Border Style="{DynamicResource Ds.Popover}">
+                <ContentPresenter Content="{TemplateBinding MenuContent}" />
+              </Border>
+            </Popup>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ======================================== CHIP ======================================== -->
+  <!--
+    _ds_bundle.js:164-182 — height 24, padding '0 8px', gap 6, radius-xs, text-xs, fontWeight 500;
+    zemin surface-raised (hover surface-overlay), kenar 1px border, metin text-secondary.
+    AKTİF (:170-174): amber-soft zemin + amber-border kenar + amber-text metin.
+
+    TİP: ToggleButton. DS'in `active` bayrağı AÇIK/KAPALI bir durumdur (filtre chip'leri, popover tetikleyen
+    branch/worktree chip'leri) ve WPF'teki karşılığı IsChecked'tır.
+  -->
+  <Style x:Key="Ds.Chip" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="24" />
+    <Setter Property="Padding" Value="8,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <Setter Property="controls:DsChrome.CornerRadius" Value="{DynamicResource Radius.Xs}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Border}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+      </Trigger>
+      <!-- Aktif, hover'ı EZER — kaynakta da sıra `active ? … : hover ? …`tır (:170). Style.Triggers'ta
+           SONRA gelen kazanır, bu yüzden bu blok hover'ın ALTINDA durmalıdır. -->
+      <Trigger Property="IsChecked" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoft}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.AmberText}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.AmberBorder}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!-- _ds_bundle.js:188-194 — chip'in SAYAÇ yuvası: mono, weight 400, tabular figürler, text-primary.
+       Boyu chip'ten miras alınamaz (ayrı bir TextBlock'tur) → chip'in text-xs'i burada tekrar ilan edilir. -->
+  <Style x:Key="Ds.Chip.Counter" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Mono}" />
+    <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Body}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <!-- ===================================== ICON BUTTON ===================================== -->
+  <!--
+    _ds_bundle.js:238-263 — kare kutu (:248 sm 22 / md 26 / lg 30; brief'in pinlediği ölçü sm 22×22),
+    padding 0, radius-sm, saydam kenar; zemin saydam → hover surface-raised (:257);
+    metin text-secondary → hover text-primary (:257); AKTİF: amber-soft zemin + amber-text.
+  -->
+  <ControlTemplate x:Key="Ds.IconButton.Template" TargetType="ButtonBase">
+    <Border Background="{TemplateBinding Background}"
+            BorderBrush="{TemplateBinding BorderBrush}"
+            BorderThickness="{TemplateBinding BorderThickness}"
+            CornerRadius="{Binding Path=(controls:DsChrome.CornerRadius), RelativeSource={RelativeSource TemplatedParent}}"
+            SnapsToDevicePixels="True">
+      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </ControlTemplate>
+
+  <Style x:Key="Ds.IconButton" TargetType="Button" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Template" Value="{DynamicResource Ds.IconButton.Template}" />
+    <Setter Property="Width" Value="22" />
+    <Setter Property="Height" Value="22" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!-- DS `active` (aria-pressed, :247-249) AÇIK/KAPALI bir durumdur → ToggleButton. Gövde AYNI şablondur;
+       ayrı bir anahtar olmasının TEK nedeni WPF'te bir Style'ın tek bir TargetType'a bağlı olmasıdır. -->
+  <Style x:Key="Ds.IconButton.Toggle" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Template" Value="{DynamicResource Ds.IconButton.Template}" />
+    <Setter Property="Width" Value="22" />
+    <Setter Property="Height" Value="22" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+      <Trigger Property="IsChecked" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoft}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.AmberText}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!-- ======================================= SWITCH ======================================= -->
+  <!--
+    _ds_bundle.js:876-903 — ray 28×16, radius-full, padding 1, 1px kenar; kapalı: surface-overlay zemin +
+    border-strong kenar, başparmak 12×12 neutral-300; açık: amber zemin + amber kenar, başparmak
+    text-on-accent ve 12px sağa kayar. Etiket text-sm/text-primary, ray ile arası 8px (:843).
+
+    TİP: CheckBox — WPF'te "toggle switch" diye bir kontrol YOKTUR; iki durumlu, etiketli, klavyeyle
+    erişilebilir kontrol CheckBox'tır (DS'in kendisi de `<input type="checkbox" role="switch">` kullanır, :865).
+
+    SAPMA (kayıtlı): kapalı başparmak CSS `neutral-300` degiskenitür (colors.css:7 = #a9a9b0); Tokens.xaml nötr
+    rampanın yalnız uçlarını taşır ve BU tonun oradaki adı `Brush.TextSecondary`dir (colors.css:22 AYNI hex).
+    Yeni token eklemek B1 kapsamıdır → aynı değeri taşıyan mevcut anahtar kullanıldı.
+  -->
+  <Style x:Key="Ds.Switch" TargetType="CheckBox">
+    <Setter Property="FocusVisualStyle" Value="{DynamicResource Ds.FocusVisual}" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="CheckBox">
+          <StackPanel Orientation="Horizontal">
+            <Border x:Name="Track" Width="28" Height="16" Padding="1" BorderThickness="1"
+                    CornerRadius="{DynamicResource Radius.Full}" VerticalAlignment="Center"
+                    controls:DsTransition.AnimatedBackground="{DynamicResource Brush.SurfaceOverlay}"
+                    controls:DsTransition.AnimatedBorderBrush="{DynamicResource Brush.BorderStrong}">
+              <Ellipse x:Name="Thumb" Width="12" Height="12" HorizontalAlignment="Left"
+                       controls:DsTransition.AnimatedBackground="{DynamicResource Brush.TextSecondary}"
+                       controls:DsTransition.AnimatedTranslateX="0" />
+            </Border>
+            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
+          </StackPanel>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Track" Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Amber}" />
+              <Setter TargetName="Track" Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Amber}" />
+              <Setter TargetName="Thumb" Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.TextOnAccent}" />
+              <!-- _ds_bundle.js:901 `translateX(12px)` — 28 ray - 2 padding - 12 başparmak = 12. -->
+              <Setter TargetName="Thumb" Property="controls:DsTransition.AnimatedTranslateX" Value="12" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+              <Setter Property="Cursor" Value="Arrow" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ======================================= SEGMENT ======================================= -->
+  <!--
+    _ds_bundle.js:305-356 — dış ray: yükseklik h+2, surface-sunken zemin + 1px border, radius-sm,
+    padding 1, gap 1 (:311-317). Seçenek (:332-352): padding '0 10px', radius-xs, text-xs/500;
+    seçili surface-overlay + text-primary, seçili değil saydam + text-dim.
+
+    Varsayılan boy DS `size="sm"`dir (h=22 → dış 24): uygulamada Segment TEK yerde ve sm olarak kullanılır
+    (BuildApp.jsx:1585 `<DS.Segment size="sm" …>`), brief'in pinlediği ölçü de 24'tür.
+
+    TİP: ItemsControl + RadioButton — kaynak `role="radiogroup"` / `role="radio"` kullanır (:302, :332).
+  -->
+  <Style x:Key="Ds.Segment" TargetType="ItemsControl">
+    <Setter Property="Height" Value="24" />
+    <Setter Property="Padding" Value="1" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="HorizontalAlignment" Value="Left" />
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceSunken}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+    <Setter Property="ItemsPanel">
+      <Setter.Value>
+        <ItemsPanelTemplate>
+          <StackPanel Orientation="Horizontal" />
+        </ItemsPanelTemplate>
+      </Setter.Value>
+    </Setter>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ItemsControl">
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}"
+                  CornerRadius="{DynamicResource Radius.Sm}" SnapsToDevicePixels="True">
+            <ItemsPresenter />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="Ds.Segment.Item" TargetType="RadioButton" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Padding" Value="10,0" />
+    <!-- :316 `gap: 1` — StackPanel'de aralık yoktur, seçenekler arası boşluk margin ile verilir. -->
+    <Setter Property="Margin" Value="0,0,1,0" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <Setter Property="controls:DsChrome.CornerRadius" Value="{DynamicResource Radius.Xs}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextDim}" />
+    <Style.Triggers>
+      <Trigger Property="IsChecked" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!-- ======================================== INPUT ======================================== -->
+  <!--
+    _ds_bundle.js:714-727 (inputBase) — height 28, padding '0 8px', surface-sunken zemin,
+    1px border-strong (invalid: status-fail-border, :717), radius-sm, text-primary, text-sm,
+    transition border-color duration-fast ease-standard (:726).
+    :749 prefix varken paddingLeft 26 · :756-772 büyüteç left 8, dikey ortalı, text-dim, tıklamayı yutmaz
+    :750 focus'ta 2px focus-ring halkası · :751 focus + !invalid → kenar amber-border.
+  -->
+  <Style x:Key="Ds.Input" TargetType="TextBox">
+    <Setter Property="Height" Value="28" />
+    <!-- :749 — VARSAYILAN prefix'LİDİR (26); prefix yoksa aşağıdaki şablon trigger'ı 8'e döner. WPF bir
+         trigger'ı "null DEĞİL" diye kuramaz, bu yüzden mantık bu yönde ifade edilir. -->
+    <Setter Property="Padding" Value="26,0,8,0" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource Brush.TextPrimary}" />
+    <!-- Metin seçim vurgusu tasarımda TANIMSIZDIR (web `<input>`'u tarayıcının seçimini kullanır); WPF bir
+         fırça İSTER. Marka ailesinden yarı saydam olan tek ton seçildi — yeni bir renk uydurulmadı. -->
+    <Setter Property="SelectionBrush" Value="{DynamicResource Brush.AmberBorder}" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <!-- Odak halkası kenarın KENDİSİNDE gösterilir (:750 boxShadow) — ayrıca adorner çizilmez. -->
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceSunken}" />
+    <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Grid>
+            <!-- :750 `0 0 0 <focus-ring-width> <focus-ring>` — kenarın hemen DIŞINDA, boşluksuz
+                 (offset 0). Genel focus halkasından FARKI budur; kaynakta da boxShadow spread'i 0'dır. -->
+            <Rectangle x:Name="FocusRing" Visibility="Collapsed" SnapsToDevicePixels="True"
+                       Stroke="{DynamicResource Brush.FocusRing}"
+                       StrokeThickness="{DynamicResource Size.FocusRingWidth}"
+                       controls:DsChrome.FocusRingOffset="0" />
+            <Border x:Name="Chrome" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{DynamicResource Radius.Sm}" SnapsToDevicePixels="True">
+              <Grid>
+                <ContentPresenter x:Name="Prefix" Margin="8,0,0,0" HorizontalAlignment="Left"
+                                  VerticalAlignment="Center" IsHitTestVisible="False"
+                                  TextElement.Foreground="{DynamicResource Brush.TextDim}"
+                                  Content="{Binding Path=(controls:DsChrome.Prefix), RelativeSource={RelativeSource TemplatedParent}}" />
+                <TextBlock x:Name="Watermark" Margin="{TemplateBinding Padding}"
+                           VerticalAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed"
+                           Foreground="{DynamicResource Brush.TextFaint}"
+                           Text="{Binding Path=(controls:DsChrome.Watermark), RelativeSource={RelativeSource TemplatedParent}}" />
+                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                              VerticalAlignment="Center" Focusable="False"
+                              HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+              </Grid>
+            </Border>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="Text" Value="">
+              <Setter TargetName="Watermark" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="controls:DsChrome.Prefix" Value="{x:Null}">
+              <Setter TargetName="Prefix" Property="Visibility" Value="Collapsed" />
+              <Setter Property="Padding" Value="8,0" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+              <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+              <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.AmberBorder}" />
+            </Trigger>
+            <!-- :751 `focus && !invalid` — invalid, focus'un amber kenarını EZER (bu blok SONRA gelmeli). -->
+            <Trigger Property="controls:DsChrome.IsInvalid" Value="True">
+              <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.StatusFailBorder}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ========================================= KBD ========================================= -->
+  <!--
+    _ds_bundle.js:271-296 — minWidth 16, height 18, padding '0 5px', surface-raised zemin,
+    1px border-strong ama ALT KENAR 2px (:285, tuş derinliği), radius-xs, mono, text-2xs, text-secondary.
+    TİP: ContentControl — kutu + kenar + dolgu gerektiği için düz bir TextBlock yetmez.
+  -->
+  <Style x:Key="Ds.Kbd" TargetType="ContentControl">
+    <Setter Property="MinWidth" Value="16" />
+    <Setter Property="Height" Value="18" />
+    <Setter Property="Padding" Value="5,0" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Mono}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.2xs}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ContentControl">
+          <Border Background="{DynamicResource Brush.SurfaceRaised}"
+                  BorderBrush="{DynamicResource Brush.BorderStrong}"
+                  BorderThickness="1,1,1,2"
+                  CornerRadius="{DynamicResource Radius.Xs}"
+                  Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===================================== PROGRESS BAR ===================================== -->
+  <!--
+    _ds_bundle.js:515-541 — yükseklik varsayılan 4 (:510), zemin surface-overlay, radius-xs, taşma gizli;
+    dolgu `building` durumunda amber (:498).
+
+    KAPSAM NOTU: `indeterminate` (:527-535) BURADA YOK. WPF'in ProgressBar'ı belirsiz durumu ŞABLON İÇİ bir
+    Storyboard ile sürer — Step 1'in ölçtüğü tam da budur: şablon trigger'ındaki bir Storyboard canlı süre
+    token'ı TAŞIYAMAZ. Belirsiz animasyon bu yüzden kod-tarafı yazılmalıdır ve onu KULLANAN task'a
+    (ribbon'daki global progress) aittir; burada uydurma bir çözüm bırakmak YAGNI olurdu.
+  -->
+  <Style x:Key="Ds.ProgressBar" TargetType="ProgressBar">
+    <Setter Property="Height" Value="4" />
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Amber}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ProgressBar">
+          <Border Background="{TemplateBinding Background}"
+                  CornerRadius="{DynamicResource Radius.Xs}" ClipToBounds="True" SnapsToDevicePixels="True">
+            <Grid>
+              <Rectangle x:Name="PART_Track" />
+              <Rectangle x:Name="PART_Indicator" HorizontalAlignment="Left" Fill="{TemplateBinding Foreground}" />
+            </Grid>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ================================== POPOVER / DIALOG ================================== -->
+  <!--
+    Popover: BuildApp.jsx:820-823 — surface-overlay zemin, 1px border-strong, radius-lg, overlay gölgesi,
+    padding 8. TİP: Border — bir Popup'ın/katmanın İÇİNE konan KABUKtur (Popup'ın kendisi çağıranındır).
+  -->
+  <Style x:Key="Ds.Popover" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Radius.Lg}" />
+    <Setter Property="Padding" Value="8" />
+    <Setter Property="Effect" Value="{DynamicResource Effect.OverlayShadow}" />
+    <Setter Property="TextElement.FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+  </Style>
+
+  <!--
+    Dialog: _ds_bundle.js:963-968 — 1px border-strong, radius-lg, overlay gölgesi.
+    SAPMA (T60 brief'inde KAYITLI): zemin CSS `surface-raised` degiskenitır (_ds_bundle.js:965) — README §2.9
+    "surface-overlay" der; KOD KAZANIR.
+  -->
+  <Style x:Key="Ds.Dialog" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceRaised}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Radius.Lg}" />
+    <Setter Property="Effect" Value="{DynamicResource Effect.OverlayShadow}" />
+    <Setter Property="TextElement.FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+  </Style>
+
+  <!-- ======================================= TOOLTIP ======================================= -->
+  <!--
+    [T61] _ds_bundle.js:1285-1348 (Tooltip.jsx) — surface-overlay zemin (:1331), 1px border-strong (:1332),
+    radius-sm (:1333), elevation-popover gölge (:1334), padding '4px 8px' (:1335 — bileşenin KENDİ ölçüsü,
+    token değil, kaynak satırıyla yazılır), font-sans/text-xs (:1337-1338).
+
+    SAPMA (kayıtlı, task-B4-brief.md:41 harfiyen): gövde metni brief'in pinlediği Brush.TextSecondary'dir;
+    kaynakta (:1339) text-primary'dir — yalnız kbd alt-metni (:1345) text-dim'dir. Brief TARTIŞMASIZ kazanır.
+
+    A13.2 (feasibility otoritesi, harfiyen): WPF'in PlacementMode.Top/Bottom'u hedefi SOLA hizalar, ORTALAMAZ
+    → Placement=Custom + CustomPopupPlacementCallback ZORUNLU (bkz. Controls/AppTooltip.cs). Tooltip AYRI bir
+    HWND'dir — bu yüzden T65'in kök ClearTypeHint'i (Grayscale, MainWindow.xaml — BURADA DOKUNULMAZ) buraya
+    sızmaz; yerel olarak BİLİNÇLİ şekilde ClearType'a döndürülür.
+
+    ShowDuration int.MaxValue'ya (sonsuz) ayarlanır — DS'in web karşılığında `open` React state'i mouse
+    ayrılana kadar sürer; WPF'in ~5sn varsayılan ShowDuration'ı bunu keserdi.
+
+    Side: controls:AppTooltip.Side, DsChrome.Prefix'in TextBox üzerinde KENDİ KENDİNİ tetiklediği desenin
+    AYNISIYLA, EXPLICIT bir <ToolTip> öğesinin KENDİSİNDE ilan edilir — otomatik sarılan düz-metin tooltip'ler
+    (Side verilmemiş) varsayılan Top kalır.
+
+    Bu stil bir ControlTemplate.Triggers/Storyboard TAŞIMAZ (Step 1 kararı, T60) — burada zaten animasyon
+    istenmiyor (brief).
+  -->
+  <Style TargetType="ToolTip">
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <!-- _ds_bundle.js:1335 `padding: '4px 8px'` → WPF Thickness(left,top,right,bottom). -->
+    <Setter Property="Padding" Value="8,4" />
+    <Setter Property="Effect" Value="{DynamicResource Effect.PopoverShadow}" />
+    <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
+    <Setter Property="ToolTipService.InitialShowDelay" Value="0" />
+    <!-- int.MaxValue — "sonsuz" (fare ayrılana kadar açık kalır). -->
+    <Setter Property="ToolTipService.ShowDuration" Value="2147483647" />
+    <Setter Property="Placement" Value="Custom" />
+    <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementTop}" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToolTip">
+          <!-- ToolTip'in kendi CornerRadius'u YOKTUR (Control'ün bir parçası değil) — Radius.Sm bu yüzden
+               TemplateBinding değil, doğrudan token ile yazılır (SplitButton'ın DEĞİŞKEN köşe ihtiyacı
+               burada yok, tek sabit değer — DsChrome.CornerRadius makinesi burada GEREKSİZ, YAGNI). -->
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{DynamicResource Radius.Sm}"
+                  Padding="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True">
+            <!-- Varsayılan ContentSource="Content" — Content/ContentTemplate/ContentStringFormat
+                 TemplatedParent'tan OLDUĞU GİBİ akar; canlı bağlı içerik (`Building — 24s`, `Copy → Copied`)
+                 burada ENGELLENMEZ. -->
+            <ContentPresenter />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property="controls:AppTooltip.Side" Value="Bottom">
+        <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementBottom}" />
+      </Trigger>
+      <Trigger Property="controls:AppTooltip.Side" Value="Left">
+        <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementLeft}" />
+      </Trigger>
+      <Trigger Property="controls:AppTooltip.Side" Value="Right">
+        <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementRight}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!-- ========================= ÖZEL KONTROLLERİN VARSAYILAN ŞABLONLARI ========================= -->
+  <!-- Anahtar `{x:Type …}`: DefaultStyleKey ile aranan implicit style'dır. Themes/Generic.xaml'e GEREK YOK —
+       uygulama kaynakları tema sözlüğünden ÖNCE taranır. -->
+
+  <Style x:Key="{x:Type controls:BuildingSpinner}" TargetType="controls:BuildingSpinner">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="controls:BuildingSpinner">
+          <Viewbox Width="{TemplateBinding Size}" Height="{TemplateBinding Size}" Stretch="Uniform">
+            <Canvas Width="16" Height="16">
+              <Path Data="{DynamicResource Icon.Spinner}"
+                    StrokeThickness="{DynamicResource Icon.Spinner.StrokeThickness}"
+                    Stroke="{Binding Foreground, RelativeSource={RelativeSource TemplatedParent}}"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+                <Path.RenderTransform>
+                  <!-- _ds_bundle.js:1359 `transform-origin: center` — 16'lık kutunun merkezi. -->
+                  <RotateTransform x:Name="PART_Rotation" CenterX="8" CenterY="8" />
+                </Path.RenderTransform>
+              </Path>
+            </Canvas>
+          </Viewbox>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="{x:Type controls:StatusGlyph}" TargetType="controls:StatusGlyph">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="controls:StatusGlyph">
+          <Grid Width="{TemplateBinding Size}" Height="{TemplateBinding Size}">
+            <!-- Geometriler 16'lık viewBox'tadır; Viewbox ölçekleyince stroke da birlikte küçülür. -->
+            <Viewbox Stretch="Uniform">
+              <Canvas Width="16" Height="16">
+                <Path x:Name="PART_Ring" />
+                <Path x:Name="PART_Inner" />
+              </Canvas>
+            </Viewbox>
+            <controls:BuildingSpinner x:Name="PART_Spinner" Size="{TemplateBinding Size}"
+                                      Foreground="{TemplateBinding Foreground}" Visibility="Collapsed" />
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="{x:Type controls:WillBuildDot}" TargetType="controls:WillBuildDot">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="controls:WillBuildDot">
+          <!-- spacing.css dot-size:8px → Tokens.xaml `Size.DotSize`; halka 1px (colors.css:41). -->
+          <Ellipse x:Name="PART_Dot"
+                   Width="{DynamicResource Size.DotSize}" Height="{DynamicResource Size.DotSize}"
+                   StrokeThickness="1" SnapsToDevicePixels="True" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="{x:Type controls:SplitButton}" TargetType="controls:SplitButton"
+         BasedOn="{StaticResource Ds.SplitButton}" />
+
+  <!-- ================================ VARSAYILAN (IMPLICIT) ================================ -->
+  <!--
+    Buraya kadar uygulamada tek bir implicit style yoktu: stil VERİLMEMİŞ her Button/TextBox/ListBox WPF'in
+    AÇIK-TEMA chrome'uyla (beyaz zemin, mavi odak) çiziliyordu — koyu kabuğun ortasında. Aşağıdakiler bunu
+    kapatır. Açıkça `Style` verilmiş öğeler (MainWindow'un CaptionButton'ı, LatestPill'in kendi şablonlu
+    butonu) ETKİLENMEZ — explicit style implicit'i tamamen ezer.
+  -->
+  <Style TargetType="Button" BasedOn="{StaticResource Ds.Button.Secondary.Md}" />
+  <Style TargetType="TextBox" BasedOn="{StaticResource Ds.Input}" />
+
+  <!--
+    ListBox/ListBoxItem: DS'in gerçek satırı `ProjectRow`dur (_ds_bundle.js:1880+) ve D FAZININ işidir.
+    Burada YALNIZCA WPF'in açık tema chrome'u token'larla nötrlenir — uydurma bir satır tasarımı YOK.
+    Sanallaştırma A13.2 gereği KAPALI.
+  -->
+  <Style TargetType="ListBox">
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceSunken}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="VirtualizingPanel.IsVirtualizing" Value="False" />
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+  </Style>
+
+  <Style TargetType="ListBoxItem">
+    <Setter Property="Padding" Value="8,0" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="FocusVisualStyle" Value="{DynamicResource Ds.FocusVisual}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True">
+            <ContentPresenter VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceHover}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+      <Trigger Property="IsSelected" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoft}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+</ResourceDictionary>

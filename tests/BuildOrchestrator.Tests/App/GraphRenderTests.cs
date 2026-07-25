@@ -5,6 +5,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 using IoPath = System.IO.Path;
@@ -28,10 +29,12 @@ public class GraphRenderTests
         GraphStatus portalStatus = GraphStatus.Discovered,
         bool portalDepIssue = false) =>
     [
-        new("OSYS.Base", 0, baseStatus),
-        new("OSYS.Data.Core", 1, dataStatus),
-        new("OSYS.Server.Api", 2, apiStatus),
-        new("OSYS.Web.Portal", 2, portalStatus, HasDepIssue: portalDepIssue),
+        // [D5] Prefix "OSYS." — GraphNode.ShortName artık veri-türevli öneki taşır (GraphBinder üretir); bu
+        // izole render testinde önek elle verilir ki etiket kısa adı ("Base"/"Server.Api") göstersin.
+        new("OSYS.Base", 0, baseStatus, Prefix: "OSYS."),
+        new("OSYS.Data.Core", 1, dataStatus, Prefix: "OSYS."),
+        new("OSYS.Server.Api", 2, apiStatus, Prefix: "OSYS."),
+        new("OSYS.Web.Portal", 2, portalStatus, HasDepIssue: portalDepIssue, Prefix: "OSYS."),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>
@@ -52,7 +55,9 @@ public class GraphRenderTests
         // pack:// / Application.Resources olmadan (headless host) token'lar çözülmez — Tokens/Motion sözlükleri
         // dosyadan merge edilir (FontAssetTests/TokenBrushesTests ile AYNI TestAssets deseni). Böylece
         // SetResourceReference ile bağlanan fırçalar ve Duration/KeySpline token'ları gerçekten çözülür.
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml" })
+        // [T64 review · fix wave 1] Icons.xaml de merge edilir: düğüm ikonu ve dep-hata üçgeni artık kodda
+        // gömülü path DEĞİL, bu sözlükten çözülen geometrilerdir (CopyLogTests.NewHeaderWithIcons ile aynı desen).
+        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
         {
             using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
             view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
@@ -150,6 +155,26 @@ public class GraphRenderTests
     }
 
     [StaFact]
+    public void The_node_icon_and_the_dep_badge_are_the_dictionary_geometries_not_copies_parsed_in_code()
+    {
+        // [T64 review · fix wave 1] Bu iki geometri GraphView'de inline `Geometry.Parse` sabitiydi ve
+        // Icons.xaml'deki metinle KARAKTER KARAKTER aynıydı — biri düzeltilince öteki sessizce eski şekli
+        // çizmeye devam ederdi ve hiçbir test bunu görmezdi. REFERANS eşitliği tek doğruluk kaynağını pinler:
+        // kodda yeniden parse edilen bir kopya AYRI bir nesne olacağından bu iddia kırılır ("aynı metin" değil,
+        // "aynı NESNE"). Geometriler donmuş ve paylaşımlıdır (Icons.xaml başlık yorumu) — paylaşım doğrudur.
+        var view = NewView(false);
+        view.SetGraph(Nodes(portalDepIssue: true), Edges());
+
+        var visual = view.NodeVisuals["OSYS.Web.Portal"];
+        // [B2→D5 fold] Aynı anahtar iki tarafta da çözülemeseydi ikisi de null olur ve Assert.Same(null, null)
+        // BOŞUNA geçerdi (sahte pass) — önce geometrilerin GERÇEKTEN çözüldüğünü pinle, sonra referans eşitliğini.
+        Assert.NotNull(visual.Icon.Data);
+        Assert.NotNull(visual.BadgeTriangle.Data);
+        Assert.Same(view.TryFindResource(GraphView.PackageIconKey), visual.Icon.Data);
+        Assert.Same(view.TryFindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle.Data);
+    }
+
+    [StaFact]
     public void Node_and_edge_colours_are_resolved_from_the_foundation_token_brushes_not_hardcoded_hex()
     {
         var view = NewView(false);
@@ -196,6 +221,97 @@ public class GraphRenderTests
         view.SetGraph(Nodes(), Edges());
 
         Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity));
+    }
+
+    // ---------------------------------------------------------------- [E3/T41/DD9] reveal = hero
+
+    [StaFact]
+    public void The_reveal_stagger_takes_the_sync_reveal_hero_while_it_plays()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());
+
+        // Reveal animate modunda hero'ya girdi ve reveal PENCERESİ boyunca TUTUYOR — release henüz tetiklenmedi
+        // (canlı bir DispatcherTimer'a bağlı; senkron bu noktada tick etmemiştir). Bkz.
+        // The_reveal_releases_the_sync_reveal_hero_when_it_completes: release GERÇEKTEN çalışır.
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(0.0, v.Cell.Opacity)); // stagger oynuyor (gecikme boyunca 0)
+    }
+
+    [StaFact]
+    public void The_reveal_releases_the_sync_reveal_hero_when_it_completes()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());
+        Assert.True(coordinator.IsHeroActive);
+        // (1) CANLI bir release ZAMANLANDI — ölü Completed-after-BeginAnimation yolu DEĞİL. (Fix'in özü: eski kod
+        // burada hiçbir tetik kurmuyordu; hero bir sonraki SetGraph/Unloaded'a kadar sonsuza dek tutuluyordu.)
+        Assert.True(view.HasPendingRevealRelease);
+
+        // (2) Reveal tamamlandığında release tetiklenir (gerçek tick beklemeden, mevcut kuşak damgasıyla) → hero BIRAKILIR.
+        view.ReleaseRevealHeroIfCurrent(view.RevealGeneration);
+
+        Assert.False(coordinator.IsHeroActive);
+        Assert.False(view.HasPendingRevealRelease);
+    }
+
+    [StaFact]
+    public void A_stale_reveal_completion_does_not_release_the_current_reveal_hero()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());          // reveal kuşağı #1
+        int gen1 = view.RevealGeneration;
+
+        view.SetGraph(Nodes(), Edges());          // hızlı ikinci SetGraph → #1'i bırakır ve #2'yi yeniden alır
+        Assert.NotEqual(gen1, view.RevealGeneration);
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+
+        // #1'in gecikmiş (stale) release'i ateşlense bile #2'nin TAZE hero'suna dokunmaz (gen1 != mevcut kuşak).
+        view.ReleaseRevealHeroIfCurrent(gen1);
+
+        Assert.True(coordinator.IsHeroActive);
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+    }
+
+    [StaFact]
+    public void A_reveal_yields_to_an_already_running_hero_and_places_the_nodes_instantly()
+    {
+        var coordinator = new MotionCoordinator();
+        Assert.True(coordinator.TryBeginHero("frontier")); // DD9: başka bir hero zaten oynuyor
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+
+        view.SetGraph(Nodes(), Edges());
+
+        // Reveal reddedildi → düğümler ANİ yerleşir (Opacity 1, stagger yok); aktif hero DEĞİŞMEDİ.
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity));
+        Assert.Equal("frontier", coordinator.CurrentHeroKey);
+    }
+
+    [StaFact]
+    public void Re_SetGraph_releases_the_previous_reveal_hero_before_taking_it_again()
+    {
+        var coordinator = new MotionCoordinator();
+        var view = NewView(true);
+        view.HeroCoordinator = coordinator;
+        view.SetGraph(Nodes(), Edges());
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+
+        // İkinci SetGraph önceki reveal hero'sunu bırakıp yeniden alır — ref-count sızmaz (hero tek girişte kalır).
+        view.SetGraph(Nodes(), Edges());
+        Assert.Equal(GraphView.RevealHeroKey, coordinator.CurrentHeroKey);
+
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent)); // unload reveal hero'sunu bırakmalı
+        Assert.False(coordinator.IsHeroActive);
     }
 
     // ---------------------------------------------------------------- akan dash — TEK paylaşımlı clock

@@ -1,0 +1,50 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.WorktreePopover"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+  <!-- [D6/T40] Worktree popover (BuildApp.jsx:872-901). İçerik Ds.Popover (300px) İÇİNE oturur; gövde:
+       caps · "Build in worktree" switch (zorunluysa disabled) · durum açıklaması · hedef worktree listesi ·
+       source satırı. Üç açıklama + source metinleri BİREBİR (kod-tarafı, WorktreePopover.xaml.cs). -->
+  <StackPanel Width="284">
+    <TextBlock Text="WORKTREE" Margin="4,2,4,8"
+               FontFamily="{x:Static controls:AppFonts.Ui}"
+               FontSize="{DynamicResource FontSize.2xs}"
+               FontWeight="{DynamicResource FontWeight.Emphasis}"
+               Foreground="{DynamicResource Brush.TextFaint}" />
+
+    <StackPanel Margin="4,0">
+      <CheckBox x:Name="PART_Switch" Content="Build in worktree" Style="{DynamicResource Ds.Switch}" />
+      <TextBlock x:Name="PART_Desc" Margin="0,6,0,8" TextWrapping="Wrap"
+                 FontSize="{DynamicResource FontSize.2xs}"
+                 Foreground="{DynamicResource Brush.TextFaint}" />
+    </StackPanel>
+
+    <!-- TARGET WORKTREE (yalnız on iken; BuildApp.jsx:887-895) -->
+    <StackPanel x:Name="PART_TargetSection" Visibility="Collapsed">
+      <Border BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0">
+        <StackPanel>
+          <TextBlock Text="TARGET WORKTREE" Margin="4,2,4,4"
+                     FontFamily="{x:Static controls:AppFonts.Ui}"
+                     FontSize="{DynamicResource FontSize.2xs}"
+                     FontWeight="{DynamicResource FontWeight.Emphasis}"
+                     Foreground="{DynamicResource Brush.TextFaint}" />
+          <StackPanel x:Name="PART_TargetRows" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <!-- source satırı (BuildApp.jsx:896-899) -->
+    <Border BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,6,0,0">
+      <StackPanel Orientation="Horizontal" Margin="4,8,4,2">
+        <TextBlock Text="source" VerticalAlignment="Center"
+                   FontSize="{DynamicResource FontSize.2xs}"
+                   Foreground="{DynamicResource Brush.TextFaint}" />
+        <TextBlock x:Name="PART_Source" Margin="6,0,0,0" VerticalAlignment="Center"
+                   FontFamily="{x:Static controls:AppFonts.Mono}"
+                   FontSize="{DynamicResource FontSize.2xs}"
+                   Foreground="{DynamicResource Brush.TextSecondary}"
+                   TextTrimming="CharacterEllipsis" />
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

@@ -25,6 +25,8 @@
     <UseWPF>true</UseWPF>
     <!-- [A13.2] PerMonitorV2 DPI (px→DIP 1:1); T65 A/B'si için de önkoşul. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- [T64] .exe'nin Explorer/taskbar ikonu — çok boyutlu ICO (16/24/32/48/256), üreteci Assets/generate-tray-icon.ps1. -->
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -46,11 +48,16 @@
   </Target>
 
   <ItemGroup>
-    <!-- [T62] Tepsi ikonu — elle ayarlanmış 16px raster (üreteci: Assets/generate-tray-icon.ps1). Tam ikon hattı T64. -->
+    <!-- [T62/T64] Tepsi ikonu (elle ayarlanmış 16px raster) + çok boyutlu uygulama ikonu; ikisi de
+         Assets/generate-tray-icon.ps1 tarafından üretilir. Gömülü kaynak olmaları Window.Icon/AppTrayIcon'ın
+         pack URI ile çözebilmesi için gerekli. -->
     <Resource Include="Assets\*.ico" />
     <Resource Include="Fonts\*.otf" />
     <!-- CompositeFont XML de gömülmeli: pack URI ile "#Geist Mono Console" ailesini çözebilmek için [T56] -->
     <Resource Include="Fonts\*.CompositeFont" />
+    <!-- [T64] Geist SIL OFL lisansı: gömülü OTF'ler uygulamayla dağıtıldığı için lisans metni de çıktıda
+         BULUNMAK ZORUNDA (OFL "included in all copies"). Gömülü kaynak DEĞİL — okunabilir dosya olarak. -->
+    <Content Include="Assets\GEIST-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

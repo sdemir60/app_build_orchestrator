@@ -9,7 +9,11 @@
        border-strong, radius-md (=overlay 8), popover gölgesi. Hover'da yüzey/metin bir adım açılır
        (surface-overlay→surface-raised, text-secondary→text-primary). Host (ConsoleView vb.) Visibility'yi
        BottomAnchorBehavior.ShowPill'e bağlar; Click → JumpToBottom (bkz. LatestPill.xaml.cs). -->
-  <Button x:Name="PillButton" Click="OnClick" Cursor="Hand" Focusable="False"
+  <!-- [T60] Style="{x:Null}": Controls.xaml artık stilsiz HER Button'a DS secondary görünümünü verir; bu
+       buton ise TAM ÖZEL bir şablona sahiptir (kabuk aşağıda, renkleri code-behind sürer). Style'a yerel bir
+       değer atamak implicit style aramasını kapatır — aksi halde DS'in yükseklik/zemin setter'ları pill'in
+       kendi 22px kabuğunun üstüne binerdi. -->
+  <Button x:Name="PillButton" Style="{x:Null}" Click="OnClick" Cursor="Hand" Focusable="False"
           Padding="0" BorderThickness="0" Background="Transparent">
     <Button.Template>
       <ControlTemplate TargetType="Button">
@@ -20,7 +24,9 @@
                 Effect="{DynamicResource Effect.PopoverShadow}"
                 Padding="7,0,9,0" Height="22">
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock x:Name="Glyph" Text="&#x2304;" FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
+            <!-- [T64] Chevron ⌄ Geist Mono'da YOK: CompositeFont (Geist Mono Console) kullanılır — FamilyMap'i
+                 sembolü Segoe UI Symbol'e düşürür (düz Mono bu eşlemeyi baypas eder → tofu riski). -->
+            <TextBlock x:Name="Glyph" Text="&#x2304;" FontFamily="{x:Static controls:AppFonts.MonoConsole}" FontSize="11"
                        Margin="0,0,5,0" VerticalAlignment="Center" />
             <TextBlock x:Name="Label" Text="latest" FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
                        VerticalAlignment="Center" />

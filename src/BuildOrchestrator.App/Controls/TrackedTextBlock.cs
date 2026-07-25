@@ -15,11 +15,6 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 public sealed class TrackedTextBlock : FrameworkElement
 {
-    // Gömülü Geist (UI font — Mono DEĞİL). ConsoleView/FontAbWindow ile AYNI pack URI kalıbı [T56/T65].
-    private static readonly FontFamily GeistFamily = new(
-        new Uri("pack://application:,,,/BuildOrchestrator.App;component/Fonts/"),
-        "./#Geist");
-
     // GlyphRun.language yalnız satır kesme/justification'ı etkiler — tek satırlık caps etiketlerde
     // önemsiz; sabit "en-US" (CultureInfo.InvariantCulture boş IETF tag verir, XmlLanguage bunu kabul
     // etmez, bu yüzden InvariantCulture'dan türetilmez).
@@ -38,8 +33,9 @@ public sealed class TrackedTextBlock : FrameworkElement
         new FrameworkPropertyMetadata(11.0, OnVisualPropertyChanged));
 
     public static readonly DependencyProperty FontFamilyProperty = DependencyProperty.Register(
+        // Varsayılan UI (sans) yüzü — pack URI burada TEKRARLANMAZ, tek tanım yeri AppFonts'tur [T64].
         nameof(FontFamily), typeof(FontFamily), typeof(TrackedTextBlock),
-        new FrameworkPropertyMetadata(GeistFamily, OnVisualPropertyChanged));
+        new FrameworkPropertyMetadata(AppFonts.Ui, OnVisualPropertyChanged));
 
     public static readonly DependencyProperty FontWeightProperty = DependencyProperty.Register(
         nameof(FontWeight), typeof(FontWeight), typeof(TrackedTextBlock),

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
 
@@ -113,6 +114,80 @@ public class LayerEngineTests
         Assert.All(result.Nodes, n => Assert.Null(n.LayerIndex));
         Assert.All(result.Nodes, n => Assert.Null(n.LayerName));
         Assert.Equal([0, 1], result.Nodes.Select(n => n.BuildOrder));
+    }
+
+    // [A1→D7 fold] Settings editörü kullanıcıya pattern yazdırır; katastrofik-backtracking bir pattern
+    // (ör. (a+)+$) sınırlı bir matchTimeout OLMADAN IsMatch'te planlamayı SONSUZA DEK ASAR. Sınırlı timeout +
+    // RegexMatchTimeoutException'ın non-match olarak ele alınması: pattern patlamamalı, proje Other'a düşmeli,
+    // warn-only bir uyarı çıkmalı. (Geçersiz-regex → planFailed yolu ayrıca korunur — o RegexParseException'dır,
+    // burada test edilen timeout'tan farklı.)
+    [Fact]
+    public void catastrophic_backtracking_pattern_completes_quickly_falls_to_other_and_warns_but_never_hangs()
+    {
+        // '(a+)+$' 40 'a' + eşleşmeyen kuyruk ('!') karşısında exponential backtracking'e girer; matchTimeout
+        // olmadan pratikte SONSUZA kadar sürer. Regex'in KENDİSİ geçerlidir (derlenir) — bu yüzden planFailed
+        // yolu tetiklenmez; tehlike IsMatch'in asmasıdır.
+        LayerPattern[] patterns = [new(Order: 0, Regex: "(a+)+$", Name: "Catastrophic")];
+        var nodes = new[] { N("A", new string('a', 40) + "!") };
+
+        var sw = Stopwatch.StartNew();
+        var result = LayerEngine.AssignLayers(nodes, patterns); // ASMAMALI / FIRLATMAMALI
+        sw.Stop();
+
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"planlama {sw.Elapsed} sürdü — matchTimeout sınırlamadı");
+        Assert.Equal(LayerEngine.OtherLayerName, result.Nodes[0].LayerName); // timeout = non-match → Other
+        Assert.NotEmpty(result.Warnings);                                    // warn-only: timeout uyarısı
+    }
+
+    // [D7 fix-wave][Fix1/CRITICAL] Boş/whitespace bir regex Settings editöründe geçerli-kaydedilebilir bir
+    // durumdur (AddLayer yeni satırları boş regex ile başlatır, CanSave bunu izin verir — bu Save-validation
+    // davranışı DOĞRUDUR ve değişmez). Ama new Regex("").IsMatch(...) HER zaman true döner (.NET: boş pattern
+    // her girdinin 0. pozisyonunda eşleşir) — bu yüzden AssignLayers'a boş/whitespace bir pattern ulaştığında
+    // TÜM projeleri yutup grouping'i tek katmana çökertiyordu. Tasarım otoritesi (prototype compileGroups,
+    // BuildApp.jsx:977) tam tersini yapar: boş/whitespace pattern → null (asla eşleşmeyen/inert). Bu test önce
+    // MEVCUT koda karşı RED olmalı (EmptyLayer/WhitespaceLayer her projeyi yutar), fix sonrası GREEN.
+    [Fact]
+    public void empty_or_whitespace_regex_layer_never_matches_and_a_later_real_pattern_or_other_still_applies()
+    {
+        LayerPattern[] patterns =
+        [
+            new(Order: 0, Regex: "", Name: "EmptyLayer"),
+            new(Order: 1, Regex: "   ", Name: "WhitespaceLayer"),
+            new(Order: 2, Regex: "^Data", Name: "DataLayer"),
+        ];
+        var nodes = new[]
+        {
+            N("A", "DataA", buildOrder: 0),
+            N("B", "Ui", buildOrder: 1),
+        };
+
+        var result = LayerEngine.AssignLayers(nodes, patterns);
+
+        var byId = result.Nodes.ToDictionary(n => n.Id);
+        Assert.Equal(2, byId["A"].LayerIndex);
+        Assert.Equal("DataLayer", byId["A"].LayerName);
+        Assert.Equal(3, byId["B"].LayerIndex); // max(Order)=2 + 1 → Other
+        Assert.Equal(LayerEngine.OtherLayerName, byId["B"].LayerName);
+
+        // Boş/whitespace katmanlar HİÇBİR projeyi yakalamamalı.
+        Assert.DoesNotContain(result.Nodes, n => n.LayerName == "EmptyLayer");
+        Assert.DoesNotContain(result.Nodes, n => n.LayerName == "WhitespaceLayer");
+    }
+
+    // [D7 fix-wave][Fix2/Minor design fidelity] Tasarım otoritesi kullanıcı regex'lerini case-INSENSITIVE
+    // derler ('i' bayrağı — prototype BuildApp.jsx:977 ve :996). CompileUserPattern RegexOptions.None
+    // kullanıyordu (case-sensitive) — bu test MEVCUT koda karşı RED, fix (RegexOptions.IgnoreCase) sonrası
+    // GREEN olmalı.
+    [Fact]
+    public void user_pattern_matches_regardless_of_casing_against_the_project_name()
+    {
+        LayerPattern[] patterns = [new(Order: 0, Regex: "^osys\\.web", Name: "WebLayer")];
+        var nodes = new[] { N("A", "OSYS.Web.Portal") };
+
+        var result = LayerEngine.AssignLayers(nodes, patterns);
+
+        Assert.Equal(0, result.Nodes[0].LayerIndex);
+        Assert.Equal("WebLayer", result.Nodes[0].LayerName);
     }
 
     [Fact]

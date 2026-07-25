@@ -59,29 +59,11 @@ public partial class LatestPill : UserControl
         if (TryBrush(hover ? "Brush.SurfaceRaised" : "Brush.SurfaceOverlay") is not SolidColorBrush bgBrush) return;
         if (TryBrush(hover ? "Brush.TextPrimary" : "Brush.TextSecondary") is not SolidColorBrush fgBrush) return;
 
-        Color bgTo = bgBrush.Color;
-        Color fgTo = fgBrush.Color;
-
-        // [Motion sözleşmesi] TAZE oku — cache'lenmiş bir bayrak DEĞİL.
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
-        var duration = MotionTokens.ResolveDuration(this, "Duration.Fast", 120.0); // prototip: --duration-fast
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1)); // --ease-standard
-
-        AnimateOrSetColor(_bg, bgTo, animationsEnabled, duration.TimeSpan, spline);
-        AnimateOrSetColor(_fg, fgTo, animationsEnabled, duration.TimeSpan, spline);
-    }
-
-    private static void AnimateOrSetColor(SolidColorBrush brush, Color to, bool animationsEnabled, TimeSpan duration, KeySpline spline)
-    {
-        if (!animationsEnabled || duration <= TimeSpan.Zero)
-        {
-            brush.BeginAnimation(SolidColorBrush.ColorProperty, null);
-            brush.Color = to;
-            return;
-        }
-        var animation = new ColorAnimationUsingKeyFrames();
-        animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(duration), spline));
-        brush.BeginAnimation(SolidColorBrush.ColorProperty, animation);
+        // [T60] Süre/eğri/AnimationsEnabled'ı TAZE okuyan tek geçiş yolu MotionTokens.TransitionColor'dır —
+        // T59'da buradaki private AnimateOrSetColor onun BİREBİR aynısıydı; T60 DS kütüphanesi aynı şekle
+        // ihtiyaç duyunca ORTAKLAŞTIRILDI (kopya YASAK, CLAUDE.md). Davranış değişmedi.
+        MotionTokens.TransitionColor(this, _bg, bgBrush.Color);
+        MotionTokens.TransitionColor(this, _fg, fgBrush.Color);
     }
 
     private void OnClick(object sender, RoutedEventArgs e) => Click?.Invoke(this, e);

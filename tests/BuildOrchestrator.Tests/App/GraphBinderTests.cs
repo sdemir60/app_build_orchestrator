@@ -1,0 +1,195 @@
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Model;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [T50/D5] <see cref="GraphBinder"/> — topoloji + satır VM'lerini graf besleme modeline (<see cref="GraphNode"/>/
+/// <see cref="GraphEdge"/>) çeviren SAF çekirdek. Kenar yönü, katman (LayerIndex ?? topolojik derinlik), statü
+/// eşlemesi (TEK otorite <see cref="ProjectRowViewModel.Status"/>), katman-içi build-order sırası ve veri-türevli
+/// kısa-ad öneki burada pinlenir. WPF'siz.
+/// </summary>
+public class GraphBinderTests
+{
+    private static string Id(string name) => $@"C:\repo\{name}.csproj";
+
+    private static ProjectNode Node(string name, string[] deps, int? layerIndex = null, bool inCycle = false, int buildOrder = 0) =>
+        new(Id(name), name, Id(name), SolutionNames: [], Dependencies: [.. deps.Select(Id)],
+            BuildOrder: buildOrder, LayerIndex: layerIndex, LayerName: null, InCycle: inCycle, WillBuild: null);
+
+    private static IReadOnlyDictionary<string, ProjectRowViewModel> RowsFor(IReadOnlyList<ProjectNode> topology)
+    {
+        var dict = new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in topology)
+            dict[n.Id] = new ProjectRowViewModel(n.Id, n.Name, ProjectRowState.Pending) { InCycle = n.InCycle };
+        return dict;
+    }
+
+    private static int IndexOf(IReadOnlyList<GraphNode> nodes, string name)
+    {
+        for (int i = 0; i < nodes.Count; i++) if (nodes[i].Name == name) return i;
+        return -1;
+    }
+
+    [Fact]
+    public void Edges_point_from_dependency_to_dependent()
+    {
+        var topology = new[]
+        {
+            Node("Base", []),
+            Node("Data.Core", ["Base"]),
+            Node("Server.Api", ["Data.Core", "External"]), // "External" topolojide YOK → kenar üretmez
+        };
+
+        var edges = GraphBinder.Edges(topology);
+
+        // From = bağımlılık (producer) adı, To = bağımlı (consumer) adı — GraphEdge sözleşmesi (yukarıdan aşağı).
+        Assert.Contains(edges, e => e.From == "Base" && e.To == "Data.Core");
+        Assert.Contains(edges, e => e.From == "Data.Core" && e.To == "Server.Api");
+        Assert.DoesNotContain(edges, e => e.From == "External"); // topoloji-dışı dep atlanır
+        Assert.Equal(2, edges.Count);
+    }
+
+    [Fact]
+    public void Layer_falls_back_to_topological_depth_when_no_layer_patterns_are_configured()
+    {
+        // LayerIndex hepsi null (katman patterni yok) → derinlik: Base 0, Data 1, Api/Portal 2.
+        var topology = new[]
+        {
+            Node("Base", []),
+            Node("Data.Core", ["Base"]),
+            Node("Server.Api", ["Data.Core"]),
+            Node("Web.Portal", ["Data.Core"]),
+        };
+
+        var depth = GraphBinder.TopologicalDepths(topology);
+        Assert.Equal(0, depth[Id("Base")]);
+        Assert.Equal(1, depth[Id("Data.Core")]);
+        Assert.Equal(2, depth[Id("Server.Api")]);
+        Assert.Equal(2, depth[Id("Web.Portal")]);
+
+        // LayerOf: LayerIndex yoksa derinliğe düşer...
+        Assert.Equal(2, GraphBinder.LayerOf(topology[2], depth));
+        // ...ama LayerIndex VARSA o kazanır (fallback değil).
+        Assert.Equal(5, GraphBinder.LayerOf(Node("Pinned", ["Base"], layerIndex: 5), depth));
+
+        // Uçtan uca aynı katmanlar Nodes() çıktısında.
+        var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
+        Assert.Equal(0, nodes.Single(n => n.Name == "Base").Layer);
+        Assert.Equal(1, nodes.Single(n => n.Name == "Data.Core").Layer);
+        Assert.Equal(2, nodes.Single(n => n.Name == "Web.Portal").Layer);
+    }
+
+    [Fact]
+    public void Cycle_members_get_finite_back_edge_trimmed_depths_not_a_shared_component_depth()
+    {
+        // [D5 fix wave/Fix 4] TopologicalDepths döküman notu (brief satır 18) cycle üyelerinin "paylaşımlı
+        // component derinliği" taşıdığını söyler; GERÇEK davranış farklıdır — SCC-paylaşımlı DEĞİL, geri-kenar
+        // (0 katkı) ile KIRPILMIŞ sonlu derinliktir (bkz. GraphBinder.TopologicalDepths dokümantasyonu). Bu KABUL
+        // EDİLEN davranış (D5 kapsamı: sonlu derinlik katman-yerleşimi için yeterli — SCC-paylaşımlı derinlik
+        // Minor/görsel bir konu, yalnız katman patterni yokken devreye girer; cycle STATÜSÜ StatusOf'tan ayrı ve
+        // doğru — bkz. Cycle_members_are_reported_as_cycle_status). Bu test brief'in ifadesinden BİLİNÇLİ sapmayı
+        // AÇIK ve KİLİTLİ hale getirir: A→B→C→A 3-düğümlü cycle'da üç üye ÜÇ FARKLI derinlik alır (paylaşımlı
+        // TEK derinlik DEĞİL) — değerler gerçek koddan okunmuştur (A=3, B=2, C=1; TEMP probe ile doğrulanmıştır),
+        // varsayılmamıştır.
+        var topology = new[]
+        {
+            Node("A", ["B"], inCycle: true), // A, B'ye bağımlı
+            Node("B", ["C"], inCycle: true), // B, C'ye bağımlı
+            Node("C", ["A"], inCycle: true), // C, A'ya bağımlı → geri kenar (cycle'ı kapatır)
+        };
+
+        var depth = GraphBinder.TopologicalDepths(topology);
+
+        Assert.Equal(3, depth[Id("A")]);
+        Assert.Equal(2, depth[Id("B")]);
+        Assert.Equal(1, depth[Id("C")]);
+        // Üç farklı değer → SCC-paylaşımlı derinlik DEĞİL (brief'ten bilinçli sapma, yukarıda belgelenmiştir).
+        Assert.NotEqual(depth[Id("A")], depth[Id("B")]);
+        Assert.NotEqual(depth[Id("B")], depth[Id("C")]);
+    }
+
+    [Fact]
+    public void Cycle_members_are_reported_as_cycle_status()
+    {
+        // StatusOf: row null + inCycle → Cycle; sync öncesi her şey Discovered (cycle olsa bile).
+        Assert.Equal(GraphStatus.Cycle, GraphBinder.StatusOf(null, inCycle: true, synced: true));
+        Assert.Equal(GraphStatus.Discovered, GraphBinder.StatusOf(null, inCycle: true, synced: false));
+
+        // Row VARSA statü TEK otoriteden (row.Status) gelir — cycle üyesi satır (InCycle + Pending) Cycle döner
+        // (StatusOf cycle'ı YENİDEN eşlemez; row.Status'a delege eder — çift otorite YASAK).
+        var cycleRow = new ProjectRowViewModel(Id("X"), "X", ProjectRowState.Pending) { InCycle = true };
+        Assert.Equal(GraphStatus.Cycle, GraphBinder.StatusOf(cycleRow, inCycle: true, synced: true));
+
+        // [D5 fix wave/Fix 3] Guard — delegasyon kanıtı: satır varsa `inCycle` argümanı YOK SAYILMALI (ikinci bir
+        // "if (inCycle) return Cycle" kısayolu YASAK). State=Started olan (row.Status==Building) bir satır,
+        // inCycle:true ile çağrılsa BİLE Cycle DEĞİL Building dönmeli — aksi halde StatusOf ikinci bir otorite
+        // taşıyor demektir.
+        var startedInCycleRow = new ProjectRowViewModel(Id("Z"), "Z", ProjectRowState.Started) { InCycle = true };
+        Assert.Equal(GraphStatus.Building, GraphBinder.StatusOf(startedInCycleRow, inCycle: true, synced: true));
+
+        // Uçtan uca: cycle düğümü grafta Cycle; cycle-dışı düğüm değil.
+        var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]) };
+        var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
+        Assert.Equal(GraphStatus.Cycle, nodes.Single(n => n.Name == "X").Status);
+        Assert.NotEqual(GraphStatus.Cycle, nodes.Single(n => n.Name == "Y").Status);
+    }
+
+    [Fact]
+    public void Nodes_source_the_dep_badge_from_row_HasDepIssue()
+    {
+        // [D5 fix wave/Fix 1] Nodes() beslemesinde `row?.HasDepIssue ?? false` sabit değil — satırdan gelmeli.
+        // Base'in satırında DepIssues set edilir (HasDepIssue==true); Data.Core'unkinde set edilmez (false kalır).
+        var topology = new[] { Node("Base", []), Node("Data.Core", ["Base"]) };
+        var rows = RowsFor(topology);
+        rows[Id("Base")].DepIssues = ["Data.Core"]; // ▲ tetikler → HasDepIssue == true
+        // Data.Core satırında DepIssues atanmaz → HasDepIssue == false (varsayılan).
+
+        var nodes = GraphBinder.Nodes(topology, rows);
+
+        Assert.True(nodes.Single(n => n.Name == "Base").HasDepIssue);
+        Assert.False(nodes.Single(n => n.Name == "Data.Core").HasDepIssue);
+    }
+
+    [Fact]
+    public void Node_order_within_a_layer_follows_build_order()
+    {
+        // [D5 fix wave/Fix 2] Zeta ve Alpha AYNI katmanda (ikisi de Root'a bağlı → derinlik 1); topoloji
+        // build-order'ı BİLEREK alfabetiğin TERSİ (Zeta önce, Alpha sonra) — böylece bu test "aynı katmanda
+        // Name'e göre sırala" regresyonunu YAKALAYABİLİR (eski Alpha/Beta örneği alfabetik==build-order olduğu
+        // için bunu ayırt edemiyordu).
+        var topology = new[]
+        {
+            Node("Root", []),
+            Node("Zeta", ["Root"], buildOrder: 1),
+            Node("Alpha", ["Root"], buildOrder: 2),
+        };
+
+        var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
+
+        Assert.Equal(nodes.Single(n => n.Name == "Zeta").Layer, nodes.Single(n => n.Name == "Alpha").Layer);
+        Assert.True(IndexOf(nodes, "Zeta") < IndexOf(nodes, "Alpha"),
+            "aynı katmanda düğüm sırası topolojinin build-order'ını izlemeli (alfabetik DEĞİL — Zeta < Alpha alfabetik olarak yanlış olurdu)");
+    }
+
+    [Fact]
+    public void Short_label_strips_the_common_prefix_derived_from_the_data_not_a_hardcoded_one()
+    {
+        // Adlar OSYS DEĞİL: önek VERİDEN türetilir (Contoso.). Hardcode "OSYS." olsaydı hiçbir şey kırpılmazdı.
+        var topology = new[]
+        {
+            Node("Contoso.Web", []),
+            Node("Contoso.Data.Core", ["Contoso.Web"]),
+        };
+        var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
+        Assert.Equal("Web", nodes.Single(n => n.Name == "Contoso.Web").ShortName);
+        Assert.Equal("Data.Core", nodes.Single(n => n.Name == "Contoso.Data.Core").ShortName);
+
+        // Ortak nokta-segmenti yoksa hiç kırpılmaz (tam ad kalır).
+        var noCommon = new[] { Node("Alpha.One", []), Node("Beta.Two", []) };
+        var n2 = GraphBinder.Nodes(noCommon, RowsFor(noCommon));
+        Assert.Equal("Alpha.One", n2.Single(n => n.Name == "Alpha.One").ShortName);
+    }
+}

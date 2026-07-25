@@ -5,6 +5,8 @@ using System.Text;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -17,20 +19,66 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 {
     public string Id { get; }
     public string Name { get; }
-    [ObservableProperty] private ProjectRowState _state;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private ProjectRowState _state;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Bu proje topolojide bir cycle (SCC) üyesi mi —
+    /// <see cref="ProjectNode.InCycle"/>'dan topoloji uzlaştırmasında (<see cref="RunViewModel.OnWorkspaceTopology"/>)
+    /// taşınır (tıpkı <see cref="SolutionName"/> gibi). Cycle üyeleri motor tarafından pre-skip edilir; tasarım
+    /// onları <c>skipped</c> değil <c>cycle</c> gösterir — bu bayrak <see cref="Status"/>'ta Pending/Skipped
+    /// alt-durumunu EZER.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool _inCycle;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı (<see cref="RunViewModel.IsRunning"/> ||
+    /// <see cref="RunViewModel.IsStarting"/>) — <see cref="RunViewModel"/> her satıra iter (IsSelected deseni).
+    /// <c>queued</c> = "planlanmış ama henüz başlamamış" YALNIZ bir run uçuştayken görünür bir durumdur; bu bayrak
+    /// olmadan Pending bir satır ölü envanterden (Discovered) ayırt edilemez.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool _isRunActive;
+
+    /// <summary>[T53-UI] Kartın soluk ikinci satırı — projenin ait olduğu solution'ın adı (prototip
+    /// <c>p.sln</c>, BuildApp.jsx:384). Kaynak: <see cref="ProjectNode.SolutionNames"/> (ilk eleman); topoloji
+    /// kurulurken atanır. Bir projeyi birden çok .sln içerebilir — kart tek (ilk) adı gösterir.</summary>
+    [ObservableProperty] private string? _solutionName;
+
+    /// <summary>[T53-UI] SHA çiftinin sol yarısı: projenin MEVCUT (derlenmiş) commit'i — prototip <c>st.curSha</c>
+    /// (BuildApp.jsx:400). <b>Şu an hiçbir IPC event'i per-proje sha taşımaz</b> (yalnız run-geneli
+    /// <see cref="RunViewModel.TargetSha"/> = SyncCompletedEvent.TargetSha vardır); bu alan bir sonraki
+    /// per-proje-sha kablajına dek boş kalır (uydurulmaz). Kart yalnız <see cref="WillBuild"/>==true iken bu
+    /// çifti gösterir.</summary>
+    [ObservableProperty] private string? _currentSha;
+
+    /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
+    /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
+    /// genişliği (2→3), iç sarmalayıcı <c>TranslateX 4</c> ve <c>Brush.SurfaceRaised</c> zemini için okur.</summary>
+    [ObservableProperty] private bool _isSelected;
+
+    /// <summary>[D5] Kısa-ad öneki (ör. <c>"OSYS."</c>) — dep-issue tooltip'i tam proje adlarını gösterirken bu
+    /// öneki atar. HARDCODE DEĞİL: <see cref="RunViewModel"/> topoloji adlarından türetip (tek otorite,
+    /// <see cref="Graph.GraphNode.CommonDotPrefix"/>) her satıra iter (<see cref="IsRunActive"/> deseni). Önek
+    /// yoksa boş — kırpma yapılmaz.</summary>
+    [ObservableProperty] private string _namePrefix = "";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DurationMsText))]
     private long _durationMs;
 
-    /// <summary>[Minor/Fix wave 1] XAML doğrudan <c>DurationMs</c>'e bağlanırsa current culture kullanılır
-    /// (brief InvariantCulture ister) — bu yüzden görüntü için ayrı, invariant biçimli bir string.</summary>
-    public string DurationMsText => DurationMs.ToString(CultureInfo.InvariantCulture);
+    /// <summary>[Minor/Fix wave 1 · C2] Görüntü metni — <see cref="DurationFormat.Duration"/> ile (fmtDur portu,
+    /// InvariantCulture): <c>4.2s</c> / <c>1m 12s</c>. Henüz derlenmemiş/skipped satırlar (<c>DurationMs == 0</c>)
+    /// prototiple tutarlı biçimde <c>"—"</c> gösterir (null süre = bilinmiyor) — ham <c>0</c> ("0.0s") değil.</summary>
+    public string DurationMsText => DurationFormat.Duration(DurationMs == 0 ? null : DurationMs);
 
     /// <summary>[Task 17][T53/v7Δ8] dirty=true, güncel(clean)=false, imza-yok/pre-Sync(hollow)=null.
     /// <see cref="BuildPreviewEvent"/> ile pre-populate edilir; proje succeeded olduğu ANDA (run içinde canlı)
     /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).</summary>
-    [ObservableProperty] private bool? _willBuild;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool? _willBuild;
 
     /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
     /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
@@ -42,15 +90,47 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
     public bool HasDepIssue => DepIssues is { Count: > 0 };
 
-    public ProjectRowViewModel(string id, string name, ProjectRowState state)
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
+    /// <see cref="InCycle"/> + <see cref="WillBuild"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
+    /// (kart yalnız bunu okur; eşleme mantığı kontrolde kopyalanmaz). <c>cycle</c> ve <c>queued</c> ayrı IPC
+    /// alanları TAŞIMAZ — ikisi de eldeki topoloji/run sinyallerinden TÜRETİLİR:
+    /// <list type="bullet">
+    /// <item><b>cycle</b>: <see cref="InCycle"/>=true olan bir satır (Pending ya da pre-skipped Skipped) — tasarım
+    /// onu skipped değil cycle gösterir (alt-durumu ezer).</item>
+    /// <item><b>queued</b>: bir run uçuştayken (<see cref="IsRunActive"/>) planlanmış (<see cref="WillBuild"/>==true)
+    /// ama henüz başlamamış (Pending) satır. Run bitince <see cref="IsRunActive"/> düşer → yine Discovered.</item>
+    /// </list></summary>
+    public Controls.GraphStatus Status
+    {
+        get
+        {
+            if (InCycle && State is ProjectRowState.Pending or ProjectRowState.Skipped)
+                return Controls.GraphStatus.Cycle;
+            return State switch
+            {
+                ProjectRowState.Started => Controls.GraphStatus.Building,
+                ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
+                ProjectRowState.Failed => Controls.GraphStatus.Failed,
+                ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
+                _ => IsRunActive && WillBuild == true ? Controls.GraphStatus.Queued : Controls.GraphStatus.Discovered,
+            };
+        }
+    }
+
+    public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)
     {
         Id = id;
         Name = name;
         _state = state;
+        _solutionName = solutionName;
     }
 }
 
 public enum ProjectRowState { Pending, Started, Succeeded, Failed, Skipped }
+
+/// <summary>[D4 review §3] Kart seçimi değişiminde konsolun izleyeceği aksiyon (<see cref="RunViewModel.NextConsoleSelection"/>
+/// kararı) — MainWindow yalnız uygular.</summary>
+public enum ConsoleSelection { ShowRun, LoadProjectLog }
 
 /// <summary>
 /// [Task 12] Event → proje satırı/elapsed/log durumu. **UI-thread-agnostic çekirdek:** hiçbir yerde
@@ -88,6 +168,7 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly ConsoleBatcher _console;
     private readonly Func<string> _newRunId;
     private readonly Func<long> _nowMs; // [Minor/Fix wave 1] elapsed hesap kaynağı — testte deterministik saat enjekte edilir (D8)
+    private readonly Services.IOsActions? _osActions; // [E1/T67] satır hover ikonlarının OS eylemleri (Reveal/Open-in-VS); üretimde daima enjekte, testte null default = güvenli no-op
 
     // [Kısıt 4] _runText/_projectText/_liveLines HEM arka plan thread'inden (OnProjectLog — marshal YOK,
     // A13.2) HEM UI thread'inden (chunk/Get*DocumentText) dokunulur — düz Dictionary/StringBuilder thread-safe
@@ -121,6 +202,13 @@ public sealed partial class RunViewModel : ObservableObject
     private int? _runParallelism;
     private readonly Dictionary<string, long> _projectStartedAtMs = new(StringComparer.OrdinalIgnoreCase);
 
+    // [D2/T38] Sticky şeridin "wb/fin/allClean"i için SABİT willBuild kümesi: prototipte (BuildApp.jsx) willBuild
+    // koşu boyunca değişmez (eng.willBuild). VM'de satırların WillBuild bayrağı succeeded olunca false'a döndüğü
+    // için CANLI sayılamaz — bu yüzden run başında BuildPreviewEvent'ten (WillBuild==true olanlar) DONDURULUR.
+    // NOT (wire gap): BuildPreviewEvent yalnız RUN başında gelir (RunCoordinator), Sync sonrası Idle'da GELMEZ —
+    // bu yüzden pre-build Idle'da bu küme boştur (allClean=true varsayılır). Bkz. task-D2-report.md.
+    private readonly HashSet<string> _willBuildIds = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>[Fix wave 1, Finding 2 regression testi] YALNIZ testler için: <see cref="OnProjectLogChunk"/>
     /// dikiş kilidinden çıkar çıkmaz (kilit ne zaman kapansa, kapandığı ANDA) senkron tetiklenir. Üretimde
     /// hep null — sıfır maliyet. Testte, kilit içinde <c>ActiveProjectId</c> atamasının GERÇEKTEN kilitle
@@ -131,9 +219,18 @@ public sealed partial class RunViewModel : ObservableObject
 
     public ObservableCollection<ProjectRowViewModel> Projects { get; } = [];
 
-    [ObservableProperty] private string _rootPath = "";
+    // [A5/T69 · Fix wave 1 — Finding 6] Sync / branch / worktree / topoloji yüzeyi AYRI partial dosyada:
+    // RunViewModel.Workspace.cs (faz, hedef commit, envanter, topoloji uzlaştırma).
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasWorkspace))]
+    private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
-    [ObservableProperty] private int _parallelism = Math.Max(1, Environment.ProcessorCount);
+
+    // [Fix wave 1, C2 review Finding 2] Parallelism artık PerfMode'un varsayılanından tohumlanır — eski
+    // Environment.ProcessorCount varsayılanı PerfMode'dan (It-2) ÖNCEYDİ ve _perfMode="Balanced"→4 (v7 plan
+    // K11: perf mode SABİT 6/4/2 tablosudur) ile çelişiyordu. TEK kaynak: her ikisi de aynı sabiti kullanır.
+    [ObservableProperty] private int _parallelism = ParallelismFor(DefaultPerfMode);
     [ObservableProperty] private long _elapsedMs;
 
     /// <summary>[Task 17] Run genelinde (RunCompletedEvent'ten) dependency-affected proje sayısı özeti.</summary>
@@ -144,14 +241,37 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="OnProjectDone"/>/ProjectSkipped) ve runStarted'da (X/N fallback ile) güncellenir.</summary>
     [ObservableProperty] private string _etaText = "";
 
+    /// <summary>[D2/T70] Yumuşatılmış ETA (ms) — <see cref="RibbonText.EtaSuffix"/> bunu okuyup " · ~35s left"/
+    /// " · almost done" ekini üretir. <see cref="UpdateEta"/>'da set edilir; ETA hesaplanamıyorsa (no-history)
+    /// <c>null</c>. <see cref="EtaText"/> (string) ayrı kalır (başka tüketiciler için); şerit numeric <c>EtaMs</c>'i kullanır.</summary>
+    [ObservableProperty] private long? _etaMs;
+
+    /// <summary>[D2/T38] Bu koşuda derlenecek proje YOK (SABİT willBuild kümesi boş) — şerit faz-metni ve progress
+    /// kolu bunu okur (prototip <c>eng.allClean</c>). Bkz. <see cref="RecomputeWillBuildSurface"/>.</summary>
+    [ObservableProperty] private bool _allClean = true;
+
+    /// <summary>[D2/T38] Derlenecek (willBuild) proje sayısı — koşu boyunca SABİT (prototip <c>wb</c>).</summary>
+    [ObservableProperty] private int _willBuildCount;
+
+    /// <summary>[D2/T38] willBuild kümesinden tamamlanan (succeeded/failed/skipped) sayısı (prototip <c>fin</c>).</summary>
+    [ObservableProperty] private int _finishedOfWillBuild;
+
+    /// <summary>[D2/T38] Repo seçili mi (prototip <c>workspace</c>) — şerit "Not ready — no repository selected"
+    /// davetini bununla ayırt eder.</summary>
+    public bool HasWorkspace => RootPath.Length > 0;
+
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
     // ABONE OLMAZ. Bu olmadan Stop/Continue butonları gerçek pencerede İLK bind sonrası ASLA yeniden
     // sorgulanmaz (StopCommand hep disabled kalır, ContinueCommand hep ölü kalır) — Kısıt 3'ü bozar.
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/worktree/config kilidi bundan türetilir
     private bool _isRunning;
 
     // [Fix wave 1(It-3), Finding 3] Supervisor runStarted'dan ÖNCE planlama yapar (scan/graph/topo — 177
@@ -161,8 +281,12 @@ public sealed partial class RunViewModel : ObservableObject
     // komut gönderilir gönderilmez (runStarted/runStopped/run-bitiren ErrorEvent'e kadar) bu boşluğu kapatır.
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
     private bool _isStarting;
 
     [ObservableProperty]
@@ -178,47 +302,163 @@ public sealed partial class RunViewModel : ObservableObject
     /// dek stale kalıp, tamamen başarılı sonraki run'larda bile güncel engine sağlığını yanlış yansıtırdı.</summary>
     [ObservableProperty] private string? _engineDiedMessage;
 
-    public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null)
+    /// <summary>[E2/T10] Son Sync başarısız olduysa hata gerekçesi (ErrorEvent.Message) — şerit bunu KIRMIZI
+    /// <c>Sync failed — {reason}</c> faz-metnine çevirir (<see cref="RibbonText.Compose"/>). Bir sonraki Sync
+    /// (<see cref="OnSyncStarted"/> retry) ya da başarılı tamamlanma (<see cref="OnSyncCompleted"/>) temizler.
+    /// Sync SALT-OKUR olduğundan Sync ile retry her zaman mümkündür (butonlar kilitlenmez).</summary>
+    [ObservableProperty] private string? _syncErrorMessage;
+
+    // ---------------------------------------------------------------- [C2] seçim / filtre / workspace hedefi / perf
+
+    /// <summary>[C2] Proje listesinde seçili satırın Id'si (yol) — null = seçim yok. <see cref="SelectProject"/>
+    /// ile yönetilir (aynı projeye tekrar tıklama = deselect).</summary>
+    [ObservableProperty] private string? _selectedProjectId;
+
+    /// <summary>[C2] Aktif statü chip'i (<see cref="ProjectFilter"/> sabitleri) — null = filtre yok.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VisibleProjects))]
+    private string? _activeFilter;
+
+    /// <summary>[C2] Serbest metin proje sorgusu (ada göre alt-dize).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VisibleProjects))]
+    private string _projectQuery = "";
+
+    /// <summary>[C2] Sync/build hedefi branch. Koşarken UI'da kilitli (<see cref="IsMidRunLocked"/>).</summary>
+    [ObservableProperty] private string _branch = "";
+
+    /// <summary>[C2] true ⇒ derleme ayrı bir git worktree üzerinde. Koşarken UI'da kilitli.</summary>
+    [ObservableProperty] private bool _useWorktree;
+
+    /// <summary>[C2] <see cref="UseWorktree"/>=true iken worktree adı; null ⇒ Supervisor varsayılan ad türetir.</summary>
+    [ObservableProperty] private string? _worktreeName;
+
+    // [Fix wave 1, C2 review Finding 2] PerfMode/Parallelism alan başlatıcılarının TEK ortak kaynağı (derleme
+    // zamanı sabiti — alan başlatma SIRASINDAN bağımsız, yukarıdaki Parallelism başlatıcısından da güvenle
+    // kullanılabilir).
+    private const string DefaultPerfMode = "Balanced";
+
+    /// <summary>[C2] Perf profili: Full/Balanced/Light. <see cref="CyclePerf"/> döngüsü paralelliği de günceller.</summary>
+    [ObservableProperty] private string _perfMode = DefaultPerfMode;
+
+    /// <summary>[C2] Proje listesi durum sayaçları — satır değişimlerinde yeniden hesaplanır.</summary>
+    [ObservableProperty] private RunCounters _counters;
+
+    /// <summary>[C2] Katman ataması pattern'leri (StartRunCommand/SyncWorkspaceCommand'a geçer). Store (D6/D7)
+    /// tarafından seed edilecek — C2 yalnız GÖNDERİR; ObservableProperty gerekmez (UI'dan iki-yönlü bağlanmaz).</summary>
+    public IReadOnlyList<LayerPattern>? LayerPatterns { get; set; }
+
+    /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
+    /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
+    public bool IsMidRunLocked => IsRunning || IsStarting;
+
+    /// <summary>[C2] Sorgu + aktif filtre altında görünen satırlar (BuildApp.jsx:465-470).</summary>
+    public IReadOnlyList<ProjectRowViewModel> VisibleProjects =>
+        Projects.Where(r => ProjectFilter.Matches(r, ProjectQuery, ActiveFilter)).ToList();
+
+    /// <summary>[C2 fold testi] YALNIZ testler: uçuştaki Sync bayrağının gözlemlenebilir hali (bkz.
+    /// <see cref="OnEngineExited"/> fold'u — engine ölümü bu bayrağı bırakmalı).</summary>
+    internal bool SyncInFlight => _syncInFlight;
+
+    // [C2] Boot geçişi: repo seçilir seçilmez (RootPath dolunca) Empty → Boot. Sonraki fazları engine event'leri sürer.
+    partial void OnRootPathChanged(string value)
+    {
+        if (Phase == AppPhase.Empty && !string.IsNullOrEmpty(value)) Phase = AppPhase.Boot;
+    }
+
+    public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null,
+        Services.IOsActions? osActions = null)
     {
         _engine = engine;
         _console = console;
         _newRunId = newRunId;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
+        _osActions = osActions; // [E1/T67] null ise OS eylemleri güvenle no-op (test default'u); üretimde enjekte edilir
     }
 
     // ---------------------------------------------------------------- komutlar
 
-    [RelayCommand(CanExecute = nameof(CanRebuild))]
-    private async Task RebuildAsync()
+    /// <summary>[C2] Ortak run başlatma yolu (Rebuild/Build/Continue/RetryFailed) — tek yerde toplanır:
+    /// runId üret, konsolu run dokümanına al, <see cref="IsStarting"/>'i aç ve <see cref="StartRunCommand"/>'ı
+    /// workspace hedefiyle (branch/worktree/layer patterns — Supervisor tarafı A1-A4'te bağlı) gönder.
+    /// <para>[Fix wave 1(It-3), Finding 1] <paramref name="clearBuffers"/>=true iken önceki run'ın
+    /// <c>_liveLines/_projectText/_runText</c> tortusu temizlenir: aksi halde İKİNCİ run'da kart tıklamasında
+    /// dikiş filtresi (LineNumber &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve
+    /// OrderBy(LineNumber) eski+yeni'yi karıştırır (bozuk "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir:
+    /// ProjectLogEvent marshal'sız işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine
+    /// düşmeden ÖNCE varabilir. <b>Continue temizlemez</b> (önceki segmentin log/proje sonuçlarını korur).</para>
+    /// <para>[Fix wave 2, Finding 1] Gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
+    /// geri açılır — aksi halde hiçbir engine event'i gelmeyeceğinden buton kalıcı kilitli kalırdı.</para></summary>
+    private async Task BeginRunAsync(RunMode mode, bool clearBuffers)
     {
         string runId = _newRunId();
         _currentRunId = runId;
         _sawRunStarted = false;
         ActiveProjectId = null;
-        IsStarting = true; // [Fix wave 1(It-3), Finding 3] runStarted gelene kadar Stop'u erişilebilir tut
-        // [Fix wave 1(It-3), Finding 1] İKİNCİ (veya sonraki) bir Rebuild'de proje log dosyaları diskte
-        // sıfırdan yazılır (satır no'ları yeniden 1'den başlar). Önceki run'ın _liveLines/_projectText/_runText
-        // tortusu temizlenmezse, bir sonraki kart tıklamasında dikiş filtresi (LineNumber > ThroughLineNumber)
-        // eski run'ın kuyruk satırlarını da geçirir ve OrderBy(LineNumber) eski+yeni'yi birbirine karıştırır
-        // (bozuk/tekrarlı "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir: ProjectLogEvent marshal'sız
-        // işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine düşmeden ÖNCE buraya
-        // varabilir — OnRunStarted'da temizlemek o satırları silerdi.
-        lock (_gate)
-        {
-            _liveLines.Clear();
-            _projectText.Clear();
-            _runText.Clear();
-            _runLineCount = 0;
-            _projectLineCount.Clear();
-        }
-        // [Fix wave 2, Finding 1] gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
-        // burada geri açılmalı — aksi halde hiçbir engine event'i asla gelmeyeceğinden (ne runStarted ne
-        // runStopped ne run-bitiren ErrorEvent) IsStarting kalıcı true kalır, Rebuild/Stop/Continue sonsuza
-        // dek kilitli kalır (eskiden self-healing olan bir buton artık "Restart Engine" ile bile açılmıyordu).
-        if (!await TrySendAsync(new StartRunCommand(runId, RunMode.Rebuild, RootPath, Configuration, Parallelism), "rebuild"))
+        IsStarting = true;
+        if (clearBuffers)
+            lock (_gate)
+            {
+                _liveLines.Clear();
+                _projectText.Clear();
+                _runText.Clear();
+                _runLineCount = 0;
+                _projectLineCount.Clear();
+            }
+        var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
+            Branch, UseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns);
+        if (!await TrySendAsync(cmd, RunModeLabel(mode)))
             IsStarting = false;
     }
-    private bool CanRebuild() => !IsRunning && !IsStarting;
+
+    private static string RunModeLabel(RunMode mode) => mode switch
+    {
+        RunMode.Rebuild => "rebuild",
+        RunMode.Build => "build",
+        RunMode.Continue => "continue",
+        RunMode.RetryFailed => "retry",
+        _ => "run",
+    };
+
+    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
+    private Task RebuildAsync()
+    {
+        ClearSelectionAndFilter(); // [design doRebuild→doBuild] tam run: seçim + filtre sıfırlanır
+        return BeginRunAsync(RunMode.Rebuild, clearBuffers: true);
+    }
+    private bool CanStartRun() => !IsRunning && !IsStarting;
+
+    // [Fix wave 1, C2 review Finding 1] Rebuild/RetryFailed, Sync uçuştayken (_syncInFlight) EK OLARAK
+    // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,
+    // ama SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
+    // Build BİLEREK bu guard'a dahil DEĞİL (prototip doBuild'in kasıtlı asimetrisi, BuildApp.jsx:1194 —
+    // doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur).
+    private bool CanRebuildOrRetry() => CanStartRun() && !_syncInFlight;
+
+    [RelayCommand(CanExecute = nameof(CanStartRun))]
+    private Task BuildAsync()
+    {
+        ClearSelectionAndFilter(); // BuildApp.jsx:1199-1200
+        return BeginRunAsync(RunMode.Build, clearBuffers: true);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRetryFailed))]
+    private Task RetryFailedAsync()
+    {
+        ClearSelectionAndFilter(); // BuildApp.jsx:1221-1222
+        return BeginRunAsync(RunMode.RetryFailed, clearBuffers: true);
+    }
+    // [C2] Yalnız önceki koşuda bir failure varsa etkin — CanExecute her çağrıda taze değerlendirilir; ayrıca
+    // OnProjectDone/OnRunCompleted NotifyCanExecuteChanged tetikler (canlı UI için).
+    private bool CanRetryFailed() => CanRebuildOrRetry() && Projects.Any(p => p.State == ProjectRowState.Failed);
+
+    [RelayCommand(CanExecute = nameof(CanSync))]
+    private async Task SyncAsync()
+    {
+        SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
+        await TrySendAsync(new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+    }
+    private bool CanSync() => !IsRunning && !IsStarting;
 
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
@@ -229,29 +469,136 @@ public sealed partial class RunViewModel : ObservableObject
     private bool CanStop() => IsRunning || IsStarting;
 
     [RelayCommand(CanExecute = nameof(CanContinueRun))]
-    private async Task ContinueAsync()
-    {
-        string runId = _newRunId();
-        _currentRunId = runId;
-        _sawRunStarted = false;
-        ActiveProjectId = null;
-        IsStarting = true; // [Fix wave 1(It-3), Finding 3] — bkz. RebuildAsync; Continue buffer'ları TEMİZLEMEZ
-        // [Fix wave 2, Finding 1] — bkz. RebuildAsync'deki aynı gerekçe: gönderim senkron başarısız olursa
-        // IsStarting geri açılmalı, yoksa hiçbir engine event'i gelmediğinden ContinueCommand kalıcı kilitlenir.
-        if (!await TrySendAsync(new StartRunCommand(runId, RunMode.Continue, RootPath, Configuration, Parallelism), "continue"))
-            IsStarting = false;
-    }
+    private Task ContinueAsync() => BeginRunAsync(RunMode.Continue, clearBuffers: false); // [design doContinue] seçim/filtre KORUNUR
     private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue;
 
+    /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
+    /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
+    /// (engine geri geldi — bir sonraki runStarted'ı beklemeden, çünkü Restart tek başına da engine sağlığını
+    /// kanıtlar). MainWindow'un <c>_engine.EventReceived</c>/<c>EngineExited</c> abonelikleri AYNI EngineHost
+    /// instance'ında kaldığından yeniden kablolama gerekmez. Gönderim başarısız olursa gerekçe konsola düşer ve
+    /// hata modu KALIR (kullanıcı tekrar deneyebilir).</summary>
+    [RelayCommand]
+    private async Task RestartEngineAsync()
+    {
+        try
+        {
+            await _engine.RestartAsync();
+            EngineDiedMessage = null;
+        }
+        catch (Exception ex)
+        {
+            AppendRunLine($"[error] engine restart failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>[C2] Aynı projeye tekrar tıklamak seçimi kaldırır (kanonik deselect, BuildApp.jsx). Proje
+    /// Id'leri Windows dosya yollarıdır → <see cref="StringComparison.OrdinalIgnoreCase"/>.</summary>
+    public void SelectProject(string? id) =>
+        SelectedProjectId = string.Equals(SelectedProjectId, id, StringComparison.OrdinalIgnoreCase) ? null : id;
+
+    /// <summary>[T53-UI · C1 debt] Seçim değişince her satırın <see cref="ProjectRowViewModel.IsSelected"/>'ını
+    /// tazeler — kartın görsel seçili durumu (şerit 2→3, iç sarmalayıcı TranslateX, <c>Brush.SurfaceRaised</c>
+    /// zemin) satır VM'inin INotifyPropertyChanged'inden akar (konsol/log geçişi D4'ün işi — burada YOK).</summary>
+    partial void OnSelectedProjectIdChanged(string? value)
+    {
+        foreach (var row in Projects)
+            row.IsSelected = string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
+        PropagateSelectionToStream(value); // [D3] stream satırları da tek seçim kaynağından tazelenir
+    }
+
+    /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı — <see cref="ProjectRowViewModel.Status"/>'un
+    /// <c>queued</c> türetimi için her satıra iter (IsSelected akışının eşi). <see cref="IsRunning"/>/
+    /// <see cref="IsStarting"/> değiştiğinde tazelenir; yeni doğan satırlar (<see cref="EnsureRow"/>/topoloji)
+    /// da mevcut değeri alır.</summary>
+    private bool RunActive => IsRunning || IsStarting;
+    partial void OnIsRunningChanged(bool value) => PropagateRunActive();
+    partial void OnIsStartingChanged(bool value) => PropagateRunActive();
+    private void PropagateRunActive()
+    {
+        bool active = RunActive;
+        foreach (var row in Projects) row.IsRunActive = active;
+    }
+
+    /// <summary>[T53/T54-UI] Proje listesini katman gruplarına böler — gruplama YALNIZ topolojiden
+    /// (<see cref="ProjectNode.LayerName"/>/<see cref="ProjectNode.LayerIndex"/>) gelir; App'te regex YOKTUR
+    /// (mimari kural, test pinler). <see cref="Projects"/> zaten build-order'dadır (topoloji sırası). Hiçbir
+    /// düğümün <c>LayerName</c>'i yoksa tek isimsiz grup = düz build-order.</summary>
+    public IReadOnlyList<LayerGrouping.Group> BuildLayerGroups() =>
+        LayerGrouping.Build(Projects, Topology);
+
+    private void ClearSelectionAndFilter()
+    {
+        SelectedProjectId = null;
+        ActiveFilter = null;
+    }
+
+    /// <summary>[T43] Debug/Release değiştir (BuildApp.jsx:1355-1363). Koşarken KİLİTLİ (no-op) ve aynı değere
+    /// no-op. Workspace varsa ve faz Boot/Empty değilse: her proje dirty işaretlenir ve uyarı satırı yazılır.</summary>
+    public void SetConfiguration(string value)
+    {
+        if (IsMidRunLocked || value == Configuration) return;
+        Configuration = value;
+        if (RootPath.Length == 0 || Phase is AppPhase.Boot or AppPhase.Empty) return;
+        foreach (var row in Projects) row.WillBuild = true; // her şey dirty
+        AppendRunLine($"Configuration → {value} — all projects will rebuild");
+    }
+
+    // [T43] Perf profili → paralellik TEK sabit eşleme (prototipteki 3 kopya taşınmaz).
+    private static int ParallelismFor(string perfMode) => perfMode switch
+    {
+        "Full" => 6, "Balanced" => 4, "Light" => 2, _ => 4,
+    };
+
+    /// <summary>[T43] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
+    /// CANLI (kilitlenmez) — yalnız koşarken konsola "parallelism: N (Mode)" notu yazılır (BuildApp.jsx:1366-1372).</summary>
+    public void CyclePerf()
+    {
+        PerfMode = PerfMode switch { "Full" => "Balanced", "Balanced" => "Light", "Light" => "Full", _ => "Balanced" };
+        Parallelism = ParallelismFor(PerfMode);
+        if (IsRunning) AppendRunLine($"parallelism: {Parallelism} ({PerfMode})");
+    }
+
+    /// <summary>[C2] Satır durumu değişimlerinde türev yüzeyi tazeler: sayaçlar, görünür liste, RetryFailed
+    /// etkinliği.</summary>
+    private void RefreshRunSurface()
+    {
+        Counters = RunCounters.From(Projects);
+        RecomputeWillBuildSurface(); // [D2] wb/fin/allClean — sayaçlarla aynı tetikleyicide tazelenir
+        OnPropertyChanged(nameof(VisibleProjects));
+        RetryFailedCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>[D2/T38] Şeridin SABİT willBuild yüzeyini (wb/fin/allClean) <see cref="_willBuildIds"/>'ten türetir —
+    /// canlı satır bayraklarından DEĞİL (succeeded olunca WillBuild false'a döner; küme donduğu için wb sabit kalır).</summary>
+    private void RecomputeWillBuildSurface()
+    {
+        WillBuildCount = _willBuildIds.Count;
+        AllClean = _willBuildIds.Count == 0;
+        int fin = 0;
+        foreach (var row in Projects)
+            if (_willBuildIds.Contains(row.Id) &&
+                row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped)
+                fin++;
+        FinishedOfWillBuild = fin;
+    }
+
     /// <summary>Engine hazır değilken (henüz başlamadı/çöktü) SendAsync SENKRON fırlar — UI tıklaması bu
-    /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz. [Fix wave 2, Finding 1] Dönen
-    /// <c>bool</c>, çağıranın (Rebuild/Continue) gönderim BAŞARISIZ olduğunda kendi "starting" durumunu geri
-    /// açabilmesi içindir — bu metot kendi başına hiçbir bound-state'e dokunmaz.</summary>
+    /// yüzden çökmemeli; hata run dokümanına düşürülür, sessizce yutulmaz. Dönen <c>bool</c>, çağıranın
+    /// gönderim BAŞARISIZ olduğunda kendi "starting" durumunu geri açabilmesi içindir — bu metot kendi başına
+    /// hiçbir bound-state'e dokunmaz. <see cref="DebugOnCommandSent"/> yalnız testler içindir.</summary>
     private async Task<bool> TrySendAsync(IpcCommand cmd, string what)
     {
+        DebugOnCommandSent?.Invoke(cmd);
         try { await _engine.SendAsync(cmd); return true; }
-        catch (Exception ex) { AppendRunLine($"[hata] {what} gönderilemedi: {ex.Message}"); return false; }
+        catch (Exception ex) { AppendRunLine($"[error] failed to send {what}: {ex.Message}"); return false; }
     }
+
+    /// <summary>[C2 testleri] YALNIZ testler ayarlar (bkz. <see cref="DebugAfterStitchLockExited"/> deseni):
+    /// bir komut gönderilmeden hemen ÖNCE senkron tetiklenir; gönderilen <see cref="StartRunCommand"/>'ın
+    /// workspace argümanlarını (Mode/Branch/UseWorktree/WorktreeName/LayerPatterns) gerçek Supervisor'a
+    /// ihtiyaç duymadan gözlemlemeye yarar. Üretimde hep null — sıfır maliyet.</summary>
+    internal Action<IpcCommand>? DebugOnCommandSent;
 
     // ---------------------------------------------------------------- elapsed
 
@@ -262,7 +609,18 @@ public sealed partial class RunViewModel : ObservableObject
     public void TickElapsed()
     {
         if (IsRunning && _elapsedStartMs is { } startMs)
+        {
             ElapsedMs = _elapsedBaseMs + (_nowMs() - startMs);
+            // [T53-UI] Building satırların CANLI süresi (kart süre kolonu + glyph tooltip) — done olunca
+            // OnProjectDone kesin DurationMs'i ezer. Kaynak: _projectStartedAtMs (ETA ile AYNI, ekstra state yok).
+            long now = _nowMs();
+            foreach (var row in Projects)
+                if (row.State == ProjectRowState.Started && _projectStartedAtMs.TryGetValue(row.Id, out long at))
+                    row.DurationMs = Math.Max(0, now - at);
+            // [D2/T70 — It-4 canlı tick] It-3'te ETA yalnız COMPLETION'da yeniden hesaplanıyordu ("live tick It-4"
+            // devir notu); şerit canlı "~Ns left"i ve building'in azalan kalanını görebilsin diye her tick'te tazelenir.
+            UpdateEta();
+        }
     }
 
     // ---------------------------------------------------------------- event → durum
@@ -282,7 +640,19 @@ public sealed partial class RunViewModel : ObservableObject
             case RunCompletedEvent e: OnRunCompleted(e); break;
             case RunStoppedEvent: OnRunStopped(); break;
             case ErrorEvent e: OnError(e); break;
+            // [A5/T69] Sync yüzeyi — handler'lar RunViewModel.Workspace.cs'te
+            case SyncStartedEvent: OnSyncStarted(); break;
+            case SyncProgressEvent e: AppendRunLine(e.Line); break;
+            case SyncCompletedEvent e: OnSyncCompleted(e); break;
+            case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
+            case BranchListEvent e: Replace(Branches, e.Branches); break;
+            case WorktreeListEvent e: Replace(Worktrees, e.Worktrees); break;
         }
+
+        // [D3] Event stream (tampon anlatı + aktif satır) — proje satırları/sayaçlar YUKARIDA güncellendikten
+        // SONRA türetilir (ad çözümü + done-glyph'in Counters.Failed'i doğru okunsun). Marshal-free ProjectLogEvent
+        // hot-path'ine (Ek A13.2) DOKUNMAZ: yalnız zaten UI-thread'inde olan OnEvent dalından çağrılır.
+        AppendStreamFor(ev);
     }
 
     private void OnRunStarted(RunStartedEvent e)
@@ -290,6 +660,7 @@ public sealed partial class RunViewModel : ObservableObject
         _currentRunId = e.RunId;
         _sawRunStarted = true;
         IsRunning = true;
+        Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
         // [Review fix, Task 16] EngineDiedMessage burada temizlenir: runStarted, VM'in CANLI engine instance'ıyla
         // IPC round-trip yaptığının ilk somut kanıtıdır — RebuildAsync/ContinueAsync'de ERKEN temizlemek YANLIŞ
@@ -301,12 +672,14 @@ public sealed partial class RunViewModel : ObservableObject
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
         if (e.Mode == RunMode.Rebuild) Projects.Clear(); // Continue'da liste (önceki segmentin sonuçları) korunur
+        _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;
         _totalProjects = e.TotalProjects;
         _runParallelism = e.Parallelism;
         _projectStartedAtMs.Clear();
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
+        RefreshRunSurface();
     }
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
@@ -323,9 +696,11 @@ public sealed partial class RunViewModel : ObservableObject
         foreach (var item in e.Items)
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
+            if (item.WillBuild == true) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
         }
+        RefreshRunSurface();
     }
 
     /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —
@@ -335,6 +710,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started).State = ProjectRowState.Started;
         _projectStartedAtMs[e.ProjectId] = _nowMs();
+        RefreshRunSurface();
     }
 
     private void OnProjectSkipped(ProjectSkippedEvent e)
@@ -342,6 +718,7 @@ public sealed partial class RunViewModel : ObservableObject
         EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped).State = ProjectRowState.Skipped;
         _projectStartedAtMs.Remove(e.ProjectId);
         UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
+        RefreshRunSurface();
     }
 
     private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues)
@@ -356,13 +733,14 @@ public sealed partial class RunViewModel : ObservableObject
         if (state == ProjectRowState.Succeeded) row.WillBuild = false;
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla
+        RefreshRunSurface();
     }
 
     private ProjectRowViewModel EnsureRow(string id, string name, ProjectRowState initialState)
     {
         var existing = Projects.FirstOrDefault(p => p.Id == id);
         if (existing is not null) return existing;
-        var row = new ProjectRowViewModel(id, name, initialState);
+        var row = new ProjectRowViewModel(id, name, initialState) { IsRunActive = RunActive, NamePrefix = _graphNamePrefix };
         Projects.Add(row);
         return row;
     }
@@ -404,6 +782,7 @@ public sealed partial class RunViewModel : ObservableObject
         long? rawEstimateMs = EtaCalculator.ComputeRawEstimateMs(queuedEstimatesMs, building, _runParallelism ?? Parallelism);
         long? smoothedEtaMs = rawEstimateMs is { } raw ? EtaCalculator.Smooth(_previousEtaMs, raw) : null;
         _previousEtaMs = smoothedEtaMs;
+        EtaMs = smoothedEtaMs; // [D2/T70] şeridin numeric ETA kaynağı (RibbonText.EtaSuffix)
         EtaText = EtaCalculator.FormatDisplay(smoothedEtaMs, completed, total, ElapsedMs);
     }
 
@@ -411,9 +790,11 @@ public sealed partial class RunViewModel : ObservableObject
     {
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
+        Phase = e.Outcome == RunOutcome.Stopped ? AppPhase.Stopped : AppPhase.Done; // [C2] Running → Done/Stopped
         CanContinue = e.Outcome == RunOutcome.Stopped;
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde (Continue segmentleri dahil) kümülatif özet
         _sawRunStarted = false;
+        RefreshRunSurface();
     }
 
     private void OnRunStopped()
@@ -427,7 +808,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnError(ErrorEvent e)
     {
-        AppendRunLine($"[hata] {e.Code}: {e.Message}");
+        AppendRunLine($"[error] {e.Code}: {e.Message}");
         // [Fix wave 1(It-3), Finding 2] logNotFound (ör. Skipped/cycle üyesi proje kartına tıklama — hiç log
         // dosyası yok) OnError'da hiç ele alınmıyordu: bekleyen LoadProjectLogAsync'in Completion'ı asla
         // tamamlanmaz, await SONSUZA DEK asılı kalırdı. ErrorEvent'te ProjectId yok (kontrat sabit) — eldeki
@@ -439,6 +820,10 @@ public sealed partial class RunViewModel : ObservableObject
             pending.Completion.TrySetResult();
         }
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/logNotFound/... aktif run'ı ETKİLEMEZ
+        // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten
+        // geldiyse (uçuşta bir Sync var ve run planlama penceresinde DEĞİL) run state'ine DOKUNULMAZ — Sync
+        // salt-okurdur ve koşan bir run sırasında da tetiklenebilir. Gerekçe: RunViewModel.Workspace.cs.
+        if (TryConsumeSyncFailure(e.Code, e.Message)) return;
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
         CanContinue = false;
@@ -465,14 +850,26 @@ public sealed partial class RunViewModel : ObservableObject
     /// — çağıran (MainWindow) bu sorumluluğu taşır, VM'in kendisi Dispatcher TÜRÜ TAŞIMAZ (test edilebilirlik).</para></summary>
     public void OnEngineExited(int? exitCode)
     {
+        // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
+        // Exit kodu (varsa) KORUNUR — test bu sayıyı pinler.
         EngineDiedMessage = exitCode is { } code
-            ? $"engine öldü (exit {code})"
-            : "engine öldü (framing hatası)";
+            ? $"Engine stopped unexpectedly (exit {code})"
+            : "Engine stopped unexpectedly (protocol error)";
+        // [E2/F3 fold] Terminal Phase kararı: engine run ORTASINDA (Phase=Running) ölürse Phase Running'de asılı
+        // kalıp IsRunning=false ile çelişik bir resting state bırakıyordu. Şerit kalıcı-hata modu EngineDiedMessage
+        // != null ÖNCELİĞİYLE Phase'i YOK SAYAR (bkz. RibbonText.Compose), yani terminal Phase seçimi KOZMETİKtir;
+        // yine de tutarlılık için Running → Stopped'a çekilir. YALNIZ Running'e dokunulur: Idle/Boot/Empty gibi
+        // resting fazlar (engine repo seçili değilken de ölebilir) Stopped'a çekilmez — yanıltıcı olurdu.
+        if (Phase == AppPhase.Running) Phase = AppPhase.Stopped;
         IsRunning = false;
         IsStarting = false;
         CanContinue = false;
         _sawRunStarted = false;
         _currentRunId = null;
+        // [C2 fold — A5 review] Engine Sync ortasında ölürse hiçbir syncCompleted/Sync-hatası gelmez; faz
+        // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada
+        // da uçuştaki Sync serbest bırakılır.
+        ReleaseSyncPhase();
     }
 
     // ---------------------------------------------------------------- konsol/log
@@ -515,14 +912,25 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void AppendRunLine(string text)
     {
+        // [D4/T56-UI] Anlatı satırı design-v1 §2.5 diliyle bileşilir: "HH:MM:SS" (sahte duvar saati, text-faint) +
+        // metin (cmd satırındaki amber ▸, satırın kendisinde zaten var — SyncProgressEvent). Renkler
+        // ConsoleColorizer'ın zaman-damgasını + ▸'yi çözmesiyle gelir (kopyalanan metin de anlamlı; markup YOK).
+        // Saat kaynağı WallClock (stream ile ORTAK; testte deterministik). Ham MSBuild (OnProjectLog) BU yoldan
+        // GEÇMEZ → zaman damgası ALMAZ → daktilo edilmez (T34: ham asla harf-harf).
+        string composed = ComposeNarrativeLine(text);
         // [Fix wave 1, Finding 3] OnProjectLog ile aynı gerekçeyle Post kilit İÇİNE alındı.
         lock (_gate)
         {
-            _runText.Append(text).Append('\n');
+            _runText.Append(composed).Append('\n');
             _runLineCount++;
-            if (ActiveProjectId is null) _console.Post(text);
+            if (ActiveProjectId is null) _console.Post(composed);
         }
     }
+
+    /// <summary>[D4/T56-UI] Bir anlatı satırının önüne "HH:MM:SS " (InvariantCulture — Global Constraint) ekler.
+    /// design-v1 §2.5 / plan §222: satırlar düz metin <c>HH:MM:SS ▸ metin</c>. Saat WallClock'tan (stream'le ORTAK).</summary>
+    private string ComposeNarrativeLine(string text) =>
+        $"{WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture)} {text}";
 
     /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
     /// TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). UI thread'inde çağrılır; sayaçlar arka plandan
@@ -549,36 +957,140 @@ public sealed partial class RunViewModel : ObservableObject
         lock (_gate) return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
     }
 
-    /// <summary>[Fix wave 1, Finding 3 → 3b: tek-okuyucudan geçen reseed] MainWindow'un "Back" akışının
-    /// kullandığı tohumlama metodu: run dokümanının metnini AYNI _gate kilidi altında okur ve
-    /// <see cref="ConsoleBatcher.PostReseed"/> ile kanala bir reseed sentinel'i yazar. <paramref name="apply"/>,
-    /// pump tarafından (sentinel'e uğrayınca) çağrılır ve TAZE snapshot'ı UI dokümanına kurar (marshal ETME
-    /// çağıranın işi).
+    /// <summary>[D4/Solution B — reseed flicker] MainWindow'un "Back" akışının kullandığı tohumlama metodu.
+    /// Doküman TIKLAMA ANINDA UI thread'inde SENKRON kurulur (başlık ve gövde AYNI karede değişir): bu metot UI
+    /// thread'inde çağrılır ve <paramref name="applyNow"/>'ı run dokümanının TAZE snapshot'ıyla senkron çağırır
+    /// (çağıran doğrudan <c>ConsoleView.ShowRunDocument</c>'a verir). Ayrıca <see cref="ConsoleBatcher.PostReseedDrop"/>
+    /// ile bir drop-only sentinel yazar: pump, snapshot'a zaten dahil olan uçuştaki satırları atar (doküman-set
+    /// yapmaz — o zaten senkron olduğundan).
     ///
-    /// <para><b>Neden kilit altında snapshot + PostReseed birlikte:</b> OnProjectLog da _runText yazımını ve
-    /// <c>_console.Post</c>'unu AYNI _gate altında yapar. Bu yüzden snapshot okunurken bir OnProjectLog araya
-    /// giremez: snapshot'a giren her satır, sentinel'den ÖNCE kanala girmiştir; snapshot'a girmeyen her satır
-    /// sentinel'den SONRA girer. Pump tek okuyucudur → sentinel'e kadarki satırları (snapshot'ta zaten var) atar,
-    /// sonrakileri yeni dokümana akıtır. Eski <c>DiscardPending</c>'in bıraktığı "pump satırı TryRead'le çekti ama
-    /// henüz flush etmedi" Dispatcher-gecikmesi artık penceresi KAPANIR (It-4 backlog kalemi — task-12 Fix wave 1
-    /// residual'ı).</para></summary>
-    public void SeedRunDocument(Action<string> apply)
+    /// <para><b>Sıralama (atomiklik):</b> snapshot okuma + <c>PostReseedDrop</c> (nesli ilerletir → sentinel) TEK
+    /// _gate kilidi altında ATOMİKTİR — OnProjectLog da _runText yazımını ve <c>_console.Post</c>'unu AYNI _gate
+    /// altında yaptığından, snapshot'a giren her satır sentinel'den ÖNCE kanaldadır. <b>[D4 review §1]</b>
+    /// <paramref name="applyNow"/> (WPF doküman rebuild'i) artık _gate DIŞINDA çağrılır: generation guard,
+    /// correctness'i "applyNow boyunca kilidi tutup post'ları bloke etme"den AYIRDIĞINDAN marshal-free OnProjectLog
+    /// hot-path'i WPF rebuild süresince bloklanmaz. Güvenlik: reseed'den ÖNCE drenajlanan (eski nesil) satırlar,
+    /// koşullarına bakılmaksızın MainWindow.AppendConsoleBatch'te <c>batchGen &lt; CurrentReseedGen</c> ile ATILIR;
+    /// applyNow sonrası Post edilen (yeni nesil) satırların flush'ı UI thread'inde applyNow'ın ARDINA sıralanır
+    /// (Dispatcher.InvokeAsync tek-thread FIFO — applyNow'ı ÖNceleyemez) → taze dokümana akar (dup/kayıp yok).</para></summary>
+    public void SeedRunDocument(Action<string> applyNow)
     {
+        string snapshot;
         lock (_gate)
-            _console.PostReseed(_runText.ToString(), apply);
+        {
+            snapshot = _runText.ToString();
+            _console.PostReseedDrop();
+        }
+        applyNow(snapshot); // [D4 review §1] _gate DIŞINDA — hot-path'i WPF rebuild boyunca bloklamaz (guard güvenli kılar)
     }
 
-    /// <summary>[3b] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın XML
-    /// yorumu (aynı gerekçe, proje dokümanı için). Log yoksa boş snapshot ile çağrılır (çağıran boş-durum metnini
-    /// uygular).</summary>
-    public void SeedProjectDocument(string projectId, Action<string> apply)
+    /// <summary>[D4/Solution B] Proje kartına tıklama akışının tohumlama metodu — bkz. <see cref="SeedRunDocument"/>'ın
+    /// XML yorumu (aynı senkron doküman-set + drop-only sentinel + generation guard gerekçesi, proje dokümanı için).
+    /// Log yoksa boş snapshot ile çağrılır (çağıran boş-durum metnini uygular).</summary>
+    public void SeedProjectDocument(string projectId, Action<string> applyNow)
     {
+        string snapshot;
         lock (_gate)
-            _console.PostReseed(_projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "", apply);
+        {
+            snapshot = _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";
+            _console.PostReseedDrop();
+        }
+        applyNow(snapshot); // [D4 review §1] _gate DIŞINDA — bkz. SeedRunDocument gerekçesi
     }
 
     /// <summary>Konsolu run dokümanına döndürür (MainWindow'daki "Back").</summary>
     public void ShowRun() => ActiveProjectId = null;
+
+    /// <summary>[D4 review §3] Kart seçimi değiştiğinde konsolun izleyeceği aksiyonun SAF kararı — MainWindow'un
+    /// <c>OnSelectedProjectChangedAsync</c> orkestrasyonundan çıkarılan test edilebilir seam (Window DI olmadan
+    /// kurulamaz). Seçim yoksa run anlatısına dön; varsa o projenin logunu yükle.</summary>
+    public ConsoleSelection NextConsoleSelection(out string? projectId)
+    {
+        projectId = SelectedProjectId;
+        return projectId is null ? ConsoleSelection.ShowRun : ConsoleSelection.LoadProjectLog;
+    }
+
+    // ---------------------------------------------------------------- [E1/T67] OS eylemleri (Reveal / Open-in-VS)
+
+    /// <summary>[E1/T67] Bir projenin Open-in-VS adaylarını çözer: kart yalnız İLK sln adını saklar (T32), Open-in-VS
+    /// ise projenin TÜM <see cref="ProjectNode.SolutionNames"/>'ini topolojiden çözüp eşleşen <see cref="Solutions"/>
+    /// girdilerini döndürür. Bilinmeyen proje / sln'i olmayan proje → boş.</summary>
+    public IReadOnlyList<SolutionRef> SolutionCandidatesFor(string projectId)
+    {
+        var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        if (node is null || node.SolutionNames.Count == 0) return [];
+        var names = new HashSet<string>(node.SolutionNames, StringComparer.OrdinalIgnoreCase);
+        return Solutions.Where(s => names.Contains(s.Name)).ToList();
+    }
+
+    /// <summary>[E1/T67] Satırın klasör ikonunun eylemi: dosyayı Explorer'da seçili açar (satır Id'si = csproj yolu)
+    /// + verbatim dim not. <see cref="_osActions"/> null ise güvenle no-op.</summary>
+    public void RevealProjectInExplorer(string projectId)
+    {
+        if (_osActions is null) return;
+        _osActions.RevealInExplorer(projectId);
+        AppendRunLine($"{ShortNameFor(projectId)}.csproj revealed in Explorer"); // BİREBİR (brief §4)
+    }
+
+    /// <summary>[E1/T67] Satırın VS ikonunun eylemi. Adaylar çözülüp <see cref="IOsActions.OpenInVisualStudio"/>'ya
+    /// delege edilir:
+    /// <list type="bullet">
+    /// <item><b>Opened</b> → verbatim opened not, <c>null</c> döner (chooser gerekmez).</item>
+    /// <item><b>NeedsChoice</b> → chooser adayları döner (ProjectRow popover'ı açar), not YAZILMAZ.</item>
+    /// <item><b>NoSolution</b> → <c>null</c>, not YAZILMAZ.</item>
+    /// <item><b>VisualStudioNotFound</b> → <c>null</c>, opened notu YAZILMAZ; makul bir dim başarısızlık notu (pinlenmemiş).</item>
+    /// </list></summary>
+    public IReadOnlyList<SolutionRef>? OpenProjectInVisualStudio(string projectId)
+    {
+        if (_osActions is null) return null;
+        var result = _osActions.OpenInVisualStudio(SolutionCandidatesFor(projectId));
+        switch (result.Outcome)
+        {
+            case Services.OpenInVsOutcome.Opened:
+                AppendOpenedNote(projectId);
+                return null;
+            case Services.OpenInVsOutcome.NeedsChoice:
+                return result.Candidates;
+            case Services.OpenInVsOutcome.VisualStudioNotFound:
+                AppendRunLine($"Visual Studio not found — install it to open {ShortNameFor(projectId)}");
+                return null;
+            default: // NoSolution
+                return null;
+        }
+    }
+
+    /// <summary>[E1/T67] Chooser'dan seçim: seçilen tek solution VS'de açılır + Opened ise verbatim opened not.</summary>
+    public void OpenSolutionInVisualStudio(string projectId, SolutionRef chosen)
+    {
+        if (_osActions is null) return;
+        var result = _osActions.OpenInVisualStudio([chosen]);
+        if (result.Outcome == Services.OpenInVsOutcome.Opened)
+            AppendOpenedNote(projectId);
+        else if (result.Outcome == Services.OpenInVsOutcome.VisualStudioNotFound)
+            AppendRunLine($"Visual Studio not found — install it to open {ShortNameFor(projectId)}");
+    }
+
+    private void AppendOpenedNote(string projectId) =>
+        AppendRunLine($"{ShortNameFor(projectId)} opened in Visual Studio"); // BİREBİR (brief §4 — .csproj YOK)
+
+    /// <summary>Projenin kısa adı (kart <c>Name</c>'i): önce açık satır, sonra topoloji düğümü, yoksa dosya adı.</summary>
+    private string ShortNameFor(string projectId)
+    {
+        var row = Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        if (row is not null) return row.Name;
+        var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        return node?.Name ?? Path.GetFileNameWithoutExtension(projectId);
+    }
+
+    /// <summary>[D4 review §2/§3] <see cref="LoadProjectLogAsync"/> bittikten sonra proje-log gösterilmeli mi:
+    /// yalnız (guard1) yükleme proje modunu GERÇEKTEN kurduysa — <see cref="ActiveProjectId"/>==<paramref name="projectId"/>,
+    /// yani log vardı ve §2 koşullu-set'i modu kurdu (no-log/skipped/deselect-mid-load'da kurulmaz) — VE (guard2)
+    /// seçim HÂLÂ o projede ise (arada başka karta/deselect'e geçilmedi). §2 donma yarışı: deselect'te ActiveProjectId
+    /// zaten null kaldığından guard1 tek başına da yakalar; iki guard MainWindow'daki üretim sırasını birebir yansıtır
+    /// (guard'lar burada toplanır — caller yalnız kararı uygular).</summary>
+    public bool ShouldShowLoadedProject(string projectId)
+        => string.Equals(ActiveProjectId, projectId, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(SelectedProjectId, projectId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// [T28 dikişi] <c>getProjectLog</c> gönderir; gelen chunk'lar sırayla biriktirilir. SON chunk'ta
@@ -597,7 +1109,7 @@ public sealed partial class RunViewModel : ObservableObject
         try { await _engine.SendAsync(new GetProjectLogCommand(projectId)); }
         catch (Exception ex)
         {
-            AppendRunLine($"[hata] proje logu istenemedi: {ex.Message}");
+            AppendRunLine($"[error] could not load project log: {ex.Message}");
             // [Fix wave 2, Finding 2] SendAsync engine ölüyken/hiç başlamamışken SENKRON fırlar (writer null) —
             // bu catch `await` HİÇBİR suspension olmadan senkron çalışır. Önceden Completion burada asla
             // tamamlanmıyordu: hiçbir yanıt/event gelmeyeceğinden aşağıdaki `await pending.Completion.Task`
@@ -634,9 +1146,18 @@ public sealed partial class RunViewModel : ObservableObject
             if (_liveLines.TryGetValue(e.ProjectId, out var buffered))
                 foreach (var line in buffered.Where(l => l.LineNumber > e.ThroughLineNumber).OrderBy(l => l.LineNumber))
                     stitched.Append(line.Text).Append('\n');
+            // Dikiş HER ZAMAN yapılır (log re-select için hazır kalsın — deselect edilmiş olsa bile).
             _projectText[e.ProjectId] = stitched;
             _projectLineCount[e.ProjectId] = CountLines(stitched); // [T56/3a] dikilmiş tam log satır sayısı
-            ActiveProjectId = e.ProjectId;
+            // [D4 review §2] ActiveProjectId (mod) YALNIZCA yükleme HÂLÂ isteniyorsa — kart hâlâ seçiliyse — kurulur.
+            // Hızlı select→deselect'te (kart A seç → IPC dönmeden bırak/geri) gecikmiş chunk eskiden ActiveProjectId'yi
+            // "A"ya set edip TAKILI bırakıyordu; AppendRunLine (ActiveProjectId null gate'i, ~satır 879) sonrasında
+            // HİÇBİR anlatı satırını post edemez → run konsolu SESSİZCE DONARDI. SelectedProjectId UI-thread değeri,
+            // OnProjectLogChunk da (marshal'lı) UI thread'inde → _gate altında okumak tutarlı (concurrency yok). Set
+            // HÂLÂ aynı _gate + _projectText snapshot'ıyla birlikte → T3b üçüncü-aralık atomikliği KORUNUR (OnProjectLog
+            // ya bu bloktan ÖNCE [satır snapshot'ta] ya da SONRA [ActiveProjectId güncel] koşar — üçüncü aralık yok).
+            if (string.Equals(SelectedProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
+                ActiveProjectId = e.ProjectId;
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
         _pendingLoad = null;

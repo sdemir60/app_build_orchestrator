@@ -1,0 +1,542 @@
+using System.ComponentModel;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Formatting;
+
+namespace BuildOrchestrator.App.Views;
+
+/// <summary>
+/// [T53/T54-UI] design-v1 proje kartı (BuildApp.jsx:355-416). 7 slot: statü şeridi · WillBuildDot · ad+sln ·
+/// sağ blok (sha↔hover ikonları) · statü glyph'i · dep rozet slotu · süre. DataContext bir
+/// <see cref="ProjectRowViewModel"/>'dir; kart onun INotifyPropertyChanged'ini dinleyip yalnız DEĞİŞEN slotu
+/// tazeler (statü tikleri satır VM'inden akar — koleksiyon reset YOK).
+///
+/// <para><b>Motion (bağlayıcı sözleşme):</b> tüm animasyonlar kod-tarafı (<see cref="MotionTokens"/>) — süre/eğri
+/// ve <c>App.Motion?.AnimationsEnabled</c> BAŞLATMA ANINDA taze okunur; template-trigger Storyboard İMKANSIZ
+/// (MotionTokens.cs). 120ms hover zemini · 80ms şerit genişliği · 120ms iç-sarmalayıcı TranslateX · 3.8s nefes
+/// (yalnız building, 30fps) · 360ms shake (yalnız hata anında bir kez). Nefes/pulse yeniden-başlatma guard'ları
+/// StatusGlyph/GraphView deseniyle AYNI (dönen bir animasyon her tikte baştan almaz).</para>
+/// </summary>
+public partial class ProjectRow : UserControl
+{
+    // design-v1 kaynak sabitleri (inline magic number YASAK — StatusGlyph.PulseMs / BuildingSpinner.RotationMs deseni).
+    private const double BreathMs = 3800;          // BuildApp.jsx:22 `bo-breath 3.8s`
+    private const double BreathPeakOpacity = 0.32; // BuildApp.jsx:24 amber-soft katman tepe opaklığı
+    private const int DecorativeFrameRate = 30;    // brief: DesiredFrameRate=30
+    private const double ShakeMs = 360;            // BuildApp.jsx:27 `bo-shake 360ms`
+    private const double SelectedTranslateX = 4;   // BuildApp.jsx:379 seçili iç-sarmalayıcı translateX
+    private const double StripeWidthNormal = 2;    // BuildApp.jsx:373
+    private const double StripeWidthSelected = 3;
+
+    // [E3/T42] design-v1 bo-reveal (BuildApp.jsx:15/:27): opacity 0→1 + translateY(-5px)→0, .3s, ease-out —
+    // GraphView katman reveal'iyle AYNI animasyon ailesi (GraphView.RevealMs/RevealRisePx). Liste satırı gecikmesi
+    // graf'tan FARKLI formül: 10ms/satır, 380ms tavan (BuildApp.jsx:367 `Math.min(revealIndex*10, 380)`).
+    internal const double RevealMs = 300;          // BuildApp.jsx:15 `bo-reveal .3s` — [E4] StickyLayerList release penceresi de kullanır
+    private const double RevealRisePx = 5;         // BuildApp.jsx:27 translateY(-5px)
+    internal const double RowStaggerMs = 10;       // BuildApp.jsx:367 revealIndex*10
+    internal const double RowStaggerCapMs = 380;   // BuildApp.jsx:367 tavan 380
+
+    private readonly SolidColorBrush _bgBrush = new(Colors.Transparent);
+    private ProjectRowViewModel? _vm;
+    private bool _hover;
+    private bool _isBreathing;
+    private ProjectRowState? _prevState;
+    private BuildOrchestrator.App.Services.IMotionSettings? _subscribedMotion;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 2] Motion sinyalinin TAZE okunduğu kapı (GraphView deseni, D8) —
+    /// sınıf statik <c>App.Motion</c>'a doğrudan bağlanmaz; testler gerçek bir 30fps saatini (nefes) sürebilmek
+    /// için bunu <c>() =&gt; true</c> ile enjekte eder (headless'ta <c>App.Motion</c> null → hiç saat başlamazdı).</summary>
+    public Func<bool> AnimationsEnabledProvider { get; set; } =
+        () => App.Motion?.AnimationsEnabled ?? false;
+
+    /// <summary>[Fix wave 1 · D1 review Finding 2] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null
+    /// ise <c>App.Motion</c> (GraphView.MotionSettings deseni).</summary>
+    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings { get; set; }
+
+    public ProjectRow()
+    {
+        InitializeComponent();
+        PART_Root.Background = _bgBrush; // template-lokal, donmamış brush (A13.2) — 120ms renk geçişi bunu animate eder
+        DataContextChanged += OnDataContextChanged;
+        MouseEnter += (_, _) => SetHover(true);
+        MouseLeave += (_, _) => SetHover(false);
+        MouseLeftButtonUp += OnRowClicked;
+        KeyDown += OnRowKeyDown;
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+
+        // [E1/T67] Hover ikonları → OS eylemleri (VM üzerinden). Chooser popover'ı D6 deseni: açılışta PopIn.
+        PART_RevealButton.Click += OnRevealClick;
+        PART_VsButton.Click += OnVsClick;
+        PART_VsChooser.Opened += (_, _) => PopIn.Play(PART_VsChooserContent);
+    }
+
+    // ---------------------------------------------------------------- test yüzeyi
+    internal Rectangle Stripe => PART_Stripe;
+    internal WillBuildDot Dot => PART_Dot;
+    internal TextBlock DurationText => PART_Duration;
+    internal TextBlock ShaText => PART_Sha;
+    internal FrameworkElement HoverIcons => PART_HoverIcons;
+    internal FrameworkElement DepSlot => PART_DepSlot;
+    internal FrameworkElement DepIcon => PART_DepIcon;
+    internal FrameworkElement BreathLayer => PART_Breath;
+    internal void SimulateHover(bool hover) => SetHover(hover);
+    internal TranslateTransform InnerTranslate => PART_InnerTranslate;
+    internal Border Root => PART_Root;                              // [T42] reveal opacity taşıyıcısı
+    internal TranslateTransform ShakeTranslate => PART_ShakeTranslate; // [T42] reveal kayması Y'de akar (shake X)
+    internal StatusGlyph Glyph => PART_Glyph;
+    internal string? DepTooltip => PART_DepTip.Content as string;   // [Fix wave 1, Finding 3] birebir metin testi
+    internal string? GlyphTooltip => PART_GlyphTip.Content as string;
+
+    /// <summary>[T54-UI test] Nefes animasyonunu üreten TEK yer — kontrol ve test AYNI fabrikayı kullanır;
+    /// 30fps sınırı ve 3.8s süre burada pinlenir (inline magic number YOK).</summary>
+    internal static DoubleAnimationUsingKeyFrames BuildBreathingAnimation(FrameworkElement host)
+    {
+        var spline = MotionTokens.ResolveKeySpline(host, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
+        var anim = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
+        anim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero), spline));
+        anim.KeyFrames.Add(new SplineDoubleKeyFrame(BreathPeakOpacity, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(BreathMs / 2)), spline));
+        anim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(BreathMs)), spline));
+        Timeline.SetDesiredFrameRate(anim, DecorativeFrameRate);
+        return anim;
+    }
+
+    // ---------------------------------------------------------------- lifecycle
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        // [Fix wave 1 · D1 review Minor 5] İdempotent abonelik: her Loaded'da -= sonra += — bir kontrol
+        // unload/reload olursa çift abonelik (ve çift ApplyBreathing) birikmesin.
+        _subscribedMotion = MotionSettings ?? App.Motion;
+        if (_subscribedMotion is { } motion)
+        {
+            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
+        }
+        ApplyAll();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (_subscribedMotion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
+        _subscribedMotion = null;
+        StopBreathing(); // GraphView deseni: durum building'i terk edince / unload'da clock serbest
+    }
+
+    private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ApplyBreathing();
+
+    private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
+        _vm = e.NewValue as ProjectRowViewModel;
+        _prevState = null;
+        if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
+        ApplyAll();
+    }
+
+    private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(ProjectRowViewModel.State):
+                // [Fix wave 1, Finding 1] Statü-türevi görseller (glyph/şerit/tooltip) ARTIK Status case'inde;
+                // State setter'ı NotifyPropertyChangedFor(Status) ile onu hemen ardından tetikler. Burada yalnız
+                // State'e özel yan etkiler kalır: shake/nefes geçişi + süre + sağ blok (building geçişinde sha).
+                ApplyStateTransition();
+                ApplyDuration();
+                ApplyRightBlock();
+                break;
+            case nameof(ProjectRowViewModel.Status):
+                ApplyStatusVisuals(); // [Fix wave 1, Finding 1] cycle/queued dahil TEK eşleme yolundan gelir
+                break;
+            case nameof(ProjectRowViewModel.WillBuild):
+                PART_Dot.State = _vm?.WillBuild;
+                ApplyRightBlock();
+                // Not: WillBuild, Status'u (queued) da tetikler → şerit/glyph Status case'inde tazelenir.
+                break;
+            case nameof(ProjectRowViewModel.DepIssues):
+            case nameof(ProjectRowViewModel.HasDepIssue):
+            case nameof(ProjectRowViewModel.NamePrefix): // [D5] önek sonradan değişirse dep-tooltip'i tazele
+                ApplyDep();
+                break;
+            case nameof(ProjectRowViewModel.DurationMs):
+                ApplyDuration();
+                UpdateGlyphTooltip(); // building'de canlı "Building — Ns"
+                break;
+            case nameof(ProjectRowViewModel.IsSelected):
+                ApplySelection();
+                break;
+            case nameof(ProjectRowViewModel.SolutionName):
+                PART_Sln.Text = _vm?.SolutionName;
+                break;
+            case nameof(ProjectRowViewModel.CurrentSha):
+                ApplySha();
+                break;
+        }
+    }
+
+    // ---------------------------------------------------------------- toplu tazeleme
+    private void ApplyAll()
+    {
+        _prevState = _vm?.State;
+        PART_Name.Text = _vm?.Name;
+        // [E5/T47] Kart klavye ile odaklanınca ekran okuyucu proje ADINI okusun (ikon/şerit/glyph görselleri SR'a
+        // bir şey söylemez). Ad, satır VM'inden gelir (İngilizce proje adı).
+        System.Windows.Automation.AutomationProperties.SetName(this, _vm?.Name ?? "");
+        PART_Sln.Text = _vm?.SolutionName;
+        PART_Dot.State = _vm?.WillBuild;
+        ApplyStatusVisuals(); // glyph/ad-rengi/şerit/tooltip (Status'tan)
+        ApplyBreathing();     // building nabzı (State'ten) — ilk kurulumda shake YOK (_prevState taze)
+        ApplyDep();
+        ApplyDuration();
+        ApplySelection();  // şerit genişliği/renk + translateX + zemin
+        ApplyRightBlock(); // sha/hover ikonları
+    }
+
+    /// <summary>[Fix wave 1, Finding 1] Statü-türevi görseller: glyph, ad soluk/parlak, şerit rengi, glyph
+    /// tooltip. Statü kaynağı <see cref="ProjectRowViewModel.Status"/> (cycle/queued dahil TEK eşleme yeri) —
+    /// kart artık kendi eşlemesini yapmaz.</summary>
+    private void ApplyStatusVisuals()
+    {
+        GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
+        var state = _vm?.State ?? ProjectRowState.Pending;
+
+        PART_Glyph.Status = status;
+
+        // Ad rengi: skipped | pending(discovered/queued/cycle) → dim (BuildApp.jsx:348) — alt-durum (State) okunur.
+        bool dim = state is ProjectRowState.Skipped or ProjectRowState.Pending;
+        PART_Name.SetResourceReference(TextBlock.ForegroundProperty, dim ? "Brush.TextDim" : "Brush.TextPrimary");
+
+        SetStripeFill();
+        UpdateGlyphTooltip();
+    }
+
+    /// <summary>State'e özel geçiş yan etkileri: hata ANINDA bir kez shake + building nefes geçişi.</summary>
+    private void ApplyStateTransition()
+    {
+        var state = _vm?.State ?? ProjectRowState.Pending;
+        // Shake yalnız hata ANINDA (Pending/Started/... → Failed geçişinde), bir kez.
+        if (state == ProjectRowState.Failed && _prevState is not null && _prevState != ProjectRowState.Failed)
+            PlayShake();
+        _prevState = state;
+        ApplyBreathing();
+    }
+
+    private void SetStripeFill()
+    {
+        string? key = (_vm?.Status ?? GraphStatus.Discovered) switch
+        {
+            GraphStatus.Queued => "Brush.StatusQueued",
+            GraphStatus.Building => "Brush.Amber",
+            GraphStatus.Succeeded => "Brush.StatusSuccess",
+            GraphStatus.Failed => "Brush.StatusFail",
+            GraphStatus.Skipped => "Brush.StatusSkipped",
+            GraphStatus.Cycle => "Brush.StatusCycle",
+            _ => null, // discovered → transparent
+        };
+        // Seçili + discovered → amber (BuildApp.jsx:374).
+        if (key is null && (_vm?.IsSelected ?? false)) key = "Brush.Amber";
+
+        if (key is null) PART_Stripe.Fill = Brushes.Transparent;
+        else PART_Stripe.SetResourceReference(Shape.FillProperty, key);
+    }
+
+    private void ApplyDuration()
+    {
+        var state = _vm?.State ?? ProjectRowState.Pending;
+        long ms = _vm?.DurationMs ?? 0;
+        // building → canlı Elapsed; bitmiş → Duration; yoksa "—" (Duration(null)).
+        PART_Duration.Text = state == ProjectRowState.Started
+            ? DurationFormat.Elapsed(ms)
+            : DurationFormat.Duration(ms == 0 ? null : ms);
+        PART_Duration.SetResourceReference(TextBlock.ForegroundProperty,
+            state == ProjectRowState.Failed ? "Brush.StatusFailText" : "Brush.TextDim");
+    }
+
+    private void ApplyDep()
+    {
+        bool has = _vm?.HasDepIssue ?? false;
+        PART_DepIcon.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+        if (has && _vm?.DepIssues is { } issues)
+        {
+            // Kısa adlar (veri-türevli ortak önek atılmış — D5, artık hardcode "OSYS." değil), virgülle;
+            // önek satıra RunViewModel'den itilir (NamePrefix). Tooltip BİREBİR (brief slot 6).
+            string prefix = _vm?.NamePrefix ?? "";
+            string names = string.Join(", ", issues.Select(n => GraphNode.ShortLabel(n, prefix)));
+            PART_DepTip.Content = $"Failed dependency: {names} — last successful output referenced";
+        }
+        UpdateGlyphTooltip(); // depIssue eki glyph tooltip'ini de değiştirir
+    }
+
+    private void ApplySha()
+    {
+        // {CurrentSha} → {TargetSha}. TargetSha run-geneli (RunViewModel) — atalardan çözülür; CurrentSha per-proje
+        // (henüz IPC'de yok — bkz. ProjectRowViewModel.CurrentSha). Görünürlük ApplyRightBlock'ta.
+        // [E6 interim] BuiltCommit wire It-5'e ertelendiğinden CurrentSha bugüne dek HEP boş gelir → yalın-ok pürüzü
+        // (" → a3f81c2", boş sol yarı). cur boşken TARGET'ı YALNIZ göster; cur dolunca (It-5) çift geri gelir.
+        string cur = _vm?.CurrentSha ?? "";
+        string target = FindRunViewModel()?.TargetSha ?? "";
+        PART_Sha.Text = cur.Length == 0 ? target : $"{cur} → {target}";
+    }
+
+    /// <summary>Sağ blok: hover'da aç-ikonları, değilse (will==dirty) sha çifti (BuildApp.jsx:387-403).</summary>
+    private void ApplyRightBlock()
+    {
+        bool showIcons = _hover;
+        bool showSha = !_hover && _vm?.WillBuild == true;
+        PART_HoverIcons.Visibility = showIcons ? Visibility.Visible : Visibility.Collapsed;
+        PART_Sha.Visibility = showSha ? Visibility.Visible : Visibility.Collapsed;
+        if (showSha) ApplySha();
+    }
+
+    /// <summary>Seçim: şerit 2→3 (80ms), iç-sarmalayıcı TranslateX (120ms EaseOut), zemin (120ms). Şerit rengi
+    /// de seçilime bağlıdır (selected+discovered→amber).</summary>
+    private void ApplySelection()
+    {
+        bool selected = _vm?.IsSelected ?? false;
+        AnimateStripeWidth(selected ? StripeWidthSelected : StripeWidthNormal);
+        AnimateInnerTranslate(selected ? SelectedTranslateX : 0);
+        SetStripeFill();
+        ApplyBackground();
+    }
+
+    private void SetHover(bool hover)
+    {
+        if (_hover == hover) return;
+        _hover = hover;
+        ApplyBackground();
+        ApplyRightBlock();
+    }
+
+    private void ApplyBackground()
+    {
+        bool selected = _vm?.IsSelected ?? false;
+        Color target = selected ? ResolveColor("Brush.SurfaceRaised", Colors.Transparent)
+            : _hover ? ResolveColor("Brush.SurfaceHover", Colors.Transparent)
+            : Colors.Transparent;
+        MotionTokens.TransitionColor(this, _bgBrush, target);
+    }
+
+    private void UpdateGlyphTooltip()
+    {
+        var state = _vm?.State ?? ProjectRowState.Pending;
+        GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
+        string text = StatusLabel(status);
+        if (state == ProjectRowState.Started)
+            text += " — " + DurationFormat.Elapsed(_vm?.DurationMs ?? 0);
+        else if (_vm?.HasDepIssue ?? false)
+            text += " — dependency issue";
+        PART_GlyphTip.Content = text;
+    }
+
+    // ---------------------------------------------------------------- nefes / shake
+    private void ApplyBreathing()
+    {
+        bool building = (_vm?.State ?? ProjectRowState.Pending) == ProjectRowState.Started;
+        // Katman "yalnız building'de var": görünürlük motion'dan BAĞIMSIZ (reduced-motion'da da building satırda
+        // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken döner.
+        PART_Breath.Visibility = building ? Visibility.Visible : Visibility.Collapsed;
+
+        bool shouldBreathe = building && AnimationsEnabledProvider();
+        if (shouldBreathe == _isBreathing) return; // zaten dönen nabız baştan almaz (StatusGlyph deseni)
+        _isBreathing = shouldBreathe;
+        if (!shouldBreathe) { StopBreathing(); return; }
+        PART_Breath.BeginAnimation(OpacityProperty, BuildBreathingAnimation(this));
+    }
+
+    private void StopBreathing()
+    {
+        _isBreathing = false;
+        PART_Breath.BeginAnimation(OpacityProperty, null);
+        PART_Breath.Opacity = 0;
+    }
+
+    // ---------------------------------------------------------------- [E3/T42] liste mount reveal (bo-reveal)
+
+    /// <summary>[T42] Liste satırı reveal gecikmesi — 10ms/satır, 380ms'de tavan (BuildApp.jsx:367). Saf/pinli;
+    /// graf katman stagger'ı (<see cref="Graph.GraphView.RevealDelayMs"/>, 55ms/330ms) ile AYNI aile, FARKLI formül.</summary>
+    internal static double RevealDelayMs(int index) => Math.Min(Math.Max(index, 0) * RowStaggerMs, RowStaggerCapMs);
+
+    /// <summary>[T42/bo-reveal] Satırı KADEMELİ belirt: opacity 0→1 + translateY(-5→0), 300ms ease-out, gecikme =
+    /// <see cref="RevealDelayMs"/>(index). Reduced-motion (AnimationsEnabled false) iken ANİ — opacity 1, kayma yok.
+    /// Gecikme boyunca opacity 0 TUTULUR (flash yok) — <see cref="Graph.GraphView"/> per-node reveal deseni. Kayma
+    /// PART_ShakeTranslate'in Y ekseninde akar (shake X'i kullanır — çakışma yok).
+    ///
+    /// <para>[E4/T48] <paramref name="animate"/> verilirse satırın kendi <see cref="AnimationsEnabledProvider"/>'ı
+    /// YERİNE onu kullanır — StickyLayerList reveal-hero wiring'i (bir hero bloke ederse ani sonuç) tüm satırların
+    /// AYNI kararla oynamasını böyle garanti eder. null (varsayılan) → satır kendi sinyalini okur (mevcut davranış).</para></summary>
+    internal void PlayReveal(int index, bool? animate = null)
+    {
+        PART_Root.BeginAnimation(OpacityProperty, null);
+        PART_ShakeTranslate.BeginAnimation(TranslateTransform.YProperty, null);
+        if (!(animate ?? AnimationsEnabledProvider()))
+        {
+            PART_Root.Opacity = 1.0;
+            PART_ShakeTranslate.Y = 0;
+            return;
+        }
+
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+        var begin = TimeSpan.FromMilliseconds(RevealDelayMs(index));
+        var duration = TimeSpan.FromMilliseconds(RevealMs);
+
+        // CSS `both` fill paritesi: gecikme boyunca 0 tutulur (Discrete 0 @ t=0), sonra hedefe ramp.
+        PART_Root.Opacity = 0.0;
+        var fade = MotionTokens.SplineTo(1.0, duration, spline);
+        fade.BeginTime = begin;
+        fade.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        PART_Root.BeginAnimation(OpacityProperty, fade);
+
+        PART_ShakeTranslate.Y = -RevealRisePx;
+        var slide = MotionTokens.SplineTo(0.0, duration, spline);
+        slide.BeginTime = begin;
+        slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        PART_ShakeTranslate.BeginAnimation(TranslateTransform.YProperty, slide);
+    }
+
+    private void PlayShake()
+    {
+        if (!AnimationsEnabledProvider()) return;
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+        // [Fix wave 1 · D1 review Minor 4] FillBehavior.Stop: keyframe'ler zaten 0'da biter → görsel aynı, ama
+        // varsayılan HoldEnd'in aksine clock BİTİNCE serbest kalır (her shake'lenmiş satırda takılı saat kalmaz).
+        var anim = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
+        void Frame(double v, double pct) =>
+            anim.KeyFrames.Add(new SplineDoubleKeyFrame(v, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ShakeMs * pct)), spline));
+        // BuildApp.jsx:27 keyframe'leri: 10%,90% → -2 · 25%,75% → +3 · 50% → -3.
+        Frame(-2, 0.10); Frame(3, 0.25); Frame(-3, 0.50); Frame(3, 0.75); Frame(-2, 0.90); Frame(0, 1.0);
+        PART_ShakeTranslate.BeginAnimation(TranslateTransform.XProperty, anim, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    // ---------------------------------------------------------------- animasyon yardımcıları
+    private void AnimateStripeWidth(double to) =>
+        AnimateDouble(PART_Stripe, FrameworkElement.WidthProperty, to,
+            "Duration.Instant", 80, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+
+    private void AnimateInnerTranslate(double to) =>
+        AnimateDouble(PART_InnerTranslate, TranslateTransform.XProperty, to,
+            "Duration.Fast", 120, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+
+    private void AnimateDouble(IAnimatable target, DependencyProperty prop, double to,
+        string durKey, double durFallback, string splineKey, KeySpline splineFallback)
+    {
+        bool enabled = AnimationsEnabledProvider();
+        var duration = MotionTokens.ResolveDuration(this, durKey, durFallback);
+        var spline = MotionTokens.ResolveKeySpline(this, splineKey, splineFallback);
+        if (!enabled || duration.TimeSpan <= TimeSpan.Zero)
+        {
+            target.BeginAnimation(prop, null);
+            ((DependencyObject)target).SetValue(prop, to);
+            return;
+        }
+        target.BeginAnimation(prop, MotionTokens.SplineTo(to, duration.TimeSpan, spline), HandoffBehavior.SnapshotAndReplace);
+    }
+
+    // ---------------------------------------------------------------- etkileşim
+    private void OnRowClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (_vm is { } vm) FindRunViewModel()?.SelectProject(vm.Id);
+    }
+
+    private void OnRowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && _vm is { } vm)
+        {
+            FindRunViewModel()?.SelectProject(vm.Id);
+            e.Handled = true;
+        }
+    }
+
+    // ---------------------------------------------------------------- [E1/T67] hover ikon eylemleri
+    /// <summary>Klasör ikonu → dosyayı Explorer'da seçili aç (satır Id'si = csproj yolu). Buton mouse event'i
+    /// handled ettiğinden satır seçimi (OnRowClicked) tetiklenmez.</summary>
+    private void OnRevealClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm is { } vm) FindRunViewModel()?.RevealProjectInExplorer(vm.Id);
+    }
+
+    /// <summary>VS ikonu → bağlı solution'ı VS'de aç. Birden çok solution varsa VM chooser adaylarını döndürür →
+    /// küçük seçim popover'ı açılır (D6 deseni). Tek/sıfır solution'da (chooser null/boş) hiçbir şey açılmaz —
+    /// eylem zaten VM içinde tamamlandı (opened / no-sln / VS-not-found).</summary>
+    private void OnVsClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm is not { } vm) return;
+        var chooser = FindRunViewModel()?.OpenProjectInVisualStudio(vm.Id);
+        if (chooser is not { Count: > 0 }) return;
+        BuildVsChooserRows(chooser);
+        PART_VsChooser.IsOpen = true;
+    }
+
+    private void BuildVsChooserRows(IReadOnlyList<SolutionRef> candidates)
+    {
+        PART_VsChooserRows.Children.Clear(); // minik non-virtualized liste (BranchPopover deseni)
+        foreach (var sln in candidates) PART_VsChooserRows.Children.Add(BuildVsRow(sln));
+    }
+
+    private Border BuildVsRow(SolutionRef sln)
+    {
+        var name = new TextBlock
+        {
+            Text = sln.Name,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontFamily = AppFonts.Mono,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap,
+        };
+        name.SetResourceReference(FontSizeProperty, "FontSize.Xs");
+        name.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
+
+        var row = new Border
+        {
+            Height = 28,
+            Padding = new Thickness(6, 0, 6, 0),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Child = name,
+        };
+        row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
+        HoverBackground.Attach(row);
+        row.MouseLeftButtonUp += (_, _) =>
+        {
+            PART_VsChooser.IsOpen = false; // seçince kapan (BranchPopover.Pick deseni)
+            if (_vm is { } vm) FindRunViewModel()?.OpenSolutionInVisualStudio(vm.Id, sln);
+        };
+        return row;
+    }
+
+    /// <summary>[C1 debt] Seçim RunViewModel'de yaşar; kartın DataContext'i satır VM'idir → ata ağaçta
+    /// DataContext'i RunViewModel olan ilk öğeye (StickyLayerList/ShellRoot) çıkılır.</summary>
+    private ViewModels.RunViewModel? FindRunViewModel()
+    {
+        DependencyObject? d = this;
+        while (d is not null)
+        {
+            if (d is FrameworkElement fe && fe.DataContext is ViewModels.RunViewModel run) return run;
+            d = VisualTreeHelper.GetParent(d) ?? LogicalTreeHelper.GetParent(d);
+        }
+        return null;
+    }
+
+    // ---------------------------------------------------------------- metin
+    /// <summary>design-v1 EN_STATUS (BuildApp.jsx:342) — glyph tooltip'inin İngilizce statü etiketi. Eşlemenin
+    /// KENDİSİ (state+cycle+queued → GraphStatus) artık <see cref="ProjectRowViewModel.Status"/>'tadır (TEK yer).</summary>
+    private static string StatusLabel(GraphStatus status) => status switch
+    {
+        GraphStatus.Queued => "Queued",
+        GraphStatus.Building => "Building",
+        GraphStatus.Succeeded => "Succeeded",
+        GraphStatus.Failed => "Failed",
+        GraphStatus.Skipped => "Skipped",
+        GraphStatus.Cycle => "Cycle",
+        _ => "Discovered",
+    };
+
+    private Color ResolveColor(string key, Color fallback) =>
+        TryFindResource(key) is SolidColorBrush b ? b.Color : fallback;
+}

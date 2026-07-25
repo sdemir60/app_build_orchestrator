@@ -6,6 +6,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
@@ -27,9 +28,11 @@ public class RunCoordinatorTests
     private static string Id(string name) => Path.Combine(PlanRoot, name, name + ".csproj");
     private static string NameOf(string projectId) => Path.GetFileNameWithoutExtension(projectId);
 
-    private static ProjectNode Node(string name, string[]? deps = null, bool inCycle = false) =>
+    // willBuild: varsayılan null = "imza yok / pre-Sync" (mevcut çağrıların tamamı); yalnız [Task 19] Build
+    // pre-skip'ini kuran testler false/true verir.
+    private static ProjectNode Node(string name, string[]? deps = null, bool inCycle = false, bool? willBuild = null) =>
         new(Id(name), name, Id(name), SolutionNames: [], Dependencies: [.. (deps ?? []).Select(Id)],
-            BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: inCycle, WillBuild: null);
+            BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: inCycle, WillBuild: willBuild);
 
     private static RunPlan PlanOf(params ProjectNode[] nodes) => PlanOf(EmptyRefs(), nodes);
 
@@ -455,6 +458,31 @@ public class RunCoordinatorTests
     }
 
     [Fact]
+    public async Task worktree_preparation_failure_on_a_different_branch_ends_the_run_as_planFailed_and_never_starts_it()
+    {
+        // [Fix wave 1 — Finding 3] Seçili branch aktif branch'ten FARKLIYSA worktree ZORUNLUDUR (K1): hazırlık
+        // başarısız olursa in-place'e DÜŞÜLEMEZ — aksi halde "X'i derle" denmişken sessizce kullanıcının kirli
+        // aktif branch'i derlenirdi. Program.PrepareAsync bunu WorktreePreparationException ile bildirir; burada
+        // kanıtlanan, koordinatörün onu MEVCUT run-bitiren hata kanalına (planFailed — App'in
+        // RunEndingErrorCodes kümesindeki kod) çevirdiği ve run'ın HİÇ başlamadığıdır.
+        const string message = "Cannot build branch 'feature-x': it is not the branch checked out in the workspace, "
+            + "so it must be built in an isolated worktree (the active branch is never checked out). "
+            + "Worktree preparation failed: fatal: 'C:/pool/feature-x-1' already exists";
+        Func<StartRunCommand, RunPlan> failingPlanner = _ => throw new WorktreePreparationException(message);
+        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())), failingPlanner);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
+        Assert.Equal("planFailed", err.Code); // "runFailed" (beklenmeyen iç hata) DEĞİL — kasıtlı, tanımlı red
+        Assert.Equal(message, err.Message);   // kullanıcı hangi branch'in ve NEDEN derlenmediğini görür
+        Assert.Empty(h.Events.OfType<RunStartedEvent>());   // run hiç başlamadı → yanlış branch DERLENMEDİ
+        Assert.Empty(h.Events.OfType<RunCompletedEvent>());
+        Assert.False(h.Sut.HasResumableRun);
+    }
+
+    [Fact]
     public async Task continue_without_a_resumable_run_errors()
     {
         using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())));
@@ -822,9 +850,9 @@ public class RunCoordinatorTests
     [Fact]
     public async Task worktree_run_with_a_supplied_resolver_gets_per_project_isolated_obj_paths()
     {
-        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) bu run
-        // akışına henüz bağlı DEĞİL (Program.cs planner'ı yalnız cmd.RootPath/Configuration alır) — burada
-        // worktreeObjRootResolver enjekte edilerek "worktree kökü biliniyorsa" davranış test edilir.
+        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) üretimde
+        // Program.cs'in planner'ında yapılır (A4) — burada koordinatörün kendi sözleşmesi izole test edilir:
+        // "worktree kökü biliniyorsa proje başına izole obj".
         string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-obj-" + Guid.NewGuid());
         var plan = PlanOf(Node("A"), Node("B"));
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
@@ -843,7 +871,7 @@ public class RunCoordinatorTests
     }
 
     [Fact]
-    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // deferred wiring: Program.cs henüz resolver vermiyor
+    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // resolver opsiyoneldir: yoksa in-place obj
     {
         var plan = PlanOf(Node("A"));
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
@@ -869,6 +897,49 @@ public class RunCoordinatorTests
 
         var a = Assert.Single(invoker.Requests);
         Assert.Null(a.BaseIntermediateOutputPath);
+    }
+
+    [Fact]
+    public async Task Continue_inherits_the_original_runs_worktree_obj_root()
+    {
+        // [A4] Worktree, run'ın ÇÖZÜLMÜŞ workspace'idir — segment başına yeniden hesaplanan bir istek bayrağı
+        // DEĞİL. App, Continue'yu bugün UseWorktree=false ile yollar (RunViewModel.cs:241); segment-2 kökü
+        // cmd'den yeniden hesaplasaydı AYNI run'ın yarısı worktree'nin izole obj'sine, yarısı projenin default
+        // obj'sine derlenirdi (yarısı bayat-obj zehrine açık, üstelik sessizce).
+        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-continue-" + Guid.NewGuid().ToString("N"));
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
+        var resolverCalls = new List<StartRunCommand>();
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (req, _, _) =>
+        {
+            if (NameOf(req.ProjectId) != "A") return Ok();
+            inFlight.TrySetResult();
+            await release.Task; // 1. segment A'da duruyorken Stop → B/C/D Queued kalır
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd =>
+        {
+            lock (resolverCalls) resolverCalls.Add(cmd);
+            return worktreeRoot;
+        });
+
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
+        await inFlight.Task.WaitAsync(Limit);
+        h.Sut.TryRequestStop(StopKind.Graceful);
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Continue: UseWorktree BAYRAĞI YOK (App'in bugünkü davranışı) — yine de 1. segmentin kökü kullanılmalı.
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Continue, PlanRoot, "Debug", 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A", "B", "C", "D"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
+        Assert.All(invoker.Requests,
+            r => Assert.StartsWith(worktreeRoot, r.BaseIntermediateOutputPath!, StringComparison.Ordinal));
+        var call = Assert.Single(resolverCalls); // resolver YALNIZ taze run'da çağrılır — Continue MİRAS ALIR
+        Assert.True(call.UseWorktree);
+        Assert.Equal(RunMode.Rebuild, call.Mode);
     }
 
     // ---------------------------------------------------------------- 12) depIssue propagation (T54)
@@ -1106,5 +1177,171 @@ public class RunCoordinatorTests
             Assert.Equal(1, warnsAfterSegment2); // Continue AYNI obj üstünde devam eder — yeniden teşhis/warn YOK
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- 14) katman uyarıları (A1/T15)
+
+    // Ters-katman uyarısı warn-only DATA'dır: koordinatör onu OKUYUP bloklama/yeniden sıralama YAPMAZ, yalnız
+    // run başında konsola basar — tasarımın tek gerçek düzeltmesi kullanıcının pattern'leri gözden geçirmesidir.
+    [Fact]
+    public async Task layer_warnings_carried_by_the_plan_are_printed_to_the_console_at_run_start()
+    {
+        const string Warning =
+            "reverse layer dependency: 'OSYS.Data' (layer 0 'DataLayer') depends on producer 'B.csproj' (layer 1 'UiLayer')";
+        var plan = new RunPlan(
+            new BuildPlan([Node("A") with { BuildOrder = 0 }], Cycles: [], Configuration: "Debug",
+                LayerWarnings: [Warning]),
+            EmptyRefs());
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Contains(h.ConsoleLines, l => l == "warning: " + Warning);
+    }
+
+    // ---------------------------------------------------------------- 15) depIssue-persist penceresi (A2)
+
+    private static string NewCacheRoot() =>
+        Path.Combine(Path.GetTempPath(), "bo-coord-state-" + Guid.NewGuid().ToString("N"));
+
+    private static IncrementalPlan Incremental(params string[] names) =>
+        new(names.ToDictionary(Id, _ => "sig", StringComparer.OrdinalIgnoreCase), "headsha", "main");
+
+    [Fact]
+    public async Task A_success_carrying_a_dep_issue_does_not_persist_build_state()
+    {
+        // [A2] Up fail eder, Down (Up'a bağımlı) BAŞARILI olur → Down depIssue taşır, yani Up'ın BAYAT (önceki)
+        // çıktısına link'lidir. Böyle bir success için taze imza persist edilirse, Up kaynak DEĞİŞMEDEN
+        // düzeldiğinde (zehirli obj temizliği sınıfı) Down'ın imzası da değişmez → sonraki Build onu "güncel"
+        // sayıp pre-skip eder ve Down sonsuza dek bayat binary'e link'li kalır. Solo kontrol grubudur:
+        // depIssue TAŞIMAYAN bir success persist edilmeye devam etmeli (aksi halde test önemsizce geçerdi).
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(
+                new BuildPlan([Node("Up") with { BuildOrder = 0 }, Node("Down", deps: ["Up"]) with { BuildOrder = 1 },
+                               Node("Solo") with { BuildOrder = 2 }],
+                    Cycles: [], Configuration: "Debug"),
+                EmptyRefs(),
+                Incremental: Incremental("Up", "Down", "Solo"));
+            var invoker = new FakeInvoker((req, _, _) =>
+                Task.FromResult(NameOf(req.ProjectId) == "Up" ? Exit(1) : Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var down = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "Down");
+            Assert.Equal(["Up"], down.DepIssues); // sanity: Down gerçekten depIssue taşıyan bir success
+
+            Assert.DoesNotContain(store.Load().Values, s => s.ProjectId == Id("Down"));
+            Assert.Contains(store.Load().Values, s => s.ProjectId == Id("Solo")); // temiz success persist EDİLİR
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Build_mode_pre_skips_up_to_date_nodes_without_invoking_msbuild_and_persists_the_built_ones()
+    {
+        // [Task 19/A2] RunMode.Build pre-skip yolunun ilk DETERMİNİSTİK (acceptance dışı, in-process) kanıtı:
+        // WillBuild==false olan düğüm için MSBuild HİÇ çağrılmaz (yalnız "skipped — up to date" olayı yeterli
+        // kanıt değildir — WillBuild'i yok sayıp yine de derleyen bir koordinatör de o olayı üretebilirdi),
+        // WillBuild==true olan ise derlenir ve BuildState'i persist edilir.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(
+                new BuildPlan([Node("Clean", willBuild: false) with { BuildOrder = 0 },
+                               Node("Dirty", willBuild: true) with { BuildOrder = 1 }],
+                    Cycles: [], Configuration: "Debug"),
+                EmptyRefs(),
+                // [A2 fix-3] Clean'e de imza verilir: aksi halde aşağıdaki "Clean persist EDİLMEDİ" iddiası
+                // önemsizce doğrudur (imzasız proje için PersistBuildStateOnSuccess zaten erken döner).
+                Incremental: Incremental("Clean", "Dirty"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+            Assert.Equal(Id("Clean"), skipped.ProjectId);
+            Assert.Equal("skipped — up to date", skipped.Reason);
+            Assert.DoesNotContain(invoker.Requests, r => r.ProjectId == Id("Clean")); // MSBuild ÇAĞRILMADI
+            Assert.Equal([Id("Dirty")], invoker.Requests.Select(r => r.ProjectId));   // yalnız dirty derlendi
+            Assert.Contains(store.Load().Values, s => s.ProjectId == Id("Dirty"));
+            // [A2 fix-1] Clean'in de imzası VAR (Incremental("Clean", "Dirty")) — bu yüzden bu iddia artık
+            // önemsizce doğru değil: pre-skip bozulup Clean derlenseydi PersistBuildStateOnSuccess erken
+            // dönmez, kaydı yazardı. Yani bu satır "Clean derlendi mi" için İKİNCİ bağımsız dedektördür.
+            Assert.DoesNotContain(store.Load().Values, s => s.ProjectId == Id("Clean")); // derlenmedi → persist yok
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task A_failed_project_is_invalidated_in_build_state_so_the_next_Build_cannot_pre_skip_it()
+    {
+        // [A2 fix-1] KAYNAK DEĞİŞMEDEN başarısızlık sınıfı (zehirli obj: silinmiş bir kardeş csproj'un
+        // project.assets.json/*.nuget.g.props artığı): Up dün YEŞİLDİ (Succeeded + imza persist edildi), bugün
+        // AYNI imzayla FAIL ediyor. Başarısızlık build-state'e yazılmazsa kayıt hâlâ "Succeeded + eşleşen imza"
+        // der ve bir sonraki Build projeyi "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk bir
+        // proje "güncel" olarak raporlanır. §4 gereği DLL/bin timestamp'i okunmadığı için bunu yakalayabilecek
+        // başka mekanizma YOKTUR. Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder
+        // → BuildPreview/WillBuildEvaluator) aynısını kullanır: WillBuild HER run'da GÜNCEL store'dan hesaplanır.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var inc = Incremental("Up", "Solo"); // imzalar SABİT — kaynak hiçbir run'da değişmiyor
+            var basePlan = new BuildPlan([Node("Up") with { BuildOrder = 0 }, Node("Solo") with { BuildOrder = 1 }],
+                Cycles: [], Configuration: "Debug");
+            RunPlan Planner(StartRunCommand _)
+            {
+                var state = store.Load();
+                return new RunPlan(
+                    BuildPreview.ComputeWillBuild(basePlan, n => inc.SignatureById[n.Id], state.GetValueOrDefault),
+                    EmptyRefs(), Incremental: inc);
+            }
+
+            bool upFails = false;
+            var invoker = new FakeInvoker((req, _, _) =>
+                Task.FromResult(upFails && NameOf(req.ProjectId) == "Up" ? Exit(1) : Ok()));
+            // planner verildiği için sabit plan argümanı KULLANILMAZ (Harness: planner ?? (_ => plan)).
+            using var h = new Harness(PlanOf(), invoker, planner: Planner, stateStore: store);
+
+            // ---- Run 1 ("dün"): state YOK → ikisi de derlenir, ikisi de Succeeded + imza persist eder.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult);
+
+            // ---- Run 2 ("bugün"): Rebuild (pre-skip yok) → Up KAYNAK DEĞİŞMEDEN fail eder.
+            upFails = true;
+            await h.Sut.StartAsync(Start(RunMode.Rebuild, runId: "r2"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var upAfterFailure = store.Load()[Id("Up")];
+            Assert.Equal(BuildResult.Failed, upAfterFailure.LastResult);   // artık "bilinen iyi" DEĞİL
+            Assert.Equal("sig", upAfterFailure.BuiltSignature);            // son BAŞARILI imza KORUNUR (Fast frozen-upstream)
+            Assert.Equal(7, upAfterFailure.LastDurationMs);                // ETA: iyi süre (Ok=7ms) fail süresiyle (9ms) EZİLMEZ
+
+            // ---- Run 3: incremental Build → Up PRE-SKIP EDİLEMEZ, GERÇEK bir MSBuild invoke'u olmalı.
+            upFails = false;
+            int before = invoker.Requests.Count;
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r3"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var run3 = invoker.Requests.Skip(before).Select(r => r.ProjectId).ToList();
+            Assert.Equal([Id("Up")], run3); // Up GERÇEKTEN derlendi (olay değil, invoke kanıtı) — Solo derlenmedi
+            // Kontrol: pre-skip mekanizması bu run'da CANLI (yoksa Up'ın derlenmesi önemsiz olurdu).
+            var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+            Assert.Equal(Id("Solo"), skipped.ProjectId);
+            Assert.Equal("skipped — up to date", skipped.Reason);
+            Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult); // yeşile dönünce kayıt düzelir
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 }

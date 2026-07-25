@@ -1,6 +1,4 @@
-using System.IO;
 using System.Windows;
-using System.Windows.Markup;
 using System.Windows.Media;
 
 namespace BuildOrchestrator.Tests.App;
@@ -11,14 +9,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class TokenBrushesTests
 {
-    // pack:// URI'ler gerçek bir Application olmadan (headless test host) çözülmez (FontAssetTests'teki
-    // TestAssets deseniyle aynı: dosyadan doğrudan XamlReader ile yükle).
-    private static ResourceDictionary LoadTokenDictionary()
-    {
-        string path = Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Tokens.xaml");
-        using var stream = File.OpenRead(path);
-        return (ResourceDictionary)XamlReader.Load(stream);
-    }
+    // [T60] Yükleme mekaniğinin TEK yeri DsResources'tır (kopya YASAK, CLAUDE.md).
+    private static ResourceDictionary LoadTokenDictionary() => DsResources.Load("Tokens.xaml");
 
     private static Color Hex(string hex) => (Color)ColorConverter.ConvertFromString(hex)!;
 

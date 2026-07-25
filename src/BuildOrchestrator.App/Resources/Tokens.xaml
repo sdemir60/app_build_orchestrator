@@ -1,11 +1,23 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
     <!--
-      [It-4a Foundation] Renk token'ları — design-v1 tokens/colors.css alt kümesi, BİREBİR (uydurma yok).
-      Bu, tam T49 token çevirisi DEĞİL — yalnız bu paketteki 6 UI task'ının (konsol/TrackedTextBlock/sticky
-      header/scroll/graf/pencere kabuğu) kullandığı brush ailesi. Anahtar adları kararlı, design token adıyla
-      eşlenir (ör. Brush.ConsoleBg kaynağı console-bg token'ından gelir).
+      [T49] Uygulamanın TEK tasarım-token sözlüğü — design-v1 tokens/*.css'ten BİREBİR (uydurma değer YOK):
+      renkler tokens/colors.css, tipografi tokens/typography.css, boşluk/radius/layout tokens/spacing.css,
+      gölge tokens/effects.css. Anahtar adları design token adıyla eşlenir (ör. Brush.ConsoleBg kaynagi console-bg token'idir).
+
+      Bu dosya, ham renk/ölçü literallerinin YAZILABİLECEĞİ TEK yerdir; uygulama XAML'lerinde hardcoded hex
+      YASAKTIR (NoHardcodedColorTests bunu pinler). Süre/eğri token'ları bu dosyada DEĞİL, Resources/Motion.xaml'
+      dedir (reduced-motion canlı sıfırlaması oradan yürür).
+
+      CSS'te KARŞILIĞI OLMAYAN iki değer aşağıda gerekçesiyle ayrıca işaretlidir: Brush.StatusQueuedBorder ve
+      FontWeight.* (ikisi de README'den türetildi).
     -->
+
+    <!-- Nötr rampa uçları (colors.css: black / white / neutral-200) -->
+    <SolidColorBrush x:Key="Brush.Black" Color="#08080a" />
+    <SolidColorBrush x:Key="Brush.White" Color="#ffffff" />
+    <SolidColorBrush x:Key="Brush.Neutral200" Color="#cdcdd2" />
 
     <!-- Yüzeyler -->
     <SolidColorBrush x:Key="Brush.ConsoleBg" Color="#060608" />
@@ -14,6 +26,12 @@
     <SolidColorBrush x:Key="Brush.Surface" Color="#141417" />
     <SolidColorBrush x:Key="Brush.SurfaceRaised" Color="#1a1a1e" />
     <SolidColorBrush x:Key="Brush.SurfaceOverlay" Color="#202024" />
+
+    <!-- Etkileşim yüzeyleri (colors.css: hover = bir üst surface adımı) + scrim -->
+    <SolidColorBrush x:Key="Brush.SurfaceHover" Color="#1a1a1e" />
+    <SolidColorBrush x:Key="Brush.SurfaceActive" Color="#202024" />
+    <!-- scrim: rgba(4,4,6,0.60) → alfa baytı round(0.60×255) = 153 = 0x99 -->
+    <SolidColorBrush x:Key="Brush.Scrim" Color="#99040406" />
 
     <!-- Border'lar (hairline) -->
     <SolidColorBrush x:Key="Brush.BorderSubtle" Color="#1c1c20" />
@@ -48,6 +66,12 @@
     <SolidColorBrush x:Key="Brush.StatusFailSoft" Color="#1FEE5A52" />
     <SolidColorBrush x:Key="Brush.StatusFailBorder" Color="#52EE5A52" />
 
+    <!-- Statü: building — colors.css'te AYNEN amber ailesine bağlıdır (status-building = amber, status-building-text = amber-text, …) -->
+    <SolidColorBrush x:Key="Brush.StatusBuilding" Color="#eda10f" />
+    <SolidColorBrush x:Key="Brush.StatusBuildingText" Color="#f1ab2e" />
+    <SolidColorBrush x:Key="Brush.StatusBuildingSoft" Color="#1FEDA10F" />
+    <SolidColorBrush x:Key="Brush.StatusBuildingBorder" Color="#52EDA10F" />
+
     <!-- Statü: skipped -->
     <SolidColorBrush x:Key="Brush.StatusSkipped" Color="#6a6a73" />
     <SolidColorBrush x:Key="Brush.StatusSkippedText" Color="#888890" />
@@ -64,6 +88,10 @@
     <SolidColorBrush x:Key="Brush.StatusQueued" Color="#7c7c84" />
     <SolidColorBrush x:Key="Brush.StatusQueuedText" Color="#9a9aa2" />
     <SolidColorBrush x:Key="Brush.StatusQueuedSoft" Color="#1A7C7C84" />
+    <!-- CSS'TE YOK (tek istisna #1): colors.css queued ailesine bir -border tonu vermez. README §1.1 "her
+         statünün 4 tonu: çekirdek, -text, -soft (%10-12), -border (%24-32)" kuralından türetildi: çekirdek
+         #7c7c84 + %24 alfa (aynı gri aileden skipped -border'ın oranı, rgba(120,120,128,0.24)) → 0x3D. -->
+    <SolidColorBrush x:Key="Brush.StatusQueuedBorder" Color="#3D7C7C84" />
 
     <!-- Will-build noktası (accent'ten AYRI, ortogonal dot semantiği) -->
     <SolidColorBrush x:Key="Brush.DotDirty" Color="#eda10f" />
@@ -74,12 +102,98 @@
     <!-- Focus -->
     <SolidColorBrush x:Key="Brush.FocusRing" Color="#80EDA10F" />
 
-    <!-- [T59] radius/gölge — yalnız `⌄ latest` pill'in ihtiyaç duyduğu alt küme (tam radius/elevation ölçeği T49). -->
-    <!-- design-v1 §1.3: overlay radius 8 (pill "radius-md" prototip CSS adı, gerçek değer overlay=8). -->
+    <!-- ============================ Tipografi (typography.css) ============================ -->
+
+    <!-- text-2xs … text-3xl; taban (BASE) 13px. -->
+    <sys:Double x:Key="FontSize.2xs">11</sys:Double>
+    <sys:Double x:Key="FontSize.Xs">12</sys:Double>
+    <sys:Double x:Key="FontSize.Sm">13</sys:Double>
+    <sys:Double x:Key="FontSize.Md">14</sys:Double>
+    <sys:Double x:Key="FontSize.Lg">16</sys:Double>
+    <sys:Double x:Key="FontSize.Xl">20</sys:Double>
+    <sys:Double x:Key="FontSize.2xl">26</sys:Double>
+    <sys:Double x:Key="FontSize.3xl">34</sys:Double>
+
+    <!-- CSS'TE YOK (tek istisna #2): typography.css sayısal font-weight token'ı tutmaz. README §1.2
+         "Başlık 600, vurgu 500, gövde 400" cümlesinden türetildi (600=SemiBold, 500=Medium, 400=Normal). -->
+    <FontWeight x:Key="FontWeight.Body">Normal</FontWeight>
+    <FontWeight x:Key="FontWeight.Emphasis">Medium</FontWeight>
+    <FontWeight x:Key="FontWeight.Heading">SemiBold</FontWeight>
+
+    <!-- CSS leading-* ORANDIR; WPF LineHeight mutlak DIP ister → oran × punto (kullanılan punto ada gömülü):
+         snug 1.35×13 · normal 1.5×13 · mono 1.55×12. -->
+    <sys:Double x:Key="LineHeight.Snug13">17.55</sys:Double>
+    <sys:Double x:Key="LineHeight.Normal13">19.5</sys:Double>
+    <sys:Double x:Key="LineHeight.Mono12">18.6</sys:Double>
+
+    <!-- tracking-caps:0.07em — TrackedTextBlock.TrackingEm em cinsinden okur (11px caps etiketleri). -->
+    <sys:Double x:Key="Tracking.Caps">0.07</sys:Double>
+
+    <!-- ====================== Boşluk / radius / ölçü (spacing.css) ====================== -->
+
+    <!-- space-1 … space-16 (4px grid) -->
+    <sys:Double x:Key="Space.1">4</sys:Double>
+    <sys:Double x:Key="Space.2">8</sys:Double>
+    <sys:Double x:Key="Space.3">12</sys:Double>
+    <sys:Double x:Key="Space.4">16</sys:Double>
+    <sys:Double x:Key="Space.5">20</sys:Double>
+    <sys:Double x:Key="Space.6">24</sys:Double>
+    <sys:Double x:Key="Space.8">32</sys:Double>
+    <sys:Double x:Key="Space.10">40</sys:Double>
+    <sys:Double x:Key="Space.12">48</sys:Double>
+    <sys:Double x:Key="Space.16">64</sys:Double>
+
+    <!-- radius-*: chip/tag 3 · kontrol 4 · kart/panel 6 · overlay 8 · pill 999 · konsol 0 (keskin) -->
+    <CornerRadius x:Key="Radius.None">0</CornerRadius>
+    <CornerRadius x:Key="Radius.Xs">3</CornerRadius>
+    <CornerRadius x:Key="Radius.Sm">4</CornerRadius>
+    <CornerRadius x:Key="Radius.Md">6</CornerRadius>
+    <CornerRadius x:Key="Radius.Lg">8</CornerRadius>
+    <CornerRadius x:Key="Radius.Full">999</CornerRadius>
+    <!-- [T59] `⌄ latest` pill'in kullandığı ad KORUNUR — Radius.Lg'nin (overlay=8) alias'ı. -->
     <CornerRadius x:Key="Radius.Overlay">8</CornerRadius>
-    <!-- design-v1 §1.3/it4a-tdd-plan Global Constraints: popover gölgesi `0 6px 18px -8px rgba(0,0,0,.6)`.
-         DropShadowEffect'te spread parametresi yok (feasibility §3.2/§5-2) — tek katmanla yakınsanır:
-         Direction=270 (düz aşağı) + ShadowDepth=6 + BlurRadius=18 + Opacity=.6. -->
+
+    <!-- Layout yükseklikleri. Kaynaklar: titlebar-height:40 (spacing.css); ribbon (sticky şerit) 32 ve
+         action bar 42 ile global progress 2 prototipten (BuildApp.jsx:781 / :1544 / :809); panel başlığı 28 =
+         spacing.css statusbar-height (v7 T49: ayrı statusbar bölgesi YOK, token BU adı alır; prototipte
+         PanelHead de 28'dir, BuildApp.jsx:227). -->
+    <sys:Double x:Key="Size.TitleBarHeight">40</sys:Double>
+    <sys:Double x:Key="Size.RibbonHeight">32</sys:Double>
+    <sys:Double x:Key="Size.ProgressHeight">2</sys:Double>
+    <sys:Double x:Key="Size.ActionBarHeight">42</sys:Double>
+    <sys:Double x:Key="Size.PanelHeaderHeight">28</sys:Double>
+
+    <!-- DİKKAT — İKİNCİ OTORİTE DEĞİL: satır/katman-başlığı yüksekliğinin TEK otoritesi
+         Controls/LayoutMetrics.DefaultRowHeight/DefaultHeaderHeight'tır (sticky aritmetiği oradan yürür) ve
+         StickyLayerList.xaml onları {x:Static controls:LayoutMetrics.*} ile tüketmeye DEVAM eder. Buradaki iki
+         girdi yalnız liste DIŞI tüketiciler içindir; DesignTokenScaleTests eşitliği pinler (drift → kırmızı). -->
+    <sys:Double x:Key="Size.RowHeight">36</sys:Double>
+    <sys:Double x:Key="Size.RowHeightCompact">30</sys:Double>
+    <sys:Double x:Key="Size.LayerHeaderHeight">24</sys:Double>
+
+    <!-- dot-size:8px · focus-ring-width:2px · README VISUAL FOUNDATIONS: focus halkası "offset 1px" -->
+    <sys:Double x:Key="Size.DotSize">8</sys:Double>
+    <sys:Double x:Key="Size.FocusRingWidth">2</sys:Double>
+    <sys:Double x:Key="Size.FocusRingOffset">1</sys:Double>
+
+    <!-- Pencerenin en küçük kullanılabilir ölçüsü (MainWindow.MinWidth/MinHeight bunları tüketir). -->
+    <sys:Double x:Key="Size.WindowMinWidth">1240</sys:Double>
+    <sys:Double x:Key="Size.WindowMinHeight">620</sys:Double>
+
+    <!-- ================================ Gölge (effects.css) ================================ -->
+    <!-- DropShadowEffect'te spread parametresi YOKtur (feasibility §3.2/§5-2, A13.1-2) — CSS'in çift katmanlı
+         gölgesi tek katmanla yakınsanır: Direction=270 (düz aşağı) + ShadowDepth=|Y| + BlurRadius=blur. -->
+    <!--
+      [T60 · B2 review carried-forward #2] BU İKİ EFEKT PAYLAŞILIR ve WPF tarafından PARSE ANINDA DONDURULUR.
+      Paylaşmak DOĞRUdur: bir Effect birden çok öğeye statik olarak verilebilir (Ds.Popover / Ds.Dialog öyle
+      yapar). Ama gölgenin `Opacity`/`BlurRadius`'unu ANIMATE etmek isteyen bir tüketici, A13.2'nin fırçalar
+      için yazdığı duvara ÇARPAR (donmuş nesne animasyon hedefi olamaz; olsa bile TÜM tüketicileri birden
+      oynatırdı). Çözüm de aynıdır: o tüketici kendi (donmamış) KOPYASINI kurup onu sürmelidir —
+      Controls/DsTransition.cs'in fırçalar için yaptığının aynısı.
+    -->
+    <!-- effects.css:5 elevation-overlay: `0 10px 28px -10px rgba(0,0,0,.66)` (dialog/menü/toast). -->
+    <DropShadowEffect x:Key="Effect.OverlayShadow" Color="Black" Direction="270" ShadowDepth="10" BlurRadius="28" Opacity="0.66" />
+    <!-- effects.css:6 elevation-popover: `0 6px 18px -8px rgba(0,0,0,.6)` (tooltip; [T59] `⌄ latest` pill). -->
     <DropShadowEffect x:Key="Effect.PopoverShadow" Color="Black" Direction="270" ShadowDepth="6" BlurRadius="18" Opacity="0.6" />
 
 </ResourceDictionary>

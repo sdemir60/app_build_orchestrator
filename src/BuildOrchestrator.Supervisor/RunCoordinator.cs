@@ -27,6 +27,8 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// cref="Core.State.BuildStateStore"/>'a <see cref="BuildState"/> persist eder — böylece BİR SONRAKİ Build
 /// incremental olur. <see cref="SignatureById"/> yalnız non-null imzaları içerir (hollow/never-committed
 /// persist edilmez); <c>null</c> Incremental (ör. testlerdeki basit planner) → persist YOK, pre-skip YOK.
+/// [A2 fix-1] Bu yalnız BAŞARI yolu içindir: başarısızlıkta yapılan invalidasyon (bkz.
+/// <c>InvalidateBuildStateOnFailure</c>) imza/HEAD gerektirmez, mevcut kaydı yerinde günceller.
 /// </summary>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
@@ -72,11 +74,13 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
 /// asla stdout'a yazılmaz.</param>
 /// <param name="worktreeObjRootResolver">
-/// [I2-K2/It-3 Task 10] <c>cmd.UseWorktree</c>=true iken bu run için kullanılacak worktree kökünü döner (null
-/// dönerse in-place gibi davranılır — obj izole EDİLMEZ). Worktree KÖKÜNÜN gerçekten hazırlanması
-/// (<c>WorktreeManager.PrepareWorktreeAsync</c>) bu run akışına HENÜZ bağlı değildir (<c>planner</c> yalnız
-/// <c>cmd.RootPath</c>/<c>cmd.Configuration</c> alır) — bu yüzden parametre isteğe bağlıdır ve verilmezse
-/// (varsayılan <c>null</c>) mevcut davranış (her zaman in-place obj) korunur. Verildiğinde, dönen kök
+/// [I2-K2/It-3 Task 10 · A4] <c>cmd.UseWorktree</c>=true iken bu run için kullanılacak worktree kökünü döner
+/// (null dönerse in-place gibi davranılır — obj izole EDİLMEZ). [A4] Worktree'nin GERÇEKTEN hazırlanması
+/// (<c>WorktreeManager.PrepareWorktreeAsync</c>) Program.cs'te <c>planner</c>'ın İÇİNDE yapılır; bu resolver
+/// yalnız orada çözülmüş kökü okur ve bu yüzden <b>planner'dan SONRA</b> çağrılır. YALNIZ taze (Rebuild/Build)
+/// segmentte çağrılır: Continue/RetryFailed orijinal run'ın kökünü miras alır (bkz. <c>_worktreeObjRoot</c>).
+/// Parametre isteğe bağlıdır; verilmezse (varsayılan <c>null</c>) her zaman in-place obj kullanılır.
+/// Verildiğinde, dönen kök
 /// <see cref="Core.MsBuild.WorktreeObjPathResolver.Resolve"/> ile proje-Id başına izole bir
 /// <c>BaseIntermediateOutputPath</c>'e çevrilir — obj PAYLAŞILMAZ (bayat-obj zehri, SPIKE-proven
 /// OSYS.Types.NewSales.Print vakası).
@@ -107,6 +111,11 @@ public sealed class RunCoordinator(
     private RunPlan? _plan;
     private string? _root;
     private RunLogWriter? _logs;
+    // [A4] Bu run için ÇÖZÜLMÜŞ worktree obj kökü (null ⇒ in-place). Taze (Rebuild/Build) segmentte BİR KEZ
+    // resolver'dan hesaplanır; Continue/RetryFailed segmentleri komuttan YENİDEN hesaplamaz, buradan MİRAS
+    // ALIR — App Continue'yu UseWorktree=false ile yolladığı için (RunViewModel) aksi halde aynı run'ın
+    // yarısı worktree'nin izole obj'sine, yarısı projenin default obj'sine derlenirdi.
+    private string? _worktreeObjRoot;
     private RunSnapshot? _snapshot;
     // [T54] projectId → o projenin (dependency zincirinden) taşıdığı kök depIssue adları. Succeeded/Failed
     // tallies gibi run SEGMENTLERİ ARASINDA KÜMÜLATİF: Continue AYNI birikimi devralır (aksi halde 1. segmentte
@@ -323,6 +332,9 @@ public sealed class RunCoordinator(
         long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
         ConcurrentDictionary<string, byte> stoppedFailedIds;
+        // [I2-K2/Task 10 · A4] Bu segmentin obj kökü: taze run'da resolver'dan hesaplanır ve run state'ine
+        // yazılır, resume yolunda AYNI run'ın saklanan kökünden okunur (bkz. _worktreeObjRoot).
+        string? worktreeObjRoot;
         // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
         // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
         // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild/Continue/RetryFailed'de boş kalır.
@@ -338,6 +350,7 @@ public sealed class RunCoordinator(
                 runPlan = _plan!; logs = _logs!; snapshot = _snapshot!;
                 depIssuesById = _depIssuesById ??= new(StringComparer.OrdinalIgnoreCase);
                 stoppedFailedIds = _stoppedFailedIds ??= new(StringComparer.OrdinalIgnoreCase);
+                worktreeObjRoot = _worktreeObjRoot; // [A4] resume: cmd'nin bayrakları DEĞİL, orijinal run'ın kökü
             }
             // [T55] AYNI plan'dan devam: yeniden tarama/planlama YOK. Snapshot.Queued INERT'tir — resume ctor'u
             // kuyruğu Completed'tan türetir; RetryPlanning ise Completed'ı dispatch edilecek yeni bir kümeyle
@@ -356,9 +369,21 @@ public sealed class RunCoordinator(
         }
         else
         {
+            // [Fix wave 1 — Finding 3] WorktreePreparationException: planner (Program.BuildRunPlan) seçili
+            // branch AKTİF branch'ten farklıyken worktree'yi hazırlayamadı. Worktree o durumda zorunludur
+            // (K1) — in-place'e düşmek YANLIŞ branch'i derlemek olurdu, bu yüzden run HİÇ BAŞLAMAZ. Ayrı bir
+            // kanal AÇILMAZ: mevcut planlama-hatası kodu (planFailed) kullanılır — App'in RunEndingErrorCodes
+            // kümesi onu zaten tanır (mesaj kullanıcıya gösterilir, Build butonu geri açılır).
             try { runPlan = planner(cmd); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                or WorktreePreparationException)
             { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }
+
+            // [I2-K2/Task 10 · A4] cmd.UseWorktree=false → HER ZAMAN null (in-place, VS-parity). true iken
+            // resolver YOKSA (ör. testlerin basit harness'ı) yine null'a düşer — obj izolasyonu ancak resolver
+            // GERÇEK bir worktree kökü döndürdüğünde devreye girer. Planner'dan SONRA çağrılır: Program.cs'te
+            // worktree'yi HAZIRLAYAN taraf planner'dır, resolver yalnız onun çözdüğü kökü okur.
+            worktreeObjRoot = cmd.UseWorktree ? worktreeObjRootResolver?.Invoke(cmd) : null;
 
             lock (_gate)
             {
@@ -366,6 +391,7 @@ public sealed class RunCoordinator(
                 _snapshot = null;
                 _plan = runPlan;
                 _root = Canonical(cmd.RootPath);
+                _worktreeObjRoot = worktreeObjRoot; // [A4] Continue/RetryFailed segmentleri bunu miras alacak
                 logs = _logs = logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
                 depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
@@ -401,11 +427,6 @@ public sealed class RunCoordinator(
         catch (MsBuildResolveException ex)
         { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
 
-        // [I2-K2/Task 10] cmd.UseWorktree=false → HER ZAMAN null (in-place, VS-parity, mevcut davranış). true
-        // iken resolver YOKSA (Program.cs henüz worktree hazırlamıyor) yine null'a düşer — obj izolasyonu ancak
-        // resolver GERÇEK bir worktree kökü döndürdüğünde devreye girer.
-        string? worktreeObjRoot = cmd.UseWorktree ? worktreeObjRootResolver?.Invoke(cmd) : null;
-
         // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi YALNIZ taze (Rebuild/Build)
         // segmentte VE in-place (worktreeObjRoot null — izole obj YOK) projeler için tetiklenir: Continue/RetryFailed
         // AYNI obj üstünde devam eder (yeniden teşhis gerekmez), worktree run'ları zaten PAYLAŞILMAYAN izole obj
@@ -434,6 +455,13 @@ public sealed class RunCoordinator(
         // taşınır; burada AYRICA hesaplanmaz.
         events.TryWrite(new BuildPreviewEvent(
             [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild))]));
+        // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
+        // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
+        // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
+        // bağımlılığından önce koyduğu plan sessizce derlenirdi — tek gerçek düzeltme pattern'leri gözden
+        // geçirmektir. Plan katmansızsa (varsayılan) LayerWarnings null/boştur → hiçbir satır basılmaz.
+        foreach (string warning in plan.LayerWarnings ?? [])
+            console("warning: " + warning);
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,
@@ -526,7 +554,9 @@ public sealed class RunCoordinator(
             if (!resumable)
             {
                 // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
-                lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; } // [T54/Task-13]
+                // [A4] _worktreeObjRoot da temizlenir: devredilecek bir run kalmadığında bu kökün yaşaması
+                // için sebep yoktur (taze run onu zaten her defasında yeniden yazar — sızma değil, hijyen).
+                lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; _worktreeObjRoot = null; } // [T54/Task-13/A4]
                 logs.Dispose();
             }
         }
@@ -619,7 +649,17 @@ public sealed class RunCoordinator(
             {
                 result = BuildResult.Succeeded;
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
-                PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
+                // [A2] depIssue TAŞIYAN bir success, bağımlılığının BAYAT (bu run'da derlenmemiş, önceki) çıktısına
+                // link'lidir — "başarılı" olması binary'nin güncel olduğu anlamına GELMEZ. Buna rağmen taze imza
+                // persist edilirse, failed upstream KAYNAK DEĞİŞMEDEN düzeldiğinde (ör. zehirli obj temizliği) bu
+                // projenin imzası da değişmez ve bir sonraki incremental Build onu "güncel" sayıp pre-skip eder;
+                // proje sonsuza dek bayat binary'e link'li kalır. §4 gereği DLL/bin timestamp'i OKUNMADIĞI için
+                // bunu yakalayabilecek başka bir mekanizma yoktur. Persist etmemenin bedeli "gereksiz bir kez daha
+                // derlemek", persist etmenin bedeli "sessizce yanlış çıktı" — güvenli taraf seçilir.
+                // [A2 fix-4] Aynı ayrımı ikinci kez TÜRETME: depIssuesForEvent (:594) zaten "depIssue var mı"
+                // sorusunun materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
+                if (depIssuesForEvent is null)
+                    PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: başarılı ({1}ms)", name, invoke.DurationMs));
@@ -649,7 +689,14 @@ public sealed class RunCoordinator(
         }
         finally
         {
-            run.Scheduler.Complete(projectId, result);
+            run.Scheduler.Complete(projectId, result); // ÖNCE: her yoldan TAM BİR KEZ, hiçbir I/O bunu geciktiremez
+            // [A2 fix-1] BAŞARISIZ biten HER yol (exit!=0 / timeout / stopped / invoke error) stored BuildState'i
+            // GEÇERSİZLEŞTİRİR. Aksi halde tek yazıcı PersistBuildStateOnSuccess olduğu için başarısız bir proje
+            // kaydına HİÇ dokunmaz: dün Succeeded+eşleşen imzayla yazılmış kayıt bugün proje FAIL etse bile
+            // aynen durur ve bir sonraki Build onu "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk
+            // bir proje "güncel" diye raporlanır. Complete'ten SONRA çağrılır: persist I/O'su beklenmedik bir
+            // şekilde fırlasa bile scheduler ASLA askıda kalmaz.
+            if (result != BuildResult.Succeeded) InvalidateBuildStateOnFailure(run, projectId);
         }
     }
 
@@ -701,7 +748,8 @@ public sealed class RunCoordinator(
     /// [Task 19] Bir proje BAŞARIYLA derlendiğinde <see cref="BuildState"/> persist eder — BİR SONRAKİ Build
     /// koşusu bunu okuyup (imza eşit + Succeeded ⇒ skip) incremental olur. Persist YALNIZ hem <see
     /// cref="RunContext.StateStore"/> hem de bu proje için non-null bir imza (<see cref="IncrementalPlan"/>)
-    /// varsa yapılır (testlerdeki basit planner → Incremental null → persist YOK, davranış nötr). §4: yalnız
+    /// varsa yapılır (testlerdeki basit planner → Incremental null → persist YOK, davranış nötr). [A2] Çağıran
+    /// AYRICA "depIssue taşımayan success" koşulunu uygular (bkz. BuildProjectAsync'teki gerekçe). §4: yalnız
     /// build-state.json'a yazılır, DLL/bin/obj'ye dokunulmaz. Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// </summary>
     private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs)
@@ -715,6 +763,49 @@ public sealed class RunCoordinator(
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("build-state yazılamadı (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+    }
+
+    /// <summary>
+    /// [A2 fix-1] Bir proje BAŞARISIZ bittiğinde stored <see cref="BuildState"/>'i GEÇERSİZLEŞTİRİR:
+    /// <c>LastResult=Failed</c> yazılır, böylece <see cref="Core.Planning.WillBuildEvaluator"/>
+    /// (<c>LastResult != Succeeded ⇒ WillBuild=true</c>) bir sonraki Build'de bu projeyi "up to date" sayıp
+    /// pre-skip EDEMEZ. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek yeri burasıdır.
+    /// <para>
+    /// <b>Neden HER başarısızlık türü:</b> stopped/timeout/invoke-error de "bilinen iyi" DEĞİLDİR — yarıda
+    /// kesilmiş bir derleme torn/eksik çıktı bırakabilir. Güvenli yön invalidasyondur; bedeli "gereksiz bir kez
+    /// daha derlemek", diğer yönün bedeli "sessizce bozuk çıktıyı güncel sanmak".
+    /// </para>
+    /// <para>
+    /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni): <see
+    /// cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
+    /// <see cref="BuildState.LastDurationMs"/> DOKUNULMADAN korunur. Gerekçe: (1) imza, Fast (frozen-upstream)
+    /// modda dependent'ların karşılaştırma tabanıdır — null'lanırsa bu projeye bağımlı HER proje de gereksizce
+    /// dirty olurdu; (2) <c>LastDurationMs</c> ETA tahminini besler, bir başarısızlığın (çoğu zaman erken patlayan)
+    /// süresi İYİ bir ölçümün üzerine yazılmamalıdır. Yalnız <c>LastResult</c>/<c>LastRunAt</c> güncellenir.
+    /// </para>
+    /// <para>
+    /// Kayıt YOKSA hiçbir şey yazılmaz: "kayıt yok" ile "imzası olmayan kayıt" tüm tüketiciler için AYNI anlama
+    /// gelir (WillBuild=true) — boş satır eklemek store'u şişirmekten başka bir şey yapmaz.
+    /// </para>
+    /// Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
+    /// <para>
+    /// [A4 review fix] Bu metot <see cref="BuildProjectAsync"/>'in <c>finally</c>'sinden çağrılır ve
+    /// <see cref="WorkerAsync"/>'in <c>try/finally</c>'sinin ÜSTÜNDE hiçbir umbrella <c>catch</c> yoktur —
+    /// buradan kaçan HERHANGİ bir exception (yalnız I/O değil: bozuk JSON, serialization, vb.) worker'ı
+    /// sessizce öldürür ve sonuncusuysa kuyrukta dispatch edilmemiş projelerle run ASILIR. Bir <c>finally</c>
+    /// içinde "run'ı öldürmez" sözü ancak KOŞULSUZ olabilir; bu yüzden filtre daraltılmaz.
+    /// </para>
+    /// </summary>
+    private void InvalidateBuildStateOnFailure(RunContext run, string projectId)
+    {
+        if (run.StateStore is null) return;
+        try
+        {
+            if (!run.StateStore.Load().TryGetValue(projectId, out var existing)) return; // geçersizleştirilecek kayıt yok
+            run.StateStore.Upsert(existing with { LastResult = BuildResult.Failed, LastRunAt = DateTimeOffset.UtcNow });
+        }
+        catch (Exception ex)
+        { console("build-state geçersizleştirilemedi (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
 
     private string ReasonFor(MsBuildInvokeResult invoke)
@@ -772,6 +863,7 @@ public sealed class RunCoordinator(
         // bunu Completed'tan Queued'a geri taşımak üzere okur (bkz. RetryPlanning.RequeueStoppedFailed).
         ConcurrentDictionary<string, byte> StoppedFailedIds,
         // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.
+        // [A2 fix-1] AYRICA projectFailed → mevcut kaydın LastResult'ı Failed'a çekilir (stale pre-skip'i keser).
         BuildStateStore? StateStore,
         IncrementalPlan? Incremental);
 

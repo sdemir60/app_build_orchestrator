@@ -60,6 +60,13 @@ public static class ScrollAnimator
         SetIsUserSuppressed(target, true);
     }
 
+    /// <summary>[E4 fix] Kullanıcı-suppress bayrağını AÇIKÇA (yeni bir <see cref="AnimateTo"/> başlatmadan) temizler —
+    /// <see cref="CancelForUser"/>'ın (bayrağı KURAN) simetriği. Frontier follow'un "kullanıcı dibe/frontier'e geri
+    /// döndü → takip sürsün" resume tetiği (StickyLayerList) bunu çağırır: <see cref="AnimateTo"/>'yu tetiklemeden
+    /// suppress'i düşürür, gerçek re-engagement bir sonraki follow tick'inde FollowScrollController'ın throttle/
+    /// dead-band'ine kalır (uçuştaki tekerlekle dövüşmez).</summary>
+    public static void ClearUserSuppressed(UIElement target) => SetIsUserSuppressed(target, false);
+
     /// <summary>
     /// <paramref name="target"/>'ı (ScrollViewer veya AvalonEdit TextEditor) <paramref name="targetOffset"/>'e
     /// kaydırır. <paramref name="animationsEnabled"/> false ya da <paramref name="effectiveDuration"/> ≤0 iken

@@ -12,7 +12,9 @@ namespace BuildOrchestrator.App.Shell;
 /// dışarı verir (<see cref="RestoreRequested"/>/<see cref="StopRequested"/>/<see cref="ExitRequested"/>).
 ///
 /// <para><b>İkon:</b> 16px ELLE ayarlanmış raster (<c>Assets/tray-icon-16.ico</c>) — 64px SVG'nin otomatik
-/// küçültülmesi amber "D"yi bozar (feasibility §3.2). Tam ikon hattı (çok boyutlu ICO/XAML) T64.</para>
+/// küçültülmesi amber "D"yi bozar (feasibility §3.2). [T64] Çok boyutlu <c>app-icon.ico</c> (pencere/taskbar)
+/// artık var ama tepsi BİLEREK 16px varyantında kalır: tepsi zaten 16px ister ve elle ayarlanmış kare
+/// rasterlestirilmiş olandan nettir.</para>
 /// </summary>
 internal sealed class AppTrayIcon : IDisposable
 {
@@ -57,6 +59,12 @@ internal sealed class AppTrayIcon : IDisposable
         title: "Build Orchestrator",
         message: "Still running in the tray. Right-click the tray icon and choose Exit to quit.",
         icon: NotificationIcon.Info);
+
+    /// <summary>[E2/triaj-f] Genel OS tray balloon'u — ikinci instance mevcut pencereyi öne getiremediğinde
+    /// (SESSİZ kalmamak için) tek-satırlık bilgilendirme gösterir. Uygulama-içi toast değil (design §8 yasağı) —
+    /// bilinçli olarak OS bildirimi.</summary>
+    public void ShowNotification(string title, string message) =>
+        _icon.ShowNotification(title: title, message: message, icon: NotificationIcon.Warning);
 
     public void Dispose() => _icon.Dispose();
 }

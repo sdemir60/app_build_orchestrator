@@ -1,0 +1,82 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.ActionBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
+  <!--
+    [D6/T40+T12+T43-UI] design-v1 ALT AKSIYON BARI (BuildApp.jsx:1543-1615). DataContext bir RunViewModel
+    (ShellRoot'tan miras). Bar: Sync · ayraç · 6 sayaç chip'i · esnek boşluk · branch/worktree popover chip'leri ·
+    Debug|Release segment · perf · ayraç · Build split-button (koşarken Stop).
+
+    Sayaç chip'leri + branch/worktree/perf chip'lerinin İÇERİĞİ (ikon+etiket+değer) ve enable/checked durumu
+    KOD-TARAFI (ActionBar.xaml.cs) VM'den sürülür — StickyRibbon deseni. Ölçü/renk token'dan (hardcode YASAK);
+    bar yüksekliği kontrolden (ShellRoot'ta Height=Size.ActionBarHeight=42; satır Auto), padding '0 10' + gap 8 (BuildApp.jsx:1544).
+    Üstte 1px Brush.Border (BuildApp.jsx:1545 borderTop = 1px solid border token).
+  -->
+  <Border Background="{DynamicResource Brush.Surface}"
+          BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
+    <DockPanel Margin="10,0" LastChildFill="True">
+
+      <!-- ============================ SAĞ GRUP (sağa yaslı) ============================ -->
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+
+        <!-- branch chip + popover (yukarı açılır) -->
+        <Grid VerticalAlignment="Center">
+          <ToggleButton x:Name="PART_BranchChip" Style="{DynamicResource Ds.Chip}" />
+          <Popup x:Name="PART_BranchPopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_BranchChip}"
+                 StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None"
+                 IsOpen="{Binding IsChecked, ElementName=PART_BranchChip, Mode=TwoWay}">
+            <Border Style="{DynamicResource Ds.Popover}" Width="272">
+              <views:BranchPopover x:Name="PART_BranchPopover"
+                                   IsOpen="{Binding IsOpen, ElementName=PART_BranchPopup, Mode=OneWay}" />
+            </Border>
+          </Popup>
+        </Grid>
+
+        <!-- worktree chip + popover -->
+        <Grid Margin="8,0,0,0" VerticalAlignment="Center">
+          <ToggleButton x:Name="PART_WorktreeChip" Style="{DynamicResource Ds.Chip}" />
+          <Popup x:Name="PART_WorktreePopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_WorktreeChip}"
+                 StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None"
+                 IsOpen="{Binding IsChecked, ElementName=PART_WorktreeChip, Mode=TwoWay}">
+            <Border Style="{DynamicResource Ds.Popover}" Width="300">
+              <views:WorktreePopover x:Name="PART_WorktreePopover"
+                                     IsOpen="{Binding IsOpen, ElementName=PART_WorktreePopup, Mode=OneWay}" />
+            </Border>
+          </Popup>
+        </Grid>
+
+        <!-- Debug | Release segment -->
+        <ItemsControl x:Name="PART_Segment" Style="{DynamicResource Ds.Segment}" Margin="8,0,0,0" VerticalAlignment="Center">
+          <RadioButton x:Name="PART_CfgDebug" Style="{DynamicResource Ds.Segment.Item}" Content="Debug" GroupName="cfg" />
+          <RadioButton x:Name="PART_CfgRelease" Style="{DynamicResource Ds.Segment.Item}" Content="Release" GroupName="cfg" />
+        </ItemsControl>
+
+        <!-- perf chip (koşarken CANLI kalır) -->
+        <ToggleButton x:Name="PART_PerfChip" Style="{DynamicResource Ds.Chip}" Margin="8,0,0,0" VerticalAlignment="Center" />
+
+        <!-- ayraç -->
+        <Border Width="1" Margin="2,10,2,10" Background="{DynamicResource Brush.BorderSubtle}" />
+
+        <!-- Build split-button (koşarken Stop) -->
+        <Grid Margin="8,0,0,0" VerticalAlignment="Center">
+          <Button x:Name="PART_Stop" Style="{DynamicResource Ds.Button.Danger.Md}"
+                  Command="{Binding StopCommand}" Visibility="Collapsed" VerticalAlignment="Center" />
+          <controls:SplitButton x:Name="PART_Split" VerticalAlignment="Center">
+            <controls:SplitButton.MenuContent>
+              <views:BuildMenu x:Name="PART_BuildMenu" />
+            </controls:SplitButton.MenuContent>
+          </controls:SplitButton>
+        </Grid>
+      </StackPanel>
+
+      <!-- ============================ SOL GRUP (sola yaslı, esnek) ============================ -->
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
+        <Button x:Name="PART_Sync" Style="{DynamicResource Ds.Button.Secondary.Sm}"
+                Command="{Binding SyncCommand}" VerticalAlignment="Center" />
+        <Border Width="1" Margin="2,10,2,10" Background="{DynamicResource Brush.BorderSubtle}" />
+        <StackPanel x:Name="PART_CounterChips" Orientation="Horizontal" VerticalAlignment="Center" />
+      </StackPanel>
+    </DockPanel>
+  </Border>
+</UserControl>

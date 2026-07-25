@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.ViewModels;
@@ -14,6 +14,16 @@ namespace BuildOrchestrator.Tests.App;
 public class CopyLogTests
 {
     private const int ClipboardCantOpen = unchecked((int)0x800401D0); // CLIPBRD_E_CANT_OPEN
+
+    /// <summary>[T64] Copy-log ikonu artık çizilmiş bir <c>Geometry</c>'dir (Icons.xaml) — <c>IsShowingCopied</c>
+    /// gerçek <c>Path.Data</c>'yı okur. Headless host'ta App merge zinciri olmadığı için sözlük kontrolün kendi
+    /// kaynak kapsamına elle eklenir; aksi halde ikon HİÇ çözülmez ve görsel toggle doğrulanamazdı.</summary>
+    private static ConsoleHeader NewHeaderWithIcons()
+    {
+        var header = new ConsoleHeader();
+        header.Resources.MergedDictionaries.Add(IconResources.Load());
+        return header;
+    }
 
     // ---------------------------------------------------------------- ClipboardRetry (retry sarmalayıcı)
 
@@ -96,7 +106,7 @@ public class CopyLogTests
     [StaFact]
     public void CopyLog_button_visible_only_in_project_log_mode_with_lines()
     {
-        var header = new ConsoleHeader();
+        var header = NewHeaderWithIcons();
 
         header.ShowNarrative(12);
         Assert.Equal(Visibility.Collapsed, header.CopyLogButton.Visibility);
@@ -113,7 +123,7 @@ public class CopyLogTests
     {
         // [M-3] Seçim anında log boş → buton gizli; ~200ms sayaç tazelemesi (SetLineCount) satır gelince
         // görünürlüğü YENİDEN değerlendirir → buton belirir (yalnız ShowProjectLog anında bir kez değil).
-        var header = new ConsoleHeader();
+        var header = NewHeaderWithIcons();
         header.ShowProjectLog("OSYS.Server.Api", ProjectRowState.Started, hasDepIssue: false, lineCount: 0);
         Assert.Equal(Visibility.Collapsed, header.CopyLogButton.Visibility);
 
@@ -129,7 +139,7 @@ public class CopyLogTests
     [StaFact]
     public void CopyLog_joins_lines_and_toggles_to_check_and_Copied_on_success()
     {
-        var header = new ConsoleHeader();
+        var header = NewHeaderWithIcons();
         header.ShowProjectLog("A", ProjectRowState.Started, false, 5);
         Assert.False(header.IsShowingCopied);
 
@@ -150,7 +160,7 @@ public class CopyLogTests
     [StaFact]
     public void CopyLog_failed_clipboard_does_not_enter_copied_state()
     {
-        var header = new ConsoleHeader();
+        var header = NewHeaderWithIcons();
         header.ShowProjectLog("A", ProjectRowState.Started, false, 5);
         header.LogTextProvider = () => "x";
         header.ClipboardWriter = _ => false; // kalıcı kilit

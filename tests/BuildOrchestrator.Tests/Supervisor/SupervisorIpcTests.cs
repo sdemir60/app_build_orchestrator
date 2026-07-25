@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Tests.Git;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
@@ -9,18 +11,23 @@ public static class TestPaths
     public static string SupervisorExe => Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.Supervisor.exe");
 
     /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).</summary>
-    public static ProcessStartInfo Psi(string? logsDir = null)
+    /// <param name="worktreePoolDir">[A5/T69] Worktree havuz kökü — verilmezse üretim varsayılanı
+    /// (<c>%LOCALAPPDATA%\BuildOrchestrator\worktrees</c>). Havuza dokunan testler KENDİ temp kökünü verir;
+    /// kullanıcının gerçek havuzu ASLA hedef alınmaz (<c>--logs</c>'un cache/state için yaptığının aynısı).</param>
+    public static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null)
     {
         var psi = new ProcessStartInfo(SupervisorExe)
         { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         if (logsDir is not null) { psi.ArgumentList.Add("--logs"); psi.ArgumentList.Add(logsDir); }
+        if (worktreePoolDir is not null) { psi.ArgumentList.Add("--worktrees"); psi.ArgumentList.Add(worktreePoolDir); }
         return psi;
     }
 }
 
 public class SupervisorIpcTests
 {
-    private static ProcessStartInfo Psi(string? logsDir = null) => TestPaths.Psi(logsDir);
+    private static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null)
+        => TestPaths.Psi(logsDir, worktreePoolDir);
 
     [Fact]
     public async Task Stdout_is_ndjson_only_even_after_garbage_command() // [D4 — It-0 kabul maddesi]
@@ -83,5 +90,138 @@ public class SupervisorIpcTests
         }
         await writer.WriteAsync(new ShutdownCommand());
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
+    }
+
+    // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree
+
+    /// <summary>İzole bir Supervisor: kendi logs/cache kökü + kendi worktree havuzu (kullanıcının gerçek dosyaları korunur).</summary>
+    private static ProcessStartInfo IsolatedPsi()
+    {
+        string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
+        return Psi(Path.Combine(sandbox, "logs"), Path.Combine(sandbox, "worktrees"));
+    }
+
+    /// <summary>Tek projelik gerçek bir git repo (bir .csproj + onu içeren bir .sln).</summary>
+    private static void SeedWorkspace(GitTestRepo repo)
+    {
+        repo.WriteFile(Path.Combine("src", "A", "A.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        repo.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { }");
+        repo.WriteFile("Osys.sln",
+            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"src\\A\\A.csproj\", \"{1}\"\nEndProject\n");
+        repo.CommitAll("c1");
+    }
+
+    /// <summary><paramref name="stop"/> true dönene kadar event okur; okunan tüm event'leri döner.</summary>
+    private static async Task<List<IpcEvent>> ReadUntilAsync(NdjsonReader reader, Func<IpcEvent, bool> stop)
+    {
+        var events = new List<IpcEvent>();
+        while (true)
+        {
+            var ev = await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(60))
+                ?? throw new InvalidOperationException("supervisor stdout kapandı");
+            events.Add(ev);
+            if (stop(ev)) return events;
+        }
+    }
+
+    // [A5/T69] syncWorkspace ARTIK unknownCommand DEĞİL: gerçek fetch(ref-only) → tarama → plan → topoloji
+    // akışı koşar. Repo'nun remote'u yoktur, bu yüzden bu aynı zamanda gerçek process üzerinden OFFLINE
+    // DEGRADE yolunu da kanıtlar (fetch başarısız → warn + yerel HEAD, akış yine de tamamlanır).
+    [Fact]
+    public async Task SyncWorkspace_streams_topology_and_completion_and_stdout_stays_ndjson()
+    {
+        using var repo = new GitTestRepo();
+        SeedWorkspace(repo);
+        string branch = repo.CurrentBranchName();
+
+        using var p = Process.Start(IsolatedPsi())!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+
+        await writer.WriteAsync(new SyncWorkspaceCommand(repo.RootPath, branch));
+        var events = await ReadUntilAsync(reader, ev => ev is SyncCompletedEvent);
+
+        // Diskriminatör SIRASI: syncStarted … workspaceTopology … syncCompleted
+        Assert.IsType<SyncStartedEvent>(events[0]);
+        int topologyAt = events.FindIndex(e => e is WorkspaceTopologyEvent);
+        Assert.True(topologyAt > 0 && topologyAt < events.Count - 1);
+        Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Contains(events, e => e is BuildPreviewEvent);
+        Assert.Contains(events, e => e is SyncProgressEvent sp && sp.Line == $"▸ git fetch origin {branch}");
+
+        var topology = (WorkspaceTopologyEvent)events[topologyAt];
+        var node = Assert.Single(topology.Nodes);
+        Assert.Equal("A", node.Name);
+        Assert.True(node.WillBuild);                                  // will-build pass process ucunda da koştu
+        Assert.Equal("Osys", Assert.Single(topology.Solutions).Name); // Open-in-VS (E1) verisi taşınıyor
+
+        var done = (SyncCompletedEvent)events[^1];
+        Assert.Equal(1, done.ProjectCount);
+        Assert.Equal(1, done.ToBuildCount);
+        Assert.True(done.FetchDegraded);                              // remote yok → degrade, ama Sync TAMAMLANDI
+
+        await writer.WriteAsync(new ShutdownCommand());
+        string rest = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        foreach (var line in rest.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            Assert.NotNull(System.Text.Json.JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options)); // [D4]
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
+    [Fact]
+    public async Task ListBranches_answers_with_local_and_remote_tracking_refs()
+    {
+        using var repo = new GitTestRepo();
+        SeedWorkspace(repo);
+        string active = repo.CurrentBranchName();
+        repo.CreateBranch("feature-x");
+
+        using var p = Process.Start(IsolatedPsi())!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+
+        await writer.WriteAsync(new ListBranchesCommand(repo.RootPath));
+        var list = Assert.IsType<BranchListEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
+
+        var activeRef = Assert.Single(list.Branches, b => b.Name == active);
+        Assert.True(activeRef.IsActive);
+        Assert.False(activeRef.IsRemoteTracking);
+        Assert.Equal(40, activeRef.Sha.Length);                       // sha GERÇEKTEN çözülmüş
+        var feature = Assert.Single(list.Branches, b => b.Name == "feature-x");
+        Assert.False(feature.IsActive);
+
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
+    // Havuz izole ve BOŞ: listWorktrees boş envanter döner; deleteWorktree bilinmeyen bir ad için error döner
+    // ama Supervisor AYAKTA kalır ve sonraki komutlara yanıt vermeye devam eder (per-command hata).
+    [Fact]
+    public async Task ListWorktrees_answers_with_an_inventory_and_delete_of_an_unknown_worktree_errors_without_killing_the_host()
+    {
+        using var repo = new GitTestRepo();
+        SeedWorkspace(repo);
+
+        using var p = Process.Start(IsolatedPsi())!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+
+        await writer.WriteAsync(new ListWorktreesCommand(repo.RootPath));
+        var list = Assert.IsType<WorktreeListEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Empty(list.Worktrees); // havuz izole ve boş — ANA çalışma ağacı envantere GİRMEZ
+
+        await writer.WriteAsync(new DeleteWorktreeCommand(repo.RootPath, "no-such-worktree"));
+        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal("worktreeDeleteFailed", err.Code);
+
+        await writer.WriteAsync(new PingCommand(9)); // host hâlâ canlı
+        Assert.Equal(9, Assert.IsType<PongEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5))).Seq);
+
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
     }
 }

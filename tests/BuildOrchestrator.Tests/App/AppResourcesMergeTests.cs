@@ -50,7 +50,40 @@ public class AppResourcesMergeTests
     }
 
     [Fact]
-    public void App_xaml_merges_exactly_the_two_foundation_dictionaries_no_more_no_less()
+    public void App_xaml_merges_the_Icons_resource_dictionary()
+    {
+        var doc = LoadAppXaml();
+
+        var sources = doc.Descendants(Presentation + "ResourceDictionary")
+            .Attributes("Source")
+            .Select(a => a.Value)
+            .ToList();
+
+        Assert.Contains("Resources/Icons.xaml", sources);
+    }
+
+    [Fact]
+    public void App_xaml_merges_the_Controls_resource_dictionary()
+    {
+        var doc = LoadAppXaml();
+
+        var sources = doc.Descendants(Presentation + "ResourceDictionary")
+            .Attributes("Source")
+            .Select(a => a.Value)
+            .ToList();
+
+        Assert.Contains("Resources/Controls.xaml", sources);
+    }
+
+    /// <summary>
+    /// Beklenen liste [T64] ile İKİDEN ÜÇE, [T60] ile ÜÇTEN DÖRDE çıktı: <c>Resources/Icons.xaml</c>
+    /// uygulamanın TEK ikon kaynağı, <c>Resources/Controls.xaml</c> ise TEK DS kontrol kütüphanesidir.
+    /// İddia bilerek TAM EŞİTLİK'tir ("en az N" DEĞİL): bu testin tüm değeri, merge zincirine düşünmeden bir
+    /// sözlük eklenmesinin derlemeyi kırmasıdır — YÜKLEME SIRASI da bilinçli bir karardır: Controls.xaml
+    /// token/ikon anahtarlarını <c>{StaticResource}</c> ile de çözer, bu yüzden ONLARDAN SONRA gelmelidir.
+    /// </summary>
+    [Fact]
+    public void App_xaml_merges_exactly_the_four_foundation_dictionaries_no_more_no_less()
     {
         var doc = LoadAppXaml();
 
@@ -60,6 +93,8 @@ public class AppResourcesMergeTests
             .Select(e => e.Attribute("Source")?.Value)
             .ToList();
 
-        Assert.Equal(["Resources/Motion.xaml", "Resources/Tokens.xaml"], sources);
+        Assert.Equal(
+            ["Resources/Motion.xaml", "Resources/Tokens.xaml", "Resources/Icons.xaml", "Resources/Controls.xaml"],
+            sources);
     }
 }

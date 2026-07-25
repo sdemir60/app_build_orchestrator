@@ -39,6 +39,34 @@ public static class LayerEngine
 {
     public const string OtherLayerName = "Other";
 
+    /// <summary>[A1→D7 fold] Kullanıcı pattern'leri Settings editöründe (D7) serbestçe yazılır. Regex'in
+    /// KENDİSİ geçerli (derlenebilir) olsa bile katastrofik-backtracking bir pattern (ör. <c>(a+)+$</c>)
+    /// <see cref="Regex.IsMatch(string)"/>'te planlamayı SONSUZA DEK asabilir. Her kullanıcı regex'i bu SINIRLI
+    /// per-IsMatch üst sınırıyla derlenir; süre aşılırsa <see cref="RegexMatchTimeoutException"/> fırlar ve
+    /// aşağıda non-match olarak ele alınır. Değer bir design token DEĞİL — bu fold'a özgü bir güvenlik sabiti:
+    /// meşru pattern'ler kısa assembly adlarına karşı mikrosaniyelerde biter, bu tavana yalnız patolojik
+    /// backtracking yaklaşır (bkz. task-D7). Off-token değer → kaynak-atıflı adlandırılmış sabit (CLAUDE.md).</summary>
+    public static readonly TimeSpan UserRegexMatchTimeout = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>[A1→D7 fold] Bir kullanıcı pattern'ini SINIRLI <see cref="UserRegexMatchTimeout"/> ile derler —
+    /// hem LayerEngine hem App'in Settings compile-check'i (D7) AYNI ctor'u kullansın diye TEK yer. Geçersiz
+    /// pattern <see cref="RegexParseException"/> (bir <see cref="ArgumentException"/>) fırlatır — bu, planlamada
+    /// planFailed yolunu tetikleyen mevcut davranıştır (timeout'tan FARKLI ve korunur).
+    /// [D7 fix-wave][Fix2] <see cref="RegexOptions.IgnoreCase"/> — tasarım otoritesi (prototype compileGroups,
+    /// BuildApp.jsx:977/:996) kullanıcı pattern'lerini 'i' bayrağıyla (case-insensitive) derler; burada aynı
+    /// hizalanır. Yalnız kullanıcı-girdili layer pattern'leri bu yoldan geçer (D7 öncesi hiçbir davranış
+    /// case-sensitivity'ye bağımlı değildi).</summary>
+    public static Regex CompileUserPattern(string pattern) =>
+        new(pattern, RegexOptions.IgnoreCase, UserRegexMatchTimeout);
+
+    /// <summary>[D7] Settings editörünün Save-validation compile-check'i: pattern derlenebiliyor mu (boş pattern
+    /// = geçerli). <see cref="CompileUserPattern"/> ile AYNI ctor — davranış tek yerde.</summary>
+    public static bool IsPatternCompilable(string pattern)
+    {
+        try { _ = CompileUserPattern(pattern); return true; }
+        catch (RegexParseException) { return false; }
+    }
+
     public static LayerAssignmentResult AssignLayers(
         IReadOnlyList<ProjectNode> nodesInBuildOrder, IReadOnlyList<LayerPattern> patterns)
     {
@@ -49,17 +77,50 @@ public static class LayerEngine
             return new LayerAssignmentResult(nodesInBuildOrder, []);
 
         var ordered = patterns.OrderBy(p => p.Order).ToList();
-        var compiled = ordered.Select(p => (p.Order, p.Name, Regex: new Regex(p.Regex))).ToList();
+        // [A1→D7 fold] Geçersiz regex burada RegexParseException fırlatır → planFailed (mevcut yol, korunur).
+        // [D7 fix-wave][Fix1] Boş/whitespace bir regex Settings'te geçerli-kaydedilebilir bir durumdur (AddLayer
+        // yeni satırları böyle başlatır, CanSave izin verir — o Save-validation davranışı KORUNUR). Ama
+        // new Regex("").IsMatch(...) HER girdide true döner; boş/whitespace pattern'i null'a derleyip aşağıdaki
+        // eşleşme döngüsünde "asla eşleşmez" (inert) yapıyoruz — tasarım otoritesiyle hizalı (prototype
+        // compileGroups, BuildApp.jsx:977: boş/whitespace → null). IsPatternCompilable/Save-validation yolu
+        // buna dokunmaz — boş pattern hâlâ "compilable" (kaydedilebilir).
+        var compiled = ordered
+            .Select(p => (p.Order, p.Name, Regex: string.IsNullOrWhiteSpace(p.Regex) ? null : CompileUserPattern(p.Regex)))
+            .ToList();
         int otherLayerIndex = ordered.Max(p => p.Order) + 1;
 
+        // [A1→D7 fold] Timeout'a giren pattern adları — her biri için bir kez warn-only uyarı üretilir (spam yok).
+        var timedOutPatterns = new HashSet<string>(StringComparer.Ordinal);
         var byId = new Dictionary<string, (int LayerIndex, string LayerName)>(StringComparer.OrdinalIgnoreCase);
         foreach (var n in nodesInBuildOrder)
         {
-            var match = compiled.FirstOrDefault(c => c.Regex.IsMatch(n.Name));
-            byId[n.Id] = match.Regex is not null ? (match.Order, match.Name) : (otherLayerIndex, OtherLayerName);
+            (int Order, string Name)? match = null;
+            foreach (var c in compiled)
+            {
+                if (c.Regex is null) continue; // [D7 fix-wave][Fix1] boş/whitespace pattern → inert, asla eşleşmez
+                // [D7 re-review][Fix4] Daha önce timeout olmuş bir pattern bu noktadan sonra HER node için tekrar
+                // 100ms'lik matchTimeout'u ödemesin — bir kez timeout olan pattern, kalan çalışma boyunca
+                // non-match kabul edilir (uyarı zaten timedOutPatterns'a eklenmişti, davranış AYNI kalır).
+                if (timedOutPatterns.Contains(c.Name)) continue;
+                bool isMatch;
+                try { isMatch = c.Regex.IsMatch(n.Name); }
+                catch (RegexMatchTimeoutException)
+                {
+                    // [A1→D7 fold] Katastrofik pattern süreyi aştı → bu pattern için NON-MATCH kabul edilir
+                    // (sıradaki pattern denenir; hiçbiri tutmazsa proje Other'a düşer). Asla asmaz/patlamaz.
+                    timedOutPatterns.Add(c.Name);
+                    continue;
+                }
+                if (isMatch) { match = (c.Order, c.Name); break; }
+            }
+            byId[n.Id] = match is { } m ? (m.Order, m.Name) : (otherLayerIndex, OtherLayerName);
         }
 
         var warnings = new List<string>();
+        foreach (var name in timedOutPatterns)
+            warnings.Add(
+                $"layer pattern '{name}' match timed out ({(int)UserRegexMatchTimeout.TotalMilliseconds} ms) — " +
+                "treated as non-match (check for catastrophic backtracking)");
         foreach (var n in nodesInBuildOrder)
         {
             var (layer, layerName) = byId[n.Id];

@@ -1,3 +1,4 @@
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 
 namespace BuildOrchestrator.Tests.App;

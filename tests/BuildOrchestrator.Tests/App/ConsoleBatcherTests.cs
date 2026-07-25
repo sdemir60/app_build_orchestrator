@@ -34,7 +34,7 @@ public class ConsoleBatcherTests
         batcher.Post("c");
 
         var flushes = new List<string>();
-        await batcher.PumpAsync(text => flushes.Add(text), CancellationToken.None);
+        await batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
 
         Assert.Equal(["a\nb\nc\n"], flushes);
     }
@@ -54,7 +54,7 @@ public class ConsoleBatcherTests
         batcher = new ConsoleBatcher(Tick);
 
         var flushes = new List<string>();
-        await batcher.PumpAsync(text => flushes.Add(text), CancellationToken.None);
+        await batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
 
         // Tam olarak TEK flush bekleniyor (1. tick'te DEĞİL) — "x" postlandığı 2. tick'te.
         Assert.Equal(["x\n"], flushes);
@@ -74,7 +74,7 @@ public class ConsoleBatcherTests
         batcher = new ConsoleBatcher(Tick);
 
         var flushes = new List<string>();
-        var pump = batcher.PumpAsync(text => flushes.Add(text), CancellationToken.None);
+        var pump = batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
 
         // Tick tamamen senkron ilerlediği için pump burada zaten bitmiş olmalı; WaitAsync yalnız
         // beklenmeyen bir asılı-kalma karşısında testin sonsuza dek takılmasını önleyen üst sınırdır
@@ -102,7 +102,7 @@ public class ConsoleBatcherTests
         batcher = new ConsoleBatcher(Tick);
 
         var flushes = new List<string>();
-        await batcher.PumpAsync(text => flushes.Add(text), CancellationToken.None);
+        await batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
 
         // Batching kanıtı: binlerce satır, avuç içi kadar tick'e sığmış olmalı.
         Assert.True(flushes.Count <= 3, $"flush sayısı ({flushes.Count}) satır sayısına ({total}) yakın olmamalı.");
@@ -146,7 +146,7 @@ public class ConsoleBatcherTests
         }
         batcher = new ConsoleBatcher(Tick);
 
-        await batcher.PumpAsync(text => doc.Append(text), CancellationToken.None);
+        await batcher.PumpAsync((text, _) => doc.Append(text), CancellationToken.None);
 
         Assert.Equal("a\nb\nc\n", doc.ToString()); // a,b (snapshot) + c (append) — hiçbir satır iki kez değil
     }
@@ -173,8 +173,89 @@ public class ConsoleBatcherTests
         }
         batcher = new ConsoleBatcher(Tick);
 
-        await batcher.PumpAsync(text => doc.Append(text), CancellationToken.None);
+        await batcher.PumpAsync((text, _) => doc.Append(text), CancellationToken.None);
 
         Assert.Equal("SNAPSHOT\n", doc.ToString()); // old1/old2 flush EDİLMEDİ (snapshot'ta zaten var)
+    }
+
+    [Fact]
+    public async Task Drop_only_reseed_discards_prior_lines_without_setting_the_document()
+    {
+        // [D4/Solution B] Doküman TIKLAMA ANINDA senkron kurulur (burada test dışında); pump'a düşen drop-only
+        // sentinel yalnız sentinel'den ÖNCEki (snapshot'a zaten dahil) satırları ATAR — doküman-set YAPMAZ.
+        // Sonrasındaki satırlar (senkron kurulan dokümana) akmaya devam eder.
+        var appended = new System.Text.StringBuilder();
+        ConsoleBatcher? batcher = null;
+        int callCount = 0;
+        Task Tick(CancellationToken ct)
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                batcher!.Post("stale1");
+                batcher!.Post("stale2");
+                batcher!.PostReseedDrop();  // doküman senkron kuruldu; bunlar atılmalı
+                batcher!.Post("fresh1");    // reseed'den SONRA — akmaya devam
+            }
+            else if (callCount == 2) batcher!.Complete();
+            return Task.CompletedTask;
+        }
+        batcher = new ConsoleBatcher(Tick);
+
+        await batcher.PumpAsync((text, _) => appended.Append(text), CancellationToken.None);
+
+        Assert.Equal("fresh1\n", appended.ToString()); // stale1/stale2 atıldı; doküman-set çağrısı YOK
+    }
+
+    // ---------------------------------------------------------------- [D4 review §1] reseed-generation guard
+
+    [Fact]
+    public async Task Pump_stamps_each_batch_with_the_reseed_generation_and_PostReseedDrop_advances_it()
+    {
+        // [§1] Nesil monoton artar (reseed ÖNCESİ 0) ve pump her flush'ı okunduğu nesille damgalar. Bu damga,
+        // Solution B'nin senkron reseed'inin ardından koşan BAYAT bir flush'ı MainWindow.AppendConsoleBatch'te
+        // ayırt etmeye yarar (batchGen < CurrentReseedGen → at).
+        long capturedGen = -1;
+        ConsoleBatcher? batcher = null;
+        Task Tick(CancellationToken ct) { batcher!.Complete(); return Task.CompletedTask; }
+        batcher = new ConsoleBatcher(Tick);
+        Assert.Equal(0, batcher.CurrentReseedGen);
+
+        batcher.Post("x");
+        await batcher.PumpAsync((_, gen) => capturedGen = gen, CancellationToken.None);
+        Assert.Equal(0, capturedGen); // reseed olmadan batch nesli 0
+
+        batcher.PostReseedDrop();      // sentinel'den ÖNCE nesli ilerletir
+        Assert.Equal(1, batcher.CurrentReseedGen);
+    }
+
+    [Fact]
+    public async Task Lines_read_after_a_reseed_sentinel_carry_the_new_generation()
+    {
+        // [§1] Bir tick içinde: pre-sentinel satır (atılır) + sentinel (gen ilerler) + post-sentinel satır. Flush
+        // edilen batch (post-sentinel) YENİ nesli taşımalı — bump sentinel'den önce olduğundan pump sentinel'i
+        // okurken _reseedGen zaten yeni değerdedir.
+        long flushedGen = -1;
+        ConsoleBatcher? batcher = null;
+        int callCount = 0;
+        Task Tick(CancellationToken ct)
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                batcher!.Post("stale");        // pre-sentinel → sentinel batch'i null'lar
+                batcher!.PostReseedDrop();     // gen 0 → 1
+                batcher!.Post("fresh");        // post-sentinel → yeni nesle ait
+            }
+            else batcher!.Complete();
+            return Task.CompletedTask;
+        }
+        batcher = new ConsoleBatcher(Tick);
+
+        var flushed = new System.Text.StringBuilder();
+        await batcher.PumpAsync((text, gen) => { flushed.Append(text); flushedGen = gen; }, CancellationToken.None);
+
+        Assert.Equal("fresh\n", flushed.ToString()); // stale atıldı
+        Assert.Equal(1, flushedGen);                  // post-sentinel batch YENİ nesli taşır
     }
 }

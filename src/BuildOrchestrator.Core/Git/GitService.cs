@@ -3,7 +3,9 @@ using BuildOrchestrator.Core.Processes;
 namespace BuildOrchestrator.Core.Git;
 
 /// <summary>Tek bir branch girdisi — yerel (<c>refs/heads/*</c>) ya da remote-tracking (<c>refs/remotes/*</c>).</summary>
-public sealed record GitBranchInfo(string Name, bool IsRemote, bool IsActive);
+/// <param name="Sha">[A5/T69] Branch'in işaret ettiği commit — branch listesiyle AYNI <c>for-each-ref</c>
+/// çağrısından gelir (branch başına ayrı <c>rev-parse</c> process'i spawn EDİLMEZ).</param>
+public sealed record GitBranchInfo(string Name, string Sha, bool IsRemote, bool IsActive);
 
 /// <summary>
 /// [T69/K1] <see cref="GitService.FetchRefOnlyAsync"/> sonucu. Normal durumda <see cref="TargetSha"/>
@@ -142,7 +144,9 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// <summary>Yerel + remote-tracking branch listesi (<c>refs/heads</c> + <c>refs/remotes</c>). <see cref="GitBranchInfo.IsActive"/> yalnız checkout edilmiş YEREL branch için true.</summary>
     public async Task<GitResult<IReadOnlyList<GitBranchInfo>>> ListBranchesAsync(CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"], _repoRoot, CommandTimeout, ct);
+        // [A5/T69] %09 = TAB: "<refname>\t<objectname>". Sha, ref adıyla AYNI çağrıdan gelir — branch başına
+        // ayrı bir rev-parse process'i spawn etmek çok branch'li bir repoda gereksiz pahalı olurdu.
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["for-each-ref", "--format=%(refname)%09%(objectname)", "refs/heads", "refs/remotes"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<IReadOnlyList<GitBranchInfo>>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -158,15 +162,20 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         {
             if (line.Length == 0) continue;
 
-            if (line.StartsWith("refs/heads/", StringComparison.Ordinal))
+            int tab = line.IndexOf('\t');
+            if (tab < 0) continue; // beklenmeyen satır formatı — savunmacı biçimde atlanır (ParseLsTreeBlobHashes deseni)
+            string refName = line[..tab];
+            string sha = line[(tab + 1)..].Trim();
+
+            if (refName.StartsWith("refs/heads/", StringComparison.Ordinal))
             {
-                string name = line["refs/heads/".Length..];
-                list.Add(new GitBranchInfo(name, IsRemote: false, IsActive: active is not null && name == active));
+                string name = refName["refs/heads/".Length..];
+                list.Add(new GitBranchInfo(name, sha, IsRemote: false, IsActive: active is not null && name == active));
             }
-            else if (line.StartsWith("refs/remotes/", StringComparison.Ordinal))
+            else if (refName.StartsWith("refs/remotes/", StringComparison.Ordinal))
             {
-                string name = line["refs/remotes/".Length..];
-                list.Add(new GitBranchInfo(name, IsRemote: true, IsActive: false));
+                string name = refName["refs/remotes/".Length..];
+                list.Add(new GitBranchInfo(name, sha, IsRemote: true, IsActive: false));
             }
         }
 
@@ -223,6 +232,34 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         }
 
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // ref yok — henüz fetch edilmemiş
+
+        return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+    }
+
+    /// <summary>
+    /// [Fix wave 1 — Finding 4] YEREL branch (<c>refs/heads/&lt;branch&gt;</c>) SHA'sı — <see
+    /// cref="GetRemoteTrackingShaAsync"/>'in birebir aynı desendeki (salt-okur <c>rev-parse --verify -q</c>)
+    /// yerel karşılığı. Gerekçe: <see cref="ListBranchesAsync"/> kullanıcıya <c>refs/heads/*</c>'ı da listeler,
+    /// yani UI yalnız yerelde var olan (henüz push edilmemiş) branch'leri de seçilebilir kılar; hedef commit'i
+    /// SADECE remote-tracking ref'ten çözen bir okuyucu tam olarak o branch'leri çözemez. Ref yoksa
+    /// <c>Ok(null)</c> döner (hata DEĞİL, edge — çağıran remote-tracking'e düşebilsin diye).
+    /// <para><b>K1:</b> salt-okur — checkout/switch/reset YOK, aktif branch ve working tree DEĞİŞMEZ.</para>
+    /// </summary>
+    public async Task<GitResult<string?>> GetLocalBranchShaAsync(string branch, CancellationToken ct = default)
+    {
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["rev-parse", "--verify", "-q", $"refs/heads/{branch}"], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode == 0)
+        {
+            string sha = r.StandardOutput.Trim();
+            return IsFortyHexSha(sha)
+                ? GitResult<string?>.Ok(sha)
+                : GitResult<string?>.Fail($"beklenmeyen 'git rev-parse refs/heads/{branch}' çıktısı: '{sha}'");
+        }
+
+        if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // yerel ref yok — branch yalnız remote'ta olabilir
 
         return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
     }

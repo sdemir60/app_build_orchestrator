@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
@@ -56,13 +57,12 @@ public partial class GraphView : UserControl
     /// <summary>Nabzın orta noktadaki opaklığı (DS <c>@keyframes: 50% { opacity: .5 }</c>).</summary>
     public const double PulseMinOpacity = 0.5;
 
-    // lucide "package" — DS DependencyGraphNode'un çizdiği ikonun BİREBİR geometrisi (24'lük viewBox).
-    private const string PackageIconPath =
-        "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z " +
-        "M3.3 7 12 12l8.7-5 M12 22V12";
-    private const double PackageIconStrokeWidth = 1.6; // viewBox birimi — Viewbox ölçeği ile birlikte küçülür
-    // lucide depWarn (DS ProjectRow/graf rozeti) — dolu üçgen, 24'lük viewBox.
-    private const string WarningTriangleIconPath = "M12 3 23 21H1Z";
+    /// <summary>[T64] Düğüm ikonu (lucide "package", 24'lük viewBox). Path data ARTIK BURADA DEĞİL: geometri
+    /// uygulamanın TEK ikon sözlüğünden (<c>Resources/Icons.xaml</c>) çözülür. Bu sınıf yalnız ANAHTAR bilir —
+    /// aynı path'in ikinci bir kopyası kaldığı sürece iki taraf sessizce ayrışabilirdi (T64 review, fix wave 1).</summary>
+    internal const string PackageIconKey = "Icon.Package";
+    /// <summary>Dep-hata rozetinin DOLU üçgeni (lucide depWarn) — aynı gerekçe, bkz. <see cref="PackageIconKey"/>.</summary>
+    internal const string WarningTriangleIconKey = "Icon.DepWarn";
 
     private readonly Dictionary<string, GraphNodeVisual> _nodes = new(StringComparer.Ordinal);
     private readonly List<GraphEdgeVisual> _edges = [];
@@ -80,6 +80,9 @@ public partial class GraphView : UserControl
     private IMotionSettings? _subscribedMotion;
     private bool _edgesAnimated;
     private bool _hasCamera;
+    private IDisposable? _revealHero;
+    private int _revealGen; // [E3/T41] her PlayRevealStagger yeni bir reveal kuşağıdır — stale release'i eleyen damga
+    private DispatcherTimer? _revealReleaseTimer;
 
     public GraphView()
     {
@@ -110,6 +113,17 @@ public partial class GraphView : UserControl
     /// Testler kendi sahtesini enjekte eder (abonelik <c>Loaded</c>'da kurulur, <c>Unloaded</c>'da bırakılır).</summary>
     public IMotionSettings? MotionSettings { get; set; }
 
+    /// <summary>[E3/T41/DD9] Reveal stagger'ının içine girdiği hero-mutex; null ise <c>App.HeroMotion</c> (TAZE).
+    /// Graf reveal ile liste reveal AYNI hero'dur (<see cref="RevealHeroKey"/>) — başka bir hero sürüyorsa graf
+    /// reveal dekoratif yolu atlayıp düğümleri ani yerleştirir. Testler kendi <c>MotionCoordinator</c>'ını enjekte
+    /// eder.</summary>
+    public MotionCoordinator? HeroCoordinator { get; set; }
+
+    /// <summary>Graf reveal + liste reveal ORTAK hero anahtarı (co-tetiklenir → aynı hero, birlikte oynar).</summary>
+    internal const string RevealHeroKey = "sync-reveal";
+
+    private MotionCoordinator? ActiveHeroCoordinator => HeroCoordinator ?? BuildOrchestrator.App.App.HeroMotion;
+
     private void OnLoadedSubscribeMotion(object? sender, RoutedEventArgs e)
     {
         if (_subscribedMotion is not null) return;
@@ -128,6 +142,8 @@ public partial class GraphView : UserControl
         // [M-d] View unload olurken paylaşımlı dash clock'u da bırak — aksi halde (M-3'ün kapsamadığı bu yol
         // için) timing engine, view artık ağaçta olmasa bile 30fps'te uyanık kalırdı.
         ReleaseDashClock();
+        // [E3/T41] Reveal ortasında unload olursa hero'yu bırak — aksi halde bir sonraki hero sonsuza dek bloke olurdu.
+        ReleaseRevealHero();
     }
 
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
@@ -279,14 +295,10 @@ public partial class GraphView : UserControl
             StrokeThickness = NodeBorderThickness, // seçiliyken 2px — bkz. ApplySelection (DS: selected ? 2 : 1.5)
         };
 
-        var icon = new Path
-        {
-            Data = Geometry.Parse(PackageIconPath),
-            StrokeThickness = PackageIconStrokeWidth,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            StrokeLineJoin = PenLineJoin.Round,
-        };
+        // [T60] Geometri + boya (kontur mu dolgu mu, hangi kalınlıkta) TEK yerden: Icons.xaml'in kardeş
+        // Icon.X.StrokeThickness anahtarı. Kalınlık burada ARTIK YAZILI DEĞİL — ApplyNodeStatus statüye göre
+        // fırçayı da verdiği için ikonun boyası oradan sürülür (bkz. IconPaint.Apply).
+        var icon = new Path();
         var iconBox = new Viewbox
         {
             Width = GraphLayout.NodeSize * 0.5, // DS: size * 0.5 → 26px düğümde 13px ikon
@@ -301,8 +313,8 @@ public partial class GraphView : UserControl
         var badgeCircle = new Ellipse { StrokeThickness = 1 };
         badgeCircle.SetResourceReference(Shape.FillProperty, "Brush.SurfaceBase");
         badgeCircle.SetResourceReference(Shape.StrokeProperty, "Brush.StatusFailBorder");
-        var badgeTriangle = new Path { Data = Geometry.Parse(WarningTriangleIconPath) };
-        badgeTriangle.SetResourceReference(Shape.FillProperty, "Brush.StatusFailText");
+        var badgeTriangle = new Path();
+        IconPaint.Apply(badgeTriangle, this, WarningTriangleIconKey, "Brush.StatusFailText"); // DOLU üçgen — kip sözlükten
         var badge = new Grid
         {
             Width = 13,
@@ -415,7 +427,7 @@ public partial class GraphView : UserControl
 
         visual.Square.SetResourceReference(Shape.StrokeProperty, border);
         visual.Square.SetResourceReference(Shape.FillProperty, background);
-        visual.Icon.SetResourceReference(Shape.StrokeProperty, iconColor);
+        IconPaint.Apply(visual.Icon, this, PackageIconKey, iconColor);
         // WPF Border dashed desteklemez → kesikli çerçeve Rectangle.StrokeDashArray ile (feasibility §3.5).
         // Dash birimi StrokeThickness çarpanı: 1.5px'lik çerçevede {2,2} = 3px dolu / 3px boş — CSS'in
         // `1.5px dashed` varsayılanının karşılığı (tasarımda ayrı bir sayısal değer verilmemiştir).
@@ -634,7 +646,22 @@ public partial class GraphView : UserControl
 
     private void PlayRevealStagger()
     {
+        // Önceki reveal hero'su + varsa bekleyen release timer'ı bırak — yeni bir SetGraph yeni bir reveal başlatır.
+        ReleaseRevealHero();
+        int gen = ++_revealGen; // bu reveal kuşağı — release yalnız bu kuşak hâlâ geçerliyken uygulanır
+
         bool animate = AnimationsEnabledProvider();
+        // [E3/T41/DD9] Reveal bir HERO'dur. Başka bir hero sürerken (Hero null döner) dekoratif stagger ATLANIR —
+        // düğümler ani yerleştirilir (reduced-motion yolu). Aksi halde hero TUTULUR ve reveal tamamlanınca (aşağıda
+        // generation-guarded timer) bırakılır. Coordinator yoksa (headless, enjekte edilmemiş) davranış eskisi gibi.
+        if (animate)
+        {
+            _revealHero = ActiveHeroCoordinator?.Hero(RevealHeroKey);
+            if (ActiveHeroCoordinator is not null && _revealHero is null)
+                animate = false; // başka bir hero aktif → ani sonuç
+        }
+
+        double maxDelay = -1;
         foreach (var visual in _nodes.Values)
         {
             visual.Cell.BeginAnimation(OpacityProperty, null);
@@ -650,7 +677,8 @@ public partial class GraphView : UserControl
             var rise = new TranslateTransform(0, -RevealRisePx);
             visual.Cell.RenderTransform = rise;
 
-            var begin = TimeSpan.FromMilliseconds(RevealDelayMs(visual.Model.Layer));
+            double delayMs = RevealDelayMs(visual.Model.Layer);
+            var begin = TimeSpan.FromMilliseconds(delayMs);
             var duration = TimeSpan.FromMilliseconds(RevealMs);
             var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
 
@@ -663,7 +691,54 @@ public partial class GraphView : UserControl
             slide.BeginTime = begin;
             slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
             rise.BeginAnimation(TranslateTransform.YProperty, slide);
+
+            if (delayMs > maxDelay) maxDelay = delayMs;
         }
+
+        // [E3/T41 — release fix] Hero, reveal PENCERESİ boyunca tutulur ve en geç biten düğümün reveal'i
+        // (maxDelay + RevealMs) tamamlanınca bırakılır. Tetik bir DispatcherTimer'dır: bir fade'in clock'u
+        // BeginAnimation ile üretildikten SONRA eklenen Completed handler'ı HİÇ ateşlenmez (gerçek-HWND WPF
+        // harness ile doğrulandı) — dolayısıyla eski Completed yolu ÖLÜ koddu. Timer, generation-guarded bir
+        // release'e (ReleaseRevealHeroIfCurrent) bağlanır: reveal #1 sürerken hızlı bir ikinci SetGraph gelirse
+        // #1'in timer'ı ateşlense bile #2'nin taze hero'suna DOKUNMAZ (gen != _revealGen). Headless testte timer
+        // tick etmez; test release'i doğrudan bu kuşak damgasıyla çağırır (bkz. ReleaseRevealHeroIfCurrent).
+        if (_revealHero is not null)
+        {
+            if (maxDelay < 0)
+            {
+                ReleaseRevealHero(); // animate ama düğüm yok (savunmacı) — hero'yu bekletme
+            }
+            else
+            {
+                var releaseAfter = TimeSpan.FromMilliseconds(maxDelay + RevealMs);
+                _revealReleaseTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = releaseAfter };
+                _revealReleaseTimer.Tick += (_, _) => ReleaseRevealHeroIfCurrent(gen);
+                _revealReleaseTimer.Start();
+            }
+        }
+    }
+
+    /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakan generation-guarded karar: YALNIZ tetikleyen reveal
+    /// hâlâ geçerliyse (<paramref name="gen"/> == <see cref="RevealGeneration"/>) bırakır. Superseded bir reveal'in
+    /// gecikmiş release'i (rapid ikinci SetGraph) mevcut reveal'in taze hero'sunu düşürmez. Test bunu doğrudan
+    /// çağırır (gerçek timer tick'i beklemeden).</summary>
+    internal void ReleaseRevealHeroIfCurrent(int gen)
+    {
+        if (gen != _revealGen) return; // stale kuşak — mevcut hero'ya dokunma
+        ReleaseRevealHero();
+    }
+
+    /// <summary>[E3/T41] Reveal hero'sunu (varsa) ve bekleyen release timer'ını bırakır — yeni bir hero girebilir.
+    /// Çift-bırakma güvenli (HeroScope.Dispose idempotent).</summary>
+    private void ReleaseRevealHero()
+    {
+        if (_revealReleaseTimer is not null)
+        {
+            _revealReleaseTimer.Stop();
+            _revealReleaseTimer = null;
+        }
+        _revealHero?.Dispose();
+        _revealHero = null;
     }
 
     // ---------------------------------------------------------------- kamera
@@ -735,6 +810,11 @@ public partial class GraphView : UserControl
 
     internal IReadOnlyDictionary<string, GraphNodeVisual> NodeVisuals => _nodes;
     internal IReadOnlyList<GraphEdgeVisual> EdgeVisuals => _edges;
+    /// <summary>[E3/T41] Aktif reveal kuşağının damgası — test, doğru kuşakla release'i tetiklemek için okur.</summary>
+    internal int RevealGeneration => _revealGen;
+    /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakacak CANLI bir release zamanlandı mı — ölü Completed
+    /// yolunun aksine gerçek bir tetik kuruldu mu (test ayırt edici olarak okur).</summary>
+    internal bool HasPendingRevealRelease => _revealReleaseTimer is { IsEnabled: true };
     /// <summary>O an akan (hedefi building) kenarların Path'leri — paylaşılan clock TAM BU kümeye uygulanır.</summary>
     internal IReadOnlyList<Path> FlowingEdgePaths => _flowingEdges;
     /// <summary>Akan dash'in TEK kök clock'u (null = hiç akan kenar yok / motion kapalı).</summary>

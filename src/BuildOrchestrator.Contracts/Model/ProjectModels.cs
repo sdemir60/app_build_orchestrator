@@ -59,10 +59,18 @@ public sealed record ProjectNode(
     }
 }
 
+/// <param name="Nodes">Build-order'da. Katman ataması uygulanmışsa sert faz bariyeri bu sırayı TOPOLOJİK
+/// OLMAYAN bir hâle getirebilir (warn-only tasarım, bkz. <c>LayerEngine</c>) — planı tüketen algoritmalar
+/// sıra-bağımsız olmalıdır [A1].</param>
+/// <param name="Cycles">Her biri bir SCC (&gt;1 üye), üyeler sıralı.</param>
+/// <param name="LayerWarnings">[A1/T15] <c>LayerEngine</c>'ın ürettiği ters-katman uyarıları (warn-only DATA:
+/// hiçbir alan bunları okuyup bloklama/yeniden sıralama yapmaz — yalnız kullanıcıya gösterilir). Katman
+/// ataması çalışmadıysa boş; planı doğrudan kuran (katmandan habersiz) yollarda null.</param>
 public sealed record BuildPlan(
-    IReadOnlyList<ProjectNode> Nodes,                       // build-order'da
-    IReadOnlyList<IReadOnlyList<string>> Cycles,            // her biri bir SCC (>1 üye), üyeler sıralı
-    string Configuration);
+    IReadOnlyList<ProjectNode> Nodes,
+    IReadOnlyList<IReadOnlyList<string>> Cycles,
+    string Configuration,
+    IReadOnlyList<string>? LayerWarnings = null);
 
 /// <summary>[T15][N8] Katman ataması config'i: sıralı regex+isim. Order ÇİFT görev görür — (1) eşleşme
 /// önceliği (LayerEngine, küçük Order'ı önce dener, ilk eşleşen kazanır), (2) eşleşen projelere atanan

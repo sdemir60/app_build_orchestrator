@@ -1,8 +1,10 @@
+using System.Collections.Specialized;
 using System.IO;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -32,6 +34,109 @@ public class RunViewModelTests
         Assert.Equal(@"C:\p\a.csproj", row.Id);
         Assert.Equal("A", row.Name);
         Assert.Equal(ProjectRowState.Started, row.State);
+    }
+
+    [Fact]
+    public async Task Selecting_a_project_flows_IsSelected_to_the_matching_row_and_toggles_off_on_repeat()
+    {
+        // [D1 · C1 debt] Seçim RunViewModel.SelectedProjectId'de yaşar; kart görsel seçili durumunu satır
+        // VM'inin IsSelected'ından okur (kanonik same-click deselect korunur).
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+        var a = vm.Projects.Single(p => p.Id == @"C:\p\a.csproj");
+        var b = vm.Projects.Single(p => p.Id == @"C:\p\b.csproj");
+
+        vm.SelectProject(a.Id);
+        Assert.True(a.IsSelected);
+        Assert.False(b.IsSelected);
+
+        vm.SelectProject(b.Id); // seçim taşınır — eski satır bırakılır
+        Assert.False(a.IsSelected);
+        Assert.True(b.IsSelected);
+
+        vm.SelectProject(b.Id); // aynı satıra tekrar → deselect
+        Assert.False(b.IsSelected);
+        Assert.Null(vm.SelectedProjectId);
+    }
+
+    [Fact]
+    public async Task Topology_carries_the_solution_name_onto_each_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        var node = new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj",
+            SolutionNames: ["Osys.sln"], Dependencies: [], BuildOrder: 0,
+            LayerIndex: null, LayerName: null, InCycle: false, WillBuild: null);
+        vm.OnEvent(new WorkspaceTopologyEvent([node], [], [], []));
+
+        Assert.Equal("Osys.sln", Assert.Single(vm.Projects).SolutionName);
+    }
+
+    // [Fix wave 1, Finding 1] cycle verisi IPC'de VAR: ProjectNode.InCycle topolojiden satıra taşınır ve
+    // Status onu cycle görsel statüsüne çevirir (Pending/pre-skipped alt-durumu ezer).
+    [Fact]
+    public async Task A_cycle_member_node_maps_the_row_to_cycle_status()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        var node = new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj",
+            SolutionNames: ["Osys.sln"], Dependencies: [], BuildOrder: 0,
+            LayerIndex: null, LayerName: null, InCycle: true, WillBuild: null);
+        vm.OnEvent(new WorkspaceTopologyEvent([node], [], [], []));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.InCycle);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status); // pending ama cycle üyesi
+
+        // Motor cycle üyesini pre-skip etse bile görsel cycle KALIR (skipped değil).
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "cycle"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status);
+    }
+
+    // [Fix wave 1, Finding 1] queued verisi TÜRETİLİR: willBuild=true + Pending + run uçuşta → Queued;
+    // run bitince (IsRunning düşer) yine Discovered.
+    [Fact]
+    public async Task A_planned_pending_row_is_queued_during_a_run_and_discovered_once_it_ends()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0)); // IsRunning=true
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Pending, row.State);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // planlanmış, henüz başlamadı
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500)); // IsRunning=false
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // run bitti → dinlenme
+    }
+
+    // [Fix wave 1, Minor 6] TickElapsed building satırların CANLI süresini ilerletir; building OLMAYAN satırlara
+    // dokunmaz. Deterministik saat enjekte edilir (D8: sleep/poll yok).
+    [Fact]
+    public async Task TickElapsed_advances_only_the_building_rows_live_duration()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        long clock = 0;
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 2, 2, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A")); // building (started at 0)
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\b.csproj", 1000)); // terminal, DurationMs=1000
+
+        clock = 5000;
+        vm.TickElapsed();
+
+        var a = vm.Projects.Single(p => p.Id == @"C:\p\a.csproj");
+        var b = vm.Projects.Single(p => p.Id == @"C:\p\b.csproj");
+        Assert.Equal(5000, a.DurationMs); // building → canlı ilerledi
+        Assert.Equal(1000, b.DurationMs); // succeeded → dokunulmadı
     }
 
     [Fact]
@@ -115,6 +220,10 @@ public class RunViewModelTests
         for (int i = 1; i <= 4; i++)
             vm.OnEvent(new ProjectLogEvent("r1", projectId, i, $"line{i}"));
 
+        // [D4 review §2] Üretimde kart seçimi (SelectedProjectId) LoadProjectLogAsync'ten ÖNCE kurulur
+        // (OnSelectedProjectChangedAsync onu SelectedProjectId değişimiyle tetikler); proje modu ancak seçim hâlâ
+        // o projedeyse kurulur. Testler bu koşulu birebir modellemeli.
+        vm.SelectProject(projectId);
         var load = vm.LoadProjectLogAsync(projectId); // pending state SENKRON kurulur (ilk await'e kadar)
         vm.OnEvent(new ProjectLogChunkEvent(projectId, Sequence: 0, "line1\nline2\n", IsLast: true, ThroughLineNumber: 2));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
@@ -142,6 +251,9 @@ public class RunViewModelTests
 
         vm.DebugAfterStitchLockExited = () => vm.OnEvent(new ProjectLogEvent("r1", projectId, 3, "race-line3"));
 
+        // [D4 review §2] Seçim üretimde load'dan önce kurulur; proje modu (ActiveProjectId) ancak seçim hâlâ
+        // o projedeyken kurulur — bu test tam da o modun kurulduğunu (race-line3'ün projeye düşmesi) doğrular.
+        vm.SelectProject(projectId);
         // ThroughLineNumber=0: disk chunk boş, dikiş TÜMÜYLE tamponlanmış canlı satırlardan (line1, line2 —
         // kilit çalıştığı ANDA _liveLines'ta zaten var) üretilir; race-line3 kanca ile kilit KAPANDIKTAN SONRA
         // enjekte edilir — snapshot'ın parçası DEĞİLDİR, yalnız (fix ile) güncel ActiveProjectId sayesinde canlı eklenir.
@@ -245,6 +357,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string a = @"C:\p\a.csproj";
+        vm.SelectProject(a); // [D4 review §2] proje modu ancak seçim o projedeyken kurulur
         var load = vm.LoadProjectLogAsync(a);
         vm.OnEvent(new ProjectLogChunkEvent(a, 0, "", IsLast: true, ThroughLineNumber: 0));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
@@ -253,6 +366,47 @@ public class RunViewModelTests
         vm.ShowRun();
 
         Assert.Null(vm.ActiveProjectId);
+    }
+
+    [Fact] // [D4 review §2] Hızlı select→deselect: gecikmiş chunk ActiveProjectId'yi TAKMAMALI → konsol donmamalı
+    public async Task Deselecting_before_the_project_log_chunk_arrives_does_not_freeze_the_run_console()
+    {
+        // Kanala düşen anlatı satırlarını gözlemlemek için: tüm VM işlemleri ÖNCE (kanala Post eder), sonra pump'ı
+        // TEK completing-tick ile boşalt (ConsoleBatcherTests deseni — gerçek 50ms/sleep YOK, D8). Fix ÖNCESİ
+        // OnProjectLogChunk ActiveProjectId'yi KOŞULSUZ "a"ya set eder → deselect'ten sonra "a"da TAKILI kalır →
+        // AppendRunLine (ActiveProjectId null gate'i) sonraki anlatı satırlarını post EDEMEZ → konsol sessizce DONAR.
+        ConsoleBatcher? batcher = null;
+        Task Tick(CancellationToken ct) { batcher!.Complete(); return Task.CompletedTask; }
+        batcher = new ConsoleBatcher(Tick);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı → SendAsync senkron fırlar
+        var vm = new RunViewModel(engine, batcher, () => "r1")
+        {
+            WallClock = () => new DateTimeOffset(2026, 7, 23, 9, 0, 0, TimeSpan.Zero),
+        };
+        const string a = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
+
+        // (1) kart A seç → yükleme uçuşta (engine ölü → SendAsync senkron fırlar; pending yine de kurulur ve
+        //     SendAsync-throws yolu onu BİLEREK null'LAMAZ — gecikmiş bir chunk hâlâ eşleşip dikişi tamamlayabilsin).
+        vm.SelectProject(a);
+        var load = vm.LoadProjectLogAsync(a);
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // (2) IPC dönmeden kullanıcı A'yı bırakır.
+        vm.SelectProject(null);
+        Assert.Null(vm.SelectedProjectId);
+
+        // (3) A'nın gecikmiş IsLast chunk'ı gelir — dikiş HER ZAMAN yapılır AMA seçim artık A değil → mod KURULMAZ.
+        vm.OnEvent(new ProjectLogChunkEvent(a, 0, "disk\n", IsLast: true, ThroughLineNumber: 0));
+        Assert.Null(vm.ActiveProjectId);                            // TAKILI DEĞİL (fix'siz kod burada "a" bırakır)
+        Assert.Equal("disk\n", vm.GetProjectDocumentText(a));       // dikiş yine de hazır (re-select için)
+
+        // (4) sonraki bir anlatı satırı YİNE konsol kanalına post edilir (donma yok).
+        vm.OnEvent(new SyncProgressEvent("Sync complete — all good", "info"));
+
+        var flushes = new List<string>();
+        await batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
+        Assert.Contains("Sync complete — all good", string.Concat(flushes)); // anlatı kanala ulaştı → DONMADI
     }
 
     // ---------------------------------------------------------------- 5) hata-yalnız outcome'lar runCompleted BEKLEMEZ
@@ -634,7 +788,10 @@ public class RunViewModelTests
         vm.OnEngineExited(139);
 
         Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
-        Assert.Contains("139", vm.EngineDiedMessage);
+        // [E2/FIX3] Gevşek Contains("139") tek başına Türkçe bir regresyonu (ör. "Motor beklenmedik…") yine
+        // GEÇİRİRDİ (İngilizce-sweep folder'ını boşa çıkarır). Üretim literaline (OnEngineExited) TAM pinle.
+        Assert.StartsWith("Engine stopped unexpectedly", vm.EngineDiedMessage, StringComparison.Ordinal);
+        Assert.Contains("139", vm.EngineDiedMessage); // exit kodu korunur
     }
 
     [Fact] // [Review fix, Task 16] EngineDiedMessage engine ölümünden sonra KALICI kalmamalı — sonraki run gerçekten
@@ -649,6 +806,39 @@ public class RunViewModelTests
         vm.OnEvent(new RunStartedEvent("r2", RunMode.Rebuild, 1, 1, "Debug", 0)); // sonraki run gerçekten başladı
 
         Assert.Null(vm.EngineDiedMessage); // eski ölüm mesajı artık geçerli engine durumunu YANLIŞ yansıtmamalı
+    }
+
+    [Fact] // [E2/F3 fold] Engine run ORTASINDA ölürse: Phase Running'de asılı kalmamalı → tutarlı bir terminale (Stopped)
+    // çekilir VE EngineDiedMessage kurulur (İngilizce, exit kodu KORUNUR). İkisi de tek atımda pinlenir.
+    public async Task OnEngineExited_mid_run_pulls_phase_to_a_terminal_stopped_and_sets_the_message()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        Assert.Equal(AppPhase.Running, vm.Phase); // gerçekten mid-run
+
+        vm.OnEngineExited(139);
+
+        Assert.Equal(AppPhase.Stopped, vm.Phase);                 // [F3] terminal Phase (Running'de asılı kalmaz)
+        Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
+        Assert.StartsWith("Engine stopped unexpectedly", vm.EngineDiedMessage, StringComparison.Ordinal); // [E2/FIX3] İngilizce pinlenir
+        Assert.Contains("139", vm.EngineDiedMessage);             // exit kodu korunur
+        Assert.False(vm.IsRunning);
+        Assert.False(vm.IsStarting);
+    }
+
+    [Fact] // [E2/F3] Engine RESTING bir fazda (Idle) ölürse Phase'i Stopped'a çekmek YANILTICI olurdu — dokunulmaz.
+    public async Task OnEngineExited_while_idle_leaves_the_resting_phase_untouched()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new SyncCompletedEvent("main", "abc1234", FetchDegraded: false, 3, 0)); // Phase → Idle
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+
+        vm.OnEngineExited(1);
+
+        Assert.Equal(AppPhase.Idle, vm.Phase); // resting faz korunur
+        Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage));
     }
 
     [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
@@ -913,5 +1103,333 @@ public class RunViewModelTests
         // queued=max(0, 2-1-1)=0 → raw=(0+0)/1 + 400(building var) = 400ms < 4000ms eşiği
 
         Assert.Equal("· almost done", vm.EtaText);
+    }
+
+    // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree / topoloji
+
+    private static ProjectNode Node(string id, string name, int buildOrder, bool? willBuild = null,
+        IReadOnlyList<string>? deps = null, string? layerName = null) =>
+        new(id, name, id, ["Osys"], deps ?? [], buildOrder, layerName is null ? null : 0, layerName, false, willBuild);
+
+    [Fact]
+    public async Task Sync_events_update_phase_target_sha_and_topology()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        Assert.Equal(AppPhase.Empty, vm.Phase);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0, willBuild: true), Node(@"C:\p\b.csproj", "B", 1, willBuild: false)],
+            Cycles: [],
+            Solutions: [new SolutionRef("Osys", @"C:\p\Osys.sln")],
+            LayerWarnings: []));
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4c0affee", FetchDegraded: false, 2, 0,
+            ChangedCount: 1, ToBuildCount: 1, UpToDateCount: 1));
+
+        Assert.Equal(AppPhase.Idle, vm.Phase);          // syncing → idle
+        Assert.Equal("b7e91d4c0affee", vm.TargetSha);
+        Assert.False(vm.FetchDegraded);
+        Assert.Equal(["A", "B"], vm.Topology.Select(n => n.Name));
+        Assert.Equal("Osys", Assert.Single(vm.Solutions).Name);
+    }
+
+    [Fact]
+    public async Task Sync_completed_records_a_degraded_fetch()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new SyncCompletedEvent("main", "abc1234", FetchDegraded: true, 1, 0));
+
+        Assert.True(vm.FetchDegraded);
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+    }
+
+    // [A5/T69] Topoloji, proje listesini BUILD-ORDER'da yeniden kurar; D1 (katman gruplaması) ve D5 (graf)
+    // TopologyChanged'i dinler. [A13.2] Koleksiyon RESET'İ YASAK — liste yerinde uzlaştırılır (Add/Remove/Move).
+    [Fact]
+    public async Task Workspace_topology_rebuilds_the_project_list_in_build_order_and_raises_TopologyChanged()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        // Önceki bir run'ın kalıntısı: sıra TERS ve topolojide olmayan bir proje var
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\gone.csproj", "Gone"));
+
+        var resets = new List<NotifyCollectionChangedAction>();
+        ((INotifyCollectionChanged)vm.Projects).CollectionChanged += (_, e) => resets.Add(e.Action);
+        int topologyChanged = 0;
+        vm.TopologyChanged += (_, _) => topologyChanged++;
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"])],
+            Cycles: [], Solutions: [], LayerWarnings: []));
+
+        Assert.Equal([@"C:\p\a.csproj", @"C:\p\b.csproj"], vm.Projects.Select(p => p.Id)); // build-order
+        Assert.DoesNotContain(NotifyCollectionChangedAction.Reset, resets);                // [A13.2]
+        Assert.Equal(1, topologyChanged);
+        Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));      // Sync = yeni taban
+    }
+
+    // [E2/§5-b verify-then-fix] AYNI graf yapısının yeniden yayınlanması (mid-run Sync gibi) TopologyChanged'i
+    // YENİDEN ateşlememeli (SetGraph = tam inşa + reveal stagger + kamera re-home; koşan grafı bozar). YALNIZ
+    // düğüm/kenar YAPISI değişince ateşlenir; statü (InCycle/WillBuild) değişimi ateşlemez (o UpdateStatuses'tan akar).
+    [Fact]
+    public async Task Identical_workspace_topology_does_not_re_raise_TopologyChanged_but_a_structural_change_does()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        int topologyChanged = 0;
+        vm.TopologyChanged += (_, _) => topologyChanged++;
+
+        WorkspaceTopologyEvent Topo(params ProjectNode[] nodes) =>
+            new(Nodes: nodes, Cycles: [], Solutions: [], LayerWarnings: []);
+
+        vm.OnEvent(Topo(Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"])));
+        Assert.Equal(1, topologyChanged); // ilk topoloji: graf ilk kez kurulur
+
+        // AYNI yapı yeniden gelir (yeni ProjectNode örnekleri, aynı Id/Ad/kenar) — re-reveal YOK.
+        vm.OnEvent(Topo(Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"])));
+        Assert.Equal(1, topologyChanged);
+
+        // Yapı GERÇEKTEN değişir (yeni düğüm eklenir) — yeniden kurulmalı.
+        vm.OnEvent(Topo(Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1, deps: [@"C:\p\a.csproj"]),
+            Node(@"C:\p\c.csproj", "C", 2)));
+        Assert.Equal(2, topologyChanged);
+    }
+
+    // [E2/FIX2] §5b imzası grafın GEOMETRİ sürücüsünü (LayerIndex) İÇERMELİDİR. LayerName, LayerIndex'in vekili
+    // DEĞİLDİR: kullanıcı D7 katman pattern'lerini düzenleyip (ör. ortaya boş katman ekleyip / Other kovasını
+    // iten eşleşmeyen bir pattern ekleyip) bir grup düğümün LayerIndex'ini kaydırdığında Id/Ad/LayerName/
+    // Dependencies VE OrderBy(LayerIndex) yayın sırası BYTE-AYNI kalabilir. LayerIndex imzada yoksa
+    // TopologyChanged ateşlenmez → SetGraph koşmaz → düğümler bayat satırlarda (bir tam satır kayması +
+    // eksik/fazla boş katman bandı) kalır. SADECE LayerIndex değişince de yeniden kurulmalı.
+    [Fact]
+    public async Task A_layer_index_only_shift_re_raises_TopologyChanged()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        int topologyChanged = 0;
+        vm.TopologyChanged += (_, _) => topologyChanged++;
+
+        // Aynı Id/Ad/LayerName/Dependencies + AYNI yayın sırası; SADECE LayerIndex farklı.
+        ProjectNode NodeAt(int layerIndex) => new(
+            @"C:\p\a.csproj", "A", @"C:\p\a.csproj",
+            SolutionNames: ["Osys"], Dependencies: [], BuildOrder: 0,
+            LayerIndex: layerIndex, LayerName: "Edge", InCycle: false, WillBuild: null);
+        WorkspaceTopologyEvent Topo(ProjectNode n) => new([n], [], [], []);
+
+        vm.OnEvent(Topo(NodeAt(0)));
+        Assert.Equal(1, topologyChanged); // ilk topoloji: graf ilk kez kurulur
+
+        vm.OnEvent(Topo(NodeAt(0))); // hiçbir şey değişmedi — ateşlenmez
+        Assert.Equal(1, topologyChanged);
+
+        vm.OnEvent(Topo(NodeAt(1))); // SADECE LayerIndex kaydı → graf satırı yer değiştirir → yeniden kurulmalı
+        Assert.Equal(2, topologyChanged);
+    }
+
+    // Topolojinin hemen ardından gelen buildPreview, satırların will-dot'unu kurar (mevcut handler — İKİNCİ
+    // bir will-build yolu açılmaz). Sync sonrası hiçbir düğüm hollow KALMAZ.
+    [Fact]
+    public async Task Build_preview_after_topology_fills_the_will_build_dots()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1)],
+            Cycles: [], Solutions: [], LayerWarnings: []));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", false),
+        ]));
+
+        Assert.True(vm.Projects[0].WillBuild);
+        Assert.False(vm.Projects[1].WillBuild);
+    }
+
+    // Koşan bir run'ın CANLI satır durumu, araya giren bir Sync tarafından SİLİNMEZ (mid-run Sync koruması).
+    [Fact]
+    public async Task Workspace_topology_does_not_reset_row_state_while_a_run_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400));
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\a.csproj", "A", 0)], Cycles: [], Solutions: [], LayerWarnings: []));
+
+        Assert.Equal(ProjectRowState.Succeeded, Assert.Single(vm.Projects).State);
+    }
+
+    // Başarısız bir Sync (ör. kök bir git repo'su değil) syncCompleted YAYINLAMAZ — yalnız planFailed gelir.
+    // Faz Syncing'de ASILI KALMAMALIDIR, aksi halde şerit sonsuza dek "▸ Sync — git fetch origin…" gösterirdi.
+    [Fact]
+    public async Task A_failed_sync_releases_the_syncing_phase_instead_of_hanging_there()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+
+        vm.OnEvent(new ErrorEvent("planFailed", "'D:\\repo' is not a usable git repository: ..."));
+
+        Assert.Equal(AppPhase.Boot, vm.Phase); // topoloji hiç gelmedi → "repo var, Sync yapılmadı"
+    }
+
+    [Fact]
+    public async Task A_failed_resync_falls_back_to_idle_when_a_topology_is_already_known()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "abc1234", false, 1, 0));
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new ErrorEvent("planFailed", "boom"));
+
+        Assert.Equal(AppPhase.Idle, vm.Phase); // önceki topoloji hâlâ geçerli
+    }
+
+    // [Fix wave 1 — Finding 2] Sync SALT-OKURDUR ve KOŞAN bir run sırasında da tetiklenebilir (bkz.
+    // OnWorkspaceTopology'nin mid-run koruması). A5, `planFailed`'ı Sync'in de hata kodu yaptı; başarısız bir
+    // Sync CANLI run state'ini yıkarsa motor derlemeye devam ederken UI run'ı bitmiş gösterir (Stop erişilemez
+    // olur) ve sonraki projectSucceeded/runCompleted YIKILMIŞ bir state'e düşer.
+    [Fact]
+    public async Task A_failed_sync_during_a_live_run_releases_the_phase_without_tearing_down_the_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        Assert.True(vm.IsRunning);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new ErrorEvent("planFailed", "'D:\\repo' is not a usable git repository: ..."));
+
+        Assert.True(vm.IsRunning);                      // run YAŞIYOR — motor hâlâ derliyor
+        Assert.True(vm.StopCommand.CanExecute(null));   // Stop erişilebilir kaldı [Kısıt 3]
+        Assert.Equal(AppPhase.Boot, vm.Phase);          // faz Syncing'de ASILI kalmadı (topoloji yok → Boot)
+
+        // Motor derlemeye devam etti: sonraki event'ler hâlâ AYAKTA bir state'e düşer
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200));
+        Assert.Equal(ProjectRowState.Succeeded, Assert.Single(vm.Projects).State);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 1500));
+        Assert.False(vm.IsRunning);
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+    }
+
+    // Ayrım ÇİFT YÖNLÜ olmalı: Sync in-flight iken gelen bir planFailed, run PLANLAMA penceresindeyse
+    // (IsStarting — `planFailed`'ın run tarafındaki TEK üretim penceresi) yine run'ı bitirir; aksi halde
+    // hiçbir engine event'i gelmeyeceğinden IsStarting kalıcı true kalır ve butonlar sonsuza dek kilitlenir.
+    [Fact]
+    public async Task A_plan_failure_while_a_run_is_still_starting_still_ends_the_run_even_if_a_sync_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.IsStarting = true; // Rebuild gönderildi, runStarted HENÜZ gelmedi = planlama penceresi
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        vm.OnEvent(new ErrorEvent("planFailed", "planlama patladı"));
+
+        Assert.False(vm.IsStarting);
+        // [Fix wave 1, C2 review Finding 1] _syncInFlight BİLEREK true kalır (çakışan pencere — yukarıdaki
+        // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir; RebuildCommand artık
+        // buna da bakıyor (CanRebuildOrRetry) — mid-Sync clearBuffers'ın canlı transkripti bozma riskiyle
+        // TUTARLI biçimde burada da engelli kalır.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
+    }
+
+    // Ayrım KODA da bakar: `runFailed` Sync'in ASLA yayınlamadığı (yalnız RunCoordinator'ın dış catch'inden
+    // gelen, run ORTASINDA da gelebilen) bir koddur — uçuşta bir Sync olması onu Sync'e atfettirmemelidir,
+    // yoksa gerçek bir run çöküşünde IsRunning kalıcı true kalır (buton kaması).
+    [Fact]
+    public async Task A_mid_run_runFailed_still_ends_the_run_even_while_a_sync_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        vm.OnEvent(new ErrorEvent("runFailed", "beklenmeyen hata"));
+
+        Assert.False(vm.IsRunning);
+        // [Fix wave 1, C2 review Finding 1] Sync HÂLÂ GERÇEKTEN uçuşta (Phase == Syncing, aşağıda doğrulanır) —
+        // RebuildCommand artık _syncInFlight'a da baktığından (CanRebuildOrRetry) burada BİLEREK engelli kalır:
+        // run bitmiş olsa da canlı Sync transkripti hâlâ SyncProgressEvent ile büyüyor olabilir.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.Equal(AppPhase.Syncing, vm.Phase); // Sync HÂLÂ uçuşta — fazı bu hata bırakmaz
+    }
+
+    [Fact]
+    public async Task Branch_list_event_fills_branches()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "abc1234", true, false),
+            new BranchRef("origin/main", "abc1234", false, true),
+        ]));
+
+        Assert.Equal(["main", "origin/main"], vm.Branches.Select(b => b.Name));
+        Assert.True(vm.Branches[0].IsActive);
+
+        // İkinci liste ÖNCEKİNİ değiştirir, üstüne eklemez
+        vm.OnEvent(new BranchListEvent([new BranchRef("feature-x", "def5678", false, false)]));
+        Assert.Equal(["feature-x"], vm.Branches.Select(b => b.Name));
+    }
+
+    [Fact]
+    public async Task Worktree_list_event_fills_worktrees()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new WorktreeListEvent([new Worktree("main-1", "main", @"C:\pool\main-1", true, 4096)]));
+
+        Assert.Equal("main-1", Assert.Single(vm.Worktrees).Name);
+    }
+
+    // [D8] Gerçek 50ms beklenmez — tick tamamen kontrol edilir (ConsoleBatcherTests deseni).
+    [Fact]
+    public async Task Sync_progress_lines_reach_the_console_batcher()
+    {
+        int ticks = 0;
+        ConsoleBatcher? batcher = null;
+        Task Tick(CancellationToken ct)
+        {
+            ticks++;
+            if (ticks == 2) batcher!.Complete(); // 1. tick birikenleri flush eder, 2. tick pump'ı kapatır
+            return Task.CompletedTask;
+        }
+        batcher = new ConsoleBatcher(Tick);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, batcher, () => "r1")
+        {
+            // [D4/T56-UI] Anlatı satırı "HH:MM:SS " damgasıyla bileşilir (design-v1 §2.5); saat deterministik enjekte.
+            WallClock = () => new DateTimeOffset(2026, 7, 23, 12, 4, 7, TimeSpan.Zero),
+        };
+
+        vm.OnEvent(new SyncProgressEvent("▸ git fetch origin main", "cmd"));
+        vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
+
+        var flushes = new List<string>();
+        await batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
+
+        // Batcher'a düşen satırlar artık "HH:MM:SS " önekli (ham ▸ satırı ONUN İÇİNDE — colorizer damga+▸'yi çözer).
+        Assert.Equal(
+            ["12:04:07 ▸ git fetch origin main\n12:04:07 Sync complete — 7 changed projects, 14 to build\n"],
+            flushes);
+        // Konsol dokümanına da düşer (run dokümanı aktifken)
+        Assert.Contains("12:04:07 ▸ git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 }

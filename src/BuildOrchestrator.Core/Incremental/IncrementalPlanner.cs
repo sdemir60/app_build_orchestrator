@@ -13,12 +13,26 @@ using BuildOrchestrator.Core.Planning;
 /// cref="BuildPreview.ComputeWillBuild"/>'e enjekte eder.
 ///
 /// <para>
-/// <b>Safe (varsayılan) — "dirty + transitive":</b> her düğümün imzası, DOĞRUDAN upstream'lerinin ZATEN
-/// hesaplanmış (bu run içindeki, taze) imzasını besler — <see cref="plan"/>.Nodes build-order'da olduğu için
-/// (bkz. <see cref="BuildPlanBuilder"/>) bu topological memoization'dır, ayrıca bir "reverse dependents" graf
-/// kurulmaz. Bir kök projenin imzası değişince bu, kendi imzasını değiştirir; imzası değişen HER düğüm,
-/// kendisine bağımlı (downstream) düğümlerin upstream teriminide değiştirir — GLOBAL propagation böyle DOĞAL
-/// olarak ortaya çıkar (bkz. <see cref="BuildSignature"/> tip özeti "Transitive upstream propagation").
+/// <b>Safe (varsayılan) — "dirty + transitive":</b> her düğümün imzası, DOĞRUDAN upstream'lerinin bu run
+/// içindeki TAZE imzasını besler; o imza gerektiğinde ÖZYİNELEMELİ (DFS + memo, on-stack cycle guard) olarak
+/// yerinde hesaplanır — ayrıca bir "reverse dependents" grafı kurulmaz. Bu, <c>plan</c>.Nodes'un topolojik
+/// SIRALI olmasına BAĞLI DEĞİLDİR [A1]: <see cref="BuildOrchestrator.Core.Planning.LayerEngine"/>'ın sert faz
+/// bariyeri bir projeyi kendi bağımlılığından ÖNCE koyabilir (warn-only, kasıtlı) — düz bir ileri geçişte o
+/// düğümün upstream terimi "bilinmeyen"e düşer ve upstream'deki değişiklik downstream'e YANSIMAZDI (dependent
+/// sessizce "up to date" sayılıp atlanırdı = under-build). Bir kök projenin imzası değişince bu, kendi imzasını
+/// değiştirir; imzası değişen HER düğüm, kendisine bağımlı (downstream) düğümlerin upstream terimini de
+/// değiştirir — GLOBAL propagation böyle DOĞAL olarak ortaya çıkar (bkz. <see cref="BuildSignature"/> tip özeti
+/// "Transitive upstream propagation").
+/// </para>
+///
+/// <para>
+/// <b>[A3] SCC (dependency cycle) = TEK kompozit imza:</b> bir cycle'ın üyeleri hiç derlenmez ama imzaları
+/// SCC DIŞINDAKİ dependent'ların imzasına GİRER. Bu yüzden her SCC için, TÜM üyelerin kendi terimleri +
+/// SCC-DIŞI upstream'lerinin imzaları üzerinden component başına TEK hash üretilir (SCC-içi kenarlar sabit
+/// bir işarete düşürülerek döngü kırılır; üyeler sıralı ⇒ deterministik) ve hem üyeler hem downstream'ler
+/// AYNI bu değeri okur. Aksi hâlde SCC bir "imza kara deliği" olurdu: cycle İÇİNDEKİ gerçek bir kaynak
+/// değişimi, ziyaret sırasına bağlı olarak dışarıdaki bir dependent'a HİÇ yansımayabilir ve o dependent bir
+/// sonraki Build'de sessizce "up to date" sayılıp atlanırdı (cycle-tangled transitive under-build).
 /// </para>
 ///
 /// <para>
@@ -55,7 +69,7 @@ using BuildOrchestrator.Core.Planning;
 /// </summary>
 public static class IncrementalPlanner
 {
-    /// <param name="plan">Build-order'da (topological) bir <see cref="BuildPlan"/>.</param>
+    /// <param name="plan">Bir <see cref="BuildPlan"/>. Nodes'un topolojik sıralı olması GEREKMEZ (bkz. tip özeti "Safe").</param>
     /// <param name="headCommit">HEAD commit SHA'sı; <c>null</c> ise hollow (tüm plan için WillBuild=null). [A6 refinement] Proje imzasına DOĞRUDAN girmez — yalnız hollow kapısı içindir, bkz. <paramref name="committedFingerprintForNode"/>.</param>
     /// <param name="dirtyFilesForNode">Düğüm → bu projeye ait working-tree dirty dosya yollarının listesi
     /// (zaten bu projeye filtrelenmiş — <see cref="BuildSignature.Compute"/>'ın beklediği gibi). Dirty yoksa boş liste.</param>
@@ -111,29 +125,108 @@ public static class IncrementalPlanner
             return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup), hollowSignatures);
         }
 
-        // Safe: bu run içinde TAZE hesaplanmış upstream imzalarını besler (topological memoization) — bir
-        // upstream'in DEĞİŞMİŞ imzası downstream'e böyle doğal biçimde yayılır (GLOBAL propagation).
+        var byId = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+        // Fast frozen-upstream imzalarını da barındırdığı için "freshMemo" değil "computedMemo" — ikisi için de
+        // tek bir isim doğru. Değerler her zaman gerçek (non-null) imzadır; tip yalnız dönüş sözleşmesi
+        // (SignatureById, hollow dalında null taşır) ile aynı kalsın diye string?'tir.
         var computedMemo = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        string? FreshUpstream(string depId) => computedMemo.TryGetValue(depId, out var sig) ? sig : null;
+        var onStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // [A3] üye id → o üyenin SCC'sinin (sıralı) üye listesi. plan.Cycles, TopoSort/Tarjan'ın ürettiği
+        // MAKSİMAL ve AYRIK SCC'lerdir (>1 üye) — bu yüzden component grafı (condensation) bir DAG'dır ve
+        // ComputeComponent'in özyinelemesi sonlanır. Plan DIŞI id'ler elenir, sıra burada sabitlenir
+        // (determinizm: kompozit, Cycles'ın hangi sırada geldiğinden bağımsız olmalı). Fast'te bu harita
+        // KURULMAZ — bkz. ComputeComponent'in gerekçesi.
+        var componentOf = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        if (mode != DependentMode.Fast)
+        {
+            foreach (var cycle in plan.Cycles)
+            {
+                var members = cycle
+                    .Where(byId.ContainsKey)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                foreach (string id in members) componentOf[id] = members;
+            }
+        }
+        var componentOnStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Fast: upstream'in TAZE imzası yerine STORED/frozen imzasını besler — upstream'de bu run'da oluşan
         // bir değişiklik downstream'e YANSITILMAZ (suppressed/cascade yok). Bkz. tip özeti "Fast" bölümü.
         string? FrozenUpstream(string depId) => state.TryGetValue(depId, out var st) ? st.BuiltSignature : null;
 
-        Func<string, string?> upstreamSignature = mode == DependentMode.Fast ? FrozenUpstream : FreshUpstream;
+        // Safe: upstream'in imzası ÖZYİNELEMELİ olarak (talep üzerine) hesaplanır — plan.Nodes'un topolojik
+        // SIRALI olduğu varsayımı YOKTUR. Bu bilinçlidir: LayerEngine'ın sert faz bariyeri bir projeyi kendi
+        // bağımlılığından ÖNCE koyabilir (warn-only tasarım, bkz. LayerEngine tip özeti) — düz ileri geçişte
+        // o durumda upstream memo'da bulunamaz, imza "bilinmeyen upstream"e düşer ve upstream'deki DEĞİŞİKLİK
+        // downstream'e YANSIMAZ: dependent sessizce "up to date" sayılıp ATLANIRDI (under-build).
+        // Plan DIŞI bir bağımlılık (byId'de yok) → null: "bilinmeyen upstream", Compute'un tolere ettiği hâl.
+        string? Upstream(string depId) => byId.TryGetValue(depId, out var dep) ? Compute(dep) : null;
 
-        foreach (var node in plan.Nodes)
+        string Compute(ProjectNode node)
         {
-            var dirtyFiles = dirtyFilesForNode(node);
-            string? committedFingerprint = committedFingerprintForNode(node);
+            if (computedMemo.TryGetValue(node.Id, out var done) && done is not null) return done;
+            // [A3] SCC üyesi: imza tek tek DEĞİL, component başına TEK kompozit olarak hesaplanır.
+            if (componentOf.TryGetValue(node.Id, out var members)) return ComputeComponent(members);
+            // Bir SCC'ye ait OLMAYAN kendine-bağımlılık (self-loop: TopoSort tek üyeli SCC'yi Cycles'a KOYMAZ)
+            // → upstream terimi "bilinmeyen" ile AYNI deterministik işarete düşer; sonsuz özyinelemeyi
+            // engelleyen tek şey budur. Kısmi değer sızmasın diye bu dönüş MEMOİZE EDİLMEZ.
+            if (!onStack.Add(node.Id)) return BuildSignature.NullMarker;
+
+            var upstreamSignature = mode == DependentMode.Fast ? FrozenUpstream : (Func<string, string?>)Upstream;
             string signature = BuildSignature.Compute(
-                node, plan.Configuration, committedFingerprint, dirtyFiles, readFileContent, upstreamSignature, inPlace);
-            // Safe modda sonraki düğümlerin FreshUpstream'i bu değeri okuyabilsin diye memoize edilir; Fast
-            // modda bu memo hiç okunmaz (FrozenUpstream state'ten okur) ama yine de dolduruluyor — zararsız.
-            // (Fast frozen-upstream imzalarını da barındırdığı için "freshMemo" değil "computedMemo" — ikisi
-            // için de tek bir isim doğru.)
+                node, plan.Configuration, committedFingerprintForNode(node), dirtyFilesForNode(node),
+                readFileContent, upstreamSignature, inPlace);
+
+            onStack.Remove(node.Id);
             computedMemo[node.Id] = signature;
+            return signature;
         }
+
+        // [A3] Bir SCC'nin (dependency cycle) TEK kompozit imzası: TÜM üyelerin KENDİ terimleri + SCC-DIŞI
+        // upstream'lerinin imzaları üzerinden tek hash; üyeler de downstream'ler de AYNI bu değeri okur.
+        // SCC-İÇİ kenarlar sabit NullMarker'a düşürülerek döngü kırılır — üye sırasından bağımsız, deterministik.
+        // ÖNCESİ: SCC bir "imza kara deliği"ydi — on-stack guard'a çarpan üyenin upstream terimi sabit
+        // NullMarker'a düşüyordu, dolayısıyla SCC İÇİNDEKİ gerçek bir kaynak değişimi, SCC DIŞINDAKİ bir
+        // downstream'e (o üyenin imzasını okuyor olmasına rağmen) ZİYARET SIRASINA bağlı olarak hiç
+        // yansımayabiliyordu: dependent bir sonraki Build'de sessizce "up to date" sayılıp atlanırdı
+        // (cycle-tangled transitive under-build). Üyeler yine hiç DERLENMEZ (WillBuildEvaluator, InCycle) —
+        // bu düzeltme yalnız downstream'in GÖRDÜĞÜ değeri onarır.
+        // Fast'te kompozit KULLANILMAZ: Fast zaten hiçbir upstream'i takip etmez (frozen/stored imza okur),
+        // yani kompozitin çözdüğü cascade sorunu orada tanım gereği yoktur — semantiği değiştirmemek için
+        // Fast'in yolu A1'deki gibi bırakılır.
+        string ComputeComponent(IReadOnlyList<string> members)
+        {
+            // Memo kontrolü BURADA TEKRARLANMAZ: kompozit, TÜM üyeler için aynı anda yazılır (aşağıda), bu
+            // yüzden Compute'un başındaki computedMemo kontrolü hangi üyeden girilirse girilsin yakalar.
+            string representative = members[0]; // üyeler sıralı → temsilci deterministik
+            // Savunmacı guard: MAKSİMAL bir SCC'de, SCC-DIŞI bir upstream aynı component'e GERİ dönemez
+            // (dönseydi o düğüm de SCC'nin üyesi olurdu) — yani sağlıklı bir plan'da buraya girilmez. Elle
+            // kurulmuş/bozuk bir Cycles listesinde bu garanti yoktur; node seviyesindeki on-stack guard ile
+            // AYNI gerekçe: sonsuz özyineleme (StackOverflow) yerine deterministik işaret.
+            if (!componentOnStack.Add(representative)) return BuildSignature.NullMarker;
+
+            var membersSet = new HashSet<string>(members, StringComparer.OrdinalIgnoreCase);
+            var sb = new StringBuilder();
+            foreach (string id in members)
+            {
+                var member = byId[id]; // members yalnız byId'de BULUNAN id'lerle kuruldu
+                sb.Append(BuildSignature.Compute(
+                    member, plan.Configuration, committedFingerprintForNode(member), dirtyFilesForNode(member),
+                    readFileContent,
+                    depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId),
+                    inPlace));
+                sb.Append(BuildSignature.ItemSeparator);
+            }
+            string composite = BuildSignature.HashText(sb.ToString());
+
+            componentOnStack.Remove(representative);
+            foreach (string id in members) computedMemo[id] = composite;
+            return composite;
+        }
+
+        foreach (var node in plan.Nodes) Compute(node);
 
         return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup), computedMemo);
     }

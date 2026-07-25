@@ -47,8 +47,8 @@ using BuildOrchestrator.Contracts.Model;
 /// <para>
 /// <b>Transitive upstream propagation:</b> <paramref name="upstreamSignature"/> yalnız bu projenin DOĞRUDAN
 /// producer'larının (bkz. <see cref="ProjectNode.Dependencies"/>) ZATEN hesaplanmış imzasını sorgular —
-/// transitivite ayrıca kodlanmaz; Task 7 (IncrementalPlanner) topological sırada ilerlediği için her upstream
-/// imzası KENDİ upstream'lerini zaten özyinelemeli biçimde içerir. Böylece bir kök projenin imzası değişince
+/// transitivite ayrıca kodlanmaz; Task 7 (IncrementalPlanner) upstream imzalarını DFS+memo ile ürettiği için
+/// her upstream imzası KENDİ upstream'lerini zaten özyinelemeli biçimde içerir. Böylece bir kök projenin imzası değişince
 /// bu değişiklik zincir boyunca doğal olarak yayılır (GLOBAL propagation girdisi).
 /// </para>
 /// </summary>
@@ -69,7 +69,12 @@ public static class BuildSignature
     /// artık tek kaynak).</summary>
     internal const char ItemSeparator = (char)0x1E;
 
-    private const string NullMarker = "￿__NULL__"; // ayırt edici null-işareti (gerçek path/commit/imza değeriyle asla çakışmaz)
+    /// <summary>Ayırt edici null-işareti (gerçek path/commit/imza değeriyle asla çakışmaz). <c>internal</c>:
+    /// aynı assembly içindeki <see cref="IncrementalPlanner"/>, döngüyü kırmak için bazı upstream terimlerini
+    /// bu işarete düşürür — kendine bağımlı (self-loop) bir düğümün on-stack guard'a çarpan kenarı ve [A3]
+    /// bir SCC'nin KOMPOZİT imzası hesaplanırken SCC-İÇİ kenarlar — "bilinmeyen upstream" ile birebir aynı
+    /// deterministik değere düşsünler diye. DEĞERİ DEĞİŞMEZ.</summary>
+    internal const string NullMarker = "￿__NULL__";
 
     /// <summary>Bir yolun build-etkileyen uzantılardan biriyle bitip bitmediği (Ordinal, case-insensitive uzantı karşılaştırması).</summary>
     public static bool IsBuildAffecting(string path) =>
@@ -83,7 +88,7 @@ public static class BuildSignature
     /// <param name="committedFingerprint">[A6 refinement] Bu projenin PER-PROJECT committed fingerprint'i — YALNIZ bu projenin build-etkileyen dosyalarının HEAD'deki committed blob içeriğini temsil eder (bkz. <see cref="BuildOrchestrator.Core.Incremental.IncrementalPlanner.ComputeCommittedFingerprint"/>). Repo-GLOBAL bir commit SHA'sı DEĞİLDİR. <c>null</c> tolere edilir (ör. proje hiç commit'lenmemiş / no-commits repo) — sabit bir null-işaretiyle imzaya girer, hata fırlatılmaz.</param>
     /// <param name="dirtyFiles">Bu projeye ait, working-tree'de dirty (GitService.GetDirtyPaths) olan dosya yollarının listesi. Build-etkileyen olmayanlar burada dahili olarak elenir; <paramref name="inPlace"/>=false ise bu parametrenin TÜM içeriği yok sayılır.</param>
     /// <param name="readFileContent">path → o dosyanın güncel (working-tree) İÇERİĞİ. Yalnız <paramref name="inPlace"/>=true iken ve yalnız sıralı/filtrelenmiş dirty dosyalar için çağrılır.</param>
-    /// <param name="upstreamSignature">projectId → o projenin ZATEN hesaplanmış imzası (Task 7 topological sırayla besler). Henüz hesaplanmamış/bilinmeyen bir id için <c>null</c> dönebilir; <c>null</c> da imzaya deterministik biçimde girer (ör. cycle/hollow upstream).</param>
+    /// <param name="upstreamSignature">projectId → o projenin imzası (Task 7, DFS+memo ile talep üzerine hesaplar). Bilinmeyen/plan dışı bir id için <c>null</c> dönebilir; <c>null</c> da imzaya deterministik biçimde girer (ör. cycle/hollow upstream).</param>
     /// <param name="inPlace">true → in-place mod (local-diff dahil). false → worktree/committed mod (local-diff terimi tamamen atlanır, yalnız committed fingerprint + upstream sayılır).</param>
     /// <returns>SHA256 hex string (64 karakter, upper-case hex — <see cref="Convert.ToHexString(byte[])"/>).</returns>
     public static string Compute(

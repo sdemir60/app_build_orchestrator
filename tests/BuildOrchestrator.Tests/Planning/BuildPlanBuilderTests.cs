@@ -46,17 +46,17 @@ public class BuildPlanBuilderTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    // [T15] Wire-in: pattern verilirse katman ataması uygulanır (LayerIndex/LayerName dolar, sert bariyer
-    // sırayı etkiler); pattern verilmezse (varsayılan) davranış birebir eskisiyle aynıdır (yukarıdaki test).
-    [Fact]
-    public void with_layer_patterns_assigns_layers_and_applies_hard_phase_barrier()
+    /// <summary>
+    /// B (yaprak) ← A (B'ye bağımlı). B "Ui" pattern'ine, A "Data" pattern'ine uyar — normalde (patternsiz)
+    /// build-order zaten B, A olurdu; A'yı Data(layer0), B'yi Ui(layer1) yapmak bariyerin B'yi (dependency,
+    /// layer1) A'dan (dependent, layer0) SONRAYA itmesine yol açar. Yani bu kurulum AYNI ZAMANDA bir TERS
+    /// KATMAN BAĞIMLILIĞIDIR (A, kendisinden sonraki bir katmandaki B'ye bağımlı).
+    /// </summary>
+    private static BuildPlan BuildPlanWithLayers()
     {
         string root = Path.Combine(Path.GetTempPath(), "plan-" + Guid.NewGuid().ToString("N"));
         try
         {
-            // B (yaprak) ← A (B'ye bağımlı). B "Ui" pattern'ine, A "Data" pattern'ine uyar — normalde
-            // (patternsiz) build-order zaten B, A olurdu; burada A'yı Data(layer0), B'yi Ui(layer1) yaparak
-            // bariyerin B'yi (dependency, layer1) A'dan (dependent, layer0) SONRAYA ittiğini doğruluyoruz.
             Directory.CreateDirectory(Path.Combine(root, "A"));
             Directory.CreateDirectory(Path.Combine(root, "B"));
             File.WriteAllText(Path.Combine(root, "B", "B.csproj"),
@@ -72,18 +72,38 @@ public class BuildPlanBuilderTests
                 new(Order: 0, Regex: "Data", Name: "DataLayer"),
                 new(Order: 1, Regex: "Ui", Name: "UiLayer"),
             ];
-            var plan = builder.Build(root, "Debug", patterns);
-
-            Assert.Equal(2, plan.Nodes.Count);
-            Assert.Equal("OSYS.Data", plan.Nodes[0].Name);
-            Assert.Equal(0, plan.Nodes[0].LayerIndex);
-            Assert.Equal("DataLayer", plan.Nodes[0].LayerName);
-            Assert.Equal(0, plan.Nodes[0].BuildOrder);
-            Assert.Equal("OSYS.Ui", plan.Nodes[1].Name);
-            Assert.Equal(1, plan.Nodes[1].LayerIndex);
-            Assert.Equal("UiLayer", plan.Nodes[1].LayerName);
-            Assert.Equal(1, plan.Nodes[1].BuildOrder);
+            return builder.Build(root, "Debug", patterns);
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // [T15] Wire-in: pattern verilirse katman ataması uygulanır (LayerIndex/LayerName dolar, sert bariyer
+    // sırayı etkiler); pattern verilmezse (varsayılan) davranış birebir eskisiyle aynıdır (yukarıdaki test).
+    [Fact]
+    public void with_layer_patterns_assigns_layers_and_applies_hard_phase_barrier()
+    {
+        var plan = BuildPlanWithLayers();
+
+        Assert.Equal(2, plan.Nodes.Count);
+        Assert.Equal("OSYS.Data", plan.Nodes[0].Name);
+        Assert.Equal(0, plan.Nodes[0].LayerIndex);
+        Assert.Equal("DataLayer", plan.Nodes[0].LayerName);
+        Assert.Equal(0, plan.Nodes[0].BuildOrder);
+        Assert.Equal("OSYS.Ui", plan.Nodes[1].Name);
+        Assert.Equal(1, plan.Nodes[1].LayerIndex);
+        Assert.Equal("UiLayer", plan.Nodes[1].LayerName);
+        Assert.Equal(1, plan.Nodes[1].BuildOrder);
+    }
+
+    // [A1/T15] Ters-katman uyarısı artık BuildPlanBuilder'da YUTULMUYOR: kullanıcının pattern'lerini gözden
+    // geçirmesi bu tasarımın (warn-only, LayerEngine düzeltme yapmaz) TEK gerçek düzeltmesidir — uyarı ona
+    // ulaşmazsa sessizce yanlış sıralanmış bir plan derlenir.
+    [Fact]
+    public void Reverse_layer_dependency_warning_reaches_the_build_plan_instead_of_being_swallowed()
+    {
+        var plan = BuildPlanWithLayers();
+
+        Assert.NotNull(plan.LayerWarnings);
+        Assert.Contains(plan.LayerWarnings!, w => w.StartsWith("reverse layer dependency:", StringComparison.Ordinal));
     }
 }

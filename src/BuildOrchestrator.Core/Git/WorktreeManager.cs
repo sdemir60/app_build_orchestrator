@@ -61,7 +61,17 @@ public sealed record WorktreeInfo
 
     public required string Path { get; init; }
 
-    /// <summary>true ⇔ <see cref="Branch"/>, ana repodaki O ANKİ checkout edilmiş branch'e eşit — <see cref="WorktreeManager.PruneToCapAsync"/> bunu ASLA silmez.</summary>
+    /// <summary>
+    /// true ⇔ <see cref="Branch"/>, ana repodaki O ANKİ checkout edilmiş branch'e eşit. Bu bir GÖSTERİM/uyarı
+    /// bilgisidir (havuz ekranı: "bu worktree senin şu an üzerinde olduğun branch'in kopyası").
+    /// <para>
+    /// [Fix wave 1 — Finding 1] <see cref="WorktreeManager.PruneToCapAsync"/> bunu ARTIK muafiyet olarak
+    /// KULLANMAZ: en yaygın yol ("aktif branch'im için worktree aç") havuzdaki HER worktree'yi IsActive
+    /// yapıyordu, aday listesi hep boş kalıyordu ve cap ne olursa olsun HİÇBİR ŞEY tahliye edilemiyordu.
+    /// Tahliye muafiyeti artık "O ANDA hazırlanan/kullanılan worktree" ile sınırlıdır (bkz. o metodun
+    /// <c>inUseName</c> parametresi).
+    /// </para>
+    /// </summary>
     public required bool IsActive { get; init; }
 
     /// <summary>Worktree dizini altındaki tüm dosyaların toplam boyutu (recursive).</summary>
@@ -75,7 +85,11 @@ public sealed record WorktreeInfo
 /// [T29 · T14 · K3] Branch-driven worktree modeli: branch SEÇİMİ bir NİYETTİR — seçim anında hiçbir git
 /// komutu çalışmaz (bkz. <see cref="PlanWorktree"/>). Gerçek <c>git worktree add --detach</c> YALNIZ Build
 /// anında (<see cref="PrepareWorktreeAsync"/>) çalışır. Aktif branch bu sınıfın HİÇBİR metodu tarafından ASLA
-/// checkout/switch edilmez (K1/v6Δ-1) — yalnız <c>worktree add/remove/list</c> komutları kullanılır.
+/// checkout/switch edilmez (K1/v6Δ-1) — ANA REPO'da yalnız <c>worktree add/remove/list</c> komutları çalıştırılır.
+/// <para>
+/// [Fix wave 1 — Finding 2] Tek istisna <see cref="ReuseWorktreeAsync"/>'in <c>reset --hard</c>'ıdır ve o komutun
+/// çalışma dizini HER ZAMAN havuzun İÇİNDEKİ (bizim açtığımız, DAİMA detached) bir worktree'dir — ana repo değil.
+/// </para>
 /// <para>
 /// Havuz (T14, <see cref="ListWorktreesAsync"/>/<see cref="PruneToCapAsync"/>/<see cref="DeleteAsync"/>)
 /// kökü varsayılan olarak <see cref="DefaultPoolRoot"/> (<c>%LOCALAPPDATA%\BuildOrchestrator\worktrees\</c>,
@@ -199,49 +213,134 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     /// </summary>
     public async Task<GitResult<IReadOnlyList<WorktreeInfo>>> ListWorktreesAsync(CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "list", "--porcelain"], _repoRoot, CommandTimeout, ct);
-        if (!outcome.Success) return GitResult<IReadOnlyList<WorktreeInfo>>.Fail(outcome.Error!);
-
-        var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<IReadOnlyList<WorktreeInfo>>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        var entriesResult = await ListPoolEntriesAsync(ct);
+        if (!entriesResult.Success) return GitResult<IReadOnlyList<WorktreeInfo>>.Fail(entriesResult.Error!);
 
         var activeBranchResult = await _gitService.GetCurrentBranchAsync(ct);
         string? activeBranch = activeBranchResult.Success ? activeBranchResult.Value : null;
 
-        string poolRootNormalized = NormalizeForCompare(_poolRoot);
         var list = new List<WorktreeInfo>();
-        foreach (string rawPath in ParseWorktreePaths(r.StandardOutput))
+        foreach (var entry in entriesResult.Value!)
         {
-            string normalized = NormalizeForCompare(rawPath);
-            if (!normalized.StartsWith(poolRootNormalized + "/", StringComparison.OrdinalIgnoreCase)) continue; // ana çalışma ağacı / havuz dışı worktree — atla
+            var (size, lastUsed) = ComputeDirStats(entry.Path);
+            bool isActive = activeBranch is not null && entry.Branch is not null && string.Equals(entry.Branch, activeBranch, StringComparison.Ordinal);
 
-            string fullPath = Path.GetFullPath(rawPath);
-            string name = Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            string? branch = ReadBranchMetadata(fullPath);
-            var (size, lastUsed) = ComputeDirStats(fullPath);
-            bool isActive = activeBranch is not null && branch is not null && string.Equals(branch, activeBranch, StringComparison.Ordinal);
-
-            list.Add(new WorktreeInfo { Name = name, Branch = branch, Path = fullPath, IsActive = isActive, SizeBytes = size, LastUsedUtc = lastUsed });
+            list.Add(new WorktreeInfo { Name = entry.Name, Branch = entry.Branch, Path = entry.Path, IsActive = isActive, SizeBytes = size, LastUsedUtc = lastUsed });
         }
 
         return GitResult<IReadOnlyList<WorktreeInfo>>.Ok(list);
     }
 
     /// <summary>
+    /// [Fix wave 1 — Finding 2] Havuzda AYNI branch için zaten bir worktree varsa onu YENİDEN KULLANIR ve
+    /// <paramref name="sha"/>'ya günceller; yoksa <c>Ok(null)</c> döner (çağıran yenisini açar).
+    /// <para>
+    /// <b>Neden:</b> <see cref="PlanWorktree"/> her çağrıda BİR SONRAKİ kullanılmamış adı üretir
+    /// (<c>main-1</c>, <c>main-2</c>, …), yani her Build sıfırdan bir dizin açardı. Bunun bedeli yalnız disk
+    /// değildir: <c>BaseIntermediateOutputPath</c> proje kimliğinden (tam csproj YOLU) türetildiği için obj HER
+    /// run'da SOĞUK olur — havuzun kalıcı olmasının (N3/D12) tek amacı olan sıcak-obj faydası hiç gerçekleşmez.
+    /// </para>
+    /// <para>
+    /// <b>K1:</b> güncelleme YALNIZ havuz worktree'sinin İÇİNDE yapılır (<c>git reset --hard &lt;sha&gt;</c>,
+    /// çalışma dizini = o worktree). Ana repo hiçbir komutun hedefi değildir: aday yollar git'in kendi
+    /// <c>worktree list --porcelain</c> çıktısından gelir ve havuz kökü ALTINDA olmayanlar (yani ana çalışma
+    /// ağacı) <see cref="ListPoolEntriesAsync"/> tarafından zaten elenir. Ek bir güvenlik kapısı olarak
+    /// worktree'nin HEAD'inin DETACHED olduğu doğrulanır: attached bir HEAD'e <c>reset --hard</c> atmak bir
+    /// BRANCH ref'ini oynatırdı — o durumda yeniden kullanım yapılmaz (çağıran yeni worktree açar).
+    /// </para>
+    /// <para>
+    /// [Fix wave 2 — Fix 4] <b>Kullanıcıya görünen sonuç:</b> <c>reset --hard</c> havuz worktree'sindeki
+    /// TRACKED dosyalardaki değişiklikleri sessizce ve geri döndürülemez şekilde atar. Bu, app'in kendi
+    /// scratch ağacı için doğru davranıştır (obj sıcak kalır, kaynaklar hedef commit'e eşitlenir) — ama bir
+    /// kullanıcı bir havuz worktree'sini editörde açıp orada elle düzenleme yaparsa, bir sonraki yeniden
+    /// kullanımda o değişiklikler kaybolur.
+    /// </para>
+    /// </summary>
+    /// <param name="preferredName">Kullanıcının açıkça istediği havuz worktree'si (<c>StartRunCommand.WorktreeName</c>);
+    /// verilirse ve o ad aynı branch'in adayları arasındaysa O seçilir, aksi halde yok sayılır.</param>
+    public async Task<GitResult<string?>> ReuseWorktreeAsync(
+        string selectedBranch, string sha, string? preferredName = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(selectedBranch)) return GitResult<string?>.Fail("selectedBranch boş olamaz.");
+        if (string.IsNullOrWhiteSpace(sha)) return GitResult<string?>.Fail("sha boş olamaz.");
+
+        var entriesResult = await ListPoolEntriesAsync(ct);
+        if (!entriesResult.Success) return GitResult<string?>.Fail(entriesResult.Error!);
+
+        // Aday = sidecar branch'i seçilen branch'e eşit olan havuz worktree'leri. Sıralama ada göre ORDINAL:
+        // deterministik olsun (aynı girdi → aynı worktree) diye; LRU burada anlamsızdır, hepsi aynı branch'in
+        // aynı derecede geçerli kopyasıdır.
+        var candidates = entriesResult.Value!
+            .Where(e => e.Branch is not null && string.Equals(e.Branch, selectedBranch, StringComparison.Ordinal))
+            .OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (candidates.Count == 0) return GitResult<string?>.Ok(null); // aday yok → çağıran yeni açar
+
+        var chosen = (PathSanitizer.IsSafeSegment(preferredName ?? string.Empty)
+            ? candidates.FirstOrDefault(e => string.Equals(e.Name, preferredName, StringComparison.OrdinalIgnoreCase))
+            : null) ?? candidates[0];
+
+        // [Fix wave 2 — Fix 3] Belt-and-braces: ListPoolEntriesAsync'in havuz-üyeliği kontrolü `Path.GetFullPath`
+        // ile normalize eder — bu, symlink/junction ÇÖZMEZ. Havuz kökü altına konan bir junction ana repoyu
+        // GÖSTERİYORSA metinsel prefix kontrolünü geçer ve aşağıdaki `reset --hard` ANA REPO'nun içinde koşardı
+        // (K1 ihlali). App'in kendi ürettiği yollarla bu ERİŞİLMEZ — savunma amaçlı son bir kapı.
+        if (string.Equals(NormalizeForCompare(chosen.Path), NormalizeForCompare(_repoRoot), StringComparison.OrdinalIgnoreCase))
+            return GitResult<string?>.Fail($"havuz worktree'si ('{chosen.Name}') ana repo köküyle çakışıyor — güvenlik için yeniden kullanılmıyor.");
+
+        // K1 güvenlik kapısı — bkz. tip özeti: attached HEAD'e reset atmak bir branch ref'ini oynatırdı.
+        var branchAtWorktree = await new GitService(_runner, chosen.Path, _gitExecutable).GetCurrentBranchAsync(ct);
+        if (!branchAtWorktree.Success)
+            return GitResult<string?>.Fail($"havuz worktree'sinin ('{chosen.Name}') HEAD'i okunamadı: {branchAtWorktree.Error}");
+        if (branchAtWorktree.Value is { } attached)
+            return GitResult<string?>.Fail($"havuz worktree'si ('{chosen.Name}') detached değil ('{attached}' checkout edilmiş) — yeniden kullanılmıyor.");
+
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["reset", "--hard", sha], chosen.Path, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+
+        // Sidecar zaten doğru branch'i taşıyor; best-effort tazeleme (dosya silinmişse geri gelir).
+        try { File.WriteAllText(Path.Combine(chosen.Path, MetadataFileName), selectedBranch); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+
+        return GitResult<string?>.Ok(chosen.Path);
+    }
+
+    /// <summary>
     /// [T14] Toplam havuz boyutu <paramref name="maxBytes"/>'ı aşarsa, EN AZ kullanılan (LRU —
     /// <see cref="WorktreeInfo.LastUsedUtc"/> artan sırada) worktree'lerden başlayarak cap altına inene kadar
-    /// siler. <see cref="WorktreeInfo.IsActive"/>=true olan worktree ASLA aday listesine girmez (ne kadar eski
-    /// olursa olsun) — ana çalışma ağacı zaten <see cref="ListWorktreesAsync"/> tarafından hiç listelenmediği
-    /// için ayrıca korumaya gerek yok. Silinen worktree'lerin adlarını döner.
+    /// siler. Silinen worktree'lerin adlarını döner. Ana çalışma ağacı zaten <see cref="ListWorktreesAsync"/>
+    /// tarafından hiç listelenmez, bu yüzden ayrıca korunmasına gerek yoktur.
+    /// <para>
+    /// [Fix wave 1 — Finding 1] Muafiyet <see cref="WorktreeInfo.IsActive"/> DEĞİL, <paramref name="inUseName"/>'dir:
+    /// "branch'i aktif branch'e eşit" olan worktree'leri muaf tutmak, en yaygın yolu (aktif branch için worktree
+    /// açmak) TÜMÜYLE tahliye edilemez kılıyordu — aday listesi hep boştu ve cap hiçbir zaman iş yapamıyordu.
+    /// Korunması gereken tek şey O ANDA hazırlanan/kullanılan worktree'dir.
+    /// </para>
+    /// <para>
+    /// [Fix wave 1 — Finding 6] UCUZ ÖN-KONTROL: havuzda <paramref name="inUseName"/> dışında hiçbir dizin
+    /// yoksa tahliye edilecek aday da yoktur — bu durumda ne git çağrısı ne de <see cref="ComputeDirStats"/>'in
+    /// rekürsif dosya taraması yapılır. Cap gerçekten iş yapabilir hale geldiği için (yukarı bkz.) bu taramanın
+    /// bedeli artık her worktree Build'inde ödenirdi; tek-worktree havuzunda (yeniden kullanım sonrası tipik
+    /// durum) tamamen atlanır.
+    /// </para>
     /// </summary>
-    public async Task<GitResult<IReadOnlyList<string>>> PruneToCapAsync(long maxBytes, CancellationToken ct = default)
+    /// <param name="inUseName">O anda hazırlanan/kullanılan havuz worktree'sinin adı — ASLA silinmez. Yeni bir
+    /// worktree açılmadan ÖNCE çağrılıyorsa <c>null</c> geçilir (henüz kullanımda olan bir şey yoktur).</param>
+    public async Task<GitResult<IReadOnlyList<string>>> PruneToCapAsync(
+        long maxBytes, string? inUseName = null, CancellationToken ct = default)
     {
+        if (!HasEvictableDirectory(inUseName)) return GitResult<IReadOnlyList<string>>.Ok([]);
+
         var listResult = await ListWorktreesAsync(ct);
         if (!listResult.Success) return GitResult<IReadOnlyList<string>>.Fail(listResult.Error!);
 
         var all = listResult.Value!;
         long total = all.Sum(w => w.SizeBytes);
-        var candidates = all.Where(w => !w.IsActive).OrderBy(w => w.LastUsedUtc).ToList();
+        var candidates = all
+            .Where(w => !string.Equals(w.Name, inUseName, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(w => w.LastUsedUtc).ToList();
 
         var removed = new List<string>();
         foreach (var w in candidates)
@@ -272,6 +371,59 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
         if (r.ExitCode != 0) return GitResult<bool>.Fail(GitCommandExecutor.DescribeGitFailure(r));
 
         return GitResult<bool>.Ok(true);
+    }
+
+    /// <summary>[Fix wave 1] Havuzdaki bir worktree'nin UCUZ kaydı: yalnız git listesi + sidecar okuması — disk taraması YOK.</summary>
+    private sealed record PoolEntry(string Name, string Path, string? Branch);
+
+    /// <summary>
+    /// [Fix wave 1] <see cref="ListWorktreesAsync"/>'in disk-taramasız çekirdeği: <c>git worktree list
+    /// --porcelain</c> (otoriter kaynak) → havuz kökü altındakiler → ad + sidecar branch. Boyut/LRU
+    /// (<see cref="ComputeDirStats"/>) YALNIZ gerçekten gereken yerde (cap/envanter) eklenir; yeniden kullanım
+    /// (<see cref="ReuseWorktreeAsync"/>) bunlara ihtiyaç duymadığı için her Build'de rekürsif tarama ödemez.
+    /// </summary>
+    private async Task<GitResult<IReadOnlyList<PoolEntry>>> ListPoolEntriesAsync(CancellationToken ct)
+    {
+        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "list", "--porcelain"], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<IReadOnlyList<PoolEntry>>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<IReadOnlyList<PoolEntry>>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+
+        string poolRootNormalized = NormalizeForCompare(_poolRoot);
+        var list = new List<PoolEntry>();
+        foreach (string rawPath in ParseWorktreePaths(r.StandardOutput))
+        {
+            string normalized = NormalizeForCompare(rawPath);
+            if (!normalized.StartsWith(poolRootNormalized + "/", StringComparison.OrdinalIgnoreCase)) continue; // ana çalışma ağacı / havuz dışı worktree — atla
+
+            string fullPath = Path.GetFullPath(rawPath);
+            string name = Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            list.Add(new PoolEntry(name, fullPath, ReadBranchMetadata(fullPath)));
+        }
+
+        return GitResult<IReadOnlyList<PoolEntry>>.Ok(list);
+    }
+
+    /// <summary>
+    /// [Fix wave 1 — Finding 6] Cap'in ucuz ön-kontrolü: havuz kökünde <paramref name="inUseName"/> dışında en
+    /// az bir dizin var mı (tek seviye enumerasyon — rekürsif tarama YOK). false ⇒ tahliye adayı yok, pahalı
+    /// yol hiç çalıştırılmaz. Enumerasyon hatasında (yarışan silme/erişim) SAVUNMACI olarak true döner: karar
+    /// pahalı ama DOĞRU yola bırakılır.
+    /// </summary>
+    private bool HasEvictableDirectory(string? inUseName)
+    {
+        try
+        {
+            if (!Directory.Exists(_poolRoot)) return false;
+            foreach (string dir in Directory.EnumerateDirectories(_poolRoot))
+                if (!string.Equals(Path.GetFileName(dir), inUseName, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
     }
 
     private static IEnumerable<string> ParseWorktreePaths(string porcelainOutput)
