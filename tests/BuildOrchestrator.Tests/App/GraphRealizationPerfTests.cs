@@ -11,8 +11,8 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [G1/It-5] <see cref="GraphView"/> ölçek ölçümü — grafın 500-1000 düğüme çıkarılması için ÖLÇÜM ZEMİNİ.
-/// <see cref="ListRealizationPerfTests"/> deseninin birebir kardeşidir (warmup + GC + medyan + yalnız ilgili
-/// pencerenin duvar saati), tek farkı grafın görsel ağacının <see cref="GraphView.SetGraph"/> içinde HEVESLE
+/// <see cref="ListRealizationPerfTests"/> ile AYNI ölçüm iskeletini (<see cref="PerfMeasure"/>: warmup + GC +
+/// medyan) kullanır; tek farkı grafın görsel ağacının <see cref="GraphView.SetGraph"/> içinde HEVESLE
 /// kurulmasıdır — bu yüzden ölçüm İKİ ayrı pencereye bölünür:
 ///
 /// <list type="bullet">
@@ -22,9 +22,11 @@ namespace BuildOrchestrator.Tests.App;
 ///   <item><b>layout</b>: <c>Measure/Arrange/UpdateLayout</c> — WPF'in kurulmuş ağacı ölçüp yerleştirmesi.</item>
 /// </list>
 ///
-/// <para><b>Neden sert eşik yok:</b> duvar saati makineye/ısınmaya göre oynaktır; 36 düğüm için (bugünkü tasarım
-/// boyutu) bir bütçe, 500/1000 için yalnız KAYIT + felaket tavanı vardır. Sadeleştirmenin kalıcılığını koruyan
-/// asıl metrik deterministiktir: düğüm başına kurulan NESNE SAYISI
+/// <para><b>Neden SERT duvar-saati eşiği yok:</b> duvar saati makineye/ısınmaya göre oynaktır. 36 düğümün
+/// bütçesi <see cref="ListRealizationPerfTests"/>'teki gibi ERTELENEBİLİR bir bütçedir: aşılırsa suite KIRILMAZ,
+/// gerçek sayı çıktıya yazılır ve yalnız felaket bir regresyon (gevşek tavan) suite'i patlatır. 500/1000 için
+/// bütçe hiç yoktur (kayıt + felaket tavanı — G2'nin hedefi). Sadeleştirmenin kalıcılığını koruyan asıl metrik
+/// deterministiktir: düğüm başına kurulan NESNE SAYISI
 /// (<see cref="A_graph_node_builds_no_more_than_the_per_node_object_ceiling"/>) — G2'nin düşürmesi gereken sayı da
 /// odur.</para>
 /// </summary>
@@ -36,7 +38,8 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
     private const int Layers = 6;
     private const double AvgFanIn = 1.6;
 
-    private const double BudgetMs36 = 400;        // bugünkü tasarım boyutu — sert bütçe
+    private const double BudgetMs36 = 400;            // bugünkü tasarım boyutu — ERTELENEBİLİR bütçe
+    private const double SanityCeilingMs36 = 3000;    // bütçe aşılsa bile suite'i patlatma (ListRealizationPerfTests ile aynı)
     private const double SanityCeilingMs500 = 6000;   // felaket regresyon tavanı (bütçe DEĞİL)
     private const double SanityCeilingMs1000 = 15000; // felaket regresyon tavanı (bütçe DEĞİL)
 
@@ -61,8 +64,15 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
                 "[G1 canvas] {0,4} nodes → canvas {1,8:N0} px (base {2:N0})",
                 n, GraphLayout.Compute(SyntheticGraph.Build(n, Layers, AvgFanIn).Nodes).Width, GraphLayout.CanvasWidth));
 
-        Assert.True(design.TotalMs < BudgetMs36,
-            $"36-düğüm graf realize {design.TotalMs:N1} ms — bütçe {BudgetMs36:N0} ms.");
+        // [G1 review round 1] Sert ms eşiği makineye bağlı kırılganlıktır — kardeş testin (ListRealizationPerfTests
+        // :48-54) ERTELENEBİLİR bütçe deseni AYNEN uygulanır: bütçe aşılırsa gerçek sayı çıktıya yazılır ve iş
+        // ertelenir, suite yalnız felaket bir regresyonda (gevşek tavan) kırılır.
+        if (design.TotalMs < BudgetMs36)
+            Assert.True(design.TotalMs < BudgetMs36,
+                $"36-düğüm graf realize {design.TotalMs:N1} ms — bütçe {BudgetMs36:N0} ms.");
+        else
+            Assert.True(design.TotalMs < SanityCeilingMs36,
+                $"36-düğüm graf realize {design.TotalMs:N1} ms — {BudgetMs36:N0} ms bütçeyi aştı (ertelendi) VE {SanityCeilingMs36:N0} ms gevşek tavanı da aştı (felaket regresyon).");
         // 500/1000 için bütçe YOK (G2'nin işi); yalnız felaket bir regresyon suite'i patlatır.
         Assert.True(five.TotalMs < SanityCeilingMs500,
             $"500-düğüm graf realize {five.TotalMs:N1} ms — {SanityCeilingMs500:N0} ms felaket tavanını aştı.");
@@ -133,33 +143,19 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
         nodeCount, s.TotalMs, s.ComputeMs, s.BuildMs, s.LayoutMs);
 
     /// <summary>Aynı grafı <paramref name="warmups"/> kez ısıtır, sonra <paramref name="samples"/> ölçümün
-    /// FAZ BAZINDA medyanını döndürür. Her ölçüm TAZE bir view ile sıfırdan realize eder.</summary>
+    /// FAZ BAZINDA medyanını döndürür. Her ölçüm TAZE bir view ile sıfırdan realize eder. Warmup/GC/medyan
+    /// iskeleti <see cref="PerfMeasure"/>'dadır (liste perf testiyle ORTAK); burada yalnız "medyan faz bazında
+    /// alınır" kararı yaşar — üç fazın medyanı ayrı ayrı alınır, tek bir örneğin fazları birlikte seçilmez.</summary>
     private static GraphRealizeSample MeasureRealization(int nodeCount, int warmups, int samples)
     {
         var (nodes, edges) = SyntheticGraph.Build(nodeCount, Layers, AvgFanIn);
 
-        for (int i = 0; i < warmups; i++) RealizeOnce(nodes, edges);
-
-        var results = new List<GraphRealizeSample>(samples);
-        for (int i = 0; i < samples; i++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            results.Add(RealizeOnce(nodes, edges));
-        }
+        var results = PerfMeasure.Sample(() => RealizeOnce(nodes, edges), warmups, samples);
 
         return new GraphRealizeSample(
-            Median(results.Select(r => r.ComputeMs)),
-            Median(results.Select(r => r.BuildMs)),
-            Median(results.Select(r => r.LayoutMs)));
-    }
-
-    private static double Median(IEnumerable<double> values)
-    {
-        var sorted = values.ToList();
-        sorted.Sort();
-        return sorted[sorted.Count / 2];
+            PerfMeasure.Median(results.Select(r => r.ComputeMs)),
+            PerfMeasure.Median(results.Select(r => r.BuildMs)),
+            PerfMeasure.Median(results.Select(r => r.LayoutMs)));
     }
 
     /// <summary>Tek bir realizasyon: saf compute · <c>SetGraph</c> · <c>Measure/Arrange/UpdateLayout</c>. Ağacın

@@ -74,22 +74,11 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
     }
 
     /// <summary>Aynı realizasyonu <paramref name="warmups"/> kez ısıtır, sonra <paramref name="samples"/> ölçümün
-    /// medyanını döndürür (ms). Her ölçüm TAZE bir host+list+VM kümesiyle sıfırdan realize eder.</summary>
+    /// medyanını döndürür (ms). Her ölçüm TAZE bir host+list+VM kümesiyle sıfırdan realize eder; timer yalnız
+    /// Measure/Arrange penceresini kapsar. Warmup/GC/medyan iskeleti <see cref="PerfMeasure"/>'dadır — aynı
+    /// iskeleti <see cref="GraphRealizationPerfTests"/> de kullanır (G1 review round 1).</summary>
     private static double MeasureRealizationMs(int rowCount, int warmups, int samples)
-    {
-        for (int i = 0; i < warmups; i++) RealizeOnce(rowCount);
-
-        var times = new List<double>(samples);
-        for (int i = 0; i < samples; i++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            times.Add(RealizeOnce(rowCount)); // timer yalnız Measure/Arrange penceresini kapsar
-        }
-        times.Sort();
-        return times[times.Count / 2]; // medyan
-    }
+        => PerfMeasure.MedianOf(() => RealizeOnce(rowCount), warmups, samples);
 
     /// <summary>Tek bir realizasyonu ölçer: N satırlık bir <see cref="StickyLayerList"/> kurar ve YALNIZ
     /// Measure/Arrange/UpdateLayout duvar-saatini döndürür. Realizasyonun gerçekten tamamlandığını (N satır)
