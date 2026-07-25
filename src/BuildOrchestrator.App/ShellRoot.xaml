@@ -16,7 +16,7 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />                                    <!-- sticky şerit + 2px progress (T37) -->
       <RowDefinition Height="*" />                                       <!-- gövde: 2×2 -->
-      <RowDefinition Height="{DynamicResource Size.ActionBarHeight}" />  <!-- action bar (42px) -->
+      <RowDefinition Height="Auto" />                                   <!-- action bar (yüksekliği kontrolden: Size.ActionBarHeight=42) -->
     </Grid.RowDefinitions>
 
     <!-- [D2/T37-T39] Ribbon bölgesi: sticky durum şeridi + 2px global progress. DataContext (RunViewModel)
@@ -132,6 +132,8 @@
     <!-- ==================================== ACTION BAR (42px) ==================================== -->
     <!-- [D6/T40] Sync · sayaç chip'leri · branch/worktree popover'ları · Debug|Release · perf · Build split-button.
          DataContext (RunViewModel) MainWindow → ShellRoot → buraya miras kalır. -->
-    <views:ActionBar x:Name="PART_ActionBar" Grid.Row="2" />
+    <!-- Yükseklik token'dan KONTROLDE verilir (FrameworkElement.Height = Double → geçerli DynamicResource;
+         PanelHeader.xaml deseni). RowDefinition.Height (GridLength) bir Double token'ı ALAMAZDI → satır Auto. -->
+    <views:ActionBar x:Name="PART_ActionBar" Grid.Row="2" Height="{DynamicResource Size.ActionBarHeight}" />
   </Grid>
 </UserControl>

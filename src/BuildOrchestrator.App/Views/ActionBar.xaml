@@ -10,7 +10,7 @@
 
     Sayaç chip'leri + branch/worktree/perf chip'lerinin İÇERİĞİ (ikon+etiket+değer) ve enable/checked durumu
     KOD-TARAFI (ActionBar.xaml.cs) VM'den sürülür — StickyRibbon deseni. Ölçü/renk token'dan (hardcode YASAK);
-    bar yüksekliği satırdan (ShellRoot Size.ActionBarHeight=42), padding '0 10' + gap 8 (BuildApp.jsx:1544).
+    bar yüksekliği kontrolden (ShellRoot'ta Height=Size.ActionBarHeight=42; satır Auto), padding '0 10' + gap 8 (BuildApp.jsx:1544).
     Üstte 1px Brush.Border (BuildApp.jsx:1545 borderTop = 1px solid border token).
   -->
   <Border Background="{DynamicResource Brush.Surface}"
