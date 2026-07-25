@@ -8,9 +8,7 @@ namespace BuildOrchestrator.Tests.ProcessControl;
 [Trait("Category", "ProcessControl")]
 public class JobObjectTests
 {
-    static string SleepChildCmdLine() => WindowsCommandLine.Build(
-        Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-        "/c", "powershell -NoProfile -Command Start-Sleep -Seconds 300");
+    static string SleepChildCmdLine() => JobTestChildren.SleepChildCmdLine();
 
     [Fact]
     public async Task Suspended_assign_resume_then_dispose_kills_tree_within_2s()

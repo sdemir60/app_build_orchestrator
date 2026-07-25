@@ -80,18 +80,17 @@ internal static class NativeMethods
 
     /// <summary>
     /// [T20-a] Win32 karşılığında <c>ControlFlags</c>'ten sonraki 4 bayt bir UNION'dır
-    /// (<c>CpuRate</c> | <c>Weight</c> | <c>{MinRate, MaxRate}</c>) — bu yüzden Explicit layout ile
-    /// üst üste bindirilir; struct boyutu 8 bayttır ve <c>cbJobObjectInfoLength</c> tam bunu bildirmelidir
-    /// (yanlış boyut ⇒ ERROR_INVALID_PARAMETER). <c>CpuRate</c> birimi 1/100 yüzdedir: %70 → 7000.
+    /// (<c>CpuRate</c> | <c>Weight</c> | <c>{MinRate, MaxRate}</c>). Bu kod YALNIZ hard-cap yolunu kullandığı
+    /// için union'ın tek üyesi (<c>CpuRate</c>) modellenir — diğer üyeler ihtiyaç doğduğunda eklenir; Explicit
+    /// layout, o alanın union yuvası olduğunu belgelemek için korunur. Struct boyutu 8 bayttır ve
+    /// <c>cbJobObjectInfoLength</c> tam bunu bildirmelidir (yanlış boyut ⇒ P/Invoke Win32 hatasıyla döner;
+    /// ölçülen: <c>ERROR_BAD_LENGTH</c> 24). <c>CpuRate</c> birimi 1/100 yüzdedir: %70 → 7000.
     /// </summary>
-    [StructLayout(LayoutKind.Explicit)]
+    [StructLayout(LayoutKind.Explicit, Size = 8)]
     public struct JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
     {
         [FieldOffset(0)] public uint ControlFlags;
-        [FieldOffset(4)] public uint CpuRate;
-        [FieldOffset(4)] public uint Weight;
-        [FieldOffset(4)] public ushort MinRate;
-        [FieldOffset(6)] public ushort MaxRate;
+        [FieldOffset(4)] public uint CpuRate; // union yuvası: hard-cap modunda CpuRate
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -76,8 +76,8 @@ public sealed class JobObject : IDisposable
     /// [T20-a/K11] Job'daki TÜM process'lerin priority class'ını tavanlar (Balanced → BelowNormal, Light → Idle).
     /// ⚠️ Priority, <c>JOBOBJECT_EXTENDED_LIMIT_INFORMATION</c>'ı KILL_ON_JOB_CLOSE ile PAYLAŞIR: taze bir struct
     /// kurup yazmak <c>LimitFlags</c>'i sıfırlar ve §3'ün kaskat-kill garantisi SESSİZCE kaybolur (kanıt:
-    /// <c>JobCpuRateTests.Priority_write_keeps_the_kill_on_job_close_limit_flag</c>). Bu yüzden yol
-    /// Query → OR → Set'tir; mevcut limit bayrakları korunur.
+    /// <c>JobCpuRateTests.Priority_write_maps_to_the_win32_class_and_keeps_the_kill_on_job_close_limit_flag</c>).
+    /// Bu yüzden yol Query → OR → Set'tir; mevcut limit bayrakları korunur.
     /// </summary>
     public void SetPriorityClass(ProcessPriorityClassKind kind)
     {
@@ -131,8 +131,14 @@ public sealed class JobObject : IDisposable
         SetCpuRateControl(ref info);
     }
 
-    /// <summary>[T20-a] Yürürlükteki cap'i yüzde olarak okur; cap yoksa <c>null</c>. Doğrulama seam'i:
-    /// hem testler hem It-5 acceptance kanıtı bunu kullanır.</summary>
+    /// <summary>
+    /// [T20-a] Yürürlükteki HARD CAP'i yüzde olarak okur; cap yoksa <c>null</c>. Doğrulama seam'i:
+    /// hem testler hem It-5 acceptance kanıtı bunu kullanır.
+    /// <para>Yalnız <c>ENABLE | HARD_CAP</c> kombinasyonu "cap" sayılır. Gerekçe: <c>ControlFlags</c>'ten
+    /// sonraki 4 bayt bir UNION'dır — weight-based (<c>Weight</c>) veya min/max-rate modunda o alan cap
+    /// DEĞİLDİR; yalnız ENABLE bitine bakıp alanı koşulsuz <c>CpuRate</c> diye yorumlamak o modlarda uydurma
+    /// bir "cap" raporlardı.</para>
+    /// </summary>
     public int? QueryCpuRate()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -140,7 +146,10 @@ public sealed class JobObject : IDisposable
         int size = Marshal.SizeOf<NativeMethods.JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>();
         if (!NativeMethods.QueryInformationJobObject(_handle, NativeMethods.JobObjectCpuRateControlInformation, ref info, size, out _))
             throw new Win32Exception(Marshal.GetLastWin32Error());
-        if ((info.ControlFlags & NativeMethods.JOB_OBJECT_CPU_RATE_CONTROL_ENABLE) == 0) return null;
+
+        const uint hardCap = NativeMethods.JOB_OBJECT_CPU_RATE_CONTROL_ENABLE
+            | NativeMethods.JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        if ((info.ControlFlags & hardCap) != hardCap) return null;
         return (int)(info.CpuRate / 100);
     }
 
