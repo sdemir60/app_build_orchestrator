@@ -101,7 +101,8 @@ public class RunCoordinatorTests
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, RunPlan>? planner = null,
-            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null)
+            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null,
+            ICpuGovernor? cpuGovernor = null)
         {
             Sut = new RunCoordinator(
                 planner: planner ?? (_ => plan),
@@ -117,7 +118,8 @@ public class RunCoordinatorTests
                 nowMs: () => Volatile.Read(ref _now),
                 console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
                 worktreeObjRootResolver: worktreeObjRootResolver,
-                stateStore: stateStore);
+                stateStore: stateStore,
+                cpuGovernor: cpuGovernor); // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -1343,5 +1345,145 @@ public class RunCoordinatorTests
             Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult); // yeşile dönünce kayıt düzelir
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- [T20-b/K11] perf: cap + priority
+
+    /// <summary>
+    /// [T20-b] Cap/priority çağrılarını SIRASIYLA yakalayan <see cref="ICpuGovernor"/>. Gerçek bir Win32 job
+    /// yerine bu kullanılır: <c>QueryCpuRate</c> yalnız YÜRÜRLÜKTEKİ durumu görebilir, oysa buradaki iddialar
+    /// "ne zaman ne uygulandı VE run sonunda geri alındı mı" hakkındadır — sıra ancak kaydedilerek görülür.
+    /// </summary>
+    private sealed class RecordingGovernor : ICpuGovernor
+    {
+        private readonly List<string> _calls = [];
+
+        public IReadOnlyList<string> Calls { get { lock (_calls) return [.. _calls]; } }
+
+        public void ApplyCap(int? percent)
+        {
+            lock (_calls) _calls.Add(percent is { } p ? $"cap:{p}" : "cap:off");
+        }
+
+        public void ApplyPriority(ProcessPriorityClassKind kind)
+        {
+            lock (_calls) _calls.Add("prio:" + kind);
+        }
+    }
+
+    [Fact]
+    public async Task Light_perf_mode_caps_the_inner_job_at_run_start_and_the_cap_is_released_when_the_run_ends()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(parallelism: 2) with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Light = %40 + Idle (PerfProfile tablosu); run bitince cap KALDIRILIR ve priority Normal'e döner —
+        // inner job Supervisor ömrü boyunca yaşadığı için cap orada BIRAKILAMAZ.
+        Assert.Equal(["cap:40", "prio:Idle", "cap:off", "prio:Normal"], governor.Calls);
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.Equal(40, started.CpuCapPercent);  // runStarted uygulanan cap'i taşır
+        Assert.Equal(2, started.Parallelism);     // paralellik KOMUTTAN gelir, profilden yeniden türetilmez
+    }
+
+    [Fact]
+    public async Task Full_perf_mode_clears_the_cap_instead_of_setting_one()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["cap:off", "prio:Normal", "cap:off", "prio:Normal"], governor.Calls);
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+    }
+
+    // Geriye dönük uyum: PerfMode taşımayan (P2 öncesi ya da harness) komutlar job'a HİÇ dokunmamalı —
+    // aksi halde bu değişiklik mevcut tüm run'lara sessizce bir priority/cap yazımı eklerdi.
+    [Fact]
+    public async Task A_start_command_without_a_perf_mode_never_touches_the_cpu_governor()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(governor.Calls);
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+    }
+
+    [Fact]
+    public void Perf_mode_change_without_an_active_run_is_a_no_op()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // koşan run yok → kısılacak MSBuild de yok
+
+        Assert.Empty(governor.Calls);
+    }
+
+    [Fact]
+    public async Task Live_perf_mode_change_moves_the_cap_and_priority_but_never_the_worker_count()
+    {
+        // İki proje uçuşa girene kadar kapı kapalı: perf değişimi run'ın TAM ORTASINDA uygulanır (sleep/poll YOK [D8]).
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
+        var pairInFlight = Signal();
+        var release = Signal();
+        int arrived = 0;
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            if (Interlocked.Increment(ref arrived) >= 2) pairInFlight.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(parallelism: 2) with { PerfMode = "Light" }, default);
+        await pairInFlight.Task.WaitAsync(Limit);
+
+        // Balanced'ın paralelliği 4'tür — worker'lar run başında bir kez yaratıldığı için bu run'da 2 KALIR;
+        // canlı değişen YALNIZ cap + priority'dir (K11'in dürüst yorumu).
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Balanced));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["cap:40", "prio:Idle", "cap:70", "prio:BelowNormal", "cap:off", "prio:Normal"], governor.Calls);
+        Assert.Equal(2, invoker.MaxConcurrent); // worker sayısı DEĞİŞMEDİ
+        Assert.Equal(4, h.Events.OfType<ProjectSucceededEvent>().Count());
+    }
+
+    // Cap, hard stop yolunda da geri alınmalı: orada job Terminate edilir ama JOB'IN KENDİSİ yaşamaya devam
+    // eder (yeni process kabul eder) — cap kalsaydı bir sonraki run/Continue kısıtlı başlardı.
+    [Fact]
+    public async Task The_cap_is_released_on_the_hard_stop_path_too()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            inFlight.TrySetResult();
+            await release.Task;
+            return Exit(1); // hard stop sonrası child ölür gibi
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["cap:40", "prio:Idle", "cap:off", "prio:Normal"], governor.Calls);
     }
 }

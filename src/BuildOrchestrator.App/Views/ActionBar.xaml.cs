@@ -16,7 +16,7 @@ namespace BuildOrchestrator.App.Views;
 /// <summary>
 /// [D6/T40+T12+T43-UI] design-v1 alt aksiyon barı (BuildApp.jsx:1543-1615). DataContext bir <see cref="RunViewModel"/>
 /// (ShellRoot'tan miras). GÖRÜNÜM + kablaj; iş mantığı VM'dedir (<see cref="RunViewModel.ToggleFilter"/>/
-/// <see cref="RunViewModel.SelectBranch"/>/<see cref="RunViewModel.SetConfiguration"/>/<see cref="RunViewModel.CyclePerf"/>).
+/// <see cref="RunViewModel.SelectBranch"/>/<see cref="RunViewModel.SetConfiguration"/>/<see cref="RunViewModel.CyclePerfAsync"/>).
 ///
 /// <para><b>Enable kuralları:</b> repo yokken (<see cref="RunViewModel.HasWorkspace"/>=false) Sync/Build + TÜM chip'ler
 /// disabled (README §3.1; prototipin canlı sayaç chip'leri gözden kaçmadır). Koşarken (<see cref="RunViewModel.IsMidRunLocked"/>)
@@ -62,7 +62,10 @@ public partial class ActionBar : UserControl
         PART_BranchPopover.CloseRequested += () => { PART_BranchChip.IsChecked = false; PART_BranchChip.Focus(); };
         PART_WorktreePopover.CloseRequested += () => { PART_WorktreeChip.IsChecked = false; PART_WorktreeChip.Focus(); };
         PART_BuildMenu.ItemInvoked += () => PART_Split.IsMenuOpen = false;
-        PART_PerfChip.Click += (_, _) => { _vm?.CyclePerf(); PART_PerfChip.IsChecked = false; }; // perf momentary
+        // perf momentary; [T20-b] chip artık koşan run'a setPerfMode gönderdiği için VM tarafı async —
+        // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli
+        // (WorktreePopover'ın `_ = _vm.DeleteWorktreeAsync(...)` deseniyle aynı).
+        PART_PerfChip.Click += (_, _) => { _ = _vm?.CyclePerfAsync(); PART_PerfChip.IsChecked = false; };
         DependencyPropertyDescriptor.FromProperty(SplitButton.IsMenuOpenProperty, typeof(SplitButton))
             .AddValueChanged(PART_Split, (_, _) => { if (PART_Split.IsMenuOpen) PART_BuildMenu.PlayPopIn(); });
     }

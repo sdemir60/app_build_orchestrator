@@ -85,6 +85,14 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <c>BaseIntermediateOutputPath</c>'e çevrilir — obj PAYLAŞILMAZ (bayat-obj zehri, SPIKE-proven
 /// OSYS.Types.NewSales.Print vakası).
 /// </param>
+/// <param name="cpuGovernor">
+/// [T20-b/K11] Perf profilinin CPU cap + priority yarısının uygulandığı seam. Varsayılan (null) ⇒
+/// <paramref name="innerJob"/>'ın KENDİSİ — yani cap DAİMA yalnız inner job'a uygulanır (App'in outer job'ına
+/// ASLA: orası Supervisor'ın kendisini ve IPC'yi kısardı). Ayrı bir parametre olmasının TEK sebebi test
+/// edilebilirliktir: cap/priority çağrılarının SIRASI (run başı → canlı değişim → run sonu geri alma) gerçek
+/// bir Win32 job üzerinden gözlenemez. Terminate hâlâ <paramref name="innerJob"/>'ın işidir — o, cap'ten
+/// bağımsız bir yaşam-döngüsü yetkisidir.
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -94,9 +102,11 @@ public sealed class RunCoordinator(
     Func<long> nowMs,
     Action<string> console,
     Func<StartRunCommand, string?>? worktreeObjRootResolver = null,
-    BuildStateStore? stateStore = null) : IDisposable
+    BuildStateStore? stateStore = null,
+    ICpuGovernor? cpuGovernor = null) : IDisposable
 {
     private readonly object _gate = new();
+    private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
 
     // --- run yaşam döngüsü (hepsi _gate altında) ---
     private bool _runActive;            // startRun slotu dolu (planlama dahil) — A6
@@ -106,6 +116,10 @@ public sealed class RunCoordinator(
     private bool _stopAcked;            // runStopped yazıldı mı — TryRequestStop true dedi ise ACK BORCU vardır
     private ReadySetScheduler? _scheduler;
     private WakeSignal? _wake;
+    // [T20-b/K11] Bu run için cap/priority GERÇEKTEN uygulandı mı (yani komut bir PerfMode taşıyor muydu).
+    // Yalnız true iken run sonunda geri alınır ve yalnız true iken canlı setPerfMode kabul edilir: PerfMode
+    // taşımayan (P2 öncesi / harness) run'lar job'a hiç dokunmamalıdır.
+    private bool _perfApplied;
 
     // --- Continue için devredilen state (run'lar ARASINDA yaşar) ---
     private RunPlan? _plan;
@@ -266,6 +280,61 @@ public sealed class RunCoordinator(
         }
     }
 
+    /// <summary>
+    /// [T20-b/K11] KOŞARKEN perf profilini değiştirir (<c>setPerfMode</c>). <b>Canlı değişen YALNIZ CPU cap +
+    /// priority'dir</b>: worker'lar run başında bir kez yaratılır (bkz. <see cref="RunSegmentAsync"/>'in worker
+    /// dizisi) ve dinamik bir slot mekanizması YOKTUR — yeni profilin paralelliği ancak BİR SONRAKİ run'da
+    /// geçerli olur. App bu ayrımı kullanıcıya konsol notuyla söyler.
+    /// <para>Aktif run yoksa (ya da bu run hiç PerfMode taşımadıysa) NO-OP'tur: kısılacak bir MSBuild child'ı
+    /// yoktur ve profil zaten bir sonraki <see cref="StartRunCommand.PerfMode"/> ile gelecektir. Aksi halde
+    /// idle bir Supervisor'ın inner job'ında, sahibi olmayan bir cap kalırdı.</para>
+    /// </summary>
+    public void ApplyPerfMode(PerfProfile profile)
+    {
+        lock (_gate)
+        {
+            if (!_runActive || !_perfApplied) return;
+            ApplyPerfLocked(profile);
+        }
+    }
+
+    /// <summary>
+    /// [T20-b/K11] Profilin cap + priority yarısını inner job'a yazar. Cap bir OPTİMİZASYONDUR: yazım hatası
+    /// (ör. rate control desteklenmiyor) run'ı ÖLDÜRMEZ — konsola uyarı düşer ve run cap'siz devam eder.
+    /// <see cref="_gate"/> altında çağrılır; ikisi de kısa, kilitsiz bir Win32 çağrısıdır (aynı desende
+    /// <see cref="TryRequestStop"/> de <c>Terminate</c>'i kilit altında yapar).
+    /// </summary>
+    private void ApplyPerfLocked(PerfProfile profile)
+    {
+        try
+        {
+            _cpu.ApplyCap(profile.CpuCapPercent);
+            _cpu.ApplyPriority(profile.Priority);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or ObjectDisposedException)
+        { console("cpu cap/priority uygulanamadı: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// [T20-b/K11] Run bitti → cap ve priority GERİ ALINIR. Zorunludur: inner job Supervisor'ın TÜM ömrü
+    /// boyunca yaşar (bkz. <c>Program.Main</c>'deki tek <c>CreateKillOnClose</c>), yani bırakılan bir cap
+    /// sonraki run'a ve o job'da doğacak her şeye sessizce miras kalırdı. Normal bitiş, graceful ve hard stop
+    /// AYNI yoldan (<see cref="ExecuteRunAsync"/>'in finally'si) geçer.
+    /// <para>"Geri alma" = Full profili: cap tamamen kaldırılır, priority Normal'e PİNLENİR. Priority limit
+    /// BAYRAĞININ kendisini silen bir API yoktur (bkz. <see cref="JobObject.SetPriorityClass"/>) — ama Normal'e
+    /// pinlemek pratikte bayraksız hâlle aynıdır: bayraksızken de child'lar Supervisor'ın (Normal) priority'sini
+    /// miras alırdı.</para>
+    /// </summary>
+    private void ReleasePerf()
+    {
+        lock (_gate)
+        {
+            if (!_perfApplied) return;
+            _perfApplied = false;
+            ApplyPerfLocked(PerfProfile.For(PerfMode.Full)); // cap yok + Normal priority
+        }
+    }
+
     // ---------------------------------------------------------------- run
 
     private async Task ExecuteRunAsync(StartRunCommand cmd, CancellationToken ct)
@@ -298,6 +367,10 @@ public sealed class RunCoordinator(
 
             events.Writer.Complete();
             await pump; // tüm event'ler yazıldıktan SONRA run task'ı biter
+            // [T20-b/K11] Cap'i BURADA geri al, RunSegmentAsync'in finally'sinde değil: bu finally run'ın TEK
+            // huni noktasıdır (erken planFailed/msbuildNotFound dönüşleri ve beklenmeyen exception dahil), yani
+            // uygulanmış bir cap'in kaçabileceği hiçbir yol kalmaz.
+            ReleasePerf();
             lock (_gate)
             {
                 _runActive = false;
@@ -436,11 +509,16 @@ public sealed class RunCoordinator(
             StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
 
         int parallelism = Math.Max(1, cmd.Parallelism);
+        // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ (o, komutun kendi alanıdır — App aynı tablodan
+        // türetir ve Continue/RetryFailed segmentleri de onu taşır). Buradan yalnız CPU cap + priority alınır.
+        // PerfMode yoksa ya da çözülemiyorsa profil null'dır ve job'a HİÇ dokunulmaz (geriye dönük uyum).
+        PerfProfile? perf = cmd.PerfMode is { } perfModeText ? PerfProfile.TryParse(perfModeText) : null;
         var wake = new WakeSignal();
         lock (_gate)
         {
             _scheduler = scheduler;
             _wake = wake;
+            if (perf is { } profile) { _perfApplied = true; ApplyPerfLocked(profile); }
             if (_stopKind is not null) scheduler.RequestStop(); // plan kurulurken gelmiş Stop
         }
 
@@ -448,7 +526,7 @@ public sealed class RunCoordinator(
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
-            plan.Configuration, elapsedAtStart));
+            plan.Configuration, elapsedAtStart, perf?.CpuCapPercent));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
@@ -465,11 +543,11 @@ public sealed class RunCoordinator(
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,
-            "Run {0} ({1}): {2} proje, {3} worker, {4} — her proje ayrı bir derleyici child process'i olarak derlenir; komut satırları proje loglarında.",
-            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration));
+            "Run {0} ({1}): {2} proje, {3} worker, {4}, {5} — her proje ayrı bir derleyici child process'i olarak derlenir; komut satırları proje loglarında.",
+            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration, CapText(perf)));
         Decide(logs, string.Format(CultureInfo.InvariantCulture,
-            "run {0} başladı: mode={1} projeler={2} parallelism={3} configuration={4} elapsedAtStart={5}ms",
-            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration, elapsedAtStart));
+            "run {0} başladı: mode={1} projeler={2} parallelism={3} configuration={4} {5} elapsedAtStart={6}ms",
+            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration, CapText(perf), elapsedAtStart));
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.
@@ -561,6 +639,14 @@ public sealed class RunCoordinator(
             }
         }
     }
+
+    /// <summary>
+    /// [T20-b/K11] Run başı konsol/decision satırlarının cap terimi — App'in perf notuyla AYNI sözlük
+    /// ("cpu cap 70%" / "cpu cap off"). Perf modu hiç bildirilmediyse cap'e dokunulmadığı için "off" değil
+    /// "cpu cap unset" yazılır: "kapatıldı" ile "hiç istenmedi" tanı sırasında aynı şey DEĞİLDİR.
+    /// </summary>
+    private static string CapText(PerfProfile? perf) => perf is not { } p ? "cpu cap unset"
+        : p.CpuCapPercent is { } cap ? string.Format(CultureInfo.InvariantCulture, "cpu cap {0}%", cap) : "cpu cap off";
 
     /// <summary>
     /// decision.log'a yazar. Log bir TANI kaydıdır: disk hatası (dolu disk vb.) run'ı ÖLDÜRMEMELİ — konsola uyarı

@@ -3,6 +3,7 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -31,7 +32,19 @@ public class RunViewModelStateTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
         Assert.Equal("Balanced", vm.PerfMode);
-        Assert.Equal(4, vm.Parallelism); // ParallelismFor("Balanced") == 4 — Environment.ProcessorCount DEĞİL
+        Assert.Equal(4, vm.Parallelism); // PerfProfile.For(Balanced).Parallelism == 4 — Environment.ProcessorCount DEĞİL
+    }
+
+    // [T20-b] Tek doğruluk kaynağı artık Core'un PerfProfile'ıdır (App'in kendi ParallelismFor tablosu KALDIRILDI).
+    // İki tablonun ASİMETRİSİ bilerek korunur: PerfProfile.TryParse tanınmayan metinde null döner, App'in eski
+    // tablosu ise 4'e düşerdi (`_ => 4`) — birleşmede ESKİ davranış kazanır, aksi halde bayat bir UiState değeri
+    // paralelliği tanımsız bırakırdı. Bu dal yalnız savunma amaçlıdır (public yollar hep geçerli metin verir),
+    // bu yüzden doğrudan pinlenir.
+    [Fact]
+    public void An_unrecognised_perf_mode_falls_back_to_the_balanced_row()
+    {
+        Assert.Equal(PerfProfile.For(PerfMode.Balanced), RunViewModel.ProfileFor("Turbo"));
+        Assert.Equal(PerfProfile.For(PerfMode.Light), RunViewModel.ProfileFor("Light"));
     }
 
     // ---------------------------------------------------------------- faz
@@ -214,10 +227,73 @@ public class RunViewModelStateTests
         Assert.Equal("Debug", vm.Configuration);
         Assert.DoesNotContain("all projects will rebuild", vm.GetRunDocumentText());
 
-        vm.CyclePerf(); // perf CANLI kalır ve koşarken not yazar
+        await vm.CyclePerfAsync(); // perf CANLI kalır ve koşarken K11 notunu yazar
         Assert.Equal("Light", vm.PerfMode);
         Assert.Equal(2, vm.Parallelism);
-        Assert.Contains("parallelism: 2 (Light)", vm.GetRunDocumentText());
+        Assert.Contains("parallelism: 2 · cpu cap 40%", vm.GetRunDocumentText());
+    }
+
+    // ---------------------------------------------------------------- [T20-b/K11] canlı perf: cap + priority
+
+    /// <summary>
+    /// [T20-b/K11] Koşarken perf değişimi ARTIK koşan run'a ulaşır: <see cref="SetPerfModeCommand"/> gönderilir
+    /// (eskiden yalnız konsola not yazılırdı, motora SIFIR etkisi vardı). Not iki satırdır çünkü canlı değişen
+    /// yalnız cap+priority'dir — paralellik bir sonraki run'da geçerli olur ve kullanıcı bunu bilmelidir.
+    /// </summary>
+    [Fact]
+    public async Task Perf_change_while_running_sends_setPerfMode_and_says_parallelism_waits_for_the_next_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { PerfMode = "Balanced" };
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, CpuCapPercent: 70));
+        Assert.True(vm.IsRunning);
+
+        var sent = new List<SetPerfModeCommand>();
+        vm.DebugOnCommandSent = c => { if (c is SetPerfModeCommand s) sent.Add(s); };
+
+        await vm.CyclePerfAsync(); // Balanced → Light
+        await vm.CyclePerfAsync(); // Light → Full (cap YOK)
+
+        Assert.Equal(["Light", "Full"], sent.Select(s => s.PerfMode));
+        string text = vm.GetRunDocumentText();
+        Assert.Contains("parallelism: 2 · cpu cap 40%", text);
+        Assert.Contains("parallelism: 6 · cpu cap off", text);
+        Assert.Contains("parallelism applies to the next run — cpu cap and priority change live", text);
+    }
+
+    // Koşmuyorken: tablo güncellenir ama NE komut gönderilir NE de konsola not yazılır — profil zaten bir
+    // sonraki startRun'ın PerfMode alanıyla gidecektir (koşmayan bir job'a cap uygulamanın sahibi yoktur).
+    [Fact]
+    public async Task Perf_change_while_idle_updates_the_table_without_ipc_or_a_console_note()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { PerfMode = "Balanced" };
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.CyclePerfAsync();
+
+        Assert.Equal("Light", vm.PerfMode);
+        Assert.Equal(2, vm.Parallelism);
+        Assert.Empty(sent);
+        Assert.DoesNotContain("cpu cap", vm.GetRunDocumentText());
+    }
+
+    // Run başlatma komutu perf profilinin ADINI da taşır: cap/priority Supervisor'da BU alandan çözülür
+    // (paralellik ayrı alandır — App ile Supervisor aynı tablodan aynı satırı okur).
+    [Fact]
+    public async Task A_started_run_carries_the_perf_mode_name_alongside_parallelism()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo", PerfMode = "Light" };
+        vm.SetPerfMode("Light"); // seed yolu: PerfMode + Parallelism birlikte
+
+        StartRunCommand? sent = null;
+        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.Equal("Light", sent!.PerfMode);
+        Assert.Equal(2, sent.Parallelism);
     }
 
     [Fact]

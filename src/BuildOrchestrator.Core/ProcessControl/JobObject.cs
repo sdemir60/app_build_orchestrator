@@ -9,7 +9,7 @@ namespace BuildOrchestrator.Core.ProcessControl;
 /// inner job'ı ve testler tarafından ORTAK kullanıldığı için fabrikaya gömülmez — perf profilini uygulamak
 /// isteyen çağıran <see cref="SetCpuRate"/>/<see cref="SetPriorityClass"/>'ı ayrıca çağırır.
 /// </summary>
-public sealed class JobObject : IDisposable
+public sealed class JobObject : IDisposable, ICpuGovernor
 {
     private nint _handle;
     private bool _disposed;
@@ -152,6 +152,16 @@ public sealed class JobObject : IDisposable
         if ((info.ControlFlags & hardCap) != hardCap) return null;
         return (int)(info.CpuRate / 100);
     }
+
+    // [T20-b/K11] ICpuGovernor: yüzde-ya-da-null ikilisini mevcut iki metoda AÇIK implementasyonla bağlar —
+    // JobObject'in public yüzeyine cap yazan üçüncü bir metot EKLENMEZ (tek yazım yolu SetCpuRate/ClearCpuRate).
+    void ICpuGovernor.ApplyCap(int? percent)
+    {
+        if (percent is { } p) SetCpuRate(p);
+        else ClearCpuRate();
+    }
+
+    void ICpuGovernor.ApplyPriority(ProcessPriorityClassKind kind) => SetPriorityClass(kind);
 
     private void SetCpuRateControl(ref NativeMethods.JOBOBJECT_CPU_RATE_CONTROL_INFORMATION info)
     {

@@ -8,8 +8,12 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [T20-a] Core'daki <see cref="PerfProfile"/> tablosu ile App'in perf chip'inin ürettiği paralellik
-/// DEĞERLERİNİN aynı olduğunu doğrular. Bugün iki tablo ayrı duruyor (<c>RunViewModel.ParallelismFor</c>);
-/// tek doğruluk kaynağına geçiş P2'de yapılacağı için bu test o güne kadar sessiz ayrışmayı yakalar.
+/// DEĞERLERİNİN aynı olduğunu doğrular.
+///
+/// <para>[T20-b] P2'den sonra iki tablo değil TEK tablo var (<c>RunViewModel.ParallelismFor</c> kaldırıldı,
+/// App doğrudan <see cref="PerfProfile"/>'ı okuyor) — bu yüzden test artık "ayrışmayı yakalayan" değil,
+/// <b>chip döngüsünün gerçekten o tablodan beslendiğini</b> pinleyen bir testtir: döngünün sırası (Balanced →
+/// Light → Full) ve her adımda <c>Parallelism</c>'in profille aynı satırdan gelmesi.</para>
 ///
 /// <para>App VM'ini (dolayısıyla <c>EngineHost</c> harness'ını) sürdüğü için Core'un saf
 /// <c>ProcessControl</c> testlerinin yanında değil, <b>App tarafında</b> durur — saf tablo testleri
@@ -31,7 +35,7 @@ public class PerfProfileParityTests
             Assert.NotNull(profile);
             Assert.Equal(profile.Value.Parallelism, vm.Parallelism);
             seen.Add(vm.PerfMode);
-            vm.CyclePerf();
+            await vm.CyclePerfAsync();
         }
         Assert.Equal(["Balanced", "Light", "Full"], seen);
     }

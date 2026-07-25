@@ -80,6 +80,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await WriteWorktreeListAsync(w.RootPath, ct); break;
             case DeleteWorktreeCommand d:
                 await DeleteWorktreeAsync(d, ct); break;
+            case SetPerfModeCommand p:
+                await ApplyPerfModeAsync(p, ct); break;
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
@@ -156,6 +158,20 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         { await writer.WriteAsync(new ErrorEvent("worktreeDeleteFailed", result.Error!), ct); return; }
 
         await WriteWorktreeListAsync(cmd.RootPath, ct);
+    }
+
+    /// <summary>
+    /// [T20-b/K11] Koşan run'ın perf profilini değiştirir. Profil tablosu Core'un (<see cref="PerfProfile"/>) —
+    /// burada yalnız metin çözülür ve koordinatöre verilir. <b>Yalnız CPU cap + priority canlı değişir</b>;
+    /// paralellik bir sonraki run'da geçerli olur (bkz. <see cref="RunCoordinator.ApplyPerfMode"/>).
+    /// Başarıda event YOKTUR (App zaten kendi konsol notunu yazar); çözülemeyen mod ise sessizce yutulmaz —
+    /// <c>error(badPerfMode)</c> döner, böylece "komut tanınmadı" (<c>unknownCommand</c>) ile karışmaz.
+    /// </summary>
+    private async Task ApplyPerfModeAsync(SetPerfModeCommand cmd, CancellationToken ct)
+    {
+        if (PerfProfile.TryParse(cmd.PerfMode) is not { } profile)
+        { await writer.WriteAsync(new ErrorEvent("badPerfMode", cmd.PerfMode), ct); return; }
+        coordinator.ApplyPerfMode(profile);
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using System.Globalization;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.ProcessControl;
 
 namespace BuildOrchestrator.App.ViewModels;
 
@@ -89,13 +90,14 @@ public sealed partial class RunViewModel
     // ---------------------------------------------------------------- [D6 persistence] perf seed
 
     /// <summary>[D6 persistence] Kalıcı (UiState) PerfMode'u uygular — <see cref="PerfMode"/> + <see cref="Parallelism"/>
-    /// BİRLİKTE (tek sabit eşleme, <see cref="CyclePerf"/> ile aynı otorite). <see cref="CyclePerf"/>'ten farkı: döngü
-    /// YOK ve konsol notu YOK (bu bir seed'dir, kullanıcı aksiyonu değil). Geçersiz değer no-op (varsayılan korunur).</summary>
+    /// BİRLİKTE (tek tablo: Core'un <c>PerfProfile</c>'ı, <see cref="CyclePerfAsync"/> ile aynı otorite).
+    /// <see cref="CyclePerfAsync"/>'ten farkı: döngü YOK, konsol notu YOK ve IPC YOK (bu bir seed'dir, kullanıcı
+    /// aksiyonu değil — ayrıca seed anında koşan bir run da olamaz). Geçersiz değer no-op (varsayılan korunur).</summary>
     public void SetPerfMode(string mode)
     {
-        if (mode is not ("Full" or "Balanced" or "Light")) return;
+        if (PerfProfile.TryParse(mode) is not { } profile) return;
         PerfMode = mode;
-        Parallelism = ParallelismFor(mode);
+        Parallelism = profile.Parallelism;
     }
 
     // ---------------------------------------------------------------- [D7/T66] Settings — layers + repository
