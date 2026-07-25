@@ -64,4 +64,24 @@ public class PopoverTests
         Assert.True(popover.IsEmptyState); // "No branches match “zzz”."
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [D6/T40] <see cref="WorktreePopover"/> AÇIKKEN gerçekten realize olabilmeli. ShellRoot'un launch-fatal'ı
+    /// (Double token → GridLength, commit c6e9a21) ActionBar'ın inline Popup içeriğinde tekrarlasaydı LAUNCH
+    /// değil CLICK-fatal olurdu: Popup çocuğu parse zamanı kurulur ama measure/arrange ancak IsOpen=true'da
+    /// çalışır — yani ShellRoot realize testi bu yolu görmez. Bu test o yolu kapatır: throw = kırmızı.
+    /// </summary>
+    [StaFact]
+    public void The_worktree_popover_realizes_and_lays_out_while_open()
+    {
+        var host = DsResources.NewHost();
+        var popover = new WorktreePopover { DataContext = NewVm() };
+        var window = DsResources.Realize(host, popover);
+
+        popover.IsOpen = true;
+        popover.UpdateLayout(); // açıkken measure/arrange — token/şablon uyuşmazlığı burada patlar
+
+        Assert.True(popover.ActualWidth > 0);
+        GC.KeepAlive(window);
+    }
 }
