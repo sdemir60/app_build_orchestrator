@@ -123,9 +123,9 @@ public sealed class RunCoordinator(
     // [Fix round 1 — KÖK 1] PLANLAMA PENCERESİNDE gelmiş perf niyeti. startRun kabul edilir edilmez _runActive
     // true olur, ama cap ancak plan kurulduktan SONRA (RunSegmentAsync'in apply noktası) uygulanır; 177 projede
     // bu pencere SANİYELERDİR ve perf chip'i o sırada canlıdır. Buraya yazılan niyet run başlarken komuttaki
-    // PerfMode'u EZER (kullanıcının SON sözü). Apply noktasında ve run sonunda temizlenir — apply noktası
-    // geçtikten sonra yazılan bir niyet (PerfMode'suz run'da olabilir) o run'la birlikte sessizce sona erer,
-    // SONRAKİ run'a sızmaz.
+    // PerfMode'u EZER (kullanıcının SON sözü). Apply noktasında tüketilir; [Fix round 2 — YENİ 1] run
+    // kapanışında İKİ kez temizlenir (ReleasePerf + son kilit), çünkü ikisinin arasındaki `await pump`
+    // penceresinde _runActive hâlâ true'dur ve oraya düşen bir niyeti başka temizleyen olmazdı.
     private PerfProfile? _pendingPerf;
 
     // --- Continue için devredilen state (run'lar ARASINDA yaşar) ---
@@ -357,9 +357,17 @@ public sealed class RunCoordinator(
     /// BAYRAĞININ kendisini silen bir API yoktur (bkz. <see cref="JobObject.SetPriorityClass"/>) — ama Normal'e
     /// pinlemek pratikte bayraksız hâlle aynıdır: bayraksızken de child'lar Supervisor'ın (Normal) priority'sini
     /// miras alırdı.</para>
-    /// <para>[Fix round 1 — KÖK 2] <see cref="_perfApplied"/> ancak HER İKİ yazım da başarılıysa temizlenir:
-    /// başarısız bir geri alma "temizlendi" SAYILMAZ, bayrak kalır ve bir sonraki run'ın sonunda yeniden
-    /// denenir. <see cref="_pendingPerf"/> ise koşulsuz temizlenir — run bitti, o niyetin sahibi kalmadı.</para>
+    /// <para>[Fix round 1 — KÖK 2 · Fix round 2 — YENİ 4] Her iki bayrak da KOŞULSUZ temizlenir: bunlar bir
+    /// retry defteri değil, RUN'A AİT yaşam-döngüsü işaretleridir ve run sınırını geçmemelidirler. Geri alma
+    /// yazımı başarısız olursa sinyal konsol uyarısıdır (<see cref="TryWriteCapLocked"/>/
+    /// <see cref="TryWritePriorityLocked"/> onu üretir); bayrağı ayakta tutmak, PerfMode taşımayan bir SONRAKİ
+    /// run'ın hiç dokunmadığı job'a run sonunda yazmasına yol açardı — yani "PerfMode'suz run job'a HİÇ
+    /// dokunmaz" invaryantını koşullu hale getirirdi.</para>
+    /// <para><see cref="_perfApplied"/>'ın burada (geri alma denemesinden hemen sonra) düşmesi ayrıca run'ın
+    /// KAPANIŞ PENCERESİNİ güvenli kılar: aşağıdaki <c>await pump</c> sürerken <c>_runActive</c> hâlâ true'dur
+    /// ve o aralıkta gelen bir <c>setPerfMode</c> CANLI uygulanabilseydi, geri alacak kimsesi olmayan bir cap
+    /// bırakırdı. Bayrak düştüğü için o niyet en fazla <see cref="_pendingPerf"/>'e yazılır; onu da run
+    /// kapanışının son kilidi temizler (bkz. <see cref="ExecuteRunAsync"/>).</para>
     /// </summary>
     private void ReleasePerf()
     {
@@ -370,9 +378,9 @@ public sealed class RunCoordinator(
             if (_perfApplied)
             {
                 var full = PerfProfile.For(PerfMode.Full); // cap yok + Normal priority
-                bool capCleared = TryWriteCapLocked(full.CpuCapPercent, warnings);
-                bool priorityReset = TryWritePriorityLocked(full.Priority, warnings);
-                _perfApplied = !(capCleared && priorityReset);
+                TryWriteCapLocked(full.CpuCapPercent, warnings);
+                TryWritePriorityLocked(full.Priority, warnings);
+                _perfApplied = false;
             }
         }
         Warn(warnings);
@@ -423,6 +431,14 @@ public sealed class RunCoordinator(
                 _stopKind = null;
                 _scheduler = null;
                 _wake = null;
+                // [Fix round 2 — YENİ 1/4] Perf state'i de BURADA, `_runActive = false` ile AYNI kritik
+                // bölgede sıfırlanır. Yukarıdaki ReleasePerf() ile arada `await pump` vardır ve o aralıkta
+                // `_runActive` hâlâ true'dur: IPC dispatch loop'u ayrı thread'dedir, setPerfMode'un hiçbir
+                // run-state ön koşulu yoktur (bkz. SupervisorHost'un dispatch'i) ve o pencerede gelen bir
+                // niyet _pendingPerf'e düşerdi — temizleyeni olmadığı için BİR SONRAKİ run'ın profilini
+                // sessizce ezerdi (cap'siz olması gereken bir run capli başlardı).
+                _pendingPerf = null;
+                _perfApplied = false;
             }
         }
     }

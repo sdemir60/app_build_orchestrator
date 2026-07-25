@@ -88,9 +88,34 @@ public class RunCoordinatorTests
 
     // ---------------------------------------------------------------- harness
 
+    /// <summary>
+    /// [Fix round 2 — YENİ 1] Belirli bir event YAZILIRKEN pump'ı duraklatan stdout. Amaç, run'ın kapanış
+    /// penceresini (RunCoordinator: <c>ReleasePerf()</c> çağrıldı ama <c>_runActive=false</c> HENÜZ yazılmadı —
+    /// arada <c>await pump</c> var) deterministik olarak yakalamak. Sleep/poll YOK [D8]: iki TCS randevusu.
+    /// </summary>
+    private sealed class PumpGateStream(string marker) : MemoryStream
+    {
+        private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Marker taşıyan event yazılırken tamamlanır — o an pump duraklamıştır.</summary>
+        public Task Reached => _reached.Task;
+
+        public void Release() => _release.TrySetResult();
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+        {
+            bool hit = Encoding.UTF8.GetString(buffer.Span).Contains(marker, StringComparison.Ordinal);
+            await base.WriteAsync(buffer, ct);
+            if (!hit) return;
+            _reached.TrySetResult();
+            await _release.Task;
+        }
+    }
+
     private sealed class Harness : IDisposable
     {
-        private readonly MemoryStream _out = new();
+        private readonly MemoryStream _out;
         private readonly List<RunLogWriter> _logWriters = [];
         private long _now;
 
@@ -102,8 +127,9 @@ public class RunCoordinatorTests
 
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, RunPlan>? planner = null,
             Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null,
-            ICpuGovernor? cpuGovernor = null)
+            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null)
         {
+            _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
                 planner: planner ?? (_ => plan),
                 msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
@@ -1377,7 +1403,10 @@ public class RunCoordinatorTests
     }
 
     /// <summary>[T20-b] Bir profilin governor'da bırakacağı İZ — yüzdeler testlerde LİTERAL yazılmaz
-    /// (P1 review dersi): tek doğruluk kaynağı <see cref="PerfProfile"/> tablosudur.</summary>
+    /// (P1 review dersi): tek doğruluk kaynağı <see cref="PerfProfile"/> tablosudur.
+    /// <para><b>İSTİSNA:</b> konsol satırının K11 KOPYA METNİ (<c>"cpu cap 40%"</c>) bilerek literaldir —
+    /// türetilseydi kendi kendini doğrulayan bir totoloji olurdu. Bedeli: Light'ın cap'i ileride değişirse o
+    /// assert "yanlış nedenle" kırılır; o gün metin de birlikte güncellenir.</para></summary>
     private static string[] Applied(PerfMode mode)
     {
         var p = PerfProfile.For(mode);
@@ -1568,6 +1597,54 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls);
+    }
+
+    // [Fix round 2 — YENİ 1] Run'ın KAPANIŞ PENCERESİ: koordinatör cap'i geri aldı (ReleasePerf) ama son
+    // event'ler hâlâ pump tarafından yazılıyor, yani `_runActive` HÂLÂ true. IPC dispatch loop'u ayrı bir
+    // thread'dedir ve setPerfMode'un hiçbir run-state ön koşulu yoktur — o pencerede gelen bir niyet, sahibi
+    // olmayan bir "pending" olarak kalıp BİR SONRAKİ run'ın profilini sessizce ezerdi.
+    [Fact]
+    public async Task A_perf_change_arriving_while_the_last_events_are_still_draining_does_not_leak_into_the_next_run()
+    {
+        var gate = new PumpGateStream("runCompleted");
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor, output: gate);
+
+        await h.Sut.StartAsync(Start(runId: "r1"), default); // PerfMode YOK → job'a hiç dokunulmamalı
+        await gate.Reached.WaitAsync(Limit);                 // runCompleted yazılırken duraklat
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // run BİTTİ ama _runActive henüz true
+        gate.Release();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Empty(governor.Calls);
+
+        // İKİNCİ run, yine PerfMode'suz: bayat niyet UYGULANMAMALI (aksi halde kullanıcının bu run için
+        // seçtiği profil ezilir ve cap'siz olması gereken bir run capli başlar).
+        await h.Sut.StartAsync(Start(runId: "r2"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(governor.Calls);
+        Assert.All(h.Events.OfType<RunStartedEvent>(), e => Assert.Null(e.CpuCapPercent));
+    }
+
+    // [Fix round 2 — YENİ 4] Geri alma yazımı BAŞARISIZ olsa bile perf bayrağı run SINIRINI geçmemeli: aksi
+    // halde PerfMode taşımayan bir SONRAKİ run, hiç dokunmadığı job'a run sonunda cap/priority yazardı ve
+    // "PerfMode'suz run job'a HİÇ dokunmaz" invariant'ı koşullu hale gelirdi.
+    [Fact]
+    public async Task A_failed_release_does_not_carry_the_perf_flag_into_the_next_run()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor { FailCapWithWin32 = true }; // hem apply hem release'in cap yazımı patlar
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(runId: "r1") with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        await h.Sut.StartAsync(Start(runId: "r2"), default); // PerfMode YOK
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // r1: priority uygulandı + geri alındı. r2: HİÇBİR yazım olmamalı (üçüncü bir "prio:Normal" YOK).
+        Assert.Equal(["prio:Idle", "prio:Normal"], governor.Calls);
     }
 
     // [Fix round 1 — KÖK 2] Cap yazımı patlarsa priority yazımı YİNE denenmeli (iki yarı bağımsız değerlidir)

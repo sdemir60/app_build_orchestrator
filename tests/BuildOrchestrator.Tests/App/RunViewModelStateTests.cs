@@ -237,8 +237,10 @@ public class RunViewModelStateTests
 
     /// <summary>
     /// [T20-b/K11] Koşarken perf değişimi ARTIK koşan run'a ulaşır: <see cref="SetPerfModeCommand"/> gönderilir
-    /// (eskiden yalnız konsola not yazılırdı, motora SIFIR etkisi vardı). Not iki satırdır çünkü canlı değişen
-    /// yalnız cap+priority'dir — paralellik bir sonraki run'da geçerli olur ve kullanıcı bunu bilmelidir.
+    /// (eskiden yalnız konsola not yazılırdı, motora SIFIR etkisi vardı). Konsola yazılan TEK satır K11'in
+    /// kendi kopyasıdır; "paralellik bir sonraki run'da geçerli olur" semantiği koda (XML-doc) ve README'ye
+    /// yazılır, her chip tıklamasında konsolda TEKRARLANMAZ — bu yüzden test o ikinci satırın YOKLUĞUNU da
+    /// pinler (aksi halde design-v1'in sakin konsol dili sessizce bozulur).
     /// </summary>
     [Fact]
     public async Task Perf_change_while_running_sends_setPerfMode_and_writes_the_k11_note()
