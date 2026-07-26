@@ -70,8 +70,15 @@ internal sealed class GraphNodeVisual
     /// <summary>13px paket ikonu (lucide "package" geometrisi; tam ikon seti T64).</summary>
     public required Path Icon { get; init; }
     /// <summary>[G2/LOD] Kare altındaki mono 10px kısa ad — <c>TextFormattingMode=Ideal</c> LOKAL override taşır.
-    /// Katmanın aralığı etiket hücresinin (88,4px) altına düştüğünde etiketler zaten üst üste binip okunmaz
-    /// olacağı için HİÇ KURULMAZ ve burası <c>null</c> kalır.</summary>
+    ///
+    /// <para>Katmanın düğüm aralığı, o katmanın <b>en geniş etiketinin ÇİZİLEN genişliğinin</b> altına
+    /// düştüğünde etiketler gerçekten üst üste biner ve ikisi de okunmaz olur; bu durumda etiket HİÇ KURULMAZ
+    /// ve burası <c>null</c> kalır. Eşik ölçülür (<see cref="GraphLabelMetrics"/>), sabit bir sayı ya da
+    /// <see cref="GraphLayout.NodeCellWidth"/> kelepçesi DEĞİLDİR — kelepçe yalnız kırpma sınırıdır, dolayısıyla
+    /// kısa adlı bir katman dar aralıkta da etiketlerini korur. LOD, cull ile aynı kapıya bağlıdır
+    /// (<see cref="GraphView.FullDetailMaxNodes"/>): o bandın altında etiket ASLA düşmez.</para>
+    ///
+    /// <para>Etiketi düşen düğüm anonim kalmaz — tam proje adını veren bir tooltip taşır.</para></summary>
     public TextBlock? Label { get; init; }
     /// <summary>[G2] Dep-hata rozeti kabı (13px, sağ üst köşe) — yalnız <c>HasDepIssue</c> olan düğümde KURULUR
     /// (eskiden her düğümde kurulup gizleniyordu). Yoksa <c>null</c>.</summary>

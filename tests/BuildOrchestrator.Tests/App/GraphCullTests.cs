@@ -61,7 +61,7 @@ public class GraphCullTests
     [StaFact]
     public void A_graph_inside_the_eager_band_still_materialises_every_node_and_edge()
     {
-        // [G2] Cull yalnız ShapesPathMaxNodes'un ÜSTÜNDE devreye girer — bugünkü graf (onlarca düğüm) birebir
+        // [G2] Cull yalnız FullDetailMaxNodes'un ÜSTÜNDE devreye girer — bugünkü graf (onlarca düğüm) birebir
         // eskisi gibi kurulur. Sınır İKİ TARAFTAN da pinlenir ki eşik sessizce kaymasın.
         var (nodes, edges) = SyntheticGraph.Build(GraphView.FullDetailMaxNodes, Layers, AvgFanIn);
         var view = NewView(Panel);
@@ -292,11 +292,16 @@ public class GraphCullTests
     }
 
     [StaFact]
-    public void Jumping_to_a_far_viewport_never_materialises_the_nodes_in_between()
+    public void Snapping_to_a_far_viewport_never_materialises_the_nodes_in_between()
     {
-        // [fix round 1 · B1] Materyalizasyon kararı ŞU ANKİ görünür alana göre verilir; görülmüş tüm alanların
+        // [fix round 1 · B1] Materyalizasyon kararı GÖRÜLEN alana göre verilir; görülmüş tüm alanların
         // KÜMÜLATİF birleşimine göre değil. İlk turda birleşim tutuluyordu ⇒ uzak bir görünüme atlamak aradaki
         // HİÇ GÖRÜLMEMİŞ düğümleri de kuruyordu.
+        //
+        // [fix round 2] Bu test kameranın ANLIK oturduğu yolu kapsar (reduced motion / ilk yerleşim / panel
+        // yeniden boyutlanması): ara kare üretilmediği için aradaki bant kullanıcıya HİÇ görünmez ⇒ kurulmamalı.
+        // Animasyonlu pan'ın bandı KASITLI olarak kurmasının pini kardeş testtedir
+        // (An_animated_pan_does_materialise_the_band_it_travels_through...).
         var (nodes, edges) = SyntheticGraph.Build(500, Layers, AvgFanIn);
         var view = NewView(Panel); // animasyon KAPALI ⇒ kamera anlık oturur, ara kare yok
         view.SetGraph(nodes, edges);
@@ -330,6 +335,38 @@ public class GraphCullTests
             !view.NodeVisuals.ContainsKey(n.Name) &&
             !firstRegion.IntersectsWith(GraphCulling.NodeBounds(view.NodeCenter(n.Name))) &&
             !secondRegion.IntersectsWith(GraphCulling.NodeBounds(view.NodeCenter(n.Name))));
+    }
+
+    [StaFact]
+    public void An_animated_pan_does_materialise_the_band_it_travels_through_because_those_nodes_are_really_seen()
+    {
+        // [fix round 2 · kalem 2] ÜRETİMİN VARSAYILAN YOLU: kamera hedefe 460ms'de pan yapar ve aradaki bant
+        // EKRANDAN GERÇEKTEN GEÇER. O düğümleri kurmamak, kullanıcının gözünün önünde boş bir şerit bırakırdı —
+        // yani buradaki materyalizasyon "eksik cull" DEĞİL, kasıtlı ve doğru davranıştır. Test bunu pinler ki
+        // kardeş testin (anlık atlama) iddiası tüm yollara genellenmiş sanılmasın.
+        var (nodes, edges) = SyntheticGraph.Build(500, Layers, AvgFanIn);
+        var view = NewView(Panel, animations: true);
+        view.SetGraph(nodes, edges);
+        var firstRegion = GraphCulling.VisibleWorldRect(view.ViewportSize, view.CurrentCamera);
+
+        var far = nodes.OrderByDescending(n => view.NodeCenter(n.Name).X).First();
+        view.SelectedNode = far.Name;
+        var secondRegion = GraphCulling.VisibleWorldRect(view.ViewportSize, view.CurrentCamera);
+        Assert.True(secondRegion.Left > firstRegion.Right, "iki görünüm örtüşüyor — fixture ayırt edici değil");
+
+        // Geçilen bantta (iki görünümün ARASINDA) materyalize olmuş düğümler VARDIR — ve hepsi bandın içindedir.
+        var band = Rect.Union(firstRegion, secondRegion);
+        var travelled = view.NodeVisuals.Keys
+            .Select(name => (Name: name, Bounds: GraphCulling.NodeBounds(view.NodeCenter(name))))
+            .Where(n => !firstRegion.IntersectsWith(n.Bounds) && !secondRegion.IntersectsWith(n.Bounds))
+            .ToList();
+
+        Assert.NotEmpty(travelled); // pan geçtiği yeri KURAR
+        Assert.All(travelled, n => Assert.True(band.IntersectsWith(n.Bounds),
+            $"{n.Name} geçilen bandın DIŞINDA — birikim (kümülatif birleşim) sızmış olabilir."));
+        // ...ama bant DIŞI hâlâ cull edilmiş durumda: tüm graf kurulmuş değil.
+        Assert.True(view.NodeVisuals.Count < nodes.Count,
+            "animasyonlu pan grafın TAMAMINI materyalize etti — cull etkisiz kalmış.");
     }
 
     [StaFact]

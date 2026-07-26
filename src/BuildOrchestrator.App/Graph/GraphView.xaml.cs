@@ -418,14 +418,25 @@ public partial class GraphView : UserControl
     // ---------------------------------------------------------------- [G2] cull / materyalizasyon
 
     /// <summary>
-    /// [fix round 1 · B1] Materyalizasyon kararı <b>ŞU ANKİ görünür alana</b> göre verilir; görülmüş tüm
-    /// alanların kümülatif birleşimine göre DEĞİL. Uzak iki görünüm arasında gezinmek, aralarında kalan ve hiç
-    /// görülmemiş düğümleri artık materyalize etmez.
+    /// [fix round 1 · B1] Materyalizasyon kararı <b>görülen alana</b> göre verilir; görülmüş tüm alanların
+    /// kümülatif birleşimine göre DEĞİL.
     ///
-    /// <para><paramref name="traversing"/>, kameranın hedefe <b>animasyonla</b> gideceğini söyler: 460ms'lik
-    /// geçişin ara karelerinde görünen dikdörtgen, mevcut görünüm ile hedefin ARASINDADIR, dolayısıyla o iki
-    /// dikdörtgenin sınır kutusu taranır (yalnız BU İKİSİ — birikim yok). Kamera anlık oturuyorsa (reduced
-    /// motion, ilk yerleşim, panel yeniden boyutlanması) ara kare yoktur ve yalnız hedef taranır.</para>
+    /// <para><b>[fix round 2] "Görülen"in tam tanımı — iki yol, ikisi de KASITLI:</b>
+    /// <list type="bullet">
+    ///   <item><b>Anlık atlama</b> (<paramref name="traversing"/> = <c>false</c>: reduced motion, ilk yerleşim,
+    ///     panel yeniden boyutlanması, Zeno dalı): kamera ara kare üretmez, yani aradaki bant kullanıcıya HİÇ
+    ///     görünmez ⇒ yalnız hedef dikdörtgen taranır, <b>aradaki düğümler materyalize EDİLMEZ</b>.</item>
+    ///   <item><b>Animasyonlu pan</b> (<paramref name="traversing"/> = <c>true</c>, üretimin varsayılan yolu):
+    ///     460ms boyunca aradaki bant EKRANDAN GERÇEKTEN GEÇER. O düğümleri kurmamak, kullanıcının gözünün
+    ///     önünde boş bir şerit bırakırdı — bu yüzden mevcut görünüm ile hedefin sınır kutusu taranır ve
+    ///     <b>geçilen bant materyalize EDİLİR. Bu bir eksik cull değil, doğru davranıştır.</b></item>
+    /// </list>
+    /// Her iki durumda da taranan bölge en fazla İKİ dikdörtgenden türer — birikim (kümülatif birleşim) YOKTUR,
+    /// yani bir önceki panın bandı bir sonrakine taşınmaz.</para>
+    ///
+    /// <para>Reddedilen alternatif: materyalizasyonu animasyon bitene ertelemek. Geçiş boyunca ekranda boş şerit
+    /// bırakır (B2'nin kapattığı pop-in sınıfının aynısı) ve bir tamamlanma kancası gerektirir — daha karmaşık
+    /// VE daha kötü.</para>
     ///
     /// <para>Cull tek yönlüdür: bir kez kurulan görsel sökülmez, yalnız yenisi eklenir.</para>
     /// </summary>
@@ -450,6 +461,8 @@ public partial class GraphView : UserControl
 
         if (traversing)
         {
+            // Kamera hedefe animasyonla gidiyor ⇒ aradaki bant EKRANDAN GEÇECEK ve görünecek; kurulmazsa
+            // kullanıcı geçiş boyunca boş bir şerit görür. Yalnız BU İKİ dikdörtgen — birikim yok.
             var live = GraphCulling.VisibleWorldRect(viewport, LiveCamera);
             if (!live.IsEmpty) region = Rect.Union(live, region);
         }
@@ -1176,7 +1189,8 @@ public partial class GraphView : UserControl
     internal int NodeCount => _slotOrder.Count;
     /// <summary>[G2] Grafın TOPLAM kenar sayısı (cull'dan bağımsız).</summary>
     internal int EdgeCount => _edgeSlots.Count;
-    /// <summary>[G2] Cull bu graf için etkin mi (düğüm sayısı <see cref="ShapesPathMaxNodes"/>'u aştı mı).</summary>
+    /// <summary>[G2] Cull (ve etiket LOD'u) bu graf için etkin mi — düğüm sayısı
+    /// <see cref="FullDetailMaxNodes"/>'u aştı mı.</summary>
     internal bool IsCullEnabled => _cullEnabled;
     /// <summary>[G2] <c>ApplyNodeStatus</c> kaç kez koştu — "değişmediyse dokunma" fast-path'inin DETERMİNİSTİK
     /// kanıtı (duvar saati değil, sayaç).</summary>

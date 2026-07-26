@@ -22,28 +22,29 @@ internal static class GraphLabelMetrics
     /// <summary>Graf etiketinin punto'su (design-v1 §2.3: kare altında mono 10px).</summary>
     public const double LabelFontSize = 10.0;
 
-    private static FontFamily? _cachedFamily;
-    private static GlyphTypeface? _cachedTypeface;
-
     /// <summary>Metnin <paramref name="fontFamily"/> (varsayılan <see cref="AppFonts.Mono"/>) ile
     /// <see cref="LabelFontSize"/>'da çizilen genişliği; typeface çözülemezse <c>null</c>.
     ///
     /// <para><paramref name="fontFamily"/> bir TEST SEAM'idir: <c>pack://</c> aileler gerçek bir
     /// <c>Application</c> olmadan çözülmez, bu yüzden testler <c>TestAssets/Fonts</c>'a <c>file://</c> tabanlı
-    /// bir aile enjekte eder — <c>TrackedTextBlockTests</c>'in kurduğu desenin AYNISI.</para></summary>
+    /// bir aile enjekte eder — <c>TrackedTextBlockTests</c>'in kurduğu desenin AYNISI.</para>
+    ///
+    /// <para><b>[fix round 2] Bu sınıf DURUMSUZDUR — typeface cache'i YOK.</b> Önceki hâlinde son çözülen
+    /// (aile, typeface) çifti statik alanlarda tutuluyordu; kilitsiz global bir durumdu ve testler kasten
+    /// çözülemeyen bir aile geçirdiğinde (ölçümün <c>null</c> döndüğünü pinlemek için) o değer paralel koşan
+    /// başka bir teste sızıp AÇIKLANAMAYAN bir kırmızı üretebilirdi. Kilit eklemek paylaşılan durumu (ve o hata
+    /// sınıfını) ayakta tutar, üstüne UI thread'inde çekişme koyardı; durumu tamamen kaldırmak sınıfı bütünüyle
+    /// kapatır. <b>Maliyeti yok denecek kadar azdır:</b> ölçüm yalnız tam-detay kapısının DIŞINDA ve
+    /// <c>SetGraph</c> başına KATMAN SAYISI kadar (tipik 6-20) koşar, üstelik WPF typeface çözümünü kendi font
+    /// cache'inde zaten tutar.</para></summary>
     public static double? TryMeasure(string text, FontFamily? fontFamily = null)
     {
-        var family = fontFamily ?? AppFonts.Mono;
-        if (!ReferenceEquals(family, _cachedFamily))
-        {
-            _cachedFamily = family;
-            var typeface = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-            _cachedTypeface = typeface.TryGetGlyphTypeface(out var glyphTypeface) ? glyphTypeface : null;
-        }
+        var typeface = new Typeface(
+            fontFamily ?? AppFonts.Mono, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        if (!typeface.TryGetGlyphTypeface(out var glyphTypeface)) return null;
 
-        if (_cachedTypeface is null) return null;
         // Etiket TrackedTextBlock DEĞİL düz bir TextBlock'tur ⇒ tracking yok, uppercase yok.
-        return TrackedGlyphs.Build(_cachedTypeface, text, LabelFontSize, trackingEm: 0.0, uppercase: false).TotalWidth;
+        return TrackedGlyphs.Build(glyphTypeface, text, LabelFontSize, trackingEm: 0.0, uppercase: false).TotalWidth;
     }
 
     /// <summary>
