@@ -250,9 +250,10 @@ public class BuildStateStoreTests : IDisposable
            // bırakıyordu: paralel suite yükü altında (xUnit sınıfları paralel koşar) hem bu 40ms hem retry
            // Thread.Sleep(5)'leri gerçek zamanda uzayabiliyor, Upsert bazen 100ms bütçesini tüketmeden kilit
            // bırakılmadan tükeniyordu (282/284 run'da gözlemlenmiş ara sıra fail, izole çalışmada geçiyordu).
-           // Artık wall-clock tahmini YOK: internal OnRenameRetry hook'u ile Upsert'in İLK retry'a girdiği an
-           // (gerçek gözlemlenen ilerleme) bir TCS ile sinyallenir, lock-holder TAM O ANDA kilidi bırakır — bir
-           // sonraki rename denemesi başarılı olur. Makine ne kadar yavaş/hızlı olursa olsun deterministik.
+           // [T49 FINAL PASS · D8] Artık GERÇEK ZAMAN HİÇ BEKLENMİYOR: retry gecikmesinin KENDİSİ enjekte edilir
+           // (RenameRetryDelay) ve iki yönlü bir randevuya çevrilir — Upsert ilk retry'ı sinyaller, lock-holder TAM
+           // O ANDA kilidi bırakır, Upsert kilit bırakıldı sinyalini bekler ve bir sonraki deneme başarılı olur.
+           // Ne üretim backoff'u (20x5ms) ne de bir wall-clock tahmini teste sızar; makine hızından bağımsız.
     public async Task Upsert_retries_and_succeeds_when_target_file_is_transiently_locked_without_delete_share()
     {
         Directory.CreateDirectory(_root);
@@ -261,19 +262,26 @@ public class BuildStateStoreTests : IDisposable
 
         var lockAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstRetryObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var lockReleased = new ManualResetEventSlim(false);
 
-        // Yalnız BİR kez sinyallemek yeterli — ilk retry gözlemlenir gözlemlenmez kilit bırakılacak, sonraki
-        // retry denemeleri zaten olmayacak (ya da olsa da TrySetResult ikinci çağrıda no-op).
-        store.OnRenameRetry = _ => firstRetryObserved.TrySetResult();
+        // Gecikme dikişi = randevu: ilk retry'ı bildir, sonra kilidin GERÇEKTEN bırakıldığı ana kadar bekle
+        // (sabit süre YOK). TrySetResult/Wait ikinci çağrıda zararsızdır — pratikte tek retry yaşanır.
+        store.RenameRetryDelay = _ =>
+        {
+            firstRetryObserved.TrySetResult();
+            lockReleased.Wait(TimeSpan.FromSeconds(10)); // yalnız hata halinde devreye giren güvenlik tavanı
+        };
 
         var lockHolder = Task.Run(async () =>
         {
             // FileShare.Read (Delete YOK): File.Move(overwrite:true) hedefi silmek/değiştirmek zorunda olduğundan
             // bu handle açıkken sharing-violation ile başarısız olur — MoveAtomicWithRetry'ın retry yolunu tetikler.
-            using var fs = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            lockAcquired.SetResult();
-            await firstRetryObserved.Task; // Upsert'in İLK retry'a girdiği, GÖZLEMLENEN an — wall-clock tahmini yok
-            // fs Dispose burada (using bloğu sonunda) kilidi bırakır; bir sonraki rename denemesi başarılı olur.
+            using (var fs = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                lockAcquired.SetResult();
+                await firstRetryObserved.Task; // Upsert'in İLK retry'a girdiği, GÖZLEMLENEN an — wall-clock tahmini yok
+            }
+            lockReleased.Set(); // kilit KESİN bırakıldı → bir sonraki rename denemesi başarılı olur
         });
 
         await lockAcquired.Task; // dosya kilidi KESİN alınmış — deterministik senkronizasyon noktası, poll yok
@@ -291,10 +299,11 @@ public class BuildStateStoreTests : IDisposable
            // IOException/UnauthorizedAccessException ile fırlar — concern #2 (kalıcı kilit) belgeleniyor. Ayrıca
            // [Review Minor 4] doğrulaması: throw sonrası tmp dosyası öksüz kalmamalı. D8: lock hiç serbest
            // bırakılmadan Upsert'in exhaust olup fırlamasını doğrudan await ediyoruz — poll yok, tek bekleme noktası.
+           // [T49 FINAL PASS] Gecikme dikişi anında döner: bütçenin tükenmesi ~100ms değil, SIFIR gerçek zaman alır.
     public async Task Upsert_throws_and_cleans_up_tmp_file_when_target_stays_locked_past_retry_budget()
     {
         Directory.CreateDirectory(_root);
-        var store = new BuildStateStore(_root);
+        var store = new BuildStateStore(_root) { RenameRetryDelay = _ => { } };
         store.Upsert(new BuildState("Seed", "seed-sig"));
 
         var lockAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
