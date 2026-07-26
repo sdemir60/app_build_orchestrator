@@ -17,6 +17,15 @@ internal static class RepoPaths
     /// <summary>App projesinin kaynak kökü (mutlak yol).</summary>
     public static string AppSrcRoot { get; } = Path.Combine(RepoRoot, "src", "BuildOrchestrator.App");
 
+    /// <summary>[T49 fix round 1 · A3] TÜM üretim projelerinin kökü — D8 (sleep yasağı) yalnız App'i değil
+    /// Core/Supervisor/Contracts'ı da bağlar, bu yüzden o guard buradan beslenir.</summary>
+    public static string SrcRoot { get; } = Path.Combine(RepoRoot, "src");
+
+    /// <summary>Tüm <c>src/</c> ağacındaki kaynak dosyalar — derleme çıktıları (<c>bin</c>/<c>obj</c>) HARİÇ.</summary>
+    public static IEnumerable<string> SrcSourceFiles(string searchPattern) =>
+        Directory.EnumerateFiles(SrcRoot, searchPattern, SearchOption.AllDirectories)
+                 .Where(f => !IsBuildOutput(SrcRoot, f));
+
     /// <summary>
     /// [T64] App kaynak ağacındaki dosyalar — derleme çıktıları (<c>bin</c>/<c>obj</c>) HARİÇ. Kaynağın
     /// KENDİSİNİ tarayan guard testleri (ikon fontu / font pack URI'si / ham renk literali) hepsi buradan
@@ -24,11 +33,11 @@ internal static class RepoPaths
     /// </summary>
     public static IEnumerable<string> AppSourceFiles(string searchPattern) =>
         Directory.EnumerateFiles(AppSrcRoot, searchPattern, SearchOption.AllDirectories)
-                 .Where(f => !IsBuildOutput(f));
+                 .Where(f => !IsBuildOutput(AppSrcRoot, f));
 
-    private static bool IsBuildOutput(string path)
+    private static bool IsBuildOutput(string root, string path)
     {
-        string[] segments = Path.GetRelativePath(AppSrcRoot, path)
+        string[] segments = Path.GetRelativePath(root, path)
             .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         return segments.Contains("bin") || segments.Contains("obj");
     }

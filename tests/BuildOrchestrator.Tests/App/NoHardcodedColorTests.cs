@@ -39,29 +39,14 @@ public sealed class NoHardcodedColorTests
 
     [Fact]
     public void No_xaml_outside_the_token_dictionary_declares_a_raw_colour()
-    {
-        var offenders = new List<string>();
-
-        foreach (string file in RepoPaths.AppSourceFiles("*.xaml"))
-        {
-            string relative = Path.GetRelativePath(RepoPaths.AppSrcRoot, file);
-            if (AllowedFiles.Contains(relative, StringComparer.OrdinalIgnoreCase)) continue;
-
-            var match = ColourLiteral.Match(File.ReadAllText(file));
-            if (match.Success) offenders.Add($"{relative}: {match.Value.Trim()}");
-        }
-
-        Assert.Empty(offenders);
-    }
+        => Assert.Empty(SourceGuard.ScanApp("*.xaml", ColourLiteral, AllowedFiles));
 
     [Fact]
     public void The_guard_actually_scans_the_xaml_files_it_claims_to()
     {
         // Tarama boş dönerse yukarıdaki test SESSİZCE yeşil kalırdı (yol/filtre bozulması). Bilinen iki
         // dosyanın taramaya girdiği ve istisnanın gerçekten var olduğu ayrıca doğrulanır.
-        var scanned = RepoPaths.AppSourceFiles("*.xaml")
-            .Select(f => Path.GetRelativePath(RepoPaths.AppSrcRoot, f))
-            .ToList();
+        var scanned = SourceGuard.ScannedAppFiles("*.xaml");
 
         Assert.Contains(Path.Combine("Resources", "Icons.xaml"), scanned);
         Assert.Contains(Path.Combine("Spikes", "FontAbWindow.xaml"), scanned);
@@ -77,37 +62,33 @@ public sealed class NoHardcodedColorTests
     /// ve BİLEREK kapsam dışıdır: literal olmayan argüman deseni eşleşmez;</item>
     /// <item>isimli renk (<c>Colors.Red</c>) — TEK istisna <c>Colors.Transparent</c>'tır (renk değil, "yok"
     /// anlamına gelen nötr taban; per-instance animasyon fırçalarının başlangıç değeri, A13.2).</item>
+    /// <item>[fix round 1 · A2] PAKETLENMİŞ ARGB sayısal literali (<c>0xFF3A3A42</c> / <c>0x3A3A42</c>) —
+    /// hex string'in tırnaksız kardeşi; <c>unchecked((int)0xFF…)</c> yoluyla bir renge çevrilebilir ve önceki
+    /// sürüm bunu HİÇ görmüyordu.</item>
     /// </list>
+    ///
+    /// <para><b>Paketlenmiş literal için dar ve gerekçeli izin:</b> <c>0x800401D0</c> — <c>CLIPBRD_E_CANT_OPEN</c>
+    /// HRESULT'ı (<c>Console/ClipboardRetry.cs</c>), renk değil. İzin TEK bir değere verilir (dosyaya değil):
+    /// aynı dosyaya eklenecek gerçek bir renk literali yine yakalanır. Yeni bir 6/8 haneli hex sabiti guard'ı
+    /// kırmızıya çeker — bu BİLİNÇLİDİR: sayısal bir renk mi yoksa Win32 sabiti mi olduğu insan kararıdır.</para>
     /// </summary>
     private static readonly Regex CodeColourLiteral = new(
         "\"#[0-9a-fA-F]{3,8}\"" +
         "|Color\\.From(?:Rgb|Argb|ScRgb)\\(\\s*(?:0x[0-9a-fA-F]+|[0-9.]+f?)\\s*(?:,\\s*(?:0x[0-9a-fA-F]+|[0-9.]+f?)\\s*)*\\)" +
-        "|(?<![A-Za-z0-9_])Colors\\.(?!Transparent\\b)[A-Z][A-Za-z]*", // (?<!…): SystemColors.* WPF sistem fırçasıdır, renk literali değil
+        "|(?<![A-Za-z0-9_])Colors\\.(?!Transparent\\b)[A-Z][A-Za-z]*" + // (?<!…): SystemColors.* WPF sistem fırçasıdır, renk literali değil
+        "|0x(?!800401D0(?![0-9a-fA-F]))(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})(?![0-9a-fA-F])",
         RegexOptions.Compiled);
 
     [Fact]
     public void No_cs_file_in_the_app_tree_declares_a_raw_colour()
-    {
-        var offenders = new List<string>();
-
-        foreach (string file in RepoPaths.AppSourceFiles("*.cs"))
-        {
-            var match = CodeColourLiteral.Match(File.ReadAllText(file));
-            if (match.Success)
-                offenders.Add($"{Path.GetRelativePath(RepoPaths.AppSrcRoot, file)}: {match.Value.Trim()}");
-        }
-
-        Assert.Empty(offenders);
-    }
+        => Assert.Empty(SourceGuard.ScanApp("*.cs", CodeColourLiteral, skipCommentLines: true));
 
     [Fact]
     public void The_guard_actually_scans_the_cs_files_it_claims_to()
     {
         // XAML kardeşiyle aynı gerekçe: tarama boş dönerse yukarıdaki test SESSİZCE yeşil kalırdı. Sapmanın
         // GERÇEKTEN yaşandığı dosya (FontAbWindow code-behind'ı) taramada olduğu ayrıca doğrulanır.
-        var scanned = RepoPaths.AppSourceFiles("*.cs")
-            .Select(f => Path.GetRelativePath(RepoPaths.AppSrcRoot, f))
-            .ToList();
+        var scanned = SourceGuard.ScannedAppFiles("*.cs");
 
         Assert.Contains(Path.Combine("Spikes", "FontAbWindow.xaml.cs"), scanned);
         Assert.Contains("MainWindow.xaml.cs", scanned);
@@ -124,8 +105,38 @@ public sealed class NoHardcodedColorTests
     [InlineData("Color.FromArgb((byte)(color.A * bucket / 255), color.R, color.G, color.B)", false)] // türev
     [InlineData("Token(\"Brush.BorderStrong\")", false)]                   // doğrusu: token'dan çöz
     [InlineData("// dotnet/wpf#293 — letter-spacing yok", false)]          // yorumdaki issue numarası
+    [InlineData("unchecked((int)0xFF3A3A42)", true)]                       // [A2] paketlenmiş ARGB
+    [InlineData("const uint Packed = 0x3A3A42;", true)]                    // [A2] paketlenmiş RGB
+    [InlineData("const int CantOpen = unchecked((int)0x800401D0);", false)] // izinli: CLIPBRD_E_CANT_OPEN HRESULT
+    [InlineData("private const int GlobalHotkeyId = 0xB0;", false)]        // kısa sabit — renk olamaz
     public void Code_regex_separates_colour_literals_from_lookalike_code(string sample, bool isColour)
         => Assert.Equal(isColour, CodeColourLiteral.IsMatch(sample));
+
+    /// <summary>
+    /// [fix round 1 · A2] <b>Guard'ın kendisinin kanıtı.</b> Yukarıdaki tarama testleri BUGÜN yeşil — yani
+    /// "ihlal yok" ile "guard hiç ateşlemiyor" ayırt edilemez. Sahte bir kaynak dosyada ÜÇ ihlal kurulur ve
+    /// ÜÇÜNÜN de (yalnız ilkinin değil — A2'nin ta kendisi) doğru satır numarasıyla raporlandığı doğrulanır.
+    /// </summary>
+    [Fact]
+    public void The_guard_reports_every_violation_in_a_file_not_just_the_first()
+    {
+        const string fake = """
+            using System.Windows.Media;
+            internal static class Fake
+            {
+                private static readonly Brush A = Frozen("#2a2a30");
+                private static readonly Color B = Color.FromRgb(58, 58, 66);
+                // yorumdaki "#ffffff" sayılmaz
+                private const uint C = 0xFF3A3A42;
+            }
+            """;
+
+        var offenders = SourceGuard.ScanText("Fake.cs", fake, CodeColourLiteral, skipCommentLines: true);
+
+        Assert.Equal(
+            ["Fake.cs:4: \"#2a2a30\"", "Fake.cs:5: Color.FromRgb(58, 58, 66)", "Fake.cs:7: 0xFF3A3A42"],
+            offenders);
+    }
 
     [Theory]
     [InlineData("Background=\"#0e0e10\"", true)]                      // attribute, 6 haneli

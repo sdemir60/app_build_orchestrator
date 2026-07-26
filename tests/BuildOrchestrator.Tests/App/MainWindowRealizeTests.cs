@@ -40,6 +40,23 @@ public class MainWindowRealizeTests
         return new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope());
     }
 
+    /// <summary>
+    /// [fix round 1 · A1] Pencerenin İÇERİĞİNİ realize eder — <b>ölçüldü:</b> <c>Window.Measure/Arrange</c>
+    /// gerçek bir <c>PresentationSource</c> (HWND) olmadan içeriğe HİÇ İNMEZ; caption butonlarının şablonları
+    /// bile genişlemez (<c>MinButton.ApplyTemplate()</c> sonradan hâlâ <c>true</c> döner). İçerik kökü doğrudan
+    /// ölçülüp yerleştirildiğinde ise şablonlar genişler ve <c>OnRender</c> koşar — yani <c>Background</c> gibi
+    /// RENDER-ONLY özellikler de gerçekten okunur ve yanlış tipli token orada patlar.
+    /// </summary>
+    private static FrameworkElement Realize(MainWindow window)
+    {
+        window.ApplyTemplate();
+        var content = (FrameworkElement)window.Content;
+        content.Measure(new Size(1400, 800));
+        content.Arrange(new Rect(0, 0, 1400, 800));
+        content.UpdateLayout();
+        return content;
+    }
+
     [StaFact]
     public void The_main_window_realizes_with_the_production_merge_chain_and_no_token_type_mismatch()
     {
@@ -52,12 +69,14 @@ public class MainWindowRealizeTests
         _ = window.MinWidth;
         _ = window.MinHeight;
 
-        // Şablon + yerleşim: title bar / caption butonları / layout seçici / gövde (ShellRoot) ve içindeki TÜM
-        // DynamicResource setter'ları burada çözülür.
-        window.ApplyTemplate();
-        window.Measure(new Size(1400, 800));
-        window.Arrange(new Rect(0, 0, 1400, 800));
-        window.UpdateLayout();
+        // Şablon + yerleşim + render: title bar / caption butonları / layout seçici / gövde (ShellRoot) ve
+        // içindeki TÜM DynamicResource bağları burada çözülür (Arrange, bağlı olmayan öğede de OnRender'ı sürer
+        // → Background/Fill gibi render-only özellikler GERÇEKTEN okunur).
+        Realize(window);
+
+        // [fix round 1 · A1] İkinci ağ: render'ın okumadığı (Collapsed dal, çizilmeyen özellik) token bağları
+        // için hedef DP tipine uyum AÇIKÇA denetlenir — WPF okuma yolunda tip doğrulaması yapmaz.
+        Assert.Empty(DsResources.DynamicResourceTypeMismatches(window));
 
         Assert.IsType<SolidColorBrush>(window.Background);
         Assert.IsType<SolidColorBrush>(window.Foreground);
@@ -85,10 +104,7 @@ public class MainWindowRealizeTests
     public void Every_dynamic_resource_key_used_by_the_title_bar_resolves_to_a_value_of_the_expected_type()
     {
         var window = NewMainWindow();
-        window.ApplyTemplate();
-        window.Measure(new Size(1400, 800));
-        window.Arrange(new Rect(0, 0, 1400, 800));
-        window.UpdateLayout();
+        Realize(window);
 
         // Caption butonları + layout seçici + gear: stil (DynamicResource Ds.IconButton*) ve ikon geometrileri
         // (DynamicResource Icon.* / Icon.*.StrokeThickness) GERÇEKTEN çözülmüş olmalı — çözülmemiş bir anahtar

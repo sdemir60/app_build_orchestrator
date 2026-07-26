@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Core.State;
 
@@ -14,13 +15,17 @@ public sealed class BuildStateStore
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
+    /// <summary>Atomik rename'in retry bütçesi: 20 deneme x <see cref="RenameRetryBackoff"/> ≈ 100ms üst sınır
+    /// (bkz. <see cref="MoveAtomicWithRetry"/>).</summary>
+    private const int RenameAttempts = 20;
+
+    /// <summary>Rename retry'ının ÜRETİM backoff'u — <see cref="DefaultRenameRetryDelay"/>'in tek kaynağı.</summary>
+    private static readonly TimeSpan RenameRetryBackoff = TimeSpan.FromMilliseconds(5);
+
     private readonly string _path;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     public BuildStateStore(string cacheRoot) => _path = Path.Combine(cacheRoot, "build-state.json");
-
-    /// <summary>Rename retry'ının ÜRETİM backoff'u: 20 deneme x 5ms ≈ 100ms üst bütçe (bkz. <see cref="MoveAtomicWithRetry"/>).</summary>
-    private static readonly TimeSpan RenameRetryBackoff = TimeSpan.FromMilliseconds(5);
 
     /// <summary>
     /// [T49 FINAL PASS · D8] Başarısız bir rename denemesinden SONRAKİ gecikmenin TAMAMI — enjekte edilebilir dikiş
@@ -124,28 +129,26 @@ public sealed class BuildStateStore
     /// orada olduğu gibi burada da ENJEKTE EDİLEBİLİR — <see cref="RenameRetryDelay"/>).
     /// </summary>
     private void MoveAtomicWithRetry(string tmp, string target)
-    {
-        const int maxAttempts = 20;
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                File.Move(tmp, target, overwrite: true);
-                return;
-            }
-            catch (Exception ex) when (attempt < maxAttempts && ex is IOException or UnauthorizedAccessException)
-            {
-                // [T49 FINAL PASS · D8] Gecikmenin TEK yeri: enjekte edilebilir dikiş. Üretimde varsayılan sınırlı
-                // backoff (20 x 5ms ≈ 100ms), testte randevu/anında dönüş — gerçek zaman beklenmez.
-                (RenameRetryDelay ?? DefaultRenameRetryDelay)(attempt);
-            }
-        }
-    }
+        // [B2] Döngünün kendisi ortak (SyncRetry) — burada yalnız BU yolun kararları durur: kaç deneme, hangi
+        // istisna geçici, gecikme nereden gelir, bütçe tükenince ne olur (burada: orijinal istisna yayılır).
+        => SyncRetry.Run(
+            () => File.Move(tmp, target, overwrite: true),
+            RenameAttempts,
+            ex => ex is IOException or UnauthorizedAccessException,
+            EffectiveRenameRetryDelay,
+            rethrowWhenExhausted: true);
+
+    /// <summary>
+    /// [B1] Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı. Ayrı bir üye olmasının
+    /// sebebi testtir — "üretimde hangi gecikme koşuyor" sorusu ancak böyle DOĞRUDAN pinlenebilir; aksi halde
+    /// varsayılanı no-op'a çeviren bir mutasyon tüm süiti yeşil bırakırdı.
+    /// </summary>
+    internal Action<int> EffectiveRenameRetryDelay => RenameRetryDelay ?? DefaultRenameRetryDelay;
 
     /// <summary>
     /// <see cref="RenameRetryDelay"/>'in üretim varsayılanı. Beklenen olay BAŞKA bir process'in okuma handle'ını
     /// kapatmasıdır — bekleyecek bir handle/TCS YOKTUR, bu yüzden sınırlı bir zaman aşımı tek seçenektir; D8'in
     /// hedefi olan "kendi kodumuzun ürettiği bir durumu sleep ile poll etmek" DEĞİLDİR ve testlere hiç sızmaz.
     /// </summary>
-    private static void DefaultRenameRetryDelay(int attempt) => Thread.Sleep(RenameRetryBackoff);
+    internal static void DefaultRenameRetryDelay(int attempt) => Thread.Sleep(RenameRetryBackoff);
 }

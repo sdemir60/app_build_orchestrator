@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.App.Console;
 
@@ -26,17 +27,14 @@ public static class ClipboardRetry
     /// hatasıyla biterse false. Kilit-DIŞI istisnalar (başka bir COM/HRESULT dahil) retry EDİLMEZ ve YUTULMAZ —
     /// olduğu gibi yayılır (sessizce yutulmuş bir hata değil). </summary>
     public static bool TrySet(Action set, int attempts = DefaultAttempts, Action<int>? wait = null)
-    {
-        for (int i = 0; i < attempts; i++)
-        {
-            try { set(); return true; }
-            catch (ExternalException ex) when (ex.ErrorCode == ClipboardCantOpen) // YALNIZ pano kilidi
-            {
-                if (i + 1 < attempts) wait?.Invoke(i);
-            }
-        }
-        return false;
-    }
+        // [T49 fix round 1 · B2] Döngü ortak (SyncRetry, Core) — burada yalnız BU yolun kararları durur: hangi
+        // istisna geçici (yalnız CLIPBRD_E_CANT_OPEN), gecikme nereden gelir, bütçe tükenince ne olur (burada:
+        // sessizce false — UI çökmez). Kopya YASAK, CLAUDE.md.
+        => SyncRetry.Run(
+            set, attempts,
+            ex => ex is ExternalException external && external.ErrorCode == ClipboardCantOpen,
+            wait ?? (_ => { }),
+            rethrowWhenExhausted: false);
 
     /// <summary>Üretim yolu: WPF <c>Clipboard.SetText</c>'i retry ile çağırır (kısa Thread.Sleep bekleme).
     /// UI thread'inde çağrılır; en kötü ~<c>DefaultAttempts×DefaultDelayMs</c> = ~100ms bloklar.</summary>

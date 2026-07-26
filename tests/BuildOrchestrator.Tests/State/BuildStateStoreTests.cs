@@ -244,6 +244,28 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal(bigSig + "-r" + (rounds - 1), store.Load()["P"].BuiltSignature); // son yazan kazandı, kayıp yok
     }
 
+    [Fact] // [T49 fix round 1 · B1] Retry gecikmesinin ÜRETİM varsayılanı hiçbir testte koşmuyordu: her test dikişi
+           // set ediyor, dolayısıyla varsayılanı no-op'a çeviren bir mutasyon TÜM süiti yeşil bırakırdı (üretimde
+           // ise retry bütçesi mikrosaniyelerde tükenip atomik yazımı gereksiz yere düşürürdü). Burada üç şey
+           // pinlenir: (1) üretimde dikiş KURULMAZ, (2) dikiş yokken koşan şey ÜRETİM varsayılanıdır,
+           // (3) o varsayılan gerçekten bekler. (3) tek bir 5ms backoff'u ölçer — bu bir poll DEĞİL, tek bir
+           // ALT SINIR iddiasıdır: no-op mikrosaniyelerde döner, gerçek backoff dönmez.
+    public void The_production_rename_retry_delay_is_the_default_and_it_really_waits()
+    {
+        var store = new BuildStateStore(_root);
+
+        Assert.Null(store.RenameRetryDelay);                                                  // (1)
+        Assert.Equal((Action<int>)BuildStateStore.DefaultRenameRetryDelay, store.EffectiveRenameRetryDelay); // (2)
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        BuildStateStore.DefaultRenameRetryDelay(1);
+        stopwatch.Stop();
+
+        // 5ms'lik backoff; alt sınır saat çözünürlüğü payıyla 3ms (no-op ~0.00Xms döner).
+        Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(3),
+            $"üretim varsayılanı beklemedi: {stopwatch.Elapsed.TotalMilliseconds:F3}ms");
+    }
+
     [Fact] // [Review Important 2] MoveAtomicWithRetry: hedef dosya geçici olarak (Delete-share VERİLMEDEN) kilitliyken
            // Upsert atomik rename'i retry ile başarır. D8: koordinasyon TCS ile — lock ALINDIĞI kesin bilinene kadar
            // beklenir (poll yok). [Flaky-test hardening] Eskiden lock-holder kilidi SABİT Task.Delay(40) sonra
@@ -262,14 +284,17 @@ public class BuildStateStoreTests : IDisposable
 
         var lockAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstRetryObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var lockReleased = new ManualResetEventSlim(false);
+        // [fix round 1 · B3] IDisposable BİR primitif DEĞİL (eskiden `using var ManualResetEventSlim` idi): zaman
+        // aşımı yolunda test metodu Upsert hâlâ koşarken sonlanır, dispose olan olay bir sonraki bekleyişte
+        // ObjectDisposedException fırlatır ve ASIL hatayı gizlerdi. TCS ne dispose edilir ne de sızdırır.
+        var lockReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Gecikme dikişi = randevu: ilk retry'ı bildir, sonra kilidin GERÇEKTEN bırakıldığı ana kadar bekle
         // (sabit süre YOK). TrySetResult/Wait ikinci çağrıda zararsızdır — pratikte tek retry yaşanır.
         store.RenameRetryDelay = _ =>
         {
             firstRetryObserved.TrySetResult();
-            lockReleased.Wait(TimeSpan.FromSeconds(10)); // yalnız hata halinde devreye giren güvenlik tavanı
+            lockReleased.Task.Wait(TimeSpan.FromSeconds(10)); // yalnız hata halinde devreye giren güvenlik tavanı
         };
 
         var lockHolder = Task.Run(async () =>
@@ -281,7 +306,7 @@ public class BuildStateStoreTests : IDisposable
                 lockAcquired.SetResult();
                 await firstRetryObserved.Task; // Upsert'in İLK retry'a girdiği, GÖZLEMLENEN an — wall-clock tahmini yok
             }
-            lockReleased.Set(); // kilit KESİN bırakıldı → bir sonraki rename denemesi başarılı olur
+            lockReleased.SetResult(); // kilit KESİN bırakıldı → bir sonraki rename denemesi başarılı olur
         });
 
         await lockAcquired.Task; // dosya kilidi KESİN alınmış — deterministik senkronizasyon noktası, poll yok

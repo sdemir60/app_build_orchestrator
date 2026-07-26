@@ -80,6 +80,64 @@ internal static class DsResources
         return window;
     }
 
+    /// <summary>
+    /// [T49 fix round 1 · A1] Realize edilmiş bir ağaçtaki HER <c>DynamicResource</c> bağını çözer ve
+    /// <b>hedef DP tipine uyup uymadığını</b> denetler; uymayanların listesini döner (boş = temiz).
+    ///
+    /// <para><b>Neden gerekli — ölçülen gerçek:</b> <c>Measure</c>/<c>Arrange</c> yalnız YERLEŞİM'e giren
+    /// özellikleri okur (<c>Height</c>, <c>Margin</c>, <c>RowDefinition.Height</c>) — <c>c6e9a21</c>'in
+    /// GridLength bug'ı bu yüzden yakalanır. Ama <c>Background</c>/<c>Foreground</c>/<c>Fill</c> RENDER-ONLY'dir:
+    /// gerçek bir <c>PresentationSource</c> olmadan hiç okunmaz. Dahası WPF, <c>GetValue</c> OKUMA yolunda tip
+    /// doğrulaması YAPMAZ (ölçüldü: bir <c>Double</c>, <c>Background</c>'dan sessizce geri gelir). Bu yüzden
+    /// uyum burada AÇIKÇA denetlenir — "patladı mı" değil, "doğru tip mi" sorulur.</para>
+    ///
+    /// <para>Şablon içindeki (ApplyTemplate ile SONRADAN doğan) öğeler de kapsanır: gezinti görsel + mantıksal
+    /// ağacın birleşimidir (<see cref="RealizedObjects"/>) ve şablon uygulandıktan SONRA çağrılmalıdır.
+    /// <b>KAPSAM DIŞI:</b> bir <c>Style</c>/<c>Setter</c> üzerinden gelen değerler yerel değer DEĞİLDİR ve
+    /// burada görünmez — onları uygulandıkları anda WPF'in kendi doğrulaması yakalar (setter'ın hedefi yanlış
+    /// tipteyse <c>Style</c> uygulanırken fırlar).</para>
+    /// </summary>
+    /// <summary>
+    /// Tasarım token'ı tüketen özellikler. Bir DP'nin bir düğüm için geçerli olup olmadığı ELENMEZ: WPF her
+    /// <see cref="DependencyObject"/> üzerinde her DP'yi okumaya izin verir ve ilgisiz olanlar varsayılanını
+    /// (tipiyle uyumlu) döner — yani yanlış pozitif üretmez.
+    /// </summary>
+    private static readonly DependencyProperty[] TokenProperties =
+    [
+        Control.BackgroundProperty, Control.BorderBrushProperty, Control.ForegroundProperty,
+        Control.BorderThicknessProperty, Control.PaddingProperty, Control.FontSizeProperty,
+        Control.FontFamilyProperty, Control.FontWeightProperty,
+        Panel.BackgroundProperty,
+        Border.BackgroundProperty, Border.BorderBrushProperty, Border.BorderThicknessProperty,
+        Border.PaddingProperty, Border.CornerRadiusProperty,
+        TextBlock.BackgroundProperty, TextBlock.ForegroundProperty, TextBlock.FontSizeProperty,
+        TextBlock.FontFamilyProperty, TextBlock.FontWeightProperty,
+        System.Windows.Shapes.Shape.FillProperty, System.Windows.Shapes.Shape.StrokeProperty,
+        System.Windows.Shapes.Shape.StrokeThicknessProperty, System.Windows.Shapes.Path.DataProperty,
+        UIElement.EffectProperty, UIElement.OpacityMaskProperty,
+        FrameworkElement.WidthProperty, FrameworkElement.HeightProperty,
+        FrameworkElement.MinWidthProperty, FrameworkElement.MinHeightProperty, FrameworkElement.MarginProperty,
+    ];
+
+    public static IReadOnlyList<string> DynamicResourceTypeMismatches(DependencyObject root)
+    {
+        var offenders = new List<string>();
+        foreach (var node in RealizedObjects(root))
+        {
+            foreach (var property in TokenProperties)
+            {
+                // GetValue = değeri GERÇEKTEN talep et (DynamicResource ancak burada çözülür). WPF okuma
+                // yolunda tip DOĞRULAMASI YAPMAZ — ölçüldü: bir şablon içinden Background'a bağlanan Double
+                // token'ı `GetValue` sessizce 40 olarak geri verir. Uyum bu yüzden BURADA denetlenir.
+                object? value = node.GetValue(property);
+                if (value is not null && !property.PropertyType.IsInstanceOfType(value))
+                    offenders.Add(
+                        $"{node.GetType().Name}.{property.Name}: {property.PropertyType.Name} bekleniyordu, {value.GetType().Name} geldi");
+            }
+        }
+        return offenders;
+    }
+
     public static Color TokenColor(FrameworkElement host, string key)
         => ((SolidColorBrush)host.FindResource(key)).Color;
 
