@@ -23,7 +23,13 @@
 | A8 | It-4a: zor-custom UI paketi | **Opus** | **xhigh** | AvalonEdit, sticky overlay, TrackedTextBlock, graf render, WindowChrome — A13'ün riskli parçaları; plandaki en zor iş, Fable telafisi → xhigh |
 | A9 | It-4b: kalan UI görevleri | **Opus** | **medium** | Template/stil hacim işi; değerler design-v1'de hazır |
 | A10 | It-5: perf + dağıtım + docs | **Opus** | **medium** | Rutin; perf sorunu çıkarsa effort'u high/xhigh'a çıkar |
+| **A11** | CLAUDE.md bayat bilgi denetimi | **Opus** | **low** | Üç olgusal satır; karar kullanıcıda, uygulama mekanik |
+| **A12** | **GÖZLE KONTROL PASI** | — | — | **Kullanıcı yapar** — harness ekran görüntüsü alamaz |
+| **A13** | Düzeltme iterasyonu (regresyon + A12 bulguları) | **Opus** | **high** | Teşhis işi; yeşil suite'in kaçırdığı runtime kusurları (c6e9a21 sınıfı) |
 | R | Her iterasyon SONU review | **Opus** | **high** (UI iter. **xhigh**) | Plandaki en güçlü model; her iterasyonun sigortası (`/code-review high` argümanı promptta zaten var); A8/A9 gibi UI iterasyonlarının review'unda xhigh |
+
+> **DURUM (2026-07-26):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti; `main @ f620e52`).
+> **Kalan 3 adım:** A11 → A12 → A13. Detay için "KALAN ADIMLAR" bölümüne bak.
 
 > **Kural 1 (model):** Plan artık tek model kullanır: **Opus** (Fable kaldırıldı). Tıkanırsan model değiştirme kolu yok; çare effort'u yükseltmek (Kural 2). Hiçbir aşamada review'u atlama — özellikle riskli bölgelerde (Stop/copy-aware, UI custom render).
 > **Kural 2 (effort):** Tıkanmada çare, aynı modelde effort'u bir kademe yükseltmek (medium → high → xhigh; Fable olmadığı için tek yükseltme kolu bu). **Fable'ın atandığı aşamalarda taban high değil xhigh'dır** (A8) — güçlü modelin kaybı effort ile telafi edilir; effort modelin tavanını AŞMAZ, yalnız o tavanı sonuna kadar kullandırır (xhigh Opus, Fable'a yaklaşır ama Fable OLMAZ). `low` hiçbir aşamada kullanılmaz — bu projede en ucuz iş bile davranış spec'ine birebir sadakat istiyor. Effort'u düşürmek yalnız mekanik tekrar işlerinde (örn. A9'da ikon/stil kopyalama alt-taskları) kabul edilebilir, onda da medium tabandır.
@@ -355,6 +361,23 @@ Her task sonunda uygulamayı çalıştırıp ilgili davranışı gözle doğrula
 
 ## A10 — It-5: Perf + dağıtım + docs · Model: **Opus** · Effort: **medium**
 
+> **✅ TAMAMLANDI (2026-07-26) — KOD TARAFI TAM; MAIN'E MERGE EDİLDİ. GÖRSEL DOĞRULAMA VE BİLİNEN BİR REGRESYON AÇIK.**
+> Kısa TDD dökümü ([2026-07-25-13-40-it5-tdd-plan.md](2026-07-25-13-40-it5-tdd-plan.md), **14 task**), sonra superpowers:subagent-driven-development ile task-by-task; yöntem A9'daki gibi (taze implementer → `review-package` → 3-lens paralel review → tek fix wave → scoped re-review → ledger). **Sonuç:** 14/14 task complete; **`main @ f620e52`**, merge commit `6c173f2` (`--no-ff`), `main == origin/main`, `it5-perf-dist` silindi, tek dal. Build **0/0**, suite **1430 passed / 2 skipped / 0 failed**, canlı OSYS acceptance **3/3**. Final whole-branch review (36 commit / 103 dosya / +10925−931): **Karar 1 `MERGE WITH FIXES`** (0 Critical / 2 Important) → fix `1546783` → **Karar 2 `READY TO MERGE`** (0 Critical / 0 Important).
+> Kayıt: [2026-07-26-10-17-it5-records.md](2026-07-26-10-17-it5-records.md) (kabul kaydı + park edilen ~60 kalemin tam tablosu) · [2026-07-26-10-17-visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md) (**gözle kontrol listesi**) · [2026-07-26-07-38-t33-decision.md](2026-07-26-07-38-t33-decision.md) · [summaries/2026-07-26-11-33-...](../summaries/2026-07-26-11-33-it5-complete-merged-to-main.md) · ledger `.superpowers/sdd/progress.md`.
+>
+> **ÖLÇÜMLER:** liste ilk realize (191 satır) **787,3 → 487,5 ms** (bütçe 400 ms **TUTMADI**, satır başına nesne 55→39) · graf 1000 düğüm **934,8 → 136,0 ms** (ilk görünür alan) / **469,1 ms** (tüm graf gezildiğinde), 500 düğüm 394,1 → 91,5 / 206,2; düğüm başına nesne **17 → 9** · publish uçtan uca doğrulandı (`scripts/verify-publish.ps1`, 16 check + ön koşul, **§3 cascade ölçülmüş kanıt**).
+>
+> **ÖLÇÜME DAYALI İKİ "YAPMA" KARARI:** (a) **`DrawingVisual` göçü YAPILMADI** — G1'in kırılımı darboğazın çizim değil **nesne kurulumu** olduğunu gösterdi (saf layout aritmetiği toplamın %0,03'ü); (b) **L2 virtualization AÇILMADI** (kullanıcı kararı) — 487 ms kabul edildi, gerekçe sticky/LayoutMetrics/FollowScroll/ScrollArbiter riskinin son iterasyonda alınmaması.
+>
+> **⚠️ AÇIK KALEM 1 — KULLANICININ BİLDİRDİĞİ REGRESYON (2026-07-26, It-5 sonrası ilk gerçek launch):**
+> *"Sol alt köşedeki kartlarda loading ile animasyonlar çalışırdı; bu adımda **hiç hareket etmiyor**, animasyonlar yok, **renklendirmeler vs hiç çalışmıyor** — bozulmuş."* It-4b sonunda çalışıyordu. **Kullanıcı kararı: tüm eksikler en sonda topluca analiz edilip düzeltilecek** (bkz. **A13**). Kod tarafı bu haliyle merge edildi.
+>
+> **⚠️ AÇIK KALEM 2 — GÖZLE KONTROL PASI HÂLÂ YAPILMADI.** It-4b'den ertelenen ~81 madde + It-5'in kendi görsel kalemleri, tek yürünebilir listede: [visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md) (81/81 kalem panel sırasına göre, **D4 zorunlu**, prototiple yan yana design-v1 §2.1-§2.9). Bkz. **A12**.
+>
+> **DİĞER AÇIK/PARK KALEMLER (bilinçli, kayıtlı):** W2'de guard'ın 4 + primitifin 3 kopyası katlanmadı · `Show()` başlatma yolu realize kapsamı dışı · `debugSpawnChildren` üretimde dinleniyor · **a11y kümesi** (graf düğümlerinde `AutomationProperties.Name` yok + etiket LOD'un tek yedeği fare-hover tooltip + düğümler klavyeyle gezilemiyor — final review: *It-5'in getirdiği gerileme değil, LOD'un görünür kıldığı ürün-seviyesi boşluk, merge'i bloklamaz*) · CLAUDE.md'nin 3 bayat ifadesi (**A11**) · tam liste `it5-records.md` park tablosunda.
+>
+> **SÜREÇ DERSLERİ (ledger'da):** (1) **Aynı worktree'de iki implementer paralel koşturulmaz** — W2-fix ile D1 paralel koştu, `git add -A` çapraz commit'e yol açtı, ağaç bir süre derlenmez kaldı; read-only reviewer'lar paralel sorunsuz. (2) **Park edilmiş bir kalem, sonradan yazılan dokümantasyon onu iddia haline getirdiğinde yeniden açılmalıdır** — `EffectivePriorityLocked` P3'te Minor diye park edilmişti; TRUST-BOUNDARY + README garantiyi kodun verdiğinden geniş anlatınca final review haklı olarak yeniden açtı. (3) **Guard'ın yeşil olması bir şeye baktığı anlamına gelmez** — T33 "tek kaynak" pini repo kökünü taramadığı için sıfır dosya tarıyordu.
+
 > **REVİZE EDİLDİ (2026-07-25, It-4b kapanışından sonra).** Değişenler: (a) okuma listesi 2→6 dosya + DURUM bloğu; (b) **T44 görev listesinden ÇIKARILDI** — D3'te zaten teslim edildi (`EventStreamView.xaml.cs:291`, glow-once 1.1s, per-instance brush, testli), yeniden yazılmamalı; (c) It-4b'den devredilen 4 kayıtlı kalem eklendi; (d) **ertelenen GÖZLE KONTROL pası son faz olarak eklendi** (It-5 son iterasyon — bu pas burada yapılmazsa kaybolur); (e) commit kuralı CLAUDE.md'nin 2026-07-21 kararına göre düzeltildi ("commit etme" → branch + task-başı commit + merge/push); (f) yöntem (TDD dökümü + subagent-driven-development + per-task 3-lens review) ve realize-test kuralı bağlayıcı yazıldı.
 
 **PROMPT — yapıştır:**
@@ -436,6 +459,124 @@ kapandığını göster. Bitince aşamamızı kaydet.
 
 ---
 
+# KALAN ADIMLAR (2026-07-26 itibarıyla) — **3 adım**
+
+A1-A10 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan üç adım kod planı değil, **kapanış**
+adımlarıdır ve sırayla yapılmalıdır: karar (A11) → gözle kontrol (A12) → düzeltme iterasyonu (A13).
+
+| Adım | Ne | Kim yapar | Model/Effort |
+|---|---|---|---|
+| **A11** | `CLAUDE.md`'deki 3 bayat olgusal ifadenin kararı | kullanıcı karar verir, sonra düzeltilir | Opus / low |
+| **A12** | **GÖZLE KONTROL PASI** — walkthrough listesini yürüyüp kusurları toplamak | **kullanıcı** (harness ekran göremez) | — |
+| **A13** | **Düzeltme iterasyonu** — A12'nin bulguları + bilinen regresyon | Opus / **high** | Opus / high |
+
+> **A11 detayı bu dosyanın sonundadır** ("A11 (detay)" başlığı) — karşılaştırma tablosu ve kanıtlar orada.
+
+---
+
+## A12 — GÖZLE KONTROL PASI (kullanıcı yapar; kod adımı değil)
+
+**Girdi:** [2026-07-26-10-17-visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md)
+— 81/81 kalem, uygulamada gezilecek sıraya göre (pencere kabuğu → sol panel → graf → konsol → action bar →
+popover → ayarlar → tepsi/kısayol), **D4 (konsol gerçek akış) ZORUNLU**, Bölüm 2'de prototiple yan yana
+design-v1 §2.1-§2.9, Bölüm 3'te It-5'in kendi görsel kalemleri.
+
+**Çıktı:** bulguların listesi. Her bulgu için: *hangi panel · ne bekliyordum · ne gördüm · (varsa) hangi
+adımda çalışıyordu*. Bu liste **A13'ün girdisidir** — ne kadar net olursa fix o kadar hızlı olur.
+
+**Not:** aşağıdaki regresyon **zaten bildirildi**, tekrar aramaya gerek yok; A12'de onun **kapsamını**
+netleştirmek yeterli (hangi kartlar, hangi durumlar, konsol/graf de etkileniyor mu).
+
+---
+
+## A13 — Düzeltme iterasyonu (regresyon + gözle kontrol bulguları) · Model: **Opus** · Effort: **high**
+
+> **BİLİNEN REGRESYON (kullanıcı bildirdi, 2026-07-26):** *"Sol alt köşedeki kartlarda loading ile
+> animasyonlar çalışırdı; bu adımda hiç hareket etmiyor, animasyonlar yok, renklendirmeler vs hiç
+> çalışmıyor."* **It-4b sonunda çalışıyordu, It-5'ten sonra bozuk.** Suite 1430 yeşil olduğu hâlde
+> bozulması, kusurun **headless suite'in görmediği bir runtime yolunda** olduğunu söylüyor — `c6e9a21` ile
+> aynı sınıf.
+>
+> **İlk bakılacak yerler (hipotez, doğrulanacak — It-5'te bu alanlara dokunuldu):**
+> 1. **W2 motion fold** — `Controls/MotionGate.cs`. `App.Motion?.AnimationsEnabled ?? false` ifadesinin
+>    **9 kopyası tek noktaya** indirildi. Tek kapı yanlış çözümlenirse **tüm** code-driven animasyonlar aynı
+>    anda susar; "hiç hareket etmiyor" tam olarak tek-nokta arızası profilidir. Latch-first ↔ latch'siz kip
+>    seçimi ve `App.Motion`'ın kart kurulurken null olup olmadığı ilk kontrol.
+> 2. **W2 fix round 1** — `ConsoleView` (5 çağrı) + `PopIn` (1) `MotionGate.StaticAnimationsEnabled`'a
+>    bağlandı. **Statik** okuma, canlı okumanın yerine geçtiyse ve snapshot erken alınıyorsa animasyon hiç
+>    açılmaz.
+> 3. **G2 ikon değişikliği** — `Viewbox` → **paylaşılan donmuş `ScaleTransform`**. **A13.2 zaten uyarıyor:**
+>    *"frozen/paylaşılan brush anime edilemez"*. Aynı ilke transform için de geçerli; animasyon yolundaki
+>    per-instance bir kaynak paylaşılan/frozen bir kaynakla değiştiyse animasyon sessizce no-op'a düşer —
+>    bu **"renklendirmeler çalışmıyor"** yakınmasını da açıklar.
+> 4. **G2 parked minor** — *"`IconPaint` self-heal turunun fast-path'le kalkması"* (ledger'da kayıtlı).
+>    Renk uygulamasını doğrudan ilgilendiriyor.
+> 5. **L1 tembel kart** — `ProjectRow.xaml.cs::EnsureActions` + yeni `ProjectRowActions.xaml`. Durum/spinner
+>    veya renklendirme elemanları yanlışlıkla **tembel alt-ağaca** düştüyse ancak hover'da kurulur.
+>
+> **Bu hipotezler doğrulanmadan koda dokunma** — önce hangi katmanda öldüğünü ölç (gate mi false dönüyor,
+> animasyon mu başlamıyor, başlıyor da görsel mi değişmiyor).
+
+**PROMPT — yapıştır:**
+
+```
+Şu dosyaları oku:
+1. .claude/handoffs/ altındaki EN YENİ handoff + işaret ettiği özet
+2. .claude/outputs/2026-07-26-10-17-it5-records.md (It-5 kabul kaydı + park edilen kalemlerin tam tablosu)
+3. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; kopya metinleri BİREBİR)
+4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 / A13.2 + Ek A)
+5. .superpowers/sdd/progress.md — It-5 bölümü (en üstteki RESUME HERE; çelişkide ledger kazanır)
+
+DURUM: It-0..It-5 main'de (tek trunk, main == origin/main). Build 0/0, suite 1430 passed / 2 skipped /
+0 failed. v7'nin planlı kod iterasyonları BİTTİ. Bu adım bir düzeltme/cila iterasyonudur.
+
+GÖREV — iki kaynaktan gelen kusurları kapat:
+
+(A) BİLİNEN REGRESYON (öncelik 1): It-4b'de çalışan kart animasyonları/renklendirmeleri It-5'ten sonra
+    ÇALIŞMIYOR — "sol alt köşedeki kartlar, loading animasyonları, hiç hareket yok, renklendirmeler yok".
+    Suite yeşil olduğu hâlde bozuk => kusur headless suite'in görmediği bir runtime yolunda (c6e9a21 sınıfı).
+    ÖNCE TEŞHİS, SONRA FİX. Hangi katmanda öldüğünü ölç: motion gate false mu dönüyor · animasyon
+    başlamıyor mu · başlıyor da görsel mi değişmiyor. Bakılacak ilk yerler (hipotez, doğrula):
+      1. Controls/MotionGate.cs — W2'de 9 kopya tek kapıya indirildi; tek kapı yanlışsa TÜM animasyonlar
+         aynı anda susar. Latch-first ↔ latch'siz kip ve kart kurulurken App.Motion null mı.
+      2. ConsoleView (5) + PopIn (1) → MotionGate.StaticAnimationsEnabled; statik okuma canlı okumanın
+         yerine geçip erken snapshot alıyorsa animasyon hiç açılmaz.
+      3. G2: ikon Viewbox → paylaşılan DONMUŞ ScaleTransform. A13.2: frozen/paylaşılan kaynak anime
+         edilemez — animasyon sessizce no-op'a düşer; "renklendirmeler yok" yakınmasını da açıklar.
+      4. G2 parked minor: "IconPaint self-heal turunun fast-path'le kalkması" (ledger'da kayıtlı).
+      5. L1: ProjectRow.xaml.cs::EnsureActions + ProjectRowActions.xaml — durum/spinner/renk elemanları
+         yanlışlıkla tembel alt-ağaca düştüyse ancak hover'da kurulur.
+    Teşhisi kanıtla (hangi satırda, neden), sonra düzelt.
+
+(B) GÖZLE KONTROL BULGULARI: kullanıcının A12'de yürüdüğü listeden gelen kusurlar (kullanıcı bu prompt'un
+    altına yapıştıracak). Her bulgu için: düzelt VEYA A13.1 "algısal eşdeğer" sınıfına GEREKÇESİYLE yaz.
+
+Kurallar:
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-{baslik}.md), sonra
+  superpowers:subagent-driven-development ile task-by-task.
+- PER-TASK METOD (bağlayıcı): taze implementer → scripts/review-package BASE HEAD → 3-lens paralel review
+  (spec/design-fidelity · WPF/threading+A13.2 · testler/yapı) → tek fix wave → scoped re-review → ledger.
+  Aynı worktree'de İKİ İMPLEMENTER PARALEL KOŞTURMA (It-5 dersi); read-only reviewer'lar paralel serbest.
+- REGRESYON TESTİ ZORUNLU: her düzeltilen kusur için, bozukluğu yakalayan bir test yaz ve fix'ten ÖNCE
+  KIRMIZI verdiğini göster. Bu iterasyonun tamamı zaten "yeşil suite bir şeyi kaçırdı" üzerine kurulu.
+- REALIZE TESTİ ZORUNLU: yeni XAML kökü/template eklersen DsResources.Realize üzerinden realize testi de
+  ekle (gerekçe c6e9a21). Not: Window.Measure/Arrange HWND'siz İÇERİĞE İNMEZ — realize window.Content
+  üzerinde yapılmalı (It-5/T1'de ölçülerek bulundu).
+- MOTION SÖZLEŞMESİ ve A13.2 aynen geçerli. Ham renk/süre sabiti YASAK — token guard'ları (renk/motion/D8)
+  yerinde, onları çalıştır.
+- v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
+  K1 (git salt-okur; checkout/pull/reset ASLA).
+- Git: kendi çalışma branch'ini aç, task başına commit at, iş bitince main'e merge + push, merge'ü
+  DOĞRULADIKTAN sonra branch'i sil, oturumu main'de bırak.
+
+Takılma veya çözümü büyük bir sorun görürsen durup bana bildir. Bitince aşamamızı kaydet.
+```
+
+**Bitti kriteri:** Bildirilen regresyon teşhis edilip düzeltildi (regresyon testi kırmızıdan yeşile) · A12'nin
+her bulgusu ya düzeltildi ya A13.1'e gerekçesiyle yazıldı · suite yeşil · main'e merge + push.
+
+---
+
 ## R — Her iterasyon SONU: Review promptu · Model: **Opus** · Effort: **high** (yeniden kullanılabilir)
 
 Her A8/A9/A10 sonrası (A3-A6 zaten tamamlandı), **Opus (high)** ile:
@@ -467,13 +608,17 @@ kaldığımız yerden devam et
 ## Sık sorulanlar
 
 - **Sıra atlayabilir miyim?** Hayır — A1 (spike) GATE'tir; A2 onsuz başlamaz. A4–A6 sıralıdır (walking-skeleton). A7 (font kapısı) It-4'ün ilk işi olmalı.
-- **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). Kalan aşamalar: A8 (Opus/**xhigh** — plandaki en zor iş, Fable telafisi), A9 (Opus/medium), A10 (Opus/medium) ve her iterasyon sonu **R** review'ları (Opus/high; UI iterasyonlarında xhigh).
+- **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). **A1-A10 bitti (2026-07-26).** Kalan aşamalar: **A11** (Opus/low — CLAUDE.md denetimi), **A12** (kullanıcı yapar, model yok — gözle kontrol pası), **A13** (Opus/**high** — regresyon + gözle kontrol bulgularının düzeltme iterasyonu).
+- **Kaç adım kaldı?** **3:** A11 → A12 → A13. A13'ün paste-ready promptu "KALAN ADIMLAR" bölümündedir.
+- **A13'te neden high?** İş kodlama değil **teşhis**: 1430 test yeşilken bozulan bir runtime davranışı aranıyor (kart animasyonları/renklendirmeleri) — `c6e9a21` ile aynı sınıf, headless suite'in görmediği yol.
 - **Tıkanırsam?** Model değiştirme kolu yok; effort'u yükselt (medium → high → xhigh, Kural 2). Effort modelin tavanını aşmaz — yalnız o tavanı sonuna kadar kullandırır. Review'u hiçbir koşulda atlama — riskli bölgelerin (UI custom render, Stop/copy-aware) tek sigortası o.
 - **Commit ne zaman?** Promptlar commit'i sana bırakıyor (CLAUDE.md kuralı). Her aşama sonunda "commit et" demen yeterli.
 
 ---
 
-## A11 — CLAUDE.md bayat bilgi denetimi (It-5'te tespit edildi, KARAR KULLANICIDA)
+## A11 (detay) — CLAUDE.md bayat bilgi denetimi (It-5'te tespit edildi, KARAR KULLANICIDA)
+
+> Kalan 3 adımın **1.'si**. Özet ve sıralama için yukarıdaki "KALAN ADIMLAR" tablosuna bak.
 
 **Durum:** It-5'in D3 (README) task'ının review'ı, `CLAUDE.md`'nin **Proje Yapısı / Mimari** bölümünde
 koddan sapmış üç olgusal ifade buldu. Bunlar It-5'te **düzeltilmedi** — kullanıcı kararı: ayrı ele alınacak.
