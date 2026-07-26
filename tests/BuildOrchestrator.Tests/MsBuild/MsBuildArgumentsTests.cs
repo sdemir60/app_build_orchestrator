@@ -16,6 +16,28 @@ public class MsBuildArgumentsTests
         Assert.Equal(@"c:\r\p.csproj", args[0]);
     }
 
+    /// <summary>[T33 KARAR PİNİ] Shared compilation KAPALI kalır — karar ve gerekçe:
+    /// <c>.claude/outputs/2026-07-26-07-38-t33-decision.md</c>. Yukarıdaki test bayrakların VARLIĞINI pinler;
+    /// bu test ters yönü kapatır: hiçbir yol (build ya da restore) shared compilation'ı ya da node reuse'u
+    /// GERİ AÇAMAZ. Açılırsa emit, inner Job'a üye OLMAYAN kalıcı <c>VBCSCompiler</c>'a taşınır ve §3'ün
+    /// "torn DLL yok" garantisi kill anında kırılır (bkz. KillMidBuildTests: bayraklar → VBCSCompiler yok →
+    /// her writer Job üyesi).</summary>
+    [Fact]
+    public void Shared_compilation_and_node_reuse_can_not_be_re_enabled_on_any_path() // [T33]
+    {
+        string[] reEnabling = ["UseSharedCompilation=true", "nodeReuse:true", "-m:", "MSBUILDDISABLENODEREUSE=0"];
+        var build = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", @"c:\wt\obj\c__r_p");
+        var restore = MsBuildArguments.RestorePackagesConfig(@"c:\r\p.csproj", @"c:\r\slnDir");
+
+        foreach (string flag in reEnabling)
+        {
+            Assert.DoesNotContain(build, a => a.Contains(flag, StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(restore, a => a.Contains(flag, StringComparison.OrdinalIgnoreCase));
+        }
+        Assert.Equal(1, build.Count(a => a == "-p:UseSharedCompilation=false")); // tek kez, çelişen ikinci değer YOK
+        Assert.Equal(1, build.Count(a => a == "-nodeReuse:false"));
+    }
+
     [Fact]
     public void Build_with_obj_isolation_has_trailing_backslash() // [SPIKE S2 şart-2 — bayat obj zehri]
     {
