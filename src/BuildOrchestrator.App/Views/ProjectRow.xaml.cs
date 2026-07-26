@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -39,8 +39,9 @@ public partial class ProjectRow : UserControl
     // [E3/T42] design-v1 bo-reveal (BuildApp.jsx:15/:27): opacity 0→1 + translateY(-5px)→0, .3s, ease-out —
     // GraphView katman reveal'iyle AYNI animasyon ailesi (GraphView.RevealMs/RevealRisePx). Liste satırı gecikmesi
     // graf'tan FARKLI formül: 10ms/satır, 380ms tavan (BuildApp.jsx:367 `Math.min(revealIndex*10, 380)`).
-    internal const double RevealMs = 300;          // BuildApp.jsx:15 `bo-reveal .3s` — [E4] StickyLayerList release penceresi de kullanır
-    private const double RevealRisePx = 5;         // BuildApp.jsx:27 translateY(-5px)
+    // [W2 fix-1] İkisi de RevealStagger'daki TEK tanımın derleme-zamanı ALIAS'ıdır (GraphView ile ASLA sürüklenemez).
+    internal const double RevealMs = RevealStagger.RevealMs;      // `bo-reveal .3s` — [E4] StickyLayerList release penceresi de kullanır
+    private const double RevealRisePx = RevealStagger.RevealRisePx; // translateY(-5px)
     internal const double RowStaggerMs = 10;       // BuildApp.jsx:367 revealIndex*10
     internal const double RowStaggerCapMs = 380;   // BuildApp.jsx:367 tavan 380
 

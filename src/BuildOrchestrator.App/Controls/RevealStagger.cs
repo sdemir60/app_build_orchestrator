@@ -1,4 +1,4 @@
-using System.Windows.Threading;
+﻿using System.Windows.Threading;
 using BuildOrchestrator.App.Services;
 
 namespace BuildOrchestrator.App.Controls;
@@ -20,6 +20,16 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 internal sealed class RevealStagger
 {
+    /// <summary>[W2 fix-1] design-v1 <c>bo-reveal</c> (BuildApp.jsx:15/:27) — bir öğenin beliriş SÜRESİ (.3s).
+    /// Graf düğümü ve liste satırı AYNI animasyon ailesindendir; sabit önce iki yerde ayrı yazılıydı
+    /// (<c>GraphView.RevealMs</c> ↔ <c>ProjectRow.RevealMs</c>) ve sessizce sürüklenebilirdi. TEK tanım burada;
+    /// iki sahip de derleme-zamanı alias tutar (<c>StickyLayerList.RevealHeroKey</c> deseni).</summary>
+    public const double RevealMs = 300.0;
+
+    /// <summary>[W2 fix-1] Öğe bu kadar YUKARIDAN gelir (BuildApp.jsx:27 <c>translateY(-5px)</c>) — aynı gerekçe,
+    /// bkz. <see cref="RevealMs"/>.</summary>
+    public const double RevealRisePx = 5.0;
+
     private IDisposable? _hero;
     private int _generation;
     private DispatcherTimer? _releaseTimer;
@@ -30,9 +40,6 @@ internal sealed class RevealStagger
     /// <summary>Reveal tamamlandığında hero'yu bırakacak CANLI bir release zamanlandı mı — ölü <c>Completed</c>
     /// yolunun aksine gerçek bir tetik kuruldu mu (test ayırt edici olarak okur).</summary>
     public bool HasPendingRelease => _releaseTimer is { IsEnabled: true };
-
-    /// <summary>Bu reveal hero'yu TUTUYOR mu (reduced-motion / bloklanmış reveal'de tutmaz).</summary>
-    public bool HasHero => _hero is not null;
 
     /// <summary>
     /// Yeni bir reveal kuşağı başlatır: önceki hero + bekleyen release bırakılır, kuşak damgası artırılır ve

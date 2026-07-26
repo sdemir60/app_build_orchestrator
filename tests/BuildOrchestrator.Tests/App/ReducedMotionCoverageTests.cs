@@ -185,6 +185,37 @@ public class ReducedMotionCoverageTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [W2 fix-1] EventStreamView artık motion sinyalini CANLI izler. Fold'dan önce bu görünüm diğer sahiplerden
+    /// asimetrikti: yalnız provider'ı vardı, <c>AnimationsEnabledChanged</c> aboneliği YOKtu — OS ayarı koşu
+    /// SIRASINDA kapatılsa imlecin sonsuz blink saati dönmeye devam ederdi. Test önce blink'in GERÇEKTEN döndüğünü
+    /// pinler (aksi halde ikinci assertion vacuous PASS olurdu), sonra sinyali kapatıp saatin söküldüğünü doğrular.
+    /// </summary>
+    [StaFact]
+    public void EventStreamView_stops_the_cursor_blink_when_the_motion_signal_turns_off_while_running()
+    {
+        var signal = new FakeMotionSignal { AnimationsEnabled = true };
+        var motion = new MotionSettings(signal);
+        var vm = NewVm();
+        var host = DsResources.NewHost();
+        var view = new EventStreamView
+        {
+            AnimationsEnabledProvider = () => motion.AnimationsEnabled, MotionSettings = motion, DataContext = vm,
+        };
+        var window = DsResources.Realize(host, view);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A")); // aktif satır → imleç blink'i başlar
+        Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties);        // non-vacuous: saat GERÇEKTEN dönüyor
+
+        signal.AnimationsEnabled = false;
+        signal.Raise();                                                  // OS ayarı koşu SIRASINDA kapandı
+
+        Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties);      // blink saati SÖKÜLDÜ
+        Assert.Equal(1.0, view.ActiveCursorGlyph.Opacity);               // imleç steady
+        GC.KeepAlive(window);
+    }
+
     // ================================================================ 7) ConsoleView (idle "ready" imleç blink)
 
     [StaFact]

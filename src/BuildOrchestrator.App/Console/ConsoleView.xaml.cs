@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -282,7 +282,7 @@ public partial class ConsoleView : UserControl
         ActiveCursor.Fill = dim;
         ActiveCursor.Opacity = 1.0;
         ActiveLineOverlay.Visibility = Visibility.Visible;
-        if (BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false) StartBlink(); else StopBlink();
+        if (MotionGate.StaticAnimationsEnabled) StartBlink(); else StopBlink(); // [W2 fix-1] statik sinyalin TEK kapısı
     }
 
     private void HideReadyIfShown()
@@ -305,7 +305,7 @@ public partial class ConsoleView : UserControl
     {
         EnsureColorizer();
         text ??= "";
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
 
         var type = ConsoleLineClassifier.Classify(text);
         Brush color = _palette?.ForType(type) ?? EditorControl.Foreground;
@@ -358,7 +358,7 @@ public partial class ConsoleView : UserControl
         _typeClock = null;
         StopBlink();
 
-        bool animate = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        bool animate = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
         if (!animate) { FinishActiveLine(commit: true); return; }
 
         _cursorFading = true;
@@ -447,7 +447,7 @@ public partial class ConsoleView : UserControl
         string sliceText = Join(allLines, _loadedFrom, allLines.Count);
         int sliceCount = allLines.Count - _loadedFrom;
 
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
 
         var scheduler = new CascadeScheduler(sliceCount, animationsEnabled);
         if (scheduler.Instant)
@@ -482,7 +482,7 @@ public partial class ConsoleView : UserControl
             CancelCascade(); // transformer'ı kaldırır + tam opak redraw
             // Blink dekoratif sonsuz animasyon — motion sinyalini BAŞLATMA anında TAZE oku (motion sözleşmesi).
             if (_buildInProgressPending)
-                ShowBuildInProgress(BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false);
+                ShowBuildInProgress(MotionGate.StaticAnimationsEnabled); // [W2 fix-1] statik sinyalin TEK kapısı
         }
     }
 

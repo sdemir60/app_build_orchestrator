@@ -119,6 +119,65 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [W2 fix-1 · latent bug] Taban sınıf kablajını <b>türevin görsel ağacı kurulduktan SONRA</b> bağlamalıdır.
+    /// Taban ctor'u türevin <c>InitializeComponent()</c>'inden ÖNCE koşar; orada <c>DataContextChanged</c>'e abone
+    /// olmak, XAML kökü <c>DataContext</c>'i kendi attribute'uyla atadığı anda <c>RefreshContent</c>'i türevin
+    /// <c>PART_*</c> alanları HENÜZ null iken çağırırdı. Bugünkü iki popover kökü DataContext atamıyor, yani bu
+    /// bir zaman bombasıydı — <see cref="XamlLikePopover"/> tam o sırayı taklit eder ve eski kablajda RED verir.
+    /// </summary>
+    [StaFact]
+    public void A_popover_wires_its_datacontext_hook_only_after_its_own_visual_tree_exists()
+    {
+        var vm = NewVm();
+
+        var popover = new XamlLikePopover(vm); // ctor içinde: DataContext ÖNCE, adlandırılmış öğe SONRA
+
+        Assert.Same(vm, popover.Model);       // seed: kablajdan önce atanan DataContext kaçırılmadı
+        Assert.Equal(1, popover.SubscribeCount);
+        Assert.True(popover.RefreshCount >= 1);
+
+        // Kablaj gerçekten CANLI: sonraki DataContext takasında eski VM bırakılır, yenisine abone olunur.
+        var next = NewVm();
+        popover.DataContext = next;
+        Assert.Same(next, popover.Model);
+        Assert.Equal(1, popover.UnsubscribeCount);
+        Assert.Equal(2, popover.SubscribeCount);
+    }
+
+    /// <summary>Bir XAML kökünün yükleme sırasını taklit eden test popover'ı: <c>DataContext</c> kök attribute'u
+    /// olarak (adlandırılmış çocuklardan ÖNCE) atanır. <see cref="RefreshContent"/> "PART" alanının kurulmuş
+    /// olmasını ŞART koşar — kablaj erken bağlanırsa burada patlar.</summary>
+    private sealed class XamlLikePopover : PopoverBase
+    {
+        private TextBox? _part;
+
+        public XamlLikePopover(RunViewModel vm)
+        {
+            BeginInit();
+            DataContext = vm;          // kök attribute'u
+            _part = new TextBox();     // x:Name'li çocuk (connector)
+            Content = _part;
+            EndInit();                 // → OnInitialized → kablaj + VM seed
+        }
+
+        public RunViewModel? Model => Vm;
+        public int RefreshCount { get; private set; }
+        public int SubscribeCount { get; private set; }
+        public int UnsubscribeCount { get; private set; }
+
+        protected override UIElement InitialFocusTarget => _part!;
+
+        protected override void RefreshContent()
+        {
+            Assert.NotNull(_part); // erken kablajda burası null olurdu → RED
+            RefreshCount++;
+        }
+
+        protected override void SubscribeVm(RunViewModel vm) => SubscribeCount++;
+        protected override void UnsubscribeVm(RunViewModel vm) => UnsubscribeCount++;
+    }
+
     private static void SetIsOpen(UserControl popover, bool value)
     {
         switch (popover)

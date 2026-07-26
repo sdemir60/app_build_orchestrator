@@ -53,10 +53,12 @@ public partial class GraphView : UserControl
     public const double LayerStaggerMs = 55.0;
     /// <summary>Stagger tavanı (Ek A #9: grafta 55ms/katman, tavan 330ms).</summary>
     public const double LayerStaggerCapMs = 330.0;
-    /// <summary>Bir düğümün beliriş süresi (prototip <c>bo-reveal .3s</c>).</summary>
-    public const double RevealMs = 300.0;
-    /// <summary>Düğüm bu kadar YUKARIDAN gelir (prototip <c>translateY(-5px)</c>).</summary>
-    public const double RevealRisePx = 5.0;
+    /// <summary>Bir düğümün beliriş süresi (prototip <c>bo-reveal .3s</c>). [W2 fix-1] Değer
+    /// <see cref="RevealStagger.RevealMs"/>'in derleme-zamanı ALIAS'ıdır — liste satırıyla (ProjectRow) ASLA
+    /// sürüklenemez; ikisi de AYNI <c>bo-reveal</c> ailesindendir.</summary>
+    public const double RevealMs = RevealStagger.RevealMs;
+    /// <summary>Düğüm bu kadar YUKARIDAN gelir (prototip <c>translateY(-5px)</c>) — aynı gerekçe, alias.</summary>
+    public const double RevealRisePx = RevealStagger.RevealRisePx;
     /// <summary>Seçim dışı düğümlerin sönme opaklığı (design-v1 §2.3).</summary>
     public const double DimmedNodeOpacity = 0.25;
     /// <summary>Dekoratif sonsuz animasyonlarda kare hızı tavanı (feasibility §3.4).</summary>

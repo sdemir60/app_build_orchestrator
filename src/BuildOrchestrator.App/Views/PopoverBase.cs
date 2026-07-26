@@ -30,10 +30,26 @@ public abstract class PopoverBase : UserControl
 {
     private RunViewModel? _vm;
 
-    protected PopoverBase()
+    /// <summary>
+    /// [W2 fix-1 · latent bug kapatıldı] Kablaj <b>ctor'da DEĞİL</b> burada kurulur. Taban ctor'u türevin
+    /// <c>InitializeComponent()</c>'inden ÖNCE koşar; orada <c>DataContextChanged</c>'e abone olmak, XAML kökü
+    /// <c>DataContext</c>'i kendi attribute'uyla atadığı anda <see cref="RefreshContent"/>'i türevin
+    /// <c>PART_*</c> alanları HENÜZ null iken çağırırdı (NullReferenceException). Bugünkü iki popover kökü
+    /// DataContext atamadığı için patlamıyordu — yani bir zaman bombasıydı.
+    ///
+    /// <para><c>OnInitialized</c>, <c>InitializeComponent()</c>'in içindeki <c>EndInit</c> ile tetiklenir; yani
+    /// buraya gelindiğinde adlandırılmış öğelerin TAMAMI kurulmuştur. Ağaca kod tarafından eklenen (BeginInit
+    /// görmemiş) bir öğe için WPF bunu parent'a bağlanırken tetikler — bu yüzden <c>DataContext</c> kablajdan
+    /// ÖNCE atanmış olabilir; o durumu da kaçırmamak için VM aşağıda ayrıca <b>seed</b> edilir.</para>
+    /// </summary>
+    protected override void OnInitialized(EventArgs e)
     {
+        base.OnInitialized(e);
         DataContextChanged += OnDataContextChanged;
         Loaded += (_, _) => RefreshContent();
+        // Kablajdan ÖNCE atanmış bir DataContext varsa (XAML kök attribute'u / object initializer) değişim olayı
+        // kaçırılmış olur — burada yakala ki abonelik ve ilk tazeleme yine de koşsun.
+        if (DataContext is RunViewModel seeded) SwapVm(seeded);
     }
 
     /// <summary>[E5/T46] Popover içinde Esc — ActionBar popover'ı kapatır + odağı tetikleyici chip'e döndürür.</summary>
@@ -90,9 +106,14 @@ public abstract class PopoverBase : UserControl
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+        => SwapVm(e.NewValue as RunViewModel);
+
+    /// <summary>VM takasının TEK yolu: eskisinden çık, yenisine gir, içeriği tazele. Hem
+    /// <c>DataContextChanged</c> hem <see cref="OnInitialized"/>'daki seed buradan geçer (kopya YASAK).</summary>
+    private void SwapVm(RunViewModel? vm)
     {
         if (_vm is not null) UnsubscribeVm(_vm);
-        _vm = e.NewValue as RunViewModel;
+        _vm = vm;
         if (_vm is not null) SubscribeVm(_vm);
         RefreshContent();
     }
