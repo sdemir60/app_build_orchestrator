@@ -5,8 +5,9 @@ for projects, derives the dependency graph, decides which projects actually chan
 output timestamps), and builds only those — in parallel, under a supervisor process it owns.
 
 It is a developer tool for your own machine: it builds a repository you would otherwise open in Visual Studio,
-with your own privileges. See [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) for what that means in
-practice — process boundaries, what git is allowed to do, what is explicitly out of the threat model.
+with your own privileges. See [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) (written in Turkish) for what
+that means in practice — process boundaries, what git is allowed to do, what is explicitly out of the threat
+model.
 
 ## What it does
 
@@ -55,8 +56,9 @@ Key consequences of that layout:
 - The shared `OutDir` is never touched: no `-p:OutDir` / `-p:OutputPath` is ever passed, so output lands
   exactly where Visual Studio would put it. Only `BaseIntermediateOutputPath` (`obj`) is isolated, and only in
   worktree mode, keyed by the project's full path.
-- "Did it change?" is answered only from source signals (commit + git diff). No DLL or `bin` timestamp is ever
-  read.
+- "Did it change?" is answered only from source signals: the committed blob SHAs of the tree
+  (`git ls-tree -r HEAD`), the current commit (`git rev-parse HEAD`) and the dirty list
+  (`git status --porcelain`). No DLL or `bin` timestamp is ever read.
 
 ## Requirements
 
@@ -108,13 +110,13 @@ To verify a publish output end to end:
 powershell -ExecutionPolicy Bypass -File scripts\verify-publish.ps1
 ```
 
-It publishes to a temp folder and runs 17 checks: publish exit code, layout (`App.exe`, `supervisor\`,
+It first refuses to measure anything if an instance is already running (the app is single-instance), then
+publishes to a temp folder and runs 16 checks: publish exit code, layout (`App.exe`, `supervisor\`,
 font licence), an NDJSON round trip against the published Supervisor binary, launching the published `.exe`
 and confirming via WMI that the Supervisor child was spawned from that same folder, reading the console boot
 line and the ribbon state out of the live window through UI Automation, and finally killing only the App and
 proving the Supervisor dies *by itself* through the job cascade. Exit code `0` = pass, `1` = fail,
-`2` = precondition not met (the app is single-instance, so an already running instance makes the measurement
-meaningless).
+`2` = precondition not met (close the running instance first — tray icon → Exit).
 
 ## Using it
 
@@ -122,8 +124,10 @@ meaningless).
    Sync automatically.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here.
 3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
-   in a detached worktree from the pool, and the list falls back to "Sync required". Worktrees are created with
-   `--detach` and live under `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
+   in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
+   *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
+   `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
+   `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
 4. **Build / Rebuild / Continue / Retry failed** — from the split button and its menu:
    - *Build* — only changed projects.
    - *Rebuild* — all projects, cached state ignored.
@@ -140,7 +144,11 @@ meaningless).
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
 | `Esc` | Close the topmost open layer: dialog → popover/menu → selection |
-| `Alt+B` | Global hotkey: bring the window back from the tray (configurable in Settings) |
+| `Alt+B` | Global hotkey: bring the window back from the tray |
+
+The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it yet
+(Settings only has LAYERS and REPOSITORY). If it cannot be registered — another application already owns that
+combination — it is silently disabled; the tray icon still restores the window.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 
@@ -161,7 +169,10 @@ One chip in the UI cycles three fixed profiles (default: Balanced):
 | Balanced | 4 | BelowNormal | 70% |
 | Light | 2 | Idle | 40% |
 
-Switching writes a console note in exactly this form: `parallelism: 4 · cpu cap 70%` (`cpu cap off` for Full).
+Switching **while a run is in flight** writes a console note and sends the new profile to the engine; switching
+while idle changes only the chip, because the profile travels with the next run anyway. The note is a timestamped
+narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
+(`cpu cap off` for Full).
 
 Three honest qualifications:
 
@@ -196,12 +207,17 @@ Three honest qualifications:
   off-screen nodes and edges are culled and labels drop out by level of detail. On the reference machine,
   synthetic graphs of 500 and 1000 nodes open in roughly 90 ms and 136 ms; panning across the whole graph
   materializes the rest and costs roughly 206 ms and 469 ms in total.
-- **The IPC has no field-level schema validation.** Malformed commands never take the Supervisor down, but a
-  missing field surfaces as a `planFailed`/`runFailed` at the point of use rather than at parse time.
+- **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
+  answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
+  as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.
+  A structurally valid command with a missing field is not rejected at all; it surfaces as a
+  `planFailed`/`runFailed` at the point of use.
 - **Symlinks/junctions are not followed or detected** during the workspace scan, and a `.csproj` may reference
   files outside the repository root. Both are accepted risks — the repository is trusted by definition.
 
 ## Design and decision records
+
+These records are written in **Turkish**; the code, the UI and this README are in English.
 
 - [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) — process, IPC, filesystem, git, input and CPU boundaries,
   each claim cited to `file:line`, plus an explicit list of what is *not* verified and what is out of the
