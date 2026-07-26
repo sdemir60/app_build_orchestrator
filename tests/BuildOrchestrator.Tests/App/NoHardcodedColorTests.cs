@@ -12,6 +12,11 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para>TEK istisna <see cref="AllowedFiles"/>'dadır: <c>Resources/Tokens.xaml</c> — renk literalleri oraya
 /// AİTTİR. Bu testin garantisi budur: "token sözlüğü dışında hiçbir uygulama XAML'ı renk literali yazmaz".</para>
+///
+/// <para>[T49 FINAL PASS] Tarama ARTIK <c>*.cs</c>'i de kapsar. Gerekçe DRIFT: <c>Spikes/FontAbWindow.xaml.cs</c>
+/// code-behind'ında 12 ham hex duruyordu ve biri (<c>BorderStrong</c>) <c>--border-strong</c> yerine
+/// <c>--border</c> değerini taşıyordu — yalnız XAML tarandığı için sapma HİÇ görünmedi. Kapsam boşluğu bu testin
+/// kendi sınıf özetinde anlattığı hatanın (elle tutulan liste) code-behind sürümüydü.</para>
 /// </summary>
 public sealed class NoHardcodedColorTests
 {
@@ -62,6 +67,65 @@ public sealed class NoHardcodedColorTests
         Assert.Contains(Path.Combine("Spikes", "FontAbWindow.xaml"), scanned);
         Assert.All(AllowedFiles, a => Assert.Contains(a, scanned));
     }
+
+    /// <summary>
+    /// [T49 FINAL PASS] <c>*.cs</c> tarafındaki renk literali biçimleri — üç ayrı kalıp, üçü de YASAK:
+    /// <list type="number">
+    /// <item>hex string literali (<c>"#3a3a42"</c>) — <c>ColorConverter</c>/<c>Brush</c> yolu;</item>
+    /// <item>SABİT argümanlı <c>Color.FromRgb(58, 58, 66)</c> / <c>FromArgb</c> / <c>FromScRgb</c> — TÜREV
+    /// çağrılar (bir token renginden alfa/kanal taşıyanlar, ör. <c>Color.FromArgb(a, color.R, …)</c>) meşrudur
+    /// ve BİLEREK kapsam dışıdır: literal olmayan argüman deseni eşleşmez;</item>
+    /// <item>isimli renk (<c>Colors.Red</c>) — TEK istisna <c>Colors.Transparent</c>'tır (renk değil, "yok"
+    /// anlamına gelen nötr taban; per-instance animasyon fırçalarının başlangıç değeri, A13.2).</item>
+    /// </list>
+    /// </summary>
+    private static readonly Regex CodeColourLiteral = new(
+        "\"#[0-9a-fA-F]{3,8}\"" +
+        "|Color\\.From(?:Rgb|Argb|ScRgb)\\(\\s*(?:0x[0-9a-fA-F]+|[0-9.]+f?)\\s*(?:,\\s*(?:0x[0-9a-fA-F]+|[0-9.]+f?)\\s*)*\\)" +
+        "|(?<![A-Za-z0-9_])Colors\\.(?!Transparent\\b)[A-Z][A-Za-z]*", // (?<!…): SystemColors.* WPF sistem fırçasıdır, renk literali değil
+        RegexOptions.Compiled);
+
+    [Fact]
+    public void No_cs_file_in_the_app_tree_declares_a_raw_colour()
+    {
+        var offenders = new List<string>();
+
+        foreach (string file in RepoPaths.AppSourceFiles("*.cs"))
+        {
+            var match = CodeColourLiteral.Match(File.ReadAllText(file));
+            if (match.Success)
+                offenders.Add($"{Path.GetRelativePath(RepoPaths.AppSrcRoot, file)}: {match.Value.Trim()}");
+        }
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void The_guard_actually_scans_the_cs_files_it_claims_to()
+    {
+        // XAML kardeşiyle aynı gerekçe: tarama boş dönerse yukarıdaki test SESSİZCE yeşil kalırdı. Sapmanın
+        // GERÇEKTEN yaşandığı dosya (FontAbWindow code-behind'ı) taramada olduğu ayrıca doğrulanır.
+        var scanned = RepoPaths.AppSourceFiles("*.cs")
+            .Select(f => Path.GetRelativePath(RepoPaths.AppSrcRoot, f))
+            .ToList();
+
+        Assert.Contains(Path.Combine("Spikes", "FontAbWindow.xaml.cs"), scanned);
+        Assert.Contains("MainWindow.xaml.cs", scanned);
+        Assert.Contains(Path.Combine("Controls", "IconPaint.cs"), scanned);
+    }
+
+    [Theory]
+    [InlineData("Frozen(\"#2a2a30\")", true)]                              // DRIFT'in kendisi: ham hex string
+    [InlineData("Color.FromRgb(58, 58, 66)", true)]                        // sabit kanal değerleri
+    [InlineData("Color.FromArgb(0x52, 0xED, 0xA1, 0x0F)", true)]           // sabit kanal değerleri (hex)
+    [InlineData("Foreground = Brushes.Red;", false)]                       // isimli renk — Colors.* dışı form, kapsam dışı
+    [InlineData("Colors.Red", true)]                                       // isimli renk
+    [InlineData("Colors.Transparent", false)]                              // nötr taban — TEK meşru isimli renk
+    [InlineData("Color.FromArgb((byte)(color.A * bucket / 255), color.R, color.G, color.B)", false)] // türev
+    [InlineData("Token(\"Brush.BorderStrong\")", false)]                   // doğrusu: token'dan çöz
+    [InlineData("// dotnet/wpf#293 — letter-spacing yok", false)]          // yorumdaki issue numarası
+    public void Code_regex_separates_colour_literals_from_lookalike_code(string sample, bool isColour)
+        => Assert.Equal(isColour, CodeColourLiteral.IsMatch(sample));
 
     [Theory]
     [InlineData("Background=\"#0e0e10\"", true)]                      // attribute, 6 haneli

@@ -15,6 +15,12 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 internal static class MotionTokens
 {
+    /// <summary>İmleç blink periyodu (design-v1 §2.5: "1.0→0.1, 0.55s"). Adlandırılmış sabit — süreyi çağrı
+    /// yerinde literal yazmak YASAK (<c>StatusGlyph.PulseMs</c> / <c>BuildingSpinner.RotationMs</c> deseni;
+    /// guard: <c>NoHardcodedMotionTests</c>). Duration.* token ailesine ait DEĞİLDİR: bu süre effects.css'te
+    /// yoktur, §2.5'e özgüdür.</summary>
+    internal const double BlinkMs = 550.0;
+
     public static Duration ResolveDuration(FrameworkElement host, string key, double fallbackMs)
         => host.TryFindResource(key) is Duration d ? d : new Duration(TimeSpan.FromMilliseconds(fallbackMs));
 
@@ -24,7 +30,7 @@ internal static class MotionTokens
     /// StartCursorBlink) bunu paylaşır (verbatim kopya YASAK, CLAUDE.md).</summary>
     public static DoubleAnimation CreateBlinkAnimation()
     {
-        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromSeconds(0.55)))
+        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromMilliseconds(BlinkMs)))
         {
             AutoReverse = true,
             RepeatBehavior = RepeatBehavior.Forever,

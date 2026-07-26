@@ -19,19 +19,21 @@ public partial class FontAbWindow : Window
     private static readonly FontFamily Mono = new(FontsBase, "./#Geist Mono");
     private static readonly FontFamily MonoConsole = new(FontsBase, "./#Geist Mono Console");
 
-    // design-v1 renk token'ları (tokens/colors.css).
-    private static readonly Brush TextPrimary = Frozen("#ededee");
-    private static readonly Brush TextSecondary = Frozen("#a9a9b0");
-    private static readonly Brush TextDim = Frozen("#76767e");
-    private static readonly Brush TextFaint = Frozen("#54545c");
-    private static readonly Brush AmberText = Frozen("#f1ab2e");
-    private static readonly Brush SuccessText = Frozen("#58cb80");
-    private static readonly Brush FailText = Frozen("#ff706a");
-    private static readonly Brush WarnText = Frozen("#f0853f"); // ConsoleLine warn = --status-cycle-text
-    private static readonly Brush Surface = Frozen("#141417");
-    private static readonly Brush ConsoleBg = Frozen("#060608");
-    private static readonly Brush BorderSubtle = Frozen("#1c1c20");
-    private static readonly Brush BorderStrong = Frozen("#2a2a30");
+    // [T49 FINAL PASS] Renkler ARTIK token sözlüğünden çözülür — buradaki ham hex kopyaları SESSİZCE sürüklenmişti:
+    // `BorderStrong` --border-strong (#3a3a42) yerine --border (#2a2a30) değerini taşıyordu (ad doğru, değer yanlış).
+    // Kopya bir palet tutmanın maliyeti buydu; tek doğruluk kaynağı Resources/Tokens.xaml'dir (kopya YASAK, CLAUDE.md).
+    private static readonly Brush TextPrimary = Token("Brush.TextPrimary");
+    private static readonly Brush TextSecondary = Token("Brush.TextSecondary");
+    private static readonly Brush TextDim = Token("Brush.TextDim");
+    private static readonly Brush TextFaint = Token("Brush.TextFaint");
+    private static readonly Brush AmberText = Token("Brush.AmberText");
+    private static readonly Brush SuccessText = Token("Brush.StatusSuccessText");
+    private static readonly Brush FailText = Token("Brush.StatusFailText");
+    private static readonly Brush WarnText = Token("Brush.StatusCycleText"); // ConsoleLine warn = --status-cycle-text
+    private static readonly Brush Surface = Token("Brush.Surface");
+    private static readonly Brush ConsoleBg = Token("Brush.ConsoleBg");
+    private static readonly Brush BorderSubtle = Token("Brush.BorderSubtle");
+    private static readonly Brush BorderStrong = Token("Brush.BorderStrong");
 
     public FontAbWindow()
     {
@@ -230,10 +232,10 @@ public partial class FontAbWindow : Window
 
     private static FrameworkElement HSpace(double width) => new Border { Width = width };
 
-    private static SolidColorBrush Frozen(string hex)
-    {
-        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-        brush.Freeze();
-        return brush;
-    }
+    /// <summary>[T49 FINAL PASS] Token sözlüğünden fırça çözer. FALLBACK YOKTUR (bilinçli): bu pencere yalnız
+    /// <c>--font-ab</c> ile, <see cref="Application"/> ve App.xaml'in merge zinciri kurulduktan SONRA açılır
+    /// (<c>App.OnStartup</c>) — anahtar yoksa sessizce yanlış renk göstermek yerine AÇIKÇA patlaması istenir.
+    /// Anahtarların Tokens.xaml'de gerçekten var olduğunu <c>FontAbWindowTokenKeysTests</c> pinler.</summary>
+    private static SolidColorBrush Token(string key)
+        => (SolidColorBrush)Application.Current.Resources[key];
 }
