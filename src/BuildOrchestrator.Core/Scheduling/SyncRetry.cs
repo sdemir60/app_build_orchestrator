@@ -19,11 +19,15 @@ public static class SyncRetry
     ///
     /// <list type="bullet">
     /// <item><paramref name="isTransient"/> <c>false</c> derse istisna OLDUĞU GİBİ yayılır (retry YOK, yutma YOK).</item>
-    /// <item>Geçici hatada, SON deneme değilse <paramref name="delay"/> çağrılır (1-based deneme no ile) —
-    /// yani <c>attempts</c> deneme, <c>attempts-1</c> gecikme. Gecikmenin ne olduğu ÇAĞIRANIN kararıdır
-    /// (üretimde kısa bir backoff, testte anında dönen bir dikiş — D8).</item>
+    /// <item>Geçici hatada, SON deneme değilse <paramref name="delay"/> çağrılır — yani <c>attempts</c> deneme,
+    /// <c>attempts-1</c> gecikme. Argüman <b>0-based BAŞARISIZ DENEME index'idir</b> (ilk gecikmede 0);
+    /// 1-based deneme no isteyen çağıran <c>i =&gt; ...(i + 1)</c> ile uyarlar. Gecikmenin ne olduğu ÇAĞIRANIN
+    /// kararıdır (üretimde kısa bir backoff, testte anında dönen bir dikiş — D8).</item>
     /// <item>Bütçe tükenirse: <paramref name="rethrowWhenExhausted"/> ise SON istisna orijinal stack'iyle yayılır,
     /// değilse <c>false</c> dönülür (çağıranın "sessizce başarısız ol, UI'ı çökertme" sözleşmesi).</item>
+    /// <item><paramref name="attempts"/> 1'den küçükse <paramref name="action"/> HİÇ çağrılmaz ve <c>false</c>
+    /// dönülür — bu, ortaklaştırmadan önceki <c>ClipboardRetry</c> döngüsünün (<c>for (i = 0; i &lt; attempts; i++)</c>)
+    /// davranışıdır ve [fix round 2] ile aynen KORUNUR: B2 bir kopya kaldırma işiydi, davranış nötr olmalıdır.</item>
     /// </list>
     /// </summary>
     public static bool Run(
@@ -32,7 +36,7 @@ public static class SyncRetry
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(isTransient);
         ArgumentNullException.ThrowIfNull(delay);
-        ArgumentOutOfRangeException.ThrowIfLessThan(attempts, 1);
+        if (attempts < 1) return false; // boş bütçe: hiç denenmez (fırlatmaz — ortaklaştırma öncesi davranış)
 
         for (int attempt = 1; ; attempt++)
         {
@@ -43,7 +47,7 @@ public static class SyncRetry
             }
             catch (Exception ex) when (attempt < attempts && isTransient(ex))
             {
-                delay(attempt);
+                delay(attempt - 1); // 0-based başarısız deneme index'i (bkz. XML-doc)
             }
             catch (Exception ex) when (!rethrowWhenExhausted && isTransient(ex))
             {

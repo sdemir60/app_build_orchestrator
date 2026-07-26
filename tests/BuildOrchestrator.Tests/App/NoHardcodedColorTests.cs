@@ -138,6 +138,38 @@ public sealed class NoHardcodedColorTests
             offenders);
     }
 
+    /// <summary>
+    /// [fix round 2] <b>ÇOK SATIRLI ihlal de yakalanmalı.</b> Round 1'in satır-bazlı taraması yeni bir kör
+    /// nokta açmıştı: satıra bölünmüş bir <c>Color.FromArgb(...)</c> ya da property-element biçimli bir renk
+    /// hiçbir satırda tam eşleşmediği için GÖRÜNMEZ oluyordu. İki dilde de kanıtlanır; rapor satırı eşleşmenin
+    /// BAŞLADIĞI satırı gösterir ve çok satırlı metin tek satıra düzleştirilir.
+    /// </summary>
+    [Fact]
+    public void The_guard_catches_a_violation_that_is_split_across_lines()
+    {
+        const string fakeCode = """
+            internal static class Fake
+            {
+                private static readonly Color B = Color.FromRgb(
+                    58, 58, 66);
+            }
+            """;
+        var codeOffenders = SourceGuard.ScanText("Fake.cs", fakeCode, CodeColourLiteral, skipCommentLines: true);
+        Assert.Equal(["Fake.cs:3: Color.FromRgb( 58, 58, 66)"], codeOffenders);
+
+        const string fakeXaml = """
+            <Border>
+              <Border.Background>
+                #0e0e10
+              </Border.Background>
+            </Border>
+            """;
+        var xamlOffenders = SourceGuard.ScanText("Fake.xaml", fakeXaml, ColourLiteral);
+        Assert.Single(xamlOffenders);
+        Assert.StartsWith("Fake.xaml:2: ", xamlOffenders[0]);
+        Assert.Contains("#0e0e10", xamlOffenders[0]);
+    }
+
     [Theory]
     [InlineData("Background=\"#0e0e10\"", true)]                      // attribute, 6 haneli
     [InlineData("<SolidColorBrush Color=\"#99040406\" />", true)]     // Color attribute, 8 haneli (alfa)

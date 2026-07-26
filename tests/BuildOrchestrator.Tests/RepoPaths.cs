@@ -26,6 +26,14 @@ internal static class RepoPaths
         Directory.EnumerateFiles(SrcRoot, searchPattern, SearchOption.AllDirectories)
                  .Where(f => !IsBuildOutput(SrcRoot, f));
 
+    /// <summary>[T49 fix round 2] Test ağacının kökü — D8 testleri de bağlar ("testte gerçek zaman beklenmez").</summary>
+    public static string TestsRoot { get; } = Path.Combine(RepoRoot, "tests");
+
+    /// <summary>Tüm <c>tests/</c> ağacındaki kaynak dosyalar — derleme çıktıları HARİÇ.</summary>
+    public static IEnumerable<string> TestSourceFiles(string searchPattern) =>
+        Directory.EnumerateFiles(TestsRoot, searchPattern, SearchOption.AllDirectories)
+                 .Where(f => !IsBuildOutput(TestsRoot, f));
+
     /// <summary>
     /// [T64] App kaynak ağacındaki dosyalar — derleme çıktıları (<c>bin</c>/<c>obj</c>) HARİÇ. Kaynağın
     /// KENDİSİNİ tarayan guard testleri (ikon fontu / font pack URI'si / ham renk literali) hepsi buradan

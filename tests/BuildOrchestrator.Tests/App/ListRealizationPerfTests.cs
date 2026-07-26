@@ -32,9 +32,12 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
     /// bkz. <see cref="DsResources.RealizedObjects"/>). Duvar saati makineye göre oynaktır; sadeleştirmenin
     /// kalıcılığını KORUYAN şey bu deterministik sayımdır. [L1] Kart sadeleştirmesi ÖNCESİ 55, SONRASI 39 nesne
     /// (hover ikonları + VS-chooser artık ilk hover'da kurulur: StackPanel + 2 Button + 2 Viewbox + 2 Canvas +
-    /// 2 Path + Popup + Border + StackPanel + TextBlock + StackPanel = 16). Tavan dar tutuldu (39 + 1) ki eager
-    /// bir alt-ağaç geri sızarsa test kırılsın.</summary>
-    private const int UnhoveredRowObjectCeiling = 40;
+    /// 2 Path + Popup + Border + StackPanel + TextBlock + StackPanel = 16). Tavan dar tutuldu (+1 marj) ki eager
+    /// bir alt-ağaç geri sızarsa test kırılsın.
+    ///
+    /// <para>[T49 fix round 2] Sayım artık SATIRIN KENDİSİNİ de içeriyor (<c>RealizedObjects</c> kökü döner) →
+    /// 39 yerine 40; tavan aynı +1 marjı korumak için 41'e alındı. GERÇEK bütçe DEĞİŞMEDİ.</para></summary>
+    private const int UnhoveredRowObjectCeiling = 41;
 
     [StaFact]
     public void Realizing_191_project_rows_measure_and_arrange_stays_under_the_400ms_budget()

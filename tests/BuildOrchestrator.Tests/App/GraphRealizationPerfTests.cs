@@ -115,7 +115,7 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
 
         var cell = view.NodeVisuals[nodes[0].Name].Cell;
         var realized = DsResources.RealizedObjects(cell);
-        int objects = realized.Count + 1; // + hücrenin kendisi (RealizedObjects yalnız torunları sayar)
+        int objects = realized.Count; // [T49 fix round 2] hücrenin kendisi ARTIK dahil (elle +1 kalktı)
 
         output.WriteLine($"[G1] graf düğümü nesne sayısı = {objects} (tavan {NodeObjectCeiling}) :: " +
             string.Join(", ", realized.GroupBy(o => o.GetType().Name)

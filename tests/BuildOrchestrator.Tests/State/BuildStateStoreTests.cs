@@ -291,8 +291,10 @@ public class BuildStateStoreTests : IDisposable
 
         // Gecikme dikişi = randevu: ilk retry'ı bildir, sonra kilidin GERÇEKTEN bırakıldığı ana kadar bekle
         // (sabit süre YOK). TrySetResult/Wait ikinci çağrıda zararsızdır — pratikte tek retry yaşanır.
-        store.RenameRetryDelay = _ =>
+        int firstAttemptSeen = 0;
+        store.RenameRetryDelay = attempt =>
         {
+            if (firstAttemptSeen == 0) firstAttemptSeen = attempt;
             firstRetryObserved.TrySetResult();
             lockReleased.Task.Wait(TimeSpan.FromSeconds(10)); // yalnız hata halinde devreye giren güvenlik tavanı
         };
@@ -314,6 +316,10 @@ public class BuildStateStoreTests : IDisposable
         var upsertTask = Task.Run(() => store.Upsert(new BuildState("P1", "sig1")));
 
         await Task.WhenAll(lockHolder, upsertTask).WaitAsync(TimeSpan.FromSeconds(10));
+
+        // [fix round 2] Dikişin argümanı bu yolda 1-BASED deneme no'dur (ortak SyncRetry'a taşımadan önce de
+        // öyleydi) — B2 fold'unun davranış nötrlüğü burada da pinlenir.
+        Assert.Equal(1, firstAttemptSeen);
 
         var map = new BuildStateStore(_root).Load();
         Assert.Equal("sig1", map["P1"].BuiltSignature);

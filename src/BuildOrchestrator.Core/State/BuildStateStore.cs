@@ -135,7 +135,9 @@ public sealed class BuildStateStore
             () => File.Move(tmp, target, overwrite: true),
             RenameAttempts,
             ex => ex is IOException or UnauthorizedAccessException,
-            EffectiveRenameRetryDelay,
+            // [fix round 2] SyncRetry 0-based index verir; bu yolun dikişi ortaklaştırmadan ÖNCE de 1-based
+            // deneme no alıyordu — uyarlama burada, davranış birebir korunur.
+            failedAttemptIndex => EffectiveRenameRetryDelay(failedAttemptIndex + 1),
             rethrowWhenExhausted: true);
 
     /// <summary>

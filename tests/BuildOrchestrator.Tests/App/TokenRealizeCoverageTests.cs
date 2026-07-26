@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Markup;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -20,6 +21,51 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")]
 public class TokenRealizeCoverageTests
 {
+    /// <summary>
+    /// [T49 fix round 2] <b>Tip denetiminin KENDİ kanıtı — <c>c6e9a21</c>'in tam olarak patladığı özellikler.</b>
+    /// O bug bir <b>Double</b> token'ı bir <c>RowDefinition.Height</c>'a (<c>GridLength</c>) veriyordu; guard'ın
+    /// kapatmayı iddia ettiği bug'ın özelliği listede YOKTU (fix round 2 ile eklendi). Ayrıca <c>RowDefinition</c>/
+    /// <c>ColumnDefinition</c> Grid'in ne görsel ne mantıksal çocuğudur — ağaç gezintisine hiç girmezler, bu
+    /// yüzden <see cref="DsResources.DynamicResourceTypeMismatches"/> her Grid için onları AYRICA ziyaret eder.
+    /// Bu test o iki yolu da (kök öğe DAHİL) sentetik bir ağaçla doğrudan kanıtlar.
+    /// </summary>
+    [StaFact]
+    public void The_type_check_catches_a_double_token_bound_to_grid_definitions_and_to_the_root_itself()
+    {
+        // ŞABLON yolu bilinçli seçildi: ölçüldü ki WPF, bir DynamicResource YEREL değer/ifade olarak
+        // değerlendirilirken tipi DOĞRULAR (orada zaten fırlar), ama ŞABLONDAN gelen değeri doğrulamaz —
+        // sessizce saklar. Bu testin kanıtladığı net tam olarak o boşluğu kapatır.
+        const string xaml = """
+            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="ContentControl">
+              <Grid Background="{DynamicResource Size.TitleBarHeight}">
+                <Grid.RowDefinitions>
+                  <RowDefinition />
+                </Grid.RowDefinitions>
+              </Grid>
+            </ControlTemplate>
+            """;
+
+        var host = DsResources.NewHost();
+        var control = new ContentControl { Template = (ControlTemplate)XamlReader.Parse(xaml) };
+        host.Child = control;
+        control.ApplyTemplate(); // Measure/Arrange YOK: yerleşim bu sapmayı zaten fırlatarak yakalardı
+
+        var grid = (Grid)VisualTreeHelper.GetChild(control, 0);
+        var offenders = DsResources.DynamicResourceTypeMismatches(grid); // grid = KÖK
+
+        // KÖKÜN KENDİ bağı: RealizedObjects kökü gezmeseydi bu ihlal görünmez kalırdı (fix round 2, kalem 4).
+        Assert.Contains(offenders, o => o.StartsWith("Grid.Background", StringComparison.Ordinal));
+
+        // c6e9a21'in TAM OLARAK patladığı özellikler listede — savunma derinliği olarak (fix round 2, kalem 2).
+        // ÖLÇÜLEN GERÇEK: bu ikisine yanlış tipli bir token bağlamanın DENENEN HER yolu WPF'in kendi
+        // doğrulamasıyla zaten fırlıyor (XAML parse · SetResourceReference · şablon değeri) — yani bugün
+        // ulaşılamaz bir kutu. Listede olmalarının sebebi guard'ın bu WPF ayrıntısının doğru KALMASINA
+        // bağımlı olmamasıdır; ayrıca bu sınıfı yakalayan asıl ağlar realize + yerleşimdir (M3 kaydı).
+        Assert.Contains(RowDefinition.HeightProperty, DsResources.CheckedProperties);
+        Assert.Contains(ColumnDefinition.WidthProperty, DsResources.CheckedProperties);
+    }
+
     [StaFact]
     public void Panel_header_realizes_and_takes_its_height_and_surface_from_tokens()
     {

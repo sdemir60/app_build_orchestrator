@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.RegularExpressions;
 
 namespace BuildOrchestrator.Tests.App;
@@ -18,10 +19,24 @@ namespace BuildOrchestrator.Tests.App;
 /// izinli bir dosyaya İKİNCİ bir sleep eklemek de guard'ı kırmızıya çeker — izin "bu dosya serbest" demek
 /// değildir, "bu BİR kullanım gerekçeli" demektir.</para>
 ///
-/// <para><b>YAKALAYAMADIĞI:</b> gecikmeyi dolaylı üreten yollar (<c>ManualResetEventSlim.Wait(timeout)</c>,
-/// <c>Task.WhenAny(..., Task.Delay(...))</c> sarmalayan bir yardımcı, <c>WaitHandle.WaitOne(ms)</c>) ve
-/// bir sleep'i bir döngüye koyup GERÇEK sleep-poll'e çevirmek — guard "uyudun mu" der, "neden uyudun" demez.
-/// Onun denetimi review'ın işidir.</para>
+/// <para>[fix round 2] <b>Test ağacı da taranır.</b> D8 "testte gerçek zaman beklenmez" der — yasağın en sık
+/// ihlal edildiği yer testlerdir. Test tarafında yalnız BLOKLAYAN biçimler yasaklanır (<c>Thread.Sleep</c>,
+/// <c>SpinWait.SpinUntil</c>, <c>Start-Sleep</c>); <c>Task.Delay</c> testlerde meşru bir araçtır
+/// (<c>Task.Delay(Timeout.Infinite)</c> = hiç tick atmayan sahte batcher, <c>WaitAsync</c> zaman aşımı tavanı)
+/// ve yasaklanması guard'ı gürültüye boğardı — o yüzden test kuralı üretim kuralından DAR tutulur.</para>
+///
+/// <para><b>YAKALAYAMADIĞI (bilinçli sınırlar):</b></para>
+/// <list type="bullet">
+/// <item>Senkron sarmalanmış async gecikme: <c>Task.Delay(50).Wait()</c> / <c>.GetAwaiter().GetResult()</c> —
+/// üretim ağacında <c>Task.Delay</c> zaten yakalanır ama test ağacında bu biçim GÖRÜNMEZ.</item>
+/// <item>Handle üzerinden zaman aşımıyla bekleme: <c>ManualResetEvent(Slim).Wait(ms)</c>,
+/// <c>WaitHandle.WaitOne(ms)</c>, <c>Monitor.Wait(ms)</c>, <c>Task.WhenAny(..., Task.Delay(...))</c>.</item>
+/// <item><c>new SpinWait().SpinOnce()</c> (yalnız <c>SpinWait.SpinUntil</c> aranır) ve <c>Thread.Yield()</c>
+/// döngüsü.</item>
+/// <item>Gecikmeyi bir yardımcının ARDINA saklamak (<c>await Pause(50)</c>) — guard çağrı biçimine bakar.</item>
+/// <item><b>En önemlisi:</b> izinli/meşru bir gecikmeyi bir DÖNGÜYE koyup gerçek sleep-poll'e çevirmek. Guard
+/// "uyudun mu" der, "neden uyudun" demez; niyetin denetimi review'ın işidir.</item>
+/// </list>
 /// </summary>
 public sealed class NoSleepPollTests
 {
@@ -69,6 +84,36 @@ public sealed class NoSleepPollTests
         Assert.Empty(offenders);
     }
 
+    /// <summary>Test ağacında yasaklanan BLOKLAYAN biçimler — <c>Task.Delay</c> BİLEREK yok (bkz. sınıf özeti).</summary>
+    private static readonly Regex BlockingSleepCall = new(
+        "(?<![A-Za-z0-9_.])(?:System\\.Threading\\.)?Thread\\.Sleep\\s*\\(" +
+        "|(?<![A-Za-z0-9_.])SpinWait\\.SpinUntil\\s*\\(" +
+        "|Start-Sleep",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Test ağacındaki meşru yollar. İkisi de "bizim thread'imiz uyumuyor" kategorisindedir, bu yüzden üretim
+    /// listesinden farklı olarak ADET pinlenmez (sayının sinyal değeri yok):
+    /// <list type="number">
+    /// <item>guard'ın KENDİ dosyası — yasakladığı kalıpların katalogunu (regex + <c>[InlineData]</c> + sahte
+    /// kaynak) zorunlu olarak içerir; <c>Resources/Tokens.xaml</c>'ın renk guard'ındaki istisnasıyla aynı
+    /// gerekçe: literaller oraya AİTTİR;</item>
+    /// <item>SPAWN EDİLEN child process'lerin KENDİ komut metinleri (<c>powershell … Start-Sleep</c>) — uzun
+    /// yaşayan bir çocuk gerektiren fixture'lar (job-object kaskadı, process timeout/cancel testleri).</item>
+    /// </list>
+    /// </summary>
+    private static readonly string[] AllowedTestFiles =
+    [
+        Path.Combine("BuildOrchestrator.Tests", "App", "NoSleepPollTests.cs"),          // guard'ın kendi kataloğu
+        Path.Combine("BuildOrchestrator.Tests", "MsBuild", "LegacyFixture.cs"),         // sahte MSBuild hedefi (child)
+        Path.Combine("BuildOrchestrator.Tests", "ProcessControl", "JobTestChildren.cs"),// job kaskadı için uzun yaşayan child
+        Path.Combine("BuildOrchestrator.Tests", "Processes", "ProcessRunnerTests.cs"),  // timeout/cancel için uzun yaşayan child
+    ];
+
+    [Fact]
+    public void No_test_blocks_the_thread_to_wait_for_real_time()
+        => Assert.Empty(SourceGuard.ScanTests("*.cs", BlockingSleepCall, AllowedTestFiles, skipCommentLines: true));
+
     [Fact]
     public void The_guard_actually_scans_every_production_project()
     {
@@ -81,6 +126,11 @@ public sealed class NoSleepPollTests
         Assert.Contains(@"BuildOrchestrator.App\MainWindow.xaml.cs", scanned);
         Assert.Contains(@"BuildOrchestrator.Contracts\Ipc\NdjsonFraming.cs", scanned);
         Assert.All(AllowedSleeps.Keys, path => Assert.Contains(path, scanned));
+
+        // [fix round 2] Test ağacı taraması da gerçekten dosya görüyor mu?
+        var scannedTests = SourceGuard.ScannedTestFiles("*.cs");
+        Assert.Contains(Path.Combine("BuildOrchestrator.Tests", "State", "BuildStateStoreTests.cs"), scannedTests);
+        Assert.All(AllowedTestFiles, path => Assert.Contains(path, scannedTests));
     }
 
     [Theory]

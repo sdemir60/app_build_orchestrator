@@ -30,6 +30,8 @@ public static class ClipboardRetry
         // [T49 fix round 1 · B2] Döngü ortak (SyncRetry, Core) — burada yalnız BU yolun kararları durur: hangi
         // istisna geçici (yalnız CLIPBRD_E_CANT_OPEN), gecikme nereden gelir, bütçe tükenince ne olur (burada:
         // sessizce false — UI çökmez). Kopya YASAK, CLAUDE.md.
+        // [fix round 2] Davranış NÖTR: wait yine 0-based başarısız deneme index'i alır ve attempts<1 yine
+        // fırlatmadan false döner — ortaklaştırma bir kopya kaldırma işiydi, sözleşmeyi değiştirmedi.
         => SyncRetry.Run(
             set, attempts,
             ex => ex is ExternalException external && external.ErrorCode == ClipboardCantOpen,

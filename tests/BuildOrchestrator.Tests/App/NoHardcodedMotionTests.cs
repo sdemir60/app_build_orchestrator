@@ -117,4 +117,25 @@ public sealed class NoHardcodedMotionTests
         Assert.StartsWith("Fake.cs:3: ", offenders[0]);
         Assert.StartsWith("Fake.cs:5: ", offenders[1]);
     }
+
+    /// <summary>
+    /// [fix round 2] ÇOK SATIRLI ihlal de yakalanmalı — round 1'in satır-bazlı taraması, argümanı bir alt
+    /// satıra taşınmış bir süreyi HİÇ görmüyordu (aynı kör nokta üç guard'da birdendi).
+    /// </summary>
+    [Fact]
+    public void The_guard_catches_a_duration_literal_that_is_split_across_lines()
+    {
+        const string fake = """
+            internal static class Fake
+            {
+                private static readonly Duration A = new Duration(
+                    TimeSpan.FromSeconds(0.55));
+            }
+            """;
+
+        var offenders = SourceGuard.ScanText("Fake.cs", fake, CodeTimeLiteral, skipCommentLines: true);
+
+        Assert.Single(offenders);
+        Assert.StartsWith("Fake.cs:3: ", offenders[0]);
+    }
 }

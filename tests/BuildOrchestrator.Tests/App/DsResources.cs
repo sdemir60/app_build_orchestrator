@@ -81,26 +81,15 @@ internal static class DsResources
     }
 
     /// <summary>
-    /// [T49 fix round 1 · A1] Realize edilmiş bir ağaçtaki HER <c>DynamicResource</c> bağını çözer ve
-    /// <b>hedef DP tipine uyup uymadığını</b> denetler; uymayanların listesini döner (boş = temiz).
-    ///
-    /// <para><b>Neden gerekli — ölçülen gerçek:</b> <c>Measure</c>/<c>Arrange</c> yalnız YERLEŞİM'e giren
-    /// özellikleri okur (<c>Height</c>, <c>Margin</c>, <c>RowDefinition.Height</c>) — <c>c6e9a21</c>'in
-    /// GridLength bug'ı bu yüzden yakalanır. Ama <c>Background</c>/<c>Foreground</c>/<c>Fill</c> RENDER-ONLY'dir:
-    /// gerçek bir <c>PresentationSource</c> olmadan hiç okunmaz. Dahası WPF, <c>GetValue</c> OKUMA yolunda tip
-    /// doğrulaması YAPMAZ (ölçüldü: bir <c>Double</c>, <c>Background</c>'dan sessizce geri gelir). Bu yüzden
-    /// uyum burada AÇIKÇA denetlenir — "patladı mı" değil, "doğru tip mi" sorulur.</para>
-    ///
-    /// <para>Şablon içindeki (ApplyTemplate ile SONRADAN doğan) öğeler de kapsanır: gezinti görsel + mantıksal
-    /// ağacın birleşimidir (<see cref="RealizedObjects"/>) ve şablon uygulandıktan SONRA çağrılmalıdır.
-    /// <b>KAPSAM DIŞI:</b> bir <c>Style</c>/<c>Setter</c> üzerinden gelen değerler yerel değer DEĞİLDİR ve
-    /// burada görünmez — onları uygulandıkları anda WPF'in kendi doğrulaması yakalar (setter'ın hedefi yanlış
-    /// tipteyse <c>Style</c> uygulanırken fırlar).</para>
-    /// </summary>
-    /// <summary>
     /// Tasarım token'ı tüketen özellikler. Bir DP'nin bir düğüm için geçerli olup olmadığı ELENMEZ: WPF her
     /// <see cref="DependencyObject"/> üzerinde her DP'yi okumaya izin verir ve ilgisiz olanlar varsayılanını
     /// (tipiyle uyumlu) döner — yani yanlış pozitif üretmez.
+    ///
+    /// <para>[fix round 2] <see cref="RowDefinition.HeightProperty"/> / <see cref="ColumnDefinition.WidthProperty"/>
+    /// listenin BAŞINDA olmalıydı: <c>c6e9a21</c>'in TAM OLARAK patladığı özellikler bunlar
+    /// (<c>Size.ActionBarHeight</c> Double token'ı bir <c>GridLength</c>'e veriliyordu). Bu ikisi
+    /// <see cref="Grid"/>'in görsel/mantıksal çocuğu DEĞİLDİR — ağaç gezintisine hiç girmezler, bu yüzden
+    /// <see cref="DynamicResourceTypeMismatches"/> her <see cref="Grid"/> için ayrıca ziyaret eder.</para>
     /// </summary>
     private static readonly DependencyProperty[] TokenProperties =
     [
@@ -117,12 +106,47 @@ internal static class DsResources
         UIElement.EffectProperty, UIElement.OpacityMaskProperty,
         FrameworkElement.WidthProperty, FrameworkElement.HeightProperty,
         FrameworkElement.MinWidthProperty, FrameworkElement.MinHeightProperty, FrameworkElement.MarginProperty,
+        RowDefinition.HeightProperty, RowDefinition.MinHeightProperty,      // c6e9a21'in kendi özellikleri
+        ColumnDefinition.WidthProperty, ColumnDefinition.MinWidthProperty,
     ];
 
+    /// <summary>Denetlenen özellik kümesi — testler "bug'ın kendi özelliği gerçekten listede mi" sorusunu
+    /// doğrudan sorabilsin diye açılır (bkz. <c>TokenRealizeCoverageTests</c>).</summary>
+    public static IReadOnlyList<DependencyProperty> CheckedProperties => TokenProperties;
+
+    /// <summary>
+    /// [T49 fix round 1 · A1] Realize edilmiş bir ağaçtaki HER <c>DynamicResource</c> bağını çözer ve
+    /// <b>hedef DP tipine uyup uymadığını</b> denetler; uymayanların listesini döner (boş = temiz).
+    ///
+    /// <para><b>Neden gerekli — ölçülen gerçek:</b> <c>Measure</c>/<c>Arrange</c> yalnız YERLEŞİM'e giren
+    /// özellikleri okur (<c>Height</c>, <c>Margin</c>, <c>RowDefinition.Height</c>) — <c>c6e9a21</c>'in
+    /// GridLength bug'ı bu yüzden yakalanır. Ama <c>Background</c>/<c>Foreground</c>/<c>Fill</c> RENDER-ONLY'dir:
+    /// gerçek bir <c>PresentationSource</c> olmadan hiç okunmaz. Dahası WPF, <c>GetValue</c> OKUMA yolunda tip
+    /// doğrulaması YAPMAZ (ölçüldü: bir <c>Double</c>, <c>Background</c>'dan sessizce geri gelir). Bu yüzden
+    /// uyum burada AÇIKÇA denetlenir — "patladı mı" değil, "doğru tip mi" sorulur.</para>
+    ///
+    /// <para>Şablon içindeki (ApplyTemplate ile SONRADAN doğan) öğeler de kapsanır: gezinti görsel + mantıksal
+    /// ağacın birleşimidir (<see cref="RealizedObjects"/>, kök DAHİL) ve şablon uygulandıktan SONRA
+    /// çağrılmalıdır. <b>KAPSAM DIŞI:</b> bir <c>Style</c>/<c>Setter</c> üzerinden gelen değerler yerel değer
+    /// DEĞİLDİR ve burada görünmez — onları uygulandıkları anda WPF'in kendi doğrulaması yakalar (setter'ın
+    /// hedefi yanlış tipteyse <c>Style</c> uygulanırken fırlar).</para>
+    /// </summary>
     public static IReadOnlyList<string> DynamicResourceTypeMismatches(DependencyObject root)
     {
         var offenders = new List<string>();
         foreach (var node in RealizedObjects(root))
+        {
+            Check(node);
+            // Grid tanımları ağacın çocuğu DEĞİLDİR (ne görsel ne mantıksal) — c6e9a21 tam da oradaydı.
+            if (node is Grid grid)
+            {
+                foreach (var row in grid.RowDefinitions) Check(row);
+                foreach (var column in grid.ColumnDefinitions) Check(column);
+            }
+        }
+        return offenders;
+
+        void Check(DependencyObject node)
         {
             foreach (var property in TokenProperties)
             {
@@ -135,7 +159,6 @@ internal static class DsResources
                         $"{node.GetType().Name}.{property.Name}: {property.PropertyType.Name} bekleniyordu, {value.GetType().Name} geldi");
             }
         }
-        return offenders;
     }
 
     public static Color TokenColor(FrameworkElement host, string key)
@@ -147,10 +170,15 @@ internal static class DsResources
     /// (tekilleştirilmiş). Yalnız görsel ağacı saymak perf metriği olarak yanıltıcıdır: Collapsed bir dalın
     /// şablonu genişlemez, bu yüzden <c>Button.Content</c> (Viewbox/Canvas/Path) ve <c>Popup.Child</c> alt-ağacı
     /// görsel ağaca hiç girmez — ama nesne olarak kurulmuş ve satır başına ödenmiştir. Ölçüm bu yüzden mantıksal
-    /// çocukları da gezer. (Tooltip'ler hiçbir ağaca girmez → bu sayıya dahil DEĞİLDİR.)</summary>
+    /// çocukları da gezer. (Tooltip'ler hiçbir ağaca girmez → bu sayıya dahil DEĞİLDİR.)
+    ///
+    /// <para>[fix round 2] <b>KÖK ARTIK SAYIYA DAHİL.</b> Önceden yalnız torunlar dönüyordu: perf çağıranları
+    /// bunu elle <c>+ 1</c> ile telafi ediyordu (kopya bir düzeltme, üç yerde) ve daha kötüsü
+    /// <see cref="DynamicResourceTypeMismatches"/> kök öğenin KENDİ token bağlarını hiç denetlemiyordu —
+    /// bir kökün <c>Background</c>'ına verilmiş yanlış tipli token görünmez kalırdı.</para></summary>
     public static IReadOnlyCollection<DependencyObject> RealizedObjects(DependencyObject root)
     {
-        var seen = new HashSet<DependencyObject>();
+        var seen = new HashSet<DependencyObject> { root };
         var stack = new Stack<DependencyObject>();
         stack.Push(root);
         while (stack.Count > 0)

@@ -74,8 +74,10 @@ public class MainWindowRealizeTests
         // → Background/Fill gibi render-only özellikler GERÇEKTEN okunur).
         Realize(window);
 
-        // [fix round 1 · A1] İkinci ağ: render'ın okumadığı (Collapsed dal, çizilmeyen özellik) token bağları
-        // için hedef DP tipine uyum AÇIKÇA denetlenir — WPF okuma yolunda tip doğrulaması yapmaz.
+        // [fix round 1 · A1 · fix round 2] İkinci ağ: ağaçta VAR OLUP render'ın okumadığı token bağları
+        // (çizilmeyen bir özellik, ölçülmeyen bir Grid tanımı) için hedef DP tipine uyum AÇIKÇA denetlenir —
+        // WPF okuma yolunda tip doğrulaması yapmaz. SINIR: Collapsed bir dalın ŞABLONLA doğacak içeriği hiç
+        // kurulmaz, dolayısıyla ne render ne de bu denetim onu görür — orası kapsam DIŞIDIR.
         Assert.Empty(DsResources.DynamicResourceTypeMismatches(window));
 
         Assert.IsType<SolidColorBrush>(window.Background);

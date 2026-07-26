@@ -169,7 +169,7 @@ public class GraphCullTests
 
         // Nesne tavanı hâlâ geçerli: tooltip HİÇBİR nesne eklemez (etiketsiz düğüm 8 + hücre = 9'un altında).
         Layout(view, Panel);
-        int objects = DsResources.RealizedObjects(visual.Cell).Count + 1;
+        int objects = DsResources.RealizedObjects(visual.Cell).Count; // [T49 fix round 2] kök artık dahil
         Assert.True(objects <= 9, $"tooltip'li etiketsiz düğüm {objects} nesne kuruyor.");
     }
 
