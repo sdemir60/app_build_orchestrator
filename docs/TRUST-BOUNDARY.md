@@ -309,13 +309,17 @@ dolayısıyla IPC'yi de kısardı.
 3. **Bellek, disk I/O, ağ, process sayısı, iş parçacığı**: hiçbir job limiti yazılmaz — `JobObject`'in yazdığı
    tek şeyler `KILL_ON_JOB_CLOSE`, priority class ve CPU rate'tir (`JobObject.cs:19-35`, `:82-123`).
 4. **Copy-contention penceresi cap'i geçici olarak gevşetir.** Post-build copy MSB302x'e takıldığında cap ve
-   priority `Balanced` tabanına (%70 / BelowNormal) çekilir (`RunCoordinator.cs:404-423`, `:431-448`;
+   priority `Balanced` tabanına (%70 / BelowNormal) çekilir (`RunCoordinator.cs:413-442`, `:450-467`;
    taban `PerfProfile.cs:44`, `:52`), pencere ref-count'ludur. Yani `Light` modda ölçülen gerçek CPU tavanı
    geçici olarak %40 değil %70 olabilir.
-5. **Graceful drain'den sonra cap bir daha yazılmaz** (`RunCoordinator.cs:143-145`, `EffectiveCapLocked` →
-   `CapWritableLocked`): "torn DLL yok" garantisi, sonradan geri konan bir cap ile pazarlık edilmez.
+5. **Graceful drain'den sonra cap bir daha yazılmaz, priority de taban değerin altına indirilemez**
+   (`RunCoordinator.cs:143-146`; `EffectiveCapLocked` ve `EffectivePriorityLocked` AYNI `CapWritableLocked`
+   predicate'ine bağlıdır): "torn DLL yok" garantisi, sonradan geri konan bir cap ya da drain sürerken `Idle`'a
+   düşürülen bir priority ile pazarlık edilmez. Nötrleme iki tarafta farklı yönde okunur — cap için "cap yok",
+   priority için "tabandan (BelowNormal) kötü değil"; istenen priority zaten tabandan iyiyse (`Full`'ün
+   `Normal`'i) aynen korunur.
 6. Cap/priority yazımı bir **optimizasyondur**: Win32 hatası run'ı öldürmez, yalnız stderr'e uyarı düşer
-   (`RunCoordinator.cs:503-515`) ve `runStarted.cpuCapPercent` istenen değil **yürürlükteki** değeri taşır
+   (`RunCoordinator.cs:519-534`) ve `runStarted.cpuCapPercent` istenen değil **yürürlükteki** değeri taşır
    (`IpcMessages.cs:145-150`).
 
 ---

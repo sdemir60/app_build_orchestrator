@@ -1731,10 +1731,13 @@ public class RunCoordinatorTests
     /// <summary>Bir profilin priority izi.</summary>
     private static string Prio(PerfMode mode) => "prio:" + PerfProfile.For(mode).Priority;
 
+    /// <summary>Taban priority'sinin izi — cap yazımından BAĞIMSIZ olarak da gerekir: graceful drain'de cap
+    /// kalkar ama priority tabana çekilir (bkz. <c>EffectivePriorityLocked</c>, final review I-1).</summary>
+    private static string FloorPrio => "prio:" + PerfProfile.CopyPhaseFloorPriority;
+
     /// <summary>Copy-contention penceresinin izi: cap VE priority tabanı (ikisi de Balanced'dan türetilir —
     /// cap'i gevşetip priority'yi Idle'da bırakmak floor'un yarısını etkisiz kılardı).</summary>
-    private static string[] FloorApplied() =>
-        [$"cap:{PerfProfile.CopyPhaseFloorPercent}", "prio:" + PerfProfile.CopyPhaseFloorPriority];
+    private static string[] FloorApplied() => [$"cap:{PerfProfile.CopyPhaseFloorPercent}", FloorPrio];
 
     /// <summary>Tek bir contention'ı senaryolayan invoker: 1. deneme MSB3021 + exit 1, sonraki denemeler OK.</summary>
     private static FakeInvoker ContendingOnce()
@@ -1991,12 +1994,48 @@ public class RunCoordinatorTests
         Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
         Assert.Equal([.. Applied(PerfMode.Full)], governor.Calls); // cap yok → drain hiçbir şey YAZMAZ
 
-        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 isterdi — drain kararı BAĞLAR
-        Assert.Equal([.. Applied(PerfMode.Full), CapOff, Prio(PerfMode.Light)], governor.Calls);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi — drain kararı BAĞLAR
+        // [final review I-1] Priority de bağlanır: Idle YAZILMAZ, taban (Balanced) yazılır.
+        Assert.Equal([.. Applied(PerfMode.Full), CapOff, FloorPrio], governor.Calls);
 
         release.TrySetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal([.. Applied(PerfMode.Full), CapOff, Prio(PerfMode.Light), .. Released()], governor.Calls);
+        Assert.Equal([.. Applied(PerfMode.Full), CapOff, FloorPrio, .. Released()], governor.Calls);
+    }
+
+    /// <summary>
+    /// [final review I-1] Drain kararı cap ile priority'yi AYNI ölçüde bağlar. Stop'a basıldıktan sonra perf
+    /// chip'i CANLI kalır (<c>CanStop() = IsRunning || IsStarting</c>), yani kullanıcı beklerken profili
+    /// değiştirebilir. Eskiden <c>EffectivePriorityLocked</c> <c>_capDrained</c>'e BAKMIYORDU: <c>Balanced</c>
+    /// koşan bir run'ın in-flight <c>MSBuild.exe</c> child'ları drain'in tam ortasında <c>Idle</c>'a
+    /// düşürülebiliyordu — yüklü bir makinede Idle bir child, tavanı serbest olsa bile zamanlayıcıdan sıra
+    /// alamaz ve <c>MsBuildInvoker.PerProjectTimeout</c> (10 dk) aşılırsa child <c>Killed</c> edilir; yani
+    /// drain'in korumaya çalıştığı yarım yazılmış çıktı senaryosu geri gelirdi.
+    /// </summary>
+    [Fact]
+    public async Task A_perf_change_during_the_graceful_drain_can_lower_neither_the_cap_nor_the_priority()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Balanced" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.Equal([.. Applied(PerfMode.Balanced), CapOff], governor.Calls); // cap ANINDA kalkar
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi
+
+        // İki yarı da aynı karara bağlı: cap yok, priority tabanın ALTINA inmedi.
+        Assert.Equal([.. Applied(PerfMode.Balanced), CapOff, CapOff, FloorPrio], governor.Calls);
+        Assert.DoesNotContain(Prio(PerfMode.Light), governor.Calls); // "prio:Idle" HİÇ yazılmadı
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Balanced), CapOff, CapOff, FloorPrio, .. Released()], governor.Calls);
     }
 }

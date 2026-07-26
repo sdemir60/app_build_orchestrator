@@ -140,8 +140,9 @@ public sealed class RunCoordinator(
     // [T20-b/P3] Şu an KAÇ worker copy-contention penceresinde. Ref-count zorunludur: paralel build'de birden
     // çok worker aynı anda MSB302x görebilir ve erken çıkan biri, diğeri hâlâ kopyalarken cap'i geri kısardı.
     private int _copyFloorDepth;
-    // [T20-b/P3] Graceful drain başladı ⇒ bu run'da cap bir daha YAZILMAZ (pencere kapanışı ve canlı
-    // setPerfMode dahil). "torn DLL yok" garantisi, sonradan geri konan bir cap ile pazarlık edilemez.
+    // [T20-b/P3] Graceful drain başladı ⇒ bu run'da cap bir daha YAZILMAZ ve [final review I-1] priority taban
+    // değerin altına İNDİRİLEMEZ (pencere kapanışı ve canlı setPerfMode dahil). "torn DLL yok" garantisi,
+    // sonradan geri konan bir cap ya da Idle'a düşürülen bir priority ile pazarlık edilemez.
     private bool _capDrained;
 
     // --- Continue için devredilen state (run'lar ARASINDA yaşar) ---
@@ -317,8 +318,11 @@ public sealed class RunCoordinator(
     /// [T20-b/P3 · §3] Graceful drain: cap KALDIRILIR. Graceful stop, in-flight <c>MSBuild.exe</c> child'larının
     /// post-build copy'lerini TAMAMLAMASINA dayanır (ortak çıktı dizininde yarım yazılmış/torn DLL kalmaz) —
     /// o pencereyi %40'lık bir HARD_CAP ile uzatmak, bir doğruluk garantisini zamanlama yarışına çevirirdi.
-    /// <para><b>Priority'ye DOKUNULMAZ:</b> priority yalnız öncelik sırasını değiştirir (boşta bir makinede
-    /// Idle bir process tam hızda koşar), HARD_CAP ise MUTLAK bir tavandır — drain'i uzatan yarı budur.</para>
+    /// <para><b>Priority BURADA yazılmaz:</b> priority yalnız öncelik sırasını değiştirir (boşta bir makinede
+    /// Idle bir process tam hızda koşar), HARD_CAP ise MUTLAK bir tavandır — drain'i uzatan yarı budur, o yüzden
+    /// kaldırılan yalnız cap'tir. [final review I-1] Ama drain KARARI priority'yi de bağlar: bu noktadan sonra
+    /// priority taban değerin altına İNDİRİLEMEZ (bkz. <see cref="EffectivePriorityLocked"/>) — aksi halde
+    /// drain sürerken gelen bir <c>setPerfMode("Light")</c> in-flight child'ları Idle'a düşürebilirdi.</para>
     /// <para><b>Hard stop yolunda çağrılmaz:</b> orada job zaten <see cref="JobObject.Terminate"/> edilmiştir,
     /// tamamlanacak bir copy yoktur.</para>
     /// <para>Karar run'ın GERİ KALANI için bağlayıcıdır (<see cref="_capDrained"/>): kapanan bir copy-floor
@@ -343,6 +347,9 @@ public sealed class RunCoordinator(
     /// GERÇEKTEN uygulamış olmalı — PerfMode taşımayan run job'a hiç dokunmaz ve run sınırını geçen bir yazım
     /// sonraki run'ın profilini ezerdi; (2) graceful drain başlamamış olmalı — o karar run'ın geri kalanı için
     /// bağlayıcıdır.
+    /// <para>[final review I-1] Priority yarısı da BU predicate'e bağlıdır (<see cref="EffectivePriorityLocked"/>):
+    /// kural iki yolda ayrışmasın diye kapı tek yerde durur — orada nötrleme "cap yok" değil "tabandan kötü
+    /// değil" biçimindedir.</para>
     /// </summary>
     private bool CapWritableLocked => _perfApplied && !_capDrained;
 
@@ -412,15 +419,25 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [T20-b/P3 · fix round 1] <see cref="EffectiveCapLocked"/>'ın priority SİMETRİĞİ: açık bir pencerede
-    /// priority de taban değerin (<see cref="PerfProfile.CopyPhaseFloorPriority"/>) altına indirilmez. Tavanı
+    /// [T20-b/P3 · fix round 1 · final review I-1] <see cref="EffectiveCapLocked"/>'ın priority SİMETRİĞİ:
+    /// priority taban değerin (<see cref="PerfProfile.CopyPhaseFloorPriority"/>) ALTINA indirilmez. Tavanı
     /// gevşetip child'ı Idle'da bırakmak floor'un yarısını etkisiz kılardı — yüklü bir makinede Idle bir
     /// process, tavanı serbest olsa bile zamanlayıcıdan sıra alamaz.
+    /// <para><b>[final review I-1] Taban İKİ hâlde yürürlüktedir</b> ve kural cap ile AYNI predicate'e
+    /// (<see cref="CapWritableLocked"/>) bağlanmıştır — yeni bir dal yok: (1) açık bir copy-contention
+    /// penceresi; (2) graceful drain. Drain'in TAMAMI zaten "copy bitsin" penceresidir
+    /// (<see cref="DrainCapLocked"/>), dolayısıyla o karardan sonra gelen canlı bir <c>setPerfMode("Light")</c>
+    /// in-flight child'ları Idle'a İNDİREMEZ. Eskiden bu kapı yalnız cap tarafında vardı: Stop'a basıldıktan
+    /// sonra perf chip'i canlı kaldığı için <c>Full</c>/<c>Balanced</c> koşan bir run drain sırasında Idle'a
+    /// düşürülebiliyor, "torn DLL yok" garantisinin yarısı korunmuyordu.</para>
+    /// <para>Cap'ten TEK farkı yön: cap için nötr değer "cap yok" (<c>null</c>), priority için "tabandan kötü
+    /// değil" — istenen değer zaten tabandan İYİYSE (ör. <c>Full</c>'ün <c>Normal</c>'i) aynen korunur, drain
+    /// gereksiz yere yavaşlatılmaz.</para>
     /// <para>Karşılaştırma enum'un SIRASINA dayanır: <see cref="ProcessPriorityClassKind"/> yüksekten alçağa
     /// bildirilmiştir (Normal &lt; BelowNormal &lt; Idle), yani "daha büyük" = "daha düşük öncelik".</para>
     /// </summary>
     private ProcessPriorityClassKind EffectivePriorityLocked(ProcessPriorityClassKind kind) =>
-        _copyFloorDepth > 0 && kind > PerfProfile.CopyPhaseFloorPriority
+        (!CapWritableLocked || _copyFloorDepth > 0) && kind > PerfProfile.CopyPhaseFloorPriority
             ? PerfProfile.CopyPhaseFloorPriority
             : kind;
 

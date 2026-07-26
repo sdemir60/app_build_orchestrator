@@ -184,7 +184,9 @@ Three honest qualifications:
 - **Light's 40% is not an absolute ceiling.** When a post-build copy gets stuck on contention (MSB302x), the
   cap and priority are deliberately raised to the Balanced floor (70% / BelowNormal) for the duration of that
   window, because starving a stuck copy is worse than the cap being briefly exceeded. Also, once a graceful
-  stop starts draining, the cap is removed and never re-applied for the rest of that run.
+  stop starts draining, the cap is removed and never re-applied for the rest of that run, and the priority can
+  no longer be lowered past that same floor — switching to Light while a stop is draining will not drop the
+  in-flight compilers to Idle.
 - **Parallelism is fixed at the start of a run.** Workers are created once, and there is no dynamic slot
   mechanism, so switching modes mid-run changes only the CPU cap and the process priority live; the new
   parallelism takes effect on the next run.

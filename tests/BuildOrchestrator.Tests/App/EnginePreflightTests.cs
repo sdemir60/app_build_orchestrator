@@ -170,6 +170,34 @@ public sealed class EnginePreflightTests
         Assert.True(vm.EngineRestartable); // doğmuş bir motor yeniden başlatılabilir — aksiyon görünür kalır
     }
 
+    /// <summary>
+    /// [final review I-2] "Restart engine" yolu da D1'in ayrımını UYGULAR. Motor normal öldüğü için şerit
+    /// aksiyonu sunar (antivirüs <c>supervisor\</c> klasörünü karantinaya almış olabilir); kullanıcı basınca
+    /// preflight <see cref="EngineUnavailableException"/> fırlatır. Eskiden generic <c>catch</c> bunu ayırt
+    /// etmiyordu: <see cref="RunViewModel.EngineRestartable"/> true kalıyor, şerit "unexpectedly stopped"
+    /// metniyle donuyor ve komutlar AÇIK kalıyordu — her tıklama şeritteki mesajla çelişen ikinci bir hata
+    /// satırı üretiyordu (sonsuz "yeniden dene" döngüsü).
+    /// </summary>
+    [Fact]
+    public async Task Restarting_into_a_missing_supervisor_switches_to_the_unavailable_state_instead_of_offering_another_retry()
+    {
+        await using var host = new EngineHost(MissingSupervisorPath);
+        var vm = new RunViewModel(host, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEngineExited(3); // doğmuş motor öldü → aksiyon görünür, komutlar açık
+        Assert.True(vm.EngineRestartable);
+        Assert.True(vm.SyncCommand.CanExecute(null));
+
+        await vm.RestartEngineCommand.ExecuteAsync(null);
+
+        Assert.False(vm.EngineRestartable);                                   // aksiyon GİZLENİR
+        Assert.True(vm.IsEngineUnavailable);
+        Assert.Equal(RunViewModel.EngineMissingMessage, vm.EngineDiedMessage); // TEK ve doğru mesaj
+        Assert.False(vm.SyncCommand.CanExecute(null));                        // çelişen ikinci hata satırı üretilemez
+        Assert.False(vm.BuildCommand.CanExecute(null));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.DoesNotContain("engine restart failed", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
     /// <summary>[Realize] Şerit GERÇEKTEN kurulur (merge zinciri + ekran dışı pencere): headless suite XAML
     /// runtime çözümlemesini görmediği için (bkz. <c>c6e9a21</c>) aksiyon görünürlüğü gerçek görsel ağaçta pinlenir.</summary>
     [StaFact]
