@@ -1,0 +1,222 @@
+# Build Orchestrator
+
+A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
+for projects, derives the dependency graph, decides which projects actually changed (from git, never from
+output timestamps), and builds only those — in parallel, under a supervisor process it owns.
+
+It is a developer tool for your own machine: it builds a repository you would otherwise open in Visual Studio,
+with your own privileges. See [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) for what that means in
+practice — process boundaries, what git is allowed to do, what is explicitly out of the threat model.
+
+## What it does
+
+You point it at a git repository. **Sync** scans the working tree for `*.csproj`/`*.sln`, reads the project
+files as raw XML (MSBuild is never evaluated for this), builds the dependency graph, and compares the current
+source signature against the stored build state to mark each project as "will build" or "up to date". **Build**
+then runs the plan: each project is shelled out to a separate `MSBuild.exe` child process, ordered by the graph,
+N at a time. Progress streams back to a live project list, a dependency graph view and a console. A run can be
+stopped (in-flight projects are allowed to finish their post-build copy), continued from where it stopped, or
+retried for just the failed projects and their dependents. Building a branch other than the checked-out one
+happens in a detached git worktree from a pool — your working tree is never checked out, reset or switched.
+
+## Architecture
+
+| Project | Target | Responsibility |
+|---|---|---|
+| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray icon, single instance. Owns the **outer Job Object** and spawns the Supervisor. |
+| `src/BuildOrchestrator.Core` | net10.0 | Pure logic: project discovery, dependency graph, git service, incremental planning, state/config persistence, Job Object + process control primitives. |
+| `src/BuildOrchestrator.Supervisor` | net10.0-windows | Separate engine process: run queue, **inner Job Object**, one `MSBuild.exe` child per project, log parsing, IPC server over stdio. |
+| `src/BuildOrchestrator.Contracts` | net10.0 | App ↔ Supervisor IPC contracts: commands, events, JSON serialization, NDJSON framing. |
+| `tests/BuildOrchestrator.Tests` | net10.0-windows (xUnit) | Unit, process-control, WPF and integration tests. |
+
+Process layout:
+
+```
+BuildOrchestrator.App.exe   (WPF; owns the outer job, but is not a member of it)
+  │  stdio, newline-delimited JSON
+  ▼
+[ outer Job Object — KILL_ON_JOB_CLOSE ]
+  BuildOrchestrator.Supervisor.exe
+    ├── git.exe / vswhere.exe        (plain child processes — outer job only)
+    └── [ inner Job Object — KILL_ON_JOB_CLOSE + CPU rate cap + priority ]
+          MSBuild.exe (one per project) + whatever its targets spawn
+```
+
+Key consequences of that layout:
+
+- The App never references the Supervisor assembly. It copies the Supervisor's output next to itself and
+  starts it as a process; all communication is IPC over stdio (`Contracts`). The Supervisor's **stdout carries
+  NDJSON only** — diagnostics go to stderr.
+- If the App dies for any reason (including being killed from Task Manager), the last handle on the outer job
+  closes and the whole tree dies with it. There is no managed parent-watcher and no PID heuristics.
+- Builds are **shelled out**, never done in-process. `MSBuild.exe` is located through `vswhere` (VS or Build
+  Tools), and every project is invoked with `-p:UseSharedCompilation=false -nodeReuse:false` so that no
+  compiler server survives outside the job.
+- The shared `OutDir` is never touched: no `-p:OutDir` / `-p:OutputPath` is ever passed, so output lands
+  exactly where Visual Studio would put it. Only `BaseIntermediateOutputPath` (`obj`) is isolated, and only in
+  worktree mode, keyed by the project's full path.
+- "Did it change?" is answered only from source signals (commit + git diff). No DLL or `bin` timestamp is ever
+  read.
+
+## Requirements
+
+- **Windows.** WPF, Job Objects and the Win32 process control are not portable.
+- **.NET 10 SDK** — to build and run this repository.
+- **Visual Studio 2022 or Build Tools** with the `Microsoft.Component.MSBuild` component. The engine resolves
+  `MSBuild.exe` at run time through
+  `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe`; without it, builds fail with a resolve
+  error (the Supervisor itself still starts). "Open in Visual Studio" additionally needs a full VS IDE install.
+- **`git` on `PATH`** — the engine invokes `git` by name.
+
+## Build, test, run
+
+```powershell
+dotnet build BuildOrchestrator.slnx
+dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj
+dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
+```
+
+Close any running instance of the app before building — a running Supervisor keeps its own binaries locked.
+The test suite is expected to be fully green; a few acceptance tests need a real large repository and are
+excluded with `--filter "Category!=Acceptance"`.
+
+## Publish
+
+Framework-dependent, folder-based publish:
+
+```powershell
+dotnet publish src\BuildOrchestrator.App\BuildOrchestrator.App.csproj `
+  -c Release -r win-x64 --self-contained false -o <output-folder>
+```
+
+**The `supervisor\` subfolder next to the published `.exe` is mandatory.** It is not an optional extra: it
+*is* the build engine. The App resolves `<app folder>\supervisor\BuildOrchestrator.Supervisor.exe` at startup;
+if it is missing, no build can run and the app says so instead of failing silently. The publish target adds
+that folder to the publish list, and the build fails outright rather than producing an engine-less package.
+`Assets\GEIST-LICENSE.txt` also ships with the output.
+
+Not supported:
+
+- **`PublishSingleFile`** — rejected by an MSBuild target with an explicit error. `AppContext.BaseDirectory`
+  would point at the extraction directory and the `supervisor\` subfolder cannot go into the bundle.
+- **Self-contained publish** is not verified. The only publish mode that is exercised end to end is
+  `-c Release -r win-x64 --self-contained false`.
+
+To verify a publish output end to end:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify-publish.ps1
+```
+
+It publishes to a temp folder and runs 17 checks: publish exit code, layout (`App.exe`, `supervisor\`,
+font licence), an NDJSON round trip against the published Supervisor binary, launching the published `.exe`
+and confirming via WMI that the Supervisor child was spawned from that same folder, reading the console boot
+line and the ribbon state out of the live window through UI Automation, and finally killing only the App and
+proving the Supervisor dies *by itself* through the job cascade. Exit code `0` = pass, `1` = fail,
+`2` = precondition not met (the app is single-instance, so an already running instance makes the measurement
+meaningless).
+
+## Using it
+
+1. **Pick a repository** — Settings → repository "Change…". Changing it resets project states and starts a
+   Sync automatically.
+2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here.
+3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
+   in a detached worktree from the pool, and the list falls back to "Sync required". Worktrees are created with
+   `--detach` and live under `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
+4. **Build / Rebuild / Continue / Retry failed** — from the split button and its menu:
+   - *Build* — only changed projects.
+   - *Rebuild* — all projects, cached state ignored.
+   - *Continue* — appears after a stop; resumes the queued remainder.
+   - *Retry failed* — appears when there are failures; rebuilds them and their dependents.
+5. **Stop** — a graceful stop: in-flight `MSBuild.exe` children are allowed to finish, including their
+   post-build copy, so no half-written DLL is left behind.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `F5` | Build — or Stop while a run is in flight, or Continue when stopped |
+| `Ctrl+F5` / `Shift+F5` | Rebuild |
+| `Ctrl+F` | Focus the project filter |
+| `Esc` | Close the topmost open layer: dialog → popover/menu → selection |
+| `Alt+B` | Global hotkey: bring the window back from the tray (configurable in Settings) |
+
+Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
+
+### State on disk
+
+Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run
+and per-project logs), `build-state.json`, `evaluation-cache.json`, `ui-state.json` and the `worktrees\` pool
+(capped at 20 GiB with LRU pruning). Autostart, when enabled, writes to
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service.
+
+## Performance modes
+
+One chip in the UI cycles three fixed profiles (default: Balanced):
+
+| Mode | Parallelism | Process priority | Inner-job hard CPU cap |
+|---|---|---|---|
+| Full | 6 | Normal | none |
+| Balanced | 4 | BelowNormal | 70% |
+| Light | 2 | Idle | 40% |
+
+Switching writes a console note in exactly this form: `parallelism: 4 · cpu cap 70%` (`cpu cap off` for Full).
+
+Three honest qualifications:
+
+- **The cap only limits the build.** It is written to the inner Job Object, which holds `MSBuild.exe` children
+  and nothing else. `git` and `vswhere` are started as plain child processes and are never assigned to the
+  inner job, so Sync, branch listing and MSBuild resolution run at full speed even in Light mode. The App
+  itself is not a member of any job either — the UI is never throttled by the cap. This is deliberate: capping
+  those would throttle the IPC and the interface, not the build.
+- **Light's 40% is not an absolute ceiling.** When a post-build copy gets stuck on contention (MSB302x), the
+  cap and priority are deliberately raised to the Balanced floor (70% / BelowNormal) for the duration of that
+  window, because starving a stuck copy is worse than the cap being briefly exceeded. Also, once a graceful
+  stop starts draining, the cap is removed and never re-applied for the rest of that run.
+- **Parallelism is fixed at the start of a run.** Workers are created once, and there is no dynamic slot
+  mechanism, so switching modes mid-run changes only the CPU cap and the process priority live; the new
+  parallelism takes effect on the next run.
+
+## Known limits (v1)
+
+- **One repository at a time.** Multi-repo is out of scope for v1.
+- **No build-output isolation for worktrees.** Only `obj` is isolated (per project id, in worktree mode); the
+  shared `OutDir` is intentionally left alone for Visual Studio parity, so builds of different branches write
+  their output to the same place.
+- **`UseSharedCompilation=false` and `nodeReuse:false` are kept**, and they cost real time — measurements put
+  the flags-off build at roughly 2.9× the flags-on build, essentially all of it from shared compilation.
+  They stay because with a compiler server the emit happens in a long-lived process *outside* the job, which
+  brings back the risk of a torn DLL when a run is stopped. Correctness was chosen over the 2.9×; revisiting
+  it is a tracked follow-up, not an oversight.
+- **The project list is not virtualized.** Card simplification brought the realize time of a 191-row list down
+  substantially but did not reach the 400 ms budget on the reference machine; virtualization was deliberately
+  deferred because it would touch sticky headers, follow-scroll, reveal staggering and selection at once.
+- **The graph view is full detail only up to 150 nodes** (`GraphView.FullDetailMaxNodes`). Above that,
+  off-screen nodes and edges are culled and labels drop out by level of detail. On the reference machine,
+  synthetic graphs of 500 and 1000 nodes open in roughly 90 ms and 136 ms; panning across the whole graph
+  materializes the rest and costs roughly 206 ms and 469 ms in total.
+- **The IPC has no field-level schema validation.** Malformed commands never take the Supervisor down, but a
+  missing field surfaces as a `planFailed`/`runFailed` at the point of use rather than at parse time.
+- **Symlinks/junctions are not followed or detected** during the workspace scan, and a `.csproj` may reference
+  files outside the repository root. Both are accepted risks — the repository is trusted by definition.
+
+## Design and decision records
+
+- [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) — process, IPC, filesystem, git, input and CPU boundaries,
+  each claim cited to `file:line`, plus an explicit list of what is *not* verified and what is out of the
+  threat model.
+- `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md` — the v7 implementation plan
+  (the binding architectural decisions: nested Job Object, shell-out, read-only git, the perf table).
+- `.claude/outputs/2026-07-15-19-00-design-v1/` — the design package: design system README plus the HTML/JSX
+  prototype that is the visual authority for the UI.
+- `CLAUDE.md` — working conventions for this repository.
+
+## Licence
+
+There is **no licence file for this project** — the repository ships no `LICENSE`, so no licence is granted
+here by default.
+
+The one third-party licence that is included and redistributed is the **Geist** and **Geist Mono** fonts,
+licensed under the **SIL Open Font License 1.1**: `src/BuildOrchestrator.App/Assets/GEIST-LICENSE.txt`, which
+is copied into the publish output as `Assets\GEIST-LICENSE.txt`.
