@@ -486,14 +486,17 @@ public partial class MainWindow : Window
     {
         try
         {
-            await _engine.StartAsync();
+            var ready = await _engine.StartAsync();
+            // [D1 review · C5] Sürüm bilgisi UI'da: konsolun boot satırı (design-v1 anlatı dili).
+            _vm.OnEngineReady(ready.EngineVersion);
         }
         catch (Services.EngineUnavailableException ex)
         {
-            // [D1] Kurulum eksik (supervisor\ çıktısı yok): child hiç doğmadığı için EngineExited ATEŞLENMEZ →
+            // [D1] Motor HİÇ doğamadı — iki neden: supervisor\ çıktısı yok (kurulum eksik) VEYA dosya var ama
+            // başlatılamadı (bozuk exe/erişim reddi/TOCTOU [A2]). Child doğmadığı için EngineExited ATEŞLENMEZ →
             // eskiden kullanıcı HİÇBİR ŞEY görmüyordu (yalnız Debug.WriteLine, Release'te derlenip çıkar).
             // Şerit kalıcı hata moduna alınır; "Restart engine" gösterilmez (bkz. OnEngineUnavailable).
-            _vm.OnEngineUnavailable(ex.ExePath);
+            _vm.OnEngineUnavailable(ex.ExePath, ex.Reason);
         }
         catch (Exception ex)
         {

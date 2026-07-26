@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
@@ -5,18 +6,35 @@ using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.App.Services;
 
-/// <summary>
-/// [D1] Supervisor çıktısı uygulamanın yanında YOK — motor hiç doğamaz (eksik/bozuk kurulum, ör. publish
-/// çıktısına <c>supervisor\</c> klasörü girmemiş). Ham <see cref="System.ComponentModel.Win32Exception"/>
-/// yerine bu AYRIŞAN tür atılır: çağıran (MainWindow) bunu kullanıcıya görünür, yeniden başlatması ANLAMSIZ
-/// bir kurulum hatasına çevirir. Child hiç doğmadığı için <see cref="EngineHost.EngineExited"/> ASLA
-/// ateşlenmez → kullanıcıya TEK sinyal gider.
-/// </summary>
-public sealed class EngineUnavailableException(string exePath)
-    : InvalidOperationException($"Supervisor çalıştırılabiliri bulunamadı: {exePath}")
+/// <summary>[D1 review · A2] Motorun hiç doğamama nedeni — kullanıcıya gösterilen metni bu ayrım belirler.</summary>
+public enum EngineUnavailableReason
 {
-    /// <summary>Aranan (ve bulunamayan) Supervisor exe yolu — konsol satırında gösterilir.</summary>
+    /// <summary>Supervisor çalıştırılabiliri uygulamanın yanında YOK (eksik/bozuk kurulum; publish çıktısına
+    /// <c>supervisor\</c> klasörü girmemiş).</summary>
+    NotFound,
+
+    /// <summary>Dosya var ama BAŞLATILAMADI: geçersiz/bozuk exe, erişim reddi, TOCTOU (pre-flight ile launch
+    /// arasında silinme) — <c>CreateProcessW</c> senkron başarısız oldu.</summary>
+    CannotStart,
+}
+
+/// <summary>
+/// [D1] Motor hiç doğamadı. Ham <see cref="System.ComponentModel.Win32Exception"/> yerine bu AYRIŞAN tür
+/// atılır: çağıran (MainWindow) bunu kullanıcıya görünür, yeniden başlatması ANLAMSIZ bir kurulum hatasına
+/// çevirir. Child hiç doğmadığı için <see cref="EngineHost.EngineExited"/> ASLA ateşlenmez → kullanıcıya TEK
+/// sinyal gider. Mesaj metni İngilizce'dir (uygulama İngilizce-only).
+/// </summary>
+public sealed class EngineUnavailableException(string exePath, EngineUnavailableReason reason, Exception? inner = null)
+    : InvalidOperationException(
+        reason == EngineUnavailableReason.NotFound
+            ? $"Supervisor executable was not found: {exePath}"
+            : $"Supervisor executable could not be started: {exePath}", inner)
+{
+    /// <summary>Aranan Supervisor exe yolu — konsol satırında gösterilir.</summary>
     public string ExePath { get; } = exePath;
+
+    /// <summary>Neden (kullanıcıya gösterilecek metni ayırt eder).</summary>
+    public EngineUnavailableReason Reason { get; } = reason;
 }
 
 public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
@@ -36,12 +54,25 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
     {
         // [D1] Pre-flight: exe yoksa CreateProcessW'nin ham Win32Exception'ını beklemeyiz — generation'a
         // DOKUNMADAN (hiçbir yan etki bırakmadan) ayrışan tür atılır.
-        if (!File.Exists(supervisorExePath)) throw new EngineUnavailableException(supervisorExePath);
+        if (!File.Exists(supervisorExePath))
+            throw new EngineUnavailableException(supervisorExePath, EngineUnavailableReason.NotFound);
 
         int gen = Interlocked.Increment(ref _generation);
         _ready = new TaskCompletionSource<EngineReadyEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         string cmdLine = WindowsCommandLine.Build(supervisorExePath);
-        _child = JobProcessLauncher.Launch(_outerJob, cmdLine, new LaunchOptions(RedirectStdio: true));
+        // [D1 review · A2] Pre-flight'ı GEÇEN ama başlatılamayan exe (bozuk/geçersiz binary, erişim reddi,
+        // TOCTOU) de AYNI görünür yüzeye düşer: ham Win32Exception generic catch'te yutulurdu. Child hiç
+        // doğmadığı için burada da EngineExited ateşlenmez → tek sinyal.
+        try
+        {
+            _child = JobProcessLauncher.Launch(_outerJob, cmdLine, new LaunchOptions(RedirectStdio: true));
+        }
+        catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            // generation GERİ ALINMAZ: monotonik kalmalı (numara yeniden kullanılırsa eski bir watcher yeni
+            // generation'ın rapor hakkını çalabilirdi). Bu gen için hiç watcher/reader kurulmadı — sinyal yok.
+            throw new EngineUnavailableException(supervisorExePath, EngineUnavailableReason.CannotStart, ex);
+        }
         _writer = new NdjsonWriter(_child.StandardInput!);
         var reader = new NdjsonReader(_child.StandardOutput!);
         _ = Task.Run(() => ReadLoopAsync(reader, gen), CancellationToken.None);
@@ -51,7 +82,8 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
             int code = await watched.WaitForExitAsync(CancellationToken.None);
             if (Volatile.Read(ref _generation) == gen)
             {
-                _ready?.TrySetException(new InvalidOperationException($"Engine startup'ta öldü (exit {code}).")); // startup-crash tek sinyal
+                // [D1 review · A3] Kullanıcıya ulaşabilen HER metin İngilizce (uygulama İngilizce-only).
+                _ready?.TrySetException(new InvalidOperationException($"Engine died during startup (exit {code}).")); // startup-crash tek sinyal
                 if (TryClaimExit(gen)) EngineExited?.Invoke(code);
             }
         }, CancellationToken.None);
@@ -66,8 +98,10 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
         }
     }
 
+    // [D1 review · A3] Bu mesaj KULLANICIYA görünür: TrySendAsync onu konsola "[error] failed to send …"
+    // satırıyla yazar. Uygulama İngilizce-only olduğundan metin de İngilizce.
     public Task SendAsync(IpcCommand command, CancellationToken ct = default) =>
-        _writer?.WriteAsync(command, ct) ?? throw new InvalidOperationException("Engine başlatılmadı.");
+        _writer?.WriteAsync(command, ct) ?? throw new InvalidOperationException("Engine is not running.");
 
     public async Task<EngineReadyEvent> RestartAsync(CancellationToken ct = default)
     {
@@ -88,7 +122,7 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
                     // Bozuk frame = kalıcı sağırlık YARATMAZ; Supervisor exit-2 ile simetri: engine'i öldür + TEK sinyal. [it0-devir]
                     if (Volatile.Read(ref _generation) == gen)
                     {
-                        _ready?.TrySetException(new InvalidOperationException("Engine framing hatası ile öldü.")); // startup'ta anlık sinyal [it0-devir]
+                        _ready?.TrySetException(new InvalidOperationException("Engine died with a framing error.")); // startup'ta anlık sinyal [it0-devir]
                         Interlocked.Increment(ref _generation); // exit watcher'ı sustur → EngineExited tek kez
                         KillCurrent();
                         if (TryClaimExit(gen)) EngineExited?.Invoke(null); // tek raporcu kazanır, stale gen yeni geni bloklayamaz

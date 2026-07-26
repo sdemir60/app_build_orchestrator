@@ -238,14 +238,16 @@ public sealed class RunCoordinator(
         ErrorEvent? rejection = null;
         lock (_gate)
         {
+            // [D1 review · A3] ErrorEvent.Message KULLANICIYA ulaşır (şerit "Sync failed — …" / konsol) →
+            // uygulama İngilizce-only olduğu için bu metinler de İngilizce.
             if (_disposed)
-                rejection = new ErrorEvent("runInProgress", "Supervisor kapanıyor — yeni run kabul edilmiyor.");
+                rejection = new ErrorEvent("runInProgress", "Supervisor is shutting down — new runs are not accepted.");
             else if (_runActive)
-                rejection = new ErrorEvent("runInProgress", $"Zaten bir run koşuyor — '{cmd.RunId}' reddedildi.");
+                rejection = new ErrorEvent("runInProgress", $"A run is already in progress — '{cmd.RunId}' was rejected.");
             else if (cmd.Mode == RunMode.Continue && !IsResumableForLocked(cmd.RootPath))
-                rejection = new ErrorEvent("noResumableRun", $"'{cmd.RootPath}' için sürdürülebilir bir run yok.");
+                rejection = new ErrorEvent("noResumableRun", $"No resumable run for '{cmd.RootPath}'.");
             else if (cmd.Mode == RunMode.RetryFailed && !IsRetryableForLocked(cmd.RootPath))
-                rejection = new ErrorEvent("noResumableRun", $"'{cmd.RootPath}' için retry edilecek failed proje yok.");
+                rejection = new ErrorEvent("noResumableRun", $"No failed projects to retry for '{cmd.RootPath}'.");
             else
             {
                 // Slot, arka plan task'ı başlamadan ÖNCE burada tutulur: ikinci bir startRun (planlama sürerken
@@ -800,7 +802,8 @@ public sealed class RunCoordinator(
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,
-            "Run {0} ({1}): {2} proje, {3} worker, {4}, {5} — her proje ayrı bir derleyici child process'i olarak derlenir; komut satırları proje loglarında.",
+            // [D1 review · A3] console(...) satırları KULLANICININ konsolunda görünür → İngilizce.
+            "Run {0} ({1}): {2} projects, {3} workers, {4}, {5} — each project is built as its own compiler child process; command lines are in the project logs.",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapTextUnset : PerfNoteText.CapText(appliedCap)));
         Decide(logs, string.Format(CultureInfo.InvariantCulture,

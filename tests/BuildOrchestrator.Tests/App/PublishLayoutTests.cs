@@ -113,12 +113,48 @@ public sealed class PublishLayoutTests
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .Append(DirectoryBuildPropsPath);
 
+        // Hiçbir proje bunu AÇMAZ (property olarak set etmez).
         var offenders = buildFiles
-            .Where(f => File.ReadAllText(f).Contains("PublishSingleFile", StringComparison.Ordinal))
+            .Where(f => Load(f).Descendants(None + "PublishSingleFile").Any())
             .Select(f => Path.GetRelativePath(RepoPaths.RepoRoot, f))
             .ToList();
-
         Assert.Empty(offenders);
+
+        // [D1 review · C2] …ve komut satırından (-p:PublishSingleFile=true) SESSİZCE açılamaz: App csproj'unda
+        // bunu açık hatayla reddeden bir target var (kaynak taraması niyeti korur, target komut satırını kapatır).
+        var gate = Load(AppCsprojPath).Descendants(None + "Target")
+            .SelectMany(t => t.Elements(None + "Error"))
+            .FirstOrDefault(e => ((string?)e.Attribute("Condition"))?.Contains("PublishSingleFile", StringComparison.Ordinal) == true);
+        Assert.NotNull(gate);
+        Assert.Contains("'true'", (string?)gate!.Attribute("Condition"), StringComparison.Ordinal);
+    }
+
+    /// <summary>[D1 review · A1] Publish, içinde engine OLMAYAN bir paketi SESSİZCE üretemez: dosya kümesi
+    /// boşsa build/publish açık bir hatayla durur (D1'in kapattığı bug'ın bir seviye yukarısı).</summary>
+    [Fact]
+    public void An_empty_supervisor_file_set_fails_the_build_instead_of_shipping_an_engineless_package()
+    {
+        var resolve = Load(AppCsprojPath).Descendants(None + "Target")
+            .Single(t => (string?)t.Attribute("Name") == "_ResolveSupervisorFiles");
+
+        var conditions = resolve.Elements(None + "Error")
+            .Select(e => (string?)e.Attribute("Condition") ?? "")
+            .ToList();
+
+        Assert.Contains(conditions, c => c.Contains("@(_SupervisorFiles)", StringComparison.Ordinal));  // A1: boş küme
+        Assert.Contains(conditions, c => c.Contains("$(_SupervisorOutDir)", StringComparison.Ordinal)); // C1: çözülemeyen dizin
+    }
+
+    /// <summary>[D1 review · C3] Kopyalama incremental: hedefin <c>Inputs</c>/<c>Outputs</c>'u var (aksi halde
+    /// her build'de tüm supervisor ağacı silinip yeniden kopyalanırdı ve <c>SkipUnchangedFiles</c> ölü kalırdı).</summary>
+    [Fact]
+    public void The_supervisor_copy_is_incremental()
+    {
+        var copy = Load(AppCsprojPath).Descendants(None + "Target")
+            .Single(t => (string?)t.Attribute("Name") == "CopySupervisorOutput");
+
+        Assert.Equal("@(_SupervisorFiles)", (string?)copy.Attribute("Inputs"));
+        Assert.False(string.IsNullOrWhiteSpace((string?)copy.Attribute("Outputs")));
     }
 
     // ------------------------------------------------------------------ sürüm / ürün kimliği
@@ -139,8 +175,28 @@ public sealed class PublishLayoutTests
 
         var app = typeof(SupervisorLayout).Assembly;
         Assert.Equal(version, app.GetName().Version?.ToString(3));
-        Assert.StartsWith(version, app.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion,
-            StringComparison.Ordinal);
         Assert.Equal(product, app.GetCustomAttribute<AssemblyProductAttribute>()!.Product);
+    }
+
+    /// <summary>
+    /// [D1 review · B2] Sürüm kablosunun GERÇEKTEN kurulu olduğunu AYIRT EDEN test. Yalın <c>1.0.0</c>,
+    /// <c>Directory.Build.props</c> hiç devreye girmese bile .NET SDK'nın varsayılanıdır — onu doğrulamak
+    /// "yeşil ama boş" bir testtir. Bu yüzden props ayırt edici bir <c>InformationalVersion</c> (teslim etiketi)
+    /// tanımlar ve hem App hem Supervisor assembly'sinde AYNEN gözlenir. Supervisor bu değeri
+    /// <c>engineReady.engineVersion</c> ile bildirir; App onu konsolun boot satırında gösterir.
+    /// </summary>
+    [Fact]
+    public void The_informational_version_proves_directory_build_props_is_really_applied()
+    {
+        var props = Load(DirectoryBuildPropsPath);
+        string version = props.Descendants(None + "Version").Single().Value;
+        string declared = props.Descendants(None + "InformationalVersion").Single().Value
+            .Replace("$(Version)", version, StringComparison.Ordinal);
+
+        Assert.NotEqual(version, declared); // SDK varsayılanından AYIRT EDİLEBİLİR olmalı
+
+        foreach (var assembly in new[] { typeof(SupervisorLayout).Assembly, typeof(BuildOrchestrator.Supervisor.SupervisorHost).Assembly })
+            Assert.Equal(declared,
+                assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion);
     }
 }

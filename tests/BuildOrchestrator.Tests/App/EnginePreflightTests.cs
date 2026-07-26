@@ -4,6 +4,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -68,6 +69,94 @@ public sealed class EnginePreflightTests
 
         Assert.Contains(MissingSupervisorPath, vm.GetRunDocumentText(), StringComparison.Ordinal);
         Assert.DoesNotContain(MissingSupervisorPath, vm.EngineDiedMessage!, StringComparison.Ordinal); // şerit tek satır kalır
+    }
+
+    /// <summary>[D1 review · A2] Dosya VAR ama başlatılamıyor (bozuk binary): pre-flight'ı geçen bu yol eskiden
+    /// generic catch'te ham <c>Win32Exception</c> olarak YUTULUYORDU — aynı görünür yüzeye, AYIRT EDİCİ metinle
+    /// düşmeli ve yine TEK sinyal üretmeli.</summary>
+    [Fact]
+    public async Task An_unstartable_supervisor_binary_is_reported_instead_of_being_swallowed()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "bo-preflight-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(dir, SupervisorLayout.FolderName));
+        string fake = SupervisorLayout.ResolveExePath(dir);
+        File.WriteAllText(fake, "this is not a portable executable"); // CreateProcessW → ERROR_BAD_EXE_FORMAT
+        try
+        {
+            await using var host = new EngineHost(fake);
+            int exitSignals = 0;
+            host.EngineExited += _ => Interlocked.Increment(ref exitSignals);
+
+            var ex = await Assert.ThrowsAsync<EngineUnavailableException>(() => host.StartAsync());
+
+            Assert.Equal(EngineUnavailableReason.CannotStart, ex.Reason);
+            Assert.Equal(fake, ex.ExePath);
+            Assert.Equal(0, exitSignals); // child doğmadı → EngineExited yok (tek sinyal)
+            Assert.Null(host.EnginePid);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void A_broken_supervisor_gets_its_own_ribbon_line_distinct_from_a_missing_one()
+    {
+        var vm = NewVm();
+
+        vm.OnEngineUnavailable(MissingSupervisorPath, EngineUnavailableReason.CannotStart);
+
+        Assert.Equal(RunViewModel.EngineCannotStartMessage, vm.EngineDiedMessage);
+        Assert.NotEqual(RunViewModel.EngineMissingMessage, RunViewModel.EngineCannotStartMessage);
+        Assert.False(vm.EngineRestartable);
+        Assert.Contains("engine could not start", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>[D1 review · A3] Motor erişilemezken Sync/Build/Rebuild/Retry/Continue ANLAMSIZ: tıklanınca
+    /// şeritteki kalıcı mesajla çelişen ikinci bir hata satırı üretirlerdi. Normal (doğmuş) motor ölümü BU
+    /// DURUM DEĞİLDİR — orada "Restart engine" sunulur ve komutlar açık kalır (E2/T37 davranışı).</summary>
+    [Fact]
+    public void An_unreachable_engine_disables_the_actions_but_a_restartable_death_does_not()
+    {
+        var missing = NewVm();
+        Assert.True(missing.SyncCommand.CanExecute(null));
+        Assert.True(missing.BuildCommand.CanExecute(null));
+
+        missing.OnEngineUnavailable(MissingSupervisorPath);
+
+        Assert.True(missing.IsEngineUnavailable);
+        Assert.False(missing.SyncCommand.CanExecute(null));
+        Assert.False(missing.BuildCommand.CanExecute(null));
+        Assert.False(missing.RebuildCommand.CanExecute(null));
+
+        var died = NewVm();
+        died.OnEngineExited(1);
+
+        Assert.False(died.IsEngineUnavailable);
+        Assert.True(died.SyncCommand.CanExecute(null)); // Restart engine sunuluyor — eylemler kilitlenmez
+        Assert.True(died.BuildCommand.CanExecute(null));
+    }
+
+    /// <summary>[D1 review · A3] Uygulama İngilizce-only: engine yokken bir komut gönderilirse konsola düşen
+    /// metin de İngilizce olmalı (eskiden <c>"Engine başlatılmadı."</c> sızıyordu).</summary>
+    [Fact]
+    public async Task Sending_a_command_without_an_engine_reports_in_english()
+    {
+        await using var host = new EngineHost(MissingSupervisorPath);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SendAsync(new PingCommand(1)));
+
+        Assert.Equal("Engine is not running.", ex.Message);
+        Assert.DoesNotMatch("[çğıöşüÇĞİÖŞÜ]", ex.Message);
+    }
+
+    /// <summary>[D1 review · C5] Sürüm bilgisi bir yüzeyde GÖRÜNÜR: konsolun boot satırı (design-v1 anlatı dili).</summary>
+    [Fact]
+    public void Engine_ready_writes_the_version_into_the_console_boot_line()
+    {
+        var vm = NewVm();
+
+        vm.OnEngineReady("1.0.0+it5");
+
+        Assert.Contains("Engine ready — v1.0.0+it5", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
     [Fact]

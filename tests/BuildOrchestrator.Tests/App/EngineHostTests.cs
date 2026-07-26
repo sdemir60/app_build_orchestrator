@@ -40,7 +40,8 @@ public class EngineHostTests
     [Fact]
     public async Task StartAsync_timeout_disposes_child_and_no_leak()
     {
-        // Var olmayan exe → child hızla ölür; StartAsync 5sn timeout'a düşmeden EngineExited ya da hata dönmeli.
+        // [D1] Var olmayan exe → child HİÇ DOĞMAZ: pre-flight (File.Exists) StartAsync'i 5sn timeout'a hiç
+        // düşürmeden EngineUnavailableException ile keser; hiçbir process/handle sızmaz.
         await using var host = new EngineHost(Path.Combine(AppContext.BaseDirectory, "does-not-exist.exe"));
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await host.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(6)).Token));

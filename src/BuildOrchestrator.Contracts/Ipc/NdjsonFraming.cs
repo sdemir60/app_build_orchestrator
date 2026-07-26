@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace BuildOrchestrator.Contracts.Ipc;
 
@@ -18,7 +18,7 @@ public sealed class NdjsonWriter(Stream stream)
     {
         byte[] payload = JsonSerializer.SerializeToUtf8Bytes(message, IpcJson.Options); // JSON escape → payload'da ham \n olamaz
         if (payload.Length + 1 > MaxLineBytes)
-            throw new IpcFramingException($"IPC mesajı {payload.Length} bayt — MaxLineBytes ({MaxLineBytes}) aşıldı.");
+            throw new IpcFramingException($"IPC message is {payload.Length} bytes — MaxLineBytes ({MaxLineBytes}) exceeded.");
         await _gate.WaitAsync(ct);
         try
         {
@@ -50,18 +50,18 @@ public sealed class NdjsonReader(Stream stream)
                 try
                 {
                     return JsonSerializer.Deserialize<T>(_line.GetBuffer().AsSpan(0, (int)_line.Length), IpcJson.Options)
-                           ?? throw new IpcFramingException("null IPC mesajı.");
+                           ?? throw new IpcFramingException("null IPC message.");
                 }
                 finally { _line.SetLength(0); }
             }
             _line.Write(_buffer, _start, _end - _start);
             _start = _end = 0;
             if (_line.Length > NdjsonWriter.MaxLineBytes)
-                throw new IpcFramingException($"IPC satırı MaxLineBytes ({NdjsonWriter.MaxLineBytes}) aşıldı.");
+                throw new IpcFramingException($"IPC line exceeded MaxLineBytes ({NdjsonWriter.MaxLineBytes}).");
             int read = await stream.ReadAsync(_buffer, ct);
             if (read == 0)
             {
-                if (_line.Length > 0) throw new IpcFramingException("EOF: tamamlanmamış IPC satırı.");
+                if (_line.Length > 0) throw new IpcFramingException("EOF: incomplete IPC line.");
                 return null;
             }
             _end = read;

@@ -67,19 +67,39 @@
       <!-- TargetPath = ...\bin\<Config>\<TFM>[\<RID>]\BuildOrchestrator.Supervisor.dll → dizini (sonda '\'). -->
       <_SupervisorOutDir>@(_SupervisorTargetPath->'%(RootDir)%(Directory)')</_SupervisorOutDir>
     </PropertyGroup>
+    <!-- [D1 review · C1] Execution-anı guard: yol çözülemediyse GLOB'a hiç girme — boş property + `**`
+         "sürücüyü tara" desenidir (bu task sırasında fiilen MSB5029 alındı). Sessiz geçmek YASAK. -->
+    <Error Condition="'$(_SupervisorOutDir)' == '' or '$(_SupervisorOutDir)' == '\'"
+           Text="Supervisor cikti dizini cozulemedi (GetTargetPath bos dondu): BuildOrchestrator.Supervisor derlenemedi mi?" />
     <ItemGroup>
       <_SupervisorFiles Include="$(_SupervisorOutDir)**\*.*" Exclude="$(_SupervisorOutDir)publish\**" />
     </ItemGroup>
+    <PropertyGroup>
+      <!-- $(OutDir) ANCAK SDK target'ları yüklendikten sonra tanımlı — bu yüzden damga yolu burada (target
+           içinde) kurulur. DependsOnTargets, tüketen hedefin Inputs/Outputs denetiminden ÖNCE koşar. -->
+      <_SupervisorCopyStamp>$(OutDir)$(SupervisorFolderName)\.copy-stamp</_SupervisorCopyStamp>
+    </PropertyGroup>
+    <!-- [D1 review · A1] FAIL-FAST: dosya kümesi boşsa build/publish SESSİZCE engine'siz bir paket üretirdi —
+         D1'in kapattığı bug'ın bir seviye yukarısı. Boşsa net mesajla dur. -->
+    <Error Condition="'@(_SupervisorFiles)' == ''"
+           Text="Supervisor cikti dosyasi bulunamadi: $(_SupervisorOutDir) bos. Engine'siz bir paket uretilmesin diye build durduruldu." />
   </Target>
 
-  <Target Name="CopySupervisorOutput" AfterTargets="Build" DependsOnTargets="_ResolveSupervisorFiles">
+  <!-- [D1 review · C3] Incremental: hedef, kaynak dosyalardan HERHANGİ biri damgadan yeniyse TÜMÜYLE koşar
+       (stale temizliği + tam kopya birlikte anlamlı; kısmi/filtrelenmiş liste ile RemoveDir tehlikeli olurdu).
+       Damga OutDir altında: `bin` elle silinirse damga da gider → hedef kendini onarır. -->
+  <Target Name="CopySupervisorOutput" AfterTargets="Build" DependsOnTargets="_ResolveSupervisorFiles"
+          Inputs="@(_SupervisorFiles)" Outputs="$(_SupervisorCopyStamp)">
     <!-- stale birikimi önle: hedef supervisor klasörünü kopya öncesi sil [it0-devir].
-         ContinueOnError: uygulama AÇIKKEN (supervisor.exe kilitli) build'i MSB3061 ile düşürmesin — kopya zaten
-         SkipUnchangedFiles ile devam eder. -->
+         ContinueOnError: uygulama AÇIKKEN (supervisor.exe kilitli) build'i MSB3061 ile düşürmesin. -->
     <RemoveDir Directories="$(OutDir)$(SupervisorFolderName)" ContinueOnError="WarnAndContinue" />
     <Copy SourceFiles="@(_SupervisorFiles)"
-          DestinationFiles="@(_SupervisorFiles->'$(OutDir)$(SupervisorFolderName)\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+          DestinationFiles="@(_SupervisorFiles->'$(OutDir)$(SupervisorFolderName)\%(RecursiveDir)%(Filename)%(Extension)')">
+      <Output TaskParameter="CopiedFiles" ItemName="FileWrites" />
+    </Copy>
+    <Touch Files="$(_SupervisorCopyStamp)" AlwaysCreate="true">
+      <Output TaskParameter="TouchedFiles" ItemName="FileWrites" />
+    </Touch>
   </Target>
 
   <!-- [D1] PUBLISH AKIŞI: çıplak <Copy> yalnız $(OutDir)'e yazar; publish çıktısı ResolvedFileToPublish
@@ -93,6 +113,14 @@
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       </ResolvedFileToPublish>
     </ItemGroup>
+  </Target>
+
+  <!-- [D1 review · C2] Tek-dosya publish DESTEKLENMİYOR ve komut satırından (-p:PublishSingleFile=true) sessizce
+       açılamaz: AppContext.BaseDirectory extraction dizinini gösterir, supervisor\ alt klasörü bundle'a giremez →
+       engine spawn'ı kırılır. Kaynak taraması (PublishLayoutTests) niyeti korur, bu target komut satırını kapatır. -->
+  <Target Name="_RejectSingleFilePublish" BeforeTargets="PrepareForBuild;PrepareForPublish">
+    <Error Condition="'$(PublishSingleFile)' == 'true'"
+           Text="PublishSingleFile desteklenmiyor: supervisor\ alt klasoru bundle'a giremez ve engine baslatilamaz. Klasor tabanli publish kullanin (v1 karari)." />
   </Target>
 
   <ItemGroup>

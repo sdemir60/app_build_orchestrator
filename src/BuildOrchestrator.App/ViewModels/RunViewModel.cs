@@ -315,20 +315,47 @@ public sealed partial class RunViewModel : ObservableObject
     /// [Review fix] Kalıcı DEĞİLDİR: bir sonraki run'ın <see cref="OnRunStarted"/>'ı (engine'in CANLI ve IPC
     /// round-trip yaptığının ilk somut kanıtı) bu mesajı temizler — aksi halde tek bir ölümden sonra sonsuza
     /// dek stale kalıp, tamamen başarılı sonraki run'larda bile güncel engine sağlığını yanlış yansıtırdı.</summary>
-    [ObservableProperty] private string? _engineDiedMessage;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEngineUnavailable))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    private string? _engineDiedMessage;
 
     /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
     /// yeniden başlatılabilir (true); Supervisor çıktısı hiç bulunamadığında (<see cref="OnEngineUnavailable"/>)
     /// yeniden başlatmak eksik dosyayı geri getirmeyeceği için aksiyon GİZLENİR ve kullanıcı yalnız ne yapması
     /// gerektiğini anlatan metni görür. <b>Değişmez:</b> <see cref="EngineDiedMessage"/>'ı yazan HER yol bunu da
     /// yazar (ölüm → true, kurulum eksik → false); mesaj temizlendiğinde değerin önemi kalmaz.</summary>
-    [ObservableProperty] private bool _engineRestartable = true;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEngineUnavailable))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    private bool _engineRestartable = true;
+
+    /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
+    /// <see cref="OnEngineUnavailable"/> bu durumu kurar. Sync/Build/Rebuild/Retry/Continue bu durumda
+    /// ANLAMSIZDIR: gönderim zaten hataya düşer ve şeritteki kalıcı mesajla ÇELİŞEN ikinci bir hata satırı
+    /// üretirdi — bu yüzden komutlar devre dışıdır ("Restart engine"in gizlenmesiyle aynı mantık).
+    /// <para>Normal (doğmuş) motor ölümü BU DURUM DEĞİLDİR: orada "Restart engine" sunulur ve komutlar açık
+    /// kalır — E2/T37 davranışı korunur.</para></summary>
+    public bool IsEngineUnavailable => EngineDiedMessage is { Length: > 0 } && !EngineRestartable;
 
     /// <summary>[D1] Supervisor çıktısı uygulamanın yanında bulunamadığında şeritte gösterilen KALICI satır.
     /// design-v1 §"Ton" (sakin, kesin, mühendisçe; ünlem yok) ve mevcut hata satırlarının em-dash/`·` dili.
     /// Ham exception dump'ı DEĞİL — tam yol konsol anlatısına düşer.</summary>
     public const string EngineMissingMessage =
         "Engine missing — supervisor was not found next to the app · reinstall required";
+
+    /// <summary>[D1 review · A2] Supervisor dosyası VAR ama başlatılamadı (bozuk/geçersiz exe, erişim reddi,
+    /// TOCTOU). Nedeni <see cref="EngineMissingMessage"/>'dan AYIRT EDER; ham exception metni gösterilmez.</summary>
+    public const string EngineCannotStartMessage =
+        "Engine could not start — the supervisor next to the app would not launch · reinstall required";
 
     /// <summary>[E2/T10] Son Sync başarısız olduysa hata gerekçesi (ErrorEvent.Message) — şerit bunu KIRMIZI
     /// <c>Sync failed — {reason}</c> faz-metnine çevirir (<see cref="RibbonText.Compose"/>). Bir sonraki Sync
@@ -456,7 +483,8 @@ public sealed partial class RunViewModel : ObservableObject
         ClearSelectionAndFilter(); // [design doRebuild→doBuild] tam run: seçim + filtre sıfırlanır
         return BeginRunAsync(RunMode.Rebuild, clearBuffers: true);
     }
-    private bool CanStartRun() => !IsRunning && !IsStarting;
+    // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
+    private bool CanStartRun() => !IsRunning && !IsStarting && !IsEngineUnavailable;
 
     // [Fix wave 1, C2 review Finding 1] Rebuild/RetryFailed, Sync uçuştayken (_syncInFlight) EK OLARAK
     // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,
@@ -488,7 +516,7 @@ public sealed partial class RunViewModel : ObservableObject
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
         await TrySendAsync(new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
     }
-    private bool CanSync() => !IsRunning && !IsStarting;
+    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
@@ -500,7 +528,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(CanContinueRun))]
     private Task ContinueAsync() => BeginRunAsync(RunMode.Continue, clearBuffers: false); // [design doContinue] seçim/filtre KORUNUR
-    private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue;
+    private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue && !IsEngineUnavailable; // [D1 review · A3]
 
     /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
     /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
@@ -952,12 +980,25 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="Services.EngineUnavailableException"/> dalında buraya girer).</para>
     /// </summary>
     /// <param name="exePath">Aranan Supervisor exe yolu (konsol satırında gösterilir).</param>
-    public void OnEngineUnavailable(string exePath)
+    /// <param name="reason">[D1 review · A2] Dosya yok mu, yoksa var ama başlatılamadı mı — şerit metnini ayırır.</param>
+    public void OnEngineUnavailable(string exePath,
+        Services.EngineUnavailableReason reason = Services.EngineUnavailableReason.NotFound)
     {
         EngineRestartable = false;
-        EngineDiedMessage = EngineMissingMessage;
-        AppendRunLine($"[error] engine not found: {exePath}");
+        EngineDiedMessage = reason == Services.EngineUnavailableReason.NotFound
+            ? EngineMissingMessage
+            : EngineCannotStartMessage;
+        // Konsola tam yol + kültürden bağımsız bir tanı kodu; OS'in (yerelleştirilmiş) Win32 metni ASLA
+        // gösterilmez — uygulama İngilizce-only [A3].
+        AppendRunLine(reason == Services.EngineUnavailableReason.NotFound
+            ? $"[error] engine not found: {exePath}"
+            : $"[error] engine could not start: {exePath}");
     }
+
+    /// <summary>[D1 review · C5] Motor hazır: konsolun boot satırında sürüm gösterilir (design-v1 §2.5 anlatı
+    /// dili — "Build started — 14 projects, parallelism 4" ile aynı kalıp). Sürüm kimliği TEK kaynaktan gelir:
+    /// <c>Directory.Build.props</c> → Supervisor assembly'sinin InformationalVersion'ı → <c>engineReady</c>.</summary>
+    public void OnEngineReady(string engineVersion) => AppendRunLine($"Engine ready — v{engineVersion}");
 
     // ---------------------------------------------------------------- konsol/log
 

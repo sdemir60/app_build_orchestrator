@@ -36,10 +36,11 @@ public static class SupervisorLayout
         string? name = assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
             .FirstOrDefault(a => string.Equals(a.Key, FolderNameMetadataKey, StringComparison.Ordinal))?.Value;
 
+        // [D1 review · A3] Kullanıcıya ulaşabilen metin (başlatmada patlarsa) → İngilizce.
         return string.IsNullOrEmpty(name)
             ? throw new InvalidOperationException(
-                $"'{FolderNameMetadataKey}' AssemblyMetadata'sı yok: BuildOrchestrator.App.csproj'daki " +
-                "$(SupervisorFolderName) property'si / AssemblyAttribute kaydı kaldırılmış olmalı.")
+                $"AssemblyMetadata '{FolderNameMetadataKey}' is missing: the $(SupervisorFolderName) property " +
+                "or its AssemblyAttribute entry in BuildOrchestrator.App.csproj must have been removed.")
             : name;
     }
 }
