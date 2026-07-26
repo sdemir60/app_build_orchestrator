@@ -90,6 +90,39 @@ public class SuccessFlourishTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[fix round 1 · Important 4] "BİR KEZ" iddiasının ŞEKLİ. Sayaç (<c>GlowPlayCount</c>) yalnız kaç kez
+    /// BAŞLATILDIĞINI ölçer; biri animasyona <c>RepeatBehavior.Forever</c> ya da <c>FillBehavior.HoldEnd</c> eklese
+    /// sayaç 1 kalır ve diğer testlerin hepsi yeşil kalırdı — oysa parıltı ya sonsuza dek yanıp sönerdi ya da
+    /// yeşil zemini üzerinde TUTARDI. Burada davranış pinlenir: parıltı KENDİ KENDİNE biter, saat bırakılır ve
+    /// zemin şeffafa döner. (Şeklin kaynak-tarafı ikinci kilidi:
+    /// <see cref="The_flourish_animation_declares_no_repeat_and_stops_filling"/>.)</summary>
+    [StaFact]
+    public void The_flourish_ends_by_itself_and_leaves_the_row_background_transparent()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm, animations: true);
+
+        DriveCleanRun(vm);
+        DispatcherPump.PumpUntil(() => view.Rows.Sum(r => r.GlowPlayCount) >= 1, PumpTimeout);
+        var done = view.Rows[^1];
+        var brush = (SolidColorBrush)done.Background;
+
+        Assert.Equal(1, done.GlowPlayCount);
+        Assert.True(brush.HasAnimatedProperties);                           // non-vacuous: saat GERÇEKTEN dönüyor
+        Assert.NotEqual(Colors.Transparent, brush.Color);                   // ve zemin GERÇEKTEN yeşil (parıltı görünür)
+
+        // Parıltı KENDİ KENDİNE bitmeli: 1.1s sonunda efektif renk tabana (şeffaf) döner. Koşul-tabanlı bekleme
+        // (D8): sabit uyku yok — renk şeffafa dönünce çıkılır, timeout yalnız güvenlik ağıdır. Drift senaryosu:
+        // son keyframe'in ya da FillBehavior'ın değişip zemini YEŞİLDE tutması → pump timeout'a düşer, assert RED.
+        // (Sonsuz tekrar — RepeatBehavior — bu ölçümle yakalanamaz; onun kilidi kaynak tarafındadır:
+        // The_flourish_animation_declares_no_repeat_and_stops_filling.)
+        DispatcherPump.PumpUntil(() => brush.Color == Colors.Transparent, TimeSpan.FromSeconds(5));
+
+        Assert.Equal(Colors.Transparent, brush.Color);                      // taban renge dönüldü (yeşilde asılı kalmaz)
+        Assert.Equal(1, done.GlowPlayCount);                                // ve yeniden başlatılmadı
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void A_failed_run_never_flourishes_any_row()
     {
@@ -104,9 +137,15 @@ public class SuccessFlourishTests
         var rows = view.Rows;
         DispatcherPump.PumpUntil(() => rows.All(r => r.IsLoaded), PumpTimeout);
 
+        // [fix round 1 · Important 3] POZİTİF KONTROL: parıltı TETİKLEYİCİSİ Loaded'dır (EventStreamRow.OnLoaded →
+        // ApplyGlow). Satırlar hiç yüklenmeseydi aşağıdaki "0 parıltı" assertion'ı doğru ama ANLAMSIZ olurdu
+        // (PumpUntil sessizce timeout'a düşer). Önce tetikleyicinin GERÇEKTEN ateşlendiğini kanıtla.
+        Assert.All(rows, r => Assert.True(r.IsLoaded, "satır yüklenmedi — 'parıltı yok' sonucu vacuous olurdu"));
+
         Assert.Equal(StreamKind.Done, rows[^1].ViewModel!.Kind);            // non-vacuous: done satırı GERÇEKTEN var
         Assert.False(rows[^1].ViewModel!.GlowEligible);                     // ama hatalı koşuda uygun DEĞİL
         Assert.Equal(0, rows.Sum(r => r.GlowPlayCount));                    // hiçbir satır parlamaz
+        Assert.False(rows[^1].ViewModel!.GlowPlayed);                       // uygun olmadığı için latch'e bile girmedi
         GC.KeepAlive(window);
     }
 
@@ -126,6 +165,11 @@ public class SuccessFlourishTests
         DriveCleanRun(vm);
         var done = view.Rows[^1];
         DispatcherPump.PumpUntil(() => done.IsLoaded, PumpTimeout);
+
+        // [fix round 1 · Important 3] POZİTİF KONTROL: tetikleyici (Loaded → ApplyGlow) gerçekten ateşlendi.
+        // Aksi halde aşağıdaki "saat kurulmadı" sonucu, reduced-motion'dan değil satırın hiç yüklenmemesinden
+        // gelirdi. GlowPlayed'in true olması da ApplyGlow'un KOŞTUĞUNUN ikinci kanıtıdır (reduced yol onu set eder).
+        Assert.True(done.IsLoaded, "satır yüklenmedi — 'saat kurulmadı' sonucu vacuous olurdu");
 
         Assert.True(done.ViewModel!.GlowEligible);                          // satır UYGUN…
         Assert.Equal(0, done.GlowPlayCount);                                // …ama saat HİÇ kurulmadı
@@ -160,11 +204,15 @@ public class SuccessFlourishTests
         var panel = new System.Windows.Controls.StackPanel { Children = { building, succeeded } };
         var window = DsResources.Realize(host, panel);
 
+        // [fix round 1 · Important 2] Zemin brush'ı BU testte ölçülmez: MotionTokens.TransitionColor sinyali
+        // STATİK kapıdan (MotionGate.StaticAnimationsEnabled → App.Motion) okur ve headless'ta App.Motion null'dur,
+        // yani "zemin animasyonlu değil" assertion'ı satırın kendi provider'ından BAĞIMSIZ olarak YAPISAL biçimde
+        // hep doğrudur — bir drift'ten ASLA kırılamazdı. Zemin yüzeyi bunun yerine kaynak guard'ıyla korunur
+        // (The_success_tint_is_animated_only_by_the_event_stream_row: TransitionColor de anahtar kelimedir).
         Assert.True(building.BreathLayer.HasAnimatedProperties);            // non-vacuous: building satırı nefes ALIR
         Assert.False(succeeded.BreathLayer.HasAnimatedProperties);          // başarı satırında kutlama saati YOK
-        Assert.False(succeeded.Root.HasAnimatedProperties);
+        Assert.False(succeeded.Root.HasAnimatedProperties);                 // satırın KENDİ provider'ı açık — ölçüm gerçek
         Assert.False(succeeded.Glyph.HasAnimatedProperties);
-        Assert.False(((SolidColorBrush)succeeded.Root.Background).HasAnimatedProperties);
         GC.KeepAlive(window);
     }
 
@@ -191,12 +239,24 @@ public class SuccessFlourishTests
 
     // ================================================================ 4) KAYNAK GUARD'LARI (drift kapısı)
 
-    /// <summary>Success tint'i (<c>Brush.StatusSuccessSoft</c>) bir animasyonun YANINDA kullanmak yalnız event
-    /// stream satırının hakkıdır. Pencere ±6 satırdır: uzaktaki meşru kullanım (GraphView'ın statü tablosu,
-    /// Tokens.xaml tanımı) tetiklemez, kopyalanmış bir parıltı bloğu tetikler.</summary>
+    /// <summary>[fix round 1 · Important 1] Bir success tint'ini (<c>Brush.StatusSuccess*</c>) animasyona
+    /// bağlamak yalnız event stream satırının hakkıdır. Anahtar kelime listesi WPF API'siyle SINIRLI DEĞİLDİR:
+    /// bu kod tabanında animasyonların ÇOĞU projenin kendi kapılarından geçer (<c>MotionTokens.TransitionColor</c>,
+    /// <c>TransitionDouble</c>, <c>SplineTo</c>, <c>AnimateSlowEaseInOut</c>, <c>CreateBlinkAnimation</c>,
+    /// <c>PopIn.Play</c>, <c>PlayReveal*</c>) — yalnız <c>BeginAnimation|Storyboard</c> aransaydı
+    /// <c>MotionTokens.TransitionColor(this, _bgBrush, successColor)</c> ile eklenmiş bir dalga GÖRÜNMEZ olurdu.
+    /// Pencere ±6 satırdır: uzaktaki meşru kullanım (GraphView/ProjectRow statü tabloları, Tokens.xaml tanımları)
+    /// tetiklemez, animasyonun dibindeki kullanım tetikler.</summary>
+    private const string AnimationEntryPoints =
+        "BeginAnimation|Storyboard|KeyFrame|ColorAnimation|DoubleAnimation|Timeline\\.|AnimationClock"
+        + "|MotionTokens\\.|TransitionColor|TransitionDouble|SplineTo|AnimateSlowEaseInOut|CreateBlinkAnimation"
+        + "|PopIn\\.Play|PlayReveal|ScrollAnimator\\.";
+
+    private const string SuccessTint = "Brush\\.StatusSuccess\\w*";
+
     private static readonly Regex SuccessTintAnimated = new(
-        "StatusSuccessSoft(?:[^\n]*\n){0,6}[^\n]*(?:BeginAnimation|Storyboard|KeyFrame|ColorAnimation|DoubleAnimation)"
-        + "|(?:BeginAnimation|Storyboard|KeyFrame|ColorAnimation|DoubleAnimation)(?:[^\n]*\n){0,6}[^\n]*StatusSuccessSoft",
+        SuccessTint + "(?:[^\n]*\n){0,6}[^\n]*(?:" + AnimationEntryPoints + ")"
+        + "|(?:" + AnimationEntryPoints + ")(?:[^\n]*\n){0,6}[^\n]*" + SuccessTint,
         RegexOptions.Compiled);
 
     /// <summary>Kutlama sözlüğü — bir "glow/ripple/confetti" başka bir sahipte belirirse ikinci bir kutlama
@@ -216,6 +276,25 @@ public class SuccessFlourishTests
         var offenders = SourceGuard.ScanApp("*.cs", SuccessTintAnimated, FlourishOwners)
             .Concat(SourceGuard.ScanApp("*.xaml", SuccessTintAnimated, FlourishOwners)).ToList();
         Assert.Empty(offenders);
+    }
+
+    /// <summary>[fix round 1 · Important 4] Şeklin kaynak-tarafı kilidi: parıltının sahibi dosyada tekrar eden bir
+    /// animasyon BEYANI olamaz (<c>RepeatBehavior</c>) ve parıltı dolgusunu bırakmak zorundadır
+    /// (<c>FillBehavior.Stop</c>). Çalışma-zamanı eşi:
+    /// <see cref="The_flourish_ends_by_itself_and_leaves_the_row_background_transparent"/>.</summary>
+    [Fact]
+    public void The_flourish_animation_declares_no_repeat_and_stops_filling()
+    {
+        string owner = File.ReadAllText(IoPath.Combine(RepoPaths.AppSrcRoot, FlourishOwners[0]));
+
+        Assert.Contains("FillBehavior.Stop", owner, StringComparison.Ordinal);      // dolgu bırakılır → yeşilde asılı kalmaz
+        Assert.Single(Regex.Matches(owner, "ColorAnimationUsingKeyFrames"));        // TEK keyframe seti — ikinci bir parıltı yok
+
+        // Sonsuz/tekrarlı parıltı YASAK. Yorum satırları elenir (dosyanın §5 notu imlecin
+        // RepeatBehavior.Forever blink'inden BAHSEDER; beyan MotionTokens.CreateBlinkAnimation'dadır, burada değil).
+        var repeats = SourceGuard.ScanText(
+            FlourishOwners[0], owner, new Regex("RepeatBehavior", RegexOptions.Compiled), skipCommentLines: true);
+        Assert.Empty(repeats);
     }
 
     [Fact]
@@ -240,6 +319,13 @@ public class SuccessFlourishTests
             "}",
         ]);
         Assert.NotEmpty(SourceGuard.ScanText(IoPath.Combine("Views", "ProjectRow.xaml.cs"), driftedRow, SuccessTintAnimated));
+
+        // (a2) [fix round 1 · Important 1] Projenin KENDİ animasyon kapısıyla eklenmiş bir yeşil dalga — tek satır,
+        // WPF API'si hiç geçmiyor. Eski anahtar kelime listesi (BeginAnimation|Storyboard|…) bunu KAÇIRIRDI.
+        Assert.NotEmpty(SourceGuard.ScanText(
+            IoPath.Combine("Controls", "StickyLayerList.cs"),
+            "MotionTokens.TransitionColor(this, _bgBrush, ResolveColor(\"Brush.StatusSuccess\"));",
+            SuccessTintAnimated));
 
         // (b) Grafa eklenmiş bir "ripple" → sözlük guard'ı YAKALAR.
         Assert.NotEmpty(SourceGuard.ScanText(

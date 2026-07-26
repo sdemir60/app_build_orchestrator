@@ -1,5 +1,8 @@
+using System.IO;
+using System.Text.RegularExpressions;
 using Xunit;
 using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Tests.App;
 
 namespace BuildOrchestrator.Tests.MsBuild;
 
@@ -23,19 +26,56 @@ public class MsBuildArgumentsTests
     /// "torn DLL yok" garantisi kill anında kırılır (bkz. KillMidBuildTests: bayraklar → VBCSCompiler yok →
     /// her writer Job üyesi).</summary>
     [Fact]
-    public void Shared_compilation_and_node_reuse_can_not_be_re_enabled_on_any_path() // [T33]
+    public void Shared_compilation_and_node_reuse_can_not_be_re_enabled_on_the_build_path() // [T33]
     {
         string[] reEnabling = ["UseSharedCompilation=true", "nodeReuse:true", "-m:", "MSBUILDDISABLENODEREUSE=0"];
         var build = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", @"c:\wt\obj\c__r_p");
-        var restore = MsBuildArguments.RestorePackagesConfig(@"c:\r\p.csproj", @"c:\r\slnDir");
 
         foreach (string flag in reEnabling)
-        {
             Assert.DoesNotContain(build, a => a.Contains(flag, StringComparison.OrdinalIgnoreCase));
-            Assert.DoesNotContain(restore, a => a.Contains(flag, StringComparison.OrdinalIgnoreCase));
-        }
+
         Assert.Equal(1, build.Count(a => a == "-p:UseSharedCompilation=false")); // tek kez, çelişen ikinci değer YOK
         Assert.Equal(1, build.Count(a => a == "-nodeReuse:false"));
+    }
+
+    /// <summary>[T33 · fix round 1 · Important 5] Restore yolu neden bu bayrakları TAŞIMIYOR: restore DERLEMEZ,
+    /// yalnız <c>-t:restore</c> hedefini koşar — compiler server (<c>VBCSCompiler</c>) hiç devreye girmez, emit
+    /// olmaz, dolayısıyla torn-DLL yüzeyi yoktur. Bu testin önceki hâli restore'da "shared compilation açılmamış"
+    /// diye assert ediyordu; restore o bayrağı ZATEN hiç geçirmediği için o assert KIRILAMAZDI (sahte kapsama).
+    /// Gerçek ve kırılabilir pin budur: restore'un hedef kümesi Build'i İÇERMEZ. İçerecek şekilde değişirse
+    /// (ör. <c>-t:restore;Build</c>) burada RED verir ve o yolun da flag'lenmesi gerektiği anlaşılır.</summary>
+    [Fact]
+    public void The_restore_path_compiles_nothing_which_is_why_it_carries_no_compiler_flags() // [T33]
+    {
+        var restore = MsBuildArguments.RestorePackagesConfig(@"c:\r\p.csproj", @"c:\r\slnDir");
+
+        var targets = restore.Where(a => a.StartsWith("-t:", StringComparison.OrdinalIgnoreCase)).ToList();
+        Assert.Equal(["-t:restore"], targets);                       // TEK hedef: restore
+        Assert.DoesNotContain(restore, a => a.Contains("Build", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>[T33 · fix round 1 · Important 6] Bayrakların TEK KAYNAK iddiasının pini. Child process'ler
+    /// parent ortamını miras alır (<c>JobProcessLauncher</c> env'i devreder), yani bu ayarlar komut satırı DIŞINDA
+    /// da (env değişkeni, <c>Directory.Build.props</c>) doğabilir. Komut satırındaki <c>-p:</c> global property'si
+    /// MSBuild önceliğinde environment property'sini EZER — asıl risk budur ve kapalıdır; buradaki guard ise
+    /// "bu değerleri üretimde başka bir yerin yazmadığını" kilitler: <c>UseSharedCompilation</c> / <c>nodeReuse</c>
+    /// / <c>MSBUILDDISABLENODEREUSE</c> literalleri TÜM <c>src/</c> ağacında (kod + csproj/props/targets) yalnız
+    /// <see cref="MsBuildArguments"/>'ta geçebilir. Kalan yüzey (kullanıcı makinesinden MİRAS gelen env) karar
+    /// kaydında açık sınırlama olarak yazılıdır.</summary>
+    [Fact]
+    public void The_compiler_server_switches_have_exactly_one_source_in_the_production_tree() // [T33]
+    {
+        var rule = new Regex("UseSharedCompilation|nodeReuse|MSBUILDDISABLENODEREUSE", RegexOptions.IgnoreCase);
+        string[] owner = [Path.Combine("BuildOrchestrator.Core", "MsBuild", "MsBuildArguments.cs")];
+
+        var offenders = new List<string>();
+        foreach (string pattern in new[] { "*.cs", "*.csproj", "*.props", "*.targets" })
+            offenders.AddRange(SourceGuard.ScanSrc(pattern, rule, owner, skipCommentLines: true));
+
+        Assert.Empty(offenders);
+        // Tarama gerçekten dosya görüyor mu (boş tarama guard'ı sessizce yeşil bırakırdı) + muaf dosya GERÇEK mi.
+        Assert.Contains(owner[0], SourceGuard.ScannedSrcFiles("*.cs"));
+        Assert.Matches(rule, File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, owner[0])));
     }
 
     [Fact]
