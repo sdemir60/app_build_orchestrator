@@ -24,7 +24,7 @@ yazılacağı orada anlatılıyor).
 - [ ] Uygulamayı başlat → pencere açılıyor, boş durumda çökme/hata yok. `[C1]`
 - [ ] **Taskbar ikonu** net (bulanık ölçekleme yok). `[B2]`
 - [ ] **Tray ikonu** net. ⚠️ **İNSAN ONAYI GEREKİR:** tray ikonu artık eski "D" letterform DEĞİL, `delta-app-icon.svg` quarter-disc mark. Bu görsel kimlik değişimini onaylıyor musun? `[B2]`
-- [ ] `--it4a-lab` argümanıyla açılmaya çalış → **açılmamalı**; `--font-ab` ile açılmalı. `[C1]`
+- [ ] `--it4a-lab` ile başlat → **lab kabuğu AÇILMAZ** (T35'te kaldırıldı, primitifleri gerçek pencereye taşındı); argüman tanınmadığı için **yok sayılır ve normal ana pencere açılır** — bu doğru davranış, sapma değil. `--font-ab` ile ise **font A/B kabuğu** açılmalı (Supervisor spawn edilmez). `[C1]`
 
 ## 1) Pencere kabuğu / title bar / layout
 
@@ -144,7 +144,7 @@ yazılacağı orada anlatılıyor).
 
 - [ ] Repo kökünü temizle → boş davet metinleri: `Pick a repository to get started` + açıklama satırı + `Choose Folder` butonu. `[E2]`
 - [ ] Supervisor'ı **Task Manager'dan öldür** → şerit **KALICI hata modu** + `Restart engine` (banner/toast YOK); bas → motor geri döner. `[E2]`
-- [ ] Uygulama açıkken **ikinci kez başlat** → mevcut pencere öne gelir; getirilemezse **tray balloon** (sessiz değil). `[E2]`
+- [ ] Uygulama açıkken **ikinci kez başlat** → mevcut pencere öne gelir; getirilemezse **tray balloon** (SESSİZ değil) ve ikinci instance **ayrışan çıkış kodu 3** ile kapanır. `[E2]`
 - [ ] Autostart'ı aç, oturumu kapat-aç → tray'de **temiz Idle** (otomatik Sync YOK). `[E2]`
 - [ ] Boş bir klasör seç → `No projects found under this folder.` + `Ready — nothing to build`. `[E2]`
 - [ ] Hiç değişmemiş repoda Build → **all-skipped DELIGHT**: `Everything up to date — {n} projects checked in {dur}, nothing to build`. `[E2]`
@@ -171,6 +171,7 @@ sonunda listelenen **A13.1 "algısal eşdeğer"** kalemleridir.
 
 - [ ] Şerit yüksekliği 32px, zemin `surface-base`, altta `border-subtle` çizgi — prototiple aynı.
 - [ ] Faz metni **mono 12px** ve `▸ ` önekli. Metinleri **kelime kelime** karşılaştır (boot / syncing / idle / running / stopped / done-başarılı / done-hatalı / all-clean). Prototip: `▸ Ready — 14 to build · 22 up to date`, `▸ Building 7/14 · 24s · ~35s left`, `Completed — 14 succeeded · 22 skipped · 1m 12s` (yeşil + ✓).
+- [ ] **ETA nüansı** (README §2.2): ETA **<4s** kala metin `· almost done` olur; ETA **5s'e yuvarlanır** (yani `~35s left` gibi 5'in katları görülür, `~33s left` değil).
 - [ ] Faz metninin yanındaki **building chip'leri**: spinner ikonu + kısa ad, **en çok 4**, fazlası `+N`.
 - [ ] **Sağdaki hata kümesi**: ✗ glyph + `5 failed` (kırmızı, 500) + `· 4 dependency-affected` (dim 11px) + ilk 3 chip + `+2 more`. **"View failures" butonu OLMAMALI** (tasarım kararı: kaldırıldı).
 - [ ] Altındaki **2px global progress**: radius 0; building=amber, failed=kırmızı, done=yeşil, sync sırasında indeterminate.
@@ -200,6 +201,7 @@ sonunda listelenen **A13.1 "algısal eşdeğer"** kalemleridir.
 - [ ] **Building satırı:** hareketsiz amber "nefes" — `amber-soft` opacity 0→0.32→0, **3.8s** ease-in-out sonsuz. Süpürme/parlama/kayma **OLMAMALI**.
 - [ ] **Failed anı:** satır **360ms** yatay shake (±3px), **bir kez**.
 - [ ] **Katman başlıkları:** 24px, caps 11px + mono sayı; **birikerek yapışıyor** (i'inci başlık `i×24px`).
+- [ ] **Follow-mode sayıları** (README §2.4): koşarken ve seçim yokken liste frontier'i takip eder — scroll animasyonu **550 ms'de bir**, hedef sapması **<54 px** ise **dokunulmaz** (ufak kaymalarda liste zıplamamalı). Karta tıklayınca takip durur, seçim kalkınca sürer.
 - [ ] Boş durum metinleri birebir: `Pick a repository to get started` (14px/600) + `Point to the OSYS solution root — projects and the dependency graph are discovered automatically.` + `Choose Folder` (klasör ikonlu primary).
 - [ ] Filtre eşleşmezse: `No projects match this filter.`
 
@@ -213,6 +215,7 @@ sonunda listelenen **A13.1 "algısal eşdeğer"** kalemleridir.
 - [ ] Satır renkleri: cmd=`text-primary` · info=`text-secondary` · dim=`text-faint` · success/warn/error=ilgili `-text` tonu.
 - [ ] **Seçili proje logu modu:** başlık → `← Back` ghost buton + proje adı (mono) + statü glyph + statü adı + (varsa) `▲ dependency issue`.
 - [ ] Log satırları **sıfırdan kaskatla** açılıyor: **26ms'de 3 satır**. ⚠️ **A13.1 madde 3 (kabul edilmiş fark):** satır başına 140ms **translateY+scale pop-in** yerine **opacity-fade** var — AvalonEdit satır transform'u desteklemiyor. **Tempo birebir olmalı**; tempo kaymışsa bu bir sapmadır.
+- [ ] Seçili proje **hâlâ building** ise proje logunun **sonunda amber `build in progress ▮`** satırı var.
 - [ ] Log yoksa metinler birebir: skipped → `Skipped — up to date; not built in this run. Last successful build: yesterday 18:42 (a3f81c2)` · queued → `Queued — waiting for dependencies: Sales.Core, Security` · diğer → `No log yet — output streams here once the build starts.`
 - [ ] Akış yönü **klasik: en yeni ALTTA**.
 - [ ] Panel başlığı sağında mono `N lines`.
@@ -221,7 +224,7 @@ sonunda listelenen **A13.1 "algısal eşdeğer"** kalemleridir.
 
 - [ ] Panel başlığı: caps `EVENT STREAM`; sağda mono `N events`.
 - [ ] Satır min 24px / mono 12px: saat + glyph (ok=✓, fail=✗, skip=—, sync/info=amber `▸`, done=✓/✗) + metin. Renkler: fail=kırmızı · skip=`text-faint` · done=yeşil/kırmızı · sync/info=`text-dim` · ok=`text-secondary`.
-- [ ] Örnek metinleri **birebir** karşılaştır: `OSYS.Domain.Service built (2.9s)` · `OSYS.Sales.Core failed — 2 errors (3.1s)` · `OSYS.Base skipped — up to date` · `Build started — 14 projects, parallelism 4` · `Completed — 5 failed · 12 succeeded · 17 skipped · 1m 30s · 4 dependency-affected`.
+- [ ] Örnek metinleri **birebir** karşılaştır: `OSYS.Domain.Service built (2.9s)` · `OSYS.Sales.Core failed — 2 errors (3.1s)` · `OSYS.Base skipped — up to date` · **`Sync — 14 to build, 22 up to date`** · `Build started — 14 projects, parallelism 4` · `Completed — 5 failed · 12 succeeded · 17 skipped · 1m 30s · 4 dependency-affected`.
 - [ ] En yeni satır **daktiloyla**; ardışık olaylarda (<340ms) ve **hata olaylarında ANINDA**.
 - [ ] Aktif satır: `OSYS.Server.Api building…` — saat + **imleç** + amber daktilo metni.
 - [ ] Projeli satırlar tıklanabilir; seçili satırda **sol 2px amber şerit + `surface-raised` zemin**.
