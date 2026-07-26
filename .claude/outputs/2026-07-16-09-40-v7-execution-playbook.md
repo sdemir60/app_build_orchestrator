@@ -461,31 +461,126 @@ kapandığını göster. Bitince aşamamızı kaydet.
 
 # KALAN ADIMLAR (2026-07-26 itibarıyla) — **3 adım**
 
-A1-A10 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan üç adım kod planı değil, **kapanış**
-adımlarıdır ve sırayla yapılmalıdır: karar (A11) → gözle kontrol (A12) → düzeltme iterasyonu (A13).
+A1-A10 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan üç adım kod planı değil **kapanış**
+adımlarıdır; sırayla yapılır: karar (A11) → gözle kontrol (A12) → düzeltme iterasyonu (A13).
+Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A10 ile aynı biçimde.
 
-| Adım | Ne | Kim yapar | Model/Effort |
+| Adım | Ne | Model | Effort |
 |---|---|---|---|
-| **A11** | `CLAUDE.md`'deki 3 bayat olgusal ifadenin kararı | kullanıcı karar verir, sonra düzeltilir | Opus / low |
-| **A12** | **GÖZLE KONTROL PASI** — walkthrough listesini yürüyüp kusurları toplamak | **kullanıcı** (harness ekran göremez) | — |
-| **A13** | **Düzeltme iterasyonu** — A12'nin bulguları + bilinen regresyon | Opus / **high** | Opus / high |
-
-> **A11 detayı bu dosyanın sonundadır** ("A11 (detay)" başlığı) — karşılaştırma tablosu ve kanıtlar orada.
+| **A11** | `CLAUDE.md`'deki 3 bayat olgusal ifadenin düzeltilmesi | **Opus** | **low** |
+| **A12** | **GÖZLE KONTROL PASI** — walkthrough'u yürüyüp kusur listesi üretmek | **Opus** | **low** |
+| **A13** | **Düzeltme iterasyonu** — bilinen regresyon + A12 bulguları | **Opus** | **high** |
 
 ---
 
-## A12 — GÖZLE KONTROL PASI (kullanıcı yapar; kod adımı değil)
+## A11 — CLAUDE.md bayat bilgi denetimi · Model: **Opus** · Effort: **low**
 
-**Girdi:** [2026-07-26-10-17-visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md)
-— 81/81 kalem, uygulamada gezilecek sıraya göre (pencere kabuğu → sol panel → graf → konsol → action bar →
-popover → ayarlar → tepsi/kısayol), **D4 (konsol gerçek akış) ZORUNLU**, Bölüm 2'de prototiple yan yana
-design-v1 §2.1-§2.9, Bölüm 3'te It-5'in kendi görsel kalemleri.
+> **Durum:** It-5'in D3 (README) task'ının review'ı, `CLAUDE.md`'nin **Proje Yapısı / Mimari** bölümünde
+> koddan sapmış üç olgusal ifade buldu (dört bağımsız kanıtla kesinleştirildi). It-5'te **düzeltilmedi** —
+> kullanıcı kararı: ayrı ele alınacak.
+>
+> **Neden önemli:** `CLAUDE.md` her session'da otomatik olarak context'e yükleniyor. Bayat kaldığı sürece
+> onu okuyan her agent'ı yanlış yönlendirir. It-5'te bu fiilen yaşandı: D3 implementer'ı README'yi yazarken
+> CLAUDE.md ile kodun çeliştiğini görüp durmak ve sormak zorunda kaldı.
 
-**Çıktı:** bulguların listesi. Her bulgu için: *hangi panel · ne bekliyordum · ne gördüm · (varsa) hangi
-adımda çalışıyordu*. Bu liste **A13'ün girdisidir** — ne kadar net olursa fix o kadar hızlı olur.
+**Üç kalem — neyi neyle karşılaştırıyoruz:**
 
-**Not:** aşağıdaki regresyon **zaten bildirildi**, tekrar aramaya gerek yok; A12'de onun **kapsamını**
-netleştirmek yeterli (hangi kartlar, hangi durumlar, konsol/graf de etkileniyor mu).
+| # | `CLAUDE.md`'deki ifade | Koddaki gerçek | Kanıt |
+|---|---|---|---|
+| 1 | "her projeyi **shell-out** (`dotnet build` ayrı child process) ile derler" ve Supervisor satırındaki aynı ifade | Kod **hiçbir yerde `dotnet build` çalıştırmıyor**; `MSBuild.exe`'yi vswhere ile çözüp çalıştırıyor | `Core/MsBuild/MsBuildResolver.cs:21-22` (vswhere → `MSBuild\**\Bin\MSBuild.exe`) · `Supervisor/Program.cs:362` yorumu birebir "`[D10] dotnet build DEĞİL, MSBuild.exe`" + `:364` `new MsBuildInvoker(..., location.MsBuildExePath)` · `Core/MsBuild/MsBuildInvoker.cs:68` o exe'yi inner job'a launch ediyor · **kesin belirleyici:** `Core/MsBuild/MsBuildArguments.cs:10-12`'deki `-nodeReuse:false` ve `-clp:Summary` `dotnet build`'in switch'leri değildir |
+| 2 | Proje tablosunda `tests/BuildOrchestrator.Tests` → **`net10.0`** (xUnit) | Gerçekte **`net10.0-windows`** + `UseWPF` (WPF testleri var: realize testleri, STA thread testleri) | `tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj` |
+| 3 | "**DURUM:** Proje sıfırdan yeniden kuruluyor… **Kod henüz yoktur**; bu tablo hedef yapıdır." | Kod var ve olgun: It-0→It-5 tamamlandı, **1430 test** yeşil, publish hattı çalışıyor | `git log` · `.superpowers/sdd/progress.md` · `dotnet test` |
+
+> **Not:** `-p:UseSharedCompilation=false -nodeReuse:false` flag'lerinden bahseden satır **doğrudur**
+> (bkz. [t33-decision.md](2026-07-26-07-38-t33-decision.md)) — yalnız o flag'leri taşıyan komutun
+> `dotnet build` değil `MSBuild.exe` olduğu düzeltilecek.
+
+**PROMPT — yapıştır:**
+
+```
+Şu dosyaları oku:
+1. CLAUDE.md (proje kökü) — özellikle "Proje Yapısı / Mimari (hedef — v2 plan)" bölümü
+2. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A11" bölümü (karşılaştırma tablosu orada)
+
+DURUM: It-0..It-5 main'de, main == origin/main, build 0/0, suite 1430 passed / 2 skipped / 0 failed.
+v7'nin planlı kod iterasyonları bitti.
+
+Görev: CLAUDE.md'deki ÜÇ olgusal ifade koddan sapmış; düzelt.
+1) "her projeyi shell-out (dotnet build ayrı child process) ile derler" (hem mimari ilkeler hem Supervisor
+   satırı) → kod dotnet build DEĞİL, vswhere ile çözülen MSBuild.exe çalıştırıyor.
+2) Proje tablosunda tests/BuildOrchestrator.Tests TFM'i "net10.0" → gerçekte net10.0-windows + UseWPF.
+3) "DURUM: Proje sıfırdan yeniden kuruluyor... Kod henüz yoktur; bu tablo hedef yapıdır." → kod var ve
+   olgun (It-0..It-5 tamam, 1430 test yeşil, publish hattı çalışıyor).
+
+ÖNCE HER İDDİAYI KODDA DOĞRULA (playbook'taki kanıtları teyit et, körlemesine uygulama). Sonra düzelt.
+
+KAPSAM YALNIZ BU ÜÇ OLGUSAL İFADEDİR. Dil kuralları, çıktı/özet/handoff dizin kuralları, git kuralları,
+build/test komutları ve talimatların geri kalanı DEĞİŞMEZ. Üslup ve biçim mevcut dosyayla aynı kalsın.
+
+Ayrıca: düzeltirken "hedef yapı" dili yerine mevcut durumu anlatan bir dil kullan, ama tabloyu yeniden
+tasarlama — yalnız yanlış hücreleri düzelt.
+
+Bitince bana neyi neye çevirdiğini dosya:satır ile göster ve commit et.
+```
+
+**Bitti kriteri:** Üç ifade de kodla uyumlu; kapsam dışına çıkılmamış (diff yalnız o üç yeri gösteriyor).
+
+---
+
+## A12 — GÖZLE KONTROL PASI · Model: **Opus** · Effort: **low**
+
+> **Bu adımda ekrana bakan sensin; agent kılavuzluk eder ve bulguları kayda geçirir.** Harness ekran
+> görüntüsü alamaz — It-4'ten beri biriken **26 👁 VISUAL** kabul satırı ancak burada kapanır.
+>
+> **Girdi:** [2026-07-26-10-17-visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md)
+> — 81/81 kalem, uygulamada gezilecek sıraya göre (pencere kabuğu → sol panel → graf → konsol → action bar
+> → popover → ayarlar → tepsi/kısayol), **D4 (konsol gerçek akış) ZORUNLU**, Bölüm 2'de prototiple yan yana
+> design-v1 §2.1-§2.9, Bölüm 3'te It-5'in kendi görsel kalemleri.
+>
+> **Çıktı:** tarihli bir **kusur listesi dosyası** — A13'ün girdisi. Ne kadar net olursa fix o kadar hızlı.
+>
+> **Not:** kart animasyonu/renklendirme regresyonu **zaten bildirildi**; tekrar aramaya gerek yok, A12'de
+> yalnız **kapsamını** netleştir (hangi kartlar, hangi durumlar, konsol/graf de etkileniyor mu).
+
+**PROMPT — yapıştır:**
+
+```
+Şu dosyaları oku:
+1. .claude/outputs/2026-07-26-10-17-visual-check-walkthrough.md (yürüyeceğimiz liste)
+2. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; §2.1-§2.9 yan yana karşılaştırma için)
+3. .claude/outputs/2026-07-26-10-17-it5-records.md (kabul kaydı + park edilen kalemler)
+
+DURUM: It-0..It-5 main'de, build 0/0, suite 1430 passed / 2 skipped / 0 failed. Kod planı bitti.
+Bu adım GÖRSEL DOĞRULAMA pasıdır: ekrana ben bakacağım, sen kılavuzluk edip bulguları kayda geçireceksin.
+
+Nasıl çalışacağız:
+- Uygulamayı çalıştır (dotnet run --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj).
+  Prototip karşılaştırması için "prototype/Build Orchestrator (standalone).html" dosyasını da tarayıcıda
+  açmam gerekecek — sırası gelince söyle.
+- Walkthrough listesini BÖLÜM BÖLÜM, PANEL PANEL bana sun. Her seferinde 5-10 maddelik küçük gruplar ver;
+  her madde için "ne yap / ne görmelisin" tek satır olsun. Beni uzun listelerle boğma.
+- Ben sana gördüklerimi yazacağım ("3 tamam, 5'te şu farklı" gibi). Sen her bulguyu ŞU FORMATTA kaydet:
+  panel · madde no · ne bekleniyordu · ne görüldü · (biliyorsam) hangi adımda çalışıyordu · şiddet.
+- Bir bulgu belirsizse AYIRT EDİCİ soru sor (hangi durumda, her seferinde mi, pencere boyutuna bağlı mı).
+  Tahmin yürütüp kaydetme.
+- İlerlemeyi kaybetmemek için her bölüm bitiminde kusur dosyasını güncelle; oturum uzarsa kaldığımız
+  maddeden devam edebilelim.
+
+BİLİNEN REGRESYON (tekrar aramaya gerek yok, KAPSAMINI netleştir): It-4b'de çalışan kart
+animasyonları/renklendirmeleri It-5'ten sonra çalışmıyor — "sol alt köşedeki kartlar, loading animasyonları,
+hiç hareket yok, renklendirmeler yok". Bunu doğrularken şunları sor: hangi kartlar (proje satırları mı,
+başka bir panel mi) · loading dışında hangi durumlar (building/success/fail) · graf düğümleri ve konsol da
+etkilenmiş mi · reduced-motion ayarı açık mı.
+
+Kod DEĞİŞTİRME, düzeltme YAPMA. Bu adımın tek çıktısı kusur listesidir; düzeltme bir sonraki adımda (A13).
+Çıktıyı .claude/outputs/YYYY-MM-DD-HH-mm-visual-check-findings.md dosyasına yaz (tarih/saat gerçek zaman).
+
+Sonda: bulguları şiddete göre grupla (bloklayıcı / önemli / kozmetik) ve A13 promptuna yapıştırmaya hazır
+kısa bir özet blok üret. Bitince aşamamızı kaydet.
+```
+
+**Bitti kriteri:** 81 kalemin tamamı yürünmüş (D4 dahil), prototiple yan yana §2.1-§2.9 yapılmış, bulgular
+tek dosyada şiddete göre gruplanmış ve A13'e yapıştırmaya hazır.
 
 ---
 
@@ -526,6 +621,7 @@ netleştirmek yeterli (hangi kartlar, hangi durumlar, konsol/graf de etkileniyor
 3. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; kopya metinleri BİREBİR)
 4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 / A13.2 + Ek A)
 5. .superpowers/sdd/progress.md — It-5 bölümü (en üstteki RESUME HERE; çelişkide ledger kazanır)
+6. .claude/outputs/ altındaki EN YENİ *-visual-check-findings.md (A12'nin kusur listesi — bu adımın girdisi)
 
 DURUM: It-0..It-5 main'de (tek trunk, main == origin/main). Build 0/0, suite 1430 passed / 2 skipped /
 0 failed. v7'nin planlı kod iterasyonları BİTTİ. Bu adım bir düzeltme/cila iterasyonudur.
@@ -548,8 +644,10 @@ GÖREV — iki kaynaktan gelen kusurları kapat:
          yanlışlıkla tembel alt-ağaca düştüyse ancak hover'da kurulur.
     Teşhisi kanıtla (hangi satırda, neden), sonra düzelt.
 
-(B) GÖZLE KONTROL BULGULARI: kullanıcının A12'de yürüdüğü listeden gelen kusurlar (kullanıcı bu prompt'un
-    altına yapıştıracak). Her bulgu için: düzelt VEYA A13.1 "algısal eşdeğer" sınıfına GEREKÇESİYLE yaz.
+(B) GÖZLE KONTROL BULGULARI (öncelik 2): A12'nin ürettiği kusur listesi — .claude/outputs/ altındaki en
+    yeni *-visual-check-findings.md. Şiddet sırasına göre işle (bloklayıcı → önemli → kozmetik).
+    Her bulgu için: düzelt VEYA A13.1 "algısal eşdeğer" sınıfına GEREKÇESİYLE yaz. Bir bulgu belirsizse
+    tahmin yürütme — bana sor.
 
 Kurallar:
 - Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-{baslik}.md), sonra
@@ -609,36 +707,7 @@ kaldığımız yerden devam et
 
 - **Sıra atlayabilir miyim?** Hayır — A1 (spike) GATE'tir; A2 onsuz başlamaz. A4–A6 sıralıdır (walking-skeleton). A7 (font kapısı) It-4'ün ilk işi olmalı.
 - **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). **A1-A10 bitti (2026-07-26).** Kalan aşamalar: **A11** (Opus/low — CLAUDE.md denetimi), **A12** (kullanıcı yapar, model yok — gözle kontrol pası), **A13** (Opus/**high** — regresyon + gözle kontrol bulgularının düzeltme iterasyonu).
-- **Kaç adım kaldı?** **3:** A11 → A12 → A13. A13'ün paste-ready promptu "KALAN ADIMLAR" bölümündedir.
+- **Kaç adım kaldı?** **3:** A11 → A12 → A13. **Üçünün de yapıştırmaya hazır promptu** "KALAN ADIMLAR" bölümünde, A1-A10 ile aynı biçimde. Sırayla yapılır: A12'nin çıktısı (kusur listesi) A13'ün girdisidir.
 - **A13'te neden high?** İş kodlama değil **teşhis**: 1430 test yeşilken bozulan bir runtime davranışı aranıyor (kart animasyonları/renklendirmeleri) — `c6e9a21` ile aynı sınıf, headless suite'in görmediği yol.
 - **Tıkanırsam?** Model değiştirme kolu yok; effort'u yükselt (medium → high → xhigh, Kural 2). Effort modelin tavanını aşmaz — yalnız o tavanı sonuna kadar kullandırır. Review'u hiçbir koşulda atlama — riskli bölgelerin (UI custom render, Stop/copy-aware) tek sigortası o.
 - **Commit ne zaman?** Promptlar commit'i sana bırakıyor (CLAUDE.md kuralı). Her aşama sonunda "commit et" demen yeterli.
-
----
-
-## A11 (detay) — CLAUDE.md bayat bilgi denetimi (It-5'te tespit edildi, KARAR KULLANICIDA)
-
-> Kalan 3 adımın **1.'si**. Özet ve sıralama için yukarıdaki "KALAN ADIMLAR" tablosuna bak.
-
-**Durum:** It-5'in D3 (README) task'ının review'ı, `CLAUDE.md`'nin **Proje Yapısı / Mimari** bölümünde
-koddan sapmış üç olgusal ifade buldu. Bunlar It-5'te **düzeltilmedi** — kullanıcı kararı: ayrı ele alınacak.
-
-**Sorun neden önemli:** `CLAUDE.md` her session'da otomatik olarak context'e yükleniyor. Bayat kaldığı
-sürece o dosyayı okuyan her agent'ı yanlış yönlendirmeye devam eder. It-5'te bu fiilen yaşandı: D3
-implementer'ı README'yi yazarken CLAUDE.md ile kodun çeliştiğini görüp durmak ve sormak zorunda kaldı.
-
-**Neyi neyle karşılaştıracağız (üç kalem):**
-
-| # | `CLAUDE.md`'deki ifade | Koddaki gerçek | Kanıt |
-|---|---|---|---|
-| 1 | "her projeyi **shell-out** (`dotnet build` ayrı child process) ile derler" ve Supervisor satırındaki aynı ifade | Kod **hiçbir yerde `dotnet build` çalıştırmıyor**; `MSBuild.exe`'yi vswhere ile çözüp çalıştırıyor | `Core/MsBuild/MsBuildResolver.cs:21-22` (vswhere → `MSBuild\**\Bin\MSBuild.exe`) · `Supervisor/Program.cs:362` yorumu birebir "`[D10] dotnet build DEĞİL, MSBuild.exe`" + `:364` `new MsBuildInvoker(..., location.MsBuildExePath)` · `Core/MsBuild/MsBuildInvoker.cs:68` o exe'yi inner job'a launch ediyor · **kesin belirleyici:** `Core/MsBuild/MsBuildArguments.cs:10-12`'deki `-nodeReuse:false` ve `-clp:Summary` `dotnet build`'in switch'leri değildir |
-| 2 | Proje tablosunda `tests/BuildOrchestrator.Tests` → **`net10.0`** (xUnit) | Gerçekte **`net10.0-windows`** + `UseWPF` (WPF testleri var: realize testleri, STA thread testleri) | `tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj` |
-| 3 | "**DURUM:** Proje sıfırdan yeniden kuruluyor… **Kod henüz yoktur**; bu tablo hedef yapıdır." | Kod var ve olgun: It-0→It-5 tamamlandı, **1424 test** yeşil, publish hattı çalışıyor | `git log` · `.superpowers/sdd/progress.md` · `dotnet test` |
-
-**Not:** `-p:UseSharedCompilation=false -nodeReuse:false` flag'lerinden bahseden satır **doğrudur**
-(bkz. T33 karar kaydı: `.claude/outputs/2026-07-26-07-38-t33-decision.md`) — yalnız o flag'leri taşıyan
-komutun `dotnet build` değil `MSBuild.exe` olduğu düzeltilecek.
-
-**Karar verilecek:** üçünü de düzeltmek mi, yalnız (1)'i mi, yoksa CLAUDE.md'yi olduğu gibi bırakıp
-mimari tabloyu ayrı bir dokümana mı taşımak. Düzeltme yapılacaksa kapsam **yalnız bu üç olgusal ifadedir**;
-dil kuralları, çıktı/özet dizin kuralları, git kuralları ve talimatların geri kalanı değişmez.
