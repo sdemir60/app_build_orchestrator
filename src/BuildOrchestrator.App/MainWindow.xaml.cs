@@ -477,9 +477,17 @@ public partial class MainWindow : Window
         {
             await _engine.StartAsync();
         }
+        catch (Services.EngineUnavailableException ex)
+        {
+            // [D1] Kurulum eksik (supervisor\ çıktısı yok): child hiç doğmadığı için EngineExited ATEŞLENMEZ →
+            // eskiden kullanıcı HİÇBİR ŞEY görmüyordu (yalnız Debug.WriteLine, Release'te derlenip çıkar).
+            // Şerit kalıcı hata moduna alınır; "Restart engine" gösterilmez (bkz. OnEngineUnavailable).
+            _vm.OnEngineUnavailable(ex.ExePath);
+        }
         catch (Exception ex)
         {
-            // Motor başlatılamadı. Görsel bildirim (sticky ribbon + Restart) T37'nin işidir — burada gözlenir.
+            // Motor DOĞDU ama hazır olamadı (timeout/framing/erken ölüm): görsel bildirimi EngineExited yolu
+            // TEK sinyal olarak zaten üretir (T37) — burada yalnız iz bırakılır, ikinci bir sinyal ÜRETİLMEZ.
             System.Diagnostics.Debug.WriteLine($"[engine] start failed — {ex.Message}");
         }
     }

@@ -104,6 +104,7 @@ public partial class StickyRibbon : UserControl
     internal IReadOnlyList<ToggleButton> FailureChips { get; private set; } = [];
     internal ToggleButton? FailureMoreChip { get; private set; }
     internal StackPanel FailureCluster => PART_FailureCluster; // [6b fold] testler "N failed"/"dependency-affected" metnini buradan pinler
+    internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -169,6 +170,7 @@ public partial class StickyRibbon : UserControl
             // [E2/T37+T10] Engine-died kalıcı hata modu ve Sync-failed KIRMIZI metni faz-metnini EZER (RibbonText
             // öncelik sırası) → değiştiklerinde metni yeniden kur (Restart engine butonu görünürlüğü de RefreshText'te).
             case nameof(RunViewModel.EngineDiedMessage):
+            case nameof(RunViewModel.EngineRestartable): // [D1] aksiyonun anlamlı olup olmadığı da metinle birlikte tazelenir
             case nameof(RunViewModel.SyncErrorMessage):
                 RefreshText();
                 RefreshProgress();
@@ -211,7 +213,10 @@ public partial class StickyRibbon : UserControl
         // NOT (wire gap): warnings=0 — App derleyici-warning sayısını izlemiyor (RunCompletedEvent'te yok). Bkz. report.
 
         // [E2/T37] "Restart engine" YALNIZ engine-died kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
-        PART_RestartEngine.Visibility = string.IsNullOrEmpty(_vm.EngineDiedMessage) ? Visibility.Collapsed : Visibility.Visible;
+        // [D1] …ve yalnız yeniden başlatmanın ANLAMI varsa: Supervisor çıktısı hiç yoksa (EngineRestartable=false)
+        // aksiyon gizlenir, kullanıcı şeritteki açıklayıcı metni okur (RunViewModel.EngineMissingMessage).
+        PART_RestartEngine.Visibility =
+            !string.IsNullOrEmpty(_vm.EngineDiedMessage) && _vm.EngineRestartable ? Visibility.Visible : Visibility.Collapsed;
 
         PART_PhaseText.Text = line.Text;
         PART_PhaseText.SetResourceReference(TextBlock.ForegroundProperty, line.BrushKey);

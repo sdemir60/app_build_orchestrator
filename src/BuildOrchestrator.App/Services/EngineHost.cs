@@ -1,8 +1,23 @@
+using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.App.Services;
+
+/// <summary>
+/// [D1] Supervisor çıktısı uygulamanın yanında YOK — motor hiç doğamaz (eksik/bozuk kurulum, ör. publish
+/// çıktısına <c>supervisor\</c> klasörü girmemiş). Ham <see cref="System.ComponentModel.Win32Exception"/>
+/// yerine bu AYRIŞAN tür atılır: çağıran (MainWindow) bunu kullanıcıya görünür, yeniden başlatması ANLAMSIZ
+/// bir kurulum hatasına çevirir. Child hiç doğmadığı için <see cref="EngineHost.EngineExited"/> ASLA
+/// ateşlenmez → kullanıcıya TEK sinyal gider.
+/// </summary>
+public sealed class EngineUnavailableException(string exePath)
+    : InvalidOperationException($"Supervisor çalıştırılabiliri bulunamadı: {exePath}")
+{
+    /// <summary>Aranan (ve bulunamayan) Supervisor exe yolu — konsol satırında gösterilir.</summary>
+    public string ExePath { get; } = exePath;
+}
 
 public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
 {
@@ -19,6 +34,10 @@ public sealed class EngineHost(string supervisorExePath) : IAsyncDisposable
 
     public async Task<EngineReadyEvent> StartAsync(CancellationToken ct = default)
     {
+        // [D1] Pre-flight: exe yoksa CreateProcessW'nin ham Win32Exception'ını beklemeyiz — generation'a
+        // DOKUNMADAN (hiçbir yan etki bırakmadan) ayrışan tür atılır.
+        if (!File.Exists(supervisorExePath)) throw new EngineUnavailableException(supervisorExePath);
+
         int gen = Interlocked.Increment(ref _generation);
         _ready = new TaskCompletionSource<EngineReadyEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         string cmdLine = WindowsCommandLine.Build(supervisorExePath);

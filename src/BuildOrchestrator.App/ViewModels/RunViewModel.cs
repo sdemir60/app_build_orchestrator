@@ -317,6 +317,19 @@ public sealed partial class RunViewModel : ObservableObject
     /// dek stale kalıp, tamamen başarılı sonraki run'larda bile güncel engine sağlığını yanlış yansıtırdı.</summary>
     [ObservableProperty] private string? _engineDiedMessage;
 
+    /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
+    /// yeniden başlatılabilir (true); Supervisor çıktısı hiç bulunamadığında (<see cref="OnEngineUnavailable"/>)
+    /// yeniden başlatmak eksik dosyayı geri getirmeyeceği için aksiyon GİZLENİR ve kullanıcı yalnız ne yapması
+    /// gerektiğini anlatan metni görür. <b>Değişmez:</b> <see cref="EngineDiedMessage"/>'ı yazan HER yol bunu da
+    /// yazar (ölüm → true, kurulum eksik → false); mesaj temizlendiğinde değerin önemi kalmaz.</summary>
+    [ObservableProperty] private bool _engineRestartable = true;
+
+    /// <summary>[D1] Supervisor çıktısı uygulamanın yanında bulunamadığında şeritte gösterilen KALICI satır.
+    /// design-v1 §"Ton" (sakin, kesin, mühendisçe; ünlem yok) ve mevcut hata satırlarının em-dash/`·` dili.
+    /// Ham exception dump'ı DEĞİL — tam yol konsol anlatısına düşer.</summary>
+    public const string EngineMissingMessage =
+        "Engine missing — supervisor was not found next to the app · reinstall required";
+
     /// <summary>[E2/T10] Son Sync başarısız olduysa hata gerekçesi (ErrorEvent.Message) — şerit bunu KIRMIZI
     /// <c>Sync failed — {reason}</c> faz-metnine çevirir (<see cref="RibbonText.Compose"/>). Bir sonraki Sync
     /// (<see cref="OnSyncStarted"/> retry) ya da başarılı tamamlanma (<see cref="OnSyncCompleted"/>) temizler.
@@ -906,6 +919,9 @@ public sealed partial class RunViewModel : ObservableObject
     {
         // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
         // Exit kodu (varsa) KORUNUR — test bu sayıyı pinler.
+        // [D1] Doğmuş bir motorun ölümü YENİDEN BAŞLATILABİLİR — şerit "Restart engine" aksiyonunu gösterir
+        // (EngineDiedMessage yazan her yol bu bayrağı da yazar; bkz. EngineRestartable).
+        EngineRestartable = true;
         EngineDiedMessage = exitCode is { } code
             ? $"Engine stopped unexpectedly (exit {code})"
             : "Engine stopped unexpectedly (protocol error)";
@@ -924,6 +940,23 @@ public sealed partial class RunViewModel : ObservableObject
         // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada
         // da uçuştaki Sync serbest bırakılır.
         ReleaseSyncPhase();
+    }
+
+    /// <summary>
+    /// [D1] Motor HİÇ başlatılamadı: Supervisor çalıştırılabiliri uygulamanın yanında yok (eksik/bozuk kurulum —
+    /// tipik olarak publish çıktısına <c>supervisor\</c> klasörü girmemiş). Kullanıcı SESSİZ kalmaz: şerit
+    /// kalıcı hata moduna girer (engine-died ile AYNI görsel yol) ama "Restart engine" GİZLENİR — yeniden
+    /// başlatmak eksik dosyayı geri getirmez. Tam yol yalnız konsol anlatısına düşer (şerit tek satır kalır).
+    /// <para><b>Tek sinyal:</b> child process hiç doğmadığı için <see cref="EngineHost.EngineExited"/> ateşlenmez;
+    /// bu yol <see cref="OnEngineExited"/> ile ASLA çakışmaz (çağıran yalnız
+    /// <see cref="Services.EngineUnavailableException"/> dalında buraya girer).</para>
+    /// </summary>
+    /// <param name="exePath">Aranan Supervisor exe yolu (konsol satırında gösterilir).</param>
+    public void OnEngineUnavailable(string exePath)
+    {
+        EngineRestartable = false;
+        EngineDiedMessage = EngineMissingMessage;
+        AppendRunLine($"[error] engine not found: {exePath}");
     }
 
     // ---------------------------------------------------------------- konsol/log

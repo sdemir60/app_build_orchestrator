@@ -88,8 +88,8 @@ public partial class App : Application
         }
 
         var sc = new ServiceCollection();
-        sc.AddSingleton(_ => new EngineHost(
-            Path.Combine(AppContext.BaseDirectory, "supervisor", "BuildOrchestrator.Supervisor.exe")));
+        // [D1] Supervisor yolu TEK kaynaktan (SupervisorLayout ← csproj $(SupervisorFolderName)).
+        sc.AddSingleton(_ => new EngineHost(SupervisorLayout.ResolveExePath(AppContext.BaseDirectory)));
         // Üretimde ~50ms tick — Task 11'in kanıtladığı batching davranışı; test'te enjekte edilen tick kullanılır.
         sc.AddSingleton(_ => new ConsoleBatcher(ct => Task.Delay(50, ct)));
         // [E1/T67] Satır hover ikonlarının OS eylemleri: gerçek Process.Start başlatıcısı + gerçek ProcessRunner
