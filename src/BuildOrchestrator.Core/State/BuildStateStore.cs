@@ -54,6 +54,15 @@ public sealed class BuildStateStore
     }
 
     /// <summary>
+    /// [W1] <see cref="Load"/> sonucundan bir projenin SON BAŞARIYLA derlendiği commit'i çeker; kayıt yoksa
+    /// (hiç derlenmemiş proje) ya da map hiç yoksa <c>null</c>. <c>BuildPreviewItem.BuiltCommit</c>
+    /// projeksiyonunun TEK yeri: Sync yolu (Core'daki <c>SyncWorkspaceService</c>) ve run yolu
+    /// (Supervisor'daki <c>RunCoordinator</c>) aynı aramayı iki kez YAZMAZ.
+    /// </summary>
+    public static string? BuiltCommitOf(IReadOnlyDictionary<string, BuildState>? state, string projectId) =>
+        state is not null && state.TryGetValue(projectId, out var found) ? found.BuiltCommit : null;
+
+    /// <summary>
     /// Tek projenin state'ini merge edip TÜM map'i atomik olarak (temp dosyaya yaz → <see cref="File.Move"/>
     /// overwrite:true rename) diske yazar. Eşzamanlı çağrılar <see cref="_writeGate"/> ile serialize edilir —
     /// concurrent Upsert'ler ne birbirini kaybeder ne de dosyayı yarım bırakır.

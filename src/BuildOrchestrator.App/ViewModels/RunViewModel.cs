@@ -50,12 +50,22 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// kurulurken atanır. Bir projeyi birden çok .sln içerebilir — kart tek (ilk) adı gösterir.</summary>
     [ObservableProperty] private string? _solutionName;
 
-    /// <summary>[T53-UI] SHA çiftinin sol yarısı: projenin MEVCUT (derlenmiş) commit'i — prototip <c>st.curSha</c>
-    /// (BuildApp.jsx:400). <b>Şu an hiçbir IPC event'i per-proje sha taşımaz</b> (yalnız run-geneli
-    /// <see cref="RunViewModel.TargetSha"/> = SyncCompletedEvent.TargetSha vardır); bu alan bir sonraki
-    /// per-proje-sha kablajına dek boş kalır (uydurulmaz). Kart yalnız <see cref="WillBuild"/>==true iken bu
-    /// çifti gösterir.</summary>
+    /// <summary>[T53-UI][W1/It-5] SHA çiftinin sol yarısı: projenin SON BAŞARIYLA DERLENDİĞİ commit — prototip
+    /// <c>st.curSha</c> (BuildApp.jsx:400). Kaynak <see cref="BuildPreviewItem.BuiltCommit"/>'tir (yani
+    /// <c>BuildState.BuiltCommit</c>); hem Sync hem run-başı önizlemesinden gelir. Değer HAM'dır (40-hex) —
+    /// 7 haneye kısaltma bir GÖRÜNTÜ kararıdır ve kartta (<c>ProjectRow.ApplySha</c>) yapılır. <b>Hiç
+    /// derlenmemiş</b> proje ⇒ <c>null</c> (uydurulmaz): kart o satırda çift yerine YALNIZ hedefi basar.
+    /// Kart yalnız <see cref="WillBuild"/>==true iken bu slotu gösterir.</summary>
     [ObservableProperty] private string? _currentSha;
+
+    /// <summary>[W1/It-5] SHA çiftinin sağ yarısı: run-geneli hedef commit (<c>SyncCompletedEvent.TargetSha</c>),
+    /// <see cref="RunViewModel.TargetSha"/>'dan her satıra İTİLİR (<see cref="IsRunActive"/>/<see cref="NamePrefix"/>
+    /// deseni). <b>Neden satırda:</b> kart bunu eskiden render anında ata ağaçtaki <see cref="RunViewModel"/>'den
+    /// ÇEKİYORDU; <c>buildPreview</c> deterministik olarak <c>syncCompleted</c>'dan ÖNCE geldiği için satır
+    /// sha'sını TargetSha daha null'ken hesaplıyor ve bir daha tazelenmiyordu (ilk Sync'ten sonra slot boş
+    /// kalırdı). Değer artık İTİLDİĞİ için iki event'in sırası ÖNEMSİZDİR — hangisi sonra gelirse satır kendi
+    /// PropertyChanged'i üzerinden tazelenir (satır başına EK abone YOK). Değer HAM'dır (40-hex).</summary>
+    [ObservableProperty] private string? _targetSha;
 
     /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
     /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
@@ -733,6 +743,11 @@ public sealed partial class RunViewModel : ObservableObject
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
             if (item.WillBuild == true) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
+            // [W1] CurrentSha ataması, aşağıdaki terminal-satır guard'ından ÖNCE ve ondan BAĞIMSIZ yapılır: o
+            // guard yalnız WillBuild'i korumak içindir (segment 1'in canlı succeeded→clean geçişi ezilmesin).
+            // Sha'nın böyle bir koruma İHTİYACI YOKTUR — tersine, segment 2'nin okuduğu değer segment 1'in
+            // persist'ini içerdiği için terminal satırların sol yarısı ancak burada TAZELENİR.
+            row.CurrentSha = item.BuiltCommit;
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
         }
@@ -776,7 +791,10 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var existing = Projects.FirstOrDefault(p => p.Id == id);
         if (existing is not null) return existing;
-        var row = new ProjectRowViewModel(id, name, initialState) { IsRunActive = RunActive, NamePrefix = _graphNamePrefix };
+        // [W1] TargetSha da IsRunActive/NamePrefix ile AYNI itme deseninden gelir: run ortasında doğan bir satır
+        // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
+        var row = new ProjectRowViewModel(id, name, initialState)
+        { IsRunActive = RunActive, NamePrefix = _graphNamePrefix, TargetSha = TargetSha };
         Projects.Add(row);
         return row;
     }

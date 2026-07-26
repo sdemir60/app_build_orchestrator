@@ -782,8 +782,14 @@ public sealed class RunCoordinator(
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
         // taşınır; burada AYRICA hesaplanmaz.
+        // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
+        // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() SEGMENT BAŞINA TAM BİR KEZ: Continue/
+        // RetryFailed her segmentte preview'ı yeniden yayınlar, item başına okuma yapılmaz. Segment 2'nin okuduğu
+        // map segment 1'in persist'lerini İÇERİR — yani derlenmiş satırların sol yarısı taze commit'e döner.
+        var builtCommits = stateStore?.Load();
         events.TryWrite(new BuildPreviewEvent(
-            [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild))]));
+            [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
+                BuildStateStore.BuiltCommitOf(builtCommits, n.Id)))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi

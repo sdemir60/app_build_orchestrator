@@ -1285,6 +1285,48 @@ public class RunCoordinatorTests
     }
 
     [Fact]
+    public async Task The_run_start_preview_carries_each_projects_last_built_commit_from_the_state_store()
+    {
+        // [W1] Sync yolu BuiltCommit'i doldurup run yolu boş bıraksaydı, Build'e basar basmaz her kartın sha
+        // slotunun sol yarısı sıfırlanırdı (buildPreview her run/segment başında YENİDEN yayınlanır ve satırı
+        // uzlaştırır). Kayıtlı proje değeri taşır, kaydı olmayan null kalır.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            const string builtCommit = "b7e91d4c0affee1122334455667788990aabbcc";
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("Known"), "sig", builtCommit, BuildResult.Succeeded));
+
+            var plan = PlanOf(Node("Known"), Node("Fresh"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+            Assert.Equal(builtCommit, Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Known").BuiltCommit);
+            Assert.Null(Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Fresh").BuiltCommit);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task A_run_without_a_state_store_still_emits_a_preview_with_no_built_commits()
+    {
+        // [W1] stateStore null (harness/pre-Task-19 kablajı) ⇒ Load HİÇ çağrılmaz ve preview yine yayınlanır —
+        // sha alanı yalnız boş kalır. Mevcut testlerin tamamı bu yoldan geçtiği için kapı ayrıca pinlenir.
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.All(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => Assert.Null(i.BuiltCommit));
+    }
+
+    [Fact]
     public async Task Build_mode_pre_skips_up_to_date_nodes_without_invoking_msbuild_and_persists_the_built_ones()
     {
         // [Task 19/A2] RunMode.Build pre-skip yolunun ilk DETERMİNİSTİK (acceptance dışı, in-process) kanıtı:

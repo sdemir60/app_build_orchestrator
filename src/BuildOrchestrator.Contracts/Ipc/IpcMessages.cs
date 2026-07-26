@@ -209,7 +209,14 @@ public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcE
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
 /// (hollow)=null. App bunu <c>Projects</c> listesini run başlamadan (proje-başına ilk event'ten önce) PRE-POPULATE
 /// etmek için kullanır — bkz. RunViewModel.OnBuildPreview.</summary>
-public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild);
+/// <param name="BuiltCommit">[W1/It-5] Bu projenin SON BAŞARIYLA derlendiği commit — <see
+/// cref="Model.BuildState.BuiltCommit"/>'ten AYNEN (40-hex ham sha; kısaltma bir GÖRÜNTÜ kararıdır ve App'te
+/// yapılır). Kart bunu sha çiftinin SOL yarısı olarak gösterir; sağ yarı run-geneli <see
+/// cref="SyncCompletedEvent.TargetSha"/>'dir. <b>Hiç derlenmemiş</b> (build-state kaydı olmayan) proje ⇒
+/// <c>null</c> — JSON'a hiç yazılmaz, dolayısıyla W1 ÖNCESİ yazılmış NDJSON satırları da alansız çözülmeye
+/// devam eder (geriye dönük uyum). <b>Not:</b> bu değer ile <c>TargetSha</c> FARKLI ref ailelerinden gelir
+/// (bu: derleme anındaki yerel/worktree HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
+public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null);
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
 /// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>

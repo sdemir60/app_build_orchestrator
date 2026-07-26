@@ -979,6 +979,78 @@ public class RunViewModelTests
         Assert.Null(vm.Projects.Single(p => p.Name == "Hollow").WillBuild);
     }
 
+    // ---------------------------------------------------------------- [W1] per-proje sha (BuiltCommit) wire
+
+    [Fact]
+    public async Task BuildPreviewEvent_fills_each_rows_current_sha_from_the_built_commit()
+    {
+        // [W1] Sha çiftinin sol yarısı artık GERÇEKTEN akar (It-4b'de üretimde HEP null'dı). Değer HAM taşınır —
+        // 7 haneye kısaltma kartın işidir (bkz. ProjectRowTests), VM veriyi kırpmaz.
+        const string built = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\built.csproj", "Built", true, built),
+            new BuildPreviewItem(@"C:\p\never.csproj", "Never", true), // hiç derlenmemiş
+        ]));
+
+        Assert.Equal(built, vm.Projects.Single(p => p.Name == "Built").CurrentSha);
+        Assert.Null(vm.Projects.Single(p => p.Name == "Never").CurrentSha); // uydurulmaz
+    }
+
+    [Fact]
+    public async Task A_later_segments_preview_refreshes_the_current_sha_of_an_already_terminal_row()
+    {
+        // [W1] OnBuildPreview'daki terminal-satır `continue` guard'ı YALNIZ WillBuild'i korur (segment 1'in canlı
+        // succeeded→clean geçişi ezilmesin). CurrentSha o guard'dan ÖNCE atanır: segment 2'nin okuduğu build-state
+        // segment 1'in persist'ini içerir, yani derlenmiş satırın sol yarısı ancak burada tazelenebilir.
+        const string oldSha = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string newSha = "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        const string projectId = @"C:\p\dirty.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, oldSha)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100)); // satır artık terminal + clean
+
+        // Continue segmenti: preview BAYAT willBuild=true taşır ama build-state TAZE commit'i taşır.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, newSha)]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(newSha, row.CurrentSha); // sha TAZELENDİ
+        Assert.False(row.WillBuild);          // ama canlı succeeded→clean geçişi KORUNDU
+    }
+
+    [Fact]
+    public async Task Sync_completed_pushes_the_target_sha_onto_rows_that_already_exist_and_onto_later_ones()
+    {
+        // [W1] Olay sırası SABİTTİR: buildPreview, syncCompleted'dan ÖNCE gelir. Kart hedef sha'yı render anında
+        // ata ağaçtan ÇEKSEYDİ (eski davranış) satır onu daha null'ken okur ve bir daha tazelenmezdi — ilk Sync'ten
+        // sonra slot BOŞ kalırdı. Değer artık satıra İTİLİR, yani sıradan bağımsızdır.
+        const string target = "b7e91d4c0affee1122334455667788990aabbcc";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\early.csproj", "Early", true, "aaaaaaa")]));
+        Assert.Null(Assert.Single(vm.Projects).TargetSha); // syncCompleted henüz gelmedi
+
+        vm.OnEvent(new SyncCompletedEvent("main", target, FetchDegraded: false, 1, 0));
+        Assert.Equal(target, Assert.Single(vm.Projects).TargetSha); // ÖNCE doğmuş satır tazelendi
+
+        // Sonradan doğan satır da (run ortasında ilk kez görülen proje) hedefi yeni bir Sync beklemeden alır.
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\late.csproj", "Late"));
+        Assert.Equal(target, vm.Projects.Single(p => p.Name == "Late").TargetSha);
+
+        // Topolojinin YERİNDE uzlaştırma yolu da (yeni bir proje eklendiğinde) aynı değeri taşır.
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            Nodes: [Node(@"C:\p\early.csproj", "Early", 0), Node(@"C:\p\added.csproj", "Added", 1)],
+            Cycles: [], Solutions: [], LayerWarnings: []));
+        Assert.Equal(target, vm.Projects.Single(p => p.Name == "Added").TargetSha);
+    }
+
     [Fact] // buildPreview arrives BEFORE the per-project events; ProjectStarted on an already-previewed row must still flip it to Started
     public async Task ProjectStarted_after_a_buildPreview_row_still_transitions_the_row_to_Started()
     {

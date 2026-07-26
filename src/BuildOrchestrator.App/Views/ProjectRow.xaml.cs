@@ -146,7 +146,8 @@ public partial class ProjectRow : UserControl
         // ağaçtadır (ItemsControl önce container'ı ağaca ekler, sonra şablonu uygular) → ilk ApplyAll eksiksizdir
         // ve Loaded'daki ikinci koşum satır başına ~10 SetResourceReference + 3 animasyon kurulumunu boşuna
         // tekrarlıyordu. Geriye yalnız Loaded'ın GERÇEKTEN değiştirebildiği iki şey kalır:
-        //   · sha — TargetSha ATA ağaçtaki RunViewModel'den çözülür (satır ağaç dışında kurulduysa boş kalmıştı),
+        //   · sağ blok — hover/görünürlük durumu (sha ARTIK buna bağlı DEĞİL: [W1] ile hem cur hem target satır
+        //     VM'inden gelir, yani ağaç dışında kurulmuş bir satırda bile eksiksizdir),
         //   · nefes — Unloaded StopBreathing çağırır, yeniden yüklenen satırda saat geri kurulmalı.
         if (!_applied) { ApplyAll(); return; }
         ApplyRightBlock();
@@ -208,6 +209,7 @@ public partial class ProjectRow : UserControl
                 PART_Sln.Text = _vm?.SolutionName;
                 break;
             case nameof(ProjectRowViewModel.CurrentSha):
+            case nameof(ProjectRowViewModel.TargetSha): // [W1] syncCompleted buildPreview'dan SONRA gelse de tazelenir
                 ApplySha();
                 break;
         }
@@ -310,14 +312,22 @@ public partial class ProjectRow : UserControl
 
     private void ApplySha()
     {
-        // {CurrentSha} → {TargetSha}. TargetSha run-geneli (RunViewModel) — atalardan çözülür; CurrentSha per-proje
-        // (henüz IPC'de yok — bkz. ProjectRowViewModel.CurrentSha). Görünürlük ApplyRightBlock'ta.
-        // [E6 interim] BuiltCommit wire It-5'e ertelendiğinden CurrentSha bugüne dek HEP boş gelir → yalın-ok pürüzü
-        // (" → a3f81c2", boş sol yarı). cur boşken TARGET'ı YALNIZ göster; cur dolunca (It-5) çift geri gelir.
-        string cur = _vm?.CurrentSha ?? "";
-        string target = FindRunViewModel()?.TargetSha ?? "";
+        // [W1] "{cur7} → {target7}" (design-v1 README §kart slot 4 + "SHA 7 hane a3f81c2"). İKİ YARI DA burada
+        // kısaltılır: kaynaklar HAM 40-hex'tir (cur = BuildState.BuiltCommit, target = remote-tracking ref) ve
+        // 118px'lik slota ham hâlleri sığmaz. Kısaltma tek yerden (RunViewModel.Short7 — branch popover'ı da onu
+        // kullanır) gelir; ikinci bir kırpma yardımcısı yazılmaz.
+        //
+        // İKİSİ DE SATIR VM'inden okunur: target artık ata ağaçtan ÇEKİLMİYOR (RunViewModel her satıra itiyor),
+        // böylece syncCompleted buildPreview'dan SONRA gelse bile satır kendi PropertyChanged'iyle tazelenir.
+        //
+        // HİÇ DERLENMEMİŞ proje (BuiltCommit yok) ⇒ sol yarı boştur: çift yerine YALNIZ hedef basılır — yalın-ok
+        // pürüzü (" → b7e91d4") üretilmez. Görünürlük ApplyRightBlock'ta.
+        string cur = Short7(_vm?.CurrentSha);
+        string target = Short7(_vm?.TargetSha);
         PART_Sha.Text = cur.Length == 0 ? target : $"{cur} → {target}";
     }
+
+    private static string Short7(string? sha) => sha is null ? "" : ViewModels.RunViewModel.Short7(sha);
 
     /// <summary>Sağ blok: hover'da aç-ikonları, değilse (will==dirty) sha çifti (BuildApp.jsx:387-403).
     /// [L1] İkon bloğu hover'da TALEP ÜZERİNE kurulur; hover yokken kurulmamışsa dokunulacak bir şey de yoktur.</summary>
