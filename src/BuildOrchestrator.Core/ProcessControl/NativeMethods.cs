@@ -10,8 +10,20 @@ namespace BuildOrchestrator.Core.ProcessControl;
 internal static class NativeMethods
 {
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+    // [T20-a/K11] Priority, KILL_ON_JOB_CLOSE ile AYNI struct'ta (JOBOBJECT_EXTENDED_LIMIT_INFORMATION) yaşar —
+    // LimitFlags üzerine körlemesine yazan her çağrı §3 kaskat garantisini siler (bkz. JobObject.SetPriorityClass).
+    public const uint JOB_OBJECT_LIMIT_PRIORITY_CLASS = 0x20;
     public const int JobObjectExtendedLimitInformation = 9;
     public const int JobObjectAssociateCompletionPortInformation = 7;
+    // [T20-a/K11] CPU rate ise AYRI bir info-class'tır — ExtendedLimitInformation'a hiç dokunmaz, güvenlidir.
+    public const int JobObjectCpuRateControlInformation = 15;
+    public const uint JOB_OBJECT_CPU_RATE_CONTROL_ENABLE = 0x1;
+    public const uint JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP = 0x4;
+
+    // Win32 priority class değerleri (CreateProcess dwCreationFlags ile aynı sabitler).
+    public const uint NORMAL_PRIORITY_CLASS = 0x00000020;
+    public const uint IDLE_PRIORITY_CLASS = 0x00000040;
+    public const uint BELOW_NORMAL_PRIORITY_CLASS = 0x00004000;
 
     public const uint CREATE_SUSPENDED = 0x00000004;
     public const uint CREATE_NO_WINDOW = 0x08000000;
@@ -66,6 +78,21 @@ internal static class NativeMethods
         public UIntPtr PeakJobMemoryUsed;
     }
 
+    /// <summary>
+    /// [T20-a] Win32 karşılığında <c>ControlFlags</c>'ten sonraki 4 bayt bir UNION'dır
+    /// (<c>CpuRate</c> | <c>Weight</c> | <c>{MinRate, MaxRate}</c>). Bu kod YALNIZ hard-cap yolunu kullandığı
+    /// için union'ın tek üyesi (<c>CpuRate</c>) modellenir — diğer üyeler ihtiyaç doğduğunda eklenir; Explicit
+    /// layout, o alanın union yuvası olduğunu belgelemek için korunur. Struct boyutu 8 bayttır ve
+    /// <c>cbJobObjectInfoLength</c> tam bunu bildirmelidir (yanlış boyut ⇒ P/Invoke Win32 hatasıyla döner;
+    /// ölçülen: <c>ERROR_BAD_LENGTH</c> 24). <c>CpuRate</c> birimi 1/100 yüzdedir: %70 → 7000.
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit, Size = 8)]
+    public struct JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
+    {
+        [FieldOffset(0)] public uint ControlFlags;
+        [FieldOffset(4)] public uint CpuRate; // union yuvası: hard-cap modunda CpuRate
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct JOBOBJECT_ASSOCIATE_COMPLETION_PORT
     {
@@ -112,6 +139,18 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool SetInformationJobObject(nint hJob, int jobObjectInfoClass,
         ref JOBOBJECT_ASSOCIATE_COMPLETION_PORT lpJobObjectInfo, int cbJobObjectInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetInformationJobObject(nint hJob, int jobObjectInfoClass,
+        ref JOBOBJECT_CPU_RATE_CONTROL_INFORMATION lpJobObjectInfo, int cbJobObjectInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryInformationJobObject(nint hJob, int jobObjectInfoClass,
+        ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION lpJobObjectInfo, int cbJobObjectInfoLength, out uint lpReturnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryInformationJobObject(nint hJob, int jobObjectInfoClass,
+        ref JOBOBJECT_CPU_RATE_CONTROL_INFORMATION lpJobObjectInfo, int cbJobObjectInfoLength, out uint lpReturnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool AssignProcessToJobObject(nint hJob, nint hProcess);

@@ -97,7 +97,12 @@ public sealed class SyncWorkspaceService(
         // --- 3) will-build pass (v7 A6: "run'dan ÖNCE"; hollow = SYNC ÖNCESİ) — Sync sonrası düğümler artık
         // dirty/clean bilir, hollow kalmaz. SALT-OKUR: build-state yalnız OKUNUR, Sync hiçbir şey PERSIST ETMEZ,
         // bu yüzden koşan bir build'in state'ini bozamaz.
-        var outcome = await ComputeWillBuildAsync(cmd, plan, scan, head.Value, emit, ct);
+        // [W1] Build-state TEK KEZ, BURADA okunur ve iki tüketiciye birden verilir: (a) will-build pass'i
+        // (BuiltSignature/LastResult), (b) aşağıdaki önizleme projeksiyonu (BuiltCommit = sha çiftinin sol
+        // yarısı). Pass'in İÇİNDE kalsaydı hollow/hata dallarında (pass hiç koşmaz) elde state olmazdı ve
+        // "durumu bilinmeyen ama daha önce derlenmiş" satır sha'sını kaybederdi. SALT-OKUR: yalnız Load.
+        var state = stateStore.Load();
+        var outcome = await ComputeWillBuildAsync(cmd, plan, scan, head.Value, state, emit, ct);
 
         // --- 4) topoloji + önizleme. Önizleme AYRI bir will-build yolu DEĞİLDİR: App'in mevcut
         // BuildPreviewEvent handler'ı satırların WillBuild'ini zaten bu event'ten kurar (ikinci bir yol açılmaz).
@@ -107,7 +112,9 @@ public sealed class SyncWorkspaceService(
             Solutions: ToSolutionRefs(scan),
             LayerWarnings: outcome.Plan.LayerWarnings ?? []));
         emit(new BuildPreviewEvent(
-            outcome.Plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild)).ToList()));
+            outcome.Plan.Nodes
+                .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild, BuildStateStore.BuiltCommitOf(state, n.Id)))
+                .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
         if (outcome.Known)
@@ -152,8 +159,11 @@ public sealed class SyncWorkspaceService(
     /// yolundaki HERHANGİ bir hata Sync'i ÖLDÜRMEZ — plan AYNEN (hollow) döner ve sayaçlar raporlanmaz.
     /// </para>
     /// </summary>
+    /// <param name="state">[W1] Çağıranın okuduğu build-state map'i — burada AYRICA <c>Load()</c> ÇAĞRILMAZ
+    /// (aynı Sync'te iki disk okuması olurdu; bkz. <see cref="RunAsync"/>).</param>
     private async Task<WillBuildOutcome> ComputeWillBuildAsync(SyncWorkspaceCommand cmd, BuildPlan plan,
-        ScanResult scan, string? headCommit, Action<IpcEvent> emit, CancellationToken ct)
+        ScanResult scan, string? headCommit, IReadOnlyDictionary<string, BuildState> state,
+        Action<IpcEvent> emit, CancellationToken ct)
     {
         // Commit'i olmayan repo: IncrementalPlanner'ın hollow kapısı zaten TÜM düğümleri null yapar — pass'i
         // hiç koşturmaya (ve ls-tree/status maliyetine) gerek yok.
@@ -177,8 +187,6 @@ public sealed class SyncWorkspaceService(
                 .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
                 .Where(x => x.Project is not null)
                 .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
-
-            var state = stateStore.Load();
 
             var (safePlan, _) = IncrementalRunBinder.Bind(
                 plan, evaluatedById, cmd.RootPath, headCommit, tracked, dirty, state,

@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 
@@ -15,6 +15,12 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 internal static class MotionTokens
 {
+    /// <summary>İmleç blink periyodu (design-v1 §2.5: "1.0→0.1, 0.55s"). Adlandırılmış sabit — süreyi çağrı
+    /// yerinde literal yazmak YASAK (<c>StatusGlyph.PulseMs</c> / <c>BuildingSpinner.RotationMs</c> deseni;
+    /// guard: <c>NoHardcodedMotionTests</c>). Duration.* token ailesine ait DEĞİLDİR: bu süre effects.css'te
+    /// yoktur, §2.5'e özgüdür.</summary>
+    internal const double BlinkMs = 550.0;
+
     public static Duration ResolveDuration(FrameworkElement host, string key, double fallbackMs)
         => host.TryFindResource(key) is Duration d ? d : new Duration(TimeSpan.FromMilliseconds(fallbackMs));
 
@@ -24,7 +30,7 @@ internal static class MotionTokens
     /// StartCursorBlink) bunu paylaşır (verbatim kopya YASAK, CLAUDE.md).</summary>
     public static DoubleAnimation CreateBlinkAnimation()
     {
-        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromSeconds(0.55)))
+        var blink = new DoubleAnimation(1.0, 0.1, new Duration(TimeSpan.FromMilliseconds(BlinkMs)))
         {
             AutoReverse = true,
             RepeatBehavior = RepeatBehavior.Forever,
@@ -74,7 +80,7 @@ internal static class MotionTokens
     /// </summary>
     public static void TransitionColor(FrameworkElement host, SolidColorBrush brush, Color to)
     {
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2] statik sinyalin TEK okuma ifadesi
         var duration = ResolveDuration(host, "Duration.Fast", 120.0);          // prototip: --duration-fast
         var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1)); // --ease-standard
 
@@ -94,7 +100,7 @@ internal static class MotionTokens
     /// <c>translateX</c> geçişi (_ds_bundle.js:900-903) gibi konum/opaklık geçişleri için.</summary>
     public static void TransitionDouble(FrameworkElement host, Animatable target, DependencyProperty property, double to)
     {
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2] statik sinyalin TEK okuma ifadesi
         var duration = ResolveDuration(host, "Duration.Fast", 120.0);
         var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
 
@@ -116,7 +122,7 @@ internal static class MotionTokens
     /// üstünden ORTAK sarılabilir (kopya YASAK, CLAUDE.md). Motion sinyali ÇAĞRI ANINDA taze okunur (sözleşme).</summary>
     public static bool AnimateSlowEaseInOut(FrameworkElement host, UIElement scrollTarget, double currentOffset, double targetOffset)
     {
-        bool animationsEnabled = BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2] statik sinyalin TEK okuma ifadesi
         var duration = ResolveDuration(host, "Duration.Slow", 280.0);
         var spline = ResolveKeySpline(host, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
         return ScrollAnimator.AnimateTo(scrollTarget, currentOffset, targetOffset, animationsEnabled, duration.TimeSpan, spline);

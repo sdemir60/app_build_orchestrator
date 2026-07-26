@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Reflection;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -40,7 +41,13 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
 
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
-        string version = typeof(SupervisorHost).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        // [D1 review · B2] TEK sürüm kimliği: Directory.Build.props → InformationalVersion (teslim etiketiyle,
+        // ör. "1.0.0+it5"). Yalın assembly Version'ı SDK varsayılanından (1.0.0) ayrılamazdı; App bu değeri
+        // konsolun boot satırında gösterir. Attribute yoksa assembly sürümüne düşülür.
+        string version =
+            typeof(SupervisorHost).Assembly
+                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(SupervisorHost).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
         await writer.WriteAsync(new EngineReadyEvent(Environment.ProcessId, version), ct);
         while (_running)
         {
@@ -80,6 +87,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await WriteWorktreeListAsync(w.RootPath, ct); break;
             case DeleteWorktreeCommand d:
                 await DeleteWorktreeAsync(d, ct); break;
+            case SetPerfModeCommand p:
+                await ApplyPerfModeAsync(p, ct); break;
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
@@ -156,6 +165,20 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         { await writer.WriteAsync(new ErrorEvent("worktreeDeleteFailed", result.Error!), ct); return; }
 
         await WriteWorktreeListAsync(cmd.RootPath, ct);
+    }
+
+    /// <summary>
+    /// [T20-b/K11] Koşan run'ın perf profilini değiştirir. Profil tablosu Core'un (<see cref="PerfProfile"/>) —
+    /// burada yalnız metin çözülür ve koordinatöre verilir. <b>Yalnız CPU cap + priority canlı değişir</b>;
+    /// paralellik bir sonraki run'da geçerli olur (bkz. <see cref="RunCoordinator.ApplyPerfMode"/>).
+    /// Başarıda event YOKTUR (App zaten kendi konsol notunu yazar); çözülemeyen mod ise sessizce yutulmaz —
+    /// <c>error(badPerfMode)</c> döner, böylece "komut tanınmadı" (<c>unknownCommand</c>) ile karışmaz.
+    /// </summary>
+    private async Task ApplyPerfModeAsync(SetPerfModeCommand cmd, CancellationToken ct)
+    {
+        if (PerfProfile.TryParse(cmd.PerfMode) is not { } profile)
+        { await writer.WriteAsync(new ErrorEvent("badPerfMode", cmd.PerfMode), ct); return; }
+        coordinator.ApplyPerfMode(profile);
     }
 
     /// <summary>

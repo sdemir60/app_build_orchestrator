@@ -27,12 +27,13 @@ public class GraphRenderTests
         GraphStatus dataStatus = GraphStatus.Discovered,
         GraphStatus apiStatus = GraphStatus.Discovered,
         GraphStatus portalStatus = GraphStatus.Discovered,
-        bool portalDepIssue = false) =>
+        bool portalDepIssue = false,
+        bool dataDepIssue = false) =>
     [
         // [D5] Prefix "OSYS." — GraphNode.ShortName artık veri-türevli öneki taşır (GraphBinder üretir); bu
         // izole render testinde önek elle verilir ki etiket kısa adı ("Base"/"Server.Api") göstersin.
         new("OSYS.Base", 0, baseStatus, Prefix: "OSYS."),
-        new("OSYS.Data.Core", 1, dataStatus, Prefix: "OSYS."),
+        new("OSYS.Data.Core", 1, dataStatus, HasDepIssue: dataDepIssue, Prefix: "OSYS."),
         new("OSYS.Server.Api", 2, apiStatus, Prefix: "OSYS."),
         new("OSYS.Web.Portal", 2, portalStatus, HasDepIssue: portalDepIssue, Prefix: "OSYS."),
     ];
@@ -99,6 +100,7 @@ public class GraphRenderTests
         view.SetGraph(Nodes(), Edges());
 
         var label = view.NodeVisuals["OSYS.Server.Api"].Label;
+        Assert.NotNull(label); // [G2/LOD] bu boyutta (katman başına ≤9) etiket HER ZAMAN kurulur
         Assert.Equal("Server.Api", label.Text);
         Assert.Equal(10.0, label.FontSize);
         // feasibility §3.4/§4.4: Display, scale transform altında BOZULUR — graf etiketlerinde LOKAL Ideal override
@@ -130,6 +132,33 @@ public class GraphRenderTests
         Assert.Equal(1.5, view.NodeVisuals["OSYS.Base"].Square.StrokeThickness); // seçim kalkınca geri döner
     }
 
+    [StaFact]
+    public void The_node_icon_is_scaled_to_13px_and_centred_inside_the_26px_square()
+    {
+        // [G2] KARAKTERİZASYON kilidi: ikonun 24 birimlik viewBox'tan 26px kareye yerleşimi (ölçek 13/24, ofset
+        // 6.5px) bir UYGULAMA DETAYI olan Viewbox'a bağlı KALMAMALI. G2 bu Viewbox'ı (+ iç ContainerVisual'ını)
+        // düğüm başına iki nesne kazanmak için kaldırır; bu test kaldırmadan ÖNCE de SONRA da AYNI sayıları
+        // ister — geometrik sonuç birebir aynıdır, yalnız onu üreten mekanizma değişir.
+        var view = NewView(false);
+        view.SetGraph(Nodes(), Edges());
+        view.Measure(new Size(600, 400));                 // düğüm ağacı SetGraph'ta kurulur → yeniden ölçülmeli
+        view.Arrange(new Rect(0, 0, 600, 400));
+        view.UpdateLayout();
+
+        var visual = view.NodeVisuals["OSYS.Base"];
+        var toSquare = visual.Icon.TransformToAncestor(visual.PulseHost);
+
+        double icon = GraphLayout.NodeSize * 0.5;                  // DS: size * 0.5 → 13px
+        double offset = (GraphLayout.NodeSize - icon) / 2;         // (26-13)/2 = 6.5
+        // 24 birimlik viewBox'ın iki köşesi 26px karenin İÇİNDE tam 13px'lik bir kutuya oturur.
+        var topLeft = toSquare.Transform(new Point(0, 0));
+        var bottomRight = toSquare.Transform(new Point(24, 24));
+        Assert.Equal(offset, topLeft.X, 10);
+        Assert.Equal(offset, topLeft.Y, 10);
+        Assert.Equal(offset + icon, bottomRight.X, 10);
+        Assert.Equal(offset + icon, bottomRight.Y, 10);
+    }
+
     // ---------------------------------------------------------------- dep-hata rozeti
 
     [StaFact]
@@ -139,6 +168,9 @@ public class GraphRenderTests
         view.SetGraph(Nodes(portalDepIssue: true), Edges());
 
         var withBadge = view.NodeVisuals["OSYS.Web.Portal"];
+        Assert.NotNull(withBadge.Badge);
+        Assert.NotNull(withBadge.BadgeCircle);
+        Assert.NotNull(withBadge.BadgeTriangle);
         Assert.Equal(Visibility.Visible, withBadge.Badge.Visibility);
         Assert.Equal(13.0, withBadge.Badge.Width);
         Assert.Equal(13.0, withBadge.Badge.Height);
@@ -150,8 +182,34 @@ public class GraphRenderTests
         Assert.Equal(view.TryFindResource("Brush.StatusFailText"), withBadge.BadgeTriangle.Fill);
         Assert.Null(withBadge.BadgeTriangle.Stroke);
         Assert.False(withBadge.BadgeTriangle.Data.IsEmpty());
+        // Rozet, kare kabının (nabız kabının KARDEŞİ) içindedir ve nabız kabında DEĞİLDİR.
+        Assert.Contains(withBadge.Badge, withBadge.SquareHost.Children.Cast<UIElement>());
 
-        Assert.Equal(Visibility.Collapsed, view.NodeVisuals["OSYS.Server.Api"].Badge.Visibility);
+        // [G2] Dep-hatası OLMAYAN düğümde rozet alt-ağacı artık HİÇ KURULMAZ (eskiden kurulup Collapsed
+        // ediliyordu — düğüm başına 6 ölü nesne, gerçek profilde düğümlerin ~%97'sinde).
+        Assert.Null(view.NodeVisuals["OSYS.Server.Api"].Badge);
+    }
+
+    [StaFact]
+    public void A_node_that_gains_a_dep_issue_later_builds_its_badge_on_demand_and_hides_it_again()
+    {
+        // [G2] Rozet TEMBEL: başta yok, HasDepIssue gelince kurulur, geri alınınca gizlenir (ikinci kez
+        // kurulmaz — aynı nesne yeniden görünür olur).
+        var view = NewView(false);
+        view.SetGraph(Nodes(), Edges());
+        Assert.Null(view.NodeVisuals["OSYS.Web.Portal"].Badge);
+
+        view.UpdateStatuses(Nodes(portalDepIssue: true));
+
+        var visual = view.NodeVisuals["OSYS.Web.Portal"];
+        Assert.NotNull(visual.Badge);
+        Assert.Equal(Visibility.Visible, visual.Badge.Visibility);
+        Assert.Equal(view.TryFindResource("Brush.StatusFailText"), visual.BadgeTriangle!.Fill);
+        var badge = visual.Badge;
+
+        view.UpdateStatuses(Nodes());
+        Assert.Same(badge, view.NodeVisuals["OSYS.Web.Portal"].Badge);
+        Assert.Equal(Visibility.Collapsed, badge.Visibility);
     }
 
     [StaFact]
@@ -168,6 +226,7 @@ public class GraphRenderTests
         var visual = view.NodeVisuals["OSYS.Web.Portal"];
         // [B2→D5 fold] Aynı anahtar iki tarafta da çözülemeseydi ikisi de null olur ve Assert.Same(null, null)
         // BOŞUNA geçerdi (sahte pass) — önce geometrilerin GERÇEKTEN çözüldüğünü pinle, sonra referans eşitliğini.
+        Assert.NotNull(visual.BadgeTriangle);
         Assert.NotNull(visual.Icon.Data);
         Assert.NotNull(visual.BadgeTriangle.Data);
         Assert.Same(view.TryFindResource(GraphView.PackageIconKey), visual.Icon.Data);
@@ -468,7 +527,9 @@ public class GraphRenderTests
     public void A_building_node_breathes_1_to_half_and_back_over_1_6s_at_30fps()
     {
         var view = NewView(true);
-        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        // Rozetin nabız kabının DIŞINDA olduğunu görebilmek için building düğüme dep-hatası da verilir
+        // ([G2] rozet artık yalnız gerçekten rozeti olan düğümde kurulur).
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building, dataDepIssue: true), Edges());
 
         var building = view.NodeVisuals["OSYS.Data.Core"];
         Assert.True(building.IsPulsing);
@@ -476,7 +537,9 @@ public class GraphRenderTests
         Assert.True(building.PulseHost.HasAnimatedProperties);
         Assert.NotSame(building.PulseHost, building.Cell);
         // Rozet nabız kabının DIŞINDADIR (DS'te kardeş eleman) — building düğümde de solmaz.
+        Assert.NotNull(building.Badge);
         Assert.DoesNotContain(building.Badge, building.PulseHost.Children.Cast<UIElement>());
+        Assert.Contains(building.Badge, building.SquareHost.Children.Cast<UIElement>());
 
         // Nabız dışındaki düğümler animasyonsuz ve tam opak.
         var idle = view.NodeVisuals["OSYS.Base"];

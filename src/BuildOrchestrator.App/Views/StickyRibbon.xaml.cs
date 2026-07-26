@@ -60,21 +60,33 @@ public partial class StickyRibbon : UserControl
     private string? _lastBuildingSig;
     private string? _lastFailedSig;
     private AppPhase? _lastAnnouncedPhase; // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil)
-    private BuildOrchestrator.App.Services.IMotionSettings? _subscribedMotion;
+    /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="Controls.MotionGate"/>) — latch'siz kip (ProjectRow ile aynı).</summary>
+    private readonly Controls.MotionGate _motion;
 
     /// <summary>[ProjectRow deseni · D8] Motion sinyalinin TAZE okunduğu kapı — headless'ta <c>App.Motion</c> null
     /// (AnimationsEnabled=false); testler gerçek bir sweep saatini sürebilmek için bunu <c>() =&gt; true</c> ile enjekte eder.</summary>
-    public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[ProjectRow deseni] AnimationsEnabledChanged aboneliği; null ise <see cref="App.Motion"/>.</summary>
-    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings { get; set; }
+    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
+    }
 
     public StickyRibbon()
     {
+        _motion = new Controls.MotionGate(this);
         InitializeComponent();
         PART_ProgressIndicator.Background = _indicatorBrush;
         DataContextChanged += OnDataContextChanged;
         PART_ProgressTrack.SizeChanged += OnTrackSizeChanged;
+        _motion.Changed += OnAnimationsEnabledChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
@@ -92,16 +104,12 @@ public partial class StickyRibbon : UserControl
     internal IReadOnlyList<ToggleButton> FailureChips { get; private set; } = [];
     internal ToggleButton? FailureMoreChip { get; private set; }
     internal StackPanel FailureCluster => PART_FailureCluster; // [6b fold] testler "N failed"/"dependency-affected" metnini buradan pinler
+    internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _subscribedMotion = MotionSettings ?? App.Motion;
-        if (_subscribedMotion is { } motion)
-        {
-            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
-        }
+        // [W2] Motion aboneliği MotionGate'te (ctor'da kablolandığı için bu handler'dan ÖNCE koşar — eski sıra birebir).
         // [E5/temizlik — L2 M2] Unloaded'da VM aboneliği bırakıldığından (leak fix), reload olursa (DataContext
         // değişmeden) burada geri kurulur — idempotent (ProjectRow subscribe-once deseni).
         if (_vm is { } vm) SubscribeVm(vm);
@@ -110,8 +118,7 @@ public partial class StickyRibbon : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        if (_subscribedMotion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-        _subscribedMotion = null;
+        // [W2] Motion aboneliğini MotionGate bırakır (bu handler'dan ÖNCE).
         // [E5/temizlik — L2 M2] LEAK FIX: OnUnloaded VM PropertyChanged/CollectionChanged aboneliğini de BIRAKIR
         // (önceden yalnız motion bırakılıyordu → şerit unload olsa bile VM'e asılı kalıyordu). E3 unsubscribe deseni.
         if (_vm is { } vm) UnsubscribeVm(vm);
@@ -163,6 +170,7 @@ public partial class StickyRibbon : UserControl
             // [E2/T37+T10] Engine-died kalıcı hata modu ve Sync-failed KIRMIZI metni faz-metnini EZER (RibbonText
             // öncelik sırası) → değiştiklerinde metni yeniden kur (Restart engine butonu görünürlüğü de RefreshText'te).
             case nameof(RunViewModel.EngineDiedMessage):
+            case nameof(RunViewModel.EngineRestartable): // [D1] aksiyonun anlamlı olup olmadığı da metinle birlikte tazelenir
             case nameof(RunViewModel.SyncErrorMessage):
                 RefreshText();
                 RefreshProgress();
@@ -205,7 +213,10 @@ public partial class StickyRibbon : UserControl
         // NOT (wire gap): warnings=0 — App derleyici-warning sayısını izlemiyor (RunCompletedEvent'te yok). Bkz. report.
 
         // [E2/T37] "Restart engine" YALNIZ engine-died kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
-        PART_RestartEngine.Visibility = string.IsNullOrEmpty(_vm.EngineDiedMessage) ? Visibility.Collapsed : Visibility.Visible;
+        // [D1] …ve yalnız yeniden başlatmanın ANLAMI varsa: Supervisor çıktısı hiç yoksa (EngineRestartable=false)
+        // aksiyon gizlenir, kullanıcı şeritteki açıklayıcı metni okur (RunViewModel.EngineMissingMessage).
+        PART_RestartEngine.Visibility =
+            !string.IsNullOrEmpty(_vm.EngineDiedMessage) && _vm.EngineRestartable ? Visibility.Visible : Visibility.Collapsed;
 
         PART_PhaseText.Text = line.Text;
         PART_PhaseText.SetResourceReference(TextBlock.ForegroundProperty, line.BrushKey);

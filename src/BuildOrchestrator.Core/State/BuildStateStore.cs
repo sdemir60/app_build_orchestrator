@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Core.State;
 
@@ -14,19 +15,29 @@ public sealed class BuildStateStore
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
+    /// <summary>Atomik rename'in retry bütçesi: 20 deneme x <see cref="RenameRetryBackoff"/> ≈ 100ms üst sınır
+    /// (bkz. <see cref="MoveAtomicWithRetry"/>).</summary>
+    private const int RenameAttempts = 20;
+
+    /// <summary>Rename retry'ının ÜRETİM backoff'u — <see cref="DefaultRenameRetryDelay"/>'in tek kaynağı.</summary>
+    private static readonly TimeSpan RenameRetryBackoff = TimeSpan.FromMilliseconds(5);
+
     private readonly string _path;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     public BuildStateStore(string cacheRoot) => _path = Path.Combine(cacheRoot, "build-state.json");
 
     /// <summary>
-    /// TEST-ONLY hook: her başarısız rename denemesinden sonra, retry sleep'inden ÖNCE çağrılır (parametre: 1-based
-    /// attempt no). Üretimde null bırakılır — zero-cost (bir null-check dışında davranış değişmez, 20x5ms bütçesi
-    /// AYNEN korunur). Testler (BuildOrchestrator.Tests, InternalsVisibleTo ile) bunu, sabit bir wall-clock bekleme
-    /// (ör. Task.Delay(40)) yerine GÖZLEMLENEN retry ilerlemesine göre kilidi bırakmak için kullanır — böylece
-    /// paralel test yükü altında (xUnit sınıfları paralel koşar) makine yavaşlasa bile test deterministik kalır.
+    /// [T49 FINAL PASS · D8] Başarısız bir rename denemesinden SONRAKİ gecikmenin TAMAMI — enjekte edilebilir dikiş
+    /// (parametre: 1-based attempt no). Üretimde null → <see cref="DefaultRenameRetryDelay"/> (sabit, küçük, sınırlı
+    /// backoff; davranış/bütçe DEĞİŞMEZ). Desen <c>RunCoordinator</c>'ın <c>retryDelay</c> dikişiyle aynıdır.
+    ///
+    /// <para>Eskiden burada bir gözlem hook'u + AYRI bir <c>Thread.Sleep(5)</c> vardı: testler retry ilerlemesini
+    /// hook'tan görüyor ama gecikmeyi GERÇEK ZAMANDA ödüyordu (D8: sleep-poll YASAK). Artık gecikmenin KENDİSİ
+    /// enjekte edilir — test onu bir randevuya (kilit bırakıldı sinyali) ya da anında dönüşe çevirir; wall-clock
+    /// tahmini de gerçek bekleme de kalmaz.</para>
     /// </summary>
-    internal Action<int>? OnRenameRetry { get; set; }
+    internal Action<int>? RenameRetryDelay { get; set; }
 
     /// <summary>Diskten tüm build-state map'ini okur. Dosya yok/boş/bozuk → boş map, ASLA fırlatmaz.</summary>
     public IReadOnlyDictionary<string, BuildState> Load()
@@ -52,6 +63,15 @@ public sealed class BuildStateStore
             return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase); // bozuk build-state → warn-only, sıfırdan kurulur
         }
     }
+
+    /// <summary>
+    /// [W1] <see cref="Load"/> sonucundan bir projenin SON BAŞARIYLA derlendiği commit'i çeker; kayıt yoksa
+    /// (hiç derlenmemiş proje) ya da map hiç yoksa <c>null</c>. <c>BuildPreviewItem.BuiltCommit</c>
+    /// projeksiyonunun TEK yeri: Sync yolu (Core'daki <c>SyncWorkspaceService</c>) ve run yolu
+    /// (Supervisor'daki <c>RunCoordinator</c>) aynı aramayı iki kez YAZMAZ.
+    /// </summary>
+    public static string? BuiltCommitOf(IReadOnlyDictionary<string, BuildState>? state, string projectId) =>
+        state is not null && state.TryGetValue(projectId, out var found) ? found.BuiltCommit : null;
 
     /// <summary>
     /// Tek projenin state'ini merge edip TÜM map'i atomik olarak (temp dosyaya yaz → <see cref="File.Move"/>
@@ -105,27 +125,32 @@ public sealed class BuildStateStore
     /// verilmiş olsa BİLE — geçici bir sharing-violation (<see cref="IOException"/>/<see cref="UnauthorizedAccessException"/>)
     /// ile başarısız olabilir (gözlemlenen Windows davranışı: handle kapanışı ile rename arasında kısa bir yarış
     /// penceresi kalıyor). Bu GERÇEK VERİ KAYBI değildir — tmp dosya hâlâ diskte durur; kısa, sınırlı bir retry
-    /// bu geçici pencereyi absorbe eder (bkz. RetryingMsBuildInvoker'daki MSB302x contention retry deseni — burada
-    /// enjekte edilmiş delay yerine küçük sabit bekleme yeterli, çünkü pencere mikrosaniyeler mertebesinde).
+    /// bu geçici pencereyi absorbe eder (bkz. RetryingMsBuildInvoker'daki MSB302x contention retry deseni; gecikme
+    /// orada olduğu gibi burada da ENJEKTE EDİLEBİLİR — <see cref="RenameRetryDelay"/>).
     /// </summary>
     private void MoveAtomicWithRetry(string tmp, string target)
-    {
-        const int maxAttempts = 20;
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                File.Move(tmp, target, overwrite: true);
-                return;
-            }
-            catch (Exception ex) when (attempt < maxAttempts && ex is IOException or UnauthorizedAccessException)
-            {
-                // [Review Minor 3] Deliberate deviation: RetryingMsBuildInvoker enjekte edilebilir async delay
-                // kullanır (testability için DI), ama Upsert senkron bir metot — o desen burada doğrudan uymuyor.
-                // Gerçek Thread.Sleep(5) kullanılıyor; üst bütçe küçük ve sabit (20 deneme x 5ms ≈ 100ms max).
-                OnRenameRetry?.Invoke(attempt); // test-only, null → zero-cost; üretim davranışı/bütçesi değişmez
-                Thread.Sleep(5);
-            }
-        }
-    }
+        // [B2] Döngünün kendisi ortak (SyncRetry) — burada yalnız BU yolun kararları durur: kaç deneme, hangi
+        // istisna geçici, gecikme nereden gelir, bütçe tükenince ne olur (burada: orijinal istisna yayılır).
+        => SyncRetry.Run(
+            () => File.Move(tmp, target, overwrite: true),
+            RenameAttempts,
+            ex => ex is IOException or UnauthorizedAccessException,
+            // [fix round 2] SyncRetry 0-based index verir; bu yolun dikişi ortaklaştırmadan ÖNCE de 1-based
+            // deneme no alıyordu — uyarlama burada, davranış birebir korunur.
+            failedAttemptIndex => EffectiveRenameRetryDelay(failedAttemptIndex + 1),
+            rethrowWhenExhausted: true);
+
+    /// <summary>
+    /// [B1] Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı. Ayrı bir üye olmasının
+    /// sebebi testtir — "üretimde hangi gecikme koşuyor" sorusu ancak böyle DOĞRUDAN pinlenebilir; aksi halde
+    /// varsayılanı no-op'a çeviren bir mutasyon tüm süiti yeşil bırakırdı.
+    /// </summary>
+    internal Action<int> EffectiveRenameRetryDelay => RenameRetryDelay ?? DefaultRenameRetryDelay;
+
+    /// <summary>
+    /// <see cref="RenameRetryDelay"/>'in üretim varsayılanı. Beklenen olay BAŞKA bir process'in okuma handle'ını
+    /// kapatmasıdır — bekleyecek bir handle/TCS YOKTUR, bu yüzden sınırlı bir zaman aşımı tek seçenektir; D8'in
+    /// hedefi olan "kendi kodumuzun ürettiği bir durumu sleep ile poll etmek" DEĞİLDİR ve testlere hiç sızmaz.
+    /// </summary>
+    internal static void DefaultRenameRetryDelay(int attempt) => Thread.Sleep(RenameRetryBackoff);
 }

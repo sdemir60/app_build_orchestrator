@@ -1,6 +1,8 @@
-using System.Windows;
+﻿using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -13,6 +15,11 @@ namespace BuildOrchestrator.Tests.App;
 /// (subscribe-once) guard'ını kanıtlar — Loaded iki kez ateşlense de sahip TEK abonelik tutar (çift Refresh/
 /// ApplyBreathing birikmez). Aynı <c>-= sonra +=</c> idiomu ProjectRow/StickyRibbon/BuildingSpinner/StatusGlyph'te
 /// paylaşılır; burada seam'li ProjectRow üstünden pinlenir.
+///
+/// <para><b>[W2]</b> Kablaj artık <see cref="MotionGate"/>'tedir. Bu sınıf onun İKİ KİPİNİ de ayrı ayrı pinler —
+/// GraphView'ın <b>latch-first</b> sapması (ilk kaynaktan sonra atama yok sayılır; MainWindow buna dayanır) ve
+/// diğerlerinin <b>latch'siz</b> "her Loaded'da yeniden oku" davranışı. Ayrıca BuildingSpinner/StatusGlyph'in
+/// W2'de kazandığı seam'in ÖLÜ KOD olmadığı (enjekte edilen sinyalde saatlerin gerçekten kurulduğu) kanıtlanır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class MotionOwnerHygieneTests
@@ -45,6 +52,58 @@ public class MotionOwnerHygieneTests
         Assert.Equal(1, motion.SubscriberCount);
     }
 
+    /// <summary>
+    /// [W2 pin — BİLİNÇLİ SAPMA] <see cref="GraphView"/>'ın abonelik guard'ı diğer sahiplerinkinden FARKLIDIR:
+    /// ilk abonelikten SONRA <c>MotionSettings</c> ataması YOK SAYILIR ("latch-first"). MainWindow bu sözleşmeye
+    /// açıkça dayanır (<c>MainWindow.xaml.cs:79-80</c>: "GraphView'ın MotionSettings'i Loaded'dan ÖNCE atanmalı").
+    /// Bu test sapmayı pinler — bir seam-fold sırasında sessizce <c>-=</c>/<c>+=</c> idiomuna dönüştürülemesin.
+    /// </summary>
+    [StaFact]
+    public void The_graph_view_latches_its_first_motion_source_and_ignores_later_assignments()
+    {
+        var first = new CountingMotion();
+        var second = new CountingMotion();
+        var view = new GraphView { AnimationsEnabledProvider = () => false, MotionSettings = first };
+
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Assert.Equal(1, first.SubscriberCount);
+
+        view.MotionSettings = second;                                        // ilk abonelikten SONRA → YOK SAYILIR
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+
+        Assert.Equal(1, first.SubscriberCount);
+        Assert.Equal(0, second.SubscriberCount);
+
+        // Latch yalnız Unloaded'da açılır: sonraki Loaded YENİ kaynağa abone olur (eski kaynak bırakılmış olur).
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+        Assert.Equal(0, first.SubscriberCount);
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Assert.Equal(1, second.SubscriberCount);
+    }
+
+    /// <summary>
+    /// [W2 pin] Latch'siz sahipler (ProjectRow/StickyRibbon) her <c>Loaded</c>'da kaynağı YENİDEN OKUR — GraphView'ın
+    /// tam TERSİ. Bugünkü davranışın tamamı pinlenir, kuyruğundaki tuhaflık dahil: yeni kaynağa abone olunur ama
+    /// ESKİ abonelik çözülmez (sahip yalnız en son kaynağı hatırlar). Fold bu asimetriyi korumalıdır.
+    /// </summary>
+    [StaFact]
+    public void A_latchless_motion_owner_re_reads_its_source_on_every_load()
+    {
+        var first = new CountingMotion();
+        var second = new CountingMotion();
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending);
+        var row = new ProjectRow { AnimationsEnabledProvider = () => false, MotionSettings = first, DataContext = vm };
+
+        row.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Assert.Equal(1, first.SubscriberCount);
+
+        row.MotionSettings = second;
+        row.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+
+        Assert.Equal(1, second.SubscriberCount); // YENİ kaynağa abone olundu (GraphView bunu yapmaz)
+        Assert.Equal(1, first.SubscriberCount);  // eski abonelik ÇÖZÜLMEZ — bugünkü davranış, bilinçli pin
+    }
+
     [StaFact]
     public void The_building_spinner_subscribes_to_the_static_signal_exactly_once_across_repeated_loads()
         => AssertSubscribesOnce(new BuildingSpinner());
@@ -52,6 +111,60 @@ public class MotionOwnerHygieneTests
     [StaFact]
     public void The_status_glyph_subscribes_to_the_static_signal_exactly_once_across_repeated_loads()
         => AssertSubscribesOnce(new StatusGlyph());
+
+    // ---------------------------------------------------------------- [W2] seam genişletmesi
+
+    /// <summary>
+    /// [W2] <see cref="BuildingSpinner"/> ve <see cref="StatusGlyph"/> artık statik <c>App.Motion</c>'a ÇİVİLENMİŞ
+    /// değildir: enjekte edilen sinyal (a) abonelikte ve (b) TAZE okumada gerçekten kullanılır. Bu, aşağıdaki
+    /// statik set/restore testinin (ve <c>ReducedMotionCoverageTests</c>'in) vacuous PASS'a düşmediğinin de kanıtı —
+    /// enjekte edilen AÇIK sinyalde saatler GERÇEKTEN kurulur.
+    /// </summary>
+    [StaFact]
+    public void The_spinner_and_the_glyph_honour_an_injected_motion_signal_instead_of_the_static_one()
+    {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // statik kapalı: aşağıdaki saatler YALNIZ seam'den doğabilir
+
+        var spinnerMotion = new CountingMotion();
+        var glyphMotion = new CountingMotion();
+        var host = DsResources.NewHost();
+        var spinner = new BuildingSpinner { MotionSettings = spinnerMotion, AnimationsEnabledProvider = () => true };
+        var glyph = new StatusGlyph
+        {
+            Status = GraphStatus.Building, MotionSettings = glyphMotion, AnimationsEnabledProvider = () => true,
+        };
+        var panel = new StackPanel { Children = { spinner, glyph } };
+        var window = DsResources.Realize(host, panel);
+
+        Assert.True(spinner.IsRotating);          // enjekte edilen AÇIK sinyal → dönüş saati kuruldu
+        Assert.True(glyph.HasAnimatedProperties); // enjekte edilen AÇIK sinyal → nabız saati kuruldu
+        Assert.Equal(1, spinnerMotion.SubscriberCount); // abonelik de seam'e gitti (statiğe değil)
+        Assert.Equal(1, glyphMotion.SubscriberCount);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[W2] Seam'li yoldan subscribe-once: <c>Loaded</c> iki kez ateşlense de TEK abonelik kalır. Statik
+    /// set/restore gerektiren aşağıdaki ikizi KALDIRILMADI — o, üretim varsayılanının (<c>App.Motion</c>) aynı
+    /// guard'dan geçtiğini ayrıca kanıtlar.</summary>
+    [StaTheory]
+    [InlineData(typeof(BuildingSpinner))]
+    [InlineData(typeof(StatusGlyph))]
+    public void A_seam_fed_motion_owner_subscribes_exactly_once_across_repeated_loads(Type ownerType)
+    {
+        var motion = new CountingMotion();
+        var owner = (FrameworkElement)Activator.CreateInstance(ownerType)!;
+        switch (owner)
+        {
+            case BuildingSpinner s: s.MotionSettings = motion; break;
+            case StatusGlyph g: g.MotionSettings = motion; break;
+            default: throw new ArgumentOutOfRangeException(nameof(ownerType));
+        }
+
+        owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+
+        Assert.Equal(1, motion.SubscriberCount);
+    }
 
     /// <summary>[fix — #3/#5] BuildingSpinner/StatusGlyph seam'li DEĞİL: motion sinyalini statik <c>App.Motion</c>'dan
     /// DOĞRUDAN okur → subscribe-once guard'ının gövdesi yalnız <c>App.Motion</c> null DEĞİLKEN koşar. Headless'ta

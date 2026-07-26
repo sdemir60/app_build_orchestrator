@@ -59,6 +59,25 @@ public class CopyLogTests
         Assert.Equal(5, calls); // tam attempts kadar denendi
     }
 
+    [Fact] // [T49 fix round 2] B2 (ortak SyncRetry'a taşıma) bir KOPYA KALDIRMA işiydi — sözleşme değişmemeli.
+           // Ortaklaştırmadan önceki iki gözlemlenebilir davranış burada pinlenir: (a) `wait` 0-BASED başarısız
+           // deneme index'i alır (0, 1, 2 …), (b) attempts<1 fırlatmaz, `set`'i HİÇ çağırmadan false döner.
+    public void TrySet_keeps_its_pre_fold_contract_zero_based_wait_index_and_no_throw_on_an_empty_budget()
+    {
+        var waits = new List<int>();
+        bool ok = ClipboardRetry.TrySet(
+            set: () => throw new COMException("locked", ClipboardCantOpen),
+            attempts: 3,
+            wait: waits.Add);
+
+        Assert.False(ok);
+        Assert.Equal([0, 1], waits); // 3 deneme → 2 gecikme, 0-based
+
+        int calls = 0;
+        Assert.False(ClipboardRetry.TrySet(set: () => calls++, attempts: 0, wait: _ => { }));
+        Assert.Equal(0, calls); // boş bütçe: hiç denenmez, fırlatmaz
+    }
+
     [Fact]
     public void TrySet_does_not_retry_a_non_clipboard_exception()
     {

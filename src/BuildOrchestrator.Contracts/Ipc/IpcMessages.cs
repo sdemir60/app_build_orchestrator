@@ -25,6 +25,7 @@ public static class IpcJson
 [JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
 [JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
 [JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
+[JsonDerivedType(typeof(SetPerfModeCommand), "setPerfMode")]
 public abstract record IpcCommand;
 
 public sealed record PingCommand(int Seq) : IpcCommand;
@@ -53,9 +54,24 @@ public enum DependentMode { Safe, Fast }
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri (bkz. <see cref="LayerPattern"/>); Core'daki
 /// <c>LayerEngine</c> yalnız bu liste DOLU geldiğinde çalışır — null/boş ise katmanlama KAPALIDIR (varsayılan,
 /// mevcut davranış). Sıra anlamlıdır: <c>Order</c> hem eşleşme önceliği hem atanan LayerIndex'tir.</param>
+/// <param name="PerfMode">[T20-b/K11] Perf profilinin ADI ("Full"/"Balanced"/"Light") — Supervisor bunu Core'daki
+/// <c>PerfProfile.TryParse</c> ile çözer ve run boyunca inner Job'a CPU cap + priority uygular.
+/// <b>Yalnız cap/priority'nin kaynağıdır:</b> paralellik AYRI bir alandır (<paramref name="Parallelism"/>) ve
+/// App tarafında aynı tablodan türetilir — Supervisor worker sayısını burada YENİDEN hesaplamaz.
+/// <c>null</c> (varsayılan) ⇒ perf modu bildirilmemiş: cap/priority'ye HİÇ dokunulmaz. Bu alan nullable +
+/// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
-    IReadOnlyList<LayerPattern>? LayerPatterns = null) : IpcCommand;
+    IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null) : IpcCommand;
+
+/// <summary>
+/// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar
+/// run başında bir kez yaratılır (bkz. <c>RunCoordinator</c>'ın worker döngüsü), dolayısıyla yeni profilin
+/// paralelliği ancak BİR SONRAKİ run'da geçerli olur. Aktif run yokken no-op'tur — perf modu o durumda zaten
+/// bir sonraki <see cref="StartRunCommand.PerfMode"/> ile gelir.
+/// </summary>
+/// <param name="PerfMode">"Full"/"Balanced"/"Light"; çözülemeyen metin <c>error(badPerfMode)</c> ile yanıtlanır.</param>
+public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 
 /// <summary>
 /// [K1 DOC FIX] Workspace'i verilen branch'e senkronize et. Sync REF-ONLY'dir: yalnızca <c>git fetch origin
@@ -126,8 +142,14 @@ public sealed record ProjectLogChunkEvent(string ProjectId, int Sequence, string
 public sealed record DebugChildrenSpawnedEvent(int[] Pids) : IpcEvent;
 
 public enum RunOutcome { Completed, Stopped }
+/// <param name="CpuCapPercent">[T20-b/K11] Bu run BAŞLARKEN inner Job'a GERÇEKTEN uygulanmış hard CPU cap'i
+/// (Balanced 70 · Light 40). <c>null</c> demek "cap YOK" demektir; üç sebebi olabilir: Full profili,
+/// <see cref="StartRunCommand.PerfMode"/>'un hiç gelmemesi, ya da cap yazımının Win32 seviyesinde
+/// BAŞARISIZ olması (o durumda Supervisor konsoluna bir uyarı da düşer). Yani bu alan İSTENEN değil
+/// YÜRÜRLÜKTEKİ değeri taşır. Run ORTASINDA <see cref="SetPerfModeCommand"/> ile değişen cap'i İZLEMEZ:
+/// bu, run'ın başlangıç durumunun kaydıdır.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
-    string Configuration, long ElapsedMsAtStart) : IpcEvent;
+    string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
@@ -187,7 +209,14 @@ public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcE
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
 /// (hollow)=null. App bunu <c>Projects</c> listesini run başlamadan (proje-başına ilk event'ten önce) PRE-POPULATE
 /// etmek için kullanır — bkz. RunViewModel.OnBuildPreview.</summary>
-public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild);
+/// <param name="BuiltCommit">[W1/It-5] Bu projenin SON BAŞARIYLA derlendiği commit — <see
+/// cref="Model.BuildState.BuiltCommit"/>'ten AYNEN (40-hex ham sha; kısaltma bir GÖRÜNTÜ kararıdır ve App'te
+/// yapılır). Kart bunu sha çiftinin SOL yarısı olarak gösterir; sağ yarı run-geneli <see
+/// cref="SyncCompletedEvent.TargetSha"/>'dir. <b>Hiç derlenmemiş</b> (build-state kaydı olmayan) proje ⇒
+/// <c>null</c> — JSON'a hiç yazılmaz, dolayısıyla W1 ÖNCESİ yazılmış NDJSON satırları da alansız çözülmeye
+/// devam eder (geriye dönük uyum). <b>Not:</b> bu değer ile <c>TargetSha</c> FARKLI ref ailelerinden gelir
+/// (bu: derleme anındaki yerel/worktree HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
+public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null);
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
 /// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>

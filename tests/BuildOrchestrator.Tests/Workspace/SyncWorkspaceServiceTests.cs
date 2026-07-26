@@ -221,6 +221,40 @@ public class SyncWorkspaceServiceTests
             store.Upsert(new BuildState(projectId, signature, head, BuildResult.Succeeded));
     }
 
+    [Fact]
+    public async Task The_preview_carries_the_last_successfully_built_commit_per_project_and_null_when_never_built()
+    {
+        // [W1] Kartın sha çiftinin SOL yarısı. Kaynak build-state'tir (App o dosyanın yolunu BİLMEZ — cacheRoot
+        // yalnız Supervisor tarafında üretilir), bu yüzden değer IPC'den, buildPreview üzerinden geçmek ZORUNDA.
+        // A daha önce derlenmiş (kayıt var), B hiç derlenmemiş (kayıt yok) → ikisi ARTIK ayrışır.
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        const string builtCommit = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b"; // 40-hex: sözleşme HAM değer taşır
+        string idA = Path.Combine(cloneRoot, "src", "A", "A.csproj");
+        // BuiltSignature bilerek BAYAT: A dirty kalsın (sha slotu yalnız dirty satırda görünür) ve sayaçlar kaymasın.
+        new BuildStateStore(cacheRoot).Upsert(new BuildState(idA, "stale-signature", builtCommit, BuildResult.Succeeded));
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        Assert.Equal(builtCommit, a.BuiltCommit);
+        Assert.Null(b.BuiltCommit); // hiç derlenmemiş → uydurulmaz
+        Assert.True(a.WillBuild);   // sanity: bayat imza ⇒ satır hâlâ dirty, yani slot GERÇEKTEN görünür
+
+        // Hedef sha AYNI Sync'te ayrıca gelir; ikisi FARKLI ref ailelerinden olduğu için eşit DEĞİLDİR.
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.NotEqual(builtCommit, done.TargetSha);
+    }
+
     // ---------------------------------------------------------------- 2) offline degrade
 
     [Fact]

@@ -63,63 +63,17 @@
           </Grid>
         </Grid>
 
-        <!-- 4) Sağ blok (MinWidth 118): hover→aç-ikonları, değilse (will==dirty) sha çifti. -->
-        <Grid Grid.Column="2" Margin="8,0,0,0" MinWidth="118" VerticalAlignment="Center" HorizontalAlignment="Right">
+        <!-- 4) Sağ blok (MinWidth 118): hover→aç-ikonları, değilse (will==dirty) sha çifti.
+             [L1/It-5 perf] Hover ikonları + VS-chooser popover'ı BURADA DEĞİL: Views/ProjectRowActions.xaml'e
+             taşındı ve İLK HOVER'da kod-tarafı buraya eklenir (ProjectRow.xaml.cs EnsureActions). Görsel sonuç
+             aynı — hover edilmemiş satır o alt-ağacın 16 nesnesini artık hiç ödemez. -->
+        <Grid x:Name="PART_RightBlock" Grid.Column="2" Margin="8,0,0,0" MinWidth="118"
+              VerticalAlignment="Center" HorizontalAlignment="Right">
           <!-- SHA çifti: mono 10.5px (token ölçeğinde YOK — prototip :399 literal, kasıtlı). -->
           <TextBlock x:Name="PART_Sha" HorizontalAlignment="Right" VerticalAlignment="Center"
                      Visibility="Collapsed" Typography.NumeralAlignment="Tabular"
                      FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="10.5"
                      Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="NoWrap" />
-          <!-- Hover ikonları (sha'nın YERİNE aynı blokta): folder + VS, 13px. -->
-          <StackPanel x:Name="PART_HoverIcons" Orientation="Horizontal" HorizontalAlignment="Right"
-                      VerticalAlignment="Center" Visibility="Collapsed">
-            <Button x:Name="PART_RevealButton" Style="{DynamicResource Ds.IconButton}"
-                    AutomationProperties.Name="Reveal in Explorer">
-              <Button.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Left">Reveal in Explorer</ToolTip>
-              </Button.ToolTip>
-              <Viewbox Width="13" Height="13">
-                <Canvas Width="24" Height="24">
-                  <Path Data="{DynamicResource Icon.FolderOpen}"
-                        StrokeThickness="{DynamicResource Icon.FolderOpen.StrokeThickness}"
-                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
-                </Canvas>
-              </Viewbox>
-            </Button>
-            <Button x:Name="PART_VsButton" Style="{DynamicResource Ds.IconButton}" Margin="2,0,0,0"
-                    AutomationProperties.Name="Open in Visual Studio">
-              <Button.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Left">Open in Visual Studio</ToolTip>
-              </Button.ToolTip>
-              <Viewbox Width="13" Height="13">
-                <Canvas Width="24" Height="24">
-                  <Path Data="{DynamicResource Icon.Vs}"
-                        StrokeThickness="{DynamicResource Icon.Vs.StrokeThickness}"
-                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
-                </Canvas>
-              </Viewbox>
-            </Button>
-          </StackPanel>
-
-          <!-- [E1/T67] Birden çok solution içeren proje için Open-in-VS seçim popover'ı (D6 popover deseni:
-               Ds.Popover chrome · StaysOpen=False dışa-tık-kapan · PopIn 140ms). Satırlar kod-tarafı kurulur
-               (BranchPopover deseni). Tek/sıfır solution'da açılmaz. -->
-          <Popup x:Name="PART_VsChooser" StaysOpen="False" AllowsTransparency="True"
-                 Placement="Bottom" PlacementTarget="{Binding ElementName=PART_VsButton}"
-                 PopupAnimation="None" VerticalOffset="4">
-            <Border x:Name="PART_VsChooserContent" Style="{DynamicResource Ds.Popover}" MinWidth="220" MaxWidth="360">
-              <StackPanel>
-                <TextBlock Text="OPEN IN VISUAL STUDIO" Margin="4,2,4,8"
-                           FontFamily="{x:Static controls:AppFonts.Ui}"
-                           FontSize="{DynamicResource FontSize.2xs}"
-                           FontWeight="{DynamicResource FontWeight.Emphasis}"
-                           Foreground="{DynamicResource Brush.TextFaint}" />
-                <StackPanel x:Name="PART_VsChooserRows" />
-              </StackPanel>
-            </Border>
-          </Popup>
         </Grid>
 
         <!-- 5) Statü glyph'i 14px + tooltip (metin kod-tarafı). -->

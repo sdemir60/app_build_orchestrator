@@ -39,10 +39,27 @@ public partial class EventStreamView : UserControl
     private string _activeFull = "";
     private long _activeGenShown = -1;
 
+    /// <summary>[W2 · fix-1] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="Controls.MotionGate"/>) — latch'siz kip. Fold'dan önce bu görünüm diğer sahiplerden ASİMETRİKTİ:
+    /// yalnız provider'ı vardı, canlı aboneliği yoktu; OS ayarı koşu SIRASINDA değişse imleç blink'i eski
+    /// durumunda kalırdı. Artık <see cref="OnMotionChanged"/> ile uyar.</summary>
+    private readonly Controls.MotionGate _motion;
+
+    /// <summary>[W2 fix-1] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null ise <c>App.Motion</c>.</summary>
+    public Services.IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
+    }
+
     /// <summary>[ProjectRow deseni · D8] Motion sinyalinin TAZE okunduğu kapı — headless'ta <c>App.Motion</c> null
     /// (AnimationsEnabled=false); testler gerçek bir daktilo/parıltı saatini sürebilmek için bunu <c>() =&gt; true</c>
     /// ile enjekte eder. Oluşturulan her <see cref="EventStreamRow"/>'a da geçirilir.</summary>
-    public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
     /// MainWindow enjekte eder.</summary>
@@ -50,6 +67,8 @@ public partial class EventStreamView : UserControl
 
     public EventStreamView()
     {
+        _motion = new Controls.MotionGate(this);
+        _motion.Changed += OnMotionChanged;
         InitializeComponent();
 
         // "{n} events" sayacı (mono, 2xs, text-faint) — RightContent'e kod-tarafı konur (bkz. XAML notu).
@@ -250,6 +269,18 @@ public partial class EventStreamView : UserControl
         _activeScheduler = null;
     }
 
+    /// <summary>[W2 fix-1] Motion sinyali koşu SIRASINDA değişince görünüm uyar. Tek SONSUZ animasyon aktif
+    /// satırın imleç blink'idir: <see cref="StartCursorBlink"/> sinyali TAZE okur ve kapalıysa saati söküp imleci
+    /// 1.0'a sabitler, açıksa yeniden kurar. Aktif satır görünmüyorsa yapılacak bir şey yoktur.
+    ///
+    /// <para>Bir kereye mahsus efektler (aktif satır daktilosu, satır parıltısı) burada YENİDEN OYNATILMAZ —
+    /// sinyal sonradan açılınca geriye dönük animasyon başlatmak sözleşme ihlali olurdu (<c>GlowPlayed</c>/
+    /// <c>TypePlayed</c> guard'larıyla aynı tek-yönlülük).</para></summary>
+    private void OnMotionChanged(object? sender, EventArgs e)
+    {
+        if (PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink();
+    }
+
     // [D3 §3] aktif imleç blink'i — ortak MotionTokens.CreateBlinkAnimation (1.0→0.1, 0.55s, SineEase in/out,
     // 30fps, sonsuz). Reduced-motion'da hiç oynamaz (imleç steady 1.0).
     private void StartCursorBlink()
@@ -309,7 +340,23 @@ public sealed class EventStreamRow : Border
     private TypewriterScheduler? _scheduler;
     private string _typeFull = "";
 
-    public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
+    /// <summary>[W2 · fix-1] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="Controls.MotionGate"/>) — latch'siz kip. Provider'ı <see cref="EventStreamView"/> her satıra
+    /// elle geçirir; canlı abonelik ise satırın KENDİ <c>Loaded</c>/<c>Unloaded</c>'ına bağlıdır.</summary>
+    private readonly Controls.MotionGate _motion;
+
+    /// <summary>[W2 fix-1] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null ise <c>App.Motion</c>.</summary>
+    public Services.IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
+    }
+
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[Test] Parıltının kaç kez BAŞLATILDIĞI — container recycle sonrası TEKRAR oynanmadığını
     /// (GlowPlayed guard'ı) kanıtlar.</summary>
@@ -319,6 +366,8 @@ public sealed class EventStreamRow : Border
 
     public EventStreamRow()
     {
+        _motion = new Controls.MotionGate(this);
+        _motion.Changed += OnMotionChanged;
         MinHeight = RowMinHeight;
         Background = _bgBrush;
         SnapsToDevicePixels = true;
@@ -507,6 +556,17 @@ public sealed class EventStreamRow : Border
             StopTypewriter();
             _text.Text = _typeFull;
         }
+    }
+
+    /// <summary>[W2 fix-1] Motion sinyali koşu SIRASINDA KAPANIRSA uçuştaki daktilo ANINDA tamamlanır — satır
+    /// harf harf yazmaya devam edemez (motion sözleşmesi: sinyal taze okunur). Sinyalin sonradan AÇILMASI ise
+    /// hiçbir şeyi yeniden oynatmaz (<c>TypePlayed</c>/<c>GlowPlayed</c> guard'larıyla aynı tek-yönlülük);
+    /// bu yüzden burada yalnız "kapandı" yönü ele alınır.</summary>
+    private void OnMotionChanged(object? sender, EventArgs e)
+    {
+        if (AnimationsEnabledProvider() || _scheduler is null) return;
+        StopTypewriter();
+        _text.Text = _typeFull;
     }
 
     private void StopTypewriter()

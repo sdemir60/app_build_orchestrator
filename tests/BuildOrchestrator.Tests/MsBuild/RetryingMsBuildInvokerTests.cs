@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.ProcessControl;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.MsBuild;
@@ -83,6 +84,36 @@ public class RetryingMsBuildInvokerTests
         {
             Calls.Add(wait);
             return ThrowOnCall is null ? Task.CompletedTask : ThrowOnCall(wait, ct);
+        }
+    }
+
+    /// <summary>
+    /// [T20-b/P3] Copy-contention penceresini KAYDEDEN sahte floor. Gerçek cap yazımı koordinatörün işidir
+    /// (bkz. <c>RunCoordinatorTests</c>'in <c>RecordingGovernor</c>'ı); burada yalnız decorator'ın SIRASI
+    /// doğrulanır: pencere retry'dan ÖNCE açılır ve invoke hangi yoldan dönerse dönsün kapanır.
+    /// </summary>
+    private sealed class RecordingFloor : ICopyPhaseCpuFloor
+    {
+        public List<string> Calls { get; } = new();
+
+        /// <summary>Run'da gerçekten bir cap yürürlükte mi — cap-farkındalı backoff'un girdisi.</summary>
+        public bool IsCapActive { get; init; } = true;
+
+        public IDisposable? Enter()
+        {
+            // Cap yoksa yükseltilecek bir taban da yoktur: üretim implementasyonu da null döner (NO-OP).
+            if (!IsCapActive) return null;
+            Calls.Add("enter");
+            return new Window(this);
+        }
+
+        private sealed class Window(RecordingFloor owner) : IDisposable
+        {
+            private int _closed;
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _closed, 1) == 0) owner.Calls.Add("exit");
+            }
         }
     }
 
@@ -248,5 +279,109 @@ public class RetryingMsBuildInvokerTests
     public void DefaultBackoff_is_200ms_then_600ms()
     {
         Assert.Equal([TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(600)], RetryingMsBuildInvoker.DefaultBackoff);
+    }
+
+    // ---------------------------------------------------------------- [T20-b/P3] copy fazı: cap taban penceresi
+
+    [Fact]
+    public async Task Copy_contention_opens_exactly_one_cpu_floor_window_that_closes_when_the_invoke_returns()
+    {
+        // İKİ retry, TEK pencere: her retry'da yeniden Enter etmek ref-count'u şişirir ve pencere run'ın
+        // sonuna kadar kapanmazdı (tek bir contention Light bir run'ı kalıcı olarak tabana çıkarırdı).
+        var scripted = new ScriptedInvoker(
+            (Contention, ContentionLines),
+            (Contention, ContentionLines),
+            (Success, SuccessLines));
+        var floor = new RecordingFloor();
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff,
+            new RecordingDelay().Delay, cpuFloor: floor);
+
+        await invoker.InvokeAsync(Req, _ => { }, CancellationToken.None);
+
+        Assert.Equal(["enter", "exit"], floor.Calls);
+    }
+
+    [Fact]
+    public async Task A_failure_without_copy_contention_never_opens_the_cpu_floor_window()
+    {
+        // Gerçek derleme hatası retry EDİLMEZ — dolayısıyla gevşetilecek bir copy penceresi de yoktur.
+        var scripted = new ScriptedInvoker((CompileError, CompileErrorLines));
+        var floor = new RecordingFloor();
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff,
+            new RecordingDelay().Delay, cpuFloor: floor);
+
+        await invoker.InvokeAsync(Req, _ => { }, CancellationToken.None);
+
+        Assert.Empty(floor.Calls);
+    }
+
+    [Fact]
+    public async Task The_cpu_floor_window_closes_even_when_every_retry_is_exhausted()
+    {
+        var scripted = new ScriptedInvoker(
+            (Contention, ContentionLines),
+            (Contention, ContentionLines),
+            (Contention, ContentionLines));
+        var floor = new RecordingFloor();
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff,
+            new RecordingDelay().Delay, cpuFloor: floor);
+
+        var result = await invoker.InvokeAsync(Req, _ => { }, CancellationToken.None);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(["enter", "exit"], floor.Calls); // BAŞARISIZ yolda da geri konur
+    }
+
+    [Fact]
+    public async Task The_cpu_floor_window_closes_when_the_backoff_is_cancelled()
+    {
+        // İptal (teardown/Stop) yolundan çıkan bir invoke da cap'i geri koymalı: aksi halde Supervisor ömrü
+        // boyunca yaşayan inner job'da sahibi olmayan bir taban kalırdı.
+        var scripted = new ScriptedInvoker((Contention, ContentionLines), (Success, SuccessLines));
+        using var cts = new CancellationTokenSource();
+        var recordingDelay = new RecordingDelay { ThrowOnCall = (_, ct) => { cts.Cancel(); ct.ThrowIfCancellationRequested(); return Task.CompletedTask; } };
+        var floor = new RecordingFloor();
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff,
+            recordingDelay.Delay, cpuFloor: floor);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invoker.InvokeAsync(Req, _ => { }, cts.Token));
+
+        Assert.Equal(["enter", "exit"], floor.Calls);
+    }
+
+    [Fact]
+    public async Task Backoff_stretches_while_a_cpu_cap_is_active()
+    {
+        // Cap altında copy'nin tamamlanma penceresi uzar; sabit backoff MSB3027'yi KALICI bir Failed'a çevirir.
+        var scripted = new ScriptedInvoker(
+            (Contention, ContentionLines),
+            (Contention, ContentionLines),
+            (Success, SuccessLines));
+        var recordingDelay = new RecordingDelay();
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff,
+            recordingDelay.Delay, cpuFloor: new RecordingFloor { IsCapActive = true });
+
+        await invoker.InvokeAsync(Req, _ => { }, CancellationToken.None);
+
+        Assert.Equal([TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(900)], recordingDelay.Calls);
+    }
+
+    [Fact]
+    public async Task Backoff_is_unchanged_when_no_cpu_cap_is_active()
+    {
+        // Full profili (cap yok): dizi AYNEN korunur ve governor'a HİÇ dokunulmaz.
+        var scripted = new ScriptedInvoker(
+            (Contention, ContentionLines),
+            (Contention, ContentionLines),
+            (Success, SuccessLines));
+        var recordingDelay = new RecordingDelay();
+        var floor = new RecordingFloor { IsCapActive = false };
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff,
+            recordingDelay.Delay, cpuFloor: floor);
+
+        await invoker.InvokeAsync(Req, _ => { }, CancellationToken.None);
+
+        Assert.Equal([TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(600)], recordingDelay.Calls);
+        Assert.Empty(floor.Calls);
     }
 }

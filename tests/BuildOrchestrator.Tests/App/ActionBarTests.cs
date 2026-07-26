@@ -6,6 +6,7 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -223,6 +224,39 @@ public partial class ActionBarTests
         Assert.False(bar.WorktreeChip.IsEnabled);
         Assert.False(bar.Segment.IsEnabled);
         Assert.True(bar.PerfChip.IsEnabled);       // perf CANLI kalır
+        GC.KeepAlive(window);
+    }
+
+    // [Fix round 1 — KÖK 5] K11'in TEK kullanıcı giriş noktası: perf chip'i. Kablaj bu iterasyonda değişti
+    // (`_vm?.CyclePerf()` → `_ = _vm?.CyclePerfAsync()`, fire-and-forget) ve görsel pas en sona ertelendiği
+    // için (It-4b dersi c6e9a21) bu testten başka güvenlik ağı YOK. Tıklamanın SENKRON kısmı (PerfMode +
+    // Parallelism güncellemesi, chip'in momentary kalması) burada pinlenir — gönderim/IPC yarısı VM
+    // testlerindedir (RunViewModelStateTests), bu yüzden burada pump/bekleme GEREKMEZ.
+    //
+    // [Fix round 2 — YENİ 2] `Click` yardımcısı ClickEvent'i DOĞRUDAN raise eder ve WPF'in native
+    // ToggleButton.OnClick→OnToggle yolunu BYPASS eder; bu yüzden IsChecked tıktan önce de sonra da false
+    // olurdu ve "momentary" iddiası VACUOUS kalırdı (handler'daki `IsChecked = false` silinse test yeşil
+    // kalırdı). Native toggle bu yüzden ELLE simüle edilir — SigmaChip testinin (:148-155) deseni.
+    [StaFact]
+    public void Perf_chip_click_cycles_the_profile_and_stays_momentary()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Equal("Balanced", vm.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Balanced).Parallelism, vm.Parallelism);
+
+        bar.PerfChip.IsChecked = true; // native toggle (ClickEvent'i elle raise etmek bunu yapmaz)
+        Click(bar.PerfChip);
+        Assert.Equal("Light", vm.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Light).Parallelism, vm.Parallelism);
+        Assert.False(bar.PerfChip.IsChecked); // momentary: chip basılı KALMAZ
+
+        bar.PerfChip.IsChecked = true;
+        Click(bar.PerfChip);
+        Assert.Equal("Full", vm.PerfMode);
+        Assert.Equal(PerfProfile.For(PerfMode.Full).Parallelism, vm.Parallelism);
+        Assert.False(bar.PerfChip.IsChecked);
         GC.KeepAlive(window);
     }
 }

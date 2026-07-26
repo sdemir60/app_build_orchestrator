@@ -45,11 +45,32 @@ public class BuildingSpinner : Control
 
     private RotateTransform? _rotation;
 
+    /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="MotionGate"/>) — latch'siz kip. <b>Seam kazanımı:</b> kontrol artık statik <c>App.Motion</c>'a
+    /// ÇİVİLENMİŞ değildir; testler kendi sinyalini enjekte edebilir (varsayılan davranış birebir aynıdır).</summary>
+    private readonly MotionGate _motion;
+
     public BuildingSpinner()
     {
-        Loaded += (_, _) => { HookMotionSignal(); Refresh(); };
-        Unloaded += (_, _) => { UnhookMotionSignal(); Stop(); };
+        _motion = new MotionGate(this);
+        _motion.Changed += (_, _) => Refresh();
+        Loaded += (_, _) => Refresh();
+        Unloaded += (_, _) => Stop();
         IsVisibleChanged += (_, _) => Refresh();
+    }
+
+    /// <summary>[W2] Motion sinyalinin TAZE okunduğu kapı (D8) — testler enjekte eder; varsayılan <c>App.Motion</c>.</summary>
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
+
+    /// <summary>[W2] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null ise <c>App.Motion</c>.</summary>
+    public Services.IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
     }
 
     public override void OnApplyTemplate()
@@ -58,24 +79,6 @@ public class BuildingSpinner : Control
         _rotation = GetTemplateChild("PART_Rotation") as RotateTransform;
         Refresh();
     }
-
-    private void HookMotionSignal()
-    {
-        // [E3 fold — subscribe-once] İdempotent abonelik (ProjectRow deseni): -= sonra += — bir kontrol
-        // unload/reload olur ya da Loaded iki kez ateşlenirse çift-abonelik (çift Refresh) birikmesin.
-        if (App.Motion is { } motion)
-        {
-            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
-        }
-    }
-
-    private void UnhookMotionSignal()
-    {
-        if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-    }
-
-    private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => Refresh();
 
     private bool _isSpinning;
 
@@ -88,7 +91,7 @@ public class BuildingSpinner : Control
     private void Refresh()
     {
         if (_rotation is null) return;
-        bool shouldSpin = IsVisible && (App.Motion?.AnimationsEnabled ?? false);
+        bool shouldSpin = IsVisible && _motion.Enabled;
         if (shouldSpin == _isSpinning) return;
         _isSpinning = shouldSpin;
         if (shouldSpin) Start(); else Stop();

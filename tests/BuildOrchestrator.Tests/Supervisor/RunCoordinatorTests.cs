@@ -23,6 +23,11 @@ public class RunCoordinatorTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(30); // hang'i sonsuz bekleme değil, test hatası yapar
     private const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
+
+    // [T20-b/P3] Gerçek MSBuild'in post-build copy çakışma satırı (MSB3021) — RetryingMsBuildInvoker'ın retry
+    // kapısı ve copy-floor penceresinin TEK tetikleyicisi budur (copy'nin "başlıyor" sinyali YOKTUR).
+    private const string ContentionLine =
+        "A.csproj : error MSB3021: Unable to copy file \"obj\\A.dll\" to \"bin\\A.dll\". The process cannot access the file because it is being used by another process.";
     private static readonly string PlanRoot = Path.Combine(Path.GetTempPath(), "bo-coord-plan");
 
     private static string Id(string name) => Path.Combine(PlanRoot, name, name + ".csproj");
@@ -88,21 +93,53 @@ public class RunCoordinatorTests
 
     // ---------------------------------------------------------------- harness
 
+    /// <summary>
+    /// [Fix round 2 — YENİ 1] Belirli bir event YAZILIRKEN pump'ı duraklatan stdout. Amaç, run'ın kapanış
+    /// penceresini (RunCoordinator: <c>ReleasePerf()</c> çağrıldı ama <c>_runActive=false</c> HENÜZ yazılmadı —
+    /// arada <c>await pump</c> var) deterministik olarak yakalamak. Sleep/poll YOK [D8]: iki TCS randevusu.
+    /// </summary>
+    private sealed class PumpGateStream(string marker) : MemoryStream
+    {
+        private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Marker taşıyan event yazılırken tamamlanır — o an pump duraklamıştır.</summary>
+        public Task Reached => _reached.Task;
+
+        public void Release() => _release.TrySetResult();
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+        {
+            bool hit = Encoding.UTF8.GetString(buffer.Span).Contains(marker, StringComparison.Ordinal);
+            await base.WriteAsync(buffer, ct);
+            if (!hit) return;
+            _reached.TrySetResult();
+            await _release.Task;
+        }
+    }
+
     private sealed class Harness : IDisposable
     {
-        private readonly MemoryStream _out = new();
+        private readonly MemoryStream _out;
         private readonly List<RunLogWriter> _logWriters = [];
         private long _now;
 
         public JobObject Job { get; } = JobObject.CreateKillOnClose();
         public string LogsRoot { get; } = Directory.CreateTempSubdirectory("bo-coord-").FullName;
         public List<string> ConsoleLines { get; } = [];
+
+        /// <summary>[P3] Copy-contention retry'ının İSTENEN backoff süreleri. Cap-farkındalı backoff'un
+        /// GERÇEK kablajını (koordinatör → <c>CoordinatorCpuFloor</c> → decorator) buradan doğrularız;
+        /// decorator testlerindeki el yazması fake bu zinciri göremez.</summary>
+        public List<TimeSpan> RetryDelays { get; } = [];
         public RunCoordinator Sut { get; }
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, RunPlan>? planner = null,
-            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null)
+            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null,
+            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null)
         {
+            _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
                 planner: planner ?? (_ => plan),
                 msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
@@ -117,7 +154,11 @@ public class RunCoordinatorTests
                 nowMs: () => Volatile.Read(ref _now),
                 console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
                 worktreeObjRootResolver: worktreeObjRootResolver,
-                stateStore: stateStore);
+                stateStore: stateStore,
+                cpuGovernor: cpuGovernor, // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
+                // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
+                // Task.Delay olan seam burada anında tamamlanır — istenen süre yalnız KAYDEDİLİR.
+                retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; });
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -1244,6 +1285,48 @@ public class RunCoordinatorTests
     }
 
     [Fact]
+    public async Task The_run_start_preview_carries_each_projects_last_built_commit_from_the_state_store()
+    {
+        // [W1] Sync yolu BuiltCommit'i doldurup run yolu boş bıraksaydı, Build'e basar basmaz her kartın sha
+        // slotunun sol yarısı sıfırlanırdı (buildPreview her run/segment başında YENİDEN yayınlanır ve satırı
+        // uzlaştırır). Kayıtlı proje değeri taşır, kaydı olmayan null kalır.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            const string builtCommit = "b7e91d4c0affee1122334455667788990aabbcc";
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("Known"), "sig", builtCommit, BuildResult.Succeeded));
+
+            var plan = PlanOf(Node("Known"), Node("Fresh"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+            Assert.Equal(builtCommit, Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Known").BuiltCommit);
+            Assert.Null(Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Fresh").BuiltCommit);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task A_run_without_a_state_store_still_emits_a_preview_with_no_built_commits()
+    {
+        // [W1] stateStore null (harness/pre-Task-19 kablajı) ⇒ Load HİÇ çağrılmaz ve preview yine yayınlanır —
+        // sha alanı yalnız boş kalır. Mevcut testlerin tamamı bu yoldan geçtiği için kapı ayrıca pinlenir.
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.All(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => Assert.Null(i.BuiltCommit));
+    }
+
+    [Fact]
     public async Task Build_mode_pre_skips_up_to_date_nodes_without_invoking_msbuild_and_persists_the_built_ones()
     {
         // [Task 19/A2] RunMode.Build pre-skip yolunun ilk DETERMİNİSTİK (acceptance dışı, in-process) kanıtı:
@@ -1343,5 +1426,616 @@ public class RunCoordinatorTests
             Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult); // yeşile dönünce kayıt düzelir
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- [T20-b/K11] perf: cap + priority
+
+    /// <summary>
+    /// [T20-b] Cap/priority çağrılarını SIRASIYLA yakalayan <see cref="ICpuGovernor"/>. Gerçek bir Win32 job
+    /// yerine bu kullanılır: <c>QueryCpuRate</c> yalnız YÜRÜRLÜKTEKİ durumu görebilir, oysa buradaki iddialar
+    /// "ne zaman ne uygulandı VE run sonunda geri alındı mı" hakkındadır — sıra ancak kaydedilerek görülür.
+    /// </summary>
+    private sealed class RecordingGovernor : ICpuGovernor
+    {
+        private readonly List<string> _calls = [];
+
+        public IReadOnlyList<string> Calls { get { lock (_calls) return [.. _calls]; } }
+
+        /// <summary>[Fix round 1 — KÖK 2] Cap yazımını gerçek job'ın hata yolundaki gibi patlatır
+        /// (<c>SetInformationJobObject</c> başarısızlığı <see cref="System.ComponentModel.Win32Exception"/>'dır).</summary>
+        public bool FailCapWithWin32 { get; init; }
+
+        public void ApplyCap(int? percent)
+        {
+            if (FailCapWithWin32) throw new System.ComponentModel.Win32Exception(87); // ERROR_INVALID_PARAMETER
+            lock (_calls) _calls.Add(percent is { } p ? $"cap:{p}" : "cap:off");
+        }
+
+        public void ApplyPriority(ProcessPriorityClassKind kind)
+        {
+            lock (_calls) _calls.Add("prio:" + kind);
+        }
+    }
+
+    /// <summary>[T20-b] Bir profilin governor'da bırakacağı İZ — yüzdeler testlerde LİTERAL yazılmaz
+    /// (P1 review dersi): tek doğruluk kaynağı <see cref="PerfProfile"/> tablosudur.
+    /// <para><b>İSTİSNA:</b> konsol satırının K11 KOPYA METNİ (<c>"cpu cap 40%"</c>) bilerek literaldir —
+    /// türetilseydi kendi kendini doğrulayan bir totoloji olurdu. Bedeli: Light'ın cap'i ileride değişirse o
+    /// assert "yanlış nedenle" kırılır; o gün metin de birlikte güncellenir.</para></summary>
+    private static string[] Applied(PerfMode mode)
+    {
+        var p = PerfProfile.For(mode);
+        return [p.CpuCapPercent is { } cap ? $"cap:{cap}" : "cap:off", "prio:" + p.Priority];
+    }
+
+    /// <summary>Run sonu geri alma izi = Full profili (cap yok + Normal priority).</summary>
+    private static string[] Released() => Applied(PerfMode.Full);
+
+    [Fact]
+    public async Task Light_perf_mode_caps_the_inner_job_at_run_start_and_the_cap_is_released_when_the_run_ends()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(parallelism: 2) with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Light = %40 + Idle (PerfProfile tablosu); run bitince cap KALDIRILIR ve priority Normal'e döner —
+        // inner job Supervisor ömrü boyunca yaşadığı için cap orada BIRAKILAMAZ.
+        Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls);
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.Equal(PerfProfile.For(PerfMode.Light).CpuCapPercent, started.CpuCapPercent); // runStarted uygulanan cap'i taşır
+        Assert.Equal(2, started.Parallelism);     // paralellik KOMUTTAN gelir, profilden yeniden türetilmez
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap 40%", StringComparison.Ordinal)); // run-başı satırı cap'i yazar
+    }
+
+    [Fact]
+    public async Task Full_perf_mode_clears_the_cap_instead_of_setting_one()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Full), .. Released()], governor.Calls);
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap off", StringComparison.Ordinal));
+    }
+
+    // Geriye dönük uyum: PerfMode taşımayan (P2 öncesi ya da harness) komutlar job'a HİÇ dokunmamalı —
+    // aksi halde bu değişiklik mevcut tüm run'lara sessizce bir priority/cap yazımı eklerdi. Run-başı satırı
+    // da "off" DEMEZ ("kapatıldı" ≠ "hiç istenmedi").
+    [Fact]
+    public async Task A_start_command_without_a_perf_mode_never_touches_the_cpu_governor()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(governor.Calls);
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap unset", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Perf_mode_change_without_an_active_run_is_a_no_op()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // koşan run yok → kısılacak MSBuild de yok
+
+        Assert.Empty(governor.Calls);
+    }
+
+    // [Fix round 1 — KÖK 3] Kapının İKİNCİ dalı: run AKTİF ama bu run hiç PerfMode taşımıyor (P2 öncesi şekil).
+    // Canlı setPerfMode o run'a uygulanmaz (cap sahibi yok, run sonunda geri alacak kimse yok) — ve niyet
+    // SONRAKİ run'a da SIZMAZ. `if (!_runActive) return;` mutasyonu bu testte kırmızıya döner.
+    [Fact]
+    public async Task A_live_perf_change_during_a_run_that_declared_no_perf_mode_is_ignored_and_does_not_leak_to_the_next_run()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            inFlight.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(runId: "r1"), default); // PerfMode YOK
+        await inFlight.Task.WaitAsync(Limit);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // run uçuşta, ama cap sahibi yok
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Empty(governor.Calls);
+
+        // İkinci run (yine PerfMode'suz): bir önceki niyetin ARTIĞI uygulanmamalı.
+        release = Signal();
+        release.TrySetResult();
+        await h.Sut.StartAsync(Start(runId: "r2"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Empty(governor.Calls);
+    }
+
+    // [Fix round 1 — KÖK 1] Planlama penceresi: startRun kabul edildi ama plan hâlâ kuruluyor (177 projede
+    // SANİYELER). Perf chip'i o pencerede canlıdır; gelen setPerfMode SESSİZCE KAYBOLMAMALI, run başlarken
+    // komuttaki profili EZMELİDİR (kullanıcının SON niyeti).
+    [Fact]
+    public async Task A_perf_change_arriving_while_the_plan_is_still_being_built_wins_when_the_run_starts()
+    {
+        var planningStarted = Signal();
+        var releasePlanning = Signal();
+        var plan = PlanOf(Node("A"));
+        RunPlan GatedPlanner(StartRunCommand _)
+        {
+            planningStarted.TrySetResult();
+            releasePlanning.Task.GetAwaiter().GetResult(); // run task'ını bloklar, test thread'ini DEĞİL [D8]
+            return plan;
+        }
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, planner: GatedPlanner, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await planningStarted.Task.WaitAsync(Limit);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // henüz hiçbir şey uygulanmadı
+        Assert.Empty(governor.Calls);                          // planlama sırasında job'a dokunulmaz
+        releasePlanning.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls); // Full DEĞİL Light uygulandı
+        Assert.Equal(PerfProfile.For(PerfMode.Light).CpuCapPercent,
+            Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+    }
+
+    [Fact]
+    public async Task Live_perf_mode_change_moves_the_cap_and_priority_but_never_the_worker_count()
+    {
+        // İki proje uçuşa girene kadar kapı kapalı: perf değişimi run'ın TAM ORTASINDA uygulanır (sleep/poll YOK [D8]).
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
+        var pairInFlight = Signal();
+        var release = Signal();
+        int arrived = 0;
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            if (Interlocked.Increment(ref arrived) >= 2) pairInFlight.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(parallelism: 2) with { PerfMode = "Light" }, default);
+        await pairInFlight.Task.WaitAsync(Limit);
+
+        // Balanced'ın paralelliği 4'tür — worker'lar run başında bir kez yaratıldığı için bu run'da 2 KALIR;
+        // canlı değişen YALNIZ cap + priority'dir (K11'in dürüst yorumu).
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Balanced));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), .. Applied(PerfMode.Balanced), .. Released()], governor.Calls);
+        Assert.Equal(2, invoker.MaxConcurrent); // worker sayısı DEĞİŞMEDİ
+        Assert.Equal(4, h.Events.OfType<ProjectSucceededEvent>().Count());
+    }
+
+    // Cap, hard stop yolunda da geri alınmalı: orada job Terminate edilir ama JOB'IN KENDİSİ yaşamaya devam
+    // eder (yeni process kabul eder) — cap kalsaydı bir sonraki run/Continue kısıtlı başlardı.
+    [Fact]
+    public async Task The_cap_is_released_on_the_hard_stop_path_too()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            inFlight.TrySetResult();
+            await release.Task;
+            return Exit(1); // hard stop sonrası child ölür gibi
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls);
+    }
+
+    // [Fix round 2 — YENİ 1] Run'ın KAPANIŞ PENCERESİ: koordinatör cap'i geri aldı (ReleasePerf) ama son
+    // event'ler hâlâ pump tarafından yazılıyor, yani `_runActive` HÂLÂ true. IPC dispatch loop'u ayrı bir
+    // thread'dedir ve setPerfMode'un hiçbir run-state ön koşulu yoktur — o pencerede gelen bir niyet, sahibi
+    // olmayan bir "pending" olarak kalıp BİR SONRAKİ run'ın profilini sessizce ezerdi.
+    [Fact]
+    public async Task A_perf_change_arriving_while_the_last_events_are_still_draining_does_not_leak_into_the_next_run()
+    {
+        var gate = new PumpGateStream("runCompleted");
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor, output: gate);
+
+        await h.Sut.StartAsync(Start(runId: "r1"), default); // PerfMode YOK → job'a hiç dokunulmamalı
+        await gate.Reached.WaitAsync(Limit);                 // runCompleted yazılırken duraklat
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // run BİTTİ ama _runActive henüz true
+        gate.Release();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Empty(governor.Calls);
+
+        // İKİNCİ run, yine PerfMode'suz: bayat niyet UYGULANMAMALI (aksi halde kullanıcının bu run için
+        // seçtiği profil ezilir ve cap'siz olması gereken bir run capli başlar).
+        await h.Sut.StartAsync(Start(runId: "r2"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(governor.Calls);
+        Assert.All(h.Events.OfType<RunStartedEvent>(), e => Assert.Null(e.CpuCapPercent));
+    }
+
+    // [Fix round 2 — YENİ 4] Geri alma yazımı BAŞARISIZ olsa bile perf bayrağı run SINIRINI geçmemeli: aksi
+    // halde PerfMode taşımayan bir SONRAKİ run, hiç dokunmadığı job'a run sonunda cap/priority yazardı ve
+    // "PerfMode'suz run job'a HİÇ dokunmaz" invariant'ı koşullu hale gelirdi.
+    [Fact]
+    public async Task A_failed_release_does_not_carry_the_perf_flag_into_the_next_run()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor { FailCapWithWin32 = true }; // hem apply hem release'in cap yazımı patlar
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(runId: "r1") with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        await h.Sut.StartAsync(Start(runId: "r2"), default); // PerfMode YOK
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // r1: priority uygulandı + geri alındı. r2: HİÇBİR yazım olmamalı (üçüncü bir "prio:Normal" YOK).
+        Assert.Equal(["prio:Idle", "prio:Normal"], governor.Calls);
+    }
+
+    // [Fix round 1 — KÖK 2] Cap yazımı patlarsa priority yazımı YİNE denenmeli (iki yarı bağımsız değerlidir)
+    // ve run ÖLMEMELİ; runStarted da olmayan bir cap'i RAPOR ETMEMELİ (yalnız GERÇEKTEN uygulanan taşınır).
+    [Fact]
+    public async Task A_failing_cap_write_still_lets_the_priority_write_through_and_is_reported_as_no_cap()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor { FailCapWithWin32 = true };
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // cap çağrıları FIRLADI (kaydedilmedi) ama priority'ler hem run başında hem run sonunda yazıldı.
+        Assert.Equal(["prio:Idle", "prio:Normal"], governor.Calls);
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+        // [D1 review round 2] Konsol kanalındaki metin İngilizce'ye çevrildi (uygulama İngilizce-only) —
+        // assert AYNI satırı pinlemeye devam eder, gevşetilmez.
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap could not be applied", StringComparison.Ordinal));
+        Assert.Equal(RunOutcome.Completed, h.Events.OfType<RunCompletedEvent>().Single().Outcome); // run ÖLMEDİ
+    }
+
+    // ------------------------------------------- [T20-b/P3] copy fazı: cap taban değeri + graceful-stop drain
+
+    /// <summary>Cap'i olmayan (Full / geri alınmış) hâlin <see cref="RecordingGovernor"/> izi.</summary>
+    private const string CapOff = "cap:off";
+
+    /// <summary>Bir profilin priority izi.</summary>
+    private static string Prio(PerfMode mode) => "prio:" + PerfProfile.For(mode).Priority;
+
+    /// <summary>Taban priority'sinin izi — cap yazımından BAĞIMSIZ olarak da gerekir: graceful drain'de cap
+    /// kalkar ama priority tabana çekilir (bkz. <c>EffectivePriorityLocked</c>, final review I-1).</summary>
+    private static string FloorPrio => "prio:" + PerfProfile.CopyPhaseFloorPriority;
+
+    /// <summary>Copy-contention penceresinin izi: cap VE priority tabanı (ikisi de Balanced'dan türetilir —
+    /// cap'i gevşetip priority'yi Idle'da bırakmak floor'un yarısını etkisiz kılardı).</summary>
+    private static string[] FloorApplied() => [$"cap:{PerfProfile.CopyPhaseFloorPercent}", FloorPrio];
+
+    /// <summary>Tek bir contention'ı senaryolayan invoker: 1. deneme MSB3021 + exit 1, sonraki denemeler OK.</summary>
+    private static FakeInvoker ContendingOnce()
+    {
+        int attempts = 0;
+        return new FakeInvoker((_, onLine, _) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                onLine(ContentionLine);
+                return Task.FromResult(Exit(1));
+            }
+            return Task.FromResult(Ok());
+        });
+    }
+
+    [Fact]
+    public async Task A_copy_contention_lifts_the_cap_to_the_copy_phase_floor_and_puts_the_run_profile_back()
+    {
+        // Post-build copy MSBuild child'ının İÇİNDE olur; "copy başlıyor" sinyali yoktur. Elde olan tek sinyal
+        // GERİYE DÖNÜKTÜR (MSB302x) — taban tam o pencerede uygulanır, retry bitince run profiline dönülür.
+        var governor = new RecordingGovernor();
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, invoker.Requests.Count); // tetikleyici GERÇEKTEN ateşledi (retry oldu)
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. Applied(PerfMode.Light), .. Released()],
+            governor.Calls);
+        Assert.Equal(RunOutcome.Completed, h.Events.OfType<RunCompletedEvent>().Single().Outcome); // retry geçti
+    }
+
+    [Fact]
+    public async Task A_copy_contention_under_the_uncapped_Full_profile_never_touches_the_cap()
+    {
+        // Cap yoksa gevşetilecek bir şey de yok: governor'a apply+release DIŞINDA hiçbir yazım gitmemeli.
+        var governor = new RecordingGovernor();
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // POZİTİF KONTROL önce: contention gerçekten retry ürettiyse "dokunulmadı" iddiası anlamlıdır —
+        // aksi halde tetikleyici bozulduğunda bu test sessizce yeşil kalırdı.
+        Assert.Equal(2, invoker.Requests.Count);
+        Assert.Equal([.. Applied(PerfMode.Full), .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_copy_contention_in_a_run_without_a_perf_mode_never_touches_the_governor()
+    {
+        var governor = new RecordingGovernor();
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(), default); // PerfMode YOK → job'a hiç dokunulmaz
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, invoker.Requests.Count); // pozitif kontrol (yukarıdaki gerekçe)
+        Assert.Empty(governor.Calls);
+    }
+
+    [Fact]
+    public async Task The_capped_backoff_is_wired_to_the_live_run_profile()
+    {
+        // GERÇEK kablaj: RunCoordinator.IsCapActiveNow → CoordinatorCpuFloor.IsCapActive → decorator.
+        // Decorator testlerindeki el yazması fake bu zinciri göremez; kablaj kopsa yalnız bu test kırılır.
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: new RecordingGovernor());
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, invoker.Requests.Count);
+        Assert.Equal([TimeSpan.FromMilliseconds(300)], h.RetryDelays); // 200ms × 1.5 (cap aktif)
+    }
+
+    [Fact]
+    public async Task The_backoff_is_not_stretched_in_a_run_without_a_perf_mode()
+    {
+        var invoker = ContendingOnce();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: new RecordingGovernor());
+
+        await h.Sut.StartAsync(Start(), default); // cap yok → dizi AYNEN
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, invoker.Requests.Count);
+        Assert.Equal([TimeSpan.FromMilliseconds(200)], h.RetryDelays);
+    }
+
+    [Fact]
+    public async Task A_live_perf_change_during_a_copy_window_cannot_push_the_cap_or_priority_below_the_floor()
+    {
+        // Sıkışmış bir post-build copy, tam ortasında yeniden kısılamaz: pencere açıkken gelen setPerfMode
+        // cap'i de priority'yi de TABAN'ın altına yazamaz (yeni profil ancak pencere kapanınca yürürlüğe girer).
+        var retrying = Signal();
+        var release = Signal();
+        int attempts = 0;
+        var invoker = new FakeInvoker(async (_, onLine, _) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1) { onLine(ContentionLine); return Exit(1); }
+            retrying.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await retrying.Task.WaitAsync(Limit); // pencere AÇIK
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. FloorApplied()], governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Pencere kapanınca profil (Light) yürürlüğe girer.
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. FloorApplied(),
+            .. Applied(PerfMode.Light), .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task Two_workers_in_a_copy_window_lift_the_cap_once_and_restore_it_only_when_the_last_one_leaves()
+    {
+        // Paralel build'de İKİ worker aynı anda contention görebilir. Ref-count yoksa erken çıkan worker, diğeri
+        // hâlâ kopyalarken cap'i geri kısar (izde cap:70·cap:70·cap:40·cap:40 görünürdü).
+        var plan = PlanOf(Node("A"), Node("B"));
+        var attemptsById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int Attempt(string id) { lock (attemptsById) { attemptsById.TryGetValue(id, out int n); return attemptsById[id] = n + 1; } }
+
+        var bothFirstAttempts = Signal();
+        var bothRetrying = Signal();
+        var releaseRetries = Signal();
+        int firstArrived = 0, retryArrived = 0;
+        var invoker = new FakeInvoker(async (req, onLine, _) =>
+        {
+            if (Attempt(req.ProjectId) == 1)
+            {
+                // İki projenin İLK denemesi de contention'a düşsün (randevu: ikisi de uçuşta) [D8].
+                if (Interlocked.Increment(ref firstArrived) == 2) bothFirstAttempts.TrySetResult();
+                await bothFirstAttempts.Task;
+                onLine(ContentionLine);
+                return Exit(1);
+            }
+            // 2. deneme = pencere AÇIK (Enter, backoff'tan ÖNCE olur) — ikisi de burada tutulur.
+            if (Interlocked.Increment(ref retryArrived) == 2) bothRetrying.TrySetResult();
+            await releaseRetries.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(parallelism: 2) with { PerfMode = "Light" }, default);
+        await bothRetrying.Task.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied()], governor.Calls); // İKİ pencere, TEK yükseltme
+
+        releaseRetries.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), .. Applied(PerfMode.Light), .. Released()],
+            governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_lifts_the_cap_so_the_in_flight_post_build_copy_can_drain()
+    {
+        // Graceful stop, in-flight child'ların post-build copy'lerini TAMAMLAMASINA dayanır ("ortak bin'de torn
+        // DLL yok", §3). O pencereyi %40'lık bir HARD_CAP ile uzatmak garantiyi zamanlama yarışına çevirirdi.
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+
+        // Cap ANINDA kalkar; priority'ye DOKUNULMAZ (Idle yalnız öncelik verir, HARD_CAP mutlak tavandır).
+        Assert.Equal([.. Applied(PerfMode.Light), CapOff], governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        Assert.Equal([.. Applied(PerfMode.Light), CapOff, .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_in_a_run_without_a_perf_mode_still_never_touches_the_governor()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(), default); // PerfMode YOK
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_during_a_copy_window_is_not_undone_when_that_window_closes()
+    {
+        // Drain kararı run'ın GERİ KALANI için bağlayıcıdır: kapanan copy penceresi cap'i geri KOYAMAZ, aksi
+        // halde drain'in tam ortasında job yeniden %40'a kısılırdı.
+        var retrying = Signal();
+        var release = Signal();
+        int attempts = 0;
+        var invoker = new FakeInvoker(async (_, onLine, _) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1) { onLine(ContentionLine); return Exit(1); }
+            retrying.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Light" }, default);
+        await retrying.Task.WaitAsync(Limit);
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied()], governor.Calls); // pencere açık
+
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Pencere kapanışı hiçbir şey yazmaz — cap zaten kalkmıştır.
+        Assert.Equal([.. Applied(PerfMode.Light), .. FloorApplied(), CapOff, .. Released()], governor.Calls);
+    }
+
+    [Fact]
+    public async Task A_graceful_stop_binds_the_run_even_when_the_active_profile_has_no_cap()
+    {
+        // [Fix round 1] Drain KARARI cap'i olmayan (Full) profilde de kaydedilmelidir. Aksi halde bayrak hiç
+        // set edilmez ve drain sürerken gelen canlı bir setPerfMode("Light") cap:40 yazarak "ortak bin'de torn
+        // DLL yok" penceresini geri açardı — kaldıracak bir cap olmaması, kararın geçersiz olduğu anlamına gelmez.
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.Equal([.. Applied(PerfMode.Full)], governor.Calls); // cap yok → drain hiçbir şey YAZMAZ
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi — drain kararı BAĞLAR
+        // [final review I-1] Priority de bağlanır: Idle YAZILMAZ, taban (Balanced) yazılır.
+        Assert.Equal([.. Applied(PerfMode.Full), CapOff, FloorPrio], governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Full), CapOff, FloorPrio, .. Released()], governor.Calls);
+    }
+
+    /// <summary>
+    /// [final review I-1] Drain kararı cap ile priority'yi AYNI ölçüde bağlar. Stop'a basıldıktan sonra perf
+    /// chip'i CANLI kalır (<c>CanStop() = IsRunning || IsStarting</c>), yani kullanıcı beklerken profili
+    /// değiştirebilir. Eskiden <c>EffectivePriorityLocked</c> <c>_capDrained</c>'e BAKMIYORDU: <c>Balanced</c>
+    /// koşan bir run'ın in-flight <c>MSBuild.exe</c> child'ları drain'in tam ortasında <c>Idle</c>'a
+    /// düşürülebiliyordu — yüklü bir makinede Idle bir child, tavanı serbest olsa bile zamanlayıcıdan sıra
+    /// alamaz ve <c>MsBuildInvoker.PerProjectTimeout</c> (10 dk) aşılırsa child <c>Killed</c> edilir; yani
+    /// drain'in korumaya çalıştığı yarım yazılmış çıktı senaryosu geri gelirdi.
+    /// </summary>
+    [Fact]
+    public async Task A_perf_change_during_the_graceful_drain_can_lower_neither_the_cap_nor_the_priority()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(PlanOf(Node("A")), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start() with { PerfMode = "Balanced" }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.Equal([.. Applied(PerfMode.Balanced), CapOff], governor.Calls); // cap ANINDA kalkar
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi
+
+        // İki yarı da aynı karara bağlı: cap yok, priority tabanın ALTINA inmedi.
+        Assert.Equal([.. Applied(PerfMode.Balanced), CapOff, CapOff, FloorPrio], governor.Calls);
+        Assert.DoesNotContain(Prio(PerfMode.Light), governor.Calls); // "prio:Idle" HİÇ yazılmadı
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. Applied(PerfMode.Balanced), CapOff, CapOff, FloorPrio, .. Released()], governor.Calls);
     }
 }

@@ -231,7 +231,8 @@ public static class Program
             // yoktur — tek seferde tek run (A6) olduğu için başka bir run'ın worktree'si kullanımda olamaz.
             var prune = await manager.PruneToCapAsync(WorktreePoolCapBytes,
                 reusedPath is null ? null : Path.GetFileName(reusedPath), ct);
-            if (!prune.Success) warn("warning: worktree havuzu budanamadı (cap uygulanmadı): " + prune.Error);
+            // [D1 review · A3] warn(...) kullanıcının konsoluna düşer → İngilizce.
+            if (!prune.Success) warn("warning: worktree pool could not be pruned (cap not applied): " + prune.Error);
 
             if (reusedPath is not null) return new PreparedWorkspace(reusedPath, reusedPath, InPlace: false);
 

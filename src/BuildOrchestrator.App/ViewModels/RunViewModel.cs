@@ -8,8 +8,12 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.ProcessControl;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+// [T20-b] VM'in KENDİ `PerfMode` string property'si, Core'daki aynı adlı enum'u basit-ad çözümlemesinde gölgeler
+// (sınıf üyesi, namespace'ten gelen türü yener) — bu yüzden enum'a bu alias'la erişilir.
+using CorePerfMode = BuildOrchestrator.Core.ProcessControl.PerfMode;
 
 namespace BuildOrchestrator.App.ViewModels;
 
@@ -46,12 +50,22 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// kurulurken atanır. Bir projeyi birden çok .sln içerebilir — kart tek (ilk) adı gösterir.</summary>
     [ObservableProperty] private string? _solutionName;
 
-    /// <summary>[T53-UI] SHA çiftinin sol yarısı: projenin MEVCUT (derlenmiş) commit'i — prototip <c>st.curSha</c>
-    /// (BuildApp.jsx:400). <b>Şu an hiçbir IPC event'i per-proje sha taşımaz</b> (yalnız run-geneli
-    /// <see cref="RunViewModel.TargetSha"/> = SyncCompletedEvent.TargetSha vardır); bu alan bir sonraki
-    /// per-proje-sha kablajına dek boş kalır (uydurulmaz). Kart yalnız <see cref="WillBuild"/>==true iken bu
-    /// çifti gösterir.</summary>
+    /// <summary>[T53-UI][W1/It-5] SHA çiftinin sol yarısı: projenin SON BAŞARIYLA DERLENDİĞİ commit — prototip
+    /// <c>st.curSha</c> (BuildApp.jsx:400). Kaynak <see cref="BuildPreviewItem.BuiltCommit"/>'tir (yani
+    /// <c>BuildState.BuiltCommit</c>); hem Sync hem run-başı önizlemesinden gelir. Değer HAM'dır (40-hex) —
+    /// 7 haneye kısaltma bir GÖRÜNTÜ kararıdır ve kartta (<c>ProjectRow.ApplySha</c>) yapılır. <b>Hiç
+    /// derlenmemiş</b> proje ⇒ <c>null</c> (uydurulmaz): kart o satırda çift yerine YALNIZ hedefi basar.
+    /// Kart yalnız <see cref="WillBuild"/>==true iken bu slotu gösterir.</summary>
     [ObservableProperty] private string? _currentSha;
+
+    /// <summary>[W1/It-5] SHA çiftinin sağ yarısı: run-geneli hedef commit (<c>SyncCompletedEvent.TargetSha</c>),
+    /// <see cref="RunViewModel.TargetSha"/>'dan her satıra İTİLİR (<see cref="IsRunActive"/>/<see cref="NamePrefix"/>
+    /// deseni). <b>Neden satırda:</b> kart bunu eskiden render anında ata ağaçtaki <see cref="RunViewModel"/>'den
+    /// ÇEKİYORDU; <c>buildPreview</c> deterministik olarak <c>syncCompleted</c>'dan ÖNCE geldiği için satır
+    /// sha'sını TargetSha daha null'ken hesaplıyor ve bir daha tazelenmiyordu (ilk Sync'ten sonra slot boş
+    /// kalırdı). Değer artık İTİLDİĞİ için iki event'in sırası ÖNEMSİZDİR — hangisi sonra gelirse satır kendi
+    /// PropertyChanged'i üzerinden tazelenir (satır başına EK abone YOK). Değer HAM'dır (40-hex).</summary>
+    [ObservableProperty] private string? _targetSha;
 
     /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
     /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
@@ -230,7 +244,8 @@ public sealed partial class RunViewModel : ObservableObject
     // [Fix wave 1, C2 review Finding 2] Parallelism artık PerfMode'un varsayılanından tohumlanır — eski
     // Environment.ProcessorCount varsayılanı PerfMode'dan (It-2) ÖNCEYDİ ve _perfMode="Balanced"→4 (v7 plan
     // K11: perf mode SABİT 6/4/2 tablosudur) ile çelişiyordu. TEK kaynak: her ikisi de aynı sabiti kullanır.
-    [ObservableProperty] private int _parallelism = ParallelismFor(DefaultPerfMode);
+    // [T20-b] O sabit artık Core'un PerfProfile tablosudur (App'in kendi kopyası KALDIRILDI).
+    [ObservableProperty] private int _parallelism = ProfileFor(DefaultPerfMode).Parallelism;
     [ObservableProperty] private long _elapsedMs;
 
     /// <summary>[Task 17] Run genelinde (RunCompletedEvent'ten) dependency-affected proje sayısı özeti.</summary>
@@ -300,7 +315,47 @@ public sealed partial class RunViewModel : ObservableObject
     /// [Review fix] Kalıcı DEĞİLDİR: bir sonraki run'ın <see cref="OnRunStarted"/>'ı (engine'in CANLI ve IPC
     /// round-trip yaptığının ilk somut kanıtı) bu mesajı temizler — aksi halde tek bir ölümden sonra sonsuza
     /// dek stale kalıp, tamamen başarılı sonraki run'larda bile güncel engine sağlığını yanlış yansıtırdı.</summary>
-    [ObservableProperty] private string? _engineDiedMessage;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEngineUnavailable))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    private string? _engineDiedMessage;
+
+    /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
+    /// yeniden başlatılabilir (true); Supervisor çıktısı hiç bulunamadığında (<see cref="OnEngineUnavailable"/>)
+    /// yeniden başlatmak eksik dosyayı geri getirmeyeceği için aksiyon GİZLENİR ve kullanıcı yalnız ne yapması
+    /// gerektiğini anlatan metni görür. <b>Değişmez:</b> <see cref="EngineDiedMessage"/>'ı yazan HER yol bunu da
+    /// yazar (ölüm → true, kurulum eksik → false); mesaj temizlendiğinde değerin önemi kalmaz.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEngineUnavailable))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
+    private bool _engineRestartable = true;
+
+    /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
+    /// <see cref="OnEngineUnavailable"/> bu durumu kurar. Sync/Build/Rebuild/Retry/Continue bu durumda
+    /// ANLAMSIZDIR: gönderim zaten hataya düşer ve şeritteki kalıcı mesajla ÇELİŞEN ikinci bir hata satırı
+    /// üretirdi — bu yüzden komutlar devre dışıdır ("Restart engine"in gizlenmesiyle aynı mantık).
+    /// <para>Normal (doğmuş) motor ölümü BU DURUM DEĞİLDİR: orada "Restart engine" sunulur ve komutlar açık
+    /// kalır — E2/T37 davranışı korunur.</para></summary>
+    public bool IsEngineUnavailable => EngineDiedMessage is { Length: > 0 } && !EngineRestartable;
+
+    /// <summary>[D1] Supervisor çıktısı uygulamanın yanında bulunamadığında şeritte gösterilen KALICI satır.
+    /// design-v1 §"Ton" (sakin, kesin, mühendisçe; ünlem yok) ve mevcut hata satırlarının em-dash/`·` dili.
+    /// Ham exception dump'ı DEĞİL — tam yol konsol anlatısına düşer.</summary>
+    public const string EngineMissingMessage =
+        "Engine missing — supervisor was not found next to the app · reinstall required";
+
+    /// <summary>[D1 review · A2] Supervisor dosyası VAR ama başlatılamadı (bozuk/geçersiz exe, erişim reddi,
+    /// TOCTOU). Nedeni <see cref="EngineMissingMessage"/>'dan AYIRT EDER; ham exception metni gösterilmez.</summary>
+    public const string EngineCannotStartMessage =
+        "Engine could not start — the supervisor next to the app would not launch · reinstall required";
 
     /// <summary>[E2/T10] Son Sync başarısız olduysa hata gerekçesi (ErrorEvent.Message) — şerit bunu KIRMIZI
     /// <c>Sync failed — {reason}</c> faz-metnine çevirir (<see cref="RibbonText.Compose"/>). Bir sonraki Sync
@@ -338,7 +393,7 @@ public sealed partial class RunViewModel : ObservableObject
     // kullanılabilir).
     private const string DefaultPerfMode = "Balanced";
 
-    /// <summary>[C2] Perf profili: Full/Balanced/Light. <see cref="CyclePerf"/> döngüsü paralelliği de günceller.</summary>
+    /// <summary>[C2] Perf profili: Full/Balanced/Light. <see cref="CyclePerfAsync"/> döngüsü paralelliği de günceller.</summary>
     [ObservableProperty] private string _perfMode = DefaultPerfMode;
 
     /// <summary>[C2] Proje listesi durum sayaçları — satır değişimlerinde yeniden hesaplanır.</summary>
@@ -405,8 +460,10 @@ public sealed partial class RunViewModel : ObservableObject
                 _runLineCount = 0;
                 _projectLineCount.Clear();
             }
+        // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
+        // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            Branch, UseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns);
+            Branch, UseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
             IsStarting = false;
     }
@@ -426,7 +483,8 @@ public sealed partial class RunViewModel : ObservableObject
         ClearSelectionAndFilter(); // [design doRebuild→doBuild] tam run: seçim + filtre sıfırlanır
         return BeginRunAsync(RunMode.Rebuild, clearBuffers: true);
     }
-    private bool CanStartRun() => !IsRunning && !IsStarting;
+    // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
+    private bool CanStartRun() => !IsRunning && !IsStarting && !IsEngineUnavailable;
 
     // [Fix wave 1, C2 review Finding 1] Rebuild/RetryFailed, Sync uçuştayken (_syncInFlight) EK OLARAK
     // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,
@@ -458,7 +516,7 @@ public sealed partial class RunViewModel : ObservableObject
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
         await TrySendAsync(new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
     }
-    private bool CanSync() => !IsRunning && !IsStarting;
+    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
@@ -470,14 +528,22 @@ public sealed partial class RunViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(CanContinueRun))]
     private Task ContinueAsync() => BeginRunAsync(RunMode.Continue, clearBuffers: false); // [design doContinue] seçim/filtre KORUNUR
-    private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue;
+    private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue && !IsEngineUnavailable; // [D1 review · A3]
 
     /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
     /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
     /// (engine geri geldi — bir sonraki runStarted'ı beklemeden, çünkü Restart tek başına da engine sağlığını
     /// kanıtlar). MainWindow'un <c>_engine.EventReceived</c>/<c>EngineExited</c> abonelikleri AYNI EngineHost
     /// instance'ında kaldığından yeniden kablolama gerekmez. Gönderim başarısız olursa gerekçe konsola düşer ve
-    /// hata modu KALIR (kullanıcı tekrar deneyebilir).</summary>
+    /// hata modu KALIR (kullanıcı tekrar deneyebilir).
+    /// <para>[final review I-2] <see cref="Services.EngineUnavailableException"/> AYRI yakalanır: yeniden
+    /// başlatma preflight'ta (dosya yok / başlatılamıyor) düşerse bu bir "tekrar dene" hatası DEĞİLDİR —
+    /// <see cref="OnEngineUnavailable"/> ile D1'in "motor erişilemez" durumuna geçilir (aksiyon gizlenir,
+    /// komutlar kapanır, şeritte TEK ve doğru mesaj kalır). Aksi halde generic catch bu türü ayırt etmediği
+    /// için <see cref="EngineRestartable"/> true kalır ve <see cref="EngineDiedMessage"/> eski "unexpectedly
+    /// stopped" metniyle donar: kullanıcıya sonsuza dek "Restart engine" sunulur, komutlar açık kalır ve her
+    /// tıklama şeritteki mesajla ÇELİŞEN ikinci bir hata satırı üretir — <see cref="EngineRestartable"/>'ın
+    /// değişmezi de ("EngineDiedMessage'ı yazan HER yol bunu da yazar") bozulurdu.</para></summary>
     [RelayCommand]
     private async Task RestartEngineAsync()
     {
@@ -485,6 +551,10 @@ public sealed partial class RunViewModel : ObservableObject
         {
             await _engine.RestartAsync();
             EngineDiedMessage = null;
+        }
+        catch (Services.EngineUnavailableException ex)
+        {
+            OnEngineUnavailable(ex.ExePath, ex.Reason); // [final review I-2] D1'in "engine yok" durumu
         }
         catch (Exception ex)
         {
@@ -544,19 +614,48 @@ public sealed partial class RunViewModel : ObservableObject
         AppendRunLine($"Configuration → {value} — all projects will rebuild");
     }
 
-    // [T43] Perf profili → paralellik TEK sabit eşleme (prototipteki 3 kopya taşınmaz).
-    private static int ParallelismFor(string perfMode) => perfMode switch
-    {
-        "Full" => 6, "Balanced" => 4, "Light" => 2, _ => 4,
-    };
+    /// <summary>
+    /// [T20-b/K11] Perf profilini App tarafında TÜRETMENİN tek kapısı — üç tüketicisi de buradan geçer:
+    /// <see cref="Parallelism"/> alan başlatıcısı, <see cref="CyclePerfAsync"/> ve <see cref="SetPerfMode"/>.
+    /// Tablo App'te DEĞİL Core'dadır (<see cref="PerfProfile"/>): paralellik + CPU cap + priority üçlüsünü
+    /// Supervisor da AYNI satırdan okur, iki tablo tutulmaz.
+    /// <para><b>Türetme ≠ geçerlilik.</b> Tanınmayan metin (ör. bayat bir UiState değeri)
+    /// <see cref="PerfProfile.TryParse"/>'ta <c>null</c> olur; burada App'in ESKİ davranışına (Balanced/4)
+    /// düşülür — kaldırılan <c>ParallelismFor</c> tablosunun <c>_ =&gt; 4</c> dalının birebir karşılığı.
+    /// <see cref="SetPerfMode"/> ise geçersiz bir SEED'i kabul etmez (no-op) — o kapı ayrıdır ve bu fallback'i
+    /// KULLANMAZ. Bu yüzden fallback dalı üretimden erişilemez, yalnız savunma amaçlıdır ve
+    /// <c>internal</c>'dır: onu pinleyen test doğrudan çağırır.</para>
+    /// </summary>
+    internal static PerfProfile ProfileFor(string perfMode) =>
+        PerfProfile.TryParse(perfMode) ?? PerfProfile.For(CorePerfMode.Balanced);
 
-    /// <summary>[T43] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
-    /// CANLI (kilitlenmez) — yalnız koşarken konsola "parallelism: N (Mode)" notu yazılır (BuildApp.jsx:1366-1372).</summary>
-    public void CyclePerf()
+    /// <summary>
+    /// [T43 · T20-b/K11] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
+    /// CANLI (kilitlenmez) — ve artık koşan run'a GERÇEKTEN etki eder: <see cref="SetPerfModeCommand"/> gönderilir.
+    /// <para><b>Canlı değişen YALNIZ CPU cap + priority'dir.</b> Worker'lar run başında bir kez yaratılır
+    /// (Supervisor'ın <c>RunCoordinator</c>'ı) ve dinamik bir slot mekanizması yoktur, bu yüzden yeni profilin
+    /// PARALELLİĞİ ancak BİR SONRAKİ run'da geçerli olur. Bu, K11'in "çalışırken değiştirilebilir" ifadesinin
+    /// dürüst yorumudur. Konsola yalnız K11'in kendi satırı (<see cref="PerfNoteText.Note"/>) yazılır —
+    /// açıklayıcı ikinci bir cümle YOK (design-v1'in konsol dili: sakin, kesin, tekrarsız).</para>
+    /// <para>Aynı sebeple ETA de dokunulmadan bırakılır: ETA modeli run'ın BAŞLANGIÇ paralelliğini
+    /// <c>runStarted</c>'dan dondurur (<c>_runParallelism</c>) ve canlı cap değişimi onu BİLİNÇLİ olarak
+    /// güncellemez (tahmin gürültüsü &lt; karmaşıklık maliyeti).</para>
+    /// <para>[Fix round 1 — KÖK 1] Kapı <see cref="IsRunning"/> DEĞİL <see cref="IsMidRunLocked"/>'dır: Build'e
+    /// basıldıktan sonra <c>runStarted</c> gelene kadar geçen PLANLAMA PENCERESİ (177 projede saniyeler) de
+    /// run'ın uçuşta olduğu bir aralıktır ve chip o sırada canlıdır. <c>IsRunning</c> kapısı o pencerede gelen
+    /// değişimi sessizce yutuyordu (run tüm ömrü boyunca eski cap'le koşardı). Supervisor tarafı komutu
+    /// planlama bitene kadar bekletir ve run başlarken uygular.</para>
+    /// <para>Hiç run uçuşta değilken ne komut ne not vardır: profil zaten bir sonraki
+    /// <see cref="StartRunCommand.PerfMode"/> ile motora gider (bkz. <see cref="BeginRunAsync"/>).</para>
+    /// </summary>
+    public async Task CyclePerfAsync()
     {
         PerfMode = PerfMode switch { "Full" => "Balanced", "Balanced" => "Light", "Light" => "Full", _ => "Balanced" };
-        Parallelism = ParallelismFor(PerfMode);
-        if (IsRunning) AppendRunLine($"parallelism: {Parallelism} ({PerfMode})");
+        var profile = ProfileFor(PerfMode);
+        Parallelism = profile.Parallelism;
+        if (!IsMidRunLocked) return;
+        AppendRunLine(PerfNoteText.Note(profile)); // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da)
+        await TrySendAsync(new SetPerfModeCommand(PerfMode), "setPerfMode");
     }
 
     /// <summary>[C2] Satır durumu değişimlerinde türev yüzeyi tazeler: sayaçlar, görünür liste, RetryFailed
@@ -697,6 +796,11 @@ public sealed partial class RunViewModel : ObservableObject
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
             if (item.WillBuild == true) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
+            // [W1] CurrentSha ataması, aşağıdaki terminal-satır guard'ından ÖNCE ve ondan BAĞIMSIZ yapılır: o
+            // guard yalnız WillBuild'i korumak içindir (segment 1'in canlı succeeded→clean geçişi ezilmesin).
+            // Sha'nın böyle bir koruma İHTİYACI YOKTUR — tersine, segment 2'nin okuduğu değer segment 1'in
+            // persist'ini içerdiği için terminal satırların sol yarısı ancak burada TAZELENİR.
+            row.CurrentSha = item.BuiltCommit;
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
         }
@@ -740,7 +844,10 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var existing = Projects.FirstOrDefault(p => p.Id == id);
         if (existing is not null) return existing;
-        var row = new ProjectRowViewModel(id, name, initialState) { IsRunActive = RunActive, NamePrefix = _graphNamePrefix };
+        // [W1] TargetSha da IsRunActive/NamePrefix ile AYNI itme deseninden gelir: run ortasında doğan bir satır
+        // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
+        var row = new ProjectRowViewModel(id, name, initialState)
+        { IsRunActive = RunActive, NamePrefix = _graphNamePrefix, TargetSha = TargetSha };
         Projects.Add(row);
         return row;
     }
@@ -852,6 +959,9 @@ public sealed partial class RunViewModel : ObservableObject
     {
         // [E2/T37 · İngilizce sweep] Şerit kalıcı-hata modu bu metni GÖSTERİR → İngilizce (tüm UI/konsol metni).
         // Exit kodu (varsa) KORUNUR — test bu sayıyı pinler.
+        // [D1] Doğmuş bir motorun ölümü YENİDEN BAŞLATILABİLİR — şerit "Restart engine" aksiyonunu gösterir
+        // (EngineDiedMessage yazan her yol bu bayrağı da yazar; bkz. EngineRestartable).
+        EngineRestartable = true;
         EngineDiedMessage = exitCode is { } code
             ? $"Engine stopped unexpectedly (exit {code})"
             : "Engine stopped unexpectedly (protocol error)";
@@ -871,6 +981,36 @@ public sealed partial class RunViewModel : ObservableObject
         // da uçuştaki Sync serbest bırakılır.
         ReleaseSyncPhase();
     }
+
+    /// <summary>
+    /// [D1] Motor HİÇ başlatılamadı: Supervisor çalıştırılabiliri uygulamanın yanında yok (eksik/bozuk kurulum —
+    /// tipik olarak publish çıktısına <c>supervisor\</c> klasörü girmemiş). Kullanıcı SESSİZ kalmaz: şerit
+    /// kalıcı hata moduna girer (engine-died ile AYNI görsel yol) ama "Restart engine" GİZLENİR — yeniden
+    /// başlatmak eksik dosyayı geri getirmez. Tam yol yalnız konsol anlatısına düşer (şerit tek satır kalır).
+    /// <para><b>Tek sinyal:</b> child process hiç doğmadığı için <see cref="EngineHost.EngineExited"/> ateşlenmez;
+    /// bu yol <see cref="OnEngineExited"/> ile ASLA çakışmaz (çağıran yalnız
+    /// <see cref="Services.EngineUnavailableException"/> dalında buraya girer).</para>
+    /// </summary>
+    /// <param name="exePath">Aranan Supervisor exe yolu (konsol satırında gösterilir).</param>
+    /// <param name="reason">[D1 review · A2] Dosya yok mu, yoksa var ama başlatılamadı mı — şerit metnini ayırır.</param>
+    public void OnEngineUnavailable(string exePath,
+        Services.EngineUnavailableReason reason = Services.EngineUnavailableReason.NotFound)
+    {
+        EngineRestartable = false;
+        EngineDiedMessage = reason == Services.EngineUnavailableReason.NotFound
+            ? EngineMissingMessage
+            : EngineCannotStartMessage;
+        // Konsola tam yol + kültürden bağımsız bir tanı kodu; OS'in (yerelleştirilmiş) Win32 metni ASLA
+        // gösterilmez — uygulama İngilizce-only [A3].
+        AppendRunLine(reason == Services.EngineUnavailableReason.NotFound
+            ? $"[error] engine not found: {exePath}"
+            : $"[error] engine could not start: {exePath}");
+    }
+
+    /// <summary>[D1 review · C5] Motor hazır: konsolun boot satırında sürüm gösterilir (design-v1 §2.5 anlatı
+    /// dili — "Build started — 14 projects, parallelism 4" ile aynı kalıp). Sürüm kimliği TEK kaynaktan gelir:
+    /// <c>Directory.Build.props</c> → Supervisor assembly'sinin InformationalVersion'ı → <c>engineReady</c>.</summary>
+    public void OnEngineReady(string engineVersion) => AppendRunLine($"Engine ready — v{engineVersion}");
 
     // ---------------------------------------------------------------- konsol/log
 

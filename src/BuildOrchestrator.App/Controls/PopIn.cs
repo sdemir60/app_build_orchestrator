@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 
@@ -25,7 +25,7 @@ internal static class PopIn
         // Önceki (uçuşta kalmış) animasyonları bırak — her açılışta taze başlar.
         element.BeginAnimation(UIElement.OpacityProperty, null);
 
-        bool animate = App.Motion?.AnimationsEnabled ?? false;
+        bool animate = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
         if (!animate)
         {
             element.Opacity = 1.0;

@@ -180,6 +180,45 @@ public class IpcMessagesTests
     }
 
     [Fact]
+    public void BuildPreviewItem_carries_the_built_commit_and_omits_it_entirely_when_a_project_was_never_built()
+    {
+        // [W1] Sha çiftinin sol yarısının IPC taşıyıcısı. İki şey birden pinlenir: (a) değer TAM (40-hex) gider —
+        // kısaltma bir GÖRÜNTÜ kararıdır, sözleşme veriyi kırpmaz; (b) hiç derlenmemiş projede alan JSON'a HİÇ
+        // yazılmaz (DefaultIgnoreCondition.WhenWritingNull), yani satır boyu da bedelsizdir.
+        const string full = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true, full),   // daha önce derlenmiş
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true),          // hiç derlenmemiş → null
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Contains($"\"builtCommit\":\"{full}\"", json, StringComparison.Ordinal);
+        Assert.Equal(1, json.Split("builtCommit").Length - 1); // B için alan hiç yazılmadı
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.Equal(full, back.Items[0].BuiltCommit);
+        Assert.Null(back.Items[1].BuiltCommit);
+    }
+
+    [Fact]
+    public void A_buildPreview_line_written_before_the_builtCommit_field_existed_still_deserializes()
+    {
+        // [W1] Geriye dönük uyum: alan opsiyonel/varsayılan değerlidir — W1 ÖNCESİ üretilmiş bir NDJSON satırı
+        // (builtCommit YOK) hâlâ çözülür ve sol yarı "hiç derlenmemiş" (null) olarak okunur.
+        const string line =
+            """{"type":"buildPreview","items":[{"projectId":"C:\\p\\a.csproj","name":"A","willBuild":true}]}""";
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options));
+
+        var item = Assert.Single(back.Items);
+        Assert.Equal("A", item.Name);
+        Assert.True(item.WillBuild);
+        Assert.Null(item.BuiltCommit);
+    }
+
+    [Fact]
     public void SyncWorkspaceCommand_roundtrips_with_discriminator()
     {
         IpcCommand cmd = new SyncWorkspaceCommand(@"D:\repo", "main");
@@ -306,6 +345,56 @@ public class IpcMessagesTests
         var bare = new SyncWorkspaceCommand(@"D:\repo", "main");
         Assert.Null(bare.LayerPatterns);
         Assert.Equal("Debug", bare.Configuration);
+    }
+
+    // ---------------------------------------------------------------- [T20-b/K11] perf modu (cap + priority)
+
+    // Perf modu App'ten Supervisor'a İKİ yoldan gider: run başında StartRunCommand.PerfMode, koşarken
+    // setPerfMode. İkincisi YENİ bir diskriminatördür — kayıtlı olmasaydı Unknown_discriminator_throws'un
+    // yakaladığı hataya düşer, kayıtlı ama dispatch edilmemiş olsaydı error(unknownCommand) dönerdi.
+    [Fact]
+    public void SetPerfModeCommand_roundtrips_with_its_own_discriminator()
+    {
+        IpcCommand cmd = new SetPerfModeCommand("Light");
+        string json = JsonSerializer.Serialize(cmd, IpcJson.Options);
+        Assert.Contains("\"type\":\"setPerfMode\"", json);
+        var back = Assert.IsType<SetPerfModeCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        Assert.Equal("Light", back.PerfMode);
+    }
+
+    // [T20-b] Geriye dönük uyum: PerfMode NULLABLE + varsayılan değerlidir. Alanı hiç taşımayan (P2 öncesi
+    // yazılmış) bir NDJSON satırı hâlâ çözülmeli ve null'a düşmeli — Supervisor o durumda cap'e HİÇ dokunmaz.
+    [Fact]
+    public void StartRunCommand_perfMode_roundtrips_and_stays_optional_for_older_lines()
+    {
+        var withPerf = new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 2, PerfMode: "Light");
+        string json = JsonSerializer.Serialize<IpcCommand>(withPerf, IpcJson.Options);
+        Assert.Contains("\"perfMode\":\"Light\"", json);
+        Assert.Equal(withPerf, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+
+        var bare = new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 2);
+        Assert.Null(bare.PerfMode);
+        Assert.DoesNotContain("perfMode", JsonSerializer.Serialize<IpcCommand>(bare, IpcJson.Options));
+
+        var legacy = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(
+            """{"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":2}""",
+            IpcJson.Options));
+        Assert.Null(legacy.PerfMode);
+    }
+
+    // [T20-b/K11] runStarted, o run için GERÇEKTEN uygulanmış cap'i taşır (App'in doğrulama/acceptance kanıtı).
+    // Cap yoksa (Full ya da perf modu hiç gelmediyse) alan JSON'a YAZILMAZ — eski okuyucular etkilenmez.
+    [Fact]
+    public void RunStartedEvent_carries_the_applied_cpu_cap_and_omits_it_when_uncapped()
+    {
+        var capped = new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", 0, CpuCapPercent: 70);
+        string json = JsonSerializer.Serialize<IpcEvent>(capped, IpcJson.Options);
+        Assert.Contains("\"cpuCapPercent\":70", json);
+        Assert.Equal(capped, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+
+        var uncapped = new RunStartedEvent("r1", RunMode.Build, 3, 6, "Debug", 0);
+        Assert.Null(uncapped.CpuCapPercent);
+        Assert.DoesNotContain("cpuCapPercent", JsonSerializer.Serialize<IpcEvent>(uncapped, IpcJson.Options));
     }
 
     // [A5/T69] Sync artık will-build pass'ini de koşar; §3.1 konsol satırları ("N changed projects, M to build" /

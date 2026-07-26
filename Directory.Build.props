@@ -3,5 +3,20 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+
+    <!-- [D1] Dağıtım kimliği — TEK yer. Version'dan Assembly/File/InformationalVersion türetilir; Supervisor
+         motor sürümünü kendi assembly'sinden okuyup EngineReadyEvent ile bildirdiğinden (SupervisorHost.cs)
+         buradaki değer App'in "engine v…" göstergesine kadar akar. Publish edilen exe'nin dosya özelliklerinde
+         de Product/Version bu değerlerdir. -->
+    <Version>1.0.0</Version>
+    <!-- [D1 review · B2] InformationalVersion AYIRT EDİCİ olmalı: yalın `1.0.0` SDK'nın varsayılanıdır, yani
+         bu dosya hiç devreye girmese bile gözlenirdi — teslim etiketi (`+it5`) kablonun GERÇEKTEN kurulu
+         olduğunu kanıtlar (testler ve `engineReady.engineVersion` bunu okur). -->
+    <InformationalVersion>$(Version)+it5</InformationalVersion>
+    <!-- SDK varsayılanı InformationalVersion'a commit sha ekler ("+it5.<sha>"): sürüm hem deterministik
+         kalsın hem de konsolun boot satırında okunabilir olsun diye kapatıldı. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Product>Build Orchestrator</Product>
+    <Company>Delta</Company>
   </PropertyGroup>
 </Project>

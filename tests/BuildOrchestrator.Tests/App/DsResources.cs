@@ -29,12 +29,23 @@ internal static class DsResources
     public static string AssetPath(string fileName)
         => Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", fileName);
 
+    /// <summary>[G2 fix round 1] Gömülü Geist Mono'nun test karşılığı: <c>pack://</c> aileler gerçek bir
+    /// <see cref="Application"/> olmadan çözülmez, bu yüzden AYNI OTF dosyalarına <c>file://</c> tabanlı bir
+    /// aile kurulur. Desen <c>TrackedTextBlockTests</c>'te (T57) kuruldu; oradaki sans karşılığıyla birlikte
+    /// tek doğruluk kaynağı burasıdır (kopya YASAK, CLAUDE.md).</summary>
+    public static FontFamily MonoFontFamily => new(
+        new Uri(Path.Combine(AppContext.BaseDirectory, "TestAssets", "Fonts") + Path.DirectorySeparatorChar),
+        "./#Geist Mono");
+
     public static ResourceDictionary Load(string fileName)
     {
         string xaml = File.ReadAllText(AssetPath(fileName))
             .Replace($"\"{LocalNamespace}\"", $"\"{QualifiedNamespace}\"", StringComparison.Ordinal);
         return (ResourceDictionary)XamlReader.Parse(xaml);
     }
+
+    /// <summary>Üretimdeki App.xaml merge sırası (AppResourcesMergeTests bunu ayrıca pinler).</summary>
+    private static readonly string[] MergeChain = ["Motion.xaml", "Tokens.xaml", "Icons.xaml", "Controls.xaml"];
 
     /// <summary>
     /// Uygulamanın merge zincirinin AYNISINI (Motion → Tokens → Icons → Controls) taşıyan bir kaynak kapsamı.
@@ -43,9 +54,18 @@ internal static class DsResources
     public static Border NewHost()
     {
         var host = new Border();
-        foreach (string name in new[] { "Motion.xaml", "Tokens.xaml", "Icons.xaml", "Controls.xaml" })
-            host.Resources.MergedDictionaries.Add(Load(name));
+        foreach (string name in MergeChain) host.Resources.MergedDictionaries.Add(Load(name));
         return host;
+    }
+
+    /// <summary>[T49 FINAL PASS] Aynı zincirin ÇIPLAK sözlük hâli — bir <see cref="Window"/>'un üstünde ebeveyn
+    /// olmadığı için ona host verilemez; kaynak kapsamı doğrudan <c>Window.Resources</c>'a enjekte edilir
+    /// (bkz. <c>MainWindow</c> ctor'ının <c>resourceScope</c> parametresi).</summary>
+    public static ResourceDictionary NewScope()
+    {
+        var scope = new ResourceDictionary();
+        foreach (string name in MergeChain) scope.MergedDictionaries.Add(Load(name));
+        return scope;
     }
 
     /// <summary>Kontrolü host'a koyar, ekran dışı bir pencerede gösterir ve şablonunu uygular — DynamicResource
@@ -60,10 +80,124 @@ internal static class DsResources
         return window;
     }
 
+    /// <summary>
+    /// Tasarım token'ı tüketen özellikler. Bir DP'nin bir düğüm için geçerli olup olmadığı ELENMEZ: WPF her
+    /// <see cref="DependencyObject"/> üzerinde her DP'yi okumaya izin verir ve ilgisiz olanlar varsayılanını
+    /// (tipiyle uyumlu) döner — yani yanlış pozitif üretmez.
+    ///
+    /// <para>[fix round 2] <see cref="RowDefinition.HeightProperty"/> / <see cref="ColumnDefinition.WidthProperty"/>
+    /// listenin BAŞINDA olmalıydı: <c>c6e9a21</c>'in TAM OLARAK patladığı özellikler bunlar
+    /// (<c>Size.ActionBarHeight</c> Double token'ı bir <c>GridLength</c>'e veriliyordu). Bu ikisi
+    /// <see cref="Grid"/>'in görsel/mantıksal çocuğu DEĞİLDİR — ağaç gezintisine hiç girmezler, bu yüzden
+    /// <see cref="DynamicResourceTypeMismatches"/> her <see cref="Grid"/> için ayrıca ziyaret eder.</para>
+    /// </summary>
+    private static readonly DependencyProperty[] TokenProperties =
+    [
+        Control.BackgroundProperty, Control.BorderBrushProperty, Control.ForegroundProperty,
+        Control.BorderThicknessProperty, Control.PaddingProperty, Control.FontSizeProperty,
+        Control.FontFamilyProperty, Control.FontWeightProperty,
+        Panel.BackgroundProperty,
+        Border.BackgroundProperty, Border.BorderBrushProperty, Border.BorderThicknessProperty,
+        Border.PaddingProperty, Border.CornerRadiusProperty,
+        TextBlock.BackgroundProperty, TextBlock.ForegroundProperty, TextBlock.FontSizeProperty,
+        TextBlock.FontFamilyProperty, TextBlock.FontWeightProperty,
+        System.Windows.Shapes.Shape.FillProperty, System.Windows.Shapes.Shape.StrokeProperty,
+        System.Windows.Shapes.Shape.StrokeThicknessProperty, System.Windows.Shapes.Path.DataProperty,
+        UIElement.EffectProperty, UIElement.OpacityMaskProperty,
+        FrameworkElement.WidthProperty, FrameworkElement.HeightProperty,
+        FrameworkElement.MinWidthProperty, FrameworkElement.MinHeightProperty, FrameworkElement.MarginProperty,
+        RowDefinition.HeightProperty, RowDefinition.MinHeightProperty,      // c6e9a21'in kendi özellikleri
+        ColumnDefinition.WidthProperty, ColumnDefinition.MinWidthProperty,
+    ];
+
+    /// <summary>Denetlenen özellik kümesi — testler "bug'ın kendi özelliği gerçekten listede mi" sorusunu
+    /// doğrudan sorabilsin diye açılır (bkz. <c>TokenRealizeCoverageTests</c>).</summary>
+    public static IReadOnlyList<DependencyProperty> CheckedProperties => TokenProperties;
+
+    /// <summary>
+    /// [T49 fix round 1 · A1] Realize edilmiş bir ağaçtaki HER <c>DynamicResource</c> bağını çözer ve
+    /// <b>hedef DP tipine uyup uymadığını</b> denetler; uymayanların listesini döner (boş = temiz).
+    ///
+    /// <para><b>Neden gerekli — ölçülen gerçek:</b> <c>Measure</c>/<c>Arrange</c> yalnız YERLEŞİM'e giren
+    /// özellikleri okur (<c>Height</c>, <c>Margin</c>, <c>RowDefinition.Height</c>) — <c>c6e9a21</c>'in
+    /// GridLength bug'ı bu yüzden yakalanır. Ama <c>Background</c>/<c>Foreground</c>/<c>Fill</c> RENDER-ONLY'dir:
+    /// gerçek bir <c>PresentationSource</c> olmadan hiç okunmaz. Dahası WPF, <c>GetValue</c> OKUMA yolunda tip
+    /// doğrulaması YAPMAZ (ölçüldü: bir <c>Double</c>, <c>Background</c>'dan sessizce geri gelir). Bu yüzden
+    /// uyum burada AÇIKÇA denetlenir — "patladı mı" değil, "doğru tip mi" sorulur.</para>
+    ///
+    /// <para>Şablon içindeki (ApplyTemplate ile SONRADAN doğan) öğeler de kapsanır: gezinti görsel + mantıksal
+    /// ağacın birleşimidir (<see cref="RealizedObjects"/>, kök DAHİL) ve şablon uygulandıktan SONRA
+    /// çağrılmalıdır. <b>KAPSAM DIŞI:</b> bir <c>Style</c>/<c>Setter</c> üzerinden gelen değerler yerel değer
+    /// DEĞİLDİR ve burada görünmez — onları uygulandıkları anda WPF'in kendi doğrulaması yakalar (setter'ın
+    /// hedefi yanlış tipteyse <c>Style</c> uygulanırken fırlar).</para>
+    /// </summary>
+    public static IReadOnlyList<string> DynamicResourceTypeMismatches(DependencyObject root)
+    {
+        var offenders = new List<string>();
+        foreach (var node in RealizedObjects(root))
+        {
+            Check(node);
+            // Grid tanımları ağacın çocuğu DEĞİLDİR (ne görsel ne mantıksal) — c6e9a21 tam da oradaydı.
+            if (node is Grid grid)
+            {
+                foreach (var row in grid.RowDefinitions) Check(row);
+                foreach (var column in grid.ColumnDefinitions) Check(column);
+            }
+        }
+        return offenders;
+
+        void Check(DependencyObject node)
+        {
+            foreach (var property in TokenProperties)
+            {
+                // GetValue = değeri GERÇEKTEN talep et (DynamicResource ancak burada çözülür). WPF okuma
+                // yolunda tip DOĞRULAMASI YAPMAZ — ölçüldü: bir şablon içinden Background'a bağlanan Double
+                // token'ı `GetValue` sessizce 40 olarak geri verir. Uyum bu yüzden BURADA denetlenir.
+                object? value = node.GetValue(property);
+                if (value is not null && !property.PropertyType.IsInstanceOfType(value))
+                    offenders.Add(
+                        $"{node.GetType().Name}.{property.Name}: {property.PropertyType.Name} bekleniyordu, {value.GetType().Name} geldi");
+            }
+        }
+    }
+
     public static Color TokenColor(FrameworkElement host, string key)
         => ((SolidColorBrush)host.FindResource(key)).Color;
 
     public static Color ColorOf(Brush? brush) => ((SolidColorBrush)brush!).Color;
+
+    /// <summary>[L1/It-5 perf] Bir kökün GERÇEKTEN kurduğu nesneler — görsel VE mantıksal ağacın birleşimi
+    /// (tekilleştirilmiş). Yalnız görsel ağacı saymak perf metriği olarak yanıltıcıdır: Collapsed bir dalın
+    /// şablonu genişlemez, bu yüzden <c>Button.Content</c> (Viewbox/Canvas/Path) ve <c>Popup.Child</c> alt-ağacı
+    /// görsel ağaca hiç girmez — ama nesne olarak kurulmuş ve satır başına ödenmiştir. Ölçüm bu yüzden mantıksal
+    /// çocukları da gezer. (Tooltip'ler hiçbir ağaca girmez → bu sayıya dahil DEĞİLDİR.)
+    ///
+    /// <para>[fix round 2] <b>KÖK ARTIK SAYIYA DAHİL.</b> Önceden yalnız torunlar dönüyordu: perf çağıranları
+    /// bunu elle <c>+ 1</c> ile telafi ediyordu (kopya bir düzeltme, üç yerde) ve daha kötüsü
+    /// <see cref="DynamicResourceTypeMismatches"/> kök öğenin KENDİ token bağlarını hiç denetlemiyordu —
+    /// bir kökün <c>Background</c>'ına verilmiş yanlış tipli token görünmez kalırdı.</para></summary>
+    public static IReadOnlyCollection<DependencyObject> RealizedObjects(DependencyObject root)
+    {
+        var seen = new HashSet<DependencyObject> { root };
+        var stack = new Stack<DependencyObject>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            if (node is Visual)
+            {
+                int count = VisualTreeHelper.GetChildrenCount(node);
+                for (int i = 0; i < count; i++)
+                {
+                    var child = VisualTreeHelper.GetChild(node, i);
+                    if (seen.Add(child)) stack.Push(child);
+                }
+            }
+            foreach (object child in LogicalTreeHelper.GetChildren(node))
+                if (child is DependencyObject d && seen.Add(d)) stack.Push(d);
+        }
+        return seen;
+    }
 
     /// <summary>Görsel ağacın tamamı — şablon içindeki şablonlara da iner (split button'ın yarımları gibi).</summary>
     public static IEnumerable<DependencyObject> Descendants(DependencyObject root)

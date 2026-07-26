@@ -22,6 +22,16 @@ public sealed partial class RunViewModel
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
     [ObservableProperty] private string? _targetSha;
 
+    /// <summary>[W1] Hedef sha her satıra İTİLİR (<c>IsRunActive</c>/<c>NamePrefix</c> deseni) — kart onu render
+    /// anında ata ağaçtan ÇEKMEZ. <c>buildPreview</c> deterministik olarak <c>syncCompleted</c>'dan ÖNCE gelir;
+    /// çekme modelinde satır sha'sını TargetSha daha null'ken hesaplayıp bir daha tazelemiyordu (ilk Sync'ten
+    /// sonra slot BOŞ kalırdı). Tazeleme sinyali TEK ve VM tarafındadır: satır başına ek bir PropertyChanged
+    /// abonesi AÇILMAZ (satır zaten yalnız kendi VM'ini dinler) — L1'in satır-realize bütçesi korunur.</summary>
+    partial void OnTargetShaChanged(string? value)
+    {
+        foreach (var row in Projects) row.TargetSha = value;
+    }
+
     /// <summary>true ⇒ son Sync'te fetch başarısız oldu ve akış yerel HEAD ile devam etti (offline degrade).</summary>
     [ObservableProperty] private bool _fetchDegraded;
 
@@ -194,6 +204,7 @@ public sealed partial class RunViewModel
                     // taşınır); Status bunu cycle görsel statüsüne çevirir. IsRunActive queued türetimi için.
                     InCycle = node.InCycle,
                     IsRunActive = RunActive,
+                    TargetSha = TargetSha, // [W1] hedef sha satıra İTİLİR (kart onu atalardan çekmez)
                 });
             else
             {

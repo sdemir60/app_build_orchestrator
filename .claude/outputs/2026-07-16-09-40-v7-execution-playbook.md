@@ -470,3 +470,30 @@ kaldığımız yerden devam et
 - **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). Kalan aşamalar: A8 (Opus/**xhigh** — plandaki en zor iş, Fable telafisi), A9 (Opus/medium), A10 (Opus/medium) ve her iterasyon sonu **R** review'ları (Opus/high; UI iterasyonlarında xhigh).
 - **Tıkanırsam?** Model değiştirme kolu yok; effort'u yükselt (medium → high → xhigh, Kural 2). Effort modelin tavanını aşmaz — yalnız o tavanı sonuna kadar kullandırır. Review'u hiçbir koşulda atlama — riskli bölgelerin (UI custom render, Stop/copy-aware) tek sigortası o.
 - **Commit ne zaman?** Promptlar commit'i sana bırakıyor (CLAUDE.md kuralı). Her aşama sonunda "commit et" demen yeterli.
+
+---
+
+## A11 — CLAUDE.md bayat bilgi denetimi (It-5'te tespit edildi, KARAR KULLANICIDA)
+
+**Durum:** It-5'in D3 (README) task'ının review'ı, `CLAUDE.md`'nin **Proje Yapısı / Mimari** bölümünde
+koddan sapmış üç olgusal ifade buldu. Bunlar It-5'te **düzeltilmedi** — kullanıcı kararı: ayrı ele alınacak.
+
+**Sorun neden önemli:** `CLAUDE.md` her session'da otomatik olarak context'e yükleniyor. Bayat kaldığı
+sürece o dosyayı okuyan her agent'ı yanlış yönlendirmeye devam eder. It-5'te bu fiilen yaşandı: D3
+implementer'ı README'yi yazarken CLAUDE.md ile kodun çeliştiğini görüp durmak ve sormak zorunda kaldı.
+
+**Neyi neyle karşılaştıracağız (üç kalem):**
+
+| # | `CLAUDE.md`'deki ifade | Koddaki gerçek | Kanıt |
+|---|---|---|---|
+| 1 | "her projeyi **shell-out** (`dotnet build` ayrı child process) ile derler" ve Supervisor satırındaki aynı ifade | Kod **hiçbir yerde `dotnet build` çalıştırmıyor**; `MSBuild.exe`'yi vswhere ile çözüp çalıştırıyor | `Core/MsBuild/MsBuildResolver.cs:21-22` (vswhere → `MSBuild\**\Bin\MSBuild.exe`) · `Supervisor/Program.cs:362` yorumu birebir "`[D10] dotnet build DEĞİL, MSBuild.exe`" + `:364` `new MsBuildInvoker(..., location.MsBuildExePath)` · `Core/MsBuild/MsBuildInvoker.cs:68` o exe'yi inner job'a launch ediyor · **kesin belirleyici:** `Core/MsBuild/MsBuildArguments.cs:10-12`'deki `-nodeReuse:false` ve `-clp:Summary` `dotnet build`'in switch'leri değildir |
+| 2 | Proje tablosunda `tests/BuildOrchestrator.Tests` → **`net10.0`** (xUnit) | Gerçekte **`net10.0-windows`** + `UseWPF` (WPF testleri var: realize testleri, STA thread testleri) | `tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj` |
+| 3 | "**DURUM:** Proje sıfırdan yeniden kuruluyor… **Kod henüz yoktur**; bu tablo hedef yapıdır." | Kod var ve olgun: It-0→It-5 tamamlandı, **1424 test** yeşil, publish hattı çalışıyor | `git log` · `.superpowers/sdd/progress.md` · `dotnet test` |
+
+**Not:** `-p:UseSharedCompilation=false -nodeReuse:false` flag'lerinden bahseden satır **doğrudur**
+(bkz. T33 karar kaydı: `.claude/outputs/2026-07-26-07-38-t33-decision.md`) — yalnız o flag'leri taşıyan
+komutun `dotnet build` değil `MSBuild.exe` olduğu düzeltilecek.
+
+**Karar verilecek:** üçünü de düzeltmek mi, yalnız (1)'i mi, yoksa CLAUDE.md'yi olduğu gibi bırakıp
+mimari tabloyu ayrı bir dokümana mı taşımak. Düzeltme yapılacaksa kapsam **yalnız bu üç olgusal ifadedir**;
+dil kuralları, çıktı/özet dizin kuralları, git kuralları ve talimatların geri kalanı değişmez.

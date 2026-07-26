@@ -1,7 +1,9 @@
-<UserControl x:Class="BuildOrchestrator.App.Views.WorktreePopover"
+﻿<!-- [W2] Kök taban tipi UserControl DEĞİL PopoverBase'tir (BranchPopover ile ortak iskelet). -->
+<views:PopoverBase x:Class="BuildOrchestrator.App.Views.WorktreePopover"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
   <!-- [D6/T40] Worktree popover (BuildApp.jsx:872-901). İçerik Ds.Popover (300px) İÇİNE oturur; gövde:
        caps · "Build in worktree" switch (zorunluysa disabled) · durum açıklaması · hedef worktree listesi ·
        source satırı. Üç açıklama + source metinleri BİREBİR (kod-tarafı, WorktreePopover.xaml.cs). -->
@@ -47,4 +49,4 @@
       </StackPanel>
     </Border>
   </StackPanel>
-</UserControl>
+</views:PopoverBase>

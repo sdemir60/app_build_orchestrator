@@ -9,7 +9,7 @@ namespace BuildOrchestrator.Tests.ProcessControl;
 [Trait("Category", "ProcessControl")]
 public class HandleInheritanceTests
 {
-    private static string CmdExe => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    private static string CmdExe => JobTestChildren.CmdExe;
 
     [Fact] // It-2 giriş kriteri: redirected child YALNIZ kendi 3 pipe ucunu miras almalı
     public async Task Redirected_child_does_not_inherit_unrelated_inheritable_handles()

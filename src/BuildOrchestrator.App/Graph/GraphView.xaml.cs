@@ -1,11 +1,10 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
-using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
@@ -14,17 +13,20 @@ namespace BuildOrchestrator.App.Graph;
 /// <summary>
 /// [T63] design-v1 §2.3 dependency graph — <b>Shapes yolu</b>: her düğüm ve kenar birer UIElement
 /// (<see cref="Rectangle"/>/<see cref="Path"/>), hit-test ve tooltip native. Tasarımın 36 düğüm / 58 kenarı bu
-/// bandın (≲<see cref="ShapesPathMaxNodes"/>) çok içinde (feasibility §3.5).
+/// bandın (≲<see cref="FullDetailMaxNodes"/>) çok içinde (feasibility §3.5).
 ///
-/// <para><b>[T51 / It-5 genişleme kancası — BU TASK'TA UYGULANMAZ]:</b> ~150 düğümün üstünde UIElement-per-node
-/// taşımaz; o eşikte render 3 katmana ayrılır: EdgeLayer (tek <c>OnRender</c>, tüm statik kenarlar tek pass),
-/// NodeLayer (DrawingVisual koleksiyonu), FlowOverlay. Akan dash kenarları O ZAMAN DA UIElement
-/// <see cref="Path"/> kalır (DrawingContext içinde <c>Pen.DashStyle.Offset</c> animasyonu güvenilir çalışmaz —
-/// A13.2, doğrulanmış) ve katman opaklığı animasyonu için katmanlar ince UIElement host'lara sarılır
-/// (<c>ContainerVisual.Opacity</c> DP değildir, Storyboard hedefleyemez — feasibility §4.5). Bu sınıfın veri
-/// girişleri (<see cref="SetGraph"/>/<see cref="UpdateStatuses"/>) ve saf çekirdeği (<see cref="GraphLayout"/>,
-/// <see cref="GraphCamera"/>, <see cref="EdgeStyleResolver"/>) o yolda AYNEN yeniden kullanılır; değişen yalnız
-/// çizim mekanizmasıdır.</para>
+/// <para><b>[G2/It-5] Ölçek, katman göçüyle DEĞİL nesne sayısıyla çözüldü.</b> G1'in ölçümü darboğazın çizim
+/// olmadığını gösterdi: maliyetin %64-72'si <see cref="SetGraph"/>'ın görsel-ağaç KURULUMU, %28-36'sı WPF'in aynı
+/// ağacı ölçüp yerleştirmesi, saf layout aritmetiği ise %0,03. Ölçekleme lineer — yani "kötü algoritma" yok,
+/// düğüm başına sabit maliyet yüksek. Bu yüzden aşağıdaki üçlü uygulandı ve <b>DrawingVisual katman göçü
+/// YAPILMADI</b> (o göç ÇİZİM maliyetini hedefler, ölçülen darboğazı değil):
+/// <list type="number">
+///   <item><b>Viewport cull</b> (<see cref="GraphCulling"/>): görünür dünya dikdörtgenine değmeyen düğüm/kenarın
+///     ağacı HİÇ kurulmaz; görünür alana girince kurulur.</item>
+///   <item><b>Tembel rozet + LOD etiket</b> (<see cref="GraphNodeVisual"/>): düğüm başına 17 → 9 nesne.</item>
+///   <item><b>Statü fast-path'i + paylaşılan frozen dash koleksiyonları</b>: 200ms'lik tick artık değişmemiş
+///     düğüme hiç dokunmaz ve her çağrıda yeni <see cref="DoubleCollection"/> üretmez.</item>
+/// </list></para>
 ///
 /// <para><b>Motion sözleşmesi:</b> her animasyon başlangıcında <see cref="AnimationsEnabledProvider"/> TAZE
 /// okunur (varsayılan <c>App.Motion</c>); reduced-motion'da → statik dash + kamerada animasyon yok + stagger yok.
@@ -33,17 +35,30 @@ namespace BuildOrchestrator.App.Graph;
 /// </summary>
 public partial class GraphView : UserControl
 {
-    /// <summary>Shapes yolunun üst sınırı — üstünde T51'in 3 katmanlı DrawingVisual mimarisi gerekir (It-5).</summary>
-    public const int ShapesPathMaxNodes = 150;
+    /// <summary>
+    /// [G2 · fix round 1 C3] <b>TAM DETAY</b> bandının üst sınırı: bu sayıya kadar (dahil) graf birebir G2
+    /// öncesindeki gibi kurulur — <b>cull YOK, LOD YOK</b>, her düğüm/kenar koşulsuz materyalize edilir ve her
+    /// düğümde etiket bulunur. Bugünkü graf görünümü ve tüm render testleri bu banttadır; "küçük grafta hiçbir
+    /// şey değişmesin" güvencesi bu yüzden bir davranış varsayımı değil YAPISAL bir garantidir.
+    ///
+    /// <para>Üstünde <see cref="GraphCulling"/> ve etiket LOD'u birlikte devreye girer.</para>
+    ///
+    /// <para><b>Adın geçmişi:</b> sabit T51'de <c>ShapesPathMaxNodes</c> adıyla "Shapes yolunun üst sınırı"
+    /// olarak tanımlanmış ama HİÇ okunmamıştı (ölü sabit). G2 onu DrawingVisual göçü yerine tam-detay eşiği
+    /// olarak canlandırdı; ad da yeni anlamını taşısın diye değiştirildi.</para>
+    /// </summary>
+    public const int FullDetailMaxNodes = 150;
 
     /// <summary>Katman başına açılış gecikmesi (design-v1 §2.3: "katman başına 55ms").</summary>
     public const double LayerStaggerMs = 55.0;
     /// <summary>Stagger tavanı (Ek A #9: grafta 55ms/katman, tavan 330ms).</summary>
     public const double LayerStaggerCapMs = 330.0;
-    /// <summary>Bir düğümün beliriş süresi (prototip <c>bo-reveal .3s</c>).</summary>
-    public const double RevealMs = 300.0;
-    /// <summary>Düğüm bu kadar YUKARIDAN gelir (prototip <c>translateY(-5px)</c>).</summary>
-    public const double RevealRisePx = 5.0;
+    /// <summary>Bir düğümün beliriş süresi (prototip <c>bo-reveal .3s</c>). [W2 fix-1] Değer
+    /// <see cref="RevealStagger.RevealMs"/>'in derleme-zamanı ALIAS'ıdır — liste satırıyla (ProjectRow) ASLA
+    /// sürüklenemez; ikisi de AYNI <c>bo-reveal</c> ailesindendir.</summary>
+    public const double RevealMs = RevealStagger.RevealMs;
+    /// <summary>Düğüm bu kadar YUKARIDAN gelir (prototip <c>translateY(-5px)</c>) — aynı gerekçe, alias.</summary>
+    public const double RevealRisePx = RevealStagger.RevealRisePx;
     /// <summary>Seçim dışı düğümlerin sönme opaklığı (design-v1 §2.3).</summary>
     public const double DimmedNodeOpacity = 0.25;
     /// <summary>Dekoratif sonsuz animasyonlarda kare hızı tavanı (feasibility §3.4).</summary>
@@ -57,6 +72,9 @@ public partial class GraphView : UserControl
     /// <summary>Nabzın orta noktadaki opaklığı (DS <c>@keyframes: 50% { opacity: .5 }</c>).</summary>
     public const double PulseMinOpacity = 0.5;
 
+    /// <summary>Icons.xaml geometrilerinin viewBox kenarı (lucide: 24).</summary>
+    private const double IconViewBox = 24.0;
+
     /// <summary>[T64] Düğüm ikonu (lucide "package", 24'lük viewBox). Path data ARTIK BURADA DEĞİL: geometri
     /// uygulamanın TEK ikon sözlüğünden (<c>Resources/Icons.xaml</c>) çözülür. Bu sınıf yalnız ANAHTAR bilir —
     /// aynı path'in ikinci bir kopyası kaldığı sürece iki taraf sessizce ayrışabilirdi (T64 review, fix wave 1).</summary>
@@ -64,29 +82,87 @@ public partial class GraphView : UserControl
     /// <summary>Dep-hata rozetinin DOLU üçgeni (lucide depWarn) — aynı gerekçe, bkz. <see cref="PackageIconKey"/>.</summary>
     internal const string WarningTriangleIconKey = "Icon.DepWarn";
 
+    /// <summary>[G2] discovered düğümün kesikli çerçevesi — TEK, DONMUŞ, paylaşımlı örnek. Eskiden her
+    /// <c>ApplyNodeStatus</c> çağrısı (yani her düğüm × her 200ms tick) yeni bir koleksiyon allocate ediyordu;
+    /// desen <c>EdgeStyleResolver</c>'ın statik dash örnekleriyle aynıdır.</summary>
+    private static readonly DoubleCollection DiscoveredDash = FrozenDash([2.0, 2.0]);
+    /// <summary>[G2] "dash yok" — aynı gerekçe (boş koleksiyon da bir allocation'dır).</summary>
+    private static readonly DoubleCollection SolidDash = FrozenDash([]);
+
+    /// <summary>[G2] Kenar dash desenlerinin donmuş karşılıkları. Anahtarlar <see cref="EdgeStyleResolver"/>'ın
+    /// STATİK örnekleridir (referans eşitliği) — her stil uygulamasında yeni koleksiyon üretilmez.</summary>
+    private static readonly Dictionary<IReadOnlyList<double>, DoubleCollection> EdgeDashes = new()
+    {
+        [EdgeStyleResolver.FlowDash] = FrozenDash([.. EdgeStyleResolver.FlowDash]),
+        [EdgeStyleResolver.FlowDashThick] = FrozenDash([.. EdgeStyleResolver.FlowDashThick]),
+        [EdgeStyleResolver.ErrorDash] = FrozenDash([.. EdgeStyleResolver.ErrorDash]),
+        [EdgeStyleResolver.ErrorDashThick] = FrozenDash([.. EdgeStyleResolver.ErrorDashThick]),
+    };
+
+    /// <summary>[G2] İkonu 24 birimlik viewBox'tan 13px'e indiren TEK, DONMUŞ ölçek. Eskiden bu işi düğüm başına
+    /// bir <see cref="Viewbox"/> (+ onun iç <c>ContainerVisual</c>'ı) yapıyordu — iki nesne. Sonuç geometrik
+    /// olarak BİREBİR aynıdır (<c>RenderTransformOrigin</c> merkezde olduğu için 24'lük tuval kendi merkezinde
+    /// küçülür) ve <c>GraphRenderTests</c>'te sayısal olarak pinlenmiştir.</summary>
+    private static readonly ScaleTransform IconScale = FrozenScale(GraphLayout.NodeSize * 0.5 / IconViewBox);
+
+    /// <summary>TÜM düğümler (materyalize olsun olmasın) — statü/kamera/kenar mantığının kaynağı.</summary>
+    private readonly Dictionary<string, GraphNodeSlot> _slots = new(StringComparer.Ordinal);
+    private readonly List<GraphNodeSlot> _slotOrder = [];
+    /// <summary>TÜM kenarlar (materyalize olsun olmasın).</summary>
+    private readonly List<GraphEdgeSlot> _edgeSlots = [];
+    /// <summary>Komşuluk (seçim sönmesi + seçimin materyalize edilmesi) — kenarların TAMAMINDAN kurulur.</summary>
+    private readonly Dictionary<string, List<string>> _neighbours = new(StringComparer.Ordinal);
+
+    /// <summary>YALNIZ materyalize olmuş düğüm görselleri.</summary>
     private readonly Dictionary<string, GraphNodeVisual> _nodes = new(StringComparer.Ordinal);
+    /// <summary>YALNIZ materyalize olmuş kenar görselleri.</summary>
     private readonly List<GraphEdgeVisual> _edges = [];
     private readonly List<Path> _flowingEdges = [];
     private readonly ScaleTransform _cameraScale = new(1, 1);
     private readonly TranslateTransform _cameraTranslate = new();
+    /// <summary>Kenarlar düğümlerin ALTINDA kalmalı. Tembel materyalizasyonda ekleme SIRASI z-order'ı garanti
+    /// edemez (bir kenar bir düğümden sonra görünür alana girebilir) — bu yüzden iki AYRI katman host'u vardır.
+    /// İkisi de <c>World</c>'ün çocuğudur, dolayısıyla kamera transform'u TEK ortak parent'ta kalır.</summary>
+    private readonly Canvas _edgeLayer = new();
+    private readonly Canvas _nodeLayer = new();
 
     private GraphLayoutResult _layout = GraphLayout.Compute([]);
     private string? _selectedNode;
+    private HashSet<string> _neighbourSet = new(StringComparer.Ordinal);
     private bool _isSettled;
     private Point? _previousFocus;
     private ClockGroup? _dashClockRoot;
     private AnimationClock? _thinDashClock;
     private AnimationClock? _thickDashClock;
-    private IMotionSettings? _subscribedMotion;
+    /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="MotionGate"/>). <b>latch-first</b> kipi: ilk abonelikten sonra <see cref="MotionSettings"/>
+    /// ataması YOK SAYILIR — <c>MainWindow</c> bu sözleşmeye dayanır (bkz. MotionGate tip dokümanı).</summary>
+    private readonly MotionGate _motion;
     private bool _edgesAnimated;
     private bool _hasCamera;
-    private IDisposable? _revealHero;
-    private int _revealGen; // [E3/T41] her PlayRevealStagger yeni bir reveal kuşağıdır — stale release'i eleyen damga
-    private DispatcherTimer? _revealReleaseTimer;
+    private bool _cullEnabled;
+    /// <summary>[G2 · fix round 1 B1] EN SON taranmış dünya bölgesi — <b>kümülatif DEĞİL</b>, her taramada
+    /// DEĞİŞTİRİLİR. Yalnız gereksiz taramayı eler: bu bölgedeki her şey materyalize edilmiş olduğundan, onun
+    /// İÇİNDE kalan yeni bir bölge için tekrar gezinmeye gerek yoktur. (İlk turda burada kümülatif bir birleşim
+    /// tutuluyordu; o, uzak iki görünüm arasında HİÇ GÖRÜLMEMİŞ düğümleri de materyalize ediyordu.)</summary>
+    private Rect _scannedRegion = Rect.Empty;
+    /// <summary>[W2] Hero + kuşak + generation-guarded release muhasebesi TEK yerde
+    /// (<see cref="RevealStagger"/>) — <see cref="Controls.StickyLayerList"/> ile ORTAK. Kademelemenin KENDİSİ
+    /// (55ms/katman, tavan 330) burada kalır; liste tarafında kasten farklıdır.</summary>
+    private readonly RevealStagger _reveal = new();
+    /// <summary>[G2 · fix round 1 B2] Açılış stagger'ı ŞU AN oynuyor mu + penceresi. Bu pencere içinde
+    /// materyalize olan düğüm de stagger'a katılır (motion sözleşmesi: düğüm animasyonu ATLAYARAK belirmez).</summary>
+    private bool _revealPlaying;
+    private long _revealStartTicks;
+    private long _revealEndTicks;
 
     public GraphView()
     {
+        _motion = new MotionGate(this, latchFirst: true);
         InitializeComponent();
+
+        World.Children.Add(_edgeLayer);
+        World.Children.Add(_nodeLayer);
 
         // CSS `transform: translate(...) scale(...)` = önce ölçek, sonra öteleme (TransformGroup sırası birebir).
         World.RenderTransform = new TransformGroup { Children = { _cameraScale, _cameraTranslate } };
@@ -97,21 +173,43 @@ public partial class GraphView : UserControl
         Ground.SizeChanged += (_, _) => ApplyCamera(animate: false);
 
         // [M-2] Canlı reduced-motion: OS ayarı koşu SIRASINDA değişirse akan dash ve nabız ANINDA durur/başlar
-        // (aksi halde bir sonraki UpdateStatuses'a kadar dönmeye devam ederdi).
-        Loaded += OnLoadedSubscribeMotion;
-        Unloaded += OnUnloadedUnsubscribeMotion;
+        // (aksi halde bir sonraki UpdateStatuses'a kadar dönmeye devam ederdi). Abonelik kablajı MotionGate'te.
+        _motion.Changed += OnAnimationsEnabledChanged;
+        Unloaded += OnUnloadedReleaseClocks;
 
         ShowEmptyState(true);
     }
 
+    private static DoubleCollection FrozenDash(double[] values)
+    {
+        var collection = new DoubleCollection(values);
+        collection.Freeze();
+        return collection;
+    }
+
+    private static ScaleTransform FrozenScale(double scale)
+    {
+        var transform = new ScaleTransform(scale, scale);
+        transform.Freeze();
+        return transform;
+    }
+
     /// <summary>Motion sinyalinin TAZE okunduğu kapı (D8 — sınıf statik <c>App.Motion</c>'a doğrudan bağlanmaz,
-    /// testler enjekte eder).</summary>
-    public Func<bool> AnimationsEnabledProvider { get; set; } =
-        () => BuildOrchestrator.App.App.Motion?.AnimationsEnabled ?? false;
+    /// testler enjekte eder). [W2] Depo <see cref="MotionGate"/>.</summary>
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[M-2] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null ise <c>App.Motion</c>.
-    /// Testler kendi sahtesini enjekte eder (abonelik <c>Loaded</c>'da kurulur, <c>Unloaded</c>'da bırakılır).</summary>
-    public IMotionSettings? MotionSettings { get; set; }
+    /// Testler kendi sahtesini enjekte eder (abonelik <c>Loaded</c>'da kurulur, <c>Unloaded</c>'da bırakılır).
+    /// <b>latch-first</b>: ilk abonelikten SONRA yapılan atama yok sayılır (bkz. <see cref="MotionGate"/>).</summary>
+    public IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
+    }
 
     /// <summary>[E3/T41/DD9] Reveal stagger'ının içine girdiği hero-mutex; null ise <c>App.HeroMotion</c> (TAZE).
     /// Graf reveal ile liste reveal AYNI hero'dur (<see cref="RevealHeroKey"/>) — başka bir hero sürüyorsa graf
@@ -124,26 +222,13 @@ public partial class GraphView : UserControl
 
     private MotionCoordinator? ActiveHeroCoordinator => HeroCoordinator ?? BuildOrchestrator.App.App.HeroMotion;
 
-    private void OnLoadedSubscribeMotion(object? sender, RoutedEventArgs e)
+    private void OnUnloadedReleaseClocks(object? sender, RoutedEventArgs e)
     {
-        if (_subscribedMotion is not null) return;
-        _subscribedMotion = MotionSettings ?? BuildOrchestrator.App.App.Motion;
-        if (_subscribedMotion is not null)
-            _subscribedMotion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
-    }
-
-    private void OnUnloadedUnsubscribeMotion(object? sender, RoutedEventArgs e)
-    {
-        if (_subscribedMotion is not null)
-        {
-            _subscribedMotion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-            _subscribedMotion = null;
-        }
         // [M-d] View unload olurken paylaşımlı dash clock'u da bırak — aksi halde (M-3'ün kapsamadığı bu yol
         // için) timing engine, view artık ağaçta olmasa bile 30fps'te uyanık kalırdı.
         ReleaseDashClock();
         // [E3/T41] Reveal ortasında unload olursa hero'yu bırak — aksi halde bir sonraki hero sonsuza dek bloke olurdu.
-        ReleaseRevealHero();
+        _reveal.Release();
     }
 
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
@@ -178,6 +263,9 @@ public partial class GraphView : UserControl
         {
             if (string.Equals(_selectedNode, value, StringComparison.Ordinal)) return;
             _selectedNode = value;
+            // [G2] Seçili düğüm, komşuları ve onlara değen kenarlar ASLA cull edilmez — seçim ekran dışından da
+            // (liste tıklamasıyla) gelebilir ve kamera oraya ancak 460ms'de varır.
+            MaterializeSelection();
             ApplySelection();
             ApplyEdgeStyles();
             ApplyCamera(animate: true);
@@ -197,7 +285,8 @@ public partial class GraphView : UserControl
         ArgumentNullException.ThrowIfNull(nodes);
         ArgumentNullException.ThrowIfNull(edges);
 
-        World.Children.Clear();
+        _edgeLayer.Children.Clear();
+        _nodeLayer.Children.Clear();
         // [M-d] Atılacak eski görsellerin (varsa) sonsuz nabız animasyonunu bırak — aksi halde bunlar artık
         // ağaçta/_nodes'ta olmasa bile timing engine'de 30fps'te uyanık kalırlardı (M-3'ün kapsadığı dash clock
         // sızıntısıyla AYNI sınıf, düğüm nabzı için).
@@ -205,9 +294,16 @@ public partial class GraphView : UserControl
             StopPulse(stale);
         _nodes.Clear();
         _edges.Clear();
+        _slots.Clear();
+        _slotOrder.Clear();
+        _edgeSlots.Clear();
+        _neighbours.Clear();
         _flowingEdges.Clear();
         _previousFocus = null;
         _hasCamera = false; // yeni topoloji → kamera hedefi baştan hesaplanır
+        CurrentCamera = default;
+        _scannedRegion = Rect.Empty;
+        _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
 
         // [M-4] Global Constraint: sayı biçimlemesi InvariantCulture.
         CountsText.Text = string.Format(
@@ -218,36 +314,82 @@ public partial class GraphView : UserControl
         _layout = GraphLayout.Compute(nodes);
         World.Width = _layout.Width;
         World.Height = _layout.Height;
+        // [G2 · fix round 1 A2] TAM DETAY bandı: bugünkü graf boyutlarında (onlarca düğüm) NE cull NE LOD
+        // devreye girer ⇒ görünüm ve nesne kurulumu birebir eskisi gibidir. İki mekanizma da AYNI kapıya
+        // bağlıdır — LOD'un ayrı bir eşikten kaçıp küçük grafta etiket düşürmesi mümkün değildir.
+        bool fullDetail = nodes.Count <= FullDetailMaxNodes;
+        _cullEnabled = !fullDetail;
+        // [fix round 1 A1] LOD eşiği katmanın EN GENİŞ etiketinin ÇİZİLEN genişliğinden türetilir (kelepçeden
+        // değil). Ölçüm katman başına TEK kez yapılır ve yalnız tam-detay bandının DIŞINDA gerekir.
+        var labelWidths = fullDetail ? null : MeasureLayerLabelWidths(nodes);
 
-        // Kenarlar önce eklenir → düğümlerin ALTINDA kalır (prototipte svg, düğüm div'lerinin altında).
+        foreach (var node in nodes)
+        {
+            if (!_layout.Positions.TryGetValue(node.Name, out var center)) continue;
+            var slot = new GraphNodeSlot
+            {
+                Model = node,
+                Center = center,
+                Bounds = GraphCulling.NodeBounds(center),
+                ShowsLabel = labelWidths is null || GraphLayout.LabelsFit(
+                    _layout.LayerSpacing.TryGetValue(node.Layer, out double s) ? s : GraphLayout.MaxNodeSpacing,
+                    labelWidths.GetValueOrDefault(node.Layer, GraphLayout.NodeCellWidth)),
+            };
+            _slots[node.Name] = slot;
+            _slotOrder.Add(slot);
+        }
+
         foreach (var edge in edges)
         {
             if (!_layout.Positions.TryGetValue(edge.From, out var from) ||
                 !_layout.Positions.TryGetValue(edge.To, out var to))
                 continue;
 
-            var path = new Path
+            _edgeSlots.Add(new GraphEdgeSlot
             {
-                Data = GraphLayout.BuildEdgeGeometry(from, to),
-                IsHitTestVisible = false, // kenarlar tıklanmaz; boş alana tıklama seçimi kaldırabilsin
-            };
-            // NOT: eğri bezier'lerde EdgeMode=Aliased KULLANILMAZ — tırtıklanır (feasibility §3.5).
-            World.Children.Add(path);
-            _edges.Add(new GraphEdgeVisual { Model = edge, Path = path });
+                Model = edge,
+                From = from,
+                To = to,
+                Bounds = GraphCulling.EdgeBounds(from, to),
+            });
+            AddNeighbour(edge.From, edge.To);
+            AddNeighbour(edge.To, edge.From);
         }
 
-        foreach (var node in nodes)
-        {
-            if (!_layout.Positions.TryGetValue(node.Name, out var center)) continue;
-            var visual = BuildNodeVisual(node, center);
-            World.Children.Add(visual.Cell);
-            _nodes[node.Name] = visual;
-        }
-
+        UpdateMaterialization();     // cull kapalıysa TAMAMI burada kurulur (kamera beklenmez)
+        MaterializeSelection();
+        ApplyCamera(animate: false); // ilk yerleşim kamerayı KAYDIRMAZ; cull açıkken görünür kümeyi de kurar
         ApplySelection();
         ApplyEdgeStyles();
-        ApplyCamera(animate: false); // ilk yerleşim kamerayı KAYDIRMAZ
         PlayRevealStagger();
+    }
+
+    /// <summary>[G2 · fix round 1 A1] Katman → o katmandaki EN GENİŞ etiketin çizilen genişliği. Katman başına
+    /// tek ölçüm (<see cref="GraphLabelMetrics"/>); LOD kararı bunu aralıkla karşılaştırır.</summary>
+    private Dictionary<int, double> MeasureLayerLabelWidths(IReadOnlyList<GraphNode> nodes)
+    {
+        var byLayer = new Dictionary<int, string>();
+        foreach (var node in nodes)
+            if (!byLayer.TryGetValue(node.Layer, out string? longest) || node.ShortName.Length > longest.Length)
+                byLayer[node.Layer] = node.ShortName;
+
+        var widths = new Dictionary<int, double>(byLayer.Count);
+        foreach (var (layer, longest) in byLayer)
+            widths[layer] = GraphLabelMetrics.WidestLabelWidth([longest], LabelFontFamily);
+        return widths;
+    }
+
+    /// <summary>[G2 fix round 1 · A1] Etiket ölçümünde kullanılan aile; null ise <see cref="AppFonts.Mono"/>.
+    /// TEST SEAM'i: <c>pack://</c> aileler gerçek bir <c>Application</c> olmadan çözülmez, testler
+    /// <c>TestAssets/Fonts</c>'a <c>file://</c> tabanlı bir aile enjekte eder (<c>TrackedTextBlockTests</c>
+    /// deseni). Üretimde ASLA set edilmez — etiketin kendisi her zaman <see cref="AppFonts.Mono"/> çizer.</summary>
+    internal FontFamily? LabelFontFamily { get; set; }
+
+    private void AddNeighbour(string from, string to)
+    {
+        if (!_neighbours.TryGetValue(from, out var list))
+            _neighbours[from] = list = [];
+        list.Add(to);
     }
 
     /// <summary>Statüleri (ve dep-hata bayraklarını) yerinde günceller: düğüm renkleri/rozetleri, kenar stilleri
@@ -258,7 +400,14 @@ public partial class GraphView : UserControl
 
         foreach (var node in nodes)
         {
-            if (!_nodes.TryGetValue(node.Name, out var visual)) continue;
+            if (!_slots.TryGetValue(node.Name, out var slot)) continue;
+            // [G2] "Değişmediyse dokunma" — kenar tarafındaki (ApplyEdgeStyle) desenin düğüm SİMETRİĞİ.
+            // GraphNode bir record'dur: değer eşitliği burada güvenlidir ve statü görselinin TAMAMI yalnız bu
+            // modelden türetilir. Eskiden her tick her düğümde 2× SetResourceReference + IconPaint.Apply
+            // (ağaç yukarı TryFindResource yürüyüşü) + yeni DoubleCollection allocation yapılıyordu.
+            if (slot.Model == node) continue;
+            slot.Model = node;
+            if (slot.Visual is not { } visual) continue;
             visual.Model = node;
             ApplyNodeStatus(visual);
         }
@@ -267,10 +416,155 @@ public partial class GraphView : UserControl
         ApplyCamera(animate: true);
     }
 
+    // ---------------------------------------------------------------- [G2] cull / materyalizasyon
+
+    /// <summary>
+    /// [fix round 1 · B1] Materyalizasyon kararı <b>görülen alana</b> göre verilir; görülmüş tüm alanların
+    /// kümülatif birleşimine göre DEĞİL.
+    ///
+    /// <para><b>[fix round 2] "Görülen"in tam tanımı — iki yol, ikisi de KASITLI:</b>
+    /// <list type="bullet">
+    ///   <item><b>Anlık atlama</b> (<paramref name="traversing"/> = <c>false</c>: reduced motion, ilk yerleşim,
+    ///     panel yeniden boyutlanması, Zeno dalı): kamera ara kare üretmez, yani aradaki bant kullanıcıya HİÇ
+    ///     görünmez ⇒ yalnız hedef dikdörtgen taranır, <b>aradaki düğümler materyalize EDİLMEZ</b>.</item>
+    ///   <item><b>Animasyonlu pan</b> (<paramref name="traversing"/> = <c>true</c>, üretimin varsayılan yolu):
+    ///     460ms boyunca aradaki bant EKRANDAN GERÇEKTEN GEÇER. O düğümleri kurmamak, kullanıcının gözünün
+    ///     önünde boş bir şerit bırakırdı — bu yüzden mevcut görünüm ile hedefin sınır kutusu taranır ve
+    ///     <b>geçilen bant materyalize EDİLİR. Bu bir eksik cull değil, doğru davranıştır.</b></item>
+    /// </list>
+    /// Her iki durumda da taranan bölge en fazla İKİ dikdörtgenden türer — birikim (kümülatif birleşim) YOKTUR,
+    /// yani bir önceki panın bandı bir sonrakine taşınmaz.</para>
+    ///
+    /// <para>Reddedilen alternatif: materyalizasyonu animasyon bitene ertelemek. Geçiş boyunca ekranda boş şerit
+    /// bırakır (B2'nin kapattığı pop-in sınıfının aynısı) ve bir tamamlanma kancası gerektirir — daha karmaşık
+    /// VE daha kötü.</para>
+    ///
+    /// <para>Cull tek yönlüdür: bir kez kurulan görsel sökülmez, yalnız yenisi eklenir.</para>
+    /// </summary>
+    private void UpdateMaterialization(bool traversing = false)
+    {
+        if (_slotOrder.Count == 0) return;
+
+        if (!_cullEnabled)
+        {
+            foreach (var slot in _slotOrder)
+                if (slot.Visual is null) MaterializeNode(slot);
+            foreach (var edge in _edgeSlots)
+                if (edge.Visual is null) MaterializeEdge(edge);
+            return;
+        }
+
+        var viewport = ViewportSize;
+        if (viewport.Width <= 0 || viewport.Height <= 0) return; // henüz ölçülmedi — SizeChanged yeniden sorar
+
+        var region = GraphCulling.VisibleWorldRect(viewport, CurrentCamera);
+        if (region.IsEmpty) return;
+
+        if (traversing)
+        {
+            // Kamera hedefe animasyonla gidiyor ⇒ aradaki bant EKRANDAN GEÇECEK ve görünecek; kurulmazsa
+            // kullanıcı geçiş boyunca boş bir şerit görür. Yalnız BU İKİ dikdörtgen — birikim yok.
+            var live = GraphCulling.VisibleWorldRect(viewport, LiveCamera);
+            if (!live.IsEmpty) region = Rect.Union(live, region);
+        }
+
+        // Bu bölge en son taranan bölgenin İÇİNDEYSE her şeyi zaten kurmuşuz — O(N) gezinmeye gerek yok.
+        if (!_scannedRegion.IsEmpty && _scannedRegion.Contains(region)) return;
+        _scannedRegion = region; // DEĞİŞTİRİLİR, birleştirilmez
+
+        foreach (var slot in _slotOrder)
+            if (slot.Visual is null && region.IntersectsWith(slot.Bounds)) MaterializeNode(slot);
+        foreach (var edge in _edgeSlots)
+            if (edge.Visual is null && region.IntersectsWith(edge.Bounds)) MaterializeEdge(edge);
+    }
+
+    /// <summary>Kameranın O ANDA ekrana uygulanmış (animasyon sürüyorsa ara karedeki) hâli — hedefi değil.</summary>
+    private CameraTransform LiveCamera => new(_cameraScale.ScaleX, _cameraTranslate.X, _cameraTranslate.Y);
+
+    /// <summary>Seçili düğümü, DOĞRUDAN komşularını ve seçime değen kenarları — nerede olurlarsa olsunlar —
+    /// materyalize eder. Seçim ekranın tamamen dışından gelebilir (liste tıklaması) ve kamera oraya ancak
+    /// animasyon sonunda varır; halka/sönme/kalın kenar o ana kadar da doğru olmalıdır.</summary>
+    private void MaterializeSelection()
+    {
+        if (_selectedNode is not { } selected || !_slots.ContainsKey(selected)) return;
+
+        MaterializeByName(selected);
+        if (_neighbours.TryGetValue(selected, out var neighbours))
+            foreach (string name in neighbours)
+                MaterializeByName(name);
+
+        foreach (var edge in _edgeSlots)
+        {
+            if (edge.Visual is not null) continue;
+            if (string.Equals(edge.Model.From, selected, StringComparison.Ordinal) ||
+                string.Equals(edge.Model.To, selected, StringComparison.Ordinal))
+                MaterializeEdge(edge);
+        }
+    }
+
+    private void MaterializeByName(string name)
+    {
+        if (_slots.TryGetValue(name, out var slot) && slot.Visual is null) MaterializeNode(slot);
+    }
+
+    private void MaterializeNode(GraphNodeSlot slot)
+    {
+        var visual = BuildNodeVisual(slot);
+        slot.Visual = visual;
+        _nodes[slot.Model.Name] = visual;
+        _nodeLayer.Children.Add(visual.Cell);
+        ApplyNodeSelection(visual, animate: false);
+        JoinRevealIfPlaying(visual);
+    }
+
+    /// <summary>
+    /// [G2 · fix round 1 B2] Açılış stagger'ı SÜRERKEN materyalize olan düğüm de stagger'a KATILIR.
+    ///
+    /// <para>MOTION SÖZLEŞMESİ bağlayıcıdır: düğüm animasyonu atlayarak, tam opaklıkta belirmez. Bu yol gerçek
+    /// bir senaryodur — <c>MainWindow</c> her büyük graf rebuild'inde <c>SetGraph</c>'ın hemen ardından
+    /// <c>IsSettled</c>'ı iter ve kamera yeniden hedeflenir, yani reveal penceresinin İÇİNDE yeni düğümler
+    /// materyalize olur.</para>
+    ///
+    /// <para>Gecikme, kuşağın başlangıcından bu yana GEÇEN süre düşülerek verilir ⇒ geç gelen düğüm kendi
+    /// katmanının zamanlamasına oturur, sıfırdan yeni bir gecikme başlatmaz. Pencere kapandıysa (veya reduced
+    /// motion) düğüm zaten ani yerleşir.</para>
+    /// </summary>
+    private void JoinRevealIfPlaying(GraphNodeVisual visual)
+    {
+        if (!_revealPlaying) return;
+
+        long now = Environment.TickCount64;
+        if (now >= _revealEndTicks || !AnimationsEnabledProvider())
+        {
+            _revealPlaying = false;
+            return;
+        }
+
+        double remaining = Math.Max(0, RevealDelayMs(visual.Model.Layer) - (now - _revealStartTicks));
+        ApplyRevealTo(visual, remaining);
+    }
+
+    private void MaterializeEdge(GraphEdgeSlot slot)
+    {
+        var path = new Path
+        {
+            Data = GraphLayout.BuildEdgeGeometry(slot.From, slot.To),
+            IsHitTestVisible = false, // kenarlar tıklanmaz; boş alana tıklama seçimi kaldırabilsin
+        };
+        // NOT: eğri bezier'lerde EdgeMode=Aliased KULLANILMAZ — tırtıklanır (feasibility §3.5).
+        var visual = new GraphEdgeVisual { Model = slot.Model, Path = path };
+        slot.Visual = visual;
+        _edges.Add(visual);
+        _edgeLayer.Children.Add(path);
+        // Stil HEMEN uygulanır: kenar bir sonraki ApplyEdgeStyles'a kadar boyasız (görünmez) kalmamalı.
+        ApplyEdgeStyle(visual, AnimationsEnabledProvider(), force: false);
+    }
+
     // ---------------------------------------------------------------- düğüm görselleri
 
-    private GraphNodeVisual BuildNodeVisual(GraphNode node, Point center)
+    private GraphNodeVisual BuildNodeVisual(GraphNodeSlot slot)
     {
+        var node = slot.Model;
         var ring = new Rectangle
         {
             // DS: 2px outline + 2px offset ⇒ 26 + 2×(offset 2 + yarım kalem 1) = 32; yarıçap da payla büyür.
@@ -298,44 +592,19 @@ public partial class GraphView : UserControl
         // [T60] Geometri + boya (kontur mu dolgu mu, hangi kalınlıkta) TEK yerden: Icons.xaml'in kardeş
         // Icon.X.StrokeThickness anahtarı. Kalınlık burada ARTIK YAZILI DEĞİL — ApplyNodeStatus statüye göre
         // fırçayı da verdiği için ikonun boyası oradan sürülür (bkz. IconPaint.Apply).
+        // [G2] 24 → 13px indirgemesi PAYLAŞILAN donmuş bir ScaleTransform'ladır (Viewbox + iç ContainerVisual
+        // yerine): merkezden ölçeklendiği için sonuç birebir aynıdır ve düğüm başına iki nesne kazandırır.
         var icon = new Path();
-        var iconBox = new Viewbox
+        var iconBox = new Canvas
         {
-            Width = GraphLayout.NodeSize * 0.5, // DS: size * 0.5 → 26px düğümde 13px ikon
-            Height = GraphLayout.NodeSize * 0.5,
-            Stretch = Stretch.Uniform,
+            Width = IconViewBox,
+            Height = IconViewBox,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false,
-            Child = new Canvas { Width = 24, Height = 24, Children = { icon } },
-        };
-
-        var badgeCircle = new Ellipse { StrokeThickness = 1 };
-        badgeCircle.SetResourceReference(Shape.FillProperty, "Brush.SurfaceBase");
-        badgeCircle.SetResourceReference(Shape.StrokeProperty, "Brush.StatusFailBorder");
-        var badgeTriangle = new Path();
-        IconPaint.Apply(badgeTriangle, this, WarningTriangleIconKey, "Brush.StatusFailText"); // DOLU üçgen — kip sözlükten
-        var badge = new Grid
-        {
-            Width = 13,
-            Height = 13,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top,
-            // Prototip: top -6, left calc(50% + 7px) → 26'lık karede sol 13+7=20.
-            Margin = new Thickness(20, -6, 0, 0),
-            Visibility = Visibility.Collapsed,
-            IsHitTestVisible = false,
-            Children =
-            {
-                badgeCircle,
-                new Viewbox
-                {
-                    Width = 8, Height = 8, Stretch = Stretch.Uniform,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Child = new Canvas { Width = 24, Height = 24, Children = { badgeTriangle } },
-                },
-            },
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = IconScale,
+            Children = { icon },
         };
 
         // Nabız kabı: DS'te `ds-node-pulse` YALNIZ kare span'ındadır — halka (outline) ve ikon onunla birlikte
@@ -352,24 +621,8 @@ public partial class GraphView : UserControl
             Width = GraphLayout.NodeSize,
             Height = GraphLayout.NodeSize,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Children = { pulseHost, badge },
+            Children = { pulseHost },
         };
-
-        var label = new TextBlock
-        {
-            FontFamily = AppFonts.Mono,
-            FontSize = 10,
-            MaxWidth = GraphLayout.NodeCellWidth,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            TextAlignment = TextAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, GraphLayout.LabelGap, 0, 0),
-            Text = node.ShortName,
-        };
-        // feasibility §3.4/§4.4: kök TextOptions.TextFormattingMode="Display" scale transform ALTINDA bozulur —
-        // graf etiketlerinde LOKAL Ideal override (kök MainWindow ayarına DOKUNULMAZ, T65).
-        TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
-        label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim"); // seçiliyken text-primary (DS)
 
         var body = new StackPanel
         {
@@ -377,12 +630,42 @@ public partial class GraphView : UserControl
             HorizontalAlignment = HorizontalAlignment.Center,
             Background = Brushes.Transparent, // etiketi de kapsayan tıklama alanı (prototipteki div gibi)
             Cursor = Cursors.Hand,
-            Children = { squareHost, label },
+            Children = { squareHost },
         };
 
+        TextBlock? label = null;
+        if (slot.ShowsLabel)
+        {
+            label = new TextBlock
+            {
+                FontFamily = AppFonts.Mono,
+                FontSize = 10,
+                MaxWidth = GraphLayout.NodeCellWidth,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, GraphLayout.LabelGap, 0, 0),
+                Text = node.ShortName,
+            };
+            // feasibility §3.4/§4.4: kök TextOptions.TextFormattingMode="Display" scale transform ALTINDA bozulur —
+            // graf etiketlerinde LOKAL Ideal override (kök MainWindow ayarına DOKUNULMAZ, T65).
+            TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
+            label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim"); // seçiliyken text-primary (DS)
+            body.Children.Add(label);
+        }
+        else
+        {
+            // [G2 · fix round 1 A3] Etiketi düşen düğüm ANONİM KALMAZ: tam proje adını veren bir tooltip
+            // taşır ve hedefi düğüm karesinin TAMAMIDIR (body = tıklama alanının kendisi). Tooltip DÜZ METİN
+            // atanır — WPF, ToolTip kontrolünü ancak gösterilirken kurar, dolayısıyla düğüm başına HİÇBİR ek
+            // nesne kurulmaz (WillBuildDot.cs:66 ile aynı desen; Controls.xaml'deki implicit ToolTip stili —
+            // InitialShowDelay=0 + CustomPopupPlacementCallback, A13.2 — otomatik sarılan tooltip'e de uygulanır).
+            body.ToolTip = node.Name;
+        }
+
         var cell = new Grid { Width = GraphLayout.NodeCellWidth, Children = { body } };
-        Canvas.SetLeft(cell, center.X - GraphLayout.NodeCellWidth / 2);
-        Canvas.SetTop(cell, center.Y - GraphLayout.NodeSize / 2);
+        Canvas.SetLeft(cell, slot.Center.X - GraphLayout.NodeCellWidth / 2);
+        Canvas.SetTop(cell, slot.Center.Y - GraphLayout.NodeSize / 2);
 
         string name = node.Name;
         body.MouseLeftButtonDown += (_, e) =>
@@ -396,24 +679,63 @@ public partial class GraphView : UserControl
             Model = node,
             Cell = cell,
             Body = body,
+            SquareHost = squareHost,
             PulseHost = pulseHost,
             Square = square,
             SelectionRing = ring,
             Icon = icon,
             Label = label,
-            Badge = badge,
-            BadgeCircle = badgeCircle,
-            BadgeTriangle = badgeTriangle,
-            Center = center,
+            Center = slot.Center,
         };
         ApplyNodeStatus(visual);
         return visual;
+    }
+
+    /// <summary>[G2] Dep-hata rozetini TALEP ÜZERİNE kurar (bir kez). Rozet nabız kabının KARDEŞİDİR ve ondan
+    /// SONRA eklenir (üstte kalır) — DS'te de <c>ds-node-pulse</c> yalnız kare span'ındadır.</summary>
+    private void EnsureBadge(GraphNodeVisual visual)
+    {
+        if (visual.Badge is not null) return;
+
+        var badgeCircle = new Ellipse { StrokeThickness = 1 };
+        badgeCircle.SetResourceReference(Shape.FillProperty, "Brush.SurfaceBase");
+        badgeCircle.SetResourceReference(Shape.StrokeProperty, "Brush.StatusFailBorder");
+        var badgeTriangle = new Path();
+        IconPaint.Apply(badgeTriangle, this, WarningTriangleIconKey, "Brush.StatusFailText"); // DOLU üçgen — kip sözlükten
+        var badge = new Grid
+        {
+            Width = 13,
+            Height = 13,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            // Prototip: top -6, left calc(50% + 7px) → 26'lık karede sol 13+7=20.
+            Margin = new Thickness(20, -6, 0, 0),
+            IsHitTestVisible = false,
+            Children =
+            {
+                badgeCircle,
+                new Viewbox
+                {
+                    Width = 8, Height = 8, Stretch = Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = new Canvas { Width = IconViewBox, Height = IconViewBox, Children = { badgeTriangle } },
+                },
+            },
+        };
+
+        visual.SquareHost.Children.Add(badge);
+        visual.Badge = badge;
+        visual.BadgeCircle = badgeCircle;
+        visual.BadgeTriangle = badgeTriangle;
     }
 
     /// <summary>DS <c>DependencyGraphNode</c> statü tablosunun birebir karşılığı: çerçeve + zemin + ikon rengi
     /// (+ discovered'ın kesikli çerçevesi), dep-hata rozetinin görünürlüğü ve building nabzı.</summary>
     private void ApplyNodeStatus(GraphNodeVisual visual)
     {
+        NodeStatusApplyCount++;
+
         var (border, background, iconColor, dashed) = visual.Model.Status switch
         {
             GraphStatus.Queued => ("Brush.StatusQueued", "Brush.SurfaceRaised", "Brush.StatusQueuedText", false),
@@ -431,8 +753,18 @@ public partial class GraphView : UserControl
         // WPF Border dashed desteklemez → kesikli çerçeve Rectangle.StrokeDashArray ile (feasibility §3.5).
         // Dash birimi StrokeThickness çarpanı: 1.5px'lik çerçevede {2,2} = 3px dolu / 3px boş — CSS'in
         // `1.5px dashed` varsayılanının karşılığı (tasarımda ayrı bir sayısal değer verilmemiştir).
-        visual.Square.StrokeDashArray = dashed ? [2.0, 2.0] : [];
-        visual.Badge.Visibility = visual.Model.HasDepIssue ? Visibility.Visible : Visibility.Collapsed;
+        visual.Square.StrokeDashArray = dashed ? DiscoveredDash : SolidDash;
+
+        if (visual.Model.HasDepIssue)
+        {
+            EnsureBadge(visual);
+            visual.Badge!.Visibility = Visibility.Visible;
+        }
+        else if (visual.Badge is { } badge)
+        {
+            badge.Visibility = Visibility.Collapsed;
+        }
+
         ApplyBuildingPulse(visual);
     }
 
@@ -480,30 +812,34 @@ public partial class GraphView : UserControl
 
     private void ApplySelection()
     {
-        var neighbours = new HashSet<string>(StringComparer.Ordinal);
+        // [G2] Komşuluk kümesi TÜM kenarlardan kurulur (materyalize olanlardan DEĞİL) — aksi halde cull edilmiş
+        // bir kenarın ucundaki komşu yanlışlıkla sönerdi.
+        _neighbourSet = new HashSet<string>(StringComparer.Ordinal);
         if (_selectedNode is { } selected)
         {
-            neighbours.Add(selected);
-            foreach (var edge in _edges)
-            {
-                if (string.Equals(edge.Model.From, selected, StringComparison.Ordinal)) neighbours.Add(edge.Model.To);
-                if (string.Equals(edge.Model.To, selected, StringComparison.Ordinal)) neighbours.Add(edge.Model.From);
-            }
+            _neighbourSet.Add(selected);
+            if (_neighbours.TryGetValue(selected, out var list))
+                foreach (string name in list)
+                    _neighbourSet.Add(name);
         }
 
         bool animate = AnimationsEnabledProvider();
-        foreach (var (name, visual) in _nodes)
-        {
-            bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
-            visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
-            // [M-1] DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
-            visual.Square.StrokeThickness = isSelected ? SelectedNodeBorderThickness : NodeBorderThickness;
-            // DS DependencyGraphNode: etiket seçiliyken text-primary, aksi halde text-dim.
-            visual.Label.SetResourceReference(TextBlock.ForegroundProperty,
-                isSelected ? "Brush.TextPrimary" : "Brush.TextDim");
-            double target = _selectedNode is null || neighbours.Contains(name) ? 1.0 : DimmedNodeOpacity;
-            SetBodyOpacity(visual.Body, target, animate);
-        }
+        foreach (var visual in _nodes.Values)
+            ApplyNodeSelection(visual, animate);
+    }
+
+    private void ApplyNodeSelection(GraphNodeVisual visual, bool animate)
+    {
+        string name = visual.Model.Name;
+        bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
+        visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
+        // [M-1] DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
+        visual.Square.StrokeThickness = isSelected ? SelectedNodeBorderThickness : NodeBorderThickness;
+        // DS DependencyGraphNode: etiket seçiliyken text-primary, aksi halde text-dim.
+        visual.Label?.SetResourceReference(TextBlock.ForegroundProperty,
+            isSelected ? "Brush.TextPrimary" : "Brush.TextDim");
+        double target = _selectedNode is null || _neighbourSet.Contains(name) ? 1.0 : DimmedNodeOpacity;
+        SetBodyOpacity(visual.Body, target, animate);
     }
 
     private void SetBodyOpacity(UIElement body, double target, bool animate)
@@ -536,60 +872,71 @@ public partial class GraphView : UserControl
         // Motion sinyali değiştiyse (reduced-motion açıldı/kapandı) clock kablajı MUTLAKA yenilenir.
         bool motionUnchanged = _edgesAnimated == animationsEnabled;
         _edgesAnimated = animationsEnabled;
-        var statuses = _nodes;
         _flowingEdges.Clear();
 
         foreach (var edge in _edges)
-        {
-            statuses.TryGetValue(edge.Model.From, out var source);
-            statuses.TryGetValue(edge.Model.To, out var target);
-
-            bool touchesSelection = _selectedNode is { } sel &&
-                (string.Equals(edge.Model.From, sel, StringComparison.Ordinal) ||
-                 string.Equals(edge.Model.To, sel, StringComparison.Ordinal));
-
-            var style = EdgeStyleResolver.Resolve(
-                source?.Model.Status ?? GraphStatus.Discovered,
-                source?.Model.HasDepIssue ?? false,
-                target?.Model.Status ?? GraphStatus.Discovered,
-                touchesSelection,
-                _selectedNode is not null);
-
-            // "Her tick'te full binding refresh yapma" (feasibility §3.4): stil DEĞİŞMEDİYSE fırça/dash/clock
-            // kablajına hiç dokunulmaz. EdgeStyle bir record'dur ve Dash alanı daima aynı statik örnektir
-            // (FlowDash/ErrorDash/null) — değer eşitliği burada güvenlidir.
-            if (motionUnchanged && edge.Style == style)
-            {
-                if (style.IsFlowing) _flowingEdges.Add(edge.Path);
-                continue;
-            }
-
-            edge.Style = style;
-            edge.Path.SetResourceReference(Shape.StrokeProperty, style.BrushKey);
-            edge.Path.StrokeThickness = style.Thickness;
-            edge.Path.Opacity = style.Opacity;
-            edge.Path.StrokeDashArray = style.Dash is null ? [] : new DoubleCollection(style.Dash);
-
-            if (style.IsFlowing)
-                _flowingEdges.Add(edge.Path);
-
-            if (style.IsFlowing && animationsEnabled)
-            {
-                // TEK paylaşımlı clock: bütün akan kenarlar (1px ve 1.6px olanlar dahil) aynı fazda kayar.
-                edge.Path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, DashClockFor(style.Thickness));
-            }
-            else
-            {
-                edge.Path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, null);
-                edge.Path.StrokeDashOffset = 0; // reduced-motion: kesikli AMA statik
-            }
-        }
+            ApplyEdgeStyle(edge, animationsEnabled, force: !motionUnchanged);
 
         // [M-3] Akan kenar kalmadıysa (veya motion kapandıysa) clock BIRAKILIR — aksi halde timing engine boşta
         // da 30fps uyanık kalırdı. Bir sonraki akan kenarda yeniden kurulur (aşağıdaki hızlı yol notuna bak).
         if (_flowingEdges.Count == 0 || !animationsEnabled)
             ReleaseDashClock();
     }
+
+    /// <summary>Tek bir kenarın stilini uygular. <see cref="ApplyEdgeStyles"/> (tam geçiş) ve
+    /// <see cref="MaterializeEdge"/> (yeni görünür olan kenar) AYNI yolu kullanır — kopya YASAK.</summary>
+    private void ApplyEdgeStyle(GraphEdgeVisual edge, bool animationsEnabled, bool force)
+    {
+        _slots.TryGetValue(edge.Model.From, out var source);
+        _slots.TryGetValue(edge.Model.To, out var target);
+
+        bool touchesSelection = _selectedNode is { } sel &&
+            (string.Equals(edge.Model.From, sel, StringComparison.Ordinal) ||
+             string.Equals(edge.Model.To, sel, StringComparison.Ordinal));
+
+        var style = EdgeStyleResolver.Resolve(
+            source?.Model.Status ?? GraphStatus.Discovered,
+            source?.Model.HasDepIssue ?? false,
+            target?.Model.Status ?? GraphStatus.Discovered,
+            touchesSelection,
+            _selectedNode is not null);
+
+        // "Her tick'te full binding refresh yapma" (feasibility §3.4): stil DEĞİŞMEDİYSE fırça/dash/clock
+        // kablajına hiç dokunulmaz. EdgeStyle bir record'dur ve Dash alanı daima aynı statik örnektir
+        // (FlowDash/ErrorDash/null) — değer eşitliği burada güvenlidir.
+        if (!force && edge.Style == style)
+        {
+            if (style.IsFlowing) _flowingEdges.Add(edge.Path);
+            return;
+        }
+
+        edge.Style = style;
+        edge.Path.SetResourceReference(Shape.StrokeProperty, style.BrushKey);
+        edge.Path.StrokeThickness = style.Thickness;
+        edge.Path.Opacity = style.Opacity;
+        edge.Path.StrokeDashArray = DashCollectionFor(style.Dash);
+
+        if (style.IsFlowing)
+            _flowingEdges.Add(edge.Path);
+
+        if (style.IsFlowing && animationsEnabled)
+        {
+            // TEK paylaşımlı clock: bütün akan kenarlar (1px ve 1.6px olanlar dahil) aynı fazda kayar.
+            edge.Path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, DashClockFor(style.Thickness));
+        }
+        else
+        {
+            edge.Path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, null);
+            edge.Path.StrokeDashOffset = 0; // reduced-motion: kesikli AMA statik
+        }
+    }
+
+    /// <summary>[G2] Stil deseninin DONMUŞ, paylaşılan koleksiyonu (bilinmeyen bir desen gelirse — bugün
+    /// gelmiyor — güvenli tarafta yeni bir donmuş kopya üretilir).</summary>
+    private static DoubleCollection DashCollectionFor(IReadOnlyList<double>? dash) =>
+        dash is null ? SolidDash
+        : EdgeDashes.TryGetValue(dash, out var collection) ? collection
+        : FrozenDash([.. dash]);
 
     /// <summary>
     /// Akan dash'in TEK paylaşımlı clock'u (A13.2). Kök <see cref="ClockGroup"/> timing engine'de TEK bir clock'tur;
@@ -646,22 +993,25 @@ public partial class GraphView : UserControl
 
     private void PlayRevealStagger()
     {
-        // Önceki reveal hero'su + varsa bekleyen release timer'ı bırak — yeni bir SetGraph yeni bir reveal başlatır.
-        ReleaseRevealHero();
-        int gen = ++_revealGen; // bu reveal kuşağı — release yalnız bu kuşak hâlâ geçerliyken uygulanır
+        // [E3/T41/DD9 · W2 fold] Reveal bir HERO'dur. Önceki hero + bekleyen release bırakılır, yeni kuşak damgalanır
+        // ve hero alınmaya çalışılır. Başka bir hero sürerken dekoratif stagger ATLANIR — düğümler ani yerleştirilir
+        // (reduced-motion yolu). Muhasebe StickyLayerList ile ORTAK: bkz. RevealStagger.
+        var (animate, gen) = _reveal.Begin(AnimationsEnabledProvider(), ActiveHeroCoordinator, RevealHeroKey);
 
-        bool animate = AnimationsEnabledProvider();
-        // [E3/T41/DD9] Reveal bir HERO'dur. Başka bir hero sürerken (Hero null döner) dekoratif stagger ATLANIR —
-        // düğümler ani yerleştirilir (reduced-motion yolu). Aksi halde hero TUTULUR ve reveal tamamlanınca (aşağıda
-        // generation-guarded timer) bırakılır. Coordinator yoksa (headless, enjekte edilmemiş) davranış eskisi gibi.
-        if (animate)
+        // [G2] Cull edilmiş düğümün reveal'i ATLANIR; gecikme KATMAN indeksinden türetildiği (koşan bir sayaçtan
+        // değil) için kalan düğümlerin zamanlaması KAYMAZ. Pencerenin uzunluğu ise TÜM katmanlardan hesaplanır
+        // (yalnız materyalize olanlardan değil) — sonradan görünür olan bir düğüm de pencereye girebilmeli.
+        double maxDelay = -1;
+        foreach (var slot in _slotOrder)
         {
-            _revealHero = ActiveHeroCoordinator?.Hero(RevealHeroKey);
-            if (ActiveHeroCoordinator is not null && _revealHero is null)
-                animate = false; // başka bir hero aktif → ani sonuç
+            double d = RevealDelayMs(slot.Model.Layer);
+            if (d > maxDelay) maxDelay = d;
         }
 
-        double maxDelay = -1;
+        _revealPlaying = animate && maxDelay >= 0;
+        _revealStartTicks = Environment.TickCount64;
+        _revealEndTicks = _revealStartTicks + (long)(maxDelay + RevealMs);
+
         foreach (var visual in _nodes.Values)
         {
             visual.Cell.BeginAnimation(OpacityProperty, null);
@@ -672,89 +1022,60 @@ public partial class GraphView : UserControl
                 continue;
             }
 
-            // CSS `both` fill paritesi: gecikme boyunca opaklık 0 TUTULUR — flash yok (feasibility §3.4).
-            visual.Cell.Opacity = 0.0;
-            var rise = new TranslateTransform(0, -RevealRisePx);
-            visual.Cell.RenderTransform = rise;
-
-            double delayMs = RevealDelayMs(visual.Model.Layer);
-            var begin = TimeSpan.FromMilliseconds(delayMs);
-            var duration = TimeSpan.FromMilliseconds(RevealMs);
-            var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
-
-            var fade = MotionTokens.SplineTo(1.0, duration, spline);
-            fade.BeginTime = begin;
-            fade.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            visual.Cell.BeginAnimation(OpacityProperty, fade);
-
-            var slide = MotionTokens.SplineTo(0.0, duration, spline);
-            slide.BeginTime = begin;
-            slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            rise.BeginAnimation(TranslateTransform.YProperty, slide);
-
-            if (delayMs > maxDelay) maxDelay = delayMs;
+            ApplyRevealTo(visual, RevealDelayMs(visual.Model.Layer));
         }
 
         // [E3/T41 — release fix] Hero, reveal PENCERESİ boyunca tutulur ve en geç biten düğümün reveal'i
-        // (maxDelay + RevealMs) tamamlanınca bırakılır. Tetik bir DispatcherTimer'dır: bir fade'in clock'u
-        // BeginAnimation ile üretildikten SONRA eklenen Completed handler'ı HİÇ ateşlenmez (gerçek-HWND WPF
-        // harness ile doğrulandı) — dolayısıyla eski Completed yolu ÖLÜ koddu. Timer, generation-guarded bir
-        // release'e (ReleaseRevealHeroIfCurrent) bağlanır: reveal #1 sürerken hızlı bir ikinci SetGraph gelirse
-        // #1'in timer'ı ateşlense bile #2'nin taze hero'suna DOKUNMAZ (gen != _revealGen). Headless testte timer
-        // tick etmez; test release'i doğrudan bu kuşak damgasıyla çağırır (bkz. ReleaseRevealHeroIfCurrent).
-        if (_revealHero is not null)
-        {
-            if (maxDelay < 0)
-            {
-                ReleaseRevealHero(); // animate ama düğüm yok (savunmacı) — hero'yu bekletme
-            }
-            else
-            {
-                var releaseAfter = TimeSpan.FromMilliseconds(maxDelay + RevealMs);
-                _revealReleaseTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = releaseAfter };
-                _revealReleaseTimer.Tick += (_, _) => ReleaseRevealHeroIfCurrent(gen);
-                _revealReleaseTimer.Start();
-            }
-        }
+        // (maxDelay + RevealMs) tamamlanınca generation-guarded bir DispatcherTimer'la bırakılır (Completed-after-
+        // BeginAnimation ÖLÜ yolu DEĞİL). Ayrıntı ve gerekçe: RevealStagger.ScheduleRelease.
+        _reveal.ScheduleRelease(maxDelay, RevealMs, gen);
     }
 
-    /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakan generation-guarded karar: YALNIZ tetikleyen reveal
-    /// hâlâ geçerliyse (<paramref name="gen"/> == <see cref="RevealGeneration"/>) bırakır. Superseded bir reveal'in
-    /// gecikmiş release'i (rapid ikinci SetGraph) mevcut reveal'in taze hero'sunu düşürmez. Test bunu doğrudan
-    /// çağırır (gerçek timer tick'i beklemeden).</summary>
-    internal void ReleaseRevealHeroIfCurrent(int gen)
+    /// <summary>[G2 · fix round 1 B2] Tek bir düğümün beliriş animasyonu (opaklık 0→1 + 5px yukarıdan).
+    /// <see cref="PlayRevealStagger"/> (açılış) ve <see cref="JoinRevealIfPlaying"/> (pencere içinde sonradan
+    /// materyalize olan düğüm) AYNI yolu kullanır — kopya YASAK.</summary>
+    private void ApplyRevealTo(GraphNodeVisual visual, double delayMs)
     {
-        if (gen != _revealGen) return; // stale kuşak — mevcut hero'ya dokunma
-        ReleaseRevealHero();
+        visual.Cell.BeginAnimation(OpacityProperty, null);
+        // CSS `both` fill paritesi: gecikme boyunca opaklık 0 TUTULUR — flash yok (feasibility §3.4).
+        visual.Cell.Opacity = 0.0;
+        var rise = new TranslateTransform(0, -RevealRisePx);
+        visual.Cell.RenderTransform = rise;
+
+        var begin = TimeSpan.FromMilliseconds(delayMs);
+        var duration = TimeSpan.FromMilliseconds(RevealMs);
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+
+        var fade = MotionTokens.SplineTo(1.0, duration, spline);
+        fade.BeginTime = begin;
+        fade.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        visual.Cell.BeginAnimation(OpacityProperty, fade);
+
+        var slide = MotionTokens.SplineTo(0.0, duration, spline);
+        slide.BeginTime = begin;
+        slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        rise.BeginAnimation(TranslateTransform.YProperty, slide);
     }
 
-    /// <summary>[E3/T41] Reveal hero'sunu (varsa) ve bekleyen release timer'ını bırakır — yeni bir hero girebilir.
-    /// Çift-bırakma güvenli (HeroScope.Dispose idempotent).</summary>
-    private void ReleaseRevealHero()
-    {
-        if (_revealReleaseTimer is not null)
-        {
-            _revealReleaseTimer.Stop();
-            _revealReleaseTimer = null;
-        }
-        _revealHero?.Dispose();
-        _revealHero = null;
-    }
+    /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakan generation-guarded karar (bkz.
+    /// <see cref="RevealStagger.ReleaseIfCurrent"/>). Test bunu doğrudan çağırır (gerçek timer tick'i beklemeden).</summary>
+    internal void ReleaseRevealHeroIfCurrent(int gen) => _reveal.ReleaseIfCurrent(gen);
 
     // ---------------------------------------------------------------- kamera
 
     private void ApplyCamera(bool animate)
     {
-        if (_nodes.Count == 0) return;
+        if (_slotOrder.Count == 0) return;
 
         var viewport = ViewportSize;
         if (viewport.Width <= 0 || viewport.Height <= 0) return;
 
-        Point? selected = _selectedNode is { } name && _nodes.TryGetValue(name, out var sel) ? sel.Center : null;
-        var building = _nodes.Values
-            .Where(v => v.Model.Status == GraphStatus.Building)
-            .Select(v => v.Center)
-            .ToList();
+        // [G2] Odak TÜM modellerden hesaplanır — cull edilmiş bir building düğümü de frontier'e katılır, aksi
+        // halde kamera görünmeyen bir cepheye hiç yönelmezdi (kendi kendini kilitleyen bir cull).
+        Point? selected = _selectedNode is { } name && _slots.TryGetValue(name, out var sel) ? sel.Center : null;
+        var building = new List<Point>();
+        foreach (var slot in _slotOrder)
+            if (slot.Model.Status == GraphStatus.Building) building.Add(slot.Center);
 
         var focus = GraphCamera.ResolveFocus(selected, building, _isSettled, GraphSize, _previousFocus);
         // [M-5] <8px eşiği YALNIZ frontier dalında geçerlidir (GraphCamera.ResolveFocus) — bu yüzden odak yalnız
@@ -767,12 +1088,19 @@ public partial class GraphView : UserControl
         // Hedef DEĞİŞMEDİYSE hiçbir animasyon yeniden başlatılmaz: koşarken UpdateStatuses saniyede birkaç kez
         // çağrılır ve aynı hedefe her seferinde yeni bir 460ms geçişi başlatmak uçuştaki geçişi sürekli
         // "yeniden doğurur" (Zeno etkisi — kamera hedefe hiç oturmaz).
-        if (_hasCamera && camera == CurrentCamera) return;
+        if (_hasCamera && camera == CurrentCamera)
+        {
+            // Hedef aynı ⇒ kamera hareket etmiyor (ara kare yok); yalnız viewport büyümüş olabilir (SizeChanged).
+            UpdateMaterialization();
+            return;
+        }
         CurrentCamera = camera;
         _hasCamera = true;
 
         bool animationsEnabled = animate && AnimationsEnabledProvider();
         LastCameraAnimated = animationsEnabled;
+        // Kamera animasyonla gidecekse ARA KARELER de görünür ⇒ mevcut görünüm + hedef taranır (bkz. B1).
+        UpdateMaterialization(traversing: animationsEnabled);
 
         if (!animationsEnabled)
         {
@@ -808,13 +1136,25 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- test/görünürlük yüzeyi
 
+    /// <summary>MATERYALİZE olmuş düğüm görselleri (cull kapalıyken = tüm düğümler).</summary>
     internal IReadOnlyDictionary<string, GraphNodeVisual> NodeVisuals => _nodes;
+    /// <summary>MATERYALİZE olmuş kenar görselleri (cull kapalıyken = tüm kenarlar).</summary>
     internal IReadOnlyList<GraphEdgeVisual> EdgeVisuals => _edges;
+    /// <summary>[G2] Grafın TOPLAM düğüm sayısı (cull'dan bağımsız).</summary>
+    internal int NodeCount => _slotOrder.Count;
+    /// <summary>[G2] Grafın TOPLAM kenar sayısı (cull'dan bağımsız).</summary>
+    internal int EdgeCount => _edgeSlots.Count;
+    /// <summary>[G2] Cull (ve etiket LOD'u) bu graf için etkin mi — düğüm sayısı
+    /// <see cref="FullDetailMaxNodes"/>'u aştı mı.</summary>
+    internal bool IsCullEnabled => _cullEnabled;
+    /// <summary>[G2] <c>ApplyNodeStatus</c> kaç kez koştu — "değişmediyse dokunma" fast-path'inin DETERMİNİSTİK
+    /// kanıtı (duvar saati değil, sayaç).</summary>
+    internal int NodeStatusApplyCount { get; private set; }
     /// <summary>[E3/T41] Aktif reveal kuşağının damgası — test, doğru kuşakla release'i tetiklemek için okur.</summary>
-    internal int RevealGeneration => _revealGen;
+    internal int RevealGeneration => _reveal.Generation;
     /// <summary>[E3/T41] Reveal tamamlandığında hero'yu bırakacak CANLI bir release zamanlandı mı — ölü Completed
     /// yolunun aksine gerçek bir tetik kuruldu mu (test ayırt edici olarak okur).</summary>
-    internal bool HasPendingRevealRelease => _revealReleaseTimer is { IsEnabled: true };
+    internal bool HasPendingRevealRelease => _reveal.HasPendingRelease;
     /// <summary>O an akan (hedefi building) kenarların Path'leri — paylaşılan clock TAM BU kümeye uygulanır.</summary>
     internal IReadOnlyList<Path> FlowingEdgePaths => _flowingEdges;
     /// <summary>Akan dash'in TEK kök clock'u (null = hiç akan kenar yok / motion kapalı).</summary>
@@ -832,5 +1172,5 @@ public partial class GraphView : UserControl
     internal string EmptyStateText => EmptyStateLabel.Text;
     internal Size ViewportSize => new(Ground.ActualWidth, Ground.ActualHeight);
     internal Size GraphSize => _layout.Size;
-    internal Point NodeCenter(string name) => _nodes[name].Center;
+    internal Point NodeCenter(string name) => _slots[name].Center;
 }

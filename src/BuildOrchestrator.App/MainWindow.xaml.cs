@@ -48,9 +48,18 @@ public partial class MainWindow : Window
     // (her 200ms tick'te BuildLayerGroups'u yeniden kurmamak için yalnız topoloji değişiminde tazelenir).
     private IReadOnlyList<ProjectRowViewModel> _orderedRows = [];
 
-    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console)
+    /// <param name="resourceScope">
+    /// [T49 FINAL PASS] ÜRETİMDE null. Pencerenin token'ları (bkz. aşağıdaki <c>FindResource</c>) üretimde
+    /// <c>Application.Resources</c>'tan çözülür — App.xaml'in merge zinciri. Headless realize testinde
+    /// <see cref="Application"/> YOKTUR ve bir <see cref="Window"/>'un kaynak zincirine dışarıdan girmenin başka
+    /// yolu yoktur (üstünde ebeveyn yok); test AYNI zinciri (Motion→Tokens→Icons→Controls) buradan enjekte eder.
+    /// Bu dikiş olmadan MainWindow.xaml hiçbir testte realize EDİLEMEZ — c6e9a21'in launch-fatal sınıfının
+    /// (Double token → GridLength/Thickness) testsiz kalan son kökü buydu.
+    /// </param>
+    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console, ResourceDictionary? resourceScope = null)
     {
         InitializeComponent();
+        if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _engine = engine;
         _vm = vm;
         _console = console;
@@ -196,7 +205,9 @@ public partial class MainWindow : Window
 
         // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
         // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
-        Application.Current.SessionEnding += OnSessionEnding;
+        // [T49 FINAL PASS] Null-kontrol yalnız headless realize testi içindir (orada Application YOKTUR); üretimde
+        // Application.Current her zaman kuruludur ve abonelik AYNEN kurulur.
+        if (Application.Current is { } app) app.SessionEnding += OnSessionEnding;
 
         SetupKeyboardShortcuts();
         _ = RunConsolePumpAsync();
@@ -475,11 +486,22 @@ public partial class MainWindow : Window
     {
         try
         {
-            await _engine.StartAsync();
+            var ready = await _engine.StartAsync();
+            // [D1 review · C5] Sürüm bilgisi UI'da: konsolun boot satırı (design-v1 anlatı dili).
+            _vm.OnEngineReady(ready.EngineVersion);
+        }
+        catch (Services.EngineUnavailableException ex)
+        {
+            // [D1] Motor HİÇ doğamadı — iki neden: supervisor\ çıktısı yok (kurulum eksik) VEYA dosya var ama
+            // başlatılamadı (bozuk exe/erişim reddi/TOCTOU [A2]). Child doğmadığı için EngineExited ATEŞLENMEZ →
+            // eskiden kullanıcı HİÇBİR ŞEY görmüyordu (yalnız Debug.WriteLine, Release'te derlenip çıkar).
+            // Şerit kalıcı hata moduna alınır; "Restart engine" gösterilmez (bkz. OnEngineUnavailable).
+            _vm.OnEngineUnavailable(ex.ExePath, ex.Reason);
         }
         catch (Exception ex)
         {
-            // Motor başlatılamadı. Görsel bildirim (sticky ribbon + Restart) T37'nin işidir — burada gözlenir.
+            // Motor DOĞDU ama hazır olamadı (timeout/framing/erken ölüm): görsel bildirimi EngineExited yolu
+            // TEK sinyal olarak zaten üretir (T37) — burada yalnız iz bırakılır, ikinci bir sinyal ÜRETİLMEZ.
             System.Diagnostics.Debug.WriteLine($"[engine] start failed — {ex.Message}");
         }
     }
@@ -677,7 +699,7 @@ public partial class MainWindow : Window
     /// iptal edilen (tepsiye küçülen) kapatmalardan etkilenmez.</summary>
     protected override void OnClosed(EventArgs e)
     {
-        Application.Current.SessionEnding -= OnSessionEnding; // [M-3 fix wave]
+        if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
         _hotkey?.Dispose();
         _tray?.Dispose();
         base.OnClosed(e);

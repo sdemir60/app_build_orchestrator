@@ -29,22 +29,102 @@
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- [D1] TEK KAYNAK: Supervisor çıktısının uygulamanın YANINDA durduğu alt klasörün adı. Aynı ad C# tarafında
+         YENİDEN YAZILMAZ — aşağıdaki AssemblyMetadata ile assembly'ye gömülür, Services/SupervisorLayout.cs onu
+         geri okur. (Eskiden ad hem burada hem App.xaml.cs'te bağımsız string'di: biri değişince derleme hatası
+         OLMUYOR, runtime'da sessizce kırılıyordu.) -->
+    <SupervisorFolderName>supervisor</SupervisorFolderName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- [D1] Klasör adını çalışma zamanına taşıyan tek köprü — anahtar SupervisorLayout.FolderNameMetadataKey. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>SupervisorFolderName</_Parameter1>
+      <_Parameter2>$(SupervisorFolderName)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\BuildOrchestrator.Supervisor\BuildOrchestrator.Supervisor.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
-  <Target Name="CopySupervisorOutput" AfterTargets="Build">
-    <!-- Tüm dosyaları eşle ama RecursiveDir'i TFM klasörü olmadan hesapla [it0-devir] -->
+
+  <!-- [D1] Supervisor'ın çıktı dizini projenin KENDİ TargetPath'inden çözülür; TFM/RID klasörü tahmin
+       EDİLMEZ (eski hal: bin\$(Configuration)\**\ globu + RecursiveDir'den ilk segmenti soyan regex — RID'li
+       bir akışta, ör. `dotnet publish -r win-x64`, TFM\RID iki segment olduğu için supervisor\win-x64\ üretirdi).
+       `**\publish\**` HARİÇ: Supervisor tek başına publish edilmişse o ağaç kopyalanmamalı. -->
+  <PropertyGroup>
+    <!-- Bu evaluation-anı varsayılanı YALNIZ MSBuild'in joker-karakter güvenlik denetimi (MSB5029: boş property
+         + `**` = sürücü taraması) içindir; GERÇEK değer aşağıdaki target'ta GetTargetPath'ten gelir. -->
+    <_SupervisorOutDir>$(MSBuildThisFileDirectory)..\BuildOrchestrator.Supervisor\bin\$(Configuration)\$(TargetFramework)\</_SupervisorOutDir>
+  </PropertyGroup>
+
+  <Target Name="_ResolveSupervisorFiles">
+    <MSBuild Projects="..\BuildOrchestrator.Supervisor\BuildOrchestrator.Supervisor.csproj" Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" ItemName="_SupervisorTargetPath" />
+    </MSBuild>
+    <PropertyGroup>
+      <!-- TargetPath = ...\bin\<Config>\<TFM>[\<RID>]\BuildOrchestrator.Supervisor.dll → dizini (sonda '\'). -->
+      <_SupervisorOutDir>@(_SupervisorTargetPath->'%(RootDir)%(Directory)')</_SupervisorOutDir>
+    </PropertyGroup>
+    <!-- [D1 review · C1] Execution-anı guard: yol çözülemediyse GLOB'a hiç girme — boş property + `**`
+         "sürücüyü tara" desenidir (bu task sırasında fiilen MSB5029 alındı). Sessiz geçmek YASAK. -->
+    <Error Condition="'$(_SupervisorOutDir)' == '' or '$(_SupervisorOutDir)' == '\'"
+           Text="Supervisor cikti dizini cozulemedi (GetTargetPath bos dondu): BuildOrchestrator.Supervisor derlenemedi mi?" />
     <ItemGroup>
-      <_SupervisorFiles Include="..\BuildOrchestrator.Supervisor\bin\$(Configuration)\**\*.*" />
-      <!-- RecursiveDir'den TFM dizinini çıkart (ilk / öncesi) [it0-devir] -->
-      <_SupervisorFiles>
-        <CopyRecursiveDir Condition="'%(RecursiveDir)' != ''">$([System.Text.RegularExpressions.Regex]::Replace('%(RecursiveDir)', '^[^\\]+\\(.*)$', '$1'))</CopyRecursiveDir>
-        <CopyRecursiveDir Condition="'%(RecursiveDir)' == ''"></CopyRecursiveDir>
-      </_SupervisorFiles>
+      <_SupervisorFiles Include="$(_SupervisorOutDir)**\*.*" Exclude="$(_SupervisorOutDir)publish\**" />
     </ItemGroup>
-    <!-- stale birikimi önle: hedef supervisor klasörünü kopya öncesi sil [it0-devir] -->
-    <RemoveDir Directories="$(OutDir)supervisor" />
-    <Copy SourceFiles="@(_SupervisorFiles)" DestinationFolder="$(OutDir)supervisor\%(CopyRecursiveDir)" SkipUnchangedFiles="true" />
+    <PropertyGroup>
+      <!-- $(OutDir) ANCAK SDK target'ları yüklendikten sonra tanımlı — bu yüzden damga yolu burada (target
+           içinde) kurulur. DependsOnTargets, tüketen hedefin Inputs/Outputs denetiminden ÖNCE koşar. -->
+      <_SupervisorCopyStamp>$(OutDir)$(SupervisorFolderName)\.copy-stamp</_SupervisorCopyStamp>
+    </PropertyGroup>
+    <!-- [D1 review · A1] FAIL-FAST: dosya kümesi boşsa build/publish SESSİZCE engine'siz bir paket üretirdi —
+         D1'in kapattığı bug'ın bir seviye yukarısı. Boşsa net mesajla dur. -->
+    <Error Condition="'@(_SupervisorFiles)' == ''"
+           Text="Supervisor cikti dosyasi bulunamadi: $(_SupervisorOutDir) bos. Engine'siz bir paket uretilmesin diye build durduruldu." />
+  </Target>
+
+  <!-- [D1 review · C3] Incremental: hedef, kaynak dosyalardan HERHANGİ biri damgadan yeniyse TÜMÜYLE koşar
+       (stale temizliği + tam kopya birlikte anlamlı; kısmi/filtrelenmiş liste ile RemoveDir tehlikeli olurdu).
+       Damga OutDir altında: `bin` elle silinirse damga da gider → hedef kendini onarır. -->
+  <Target Name="CopySupervisorOutput" AfterTargets="Build" DependsOnTargets="_ResolveSupervisorFiles"
+          Inputs="@(_SupervisorFiles)" Outputs="$(_SupervisorCopyStamp)">
+    <!-- stale birikimi önle: hedef supervisor klasörünü kopya öncesi sil [it0-devir].
+         [D1 review round 2] ContinueOnError'ın GERÇEK kapsamı: silme başarısız olursa (uygulama AÇIK, exe
+         kilitli) build BURADA MSB3061 ile düşmez, uyarıya çevrilir — ama hemen aşağıdaki Copy o kilitli hedefe
+         yazamazsa build YİNE hata verir. Bu bilinçlidir: yarısı eski, yarısı yeni bir supervisor\ üretmektense
+         durulur. (Klasör her koşumda boşaltıldığı için Copy'de SkipUnchangedFiles ANLAMSIZ olurdu — atlanacak
+         dosya kalmaz; artımlılık hedef seviyesindeki Inputs/Outputs damgasıyla sağlanır.) -->
+    <RemoveDir Directories="$(OutDir)$(SupervisorFolderName)" ContinueOnError="WarnAndContinue" />
+    <Copy SourceFiles="@(_SupervisorFiles)"
+          DestinationFiles="@(_SupervisorFiles->'$(OutDir)$(SupervisorFolderName)\%(RecursiveDir)%(Filename)%(Extension)')">
+      <Output TaskParameter="CopiedFiles" ItemName="FileWrites" />
+    </Copy>
+    <Touch Files="$(_SupervisorCopyStamp)" AlwaysCreate="true">
+      <Output TaskParameter="TouchedFiles" ItemName="FileWrites" />
+    </Touch>
+  </Target>
+
+  <!-- [D1] PUBLISH AKIŞI: çıplak <Copy> yalnız $(OutDir)'e yazar; publish çıktısı ResolvedFileToPublish
+       üzerinden hesaplandığı için supervisor\ klasörü publish'te HİÇ oluşmuyordu (engine sessizce hiç
+       başlamıyordu). Aynı dosya kümesi burada publish listesine eklenir — build ve publish TEK kaynaktan. -->
+  <Target Name="AddSupervisorToPublishList" AfterTargets="ComputeResolvedFilesToPublishList"
+          DependsOnTargets="_ResolveSupervisorFiles">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="@(_SupervisorFiles)">
+        <RelativePath>$(SupervisorFolderName)\%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <!-- [D1 review · C2] Tek-dosya publish DESTEKLENMİYOR ve komut satırından (-p:PublishSingleFile=true) sessizce
+       açılamaz: AppContext.BaseDirectory extraction dizinini gösterir, supervisor\ alt klasörü bundle'a giremez →
+       engine spawn'ı kırılır. Kaynak taraması (PublishLayoutTests) niyeti korur, bu target komut satırını kapatır. -->
+  <Target Name="_RejectSingleFilePublish" BeforeTargets="PrepareForBuild;PrepareForPublish">
+    <Error Condition="'$(PublishSingleFile)' == 'true'"
+           Text="PublishSingleFile desteklenmiyor: supervisor\ alt klasoru bundle'a giremez ve engine baslatilamaz. Klasor tabanli publish kullanin (v1 karari)." />
   </Target>
 
   <ItemGroup>
@@ -56,8 +136,11 @@
     <!-- CompositeFont XML de gömülmeli: pack URI ile "#Geist Mono Console" ailesini çözebilmek için [T56] -->
     <Resource Include="Fonts\*.CompositeFont" />
     <!-- [T64] Geist SIL OFL lisansı: gömülü OTF'ler uygulamayla dağıtıldığı için lisans metni de çıktıda
-         BULUNMAK ZORUNDA (OFL "included in all copies"). Gömülü kaynak DEĞİL — okunabilir dosya olarak. -->
-    <Content Include="Assets\GEIST-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+         BULUNMAK ZORUNDA (OFL "included in all copies"). Gömülü kaynak DEĞİL — okunabilir dosya olarak.
+         [D1] CopyToPublishDirectory AÇIKÇA yazılır: "all copies" şartı asıl DAĞITILAN artifact (publish çıktısı)
+         için geçerlidir; SDK varsayılanına bırakılmaz. -->
+    <Content Include="Assets\GEIST-LICENSE.txt" CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -85,6 +85,20 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <c>BaseIntermediateOutputPath</c>'e çevrilir — obj PAYLAŞILMAZ (bayat-obj zehri, SPIKE-proven
 /// OSYS.Types.NewSales.Print vakası).
 /// </param>
+/// <param name="cpuGovernor">
+/// [T20-b/K11] Perf profilinin CPU cap + priority yarısının uygulandığı seam. Varsayılan (null) ⇒
+/// <paramref name="innerJob"/>'ın KENDİSİ — yani cap DAİMA yalnız inner job'a uygulanır (App'in outer job'ına
+/// ASLA: orası Supervisor'ın kendisini ve IPC'yi kısardı). Ayrı bir parametre olmasının TEK sebebi test
+/// edilebilirliktir: cap/priority çağrılarının SIRASI (run başı → canlı değişim → run sonu geri alma) gerçek
+/// bir Win32 job üzerinden gözlenemez. Terminate hâlâ <paramref name="innerJob"/>'ın işidir — o, cap'ten
+/// bağımsız bir yaşam-döngüsü yetkisidir.
+/// </param>
+/// <param name="retryDelay">
+/// [T20-b/P3 · D8] Copy-contention retry'ının backoff bekleyişi (bkz. <see cref="RetryingMsBuildInvoker"/>).
+/// Üretimde <c>Task.Delay</c>'dir; testlerde anında tamamlanan bir callback verilir — retry SIRASI (ve onunla
+/// birlikte cap taban penceresinin açılıp kapanması) gerçek zaman beklenmeden doğrulanabilsin diye. Varsayılan
+/// (null) ⇒ <c>Task.Delay</c>.
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -94,9 +108,12 @@ public sealed class RunCoordinator(
     Func<long> nowMs,
     Action<string> console,
     Func<StartRunCommand, string?>? worktreeObjRootResolver = null,
-    BuildStateStore? stateStore = null) : IDisposable
+    BuildStateStore? stateStore = null,
+    ICpuGovernor? cpuGovernor = null,
+    Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : IDisposable
 {
     private readonly object _gate = new();
+    private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
 
     // --- run yaşam döngüsü (hepsi _gate altında) ---
     private bool _runActive;            // startRun slotu dolu (planlama dahil) — A6
@@ -106,6 +123,27 @@ public sealed class RunCoordinator(
     private bool _stopAcked;            // runStopped yazıldı mı — TryRequestStop true dedi ise ACK BORCU vardır
     private ReadySetScheduler? _scheduler;
     private WakeSignal? _wake;
+    // [T20-b/K11] Bu run için cap/priority GERÇEKTEN uygulandı mı (yani komut bir PerfMode taşıyor muydu).
+    // Yalnız true iken run sonunda geri alınır ve yalnız true iken canlı setPerfMode UYGULANIR: PerfMode
+    // taşımayan (P2 öncesi / harness) run'lar job'a hiç dokunmamalıdır.
+    private bool _perfApplied;
+    // [Fix round 1 — KÖK 1] PLANLAMA PENCERESİNDE gelmiş perf niyeti. startRun kabul edilir edilmez _runActive
+    // true olur, ama cap ancak plan kurulduktan SONRA (RunSegmentAsync'in apply noktası) uygulanır; 177 projede
+    // bu pencere SANİYELERDİR ve perf chip'i o sırada canlıdır. Buraya yazılan niyet run başlarken komuttaki
+    // PerfMode'u EZER (kullanıcının SON sözü). Apply noktasında tüketilir; [Fix round 2 — YENİ 1] run
+    // kapanışında İKİ kez temizlenir (ReleasePerf + son kilit), çünkü ikisinin arasındaki `await pump`
+    // penceresinde _runActive hâlâ true'dur ve oraya düşen bir niyeti başka temizleyen olmazdı.
+    private PerfProfile? _pendingPerf;
+    // [T20-b/P3] Bu run'da YÜRÜRLÜKTEKİ profil — copy-contention penceresi kapanınca cap buraya döner.
+    // (_perfApplied false iken anlamsızdır; ikisi de run sınırında birlikte sıfırlanır.)
+    private PerfProfile? _activePerf;
+    // [T20-b/P3] Şu an KAÇ worker copy-contention penceresinde. Ref-count zorunludur: paralel build'de birden
+    // çok worker aynı anda MSB302x görebilir ve erken çıkan biri, diğeri hâlâ kopyalarken cap'i geri kısardı.
+    private int _copyFloorDepth;
+    // [T20-b/P3] Graceful drain başladı ⇒ bu run'da cap bir daha YAZILMAZ ve [final review I-1] priority taban
+    // değerin altına İNDİRİLEMEZ (pencere kapanışı ve canlı setPerfMode dahil). "torn DLL yok" garantisi,
+    // sonradan geri konan bir cap ya da Idle'a düşürülen bir priority ile pazarlık edilemez.
+    private bool _capDrained;
 
     // --- Continue için devredilen state (run'lar ARASINDA yaşar) ---
     private RunPlan? _plan;
@@ -201,14 +239,16 @@ public sealed class RunCoordinator(
         ErrorEvent? rejection = null;
         lock (_gate)
         {
+            // [D1 review · A3] ErrorEvent.Message KULLANICIYA ulaşır (şerit "Sync failed — …" / konsol) →
+            // uygulama İngilizce-only olduğu için bu metinler de İngilizce.
             if (_disposed)
-                rejection = new ErrorEvent("runInProgress", "Supervisor kapanıyor — yeni run kabul edilmiyor.");
+                rejection = new ErrorEvent("runInProgress", "Supervisor is shutting down — new runs are not accepted.");
             else if (_runActive)
-                rejection = new ErrorEvent("runInProgress", $"Zaten bir run koşuyor — '{cmd.RunId}' reddedildi.");
+                rejection = new ErrorEvent("runInProgress", $"A run is already in progress — '{cmd.RunId}' was rejected.");
             else if (cmd.Mode == RunMode.Continue && !IsResumableForLocked(cmd.RootPath))
-                rejection = new ErrorEvent("noResumableRun", $"'{cmd.RootPath}' için sürdürülebilir bir run yok.");
+                rejection = new ErrorEvent("noResumableRun", $"No resumable run for '{cmd.RootPath}'.");
             else if (cmd.Mode == RunMode.RetryFailed && !IsRetryableForLocked(cmd.RootPath))
-                rejection = new ErrorEvent("noResumableRun", $"'{cmd.RootPath}' için retry edilecek failed proje yok.");
+                rejection = new ErrorEvent("noResumableRun", $"No failed projects to retry for '{cmd.RootPath}'.");
             else
             {
                 // Slot, arka plan task'ı başlamadan ÖNCE burada tutulur: ikinci bir startRun (planlama sürerken
@@ -247,23 +287,300 @@ public sealed class RunCoordinator(
     /// raporlandıktan SONRA) bu koordinatör yazar. <c>false</c> → sahiplenilecek run yok; çağıran (host) kendi
     /// ack'ini vermelidir.
     ///
-    /// <para><b>Graceful:</b> yalnız <see cref="ReadySetScheduler.RequestStop"/> — yeni dispatch yok, in-flight
+    /// <para><b>Graceful:</b> <see cref="ReadySetScheduler.RequestStop"/> — yeni dispatch yok, in-flight
     /// <c>MSBuild.exe</c> child'ları post-build copy DAHİL kendi tamamlanmalarını yapar (ortak çıktı dizini
-    /// yarım yazılmış kalmaz). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
+    /// yarım yazılmış kalmaz); [P3] bu drain penceresi boyunca CPU cap KALDIRILIR (bkz.
+    /// <see cref="DrainCapLocked"/>). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
     /// <c>projectFailed("stopped")</c> raporlanır. Terminate edilmiş Job yeni process kabul ettiği için ikisi de
     /// Continue'ya açıktır.</para>
     /// </summary>
     public bool TryRequestStop(StopKind kind)
     {
+        var warnings = new List<string>(); // [minor 1] konsol yazımı KİLİT DIŞINDA
+        bool owned = false;
         lock (_gate)
         {
-            if (!_runActive || _finishing) return false;
-            _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
-            if (kind == StopKind.Hard) innerJob.Terminate();
-            _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
-            _wake?.WakeAll();          // parked worker'lar IsDone'ı yeniden değerlendirsin
-            return true;
+            if (_runActive && !_finishing)
+            {
+                owned = true;
+                _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
+                if (kind == StopKind.Hard) innerJob.Terminate();
+                else if (_stopKind == StopKind.Graceful) DrainCapLocked(warnings); // [P3] Hard'dan SONRA gelen graceful'da anlamsız
+                _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
+                _wake?.WakeAll();          // parked worker'lar IsDone'ı yeniden değerlendirsin
+            }
         }
+        Warn(warnings);
+        return owned;
+    }
+
+    /// <summary>
+    /// [T20-b/P3 · §3] Graceful drain: cap KALDIRILIR. Graceful stop, in-flight <c>MSBuild.exe</c> child'larının
+    /// post-build copy'lerini TAMAMLAMASINA dayanır (ortak çıktı dizininde yarım yazılmış/torn DLL kalmaz) —
+    /// o pencereyi %40'lık bir HARD_CAP ile uzatmak, bir doğruluk garantisini zamanlama yarışına çevirirdi.
+    /// <para><b>Priority BURADA yazılmaz:</b> priority yalnız öncelik sırasını değiştirir (boşta bir makinede
+    /// Idle bir process tam hızda koşar), HARD_CAP ise MUTLAK bir tavandır — drain'i uzatan yarı budur, o yüzden
+    /// kaldırılan yalnız cap'tir. [final review I-1] Ama drain KARARI priority'yi de bağlar: bu noktadan sonra
+    /// priority taban değerin altına İNDİRİLEMEZ (bkz. <see cref="EffectivePriorityLocked"/>) — aksi halde
+    /// drain sürerken gelen bir <c>setPerfMode("Light")</c> in-flight child'ları Idle'a düşürebilirdi.</para>
+    /// <para><b>Hard stop yolunda çağrılmaz:</b> orada job zaten <see cref="JobObject.Terminate"/> edilmiştir,
+    /// tamamlanacak bir copy yoktur.</para>
+    /// <para>Karar run'ın GERİ KALANI için bağlayıcıdır (<see cref="_capDrained"/>): kapanan bir copy-floor
+    /// penceresi de, o sırada gelen bir <c>setPerfMode</c> de cap'i geri koyamaz.</para>
+    /// </summary>
+    private void DrainCapLocked(List<string> warnings)
+    {
+        // PerfMode taşımayan run'ın job'ına DOKUNULMAZ.
+        if (!CapWritableLocked) return;
+        // [Fix round 1] KARAR her zaman kaydedilir, YAZIM yalnız gerçekten bir cap varsa yapılır. Bayrağı
+        // cap'siz (Full) profilde atlamak, drain sürerken gelen canlı bir setPerfMode("Light")'ın cap:40 yazıp
+        // "torn DLL yok" penceresini geri açmasına izin verirdi — kaldırılacak bir şey olmaması, kararın
+        // geçersiz olduğu anlamına gelmez.
+        _capDrained = true;
+        if (_activePerf is { CpuCapPercent: not null }) TryWriteCapLocked(null, warnings);
+    }
+
+    /// <summary>
+    /// [T20-b/P3 · fix round 1] "Cap'e ŞU AN yazılabilir mi" kuralının TEK yeri. Eskiden aynı kural dört ayrı
+    /// noktada (drain · efektif cap · pencere aç/kapa · cap-aktif sorgusu) üç farklı biçimde yazılıydı ve biri
+    /// güncellenirken diğerlerinin sessizce ayrışması işten değildi. İki koşul: (1) bu run cap/priority'yi
+    /// GERÇEKTEN uygulamış olmalı — PerfMode taşımayan run job'a hiç dokunmaz ve run sınırını geçen bir yazım
+    /// sonraki run'ın profilini ezerdi; (2) graceful drain başlamamış olmalı — o karar run'ın geri kalanı için
+    /// bağlayıcıdır.
+    /// <para>[final review I-1] Priority yarısı da BU predicate'e bağlıdır (<see cref="EffectivePriorityLocked"/>):
+    /// kural iki yolda ayrışmasın diye kapı tek yerde durur — orada nötrleme "cap yok" değil "tabandan kötü
+    /// değil" biçimindedir.</para>
+    /// </summary>
+    private bool CapWritableLocked => _perfApplied && !_capDrained;
+
+    /// <summary>
+    /// [T20-b/K11] KOŞARKEN perf profilini değiştirir (<c>setPerfMode</c>). <b>Canlı değişen YALNIZ CPU cap +
+    /// priority'dir</b>: worker'lar run başında bir kez yaratılır (bkz. <see cref="RunSegmentAsync"/>'in worker
+    /// dizisi) ve dinamik bir slot mekanizması YOKTUR — yeni profilin paralelliği ancak BİR SONRAKİ run'da
+    /// geçerli olur. App bu ayrımı kullanıcıya konsol notuyla söyler.
+    /// <para>[Fix round 1 — KÖK 1] Cap HENÜZ uygulanmamışken (plan hâlâ kuruluyor) gelen niyet KAYBOLMAZ:
+    /// <see cref="_pendingPerf"/>'e yazılır ve run başlarken komuttaki <see cref="StartRunCommand.PerfMode"/>'u
+    /// ezer. Hiç aktif run yokken NO-OP'tur: kısılacak bir MSBuild child'ı yoktur ve profil zaten bir sonraki
+    /// <c>startRun</c> ile gelecektir — aksi halde idle bir Supervisor'ın inner job'ında sahibi olmayan (ve
+    /// hiçbir run sonunun geri almayacağı) bir cap kalırdı.</para>
+    /// </summary>
+    public void ApplyPerfMode(PerfProfile profile)
+    {
+        var warnings = new List<string>();
+        lock (_gate)
+        {
+            if (!_runActive) return;                                  // sahipsiz cap bırakma
+            if (_perfApplied) ApplyPerfLocked(profile, warnings);     // canlı: cap + priority
+            else _pendingPerf = profile;                              // planlama penceresi: run başında uygulanacak
+        }
+        Warn(warnings);
+    }
+
+    /// <summary>
+    /// [T20-b/K11] Profilin cap + priority yarısını inner job'a yazar ve GERÇEKTEN yürürlükte olan cap'i döner
+    /// (yazım başarısızsa <c>null</c> — <c>runStarted</c> ve konsol satırı bu değeri raporlar, istenen değeri
+    /// değil).
+    /// <para>[Fix round 1 — KÖK 2] İki yazım BAĞIMSIZDIR ve ayrı try/catch'lerdedir: cap yazımı patlarsa
+    /// priority yazımı YİNE denenir. Eskiden tek try içindeydiler ve bir cap hatası K11'in priority yarısını
+    /// sessizce düşürüyordu (release yolunda daha kötüsü: job Idle'a çakılı kalırdı).</para>
+    /// </summary>
+    private int? ApplyPerfLocked(PerfProfile profile, List<string> warnings)
+    {
+        _activePerf = profile; // [P3] copy penceresi kapanınca buraya dönülür
+        return WritePerfLocked(profile, warnings);
+    }
+
+    /// <summary>
+    /// [T20-b/P3 · fix round 1] Bir profili TABAN SÜZGECİNDEN geçirip job'a yazan TEK nokta (run başı + canlı
+    /// <c>setPerfMode</c> + copy penceresinin açılışı ve kapanışı aynı buradan geçer). Yazım sırası cap → priority
+    /// olarak SABİTTİR ve dönen değer GERÇEKTEN yürürlükte olan cap'tir (yazım patlarsa <c>null</c>):
+    /// <c>runStarted</c> ve konsol satırı istenen değeri değil bunu raporlar.
+    /// </summary>
+    private int? WritePerfLocked(PerfProfile profile, List<string> warnings)
+    {
+        int? effectiveCap = EffectiveCapLocked(profile.CpuCapPercent);
+        bool capWritten = TryWriteCapLocked(effectiveCap, warnings);
+        TryWritePriorityLocked(EffectivePriorityLocked(profile.Priority), warnings);
+        return capWritten ? effectiveCap : null;
+    }
+
+    /// <summary>
+    /// [T20-b/P3] Job'a GERÇEKTEN yazılacak cap. İki kural: (1) graceful drain'den sonra cap YOKTUR; (2) açık
+    /// bir copy-contention penceresinde taban değerin ALTINA inilmez — canlı bir <c>setPerfMode</c>, sıkışmış
+    /// bir post-build copy'yi tam ortasında yeniden kısamaz (o copy zaten MSB3027 sınırına yaklaşmıştır).
+    /// Pencere kapalıyken (normal hâl) istenen değeri AYNEN döndürür.
+    /// </summary>
+    private int? EffectiveCapLocked(int? capPercent)
+    {
+        if (!CapWritableLocked) return null;
+        return _copyFloorDepth > 0 && capPercent is { } cap && cap < PerfProfile.CopyPhaseFloorPercent
+            ? PerfProfile.CopyPhaseFloorPercent
+            : capPercent;
+    }
+
+    /// <summary>
+    /// [T20-b/P3 · fix round 1 · final review I-1] <see cref="EffectiveCapLocked"/>'ın priority SİMETRİĞİ:
+    /// priority taban değerin (<see cref="PerfProfile.CopyPhaseFloorPriority"/>) ALTINA indirilmez. Tavanı
+    /// gevşetip child'ı Idle'da bırakmak floor'un yarısını etkisiz kılardı — yüklü bir makinede Idle bir
+    /// process, tavanı serbest olsa bile zamanlayıcıdan sıra alamaz.
+    /// <para><b>[final review I-1] Taban İKİ hâlde yürürlüktedir</b> ve kural cap ile AYNI predicate'e
+    /// (<see cref="CapWritableLocked"/>) bağlanmıştır — yeni bir dal yok: (1) açık bir copy-contention
+    /// penceresi; (2) graceful drain. Drain'in TAMAMI zaten "copy bitsin" penceresidir
+    /// (<see cref="DrainCapLocked"/>), dolayısıyla o karardan sonra gelen canlı bir <c>setPerfMode("Light")</c>
+    /// in-flight child'ları Idle'a İNDİREMEZ. Eskiden bu kapı yalnız cap tarafında vardı: Stop'a basıldıktan
+    /// sonra perf chip'i canlı kaldığı için <c>Full</c>/<c>Balanced</c> koşan bir run drain sırasında Idle'a
+    /// düşürülebiliyor, "torn DLL yok" garantisinin yarısı korunmuyordu.</para>
+    /// <para>Cap'ten TEK farkı yön: cap için nötr değer "cap yok" (<c>null</c>), priority için "tabandan kötü
+    /// değil" — istenen değer zaten tabandan İYİYSE (ör. <c>Full</c>'ün <c>Normal</c>'i) aynen korunur, drain
+    /// gereksiz yere yavaşlatılmaz.</para>
+    /// <para>Karşılaştırma enum'un SIRASINA dayanır: <see cref="ProcessPriorityClassKind"/> yüksekten alçağa
+    /// bildirilmiştir (Normal &lt; BelowNormal &lt; Idle), yani "daha büyük" = "daha düşük öncelik".</para>
+    /// </summary>
+    private ProcessPriorityClassKind EffectivePriorityLocked(ProcessPriorityClassKind kind) =>
+        (!CapWritableLocked || _copyFloorDepth > 0) && kind > PerfProfile.CopyPhaseFloorPriority
+            ? PerfProfile.CopyPhaseFloorPriority
+            : kind;
+
+    /// <summary>
+    /// [T20-b/P3] <see cref="ICopyPhaseCpuFloor.Enter"/>: copy-contention penceresi açar. Cap taban değerin
+    /// altındaysa cap DE priority DE tabana çekilir — ve YALNIZ ilk girişte yazılır
+    /// (<see cref="_copyFloorDepth"/> ref-count). Cap yoksa (Full / PerfMode'suz run) ya da zaten tabanın
+    /// üstündeyse <c>null</c> döner: job'a HİÇ dokunulmaz. Konsol uyarısı kilit DIŞINDA yazılır.
+    /// </summary>
+    private IDisposable? EnterCopyFloor()
+    {
+        var warnings = new List<string>();
+        bool opened = false;
+        lock (_gate)
+        {
+            if (CapWritableLocked
+                && _activePerf is { CpuCapPercent: { } cap } profile && cap < PerfProfile.CopyPhaseFloorPercent)
+            {
+                opened = true;
+                // Sayaç ÖNCE artar: yazımı yapan <see cref="WritePerfLocked"/> aynı profili artık AÇIK pencere
+                // kuralıyla (taban süzgeci) değerlendirir — taban değeri burada AYRICA yazılmaz.
+                if (_copyFloorDepth++ == 0) WritePerfLocked(profile, warnings);
+            }
+        }
+        Warn(warnings);
+        return opened ? new CopyFloorWindow(this) : null;
+    }
+
+    /// <summary>
+    /// [T20-b/P3] Pencereyi kapatır: cap ve priority ancak SON çıkışta run profiline döner (sayaç sıfırlandığı
+    /// için taban süzgeci artık uygulanmaz). Drain sonrası hiçbir şey yazılmaz — cap zaten kalkmıştır ve geri
+    /// konmamalıdır; priority'nin tabanda kalması zararsızdır, drain'in tamamı zaten "copy bitsin" penceresidir
+    /// ve run sonu geri alma onu Normal'e pinler. <see cref="_perfApplied"/> düşmüşse (run kapanışı) de
+    /// yazılmaz: run sınırını geçen bir yazım, sonraki run'ın profilini ezerdi.
+    /// </summary>
+    private void ExitCopyFloor()
+    {
+        var warnings = new List<string>();
+        lock (_gate)
+        {
+            if (_copyFloorDepth > 0 && --_copyFloorDepth == 0
+                && CapWritableLocked && _activePerf is { } profile)
+                WritePerfLocked(profile, warnings);
+        }
+        Warn(warnings);
+    }
+
+    /// <summary>[T20-b/P3] Cap-farkındalı backoff'un girdisi: run'da gerçekten bir cap yürürlükte mi. Açık bir
+    /// pencerede de <c>true</c>'dur (taban da bir cap'tir), drain'den sonra <c>false</c>.</summary>
+    private bool IsCapActiveNow
+    {
+        get { lock (_gate) return CapWritableLocked && _activePerf is { CpuCapPercent: not null }; }
+    }
+
+    /// <summary>
+    /// [T20-b/P3] Core'un retry decorator'ına verilen seam. Koordinatörün KENDİSİ bu arayüzü implement etmez:
+    /// <c>Enter</c>/<c>IsCapActive</c> public bir yaşam-döngüsü yetkisi değil, tek bir run'ın iç mekanizmasıdır.
+    /// </summary>
+    private sealed class CoordinatorCpuFloor(RunCoordinator owner) : ICopyPhaseCpuFloor
+    {
+        public bool IsCapActive => owner.IsCapActiveNow;
+
+        public IDisposable? Enter() => owner.EnterCopyFloor();
+    }
+
+    /// <summary>[T20-b/P3] Tek bir copy-contention penceresinin sahibi. Dispose İDEMPOTENT'tir: aynı handle
+    /// iki kez kapatılsa bile ref-count TAM BİR KEZ düşer (aksi halde bir çift-kapatma, hâlâ kopyalayan
+    /// worker'ın tabanını altından çekerdi).</summary>
+    private sealed class CopyFloorWindow(RunCoordinator owner) : IDisposable
+    {
+        private int _closed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) == 0) owner.ExitCopyFloor();
+        }
+    }
+
+    // Cap/priority bir OPTİMİZASYONDUR: yazım hatası (ör. rate control desteklenmiyor) run'ı ÖLDÜRMEZ.
+    // [Fix round 1 — minor 1] Uyarı BURADA yazılmaz, `warnings`'e biriktirilir: bu metotlar _gate altında
+    // çağrılır ve `console` bir I/O kanalıdır — koordinatörün merkezî kilidi I/O boyunca tutulmamalıdır.
+    private bool TryWriteCapLocked(int? capPercent, List<string> warnings)
+    {
+        try { _cpu.ApplyCap(capPercent); return true; }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or ObjectDisposedException)
+        { warnings.Add("warning: cpu cap could not be applied: " + ex.Message); return false; }
+    }
+
+    private bool TryWritePriorityLocked(ProcessPriorityClassKind kind, List<string> warnings)
+    {
+        try { _cpu.ApplyPriority(kind); return true; }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or ObjectDisposedException)
+        { warnings.Add("warning: cpu priority could not be applied: " + ex.Message); return false; }
+    }
+
+    /// <summary>[Fix round 1 — minor 1] Biriktirilmiş uyarıları KİLİT DIŞINDA yazar.</summary>
+    private void Warn(List<string> warnings)
+    {
+        foreach (string line in warnings) console(line);
+    }
+
+    /// <summary>
+    /// [T20-b/K11] Run bitti → cap ve priority GERİ ALINIR. Zorunludur: inner job Supervisor'ın TÜM ömrü
+    /// boyunca yaşar (bkz. <c>Program.Main</c>'deki tek <c>CreateKillOnClose</c>), yani bırakılan bir cap
+    /// sonraki run'a ve o job'da doğacak her şeye sessizce miras kalırdı. Normal bitiş, graceful ve hard stop
+    /// AYNI yoldan (<see cref="ExecuteRunAsync"/>'in finally'si) geçer.
+    /// <para>"Geri alma" = Full profili: cap tamamen kaldırılır, priority Normal'e PİNLENİR. Priority limit
+    /// BAYRAĞININ kendisini silen bir API yoktur (bkz. <see cref="JobObject.SetPriorityClass"/>) — ama Normal'e
+    /// pinlemek pratikte bayraksız hâlle aynıdır: bayraksızken de child'lar Supervisor'ın (Normal) priority'sini
+    /// miras alırdı.</para>
+    /// <para>[Fix round 1 — KÖK 2 · Fix round 2 — YENİ 4] Her iki bayrak da KOŞULSUZ temizlenir: bunlar bir
+    /// retry defteri değil, RUN'A AİT yaşam-döngüsü işaretleridir ve run sınırını geçmemelidirler. Geri alma
+    /// yazımı başarısız olursa sinyal konsol uyarısıdır (<see cref="TryWriteCapLocked"/>/
+    /// <see cref="TryWritePriorityLocked"/> onu üretir); bayrağı ayakta tutmak, PerfMode taşımayan bir SONRAKİ
+    /// run'ın hiç dokunmadığı job'a run sonunda yazmasına yol açardı — yani "PerfMode'suz run job'a HİÇ
+    /// dokunmaz" invaryantını koşullu hale getirirdi.</para>
+    /// <para><see cref="_perfApplied"/>'ın burada (geri alma denemesinden hemen sonra) düşmesi ayrıca run'ın
+    /// KAPANIŞ PENCERESİNİ güvenli kılar: aşağıdaki <c>await pump</c> sürerken <c>_runActive</c> hâlâ true'dur
+    /// ve o aralıkta gelen bir <c>setPerfMode</c> CANLI uygulanabilseydi, geri alacak kimsesi olmayan bir cap
+    /// bırakırdı. Bayrak düştüğü için o niyet en fazla <see cref="_pendingPerf"/>'e yazılır; onu da run
+    /// kapanışının son kilidi temizler (bkz. <see cref="ExecuteRunAsync"/>).</para>
+    /// </summary>
+    private void ReleasePerf()
+    {
+        var warnings = new List<string>();
+        lock (_gate)
+        {
+            _pendingPerf = null;
+            // [P3] Copy-floor defteri de run'a AİTTİR ve run sınırını geçmez: bu noktada tüm worker'lar join
+            // olmuştur (bkz. ExecuteRunAsync'in finally'si), yani açık kalmış bir pencere olamaz — sıfırlama,
+            // beklenmedik bir yol (worker exception'ı) sayacı asılı bıraksa bile sonraki run'ı korur.
+            _activePerf = null;
+            _copyFloorDepth = 0;
+            _capDrained = false;
+            if (_perfApplied)
+            {
+                var full = PerfProfile.For(PerfMode.Full); // cap yok + Normal priority
+                TryWriteCapLocked(full.CpuCapPercent, warnings);
+                TryWritePriorityLocked(full.Priority, warnings);
+                _perfApplied = false;
+            }
+        }
+        Warn(warnings);
     }
 
     // ---------------------------------------------------------------- run
@@ -283,6 +600,12 @@ public sealed class RunCoordinator(
         }
         finally
         {
+            // [T20-b/K11 · Fix round 1 — minor 2] Cap'i EN BAŞTA geri al. Bu finally run'ın TEK huni
+            // noktasıdır (erken planFailed/msbuildNotFound dönüşleri ve beklenmeyen exception dahil); aşağıdaki
+            // `await pump` beklenmedik bir şekilde fırlarsa bile uygulanmış bir cap Supervisor ömrü boyunca
+            // SIZMAZ. Bu noktada tüm worker'lar zaten join olmuştur (RunSegmentAsync döndü), yani kısılacak bir
+            // MSBuild child'ı kalmamıştır.
+            ReleasePerf();
             // ACK BORCU: TryRequestStop true dediyse runStopped'ı yazmak BİZİM sorumluluğumuzdur — ama run,
             // runStarted'a hiç ulaşmamış olabilir (planFailed/msbuildNotFound ya da beklenmeyen bir hata; ör.
             // kullanıcı 177 projelik bir planlama sürerken Stop'a bastı). O yolda aşağıdaki finally çalışmadığı
@@ -305,6 +628,19 @@ public sealed class RunCoordinator(
                 _stopKind = null;
                 _scheduler = null;
                 _wake = null;
+                // [Fix round 2 — YENİ 1/4] Perf state'i de BURADA, `_runActive = false` ile AYNI kritik
+                // bölgede sıfırlanır. Yukarıdaki ReleasePerf() ile arada `await pump` vardır ve o aralıkta
+                // `_runActive` hâlâ true'dur: IPC dispatch loop'u ayrı thread'dedir, setPerfMode'un hiçbir
+                // run-state ön koşulu yoktur (bkz. SupervisorHost'un dispatch'i) ve o pencerede gelen bir
+                // niyet _pendingPerf'e düşerdi — temizleyeni olmadığı için BİR SONRAKİ run'ın profilini
+                // sessizce ezerdi (cap'siz olması gereken bir run capli başlardı).
+                _pendingPerf = null;
+                _perfApplied = false;
+                // [P3] ReleasePerf ile AYNI defter; o çağrı ile bu kilit arasındaki `await pump` penceresinde
+                // (_runActive hâlâ true) yeni bir pencere açılamaz — _perfApplied düştüğü için Enter NO-OP'tur.
+                _activePerf = null;
+                _copyFloorDepth = 0;
+                _capDrained = false;
             }
         }
     }
@@ -436,25 +772,43 @@ public sealed class RunCoordinator(
             StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
 
         int parallelism = Math.Max(1, cmd.Parallelism);
+        // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ (o, komutun kendi alanıdır — App aynı tablodan
+        // türetir ve Continue/RetryFailed segmentleri de onu taşır). Buradan yalnız CPU cap + priority alınır.
+        // PerfMode yoksa ya da çözülemiyorsa profil null'dır ve job'a HİÇ dokunulmaz (geriye dönük uyum).
+        PerfProfile? perf = cmd.PerfMode is { } perfModeText ? PerfProfile.TryParse(perfModeText) : null;
+        int? appliedCap = null;                 // GERÇEKTEN yürürlükte olan cap (runStarted + konsol bunu yazar)
+        var perfWarnings = new List<string>();  // [minor 1] kilit dışında yazılır
         var wake = new WakeSignal();
         lock (_gate)
         {
             _scheduler = scheduler;
             _wake = wake;
+            // [Fix round 1 — KÖK 1] Planlama penceresinde gelmiş bir setPerfMode komuttakini EZER: o,
+            // kullanıcının DAHA SONRAKİ sözüdür. Niyet burada TÜKETİLİR (bir sonraki run'a taşınmaz).
+            perf = _pendingPerf ?? perf;
+            _pendingPerf = null;
+            if (perf is { } profile) { _perfApplied = true; appliedCap = ApplyPerfLocked(profile, perfWarnings); }
             if (_stopKind is not null) scheduler.RequestStop(); // plan kurulurken gelmiş Stop
         }
+        Warn(perfWarnings);
 
         clock.Start();
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
-            plan.Configuration, elapsedAtStart));
+            plan.Configuration, elapsedAtStart, appliedCap));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
         // taşınır; burada AYRICA hesaplanmaz.
+        // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
+        // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() SEGMENT BAŞINA TAM BİR KEZ: Continue/
+        // RetryFailed her segmentte preview'ı yeniden yayınlar, item başına okuma yapılmaz. Segment 2'nin okuduğu
+        // map segment 1'in persist'lerini İÇERİR — yani derlenmiş satırların sol yarısı taze commit'e döner.
+        var builtCommits = stateStore?.Load();
         events.TryWrite(new BuildPreviewEvent(
-            [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild))]));
+            [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
+                BuildStateStore.BuiltCommitOf(builtCommits, n.Id)))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
@@ -465,11 +819,14 @@ public sealed class RunCoordinator(
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,
-            "Run {0} ({1}): {2} proje, {3} worker, {4} — her proje ayrı bir derleyici child process'i olarak derlenir; komut satırları proje loglarında.",
-            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration));
+            // [D1 review · A3] console(...) satırları KULLANICININ konsolunda görünür → İngilizce.
+            "Run {0} ({1}): {2} projects, {3} workers, {4}, {5} — each project is built as its own compiler child process; command lines are in the project logs.",
+            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
+            perf is null ? PerfNoteText.CapTextUnset : PerfNoteText.CapText(appliedCap)));
         Decide(logs, string.Format(CultureInfo.InvariantCulture,
-            "run {0} başladı: mode={1} projeler={2} parallelism={3} configuration={4} elapsedAtStart={5}ms",
-            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration, elapsedAtStart));
+            "run {0} başladı: mode={1} projeler={2} parallelism={3} configuration={4} cpuCap={5} elapsedAtStart={6}ms",
+            cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
+            perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap), elapsedAtStart));
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.
@@ -494,9 +851,12 @@ public sealed class RunCoordinator(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs, nodeById,
                 scheduler, wake, logs, events,
                 // Retry politikası Core'un [T8]; burada yalnız run'a bağlanır: onRetry hem decision.log'a hem konsola.
+                // [T20-b/P3] cpuFloor: contention penceresinde cap'i tabana yükseltir — cap'in TEK yazıcısı
+                // bu koordinatör olduğu için seam de buraya bağlanır (bkz. EnterCopyFloor/ExitCopyFloor).
                 new RetryingMsBuildInvoker(toolset.Invoker, RetryingMsBuildInvoker.DefaultBackoff,
-                    (delay, token) => Task.Delay(delay, token),
-                    onRetry: message => { Decide(logs, message); console(message); }),
+                    retryDelay ?? ((delay, token) => Task.Delay(delay, token)),
+                    onRetry: message => { Decide(logs, message); console(message); },
+                    cpuFloor: new CoordinatorCpuFloor(this)),
                 toolset.MsBuildExePath,
                 worktreeObjRoot,
                 depIssuesById, // [T54]
@@ -570,7 +930,7 @@ public sealed class RunCoordinator(
     private void Decide(RunLogWriter logs, string line)
     {
         try { logs.AppendDecision(line); }
-        catch (IOException ex) { console("decision.log yazılamadı: " + ex.Message); }
+        catch (IOException ex) { console("warning: decision.log could not be written: " + ex.Message); }
     }
 
     // ---------------------------------------------------------------- worker
@@ -762,7 +1122,7 @@ public sealed class RunCoordinator(
             DateTimeOffset.UtcNow, inc.Branch, durationMs);
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { console("build-state yazılamadı (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+        { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
 
     /// <summary>
@@ -805,7 +1165,7 @@ public sealed class RunCoordinator(
             run.StateStore.Upsert(existing with { LastResult = BuildResult.Failed, LastRunAt = DateTimeOffset.UtcNow });
         }
         catch (Exception ex)
-        { console("build-state geçersizleştirilemedi (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+        { console("warning: build-state could not be invalidated (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
 
     private string ReasonFor(MsBuildInvokeResult invoke)

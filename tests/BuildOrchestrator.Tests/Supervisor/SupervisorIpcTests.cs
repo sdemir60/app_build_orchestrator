@@ -92,6 +92,28 @@ public class SupervisorIpcTests
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
     }
 
+    // [T20-b/K11] setPerfMode ARTIK unknownCommand DEĞİL: diskriminatör kayıtlı VE dispatch edilmiş olmalı.
+    // Geçerli mod, aktif run yokken SESSİZ bir no-op'tur (uygulanacak MSBuild child'ı yoktur) — bu yüzden
+    // "tanınıyor mu" sorusu ancak İKİNCİ, çözülemeyen mod için gelen error'ın KODUYLA kanıtlanır:
+    // badPerfMode ⇒ komut dispatch edildi; unknownCommand ⇒ hiç bağlanmamış.
+    [Fact]
+    public async Task SetPerfMode_is_dispatched_and_an_unparseable_mode_answers_with_badPerfMode()
+    {
+        using var p = Process.Start(IsolatedPsi())!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+
+        await writer.WriteAsync(new SetPerfModeCommand("Light"));  // aktif run yok → hiçbir event YOK
+        await writer.WriteAsync(new SetPerfModeCommand("Turbo"));  // tanınmayan profil adı
+        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("badPerfMode", err.Code);
+        Assert.Equal("Turbo", err.Message);
+
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
     // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree
 
     /// <summary>İzole bir Supervisor: kendi logs/cache kökü + kendi worktree havuzu (kullanıcının gerçek dosyaları korunur).</summary>
