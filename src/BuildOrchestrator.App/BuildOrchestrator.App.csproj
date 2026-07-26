@@ -91,7 +91,11 @@
   <Target Name="CopySupervisorOutput" AfterTargets="Build" DependsOnTargets="_ResolveSupervisorFiles"
           Inputs="@(_SupervisorFiles)" Outputs="$(_SupervisorCopyStamp)">
     <!-- stale birikimi önle: hedef supervisor klasörünü kopya öncesi sil [it0-devir].
-         ContinueOnError: uygulama AÇIKKEN (supervisor.exe kilitli) build'i MSB3061 ile düşürmesin. -->
+         [D1 review round 2] ContinueOnError'ın GERÇEK kapsamı: silme başarısız olursa (uygulama AÇIK, exe
+         kilitli) build BURADA MSB3061 ile düşmez, uyarıya çevrilir — ama hemen aşağıdaki Copy o kilitli hedefe
+         yazamazsa build YİNE hata verir. Bu bilinçlidir: yarısı eski, yarısı yeni bir supervisor\ üretmektense
+         durulur. (Klasör her koşumda boşaltıldığı için Copy'de SkipUnchangedFiles ANLAMSIZ olurdu — atlanacak
+         dosya kalmaz; artımlılık hedef seviyesindeki Inputs/Outputs damgasıyla sağlanır.) -->
     <RemoveDir Directories="$(OutDir)$(SupervisorFolderName)" ContinueOnError="WarnAndContinue" />
     <Copy SourceFiles="@(_SupervisorFiles)"
           DestinationFiles="@(_SupervisorFiles->'$(OutDir)$(SupervisorFolderName)\%(RecursiveDir)%(Filename)%(Extension)')">

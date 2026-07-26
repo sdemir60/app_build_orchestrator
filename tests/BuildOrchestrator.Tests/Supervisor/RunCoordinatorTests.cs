@@ -1717,7 +1717,9 @@ public class RunCoordinatorTests
         // cap çağrıları FIRLADI (kaydedilmedi) ama priority'ler hem run başında hem run sonunda yazıldı.
         Assert.Equal(["prio:Idle", "prio:Normal"], governor.Calls);
         Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
-        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap uygulanamadı", StringComparison.Ordinal));
+        // [D1 review round 2] Konsol kanalındaki metin İngilizce'ye çevrildi (uygulama İngilizce-only) —
+        // assert AYNI satırı pinlemeye devam eder, gevşetilmez.
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap could not be applied", StringComparison.Ordinal));
         Assert.Equal(RunOutcome.Completed, h.Events.OfType<RunCompletedEvent>().Single().Outcome); // run ÖLMEDİ
     }
 

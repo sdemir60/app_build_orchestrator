@@ -506,14 +506,14 @@ public sealed class RunCoordinator(
     {
         try { _cpu.ApplyCap(capPercent); return true; }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or ObjectDisposedException)
-        { warnings.Add("cpu cap uygulanamadı: " + ex.Message); return false; }
+        { warnings.Add("warning: cpu cap could not be applied: " + ex.Message); return false; }
     }
 
     private bool TryWritePriorityLocked(ProcessPriorityClassKind kind, List<string> warnings)
     {
         try { _cpu.ApplyPriority(kind); return true; }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or ObjectDisposedException)
-        { warnings.Add("cpu priority uygulanamadı: " + ex.Message); return false; }
+        { warnings.Add("warning: cpu priority could not be applied: " + ex.Message); return false; }
     }
 
     /// <summary>[Fix round 1 — minor 1] Biriktirilmiş uyarıları KİLİT DIŞINDA yazar.</summary>
@@ -913,7 +913,7 @@ public sealed class RunCoordinator(
     private void Decide(RunLogWriter logs, string line)
     {
         try { logs.AppendDecision(line); }
-        catch (IOException ex) { console("decision.log yazılamadı: " + ex.Message); }
+        catch (IOException ex) { console("warning: decision.log could not be written: " + ex.Message); }
     }
 
     // ---------------------------------------------------------------- worker
@@ -1105,7 +1105,7 @@ public sealed class RunCoordinator(
             DateTimeOffset.UtcNow, inc.Branch, durationMs);
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { console("build-state yazılamadı (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+        { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
 
     /// <summary>
@@ -1148,7 +1148,7 @@ public sealed class RunCoordinator(
             run.StateStore.Upsert(existing with { LastResult = BuildResult.Failed, LastRunAt = DateTimeOffset.UtcNow });
         }
         catch (Exception ex)
-        { console("build-state geçersizleştirilemedi (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+        { console("warning: build-state could not be invalidated (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
 
     private string ReasonFor(MsBuildInvokeResult invoke)
