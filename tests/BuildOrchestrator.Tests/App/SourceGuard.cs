@@ -26,6 +26,14 @@ internal static class SourceGuard
         IReadOnlyCollection<string>? allowedFiles = null, bool skipCommentLines = false)
         => Scan(RepoPaths.SrcSourceFiles(searchPattern), RepoPaths.SrcRoot, rule, allowedFiles, skipCommentLines);
 
+    /// <summary>[T33 fix round 2] TÜM repo ağacını tarar (<c>src/</c> DIŞI dosyalar dahil — ör. kökteki
+    /// <c>Directory.Build.props</c>). MSBuild ayarları proje ağacının dışında da yaşayabildiği için
+    /// <see cref="ScanSrc"/> tek başına o yüzeyi kapsamaz.</summary>
+    public static IReadOnlyList<string> ScanRepo(
+        string searchPattern, Regex rule,
+        IReadOnlyCollection<string>? allowedFiles = null, bool skipCommentLines = false)
+        => Scan(RepoPaths.RepoSourceFiles(searchPattern), RepoPaths.RepoRoot, rule, allowedFiles, skipCommentLines);
+
     /// <summary>[fix round 2] TÜM test ağacını tarar — D8 "testte gerçek zaman beklenmez" der, yani yasak
     /// testleri de bağlar.</summary>
     public static IReadOnlyList<string> ScanTests(
@@ -104,6 +112,10 @@ internal static class SourceGuard
     public static IReadOnlyList<string> ScannedSrcFiles(string searchPattern) =>
         RepoPaths.SrcSourceFiles(searchPattern)
                  .Select(f => Path.GetRelativePath(RepoPaths.SrcRoot, f)).ToList();
+
+    public static IReadOnlyList<string> ScannedRepoFiles(string searchPattern) =>
+        RepoPaths.RepoSourceFiles(searchPattern)
+                 .Select(f => Path.GetRelativePath(RepoPaths.RepoRoot, f)).ToList();
 
     public static IReadOnlyList<string> ScannedTestFiles(string searchPattern) =>
         RepoPaths.TestSourceFiles(searchPattern)

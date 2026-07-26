@@ -84,18 +84,27 @@ public class SuccessFlourishTests
         Assert.NotEmpty(fresh);
         DispatcherPump.PumpUntil(() => fresh.All(r => r.IsLoaded), PumpTimeout);
 
+        // [fix round 2 · Important 3] POZİTİF KONTROL (kalem 3'ün ikinci sitesi): taze satırlar GERÇEKTEN
+        // yüklendi — yani ApplyGlow her birinde KOŞTU ve parıltıyı VM guard'ı engelledi. Bu assert olmadan
+        // "hiçbiri parlamadı" sonucu, satırların hiç yüklenmemiş olmasından da gelebilirdi (vacuous).
+        Assert.All(fresh, r => Assert.True(r.IsLoaded, "taze satır yüklenmedi — 'parıltı yok' sonucu vacuous olurdu"));
+
         Assert.All(fresh, r => Assert.Equal(0, r.GlowPlayCount));           // hiçbir taze satır parlamadı
         Assert.Same(doneVm, fresh[^1].ViewModel);                           // aynı done VM'i — guard hâlâ onda
         Assert.True(doneVm.GlowPlayed);
         GC.KeepAlive(window);
     }
 
-    /// <summary>[fix round 1 · Important 4] "BİR KEZ" iddiasının ŞEKLİ. Sayaç (<c>GlowPlayCount</c>) yalnız kaç kez
-    /// BAŞLATILDIĞINI ölçer; biri animasyona <c>RepeatBehavior.Forever</c> ya da <c>FillBehavior.HoldEnd</c> eklese
-    /// sayaç 1 kalır ve diğer testlerin hepsi yeşil kalırdı — oysa parıltı ya sonsuza dek yanıp sönerdi ya da
-    /// yeşil zemini üzerinde TUTARDI. Burada davranış pinlenir: parıltı KENDİ KENDİNE biter, saat bırakılır ve
-    /// zemin şeffafa döner. (Şeklin kaynak-tarafı ikinci kilidi:
-    /// <see cref="The_flourish_animation_declares_no_repeat_and_stops_filling"/>.)</summary>
+    /// <summary>[fix round 1 · Important 4 · fix round 2 · Important 1] Parıltının GÖRÜNEN sonu. Sayaç
+    /// (<c>GlowPlayCount</c>) yalnız kaç kez BAŞLATILDIĞINI ölçer; bu test ise parıltının kendi kendine bitip
+    /// zemini tabana (şeffaf) bıraktığını pinler — son keyframe'i ya da süreyi değiştirip zemini YEŞİLDE bırakan
+    /// bir drift burada RED verir.
+    ///
+    /// <para><b>Bu testin GÖREMEDİĞİ (round 1'de yanlış iddia edilmişti):</b> <c>FillBehavior</c>'ın
+    /// <c>Stop</c>→<c>HoldEnd</c> olması. Son keyframe ZATEN <c>Colors.Transparent</c>'tır
+    /// (<c>EventStreamView.xaml.cs:513-514</c>), dolayısıyla dolgu tutulsa da tutulmasa da GÖZLENEN renk aynıdır —
+    /// ikisi gözlemsel olarak ayırt edilemez. <c>FillBehavior.Stop</c>'un ve tekrar yokluğunun kilidi bu yüzden
+    /// KAYNAK tarafındadır: <see cref="The_flourish_animation_declares_no_repeat_and_stops_filling"/>.</para></summary>
     [StaFact]
     public void The_flourish_ends_by_itself_and_leaves_the_row_background_transparent()
     {
@@ -111,11 +120,13 @@ public class SuccessFlourishTests
         Assert.True(brush.HasAnimatedProperties);                           // non-vacuous: saat GERÇEKTEN dönüyor
         Assert.NotEqual(Colors.Transparent, brush.Color);                   // ve zemin GERÇEKTEN yeşil (parıltı görünür)
 
-        // Parıltı KENDİ KENDİNE bitmeli: 1.1s sonunda efektif renk tabana (şeffaf) döner. Koşul-tabanlı bekleme
-        // (D8): sabit uyku yok — renk şeffafa dönünce çıkılır, timeout yalnız güvenlik ağıdır. Drift senaryosu:
-        // son keyframe'in ya da FillBehavior'ın değişip zemini YEŞİLDE tutması → pump timeout'a düşer, assert RED.
-        // (Sonsuz tekrar — RepeatBehavior — bu ölçümle yakalanamaz; onun kilidi kaynak tarafındadır:
-        // The_flourish_animation_declares_no_repeat_and_stops_filling.)
+        // Parıltı KENDİ KENDİNE bitmeli: 1.1s sonunda renk tabana (şeffaf) döner. Koşul-tabanlı bekleme (D8):
+        // sabit uyku yok — renk şeffafa dönünce çıkılır, timeout yalnız güvenlik ağıdır. YAKALADIĞI drift:
+        // son keyframe'in/sürenin değişip zemini YEŞİLDE bırakması → pump timeout'a düşer, assert RED.
+        // YAKALAYAMADIĞI: (a) FillBehavior.HoldEnd — son keyframe zaten şeffaf olduğu için Stop ile gözlemsel
+        // olarak AYNI; (b) sonsuz tekrar (RepeatBehavior/AutoReverse) — döngü şeffaf noktadan geçtiği an bu
+        // koşul sağlanır. Her ikisinin kilidi KAYNAK tarafındadır:
+        // The_flourish_animation_declares_no_repeat_and_stops_filling.
         DispatcherPump.PumpUntil(() => brush.Color == Colors.Transparent, TimeSpan.FromSeconds(5));
 
         Assert.Equal(Colors.Transparent, brush.Color);                      // taban renge dönüldü (yeşilde asılı kalmaz)
@@ -278,10 +289,19 @@ public class SuccessFlourishTests
         Assert.Empty(offenders);
     }
 
-    /// <summary>[fix round 1 · Important 4] Şeklin kaynak-tarafı kilidi: parıltının sahibi dosyada tekrar eden bir
-    /// animasyon BEYANI olamaz (<c>RepeatBehavior</c>) ve parıltı dolgusunu bırakmak zorundadır
-    /// (<c>FillBehavior.Stop</c>). Çalışma-zamanı eşi:
-    /// <see cref="The_flourish_ends_by_itself_and_leaves_the_row_background_transparent"/>.</summary>
+    /// <summary>[fix round 1 · Important 4 · fix round 2 · Important 4] Şeklin kaynak-tarafı kilidi: parıltının
+    /// sahibi dosyada tekrar eden bir animasyon BEYANI olamaz (<c>RepeatBehavior</c> ya da <c>AutoReverse</c>) ve
+    /// parıltı dolgusunu bırakmak zorundadır (<c>FillBehavior.Stop</c>). Çalışma-zamanı eşi:
+    /// <see cref="The_flourish_ends_by_itself_and_leaves_the_row_background_transparent"/>.
+    ///
+    /// <para><b>KAPSAM SINIRI (bilinçli, dürüstçe yazılmıştır — bu guard'a olduğundan fazla güvenmeyin):</b> bu
+    /// kilit LİTERAL tabanlıdır ve yalnız <c>EventStreamView.xaml.cs</c>'i okur. Tekrar başka bir dosyadaki bir
+    /// YARDIMCININ içine saklanırsa (ör. <c>MotionTokens</c>'a "repeating glow" fabrikası eklenip buradan
+    /// çağrılırsa) ya da tekrar davranışı çalışma zamanında hesaplanırsa (değişkene atanmış bir
+    /// <c>RepeatBehavior</c>) burada YAKALANMAZ. Çalışma-zamanı testi de yakalamaz (yukarıdaki nota bakın).
+    /// Bu kalan boşluk kabul edilmiştir: dolaylı tekrar ancak yeni bir yardımcı EKLEMEKLE mümkündür ve o ekleme
+    /// kutlama sözlüğü guard'ına (<see cref="Celebration_vocabulary_lives_only_in_the_event_stream_owner"/>)
+    /// ya da success-tint guard'ına takılmadan yapılmak zorundadır.</para></summary>
     [Fact]
     public void The_flourish_animation_declares_no_repeat_and_stops_filling()
     {
@@ -290,10 +310,11 @@ public class SuccessFlourishTests
         Assert.Contains("FillBehavior.Stop", owner, StringComparison.Ordinal);      // dolgu bırakılır → yeşilde asılı kalmaz
         Assert.Single(Regex.Matches(owner, "ColorAnimationUsingKeyFrames"));        // TEK keyframe seti — ikinci bir parıltı yok
 
-        // Sonsuz/tekrarlı parıltı YASAK. Yorum satırları elenir (dosyanın §5 notu imlecin
-        // RepeatBehavior.Forever blink'inden BAHSEDER; beyan MotionTokens.CreateBlinkAnimation'dadır, burada değil).
+        // Sonsuz/tekrarlı parıltı YASAK — hem RepeatBehavior hem AutoReverse (ikincisi de "geri sar, yeniden oyna"
+        // demektir ve round 1'de kaçaktı). Yorum satırları elenir (dosyanın §5 notu imlecin RepeatBehavior.Forever
+        // blink'inden BAHSEDER; beyan MotionTokens.CreateBlinkAnimation'dadır, burada değil).
         var repeats = SourceGuard.ScanText(
-            FlourishOwners[0], owner, new Regex("RepeatBehavior", RegexOptions.Compiled), skipCommentLines: true);
+            FlourishOwners[0], owner, new Regex("RepeatBehavior|AutoReverse", RegexOptions.Compiled), skipCommentLines: true);
         Assert.Empty(repeats);
     }
 

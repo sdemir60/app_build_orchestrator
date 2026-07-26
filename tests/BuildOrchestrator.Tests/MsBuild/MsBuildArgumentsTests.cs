@@ -59,23 +59,40 @@ public class MsBuildArgumentsTests
     /// da (env değişkeni, <c>Directory.Build.props</c>) doğabilir. Komut satırındaki <c>-p:</c> global property'si
     /// MSBuild önceliğinde environment property'sini EZER — asıl risk budur ve kapalıdır; buradaki guard ise
     /// "bu değerleri üretimde başka bir yerin yazmadığını" kilitler: <c>UseSharedCompilation</c> / <c>nodeReuse</c>
-    /// / <c>MSBUILDDISABLENODEREUSE</c> literalleri TÜM <c>src/</c> ağacında (kod + csproj/props/targets) yalnız
+    /// / <c>MSBUILDDISABLENODEREUSE</c> literalleri üretim kodunda (<c>src/**.cs</c>) ve MSBuild yapılandırma
+    /// dosyalarında (<b>TÜM repo</b>: <c>*.csproj</c> · <c>*.props</c> · <c>*.targets</c>) yalnız
     /// <see cref="MsBuildArguments"/>'ta geçebilir. Kalan yüzey (kullanıcı makinesinden MİRAS gelen env) karar
-    /// kaydında açık sınırlama olarak yazılıdır.</summary>
+    /// kaydında açık sınırlama olarak yazılıdır.
+    ///
+    /// <para>[fix round 2 · Important 2] Yapılandırma kolu artık <c>src/</c>'den DEĞİL repo kökünden taranır:
+    /// kökteki <c>Directory.Build.props</c> <c>src/</c> ağacının DIŞINDADIR, yani eski hâlde props/targets kolu
+    /// <b>sıfır dosya</b> tarıyordu — flag oraya eklense pin hiç fark etmezdi. Ayrıca her kol için taramanın
+    /// dosya GÖRDÜĞÜ ayrıca assert edilir: sıfır-dosya taraması artık sessizce yeşil kalmaz, RED verir.</para></summary>
     [Fact]
-    public void The_compiler_server_switches_have_exactly_one_source_in_the_production_tree() // [T33]
+    public void The_compiler_server_switches_have_exactly_one_source_in_the_repo() // [T33]
     {
         var rule = new Regex("UseSharedCompilation|nodeReuse|MSBUILDDISABLENODEREUSE", RegexOptions.IgnoreCase);
-        string[] owner = [Path.Combine("BuildOrchestrator.Core", "MsBuild", "MsBuildArguments.cs")];
+        string srcOwner = Path.Combine("BuildOrchestrator.Core", "MsBuild", "MsBuildArguments.cs");
+        string repoOwner = Path.Combine("src", srcOwner);
 
         var offenders = new List<string>();
-        foreach (string pattern in new[] { "*.cs", "*.csproj", "*.props", "*.targets" })
-            offenders.AddRange(SourceGuard.ScanSrc(pattern, rule, owner, skipCommentLines: true));
+
+        // (a) Üretim KODU — src ağacı (testler hariç: onlar bu literalleri anlatmak için kullanır).
+        Assert.Contains(srcOwner, SourceGuard.ScannedSrcFiles("*.cs")); // tarama dosya görüyor mu
+        offenders.AddRange(SourceGuard.ScanSrc("*.cs", rule, [srcOwner], skipCommentLines: true));
+
+        // (b) MSBuild YAPILANDIRMASI — TÜM repo (kökteki Directory.Build.props dahil).
+        foreach (string pattern in new[] { "*.csproj", "*.props", "*.targets" })
+        {
+            var scanned = SourceGuard.ScannedRepoFiles(pattern);
+            if (pattern != "*.targets")                                 // *.targets bugün repoda YOK — kol boş olabilir
+                Assert.NotEmpty(scanned);                               // …ama csproj/props kolları GERÇEKTEN dosya görmeli
+            offenders.AddRange(SourceGuard.ScanRepo(pattern, rule, [repoOwner], skipCommentLines: true));
+        }
+        Assert.Contains("Directory.Build.props", SourceGuard.ScannedRepoFiles("*.props")); // kök props GERÇEKTEN taranıyor
 
         Assert.Empty(offenders);
-        // Tarama gerçekten dosya görüyor mu (boş tarama guard'ı sessizce yeşil bırakırdı) + muaf dosya GERÇEK mi.
-        Assert.Contains(owner[0], SourceGuard.ScannedSrcFiles("*.cs"));
-        Assert.Matches(rule, File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, owner[0])));
+        Assert.Matches(rule, File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, srcOwner))); // muaf dosya GERÇEKTEN eşleşiyor
     }
 
     [Fact]

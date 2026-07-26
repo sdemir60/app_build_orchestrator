@@ -26,6 +26,16 @@ internal static class RepoPaths
         Directory.EnumerateFiles(SrcRoot, searchPattern, SearchOption.AllDirectories)
                  .Where(f => !IsBuildOutput(SrcRoot, f));
 
+    /// <summary>
+    /// [T33 fix round 2] TÜM repo ağacındaki kaynak dosyalar — derleme çıktıları (<c>bin</c>/<c>obj</c>) ve
+    /// <c>.git</c> HARİÇ. Gerekçe: bazı ayarlar <c>src/</c>'nin DIŞINDA yaşar — kökteki
+    /// <c>Directory.Build.props</c> gibi. Yalnız <see cref="SrcSourceFiles"/> ile taranan bir guard, o dosyaya
+    /// eklenen bir MSBuild property'sini GÖRMEZ (tarama sessizce sıfır dosya döner).
+    /// </summary>
+    public static IEnumerable<string> RepoSourceFiles(string searchPattern) =>
+        Directory.EnumerateFiles(RepoRoot, searchPattern, SearchOption.AllDirectories)
+                 .Where(f => !IsBuildOutput(RepoRoot, f) && !IsHiddenTree(RepoRoot, f));
+
     /// <summary>[T49 fix round 2] Test ağacının kökü — D8 testleri de bağlar ("testte gerçek zaman beklenmez").</summary>
     public static string TestsRoot { get; } = Path.Combine(RepoRoot, "tests");
 
@@ -42,6 +52,13 @@ internal static class RepoPaths
     public static IEnumerable<string> AppSourceFiles(string searchPattern) =>
         Directory.EnumerateFiles(AppSrcRoot, searchPattern, SearchOption.AllDirectories)
                  .Where(f => !IsBuildOutput(AppSrcRoot, f));
+
+    /// <summary>Nokta ile başlayan araç dizinleri (<c>.git</c>, <c>.vs</c>, <c>.claude</c>, <c>.superpowers</c>) —
+    /// kaynak değildir, taramaya girmez.</summary>
+    private static bool IsHiddenTree(string root, string path) =>
+        Path.GetRelativePath(root, path)
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => segment.StartsWith('.'));
 
     private static bool IsBuildOutput(string root, string path)
     {
