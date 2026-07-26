@@ -63,10 +63,30 @@ public class StatusGlyph : Control
     private Path? _inner;
     private BuildingSpinner? _spinner;
 
+    /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="MotionGate"/>) — latch'siz kip. <b>Seam kazanımı:</b> BuildingSpinner ile aynı gerekçe.</summary>
+    private readonly MotionGate _motion;
+
     public StatusGlyph()
     {
-        Loaded += (_, _) => { HookMotionSignal(); ApplyStatus(); };
-        Unloaded += (_, _) => { UnhookMotionSignal(); StopPulse(); };
+        _motion = new MotionGate(this);
+        _motion.Changed += (_, _) => ApplyPulse();
+        Loaded += (_, _) => ApplyStatus();
+        Unloaded += (_, _) => StopPulse();
+    }
+
+    /// <summary>[W2] Motion sinyalinin TAZE okunduğu kapı (D8) — testler enjekte eder; varsayılan <c>App.Motion</c>.</summary>
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
+
+    /// <summary>[W2] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null ise <c>App.Motion</c>.</summary>
+    public Services.IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
     }
 
     public override void OnApplyTemplate()
@@ -77,24 +97,6 @@ public class StatusGlyph : Control
         _spinner = GetTemplateChild(SpinnerPart) as BuildingSpinner;
         ApplyStatus();
     }
-
-    private void HookMotionSignal()
-    {
-        // [E3 fold — subscribe-once] İdempotent abonelik (ProjectRow deseni): -= sonra += — Loaded iki kez
-        // ateşlenirse çift-abonelik (çift ApplyPulse) birikmesin.
-        if (App.Motion is { } motion)
-        {
-            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
-        }
-    }
-
-    private void UnhookMotionSignal()
-    {
-        if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-    }
-
-    private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ApplyPulse();
 
     /// <summary>DS <c>STATUS_META</c> (_ds_bundle.js:1402-1433) — statünün metin/glyph rengi.
     /// <c>discovered</c> için <c>text-faint</c>, <c>building</c> için amber ailesidir.</summary>
@@ -161,7 +163,7 @@ public class StatusGlyph : Control
     /// aksi halde her statü güncellemesinde nabız baştan alır ve "takılı" görünür.</summary>
     private void ApplyPulse()
     {
-        bool shouldPulse = Status == GraphStatus.Building && (App.Motion?.AnimationsEnabled ?? false);
+        bool shouldPulse = Status == GraphStatus.Building && _motion.Enabled;
         if (shouldPulse == _isPulsing) return;
         _isPulsing = shouldPulse;
 

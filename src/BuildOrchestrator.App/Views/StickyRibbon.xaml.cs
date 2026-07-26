@@ -60,21 +60,33 @@ public partial class StickyRibbon : UserControl
     private string? _lastBuildingSig;
     private string? _lastFailedSig;
     private AppPhase? _lastAnnouncedPhase; // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil)
-    private BuildOrchestrator.App.Services.IMotionSettings? _subscribedMotion;
+    /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="Controls.MotionGate"/>) — latch'siz kip (ProjectRow ile aynı).</summary>
+    private readonly Controls.MotionGate _motion;
 
     /// <summary>[ProjectRow deseni · D8] Motion sinyalinin TAZE okunduğu kapı — headless'ta <c>App.Motion</c> null
     /// (AnimationsEnabled=false); testler gerçek bir sweep saatini sürebilmek için bunu <c>() =&gt; true</c> ile enjekte eder.</summary>
-    public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[ProjectRow deseni] AnimationsEnabledChanged aboneliği; null ise <see cref="App.Motion"/>.</summary>
-    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings { get; set; }
+    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
+    }
 
     public StickyRibbon()
     {
+        _motion = new Controls.MotionGate(this);
         InitializeComponent();
         PART_ProgressIndicator.Background = _indicatorBrush;
         DataContextChanged += OnDataContextChanged;
         PART_ProgressTrack.SizeChanged += OnTrackSizeChanged;
+        _motion.Changed += OnAnimationsEnabledChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
@@ -96,12 +108,7 @@ public partial class StickyRibbon : UserControl
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _subscribedMotion = MotionSettings ?? App.Motion;
-        if (_subscribedMotion is { } motion)
-        {
-            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
-        }
+        // [W2] Motion aboneliği MotionGate'te (ctor'da kablolandığı için bu handler'dan ÖNCE koşar — eski sıra birebir).
         // [E5/temizlik — L2 M2] Unloaded'da VM aboneliği bırakıldığından (leak fix), reload olursa (DataContext
         // değişmeden) burada geri kurulur — idempotent (ProjectRow subscribe-once deseni).
         if (_vm is { } vm) SubscribeVm(vm);
@@ -110,8 +117,7 @@ public partial class StickyRibbon : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        if (_subscribedMotion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-        _subscribedMotion = null;
+        // [W2] Motion aboneliğini MotionGate bırakır (bu handler'dan ÖNCE).
         // [E5/temizlik — L2 M2] LEAK FIX: OnUnloaded VM PropertyChanged/CollectionChanged aboneliğini de BIRAKIR
         // (önceden yalnız motion bırakılıyordu → şerit unload olsa bile VM'e asılı kalıyordu). E3 unsubscribe deseni.
         if (_vm is { } vm) UnsubscribeVm(vm);

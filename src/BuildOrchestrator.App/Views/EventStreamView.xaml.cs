@@ -39,10 +39,18 @@ public partial class EventStreamView : UserControl
     private string _activeFull = "";
     private long _activeGenShown = -1;
 
+    /// <summary>[W2] Provider seam'i TEK yerde (<see cref="Controls.MotionGate"/>). Bu sahip yalnız TAZE OKUR —
+    /// canlı <c>AnimationsEnabledChanged</c> aboneliği bugün de YOKtur (davranış birebir korunur).</summary>
+    private readonly Controls.MotionGate _motion = new();
+
     /// <summary>[ProjectRow deseni · D8] Motion sinyalinin TAZE okunduğu kapı — headless'ta <c>App.Motion</c> null
     /// (AnimationsEnabled=false); testler gerçek bir daktilo/parıltı saatini sürebilmek için bunu <c>() =&gt; true</c>
     /// ile enjekte eder. Oluşturulan her <see cref="EventStreamRow"/>'a da geçirilir.</summary>
-    public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
     /// MainWindow enjekte eder.</summary>
@@ -309,7 +317,15 @@ public sealed class EventStreamRow : Border
     private TypewriterScheduler? _scheduler;
     private string _typeFull = "";
 
-    public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
+    /// <summary>[W2] Provider seam'i TEK yerde (<see cref="Controls.MotionGate"/>) — satır yalnız TAZE OKUR
+    /// (canlı abonelik bugün de yok). Değeri <see cref="EventStreamView"/> her satıra elle geçirir.</summary>
+    private readonly Controls.MotionGate _motion = new();
+
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[Test] Parıltının kaç kez BAŞLATILDIĞI — container recycle sonrası TEKRAR oynanmadığını
     /// (GlowPlayed guard'ı) kanıtlar.</summary>

@@ -36,11 +36,14 @@ public partial class StickyLayerList : UserControl
     // [T59] Follow-mode/seçili-karta-kaydırma orkestratörü — Metrics her SetGroups'ta yenilendiğinden burada da yenilenir.
     private FollowScrollController? _follow;
 
-    // [E4/T48 · E3 fold] Liste-frontier reveal hero (DD9: graf+liste AYNI hero) — GraphView.PlayRevealStagger deseni.
-    private IDisposable? _revealHero;
-    private int _revealGen;                  // her PlayRevealStagger yeni bir reveal kuşağı (stale release damgası)
-    private DispatcherTimer? _revealReleaseTimer;
+    // [E4/T48 · E3 fold · W2] Liste-frontier reveal hero (DD9: graf+liste AYNI hero) — hero/kuşak/release muhasebesi
+    // GraphView ile ORTAK tek yerde (RevealStagger); burada yalnız liste kademelemesi (10ms/satır, tavan 380) kalır.
+    private readonly RevealStagger _reveal = new();
     private bool _revealPending;             // SetGroups reveal'i "kurar"; container üretimi tamamlanınca oynar
+
+    /// <summary>[W2] Provider seam'i TEK yerde (<see cref="MotionGate"/>). Bu sahip yalnız TAZE OKUR — canlı
+    /// <c>AnimationsEnabledChanged</c> aboneliği bugün de YOKtur (davranış birebir korunur).</summary>
+    private readonly MotionGate _motion = new();
 
     public StickyLayerList()
     {
@@ -61,12 +64,16 @@ public partial class StickyLayerList : UserControl
         // beklerken satırlar KADEMELİ belirsin (bo-reveal). Bkz. OnGeneratorStatusChanged (deferred).
         Flow.ItemContainerGenerator.StatusChanged += OnGeneratorStatusChanged;
         // Reveal ortasında unload olursa hero'yu bırak (aksi halde bir sonraki hero sonsuza dek bloke olurdu).
-        Unloaded += (_, _) => ReleaseRevealHero();
+        Unloaded += (_, _) => _reveal.Release();
     }
 
     /// <summary>[E4/T48] Motion sinyalinin TAZE okunduğu kapı (GraphView deseni, D8) — testler enjekte eder;
-    /// null-güvenli headless varsayılan <c>App.Motion</c>.</summary>
-    public Func<bool> AnimationsEnabledProvider { get; set; } = () => App.Motion?.AnimationsEnabled ?? false;
+    /// null-güvenli headless varsayılan <c>App.Motion</c>. [W2] Depo <see cref="MotionGate"/>.</summary>
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[E4/T48/DD9] Liste reveal'inin girdiği hero-mutex; null ise <c>App.HeroMotion</c> (TAZE). Graf reveal
     /// ile AYNI key (<see cref="RevealHeroKey"/>) — co-tetiklenir, birlikte oynar (re-entrant). Testler enjekte eder.</summary>
@@ -224,17 +231,10 @@ public partial class StickyLayerList : UserControl
     /// </summary>
     internal void PlayRevealStagger()
     {
-        ReleaseRevealHero();                 // önceki hero + bekleyen release'i bırak (yeni reveal kuşağı)
-        int gen = ++_revealGen;
-
+        // [W2 fold] Önceki hero + bekleyen release'i bırak, yeni kuşağı damgala, hero'yu al (başka hero sürüyorsa
+        // animate düşer → ani sonuç). Muhasebe GraphView ile ORTAK: bkz. RevealStagger.Begin.
         var rows = CollectRows();
-        bool animate = AnimationsEnabledProvider();
-        if (animate)
-        {
-            _revealHero = ActiveHeroCoordinator?.Hero(RevealHeroKey);
-            if (ActiveHeroCoordinator is not null && _revealHero is null)
-                animate = false;             // başka bir hero aktif → ani sonuç (GraphView deseni)
-        }
+        var (animate, gen) = _reveal.Begin(AnimationsEnabledProvider(), ActiveHeroCoordinator, RevealHeroKey);
 
         double maxDelay = -1;
         for (int i = 0; i < rows.Count; i++)
@@ -244,13 +244,7 @@ public partial class StickyLayerList : UserControl
             if (delay > maxDelay) maxDelay = delay;
         }
 
-        if (_revealHero is null) return;                    // reduced/blocked → hero yok, release gerekmez
-        if (maxDelay < 0) { ReleaseRevealHero(); return; }  // hero alındı ama satır yok (savunmacı) — bekletme
-
-        var releaseAfter = TimeSpan.FromMilliseconds(maxDelay + ProjectRow.RevealMs);
-        _revealReleaseTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = releaseAfter };
-        _revealReleaseTimer.Tick += (_, _) => ReleaseRevealHeroIfCurrent(gen);
-        _revealReleaseTimer.Start();
+        _reveal.ScheduleRelease(maxDelay, ProjectRow.RevealMs, gen);
     }
 
     /// <summary>Flow'un üretilmiş <see cref="ProjectRow"/> container'ları, in-flow satır sırasında (başlıklar
@@ -278,31 +272,13 @@ public partial class StickyLayerList : UserControl
         return null;
     }
 
-    /// <summary>[E3 fix deseni] Reveal tamamlanınca hero'yu bırakan generation-guarded karar: YALNIZ tetikleyen
-    /// reveal hâlâ geçerliyse (<paramref name="gen"/> == <see cref="RevealGeneration"/>) bırakır. Superseded bir
-    /// reveal'in gecikmiş release'i mevcut reveal'in taze hero'sunu düşürmez. Test bunu doğrudan çağırır.</summary>
-    internal void ReleaseRevealHeroIfCurrent(int gen)
-    {
-        if (gen != _revealGen) return;
-        ReleaseRevealHero();
-    }
-
-    /// <summary>Reveal hero'sunu (varsa) ve bekleyen release timer'ını bırakır — yeni bir hero girebilir. Çift-
-    /// bırakma güvenli (HeroScope.Dispose idempotent).</summary>
-    private void ReleaseRevealHero()
-    {
-        if (_revealReleaseTimer is not null)
-        {
-            _revealReleaseTimer.Stop();
-            _revealReleaseTimer = null;
-        }
-        _revealHero?.Dispose();
-        _revealHero = null;
-    }
+    /// <summary>[E3 fix deseni] Reveal tamamlanınca hero'yu bırakan generation-guarded karar (bkz.
+    /// <see cref="RevealStagger.ReleaseIfCurrent"/>). Test bunu doğrudan çağırır.</summary>
+    internal void ReleaseRevealHeroIfCurrent(int gen) => _reveal.ReleaseIfCurrent(gen);
 
     // test yüzeyi (GraphView deseni)
-    internal int RevealGeneration => _revealGen;
-    internal bool HasPendingRevealRelease => _revealReleaseTimer is { IsEnabled: true };
+    internal int RevealGeneration => _reveal.Generation;
+    internal bool HasPendingRevealRelease => _reveal.HasPendingRelease;
     internal IReadOnlyList<ProjectRow> RevealRows => CollectRows();
     /// <summary>[E5/T47 test yüzeyi] Satır akışı paneli — ok-tuşu gezinme modu (DirectionalNavigation) buradan pinlenir.</summary>
     internal ItemsControl RowFlow => Flow;

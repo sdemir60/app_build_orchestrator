@@ -51,20 +51,30 @@ public partial class ProjectRow : UserControl
     private bool _hover;
     private bool _isBreathing;
     private ProjectRowState? _prevState;
-    private BuildOrchestrator.App.Services.IMotionSettings? _subscribedMotion;
+    /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
+    /// (<see cref="MotionGate"/>) — latch'siz kip: her <c>Loaded</c>'da kaynak yeniden okunur.</summary>
+    private readonly MotionGate _motion;
 
     /// <summary>[Fix wave 1 · D1 review Finding 2] Motion sinyalinin TAZE okunduğu kapı (GraphView deseni, D8) —
     /// sınıf statik <c>App.Motion</c>'a doğrudan bağlanmaz; testler gerçek bir 30fps saatini (nefes) sürebilmek
     /// için bunu <c>() =&gt; true</c> ile enjekte eder (headless'ta <c>App.Motion</c> null → hiç saat başlamazdı).</summary>
-    public Func<bool> AnimationsEnabledProvider { get; set; } =
-        () => App.Motion?.AnimationsEnabled ?? false;
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>[Fix wave 1 · D1 review Finding 2] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null
     /// ise <c>App.Motion</c> (GraphView.MotionSettings deseni).</summary>
-    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings { get; set; }
+    public BuildOrchestrator.App.Services.IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
+    }
 
     public ProjectRow()
     {
+        _motion = new MotionGate(this);
         InitializeComponent();
         PART_Root.Background = _bgBrush; // template-lokal, donmamış brush (A13.2) — 120ms renk geçişi bunu animate eder
         DataContextChanged += OnDataContextChanged;
@@ -72,6 +82,7 @@ public partial class ProjectRow : UserControl
         MouseLeave += (_, _) => SetHover(false);
         MouseLeftButtonUp += OnRowClicked;
         KeyDown += OnRowKeyDown;
+        _motion.Changed += OnAnimationsEnabledChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         // [L1] Hover ikonlarının kablajı ctor'dan EnsureActions'a taşındı — ikonlar artık ilk hover'da doğuyor.
@@ -133,14 +144,8 @@ public partial class ProjectRow : UserControl
     // ---------------------------------------------------------------- lifecycle
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // [Fix wave 1 · D1 review Minor 5] İdempotent abonelik: her Loaded'da -= sonra += — bir kontrol
-        // unload/reload olursa çift abonelik (ve çift ApplyBreathing) birikmesin.
-        _subscribedMotion = MotionSettings ?? App.Motion;
-        if (_subscribedMotion is { } motion)
-        {
-            motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-            motion.AnimationsEnabledChanged += OnAnimationsEnabledChanged;
-        }
+        // [Fix wave 1 · D1 review Minor 5 · W2] İdempotent abonelik (her Loaded'da -= sonra +=) MotionGate'te;
+        // gate'in kablajı ctor'da kurulduğu için bu handler'dan ÖNCE koşar (eski sıra birebir).
 
         // [L1/It-5 perf] ApplyAll BURADA TEKRAR koşmaz. Üretimde satır, DataContext'i miras aldığı anda ZATEN
         // ağaçtadır (ItemsControl önce container'ı ağaca ekler, sonra şablonu uygular) → ilk ApplyAll eksiksizdir
@@ -156,8 +161,7 @@ public partial class ProjectRow : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        if (_subscribedMotion is { } motion) motion.AnimationsEnabledChanged -= OnAnimationsEnabledChanged;
-        _subscribedMotion = null;
+        // [W2] Motion aboneliğini MotionGate bırakır (bu handler'dan ÖNCE — kablaj sırası eskisiyle birebir).
         StopBreathing(); // GraphView deseni: durum building'i terk edince / unload'da clock serbest
     }
 

@@ -1,11 +1,10 @@
-using System.Collections.Specialized;
+﻿using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
@@ -18,67 +17,42 @@ namespace BuildOrchestrator.App.Views;
 /// (<see cref="RunViewModel.IsWorktreeForced"/>) ZORUNLU/disabled'dır. Üç durum açıklaması + source satırı BİREBİR
 /// design metnidir. Hedef listesi auto ("{ad} (new)") + mevcut worktree'lerdir; hover'da çöp kutusu siler
 /// (<see cref="RunViewModel.DeleteWorktreeAsync"/>).
+///
+/// <para><b>[W2]</b> <see cref="IsOpen"/> DP'si + açılış (tazele → pop-in → odağı içeri) + Esc →
+/// <c>CloseRequested</c> + VM takası <see cref="PopoverBase"/>'e taşındı (BranchPopover ile birebir kopyaydı);
+/// burada yalnız WORKTREE'ye özel olan kalır (forced/disabled switch, üç durum metni, hover'da çöp kutusu).</para>
 /// </summary>
-public partial class WorktreePopover : UserControl
+public partial class WorktreePopover : PopoverBase
 {
     private const double RowHeight = 28;
     private const double RowGap = 8;
     private const double IconSlot = 12;
 
-    private RunViewModel? _vm;
     private bool _syncing; // switch'i programatik güncellerken Checked/Unchecked geri-tetiklemesini engeller
 
     public WorktreePopover()
     {
         InitializeComponent();
-        DataContextChanged += OnDataContextChanged;
         PART_Switch.Checked += OnSwitchToggled;
         PART_Switch.Unchecked += OnSwitchToggled;
         AutomationProperties.SetName(PART_Switch, AccessibilityNames.WorktreeSwitch);
-        Loaded += (_, _) => Refresh();
     }
 
-    /// <summary>[E5/T46] Popover içinde Esc — ActionBar popover'ı kapatır + odağı chip'e döndürür (ayrı HWND →
-    /// pencere Esc zinciri buraya ulaşmaz).</summary>
-    public event Action? CloseRequested;
+    /// <summary>[E5/T47] Açılışta odak: ilk etkileşimli öğe = "Build in worktree" switch'i.</summary>
+    protected override UIElement InitialFocusTarget => PART_Switch;
 
-    public static readonly DependencyProperty IsOpenProperty = DependencyProperty.Register(
-        nameof(IsOpen), typeof(bool), typeof(WorktreePopover),
-        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, OnIsOpenChanged));
-
-    public bool IsOpen { get => (bool)GetValue(IsOpenProperty); set => SetValue(IsOpenProperty, value); }
-
-    /// <summary>[E5/T46] Esc → popover'ı kapat (BranchPopover deseni).</summary>
-    protected override void OnKeyDown(KeyEventArgs e)
+    protected override void SubscribeVm(RunViewModel vm)
     {
-        if (e.Key == Key.Escape) { CloseRequested?.Invoke(); e.Handled = true; return; }
-        base.OnKeyDown(e);
+        ArgumentNullException.ThrowIfNull(vm);
+        vm.PropertyChanged += OnVmPropertyChanged;
+        vm.Worktrees.CollectionChanged += OnWorktreesChanged;
     }
 
-    private static void OnIsOpenChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    protected override void UnsubscribeVm(RunViewModel vm)
     {
-        var popover = (WorktreePopover)d;
-        if (e.NewValue is not true) return;
-        popover.Refresh();
-        PopIn.Play(popover);
-        // [E5/T47] Açılınca odak İÇERİ (ilk etkileşimli öğe = "Build in worktree" switch'i) — BranchPopover deseni.
-        popover.Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => popover.PART_Switch.Focus()));
-    }
-
-    private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
-    {
-        if (_vm is not null)
-        {
-            _vm.PropertyChanged -= OnVmPropertyChanged;
-            _vm.Worktrees.CollectionChanged -= OnWorktreesChanged;
-        }
-        _vm = e.NewValue as RunViewModel;
-        if (_vm is not null)
-        {
-            _vm.PropertyChanged += OnVmPropertyChanged;
-            _vm.Worktrees.CollectionChanged += OnWorktreesChanged;
-        }
-        Refresh();
+        ArgumentNullException.ThrowIfNull(vm);
+        vm.PropertyChanged -= OnVmPropertyChanged;
+        vm.Worktrees.CollectionChanged -= OnWorktreesChanged;
     }
 
     private void OnWorktreesChanged(object? sender, NotifyCollectionChangedEventArgs e) => Refresh();
@@ -97,16 +71,18 @@ public partial class WorktreePopover : UserControl
 
     private void OnSwitchToggled(object sender, RoutedEventArgs e)
     {
-        if (_syncing || _vm is null) return;
-        if (_vm.IsWorktreeForced) { _syncing = true; PART_Switch.IsChecked = true; _syncing = false; return; } // zorunlu → kapatılamaz
-        _vm.UseWorktree = PART_Switch.IsChecked == true;
+        if (_syncing || Vm is not { } vm) return;
+        if (vm.IsWorktreeForced) { _syncing = true; PART_Switch.IsChecked = true; _syncing = false; return; } // zorunlu → kapatılamaz
+        vm.UseWorktree = PART_Switch.IsChecked == true;
     }
+
+    protected override void RefreshContent() => Refresh();
 
     private void Refresh()
     {
-        if (_vm is null) return;
-        bool forced = _vm.IsWorktreeForced;
-        bool on = _vm.UseWorktree;
+        if (Vm is not { } vm) return;
+        bool forced = vm.IsWorktreeForced;
+        bool on = vm.UseWorktree;
 
         _syncing = true;
         PART_Switch.IsChecked = on;
@@ -123,7 +99,7 @@ public partial class WorktreePopover : UserControl
         // source satırı (BuildApp.jsx:1157).
         PART_Source.Text = !on
             ? "working directory — local changes included"
-            : string.Create(CultureInfo.InvariantCulture, $"committed HEAD ({_vm.Branch}) → {_vm.EffectiveWorktreeName}");
+            : string.Create(CultureInfo.InvariantCulture, $"committed HEAD ({vm.Branch}) → {vm.EffectiveWorktreeName}");
 
         PART_TargetSection.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         if (on) BuildTargetRows();
@@ -131,26 +107,26 @@ public partial class WorktreePopover : UserControl
 
     private void BuildTargetRows()
     {
-        if (_vm is null) return;
+        if (Vm is not { } vm) return;
         PART_TargetRows.Children.Clear();
 
         // auto satırı: "{autoName} (new)" · note "auto" · seçili = WorktreeName==null (BuildApp.jsx:890).
-        string autoName = RunViewModel.AutoWorktreeName(_vm.Branch, _vm.Worktrees);
+        string autoName = RunViewModel.AutoWorktreeName(vm.Branch, vm.Worktrees);
         PART_TargetRows.Children.Add(TargetRow(
             string.Create(CultureInfo.InvariantCulture, $"{autoName} (new)"), "auto",
-            selected: _vm.WorktreeName is null, onPick: () => Choose(null), onDelete: null));
+            selected: vm.WorktreeName is null, onPick: () => Choose(null), onDelete: null));
 
-        foreach (var wt in _vm.Worktrees)
+        foreach (var wt in vm.Worktrees)
         {
             string name = wt.Name;
             PART_TargetRows.Children.Add(TargetRow(
                 name, wt.Branch, // not = worktree'nin branch'i (Worktree kaydında ayrı "note" yok)
-                selected: string.Equals(_vm.WorktreeName, name, StringComparison.Ordinal),
-                onPick: () => Choose(name), onDelete: () => _ = _vm.DeleteWorktreeAsync(name)));
+                selected: string.Equals(vm.WorktreeName, name, StringComparison.Ordinal),
+                onPick: () => Choose(name), onDelete: () => _ = vm.DeleteWorktreeAsync(name)));
         }
     }
 
-    private void Choose(string? name) => _vm!.WorktreeName = name; // null = auto
+    private void Choose(string? name) => Vm!.WorktreeName = name; // null = auto
 
     private Border TargetRow(string name, string note, bool selected, Action onPick, Action? onDelete)
     {
