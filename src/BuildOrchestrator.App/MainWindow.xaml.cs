@@ -48,9 +48,18 @@ public partial class MainWindow : Window
     // (her 200ms tick'te BuildLayerGroups'u yeniden kurmamak için yalnız topoloji değişiminde tazelenir).
     private IReadOnlyList<ProjectRowViewModel> _orderedRows = [];
 
-    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console)
+    /// <param name="resourceScope">
+    /// [T49 FINAL PASS] ÜRETİMDE null. Pencerenin token'ları (bkz. aşağıdaki <c>FindResource</c>) üretimde
+    /// <c>Application.Resources</c>'tan çözülür — App.xaml'in merge zinciri. Headless realize testinde
+    /// <see cref="Application"/> YOKTUR ve bir <see cref="Window"/>'un kaynak zincirine dışarıdan girmenin başka
+    /// yolu yoktur (üstünde ebeveyn yok); test AYNI zinciri (Motion→Tokens→Icons→Controls) buradan enjekte eder.
+    /// Bu dikiş olmadan MainWindow.xaml hiçbir testte realize EDİLEMEZ — c6e9a21'in launch-fatal sınıfının
+    /// (Double token → GridLength/Thickness) testsiz kalan son kökü buydu.
+    /// </param>
+    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console, ResourceDictionary? resourceScope = null)
     {
         InitializeComponent();
+        if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _engine = engine;
         _vm = vm;
         _console = console;
@@ -196,7 +205,9 @@ public partial class MainWindow : Window
 
         // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
         // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
-        Application.Current.SessionEnding += OnSessionEnding;
+        // [T49 FINAL PASS] Null-kontrol yalnız headless realize testi içindir (orada Application YOKTUR); üretimde
+        // Application.Current her zaman kuruludur ve abonelik AYNEN kurulur.
+        if (Application.Current is { } app) app.SessionEnding += OnSessionEnding;
 
         SetupKeyboardShortcuts();
         _ = RunConsolePumpAsync();
@@ -685,7 +696,7 @@ public partial class MainWindow : Window
     /// iptal edilen (tepsiye küçülen) kapatmalardan etkilenmez.</summary>
     protected override void OnClosed(EventArgs e)
     {
-        Application.Current.SessionEnding -= OnSessionEnding; // [M-3 fix wave]
+        if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
         _hotkey?.Dispose();
         _tray?.Dispose();
         base.OnClosed(e);

@@ -44,6 +44,9 @@ internal static class DsResources
         return (ResourceDictionary)XamlReader.Parse(xaml);
     }
 
+    /// <summary>Üretimdeki App.xaml merge sırası (AppResourcesMergeTests bunu ayrıca pinler).</summary>
+    private static readonly string[] MergeChain = ["Motion.xaml", "Tokens.xaml", "Icons.xaml", "Controls.xaml"];
+
     /// <summary>
     /// Uygulamanın merge zincirinin AYNISINI (Motion → Tokens → Icons → Controls) taşıyan bir kaynak kapsamı.
     /// Sıra üretimdeki App.xaml ile birebir aynıdır — bir stil yanlış sırada çözülüyorsa test de görmelidir.
@@ -51,9 +54,18 @@ internal static class DsResources
     public static Border NewHost()
     {
         var host = new Border();
-        foreach (string name in new[] { "Motion.xaml", "Tokens.xaml", "Icons.xaml", "Controls.xaml" })
-            host.Resources.MergedDictionaries.Add(Load(name));
+        foreach (string name in MergeChain) host.Resources.MergedDictionaries.Add(Load(name));
         return host;
+    }
+
+    /// <summary>[T49 FINAL PASS] Aynı zincirin ÇIPLAK sözlük hâli — bir <see cref="Window"/>'un üstünde ebeveyn
+    /// olmadığı için ona host verilemez; kaynak kapsamı doğrudan <c>Window.Resources</c>'a enjekte edilir
+    /// (bkz. <c>MainWindow</c> ctor'ının <c>resourceScope</c> parametresi).</summary>
+    public static ResourceDictionary NewScope()
+    {
+        var scope = new ResourceDictionary();
+        foreach (string name in MergeChain) scope.MergedDictionaries.Add(Load(name));
+        return scope;
     }
 
     /// <summary>Kontrolü host'a koyar, ekran dışı bir pencerede gösterir ve şablonunu uygular — DynamicResource
