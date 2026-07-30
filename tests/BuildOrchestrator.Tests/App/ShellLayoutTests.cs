@@ -65,9 +65,28 @@ public class ShellLayoutTests
         Assert.Equal(Visibility.Collapsed, shell.GraphHost.Visibility);
     }
 
+    /// <summary>
+    /// [A13/T3b · b11 fix] ÖNCEKİ hâl TOTOLOJİKTİ: <c>Assert.Equal(DsSplitter.GrabBand, col.Width)</c> sabiti
+    /// KENDİSİYLE kıyaslıyordu — <c>GrabBand</c> 7'den 40'a değişse bile bu satır YEŞİL kalırdı (üretim
+    /// kusuruna kör). Otorite — design-v1 README §2.2 (Splitter'lar, BİREBİR): <i>"7px tutma alanı, görünür
+    /// kısım 1px çizgi"</i>. Beklenen değer artık bu OTORİTE LİTERALİDİR, üretim sabitinden OKUNMAZ.
+    ///
+    /// <para><b>Ayırt edicilik (kural 1, kanıtlandı):</b> <c>DsSplitter.GrabBand</c> geçici olarak 40'a
+    /// çekilip süit koşturuldu → bu test KIRMIZI düştü (<c>Assert.Equal(7.0, DsSplitter.GrabBand)</c>
+    /// başarısız), eski totolojik hâliyle YEŞİL kalırdı. Değişiklik sonra geri alındı — bkz. T3b raporu.</para>
+    ///
+    /// <para>İkinci, AYRI bir iddia: sabitin GERÇEKTEN kullanıldığı (kolon genişliği / çizgi kalınlığı GrabBand'e
+    /// eşit) — bu olmadan yalnız "7.0 sabittir" iddiası neyin kontrol edildiğini kanıtlamaz (brief'in b11
+    /// notu: "İki iddia ayrılmazsa totoloji geri gelir").</para>
+    /// </summary>
     [StaFact]
-    public void Splitter_grab_band_is_seven_pixels_with_a_one_pixel_visible_line()
+    public void Splitter_grab_band_is_seven_pixels_against_design_v1_not_against_itself()
     {
+        // (1) OTORİTE İDDİASI — literal, üretim sabitinden BAĞIMSIZ okunur.
+        Assert.Equal(7.0, DsSplitter.GrabBand);
+        Assert.Equal(1.0, DsSplitter.LineThickness);
+
+        // (2) KULLANIM İDDİASI — sabit gerçekten kolon genişliğine/çizgi kalınlığına uygulanmış mı.
         var col = new DsSplitter { LineOrientation = SplitterLine.Vertical };
         Assert.Equal(DsSplitter.GrabBand, col.Width);          // 7px kavrama alanı (dikey ayraç)
         Assert.Equal(DsSplitter.LineThickness, col.Line.Width); // ortada 1px görünür çizgi
