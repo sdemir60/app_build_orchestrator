@@ -136,6 +136,17 @@ public partial class MainWindow : Window
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
+        // [A13/T2 · 2.1] design-v1 §2.1 title-bar bağlamı. AYRI bir abonelik (persist'le AYNI dört alanı dinler
+        // ama ONA BAĞLANMAZ): OnWorkflowPreferenceChanged'in tek sorumluluğu kalıcı duruma yazmaktır, görsel
+        // tazeleme oraya karışmamalı. Seed ATAMALARINDAN SONRA kurulur ve hemen bir kez elle sürülür — böylece
+        // açılışta hatırlanan repo/branch başlıkta ZATEN doğrudur (seed'ler yukarıda, abonelikten önce akıyor).
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(RunViewModel.RootPath) or nameof(RunViewModel.Branch)
+                or nameof(RunViewModel.UseWorktree) or nameof(RunViewModel.WorktreeName)) RefreshTitleContext();
+        };
+        RefreshTitleContext();
+
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
         // [D5] Aynı topoloji sinyalinde grafı da yeniden kur (SetGraph = tam yeniden inşa + reveal stagger).
@@ -547,6 +558,17 @@ public partial class MainWindow : Window
     private async void OnChooseFolder(object sender, RoutedEventArgs e)
     {
         if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);
+    }
+
+    /// <summary>[A13/T2 · 2.1] design-v1 §2.1 başlık bağlamını tazeler — karar SAF <see cref="TitleBarContext"/>'te,
+    /// burada YALNIZ uygulanır. Worktree eki boşsa öğe <c>Collapsed</c> olur: boş metin bırakmak 8px'lik marjını
+    /// yine de ödetirdi (logo/başlık hizası kayardı).</summary>
+    private void RefreshTitleContext()
+    {
+        ContextText.Text = TitleBarContext.Compose(_vm.RootPath, _vm.Branch);
+        string suffix = TitleBarContext.WorktreeSuffix(_vm.RootPath, _vm.UseWorktree, _vm.EffectiveWorktreeName);
+        ContextWorktreeText.Text = suffix;
+        ContextWorktreeText.Visibility = suffix.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>

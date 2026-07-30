@@ -33,25 +33,11 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")]
 public class MainWindowInputTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
-
-    /// <summary>MainWindowRealizeTests.NewMainWindow ile AYNI kurulum: var olmayan supervisor yolu + pencere
-    /// hiç <c>Show()</c> edilmez (Loaded/OnSourceInitialized tetiklenmez).
-    ///
-    /// <para>[fix-1 · C1] <b>Kalıcı durum store'u AÇIKÇA temp'e yönlendirilir.</b> Ölçülen yan etki: layout
-    /// düğmesine basmak <c>Shell.LayoutChanged → MainWindow.OnShellLayoutChanged → _uiState.Save(...)</c>
-    /// zincirini sürer ve bu zincir pencerenin <c>Show()</c> edilmesine BAĞLI DEĞİLDİR (abonelik ctor'da
-    /// kurulur) — yani testler KULLANICININ GERÇEK
-    /// <c>%LOCALAPPDATA%\BuildOrchestrator\ui-state.json</c> dosyasını yeniden yazıyordu. Store'u olmayan bir
-    /// klasöre vermek yeterlidir: <c>JsonUiStateStore.Load</c> dosya yoksa varsayılan durumu döndürür ve
-    /// <c>Save</c> klasörü kendisi oluşturur — temp klasörü testten sonra <see cref="TempDir"/> ile silinir.</para></summary>
-    private static (MainWindow window, RunViewModel vm) NewMainWindow(TempDir uiStateDir)
-    {
-        var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        var store = new JsonUiStateStore(Path.Combine(uiStateDir.Path, "ui-state.json"));
-        return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store), vm);
-    }
+    /// <summary>[A13/T2] Kurulum ARTIK <see cref="MainWindowHost"/>'ta (kopya YASAK). Gerekçesi orada:
+    /// motor asla doğmaz, pencere hiç <c>Show()</c> edilmez ve kalıcı durum store'u ZORUNLU olarak temp'e
+    /// yönlendirilir (fix-1 · C1 — aşağıdaki parmak-izi testi bunun kanıtıdır).</summary>
+    private static (MainWindow window, RunViewModel vm) NewMainWindow(TempDir uiStateDir) =>
+        MainWindowHost.New(uiStateDir);
 
     private static IReadOnlyList<KeyBinding> KeyBindingsOf(MainWindow window) =>
         [.. window.InputBindings.OfType<KeyBinding>()];

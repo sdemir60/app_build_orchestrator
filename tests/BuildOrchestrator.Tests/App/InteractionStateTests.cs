@@ -28,6 +28,34 @@ public class InteractionStateTests
         Assert.Equal("No events yet.", InteractionText.StreamEmpty);
     }
 
+    // ---- [A13/T2 · 2.1] Title bar bağlamı (design-v1 §2.1) — SAF karar + verbatim metin ----
+
+    [Fact]
+    public void Title_context_texts_are_verbatim()
+    {
+        Assert.Equal("no repository", TitleBarContext.NoRepository);
+        Assert.Equal("no repository", TitleBarContext.Compose("", ""));
+        Assert.Equal("OSYS · main", TitleBarContext.Compose(@"D:\Projects\Delta\OSYS", "main"));
+        Assert.Equal("· main-2", TitleBarContext.WorktreeSuffix(@"D:\OSYS", useWorktree: true, "main-2"));
+    }
+
+    [Theory] // Repo adı = kökün KLASÖR adı; sondaki ayraç(lar) yok sayılır.
+    [InlineData(@"D:\Projects\Delta\OSYS", "OSYS")]
+    [InlineData(@"D:\Projects\Delta\OSYS\", "OSYS")]
+    [InlineData("/home/dev/osys/", "osys")]
+    [InlineData("OSYS", "OSYS")]     // ayraç yok → dizenin kendisi
+    [InlineData("", "")]
+    public void The_repository_name_is_the_folder_name_of_the_root(string root, string expected)
+        => Assert.Equal(expected, TitleBarContext.RepositoryName(root));
+
+    [Fact]
+    public void The_worktree_suffix_only_appears_for_a_real_repository_with_the_worktree_on()
+    {
+        Assert.Equal("", TitleBarContext.WorktreeSuffix("", useWorktree: true, "main-2"));      // repo yok
+        Assert.Equal("", TitleBarContext.WorktreeSuffix(@"D:\OSYS", useWorktree: false, "main-2")); // worktree kapalı
+        Assert.Equal("", TitleBarContext.WorktreeSuffix(@"D:\OSYS", useWorktree: true, null));  // ad henüz yok
+    }
+
     // ---- ListInvite.Resolve kararı ----
 
     [Fact]

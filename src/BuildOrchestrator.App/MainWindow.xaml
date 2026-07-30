@@ -158,9 +158,17 @@
             </Viewbox>
             <TextBlock Text="Build Orchestrator" VerticalAlignment="Center" Margin="8,0,0,0"
                        FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
-            <TextBlock x:Name="ContextText" Text="no repository" VerticalAlignment="Center" Margin="8,0,0,0"
+            <!-- [A13/T2 · 2.1] design-v1 §2.1 bağlamı: mono 11px, gövde text-dim + worktree eki text-faint.
+                 METİN ARTIK KOD-TARAFI sürülür (MainWindow.RefreshTitleContext → TitleBarContext) — XAML'de
+                 literal YOKTUR. Eski hâlinde "no repository" burada DONMUŞTU: repo/branch/worktree hiçbir
+                 zaman başlığa ulaşmıyordu. İki AYRI TextBlock zorunlu: tek Text literali iki ton veremez. -->
+            <TextBlock x:Name="ContextText" VerticalAlignment="Center" Margin="8,0,0,0"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextDim}" />
+            <TextBlock x:Name="ContextWorktreeText" VerticalAlignment="Center" Margin="8,0,0,0"
+                       Visibility="Collapsed" TextTrimming="CharacterEllipsis"
+                       FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                       Foreground="{DynamicResource Brush.TextFaint}" />
           </StackPanel>
         </DockPanel>
       </Grid>

@@ -28,39 +28,18 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")]
 public class MainWindowRealizeTests
 {
-    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
+    /// <summary>[A13/T2] Kurulum + realize ARTIK <see cref="MainWindowHost"/>'ta (kopya YASAK — T2 üçüncü bir
+    /// kopyasını yazacaktı). Store da oraya taşındığı için bu sınıf da temp'e yazar: bu testler bugün kalıcı
+    /// duruma dokunmuyor, ama "MainWindow kuran HER test store enjekte eder" kuralının istisnası olmaz.</summary>
+    private static MainWindow NewMainWindow(TempDir temp) => MainWindowHost.New(temp).window;
 
-    /// <summary>Motor asla doğmasın: var olmayan bir supervisor yolu ile <c>StartAsync</c> zaten
-    /// <c>EngineUnavailableException</c> verir — ama bu test pencereyi hiç <c>Show()</c> etmediğinden
-    /// <c>Loaded</c> da tetiklenmez; yol iki kere kapalıdır.</summary>
-    private static MainWindow NewMainWindow()
-    {
-        var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        return new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope());
-    }
-
-    /// <summary>
-    /// [fix round 1 · A1] Pencerenin İÇERİĞİNİ realize eder — <b>ölçüldü:</b> <c>Window.Measure/Arrange</c>
-    /// gerçek bir <c>PresentationSource</c> (HWND) olmadan içeriğe HİÇ İNMEZ; caption butonlarının şablonları
-    /// bile genişlemez (<c>MinButton.ApplyTemplate()</c> sonradan hâlâ <c>true</c> döner). İçerik kökü doğrudan
-    /// ölçülüp yerleştirildiğinde ise şablonlar genişler ve <c>OnRender</c> koşar — yani <c>Background</c> gibi
-    /// RENDER-ONLY özellikler de gerçekten okunur ve yanlış tipli token orada patlar.
-    /// </summary>
-    private static FrameworkElement Realize(MainWindow window)
-    {
-        window.ApplyTemplate();
-        var content = (FrameworkElement)window.Content;
-        content.Measure(new Size(1400, 800));
-        content.Arrange(new Rect(0, 0, 1400, 800));
-        content.UpdateLayout();
-        return content;
-    }
+    private static FrameworkElement Realize(MainWindow window) => MainWindowHost.Realize(window);
 
     [StaFact]
     public void The_main_window_realizes_with_the_production_merge_chain_and_no_token_type_mismatch()
     {
-        var window = NewMainWindow();
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
 
         // Pencere seviyesindeki DynamicResource'lar: değer ANCAK okununca çözülür — bir Double token'ı
         // Brush'a (ya da tersi) veren bir sapma tam burada InvalidCastException/XamlParseException verir.
@@ -89,7 +68,8 @@ public class MainWindowRealizeTests
     [StaFact]
     public void The_title_bar_height_cast_really_runs_and_feeds_both_the_row_and_the_window_chrome()
     {
-        var window = NewMainWindow();
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
 
         // `(double)FindResource("Size.TitleBarHeight")` ctor'da KOŞTU: token bir Double DEĞİLSE (ör. GridLength'e
         // ya da Thickness'a çevrilse) ctor InvalidCastException ile patlardı — buraya hiç gelinmezdi.
@@ -105,7 +85,8 @@ public class MainWindowRealizeTests
     [StaFact]
     public void Every_dynamic_resource_key_used_by_the_title_bar_resolves_to_a_value_of_the_expected_type()
     {
-        var window = NewMainWindow();
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
         Realize(window);
 
         // Caption butonları + layout seçici + gear: stil (DynamicResource Ds.IconButton*) ve ikon geometrileri
