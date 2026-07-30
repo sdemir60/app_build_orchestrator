@@ -480,6 +480,21 @@ adımlarıdır. Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A1
 her panelde sahte bulgu üretir — o yüzden regresyon fix'i öne alındı. A13, senin gezeceğin 81 kalemi
 15-25'e indirir. A14 asıl test-düzelt döngündür.
 
+## Otorite hiyerarşisi (kalan adımlarda hangi belge bağlayıcı)
+
+Çelişkide **yukarıdaki kazanır**:
+
+| # | Belge | Ne için bağlayıcı |
+|---|---|---|
+| 1 | [`.superpowers/sdd/progress.md`](../../.superpowers/sdd/progress.md) (ledger) + `it5-records` | **Mevcut durum**: ne yapıldı, ne park edildi, hangi karar hangi ölçümle alındı |
+| 2 | [**Plan v7**](2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md) (+ `[SPIKE-AMEND 2026-07-16]`) | **PLAN OF RECORD.** Global Constraints (yasaklar) · A7 UI/UX · A8 test stratejisi · A13 fidelity & WPF kararları · PART B task ID'leri (T1-T72) |
+| 3 | [design-v1 README](2026-07-15-19-00-design-v1/README.md) | **Görsel otorite** — v7 A7 zaten "OTORİTE: design-v1" diyor: değerler, süreler, renk token'ları, kopya metinleri BİREBİR |
+| 4 | [fizibilite analizi](2026-07-15-23-34-design-wpf-feasibility-analysis.md) | A13.1 "algısal eşdeğer" sınıfı + A13.2 WPF teknik yasakları |
+| 5 | Bu playbook | Yalnız **yürütme sırası ve promptlar** — teknik otorite değil |
+
+**v2/v3/v4.x/v5/v6 planları TARİHSELDİR** — kalan adımlarda referans alınmaz. (`CLAUDE.md` hâlâ v2'yi
+gösteriyor; bu **A11'in 4. kalemi** olarak düzeltiliyor.)
+
 ## SEN NE YAPACAKSIN — sırayla
 
 1. **Yeni oturum aç** → model **Opus**, effort **low** → **A11** promptunu yapıştır → bitince "commit et".
@@ -503,19 +518,21 @@ tam olarak bu kuralın neden gerektiğini gösteriyor.)
 
 > **Durum:** It-5'in D3 (README) task'ının review'ı, `CLAUDE.md`'nin **Proje Yapısı / Mimari** bölümünde
 > koddan sapmış üç olgusal ifade buldu (dört bağımsız kanıtla kesinleştirildi). It-5'te **düzeltilmedi** —
-> kullanıcı kararı: ayrı ele alınacak.
+> kullanıcı kararı: ayrı ele alınacak. **2026-07-30'da dördüncü kalem eklendi** (kullanıcı tespiti):
+> `CLAUDE.md` mimari kaynağı olarak hâlâ **v2 plan**'ı gösteriyor, oysa uygulanan plan **v7**'dir.
 >
 > **Neden önemli:** `CLAUDE.md` her session'da otomatik olarak context'e yükleniyor. Bayat kaldığı sürece
 > onu okuyan her agent'ı yanlış yönlendirir. It-5'te bu fiilen yaşandı: D3 implementer'ı README'yi yazarken
 > CLAUDE.md ile kodun çeliştiğini görüp durmak ve sormak zorunda kaldı.
 
-**Üç kalem — neyi neyle karşılaştırıyoruz:**
+**Dört kalem — neyi neyle karşılaştırıyoruz:**
 
 | # | `CLAUDE.md`'deki ifade | Koddaki gerçek | Kanıt |
 |---|---|---|---|
 | 1 | "her projeyi **shell-out** (`dotnet build` ayrı child process) ile derler" ve Supervisor satırındaki aynı ifade | Kod **hiçbir yerde `dotnet build` çalıştırmıyor**; `MSBuild.exe`'yi vswhere ile çözüp çalıştırıyor | `Core/MsBuild/MsBuildResolver.cs:21-22` (vswhere → `MSBuild\**\Bin\MSBuild.exe`) · `Supervisor/Program.cs:362` yorumu birebir "`[D10] dotnet build DEĞİL, MSBuild.exe`" + `:364` `new MsBuildInvoker(..., location.MsBuildExePath)` · `Core/MsBuild/MsBuildInvoker.cs:68` o exe'yi inner job'a launch ediyor · **kesin belirleyici:** `Core/MsBuild/MsBuildArguments.cs:10-12`'deki `-nodeReuse:false` ve `-clp:Summary` `dotnet build`'in switch'leri değildir |
 | 2 | Proje tablosunda `tests/BuildOrchestrator.Tests` → **`net10.0`** (xUnit) | Gerçekte **`net10.0-windows`** + `UseWPF` (WPF testleri var: realize testleri, STA thread testleri) | `tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj` |
 | 3 | "**DURUM:** Proje sıfırdan yeniden kuruluyor… **Kod henüz yoktur**; bu tablo hedef yapıdır." | Kod var ve olgun: It-0→It-5 tamamlandı, **1430 test** yeşil, publish hattı çalışıyor | `git log` · `.superpowers/sdd/progress.md` · `dotnet test` |
+| 4 | Başlık "Proje Yapısı / Mimari **(hedef — v2 plan)**" ve gövdedeki "onaylı **v2 plan**'a dayanır: `2026-06-27-22-46-build-orchestrator-yeni-plan.md`" (satır 7 + 9) | Uygulanan plan **v7**'dir: `2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md`. v2, v3→v4→v4.1→v4.2→v4.3→v5→v6→v7 zincirinin ilk halkası — **tarihsel**. Bugünkü yürütme kaynağı v7 (+ `[SPIKE-AMEND 2026-07-16]`) ve onun **A7 (UI otoritesi = design-v1)** / **A13 (fidelity & WPF kararları)** / **Global Constraints** bölümleridir | Playbook'un tamamı v7'yi referans veriyor · `.superpowers/sdd/progress.md` v7 task ID'leriyle (T1-T72) yürüdü · v7 PART C It-0→It-5 = fiilen uygulanan yol haritası |
 
 > **Not:** `-p:UseSharedCompilation=false -nodeReuse:false` flag'lerinden bahseden satır **doğrudur**
 > (bkz. [t33-decision.md](2026-07-26-07-38-t33-decision.md)) — yalnız o flag'leri taşıyan komutun
@@ -527,20 +544,28 @@ tam olarak bu kuralın neden gerektiğini gösteriyor.)
 Şu dosyaları oku:
 1. CLAUDE.md (proje kökü) — özellikle "Proje Yapısı / Mimari (hedef — v2 plan)" bölümü
 2. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A11" bölümü (karşılaştırma tablosu orada)
+3. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md — YALNIZ başlık + "v7 KARAR
+   KAYDI" + "Global Constraints" + PART C (kalem 4'ün doğrulaması için; tamamını okumana gerek yok)
 
 DURUM: It-0..It-5 main'de, main == origin/main, build 0/0, suite 1430 passed / 2 skipped / 0 failed.
 v7'nin planlı kod iterasyonları bitti.
 
-Görev: CLAUDE.md'deki ÜÇ olgusal ifade koddan sapmış; düzelt.
+Görev: CLAUDE.md'deki DÖRT olgusal ifade koddan/plandan sapmış; düzelt.
 1) "her projeyi shell-out (dotnet build ayrı child process) ile derler" (hem mimari ilkeler hem Supervisor
    satırı) → kod dotnet build DEĞİL, vswhere ile çözülen MSBuild.exe çalıştırıyor.
 2) Proje tablosunda tests/BuildOrchestrator.Tests TFM'i "net10.0" → gerçekte net10.0-windows + UseWPF.
 3) "DURUM: Proje sıfırdan yeniden kuruluyor... Kod henüz yoktur; bu tablo hedef yapıdır." → kod var ve
    olgun (It-0..It-5 tamam, 1430 test yeşil, publish hattı çalışıyor).
+4) Başlıktaki "(hedef — v2 plan)" ve gövdedeki "onaylı v2 plan'a dayanır: 2026-06-27-22-46-build-
+   orchestrator-yeni-plan.md" → uygulanan plan V7'dir:
+   .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (+ içindeki
+   [SPIKE-AMEND 2026-07-16] bölümü). v2 tarihsel ilk halkadır; referansı v7'ye çevir ve v2'yi istersen
+   "tarihsel" diye tek parantezde bırak. UI/görsel otorite v7 A7 üzerinden design-v1'dir
+   (.claude/outputs/2026-07-15-19-00-design-v1/README.md); WPF fidelity kararları v7 A13'tedir.
 
-ÖNCE HER İDDİAYI KODDA DOĞRULA (playbook'taki kanıtları teyit et, körlemesine uygulama). Sonra düzelt.
+ÖNCE HER İDDİAYI KODDA/PLANDA DOĞRULA (playbook'taki kanıtları teyit et, körlemesine uygulama). Sonra düzelt.
 
-KAPSAM YALNIZ BU ÜÇ OLGUSAL İFADEDİR. Dil kuralları, çıktı/özet/handoff dizin kuralları, git kuralları,
+KAPSAM YALNIZ BU DÖRT OLGUSAL İFADEDİR. Dil kuralları, çıktı/özet/handoff dizin kuralları, git kuralları,
 build/test komutları ve talimatların geri kalanı DEĞİŞMEZ. Üslup ve biçim mevcut dosyayla aynı kalsın.
 
 Ayrıca: düzeltirken "hedef yapı" dili yerine mevcut durumu anlatan bir dil kullan, ama tabloyu yeniden
@@ -549,7 +574,8 @@ tasarlama — yalnız yanlış hücreleri düzelt.
 Bitince bana neyi neye çevirdiğini dosya:satır ile göster ve commit et.
 ```
 
-**Bitti kriteri:** Üç ifade de kodla uyumlu; kapsam dışına çıkılmamış (diff yalnız o üç yeri gösteriyor).
+**Bitti kriteri:** Dört ifade de kodla/planla uyumlu; kapsam dışına çıkılmamış (diff yalnız o dört yeri
+gösteriyor) — özellikle **mimari kaynağı artık v7'yi işaret ediyor**.
 
 **Senin işin:** yok — bu adım tamamen agent'ta. Prompt'u yapıştır, bitince "commit et" de.
 
@@ -590,10 +616,12 @@ Bitince bana neyi neye çevirdiğini dosya:satır ile göster ve commit et.
 ```
 Şu dosyaları oku:
 1. .claude/handoffs/ altındaki EN YENİ handoff + işaret ettiği özet
-2. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A12" bölümü (hipotez listesi orada)
-3. .claude/outputs/2026-07-26-10-17-it5-records.md (It-5 kabul kaydı + park edilen kalemlerin tam tablosu)
-4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 / A13.2 + Ek A)
-5. .superpowers/sdd/progress.md — It-5 bölümü (en üstteki RESUME HERE; çelişkide ledger kazanır)
+2. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (PLAN OF RECORD — bu adım
+   için YALNIZ "Global Constraints" + "A7 UI/UX" + "A13 Fidelity & WPF kararları"; tamamı gerekmez)
+3. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A12" bölümü (hipotez listesi orada)
+4. .claude/outputs/2026-07-26-10-17-it5-records.md (It-5 kabul kaydı + park edilen kalemlerin tam tablosu)
+5. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 / A13.2 + Ek A)
+6. .superpowers/sdd/progress.md — It-5 bölümü (en üstteki RESUME HERE; çelişkide ledger kazanır)
 
 DURUM: It-0..It-5 main'de (tek trunk, main == origin/main). Build 0/0, suite 1430 passed / 2 skipped /
 0 failed. v7'nin planlı kod iterasyonları BİTTİ. Bu adım TEK BİR REGRESYONU kapatır — başka iş alma,
@@ -671,12 +699,15 @@ geç.
 Şu dosyaları oku:
 1. .claude/outputs/2026-07-26-10-17-visual-check-walkthrough.md (81 kalem + BÖLÜM 2 prototip karşılaştırması
    + BÖLÜM 3 It-5 görsel kalemleri) — bu adımın BİRİNCİL girdisi
-2. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; değerler ve kopya metinleri BİREBİR)
-3. .claude/outputs/2026-07-26-10-17-it5-records.md — özellikle "2. Kapanmayan / bilinçli park edilen
+2. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (PLAN OF RECORD — bu adım
+   için "Global Constraints" + "A7 UI/UX (OTORİTE: design-v1)" + "A8 Test Stratejisi" + "A13 Fidelity &
+   WPF kararları"; bir kalemin kabul ölçütü tartışmalıysa v7 bağlayıcıdır)
+3. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; değerler ve kopya metinleri BİREBİR)
+4. .claude/outputs/2026-07-26-10-17-it5-records.md — özellikle "2. Kapanmayan / bilinçli park edilen
    kalemler" tablosu (18 satır, ~60 minor)
-4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 "algısal eşdeğer" / A13.2)
-5. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır)
-6. .claude/handoffs/ altındaki EN YENİ handoff
+5. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 "algısal eşdeğer" / A13.2)
+6. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır)
+7. .claude/handoffs/ altındaki EN YENİ handoff
 
 DURUM: It-0..It-5 main'de (main == origin/main), build 0/0, suite yeşil. Kod planı bitti. Kart
 animasyonu/renklendirme regresyonu A12'de kapatıldı. Bu adımda İKİ iş var.
@@ -766,9 +797,12 @@ var · suite yeşil · main'e merge + push.
 Şu dosyaları oku:
 1. .claude/handoffs/ altındaki EN YENİ handoff + işaret ettiği özet
 2. .claude/outputs/ altındaki EN YENİ *-visual-check-residue.md (gezdiğim liste)
-3. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; değerler ve kopya metinleri BİREBİR)
-4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 "algısal eşdeğer" / A13.2)
-5. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır)
+3. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (PLAN OF RECORD — "Global
+   Constraints" + "A7 UI/UX" + "A13"; bir bulgunun kusur mu tasarım kararı mı olduğu tartışmalıysa v7 karar
+   verir. v2/v3…v6 planları TARİHSELDİR, referans alma)
+4. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; değerler ve kopya metinleri BİREBİR)
+5. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 "algısal eşdeğer" / A13.2)
+6. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır)
 
 DURUM: v7 kod planı + kapanış adımları (A11-A13) bitti; main == origin/main, suite yeşil.
 Bu bir DÜZELTME DALGASIDIR — uygulamayı kullanırken gördüğüm kusurlar aşağıda.
