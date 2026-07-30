@@ -1,4 +1,6 @@
+using System.IO;
 using System.Windows;
+using System.Windows.Markup;
 using ICSharpCode.AvalonEdit;
 using BuildOrchestrator.App.Console;
 
@@ -93,6 +95,21 @@ public class ConsoleViewTests
         view.PlayCascade(new[] { "a", "b", "c" }, buildInProgress: false);
 
         Assert.Equal("a\nb\nc\n", view.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a6] "build in progress ▮" (BİREBİR)
+
+    /// <summary>[A13/T3a · a6] design-v1 §2.5: building bir projenin logunda kaskat sonunda amber
+    /// <c>build in progress ▮</c> belirir (ConsoleView.xaml:34 <c>BuildProgressText</c>). Metin testsizdi.</summary>
+    [StaFact]
+    public void PlayCascade_with_building_project_shows_the_verbatim_build_in_progress_overlay()
+    {
+        var view = new ConsoleView();
+
+        view.PlayCascade(new[] { "log line" }, buildInProgress: true);
+
+        Assert.Equal(Visibility.Visible, view.BuildProgressOverlay.Visibility);
+        Assert.Equal("build in progress", view.BuildProgressText.Text);
     }
 
     // ---------------------------------------------------------------- [3b I-2] chunk loader GERÇEK yolu
@@ -311,5 +328,30 @@ public class ConsoleViewTests
         view.AppendNarrativeBatch("12:00:03 Sync complete — 0 changed projects\n");
         Assert.Equal(Visibility.Collapsed, view.ActiveLineOverlay.Visibility); // "ready" temizlendi
         Assert.Contains("Sync complete", view.Document.Text);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a7] ready satırının rengi (dim)
+
+    private static ResourceDictionary LoadTokens()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Tokens.xaml");
+        using var stream = File.OpenRead(path);
+        return (ResourceDictionary)XamlReader.Load(stream);
+    }
+
+    /// <summary>[A13/T3a · a7] design-v1 §2.5: idle "ready" satırı UÇTAN UCA <c>dim</c> (Brush.TextFaint) —
+    /// hem metin hem imleç. Önceki test yalnız gövde metnini ("ready") pinliyordu; renk testsizdi.</summary>
+    [StaFact]
+    public void ShowReady_paints_both_the_text_and_the_cursor_with_the_dim_token()
+    {
+        var tokens = LoadTokens();
+        var palette = ConsolePalette.FromLookup(k => tokens[k]);
+        var view = new ConsoleView();
+        view.EnableColorizer(palette);
+
+        view.ShowReady();
+
+        Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineText.Foreground);
+        Assert.Same(tokens["Brush.TextFaint"], view.ActiveCursor.Fill);
     }
 }
