@@ -30,6 +30,8 @@ public class IconGeometryTests
         // [T60] DS kontrol kütüphanesinin ihtiyaç duyduğu çizimler (StatusGlyph gövdesi + Spinner + chevron)
         "Icon.StatusRing", "Icon.StatusCheck", "Icon.StatusCross", "Icon.StatusDash", "Icon.StatusClock",
         "Icon.StatusCycle", "Icon.Spinner", "Icon.Chevron",
+        // [A13/T2 · 2.3] Chip'in `onRemove` göstergesi (_ds_bundle.js:206-220) — ham `✕` karakteri yerine çizim.
+        "Icon.ChipRemove",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —

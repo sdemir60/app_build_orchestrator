@@ -28,6 +28,9 @@ public static class AccessibilityNames
 
     // ---- Filtre / popover input'ları ----
     public const string ProjectFilter = "Filter projects";
+    /// <summary>[A13/T2 · 2.3] PROJECTS başlığındaki kaldırılabilir filtre chip'i (ikon-yalnız ✕ göstergesi
+    /// ekran okuyucuya bir şey söylemez — işlev burada tarif edilir).</summary>
+    public const string ClearFilterChip = "Clear the active filter";
     public const string BranchFilter = "Filter branches";
     public const string WorktreeSwitch = "Build in worktree";
 

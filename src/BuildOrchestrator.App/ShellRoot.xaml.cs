@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -22,11 +24,17 @@ public partial class ShellRoot : UserControl
     // referans RightContent DP'sinden alınır, Esc handler'ı kod-tarafı bağlanır.
     private readonly TextBox _projectFilter;
 
+    // [A13/T2 · 2.3] PROJECTS başlığındaki kaldırılabilir filtre chip'i — LeftContent alt-namescope'unda
+    // olduğundan XAML'de adlanamaz/handler bağlanamaz; kod-tarafı kurulur (filtre TextBox'ıyla AYNI desen).
+    private readonly ToggleButton _filterChip;
+    private readonly TextBlock _filterChipLabel;
+
     public ShellRoot()
     {
         InitializeComponent();
         _projectFilter = (TextBox)PART_ProjectsHeader.RightContent!; // XAML'de sabit atanır (InitializeComponent'te kurulur)
         _projectFilter.PreviewKeyDown += OnFilterKeyDown;
+        (_filterChip, _filterChipLabel) = BuildFilterChip();
         PART_ColumnSplitter.DragCompleted += (_, _) => OnColumnDragCompleted();
         PART_LeftSplitter.DragCompleted += (_, _) => OnLeftDragCompleted();
         PART_RightSplitter.DragCompleted += (_, _) => OnRightDragCompleted();
@@ -80,6 +88,71 @@ public partial class ShellRoot : UserControl
         _projectFilter.Clear();  // Text="" → iki-yönlü binding ProjectQuery'yi temizler
         Keyboard.ClearFocus();   // blur — sonraki Esc artık global zincire (seçim temizleme) düşebilir
         e.Handled = true;        // stopPropagation: bu Esc dialog/popover/seçim katmanına ULAŞMAZ
+    }
+
+    // ---- [A13/T2 · 2.3] PROJECTS başlığındaki kaldırılabilir filtre chip'i ----
+
+    /// <summary>
+    /// design-v1 §2.4: <i>"…aktif filtre varsa kaldırılabilir chip (ör. <c>Failed ✕</c>)"</i>
+    /// (<c>BuildApp.jsx:1492</c> — <c>DS.Chip active label={FILTER_LABELS[filter]} onRemove={…}</c>).
+    ///
+    /// <para>Taban <c>Ds.Chip</c>'tir (<see cref="DsChipFactory.Small"/> ile küçük ölçüler) — yeni bir chip
+    /// stili İCAT EDİLMEZ. <c>IsChecked</c> KALICI olarak açıktır: chip'in tek anlamı "şu an bir filtre
+    /// uygulanıyor"dur, yani DS'in <c>active</c> (amber) görünümü onun DOĞAL hâlidir; şeritteki momentary
+    /// chip'lerin aksine tıklamada sıfırlanmaz — zaten tıklanınca chip tamamen KAYBOLUR.</para>
+    ///
+    /// <para><b>Kaldırma göstergesi</b> çizilmiş bir geometridir (<c>Icon.ChipRemove</c>), ham <c>✕</c>
+    /// karakteri DEĞİL: repo'nun tek ikon stratejisi budur (T64) ve ham karakter emoji taramasına takılırdı.
+    /// Tüm chip tıklanabilir olduğu için ✕'e tıklamak da filtreyi kaldırır — chip'in BAŞKA bir eylemi yoktur,
+    /// bu yüzden iç içe ikinci bir buton (ve onun hit-test/odak karmaşası) GEREKSİZDİR.</para>
+    /// </summary>
+    private (ToggleButton Chip, TextBlock Label) BuildFilterChip()
+    {
+        var label = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+        var glyph = new System.Windows.Shapes.Path
+        {
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+        };
+        IconPaint.Apply(glyph, this, "Icon.ChipRemove", "Brush.TextDim");
+        var canvas = new Canvas { Width = 16, Height = 16 };
+        canvas.Children.Add(glyph);
+
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(label);
+        content.Children.Add(new Viewbox
+        {
+            Width = RemoveGlyphSize, Height = RemoveGlyphSize, Stretch = Stretch.Uniform, Child = canvas,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(ChipContentGap, 0, 0, 0), // _ds_bundle.js:164 chip gap 6
+        });
+
+        var chip = DsChipFactory.Small(this, content);
+        chip.IsChecked = true;                                   // DS `active` — chip'in doğal (amber) hâli
+        chip.Visibility = Visibility.Collapsed;                  // filtre yokken YOK
+        chip.Margin = new Thickness(ChipContentGap, 0, 0, 0);    // `build-order` etiketinden sonra
+        chip.ToolTip = AccessibilityNames.ClearFilterChip;
+        AutomationProperties.SetName(chip, AccessibilityNames.ClearFilterChip);
+        // LeftContent alt-namescope'unda ADLANAMAZ (MC3093) — referans, RightContent'teki filtre TextBox'ıyla
+        // AYNI şekilde DP üzerinden alınır (XAML'de sabit atanır, InitializeComponent'te kurulur).
+        ((StackPanel)PART_ProjectsHeader.LeftContent!).Children.Add(chip);
+        return (chip, label);
+    }
+
+    private const double RemoveGlyphSize = 10; // _ds_bundle.js:210-211 — svg 10x10
+    private const double ChipContentGap = 6;   // _ds_bundle.js:164 — chip gap 6
+
+    /// <summary>[test yüzeyi + MainWindow kablajı] Başlıktaki filtre chip'i — tıklaması filtreyi kaldırır.</summary>
+    internal ToggleButton ProjectFilterChip => _filterChip;
+
+    /// <summary>[A13/T2 · 2.3] Chip'i aktif filtreye göre sürer; <paramref name="label"/> null ise chip gizlenir.
+    /// Karar (hangi etiket) çağıranındır — <see cref="ViewModels.ProjectFilter.Label"/> TEK etiket kaynağıdır,
+    /// burada yeni bir eşleme tablosu KOPYALANMAZ.</summary>
+    public void SetFilterChip(string? label)
+    {
+        _filterChipLabel.Text = label ?? "";
+        _filterChip.Visibility = label is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     // ---- [E2/T10] Proje listesi boş-durum davetleri (görünürlük + Choose Folder kablajı MainWindow'da) ----

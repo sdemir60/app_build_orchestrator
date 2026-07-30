@@ -181,6 +181,16 @@ public partial class MainWindow : Window
             if (e.PropertyName == nameof(RunViewModel.VisibleProjects)) RefreshVisibleRows();
         };
 
+        // [A13/T2 · 2.3] PROJECTS başlığındaki kaldırılabilir filtre chip'i (design-v1 §2.4). Görünürlük/etiket
+        // buradan sürülür (SetListInvite ile AYNI desen: karar dışarıda, kabuk yalnız uygular); chip'e tıklamak
+        // Σ chip'iyle AYNI yolu kullanır (ToggleFilter(null)) — ikinci bir "filtreyi temizle" yolu AÇILMAZ.
+        Shell.ProjectFilterChip.Click += (_, _) => _vm.ToggleFilter(null);
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.ActiveFilter)) RefreshFilterChip();
+        };
+        RefreshFilterChip();
+
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
         // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
@@ -609,6 +619,12 @@ public partial class MainWindow : Window
         ContextWorktreeText.Text = suffix;
         ContextWorktreeText.Visibility = suffix.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    /// <summary>[A13/T2 · 2.3] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
+    /// <see cref="ProjectFilter.Label"/>'dır (action bar'ın chip tooltip'leriyle aynı tablo) — burada yeni bir
+    /// eşleme uydurulmaz. Filtre yoksa chip gizlenir.</summary>
+    private void RefreshFilterChip() =>
+        Shell.SetFilterChip(_vm.ActiveFilter is { } f ? ProjectFilter.Label(f) : null);
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite() =>

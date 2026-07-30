@@ -47,10 +47,16 @@
         <DockPanel Grid.Row="2">
           <controls:PanelHeader x:Name="PART_ProjectsHeader" DockPanel.Dock="Top" Text="PROJECTS">
             <controls:PanelHeader.LeftContent>
-              <TextBlock Text="build-order" VerticalAlignment="Center"
-                         FontFamily="{x:Static controls:AppFonts.Mono}"
-                         FontSize="{DynamicResource FontSize.2xs}"
-                         Foreground="{DynamicResource Brush.TextFaint}" />
+              <!-- [A13/T2 · 2.3] mono `build-order` etiketi + (aktif filtre varsa) kaldırılabilir chip
+                   (design-v1 §2.4, BuildApp.jsx:1490-1493). Chip KOD-TARAFI kurulur: LeftContent bir
+                   alt-namescope'tur, buraya x:Name/handler YAZILAMAZ (MC3093 — RightContent'teki filtre
+                   TextBox'ıyla AYNI kısıt). Bkz. ShellRoot ctor. -->
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="build-order" VerticalAlignment="Center"
+                           FontFamily="{x:Static controls:AppFonts.Mono}"
+                           FontSize="{DynamicResource FontSize.2xs}"
+                           Foreground="{DynamicResource Brush.TextFaint}" />
+              </StackPanel>
             </controls:PanelHeader.LeftContent>
             <controls:PanelHeader.RightContent>
               <!-- Ds.Input (implicit TextBox) + büyüteç prefix (paddingLeft 26) + watermark.
