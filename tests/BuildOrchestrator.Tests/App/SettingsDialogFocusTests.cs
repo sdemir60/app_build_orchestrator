@@ -25,12 +25,8 @@ public class SettingsDialogFocusTests
 {
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
-    private sealed class FakeStore : IUiStateStore
-    {
-        public UiState State { get; private set; } = new();
-        public UiState Load() => State;
-        public void Save(UiState state) => State = state;
-    }
+    // [A13/T3 fix-1 · C13] FakeStore ARTIK tek yerde: SettingsDialogHost.FakeStore (iki dosyada ikizdi).
+    private static SettingsDialogHost.FakeStore NewStore() => new();
 
     /// <summary>Yapısal asgari kanıt: diyaloğun scrim kökü gerçekten bir Cycle klavye-gezinme kapsayıcısı ve
     /// bir odak kapsamı (FocusScope) mı — Tab'ın alt-ağaç dışına kaçamayacağının doğrudan kanıtı.</summary>
@@ -66,7 +62,7 @@ public class SettingsDialogFocusTests
 
         var window = DsResources.Realize(host, root);
 
-        dialog.Open(run, new FakeStore(), () => null);
+        dialog.Open(run, NewStore(), () => null);
         root.UpdateLayout(); // diyalog artık Visible — satır/buton container'ları yerleşsin
 
         Assert.True(dialog.Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First)));
@@ -99,19 +95,14 @@ public class SettingsDialogFocusTests
     [StaFact]
     public void Settings_dialog_shell_is_six_hundred_twenty_pixels_wide()
     {
-        var host = DsResources.NewHost();
-        var run = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
-        { RootPath = @"D:\repo" };
-        var dialog = new SettingsDialog();
-        var window = DsResources.Realize(host, dialog);
-
-        dialog.Open(run, new FakeStore(), () => null);
-        dialog.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange
-
-        var shell = (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
-        Assert.Equal(620.0, shell.Width);
-        Assert.Equal(620.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
-        GC.KeepAlive(window);
+        // [fix-1 · B6/C9] Kurulum + EngineHost sahipliği tek yerde (SettingsDialogHost).
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using (scope)
+        {
+            var shell = (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
+            Assert.Equal(620.0, shell.Width);
+            Assert.Equal(620.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
+        }
     }
 
     /// <summary>[A13/T3b · b3] design-v1 README §2.9: "Katman kartları (36px + 6px boşluk) ... ad inputu
@@ -121,15 +112,9 @@ public class SettingsDialogFocusTests
     [StaFact]
     public void Layer_cards_are_36px_tall_with_a_6px_gap_and_a_170px_name_input()
     {
-        var host = DsResources.NewHost();
-        var run = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
-        { RootPath = @"D:\repo" };
-        run.LayerPatterns = [new LayerPattern(0, "^A", "Layer A"), new LayerPattern(1, "^B", "Layer B")];
-        var dialog = new SettingsDialog();
-        var window = DsResources.Realize(host, dialog);
-
-        dialog.Open(run, new FakeStore(), () => null);
-        dialog.UpdateLayout();
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run =>
+            run.LayerPatterns = [new LayerPattern(0, "^A", "Layer A"), new LayerPattern(1, "^B", "Layer B")]);
+        using var _scope = scope;
 
         var editor = (LayerEditorViewModel)dialog.DataContext;
         Assert.Equal(2, editor.Layers.Count); // ön-koşul: iki kart gerçekten var
@@ -149,7 +134,6 @@ public class SettingsDialogFocusTests
             .Single(t => BuildOrchestrator.App.Controls.DsChrome.GetWatermark(t) == "Layer name");
         Assert.Equal(170.0, nameBox.Width);
         Assert.Equal(170.0, nameBox.ActualWidth);
-        GC.KeepAlive(window);
     }
 
     private static Border CardBorder(ItemsControl list, LayerRowViewModel row)
