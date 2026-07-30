@@ -1,6 +1,11 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Shapes;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -116,6 +121,172 @@ public partial class ActionBarTests
 
     private static void Click(ButtonBase button) =>
         button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+    /// <summary>[A13/T3c · c4] design-v1 BuildApp.jsx:1544-1545: <c>background: var(--surface)</c>,
+    /// <c>borderTop: 1px solid var(--border)</c>. Yükseklik zaten pinliydi (DesignTokenScaleTests); zemin/üst
+    /// çizgi testsizdi — root Border başka bir fırçaya bağlansa süit yeşil kalırdı.</summary>
+    [StaFact]
+    public void The_action_bar_root_is_surface_with_a_border_top_line()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var root = Assert.IsType<Border>(bar.Content);
+        Assert.Same(bar.FindResource("Brush.Surface"), root.Background);
+        Assert.Same(bar.FindResource("Brush.Border"), root.BorderBrush);
+        Assert.Equal(new Thickness(0, 1, 0, 0), root.BorderThickness);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c5] design-v1 BuildApp.jsx:1546-1614 sırası: Sync · ayraç · 6 sayaç chip'i (Σ/building/
+    /// succeeded/failed/skipped/dep) · … · branch · worktree · Debug|Release · perf · ayraç · Stop/Build. Hiçbir
+    /// test bu SIRAYI assert etmiyordu — chip'ler kod-tarafı kurulduğu için ("BuildCounterChips") sıra sessizce
+    /// kayabilirdi.</summary>
+    [StaFact]
+    public void The_left_group_orders_sync_then_a_separator_then_the_six_counter_chips_in_design_order()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var leftGroup = Assert.IsType<StackPanel>(bar.SyncButton.Parent);
+        var leftChildren = leftGroup.Children.Cast<UIElement>().ToList();
+        Assert.Equal(3, leftChildren.Count);
+        Assert.Same(bar.SyncButton, leftChildren[0]);
+        var leftSeparator = Assert.IsType<Border>(leftChildren[1]);
+        Assert.Same(bar.FindResource("Brush.BorderSubtle"), leftSeparator.Background);
+        var counterStrip = Assert.IsType<StackPanel>(leftChildren[2]);
+
+        var chipOrder = counterStrip.Children.Cast<UIElement>().ToList();
+        Assert.Equal(
+            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.SucceededChip, bar.FailedChip, bar.SkippedChip, bar.DepChip },
+            chipOrder);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c5] Sağ grubun sırası: branch · worktree · Debug|Release · perf · ayraç · Stop/Build
+    /// grid'i (BuildApp.jsx:1570-1614).</summary>
+    [StaFact]
+    public void The_right_group_orders_branch_worktree_config_perf_a_separator_then_the_build_area()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
+        var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
+        Assert.Equal(6, rightChildren.Count);
+        Assert.Same(bar.BranchChip, ((Grid)rightChildren[0]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.Segment, rightChildren[2]);
+        Assert.Same(bar.PerfChip, rightChildren[3]);
+        var rightSeparator = Assert.IsType<Border>(rightChildren[4]);
+        Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
+        var buildArea = Assert.IsType<Grid>(rightChildren[5]);
+        Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
+        Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3c · c6] chip glyph'leri
+
+    /// <summary>Bir sayaç chip'inin İLK çocuğu (StackPanel[icon, value]) — chip glyph'ini okumanın TEK yolu.</summary>
+    private static UIElement ChipIcon(ToggleButton chip) => ((StackPanel)chip.Content).Children[0];
+
+    /// <summary>[A13/T3c · c6.2] BuildApp.jsx:1550 Σ chip'i <c>I.sigma</c> ikonunu taşır — <c>ActionBar.BuildCounterChips</c>
+    /// hangi ikonu bağladığını hiçbir test doğrulamıyordu (Icon.Sigma yerine başka bir anahtar verilse süit yeşil kalırdı).</summary>
+    [StaFact]
+    public void The_sigma_chip_paints_the_sigma_glyph()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var canvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.SigmaChip)).Child);
+        var path = Assert.IsType<System.Windows.Shapes.Path>(canvas.Children[0]);
+        Assert.Same(bar.FindResource("Icon.Sigma"), path.Data);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c6.1+c6.2] BuildApp.jsx:1551-1565 chip KÜMESİ (bu SIRAYLA: building/succeeded/failed/
+    /// skipped/dep) ve HER birinin glyph türü. Building = spinner+nokta çifti (BuildApp.jsx:1553); succeeded/
+    /// failed/skipped = <see cref="StatusGlyph"/> (DS.StatusGlyph status=…); dep = ▲ üçgeni (Icon.AlertTri).</summary>
+    [StaFact]
+    public void Each_counter_chip_after_sigma_paints_its_own_designated_glyph()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var buildingIcon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
+        Assert.IsType<Ellipse>(buildingIcon.Children[0]);
+        Assert.IsType<BuildingSpinner>(buildingIcon.Children[1]);
+
+        Assert.Equal(GraphStatus.Succeeded, Assert.IsType<StatusGlyph>(ChipIcon(bar.SucceededChip)).Status);
+        Assert.Equal(GraphStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
+        Assert.Equal(GraphStatus.Skipped, Assert.IsType<StatusGlyph>(ChipIcon(bar.SkippedChip)).Status);
+
+        var depCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.DepChip)).Child);
+        var depPath = Assert.IsType<System.Windows.Shapes.Path>(depCanvas.Children[0]);
+        Assert.Same(bar.FindResource("Icon.AlertTri"), depPath.Data);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c6.3] BuildApp.jsx:1566 <c>color: di ? 'var(--status-fail-text)' : 'var(--text-faint)'</c>
+    /// — ▲'nin kırmızıya dönmesi İKİ YÖNLÜDÜR (0'da faint, &gt;0'da kırmızı) ve ÜRETİM YOLUNDAN (gerçek bir proje
+    /// succeeded + depIssue taşıyarak <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN artırarak) tetiklenir —
+    /// alanı doğrudan set etmek/metodu çağırmak brief kural 6'yı ihlal ederdi.</summary>
+    [StaFact]
+    public void The_dep_triangle_turns_red_only_once_a_project_succeeds_with_a_real_dep_issue()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0)); // → Idle
+        var (bar, window) = Realize(vm);
+
+        var depCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.DepChip)).Child);
+        var depPath = Assert.IsType<System.Windows.Shapes.Path>(depCanvas.Children[0]);
+
+        // ön-koşul: henüz kimse succeeded değil → DepAffected == 0 → faint.
+        Assert.Equal(0, vm.Counters.DepAffected);
+        Assert.Same(bar.FindResource("Brush.TextFaint"), depPath.Stroke);
+
+        // ÜRETİM YOLU: RunStarted → ProjectStarted → ProjectSucceeded(DepIssues: [...]) — RunCounters.From
+        // yalnız succeeded+HasDepIssue satırları sayar (RunCounters.cs).
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100, ["dependent B henüz derlenmedi"]));
+
+        Assert.Equal(1, vm.Counters.DepAffected); // ön-koşul: sayaç GERÇEKTEN arttı
+        Assert.Same(bar.FindResource("Brush.StatusFailText"), depPath.Stroke);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3c · c7] Stop takası
+
+    /// <summary>[A13/T3c · c7] BuildApp.jsx:1584-1614: <c>running ? &lt;Stop/&gt; : &lt;split-button/&gt;</c>.
+    /// AccessibilityTests yalnız Stop'un UIA adını pinliyordu — görünürlük TAKASININ KENDİSİ (Idle→running→
+    /// tamamlandı) hiç sürülmemişti. Tetik ÜRETİM YOLU: <see cref="RunStartedEvent"/>/<see cref="RunCompletedEvent"/>
+    /// (brief kural 6) — VM'in <see cref="RunViewModel.IsMidRunLocked"/>'ını doğrudan set etmek YOK.</summary>
+    [StaFact]
+    public void The_stop_button_and_the_build_split_button_swap_visibility_across_a_real_run()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        // Idle: split-button görünür, Stop gizli.
+        Assert.Equal(Visibility.Visible, bar.Split.Visibility);
+        Assert.Equal(Visibility.Collapsed, bar.StopButton.Visibility);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.True(vm.IsRunning); // ön-koşul: gerçekten koşuyor
+
+        Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
+        Assert.Equal(Visibility.Collapsed, bar.Split.Visibility);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0));
+        Assert.False(vm.IsRunning); // ön-koşul: gerçekten bitti
+
+        Assert.Equal(Visibility.Visible, bar.Split.Visibility);
+        Assert.Equal(Visibility.Collapsed, bar.StopButton.Visibility);
+        GC.KeepAlive(window);
+    }
 
     [StaFact]
     public void Counter_chips_toggle_the_filter_and_sigma_always_clears_it()
