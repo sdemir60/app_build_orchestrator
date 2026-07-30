@@ -943,6 +943,12 @@ GÖREV: her belgeyi KODLA karşılaştır, olgusal sapmaları düzelt.
 
 YÖNTEM (bağlayıcı):
 - Her iddiayı KODDA DOĞRULA ve düzeltmeyi dosya:satır KANITIYLA göster. Doğru olan ifadeye DOKUNMA.
+- TEKRAR / OTORİTE DENETİMİ: bu üç belge v7'nin kurallarını ÖZETLER — bu DOĞRUDUR, README'yi v7'yi hiç
+  okumamış birine yeter hâlde tutmak gerekir; belgeleri "bkz. v7" pointer'ına İNDİRGEME. Denetleyeceğin iki
+  şey: (a) özet KODLA birebir mi, (b) belge kendini rakip bir doğru-kaynak gibi mi sunuyor. (b) için:
+  CLAUDE.md'de kural kaynağının v7 olduğu EN AZ BİR KEZ geçsin (plan referansı + "otorite: v7 Global
+  Constraints / A13"); README'de "Design and decision records" bölümü v7'yi plan of record olarak
+  göstersin. Çelişki varsa v7 + kod kazanır, belge düzeltilir.
 - Belgeleri yeniden tasarlama, üslup ve biçim korunur. Kozmetik düzenleme, yeniden yazım, bölüm ekleme yok —
   yalnız olgusal düzeltme + yukarıda istenen kayıt listesi güncellemesi.
 - RAKAM GÖMME: "X test yeşil" gibi bir dalgada bayatlayacak sayı yazma; dayanıklı dil + ledger'a işaret.
