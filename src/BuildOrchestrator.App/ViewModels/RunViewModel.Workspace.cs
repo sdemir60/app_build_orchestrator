@@ -258,6 +258,27 @@ public sealed partial class RunViewModel
         return -1;
     }
 
+    /// <summary>
+    /// [A13/T2 · 2.2] Branch envanteri geldi: liste tazelenir ve <see cref="Branch"/> HENÜZ BOŞSA aktif
+    /// branch'e SEED edilir.
+    ///
+    /// <para><b>Neden seed gerekli:</b> <see cref="Branch"/> boş başlar ve ona yazan yalnız iki yol vardır —
+    /// kullanıcının popover seçimi (<see cref="SelectBranch"/>) ve diskteki UiState seed'i. <c>syncCompleted</c>
+    /// yazmaz ve zaten bir ECHO'dur (App ne gönderdiyse o döner). Dolayısıyla ilk kurulumda branch chip'i
+    /// SONSUZA DEK boş kalıyordu.</para>
+    ///
+    /// <para><b>Neden YALNIZ boşken:</b> seed bir varsayılan doldurmadır, bir kullanıcı kararı DEĞİL. Kullanıcı
+    /// aktif-olmayan bir branch seçtiyse (ya da UiState'ten öyle geldiyse), her Sync'in envanteri onu aktif
+    /// branch'e geri çekerdi — seçim kaybolur, worktree zorlaması sessizce düşerdi.</para>
+    ///
+    /// <para><b>Aktif branch yoksa</b> (detached HEAD / boş envanter) hiçbir şey yazılmaz: uydurma değer YOK.</para>
+    /// </summary>
+    private void OnBranchList(BranchListEvent e)
+    {
+        Replace(Branches, e.Branches);
+        if (Branch.Length == 0 && ActiveBranchName is { } active) Branch = active;
+    }
+
     /// <summary>Bir listeyi gelen anlık görüntüyle değiştirir. <see cref="ObservableCollection{T}.Clear"/>
     /// KULLANILMAZ ([A13.2] reset yasağı) — sondan silip yeniden eklemek yalnız Remove/Add bildirimleri üretir.</summary>
     private static void Replace<T>(ObservableCollection<T> target, IReadOnlyList<T> source)

@@ -148,16 +148,20 @@ public class SettingsDialogTests
         run.OnEvent(new ProjectStartedEvent("r1", @"C:\old\a.csproj", "A")); // eski repo'da bir satır (Started)
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
 
-        IpcCommand? sent = null;
-        run.DebugOnCommandSent = c => sent = c;
+        // [A13/T2 · 2.2] Sync ARTIK İKİ komut gönderir (sync + listBranches) — "son gönderilen" yerine TÜMÜ
+        // toplanır ve aranan komut TÜRÜNE göre seçilir. Assert GEVŞEMEDİ, KESİNLEŞTİ: Sync'in yeni kökte
+        // gittiği hâlâ aynı sıkılıkta pinlenir, üstüne envanterin de istendiği eklenir.
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
 
         await run.ChangeRepositoryAsync(@"D:\new\repo");
 
         Assert.Equal(@"D:\new\repo", run.RootPath);
         Assert.True(run.HasWorkspace);
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State)); // durumlar sıfırlandı (hollow)
-        var sync = Assert.IsType<SyncWorkspaceCommand>(sent);                          // otomatik Sync gönderildi
+        var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());                 // otomatik Sync gönderildi
         Assert.Equal(@"D:\new\repo", sync.RootPath);                                   // yeni kökte
+        Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<ListBranchesCommand>()).RootPath);
     }
 
     [Fact] // [D7 re-review][Fix3] Aynı kökü (case-insensitive — Windows yolu) YENİDEN seçmek no-op olmalı.

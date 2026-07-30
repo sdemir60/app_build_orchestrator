@@ -515,6 +515,14 @@ public sealed partial class RunViewModel : ObservableObject
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
         await TrySendAsync(new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+        // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
+        // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
+        // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder / Settings→Change →
+        // ChangeRepositoryAsync) zaten buraya iner; (c) Sync salt-okurdur, tekrarı zararsızdır.
+        // Ayrı bir komut olarak GİDER (Sync'in kendi event akışına karışmaz): Supervisor sıradaki komut olarak
+        // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
+        // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
+        await TrySendAsync(new ListBranchesCommand(RootPath), "listBranches");
     }
     private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 
@@ -744,7 +752,7 @@ public sealed partial class RunViewModel : ObservableObject
             case SyncProgressEvent e: AppendRunLine(e.Line); break;
             case SyncCompletedEvent e: OnSyncCompleted(e); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
-            case BranchListEvent e: Replace(Branches, e.Branches); break;
+            case BranchListEvent e: OnBranchList(e); break;
             case WorktreeListEvent e: Replace(Worktrees, e.Worktrees); break;
         }
 
