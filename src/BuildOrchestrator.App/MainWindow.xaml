@@ -66,7 +66,9 @@
       </Grid.RowDefinitions>
 
       <!-- ==================================== TITLE BAR ==================================== -->
-      <Grid x:Name="TitleBarRow" Grid.Row="0" Background="{DynamicResource Brush.Surface}">
+      <!-- [A13/T3 fix-1 · P1] Zemin design-v1 DS TitleBar'ından gelir (_ds_bundle.js:1189
+           background: var(surface-base) = #0e0e10) — eskiden Brush.Surface (#141417) bağlıydı. -->
+      <Grid x:Name="TitleBarRow" Grid.Row="0" Background="{DynamicResource Brush.SurfaceBase}">
         <DockPanel LastChildFill="False">
           <!-- Caption pencere butonları (min/max/close) — kabuk makinesi (Snap hook MaxButton'a ad ile bağlanır) -->
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
