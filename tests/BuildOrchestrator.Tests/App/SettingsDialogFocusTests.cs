@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -89,4 +90,72 @@ public class SettingsDialogFocusTests
 
     private static DependencyObject? GetParent(DependencyObject node) =>
         (node as Visual) is not null ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+
+    // ================================================================ [A13/T3b] ölçü/geometri (b2/b3)
+
+    /// <summary>[A13/T3b · b2] design-v1 README §2.9: "Settings dialog (620px)". <c>DesignTokenScaleTests.cs:141</c>
+    /// içinde geçen 620 AYRI bir kalemdir (<c>Size.WindowMinHeight</c>) — karıştırılmaz (brief notu). Diyaloğun
+    /// KENDİ genişliği testsizdi.</summary>
+    [StaFact]
+    public void Settings_dialog_shell_is_six_hundred_twenty_pixels_wide()
+    {
+        var host = DsResources.NewHost();
+        var run = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        { RootPath = @"D:\repo" };
+        var dialog = new SettingsDialog();
+        var window = DsResources.Realize(host, dialog);
+
+        dialog.Open(run, new FakeStore(), () => null);
+        dialog.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange
+
+        var shell = (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
+        Assert.Equal(620.0, shell.Width);
+        Assert.Equal(620.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3b · b3] design-v1 README §2.9: "Katman kartları (36px + 6px boşluk) ... ad inputu
+    /// (170px)". Önceden yalnız 42px (=36+6) aritmetiği DragReorderTests.cs'teki sürükleme eşiğinden DOLAYLI
+    /// pinliydi (RowStep=42 — sürükleme mantığının kendi sabiti, kartın GERÇEK yerleşimi değil). Bu test iki
+    /// gerçek kartı realize edip aralarındaki GERÇEK piksel farkını ve ad inputunun GERÇEK genişliğini ölçer.</summary>
+    [StaFact]
+    public void Layer_cards_are_36px_tall_with_a_6px_gap_and_a_170px_name_input()
+    {
+        var host = DsResources.NewHost();
+        var run = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        { RootPath = @"D:\repo" };
+        run.LayerPatterns = [new LayerPattern(0, "^A", "Layer A"), new LayerPattern(1, "^B", "Layer B")];
+        var dialog = new SettingsDialog();
+        var window = DsResources.Realize(host, dialog);
+
+        dialog.Open(run, new FakeStore(), () => null);
+        dialog.UpdateLayout();
+
+        var editor = (LayerEditorViewModel)dialog.DataContext;
+        Assert.Equal(2, editor.Layers.Count); // ön-koşul: iki kart gerçekten var
+
+        var card0 = CardBorder(dialog.LayersList, editor.Layers[0]);
+        var card1 = CardBorder(dialog.LayersList, editor.Layers[1]);
+
+        Assert.Equal(36.0, card0.ActualHeight);
+        Assert.Equal(new Thickness(0, 0, 0, 6), card0.Margin);
+
+        // GERÇEK dikey mesafe: kart1'in üst kenarı − kart0'ın üst kenarı = 36 (yükseklik) + 6 (alt boşluk) = 42.
+        double top0 = card0.TranslatePoint(new Point(0, 0), dialog).Y;
+        double top1 = card1.TranslatePoint(new Point(0, 0), dialog).Y;
+        Assert.Equal(42.0, top1 - top0, precision: 1);
+
+        var nameBox = DsResources.Descendants(card0).OfType<TextBox>()
+            .Single(t => BuildOrchestrator.App.Controls.DsChrome.GetWatermark(t) == "Layer name");
+        Assert.Equal(170.0, nameBox.Width);
+        Assert.Equal(170.0, nameBox.ActualWidth);
+        GC.KeepAlive(window);
+    }
+
+    private static Border CardBorder(ItemsControl list, LayerRowViewModel row)
+    {
+        var presenter = (ContentPresenter)list.ItemContainerGenerator.ContainerFromItem(row)!;
+        presenter.ApplyTemplate();
+        return (Border)VisualTreeHelper.GetChild(presenter, 0);
+    }
 }
