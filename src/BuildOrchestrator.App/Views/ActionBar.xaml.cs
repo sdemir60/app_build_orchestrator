@@ -127,6 +127,7 @@ public partial class ActionBar : UserControl
         {
             _vm.PropertyChanged -= OnVmPropertyChanged;
             _vm.Branches.CollectionChanged -= OnBranchesChanged;
+            _vm.Worktrees.CollectionChanged -= OnWorktreesChanged;
         }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
@@ -137,11 +138,21 @@ public partial class ActionBar : UserControl
         {
             _vm.PropertyChanged += OnVmPropertyChanged;
             _vm.Branches.CollectionChanged += OnBranchesChanged;
+            _vm.Worktrees.CollectionChanged += OnWorktreesChanged;
         }
         RefreshAll();
     }
 
     private void OnBranchesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => RefreshBranchWorktree();
+
+    /// <summary>[T2 fix-3 · round-3 bulgu 1] <c>EffectiveWorktreeName</c>'in auto-ad dalı (<c>AutoWorktreeName</c>)
+    /// mevcut worktree SAYISINI sayar (<see cref="RunViewModel.Worktrees"/>'ten) — envanter I-G ile canlı
+    /// doldurulduğundan (<c>ListWorktreesCommand</c>) gösterilen ad envanter gelince değişebilir
+    /// (<c>main-1</c> → <c>main-2</c>). <see cref="OnBranchesChanged"/> ile BİREBİR aynı desen: bu abonelik
+    /// olmadan chip bayat adı göstermeye devam ediyordu (title bar ve <c>WorktreePopover</c> zaten
+    /// dinliyordu — üç yüzey iki farklı ad söylüyordu).</summary>
+    private void OnWorktreesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         => RefreshBranchWorktree();
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)

@@ -179,4 +179,30 @@ public class FollowScrollControllerTests
         follow.FollowRow(rowIndex: 20);
         Assert.Empty(f.AnimatedTargets);  // seçim varken follow hareket ETMEZ
     }
+
+    /// <summary>
+    /// <b>[T2 fix-3 · round-3 bulgu 2 — regresyon]</b> <c>Rebind</c>, <see cref="FollowScrollController.SelectRow"/>'un
+    /// bekleyen (90ms gecikmeli) kaydırma callback'ini GEÇERSİZ KILAR — <see cref="ClearSelection"/>'ın
+    /// bekleyen bir seçim-scroll'u iptal eden desenin AYNISı.
+    ///
+    /// <para><b>Ölçülen kusur:</b> callback <c>rowIndex</c>'i SelectRow anında yakalanmış bir tamsayı olarak
+    /// taşıyor, satırı yeniden sorgulamıyordu. <c>Rebind</c> tam olarak satır düzeni değiştiği (filtre
+    /// tazelemesi) için çağrılıyor — yani o eski <c>rowIndex</c> YENİ metrics'te başka bir satırı (ya da
+    /// hiçbirini) gösterebilirdi; iptal edilmeden bırakılsaydı "seçili kart görünür kılınır" niyeti YANLIŞ bir
+    /// satıra kaydırarak ihlal edilirdi.</para>
+    /// </summary>
+    [Fact]
+    public void Rebind_invalidates_a_pending_selection_scroll()
+    {
+        var f = new Fake();
+        var follow = f.New(Flat40());
+        follow.SelectRow(20);
+        var staleCallback = f.PendingSchedule!;
+
+        follow.Rebind(Flat40()); // satır düzeni değişti — bekleyen kaydırma artık BAYAT
+        staleCallback();
+
+        Assert.Empty(f.AnimatedTargets);   // eski (bayat) hedefe KAYMADI
+        Assert.False(follow.IsFollowing);  // ama seçim DURUMU (follow duraklı) hâlâ korunuyor — Rebind ayrı testte pinli
+    }
 }

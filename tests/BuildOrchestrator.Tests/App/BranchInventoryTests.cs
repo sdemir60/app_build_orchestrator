@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -322,8 +323,43 @@ public class BranchInventoryTests
         GC.KeepAlive(window);
     }
 
-    private static IReadOnlyList<string> ChipTexts(ActionBar bar) =>
-        [.. DsResources.Descendants(bar.BranchChip).OfType<TextBlock>().Select(t => t.Text)];
+    /// <summary>
+    /// <b>[T2 fix-3 · round-3 bulgu 1]</b> Worktree envanteri geldiğinde <c>ActionBar</c>'ın worktree chip'i
+    /// (auto-ad dalı) da tazelenir.
+    ///
+    /// <para><b>Ölçülen kusur:</b> I-G ile <c>ListWorktreesCommand</c> gönderilip <see cref="RunViewModel.Worktrees"/>
+    /// canlı dolmaya başladı; <see cref="RunViewModel.EffectiveWorktreeName"/>'in auto-ad dalı
+    /// (<see cref="RunViewModel.AutoWorktreeName"/>) mevcut worktree sayısını bu koleksiyondan sayar, yani
+    /// envanter gelince gösterilen ad değişebilir (<c>main-1</c> → <c>main-2</c>). Title bar
+    /// (<c>MainWindow.xaml.cs</c>) ve <see cref="WorktreePopover"/> zaten <c>Worktrees.CollectionChanged</c>'e
+    /// abone; <c>ActionBar</c> DEĞİLDİ — chip bayat adı göstermeye devam ediyordu (üç yüzey iki farklı ad
+    /// söylüyordu).</para>
+    /// </summary>
+    [StaFact]
+    public void The_arriving_worktree_inventory_refreshes_the_worktree_chip()
+    {
+        var vm = NewVm();
+        var host = DsResources.NewHost();
+        var bar = new ActionBar { DataContext = vm };
+        var window = DsResources.Realize(host, bar);
+
+        vm.OnEvent(new BranchListEvent(Inventory())); // Branch seed → "main" (aktif), havuz henüz boş
+        vm.UseWorktree = true; // chip yalnız EffectiveUseWorktree açıkken adı gösterir ("off" değil)
+        Assert.Contains("main-1", ChipTexts(bar, bar.WorktreeChip)); // ön-koşul: auto-ad "main-1"
+
+        // main-1 ZATEN dolu → auto-ad "main-2"ye kaymalı. Kablo ActionBar'ın KENDİ Worktrees.CollectionChanged
+        // aboneliğinden geçmek ZORUNDA (üretim sırası: bar önce realize, envanter sonra akar).
+        vm.OnEvent(new WorktreeListEvent([new Worktree("main-1", "main", @"D:\pool\main-1", false, 0)]));
+
+        Assert.Contains("main-2", ChipTexts(bar, bar.WorktreeChip));
+        Assert.DoesNotContain("main-1", ChipTexts(bar, bar.WorktreeChip));
+        GC.KeepAlive(window);
+    }
+
+    private static IReadOnlyList<string> ChipTexts(ActionBar bar) => ChipTexts(bar, bar.BranchChip);
+
+    private static IReadOnlyList<string> ChipTexts(ActionBar bar, ToggleButton chip) =>
+        [.. DsResources.Descendants(chip).OfType<TextBlock>().Select(t => t.Text)];
 
     // ---------------------------------------------------------------- 2.2'nin YAN ETKİSİ: forced dalı canlandı
 

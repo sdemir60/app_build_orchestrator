@@ -52,7 +52,8 @@ public sealed class FollowScrollController
 
     /// <summary>
     /// [T2 fix-1 · I-D] Satır düzeni değişti (yeni <see cref="LayoutMetrics"/>) ama <b>oturum aynı</b>:
-    /// throttle zamanlayıcısı (<see cref="_lastMoveAtMs"/>) ve seçim durumu KORUNUR.
+    /// throttle zamanlayıcısı (<see cref="_lastMoveAtMs"/>) ve seçim DURUMU (<see cref="_hasSelection"/>,
+    /// <see cref="IsFollowing"/>) KORUNUR.
     ///
     /// <para><b>Neden gerekli (ölçülen kusur):</b> <c>StickyLayerList.SetGroups</c> controller'ı her çağrıda
     /// YENİDEN yaratıyordu. Eskiden bu yalnız topoloji değişiminde olurdu; 2.5'ten sonra görünür küme her
@@ -61,11 +62,22 @@ public sealed class FollowScrollController
     /// <c>_lastMoveAtMs == long.MinValue</c> → <c>elapsed = double.MaxValue</c> → <see cref="FollowScrollDecision.ShouldMove"/>
     /// HEP true: design-v1 §3.3'ün 550ms throttle'ı filtre altında tamamen etkisizleşiyor ve takip 200ms
     /// tick'te zıplıyordu. Seçim durumu da (<c>_hasSelection</c>) sessizce düşüyordu.</para>
+    ///
+    /// <para><b>[T2 fix-3 · round-3 bulgu 2]</b> Ama bekleyen bir <see cref="SelectRow"/> callback'i (90ms
+    /// gecikmeli, <see cref="_selectionGeneration"/> ile korunur) BURADA AYRIDIR ve <b>KASITLI OLARAK
+    /// iptal edilir</b> (<c>_selectionGeneration</c> artırılır — <see cref="ClearSelection"/>'daki desenin
+    /// AYNISI). Gerekçe: callback <c>rowIndex</c>'i SelectRow çağrıldığı ANDA yakalanmış bir tamsayı olarak
+    /// taşır, satırı yeniden SORGULAMAZ; <c>Rebind</c> ise TAM OLARAK satır düzeni değiştiği (filtre
+    /// tazelemesi/topoloji) için çağrılır. Yani o eski <c>rowIndex</c> YENİ metrics'te ARTIK BAŞKA bir satırı
+    /// (ya da hiçbirini) gösterebilir — iptal etmeden bırakmak "seçili kart görünür kılınır" niyetini YANLIŞ
+    /// bir satıra kaydırarak ihlal ederdi. <c>_hasSelection</c>'ın kendisi (follow'un durup durmaması) buna
+    /// dokunulmaz, çünkü o satır KİMLİĞİNE değil yalnızca "bir seçim var mı" durumuna bağlıdır.</para>
     /// </summary>
     public void Rebind(LayoutMetrics metrics)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         _metrics = metrics;
+        _selectionGeneration++; // bekleyen bir seçim-scroll'u geçersiz kıl (bkz. XML doc — rowIndex bayatladı)
     }
 
 
