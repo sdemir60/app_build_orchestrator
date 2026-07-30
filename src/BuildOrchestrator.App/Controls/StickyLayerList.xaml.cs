@@ -98,8 +98,28 @@ public partial class StickyLayerList : UserControl
     internal DataTemplate HeaderTemplateForFlow() => ((EntrySelector)Flow.ItemTemplateSelector).Header;
 
     /// <summary>Grupları kur: kümülatif metrics + in-flow entry akışı (başlık + satırlar) + overlay ilk hesap.
-    /// Adı boş grup → başlıksız (varsayılan tek liste); sticky devrede değil.</summary>
-    public void SetGroups(IReadOnlyList<LayerGroup> groups)
+    /// Adı boş grup → başlıksız (varsayılan tek liste); sticky devrede değil.
+    /// <para>Varsayılan reveal OYNAR — bu, topoloji/Sync yoludur (<see cref="StickyRevealTriggerTests"/> pinler).</para></summary>
+    public void SetGroups(IReadOnlyList<LayerGroup> groups) => SetGroups(groups, reveal: true);
+
+    /// <summary>
+    /// [A13/T2 · 2.5] <paramref name="reveal"/> = bu tazeleme kademeli belirişi (bo-reveal) OYNATSIN mı.
+    ///
+    /// <para><b>Neden ayrım ZORUNLU (A12 sınıfı, ÖLÇÜLDÜ):</b> liste 2.5'te filtreye bağlandı ve
+    /// <c>_revealPending</c> koşulsuz kurulduğu sürece <b>her tuş vuruşu stagger'ı baştan oynatıyordu</b> —
+    /// üç harflik bir sorgu <c>RevealGeneration</c>'ı 3'ten 6'ya çıkarıyordu. Prototip otoritesi de aynı
+    /// yöndedir: <c>revealKey</c> yalnız sync/topolojide artar (<c>BuildApp.jsx:1378</c>), filtrede ARTMAZ.</para>
+    ///
+    /// <para><b>Reset semantiği BİLEREK KORUNDU</b> (filtre tazelemesi de <c>ItemsSource</c> ataması yapar,
+    /// yani tam reset). A13.2'nin "koleksiyon reset'i YASAK" kuralı burada ihlal edilmez, çünkü kuralın
+    /// koruduğu iki şey de zarar görmez: <b>(a) seçim</b> satır VM'lerinin kendi <c>IsSelected</c>'ında yaşar
+    /// ve satır nesneleri <c>Projects</c>'ten gelen AYNI örneklerdir → reset seçimi düşürmez; <b>(b) gereksiz
+    /// churn</b> çağıran tarafta kapatılır (<c>MainWindow</c> görünür-satır imzası değişmedikçe buraya HİÇ
+    /// gelmez). Alternatif (entry akışını yerinde uzlaştırmak) <see cref="Metrics"/>/overlay/reveal
+    /// muhasebesinin İKİNCİ bir kopyasını gerektirirdi — "tek yer" kuralına aykırı. Ayrıca görünür küme
+    /// gerçekten değiştiğinde listenin başa dönmesi DOĞRU davranıştır (filtre yeni bir liste demektir).</para>
+    /// </summary>
+    public void SetGroups(IReadOnlyList<LayerGroup> groups, bool reveal)
     {
         ArgumentNullException.ThrowIfNull(groups);
         Metrics = new LayoutMetrics(groups.Select(g => new LayerSpec(g.Name ?? "", g.Rows.Count)).ToList());
@@ -121,7 +141,10 @@ public partial class StickyLayerList : UserControl
         // yani üretimdeki sıra: kabuk realize, gruplar sonra akar — `StatusChanged`/`ContainersGenerated`
         // bu satırın İÇİNDE ateşlenir). Bayrak sonra kurulursa handler onu `false` görüp döner ve BİR DAHA
         // status değişimi gelmez → reveal SESSİZCE hiç oynamaz, kartlar tam opaklıkta "pat" diye belirir.
-        _revealPending = true;
+        // [A13/T2 · 2.5] Filtre tazelemesinde (reveal:false) bayrak KURULMAZ — bekleyen bir reveal varsa da
+        // İPTAL EDİLİR: en son tazeleme kazanır, aksi halde filtreyle gelen liste eski bir topoloji reveal'iyle
+        // kademeli belirirdi.
+        _revealPending = reveal;
         Flow.ItemsSource = entries;
         UpdateOverlay(Scroll.VerticalOffset);
     }

@@ -49,6 +49,8 @@ public partial class MainWindow : Window
     // [E4/T48] Liste satır sırası (başlık hariç) — SetGroups ile AYNI sıra; FollowRow/SelectRow satır index'i buradan
     // (her 200ms tick'te BuildLayerGroups'u yeniden kurmamak için yalnız topoloji değişiminde tazelenir).
     private IReadOnlyList<ProjectRowViewModel> _orderedRows = [];
+    // [A13/T2 · 2.5] En son listeye verilen GÖRÜNÜR satır kümesinin imzası — bkz. RefreshVisibleRows guard'ı.
+    private string _visibleRowSignature = "";
 
     /// <param name="resourceScope">
     /// [T49 FINAL PASS] ÜRETİMDE null. Pencerenin token'ları (bkz. aşağıdaki <c>FindResource</c>) üretimde
@@ -165,6 +167,19 @@ public partial class MainWindow : Window
         };
         _vm.Projects.CollectionChanged += (_, _) => RefreshListInvite();
         RefreshListInvite();
+
+        // [A13/T2 · 2.5] Proje listesi ARTIK GÖRÜNÜR kümeyi (VisibleProjects) gösterir. Ölçülen kusur: liste
+        // TÜM Projects'ten besleniyordu ve VisibleProjects'in ÜRETİMDE HİÇ TÜKETİCİSİ YOKTU — yani statü
+        // chip'leri de Ctrl+F filtre kutusu da listede görsel olarak hiçbir şey yapmıyordu.
+        //
+        // TEK sinyal VisibleProjects'tir: hem ActiveFilter/ProjectQuery değişimi ([NotifyPropertyChangedFor])
+        // hem de satır statüsü değişimi (RefreshRunSurface) onu yayınlar — böylece "Failed" filtresi açıkken
+        // YENİ bir hata listeye CANLI düşer. Bu, TopologyChanged yolundan AYRI ve ona DOKUNMAZ (E2/§5-b kararı
+        // korunur: graf yalnız YAPI değişince yeniden kurulur).
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.VisibleProjects)) RefreshVisibleRows();
+        };
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
         // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
@@ -379,16 +394,40 @@ public partial class MainWindow : Window
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te
     /// başlıksızdır.</summary>
-    private void RefreshProjectGroups()
+    private void RefreshProjectGroups() => ApplyProjectGroups(reveal: true);
+
+    /// <summary>[A13/T2 · 2.5] Filtre/sorgu (ya da bir satırın statüsü) yüzünden GÖRÜNÜR küme değişti → listeyi
+    /// tazele, ama kademeli belirişi (bo-reveal) OYNATMA.
+    ///
+    /// <para><b>İmza guard'ı (E2/§5-b <c>_lastTopologySignature</c> deseninin eşi):</b> <c>VisibleProjects</c>
+    /// bildirimi bir run boyunca HER proje event'inde gelir (<c>RefreshRunSurface</c>). Guard olmadan liste
+    /// saniyede onlarca kez tam reset yerdi — oysa filtre yokken küme HİÇ değişmez. Yalnız görünür satırların
+    /// sırası/kimliği gerçekten değiştiğinde WPF'e dokunulur.</para></summary>
+    private void RefreshVisibleRows()
+    {
+        if (VisibleRowSignature() == _visibleRowSignature) return;
+        ApplyProjectGroups(reveal: false);
+    }
+
+    /// <summary>[D1] VM'in katman gruplarını StickyLayerList'e verir. <paramref name="reveal"/> = kademeli
+    /// beliriş oynasın mı: topoloji değişimi OYNATIR (yeni liste), filtre tazelemesi OYNATMAZ (aynı listenin
+    /// alt kümesi) — gerekçe <see cref="StickyLayerList.SetGroups(IReadOnlyList{StickyLayerList.LayerGroup}, bool)"/>'ta.</summary>
+    private void ApplyProjectGroups(bool reveal)
     {
         var groups = _vm.BuildLayerGroups()
             .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
             .ToList();
-        Shell.ProjectsList.SetGroups(groups);
+        Shell.ProjectsList.SetGroups(groups, reveal);
         // [E4/T48] Satır sırasını (başlık hariç) önbelleğe al — FollowRow/SelectRow global satır index'i buradan;
-        // SetGroups'un kurduğu LayoutMetrics satır sırasıyla BİREBİR (aynı groups kaynağı).
+        // SetGroups'un kurduğu LayoutMetrics satır sırasıyla BİREBİR (aynı groups kaynağı). Filtre altında da
+        // tutarlı kalır: ikisi de AYNI groups'tan türer, yani index'ler görünür listeyi adresler.
         _orderedRows = groups.SelectMany(g => g.Rows).OfType<ProjectRowViewModel>().ToList();
+        _visibleRowSignature = VisibleRowSignature();
     }
+
+    /// <summary>Görünür satır kümesinin kimliği+sırası. Ayraç <c>'|'</c>: Windows yol adlarında YASAK bir
+    /// karakterdir, dolayısıyla iki farklı küme birleşince aynı imzaya düşemez.</summary>
+    private string VisibleRowSignature() => string.Join('|', _vm.VisibleProjects.Select(r => r.Id));
 
     /// <summary>[E4/T48] Liste sırasındaki (başlık hariç) İLK eşleşen satırın global index'i — <see cref="Controls.LayoutMetrics"/>
     /// satır index'iyle birebir (StickyLayerList.FollowRow/SelectRow bunu bekler). Eşleşme yoksa -1.</summary>

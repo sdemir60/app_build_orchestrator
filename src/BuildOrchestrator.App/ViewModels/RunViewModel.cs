@@ -603,7 +603,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (mimari kural, test pinler). <see cref="Projects"/> zaten build-order'dadır (topoloji sırası). Hiçbir
     /// düğümün <c>LayerName</c>'i yoksa tek isimsiz grup = düz build-order.</summary>
     public IReadOnlyList<LayerGrouping.Group> BuildLayerGroups() =>
-        LayerGrouping.Build(Projects, Topology);
+        LayerGrouping.Build(VisibleProjects, Topology);
 
     private void ClearSelectionAndFilter()
     {
