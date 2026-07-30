@@ -16,6 +16,8 @@ SDD ledger (git-ignored, yalnız lokal, **en güncel kaynak**):
 
 ## İlgili dosyalar (kümülatif)
 
+- `.claude/outputs/2026-07-30-18-45-a13-t2-open-findings.md` — **T2'nin 11 AÇIK BULGUSU** (C1 + 7 Important + 3 doküman düzeltmesi); ağaçtaki 18 commit edilmemiş dosya buna karşı doğrulanacak.
+- `.claude/outputs/2026-07-30-18-45-a13-inventory-appendix.md` — **envanter eki: kalem-kalem ölçüm** (10 göz-ister gerekçeleri + 56 testsiz kalemin `dosya:satır` kanıtı, T3-T6 girdisi).
 - `.claude/summaries/2026-07-30-18-26-visual-check-automation-progress.md` — **bu oturumun özeti** (envanter tablosu, kullanıcı kararları, bulunan gerçek üretim kusurları, kalan 9 task).
 - `.claude/outputs/2026-07-30-14-59-visual-check-automation-tdd-plan.md` — **A13 TDD dökümü** (task tanımları T1-T8 + B1-B4, üç kovalı triyaj taslağı).
 - `.superpowers/sdd/2026-07-30-14-59-visual-check-automation-tdd-plan/progress.md` — SDD ledger + brief/rapor dosyaları (git-ignored).
