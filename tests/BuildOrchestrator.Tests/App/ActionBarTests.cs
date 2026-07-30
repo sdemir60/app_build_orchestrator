@@ -228,6 +228,52 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[A13/T3 fix-1 · B1] BuildApp.jsx:1552-1553 building chip'inin glyph'i KOŞULLUdur:
+    /// <c>icon={c.building ? &lt;BuildingSpin size={12}/&gt; : &lt;span 8×8 daire background:'var(--neutral-600)'&gt;}</c>
+    /// (README §2.7: <i>"spinner+4 (building; boşken gri nokta)"</i>). Üretimde kural
+    /// <c>ActionBar.RefreshChips</c>'te yaşar; T3c yalnız İKİ ÇOCUĞUN VARLIĞINI okuyordu — iki satır tersine
+    /// çevrilse (boşken spinner, koşarken nokta) süit YEŞİL kalırdı.
+    ///
+    /// <para>Takas <b>iki yönlü</b> ve ÜRETİM YOLUNDAN sürülür (brief kural 3): gerçek
+    /// <see cref="RunStartedEvent"/>/<see cref="ProjectStartedEvent"/>/<see cref="ProjectSucceededEvent"/>
+    /// zinciri <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN değiştirir; <c>RefreshChips</c> doğrudan
+    /// çağrılmaz. Nokta rengi de pinli: <c>--dot-clean = var(--neutral-600) = #3a3a42 = Brush.DotClean</c>
+    /// (colors.css:39).</para></summary>
+    [StaFact]
+    public void The_building_chip_swaps_its_grey_dot_for_the_spinner_only_while_a_project_is_building()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0)); // → Idle
+        var (bar, window) = Realize(vm);
+
+        var icon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
+        var dot = Assert.IsType<Ellipse>(icon.Children[0]);
+        var spinner = Assert.IsType<BuildingSpinner>(icon.Children[1]);
+
+        // Boşken: gri nokta görünür, spinner gizli.
+        Assert.Equal(0, vm.Counters.Building); // ön-koşul: gerçekten kimse derlenmiyor
+        Assert.Equal(Visibility.Visible, dot.Visibility);
+        Assert.Equal(Visibility.Collapsed, spinner.Visibility);
+        Assert.Same(bar.FindResource("Brush.DotClean"), dot.Fill);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        // Koşarken TAKAS: spinner görünür, nokta gizli.
+        Assert.Equal(1, vm.Counters.Building); // ön-koşul: sayaç GERÇEKTEN arttı
+        Assert.Equal(Visibility.Visible, spinner.Visibility);
+        Assert.Equal(Visibility.Collapsed, dot.Visibility);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+
+        // Bitince geri döner (tek yönlü bir latch DEĞİL).
+        Assert.Equal(0, vm.Counters.Building);
+        Assert.Equal(Visibility.Visible, dot.Visibility);
+        Assert.Equal(Visibility.Collapsed, spinner.Visibility);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[A13/T3c · c6.3] BuildApp.jsx:1566 <c>color: di ? 'var(--status-fail-text)' : 'var(--text-faint)'</c>
     /// — ▲'nin kırmızıya dönmesi İKİ YÖNLÜDÜR (0'da faint, &gt;0'da kırmızı) ve ÜRETİM YOLUNDAN (gerçek bir proje
     /// succeeded + depIssue taşıyarak <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN artırarak) tetiklenir —
@@ -257,6 +303,47 @@ public partial class ActionBarTests
         Assert.Same(bar.FindResource("Brush.StatusFailText"), depPath.Stroke);
         GC.KeepAlive(window);
     }
+
+    // ---------------------------------------------------------------- [A13/T3b · b1] popover kabukları
+
+    /// <summary>[A13/T3b · b1] design-v1 README §2.8: <c>"Branch (272px)"</c> / <c>"Worktree (300px)"</c> —
+    /// OTORİTE LİTERALLERİ. Ölçülen, ActionBar'ın KENDİ sarmalayıcı Border'ıdır (<c>Ds.Popover</c> stilli,
+    /// <c>Width="272"</c>/<c>"300"</c>, ActionBar.xaml) — <see cref="BranchPopover"/>/<see cref="WorktreePopover"/>
+    /// kontrollerinin kendi genişliği DEĞİL (bu ikisi FARKLI kavramlardır).
+    ///
+    /// <para>[fix-1 · B7] Test <c>PopoverTests</c>'ten BURAYA taşındı (kalem ActionBar'ındır) ve oradaki inline
+    /// <see cref="Realize"/> kopyası silindi. [fix-1 · C8] Açılan her popup KAPATILIR: <c>StaysOpen="False"</c> +
+    /// <c>AllowsTransparency="True"</c> bir Popup, kapatılmadan bırakılırsa STA thread'inde canlı bir HWND olarak
+    /// asılı kalır. [fix-1 · C11] Ata yürüyüşü <see cref="DsResources.Ancestors"/>'a çıkarıldı.</para></summary>
+    [StaFact]
+    public void Action_bar_wraps_the_branch_and_worktree_popovers_in_design_v1s_272_and_300_pixel_shells()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var branchBorder = PopoverShellBorder(bar.BranchPopoverControl);
+        var worktreeBorder = PopoverShellBorder(bar.WorktreePopoverControl);
+        Assert.Equal(272.0, branchBorder.Width);
+        Assert.Equal(300.0, worktreeBorder.Width);
+
+        // Realize zorunlu (kural 5): Popup içeriği yalnız IsOpen=true iken ölçülüp yerleşir — gerçek açılış
+        // olmadan ActualWidth hep 0 kalırdı (bu yüzden literal DP okumak TEK BAŞINA yetmezdi).
+        bar.BranchChip.IsChecked = true;
+        DispatcherPump.PumpUntil(() => branchBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
+        Assert.Equal(272.0, branchBorder.ActualWidth);
+        bar.BranchChip.IsChecked = false;
+
+        bar.WorktreeChip.IsChecked = true;
+        DispatcherPump.PumpUntil(() => worktreeBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
+        Assert.Equal(300.0, worktreeBorder.ActualWidth);
+        bar.WorktreeChip.IsChecked = false; // simetri: açılan popup kapatılır (fix-1 · C8)
+
+        GC.KeepAlive(window);
+    }
+
+    private static Border PopoverShellBorder(FrameworkElement inner) =>
+        DsResources.Ancestors(inner).OfType<Border>().FirstOrDefault()
+        ?? throw new InvalidOperationException("popover'ı saran Ds.Popover Border'ı bulunamadı");
 
     // ---------------------------------------------------------------- [A13/T3c · c7] Stop takası
 

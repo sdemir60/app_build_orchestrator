@@ -207,6 +207,16 @@ internal static class DsResources
         return seen;
     }
 
+    /// <summary>[A13/T3 fix-1 · C11] <see cref="Descendants"/>'ın simetrik karşılığı: görsel ata zinciri (kökten
+    /// UZAĞA doğru, kök hariç). Süitte bu yürüyüş dört ayrı yerde elle yazılmıştı; yeni çağıranlar buradan
+    /// beslenir (kopya YASAK, CLAUDE.md).</summary>
+    public static IEnumerable<DependencyObject> Ancestors(DependencyObject node)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        for (var parent = VisualTreeHelper.GetParent(node); parent is not null; parent = VisualTreeHelper.GetParent(parent))
+            yield return parent;
+    }
+
     /// <summary>Görsel ağacın tamamı — şablon içindeki şablonlara da iner (split button'ın yarımları gibi).</summary>
     public static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {

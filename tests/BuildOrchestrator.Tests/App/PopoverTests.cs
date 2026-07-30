@@ -299,46 +299,7 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [A13/T3b · b1] ölçü/geometri
-
-    /// <summary>[A13/T3b · b1] design-v1 README §2.8: <c>"Branch (272px)"</c> / <c>"Worktree (300px)"</c> —
-    /// OTORİTE LİTERALLERİ. Önceki tek pin (<see cref="The_branch_popover_realizes_and_lays_out_while_open"/>
-    /// benzeri testler) yalnız <c>ActualWidth &gt; 0</c> kontrol ediyordu — genişlik 500'e çıksa da YEŞİL
-    /// kalırdı (totolojiye yakın, ayırt edicilik yok). Bu test ActionBar'ın KENDİ sarmalayıcı Border'ını
-    /// (<c>Ds.Popover</c> stilli, <c>Width="272"</c>/<c>"300"</c>, ActionBar.xaml:29/:42) GERÇEKTEN açarak
-    /// ölçer — <see cref="BranchPopover"/>/<see cref="WorktreePopover"/>'ın KENDİ <c>ActualWidth</c>'i değil,
-    /// onları SARAN popover kabuğunun genişliği (bu ikisi FARKLI kavramlardır).</summary>
-    [StaFact]
-    public void Action_bar_wraps_the_branch_and_worktree_popovers_in_design_v1s_272_and_300_pixel_shells()
-    {
-        var vm = NewVm();
-        var host = DsResources.NewHost();
-        var bar = new ActionBar { DataContext = vm };
-        var window = DsResources.Realize(host, bar);
-
-        var branchBorder = PopoverShellBorder(bar.BranchPopoverControl);
-        var worktreeBorder = PopoverShellBorder(bar.WorktreePopoverControl);
-        Assert.Equal(272.0, branchBorder.Width);
-        Assert.Equal(300.0, worktreeBorder.Width);
-
-        // Realize zorunlu (kural 5): Popup içeriği yalnız IsOpen=true iken ölçülüp yerleşir — gerçek açılış
-        // olmadan ActualWidth hep 0 kalırdı (bu yüzden literal DP okumak TEK BAŞINA yetmezdi).
-        bar.BranchChip.IsChecked = true;
-        DispatcherPump.PumpUntil(() => branchBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
-        Assert.Equal(272.0, branchBorder.ActualWidth);
-        bar.BranchChip.IsChecked = false;
-
-        bar.WorktreeChip.IsChecked = true;
-        DispatcherPump.PumpUntil(() => worktreeBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
-        Assert.Equal(300.0, worktreeBorder.ActualWidth);
-
-        GC.KeepAlive(window);
-    }
-
-    private static Border PopoverShellBorder(FrameworkElement inner)
-    {
-        for (DependencyObject? d = VisualTreeHelper.GetParent(inner); d is not null; d = VisualTreeHelper.GetParent(d))
-            if (d is Border b) return b;
-        throw new InvalidOperationException("popover'ı saran Ds.Popover Border'ı bulunamadı");
-    }
+    // [A13/T3 fix-1 · B7] b1 ("ActionBar popover kabukları 272/300px") ARTIK ActionBarTests'te: kalem
+    // ActionBar'ın KENDİ kabuğuna aittir (ActionBar.xaml), bu dosya ise BranchPopover/WorktreePopover
+    // kontrollerinindir; test burada dururken ActionBarTests.Realize'ı inline kopyalıyordu.
 }
