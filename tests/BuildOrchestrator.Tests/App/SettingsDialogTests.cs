@@ -1,7 +1,11 @@
+using System.Linq;
+using System.Windows.Controls;
+using System.Windows.Documents;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
@@ -12,11 +16,16 @@ namespace BuildOrchestrator.Tests.App;
 /// [D7/T66] Settings diyaloğu — LAYERS editör VM'i (<see cref="LayerEditorViewModel"/>). Saf/WPF'siz [Fact]'ler:
 /// Save-validation kuralı, taslak commit/rollback (Cancel), ve Save'in BİREBİR konsol notu + persistence'ı.
 /// RunViewModel D8 desenine göre kurulur (EngineHost hiç başlatılmaz — VM'in AppendRunLine yolu engine'e
-/// dokunmaz).
+/// dokunmaz). [A13/T3a] StaFact'ler (a2/a3/a9) GERÇEK <see cref="SettingsDialog"/>'u realize eder — kopya
+/// metinleri XAML'de yaşar, VM'den erişilemez.
 /// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsDialogTests
 {
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
+
+    private static RunViewModel NewRun() =>
+        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
 
     /// <summary>Bellek-içi UiStateStore — persistence round-trip'ini WPF/dosya olmadan gözlemler.</summary>
     private sealed class FakeStore : IUiStateStore
@@ -180,5 +189,61 @@ public class SettingsDialogTests
         Assert.Equal(@"D:\repo", run.RootPath);                                    // kök değişmedi
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);  // satırlar sıfırlanmadı (hollow YOK)
         Assert.Null(sent);                                                         // yeniden Sync GÖNDERİLMEDİ
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a2/a3] LAYERS kopya metinleri
+
+    /// <summary>[A13/T3a · a2/a3] design-v1 §2.9 BİREBİR: <c>LAYERS</c> caps başlığı, açıklama cümlesi ("Other"
+    /// mono Run'la BİRLEŞİK okunur — <c>TextBlock.Text</c> tüm Inline'ları düzleştirir) ve boş-katman kesikli
+    /// kutu metni. Katman yokken (taze <see cref="RunViewModel.LayerPatterns"/> null) boş-durum kutusu görünür.</summary>
+    [StaFact]
+    public void Settings_dialog_pins_the_layers_caption_description_and_empty_state_box_verbatim()
+    {
+        var host = DsResources.NewHost();
+        var dialog = new SettingsDialog();
+        var window = DsResources.Realize(host, dialog);
+        dialog.Open(NewRun(), new FakeStore(), () => null);
+        dialog.UpdateLayout();
+
+        var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
+        var texts = blocks.Select(t => t.Text).ToList();
+        Assert.Contains("LAYERS", texts);
+
+        // description TextBlock 3 <Run>'dan kurulu — headless'ta TextBlock.Text (ContentStart/End tabanlı)
+        // Inlines'ı yansıtmaz; Run'lar doğrudan birleştirilir (aynı okunabilir metin, farklı okuma yolu).
+        string description = string.Concat(
+            blocks.Single(b => b.Inlines.Count == 3).Inlines.OfType<Run>().Select(r => r.Text));
+        Assert.Equal(
+            "Projects are grouped by the first matching pattern (regex on the project name), top to bottom; " +
+            "card order is the layer order in the list. Non-matching projects fall under Other.",
+            description);
+
+        Assert.Contains("No layers yet — projects show as a single list in build order.", texts);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a9] footer buton etiketleri
+
+    /// <summary>[A13/T3a · a9] design-v1 §2.9: <c>Add layer</c> (ghost, ikon+etiket) · <c>Cancel</c> · <c>Save</c>
+    /// (primary) · <c>Load sample layers</c> (ghost) — davranışları zaten pinliydi (Save/Cancel/LoadSample
+    /// testleri), etiketlerin BİREBİR metni testsizdi.</summary>
+    [StaFact]
+    public void Settings_dialog_footer_and_add_layer_button_labels_are_verbatim()
+    {
+        var host = DsResources.NewHost();
+        var dialog = new SettingsDialog();
+        var window = DsResources.Realize(host, dialog);
+        dialog.Open(NewRun(), new FakeStore(), () => null);
+        dialog.UpdateLayout();
+
+        var buttons = DsResources.RealizedObjects(dialog).OfType<Button>().ToList();
+        Assert.Contains(buttons, b => Equals(b.Content, "Cancel"));
+        Assert.Contains(buttons, b => Equals(b.Content, "Save"));
+        Assert.Contains(buttons, b => Equals(b.Content, "Load sample layers"));
+
+        // "Add layer": Content bir StackPanel'dir (ikon + TextBlock) — etiket ayrı aranır.
+        var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
+        Assert.Contains("Add layer", texts);
+        GC.KeepAlive(window);
     }
 }
