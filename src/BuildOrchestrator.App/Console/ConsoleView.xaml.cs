@@ -40,6 +40,17 @@ public partial class ConsoleView : UserControl
     private ConsoleColorizer? _colorizer;
     private ConsolePalette? _palette;
 
+    /// <summary>[A13/T1] Motion sinyalinin TAZE okunduğu kapı — depo <see cref="MotionGate"/> (kardeş sahiplerin
+    /// deseni: <see cref="Controls.StickyLayerList"/>/<see cref="Views.EventStreamView"/>/<see cref="Views.ProjectRow"/>/
+    /// <see cref="Graph.GraphView"/>). <b>Parametresiz ctor</b> = yalnız TAZE OKUMA: canlı
+    /// <c>AnimationsEnabledChanged</c> aboneliği bugün de YOKtu, kurulmaz (davranış birebir korunur).
+    ///
+    /// <para><b>Neden gerekliydi:</b> bu görünüm motion sinyalini statik <see cref="MotionGate.StaticAnimationsEnabled"/>
+    /// üzerinden DOĞRUDAN okuyordu; headless'ta <c>App.Motion</c> null olduğundan üretim append yolunun
+    /// (<see cref="AppendNarrativeBatch"/>) daktilo kolu HİÇ koşturulamıyordu — yalnız reduced-motion (instant)
+    /// kolu sınanabiliyordu. Varsayılan provider aynı statik ifadedir, yani enjeksiyon yokken davranış AYNI.</para></summary>
+    private readonly MotionGate _motion = new();
+
     // [T59] Alta-yapışık + `⌄ latest` pill — StickToBottom'ın TEK gerçek kaynağı (bkz. StickToBottom get/set altta).
     private readonly BottomAnchorBehavior _bottomAnchor;
     private double _lastExtentHeight; // AvalonEdit ScrollChanged extent-delta VERMEZ — burada elle izlenir (T59)
@@ -106,6 +117,15 @@ public partial class ConsoleView : UserControl
     /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
     /// MainWindow enjekte eder.</summary>
     public ScrollArbiter? Arbiter { get; set; }
+
+    /// <summary>[A13/T1 · ProjectRow/GraphView/EventStreamView deseni · D8] Motion sinyalinin TAZE okunduğu kapı —
+    /// sınıf statik <c>App.Motion</c>'a doğrudan bağlanmaz; testler gerçek bir daktilo/kaskat/blink saatini
+    /// sürebilmek için bunu <c>() =&gt; true</c> ile enjekte eder (headless'ta <c>App.Motion</c> null → reduced).</summary>
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
 
     /// <summary>Test/host erişimi için altındaki AvalonEdit kontrolü.</summary>
     public TextEditor Editor => EditorControl;
@@ -282,7 +302,7 @@ public partial class ConsoleView : UserControl
         ActiveCursor.Fill = dim;
         ActiveCursor.Opacity = 1.0;
         ActiveLineOverlay.Visibility = Visibility.Visible;
-        if (MotionGate.StaticAnimationsEnabled) StartBlink(); else StopBlink(); // [W2 fix-1] statik sinyalin TEK kapısı
+        if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
     }
 
     private void HideReadyIfShown()
@@ -305,7 +325,7 @@ public partial class ConsoleView : UserControl
     {
         EnsureColorizer();
         text ??= "";
-        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
+        bool animationsEnabled = _motion.Enabled; // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
 
         var type = ConsoleLineClassifier.Classify(text);
         Brush color = _palette?.ForType(type) ?? EditorControl.Foreground;
@@ -358,7 +378,7 @@ public partial class ConsoleView : UserControl
         _typeClock = null;
         StopBlink();
 
-        bool animate = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
+        bool animate = _motion.Enabled; // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
         if (!animate) { FinishActiveLine(commit: true); return; }
 
         _cursorFading = true;
@@ -447,7 +467,7 @@ public partial class ConsoleView : UserControl
         string sliceText = Join(allLines, _loadedFrom, allLines.Count);
         int sliceCount = allLines.Count - _loadedFrom;
 
-        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
+        bool animationsEnabled = _motion.Enabled; // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
 
         var scheduler = new CascadeScheduler(sliceCount, animationsEnabled);
         if (scheduler.Instant)
@@ -482,7 +502,7 @@ public partial class ConsoleView : UserControl
             CancelCascade(); // transformer'ı kaldırır + tam opak redraw
             // Blink dekoratif sonsuz animasyon — motion sinyalini BAŞLATMA anında TAZE oku (motion sözleşmesi).
             if (_buildInProgressPending)
-                ShowBuildInProgress(MotionGate.StaticAnimationsEnabled); // [W2 fix-1] statik sinyalin TEK kapısı
+                ShowBuildInProgress(_motion.Enabled); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
         }
     }
 

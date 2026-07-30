@@ -122,6 +122,23 @@ public sealed class DsSplitter : GridSplitter
 
     protected override Visual GetVisualChild(int index) => Line;
 
+    /// <summary>
+    /// [A13/T1 — ölçülmüş kusur] <see cref="AddLogicalChild"/> yalnız ÇOCUĞUN <c>Parent</c>'ını kurar; WPF'in ağaç
+    /// yürüyüşleri (<c>TreeWalkHelper</c>) ise ebeveynin <b>bu</b> numaralandırıcısını kullanır. Override yokken
+    /// <see cref="Line"/> mantıksal ağaçta GÖRÜNMEZ ve bu yüzden ayraç bir kaynak kapsamına girdiğinde onun
+    /// <c>DynamicResource</c>'ları YENİDEN ÇÖZÜLMEZ.
+    ///
+    /// <para><b>Ölçülen sonuç:</b> ctor'daki <c>Line.SetResourceReference(Fill, "Brush.Border")</c> henüz ebeveynsiz
+    /// bir kapsamda koşup <c>null</c>'a düşüyor ve orada KALIYORDU — tam realize edilmiş bir <c>ShellRoot</c>'ta bile
+    /// <c>ColumnSplitter.Line.Fill == null</c>, yani ayracın 1px görünür çizgisi DİNLENİRKEN HİÇ ÇİZİLMİYORDU.
+    /// Kusur gözle kontrolde kolayca kaçar, çünkü ilk sürüklemeden sonra KENDİLİĞİNDEN kapanır: amber/geri-dönüş
+    /// handler'ları (ctor'daki <c>DragStarted</c>/<c>DragCompleted</c>) <c>SetResourceReference</c>'ı ayraç ARTIK
+    /// ağaçtayken çağırır ve o çağrı doğru çözülür.</para></summary>
+    protected override System.Collections.IEnumerator LogicalChildren
+    {
+        get { yield return Line; }
+    }
+
     protected override Size MeasureOverride(Size constraint)
     {
         Line.Measure(constraint);
