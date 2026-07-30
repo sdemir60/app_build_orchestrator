@@ -162,11 +162,15 @@
                  METİN ARTIK KOD-TARAFI sürülür (MainWindow.RefreshTitleContext → TitleBarContext) — XAML'de
                  literal YOKTUR. Eski hâlinde "no repository" burada DONMUŞTU: repo/branch/worktree hiçbir
                  zaman başlığa ulaşmıyordu. İki AYRI TextBlock zorunlu: tek Text literali iki ton veremez. -->
+            <!-- [T2 fix-1 · m5] MaxWidth ZORUNLU: yatay StackPanel çocuklarını SONSUZ genişlikle ölçer, yani
+                 MaxWidth olmadan TextTrimming HİÇ devreye girmez ve uzun bir repo/branch adı caption
+                 butonlarının altına sert kesilirdi. Sınırlar tek satırda kalacak şekilde ölçülüdür. -->
             <TextBlock x:Name="ContextText" VerticalAlignment="Center" Margin="8,0,0,0"
+                       MaxWidth="320" TextTrimming="CharacterEllipsis"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextDim}" />
             <TextBlock x:Name="ContextWorktreeText" VerticalAlignment="Center" Margin="8,0,0,0"
-                       Visibility="Collapsed" TextTrimming="CharacterEllipsis"
+                       Visibility="Collapsed" MaxWidth="200" TextTrimming="CharacterEllipsis"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextFaint}" />
           </StackPanel>

@@ -132,4 +132,51 @@ public class FollowScrollControllerTests
 
         Assert.Empty(f.AnimatedTargets); // ilk (bayat) satıra kaydırmadı
     }
+
+    // ---------------------------------------------------------------- [T2 fix-1 · I-D] Rebind
+
+    /// <summary>
+    /// <b>[T2 fix-1 · I-D — regresyon]</b> Satır düzeni değişince (<see cref="FollowScrollController.Rebind"/>)
+    /// 550ms throttle saati KORUNUR.
+    ///
+    /// <para><b>Ölçülen kusur:</b> <c>StickyLayerList.SetGroups</c> controller'ı her çağrıda yeniden
+    /// yaratıyordu; taze controller'da <c>_lastMoveAtMs == long.MinValue</c> → <c>elapsed = double.MaxValue</c>
+    /// → <c>ShouldMove</c> HEP true. 2.5'ten sonra <c>SetGroups</c> görünür küme her değiştiğinde koştuğu için
+    /// koşarken bir statü filtresi açıkken throttle tamamen etkisizleşiyordu.</para>
+    /// </summary>
+    [Fact]
+    public void Rebinding_new_metrics_keeps_the_throttle_window_open()
+    {
+        var f = new Fake();
+        var follow = f.New(Flat40());
+        follow.FollowRow(rowIndex: 20);
+        Assert.Single(f.AnimatedTargets);          // ön-koşul: saat işledi
+
+        follow.Rebind(Flat40());                   // filtre tazelemesi: YENİ metrics, AYNI oturum
+        f.NowMs += 100;                            // throttle penceresi (550ms) HÂLÂ açık
+        follow.FollowRow(rowIndex: 30);
+
+        Assert.Single(f.AnimatedTargets);          // throttle tuttu — ikinci hareket YOK
+
+        f.NowMs += 600;                            // pencere kapandı
+        follow.FollowRow(rowIndex: 30);
+        Assert.Equal(2, f.AnimatedTargets.Count);  // ...ve normal kadans devam ediyor
+    }
+
+    /// <summary>Rebind seçim durumunu da korur — aksi halde bir filtre tazelemesi "seçili kart" kilidini
+    /// sessizce açıp follow'u yeniden devreye sokardı.</summary>
+    [Fact]
+    public void Rebinding_keeps_the_selection_lock()
+    {
+        var f = new Fake();
+        var follow = f.New(Flat40());
+        follow.SelectRow(5);
+        Assert.False(follow.IsFollowing); // ön-koşul: seçim kilidi var
+
+        follow.Rebind(Flat40());
+
+        Assert.False(follow.IsFollowing);
+        follow.FollowRow(rowIndex: 20);
+        Assert.Empty(f.AnimatedTargets);  // seçim varken follow hareket ETMEZ
+    }
 }

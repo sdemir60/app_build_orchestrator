@@ -165,11 +165,19 @@ public class RunViewModelStateTests
         {
             RootPath = @"D:\repo",
             Configuration = "Release",
-            Branch = "feature/x",
             UseWorktree = true,
-            WorktreeName = "wt-1",
             LayerPatterns = layers,
         };
+        // [T2 fix-1 · C1/I4] Branch ARTIK doğrudan atanamaz: StartRunCommand.Branch bir NİYETtir ve yalnız
+        // kullanıcının AÇIK seçimi oraya gider (bkz. RunViewModel.RunBranchIntent). Doğrudan atama bir
+        // görüntüleme/seed değeridir ve komuta GİTMEZ — bu testin konusu komutun ALANLARININ doğru
+        // taşındığı olduğundan, branch de üretimdeki gerçek yoldan (popover seçimi) kurulur.
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", true, false),
+            new BranchRef("feature/x", "bbbbbbbccccc", false, false),
+        ]));
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
+        vm.WorktreeName = "wt-1"; // SelectBranch hedefi auto'ya (null) döndürür → seçimden SONRA verilir
         StartRunCommand? sent = null;
         vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
 

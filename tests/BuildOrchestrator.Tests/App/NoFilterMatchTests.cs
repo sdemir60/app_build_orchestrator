@@ -25,16 +25,13 @@ public class NoFilterMatchTests
 {
     private const string Copy = "No projects match this filter.";
 
-    private static ProjectNode Node(string name, int order) =>
-        new($@"C:\p\{name}.csproj", name, $@"C:\p\{name}.csproj", ["Osys"], [], order, null, null, false, null);
-
+    /// <summary>[T2 fix-1 · I-F] Ortak fixture (<see cref="MainWindowHost.NewWithProjects"/>).
+    /// <paramref name="withProjects"/> false → hiç düğüm akmaz (0-proje workspace'i).</summary>
     private static (MainWindow window, RunViewModel vm) NewShell(TempDir temp, bool withProjects = true)
     {
-        var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-        vm.RootPath = @"C:\src\OSYS";
-        if (withProjects) vm.OnEvent(new WorkspaceTopologyEvent([Node("Alpha", 0), Node("Beta", 1)], [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, withProjects ? 2 : 0, 0)); // Idle
+        var (window, vm, _) = withProjects
+            ? MainWindowHost.NewWithProjects(temp, ("Alpha", null), ("Beta", null))
+            : MainWindowHost.NewWithProjects(temp);
         return (window, vm);
     }
 

@@ -35,6 +35,65 @@ public sealed partial class RunViewModel
     public bool IsWorktreeForced =>
         ActiveBranchName is { } active && !string.Equals(Branch, active, StringComparison.Ordinal);
 
+    // ---------------------------------------------------------------- [T2 fix-1 · C1] açık seçim ↔ bayat seed
+
+    /// <summary>
+    /// [T2 fix-1 · C1] Kullanıcı branch'i POPOVER'DAN AÇIKÇA seçti mi. <see cref="Branch"/> tek başına bunu
+    /// SÖYLEYEMEZ: aynı alan hem açık seçimle hem diskteki <c>UiState</c> seed'iyle hem de envanter seed'iyle
+    /// (<see cref="OnBranchList"/>) dolar.
+    ///
+    /// <para><b>Neden ayrım ZORUNLU (ölçülen kusur):</b> T2'nin ilk hâlinde seed YALNIZ <c>Branch</c> boşken
+    /// koşuyordu, yani ilk Sync <c>"main"</c> yazıp diske persist ediyordu. Kullanıcı terminalde
+    /// <c>git checkout feature/y</c> yapınca uygulama kendini ASLA düzeltemiyordu: <c>Branch</c> <c>"main"</c>
+    /// kalıyor, <see cref="IsWorktreeForced"/> true oluyor ve build <c>main</c>'in committed HEAD'ini
+    /// derliyordu — kullanıcı <c>feature/y</c> üzerindeyken. Ayrım sayesinde AÇIK OLMAYAN her değer
+    /// envanterle birlikte TAZELENİR.</para>
+    /// </summary>
+    private bool _branchChosenByUser;
+
+    /// <summary>[test yüzeyi] Bkz. <see cref="_branchChosenByUser"/>.</summary>
+    internal bool BranchChosenByUser => _branchChosenByUser;
+
+    /// <summary>
+    /// [T2 fix-1 · C1/I4] <see cref="StartRunCommand.Branch"/>'e giden değer — <see cref="Branch"/>'ten
+    /// KASITLI olarak farklıdır.
+    ///
+    /// <para><b>Karar:</b> <c>Branch</c> bir <b>görüntüleme</b> değeridir (chip · title bar · popover source
+    /// satırı). Supervisor içinse bu alan bir <b>NİYET</b>tir: dolu gelmesi (a) worktree'yi ZORUNLU kılan
+    /// 3-durum matrisini devreye sokar (<c>Supervisor/Program.cs:215-216</c>) ve (b) "aktif branch çözülemedi"
+    /// (detached HEAD / bozuk git) durumunu <c>warn + in-place</c> yerine <b>run'ı hiç başlatmayan</b> bir
+    /// hataya çevirir (<c>:207-208</c>). Bir seed değerini niyet diye göndermek tam da C1/I4'ün kök nedenidir.
+    /// Bu yüzden komuta YALNIZ kullanıcının açık seçimi gider; aksi halde boş — ve Supervisor'ın zaten yazılı
+    /// olan sözleşmesi devreye girer: <i>"Branch boş gelirse niyet aktif branch'in COMMITTED hâlidir"</i>
+    /// (<c>Program.cs:214</c>), <c>UseWorktree</c> kapalıysa tek bir git çağrısı bile yapılmadan in-place
+    /// (<c>:183</c>). Yani açık seçim yapmamış kullanıcı için davranış T2 ÖNCESİYLE birebir aynıdır.</para>
+    ///
+    /// <para><b>Sync BUNU KULLANMAZ</b> ve kullanmamalıdır: <c>SyncWorkspaceCommand.Branch</c> yalnız
+    /// <c>git fetch origin &lt;ref&gt;</c>'in ref'ini ve <c>syncCompleted</c> echo'sunu besler, worktree
+    /// matrisini DEĞİL. Orada görüntüleme değeri doğru olandır (aksi halde fetch boş ref'e giderdi).</para>
+    /// </summary>
+    internal string RunBranchIntent => _branchChosenByUser ? Branch : "";
+
+    /// <summary>
+    /// [T2 fix-1 · C1] <b>Worktree'nin ETKİN durumu</b> — <c>forced || kullanıcının toggle'ı</c>. Kullanıcıya
+    /// gösterilen ve motora giden TEK doğruluk kaynağı budur; <see cref="UseWorktree"/> yalnız kullanıcının
+    /// KENDİ tercihini taşır (kalıcı duruma yazılan da odur).
+    ///
+    /// <para><b>Ölçülen kusur:</b> zorlamayı yalnız <see cref="SelectBranch"/> uyguluyordu (<c>UseWorktree</c>'yi
+    /// mutasyona uğratarak); seed yolu uygulamıyordu. Sonuç <b>forced + <c>UseWorktree=false</c></b>
+    /// kombinasyonuydu: build worktree'yi ZORUNLU açıp başka bir branch'in committed HEAD'ini derlerken chip
+    /// <c>"off"</c>, popover switch'i işaretsiz-ve-disabled ve source satırı "working directory — local changes
+    /// included" diyordu — UI motorun yapacağının TERSİNİ gösteriyordu. Türetilmiş değerle o kombinasyon
+    /// ÜRETİLEMEZ hâle gelir.</para>
+    ///
+    /// <para><b>Neden mutasyon DEĞİL türetim:</b> prototipin semantiği de budur (<c>BuildApp.jsx:1153</c>
+    /// <c>wtActive = forced || wtOn</c>) — zorlama bir KATMANDIR, kullanıcının tercihini KALICI olarak
+    /// ezmez. Mutasyon denendi ve ölçüldü: aktif-olmayan bir branch'ten aktife DÖNÜNCE kullanıcının
+    /// <c>false</c> tercihi geri gelmiyordu (<c>ActionBarTests.Selecting_the_active_branch_…</c> kırmızı
+    /// verdi) ve zorlama diske persist ediliyordu.</para>
+    /// </summary>
+    public bool EffectiveUseWorktree => UseWorktree || IsWorktreeForced;
+
     /// <summary>
     /// [T40 · K3 — prototipten SAPMA, plan kazanır (BuildApp.jsx:1336-1353)] Branch seçimi. Aktif-OLMAYAN bir branch
     /// seçilince: worktree ZORUNLU ON, proje durumları Pending'e sıfırlanır, faz <see cref="AppPhase.Boot"/>'a düşer
@@ -44,11 +103,15 @@ public sealed partial class RunViewModel
     /// </summary>
     public void SelectBranch(BranchRef branch)
     {
+        ArgumentNullException.ThrowIfNull(branch);
+        // [T2 fix-1 · C1] AÇIK seçim: bundan sonra envanter seed'i bu değeri EZMEZ ve StartRunCommand'a
+        // gerçek bir NİYET olarak gider (bkz. RunBranchIntent).
+        _branchChosenByUser = true;
         Branch = branch.Name;
         if (branch.IsActive) return; // aktif branch: worktree zorlaması/reset/niyet-satırı YOK
 
         WorktreeName = null;  // seçili hedef worktree'yi auto'ya döndür (BuildApp.jsx:1340)
-        UseWorktree = true;   // aktif-olmayan branch → worktree zorunlu (BuildApp.jsx:1342)
+        UseWorktree = true;   // aktif-olmayan branch → kullanıcının toggle'ı da açılır (BuildApp.jsx:1342)
         ResetRowsToHollow();  // BuildApp.jsx:1345 status='discovered' → Pending, will='unknown' → hollow
         _willBuildIds.Clear();       // BuildApp.jsx:1346 eng.willBuild = new Set()
         Phase = AppPhase.Boot;       // BuildApp.jsx:1347

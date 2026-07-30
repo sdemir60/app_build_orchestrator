@@ -462,8 +462,11 @@ public sealed partial class RunViewModel : ObservableObject
             }
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
+        // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
+        // değeri ≠ niyet; seed'i niyet diye göndermek worktree'yi zorunlu kılıyor ve detached HEAD'de run'ı
+        // hiç başlatmıyordu).
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            Branch, UseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
+            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
             IsStarting = false;
     }
@@ -523,6 +526,12 @@ public sealed partial class RunViewModel : ObservableObject
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
         await TrySendAsync(new ListBranchesCommand(RootPath), "listBranches");
+        // [T2 fix-1 · I-G] Worktree envanteri de BURADAN istenir — branch'in birebir simetriği ve AYNI
+        // gerekçelerle. Gönderilmediği sürece <see cref="Worktrees"/> boş kalıyordu; sonucu yalnız boş bir
+        // popover listesi değil, ÜRETİLEN AD'ın kendisiydi: AutoWorktreeName "aynı slug önekiyle başlayan
+        // mevcut worktree sayısı"nı hep 0 sayıp her seferinde `-1` son ekini veriyor, yani var olan bir
+        // worktree ile ÇAKIŞAN bir ad öneriyordu. Hatası ayrı kodla döner ("worktreeListFailed").
+        await TrySendAsync(new ListWorktreesCommand(RootPath), "listWorktrees");
     }
     private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 

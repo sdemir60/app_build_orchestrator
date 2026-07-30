@@ -225,17 +225,27 @@ public sealed partial class RunViewModel
         // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;
 
-        RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
-
         // [E2/§5-b] TopologyChanged (→ D5 SetGraph = tam inşa + reveal stagger + kamera re-home) YALNIZ graf YAPISI
         // (düğüm Id/Ad/katman + kenar seti) değiştiğinde ateşlenir. Aynı yapının yeniden yayınlanması (ör. mid-run
         // Sync) koşan grafı yeniden-reveal ETMEZ; statü/dep tikleri zaten UpdateStatuses'tan (PushGraphStatuses) akar.
+        //
+        // [T2 fix-1 · I-C] SIRA ÖNEMLİ: TopologyChanged ARTIK RefreshRunSurface'ten ÖNCE ateşlenir.
+        // Ölçülen kusur: ters sırada her topoloji değişimi listeyi İKİ KEZ tam reset ediyordu —
+        // RefreshRunSurface → OnPropertyChanged(VisibleProjects) → RefreshVisibleRows (imza değişti, guard
+        // tutmaz) → ApplyProjectGroups(reveal:false) [1. reset, tamamen çöp], hemen ardından TopologyChanged →
+        // RefreshProjectGroups → ApplyProjectGroups(reveal:true) [2. reset]. "Churn imza guard'ıyla kesiliyor"
+        // savunması bu yol için geçerli DEĞİLDİ: guard yalnız reveal:false dalındadır.
+        // Yeni sırada reveal:true dalı listeyi kurar ve İMZAYI yazar; hemen sonra gelen RefreshRunSurface'in
+        // VisibleProjects bildirimi guard'a çarpıp NO-OP olur. Sayaç tüketicileri sıradan etkilenmez:
+        // TopologyChanged abonelerinden (RefreshProjectGroups/RebuildGraph) hiçbiri Counters okumaz.
         string signature = TopologySignature(e.Nodes);
         if (signature != _lastTopologySignature)
         {
             _lastTopologySignature = signature;
             TopologyChanged?.Invoke(this, EventArgs.Empty);
         }
+
+        RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
     }
 
     /// <summary>[E2/§5-b] Grafın GEOMETRİSİNİ belirleyen alanların (düğüm Id/Ad/<b>LayerIndex</b>/LayerName + kenarlar)
@@ -276,7 +286,40 @@ public sealed partial class RunViewModel
     private void OnBranchList(BranchListEvent e)
     {
         Replace(Branches, e.Branches);
-        if (Branch.Length == 0 && ActiveBranchName is { } active) Branch = active;
+        ReconcileBranchWithInventory();
+        // [T2 fix-1 · C1/I-G] Aktif branch DEĞİŞMİŞ olabilir (kullanıcı terminalde `git checkout` yaptı) →
+        // IsWorktreeForced/EffectiveUseWorktree TÜRETİLMİŞ değerleri de değişmiştir ama kendi bildirimlerini
+        // yayınlamazlar. Bağlı görünümler (açık bir WorktreePopover, ActionBar chip'i) tazelensin diye
+        // AÇIKÇA duyurulur.
+        OnPropertyChanged(nameof(ActiveBranchName));
+        OnPropertyChanged(nameof(IsWorktreeForced));
+        OnPropertyChanged(nameof(EffectiveUseWorktree));
+    }
+
+    /// <summary>
+    /// [T2 fix-1 · C1] Envanter geldi: <see cref="Branch"/>'i gerçekle uzlaştırır.
+    ///
+    /// <para><b>Kullanıcının AÇIK seçimi korunur</b> — o bir niyettir, bir varsayılan değil. TEK istisna:
+    /// seçilen branch envanterde ARTIK YOKSA (silinmiş/yeniden adlandırılmış) seçim düşürülür ve değer aktif
+    /// branch'e döner; aksi halde uygulama var olmayan bir branch'i hedeflemeye çalışır ve build zorunlu
+    /// worktree yolunda "no commit could be resolved" ile ölürdü.</para>
+    ///
+    /// <para><b>Açık olmayan her değer TAZELENİR</b> (boş olsun, diskteki bayat <c>UiState</c> seed'i olsun,
+    /// önceki bir envanter seed'i olsun) → aktif branch. C1'in tam olarak kapattığı yol budur: kullanıcı
+    /// terminalde branch değiştirince bir sonraki Sync uygulamayı kendiliğinden hizaya sokar.</para>
+    /// </summary>
+    private void ReconcileBranchWithInventory()
+    {
+        if (ActiveBranchName is not { } active) return; // detached HEAD / boş envanter → uydurma değer YOK
+
+        if (_branchChosenByUser)
+        {
+            bool stillExists = Branches.Any(b => string.Equals(b.Name, Branch, StringComparison.Ordinal));
+            if (stillExists) return;    // açık seçim GEÇERLİ → dokunma
+            _branchChosenByUser = false; // seçilen branch yok olmuş → seçim düşer, aşağıda aktife dönülür
+        }
+
+        Branch = active;
     }
 
     /// <summary>Bir listeyi gelen anlık görüntüyle değiştirir. <see cref="ObservableCollection{T}.Clear"/>

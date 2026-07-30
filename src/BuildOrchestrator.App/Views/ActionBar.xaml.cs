@@ -333,14 +333,13 @@ public partial class ActionBar : UserControl
     }
 
     // Chip içeriği (ikon/değer/chevron) chip'in ANİMASYONLU Foreground'unu izler (aktif → amber; SplitButton chevron deseni).
-    private Viewbox BoundChipIcon(ToggleButton chip, string iconKey, double size, double viewBox)
+    // [T2 fix-1 · I-B] Gövde IconVisual.BoundToForeground'a taşındı — ShellRoot'un filtre chip'i ikinci çağıran
+    // oldu (kopya YASAK). Burada yalnız bu barın chip-arası boşluğu (Margin) kalır.
+    private static Viewbox BoundChipIcon(ToggleButton chip, string iconKey, double size, double viewBox)
     {
-        var path = new Path { StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round };
-        IconPaint.Apply(path, this, iconKey, "Brush.TextSecondary");
-        path.SetBinding(Shape.StrokeProperty, new Binding(nameof(Control.Foreground)) { Source = chip });
-        var canvas = new Canvas { Width = viewBox, Height = viewBox };
-        canvas.Children.Add(path);
-        return new Viewbox { Width = size, Height = size, Stretch = Stretch.Uniform, Child = canvas, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(ChipContentGap, 0, 0, 0) };
+        var icon = IconVisual.BoundToForeground(chip, iconKey, size, viewBox);
+        icon.Margin = new Thickness(ChipContentGap, 0, 0, 0);
+        return icon;
     }
 
     private static TextBlock ChipLabel(string text)
@@ -360,7 +359,9 @@ public partial class ActionBar : UserControl
     {
         if (!_built) return;
         _branchValue.Text = _vm?.Branch ?? "";
-        bool on = _vm?.UseWorktree ?? false;
+        // [T2 fix-1 · C1] ETKİN değer (forced || kullanıcı toggle'ı) — ham UseWorktree DEĞİL. Aksi halde
+        // zorunlu worktree ile derlenirken chip "off" gösteriyordu.
+        bool on = _vm?.EffectiveUseWorktree ?? false;
         _worktreeValue.Text = on ? (_vm?.EffectiveWorktreeName ?? "") : "off";
     }
 

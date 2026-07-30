@@ -72,6 +72,35 @@ public class BranchInventoryTests
         Assert.Equal(@"D:\other-repo", list.RootPath);
     }
 
+    /// <summary>[T2 fix-1 · I-G] Worktree envanteri de istenir — branch'in birebir simetriği. Gönderilmediği
+    /// sürece <see cref="RunViewModel.Worktrees"/> boş kalıyor ve <see cref="RunViewModel.AutoWorktreeName"/>
+    /// mevcutları hep 0 sayıp ÇAKIŞAN bir ad öneriyordu.</summary>
+    [Fact]
+    public async Task Sync_also_asks_for_the_worktree_inventory()
+    {
+        var vm = NewVm();
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<ListWorktreesCommand>()).RootPath);
+    }
+
+    /// <summary>[T2 fix-1 · I-G] Envanter geldiğinde otomatik ad ÇAKIŞMAYI önler: havuzda <c>main-1</c> varken
+    /// önerilen ad <c>main-2</c> olur. Envanter hiç gelmezse (eski davranış) hep <c>main-1</c> önerilirdi.</summary>
+    [Fact]
+    public void The_worktree_inventory_makes_the_auto_name_avoid_a_collision()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent(Inventory()));
+        Assert.Equal("main-1", vm.EffectiveWorktreeName); // envanter yokken
+
+        vm.OnEvent(new WorktreeListEvent([new Worktree("main-1", "main", @"D:\pool\main-1", false, 0)]));
+
+        Assert.Equal("main-2", vm.EffectiveWorktreeName);
+    }
+
     // ---------------------------------------------------------------- seed (SAF VM)
 
     /// <summary>Envanter gelince hedef branch AKTİF branch'e seed edilir — chip'in ilk kez bir değeri olur.</summary>
@@ -87,18 +116,178 @@ public class BranchInventoryTests
         Assert.False(vm.IsWorktreeForced); // aktif branch seçili → worktree ZORLANMAZ
     }
 
-    /// <summary>Seed YALNIZ boşluğu doldurur: kullanıcının popover'dan yaptığı seçim ya da UiState'ten gelen
-    /// seed (<c>MainWindow.xaml.cs:126</c>) EZİLMEZ — aksi halde hatırlanan branch her Sync'te kaybolurdu.</summary>
+    /// <summary>
+    /// [T2 fix-1 · C1] Kullanıcının POPOVER'DAN yaptığı AÇIK seçim korunur — o bir niyettir, varsayılan değil.
+    /// </summary>
     [Fact]
-    public void The_inventory_never_overwrites_a_branch_that_was_already_chosen()
+    public void The_inventory_never_overwrites_an_explicit_user_choice()
     {
         var vm = NewVm();
-        vm.Branch = "feature/x"; // UiState seed'i ya da kullanıcı seçimi
+        vm.OnEvent(new BranchListEvent(Inventory()));                                  // seed → "main"
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));     // AÇIK seçim
+        Assert.True(vm.BranchChosenByUser);
 
-        vm.OnEvent(new BranchListEvent(Inventory()));
+        vm.OnEvent(new BranchListEvent(Inventory()));                                  // ikinci Sync
 
         Assert.Equal("feature/x", vm.Branch);
-        Assert.True(vm.IsWorktreeForced); // aktif-OLMAYAN branch → worktree zorunlu (bu dal ilk kez canlı)
+        Assert.True(vm.IsWorktreeForced);
+    }
+
+    /// <summary>
+    /// <b>[T2 fix-1 · C1 — kritik regresyon]</b> DİSKTEN gelen bayat <c>Branch</c> (UiState seed'i,
+    /// <c>MainWindow.xaml.cs:128</c>) bir açık seçim DEĞİLDİR ve envanterle TAZELENİR.
+    ///
+    /// <para>Kapatılan senaryo: ilk Sync <c>Branch="main"</c> yazıp diske persist ediyordu; kullanıcı terminalde
+    /// <c>git checkout feature/y</c> yapınca seed YALNIZ boşken koştuğu için uygulama kendini ASLA
+    /// düzeltemiyordu — build sessizce <c>main</c>'in committed HEAD'ini zorunlu bir worktree'de derliyordu.</para>
+    /// </summary>
+    [Fact]
+    public void A_stale_branch_from_disk_is_refreshed_to_whatever_is_actually_checked_out()
+    {
+        var vm = NewVm();
+        vm.Branch = "main"; // UiState seed'i (açık seçim DEĞİL)
+        Assert.False(vm.BranchChosenByUser);
+
+        // Kullanıcı terminalde `git checkout feature/y` yaptı → envanterde aktif branch ARTIK feature/y.
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", false, false),
+            new BranchRef("feature/y", "ccccccceeeee", true, false),
+        ]));
+
+        Assert.Equal("feature/y", vm.Branch);   // uygulama kendini DÜZELTTİ
+        Assert.False(vm.IsWorktreeForced);      // aktif branch → zorlama YOK
+        Assert.False(vm.EffectiveUseWorktree);  // ...ve in-place build
+    }
+
+    /// <summary>Açık seçim yapılmış branch envanterden SİLİNMİŞSE seçim düşer ve aktife dönülür — aksi halde
+    /// build "no commit could be resolved" ile zorunlu-worktree yolunda ölürdü.</summary>
+    [Fact]
+    public void An_explicit_choice_that_disappeared_from_the_inventory_falls_back_to_the_active_branch()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent(Inventory()));
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
+
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaaaaaaaaaaa", true, false)])); // feature/x silindi
+
+        Assert.Equal("main", vm.Branch);
+        Assert.False(vm.BranchChosenByUser);
+    }
+
+    // -------------------------------------------------- C1 (a): UI motorun yapacağının TERSİNİ göstermez
+
+    /// <summary>
+    /// <b>[T2 fix-1 · C1 — regresyon (a)]</b> Bayat <c>Branch</c> + farklı aktif branch senaryosunda chip
+    /// <c>"off"</c> göstermez ve komuta <c>UseWorktree=true</c> gider.
+    ///
+    /// <para>Not: C1 fix'i bu senaryoyu KÖKÜNDEN de kapatır (bayat değer tazelenir). Bu test, zorlamanın
+    /// gerçekten oluştuğu yoldan — AÇIK seçim — aynı değişmezi sürer: <b>forced ⇒ UI ve komut worktree
+    /// gösterir</b>.</para>
+    /// </summary>
+    [StaFact]
+    public async Task A_forced_worktree_is_never_displayed_or_sent_as_off()
+    {
+        var vm = NewVm();
+        var host = DsResources.NewHost();
+        var bar = new ActionBar { DataContext = vm };
+        var window = DsResources.Realize(host, bar);
+
+        vm.OnEvent(new BranchListEvent(Inventory()));
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
+        vm.UseWorktree = false; // kullanıcının KENDİ tercihi kapalı olsa bile zorlama üstündedir
+
+        Assert.True(vm.IsWorktreeForced);
+        Assert.True(vm.EffectiveUseWorktree);
+        Assert.DoesNotContain("off", ChipTexts(bar));   // chip "off" DEMEZ
+
+        StartRunCommand? sent = null;
+        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.NotNull(sent);
+        Assert.True(sent.UseWorktree);                  // motora da worktree gider
+        Assert.Equal("feature/x", sent.Branch);         // açık seçim NİYET olarak gider
+        GC.KeepAlive(window);
+    }
+
+    // -------------------------------------------------- C1 (b): yasak kombinasyon üretilemez
+
+    /// <summary><b>[T2 fix-1 · C1 — regresyon (b)]</b> <c>forced == true &amp;&amp; EffectiveUseWorktree == false</c>
+    /// kombinasyonu ARTIK ÜRETİLEMEZ — hangi yoldan girilirse girilsin.</summary>
+    [Theory]
+    [InlineData(true)]   // kullanıcı toggle'ı kapalı
+    [InlineData(false)]  // kullanıcı toggle'ına hiç dokunmadı
+    public void The_forced_but_worktree_off_combination_cannot_be_produced(bool explicitlyTurnOff)
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent(Inventory()));
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
+        if (explicitlyTurnOff) vm.UseWorktree = false;
+
+        Assert.True(vm.IsWorktreeForced);
+        Assert.True(vm.EffectiveUseWorktree); // yasak kombinasyon YOK
+    }
+
+    /// <summary>Zorlama bir KATMANDIR, kullanıcının tercihini kalıcı olarak EZMEZ: aktif branch'e dönünce
+    /// kullanıcının kendi <c>UseWorktree</c> değeri neyse ona geri düşülür (prototip <c>wtActive = forced || wtOn</c>,
+    /// <c>BuildApp.jsx:1153</c>). Kalıcı duruma yazılan da kullanıcının kendi değeridir.</summary>
+    [Fact]
+    public void The_forcing_layer_does_not_permanently_overwrite_the_users_own_toggle()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent(Inventory()));
+        vm.UseWorktree = false;                                                       // kullanıcı: kapalı
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));    // forced katmanı
+        Assert.True(vm.EffectiveUseWorktree);
+
+        vm.SelectBranch(new BranchRef("main", "aaaaaaaaaaaa", true, false));          // aktife dön
+        vm.UseWorktree = false;                                                        // (SelectBranch açmıştı)
+
+        Assert.False(vm.IsWorktreeForced);
+        Assert.False(vm.EffectiveUseWorktree);
+    }
+
+    // -------------------------------------------------- C1/I4 (c): in-place Build hâlâ koşar
+
+    /// <summary>
+    /// <b>[T2 fix-1 · I4 — regresyon (c)]</b> Açık seçim YOKKEN <see cref="StartRunCommand.Branch"/> BOŞ gider.
+    ///
+    /// <para>Neden kritik: Supervisor bu alanı bir NİYET olarak okur. Dolu gelirse (a) worktree zorunlu olur
+    /// (<c>Program.cs:215-216</c>) ve (b) "aktif branch çözülemedi" (detached HEAD / bozuk git) durumu
+    /// <c>warn + in-place</c> yerine run'ı HİÇ BAŞLATMAYAN bir hataya düşer (<c>:207-208</c>). Boş gitmesi,
+    /// <c>Program.cs:183</c>'ün "toggle kapalı + branch boş ⇒ tek git çağrısı bile yapmadan in-place" dalını
+    /// korur — yani detached HEAD'de de in-place Build koşmaya devam eder.</para>
+    /// </summary>
+    [Fact]
+    public async Task Without_an_explicit_choice_the_run_command_carries_no_branch_intent()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent(Inventory())); // Branch görüntüleme değeri "main" olur…
+        Assert.Equal("main", vm.Branch);
+        Assert.False(vm.BranchChosenByUser);
+
+        StartRunCommand? sent = null;
+        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.NotNull(sent);
+        Assert.Equal("", sent.Branch);      // …ama NİYET boş gider (in-place korunur)
+        Assert.False(sent.UseWorktree);
+    }
+
+    /// <summary>Sync ise görüntüleme değerini KULLANIR — orada branch yalnız <c>git fetch origin &lt;ref&gt;</c>'in
+    /// ref'ini ve echo'yu besler, worktree matrisini DEĞİL. Boş göndermek fetch'i boş ref'e yollardı.</summary>
+    [Fact]
+    public async Task Sync_still_carries_the_display_branch_because_it_only_drives_the_fetch_ref()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent(Inventory()));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Equal("main", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Branch);
     }
 
     /// <summary>Envanterde aktif branch yoksa (detached HEAD / boş liste) seed YAPILMAZ — uydurma değer yok.</summary>

@@ -35,6 +35,7 @@ public partial class ShellRoot : UserControl
         _projectFilter = (TextBox)PART_ProjectsHeader.RightContent!; // XAML'de sabit atanır (InitializeComponent'te kurulur)
         _projectFilter.PreviewKeyDown += OnFilterKeyDown;
         (_filterChip, _filterChipLabel) = BuildFilterChip();
+        SetFilterChip(null); // başlangıç durumu da TEK yoldan kurulur (gizli + aktif görünüme hazır)
         PART_ColumnSplitter.DragCompleted += (_, _) => OnColumnDragCompleted();
         PART_LeftSplitter.DragCompleted += (_, _) => OnLeftDragCompleted();
         PART_RightSplitter.DragCompleted += (_, _) => OnRightDragCompleted();
@@ -109,27 +110,18 @@ public partial class ShellRoot : UserControl
     private (ToggleButton Chip, TextBlock Label) BuildFilterChip()
     {
         var label = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
-        var glyph = new System.Windows.Shapes.Path
-        {
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            StrokeLineJoin = PenLineJoin.Round,
-        };
-        IconPaint.Apply(glyph, this, "Icon.ChipRemove", "Brush.TextDim");
-        var canvas = new Canvas { Width = 16, Height = 16 };
-        canvas.Children.Add(glyph);
-
         var content = new StackPanel { Orientation = Orientation.Horizontal };
         content.Children.Add(label);
-        content.Children.Add(new Viewbox
-        {
-            Width = RemoveGlyphSize, Height = RemoveGlyphSize, Stretch = Stretch.Uniform, Child = canvas,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(ChipContentGap, 0, 0, 0), // _ds_bundle.js:164 chip gap 6
-        });
 
         var chip = DsChipFactory.Small(this, content);
-        chip.IsChecked = true;                                   // DS `active` — chip'in doğal (amber) hâli
+        // [T2 fix-1 · I-B] ✕ chip'in ANİMASYONLU Foreground'unu izler (aktifken amber) — sabit bir token'a
+        // bağlanmış bir ✕, chip'in aktif durumunu yalanlardı. Görsel IconVisual.BoundToForeground'dan gelir
+        // (ActionBar'ın chip ikonlarıyla AYNI deyim; inline kopya YASAK) ve viewBox 16'dır — DS'in çizimi
+        // (_ds_bundle.js:210-215) 16'lık ızgarada 10px'e ölçeklenir.
+        var glyph = IconVisual.BoundToForeground(chip, "Icon.ChipRemove", RemoveGlyphSize, viewBox: 16);
+        glyph.Margin = new Thickness(ChipContentGap, 0, 0, 0); // _ds_bundle.js:164 chip gap 6
+        content.Children.Add(glyph);
+
         chip.Visibility = Visibility.Collapsed;                  // filtre yokken YOK
         chip.Margin = new Thickness(ChipContentGap, 0, 0, 0);    // `build-order` etiketinden sonra
         chip.ToolTip = AccessibilityNames.ClearFilterChip;
@@ -153,6 +145,12 @@ public partial class ShellRoot : UserControl
     {
         _filterChipLabel.Text = label ?? "";
         _filterChip.Visibility = label is null ? Visibility.Collapsed : Visibility.Visible;
+        // [T2 fix-1 · I-A] `IsChecked` HER tazelemede geri kurulur, yalnız ctor'da BİR KEZ değil. Chip bir
+        // ToggleButton'dır: GERÇEK bir tıklama ButtonBase.OnClick → ToggleButton.OnToggle zincirini koşturur ve
+        // IsChecked'i false'a çevirir. Ds.Chip'in amber görünümü TAMAMEN IsChecked=True trigger'ına bağlı
+        // olduğundan (Controls.xaml:328-332), chip ilk gerçek tıklamadan sonra kalıcı olarak pasif-griye
+        // düşüyordu. Bu chip'in "kapalı" bir durumu YOKTUR — göründüğü her an aktiftir.
+        _filterChip.IsChecked = true;
     }
 
     // ---- [E2/T10] Proje listesi boş-durum davetleri (görünürlük + Choose Folder kablajı MainWindow'da) ----

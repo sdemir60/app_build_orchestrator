@@ -147,6 +147,10 @@ public partial class MainWindow : Window
             if (e.PropertyName is nameof(RunViewModel.RootPath) or nameof(RunViewModel.Branch)
                 or nameof(RunViewModel.UseWorktree) or nameof(RunViewModel.WorktreeName)) RefreshTitleContext();
         };
+        // [T2 fix-1 · I-G] EffectiveWorktreeName auto-ad dalında <see cref="RunViewModel.Worktrees"/>'e de
+        // BAĞLIDIR (AutoWorktreeName mevcut worktree sayısını sayar) — envanter geldiğinde gösterilen ad
+        // değişebilir. Yalnız dört özelliği dinlemek bu kaynağı KAÇIRIYORDU.
+        _vm.Worktrees.CollectionChanged += (_, _) => RefreshTitleContext();
         RefreshTitleContext();
 
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
@@ -619,7 +623,8 @@ public partial class MainWindow : Window
     private void RefreshTitleContext()
     {
         ContextText.Text = TitleBarContext.Compose(_vm.RootPath, _vm.Branch);
-        string suffix = TitleBarContext.WorktreeSuffix(_vm.RootPath, _vm.UseWorktree, _vm.EffectiveWorktreeName);
+        // [T2 fix-1 · C1] ETKİN değer — zorunlu worktree'de başlık da worktree'yi göstermeli.
+        string suffix = TitleBarContext.WorktreeSuffix(_vm.RootPath, _vm.EffectiveUseWorktree, _vm.EffectiveWorktreeName);
         ContextWorktreeText.Text = suffix;
         ContextWorktreeText.Visibility = suffix.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }

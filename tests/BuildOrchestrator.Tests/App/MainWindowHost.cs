@@ -2,9 +2,12 @@ using System.IO;
 using System.Windows;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -36,6 +39,37 @@ internal static class MainWindowHost
         var store = new JsonUiStateStore(Path.Combine(uiStateDir.Path, "ui-state.json"));
         return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store), vm);
     }
+
+    /// <summary>
+    /// [T2 fix-1 · I-F] Realize edilmiş bir kabuk + topolojisi akmış bir VM — <b>üretim sırasıyla</b> (kabuk
+    /// ÖNCE realize, veri SONRA) ve <c>Idle</c> fazında.
+    ///
+    /// <para>Üç test sınıfı bu fixture'ı ayrı ayrı kopyalamıştı ve ŞİMDİDEN ayrışmıştı: biri <c>RootPath</c>'i
+    /// hiç set etmiyordu, yani o kabuk <c>HasWorkspace == false</c> ile ve "Pick a repository" overlay'i
+    /// AÇIKKEN koşuyordu. Kopyalanmış fixture'ın sessiz ayrışması, kuralın (kopya YASAK) önlemeye çalıştığı
+    /// şeyin ta kendisidir → tek yer.</para>
+    /// </summary>
+    /// <param name="nodes">Proje adı + (varsa) katman adı, build-order sırasında.</param>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjects(
+        TempDir uiStateDir, params (string Name, string? Layer)[] nodes)
+    {
+        ArgumentNullException.ThrowIfNull(nodes);
+        var (window, vm) = New(uiStateDir);
+        Realize(window);
+        vm.RootPath = @"C:\src\OSYS";
+        var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
+        vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, projectNodes.Count, 0)); // → Idle
+        return (window, vm, window.Shell.ProjectsList);
+    }
+
+    /// <summary>Test topolojisi düğümü — <c>Id</c> = kanonik csproj yolu (üretimdeki gibi tam yol).</summary>
+    public static ProjectNode Node(string name, int order, string? layer = null) =>
+        new($@"C:\p\{name}.csproj", name, $@"C:\p\{name}.csproj", ["Osys"], [], order,
+            layer is null ? null : order, layer, false, null);
+
+    /// <summary>Bir test projesinin <c>Id</c>'si (<see cref="Node"/> ile BİREBİR aynı kural).</summary>
+    public static string IdOf(string name) => $@"C:\p\{name}.csproj";
 
     /// <summary>
     /// [fix round 1 · A1] Pencerenin İÇERİĞİNİ realize eder — <b>ölçüldü:</b> <c>Window.Measure/Arrange</c>

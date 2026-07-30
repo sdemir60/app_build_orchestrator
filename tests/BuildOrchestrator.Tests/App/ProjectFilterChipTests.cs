@@ -1,4 +1,7 @@
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App;
@@ -25,15 +28,12 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")]
 public class ProjectFilterChipTests
 {
-    private static ProjectNode Node(string name, int order) =>
-        new($@"C:\p\{name}.csproj", name, $@"C:\p\{name}.csproj", ["Osys"], [], order, null, null, false, null);
-
+    /// <summary>[T2 fix-1 · I-F] Ortak fixture. ÖNEMLİ: bu sınıfın eski kopyası <c>RootPath</c>'i hiç set
+    /// etmiyordu, yani kabuk <c>HasWorkspace == false</c> ile ve "Pick a repository" daveti AÇIKKEN koşuyordu —
+    /// kopyalanmış fixture'ın sessiz ayrışması. Artık üçü de AYNI kurulumu paylaşır.</summary>
     private static (MainWindow window, RunViewModel vm) NewShell(TempDir temp)
     {
-        var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-        vm.OnEvent(new WorkspaceTopologyEvent([Node("Alpha", 0), Node("Beta", 1)], [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0));
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("Alpha", null), ("Beta", null));
         return (window, vm);
     }
 
@@ -145,8 +145,79 @@ public class ProjectFilterChipTests
         var chip = Assert.Single(HeaderChips(window));
 
         var glyph = Assert.Single(DsResources.Descendants(chip).OfType<System.Windows.Shapes.Path>());
-        Assert.NotNull(glyph.Data);                       // geometri GERÇEKTEN çözüldü
+        // [T2 fix-1 · I-B/m4] Assert.NotNull(Data) YETMEZ: geometrinin KAYNAĞI ve kalınlığın GERÇEKTEN
+        // çözüldüğü pinlenir. Kalınlık eskiden IconPaint.Apply ile ANINDA çözülüyordu; ShellRoot ctor'unda
+        // öğe hiçbir ağaçta olmadığından o çağrı erken dönüp konturu HİÇ bağlamıyordu (üretimde
+        // Application.Resources maskeliyordu — T49 sınıfı).
+        // Kaynak PENCERENİN KENDİ kapsamından okunur: ayrı bir DsResources.NewHost() eşdeğer ama BAŞKA bir
+        // nesne üretir, referans kimliği oradan doğrulanamazdı.
+        Assert.Same(window.FindResource("Icon.ChipRemove"), glyph.Data);
+        Assert.Equal((double)window.FindResource("Icon.ChipRemove.StrokeThickness"), glyph.StrokeThickness);
+        Assert.True(glyph.StrokeThickness > 0, "kontur kalınlığı hiç çözülmedi — ikon görünmez olurdu");
         Assert.DoesNotContain('\u2715', TextOf(chip));    // metinde ham ✕ YOK
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[T2 fix-1 · I-B] ✕ chip'in ANİMASYONLU <c>Foreground</c>'unu İZLER — sabit bir token'a
+    /// bağlanmış bir ✕, chip aktifken (amber) gri kalıp aktif durumu yalanlardı. Desen
+    /// <c>ActionBar.BoundChipIcon</c> ile ORTAK (<c>IconVisual.BoundToForeground</c>).</summary>
+    [StaFact]
+    public void The_remove_glyph_follows_the_chips_active_foreground()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = NewShell(temp);
+
+        vm.ActiveFilter = ProjectFilter.Failed;
+        var chip = Assert.Single(HeaderChips(window));
+        var glyph = Assert.Single(DsResources.Descendants(chip).OfType<System.Windows.Shapes.Path>());
+
+        Assert.Equal(DsResources.ColorOf(chip.Foreground), DsResources.ColorOf(glyph.Stroke));
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [T2 fix-1 · I-A] gerçek tıklama sonrası
+
+    /// <summary>
+    /// <b>[T2 fix-1 · I-A — regresyon]</b> Chip GERÇEK bir tıklamadan sonra da aktif (amber) görünümünü korur.
+    ///
+    /// <para><b>Ölçülen kusur:</b> <c>IsChecked = true</c> yalnız ctor'da BİR KEZ kuruluyordu. Chip bir
+    /// <see cref="ToggleButton"/>'dır: gerçek bir tıklama <c>ButtonBase.OnClick → ToggleButton.OnToggle</c>
+    /// zincirini koşturur ve <c>IsChecked</c>'i <b>false</b>'a çevirir; <c>Ds.Chip</c>'in amber görünümü tamamen
+    /// o trigger'a bağlı olduğundan (<c>Controls.xaml:328-332</c>) chip ilk tıklamadan sonra KALICI olarak
+    /// pasif-griye düşüyordu.</para>
+    ///
+    /// <para><b>Neden önceki test bunu görmüyordu:</b> sentetik <c>RaiseEvent(ButtonBase.ClickEvent)</c>
+    /// <c>OnToggle</c>'ı HİÇ çalıştırmaz, yani <c>IsChecked</c>'e hiç dokunmaz. Burada gerçek tıklamanın İKİ
+    /// yarısı da, <c>ToggleButton.OnClick</c>'in yaptığı SIRAYLA sürülür: önce <c>OnToggle</c> (otomasyon
+    /// peer'inin <c>IToggleProvider.Toggle</c>'ı — WPF'in kendi giriş noktası, <c>IsChecked</c>'i çevirir),
+    /// sonra <c>Click</c> routed event'i. Kusur tam olarak bu sıradan doğuyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void The_chip_stays_amber_after_a_real_click_toggles_it()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = NewShell(temp);
+        var host = DsResources.NewHost();
+
+        vm.ActiveFilter = ProjectFilter.Failed;
+        var chip = Assert.Single(HeaderChips(window));
+
+        Assert.True(chip.IsChecked, "görünen chip AKTİF olmalı — Ds.Chip'in amber'ı tamamen buna bağlı");
+
+        var toggle = (IToggleProvider)new ToggleButtonAutomationPeer(chip).GetPattern(PatternInterface.Toggle)!;
+        toggle.Toggle();                                                       // ToggleButton.OnToggle
+        Assert.False(chip.IsChecked);                                          // ...IsChecked GERÇEKTEN düştü
+        chip.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));           // ...ardından base.OnClick
+
+        Assert.Null(vm.ActiveFilter);              // tıklama filtreyi GERÇEKTEN kaldırdı
+        Assert.Empty(HeaderChips(window));
+
+        vm.ActiveFilter = ProjectFilter.Succeeded; // chip yeniden göründüğünde HÂLÂ amber olmalı
+        var again = Assert.Single(HeaderChips(window));
+        again.UpdateLayout();
+
+        Assert.True(again.IsChecked);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberSoft"), DsResources.ColorOf(again.Background));
         GC.KeepAlive(window);
     }
 }

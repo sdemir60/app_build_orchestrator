@@ -123,8 +123,14 @@ public partial class StickyLayerList : UserControl
     {
         ArgumentNullException.ThrowIfNull(groups);
         Metrics = new LayoutMetrics(groups.Select(g => new LayerSpec(g.Name ?? "", g.Rows.Count)).ToList());
-        // [T59] Metrics tazelendi — follow/seçim controller'ı da AYNI (yeni) instance'ı paylaşacak şekilde yenilenir.
-        _follow = new FollowScrollController(Metrics, () => Scroll.ViewportHeight, () => Scroll.VerticalOffset, AnimateScrollTo);
+        // [T59] Metrics tazelendi — follow/seçim controller'ı AYNI (yeni) instance'ı paylaşmalı.
+        // [T2 fix-1 · I-D] ...ama controller YENİDEN YARATILMAZ, yalnız REBIND edilir: 2.5'ten sonra SetGroups
+        // görünür küme her değiştiğinde koşuyor ve her yeni controller throttle saatini (550ms, design-v1 §3.3)
+        // ve seçim durumunu sıfırlıyordu. Bkz. FollowScrollController.Rebind.
+        if (_follow is null)
+            _follow = new FollowScrollController(Metrics, () => Scroll.ViewportHeight, () => Scroll.VerticalOffset, AnimateScrollTo);
+        else
+            _follow.Rebind(Metrics);
 
         var entries = new List<object>();
         foreach (var g in groups)
@@ -141,9 +147,12 @@ public partial class StickyLayerList : UserControl
         // yani üretimdeki sıra: kabuk realize, gruplar sonra akar — `StatusChanged`/`ContainersGenerated`
         // bu satırın İÇİNDE ateşlenir). Bayrak sonra kurulursa handler onu `false` görüp döner ve BİR DAHA
         // status değişimi gelmez → reveal SESSİZCE hiç oynamaz, kartlar tam opaklıkta "pat" diye belirir.
-        // [A13/T2 · 2.5] Filtre tazelemesinde (reveal:false) bayrak KURULMAZ — bekleyen bir reveal varsa da
-        // İPTAL EDİLİR: en son tazeleme kazanır, aksi halde filtreyle gelen liste eski bir topoloji reveal'iyle
-        // kademeli belirirdi.
+        // [A13/T2 · 2.5] Filtre tazelemesinde (reveal:false) bayrak KURULMAZ.
+        // [T2 fix-1 · m1] Sınırı doğru yazalım: bu, HENÜZ TÜKETİLMEMİŞ bir bayrağı (container üretimi
+        // tamamlanmadan gelen ikinci bir SetGroups) düşürür. Bayrak zaten tüketilip
+        // <see cref="PlayRevealStagger"/> Dispatcher(Loaded) kuyruğuna alındıysa O ÇAĞRI İPTAL EDİLMEZ —
+        // reveal'in kendisi generation-guard'lı (<see cref="RevealStagger"/>) olduğundan zararsızdır:
+        // en fazla taze listeyi bir kez kademeli gösterir, yanlış satırlara dokunamaz.
         _revealPending = reveal;
         Flow.ItemsSource = entries;
         UpdateOverlay(Scroll.VerticalOffset);
@@ -309,6 +318,10 @@ public partial class StickyLayerList : UserControl
     internal int RevealGeneration => _reveal.Generation;
     internal bool HasPendingRevealRelease => _reveal.HasPendingRelease;
     internal IReadOnlyList<ProjectRow> RevealRows => CollectRows();
+    /// <summary>[T2 fix-1 · I-D test yüzeyi] Follow/seçim controller'ı — <c>SetGroups</c> boyunca AYNI nesne
+    /// kalmalıdır (yeniden yaratmak throttle saatini ve seçim durumunu sıfırlar; bkz.
+    /// <see cref="FollowScrollController.Rebind"/>).</summary>
+    internal FollowScrollController? FollowController => _follow;
     /// <summary>[E5/T47 test yüzeyi] Satır akışı paneli — ok-tuşu gezinme modu (DirectionalNavigation) buradan pinlenir.</summary>
     internal ItemsControl RowFlow => Flow;
 

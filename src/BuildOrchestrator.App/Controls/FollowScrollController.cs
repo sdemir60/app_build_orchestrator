@@ -16,7 +16,9 @@ public sealed class FollowScrollController
     /// <summary>Ek A-11: seçili kart 90ms gecikmeyle (kaskat/reveal animasyonuyla çakışmasın diye) görünür kılınır.</summary>
     public const double SelectedCardDelayMs = 90.0;
 
-    private readonly LayoutMetrics _metrics;
+    // [T2 fix-1 · I-D] Metrics ARTIK readonly DEĞİL: liste her filtre tazelemesinde yeni bir LayoutMetrics
+    // üretir ve controller'ı yeniden yaratmak throttle/seçim state'ini SIFIRLARDI (bkz. Rebind).
+    private LayoutMetrics _metrics;
     private readonly Func<double> _getViewportHeight;
     private readonly Func<double> _getCurrentOffset;
     private readonly Func<double, bool> _animateTo; // (targetOffset) -> animasyon başladı mı
@@ -47,6 +49,25 @@ public sealed class FollowScrollController
 
     /// <summary>Seçim yokken true — follow-mode aktif.</summary>
     public bool IsFollowing => !_hasSelection;
+
+    /// <summary>
+    /// [T2 fix-1 · I-D] Satır düzeni değişti (yeni <see cref="LayoutMetrics"/>) ama <b>oturum aynı</b>:
+    /// throttle zamanlayıcısı (<see cref="_lastMoveAtMs"/>) ve seçim durumu KORUNUR.
+    ///
+    /// <para><b>Neden gerekli (ölçülen kusur):</b> <c>StickyLayerList.SetGroups</c> controller'ı her çağrıda
+    /// YENİDEN yaratıyordu. Eskiden bu yalnız topoloji değişiminde olurdu; 2.5'ten sonra görünür küme her
+    /// değiştiğinde oluyor — yani koşarken <c>Building</c>/<c>Failed</c> filtresi açıkken HER
+    /// <c>projectStarted</c>/<c>projectSucceeded</c> taze bir controller üretiyordu. Taze controller'da
+    /// <c>_lastMoveAtMs == long.MinValue</c> → <c>elapsed = double.MaxValue</c> → <see cref="FollowScrollDecision.ShouldMove"/>
+    /// HEP true: design-v1 §3.3'ün 550ms throttle'ı filtre altında tamamen etkisizleşiyor ve takip 200ms
+    /// tick'te zıplıyordu. Seçim durumu da (<c>_hasSelection</c>) sessizce düşüyordu.</para>
+    /// </summary>
+    public void Rebind(LayoutMetrics metrics)
+    {
+        ArgumentNullException.ThrowIfNull(metrics);
+        _metrics = metrics;
+    }
+
 
     /// <summary>
     /// Koşarken + seçim yokken frontier satırının (ör. ilk <c>State==Started</c> proje) görünür kalması için

@@ -23,13 +23,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")]
 public class ProjectListFilterTests
 {
-    private static ProjectNode Node(string name, int order, string? layer) =>
-        new($@"C:\p\{name}.csproj", name, $@"C:\p\{name}.csproj", ["Osys"], [], order, layer is null ? null : order, layer, false, null);
-
-    /// <summary>İki katmanlı örnek: Core(Alpha, Beta) · Ui(Gamma).</summary>
-    private static WorkspaceTopologyEvent Topology() =>
-        new([Node("Alpha", 0, "Core"), Node("Beta", 1, "Core"), Node("Gamma", 2, "Ui")], [], [], []);
-
     /// <summary>Listenin GERÇEKTEN gösterdiği satır adları (in-flow akıştan; başlıklar hariç).</summary>
     private static IReadOnlyList<string> VisibleRowNames(StickyLayerList list) =>
         [.. list.RowFlow.Items.OfType<ProjectRowViewModel>().Select(r => r.Name)];
@@ -38,15 +31,10 @@ public class ProjectListFilterTests
     private static IReadOnlyList<(string Name, int Rows)> VisibleHeaders(StickyLayerList list) =>
         [.. list.RowFlow.Items.OfType<StickyLayerList.HeaderEntry>().Select(h => (h.Name, h.RowCount))];
 
-    /// <summary>ÜRETİM SIRASI: kabuk ÖNCE realize edilir, topoloji SONRA akar.</summary>
-    private static (MainWindow window, RunViewModel vm, StickyLayerList list) NewShellWithProjects(TempDir temp)
-    {
-        var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-        vm.OnEvent(Topology());
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0)); // Idle
-        return (window, vm, window.Shell.ProjectsList);
-    }
+    /// <summary>[T2 fix-1 · I-F] Ortak fixture: iki katmanlı örnek — Core(Alpha, Beta) · Ui(Gamma).
+    /// Kurulum <see cref="MainWindowHost.NewWithProjects"/>'ta (üretim sırası: kabuk ÖNCE realize, veri SONRA).</summary>
+    private static (MainWindow window, RunViewModel vm, StickyLayerList list) NewShellWithProjects(TempDir temp) =>
+        MainWindowHost.NewWithProjects(temp, ("Alpha", "Core"), ("Beta", "Core"), ("Gamma", "Ui"));
 
     // ---------------------------------------------------------------- 1) statü chip'i filtresi
 
@@ -165,9 +153,16 @@ public class ProjectListFilterTests
     {
         using var temp = new TempDir();
         var (window, vm, list) = NewShellWithProjects(temp);
+        // [T2 fix-1 · I-E] Motion ön-koşulu kardeş testle EŞİTLENDİ: reveal ancak animasyonlar açıkken
+        // kuşak ilerletir, yoksa taban çizgisi 0'da kalırdı.
+        list.AnimationsEnabledProvider = () => true;
         // Topolojinin kendi reveal'i tamamlansın (o reveal MEŞRU — bu test onu değil, FİLTRE'yi ölçer).
         DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
         int afterTopology = list.RevealGeneration;
+        // [T2 fix-1 · I-E] TABAN ÇİZGİSİ ASSERT'İ — PumpUntil timeout'ta HATA VERMEZ. Bu satır olmadan
+        // afterTopology 0 kalabilir ve aşağıdaki eşitlik `0 == 0` ile TRIVIAL yeşil olurdu; yani A12'de
+        // kapatılan regresyonun tersi guard'ı sessizce görünmez hâle gelirdi.
+        Assert.True(afterTopology > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
 
         vm.ProjectQuery = "a";       // liste GERÇEKTEN yeniden kuruluyor…
         vm.ProjectQuery = "al";
@@ -198,6 +193,71 @@ public class ProjectListFilterTests
         list.SetGroups([new StickyLayerList.LayerGroup("", rows)]); // varsayılan = topoloji yolu
         DispatcherPump.PumpUntil(() => list.RevealGeneration != before, TimeSpan.FromSeconds(3));
         Assert.NotEqual(before, list.RevealGeneration); // reveal OYNAR
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [T2 fix-1 · I-D] follow throttle korunur
+
+    /// <summary>
+    /// <b>[T2 fix-1 · I-D — regresyon]</b> Bir filtre tazelemesi follow-mode'un 550ms throttle saatini
+    /// SIFIRLAMAZ.
+    ///
+    /// <para><b>Ölçülen kusur:</b> <c>SetGroups</c> her çağrıda <c>new FollowScrollController(...)</c>
+    /// yapıyordu. Taze controller'da <c>_lastMoveAtMs == long.MinValue</c> → <c>elapsed = double.MaxValue</c> →
+    /// <c>ShouldMove</c> HEP true. Eskiden bu yalnız topoloji değişiminde olurdu; 2.5'ten sonra görünür küme
+    /// her değiştiğinde oluyor, yani koşarken bir statü filtresi açıkken HER proje event'i throttle'ı
+    /// atlatıyordu (design-v1 §3.3 kadansı etkisizleşiyordu).</para>
+    ///
+    /// <para>Burada NESNE KİMLİĞİ pinlenir (yerleşimden bağımsız, deterministik); throttle'ın gerçekten
+    /// korunduğu ise saf <see cref="FollowScrollControllerTests"/> tarafında ölçülür.</para>
+    /// </summary>
+    [StaFact]
+    public void A_filter_refresh_rebinds_the_follow_controller_instead_of_recreating_it()
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+        var before = list.FollowController;
+        Assert.NotNull(before); // ön-koşul: topoloji akışı controller'ı kurdu
+
+        vm.ProjectQuery = "alp";  // filtre → SetGroups (YENİ LayoutMetrics)
+
+        Assert.Equal(new[] { "Alpha" }, VisibleRowNames(list)); // gerçekten yeniden kuruldu
+        Assert.Same(before, list.FollowController);                      // ...ama controller AYNI nesne
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [T2 fix-1 · I-C] çift reset yok
+
+    /// <summary>
+    /// <b>[T2 fix-1 · I-C — regresyon]</b> Bir topoloji değişimi listeyi <b>TEK KEZ</b> kurar.
+    ///
+    /// <para><b>Ölçülen kusur:</b> <c>OnWorkspaceTopology</c> <c>RefreshRunSurface()</c>'i
+    /// <c>TopologyChanged</c>'DEN ÖNCE çağırıyordu. Zincir: <c>RefreshRunSurface</c> →
+    /// <c>OnPropertyChanged(VisibleProjects)</c> → <c>RefreshVisibleRows</c> (imza değişti, guard tutmaz) →
+    /// <c>ApplyProjectGroups(reveal:false)</c> [1. tam reset, tamamen çöp]; hemen ardından
+    /// <c>TopologyChanged</c> → <c>ApplyProjectGroups(reveal:true)</c> [2. tam reset]. Guard yalnız
+    /// <c>reveal:false</c> dalında olduğu için "churn imza guard'ıyla kesiliyor" savunması bu yol için
+    /// GEÇERSİZDİ — 191 satırlık realize maliyeti iki katına çıkıyordu.</para>
+    ///
+    /// <para>Sonda: <c>ItemsSource</c> ataması <see cref="StickyLayerList"/> için TAM reset'tir, yani her
+    /// kurulum YENİ bir <c>Items</c> koleksiyonu üretir. <c>ItemContainerGenerator.ItemsChanged</c> olayı
+    /// bu reset'leri SAYAR.</para>
+    /// </summary>
+    [StaFact]
+    public void A_topology_change_rebuilds_the_list_exactly_once()
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+
+        int resets = 0;
+        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => resets++;
+
+        // YENİ bir topoloji (imza değişir → TopologyChanged ateşler) — üretimdeki tek giriş noktası.
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Delta", 1, "Ui")], [], [], []));
+
+        Assert.Equal(new[] { "Alpha", "Delta" }, VisibleRowNames(list)); // gerçekten kuruldu (non-vacuous)
+        Assert.Equal(1, resets);                                         // ...ve YALNIZ BİR KEZ
         GC.KeepAlive(window);
     }
 }
