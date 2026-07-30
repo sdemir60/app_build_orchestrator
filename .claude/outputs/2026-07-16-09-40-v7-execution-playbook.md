@@ -464,21 +464,21 @@ kapandığını göster. Bitince aşamamızı kaydet.
 
 ---
 
-# KALAN ADIMLAR (2026-07-30 revizyonu) — **4 adım** (A11 tamamlandı)
+# KALAN ADIMLAR (2026-07-30 revizyonu) — **3 adım** (A11 + A12 tamamlandı)
 
-A1-A11 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan adımlar kod planı değil **kapanış**
+A1-A12 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan adımlar kod planı değil **kapanış**
 adımlarıdır. Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A10 ile aynı biçimde — her adımı
 **temiz (yeni) oturumda** başlat, prompt kendi bağlamını dosyalardan kuruyor.
 
 | Adım | Ne | Kim | Model | Effort |
 |---|---|---|---|---|
 | ~~**A11**~~ ✅ | `CLAUDE.md`'deki 4 bayat olgusal ifadenin düzeltilmesi — **TAMAMLANDI** (`4bb6158`) | agent | **Opus** | **low** |
-| **A12** | **Bilinen regresyon**: kart animasyonları / renklendirmeler — teşhis + fix | agent | **Opus** | **high** |
+| ~~**A12**~~ ✅ | Kart animasyonu regresyonu — **TAMAMLANDI** (`739cfa0`, merge `4fb98f4`; kullanıcı gözle doğruladı) | agent | **Opus** | **high** |
 | **A13** | Gözle-kontrol borcunun **teste çevrilmesi** + park edilmiş ~60 minor'ın triyajı | agent | **Opus** | **high** |
 | **A14** | **Test-düzelt döngüsü** — senin bulguların, dalga dalga (**tekrarlanır**) | sen + agent | **Opus** | **high** |
 | **A15** | **Kapanış belge pası** — `CLAUDE.md` · `README.md` · `docs/TRUST-BOUNDARY.md` son duruma | agent | **Opus** | **low** |
 
-**Neden bu sıra:** A12, A13'e bağlı DEĞİL (kusur zaten bildirilmiş) ve animasyon/renk ölüyken UI'ı gezmek
+**Neden bu sıra:** A12, A13'e bağlı DEĞİLDİ (kusur zaten bildirilmişti) ve animasyon/renk ölüyken UI'ı gezmek
 her panelde sahte bulgu üretir — o yüzden regresyon fix'i öne alındı. A13, senin gezeceğin 81 kalemi
 15-25'e indirir. A14 asıl test-düzelt döngündür.
 
@@ -510,11 +510,11 @@ kazanır."* Prompta yalnız **v7'de OLMAYAN** proje pratiği yazılır:
 ## SEN NE YAPACAKSIN — sırayla
 
 1. ✅ **A11 TAMAMLANDI** (2026-07-30, `4bb6158`) — `CLAUDE.md`'nin dört olgusal ifadesi koda/plana hizalandı.
-2. **Yeni oturum aç** → **Opus / high** → **A12** promptunu yapıştır. **← BURADAN DEVAM** Agent bitirince uygulamayı bir kez aç,
-   verdiği 5-8 maddelik listeye bak: **kartlar hareket ediyor mu, renkler geliyor mu?** Hâlâ ölüyse
-   **aynı oturumda** söyle (teşhis bağlamı elinde). Yaşıyorsa 3'e geç.
-3. **Yeni oturum aç** → **Opus / high** → **A13** promptunu yapıştır. Senden bir şey istemez; çıktısı
-   `visual-check-residue.md` (senin gezeceğin **kısa** liste).
+2. ✅ **A12 TAMAMLANDI** (2026-07-30, `739cfa0` → merge `4fb98f4`) — kart reveal stagger'ı hiç oynamıyordu;
+   kök neden ölçüldü, 1 satırla kapatıldı, 3 regresyon testi kırmızıdan yeşile döndü. **Kullanıcı gözle
+   doğruladı** ("ilk aşamada tamam").
+3. **Yeni oturum aç** → **Opus / high** → **A13** promptunu yapıştır. **← BURADAN DEVAM** Senden bir şey
+   istemez; çıktısı `visual-check-residue.md` (senin gezeceğin **kısa** liste).
 4. **Uygulamayı kullan** + o kısa listeyi gez. Gördüğün her kusuru şu formatta not al:
    `hangi panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`.
 5. **Yeni oturum aç** → **Opus / high** → **A14** promptunu yapıştır, bulgularını `<<< >>>` bloğuna yaz.
@@ -636,7 +636,54 @@ gösteriyor) — özellikle **mimari kaynağı artık v7'yi işaret ediyor**.
 
 ## A12 — Bilinen regresyon: kart animasyonları / renklendirmeler · Model: **Opus** · Effort: **high**
 
-> **KUSUR (kullanıcı bildirdi, 2026-07-26):** *"Sol alt köşedeki kartlarda loading ile animasyonlar
+> **✅ TAMAMLANDI (2026-07-30, fix `739cfa0` · doküman `879f376` · merge `4fb98f4`).** Kullanıcı gözle
+> doğruladı. Kayıt: [motion-regression-fix](2026-07-30-13-04-motion-regression-fix.md).
+>
+> **Kök neden (ölçüldü):** kartların kademeli beliriş animasyonu (`bo-reveal`) üretimde **HİÇ oynamıyordu**.
+> `Controls/StickyLayerList.xaml.cs::SetGroups` içinde `_revealPending = true` bayrağı
+> `Flow.ItemsSource = entries` atamasından **SONRA** kuruluyordu. Üretimdeki sıra "kabuk realize edilir,
+> gruplar sonra akar" (`MainWindow.xaml.cs:361`) olduğu için liste **zaten realize**; o durumda `ItemsSource`
+> ataması container üretimini **senkron** bitiriyor → `OnGeneratorStatusChanged` o satırın **içinde**
+> ateşleniyor, bayrağı `false` görüp dönüyor, **bir daha status değişimi gelmiyor** → `PlayRevealStagger`
+> hiç çağrılmıyor → satır opaklığı hiç 0'a çekilmiyor. **Fix: bayrak atamadan önceye alındı (1 satır).**
+>
+> **Ölçüm:** ilk Sync'te 4 kart, 19 ms aralıkla — **fix öncesi 721 karede 0 ara-opaklık karesi**
+> (300 ms'lik rampa ~15 ara kare üretirdi), **fix sonrası 737 karede 5 ara kare** + satır 4'ün satır 1-3'ün
+> gerisinde kalması (**10 ms/satır stagger gözlendi**).
+>
+> **Suite neden yeşildi:** `StickyRevealTests`'in **yedi testi de** `PlayRevealStagger()`'ı **DOĞRUDAN**
+> çağırıyor, yardımcısı da `SetGroups`'u realize'den **ÖNCE** yapıyor (o sırada üretim ertelenir, hatalı sıra
+> hiç tetiklenmez) → tetikleyici hiç sınanmıyordu. Yeni: `App/StickyRevealTriggerTests.cs` (3 test,
+> fix'ten önce **3/3 KIRMIZI**), üretim sırasını kuran `RealizeEmptyThenFeed` yardımcısıyla.
+>
+> **Playbook'un beş hipotezi de ELENDİ (ölçümle):** `MotionGate` tek kapısı · `StaticAnimationsEnabled`
+> snapshot'ı · G2 donmuş paylaşılan `ScaleTransform` · G2 `IconPaint` self-heal · L1 tembel alt-ağaç.
+> Canlı Build koşusunda şerit renkleri / glyph'ler / will-dot / süre **doğru**, **spinner dönüyor**
+> (kare farkı 13,5-19,0) ve **nefes salınıyor** (2,8-10,2). *"Renklendirmeler yok"* yakınmasının ölçülebilir
+> karşılığı **bulunamadı** — kullanıcı hâlâ görürse A14 dalgasına yazılacak.
+>
+> **Kapsam:** desen tek yerde. Graf reveal'i `SetGraph` içinden **senkron** tetikliyor
+> (`Graph/GraphView.xaml.cs:364`); konsol/event stream bu deseni hiç kullanmıyor → etkilenmediler.
+>
+> ### >>> A12'nin ürettiği ve A13'ü DOĞRUDAN etkileyen bulgu: **harness ekran görüntüsü ALABİLİYOR**
+> Bu playbook (ve `it5-records` §4 / walkthrough) "harness ekran görüntüsü alamaz → gözle kontrol kullanıcıya
+> ait" diyordu. **Bu yanlış.** `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)` pencere içeriğini **örtülü olsa
+> bile** bitmap'e alır; UIA ile ağaç okunup buton `Invoke`/`Toggle` edilir; kare-arası piksel farkı ve
+> parlaklık serisiyle **animasyon ölçülebilir** (bu adımda tam olarak böyle ölçüldü). **A13 bunu kullanmalı:**
+> "göz ister" sanılan bazı kalemler (animasyon gerçekten oynuyor mu, stagger sırası, renk gerçekten uygulandı
+> mı) aslında **ölçülebilir** ⇒ artık listeye atılmadan önce bu kanal denenmeli.
+> **DPI tuzağı:** PowerShell 5.1 DPI-unaware'dır → `GetWindowRect` **sanallaştırılmış** (1400×800), UIA
+> **fiziksel** (1750×1000) verir. Bitmap boyutu **UIA'nın `BoundingRectangle`'ından** alınmalı, yoksa yakalama
+> kırpılır (bu adımda önce kırpıldı ve action bar "yok" sanıldı).
+>
+> **Dürüstlük kaydı — çürütülen ara-hipotez:** teşhis ortasında *"`SystemParameters.ClientAreaAnimation`
+> önbelleğe alınıp hiç tazelenmiyor"* diye yanlış bir kök nedene varıldı; kendi ölçümüyle çürütüldü — o test
+> ayarı `SPIF_SENDCHANGE (2)` ile yazıyordu (ayarı kalıcılaştırmaz, WPF invalidation'ını tetiklemez).
+> Windows Ayarlar'ın kullandığı `SPIF_UPDATEINIFILE|SPIF_SENDCHANGE (3)` ile sinyal **doğru çalışıyor**
+> (`signal.Changed=1`, `StaticPropertyChanged=1`, iki yönde de). O premise üzerine yazılmış 4 kırmızı test
+> **silindi**; üretim kodu onlara göre değiştirilmedi.
+
+> **KUSUR (kullanıcı bildirdi, 2026-07-26 — tarihsel kayıt):** *"Sol alt köşedeki kartlarda loading ile animasyonlar
 > çalışırdı; bu adımda hiç hareket etmiyor, animasyonlar yok, renklendirmeler vs hiç çalışmıyor."*
 > **It-4b sonunda çalışıyordu, It-5'ten sonra bozuk.** Suite 1430 yeşil olduğu hâlde bozulması, kusurun
 > **headless suite'in görmediği bir runtime yolunda** olduğunu söylüyor — `c6e9a21` ile aynı sınıf.
@@ -755,7 +802,15 @@ geç.
 >
 > **Girdi:** [2026-07-26-10-17-visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md)
 > (BÖLÜM 1 It-4b'nin 81 kalemi · BÖLÜM 2 prototiple yan yana design-v1 §2.1-§2.9 · BÖLÜM 3 It-5'in kendi
-> görsel kalemleri) + [2026-07-26-10-17-it5-records.md](2026-07-26-10-17-it5-records.md) §2.
+> görsel kalemleri) + [2026-07-26-10-17-it5-records.md](2026-07-26-10-17-it5-records.md) §2
+> + [2026-07-30-13-04-motion-regression-fix.md](2026-07-30-13-04-motion-regression-fix.md) (A12'nin ölçüm
+> kanalı + §8'deki 6 devredilen kalem).
+>
+> **⚠️ A12'DEN GELEN REVİZYON — bu adımın hedefi büyüdü:** "harness ekran görüntüsü alamaz" varsayımı
+> **çürütüldü** (bkz. A12 bölümü). `PrintWindow(PW_RENDERFULLCONTENT)` + UIA + kare-arası piksel farkı ile
+> **canlı uygulamada animasyon ölçülebiliyor.** Yani daha önce kaçınılmaz "GÖZ İSTER" sanılan kalemlerin bir
+> kısmı (animasyon gerçekten oynuyor mu · stagger sırası · renk gerçekten uygulandı mı · bir öğe gerçekten
+> görünür mü) **pinlenebilir**. A13, bir kalemi artık listeye atmadan önce bu kanalı denemek zorundadır.
 
 **PROMPT — yapıştır:**
 
@@ -771,11 +826,30 @@ geç.
 4. .claude/outputs/2026-07-26-10-17-it5-records.md — özellikle "2. Kapanmayan / bilinçli park edilen
    kalemler" tablosu (18 satır, ~60 minor)
 5. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 "algısal eşdeğer" / A13.2)
-6. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır)
+6. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır — NOT: en üstteki RESUME HERE It-5'te
+   kalmış ve BAYAT; A11+A12 bittiği için "sıradaki iş" satırını olduğu gibi almayın, güncel durum en yeni
+   handoff'tadır)
 7. .claude/handoffs/ altındaki EN YENİ handoff
+8. .claude/outputs/2026-07-30-13-04-motion-regression-fix.md — A12 teşhis kaydı. İKİ nedenle bu adımın
+   girdisi: (a) §1.1'deki ÖLÇÜM KANALI (aşağıya bak), (b) §8'de A13/A14'e devredilen 6 kalem.
 
-DURUM: It-0..It-5 main'de (main == origin/main), build 0/0, suite yeşil. Kod planı bitti. Kart
-animasyonu/renklendirme regresyonu A12'de kapatıldı. Bu adımda İKİ iş var.
+DURUM: It-0..It-5 main'de (main == origin/main), build 0/0, suite yeşil (güncel sayı ledger'da). Kod planı
+bitti. A11 (CLAUDE.md denetimi) ve A12 (kart reveal stagger regresyonu) kapandı; A12'yi kullanıcı gözle
+doğruladı. Bu adımda İKİ iş var.
+
+>>> BU ADIMIN HEDEFİNİ BÜYÜTEN BULGU (A12'de ölçüldü — ESKİ VARSAYIM ÇÜRÜTÜLDÜ)
+Walkthrough ve it5-records "harness ekran görüntüsü alamaz, gözle kontrol kullanıcıya ait" diyor. BU YANLIŞ.
+Ölçülmüş kanal: PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT) pencere içeriğini PENCERE ÖRTÜLÜ OLSA BİLE
+bitmap'e alır; UI Automation ile ağaç okunur ve buton Invoke/Toggle edilir; kare-arası piksel farkı +
+parlaklık serisi ile ANİMASYON ÖLÇÜLEBİLİR. A12 kök nedeni tam olarak böyle bulundu (19 ms aralıkla 721
+kare → 0 ara-opaklık karesi = animasyon hiç oynamıyor).
+  - Uygulama gerçek OSYS ile açılıp Sync/Build sürülebilir (A12 bunu yaptı; kalıcı yan etki yok).
+  - DPI TUZAĞI: PowerShell 5.1 DPI-unaware → GetWindowRect SANALLAŞTIRILMIŞ (1400x800), UIA FİZİKSEL
+    (1750x1000) verir. Bitmap boyutunu UIA'nın BoundingRectangle'ından al, yoksa yakalama kırpılır.
+  - UIA notu: action bar'ın filtre/segment butonları InvokePattern DEĞİL TogglePattern sunar; "Sync"
+    InvokePattern sunar; menü öğeleri (ör. Rebuild) hiç pattern sunmaz → SetWindowPos(HWND_TOPMOST) ile
+    pencereyi öne al, fiziksel tıkla (SetForegroundWindow arka plan process'ten çalışmaz).
+SONUÇ: bir kalemi "GÖZ İSTER"e atmadan ÖNCE bu kanalı dene. Gerçekten göz isteyenler daralır.
 
 (A) GÖZLE-KONTROL BORCUNUN OTOMATİKLEŞTİRİLMESİ
 Walkthrough'un HER kalemini (BÖLÜM 1 + 2 + 3, tamamı) tek tek sınıflandır:
@@ -786,10 +860,17 @@ Walkthrough'un HER kalemini (BÖLÜM 1 + 2 + 3, tamamı) tek tek sınıflandır:
   - GÖZ İSTER → ARTIK LİSTEYE yaz. Yalnız: akıcılık/hız hissi, animasyon estetiği, renk algısı, prototiple
     yan yana genel izlenim, OS davranışı (tepsi, global hotkey, DPI değişimi, ekran okuyucu).
 Sınıflandırmayı GEREKÇESİZ yapma: her "GÖZ İSTER" kalemi için NEDEN pinlenemediğini tek satırla yaz.
-"Zor" gerekçe değildir; "assert edilebilir bir değeri yok" gerekçedir. Emin olamadığın kalemi GÖZ İSTER'e
-at ama bunu belirt.
+"Zor" gerekçe değildir; "assert edilebilir bir değeri yok" gerekçedir. "Harness göremez" de ARTIK gerekçe
+DEĞİLDİR (yukarıdaki kanal) — kullanacaksan neden yetmediğini yaz. Emin olamadığın kalemi GÖZ İSTER'e at ama
+bunu belirt.
 Not: walkthrough'un D4 (konsol gerçek akış) kalemi ZORUNLU işaretli — pinlenebilir kısmını teste çevir,
 kalanını artık listede ZORUNLU olarak işaretle.
+
+TETİKLEYİCİ DERSİ (A12, bağlayıcı): bir davranışı test ederken onu ÜRETİMDEKİ YOLDAN tetikle. A12'nin kusuru
+tam olarak burada saklanmıştı — 7 test animasyonu doğrudan çağırıyordu, tetikleyici hiç sınanmıyordu ve
+üretimde animasyon HİÇ oynamıyordu. Bu adımda yazdığın her "X doğru oynar" testi için sor: "X üretimde
+GERÇEKTEN çağrılıyor mu, onu kim tetikliyor, o tetikleyici testli mi?" Ayrıca kurulum sırası üretimle aynı
+olmalı (kabuk realize → sonra veri akar); tersi sıra senkron/asenkron farkını gizler.
 
 (B) PARK EDİLMİŞ KALEMLERİN TRİYAJI (it5-records §2 — 18 satır, ~60 minor)
 Her kalemi üç kovaya ayır:
@@ -799,12 +880,44 @@ Her kalemi üç kovaya ayır:
 Öncelik: davranış/veri doğruluğu > a11y (G2'deki AutomationProperties.Name eksikleri) > üretimde duran
 debug hook'u (debugSpawnChildren — Contracts/Ipc/IpcMessages.cs:22 + Supervisor/SupervisorHost.cs:80) >
 test/kayıt zayıflıkları > kozmetik.
-EK KALEM (it5-records listesinde YOK — A11'de ölçülerek bulundu, aynı üç kovaya sok): MsBuildInvokerTests.
-LingeringPostBuildGrandchild_does_not_stall_success_path (MsBuildInvokerTests.cs:155) tam suite koşusunda
-yük altında TimeoutException veriyor, izole koşuda geçiyor (16 s). Dış WaitAsync(20s) + sw.Elapsed<15s
-assert'i gerçek MSBuild.exe + 60 sn yaşayan ping.exe grandchild'ına bağlı, yani makine yüküne duyarlı.
-Seçenekler: deadline'ı yük-bağımsız sinyale çevir (gerçek kusur) · kabul edilen borç olarak gerekçesiyle
-kaydet · testi seri/izole koşacak şekilde işaretle. Sessizce "yeşil" sayma.
+EK KALEMLER — it5-records listesinde YOK, A11/A12'de ÖLÇÜLEREK bulundu; hepsini aynı üç kovaya sok:
+
+ E1. FLAKY ÜÇLÜSÜ (yük-hassas; hepsi izole koşuda geçiyor, tam suite'te ara sıra kırmızı):
+     · MsBuildInvokerTests.LingeringPostBuildGrandchild_does_not_stall_success_path
+       (MsBuildInvokerTests.cs:155) — dış WaitAsync(20s) + sw.Elapsed<15s assert'i, gerçek MSBuild.exe +
+       60 sn yaşayan ping.exe grandchild'ına bağlı (A11'de bulundu).
+     · EngineHostTests.Start_receives_engineReady_and_ping_pong_works (A12'de bulundu)
+     · RunViewModelTests.RebuildCommand_enables_Stop_and_disables_Rebuild_before_runStarted_arrives (A12'de)
+     A12'de son ikisi bir tam koşumda kırmızı verdi, izole 2/2 geçti, ikinci tam koşum 0 failed. Seçenekler:
+     deadline'ı/beklemeyi yük-bağımsız sinyale çevir (gerçek kusur) · kabul edilen borç olarak gerekçesiyle
+     kaydet · seri collection'a al. ÜÇÜNÜ birlikte değerlendir (aynı kök: gerçek zamana bağlı bekleme).
+     Sessizce "yeşil" sayma.
+
+ E2. Başarılı Sync'ten SONRA bile başlıkta "no repository" yazıyor ve action bar'daki branch chip'i BOŞ
+     ("branch"), oysa v7 A7 başlıkta "OSYS · main" ve chip'te branch değeri bekliyor. A12'de canlı gözlendi
+     (4 proje başarıyla sync edildi, graf/kartlar doldu, başlık yine "no repository"). Muhtemelen aynı kökten:
+     konsolda "warning: git fetch failed — continuing against the local HEAD (... remote-tracking ref
+     okunamadı)". Repo adı/branch tespitinin fetch başarısına gereksiz bağlı olup olmadığını KONTROL ET.
+
+ E3. Konsola TÜRKÇE kullanıcı metni sızıyor: "warning: git fetch failed — continuing against the local HEAD
+     (git fetch başarılı ama remote-tracking ref okunamadı…)". Uygulama İngilizce-only; D1'in 77 metinlik
+     süpürmesinden artakalan. Aynı turda TÜM ağacı yeniden tara (D1 taramasının kaçırdığı başka metin var mı).
+
+ E4. Sync "no changes" döndüğünde SetGroups çağrılmıyor → o Sync'te reveal de oynamaz (kartlar yeniden
+     belirmez). Kasıtlı görünüyor (tam reset'ten kaçınma, StickyLayerList "koleksiyon reset YOK" kuralı) ama
+     KARAR KAYDI YOK. Ya gerekçeyi koda/belgeye yaz (kabul edilen borç) ya da tasarım kararını netleştir.
+
+ E5. StickyLayerList.CollectRows() realize olmamış satırı atlıyor ve yorumu "bir sonraki reveal onu yakalar"
+     diyor; oysa SetGroups yalnız topoloji değişiminde koştuğu için BİR SONRAKİ REVEAL GELMEYEBİLİR (E4 ile
+     aynı kök). A12'nin testi "en az bir satır toplandı"yı pinliyor ama kısmi realize hâlâ sessiz.
+
+ E6. src/BuildOrchestrator.App/Services/SystemParametersMotionSignal.cs — OS reduced-motion sinyaline dokunan
+     TEK sınıf — SIFIR TESTLİ; tüm reduced-motion testleri FakeMotionSignal enjekte ediyor. A12'de kodu
+     ÖLÇÜLDÜ ve DOĞRU çıktı (SPIF_UPDATEINIFILE|SPIF_SENDCHANGE ile canlı takip iki yönde tutuyor), yani
+     gerçek kusur DEĞİL — ama koruması yok. Test yazmak makine-global bir erişilebilirlik ayarını
+     değiştirmeyi gerektiriyor (A12'de bir kez ayar yanlışlıkla KAPALI kaldı, elle geri alındı) → riski
+     kullanıcıya sor, kendi başına suite'e ekleme.
+
 AÇILMAYACAKLAR (ölçüme dayalı kullanıcı/stop-gate kararları, yeniden tartışma): L2 liste virtualization ·
 G1 DrawingVisual katman göçü · W2 guard kopyalarının katlanması · T33 shared compilation.
 
