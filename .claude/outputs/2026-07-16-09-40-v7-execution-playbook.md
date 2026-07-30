@@ -24,12 +24,16 @@
 | A9 | It-4b: kalan UI görevleri | **Opus** | **medium** | Template/stil hacim işi; değerler design-v1'de hazır |
 | A10 | It-5: perf + dağıtım + docs | **Opus** | **medium** | Rutin; perf sorunu çıkarsa effort'u high/xhigh'a çıkar |
 | **A11** | CLAUDE.md bayat bilgi denetimi | **Opus** | **low** | Üç olgusal satır; karar kullanıcıda, uygulama mekanik |
-| **A12** | **GÖZLE KONTROL PASI** | — | — | **Kullanıcı yapar** — harness ekran görüntüsü alamaz |
-| **A13** | Düzeltme iterasyonu (regresyon + A12 bulguları) | **Opus** | **high** | Teşhis işi; yeşil suite'in kaçırdığı runtime kusurları (c6e9a21 sınıfı) |
+| **A12** | Bilinen regresyon: kart animasyonu / renklendirme | **Opus** | **high** | Teşhis işi; yeşil suite'in kaçırdığı runtime kusuru (c6e9a21 sınıfı) |
+| **A13** | Gözle-kontrol borcunun otomatikleştirilmesi + park listesi triyajı | **Opus** | **high** | 81 görsel kalemin pinlenebilenleri süite; kalanı kısa artık liste |
+| **A14** | **Test-düzelt döngüsü** (tekrarlanır) | **Opus** | **high** | Kullanıcının bulguları; her fix'ten önce kırmızı test |
 | R | Her iterasyon SONU review | **Opus** | **high** (UI iter. **xhigh**) | Plandaki en güçlü model; her iterasyonun sigortası (`/code-review high` argümanı promptta zaten var); A8/A9 gibi UI iterasyonlarının review'unda xhigh |
 
-> **DURUM (2026-07-26):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti; `main @ f620e52`).
-> **Kalan 3 adım:** A11 → A12 → A13. Detay için "KALAN ADIMLAR" bölümüne bak.
+> **DURUM (2026-07-30):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti).
+> **Kalan 4 adım:** A11 → A12 → A13 → A14. **Kalan bölüm 2026-07-30'da revize edildi** (kullanıcı kararı):
+> eski A12 (81 kalemlik kullanıcı gözle-kontrol pası) kaldırıldı; onun yerine regresyon fix'i (A12) ve
+> görsel borcun otomatikleştirilmesi (A13) agent'a alındı, kullanıcıya yalnız kısa bir artık liste +
+> tekrarlanan test-düzelt döngüsü (A14) kaldı. Detay için "KALAN ADIMLAR" bölümüne bak.
 
 > **Kural 1 (model):** Plan artık tek model kullanır: **Opus** (Fable kaldırıldı). Tıkanırsan model değiştirme kolu yok; çare effort'u yükseltmek (Kural 2). Hiçbir aşamada review'u atlama — özellikle riskli bölgelerde (Stop/copy-aware, UI custom render).
 > **Kural 2 (effort):** Tıkanmada çare, aynı modelde effort'u bir kademe yükseltmek (medium → high → xhigh; Fable olmadığı için tek yükseltme kolu bu). **Fable'ın atandığı aşamalarda taban high değil xhigh'dır** (A8) — güçlü modelin kaybı effort ile telafi edilir; effort modelin tavanını AŞMAZ, yalnız o tavanı sonuna kadar kullandırır (xhigh Opus, Fable'a yaklaşır ama Fable OLMAZ). `low` hiçbir aşamada kullanılmaz — bu projede en ucuz iş bile davranış spec'ine birebir sadakat istiyor. Effort'u düşürmek yalnız mekanik tekrar işlerinde (örn. A9'da ikon/stil kopyalama alt-taskları) kabul edilebilir, onda da medium tabandır.
@@ -455,21 +459,43 @@ cull · publish çalışır exe · flourish yalnız stream glow · README + trus
 kapandığını göster. Bitince aşamamızı kaydet.
 ```
 
-**Bitti kriteri:** It-5 acceptance tam; `dotnet publish` çıktısı çalışıyor; **ertelenen GÖZLE KONTROL pası + tasarım yan-yana karşılaştırması yapıldı** (It-4 acceptance'ının 26 👁 VISUAL satırı burada kapanır). Son **R promptu (Opus)** + istersen `/code-review ultra` ile kapanış denetimi.
+**Bitti kriteri:** It-5 acceptance tam; `dotnet publish` çıktısı çalışıyor. Son **R promptu (Opus)** + istersen `/code-review ultra` ile kapanış denetimi. — **Not (2026-07-30):** gözle kontrol pası + tasarım yan-yana karşılaştırması It-5'te YAPILMADI, kullanıcı pasına ertelendi; borç tek listeye alındı ([visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md)) ve **A13'te teste çevriliyor**, artığı **A14**'te yürünüyor.
 
 ---
 
-# KALAN ADIMLAR (2026-07-26 itibarıyla) — **3 adım**
+# KALAN ADIMLAR (2026-07-30 revizyonu) — **4 adım**
 
-A1-A10 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan üç adım kod planı değil **kapanış**
-adımlarıdır; sırayla yapılır: karar (A11) → gözle kontrol (A12) → düzeltme iterasyonu (A13).
-Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A10 ile aynı biçimde.
+A1-A10 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan adımlar kod planı değil **kapanış**
+adımlarıdır. Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A10 ile aynı biçimde — her adımı
+**temiz (yeni) oturumda** başlat, prompt kendi bağlamını dosyalardan kuruyor.
 
-| Adım | Ne | Model | Effort |
-|---|---|---|---|
-| **A11** | `CLAUDE.md`'deki 3 bayat olgusal ifadenin düzeltilmesi | **Opus** | **low** |
-| **A12** | **GÖZLE KONTROL PASI** — walkthrough'u yürüyüp kusur listesi üretmek | **Opus** | **low** |
-| **A13** | **Düzeltme iterasyonu** — bilinen regresyon + A12 bulguları | **Opus** | **high** |
+| Adım | Ne | Kim | Model | Effort |
+|---|---|---|---|---|
+| **A11** | `CLAUDE.md`'deki 3 bayat olgusal ifadenin düzeltilmesi | agent | **Opus** | **low** |
+| **A12** | **Bilinen regresyon**: kart animasyonları / renklendirmeler — teşhis + fix | agent | **Opus** | **high** |
+| **A13** | Gözle-kontrol borcunun **teste çevrilmesi** + park edilmiş ~60 minor'ın triyajı | agent | **Opus** | **high** |
+| **A14** | **Test-düzelt döngüsü** — senin bulguların, dalga dalga (**tekrarlanır**) | sen + agent | **Opus** | **high** |
+
+**Neden bu sıra:** A12, A13'e bağlı DEĞİL (kusur zaten bildirilmiş) ve animasyon/renk ölüyken UI'ı gezmek
+her panelde sahte bulgu üretir — o yüzden regresyon fix'i öne alındı. A13, senin gezeceğin 81 kalemi
+15-25'e indirir. A14 asıl test-düzelt döngündür.
+
+## SEN NE YAPACAKSIN — sırayla
+
+1. **Yeni oturum aç** → model **Opus**, effort **low** → **A11** promptunu yapıştır → bitince "commit et".
+2. **Yeni oturum aç** → **Opus / high** → **A12** promptunu yapıştır. Agent bitirince uygulamayı bir kez aç,
+   verdiği 5-8 maddelik listeye bak: **kartlar hareket ediyor mu, renkler geliyor mu?** Hâlâ ölüyse
+   **aynı oturumda** söyle (teşhis bağlamı elinde). Yaşıyorsa 3'e geç.
+3. **Yeni oturum aç** → **Opus / high** → **A13** promptunu yapıştır. Senden bir şey istemez; çıktısı
+   `visual-check-residue.md` (senin gezeceğin **kısa** liste).
+4. **Uygulamayı kullan** + o kısa listeyi gez. Gördüğün her kusuru şu formatta not al:
+   `hangi panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`.
+5. **Yeni oturum aç** → **Opus / high** → **A14** promptunu yapıştır, bulgularını `<<< >>>` bloğuna yaz.
+   Bulgu kalmayana kadar 4-5'i tekrarla (dalga başına 5-15 bulgu ideal).
+
+**Test yazma işi sende değil.** Sen kusuru görüp tarif ediyorsun; testi agent yazıyor. Kural: **hiçbir fix,
+kusuru yakalayan test kırmızı verdiği gösterilmeden yapılmaz.** (1430 test yeşilken animasyonların ölmesi
+tam olarak bu kuralın neden gerektiğini gösteriyor.)
 
 ---
 
@@ -525,72 +551,19 @@ Bitince bana neyi neye çevirdiğini dosya:satır ile göster ve commit et.
 
 **Bitti kriteri:** Üç ifade de kodla uyumlu; kapsam dışına çıkılmamış (diff yalnız o üç yeri gösteriyor).
 
----
-
-## A12 — GÖZLE KONTROL PASI · Model: **Opus** · Effort: **low**
-
-> **Bu adımda ekrana bakan sensin; agent kılavuzluk eder ve bulguları kayda geçirir.** Harness ekran
-> görüntüsü alamaz — It-4'ten beri biriken **26 👁 VISUAL** kabul satırı ancak burada kapanır.
->
-> **Girdi:** [2026-07-26-10-17-visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md)
-> — 81/81 kalem, uygulamada gezilecek sıraya göre (pencere kabuğu → sol panel → graf → konsol → action bar
-> → popover → ayarlar → tepsi/kısayol), **D4 (konsol gerçek akış) ZORUNLU**, Bölüm 2'de prototiple yan yana
-> design-v1 §2.1-§2.9, Bölüm 3'te It-5'in kendi görsel kalemleri.
->
-> **Çıktı:** tarihli bir **kusur listesi dosyası** — A13'ün girdisi. Ne kadar net olursa fix o kadar hızlı.
->
-> **Not:** kart animasyonu/renklendirme regresyonu **zaten bildirildi**; tekrar aramaya gerek yok, A12'de
-> yalnız **kapsamını** netleştir (hangi kartlar, hangi durumlar, konsol/graf de etkileniyor mu).
-
-**PROMPT — yapıştır:**
-
-```
-Şu dosyaları oku:
-1. .claude/outputs/2026-07-26-10-17-visual-check-walkthrough.md (yürüyeceğimiz liste)
-2. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; §2.1-§2.9 yan yana karşılaştırma için)
-3. .claude/outputs/2026-07-26-10-17-it5-records.md (kabul kaydı + park edilen kalemler)
-
-DURUM: It-0..It-5 main'de, build 0/0, suite 1430 passed / 2 skipped / 0 failed. Kod planı bitti.
-Bu adım GÖRSEL DOĞRULAMA pasıdır: ekrana ben bakacağım, sen kılavuzluk edip bulguları kayda geçireceksin.
-
-Nasıl çalışacağız:
-- Uygulamayı çalıştır (dotnet run --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj).
-  Prototip karşılaştırması için "prototype/Build Orchestrator (standalone).html" dosyasını da tarayıcıda
-  açmam gerekecek — sırası gelince söyle.
-- Walkthrough listesini BÖLÜM BÖLÜM, PANEL PANEL bana sun. Her seferinde 5-10 maddelik küçük gruplar ver;
-  her madde için "ne yap / ne görmelisin" tek satır olsun. Beni uzun listelerle boğma.
-- Ben sana gördüklerimi yazacağım ("3 tamam, 5'te şu farklı" gibi). Sen her bulguyu ŞU FORMATTA kaydet:
-  panel · madde no · ne bekleniyordu · ne görüldü · (biliyorsam) hangi adımda çalışıyordu · şiddet.
-- Bir bulgu belirsizse AYIRT EDİCİ soru sor (hangi durumda, her seferinde mi, pencere boyutuna bağlı mı).
-  Tahmin yürütüp kaydetme.
-- İlerlemeyi kaybetmemek için her bölüm bitiminde kusur dosyasını güncelle; oturum uzarsa kaldığımız
-  maddeden devam edebilelim.
-
-BİLİNEN REGRESYON (tekrar aramaya gerek yok, KAPSAMINI netleştir): It-4b'de çalışan kart
-animasyonları/renklendirmeleri It-5'ten sonra çalışmıyor — "sol alt köşedeki kartlar, loading animasyonları,
-hiç hareket yok, renklendirmeler yok". Bunu doğrularken şunları sor: hangi kartlar (proje satırları mı,
-başka bir panel mi) · loading dışında hangi durumlar (building/success/fail) · graf düğümleri ve konsol da
-etkilenmiş mi · reduced-motion ayarı açık mı.
-
-Kod DEĞİŞTİRME, düzeltme YAPMA. Bu adımın tek çıktısı kusur listesidir; düzeltme bir sonraki adımda (A13).
-Çıktıyı .claude/outputs/YYYY-MM-DD-HH-mm-visual-check-findings.md dosyasına yaz (tarih/saat gerçek zaman).
-
-Sonda: bulguları şiddete göre grupla (bloklayıcı / önemli / kozmetik) ve A13 promptuna yapıştırmaya hazır
-kısa bir özet blok üret. Bitince aşamamızı kaydet.
-```
-
-**Bitti kriteri:** 81 kalemin tamamı yürünmüş (D4 dahil), prototiple yan yana §2.1-§2.9 yapılmış, bulgular
-tek dosyada şiddete göre gruplanmış ve A13'e yapıştırmaya hazır.
+**Senin işin:** yok — bu adım tamamen agent'ta. Prompt'u yapıştır, bitince "commit et" de.
 
 ---
 
-## A13 — Düzeltme iterasyonu (regresyon + gözle kontrol bulguları) · Model: **Opus** · Effort: **high**
+## A12 — Bilinen regresyon: kart animasyonları / renklendirmeler · Model: **Opus** · Effort: **high**
 
-> **BİLİNEN REGRESYON (kullanıcı bildirdi, 2026-07-26):** *"Sol alt köşedeki kartlarda loading ile
-> animasyonlar çalışırdı; bu adımda hiç hareket etmiyor, animasyonlar yok, renklendirmeler vs hiç
-> çalışmıyor."* **It-4b sonunda çalışıyordu, It-5'ten sonra bozuk.** Suite 1430 yeşil olduğu hâlde
-> bozulması, kusurun **headless suite'in görmediği bir runtime yolunda** olduğunu söylüyor — `c6e9a21` ile
-> aynı sınıf.
+> **KUSUR (kullanıcı bildirdi, 2026-07-26):** *"Sol alt köşedeki kartlarda loading ile animasyonlar
+> çalışırdı; bu adımda hiç hareket etmiyor, animasyonlar yok, renklendirmeler vs hiç çalışmıyor."*
+> **It-4b sonunda çalışıyordu, It-5'ten sonra bozuk.** Suite 1430 yeşil olduğu hâlde bozulması, kusurun
+> **headless suite'in görmediği bir runtime yolunda** olduğunu söylüyor — `c6e9a21` ile aynı sınıf.
+>
+> **Neden A13'ten (gözle kontrol) ÖNCE:** animasyon ve renklendirme ölüyken UI'ı gezmenin anlamı yok —
+> her panelde sahte bulgu üretir. Bu adım gözle kontrole bağlı DEĞİL; kusur zaten bildirilmiş.
 >
 > **İlk bakılacak yerler (hipotez, doğrulanacak — It-5'te bu alanlara dokunuldu):**
 > 1. **W2 motion fold** — `Controls/MotionGate.cs`. `App.Motion?.AnimationsEnabled ?? false` ifadesinin
@@ -617,46 +590,39 @@ tek dosyada şiddete göre gruplanmış ve A13'e yapıştırmaya hazır.
 ```
 Şu dosyaları oku:
 1. .claude/handoffs/ altındaki EN YENİ handoff + işaret ettiği özet
-2. .claude/outputs/2026-07-26-10-17-it5-records.md (It-5 kabul kaydı + park edilen kalemlerin tam tablosu)
-3. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; kopya metinleri BİREBİR)
+2. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A12" bölümü (hipotez listesi orada)
+3. .claude/outputs/2026-07-26-10-17-it5-records.md (It-5 kabul kaydı + park edilen kalemlerin tam tablosu)
 4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 / A13.2 + Ek A)
 5. .superpowers/sdd/progress.md — It-5 bölümü (en üstteki RESUME HERE; çelişkide ledger kazanır)
-6. .claude/outputs/ altındaki EN YENİ *-visual-check-findings.md (A12'nin kusur listesi — bu adımın girdisi)
 
 DURUM: It-0..It-5 main'de (tek trunk, main == origin/main). Build 0/0, suite 1430 passed / 2 skipped /
-0 failed. v7'nin planlı kod iterasyonları BİTTİ. Bu adım bir düzeltme/cila iterasyonudur.
+0 failed. v7'nin planlı kod iterasyonları BİTTİ. Bu adım TEK BİR REGRESYONU kapatır — başka iş alma,
+gözle kontrol pası bir SONRAKİ adımda (A13).
 
-GÖREV — iki kaynaktan gelen kusurları kapat:
+GÖREV: It-4b'de çalışan kart animasyonları/renklendirmeleri It-5'ten sonra ÇALIŞMIYOR — kullanıcının
+bildirimi: "sol alt köşedeki kartlar, loading animasyonları, hiç hareket yok, renklendirmeler yok".
+Suite yeşil olduğu hâlde bozuk => kusur headless suite'in görmediği bir runtime yolunda (c6e9a21 sınıfı).
 
-(A) BİLİNEN REGRESYON (öncelik 1): It-4b'de çalışan kart animasyonları/renklendirmeleri It-5'ten sonra
-    ÇALIŞMIYOR — "sol alt köşedeki kartlar, loading animasyonları, hiç hareket yok, renklendirmeler yok".
-    Suite yeşil olduğu hâlde bozuk => kusur headless suite'in görmediği bir runtime yolunda (c6e9a21 sınıfı).
-    ÖNCE TEŞHİS, SONRA FİX. Hangi katmanda öldüğünü ölç: motion gate false mu dönüyor · animasyon
-    başlamıyor mu · başlıyor da görsel mi değişmiyor. Bakılacak ilk yerler (hipotez, doğrula):
-      1. Controls/MotionGate.cs — W2'de 9 kopya tek kapıya indirildi; tek kapı yanlışsa TÜM animasyonlar
-         aynı anda susar. Latch-first ↔ latch'siz kip ve kart kurulurken App.Motion null mı.
-      2. ConsoleView (5) + PopIn (1) → MotionGate.StaticAnimationsEnabled; statik okuma canlı okumanın
-         yerine geçip erken snapshot alıyorsa animasyon hiç açılmaz.
-      3. G2: ikon Viewbox → paylaşılan DONMUŞ ScaleTransform. A13.2: frozen/paylaşılan kaynak anime
-         edilemez — animasyon sessizce no-op'a düşer; "renklendirmeler yok" yakınmasını da açıklar.
-      4. G2 parked minor: "IconPaint self-heal turunun fast-path'le kalkması" (ledger'da kayıtlı).
-      5. L1: ProjectRow.xaml.cs::EnsureActions + ProjectRowActions.xaml — durum/spinner/renk elemanları
-         yanlışlıkla tembel alt-ağaca düştüyse ancak hover'da kurulur.
-    Teşhisi kanıtla (hangi satırda, neden), sonra düzelt.
+ÖNCE TEŞHİS, SONRA FİX. Hangi katmanda öldüğünü ÖLÇ: motion gate false mu dönüyor · animasyon başlamıyor
+mu · başlıyor da görsel mi değişmiyor. Bakılacak ilk yerler (hipotez — doğrulanmadan koda DOKUNMA):
+  1. Controls/MotionGate.cs — W2'de 9 kopya tek kapıya indirildi; tek kapı yanlışsa TÜM animasyonlar
+     aynı anda susar. Latch-first ↔ latch'siz kip ve kart kurulurken App.Motion null mı.
+  2. ConsoleView (5) + PopIn (1) → MotionGate.StaticAnimationsEnabled; statik okuma canlı okumanın
+     yerine geçip erken snapshot alıyorsa animasyon hiç açılmaz.
+  3. G2: ikon Viewbox → paylaşılan DONMUŞ ScaleTransform. A13.2: frozen/paylaşılan kaynak anime
+     edilemez — animasyon sessizce no-op'a düşer; "renklendirmeler yok" yakınmasını da açıklar.
+  4. G2 parked minor: "IconPaint self-heal turunun fast-path'le kalkması" (ledger'da kayıtlı).
+  5. L1: ProjectRow.xaml.cs::EnsureActions + ProjectRowActions.xaml — durum/spinner/renk elemanları
+     yanlışlıkla tembel alt-ağaca düştüyse ancak hover'da kurulur.
+Teşhisi KANITLA (hangi dosya:satır, neden ölüyor), sonra düzelt.
 
-(B) GÖZLE KONTROL BULGULARI (öncelik 2): A12'nin ürettiği kusur listesi — .claude/outputs/ altındaki en
-    yeni *-visual-check-findings.md. Şiddet sırasına göre işle (bloklayıcı → önemli → kozmetik).
-    Her bulgu için: düzelt VEYA A13.1 "algısal eşdeğer" sınıfına GEREKÇESİYLE yaz. Bir bulgu belirsizse
-    tahmin yürütme — bana sor.
+KAPSAM: teşhis kusurun graf düğümlerini / konsolu / event stream'i de etkilediğini gösterirse aynı kök
+nedeni oralarda da kapat. Kök nedenle ilgisi olmayan başka görsel kusurları BU ADIMDA alma — onlar A13/A14.
 
 Kurallar:
-- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-{baslik}.md), sonra
-  superpowers:subagent-driven-development ile task-by-task.
-- PER-TASK METOD (bağlayıcı): taze implementer → scripts/review-package BASE HEAD → 3-lens paralel review
-  (spec/design-fidelity · WPF/threading+A13.2 · testler/yapı) → tek fix wave → scoped re-review → ledger.
-  Aynı worktree'de İKİ İMPLEMENTER PARALEL KOŞTURMA (It-5 dersi); read-only reviewer'lar paralel serbest.
-- REGRESYON TESTİ ZORUNLU: her düzeltilen kusur için, bozukluğu yakalayan bir test yaz ve fix'ten ÖNCE
-  KIRMIZI verdiğini göster. Bu iterasyonun tamamı zaten "yeşil suite bir şeyi kaçırdı" üzerine kurulu.
+- superpowers:systematic-debugging ile teşhis; hipotezleri ölçerek ele.
+- REGRESYON TESTİ ZORUNLU: kusuru yakalayan testi ÖNCE yaz ve fix'ten ÖNCE KIRMIZI verdiğini GÖSTER.
+  Bu adımın tamamı zaten "yeşil suite bir şeyi kaçırdı" üzerine kurulu.
 - REALIZE TESTİ ZORUNLU: yeni XAML kökü/template eklersen DsResources.Realize üzerinden realize testi de
   ekle (gerekçe c6e9a21). Not: Window.Measure/Arrange HWND'siz İÇERİĞE İNMEZ — realize window.Content
   üzerinde yapılmalı (It-5/T1'de ölçülerek bulundu).
@@ -667,12 +633,185 @@ Kurallar:
 - Git: kendi çalışma branch'ini aç, task başına commit at, iş bitince main'e merge + push, merge'ü
   DOĞRULADIKTAN sonra branch'i sil, oturumu main'de bırak.
 
-Takılma veya çözümü büyük bir sorun görürsen durup bana bildir. Bitince aşamamızı kaydet.
+ÇIKTI:
+1. .claude/outputs/YYYY-MM-DD-HH-mm-motion-regression-fix.md — teşhis (hangi katmanda öldü, kanıt) +
+   fix + kırmızıdan yeşile dönen testler.
+2. Bana 5-8 maddelik KISA bir göz kontrolü listesi ver ("uygulamayı çalıştır, şuna bak, şunu görmelisin")
+   — sadece bu fix'in doğrulaması için, uzun walkthrough DEĞİL.
+
+Takılırsan veya çözümü büyük bir sorun görürsen durup bana bildir. Bitince aşamamızı kaydet.
 ```
 
-**Bitti kriteri:** Bildirilen regresyon teşhis edilip düzeltildi (regresyon testi kırmızıdan yeşile) · A12'nin
-her bulgusu ya düzeltildi ya A13.1'e gerekçesiyle yazıldı · suite yeşil · main'e merge + push.
+**Bitti kriteri:** Teşhis kanıtlı (dosya:satır) · regresyon testi kırmızıdan yeşile döndü · suite yeşil ·
+main'e merge + push.
 
+**Senin işin:** agent bitirince uygulamayı bir kez aç ve verdiği 5-8 maddelik listeye bak — kartlar hareket
+ediyor mu, renkler geliyor mu. **Hâlâ ölüyse aynı oturumda söyle** (teşhis bağlamı elinde). Yaşıyorsa A13'e
+geç.
+
+---
+
+## A13 — Gözle-kontrol borcunun otomatikleştirilmesi + park listesi triyajı · Model: **Opus** · Effort: **high**
+
+> **Amaç:** 81 kalemlik gözle-kontrol listesini **senin sırtından alıp süite taşımak.** Kalemlerin çoğu
+> aslında ölçülebilir bir değere dayanıyor (yükseklik, padding, renk token'ı, kopya metni, binding, realize) —
+> bunlar test olur. Yalnız gerçekten göz isteyenler (akıcılık hissi, renk algısı, OS davranışı) sana kalır.
+> Hedef: **81 → 15-25 kalem.**
+>
+> **İkinci iş:** `it5-records` §2'deki **18 satır / ~60 park edilmiş minor** triyaj edilir; gerçek kusur
+> olanlar burada kapanır. Kullanıcı kararı (2026-07-30): *"sıkıntılı konular varsa bakılsın, düzeltilsin."*
+>
+> **Girdi:** [2026-07-26-10-17-visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md)
+> (BÖLÜM 1 It-4b'nin 81 kalemi · BÖLÜM 2 prototiple yan yana design-v1 §2.1-§2.9 · BÖLÜM 3 It-5'in kendi
+> görsel kalemleri) + [2026-07-26-10-17-it5-records.md](2026-07-26-10-17-it5-records.md) §2.
+
+**PROMPT — yapıştır:**
+
+```
+Şu dosyaları oku:
+1. .claude/outputs/2026-07-26-10-17-visual-check-walkthrough.md (81 kalem + BÖLÜM 2 prototip karşılaştırması
+   + BÖLÜM 3 It-5 görsel kalemleri) — bu adımın BİRİNCİL girdisi
+2. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; değerler ve kopya metinleri BİREBİR)
+3. .claude/outputs/2026-07-26-10-17-it5-records.md — özellikle "2. Kapanmayan / bilinçli park edilen
+   kalemler" tablosu (18 satır, ~60 minor)
+4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 "algısal eşdeğer" / A13.2)
+5. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır)
+6. .claude/handoffs/ altındaki EN YENİ handoff
+
+DURUM: It-0..It-5 main'de (main == origin/main), build 0/0, suite yeşil. Kod planı bitti. Kart
+animasyonu/renklendirme regresyonu A12'de kapatıldı. Bu adımda İKİ iş var.
+
+(A) GÖZLE-KONTROL BORCUNUN OTOMATİKLEŞTİRİLMESİ
+Walkthrough'un HER kalemini (BÖLÜM 1 + 2 + 3, tamamı) tek tek sınıflandır:
+  - PİNLENEBİLİR → TEST YAZ. Şunlar pinlenebilir: XAML/kod değerinin design-v1 değeriyle karşılaştırılması
+    (yükseklik, padding, kolon, renk/motion token'ı), kopya metni birebirliği, realize testi
+    (DsResources.Realize), ölçü/geometri assert'i, binding/CanExecute canlılığı, durum→şablon eşlemesi,
+    kaynak-deseni guard'ı. Test yoksa kalem KAPANMAZ.
+  - GÖZ İSTER → ARTIK LİSTEYE yaz. Yalnız: akıcılık/hız hissi, animasyon estetiği, renk algısı, prototiple
+    yan yana genel izlenim, OS davranışı (tepsi, global hotkey, DPI değişimi, ekran okuyucu).
+Sınıflandırmayı GEREKÇESİZ yapma: her "GÖZ İSTER" kalemi için NEDEN pinlenemediğini tek satırla yaz.
+"Zor" gerekçe değildir; "assert edilebilir bir değeri yok" gerekçedir. Emin olamadığın kalemi GÖZ İSTER'e
+at ama bunu belirt.
+Not: walkthrough'un D4 (konsol gerçek akış) kalemi ZORUNLU işaretli — pinlenebilir kısmını teste çevir,
+kalanını artık listede ZORUNLU olarak işaretle.
+
+(B) PARK EDİLMİŞ KALEMLERİN TRİYAJI (it5-records §2 — 18 satır, ~60 minor)
+Her kalemi üç kovaya ayır:
+  1. GERÇEK KUSUR → bu adımda KAPAT (önce kırmızı test, sonra fix).
+  2. KABUL EDİLEN BORÇ → gerekçesiyle listede kalsın.
+  3. ARTIK GEÇERSİZ (kod değişti / dayanağı yok) → sil, nedenini yaz.
+Öncelik: davranış/veri doğruluğu > a11y (G2'deki AutomationProperties.Name eksikleri) > üretimde duran
+debug hook'u (debugSpawnChildren — Contracts/Ipc/IpcMessages.cs:22 + Supervisor/SupervisorHost.cs:80) >
+test/kayıt zayıflıkları > kozmetik.
+AÇILMAYACAKLAR (ölçüme dayalı kullanıcı/stop-gate kararları, yeniden tartışma): L2 liste virtualization ·
+G1 DrawingVisual katman göçü · W2 guard kopyalarının katlanması · T33 shared compilation.
+
+ÇIKTI:
+1. .claude/outputs/YYYY-MM-DD-HH-mm-visual-check-residue.md — SADECE göz isteyen kalemler, uygulamada
+   gezilecek sıraya göre (pencere → sol panel → graf → konsol → action bar → popover → ayarlar → tepsi).
+   Her kalem TEK SATIR: "ne yap / ne görmelisin". Bu benim yürüyeceğim liste — mümkün olduğunca kısa olsun
+   ama kalem GİZLEME. Başına: kaç kalem pinlendi / kaç kalem kaldı.
+2. .claude/outputs/YYYY-MM-DD-HH-mm-parked-items-triage.md — üç kovalı tablo + kapatılanların commit'i.
+3. Süite eklenen testler. Raporla: X yeni test, walkthrough'un Y/81 kalemini pinliyor.
+
+Kurallar:
+- Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-{baslik}.md), sonra
+  superpowers:subagent-driven-development ile task-by-task.
+- PER-TASK METOD (bağlayıcı): taze implementer → scripts/review-package BASE HEAD → 3-lens paralel review
+  (spec/design-fidelity · WPF/threading+A13.2 · testler/yapı) → tek fix wave → scoped re-review → ledger.
+  Aynı worktree'de İKİ İMPLEMENTER PARALEL KOŞTURMA (It-5 dersi); read-only reviewer'lar paralel serbest.
+- Yazdığın her testin GERÇEKTEN AYIRT ETTİĞİNİ göster: değeri bilerek boz, test KIRMIZI olsun, geri al.
+  Her zaman yeşil kalan test kalem kapatmaz.
+- REALIZE TESTİ: yeni XAML kökü/template için ZORUNLU (gerekçe c6e9a21). Window.Measure/Arrange HWND'siz
+  İÇERİĞE İNMEZ — realize window.Content üzerinde yapılmalı.
+- MOTION SÖZLEŞMESİ + A13.2 geçerli. Ham renk/süre sabiti YASAK — token guard'larını çalıştır.
+- v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
+  K1 (git salt-okur).
+- Süit süresi ölçülebilir şekilde artıyorsa raporla (It-5'te perf testlerinin maliyeti ölçülmemişti).
+- Git: kendi çalışma branch'in, task başına commit, iş bitince main'e merge + push, doğrulayıp branch'i sil,
+  oturumu main'de bırak.
+
+Bir kalem belirsizse TAHMİN YÜRÜTME — bana sor. Bitince aşamamızı kaydet.
+```
+
+**Bitti kriteri:** Walkthrough'un her kalemi ya teste çevrildi ya artık listeye gerekçesiyle yazıldı ·
+park listesi üç kovaya ayrıldı, gerçek kusurlar kapandı · `visual-check-residue.md` + `parked-items-triage.md`
+var · suite yeşil · main'e merge + push.
+
+**Senin işin:** yok — bu adım tamamen agent'ta. Çıktısı senin A14'te yürüyeceğin **kısa** listedir.
+
+---
+
+## A14 — Test-düzelt döngüsü (senin pasın · **tekrarlanır**) · Model: **Opus** · Effort: **high**
+
+> **Buradan sonrası senin.** Uygulamayı kullanırsın; A13'ün ürettiği `visual-check-residue.md` listesini
+> gezersin ve serbest kullanımda ne görürsen not alırsın. Sonra aşağıdaki promptu **her dalga için yeniden**
+> yapıştırırsın — bulgularını içine yazarak.
+>
+> **Sen test YAZMIYORSUN.** Senin işin kusuru görmek ve tarif etmek; testi agent yazar. Kural değişmez:
+> **hiçbir fix, kusuru yakalayan test kırmızı verdiği gösterilmeden yapılmaz.** 1430 test yeşilken
+> animasyonların ölmesi bu kuralın neden gerektiğinin kanıtı.
+>
+> **İyi bulgu nasıl yazılır** (agent'ın soru sormasına gerek kalmasın):
+> `hangi panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi / bir kez mi`
+> Örnek: *"Projects listesi · Build başlattım · kart sarıya dönüp spinner dönmeli · kart beyaz kaldı,
+> spinner yok · her seferinde."*
+>
+> **Dalga boyutu:** tek seferde 5-15 bulgu ideal. 40 bulguyu tek promptta verme — dalgayı böl, her dalga
+> sonunda suite yeşil kalsın.
+
+**PROMPT — yapıştır** (bulgularını `<<< >>>` bloğuna yaz):
+
+```
+Şu dosyaları oku:
+1. .claude/handoffs/ altındaki EN YENİ handoff + işaret ettiği özet
+2. .claude/outputs/ altındaki EN YENİ *-visual-check-residue.md (gezdiğim liste)
+3. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; değerler ve kopya metinleri BİREBİR)
+4. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 "algısal eşdeğer" / A13.2)
+5. .superpowers/sdd/progress.md (ledger; çelişkide ledger kazanır)
+
+DURUM: v7 kod planı + kapanış adımları (A11-A13) bitti; main == origin/main, suite yeşil.
+Bu bir DÜZELTME DALGASIDIR — uygulamayı kullanırken gördüğüm kusurlar aşağıda.
+
+BULGULARIM:
+---
+<<< BURAYA BULGULARINI YAZ. Her satır:
+    hangi panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi / bir kez mi >>>
+---
+
+GÖREV: her bulguyu sırayla ele al.
+- ÖNCE ŞİDDET SIRALA (bloklayıcı → önemli → kozmetik) ve bana sırayı göster, sonra başla.
+- Bir bulgu belirsizse TAHMİN YÜRÜTME — bana ayırt edici soru sor (hangi durumda, her seferinde mi,
+  pencere boyutuna bağlı mı, reduced-motion açık mı).
+- Her bulgu için: kusuru yakalayan testi ÖNCE yaz, fix'ten ÖNCE KIRMIZI verdiğini GÖSTER, sonra düzelt,
+  YEŞİL olduğunu göster. Kırmızıyı gösteremiyorsan testin yanlış — testi düzelt, kuralı esnetme.
+- Kusur değil de tasarımdan kabul edilebilir bir sapmaysa: A13.1 "algısal eşdeğer" sınıfına GEREKÇESİYLE
+  yaz, düzeltme. Gerekçesiz "eşdeğer" deme.
+- Birden çok bulgu tek kök nedene bağlıysa tek fix'le kapat, ama HER BİRİ için ayrı test yaz.
+- Teşhis gerektiren (nedeni belirsiz) bulgularda superpowers:systematic-debugging kullan; hipotezi
+  doğrulamadan koda dokunma.
+
+Kurallar:
+- Bulgu sayısı 5'ten fazlaysa: önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-{baslik}.md), sonra
+  superpowers:subagent-driven-development ile task-by-task. Azsa doğrudan TDD döngüsüyle ilerle.
+- REALIZE TESTİ: yeni XAML kökü/template için ZORUNLU (c6e9a21). Window.Measure/Arrange HWND'siz İÇERİĞE
+  İNMEZ — realize window.Content üzerinde.
+- MOTION SÖZLEŞMESİ + A13.2 geçerli. Ham renk/süre sabiti YASAK — token guard'larını çalıştır.
+- v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
+  K1 (git salt-okur; checkout/pull/reset ASLA).
+- Dalga sonunda TAM SÜİT yeşil olacak (acceptance dahil değilse belirt). Sayıyı raporla.
+- Git: kendi çalışma branch'in, task başına commit, iş bitince main'e merge + push, doğrulayıp branch'i sil,
+  oturumu main'de bırak.
+
+Dalga bitince: hangi bulgu düzeltildi / hangisi algısal eşdeğere yazıldı / hangisi açık kaldı — tek tablo.
+Bitince aşamamızı kaydet.
+```
+
+**Bitti kriteri (dalga başına):** Her bulgu ya düzeltildi (kırmızı→yeşil testiyle) ya A13.1'e gerekçesiyle
+yazıldı · suite yeşil · main'e merge + push.
+
+**Senin işin:** uygulamayı kullan, kusurları yukarıdaki formatta yaz, dalgayı başlat. Bulgu kalmayana kadar
+tekrarla. Bu adımın "bitti"si yok — proje kapanana kadar döngü budur.
 ---
 
 ## R — Her iterasyon SONU: Review promptu · Model: **Opus** · Effort: **high** (yeniden kullanılabilir)
@@ -706,8 +845,10 @@ kaldığımız yerden devam et
 ## Sık sorulanlar
 
 - **Sıra atlayabilir miyim?** Hayır — A1 (spike) GATE'tir; A2 onsuz başlamaz. A4–A6 sıralıdır (walking-skeleton). A7 (font kapısı) It-4'ün ilk işi olmalı.
-- **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). **A1-A10 bitti (2026-07-26).** Kalan aşamalar: **A11** (Opus/low — CLAUDE.md denetimi), **A12** (kullanıcı yapar, model yok — gözle kontrol pası), **A13** (Opus/**high** — regresyon + gözle kontrol bulgularının düzeltme iterasyonu).
-- **Kaç adım kaldı?** **3:** A11 → A12 → A13. **Üçünün de yapıştırmaya hazır promptu** "KALAN ADIMLAR" bölümünde, A1-A10 ile aynı biçimde. Sırayla yapılır: A12'nin çıktısı (kusur listesi) A13'ün girdisidir.
-- **A13'te neden high?** İş kodlama değil **teşhis**: 1430 test yeşilken bozulan bir runtime davranışı aranıyor (kart animasyonları/renklendirmeleri) — `c6e9a21` ile aynı sınıf, headless suite'in görmediği yol.
+- **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). **A1-A10 bitti (2026-07-26).** Kalan aşamalar: **A11** (Opus/low — CLAUDE.md denetimi), **A12** (Opus/**high** — animasyon/renk regresyonu), **A13** (Opus/**high** — görsel borcun teste çevrilmesi + park listesi triyajı), **A14** (Opus/**high** — tekrarlanan test-düzelt dalgaları).
+- **Kaç adım kaldı?** **4:** A11 → A12 → A13 → A14 (sonuncusu tekrarlanır). **Dördünün de yapıştırmaya hazır promptu** "KALAN ADIMLAR" bölümünde. Sıra bağlayıcı: A12 animasyonu diriltmeden UI gezilmez; A13'ün çıktısı (`visual-check-residue.md`) A14'ün girdisidir.
+- **Eski A12 (81 kalemlik gözle kontrol pası) ne oldu?** 2026-07-30'da kaldırıldı (kullanıcı kararı: *"playbook ile işim kalmasın"*). Kalemlerin pinlenebilir kısmı **A13'te teste çevriliyor**; yalnız gerçekten göz isteyenler kısa bir artık listede kullanıcıya kalıyor. Eski liste (`visual-check-walkthrough.md`) A13'ün girdisi olarak duruyor, silinmedi.
+- **A12/A13'te neden high?** A12 kodlama değil **teşhis**: 1430 test yeşilken bozulan bir runtime davranışı aranıyor — `c6e9a21` ile aynı sınıf, headless suite'in görmediği yol. A13 ise 81 görsel kalemi tek tek "pinlenebilir mi" diye ayırıp gerçekten ayırt eden test yazmayı gerektiriyor; yüzeysel yapılırsa hep-yeşil testler üretir ve borcu gizler.
+- **Testleri ben mi yazacağım?** Hayır. Sen kusuru görüp tarif ediyorsun (`panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`), testi agent yazıyor — ve **her fix'ten önce testin KIRMIZI verdiğini göstermek zorunda.**
 - **Tıkanırsam?** Model değiştirme kolu yok; effort'u yükselt (medium → high → xhigh, Kural 2). Effort modelin tavanını aşmaz — yalnız o tavanı sonuna kadar kullandırır. Review'u hiçbir koşulda atlama — riskli bölgelerin (UI custom render, Stop/copy-aware) tek sigortası o.
 - **Commit ne zaman?** Promptlar commit'i sana bırakıyor (CLAUDE.md kuralı). Her aşama sonunda "commit et" demen yeterli.
