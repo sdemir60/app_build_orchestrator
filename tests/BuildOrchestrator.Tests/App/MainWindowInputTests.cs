@@ -200,24 +200,41 @@ public class MainWindowInputTests
     }
 
     /// <summary>
-    /// [fix-1 · C1] Layout tıklaması KALICI duruma yazar — ve yazdığı yer ENJEKTE EDİLEN store'dur.
+    /// [fix-1 · C1] Layout tıklaması KALICI duruma yazar — ve yazdığı yer ENJEKTE EDİLEN store'dur,
+    /// <b>kullanıcının gerçek dosyası DEĞİL.</b>
     ///
-    /// <para>Bu test iki şeyi birden pinler: (a) düğme→persist zinciri gerçekten koşuyor (dolayısıyla yukarıdaki
-    /// üç testin temp store enjeksiyonu bir SÜS DEĞİL — o zincir olmasa yan etki de olmazdı), (b) enjeksiyon
-    /// GERÇEKTEN devrede, yani üretim varsayılanı (kullanıcının <c>%LOCALAPPDATA%</c> dosyası) BY-PASS ediliyor.
-    /// Enjeksiyon parametresi yok sayılsaydı temp dosyası hiç oluşmaz → KIRMIZI.</para></summary>
+    /// <para>Bu test üç şeyi birden pinler: (a) düğme→persist zinciri gerçekten koşuyor — dolayısıyla
+    /// diğer layout testlerindeki temp-store enjeksiyonu bir SÜS DEĞİL; (b) enjeksiyon GERÇEKTEN devrede
+    /// (temp dosyası oluşur); (c) üretim varsayılanı olan
+    /// <c>%LOCALAPPDATA%\BuildOrchestrator\ui-state.json</c> dosyasına <b>DOKUNULMUYOR</b>.</para>
+    ///
+    /// <para><b>Neden (c) bir teste dönüştürüldü:</b> bu tam olarak bu turda bulunan hatanın kendisidir —
+    /// persist zinciri pencerenin <c>Show()</c> edilmesine bağlı olmadığı için, testler kullanıcının
+    /// gerçek tercih dosyasını sessizce yeniden yazıyordu. Elle "koşumdan önce/sonra karşılaştır" kontrolü
+    /// bir dahaki sefere unutulur; bu assert unutmaz. Dosya yoksa "hâlâ yok" da geçerli bir sonuçtur
+    /// (CI/temiz makine).</para></summary>
     [StaFact]
-    public void A_layout_click_persists_through_the_injected_ui_state_store_not_the_default_one()
+    public void A_layout_click_persists_through_the_injected_store_and_never_touches_the_users_real_file()
     {
         using var temp = new TempDir();
         string path = Path.Combine(temp.Path, "ui-state.json");
+        var before = Fingerprint(JsonUiStateStore.DefaultPath);
         var (window, _) = NewMainWindow(temp);
-        Assert.False(File.Exists(path)); // ön-koşul: henüz yazılmadı
+        Assert.False(File.Exists(path)); // ön-koşul: enjekte edilen store henüz yazılmadı
 
         Click(window.LayFocusButton);
 
         Assert.True(File.Exists(path), "layout tıklaması enjekte edilen store'a YAZMADI");
         Assert.Equal(LayoutMode.Focus, new JsonUiStateStore(path).Load().LayoutMode);
+        Assert.Equal(before, Fingerprint(JsonUiStateStore.DefaultPath));
         GC.KeepAlive(window);
+    }
+
+    /// <summary>Bir dosyanın "değişti mi" parmak izi — yoksa <c>"absent"</c>. İçerik + son yazma zamanı birlikte
+    /// alınır (aynı değerlerin yeniden yazılması da bir DOKUNUŞTUR ve yakalanmalıdır).</summary>
+    private static string Fingerprint(string path)
+    {
+        if (!File.Exists(path)) return "absent";
+        return $"{File.GetLastWriteTimeUtc(path):O}/{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)))}";
     }
 }
