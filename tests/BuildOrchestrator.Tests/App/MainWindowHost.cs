@@ -77,14 +77,18 @@ internal static class MainWindowHost
     /// bile genişlemez (<c>MinButton.ApplyTemplate()</c> sonradan hâlâ <c>true</c> döner). İçerik kökü doğrudan
     /// ölçülüp yerleştirildiğinde ise şablonlar genişler ve <c>OnRender</c> koşar — yani <c>Background</c> gibi
     /// RENDER-ONLY özellikler de gerçekten okunur ve yanlış tipli token orada patlar.
+    ///
+    /// <para>[A13/T3 fix-1 · B4] Boyut ARTIK parametre: <c>TitleBarContextTests</c> "en dar desteklenen pencere"
+    /// (<c>Size.WindowMinWidth</c>=1240) senaryosunu ölçmek için bu bloğu inline yeniden yazmıştı — realize
+    /// etmenin TEK yeri kuralı delinmişti. Varsayılan üretimin açılış boyutudur (MainWindow.xaml 1400×800).</para>
     /// </summary>
-    public static FrameworkElement Realize(MainWindow window)
+    public static FrameworkElement Realize(MainWindow window, double width = 1400, double height = 800)
     {
         ArgumentNullException.ThrowIfNull(window);
         window.ApplyTemplate();
         var content = (FrameworkElement)window.Content;
-        content.Measure(new Size(1400, 800));
-        content.Arrange(new Rect(0, 0, 1400, 800));
+        content.Measure(new Size(width, height));
+        content.Arrange(new Rect(0, 0, width, height));
         content.UpdateLayout();
         return content;
     }

@@ -130,7 +130,13 @@ public class TitleBarContextTests
     // ================================================================ [A13/T3b] ölçü/geometri (b10/b12)
 
     /// <summary>[A13/T3b · b10] design-v1 README §1.1/§2.1: "Delta logosu (dark varyant, 15px yükseklik)"
-    /// (ayrıca §1.1 satır 68, §2.1 satır 107). Testsizdi.</summary>
+    /// (otorite ayrıca DS <c>TitleBar</c>: <c>_ds_bundle.js:1201</c> <c>img { height: 15 }</c>). Testsizdi.
+    ///
+    /// <para>[A13/T3 fix-1 · B8] Seçici ARTIK iddianın kendisi DEĞİL: eski hâli logoyu
+    /// <c>Single(v =&gt; v.Height == 15)</c> ile, yani <b>15 olduğu için</b> buluyordu — "logo 20px oldu" ile
+    /// "logo ağaçtan silindi" ayırt edilemiyordu ve mutasyon bir ölçü hatası değil
+    /// <c>Sequence contains no matching element</c> gürültüsü üretiyordu. Öğe artık KİMLİĞİNDEN
+    /// (<c>MainWindow.xaml x:Name="TitleBarLogo"</c>) seçilir, ölçü SONRA assert edilir.</para></summary>
     [StaFact]
     public void The_title_bar_logo_is_fifteen_pixels_tall()
     {
@@ -138,9 +144,9 @@ public class TitleBarContextTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        // Logo Viewbox'ı design-v1'in tek 15px yükseklikli Viewbox'ıdır (layout ikonları/gear 16x16'dır) —
-        // tek eşleşen ayırt edici.
-        var logo = DsResources.Descendants(window.RootShell).OfType<Viewbox>().Single(v => v.Height == 15);
+        var logo = window.TitleBarLogo;
+        Assert.Contains(logo, DsResources.Descendants(window.RootShell)); // gerçekten AĞAÇTA (kurulup atılmamış)
+        Assert.Equal(15.0, logo.Height);
         // Realize zorunlu (kural 5) — literal okumak yetmez. Tolerans: UseLayoutRounding="True" (MainWindow.xaml)
         // + test host'unun DPI ölçeği (150%'de ölçüldü: 15dip*1.5=22.5px → 22'ye yuvarlanır → 14.667dip) 15'i
         // BİR alt-piksele kaydırabilir; 1dip'lik pay bunu yutar ama YANLIŞ bir sabiti (ör. 20) YAKALAR.
@@ -150,80 +156,76 @@ public class TitleBarContextTests
     }
 
     /// <summary>
-    /// [A13/T3b · b12] Title bar bağlam metninin <c>MaxWidth</c> kırpması (<c>ContextText</c>=320,
-    /// <c>ContextWorktreeText</c>=200) — T2'nin fix'inden devreden borç (koordinatör notu). T2'nin XAML yorumu
-    /// "sınırlar tek satırda kalacak şekilde ölçülüdür" diyordu; ne design-v1 README/BuildApp.jsx ne de
-    /// design-wpf-feasibility-analysis bu iki SAYI için bir genişlik bütçesi/ölçüm KAYDETMİYOR (§2.1 yalnız
-    /// iki-span + <c>gap:8</c> yapısını tarif eder — bir MaxWidth değil). Otorite/ölçüm bu iki sayı için
-    /// SESSİZ: rakamlar bu yüzden DEĞİŞTİRİLMEDİ (kural 4), ama yanlış "ölçülüdür" iddiası MainWindow.xaml'de
-    /// düzeltildi (bu commit). Kalan, kapsam dahilindeki görev: kırpmanın GERÇEKTEN çalıştığını VE
-    /// caption/layout butonlarının ALTINA taşmadığını pinlemek.
+    /// [A13/T3b · b12 → fix-1 · B2+B3+C7] Title bar bağlam metninin kırpması.
+    ///
+    /// <para><b>Otorite bu iki SAYI için (320/200) SESSİZDİR</b> — design-v1 §2.1 ve <c>BuildApp.jsx:1436-1444</c>
+    /// yalnız iki span + <c>gap:8</c> yapısını tarif eder, bir genişlik bütçesi VERMEZ;
+    /// <c>design-wpf-feasibility-analysis</c>'te de bir ölçüm yoktur. Sayılar T2'nin kendi fix'inden gelir.
+    /// Bu yüzden test sayıyı DEĞİL <b>davranışı</b> pinler (brief kural 4/7) ve beklenen sınırı üretimin kendi
+    /// <see cref="FrameworkElement.MaxWidth"/>'inden okur — koordinatör yarın 320'yi 280 yapsa test kırılmaz,
+    /// ama kırpma bozulursa kırılır.</para>
+    ///
+    /// <para><b>Beş ayrı ayak:</b> (1) öğe gerçekten yerleşti ve kırpılmış metin sınırı DOLDURUYOR (ön-koşul —
+    /// <c>ActualWidth==0</c> ile önemsizce geçen bir vakum penceresi kalmasın), (2) kırpma GERÇEKTEN oldu (ham
+    /// ölçülen genişlik yerleşenden büyük), (3) sınır aşılmadı, (4) kırpma <b>ellipsis</b>'tir —
+    /// <c>TextTrimming</c> silinse <c>MaxWidth</c> metni yine 320'de keserdi ve önceki hâl YEŞİL kalırdı
+    /// (lens2), (5) metin caption/layout butonlarının ALTINA taşmıyor.</para>
     /// </summary>
-    [StaFact]
-    public void An_extremely_long_repository_and_branch_name_is_clamped_and_never_creeps_under_the_layout_buttons()
+    /// <param name="worktreeSuffix"><c>false</c>: gövde (<c>ContextText</c>) · <c>true</c>: ek
+    /// (<c>ContextWorktreeText</c>) — iki test karbon kopyaydı (fix-1 · B4).</param>
+    [StaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void An_over_long_title_context_is_ellipsised_and_never_creeps_under_the_layout_buttons(bool worktreeSuffix)
     {
         using var temp = new TempDir();
         var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
+        MainWindowHost.Realize(window); // kabuk ÖNCE realize — veri SONRA akar (üretim sırası)
 
-        vm.RootPath = @"C:\src\" + new string('R', 80);
-        vm.Branch = new string('b', 80);
-        // [gerçek ölçüm] En dar desteklenen genişlikte (Size.WindowMinWidth=1240) yerleş — bolluk (1400px
-        // varsayılan) altında bu iddia anlamsız olurdu (DockPanel'in kendisi hiç sıkışmaz).
-        ((FrameworkElement)window.Content).Measure(new Size(1240, 800));
-        ((FrameworkElement)window.Content).Arrange(new Rect(0, 0, 1240, 800));
-        window.RootShell.UpdateLayout();
+        if (worktreeSuffix)
+        {
+            vm.RootPath = @"C:\src\OSYS";
+            vm.Branch = "main";
+            vm.UseWorktree = true;
+            vm.WorktreeName = new string('w', 80);
+        }
+        else
+        {
+            vm.RootPath = @"C:\src\" + new string('R', 80);
+            vm.Branch = new string('b', 80);
+        }
 
-        // Kontrol grubu: MaxWidth OLMASAYDI bu metin çok daha geniş render ederdi — pack:// font headless
+        // En dar desteklenen genişlikte (Size.WindowMinWidth=1240) yeniden yerleş — bolluk (1400px varsayılan)
+        // altında taşma iddiası anlamsız olurdu. Realize etmenin TEK yeri MainWindowHost'tur (fix-1 · B4).
+        MainWindowHost.Realize(window, width: 1240);
+
+        var text = worktreeSuffix ? WorktreeSuffix(window) : window.ContextText;
+        Assert.NotNull(text);
+
+        // (1) Kırpılmış metin sınırı TAM doldurur — hem "gerçekten yerleşti" ön-koşulu hem sınırın kendisi.
+        Assert.True(text.ActualWidth > 0, "bağlam metni hiç yerleşmedi — sınır iddiaları önemsizce geçerdi");
+        Assert.Equal(text.MaxWidth, text.ActualWidth, precision: 0);
+
+        // (2) Kırpma GERÇEKTEN oldu: sınırsız ölçülen ham genişlik yerleşenden BÜYÜK. pack:// font headless
         // çözülmediği için file:// eşdeğeriyle ölçülür (ProjectRowTests.Sha deseni, kopya YASAK).
         var probe = new TextBlock
-        { Text = window.ContextText.Text, FontFamily = DsResources.MonoFontFamily, FontSize = window.ContextText.FontSize };
+        { Text = text.Text, FontFamily = DsResources.MonoFontFamily, FontSize = text.FontSize };
         probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        Assert.True(probe.DesiredSize.Width > 320,
-            $"kontrol grubu önemsiz: kısaltılmamış metin zaten 320px altında ({probe.DesiredSize.Width}px)");
+        Assert.True(probe.DesiredSize.Width > text.ActualWidth,
+            $"kontrol grubu önemsiz: kısaltılmamış metin zaten sınırın altında ({probe.DesiredSize.Width}px)");
 
-        Assert.True(window.ContextText.ActualWidth <= 320.01,
-            $"ContextText MaxWidth=320'yi aştı: {window.ContextText.ActualWidth}px");
+        // (3) Sınır aşılmadı (beklenen değer ÜRETİMDEN okunur — otorite sessiz).
+        Assert.True(text.ActualWidth <= text.MaxWidth + 0.01,
+            $"bağlam metni MaxWidth={text.MaxWidth}'i aştı: {text.ActualWidth}px");
 
-        double contextRightEdge = window.ContextText.TranslatePoint(new Point(window.ContextText.ActualWidth, 0), window).X;
+        // (4) Kırpma ELLIPSIS'tir — MaxWidth tek başına glyph ortasından keserdi (lens2).
+        Assert.Equal(TextTrimming.CharacterEllipsis, text.TextTrimming);
+
+        // (5) Caption/layout butonlarının ALTINA taşma yok.
+        double rightEdge = text.TranslatePoint(new Point(text.ActualWidth, 0), window).X;
         double layoutButtonsLeftEdge = window.LayQuadButton.TranslatePoint(new Point(0, 0), window).X;
-        Assert.True(contextRightEdge <= layoutButtonsLeftEdge,
-            $"bağlam metni ({contextRightEdge}px) layout butonlarının ({layoutButtonsLeftEdge}px) ALTINA taştı");
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[A13/T3b · b12] Worktree ekinin (ContextWorktreeText) 200px kırpması — yukarıdaki testin
-    /// AYNI gerekçesi, ek için.</summary>
-    [StaFact]
-    public void An_extremely_long_worktree_suffix_is_clamped_and_never_creeps_under_the_layout_buttons()
-    {
-        using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-
-        vm.RootPath = @"C:\src\OSYS";
-        vm.Branch = "main";
-        vm.UseWorktree = true;
-        vm.WorktreeName = new string('w', 80);
-        ((FrameworkElement)window.Content).Measure(new Size(1240, 800));
-        ((FrameworkElement)window.Content).Arrange(new Rect(0, 0, 1240, 800));
-        window.RootShell.UpdateLayout();
-
-        var suffix = WorktreeSuffix(window);
-        Assert.NotNull(suffix); // ön-koşul
-
-        var probe = new TextBlock
-        { Text = suffix!.Text, FontFamily = DsResources.MonoFontFamily, FontSize = suffix.FontSize };
-        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        Assert.True(probe.DesiredSize.Width > 200,
-            $"kontrol grubu önemsiz: kısaltılmamış ek zaten 200px altında ({probe.DesiredSize.Width}px)");
-
-        Assert.True(suffix.ActualWidth <= 200.01, $"ContextWorktreeText MaxWidth=200'ü aştı: {suffix.ActualWidth}px");
-
-        double suffixRightEdge = suffix.TranslatePoint(new Point(suffix.ActualWidth, 0), window).X;
-        double layoutButtonsLeftEdge = window.LayQuadButton.TranslatePoint(new Point(0, 0), window).X;
-        Assert.True(suffixRightEdge <= layoutButtonsLeftEdge,
-            $"worktree eki ({suffixRightEdge}px) layout butonlarının ({layoutButtonsLeftEdge}px) ALTINA taştı");
+        Assert.True(rightEdge <= layoutButtonsLeftEdge,
+            $"bağlam metni ({rightEdge}px) layout butonlarının ({layoutButtonsLeftEdge}px) ALTINA taştı");
         GC.KeepAlive(window);
     }
 }

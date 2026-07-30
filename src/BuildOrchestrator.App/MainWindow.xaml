@@ -147,7 +147,7 @@
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
             <!-- [T35] delta-logo-dark.svg → XAML Path'ler (design-v1 assets), 15px. Renkler token'dan
                  (amber accent + text-primary; hardcode YASAK). SVG grup/parça transform'ları birebir korunur. -->
-            <Viewbox Height="15" Stretch="Uniform" VerticalAlignment="Center">
+            <Viewbox x:Name="TitleBarLogo" Height="15" Stretch="Uniform" VerticalAlignment="Center">
               <Canvas Width="132.574" Height="33">
                 <Canvas Canvas.Left="0.5">
                   <Path Fill="{DynamicResource Brush.Amber}"
@@ -169,14 +169,8 @@
                  zaman başlığa ulaşmıyordu. İki AYRI TextBlock zorunlu: tek Text literali iki ton veremez. -->
             <!-- [T2 fix-1 · m5] MaxWidth ZORUNLU: yatay StackPanel çocuklarını SONSUZ genişlikle ölçer, yani
                  MaxWidth olmadan TextTrimming HİÇ devreye girmez ve uzun bir repo/branch adı caption
-                 butonlarının altına sert kesilirdi.
-                 [A13/T3b · b12 düzeltme] "Sınırlar tek satırda kalacak şekilde ölçülüdür" iddiası GERÇEK DIŞIYDI:
-                 320/200 için ne design-v1 README/BuildApp.jsx'te (§2.1 yalnız iki-span + gap:8 yapısını tarif
-                 eder, bir genişlik bütçesi VERMEZ) ne de design-wpf-feasibility-analysis'te bir ölçüm/otorite
-                 kaydı VAR — otorite bu iki sayı için SESSİZ. Sayılar bu yüzden DEĞİŞTİRİLMEDİ (koordinatör kararı
-                 bekliyor, bkz. task-T3b raporu); burada iddia edilen TEK şey kırpmanın (TextTrimming+MaxWidth)
-                 GERÇEKTEN çalıştığıdır — TitleBarContextTests.cs'teki realize testleri bunu pinler. -->
-
+                 butonlarının altına sert kesilirdi. 320/200 için otorite SESSİZDİR (kaynak: bu iki sayı T2'nin
+                 kendi kararıdır); pinlenen sayı değil DAVRANIŞTIR — bkz. TitleBarContextTests. -->
             <TextBlock x:Name="ContextText" VerticalAlignment="Center" Margin="8,0,0,0"
                        MaxWidth="320" TextTrimming="CharacterEllipsis"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
