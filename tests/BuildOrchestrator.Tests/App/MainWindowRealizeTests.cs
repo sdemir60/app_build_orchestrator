@@ -65,6 +65,42 @@ public class MainWindowRealizeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[A13/T3c · c2a] design-v1 BuildApp.jsx:1429 kök konteyner <c>background: var(--surface-base)</c>
+    /// — pencerenin zemini <b>DOĞRU token'a</b> bağlı olmalı, herhangi bir <see cref="SolidColorBrush"/> değil.
+    /// İki ayrı iddia gerekir (brief c2 notu): (a) renk otoriteyle birebir, (b) bağ CANLI — uygulanan fırça
+    /// Tokens.xaml sözlüğündeki nesnenin TA KENDİSİ (<see cref="Assert.Same"/>); yalnız renk eşitliği aynı rengi
+    /// taşıyan BAŞKA bir fırçayı (kopya bir <c>SolidColorBrush</c>) ayırt edemezdi.</summary>
+    [StaFact]
+    public void The_window_background_is_live_bound_to_surface_base()
+    {
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
+        Realize(window);
+
+        var expected = Assert.IsType<SolidColorBrush>(window.FindResource("Brush.SurfaceBase"));
+        Assert.Same(expected, window.Background);
+        Assert.Equal((Color)ColorConverter.ConvertFromString("#0e0e10")!, expected.Color); // colors.css --surface-base
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c2b — ÜRETİM BULGUSU, bkz. task-T3c-report.md ## Concerns] Otorite (design-v1
+    /// <c>components/shell/TitleBar.jsx</c>, BuildApp.jsx içinde STİLSİZ kullanılır) title bar zeminini
+    /// <c>var(--surface-base)</c> (#0e0e10) olarak kurar. Üretim (<c>MainWindow.xaml:TitleBarRow</c>)
+    /// <c>Brush.Surface</c>'a (#141417) bağlıdır — SAPMA. Düzeltmek bu task'ın kapsamı DIŞINDA (brief kural 3);
+    /// bu test o yüzden BİLEREK <c>Skip</c>'lidir: otoriteye göre yazılmış assertion'ın gerçek üretime karşı
+    /// KIRMIZI çıktığı, task sırasında bir kez çalıştırılıp raporda kanıtlandı (## Koşum çıktıları).</summary>
+    [StaFact(Skip = "A13/T3c c2b: bilinen üretim≠otorite sapması (Brush.Surface #141417 vs otorite Brush.SurfaceBase #0e0e10) — düzeltme kapsam dışı, bkz. rapor Concerns. Kırmızı kanıt (skip'siz çalıştırıldığında): Assert.Same() Failure — Expected #FF0E0E10, Actual #FF141417.")]
+    public void The_title_bar_background_is_live_bound_to_surface_base_per_authority()
+    {
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
+        Realize(window);
+
+        var expected = Assert.IsType<SolidColorBrush>(window.FindResource("Brush.SurfaceBase"));
+        Assert.Same(expected, window.TitleBarRow.Background);
+        Assert.Equal((Color)ColorConverter.ConvertFromString("#0e0e10")!, ((SolidColorBrush)window.TitleBarRow.Background).Color);
+    }
+
     [StaFact]
     public void The_title_bar_height_cast_really_runs_and_feeds_both_the_row_and_the_window_chrome()
     {

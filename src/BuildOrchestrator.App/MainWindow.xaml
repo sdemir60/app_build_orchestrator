@@ -66,7 +66,7 @@
       </Grid.RowDefinitions>
 
       <!-- ==================================== TITLE BAR ==================================== -->
-      <Grid Grid.Row="0" Background="{DynamicResource Brush.Surface}">
+      <Grid x:Name="TitleBarRow" Grid.Row="0" Background="{DynamicResource Brush.Surface}">
         <DockPanel LastChildFill="False">
           <!-- Caption pencere butonları (min/max/close) — kabuk makinesi (Snap hook MaxButton'a ad ile bağlanır) -->
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
