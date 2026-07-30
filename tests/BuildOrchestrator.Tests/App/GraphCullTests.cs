@@ -31,20 +31,11 @@ public class GraphCullTests
         [.. Enumerable.Range(0, perLayer * layers)
             .Select(i => new GraphNode($"{prefix}{i}", i / perLayer, GraphStatus.Discovered))];
 
+    // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer). LOD ölçümü için file:// tabanlı
+    // etiket ailesi hâlâ buradan enjekte edilir (pack:// aileler headless'ta çözülmez — TrackedTextBlockTests deseni).
     private static GraphView NewView(Size size, bool animations = false)
     {
-        var view = new GraphView
-        {
-            AnimationsEnabledProvider = () => animations,
-            // pack:// aileler gerçek bir Application olmadan çözülmez → LOD ölçümü için file:// aile enjekte
-            // edilir (TrackedTextBlockTests deseni). Üretimde bu seam ASLA set edilmez.
-            LabelFontFamily = DsResources.MonoFontFamily,
-        };
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
+        var view = GraphTestView.New(() => animations, labelFontFamily: DsResources.MonoFontFamily);
         Layout(view, size);
         return view;
     }

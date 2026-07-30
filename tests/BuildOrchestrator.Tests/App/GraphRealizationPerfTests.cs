@@ -254,12 +254,8 @@ public class GraphRealizationPerfTests(ITestOutputHelper output)
     /// <c>SetResourceReference</c> ile bağlanan fırçalar GERÇEKTEN çözülsün (aksi halde ölçüm gerçekçi olmazdı).</summary>
     private static GraphView NewHeadlessView(Size size)
     {
-        var view = new GraphView { AnimationsEnabledProvider = () => false };
-        foreach (string name in new[] { "Motion.xaml", "Tokens.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
+        // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.
+        var view = GraphTestView.New();
         Layout(view, size); // ViewportSize > 0 olmalı — aksi halde ApplyCamera erken döner
         return view;
     }

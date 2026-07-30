@@ -123,20 +123,35 @@ public sealed class DsSplitter : GridSplitter
     protected override Visual GetVisualChild(int index) => Line;
 
     /// <summary>
-    /// [A13/T1 — ölçülmüş kusur] <see cref="AddLogicalChild"/> yalnız ÇOCUĞUN <c>Parent</c>'ını kurar; WPF'in ağaç
-    /// yürüyüşleri (<c>TreeWalkHelper</c>) ise ebeveynin <b>bu</b> numaralandırıcısını kullanır. Override yokken
-    /// <see cref="Line"/> mantıksal ağaçta GÖRÜNMEZ ve bu yüzden ayraç bir kaynak kapsamına girdiğinde onun
-    /// <c>DynamicResource</c>'ları YENİDEN ÇÖZÜLMEZ.
+    /// [A13/T1] <see cref="Line"/>'ı mantıksal ağaçta GÖRÜNÜR kılar. <see cref="AddLogicalChild"/> yalnız ÇOCUĞUN
+    /// <c>Parent</c>'ını kurar; WPF'in ağaç yürüyüşleri (<c>TreeWalkHelper</c>) ise ebeveynin <b>bu</b>
+    /// numaralandırıcısını gezer. Override yokken <see cref="Line"/> o yürüyüşlerde hiç görünmez, dolayısıyla
+    /// ayraç bir kaynak kapsamına SONRADAN girdiğinde onun <c>DynamicResource</c>'ları yeniden çözülmez.
     ///
-    /// <para><b>Ölçülen sonuç:</b> ctor'daki <c>Line.SetResourceReference(Fill, "Brush.Border")</c> henüz ebeveynsiz
-    /// bir kapsamda koşup <c>null</c>'a düşüyor ve orada KALIYORDU — tam realize edilmiş bir <c>ShellRoot</c>'ta bile
-    /// <c>ColumnSplitter.Line.Fill == null</c>, yani ayracın 1px görünür çizgisi DİNLENİRKEN HİÇ ÇİZİLMİYORDU.
-    /// Kusur gözle kontrolde kolayca kaçar, çünkü ilk sürüklemeden sonra KENDİLİĞİNDEN kapanır: amber/geri-dönüş
-    /// handler'ları (ctor'daki <c>DragStarted</c>/<c>DragCompleted</c>) <c>SetResourceReference</c>'ı ayraç ARTIK
-    /// ağaçtayken çağırır ve o çağrı doğru çözülür.</para></summary>
+    /// <para><b>Ölçülen etki (fix-1 · I-A ile düzeltilmiş anlatı):</b> ctor'daki
+    /// <c>Line.SetResourceReference(Fill, "Brush.Border")</c> henüz ebeveynsiz bir kapsamda koşar. Bu,
+    /// <b>Application'ı OLMAYAN headless test host'unda</b> <c>null</c>'a düşer ve orada KALIRDI — tam realize
+    /// edilmiş bir <c>ShellRoot</c>'ta bile <c>ColumnSplitter.Line.Fill == null</c> ölçüldü, çünkü orada kaynak
+    /// kapsamı ctor'dan SONRA enjekte edilir (bkz. <c>MainWindow</c> ctor'ının <c>resourceScope</c> parametresi).
+    /// <b>ÜRETİMDE bu kusur beklenmez:</b> <c>App.xaml</c> aynı sözlükleri <c>Application.Resources</c>'a
+    /// MainWindow kurulmadan ÖNCE merge eder ve WPF'in kaynak araması ağaç yürüyüşünden sonra oraya düşer —
+    /// yani ctor'daki çözüm ebeveynsizken de başarılı olur. (Bu ayrım ÖLÇÜLMEDİ, çünkü ölçmek süreç-global ve
+    /// geri alınamaz bir <see cref="Application"/> örneği kurmayı gerektirirdi; iddia bu yüzden "üretimde
+    /// kusurluydu" DEĞİL, "test host'unda kusurluydu" olarak sınırlandırıldı.)</para>
+    ///
+    /// <para>Override iki nedenle KALIR: (1) mantıksal ağaç bütünlüğü — ikinci bir çocuk eklendiğinde aynı
+    /// sessiz sapma yeniden doğmaz; (2) headless host'u üretime benzetir, böylece ayracın dinlenme rengini
+    /// sınayan test vacuous bir <c>null</c> yerine gerçek token'ı görür.</para></summary>
     protected override System.Collections.IEnumerator LogicalChildren
     {
-        get { yield return Line; }
+        get
+        {
+            yield return Line;
+            // [fix-1 · S7] Taban numaralandırıcı da boşaltılır: bugün boş, ama sessizce yutmak ileride eklenecek
+            // ikinci bir çocuk için TAM DA bu override'ın düzelttiği hatayı yeniden üretirdi.
+            var rest = base.LogicalChildren;
+            while (rest is not null && rest.MoveNext()) yield return rest.Current;
+        }
     }
 
     protected override Size MeasureOverride(Size constraint)

@@ -221,7 +221,10 @@ public class ReducedMotionCoverageTests
     [StaFact]
     public void ConsoleView_ready_cursor_does_not_blink_under_reduced_motion()
     {
-        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz sahip: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
+        // [A13/T1 fix-1 · S6] ConsoleView ARTIK seam'lidir (yorumun "seam'siz sahip" hâli bayattı). Burada seam
+        // KASTEN enjekte EDİLMEZ ki üretim VARSAYILANI (statik App.Motion) sınansın — headless'ta null = reduced.
+        // Pozitif ikizi: ConsoleMotionPathTests.The_idle_ready_cursor_really_blinks_when_motion_is_on.
+        Assert.Null(BuildOrchestrator.App.App.Motion);
         var view = new ConsoleView();
 
         view.ShowReady(); // headless App.Motion null → StopBlink
@@ -289,18 +292,9 @@ public class ReducedMotionCoverageTests
 
     // ---------------------------------------------------------------- helpers
 
+    // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.
     private static GraphView NewGraphView()
-    {
-        var view = new GraphView { AnimationsEnabledProvider = () => false, MotionSettings = Off() };
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
-        view.Measure(new Size(600, 400));
-        view.Arrange(new Rect(0, 0, 600, 400));
-        return view;
-    }
+        => GraphTestView.Sized(new Size(600, 400), () => false, Off());
 
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 

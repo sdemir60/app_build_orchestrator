@@ -390,20 +390,9 @@ public class SuccessFlourishTests
         return (view, DsResources.Realize(host, view));
     }
 
-    /// <summary>Animasyonu AÇIK bir GraphView (ReducedMotionCoverageTests.NewGraphView'ın açık-sinyal eşi):
-    /// pack:// headless'ta çözülmez, sözlükler TestAssets'ten yüklenir.</summary>
-    private static GraphView NewGraphView()
-    {
-        var view = new GraphView { AnimationsEnabledProvider = () => true };
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
-        view.Measure(new Size(600, 400));
-        view.Arrange(new Rect(0, 0, 600, 400));
-        return view;
-    }
+    /// <summary>Animasyonu AÇIK bir GraphView (ReducedMotionCoverageTests.NewGraphView'ın açık-sinyal eşi).
+    /// [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.</summary>
+    private static GraphView NewGraphView() => GraphTestView.Sized(new Size(600, 400), () => true);
 
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 

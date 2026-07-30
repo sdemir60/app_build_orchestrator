@@ -45,8 +45,18 @@ public class ProjectRowInputTests
         return row;
     }
 
+    /// <summary>
+    /// [fix-1 · I-G] Tuş, satır GERÇEKTEN klavye odağındayken basılır.
+    ///
+    /// <para>Odak adımı süs değil: kart klavyeyle ancak <c>ProjectRow.xaml:5</c>'teki
+    /// <c>Focusable="True" IsTabStop="True"</c> sayesinde ulaşılabilir. O regresyona uğrarsa üretimde
+    /// Enter/Space tuşu karta HİÇ ULAŞMAZ; odak kurulmadan ham <c>RaiseEvent</c> yapan bir test ise bunu
+    /// göremez ve yeşil kalırdı. <c>Assert.True(IsKeyboardFocused)</c> o kapıyı da pinler.</para></summary>
     private static KeyEventArgs Press(ProjectRow row, Key key)
     {
+        Assert.True(row.Focus(), "kart klavye odağını ALAMADI — Focusable/IsTabStop regresyonu");
+        Assert.True(row.IsKeyboardFocused);
+
         var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(row)!, 0, key)
         {
             RoutedEvent = Keyboard.KeyDownEvent,

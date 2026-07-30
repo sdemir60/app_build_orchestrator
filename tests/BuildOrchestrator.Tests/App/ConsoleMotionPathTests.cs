@@ -1,5 +1,6 @@
 using System.Windows;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Services;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -43,9 +44,14 @@ public class ConsoleMotionPathTests
 
     /// <summary>
     /// Anlatı satırı üretim yolundan (<see cref="ConsoleView.AppendNarrativeBatch"/>) akınca satır <b>bir anda tam
-    /// basılmaz</b>: overlay'de açılır ve karakter karakter ilerler. Seam kopsa (görünüm statik sinyale geri dönse)
-    /// headless'ta instant kola düşer — overlay Collapsed kalır, satır tek hamlede dokümana girer → KIRMIZI.
-    /// </summary>
+    /// basılmaz</b>: overlay'de açılır ve daktilo zamanlayıcısı KURULUR. Seam kopsa (görünüm statik sinyale geri
+    /// dönse) headless'ta instant kola düşer — overlay Collapsed kalır, satır tek hamlede dokümana girer → KIRMIZI.
+    ///
+    /// <para><b>[fix-1 · I-C] Deterministik.</b> Önceki hâli bir ARA KARE avlıyordu (<c>0 &lt; len &lt; full</c>);
+    /// o pencere yalnız ~198 ms sürer (<see cref="TypewriterScheduler.Duration"/>) ve örnekleyen pompa daktilodan
+    /// DAHA DÜŞÜK önceliktedir → yük altında kare kaçıp teşhissiz kırmızı verebilirdi (D8: yeni flake YASAK).
+    /// Aynı iddia artık <see cref="ConsoleView.ActiveLineInstant"/> seam'iyle zamandan bağımsız kurulur —
+    /// kademelemenin KENDİSİ (hangi t'de kaç karakter) zaten <c>TypewriterSchedulerTests</c>'te pinli.</para></summary>
     [StaFact]
     public void A_narrative_line_arriving_through_the_production_append_path_is_typed_out_progressively()
     {
@@ -53,25 +59,14 @@ public class ConsoleMotionPathTests
 
         view.AppendNarrativeBatch(NarrativeLine + "\n");
 
+        // Daktilo GERÇEKTEN kuruldu (instant kola düşmedi) — zamandan bağımsız kanıt.
+        Assert.False(view.ActiveLineInstant, "en yeni satır instant basıldı — daktilo hiç kurulmadı");
         // İlk kare: satır overlay'de, HENÜZ tam değil ve dokümana commit EDİLMEMİŞ.
         Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
         Assert.True(view.ActiveLineText.Text.Length < NarrativeLine.Length,
             "en yeni satır ilk karede TAM basıldı — daktilo hiç koşmadı");
+        Assert.StartsWith(view.ActiveLineText.Text, NarrativeLine, StringComparison.Ordinal); // önek, atlamalı değil
         Assert.DoesNotContain("refreshing refs", view.Document.Text);
-
-        // ...ve GERÇEKTEN ilerler: bir ARA kare (boş değil, tam da değil) yakalanmalı.
-        string? partial = null;
-        DispatcherPump.PumpUntil(
-            () =>
-            {
-                string t = view.ActiveLineText.Text;
-                if (t.Length > 0 && t.Length < NarrativeLine.Length) { partial = t; return true; }
-                return false;
-            },
-            TimeSpan.FromSeconds(3));
-
-        Assert.NotNull(partial);
-        Assert.StartsWith(partial!, NarrativeLine, StringComparison.Ordinal); // kademeli ÖNEK — atlamalı değil
         GC.KeepAlive(window);
     }
 
@@ -88,11 +83,13 @@ public class ConsoleMotionPathTests
     [StaFact]
     public void Raw_msbuild_output_on_the_production_append_path_never_starts_the_typewriter()
     {
+        // [fix-1 · I-F] `Assert.True(view.AnimationsEnabledProvider())` KALDIRILDI: testin kendi lambda'sını geri
+        // okuyan totolojik bir assert'ti — ConsoleView'ın onu TÜKETTİĞİNE dair hiçbir şey söylemiyordu.
         var view = RealizeWithMotion(out var window);
-        Assert.True(view.AnimationsEnabledProvider()); // ön-koşul: motion AÇIK (reduced-motion kolu DEĞİL)
 
         view.AppendNarrativeBatch(RawLine + "\n");
 
+        Assert.True(view.ActiveLineInstant, "ham MSBuild satırı için daktilo KURULDU — gate tüketilmemiş");
         Assert.Equal(Visibility.Collapsed, view.ActiveLineOverlay.Visibility); // overlay hiç açılmadı
         Assert.Equal("", view.ActiveLineText.Text);
         Assert.Contains("CS1591", view.Document.Text);                        // satır ANINDA ve TAM dokümanda
@@ -126,6 +123,65 @@ public class ConsoleMotionPathTests
 
         Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
         Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties, "aktif satır imlecinin blink saati kurulmadı");
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [fix-1 · I-D] canlı motion sinyali
+
+    /// <summary>
+    /// [fix-1 · I-D] OS "animasyon efektleri" ayarı koşu SIRASINDA kapanırsa konsol imlecinin SONSUZ blink saati
+    /// SÖKÜLÜR. Kardeşinin (<c>ReducedMotionCoverageTests:195 EventStreamView_stops_the_cursor_blink…</c>)
+    /// deseni birebir: önce saatin GERÇEKTEN döndüğü pinlenir (aksi halde ikinci assert vacuous PASS olurdu),
+    /// sonra sinyal kapatılır.
+    ///
+    /// <para><b>Neden gerçek bir boşluktu:</b> seam'in ilk hâli <see cref="Controls.MotionGate"/>'in
+    /// <b>aboneliksiz</b> kipini kullanıyordu (o kip <c>StickyLayerList</c>'ten alınmıştı — ama o sahip sonsuz
+    /// saat TUTMAZ). Sonuç: sinyal kapansa bile konsol imleci sonsuza dek dönerdi. Walkthrough §11.1'in
+    /// "kapat → imleç DURUR" kolu.</para></summary>
+    [StaFact]
+    public void The_console_cursor_stops_blinking_when_the_motion_signal_turns_off_while_running()
+    {
+        var signal = new FakeMotionSignal { AnimationsEnabled = true };
+        var motion = new MotionSettings(signal);
+        var view = new ConsoleView
+        {
+            AnimationsEnabledProvider = () => motion.AnimationsEnabled, MotionSettings = motion,
+        };
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, view);
+
+        view.ShowReady();                                            // idle imleç → blink başlar
+        Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties);   // non-vacuous: saat GERÇEKTEN dönüyor
+
+        signal.AnimationsEnabled = false;
+        signal.Raise();                                              // OS ayarı koşu SIRASINDA kapandı
+
+        Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties);  // blink saati SÖKÜLDÜ
+        Assert.Equal(1.0, view.ActiveCursorGlyph.Opacity);           // imleç steady
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Simetrik yön: sinyal geri AÇILINCA görünür imleç yeniden yanıp sönmeye başlar (tek yönlü bir
+    /// handler burada kırılır).</summary>
+    [StaFact]
+    public void The_console_cursor_starts_blinking_again_when_the_motion_signal_comes_back_on()
+    {
+        var signal = new FakeMotionSignal { AnimationsEnabled = false };
+        var motion = new MotionSettings(signal);
+        var view = new ConsoleView
+        {
+            AnimationsEnabledProvider = () => motion.AnimationsEnabled, MotionSettings = motion,
+        };
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, view);
+
+        view.ShowReady();                                            // reduced → blink YOK
+        Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties);
+
+        signal.AnimationsEnabled = true;
+        signal.Raise();
+
+        Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties);
         GC.KeepAlive(window);
     }
 }

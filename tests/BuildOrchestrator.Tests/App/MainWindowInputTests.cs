@@ -36,12 +36,21 @@ public class MainWindowInputTests
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     /// <summary>MainWindowRealizeTests.NewMainWindow ile AYNI kurulum: var olmayan supervisor yolu + pencere
-    /// hiç <c>Show()</c> edilmez (Loaded/OnSourceInitialized tetiklenmez).</summary>
-    private static (MainWindow window, RunViewModel vm) NewMainWindow()
+    /// hiç <c>Show()</c> edilmez (Loaded/OnSourceInitialized tetiklenmez).
+    ///
+    /// <para>[fix-1 · C1] <b>Kalıcı durum store'u AÇIKÇA temp'e yönlendirilir.</b> Ölçülen yan etki: layout
+    /// düğmesine basmak <c>Shell.LayoutChanged → MainWindow.OnShellLayoutChanged → _uiState.Save(...)</c>
+    /// zincirini sürer ve bu zincir pencerenin <c>Show()</c> edilmesine BAĞLI DEĞİLDİR (abonelik ctor'da
+    /// kurulur) — yani testler KULLANICININ GERÇEK
+    /// <c>%LOCALAPPDATA%\BuildOrchestrator\ui-state.json</c> dosyasını yeniden yazıyordu. Store'u olmayan bir
+    /// klasöre vermek yeterlidir: <c>JsonUiStateStore.Load</c> dosya yoksa varsayılan durumu döndürür ve
+    /// <c>Save</c> klasörü kendisi oluşturur — temp klasörü testten sonra <see cref="TempDir"/> ile silinir.</para></summary>
+    private static (MainWindow window, RunViewModel vm) NewMainWindow(TempDir uiStateDir)
     {
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope()), vm);
+        var store = new JsonUiStateStore(Path.Combine(uiStateDir.Path, "ui-state.json"));
+        return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store), vm);
     }
 
     private static IReadOnlyList<KeyBinding> KeyBindingsOf(MainWindow window) =>
@@ -50,19 +59,20 @@ public class MainWindowInputTests
     // ---------------------------------------------------------------- 1.5 pencere kısayolları
 
     /// <summary>Tablo → <see cref="InputBindings"/> dönüşümü BİREBİR: her satır için TAM BİR
-    /// <see cref="KeyBinding"/> ve fazlası yok. Foreach silinirse koleksiyon boş kalır → kırmızı.</summary>
+    /// <see cref="KeyBinding"/> ve fazlası yok. Foreach silinirse koleksiyon boş kalır → kırmızı.
+    /// [fix-1 · I-F] <c>Assert.NotEmpty</c> vakum-yeşili kapatır; <c>Assert.NotNull(binding.Command)</c>
+    /// KALDIRILDI (komut bir sözlük lookup'ından kurulur, ASLA null olamazdı — hep-yeşil assert).</summary>
     [StaFact]
     public void Every_window_shortcut_row_becomes_a_real_key_binding_on_the_window()
     {
-        var (window, _) = NewMainWindow();
+        using var temp = new TempDir();
+        var (window, _) = NewMainWindow(temp);
         var bindings = KeyBindingsOf(window);
 
+        Assert.NotEmpty(bindings);
         Assert.Equal(KeyboardShortcuts.WindowBindings.Count, bindings.Count);
         foreach (var row in KeyboardShortcuts.WindowBindings)
-        {
-            var binding = Assert.Single(bindings, b => b.Key == row.Key && b.Modifiers == row.Modifiers);
-            Assert.NotNull(binding.Command);
-        }
+            Assert.Single(bindings, b => b.Key == row.Key && b.Modifiers == row.Modifiers);
         GC.KeepAlive(window);
     }
 
@@ -72,7 +82,8 @@ public class MainWindowInputTests
     [StaFact]
     public void Both_rebuild_gestures_are_bound_to_the_view_models_own_rebuild_command()
     {
-        var (window, vm) = NewMainWindow();
+        using var temp = new TempDir();
+        var (window, vm) = NewMainWindow(temp);
         var bindings = KeyBindingsOf(window);
 
         var ctrlF5 = bindings.Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.Control);
@@ -95,7 +106,8 @@ public class MainWindowInputTests
     [StaFact]
     public void The_escape_key_binding_really_runs_the_layer_chain_and_clears_the_selection()
     {
-        var (window, vm) = NewMainWindow();
+        using var temp = new TempDir();
+        var (window, vm) = NewMainWindow(temp);
         vm.SelectProject(@"C:\p\a.csproj");
         Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // ön-koşul
 
@@ -108,23 +120,28 @@ public class MainWindowInputTests
     }
 
     /// <summary>
-    /// Niyetler komutlara BİRE BİR gider: aynı niyeti paylaşan iki tuş (Ctrl+F5 / Shift+F5) AYNI nesneyi,
-    /// FARKLI niyetler ise FARKLI nesneleri alır — yani 5 bağlama tam 4 ayrı komuta düşer. Bir sözlük arm'ı
-    /// takas edilse (ör. Ctrl+F ile Esc aynı komuta bağlansa) bu sayı 3'e düşer → kırmızı.
+    /// [fix-1 · I-F] Ctrl+F bağlamasının kimliği DAVRANIŞLA pinlenir: komutu çalıştırmak seçime DOKUNMAZ.
+    /// Ayırt edici tam olarak review'ün işaret ettiği takas: <c>FocusFilter</c> arm'ı Esc'in komutuyla
+    /// değiştirilseydi bu koşum seçimi temizler → KIRMIZI. (Önceki hâli "5 gesture → 4 komut" sayımıydı;
+    /// adı davranış değil API şekli anlatıyordu ve bir arm'ın GÖVDESİ takas edilse sayı yine 4 kalırdı.)
     ///
-    /// <para><b>Neden davranışsal koşum değil:</b> <c>FocusFilter</c> ve <c>Escape</c>'in etkileri (odak / katman
-    /// zinciri) gerçek bir HWND ister ya da hiç açık katman yokken gözlemlenemez; <see cref="Escape"/> kolunun
-    /// GERÇEK etkisi yukarıdaki ayrı testte (seçim temizleme) zaten sürülür.</para></summary>
+    /// <para>Odağın kendisi (<c>Shell.FocusProjectFilter</c>) burada gözlemlenemez: <c>Focus()</c> gerçek bir
+    /// <c>PresentationSource</c> ister ve pencere <c>Show()</c> EDİLEMEZ (bkz. sınıf özeti).</para></summary>
     [StaFact]
-    public void The_five_gestures_collapse_onto_exactly_four_distinct_commands()
+    public void Running_the_filter_shortcut_leaves_the_selection_alone_so_it_cannot_be_the_escape_action()
     {
-        var (window, _) = NewMainWindow();
+        using var temp = new TempDir();
+        var (window, vm) = NewMainWindow(temp);
+        vm.SelectProject(@"C:\p\a.csproj");
+        Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // ön-koşul
+
         var bindings = KeyBindingsOf(window);
+        var ctrlF = bindings.Single(b => b.Key == Key.F && b.Modifiers == ModifierKeys.Control);
+        var escape = bindings.Single(b => b.Key == Key.Escape && b.Modifiers == ModifierKeys.None);
+        ctrlF.Command.Execute(null);
 
-        int distinct = bindings.Select(b => b.Command).Distinct(ReferenceEqualityComparer.Instance).Count();
-
-        Assert.Equal(5, bindings.Count);
-        Assert.Equal(4, distinct); // Ctrl+F5 ve Shift+F5 TEK komutu paylaşır; kalan üçü ayrı
+        Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId); // Esc ile takas edilseydi temizlenirdi
+        Assert.NotSame(escape.Command, ctrlF.Command);
         GC.KeepAlive(window);
     }
 
@@ -137,7 +154,8 @@ public class MainWindowInputTests
     [StaFact]
     public void Clicking_the_list_layout_icon_hides_the_graph_and_applies_the_list_preset()
     {
-        var (window, _) = NewMainWindow();
+        using var temp = new TempDir();
+        var (window, _) = NewMainWindow(temp);
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Quad, 60, 74, 76)); // bilinen başlangıç (persist'ten bağımsız)
 
         Click(window.LayListButton);
@@ -153,7 +171,8 @@ public class MainWindowInputTests
     [StaFact]
     public void Clicking_the_focus_layout_icon_hides_the_graph_and_applies_the_focus_preset()
     {
-        var (window, _) = NewMainWindow();
+        using var temp = new TempDir();
+        var (window, _) = NewMainWindow(temp);
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Quad, 60, 74, 50));
 
         Click(window.LayFocusButton);
@@ -167,7 +186,8 @@ public class MainWindowInputTests
     [StaFact]
     public void Clicking_the_quad_layout_icon_brings_the_graph_back_and_resets_all_three_splits()
     {
-        var (window, _) = NewMainWindow();
+        using var temp = new TempDir();
+        var (window, _) = NewMainWindow(temp);
         window.Shell.ApplyLayout(new LayoutState(LayoutMode.Focus, 60, 74, 76));
         Assert.Equal(Visibility.Collapsed, window.Shell.GraphHost.Visibility); // ön-koşul: graf gizli
 
@@ -176,6 +196,28 @@ public class MainWindowInputTests
         Assert.Equal(LayoutMode.Quad, window.Shell.Layout.Mode);
         Assert.Equal(Visibility.Visible, window.Shell.GraphHost.Visibility);
         Assert.Equal(new LayoutState(LayoutMode.Quad, 50, 50, 50), window.Shell.Layout); // quad preset: üç split de 50
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [fix-1 · C1] Layout tıklaması KALICI duruma yazar — ve yazdığı yer ENJEKTE EDİLEN store'dur.
+    ///
+    /// <para>Bu test iki şeyi birden pinler: (a) düğme→persist zinciri gerçekten koşuyor (dolayısıyla yukarıdaki
+    /// üç testin temp store enjeksiyonu bir SÜS DEĞİL — o zincir olmasa yan etki de olmazdı), (b) enjeksiyon
+    /// GERÇEKTEN devrede, yani üretim varsayılanı (kullanıcının <c>%LOCALAPPDATA%</c> dosyası) BY-PASS ediliyor.
+    /// Enjeksiyon parametresi yok sayılsaydı temp dosyası hiç oluşmaz → KIRMIZI.</para></summary>
+    [StaFact]
+    public void A_layout_click_persists_through_the_injected_ui_state_store_not_the_default_one()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        var (window, _) = NewMainWindow(temp);
+        Assert.False(File.Exists(path)); // ön-koşul: henüz yazılmadı
+
+        Click(window.LayFocusButton);
+
+        Assert.True(File.Exists(path), "layout tıklaması enjekte edilen store'a YAZMADI");
+        Assert.Equal(LayoutMode.Focus, new JsonUiStateStore(path).Load().LayoutMode);
         GC.KeepAlive(window);
     }
 }

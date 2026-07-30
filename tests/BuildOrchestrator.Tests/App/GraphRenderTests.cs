@@ -45,28 +45,13 @@ public class GraphRenderTests
         new("OSYS.Data.Core", "OSYS.Web.Portal"),
     ];
 
+    // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.
     private static GraphView NewView(
         bool animationsEnabled, double width = 600, double height = 400, IMotionSettings? motion = null)
-    {
-        var view = new GraphView
-        {
-            MotionSettings = motion,
-            AnimationsEnabledProvider = () => motion?.AnimationsEnabled ?? animationsEnabled,
-        };
-        // pack:// / Application.Resources olmadan (headless host) token'lar çözülmez — Tokens/Motion sözlükleri
-        // dosyadan merge edilir (FontAssetTests/TokenBrushesTests ile AYNI TestAssets deseni). Böylece
-        // SetResourceReference ile bağlanan fırçalar ve Duration/KeySpline token'ları gerçekten çözülür.
-        // [T64 review · fix wave 1] Icons.xaml de merge edilir: düğüm ikonu ve dep-hata üçgeni artık kodda
-        // gömülü path DEĞİL, bu sözlükten çözülen geometrilerdir (CopyLogTests.NewHeaderWithIcons ile aynı desen).
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
-        view.Measure(new Size(width, height));
-        view.Arrange(new Rect(0, 0, width, height));
-        return view;
-    }
+        => GraphTestView.Sized(
+            new Size(width, height),
+            () => motion?.AnimationsEnabled ?? animationsEnabled,
+            motion);
 
     // ---------------------------------------------------------------- düğüm (26px, 4px radius KARE)
 

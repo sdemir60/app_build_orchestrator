@@ -28,7 +28,9 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
     // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + Alt+B (v7Δ-5).
-    private readonly IUiStateStore _uiState = new JsonUiStateStore(JsonUiStateStore.DefaultPath);
+    // [A13/T1 fix-1 · C1] Store ARTIK ctor'dan gelir (varsayılan üretim yolu birebir aynı: JsonUiStateStore
+    // + DefaultPath). Gerekçe <see cref="MainWindow(EngineHost, RunViewModel, ConsoleBatcher, ResourceDictionary, IUiStateStore)"/>'da.
+    private readonly IUiStateStore _uiState;
     private readonly FirstCloseBalloonGate _closeBalloon;
     private AppTrayIcon? _tray;
     private HotkeyRegistration? _hotkey;
@@ -56,10 +58,23 @@ public partial class MainWindow : Window
     /// Bu dikiş olmadan MainWindow.xaml hiçbir testte realize EDİLEMEZ — c6e9a21'in launch-fatal sınıfının
     /// (Double token → GridLength/Thickness) testsiz kalan son kökü buydu.
     /// </param>
-    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console, ResourceDictionary? resourceScope = null)
+    /// <param name="uiState">
+    /// [A13/T1 fix-1 · C1] ÜRETİMDE null → <see cref="JsonUiStateStore"/> + <see cref="JsonUiStateStore.DefaultPath"/>
+    /// (<c>%LOCALAPPDATA%\BuildOrchestrator\ui-state.json</c>), yani davranış eskisiyle BİREBİR aynıdır.
+    ///
+    /// <para><b>Neden gerekli — ölçülen gerçek:</b> kalıcı yazma yolu pencerenin <c>Show()</c> edilmesine BAĞLI
+    /// DEĞİLDİR; abonelik ctor'da kurulur (<c>Shell.LayoutChanged += OnShellLayoutChanged</c>) ve oradan
+    /// <c>_uiState.Save(...)</c>'a gider. Yani title-bar layout düğmesine basan bir TEST, pencereyi hiç
+    /// göstermeden KULLANICININ GERÇEK tercih dosyasını yeniden yazardı (ve testler arası sıraya bağlı bir
+    /// yan etki bırakırdı). Bu dikiş, <paramref name="resourceScope"/> ile AYNI desende, o yolu teste
+    /// yönlendirilebilir kılar.</para>
+    /// </param>
+    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console,
+        ResourceDictionary? resourceScope = null, IUiStateStore? uiState = null)
     {
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
+        _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);
         _engine = engine;
         _vm = vm;
         _console = console;

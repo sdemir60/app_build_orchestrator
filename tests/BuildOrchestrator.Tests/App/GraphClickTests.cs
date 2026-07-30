@@ -1,10 +1,7 @@
-using System.IO;
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Markup;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
-using IoPath = System.IO.Path;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -37,19 +34,9 @@ public class GraphClickTests
 
     private static IReadOnlyList<GraphEdge> Edges() => [new("OSYS.Base", "OSYS.Data.Core")];
 
-    /// <summary>GraphRenderTests.NewView ile AYNI headless kurulum (token sözlükleri + ölçüm/yerleşim).</summary>
-    private static GraphView NewView()
-    {
-        var view = new GraphView { AnimationsEnabledProvider = () => false };
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
-        view.Measure(new Size(600, 400));
-        view.Arrange(new Rect(0, 0, 600, 400));
-        return view;
-    }
+    /// <summary>[fix-1 · S1] Headless GraphView kurulumu ORTAK yerde (<see cref="GraphTestView"/>) — bu dosya
+    /// o bloğun ALTINCI inline kopyasını taşıyordu.</summary>
+    private static GraphView NewView() => GraphTestView.Sized(new Size(600, 400));
 
     /// <summary>Gerçek sol-tuş basışı: <see cref="Mouse.MouseDownEvent"/> kabarır ve WPF'in kendi sınıf
     /// handler'ı yol üstündeki her öğede <c>MouseLeftButtonDown</c>'ı yükseltir (bkz. sınıf özeti).</summary>
@@ -94,7 +81,12 @@ public class GraphClickTests
     {
         var view = NewView();
         view.SetGraph(Nodes(), Edges());
-        view.SelectedNode = "OSYS.Base"; // ön-koşul (bu testin iddiası zemin tıklaması, seçimin kurulması değil)
+
+        // [fix-1 · I-E] Ön-koşul da ÜRETİM TETİĞİYLE kurulur (programatik setter DEĞİL) ve AÇIKÇA assert edilir:
+        // setter'a bir kapı eklense (bilinmeyen düğüm yok say / materyalizasyon başarısızsa geri al) bu test
+        // sessizce vakum-yeşile düşer ve zemin kablosu koptuğunda kırmızı VERMEZDİ.
+        PressLeft(view.NodeVisuals["OSYS.Base"].Body);
+        Assert.Equal("OSYS.Base", view.SelectedNode);
 
         PressLeft(view.Ground);
 

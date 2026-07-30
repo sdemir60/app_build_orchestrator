@@ -33,11 +33,20 @@ public class EventStreamWiringTests
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
-    private static (EventStreamView view, Window window) Realize(RunViewModel vm)
+    /// <summary>
+    /// [fix-1 · I-B] ÜRETİM SIRASI: kabuk BOŞ VM ile realize edilir, olaylar SONRA akar.
+    ///
+    /// <para><b>Neden kritik:</b> ters sırada (önce <c>OnEvent</c>, sonra realize) satırlar
+    /// <c>OnDataContextChanged → RebuildRows</c> toplu kolundan doğar. Üretimde canlı bir koşuda satırlar
+    /// <c>StreamEvents.CollectionChanged → PART_Rows.Children.Insert</c> ARTIMLI kolundan doğar
+    /// (<c>EventStreamView.xaml.cs:159-166</c>). Ters sıra o kolu hiç sınamaz — brief'in adıyla yasakladığı
+    /// körlük budur. Emsal: <c>StickyRevealTriggerTests</c> / <c>StickyScrollTriggerTests</c>.</para></summary>
+    private static (EventStreamView view, Window window) RealizeEmpty(RunViewModel vm)
     {
         var host = DsResources.NewHost();
         var view = new EventStreamView { AnimationsEnabledProvider = () => false, DataContext = vm };
         var window = DsResources.Realize(host, view);
+        Assert.Empty(view.Rows); // ön-koşul: kabuk BOŞ realize edildi (satırlar artımlı koldan doğacak)
         return (view, window);
     }
 
@@ -56,11 +65,13 @@ public class EventStreamWiringTests
     public void Clicking_a_stream_row_selects_the_project_it_reports()
     {
         var vm = NewVm();
+        var (view, window) = RealizeEmpty(vm);
+
+        // Olaylar realize'den SONRA akar → satır ARTIMLI (CollectionChanged/Insert) koldan doğar.
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", ProjectId, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", ProjectId, 1200)); // tıklanabilir "A built (1.2s)" satırı
 
-        var (view, window) = Realize(vm);
         var row = view.Rows.Single(r => r.ViewModel?.ProjectId == ProjectId);
         Assert.Null(vm.SelectedProjectId); // ön-koşul: seçim yok
 
@@ -76,12 +87,13 @@ public class EventStreamWiringTests
     public void Clicking_a_row_that_carries_no_project_leaves_the_selection_untouched()
     {
         var vm = NewVm();
+        var (view, window) = RealizeEmpty(vm);
+
         vm.OnEvent(new SyncCompletedEvent("main", "abc", false, 1, 0, ToBuildCount: 1, UpToDateCount: 0)); // sync satırı: ProjectId YOK
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", ProjectId, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", ProjectId, 1200));
 
-        var (view, window) = Realize(vm);
         vm.SelectProject(ProjectId);
         var syncRow = view.Rows.First(r => r.ViewModel?.ProjectId is null);
 
@@ -102,10 +114,12 @@ public class EventStreamWiringTests
     public void Scrolling_the_stream_away_from_the_bottom_reveals_the_latest_pill_and_returning_hides_it()
     {
         var vm = NewVm();
+        var (view, window) = RealizeEmpty(vm);
+
+        // Olaylar realize'den SONRA akar → satırlar artımlı koldan doğar ve içerik CANLI büyür (üretimdeki gibi).
         for (int i = 0; i < 60; i++)
             vm.OnEvent(new ProjectSkippedEvent("r1", $@"C:\p\proj{i}.csproj", "up to date"));
 
-        var (view, window) = Realize(vm);
         // İçerik viewport'u GERÇEKTEN aşmalı — aksi halde "dipten uzaklık" hep 0 kalır ve test vacuous olurdu.
         DispatcherPump.PumpUntil(
             () => view.Scroll.ScrollableHeight > BottomAnchorDecision.DefaultThresholdPx, TimeSpan.FromSeconds(2));
