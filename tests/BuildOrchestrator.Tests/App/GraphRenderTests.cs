@@ -92,9 +92,9 @@ public class GraphRenderTests
         // (kök MainWindow Display'i DEĞİŞMEZ, T65).
         Assert.Equal(TextFormattingMode.Ideal, TextOptions.GetTextFormattingMode(label));
         // DS: etiket text-dim, seçiliyken text-primary (varsayılan siyah Foreground'u miras almaz).
-        Assert.Equal(view.TryFindResource("Brush.TextDim"), label.Foreground);
+        Assert.Same(view.FindResource("Brush.TextDim"), label.Foreground);
         view.SelectedNode = "OSYS.Server.Api";
-        Assert.Equal(view.TryFindResource("Brush.TextPrimary"), label.Foreground);
+        Assert.Same(view.FindResource("Brush.TextPrimary"), label.Foreground);
     }
 
     [StaFact]
@@ -165,11 +165,11 @@ public class GraphRenderTests
         Assert.Equal(VerticalAlignment.Top, withBadge.Badge.VerticalAlignment);
         Assert.Equal(new Thickness(20, -6, 0, 0), withBadge.Badge.Margin);
         // 13px daire: zemin surface-base, 1px kırmızı border
-        Assert.Equal(view.TryFindResource("Brush.SurfaceBase"), withBadge.BadgeCircle.Fill);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailBorder"), withBadge.BadgeCircle.Stroke);
+        Assert.Same(view.FindResource("Brush.SurfaceBase"), withBadge.BadgeCircle.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailBorder"), withBadge.BadgeCircle.Stroke);
         Assert.Equal(1.0, withBadge.BadgeCircle.StrokeThickness);
         // İçinde DOLU kırmızı üçgen ▲ (stroke YOK — dolu)
-        Assert.Equal(view.TryFindResource("Brush.StatusFailText"), withBadge.BadgeTriangle.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailText"), withBadge.BadgeTriangle.Fill);
         Assert.Null(withBadge.BadgeTriangle.Stroke);
         Assert.False(withBadge.BadgeTriangle.Data.IsEmpty());
         // Rozet, kare kabının (nabız kabının KARDEŞİ) içindedir ve nabız kabında DEĞİLDİR.
@@ -194,7 +194,7 @@ public class GraphRenderTests
         var visual = view.NodeVisuals["OSYS.Web.Portal"];
         Assert.NotNull(visual.Badge);
         Assert.Equal(Visibility.Visible, visual.Badge.Visibility);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailText"), visual.BadgeTriangle!.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailText"), visual.BadgeTriangle!.Fill);
         var badge = visual.Badge;
 
         view.UpdateStatuses(Nodes());
@@ -219,8 +219,8 @@ public class GraphRenderTests
         Assert.NotNull(visual.BadgeTriangle);
         Assert.NotNull(visual.Icon.Data);
         Assert.NotNull(visual.BadgeTriangle.Data);
-        Assert.Same(view.TryFindResource(GraphView.PackageIconKey), visual.Icon.Data);
-        Assert.Same(view.TryFindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle.Data);
+        Assert.Same(view.FindResource(GraphView.PackageIconKey), visual.Icon.Data);
+        Assert.Same(view.FindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle.Data);
     }
 
     [StaFact]
@@ -230,13 +230,13 @@ public class GraphRenderTests
         view.SetGraph(Nodes(baseStatus: GraphStatus.Failed, dataStatus: GraphStatus.Building), Edges());
 
         var failed = view.NodeVisuals["OSYS.Base"];
-        Assert.Equal(view.TryFindResource("Brush.StatusFail"), failed.Square.Stroke);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailSoft"), failed.Square.Fill);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailText"), failed.Icon.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusFail"), failed.Square.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusFailSoft"), failed.Square.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailText"), failed.Icon.Stroke);
 
         // Base failed ⇒ Base→Data.Core hata dalıdır; hedefi building olduğu için AKAR ama kırmızı çizilir.
         var edge = view.EdgeVisuals.Single(e => e.Model.From == "OSYS.Base");
-        Assert.Equal(view.TryFindResource("Brush.StatusFailBorder"), edge.Path.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusFailBorder"), edge.Path.Stroke);
         Assert.True(edge.Style!.IsFlowing);
     }
 
@@ -673,10 +673,17 @@ public class GraphRenderTests
         Assert.Equal("./#Geist Mono", BuildOrchestrator.App.Controls.AppFonts.Mono.Source);
     }
 
-    /// <summary>[A13/T3c · c3] README §2.3: "Panel başlığı (28px, surface, alt border-subtle)" — GraphView bu
-    /// başlığı <see cref="Controls.PanelHeader"/> KULLANMADAN kendi Border'ıyla çizer (GraphView.xaml), bu yüzden
-    /// <c>Size.PanelHeaderHeight</c> token'ıyla arasındaki bağ hiç doğrulanmıyordu (token 50 olsa da başlık
-    /// hâlâ 28 hardcoded kalırdı — süit yeşil).</summary>
+    /// <summary>[A13/T3c · c3 → fix-1 · C3] README §2.3: "Panel başlığı (28px, surface, alt border-subtle)" —
+    /// GraphView bu başlığı <see cref="Controls.PanelHeader"/> KULLANMADAN kendi Border'ıyla çizer
+    /// (GraphView.xaml).
+    ///
+    /// <para>T3c'nin iddiası "bağ" değil <b>iki sayının uyuşması</b>ydı: üretim <c>Height="28"</c> çıplak
+    /// literalini taşıyordu, yani <c>Size.PanelHeaderHeight</c> token'ı 50'ye kaysa başlık 28'de kalır ve
+    /// zemin/çizgi assert'leri yeşil sürerdi. Üretim düzeltildi (<c>DynamicResource</c>) ve iddia
+    /// <b>canlı bağ</b> seviyesine çıkarıldı: token'ın DEĞERİ değişince başlık GERÇEKTEN onu izler.</para>
+    ///
+    /// <para><b>Not (A13.2 kural 6):</b> mutasyon paylaşılan sözlüğe DOKUNMAZ — override, atılacak görünümün
+    /// KENDİ <see cref="FrameworkElement.Resources"/>'ına konur ve testin sonunda geri alınır.</para></summary>
     [StaFact]
     public void The_panel_header_is_28px_over_surface_with_a_border_subtle_bottom_line()
     {
@@ -689,6 +696,12 @@ public class GraphRenderTests
         Assert.Same(view.FindResource("Brush.Surface"), header.Background);
         Assert.Same(view.FindResource("Brush.BorderSubtle"), header.BorderBrush);
         Assert.Equal(new Thickness(0, 0, 0, 1), header.BorderThickness);
+
+        // CANLI BAĞ: token'ı görünümün kendi kapsamında ez → başlık izler. Çıplak literalde bu KIRMIZI olur.
+        view.Resources["Size.PanelHeaderHeight"] = 50.0;
+        Assert.Equal(50.0, header.Height);
+        view.Resources.Remove("Size.PanelHeaderHeight");
+        Assert.Equal(28.0, header.Height); // override kalktı — üretim değeri geri geldi (mutasyon geri alındı)
     }
 
     [StaFact]

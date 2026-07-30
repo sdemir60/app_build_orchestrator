@@ -49,10 +49,18 @@ public class CopyTextTests
 
     /// <summary>[A13/T3a · a12] design-v1 §1.2: makine çıktısı (sayaç dahil) DAİMA Geist Mono — sistem Consolas'ı
     /// tasarımın parçası DEĞİLDİR. <c>ConsoleModesTests.cs:34</c> sayının kendisini ("12 lines") pinliyordu,
-    /// font ailesini değil.</summary>
+    /// font ailesini değil.
+    ///
+    /// <para>[fix-1 · C5] <see cref="Assert.Same"/> tek başına <b>üretimi üretimle</b> kıyaslar: <c>AppFonts.Mono</c>
+    /// bir gün başka bir aileye repoint edilse iki taraf BİRLİKTE kayar ve test yeşil kalırdı. Zincirin otorite
+    /// ucu bu yüzden burada, testin KENDİ içinde kapatılır (eskiden yalnız <c>GraphRenderTests</c>'teki bir
+    /// assert'e yaslanıyordu — o satır silinince a12 sessizce içi boşalırdı).</para></summary>
     [StaFact]
     public void The_lines_and_events_counters_use_the_mono_font_family_not_the_ui_sans()
     {
+        // Otorite ucu: aile GERÇEKTEN gömülü Geist Mono (design-v1 §1.2 — makine çıktısı mono).
+        Assert.Equal("./#Geist Mono", AppFonts.Mono.Source);
+
         var header = new ConsoleHeader();
         Assert.Same(AppFonts.Mono, header.LinesText.FontFamily);
 

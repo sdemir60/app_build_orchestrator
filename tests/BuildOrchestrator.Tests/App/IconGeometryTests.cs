@@ -128,7 +128,20 @@ public class IconGeometryTests
 
     /// <summary>[A13/T3c · c8] <see cref="BuildOrchestrator.App.Shell.AppTrayIcon"/>: tepsi BİLEREK ayrı, tek-kareli
     /// 16px raster kullanır (app-icon.ico'nun otomatik küçültülmesi amber "D"yi bozar — bkz. AppTrayIcon.cs
-    /// sınıf özeti). <c>app-icon.ico</c> için kare testi vardı (yukarıda), tepsi ikonu için HİÇ yoktu.</summary>
+    /// sınıf özeti). <c>app-icon.ico</c> için kare testi vardı (yukarıda), tepsi ikonu için HİÇ yoktu.
+    ///
+    /// <para><b>[fix-1 · C4] OTORİTE BU KALEMDE SESSİZDİR</b> (brief kural 7): design-v1 README §6 (Assets)
+    /// yalnız <c>delta-logo-dark.svg</c> ve <c>delta-app-icon.svg</c>'yi tanımlar; bir <i>tray</i> ikonundan ya
+    /// da 16px şartından SÖZ ETMEZ (§1.4 ikonografi de tepsiye değinmez). Beklenen 16, üretimin KENDİ kararından
+    /// gelir (<c>AppTrayIcon</c> + dosya adı <c>tray-icon-16.ico</c>). Bu test bu yüzden bir design-fidelity
+    /// kalemi DEĞİL, bir <b>asset-bütünlüğü</b> testidir: shell'in beklediği asset gerçekten repoda ve gerçekten
+    /// tek-kareli 16px mi.</para>
+    ///
+    /// <para><b>Ayırt edicilik (ikili asset):</b> "üretimi boz → kırmızı gör" döngüsü bir <c>.ico</c> için
+    /// uygulanamaz (dosyayı bozmak testi assert'ten ÖNCE decoder hatasına düşürür ve kalemi kanıtlamaz);
+    /// bunun yerine BEKLENEN DEĞER mutasyona uğratıldı — <c>16 → 32</c> koşuldu ve
+    /// <c>Assert.Equal() Failure: Expected 32 / Actual 16</c> ile kırmızı verdi (bkz. task-T3-fix1-report.md),
+    /// yani assert gerçekten dosyanın piksel boyutunu okuyor.</para></summary>
     [StaFact]
     public void Tray_icon_is_a_16px_square()
     {
