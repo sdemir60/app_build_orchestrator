@@ -27,10 +27,11 @@
 | **A12** | Bilinen regresyon: kart animasyonu / renklendirme | **Opus** | **high** | Teşhis işi; yeşil suite'in kaçırdığı runtime kusuru (c6e9a21 sınıfı) |
 | **A13** | Gözle-kontrol borcunun otomatikleştirilmesi + park listesi triyajı | **Opus** | **high** | 81 görsel kalemin pinlenebilenleri süite; kalanı kısa artık liste |
 | **A14** | **Test-düzelt döngüsü** (tekrarlanır) | **Opus** | **high** | Kullanıcının bulguları; her fix'ten önce kırmızı test |
+| **A15** | Kapanış belge pası (CLAUDE.md · README · docs/) | **Opus** | **low** | Mekanik denetim; kanıt zaten koddadır |
 | R | Her iterasyon SONU review | **Opus** | **high** (UI iter. **xhigh**) | Plandaki en güçlü model; her iterasyonun sigortası (`/code-review high` argümanı promptta zaten var); A8/A9 gibi UI iterasyonlarının review'unda xhigh |
 
 > **DURUM (2026-07-30):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti).
-> **Kalan 4 adım:** A11 → A12 → A13 → A14. **Kalan bölüm 2026-07-30'da revize edildi** (kullanıcı kararı):
+> **Kalan 5 adım:** A11 → A12 → A13 → A14 (tekrarlanır) → A15. **Kalan bölüm 2026-07-30'da revize edildi** (kullanıcı kararı):
 > eski A12 (81 kalemlik kullanıcı gözle-kontrol pası) kaldırıldı; onun yerine regresyon fix'i (A12) ve
 > görsel borcun otomatikleştirilmesi (A13) agent'a alındı, kullanıcıya yalnız kısa bir artık liste +
 > tekrarlanan test-düzelt döngüsü (A14) kaldı. Detay için "KALAN ADIMLAR" bölümüne bak.
@@ -463,7 +464,7 @@ kapandığını göster. Bitince aşamamızı kaydet.
 
 ---
 
-# KALAN ADIMLAR (2026-07-30 revizyonu) — **4 adım**
+# KALAN ADIMLAR (2026-07-30 revizyonu) — **5 adım**
 
 A1-A10 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan adımlar kod planı değil **kapanış**
 adımlarıdır. Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A10 ile aynı biçimde — her adımı
@@ -475,6 +476,7 @@ adımlarıdır. Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A1
 | **A12** | **Bilinen regresyon**: kart animasyonları / renklendirmeler — teşhis + fix | agent | **Opus** | **high** |
 | **A13** | Gözle-kontrol borcunun **teste çevrilmesi** + park edilmiş ~60 minor'ın triyajı | agent | **Opus** | **high** |
 | **A14** | **Test-düzelt döngüsü** — senin bulguların, dalga dalga (**tekrarlanır**) | sen + agent | **Opus** | **high** |
+| **A15** | **Kapanış belge pası** — `CLAUDE.md` · `README.md` · `docs/TRUST-BOUNDARY.md` son duruma | agent | **Opus** | **low** |
 
 **Neden bu sıra:** A12, A13'e bağlı DEĞİL (kusur zaten bildirilmiş) ve animasyon/renk ölüyken UI'ı gezmek
 her panelde sahte bulgu üretir — o yüzden regresyon fix'i öne alındı. A13, senin gezeceğin 81 kalemi
@@ -507,6 +509,14 @@ gösteriyor; bu **A11'in 4. kalemi** olarak düzeltiliyor.)
    `hangi panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`.
 5. **Yeni oturum aç** → **Opus / high** → **A14** promptunu yapıştır, bulgularını `<<< >>>` bloğuna yaz.
    Bulgu kalmayana kadar 4-5'i tekrarla (dalga başına 5-15 bulgu ideal).
+6. Dalgalar seyreldiğinde **son bir oturum** → **Opus / low** → **A15** promptu: `CLAUDE.md`, `README.md`,
+   `docs/TRUST-BOUNDARY.md` son duruma gelir. Bir kez, en sonda.
+
+**Belgeler ne zaman güncelleniyor?** İkili düzen: **(a)** A12/A13/A14'ün her birinde "DOKÜMAN SENKRONU"
+kuralı var — yapılan değişiklik bir belgedeki *olgusal* ifadeyi yalanlıyorsa o dalgada düzeltilir, drift
+büyümez; **(b)** A15 üç belgeyi baştan sona bir kez denetler. `CLAUDE.md`'nin kendi bayat kalemleri ise en
+başta, **A11**'de kapanıyor. `.claude/outputs/` altındaki kayıtlar tarihsel belgedir — geriye dönük
+düzeltilmez.
 
 **Test yazma işi sende değil.** Sen kusuru görüp tarif ediyorsun; testi agent yazıyor. Kural: **hiçbir fix,
 kusuru yakalayan test kırmızı verdiği gösterilmeden yapılmaz.** (1430 test yeşilken animasyonların ölmesi
@@ -564,6 +574,11 @@ Görev: CLAUDE.md'deki DÖRT olgusal ifade koddan/plandan sapmış; düzelt.
    (.claude/outputs/2026-07-15-19-00-design-v1/README.md); WPF fidelity kararları v7 A13'tedir.
 
 ÖNCE HER İDDİAYI KODDA/PLANDA DOĞRULA (playbook'taki kanıtları teyit et, körlemesine uygulama). Sonra düzelt.
+
+RAKAM GÖMME: CLAUDE.md'ye "1430 test yeşil" gibi her dalgada değişecek bir sayı YAZMA — sonraki adımlar
+(A13/A14) test ekleyecek, sayı ertesi gün bayatlar ve bu adımı tekrar yaptırır. Dayanıklı dil kullan:
+"It-0→It-5 tamamlandı; suite yeşil, publish hattı çalışıyor." Güncel sayı zaten ledger'da
+(.superpowers/sdd/progress.md) ve it5-records'ta.
 
 KAPSAM YALNIZ BU DÖRT OLGUSAL İFADEDİR. Dil kuralları, çıktı/özet/handoff dizin kuralları, git kuralları,
 build/test komutları ve talimatların geri kalanı DEĞİŞMEZ. Üslup ve biçim mevcut dosyayla aynı kalsın.
@@ -658,6 +673,10 @@ Kurallar:
   yerinde, onları çalıştır.
 - v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
   K1 (git salt-okur; checkout/pull/reset ASLA).
+- DOKÜMAN SENKRONU: bitirmeden önce, yaptığın değişikliğin CLAUDE.md / README.md / docs/TRUST-BOUNDARY.md
+  içindeki bir OLGUSAL ifadeyi geçersiz kılıp kılmadığını KONTROL ET. Kılıyorsa aynı dalgada düzelt, aynı
+  commit serisine koy. Kılmıyorsa DOKUNMA (kozmetik doc düzenlemesi yapma). Sayı gömme — güncel test sayısı
+  ledger'dadır.
 - Git: kendi çalışma branch'ini aç, task başına commit at, iş bitince main'e merge + push, merge'ü
   DOĞRULADIKTAN sonra branch'i sil, oturumu main'de bırak.
 
@@ -759,6 +778,10 @@ Kurallar:
 - v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
   K1 (git salt-okur).
 - Süit süresi ölçülebilir şekilde artıyorsa raporla (It-5'te perf testlerinin maliyeti ölçülmemişti).
+- DOKÜMAN SENKRONU: (B)'de kapattığın her kalem için belgeleri kontrol et. ÖZELLİKLE: debugSpawnChildren
+  üretimden kaldırılırsa docs/TRUST-BOUNDARY.md §3 "Komut yönü (App → Supervisor) hangi girdileri kabul
+  ediyor" bölümü GÜNCELLENMELİ. Aynı şekilde bir davranış/akış/komut değişirse CLAUDE.md ve README.md'nin
+  ilgili bölümü. Değişmeyen belgeye DOKUNMA; sayı gömme.
 - Git: kendi çalışma branch'in, task başına commit, iş bitince main'e merge + push, doğrulayıp branch'i sil,
   oturumu main'de bırak.
 
@@ -834,6 +857,11 @@ Kurallar:
 - v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
   K1 (git salt-okur; checkout/pull/reset ASLA).
 - Dalga sonunda TAM SÜİT yeşil olacak (acceptance dahil değilse belirt). Sayıyı raporla.
+- DOKÜMAN SENKRONU: bu dalgadaki fix'ler CLAUDE.md / README.md / docs/TRUST-BOUNDARY.md içindeki bir
+  OLGUSAL ifadeyi geçersiz kılıyorsa aynı dalgada düzelt (tetikleyiciler: mimari/akış değişikliği · yeni ya
+  da kaldırılan komut/kısayol/script · TFM veya bağımlılık değişikliği · trust-boundary'yi ilgilendiren şey
+  — IPC komutu, dosya yolu, process/job davranışı, git dokunuşu · README "Using it" / "Keyboard shortcuts" /
+  "Performance modes" / "Known limits (v1)" bölümlerini yalanlayan davranış). Kılmıyorsa DOKUNMA; sayı gömme.
 - Git: kendi çalışma branch'in, task başına commit, iş bitince main'e merge + push, doğrulayıp branch'i sil,
   oturumu main'de bırak.
 
@@ -846,6 +874,64 @@ yazıldı · suite yeşil · main'e merge + push.
 
 **Senin işin:** uygulamayı kullan, kusurları yukarıdaki formatta yaz, dalgayı başlat. Bulgu kalmayana kadar
 tekrarla. Bu adımın "bitti"si yok — proje kapanana kadar döngü budur.
+
+---
+
+## A15 — Kapanış belge pası (CLAUDE.md · README.md · docs/) · Model: **Opus** · Effort: **low**
+
+> **Ne zaman:** A14 dalgaları seyreldiğinde — yeni bulgu kalmadığında ya da kalanlar yalnız kozmetikken.
+> **Tek seferlik**, en sonda.
+>
+> **Neden ayrı adım:** A12-A14'ün her birinde "DOKÜMAN SENKRONU" kuralı var — o kural drift'in *büyümesini*
+> engeller, ama üç belgeyi baştan sona kimse bir kez okumaz. Bu adım onu yapar. A11'in yaşattığı dersin
+> (bayat `CLAUDE.md` her session'da her agent'ı yanlış yönlendirdi) tekrarlanmaması için.
+>
+> **Kapsamdaki belgeler:** `CLAUDE.md` (84 satır) · `README.md` (240 satır) · `docs/TRUST-BOUNDARY.md`
+> (418 satır). `.claude/outputs/` altındaki kayıt dosyaları **tarihsel belgedir, geriye dönük düzeltilmez** —
+> onlara dokunma.
+
+**PROMPT — yapıştır:**
+
+```
+Şu dosyaları oku:
+1. CLAUDE.md · README.md · docs/TRUST-BOUNDARY.md (denetlenecek üç belge)
+2. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (PLAN OF RECORD — Global
+   Constraints + PART C; belgelerin anlatması gereken şey budur)
+3. .superpowers/sdd/progress.md (ledger — güncel durum; çelişkide ledger kazanır)
+4. .claude/outputs/ altındaki A12/A13/A14 çıktıları: *-motion-regression-fix.md · *-parked-items-triage.md ·
+   *-visual-check-residue.md + dalga raporları (bu adımlarda ne değişti)
+5. .claude/handoffs/ altındaki EN YENİ handoff
+
+DURUM: v7 kod planı + kapanış adımları (A11-A14) bitti. Bu SON adım: üç kalıcı belgeyi koda göre
+senkronlamak.
+
+GÖREV: her belgeyi KODLA karşılaştır, olgusal sapmaları düzelt.
+1. CLAUDE.md — proje/mimari tablosu (proje adı · TFM · sorumluluk), mimari ilkeler, build/test/run
+   komutları, plan referansı (v7 olmalı), dizin/isimlendirme kuralları hâlâ geçerli mi.
+2. README.md — What it does · Architecture · Requirements · Build,test,run · Publish · Using it ·
+   Keyboard shortcuts · State on disk · Performance modes · Known limits (v1) · Design and decision records.
+   "Known limits (v1)" A13/A14'te kapanan kalemleri hâlâ limit diye sayıyor mu? "Design and decision
+   records" listesine A12/A13/A14'ün ürettiği kayıt dosyalarını EKLE.
+3. docs/TRUST-BOUNDARY.md — process/IPC/dosya sistemi/git sınırları. A13'ün park-triyajında kapatılan
+   kalemler yansıdı mı (ör. debugSpawnChildren üretimden kalktıysa §3 "Komut yönü ... hangi girdileri kabul
+   ediyor"), A14 dalgalarında dosya yolu / IPC komutu / job davranışı değiştiyse ilgili bölüm.
+
+YÖNTEM (bağlayıcı):
+- Her iddiayı KODDA DOĞRULA ve düzeltmeyi dosya:satır KANITIYLA göster. Doğru olan ifadeye DOKUNMA.
+- Belgeleri yeniden tasarlama, üslup ve biçim korunur. Kozmetik düzenleme, yeniden yazım, bölüm ekleme yok —
+  yalnız olgusal düzeltme + yukarıda istenen kayıt listesi güncellemesi.
+- RAKAM GÖMME: "X test yeşil" gibi bir dalgada bayatlayacak sayı yazma; dayanıklı dil + ledger'a işaret.
+- .claude/outputs/ ve .claude/summaries/ altındaki dosyalar TARİHSEL kayıttır — geriye dönük düzeltme YOK.
+- Emin olamadığın bir ifade varsa TAHMİN YÜRÜTME, bana sor.
+
+ÇIKTI: neyi neye çevirdiğinin dosya:satır tablosu (üç belge için ayrı ayrı) + "denetlendi, sapma yok"
+dediğin bölümlerin listesi. Sonra commit + push. Bitince aşamamızı kaydet.
+```
+
+**Bitti kriteri:** Üç belge de kodla uyumlu (her düzeltme dosya:satır kanıtlı) · sapma bulunmayan bölümler
+de raporlanmış (sessiz atlama yok) · `.claude/outputs/` tarihsel kayıtlarına dokunulmamış · main'e push.
+
+**Senin işin:** yok. A14 dalgaları bitince bu promptu yapıştır — projenin kalıcı belgeleri son duruma gelir.
 ---
 
 ## R — Her iterasyon SONU: Review promptu · Model: **Opus** · Effort: **high** (yeniden kullanılabilir)
@@ -880,7 +966,8 @@ kaldığımız yerden devam et
 
 - **Sıra atlayabilir miyim?** Hayır — A1 (spike) GATE'tir; A2 onsuz başlamaz. A4–A6 sıralıdır (walking-skeleton). A7 (font kapısı) It-4'ün ilk işi olmalı.
 - **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). **A1-A10 bitti (2026-07-26).** Kalan aşamalar: **A11** (Opus/low — CLAUDE.md denetimi), **A12** (Opus/**high** — animasyon/renk regresyonu), **A13** (Opus/**high** — görsel borcun teste çevrilmesi + park listesi triyajı), **A14** (Opus/**high** — tekrarlanan test-düzelt dalgaları).
-- **Kaç adım kaldı?** **4:** A11 → A12 → A13 → A14 (sonuncusu tekrarlanır). **Dördünün de yapıştırmaya hazır promptu** "KALAN ADIMLAR" bölümünde. Sıra bağlayıcı: A12 animasyonu diriltmeden UI gezilmez; A13'ün çıktısı (`visual-check-residue.md`) A14'ün girdisidir.
+- **Kaç adım kaldı?** **5:** A11 → A12 → A13 → A14 (tekrarlanır) → A15. **Beşinin de yapıştırmaya hazır promptu** "KALAN ADIMLAR" bölümünde. Sıra bağlayıcı: A12 animasyonu diriltmeden UI gezilmez; A13'ün çıktısı (`visual-check-residue.md`) A14'ün girdisidir; A15 en sonda, bir kez.
+- **CLAUDE.md / README / docs ne zaman güncelleniyor?** Üç noktada: **A11** (CLAUDE.md'nin bilinen 4 bayat kalemi) · **A12/A13/A14 içindeki "DOKÜMAN SENKRONU" kuralı** (yapılan değişiklik bir olgusal ifadeyi yalanlıyorsa aynı dalgada düzeltilir; yalanlamıyorsa dokunulmaz) · **A15** (üç belgenin baştan sona son denetimi). Belgelere her dalgada bayatlayacak **sayı gömülmez** (test sayısı gibi) — güncel rakam ledger'dadır.
 - **Eski A12 (81 kalemlik gözle kontrol pası) ne oldu?** 2026-07-30'da kaldırıldı (kullanıcı kararı: *"playbook ile işim kalmasın"*). Kalemlerin pinlenebilir kısmı **A13'te teste çevriliyor**; yalnız gerçekten göz isteyenler kısa bir artık listede kullanıcıya kalıyor. Eski liste (`visual-check-walkthrough.md`) A13'ün girdisi olarak duruyor, silinmedi.
 - **A12/A13'te neden high?** A12 kodlama değil **teşhis**: 1430 test yeşilken bozulan bir runtime davranışı aranıyor — `c6e9a21` ile aynı sınıf, headless suite'in görmediği yol. A13 ise 81 görsel kalemi tek tek "pinlenebilir mi" diye ayırıp gerçekten ayırt eden test yazmayı gerektiriyor; yüzeysel yapılırsa hep-yeşil testler üretir ve borcu gizler.
 - **Testleri ben mi yazacağım?** Hayır. Sen kusuru görüp tarif ediyorsun (`panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`), testi agent yazıyor — ve **her fix'ten önce testin KIRMIZI verdiğini göstermek zorunda.**
