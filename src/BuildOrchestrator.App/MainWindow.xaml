@@ -66,9 +66,12 @@
       </Grid.RowDefinitions>
 
       <!-- ==================================== TITLE BAR ==================================== -->
-      <!-- [A13/T3 fix-1 · P1] Zemin design-v1 DS TitleBar'ından gelir (_ds_bundle.js:1189
-           background: var(surface-base) = #0e0e10) — eskiden Brush.Surface (#141417) bağlıydı. -->
-      <Grid x:Name="TitleBarRow" Grid.Row="0" Background="{DynamicResource Brush.SurfaceBase}">
+      <!-- [A13/T3 fix-1 · P1+P2] design-v1 DS TitleBar (_ds_bundle.js:1184-1196) TEK stil bloğunda hem zemini
+           (background: var(surface-base) = #0e0e10) hem alt çizgiyi (borderBottom: 1px solid var(border-subtle))
+           verir; bu yüzden ikisini de AYNI öğe taşır → Grid değil Border. Eskiden zemin Brush.Surface (#141417)
+           idi ve alt çizgi HİÇ YOKTU (title bar ile gövde arasında ayırıcı yok). Pin: MainWindowRealizeTests. -->
+      <Border x:Name="TitleBarRow" Grid.Row="0" Background="{DynamicResource Brush.SurfaceBase}"
+              BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
         <DockPanel LastChildFill="False">
           <!-- Caption pencere butonları (min/max/close) — kabuk makinesi (Snap hook MaxButton'a ad ile bağlanır) -->
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
@@ -191,7 +194,7 @@
                        Foreground="{DynamicResource Brush.TextFaint}" />
           </StackPanel>
         </DockPanel>
-      </Grid>
+      </Border>
 
       <!-- ==================================== GÖVDE ==================================== -->
       <local:ShellRoot x:Name="Shell" Grid.Row="1" WindowChrome.IsHitTestVisibleInChrome="True" />

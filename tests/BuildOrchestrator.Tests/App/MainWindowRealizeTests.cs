@@ -101,6 +101,30 @@ public class MainWindowRealizeTests
         GC.KeepAlive(window); // [fix-1 · lens1 D7] kardeşlerindeki KeepAlive eksikti — skip kalkınca GC riski gerçek olurdu
     }
 
+    /// <summary>[A13/T3 fix-1 · P2] Otoritenin AYNI öğesi (design-v1 DS <c>TitleBar</c>,
+    /// <c>_ds_bundle.js:1184-1196</c>) zeminle BİRLİKTE bir alt çizgi de kurar:
+    /// <c>borderBottom: '1px solid var(--border-subtle)'</c>. Üretimde title bar ile gövde arasında HİÇBİR ayırıcı
+    /// yoktu (<c>MainWindow.xaml</c> genelinde <c>BorderBrush</c>/<c>BorderThickness</c> sıfır eşleşme) — lens1 ve
+    /// lens2 bağımsız ölçtü, kullanıcı kararıyla (2026-07-31) kapatıldı.
+    ///
+    /// <para>Otorite zemini ve alt çizgiyi TEK stil bloğunda aynı öğeye verdiği için üretimde de tek öğe taşır:
+    /// <c>TitleBarRow</c> artık bir <see cref="Border"/>'dır (tek çocuğu eski <c>DockPanel</c>). Renk eşitliği tek
+    /// başına yetmez — fırçanın Tokens.xaml'deki nesnenin TA KENDİSİ olduğu (<see cref="Assert.Same"/>) ve
+    /// kalınlığın <b>yalnız altta</b> 1px olduğu ayrı ayrı pinlenir.</para></summary>
+    [StaFact]
+    public void The_title_bar_carries_the_authoritys_one_pixel_border_subtle_hairline_along_its_bottom_edge()
+    {
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
+        Realize(window);
+
+        // Otoritede zemin ve alt çizgi AYNI stil bloğundadır → üretimde de aynı öğe taşımalı (Grid taşıyamaz).
+        var titleBar = Assert.IsType<Border>((object)window.TitleBarRow);
+        Assert.Same(window.FindResource("Brush.BorderSubtle"), titleBar.BorderBrush);
+        Assert.Equal(new Thickness(0, 0, 0, 1), titleBar.BorderThickness);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void The_title_bar_height_cast_really_runs_and_feeds_both_the_row_and_the_window_chrome()
     {
