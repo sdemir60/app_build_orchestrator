@@ -497,6 +497,16 @@ her panelde sahte bulgu üretir — o yüzden regresyon fix'i öne alındı. A13
 **v2/v3/v4.x/v5/v6 planları TARİHSELDİR** — kalan adımlarda referans alınmaz. (`CLAUDE.md` hâlâ v2'yi
 gösteriyor; bu **A11'in 4. kalemi** olarak düzeltiliyor.)
 
+**Promptlar v7'yi TEKRAR ETMEZ, İŞARET EDER.** Yasak listesini prompta kopyalamak iki risk taşır: (a) v7
+güncellenirse prompt yalan söyler, (b) kopyalanan kısa liste planın tamamı sanılır. Bu yüzden A12-A15
+promptlarında tek satır var — *"v7 Global Constraints + A13 (+ A7/A8) BAĞLAYICI: oku ve uygula; çelişkide v7
+kazanır."* Prompta yalnız **v7'de OLMAYAN** proje pratiği yazılır:
+
+- kırmızı-test kuralı (fix'ten önce testin KIRMIZI verdiğini göster),
+- realize testi + `Window.Measure/Arrange` HWND dersi (`c6e9a21` / It-5 T1 — plandan sonra ölçülerek öğrenildi),
+- per-task review metodu (taze implementer → 3-lens review → fix wave → ledger),
+- git akışı ve doküman senkronu.
+
 ## SEN NE YAPACAKSIN — sırayla
 
 1. **Yeni oturum aç** → model **Opus**, effort **low** → **A11** promptunu yapıştır → bitince "commit et".
@@ -673,16 +683,16 @@ KAPSAM: teşhis kusurun graf düğümlerini / konsolu / event stream'i de etkile
 nedeni oralarda da kapat. Kök nedenle ilgisi olmayan başka görsel kusurları BU ADIMDA alma — onlar A13/A14.
 
 Kurallar:
+- V7 BAĞLAYICI: yasaklar ve teknik kararlar planın kendisindedir — "Global Constraints" + "A13 Fidelity &
+  WPF kararları" + "A8 Test Stratejisi". OKU ve UYGULA; bu prompt onları tek tek TEKRAR ETMEZ. Çelişkide v7
+  kazanır.
 - superpowers:systematic-debugging ile teşhis; hipotezleri ölçerek ele.
 - REGRESYON TESTİ ZORUNLU: kusuru yakalayan testi ÖNCE yaz ve fix'ten ÖNCE KIRMIZI verdiğini GÖSTER.
   Bu adımın tamamı zaten "yeşil suite bir şeyi kaçırdı" üzerine kurulu.
-- REALIZE TESTİ ZORUNLU: yeni XAML kökü/template eklersen DsResources.Realize üzerinden realize testi de
-  ekle (gerekçe c6e9a21). Not: Window.Measure/Arrange HWND'siz İÇERİĞE İNMEZ — realize window.Content
-  üzerinde yapılmalı (It-5/T1'de ölçülerek bulundu).
-- MOTION SÖZLEŞMESİ ve A13.2 aynen geçerli. Ham renk/süre sabiti YASAK — token guard'ları (renk/motion/D8)
-  yerinde, onları çalıştır.
-- v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
-  K1 (git salt-okur; checkout/pull/reset ASLA).
+- REALIZE TESTİ (v7'de YOK, sonradan ölçülerek öğrenildi): yeni XAML kökü/template eklersen
+  DsResources.Realize üzerinden realize testi de ekle (gerekçe c6e9a21). Window.Measure/Arrange HWND'siz
+  İÇERİĞE İNMEZ — realize window.Content üzerinde yapılmalı (It-5/T1).
+- Repo'daki token guard'larını (renk/motion/D8) çalıştır.
 - DOKÜMAN SENKRONU: bitirmeden önce, yaptığın değişikliğin CLAUDE.md / README.md / docs/TRUST-BOUNDARY.md
   içindeki bir OLGUSAL ifadeyi geçersiz kılıp kılmadığını KONTROL ET. Kılıyorsa aynı dalgada düzelt, aynı
   commit serisine koy. Kılmıyorsa DOKUNMA (kozmetik doc düzenlemesi yapma). Sayı gömme — güncel test sayısı
@@ -776,6 +786,9 @@ G1 DrawingVisual katman göçü · W2 guard kopyalarının katlanması · T33 sh
 3. Süite eklenen testler. Raporla: X yeni test, walkthrough'un Y/81 kalemini pinliyor.
 
 Kurallar:
+- V7 BAĞLAYICI: yasaklar, teknik kararlar ve kabul ölçütleri planın kendisindedir — "Global Constraints" +
+  "A7 UI/UX" + "A8 Test Stratejisi" + "A13". OKU ve UYGULA; bu prompt onları TEKRAR ETMEZ. Çelişkide v7
+  kazanır. Bir kalemin "doğru"su tartışmalıysa önce v7'ye, sonra design-v1'e bak.
 - Önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-{baslik}.md), sonra
   superpowers:subagent-driven-development ile task-by-task.
 - PER-TASK METOD (bağlayıcı): taze implementer → scripts/review-package BASE HEAD → 3-lens paralel review
@@ -783,11 +796,9 @@ Kurallar:
   Aynı worktree'de İKİ İMPLEMENTER PARALEL KOŞTURMA (It-5 dersi); read-only reviewer'lar paralel serbest.
 - Yazdığın her testin GERÇEKTEN AYIRT ETTİĞİNİ göster: değeri bilerek boz, test KIRMIZI olsun, geri al.
   Her zaman yeşil kalan test kalem kapatmaz.
-- REALIZE TESTİ: yeni XAML kökü/template için ZORUNLU (gerekçe c6e9a21). Window.Measure/Arrange HWND'siz
-  İÇERİĞE İNMEZ — realize window.Content üzerinde yapılmalı.
-- MOTION SÖZLEŞMESİ + A13.2 geçerli. Ham renk/süre sabiti YASAK — token guard'larını çalıştır.
-- v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
-  K1 (git salt-okur).
+- REALIZE TESTİ (v7'de YOK, sonradan öğrenildi): yeni XAML kökü/template için ZORUNLU (gerekçe c6e9a21).
+  Window.Measure/Arrange HWND'siz İÇERİĞE İNMEZ — realize window.Content üzerinde yapılmalı.
+- Repo'daki token guard'larını (renk/motion/D8) çalıştır.
 - Süit süresi ölçülebilir şekilde artıyorsa raporla (It-5'te perf testlerinin maliyeti ölçülmemişti).
 - DOKÜMAN SENKRONU: (B)'de kapattığın her kalem için belgeleri kontrol et. ÖZELLİKLE: debugSpawnChildren
   üretimden kaldırılırsa docs/TRUST-BOUNDARY.md §3 "Komut yönü (App → Supervisor) hangi girdileri kabul
@@ -860,13 +871,15 @@ GÖREV: her bulguyu sırayla ele al.
   doğrulamadan koda dokunma.
 
 Kurallar:
+- V7 BAĞLAYICI: yasaklar, teknik kararlar ve kabul ölçütleri planın kendisindedir — "Global Constraints" +
+  "A7 UI/UX" + "A13". OKU ve UYGULA; bu prompt onları TEKRAR ETMEZ. Çelişkide v7 kazanır. Bir bulgunun
+  "kusur mu, kabul edilmiş karar mı" olduğu tartışmalıysa cevap v7'dedir (A11 kapsam sınırları · A12
+  varsayımlar · A13.1 algısal eşdeğer).
 - Bulgu sayısı 5'ten fazlaysa: önce kısa TDD dökümü (.claude/outputs/YYYY-MM-DD-HH-mm-{baslik}.md), sonra
   superpowers:subagent-driven-development ile task-by-task. Azsa doğrudan TDD döngüsüyle ilerle.
-- REALIZE TESTİ: yeni XAML kökü/template için ZORUNLU (c6e9a21). Window.Measure/Arrange HWND'siz İÇERİĞE
-  İNMEZ — realize window.Content üzerinde.
-- MOTION SÖZLEŞMESİ + A13.2 geçerli. Ham renk/süre sabiti YASAK — token guard'larını çalıştır.
-- v7 yasakları: in-process MSBuild yok · OutDir okunmaz · stdout yalnız NDJSON · D8 (sleep-poll yasak) ·
-  K1 (git salt-okur; checkout/pull/reset ASLA).
+- REALIZE TESTİ (v7'de YOK, sonradan öğrenildi): yeni XAML kökü/template için ZORUNLU (c6e9a21).
+  Window.Measure/Arrange HWND'siz İÇERİĞE İNMEZ — realize window.Content üzerinde.
+- Repo'daki token guard'larını (renk/motion/D8) çalıştır.
 - Dalga sonunda TAM SÜİT yeşil olacak (acceptance dahil değilse belirt). Sayıyı raporla.
 - DOKÜMAN SENKRONU: bu dalgadaki fix'ler CLAUDE.md / README.md / docs/TRUST-BOUNDARY.md içindeki bir
   OLGUSAL ifadeyi geçersiz kılıyorsa aynı dalgada düzelt (tetikleyiciler: mimari/akış değişikliği · yeni ya
