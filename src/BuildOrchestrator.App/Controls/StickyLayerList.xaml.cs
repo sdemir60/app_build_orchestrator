@@ -113,11 +113,17 @@ public partial class StickyLayerList : UserControl
                 entries.Add(new HeaderEntry(g.Name, g.Rows.Count));
             entries.AddRange(g.Rows);
         }
+        // [E4/T48 · E3 fold] Yeni topoloji = yeni reveal (prototip revealKey artışı, BuildApp.jsx:1378 vb.). Container
+        // üretimi tamamlanınca satırlar kademeli belirir (OnGeneratorStatusChanged).
+        //
+        // [A12] BAYRAK, `ItemsSource` ATAMASINDAN ÖNCE KURULUR — sıra KRİTİKTİR. `ItemsSource` ataması
+        // container üretimini SENKRON olarak tamamlayabilir (ölçüldü: liste ZATEN realize edilmişken —
+        // yani üretimdeki sıra: kabuk realize, gruplar sonra akar — `StatusChanged`/`ContainersGenerated`
+        // bu satırın İÇİNDE ateşlenir). Bayrak sonra kurulursa handler onu `false` görüp döner ve BİR DAHA
+        // status değişimi gelmez → reveal SESSİZCE hiç oynamaz, kartlar tam opaklıkta "pat" diye belirir.
+        _revealPending = true;
         Flow.ItemsSource = entries;
         UpdateOverlay(Scroll.VerticalOffset);
-        // [E4/T48 · E3 fold] Yeni topoloji = yeni reveal (prototip revealKey artışı, BuildApp.jsx:1378 vb.). Container
-        // üretimi bir sonraki layout pass'ında tamamlanınca satırlar kademeli belirir (OnGeneratorStatusChanged).
-        _revealPending = true;
     }
 
     /// <summary>[T59] Koşarken + seçim yokken frontier satırının (çağıranın belirlediği — ör. ilk
