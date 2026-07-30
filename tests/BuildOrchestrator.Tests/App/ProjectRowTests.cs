@@ -476,4 +476,73 @@ public class ProjectRowTests
         Assert.True(row.ShaText.DesiredSize.Width > 118, "ham 40-hex çift beklenmedik biçimde 118px'e sığdı");
         GC.KeepAlive(window);
     }
+
+    // ================================================================ [A13/T3b] ölçü/geometri (b4–b7)
+
+    /// <summary>[A13/T3b · b4] design-v1 README §2.3 slot 7: "Süre mono 12px sağa yaslı 46px" (BuildApp.jsx:414
+    /// <c>minWidth 46</c>). Yalnız 118px'lik sağ blok sığması (Sha testi) pinliydi; süre kolonunun KENDİ
+    /// MinWidth'i ve mono ailesi testsizdi.</summary>
+    [StaFact]
+    public void Duration_column_has_a_fortysix_pixel_minimum_width_and_uses_the_mono_family()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { DurationMs = 4200 };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(46.0, row.DurationText.MinWidth);
+        Assert.Same(AppFonts.Mono, row.DurationText.FontFamily); // makinenin ürettiği değer → HER ZAMAN mono
+
+        // Realize zorunlu (kural 5): kısa içerikle (46'yı doldurmayan "4.2s") GERÇEK arrange yine de MinWidth'i
+        // uygular — yalnız XAML literalini okumak bunu kanıtlamaz.
+        Assert.Equal("4.2s", row.DurationText.Text); // ön-koşul: içerik gerçekten kısa
+        Assert.Equal(46.0, row.DurationText.ActualWidth);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3b · b5] design-v1 README §2.3 slot 5: "Statü glyph'i 14px" (BuildApp.jsx:405
+    /// <c>size={14}</c>). Yalnız dep-slot'un KENDİ 14px'i (DepSlot) pinliydi; glyph'in KENDİ boyutu
+    /// testsizdi.</summary>
+    [StaFact]
+    public void Status_glyph_is_fourteen_pixels_both_as_a_property_and_after_real_layout()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded);
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(14.0, row.Glyph.Size);
+        // Realize zorunlu (kural 5): Size, DS StatusGlyph şablonundaki Grid/Viewbox Width/Height'e
+        // TemplateBinding ile akar (Controls.xaml:781/789) — ActualWidth/Height GERÇEKTEN bu değeri taşıyor mu.
+        Assert.Equal(14.0, row.Glyph.ActualWidth);
+        Assert.Equal(14.0, row.Glyph.ActualHeight);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3b · b6] design-v1 README §2.3 slot 6: sabit 14px SLOT içindeki dep-hata üçgeni "12px"
+    /// (aynı ölçek Icon.AlertTri kullanımı, ProjectRow.xaml:90). Slot'un KENDİ 14px'i zaten pinliydi
+    /// (<c>Dep_issue_slot_is_fourteen_pixels_...</c>); İÇİNDEKİ üçgen ikonun KENDİ boyutu testsizdi.</summary>
+    [StaFact]
+    public void Dep_issue_triangle_icon_is_twelve_by_twelve_pixels_when_visible()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { DepIssues = ["OSYS.Sales.Core"] };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility); // ön-koşul: ikon gerçekten görünür
+        Assert.Equal(12.0, row.DepIcon.Width);
+        Assert.Equal(12.0, row.DepIcon.Height);
+        Assert.Equal(12.0, row.DepIcon.ActualWidth);   // realize zorunlu — Collapsed'ken 0 olurdu
+        Assert.Equal(12.0, row.DepIcon.ActualHeight);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3b · b7] design-v1 README §2.3 slot 4: "mono 10.5px" (BuildApp.jsx:399 <c>fontSize: 10.5</c>).
+    /// 118px'e sığma ZATEN pinliydi (yukarıdaki test); PUNTONUN KENDİSİ (10.5 — token ölçeğinde YOK, kasıtlı
+    /// literal, ProjectRow.xaml:75 yorumu) testsizdi.</summary>
+    [StaFact]
+    public void Sha_pairs_font_size_is_the_deliberate_ten_point_five_literal_not_a_token_size()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        { WillBuild = true, CurrentSha = "a3f81c2" };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(10.5, row.ShaText.FontSize);
+        GC.KeepAlive(window);
+    }
 }
