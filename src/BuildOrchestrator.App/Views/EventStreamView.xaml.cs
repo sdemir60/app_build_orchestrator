@@ -363,6 +363,10 @@ public sealed class EventStreamRow : Border
     internal int GlowPlayCount { get; private set; }
     internal Rectangle SelectionStripe => _stripe;
     internal StreamEventViewModel? ViewModel => _vm;
+    /// <summary>[A13/T3b · b8] Glyph kolonunun host'u (12px genişlik, BuildApp.jsx:653) — dış testlerin
+    /// ölçüm iddiasını gerçek bir realize üzerinde doğrulayabilmesi için (kural 5) SelectionStripe deseniyle
+    /// AYNI gerekçeyle dışa açılır.</summary>
+    internal Border GlyphHost => _glyphHost;
 
     public EventStreamRow()
     {

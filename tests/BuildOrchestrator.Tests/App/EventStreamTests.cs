@@ -225,4 +225,31 @@ public class EventStreamTests
         Assert.Equal(260, StreamComposer.BufferCap); // cap literal (300'e çıkarsa bu düşer)
         Assert.Equal(150, StreamComposer.RenderSlice); // render dilimi literal
     }
+
+    // ============================================================ [A13/T3b · b8] ölçü/geometri
+
+    /// <summary>[A13/T3b · b8] design-v1 README §2.6: "Satır (min 24px, mono 12px)" (BuildApp.jsx:645
+    /// <c>minHeight 24</c>) + glyph kolonu (BuildApp.jsx:653 <c>width 12</c>). İkisi de adlandırılmış sabit
+    /// olarak koddaydı (<c>EventStreamRow.RowMinHeight</c>/<c>GlyphColumn</c>) ama hiçbir test GERÇEK bir
+    /// satırı realize edip bu geometriyi ölçmüyordu.</summary>
+    [StaFact]
+    public void Stream_row_is_at_least_24px_tall_with_a_12px_glyph_column()
+    {
+        const string id = @"C:\p\a.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 1200)); // → glyph'li, tıklanabilir bir satır
+
+        var (view, window, _) = Realize(vm);
+        var row = view.Rows.Single(r => r.ViewModel?.ProjectId == id);
+
+        Assert.Equal(24.0, row.MinHeight);
+        Assert.Equal(12.0, row.GlyphHost.Width);
+        // Realize zorunlu (kural 5): XAML/kod-tarafı literalini okumak yetmez — GERÇEK arrange sonrası
+        // ActualHeight/ActualWidth bu değerleri taşıyor mu.
+        Assert.True(row.ActualHeight >= 24.0, $"satır 24px altına küçüldü: {row.ActualHeight}px");
+        Assert.Equal(12.0, row.GlyphHost.ActualWidth);
+        GC.KeepAlive(window);
+    }
 }
