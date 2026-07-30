@@ -1,12 +1,14 @@
 # App Build Orchestrator — Claude Talimatları
 
-Bu proje, çok projeli bir .NET çözümünü (solution) akıllıca derleyen bir **build orchestrator** masaüstü uygulamasıdır. Dependency graph çıkarır, sadece değişen projeleri incremental olarak derler ve derlemeyi ayrı bir **supervisor process** üzerinden yönetir; her projeyi **shell-out** (`dotnet build` ayrı child process) ile derler.
+Bu proje, çok projeli bir .NET çözümünü (solution) akıllıca derleyen bir **build orchestrator** masaüstü uygulamasıdır. Dependency graph çıkarır, sadece değişen projeleri incremental olarak derler ve derlemeyi ayrı bir **supervisor process** üzerinden yönetir; her projeyi **shell-out** (`MSBuild.exe` ayrı child process) ile derler.
 
 ---
 
-## Proje Yapısı / Mimari (hedef — v2 plan)
+## Proje Yapısı / Mimari
 
-> **DURUM:** Proje sıfırdan yeniden kuruluyor. Aşağıdaki mimari, onaylı **v2 plan**'a dayanır: [.claude/outputs/2026-06-27-22-46-build-orchestrator-yeni-plan.md](.claude/outputs/2026-06-27-22-46-build-orchestrator-yeni-plan.md). Kod henüz yoktur; bu tablo hedef yapıdır. Teslim, walking-skeleton (Iteration 0→5) ile yapılır.
+> **DURUM:** Kod mevcut ve olgun — walking-skeleton **It-0→It-5 tamamlandı**; suite yeşil, publish hattı çalışıyor. Güncel durum/rakamlar ledger'da: [.superpowers/sdd/progress.md](.superpowers/sdd/progress.md).
+>
+> **PLAN OF RECORD = plan v7:** [.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md](.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md) (+ içindeki `[SPIKE-AMEND 2026-07-16]`). Aşağıdaki mimari ona dayanır. UI/görsel otorite v7 A7 üzerinden [design-v1](.claude/outputs/2026-07-15-19-00-design-v1/README.md); WPF fidelity kararları v7 A13'tedir. v2→…→v6 planları **tarihseldir** (zincirin ilk halkası [v2](.claude/outputs/2026-06-27-22-46-build-orchestrator-yeni-plan.md)) — referans alınmaz.
 
 Solution: `BuildOrchestrator.slnx` (kökte). Ana git kökü: bu dizin.
 
@@ -14,14 +16,14 @@ Solution: `BuildOrchestrator.slnx` (kökte). Ana git kökü: bu dizin.
 |---|---|---|
 | `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI katmanı. MVVM (CommunityToolkit.Mvvm), DI, system tray, single-instance, supervisor ile IPC client. **Outer Job Object** sahibi. |
 | `src/BuildOrchestrator.Core` | net10.0 | Saf çekirdek mantık: project discovery, dependency graph, git servisi, incremental planlama (DiffAnalyzer/IncrementalPlanner), state & config persistence. UI/process bağımsız, test edilebilir. |
-| `src/BuildOrchestrator.Supervisor` | net10.0-windows | Derlemeyi yöneten ayrı process: build kuyruğu, **inner Job Object**, her projeyi `dotnet build` ile **shell-out**, log parse, IPC server (stdio). App tarafından spawn edilir. |
+| `src/BuildOrchestrator.Supervisor` | net10.0-windows | Derlemeyi yöneten ayrı process: build kuyruğu, **inner Job Object**, her projeyi `MSBuild.exe` ile **shell-out**, log parse, IPC server (stdio). App tarafından spawn edilir. |
 | `src/BuildOrchestrator.Contracts` | net10.0 | App ↔ Supervisor IPC sözleşmeleri: DTO'lar, enum'lar, command/event, JSON serialization. |
-| `tests/BuildOrchestrator.Tests` | net10.0 (xUnit) | Core unit + process-control + integration testleri. |
+| `tests/BuildOrchestrator.Tests` | net10.0-windows (xUnit, `UseWPF`) | Core unit + process-control + integration testleri; ayrıca WPF realize / STA thread testleri (bu yüzden `-windows` + `UseWPF`). |
 
 **Mimari ilkeler:**
 - App, Supervisor'ın assembly'sine referans vermez; sadece çıktısını yanına kopyalar ve runtime'da process olarak başlatır. İletişim tamamen IPC (Contracts) üzerinden, **stdio newline-delimited JSON**.
-- **Derleme shell-out ile:** in-process MSBuild (BuildManager) kullanılmaz; her proje `dotnet build` child process'i olarak derlenir (`-p:UseSharedCompilation=false -nodeReuse:false`).
-- **§6.1 process kontrolü = nested Job Object:** App outer Job (`KILL_ON_JOB_CLOSE`) sahibi; Supervisor onun içinde doğar; Supervisor inner Job'da `dotnet build` child'larını tutar. App ölünce kaskat halinde her şey ölür. Managed parent-watcher veya PID-heuristik süpürme **kullanılmaz**.
+- **Derleme shell-out ile:** in-process MSBuild (BuildManager) kullanılmaz; her proje, `vswhere` ile resolve edilen **`MSBuild.exe`** child process'i olarak derlenir — **`dotnet build` DEĞİL** (hedef repo ağırlıkla legacy .NET Framework) (`-p:UseSharedCompilation=false -nodeReuse:false`).
+- **§6.1 process kontrolü = nested Job Object:** App outer Job (`KILL_ON_JOB_CLOSE`) sahibi; Supervisor onun içinde doğar; Supervisor inner Job'da `MSBuild.exe` child'larını tutar. App ölünce kaskat halinde her şey ölür. Managed parent-watcher veya PID-heuristik süpürme **kullanılmaz**.
 - **§4 OutDir'e dokunulmaz:** sadece `BaseIntermediateOutputPath` (obj) worktree altında, proje **Id (tam yol)** anahtarıyla izole edilir. "Değişti mi" kararı yalnız kaynak sinyaline (commit + git diff) dayanır; DLL/bin timestamp asla okunmaz.
 - Core, UI'dan ve Supervisor'dan bağımsız test edilebilir olmalıdır; iş mantığını App/Supervisor'a sızdırma. DI baştan kurulu.
 
