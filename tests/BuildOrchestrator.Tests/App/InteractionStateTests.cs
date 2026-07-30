@@ -26,6 +26,9 @@ public class InteractionStateTests
         Assert.Equal("No projects found under this folder.", InteractionText.NoProjectsFound);
         Assert.Equal("Graph appears after Sync", InteractionText.GraphEmpty);
         Assert.Equal("No events yet.", InteractionText.StreamEmpty);
+        // [A13/T2 · 2.4] design-v1 §2.4 — "veri yok" DEĞİL, "veri süzüldü".
+        Assert.Equal("No projects match this filter.", InteractionText.NoProjectsMatchFilter);
+        Assert.NotEqual(InteractionText.NoProjectsFound, InteractionText.NoProjectsMatchFilter);
     }
 
     // ---- [A13/T2 · 2.1] Title bar bağlamı (design-v1 §2.1) — SAF karar + verbatim metin ----
@@ -61,19 +64,19 @@ public class InteractionStateTests
     [Fact]
     public void No_repository_resolves_to_the_pick_repository_invitation()
     {
-        Assert.Equal(ListInviteState.PickRepository, ListInvite.Resolve(hasWorkspace: false, AppPhase.Empty, projectCount: 0));
+        Assert.Equal(ListInviteState.PickRepository, ListInvite.Resolve(hasWorkspace: false, AppPhase.Empty, projectCount: 0, visibleCount: 0));
     }
 
     [Fact]
     public void Synced_workspace_with_no_projects_resolves_to_the_no_projects_message()
     {
-        Assert.Equal(ListInviteState.NoProjects, ListInvite.Resolve(hasWorkspace: true, AppPhase.Idle, projectCount: 0));
+        Assert.Equal(ListInviteState.NoProjects, ListInvite.Resolve(hasWorkspace: true, AppPhase.Idle, projectCount: 0, visibleCount: 0));
     }
 
     [Fact]
     public void Workspace_with_projects_shows_no_invitation()
     {
-        Assert.Equal(ListInviteState.None, ListInvite.Resolve(hasWorkspace: true, AppPhase.Idle, projectCount: 5));
+        Assert.Equal(ListInviteState.None, ListInvite.Resolve(hasWorkspace: true, AppPhase.Idle, projectCount: 5, visibleCount: 5));
     }
 
     [Theory] // Boot/Syncing = "henüz bilinmiyor" — 0 satır olsa da davet gösterilmez (boş liste bırakılır).
@@ -81,6 +84,38 @@ public class InteractionStateTests
     [InlineData(AppPhase.Syncing)]
     public void Pre_sync_phases_with_zero_projects_show_no_invitation(AppPhase phase)
     {
-        Assert.Equal(ListInviteState.None, ListInvite.Resolve(hasWorkspace: true, phase, projectCount: 0));
+        Assert.Equal(ListInviteState.None, ListInvite.Resolve(hasWorkspace: true, phase, projectCount: 0, visibleCount: 0));
+    }
+
+    // ---- [A13/T2 · 2.4] "filtre eşleşmedi" AYRI bir durumdur ----
+
+    [Fact]
+    public void Projects_that_the_filter_hides_resolve_to_the_no_filter_match_message()
+    {
+        Assert.Equal(ListInviteState.NoFilterMatch,
+            ListInvite.Resolve(hasWorkspace: true, AppPhase.Idle, projectCount: 5, visibleCount: 0));
+    }
+
+    [Fact] // "Veri yok" kararı "veri süzüldü"den ÖNCE gelir — 0 projeli workspace'te filtreyi suçlamak yanlıştır.
+    public void An_empty_workspace_is_never_blamed_on_the_filter()
+    {
+        Assert.Equal(ListInviteState.NoProjects,
+            ListInvite.Resolve(hasWorkspace: true, AppPhase.Idle, projectCount: 0, visibleCount: 0));
+    }
+
+    [Theory] // Filtre eşleşmezliği faz-bağımsızdır: koşarken de doğru mesajdır.
+    [InlineData(AppPhase.Running)]
+    [InlineData(AppPhase.Boot)]
+    public void The_no_filter_match_state_does_not_depend_on_the_phase(AppPhase phase)
+    {
+        Assert.Equal(ListInviteState.NoFilterMatch,
+            ListInvite.Resolve(hasWorkspace: true, phase, projectCount: 3, visibleCount: 0));
+    }
+
+    [Fact] // Repo yokken davet KAZANIR (filtre mesajı oraya sızmaz).
+    public void With_no_repository_the_invitation_wins_over_the_filter_message()
+    {
+        Assert.Equal(ListInviteState.PickRepository,
+            ListInvite.Resolve(hasWorkspace: false, AppPhase.Empty, projectCount: 3, visibleCount: 0));
     }
 }

@@ -164,11 +164,13 @@ public partial class ShellRoot : UserControl
     public Button ChooseFolderButton => PART_ChooseFolder;
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü uygular (karar <see cref="ViewModels.ListInvite"/>'te
-    /// verilir — SAF; burada YALNIZ uygulanır). PickRepository → invite paneli; NoProjects → 0-proje metni; None → ikisi de gizli.</summary>
+    /// verilir — SAF; burada YALNIZ uygulanır). PickRepository → invite paneli; NoProjects → 0-proje metni;
+    /// [A13/T2 · 2.4] NoFilterMatch → "filtre eşleşmedi" metni; None → hepsi gizli. Durumlar birbirini DIŞLAR.</summary>
     public void SetListInvite(ViewModels.ListInviteState state)
     {
         PART_ListInvite.Visibility = state == ViewModels.ListInviteState.PickRepository ? Visibility.Visible : Visibility.Collapsed;
         PART_NoProjects.Visibility = state == ViewModels.ListInviteState.NoProjects ? Visibility.Visible : Visibility.Collapsed;
+        PART_NoFilterMatch.Visibility = state == ViewModels.ListInviteState.NoFilterMatch ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Yerleşim durumunu görsele uygular: kolon/satır star oranları + graf/ayraç görünürlüğü.

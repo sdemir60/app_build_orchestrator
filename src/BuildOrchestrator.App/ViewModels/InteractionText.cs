@@ -23,6 +23,11 @@ public static class InteractionText
     /// <summary>Repo Sync'lendi ama altında hiç proje bulunamadı.</summary>
     public const string NoProjectsFound = "No projects found under this folder.";
 
+    // ---- [A13/T2 · 2.4] Proje listesi: projeler VAR ama filtre hiçbirini eşleştirmiyor ----
+    /// <summary>Aktif filtre/sorgu altında görünür satır kalmadı — design-v1 §2.4 (BuildApp.jsx:511).
+    /// <see cref="NoProjectsFound"/>'dan AYRI: orada veri YOKTUR, burada veri var ama SÜZÜLMÜŞTÜR.</summary>
+    public const string NoProjectsMatchFilter = "No projects match this filter.";
+
     // ---- Graf / event stream Sync-öncesi boş-durum ----
     /// <summary>Graf paneli Sync öncesi boş-durum etiketi (GraphView).</summary>
     public const string GraphEmpty = "Graph appears after Sync";
@@ -41,17 +46,29 @@ public enum ListInviteState
     PickRepository,
     /// <summary>Repo Sync'lendi (Idle) ama 0 proje → "No projects found under this folder."</summary>
     NoProjects,
+    /// <summary>[A13/T2 · 2.4] Projeler VAR ama aktif filtre/sorgu hiçbirini eşleştirmiyor →
+    /// "No projects match this filter." <see cref="NoProjects"/>'ten AYRI durumdur.</summary>
+    NoFilterMatch,
 }
 
 /// <summary>[E2/T10] <see cref="ListInviteState"/> kararının TEK yeri.</summary>
 public static class ListInvite
 {
-    /// <summary>Repo yoksa PickRepository; repo Sync'lendiyse (Idle) ve hiç proje yoksa NoProjects; aksi None
-    /// (dolu liste, ya da Boot/Syncing gibi "henüz bilinmiyor" fazları — o zaman davet gösterme, boş liste bırak).</summary>
-    public static ListInviteState Resolve(bool hasWorkspace, AppPhase phase, int projectCount)
+    /// <summary>
+    /// Repo yoksa PickRepository; repo Sync'lendiyse (Idle) ve hiç proje yoksa NoProjects; projeler VARKEN
+    /// filtre hiçbirini geçirmiyorsa NoFilterMatch; aksi None (dolu liste, ya da Boot/Syncing gibi "henüz
+    /// bilinmiyor" fazları — o zaman davet gösterme, boş liste bırak).
+    /// </summary>
+    /// <param name="projectCount">TOPLAM satır sayısı (filtresiz) — "veri var mı" sorusu.</param>
+    /// <param name="visibleCount">[A13/T2 · 2.4] Aktif filtre/sorgu altında GÖRÜNEN satır sayısı — "veri
+    /// süzüldü mü" sorusu. Sıra önemlidir: "hiç proje yok" (veri yok) kararı, "filtre eşleşmedi" (veri var ama
+    /// gizli) kararından ÖNCE gelir — 0 projeli bir workspace'te açık bir filtre varsa kullanıcıya filtreyi
+    /// suçlamak YANLIŞ olurdu.</param>
+    public static ListInviteState Resolve(bool hasWorkspace, AppPhase phase, int projectCount, int visibleCount)
     {
         if (!hasWorkspace) return ListInviteState.PickRepository;
         if (projectCount == 0 && phase == AppPhase.Idle) return ListInviteState.NoProjects;
+        if (projectCount > 0 && visibleCount == 0) return ListInviteState.NoFilterMatch;
         return ListInviteState.None;
     }
 }

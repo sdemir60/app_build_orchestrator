@@ -106,6 +106,15 @@
                        TextAlignment="Center" TextWrapping="Wrap" MaxWidth="280"
                        FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}" />
 
+            <!-- [A13/T2 · 2.4] Projeler VAR ama filtre hiçbirini eşleştirmiyor (design-v1 §2.4,
+                 BuildApp.jsx:511). "Hiç proje yok"tan (PART_NoProjects) AYRI bir durumdur ve prototipteki gibi
+                 listenin ÜST-SOLUNDA, 20px dolguyla, text-xs/text-dim durur — ortalanmış boş-durum daveti
+                 DEĞİL (o, veri yokluğunun dilidir). -->
+            <TextBlock x:Name="PART_NoFilterMatch" Text="{x:Static vm:InteractionText.NoProjectsMatchFilter}"
+                       Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="20"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
+
             <controls:LatestPill x:Name="PART_ProjectsPill" Visibility="Collapsed" />
           </Grid>
         </DockPanel>

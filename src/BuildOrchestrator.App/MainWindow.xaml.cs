@@ -178,7 +178,11 @@ public partial class MainWindow : Window
         // korunur: graf yalnız YAPI değişince yeniden kurulur).
         _vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(RunViewModel.VisibleProjects)) RefreshVisibleRows();
+            if (e.PropertyName != nameof(RunViewModel.VisibleProjects)) return;
+            RefreshVisibleRows();
+            // [A13/T2 · 2.4] Görünür küme boşaldıysa panel NEDENİNİ söyler ("No projects match this filter.")
+            // — "hiç proje yok"tan AYRI durum; karar SAF ListInvite.Resolve'de.
+            RefreshListInvite();
         };
 
         // [A13/T2 · 2.3] PROJECTS başlığındaki kaldırılabilir filtre chip'i (design-v1 §2.4). Görünürlük/etiket
@@ -628,7 +632,7 @@ public partial class MainWindow : Window
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite() =>
-        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count));
+        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count, _vm.VisibleProjects.Count));
 
     /// <summary>Split sürükleme sonu ya da mod değişimi → kalıcı UiState'e yaz + aktif mod düğmesini eşle.</summary>
     private void OnShellLayoutChanged(object? sender, LayoutState state)
