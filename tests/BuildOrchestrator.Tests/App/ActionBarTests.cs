@@ -185,6 +185,33 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- [A13/T3a · a5] kopya metinleri (BİREBİR)
+
+    /// <summary>[A13/T3a · a5] BuildMenu.xaml.cs:82,84 açıklamaları — Kind+Kbd zaten pinliydi (bkz. yukarıdaki
+    /// testler), kopya metni testsizdi: <c>Only changed projects</c> / stopped varyantı <c>Start over — only
+    /// changed projects</c> / <c>All {n} projects — cache ignored</c> (design-v1 §2.7).</summary>
+    [StaFact]
+    public void Build_menu_desc_texts_are_verbatim_for_build_and_rebuild()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1), Node(@"C:\p\c.csproj", "C", 2)],
+            [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0)); // → Idle
+        var (menu, window) = RealizeMenu(vm);
+
+        Assert.Equal("Only changed projects", menu.Items.Single(i => i.Kind == "build").Desc);
+        Assert.Equal("All 3 projects — cache ignored", menu.Items.Single(i => i.Kind == "rebuild").Desc);
+
+        // stopped → Build'in açıklaması "Start over" önekini alır (BuildMenu.ComposeItems).
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 3, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
+        Assert.Equal(AppPhase.Stopped, vm.Phase);
+        Assert.Equal("Start over — only changed projects", menu.Items.Single(i => i.Kind == "build").Desc);
+
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Stopped_state_moves_the_F5_badge_from_build_to_continue()
     {
