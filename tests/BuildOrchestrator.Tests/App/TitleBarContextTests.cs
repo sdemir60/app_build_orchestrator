@@ -1,4 +1,7 @@
+using System.Linq;
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using BuildOrchestrator.App;
 
 namespace BuildOrchestrator.Tests.App;
@@ -121,6 +124,106 @@ public class TitleBarContextTests
         vm.UseWorktree = false;
 
         Assert.Null(WorktreeSuffix(window));
+        GC.KeepAlive(window);
+    }
+
+    // ================================================================ [A13/T3b] ölçü/geometri (b10/b12)
+
+    /// <summary>[A13/T3b · b10] design-v1 README §1.1/§2.1: "Delta logosu (dark varyant, 15px yükseklik)"
+    /// (ayrıca §1.1 satır 68, §2.1 satır 107). Testsizdi.</summary>
+    [StaFact]
+    public void The_title_bar_logo_is_fifteen_pixels_tall()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        // Logo Viewbox'ı design-v1'in tek 15px yükseklikli Viewbox'ıdır (layout ikonları/gear 16x16'dır) —
+        // tek eşleşen ayırt edici.
+        var logo = DsResources.Descendants(window.RootShell).OfType<Viewbox>().Single(v => v.Height == 15);
+        // Realize zorunlu (kural 5) — literal okumak yetmez. Tolerans: UseLayoutRounding="True" (MainWindow.xaml)
+        // + test host'unun DPI ölçeği (150%'de ölçüldü: 15dip*1.5=22.5px → 22'ye yuvarlanır → 14.667dip) 15'i
+        // BİR alt-piksele kaydırabilir; 1dip'lik pay bunu yutar ama YANLIŞ bir sabiti (ör. 20) YAKALAR.
+        Assert.True(Math.Abs(logo.ActualHeight - 15.0) < 1.0,
+            $"logo ActualHeight beklenenden ({15.0}) çok uzak: {logo.ActualHeight}");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [A13/T3b · b12] Title bar bağlam metninin <c>MaxWidth</c> kırpması (<c>ContextText</c>=320,
+    /// <c>ContextWorktreeText</c>=200) — T2'nin fix'inden devreden borç (koordinatör notu). T2'nin XAML yorumu
+    /// "sınırlar tek satırda kalacak şekilde ölçülüdür" diyordu; ne design-v1 README/BuildApp.jsx ne de
+    /// design-wpf-feasibility-analysis bu iki SAYI için bir genişlik bütçesi/ölçüm KAYDETMİYOR (§2.1 yalnız
+    /// iki-span + <c>gap:8</c> yapısını tarif eder — bir MaxWidth değil). Otorite/ölçüm bu iki sayı için
+    /// SESSİZ: rakamlar bu yüzden DEĞİŞTİRİLMEDİ (kural 4), ama yanlış "ölçülüdür" iddiası MainWindow.xaml'de
+    /// düzeltildi (bu commit). Kalan, kapsam dahilindeki görev: kırpmanın GERÇEKTEN çalıştığını VE
+    /// caption/layout butonlarının ALTINA taşmadığını pinlemek.
+    /// </summary>
+    [StaFact]
+    public void An_extremely_long_repository_and_branch_name_is_clamped_and_never_creeps_under_the_layout_buttons()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        vm.RootPath = @"C:\src\" + new string('R', 80);
+        vm.Branch = new string('b', 80);
+        // [gerçek ölçüm] En dar desteklenen genişlikte (Size.WindowMinWidth=1240) yerleş — bolluk (1400px
+        // varsayılan) altında bu iddia anlamsız olurdu (DockPanel'in kendisi hiç sıkışmaz).
+        ((FrameworkElement)window.Content).Measure(new Size(1240, 800));
+        ((FrameworkElement)window.Content).Arrange(new Rect(0, 0, 1240, 800));
+        window.RootShell.UpdateLayout();
+
+        // Kontrol grubu: MaxWidth OLMASAYDI bu metin çok daha geniş render ederdi — pack:// font headless
+        // çözülmediği için file:// eşdeğeriyle ölçülür (ProjectRowTests.Sha deseni, kopya YASAK).
+        var probe = new TextBlock
+        { Text = window.ContextText.Text, FontFamily = DsResources.MonoFontFamily, FontSize = window.ContextText.FontSize };
+        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        Assert.True(probe.DesiredSize.Width > 320,
+            $"kontrol grubu önemsiz: kısaltılmamış metin zaten 320px altında ({probe.DesiredSize.Width}px)");
+
+        Assert.True(window.ContextText.ActualWidth <= 320.01,
+            $"ContextText MaxWidth=320'yi aştı: {window.ContextText.ActualWidth}px");
+
+        double contextRightEdge = window.ContextText.TranslatePoint(new Point(window.ContextText.ActualWidth, 0), window).X;
+        double layoutButtonsLeftEdge = window.LayQuadButton.TranslatePoint(new Point(0, 0), window).X;
+        Assert.True(contextRightEdge <= layoutButtonsLeftEdge,
+            $"bağlam metni ({contextRightEdge}px) layout butonlarının ({layoutButtonsLeftEdge}px) ALTINA taştı");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3b · b12] Worktree ekinin (ContextWorktreeText) 200px kırpması — yukarıdaki testin
+    /// AYNI gerekçesi, ek için.</summary>
+    [StaFact]
+    public void An_extremely_long_worktree_suffix_is_clamped_and_never_creeps_under_the_layout_buttons()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        vm.RootPath = @"C:\src\OSYS";
+        vm.Branch = "main";
+        vm.UseWorktree = true;
+        vm.WorktreeName = new string('w', 80);
+        ((FrameworkElement)window.Content).Measure(new Size(1240, 800));
+        ((FrameworkElement)window.Content).Arrange(new Rect(0, 0, 1240, 800));
+        window.RootShell.UpdateLayout();
+
+        var suffix = WorktreeSuffix(window);
+        Assert.NotNull(suffix); // ön-koşul
+
+        var probe = new TextBlock
+        { Text = suffix!.Text, FontFamily = DsResources.MonoFontFamily, FontSize = suffix.FontSize };
+        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        Assert.True(probe.DesiredSize.Width > 200,
+            $"kontrol grubu önemsiz: kısaltılmamış ek zaten 200px altında ({probe.DesiredSize.Width}px)");
+
+        Assert.True(suffix.ActualWidth <= 200.01, $"ContextWorktreeText MaxWidth=200'ü aştı: {suffix.ActualWidth}px");
+
+        double suffixRightEdge = suffix.TranslatePoint(new Point(suffix.ActualWidth, 0), window).X;
+        double layoutButtonsLeftEdge = window.LayQuadButton.TranslatePoint(new Point(0, 0), window).X;
+        Assert.True(suffixRightEdge <= layoutButtonsLeftEdge,
+            $"worktree eki ({suffixRightEdge}px) layout butonlarının ({layoutButtonsLeftEdge}px) ALTINA taştı");
         GC.KeepAlive(window);
     }
 }
