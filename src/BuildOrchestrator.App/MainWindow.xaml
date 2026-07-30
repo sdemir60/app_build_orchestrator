@@ -169,6 +169,13 @@
                        MaxWidth="320" TextTrimming="CharacterEllipsis"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextDim}" />
+            <!-- [T2 fix-2 · m5 kalıntısı — ÖLÇÜLDÜ, marj BİLEREK KORUNDU] Otorite (BuildApp.jsx:1436-1444) gövde
+                 ve worktree ekini İKİ AYRI span olarak, ebeveyn `inline-flex` konteynerin `gap: 8` (8px) ile
+                 ayırdığı iki kutu olarak kurar; ekin KENDİ metni yalnız `· {wtName}` (dot+space, ayraç ÖNÜNDE
+                 fazladan boşluk YOK — bkz. BuildApp.jsx:1442). Yani CSS `gap:8` ile gövde-içi `" · "` metin
+                 ayracı OTORİTEDE de FARKLI iki mekanizmadır (kutular-arası boşluk vs. metin-içi karakter) —
+                 aynı genişlikte olmaları BEKLENMEZ. Bu Margin=8,0,0,0, `gap:8`'in WPF karşılığıdır; TitleBarContext.
+                 WorktreeSuffix zaten "· {name}" döndürür (ek boşluk eklemez). Kaldırılacak bir kusur DEĞİL. -->
             <TextBlock x:Name="ContextWorktreeText" VerticalAlignment="Center" Margin="8,0,0,0"
                        Visibility="Collapsed" MaxWidth="200" TextTrimming="CharacterEllipsis"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"

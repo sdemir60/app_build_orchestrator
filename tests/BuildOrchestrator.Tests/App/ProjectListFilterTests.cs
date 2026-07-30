@@ -260,4 +260,51 @@ public class ProjectListFilterTests
         Assert.Equal(1, resets);                                         // ...ve YALNIZ BİR KEZ
         GC.KeepAlive(window);
     }
+
+    // ---------------------------------------------------------------- [T2 fix-2 · m9] scroll offset ÖLÇÜMÜ
+
+    /// <summary>
+    /// <b>[T2 fix-2 · m9 — iddia düzeltmesi]</b> <c>task-T2-report.md</c>'nin (§2.5) ve
+    /// <see cref="StickyLayerList.SetGroups(System.Collections.Generic.IReadOnlyList{StickyLayerList.LayerGroup}, bool)"/>'ün
+    /// XML doc'unun eski iddiası — "görünür küme değiştiğinde listenin başa dönmesi doğru davranıştır" — hiç
+    /// ÖLÇÜLMEMİŞTİ. Burada üretim yolundan (<see cref="MainWindowHost.NewWithProjects"/>) ÖLÇÜLÜYOR.
+    ///
+    /// <para><b>Sonuç (ölçüldü):</b> WPF <c>ScrollViewer</c>, içerideki <c>ItemsControl.ItemsSource</c> tam reset
+    /// yese bile <c>VerticalOffset</c>'i <b>KORUR</b> (yeni extent'e clamp eder) — liste BAŞA DÖNMEZ. İddia
+    /// YANLIŞTI; bu test gerçeği pinler.</para>
+    ///
+    /// <para><b>Ayırt edici kanıt:</b> bu testi yazdıktan sonra <c>SetGroups</c>'un sonuna bilerek
+    /// <c>Scroll.ScrollToVerticalOffset(0)</c> eklenip test KIRMIZI görüldü, sonra geri alındı (bkz.
+    /// task-T2-report.md §4) — yani bu test gerçekten üretim davranışını ölçüyor, sahte-yeşil değil.</para>
+    /// </summary>
+    [StaFact]
+    public void Filtering_the_list_preserves_the_scroll_offset_instead_of_snapping_to_the_top()
+    {
+        using var temp = new TempDir();
+        var nodes = Enumerable.Range(0, 80).Select(i => ($"P{i}", (string?)"Core")).ToArray();
+        var (window, vm, list) = MainWindowHost.NewWithProjects(temp, nodes);
+
+        // Ön-koşul: liste GERÇEKTEN kaydırılabilir (80 satır × 36px + başlık >> viewport) — vakum değil.
+        DispatcherPump.PumpUntil(() => list.Scroll.ScrollableHeight > 200, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.ScrollableHeight > 200,
+            $"liste kaydırılamıyor (ScrollableHeight={list.Scroll.ScrollableHeight}) — senaryo kurulamadı");
+
+        list.Scroll.ScrollToVerticalOffset(100);
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset >= 99.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset >= 99.5, "test scroll'u tutmadı — ön-koşul kurulamadı");
+
+        // 70/80 proje Failed'e düşer — 10 satır filtrelenir ama kalan 70 satır YİNE viewport'tan büyük kalır,
+        // yani clamp'in kendisi 100'ü kesip 0'a indirmez (post-filtre extent hâlâ bol bol scrollable).
+        for (int i = 0; i < 70; i++)
+            vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf($"P{i}"), 10, "boom"));
+        vm.ActiveFilter = ProjectFilter.Failed;
+
+        DispatcherPump.PumpUntil(() => VisibleRowNames(list).Count == 70, TimeSpan.FromSeconds(3));
+        Assert.Equal(70, VisibleRowNames(list).Count); // filtre gerçekten uygulandı (non-vacuous)
+
+        Assert.True(list.Scroll.VerticalOffset >= 99.5,
+            $"[ÖLÇÜLDÜ] filtre altında scroll offset'i KORUNMALIYDI, BAŞA dönmemeliydi " +
+            $"(gözlemlenen VerticalOffset={list.Scroll.VerticalOffset})");
+        GC.KeepAlive(window);
+    }
 }

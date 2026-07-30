@@ -116,8 +116,14 @@ public partial class StickyLayerList : UserControl
     /// ve satır nesneleri <c>Projects</c>'ten gelen AYNI örneklerdir → reset seçimi düşürmez; <b>(b) gereksiz
     /// churn</b> çağıran tarafta kapatılır (<c>MainWindow</c> görünür-satır imzası değişmedikçe buraya HİÇ
     /// gelmez). Alternatif (entry akışını yerinde uzlaştırmak) <see cref="Metrics"/>/overlay/reveal
-    /// muhasebesinin İKİNCİ bir kopyasını gerektirirdi — "tek yer" kuralına aykırı. Ayrıca görünür küme
-    /// gerçekten değiştiğinde listenin başa dönmesi DOĞRU davranıştır (filtre yeni bir liste demektir).</para>
+    /// muhasebesinin İKİNCİ bir kopyasını gerektirirdi — "tek yer" kuralına aykırı.</para>
+    ///
+    /// <para><b>[T2 fix-2 · m9 — ÖLÇÜLDÜ, düzeltildi]</b> Önceki sürüm burada "görünür küme değiştiğinde
+    /// listenin başa dönmesi doğru davranıştır" diyordu — bu iddia hiç ÖLÇÜLMEMİŞTİ ve YANLIŞTI.
+    /// <see cref="ProjectListFilterTests.Filtering_the_list_preserves_the_scroll_offset_instead_of_snapping_to_the_top"/>
+    /// üretim yolundan ölçer: WPF <c>ScrollViewer</c>, <c>ItemsSource</c> tam reset yese bile
+    /// <c>VerticalOffset</c>'i KORUR (yeni extent'e clamp eder) — liste BAŞA DÖNMEZ. Yani reset semantiğinin
+    /// zararsızlığı yalnız (a) ve (b)'ye dayanır; scroll konumu zaten hiç tehlikede değildi.</para>
     /// </summary>
     public void SetGroups(IReadOnlyList<LayerGroup> groups, bool reveal)
     {
