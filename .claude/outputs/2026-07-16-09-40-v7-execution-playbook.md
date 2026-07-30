@@ -552,10 +552,19 @@ tam olarak bu kuralın neden gerektiğini gösteriyor.)
 
 ```
 Şu dosyaları oku:
-1. CLAUDE.md (proje kökü) — özellikle "Proje Yapısı / Mimari (hedef — v2 plan)" bölümü
-2. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A11" bölümü (karşılaştırma tablosu orada)
-3. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md — YALNIZ başlık + "v7 KARAR
-   KAYDI" + "Global Constraints" + PART C (kalem 4'ün doğrulaması için; tamamını okumana gerek yok)
+1. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md — PLAN OF RECORD, bu
+   projede fiilen uygulanan plan. (Bu adım için başlık + "v7 KARAR KAYDI" + "Global Constraints" + PART C
+   yeter; 75 KB'ın tamamını okuma.)
+2. CLAUDE.md (proje kökü) — özellikle "Proje Yapısı / Mimari" bölümü (satır 7-9 civarı; başlık şu an
+   yanlışlıkla "(hedef — v2 plan)" ekiyle duruyor ve gövdesi v2 planına link veriyor — DÜZELTİLECEK
+   OLAN BU, aşağıdaki kalem 4)
+3. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A11" bölümü (karşılaştırma tablosu orada)
+
+DİKKAT — v2 YANILGISI: CLAUDE.md her session'da context'e yüklendiği için, bu adıma başlarken senin
+context'inde de "onaylı v2 plan" ifadesi duruyor olacak. O ifade BAYATTIR. Uygulanan plan **v7**'dir
+(2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md + içindeki [SPIKE-AMEND 2026-07-16]);
+v2 → v3 → v4 → v4.1 → v4.2 → v4.3 → v5 → v6 → v7 zincirinin ilk halkası olan v2 yalnız TARİHSELDİR.
+Mimariyi v2'ye göre değerlendirme, v2'den alıntı yapma.
 
 DURUM: It-0..It-5 main'de, main == origin/main, build 0/0, suite 1430 passed / 2 skipped / 0 failed.
 v7'nin planlı kod iterasyonları bitti.
@@ -632,7 +641,8 @@ gösteriyor) — özellikle **mimari kaynağı artık v7'yi işaret ediyor**.
 Şu dosyaları oku:
 1. .claude/handoffs/ altındaki EN YENİ handoff + işaret ettiği özet
 2. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (PLAN OF RECORD — bu adım
-   için YALNIZ "Global Constraints" + "A7 UI/UX" + "A13 Fidelity & WPF kararları"; tamamı gerekmez)
+   için YALNIZ "Global Constraints" + "A7 UI/UX" + "A13 Fidelity & WPF kararları"; tamamı gerekmez.
+   v2/v3/v4.x/v5/v6 planları TARİHSELDİR — referans alma, alıntı yapma)
 3. .claude/outputs/2026-07-16-09-40-v7-execution-playbook.md — "A12" bölümü (hipotez listesi orada)
 4. .claude/outputs/2026-07-26-10-17-it5-records.md (It-5 kabul kaydı + park edilen kalemlerin tam tablosu)
 5. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 / A13.2 + Ek A)
@@ -720,7 +730,8 @@ geç.
    + BÖLÜM 3 It-5 görsel kalemleri) — bu adımın BİRİNCİL girdisi
 2. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (PLAN OF RECORD — bu adım
    için "Global Constraints" + "A7 UI/UX (OTORİTE: design-v1)" + "A8 Test Stratejisi" + "A13 Fidelity &
-   WPF kararları"; bir kalemin kabul ölçütü tartışmalıysa v7 bağlayıcıdır)
+   WPF kararları"; bir kalemin kabul ölçütü tartışmalıysa v7 bağlayıcıdır. v2/v3/v4.x/v5/v6 planları
+   TARİHSELDİR — referans alma)
 3. .claude/outputs/2026-07-15-19-00-design-v1/README.md (görsel otorite; değerler ve kopya metinleri BİREBİR)
 4. .claude/outputs/2026-07-26-10-17-it5-records.md — özellikle "2. Kapanmayan / bilinçli park edilen
    kalemler" tablosu (18 satır, ~60 minor)
@@ -896,7 +907,8 @@ tekrarla. Bu adımın "bitti"si yok — proje kapanana kadar döngü budur.
 Şu dosyaları oku:
 1. CLAUDE.md · README.md · docs/TRUST-BOUNDARY.md (denetlenecek üç belge)
 2. .claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md (PLAN OF RECORD — Global
-   Constraints + PART C; belgelerin anlatması gereken şey budur)
+   Constraints + PART C; belgelerin anlatması gereken şey budur. v2/v3/v4.x/v5/v6 TARİHSELDİR — belgelerde
+   hâlâ onlara referans varsa v7'ye çevir)
 3. .superpowers/sdd/progress.md (ledger — güncel durum; çelişkide ledger kazanır)
 4. .claude/outputs/ altındaki A12/A13/A14 çıktıları: *-motion-regression-fix.md · *-parked-items-triage.md ·
    *-visual-check-residue.md + dalga raporları (bu adımlarda ne değişti)
