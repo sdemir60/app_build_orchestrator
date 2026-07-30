@@ -354,4 +354,17 @@ public class ConsoleViewTests
         Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineText.Foreground);
         Assert.Same(tokens["Brush.TextFaint"], view.ActiveCursor.Fill);
     }
+
+    // ---------------------------------------------------------------- [A13/T3b · b9] ölçü/geometri
+
+    /// <summary>[A13/T3b · b9] design-v1 README §2.5: "padding 8×12" (BuildApp.jsx:617 <c>padding: '8px 12px'</c>
+    /// — CSS shorthand: dikey(top/bottom)=8, yatay(left/right)=12). WPF karşılığı iki-değerli
+    /// <c>Thickness</c>: <c>"12,8"</c> = sol/sağ 12, üst/alt 8 (ConsoleView.xaml:17) — BİREBİR aynı bütçe,
+    /// farklı yazım sırası. Testsizdi.</summary>
+    [StaFact]
+    public void Editor_padding_matches_the_design_v1_eight_by_twelve_budget()
+    {
+        var view = new ConsoleView();
+        Assert.Equal(new Thickness(12, 8, 12, 8), view.Editor.Padding);
+    }
 }
