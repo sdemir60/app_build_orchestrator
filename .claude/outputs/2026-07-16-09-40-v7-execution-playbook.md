@@ -23,15 +23,15 @@
 | A8 | It-4a: zor-custom UI paketi | **Opus** | **xhigh** | AvalonEdit, sticky overlay, TrackedTextBlock, graf render, WindowChrome — A13'ün riskli parçaları; plandaki en zor iş, Fable telafisi → xhigh |
 | A9 | It-4b: kalan UI görevleri | **Opus** | **medium** | Template/stil hacim işi; değerler design-v1'de hazır |
 | A10 | It-5: perf + dağıtım + docs | **Opus** | **medium** | Rutin; perf sorunu çıkarsa effort'u high/xhigh'a çıkar |
-| **A11** | CLAUDE.md bayat bilgi denetimi | **Opus** | **low** | Üç olgusal satır; karar kullanıcıda, uygulama mekanik |
+| **A11** | CLAUDE.md bayat bilgi denetimi ✅ | **Opus** | **low** | Dört olgusal ifade; karar kullanıcıda, uygulama mekanik |
 | **A12** | Bilinen regresyon: kart animasyonu / renklendirme | **Opus** | **high** | Teşhis işi; yeşil suite'in kaçırdığı runtime kusuru (c6e9a21 sınıfı) |
 | **A13** | Gözle-kontrol borcunun otomatikleştirilmesi + park listesi triyajı | **Opus** | **high** | 81 görsel kalemin pinlenebilenleri süite; kalanı kısa artık liste |
 | **A14** | **Test-düzelt döngüsü** (tekrarlanır) | **Opus** | **high** | Kullanıcının bulguları; her fix'ten önce kırmızı test |
 | **A15** | Kapanış belge pası (CLAUDE.md · README · docs/) | **Opus** | **low** | Mekanik denetim; kanıt zaten koddadır |
 | R | Her iterasyon SONU review | **Opus** | **high** (UI iter. **xhigh**) | Plandaki en güçlü model; her iterasyonun sigortası (`/code-review high` argümanı promptta zaten var); A8/A9 gibi UI iterasyonlarının review'unda xhigh |
 
-> **DURUM (2026-07-30):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti).
-> **Kalan 5 adım:** A11 → A12 → A13 → A14 (tekrarlanır) → A15. **Kalan bölüm 2026-07-30'da revize edildi** (kullanıcı kararı):
+> **DURUM (2026-07-30):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti); **A11 de tamamlandı** (aynı gün, commit `4bb6158`).
+> **Kalan 4 adım:** A12 → A13 → A14 (tekrarlanır) → A15. **Kalan bölüm 2026-07-30'da revize edildi** (kullanıcı kararı):
 > eski A12 (81 kalemlik kullanıcı gözle-kontrol pası) kaldırıldı; onun yerine regresyon fix'i (A12) ve
 > görsel borcun otomatikleştirilmesi (A13) agent'a alındı, kullanıcıya yalnız kısa bir artık liste +
 > tekrarlanan test-düzelt döngüsü (A14) kaldı. Detay için "KALAN ADIMLAR" bölümüne bak.
@@ -379,7 +379,7 @@ Her task sonunda uygulamayı çalıştırıp ilgili davranışı gözle doğrula
 >
 > **⚠️ AÇIK KALEM 2 — GÖZLE KONTROL PASI HÂLÂ YAPILMADI.** It-4b'den ertelenen ~81 madde + It-5'in kendi görsel kalemleri, tek yürünebilir listede: [visual-check-walkthrough.md](2026-07-26-10-17-visual-check-walkthrough.md) (81/81 kalem panel sırasına göre, **D4 zorunlu**, prototiple yan yana design-v1 §2.1-§2.9). Bkz. **A12**.
 >
-> **DİĞER AÇIK/PARK KALEMLER (bilinçli, kayıtlı):** W2'de guard'ın 4 + primitifin 3 kopyası katlanmadı · `Show()` başlatma yolu realize kapsamı dışı · `debugSpawnChildren` üretimde dinleniyor · **a11y kümesi** (graf düğümlerinde `AutomationProperties.Name` yok + etiket LOD'un tek yedeği fare-hover tooltip + düğümler klavyeyle gezilemiyor — final review: *It-5'in getirdiği gerileme değil, LOD'un görünür kıldığı ürün-seviyesi boşluk, merge'i bloklamaz*) · CLAUDE.md'nin 3 bayat ifadesi (**A11**) · tam liste `it5-records.md` park tablosunda.
+> **DİĞER AÇIK/PARK KALEMLER (bilinçli, kayıtlı):** W2'de guard'ın 4 + primitifin 3 kopyası katlanmadı · `Show()` başlatma yolu realize kapsamı dışı · `debugSpawnChildren` üretimde dinleniyor · **a11y kümesi** (graf düğümlerinde `AutomationProperties.Name` yok + etiket LOD'un tek yedeği fare-hover tooltip + düğümler klavyeyle gezilemiyor — final review: *It-5'in getirdiği gerileme değil, LOD'un görünür kıldığı ürün-seviyesi boşluk, merge'i bloklamaz*) · ~~CLAUDE.md'nin bayat ifadeleri~~ (**A11'de kapatıldı**, 2026-07-30 · `4bb6158`) · tam liste `it5-records.md` park tablosunda.
 >
 > **SÜREÇ DERSLERİ (ledger'da):** (1) **Aynı worktree'de iki implementer paralel koşturulmaz** — W2-fix ile D1 paralel koştu, `git add -A` çapraz commit'e yol açtı, ağaç bir süre derlenmez kaldı; read-only reviewer'lar paralel sorunsuz. (2) **Park edilmiş bir kalem, sonradan yazılan dokümantasyon onu iddia haline getirdiğinde yeniden açılmalıdır** — `EffectivePriorityLocked` P3'te Minor diye park edilmişti; TRUST-BOUNDARY + README garantiyi kodun verdiğinden geniş anlatınca final review haklı olarak yeniden açtı. (3) **Guard'ın yeşil olması bir şeye baktığı anlamına gelmez** — T33 "tek kaynak" pini repo kökünü taramadığı için sıfır dosya tarıyordu.
 
@@ -464,15 +464,15 @@ kapandığını göster. Bitince aşamamızı kaydet.
 
 ---
 
-# KALAN ADIMLAR (2026-07-30 revizyonu) — **5 adım**
+# KALAN ADIMLAR (2026-07-30 revizyonu) — **4 adım** (A11 tamamlandı)
 
-A1-A10 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan adımlar kod planı değil **kapanış**
+A1-A11 bitti; **v7'nin planlı kod iterasyonları tamamlandı.** Kalan adımlar kod planı değil **kapanış**
 adımlarıdır. Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A10 ile aynı biçimde — her adımı
 **temiz (yeni) oturumda** başlat, prompt kendi bağlamını dosyalardan kuruyor.
 
 | Adım | Ne | Kim | Model | Effort |
 |---|---|---|---|---|
-| **A11** | `CLAUDE.md`'deki 3 bayat olgusal ifadenin düzeltilmesi | agent | **Opus** | **low** |
+| ~~**A11**~~ ✅ | `CLAUDE.md`'deki 4 bayat olgusal ifadenin düzeltilmesi — **TAMAMLANDI** (`4bb6158`) | agent | **Opus** | **low** |
 | **A12** | **Bilinen regresyon**: kart animasyonları / renklendirmeler — teşhis + fix | agent | **Opus** | **high** |
 | **A13** | Gözle-kontrol borcunun **teste çevrilmesi** + park edilmiş ~60 minor'ın triyajı | agent | **Opus** | **high** |
 | **A14** | **Test-düzelt döngüsü** — senin bulguların, dalga dalga (**tekrarlanır**) | sen + agent | **Opus** | **high** |
@@ -494,8 +494,8 @@ her panelde sahte bulgu üretir — o yüzden regresyon fix'i öne alındı. A13
 | 4 | [fizibilite analizi](2026-07-15-23-34-design-wpf-feasibility-analysis.md) | A13.1 "algısal eşdeğer" sınıfı + A13.2 WPF teknik yasakları |
 | 5 | Bu playbook | Yalnız **yürütme sırası ve promptlar** — teknik otorite değil |
 
-**v2/v3/v4.x/v5/v6 planları TARİHSELDİR** — kalan adımlarda referans alınmaz. (`CLAUDE.md` hâlâ v2'yi
-gösteriyor; bu **A11'in 4. kalemi** olarak düzeltiliyor.)
+**v2/v3/v4.x/v5/v6 planları TARİHSELDİR** — kalan adımlarda referans alınmaz. (`CLAUDE.md`'nin v2
+referansı **A11'de v7'ye çevrildi** — 2026-07-30, `4bb6158`; artık CLAUDE.md de v7'yi gösteriyor.)
 
 **Promptlar v7'yi TEKRAR ETMEZ, İŞARET EDER.** Yasak listesini prompta kopyalamak iki risk taşır: (a) v7
 güncellenirse prompt yalan söyler, (b) kopyalanan kısa liste planın tamamı sanılır. Bu yüzden A12-A15
@@ -509,8 +509,8 @@ kazanır."* Prompta yalnız **v7'de OLMAYAN** proje pratiği yazılır:
 
 ## SEN NE YAPACAKSIN — sırayla
 
-1. **Yeni oturum aç** → model **Opus**, effort **low** → **A11** promptunu yapıştır → bitince "commit et".
-2. **Yeni oturum aç** → **Opus / high** → **A12** promptunu yapıştır. Agent bitirince uygulamayı bir kez aç,
+1. ✅ **A11 TAMAMLANDI** (2026-07-30, `4bb6158`) — `CLAUDE.md`'nin dört olgusal ifadesi koda/plana hizalandı.
+2. **Yeni oturum aç** → **Opus / high** → **A12** promptunu yapıştır. **← BURADAN DEVAM** Agent bitirince uygulamayı bir kez aç,
    verdiği 5-8 maddelik listeye bak: **kartlar hareket ediyor mu, renkler geliyor mu?** Hâlâ ölüyse
    **aynı oturumda** söyle (teşhis bağlamı elinde). Yaşıyorsa 3'e geç.
 3. **Yeni oturum aç** → **Opus / high** → **A13** promptunu yapıştır. Senden bir şey istemez; çıktısı
@@ -536,7 +536,26 @@ tam olarak bu kuralın neden gerektiğini gösteriyor.)
 
 ## A11 — CLAUDE.md bayat bilgi denetimi · Model: **Opus** · Effort: **low**
 
-> **Durum:** It-5'in D3 (README) task'ının review'ı, `CLAUDE.md`'nin **Proje Yapısı / Mimari** bölümünde
+> **✅ TAMAMLANDI (2026-07-30, commit `4bb6158`).** Dört kalemin hepsi düzeltildi — `CLAUDE.md`: **satır 3 + 19 + 25 + 26**
+> `dotnet build` → **`MSBuild.exe`** (`vswhere` ile resolve; ilke maddesinde "`dotnet build` DEĞİL" gerekçesiyle) ·
+> **satır 21** tests TFM `net10.0 (xUnit)` → `net10.0-windows (xUnit, UseWPF)` + WPF realize/STA notu ·
+> **satır 9** DURUM: "kod henüz yoktur / hedef yapı" → kod mevcut ve olgun, It-0→It-5 tamamlandı, suite yeşil,
+> publish hattı çalışıyor (**rakam gömülmedi**, ledger'a link) · **satır 7 + 11** plan referansı v2 →
+> **PLAN OF RECORD = v7** (+ `[SPIKE-AMEND]`; UI otoritesi A7 → design-v1, fidelity A13; v2-v6 "tarihsel").
+> Kanıtlar koddan teyit edildi: `Core/MsBuild/MsBuildResolver.cs:21-22` · `Supervisor/Program.cs:362-364` ·
+> `Core/MsBuild/MsBuildArguments.cs:10-12` · `tests/…/BuildOrchestrator.Tests.csproj:4-6` · build **0/0**.
+>
+> **Bu adımda ÇIKAN İKİ YENİ KALEM (sahipleri atandı, kapsam dışı bırakıldı):**
+> 1. **Bilinen flaky test → A13 (B) triyajı.** `MsBuildInvokerTests.LingeringPostBuildGrandchild_does_not_stall_success_path`
+>    tam suite koşusunda `TimeoutException` verdi (`tests/BuildOrchestrator.Tests/MsBuild/MsBuildInvokerTests.cs:155`
+>    — dış `WaitAsync(20s)`, ayrıca `sw.Elapsed < 15s` assert'i), **izole koşuda geçiyor** (16 s, 2/2). Gerçek
+>    `MSBuild.exe` + 60 sn yaşayan `ping.exe` grandchild kullanan **yük-hassas** integration testi; paralel suite
+>    yükü altında deadline'a çarpıyor. "Suite yeşil" ifadesi bu tek flaky ile birlikte okunmalı.
+> 2. **Beşinci bayat ifade → A15.** `CLAUDE.md` proje tablosunun Core hücresi `DiffAnalyzer` sınıfına atıf
+>    yapıyor; kodda böyle bir tip **yok** (`Core/Incremental/IncrementalPlanner.cs` var). A11 kapsamı dört
+>    ifadeyle sınırlı tutulduğu için dokunulmadı.
+
+> **Durum (adım öncesi kayıt):** It-5'in D3 (README) task'ının review'ı, `CLAUDE.md`'nin **Proje Yapısı / Mimari** bölümünde
 > koddan sapmış üç olgusal ifade buldu (dört bağımsız kanıtla kesinleştirildi). It-5'te **düzeltilmedi** —
 > kullanıcı kararı: ayrı ele alınacak. **2026-07-30'da dördüncü kalem eklendi** (kullanıcı tespiti):
 > `CLAUDE.md` mimari kaynağı olarak hâlâ **v2 plan**'ı gösteriyor, oysa uygulanan plan **v7**'dir.
@@ -658,9 +677,15 @@ gösteriyor) — özellikle **mimari kaynağı artık v7'yi işaret ediyor**.
 5. .claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md (A13.1 / A13.2 + Ek A)
 6. .superpowers/sdd/progress.md — It-5 bölümü (en üstteki RESUME HERE; çelişkide ledger kazanır)
 
-DURUM: It-0..It-5 main'de (tek trunk, main == origin/main). Build 0/0, suite 1430 passed / 2 skipped /
-0 failed. v7'nin planlı kod iterasyonları BİTTİ. Bu adım TEK BİR REGRESYONU kapatır — başka iş alma,
-gözle kontrol pası bir SONRAKİ adımda (A13).
+DURUM: It-0..It-5 main'de (tek trunk). Build 0/0, suite yeşil (güncel sayı ledger'da). v7'nin planlı kod
+iterasyonları BİTTİ; A11 (CLAUDE.md denetimi) de bitti — CLAUDE.md artık koda hizalı ve PLAN OF RECORD
+olarak v7'yi gösteriyor, ama otorite sırası değişmedi: çelişkide ledger > v7 > CLAUDE.md. Bu adım TEK BİR
+REGRESYONU kapatır — başka iş alma, gözle kontrol pası bir SONRAKİ adımda (A13).
+
+BİLİNEN FLAKY (bu adımın işi DEĞİL, kovalamayacaksın): MsBuildInvokerTests.
+LingeringPostBuildGrandchild_does_not_stall_success_path (MsBuildInvokerTests.cs:155) tam suite koşusunda
+yük altında 20 sn dış deadline'a çarpıp TimeoutException verebiliyor; izole koşuda geçiyor. Suite'i
+koşarken TEK kırmızı bu ise regresyon sayma — izole koş, geçiyorsa geç; triyajı A13'te.
 
 GÖREV: It-4b'de çalışan kart animasyonları/renklendirmeleri It-5'ten sonra ÇALIŞMIYOR — kullanıcının
 bildirimi: "sol alt köşedeki kartlar, loading animasyonları, hiç hareket yok, renklendirmeler yok".
@@ -774,6 +799,12 @@ Her kalemi üç kovaya ayır:
 Öncelik: davranış/veri doğruluğu > a11y (G2'deki AutomationProperties.Name eksikleri) > üretimde duran
 debug hook'u (debugSpawnChildren — Contracts/Ipc/IpcMessages.cs:22 + Supervisor/SupervisorHost.cs:80) >
 test/kayıt zayıflıkları > kozmetik.
+EK KALEM (it5-records listesinde YOK — A11'de ölçülerek bulundu, aynı üç kovaya sok): MsBuildInvokerTests.
+LingeringPostBuildGrandchild_does_not_stall_success_path (MsBuildInvokerTests.cs:155) tam suite koşusunda
+yük altında TimeoutException veriyor, izole koşuda geçiyor (16 s). Dış WaitAsync(20s) + sw.Elapsed<15s
+assert'i gerçek MSBuild.exe + 60 sn yaşayan ping.exe grandchild'ına bağlı, yani makine yüküne duyarlı.
+Seçenekler: deadline'ı yük-bağımsız sinyale çevir (gerçek kusur) · kabul edilen borç olarak gerekçesiyle
+kaydet · testi seri/izole koşacak şekilde işaretle. Sessizce "yeşil" sayma.
 AÇILMAYACAKLAR (ölçüme dayalı kullanıcı/stop-gate kararları, yeniden tartışma): L2 liste virtualization ·
 G1 DrawingVisual katman göçü · W2 guard kopyalarının katlanması · T33 shared compilation.
 
@@ -933,6 +964,9 @@ senkronlamak.
 GÖREV: her belgeyi KODLA karşılaştır, olgusal sapmaları düzelt.
 1. CLAUDE.md — proje/mimari tablosu (proje adı · TFM · sorumluluk), mimari ilkeler, build/test/run
    komutları, plan referansı (v7 olmalı), dizin/isimlendirme kuralları hâlâ geçerli mi.
+   BİLİNEN KALEM (A11'de bulundu, kapsam dışı bırakıldı): tablonun Core hücresi "incremental planlama
+   (DiffAnalyzer/IncrementalPlanner)" diyor; kodda DiffAnalyzer diye bir tip YOK (Core/Incremental/
+   IncrementalPlanner.cs var). Hücreyi koddaki gerçek tiplere göre düzelt.
 2. README.md — What it does · Architecture · Requirements · Build,test,run · Publish · Using it ·
    Keyboard shortcuts · State on disk · Performance modes · Known limits (v1) · Design and decision records.
    "Known limits (v1)" A13/A14'te kapanan kalemleri hâlâ limit diye sayıyor mu? "Design and decision
@@ -996,9 +1030,9 @@ kaldığımız yerden devam et
 ## Sık sorulanlar
 
 - **Sıra atlayabilir miyim?** Hayır — A1 (spike) GATE'tir; A2 onsuz başlamaz. A4–A6 sıralıdır (walking-skeleton). A7 (font kapısı) It-4'ün ilk işi olmalı.
-- **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). **A1-A10 bitti (2026-07-26).** Kalan aşamalar: **A11** (Opus/low — CLAUDE.md denetimi), **A12** (Opus/**high** — animasyon/renk regresyonu), **A13** (Opus/**high** — görsel borcun teste çevrilmesi + park listesi triyajı), **A14** (Opus/**high** — tekrarlanan test-düzelt dalgaları).
-- **Kaç adım kaldı?** **5:** A11 → A12 → A13 → A14 (tekrarlanır) → A15. **Beşinin de yapıştırmaya hazır promptu** "KALAN ADIMLAR" bölümünde. Sıra bağlayıcı: A12 animasyonu diriltmeden UI gezilmez; A13'ün çıktısı (`visual-check-residue.md`) A14'ün girdisidir; A15 en sonda, bir kez.
-- **CLAUDE.md / README / docs ne zaman güncelleniyor?** Üç noktada: **A11** (CLAUDE.md'nin bilinen 4 bayat kalemi) · **A12/A13/A14 içindeki "DOKÜMAN SENKRONU" kuralı** (yapılan değişiklik bir olgusal ifadeyi yalanlıyorsa aynı dalgada düzeltilir; yalanlamıyorsa dokunulmaz) · **A15** (üç belgenin baştan sona son denetimi). Belgelere her dalgada bayatlayacak **sayı gömülmez** (test sayısı gibi) — güncel rakam ledger'dadır.
+- **Model seçimi?** Plan artık **tamamı Opus** (Fable kaldırıldı). **A1-A10 bitti (2026-07-26), A11 bitti (2026-07-30).** Kalan aşamalar: **A12** (Opus/**high** — animasyon/renk regresyonu), **A13** (Opus/**high** — görsel borcun teste çevrilmesi + park listesi triyajı), **A14** (Opus/**high** — tekrarlanan test-düzelt dalgaları), **A15** (Opus/low — kapanış belge pası).
+- **Kaç adım kaldı?** **4:** A12 → A13 → A14 (tekrarlanır) → A15. **Dördünün de yapıştırmaya hazır promptu** "KALAN ADIMLAR" bölümünde. Sıra bağlayıcı: A12 animasyonu diriltmeden UI gezilmez; A13'ün çıktısı (`visual-check-residue.md`) A14'ün girdisidir; A15 en sonda, bir kez.
+- **CLAUDE.md / README / docs ne zaman güncelleniyor?** Üç noktada: **A11** (CLAUDE.md'nin bilinen 4 bayat kalemi — ✅ 2026-07-30'da kapandı) · **A12/A13/A14 içindeki "DOKÜMAN SENKRONU" kuralı** (yapılan değişiklik bir olgusal ifadeyi yalanlıyorsa aynı dalgada düzeltilir; yalanlamıyorsa dokunulmaz) · **A15** (üç belgenin baştan sona son denetimi). Belgelere her dalgada bayatlayacak **sayı gömülmez** (test sayısı gibi) — güncel rakam ledger'dadır.
 - **Eski A12 (81 kalemlik gözle kontrol pası) ne oldu?** 2026-07-30'da kaldırıldı (kullanıcı kararı: *"playbook ile işim kalmasın"*). Kalemlerin pinlenebilir kısmı **A13'te teste çevriliyor**; yalnız gerçekten göz isteyenler kısa bir artık listede kullanıcıya kalıyor. Eski liste (`visual-check-walkthrough.md`) A13'ün girdisi olarak duruyor, silinmedi.
 - **A12/A13'te neden high?** A12 kodlama değil **teşhis**: 1430 test yeşilken bozulan bir runtime davranışı aranıyor — `c6e9a21` ile aynı sınıf, headless suite'in görmediği yol. A13 ise 81 görsel kalemi tek tek "pinlenebilir mi" diye ayırıp gerçekten ayırt eden test yazmayı gerektiriyor; yüzeysel yapılırsa hep-yeşil testler üretir ve borcu gizler.
 - **Testleri ben mi yazacağım?** Hayır. Sen kusuru görüp tarif ediyorsun (`panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`), testi agent yazıyor — ve **her fix'ten önce testin KIRMIZI verdiğini göstermek zorunda.**
