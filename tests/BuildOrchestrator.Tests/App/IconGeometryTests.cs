@@ -126,6 +126,23 @@ public class IconGeometryTests
         Assert.All(expected, s => Assert.Contains(s, sizes));
     }
 
+    /// <summary>[A13/T3c · c8] <see cref="BuildOrchestrator.App.Shell.AppTrayIcon"/>: tepsi BİLEREK ayrı, tek-kareli
+    /// 16px raster kullanır (app-icon.ico'nun otomatik küçültülmesi amber "D"yi bozar — bkz. AppTrayIcon.cs
+    /// sınıf özeti). <c>app-icon.ico</c> için kare testi vardı (yukarıda), tepsi ikonu için HİÇ yoktu.</summary>
+    [StaFact]
+    public void Tray_icon_is_a_16px_square()
+    {
+        string path = Path.Combine(RepoPaths.AppSrcRoot, "Assets", "tray-icon-16.ico");
+        Assert.True(File.Exists(path), $"tepsi ikonu yok: {path}");
+
+        var decoder = new IconBitmapDecoder(
+            new Uri(path), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+
+        var frame = Assert.Single(decoder.Frames);
+        Assert.Equal(16, frame.PixelWidth);
+        Assert.Equal(16, frame.PixelHeight);
+    }
+
     [StaFact]
     public void No_control_depends_on_the_Segoe_MDL2_icon_font()
     {

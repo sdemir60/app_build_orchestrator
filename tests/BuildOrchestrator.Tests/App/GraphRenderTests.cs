@@ -159,6 +159,11 @@ public class GraphRenderTests
         Assert.Equal(Visibility.Visible, withBadge.Badge.Visibility);
         Assert.Equal(13.0, withBadge.Badge.Width);
         Assert.Equal(13.0, withBadge.Badge.Height);
+        // [A13/T3c · c11] README §2.3: "sağ üstünde 13px daire" — KONUM hiç okunmuyordu (sol alta kaysa süit
+        // yeşil kalırdı). Otorite: BuildApp.jsx:326 `top:-6, left:calc(50% + 7px)`; düğüm 26px → 13+7=20.
+        Assert.Equal(HorizontalAlignment.Left, withBadge.Badge.HorizontalAlignment);
+        Assert.Equal(VerticalAlignment.Top, withBadge.Badge.VerticalAlignment);
+        Assert.Equal(new Thickness(20, -6, 0, 0), withBadge.Badge.Margin);
         // 13px daire: zemin surface-base, 1px kırmızı border
         Assert.Equal(view.TryFindResource("Brush.SurfaceBase"), withBadge.BadgeCircle.Fill);
         Assert.Equal(view.TryFindResource("Brush.StatusFailBorder"), withBadge.BadgeCircle.Stroke);
@@ -255,7 +260,9 @@ public class GraphRenderTests
 
         // CSS `both` fill paritesi (feasibility §3.4): gecikme boyunca opaklık 0 tutulur — flash YOK.
         Assert.All(view.NodeVisuals.Values, v => Assert.Equal(0.0, v.Cell.Opacity));
-        Assert.NotNull(view.NodeVisuals["OSYS.Base"].Cell.RenderTransform); // 5px yukarıdan gelir
+        // [A13/T3c · c10] BuildApp.jsx:27 `translateY(-5px)` — yalnız NotNull YETMEZDİ (50px olsa da geçerdi).
+        var rise = Assert.IsType<TranslateTransform>(view.NodeVisuals["OSYS.Base"].Cell.RenderTransform);
+        Assert.Equal(-5.0, rise.Y);
     }
 
     [StaFact]
@@ -664,6 +671,24 @@ public class GraphRenderTests
         // TEK aileyi (AppFonts.Mono) kullanır — pack URI hiçbir yerde kopyalanmaz.
         Assert.Same(BuildOrchestrator.App.Controls.AppFonts.Mono, view.HeaderCountsFontFamily);
         Assert.Equal("./#Geist Mono", BuildOrchestrator.App.Controls.AppFonts.Mono.Source);
+    }
+
+    /// <summary>[A13/T3c · c3] README §2.3: "Panel başlığı (28px, surface, alt border-subtle)" — GraphView bu
+    /// başlığı <see cref="Controls.PanelHeader"/> KULLANMADAN kendi Border'ıyla çizer (GraphView.xaml), bu yüzden
+    /// <c>Size.PanelHeaderHeight</c> token'ıyla arasındaki bağ hiç doğrulanmıyordu (token 50 olsa da başlık
+    /// hâlâ 28 hardcoded kalırdı — süit yeşil).</summary>
+    [StaFact]
+    public void The_panel_header_is_28px_over_surface_with_a_border_subtle_bottom_line()
+    {
+        var view = NewView(false);
+        view.SetGraph(Nodes(), Edges());
+
+        var header = Assert.IsType<Border>(((DockPanel)view.Content).Children[0]);
+        Assert.Equal((double)view.FindResource("Size.PanelHeaderHeight"), header.Height);
+        Assert.Equal(28.0, header.Height); // otorite literali (README §2.3) — token'ın KENDİSİ sürüklenirse de yakalar
+        Assert.Same(view.FindResource("Brush.Surface"), header.Background);
+        Assert.Same(view.FindResource("Brush.BorderSubtle"), header.BorderBrush);
+        Assert.Equal(new Thickness(0, 0, 0, 1), header.BorderThickness);
     }
 
     [StaFact]

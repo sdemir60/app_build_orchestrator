@@ -24,6 +24,8 @@ public class TokenBrushesTests
         Assert.Equal(Hex("#ff706a"), Assert.IsType<SolidColorBrush>(resources["Brush.StatusFailText"]).Color);
         Assert.Equal(Hex("#2a2a30"), Assert.IsType<SolidColorBrush>(resources["Brush.Border"]).Color);
         Assert.Equal(Hex("#54545c"), Assert.IsType<SolidColorBrush>(resources["Brush.TextFaint"]).Color);
+        // [A13/T3c · c1] --text-primary (tokens/colors.css) — en sık kullanılan metin rengi hiç pinli DEĞİLDİ.
+        Assert.Equal(Hex("#ededee"), Assert.IsType<SolidColorBrush>(resources["Brush.TextPrimary"]).Color);
     }
 
     [StaFact]

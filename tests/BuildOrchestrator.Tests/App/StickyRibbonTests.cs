@@ -62,6 +62,22 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[A13/T3c · c9] README §2.2: "Kalıcı durum satırı; surface-base, altta border-subtle." Yükseklik
+    /// (32/2px) zaten pinliydi (yukarıdaki test); şeridin KENDİ zemini/alt çizgisi testsizdi — root Border
+    /// başka bir fırçaya (ör. Brush.Surface) bağlansa süit yeşil kalırdı.</summary>
+    [StaFact]
+    public void The_ribbon_root_is_surface_base_with_a_border_subtle_bottom_line()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+
+        var root = Assert.IsType<Border>(ribbon.Content);
+        Assert.Same(ribbon.FindResource("Brush.SurfaceBase"), root.Background);
+        Assert.Same(ribbon.FindResource("Brush.BorderSubtle"), root.BorderBrush);
+        Assert.Equal(new Thickness(0, 0, 0, 1), root.BorderThickness);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void At_most_four_building_chips_are_shown_and_the_overflow_is_plain_text()
     {
