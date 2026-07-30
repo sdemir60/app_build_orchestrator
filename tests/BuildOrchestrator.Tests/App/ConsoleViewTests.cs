@@ -321,7 +321,7 @@ public class ConsoleViewTests
         // gelince temizlenir.
         var view = new ConsoleView();
 
-        view.ShowReady();
+        view.ShowReady(IdleInstant);
         Assert.Equal("ready", view.ActiveLineText.Text);
         Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
 
@@ -330,41 +330,152 @@ public class ConsoleViewTests
         Assert.Contains("Sync complete", view.Document.Text);
     }
 
-    // ---------------------------------------------------------------- [A13/T3a · a7] ready satırının rengi (dim)
+    // ---------------------------------------------------------------- [A13/T3a · a7 + fix-1 · P3] ready satırı
 
-    private static ResourceDictionary LoadTokens()
-    {
-        string path = Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Tokens.xaml");
-        using var stream = File.OpenRead(path);
-        return (ResourceDictionary)XamlReader.Load(stream);
-    }
+    // [A13/T3 fix-1 · B5] Sözlük yükleme ARTIK tek yerde (DsResources.Load) — buradaki kopya beşincisiydi ve
+    // ham XamlReader.Load(stream) kullandığı için clr-namespace tamamlamasını atlıyordu.
+    private static ResourceDictionary LoadTokens() => DsResources.Load("Tokens.xaml");
+
+    /// <summary>Otoritedeki örnek damga (README §2.5 <c>12:04:07 ▮ ready</c>) — <c>RunViewModelTests</c>/
+    /// <c>RunViewModelStateTests</c>'in <c>WallClock</c> tohumuyla aynı an.</summary>
+    private static readonly DateTimeOffset IdleInstant = new(2026, 7, 23, 12, 4, 7, TimeSpan.Zero);
 
     /// <summary>[A13/T3a · a7] design-v1 §2.5: idle "ready" satırı UÇTAN UCA <c>dim</c> (Brush.TextFaint) —
-    /// hem metin hem imleç. Önceki test yalnız gövde metnini ("ready") pinliyordu; renk testsizdi.</summary>
+    /// damga, metin ve imleç. Önceki test yalnız gövde metnini ("ready") pinliyordu; renk testsizdi.</summary>
     [StaFact]
-    public void ShowReady_paints_both_the_text_and_the_cursor_with_the_dim_token()
+    public void ShowReady_paints_the_timestamp_the_text_and_the_cursor_with_the_dim_token()
     {
         var tokens = LoadTokens();
-        var palette = ConsolePalette.FromLookup(k => tokens[k]);
         var view = new ConsoleView();
-        view.EnableColorizer(palette);
+        view.EnableColorizer(DsResources.ConsolePaletteFrom(tokens));
 
-        view.ShowReady();
+        view.ShowReady(IdleInstant);
 
+        Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineTime.Foreground);
         Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineText.Foreground);
         Assert.Same(tokens["Brush.TextFaint"], view.ActiveCursor.Fill);
+    }
+
+    /// <summary>
+    /// [A13/T3 fix-1 · P3] design-v1 README §2.5 BİREBİR: <i>"Boşta (idle/boot) tek satır: <c>12:04:07 ▮ ready</c>
+    /// (dim)"</i>. Otoritede satır <c>BuildApp.jsx:607</c>'de
+    /// <c>&lt;NarrLine type="dim" time={eng.wall()} cursor&gt;…'ready'…&lt;/NarrLine&gt;</c>'dur — damga AÇIKÇA
+    /// taşınır — ve <c>NarrLine</c> (<c>:158-160</c>) onu <c>{time}</c> → 10px imleç kolonu → <c>{children}</c>
+    /// sırasıyla basar. Üretim yalnız <c>"ready"</c> yazıyordu: damga HİÇ YOKTU ve imleç metnin ARDINDAYDI.
+    ///
+    /// <para><b>Üç ayrı iddia:</b> (a) damganın kendisi (deterministik — üretimin
+    /// <see cref="BuildOrchestrator.App.ViewModels.RunViewModel.WallClock"/> seam'i enjekte edilir, duvar saatine
+    /// assert edilmez), (b) <c>▮</c> imlecinin gerçek 7×13 <see cref="Rectangle"/> olarak görünür olması,
+    /// (c) <b>SIRA</b> — gerçek yerleşimden okunan X koordinatlarıyla (kolon indeksi gibi bir uygulama
+    /// ayrıntısıyla değil).</para>
+    /// </summary>
+    [StaFact]
+    public void ShowReady_composes_the_authoritys_timestamp_then_cursor_then_ready_text_in_that_order()
+    {
+        var view = new ConsoleView();
+        view.EnableColorizer(DsResources.ConsolePaletteFrom(LoadTokens()));
+
+        view.ShowReady(IdleInstant);
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        Assert.Equal("12:04:07", view.ActiveLineTime.Text);
+        Assert.Equal("ready", view.ActiveLineText.Text);
+
+        // ▮ = 7×13 blok imleç (font glyph'i DEĞİL, design-v1 §2.5) ve GERÇEKTEN görünür.
+        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
+        Assert.Equal(7.0, view.ActiveCursor.ActualWidth);
+        Assert.Equal(13.0, view.ActiveCursor.ActualHeight);
+
+        // Ön-koşul: satır gerçekten yerleşti (aksi hâlde tüm X'ler 0 olur ve sıra iddiası önemsizce geçerdi).
+        Assert.True(view.ActiveLineOverlay.ActualWidth > 0, "aktif satır overlay'i hiç yerleşmedi");
+
+        double timeX = LeftEdge(view, view.ActiveLineTime);
+        double cursorX = LeftEdge(view, view.ActiveCursor);
+        double textX = LeftEdge(view, view.ActiveLineText);
+        Assert.True(timeX < cursorX, $"damga imlecin SOLUNDA olmalı (damga {timeX}px, imleç {cursorX}px)");
+        Assert.True(cursorX < textX, $"imleç metnin SOLUNDA olmalı (imleç {cursorX}px, metin {textX}px)");
+    }
+
+    /// <summary>Karşı yön (ayırt edicilik): daktilo satırı idle satırı DEĞİLDİR — orada damga GİZLİDİR ve imleç
+    /// yazılan metnin ARDINDA kalır (A13.2 hibrit aktif satır). Aynı overlay iki düzeni de sürebilmeli.</summary>
+    [StaFact]
+    public void The_typewriter_line_hides_the_idle_stamp_and_keeps_its_cursor_after_the_text()
+    {
+        // Daktilo kolu GERÇEKTEN koşsun: motion açık + canlı bir pencere (ConsoleMotionPathTests deseni).
+        var view = new ConsoleView { AnimationsEnabledProvider = () => true };
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, view);
+
+        view.ShowReady(IdleInstant);
+        Assert.Equal(Visibility.Visible, view.ActiveLineTime.Visibility); // ön-koşul: idle düzeni kuruldu
+
+        view.AppendNarrativeBatch("12:00:01 ▸ git fetch origin main\n"); // ÜRETİM yolu (brief kural 3)
+        view.UpdateLayout();
+
+        Assert.False(view.ActiveLineInstant, "ön-koşul: daktilo kurulmadı — düzen iddiası önemsiz olurdu");
+        Assert.Equal(Visibility.Collapsed, view.ActiveLineTime.Visibility); // damga daktilo satırına ait DEĞİL
+        Assert.True(LeftEdge(view, view.ActiveLineText) < LeftEdge(view, view.ActiveCursor),
+            "daktilo satırında imleç metnin ARDINDA kalmalı");
+        GC.KeepAlive(window);
+    }
+
+    private static double LeftEdge(ConsoleView view, FrameworkElement element) =>
+        element.TranslatePoint(new Point(0, 0), view).X;
+
+    // ---------------------------------------------------------------- [A13/T3a · a6] "build in progress ▮" imleci
+
+    /// <summary>[A13/T3 fix-1 · C2] a6 kaleminin metni <c>build in progress ▮</c> idi; pinlenen yalnız gövde
+    /// metniydi. <c>▮</c> ayrı bir <see cref="Rectangle"/>'dır (<c>ConsoleView.xaml BuildProgressCursor</c>, 7×13,
+    /// amber) — silinse ya da başka bir fırçaya bağlansa süit yeşil kalırdı. Ton
+    /// (<c>Brush.AmberText</c>) a7'nin <c>ActiveCursor.Fill</c> deseninin birebir kardeşidir.</summary>
+    [StaFact]
+    public void The_build_in_progress_overlay_ends_with_the_amber_block_cursor()
+    {
+        var host = DsResources.NewHost();
+        var view = new ConsoleView();
+        var window = DsResources.Realize(host, view);
+
+        view.PlayCascade(new[] { "log line" }, buildInProgress: true);
+        view.UpdateLayout();
+
+        Assert.Equal(Visibility.Visible, view.BuildProgressOverlay.Visibility);
+        Assert.Same(view.FindResource("Brush.AmberText"), view.BuildProgressCursor.Fill);
+        Assert.Equal(7.0, view.BuildProgressCursor.ActualWidth);
+        Assert.Equal(13.0, view.BuildProgressCursor.ActualHeight);
+        GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- [A13/T3b · b9] ölçü/geometri
 
     /// <summary>[A13/T3b · b9] design-v1 README §2.5: "padding 8×12" (BuildApp.jsx:617 <c>padding: '8px 12px'</c>
     /// — CSS shorthand: dikey(top/bottom)=8, yatay(left/right)=12). WPF karşılığı iki-değerli
-    /// <c>Thickness</c>: <c>"12,8"</c> = sol/sağ 12, üst/alt 8 (ConsoleView.xaml:17) — BİREBİR aynı bütçe,
-    /// farklı yazım sırası. Testsizdi.</summary>
+    /// <c>Thickness</c>: <c>"12,8"</c> = sol/sağ 12, üst/alt 8 (ConsoleView.xaml) — BİREBİR aynı bütçe,
+    /// farklı yazım sırası. Testsizdi.
+    ///
+    /// <para>[A13/T3 fix-1 · C1] Realize eklendi (brief kural 5): salt DP okuması bir stil/şablonun Padding'i
+    /// ezmesini GÖRMEZDİ. Gerçek yerleşimde bütçe, editörün metin alanının sol/üst kenarını kontrolün kendi
+    /// kenarından TAM 12/8 dip içeri almış olmalıdır.</para></summary>
     [StaFact]
     public void Editor_padding_matches_the_design_v1_eight_by_twelve_budget()
     {
+        var host = DsResources.NewHost();
         var view = new ConsoleView();
+        var window = DsResources.Realize(host, view);
+        view.AppendBatch("line1\n");
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
         Assert.Equal(new Thickness(12, 8, 12, 8), view.Editor.Padding);
+
+        // GERÇEK yerleşim: TextView'in sol/üst kenarı editörün kenarından padding kadar içeride.
+        var textView = view.Editor.TextArea.TextView;
+        Assert.True(textView.ActualWidth > 0, "AvalonEdit TextView hiç yerleşmedi — ölçüm önemsiz olurdu");
+        var offset = textView.TranslatePoint(new Point(0, 0), view.Editor);
+        Assert.Equal(12.0, offset.X, precision: 1);
+        Assert.Equal(8.0, offset.Y, precision: 1);
+        GC.KeepAlive(window);
     }
 }

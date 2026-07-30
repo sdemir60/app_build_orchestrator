@@ -220,7 +220,7 @@ public partial class EventStreamView : UserControl
 
         PART_ActiveLine.Visibility = Visibility.Visible;
         RefreshEmptyState(); // [D3 §8] canlı aktif satır var → boş-durum gizli
-        PART_ActiveTime.Text = _vm.WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm.WallClock());
         StartCursorBlink();
 
         // [D3 §1] Aktif satır KOŞULSUZ daktilo eder (prototip BuildApp.jsx:723 `<TypingLine instant={false} />`).

@@ -17,15 +17,29 @@
                             Padding="12,8"
                             Background="Transparent" Foreground="{DynamicResource Brush.TextPrimary}" />
     <!-- Aktif (en yeni) satır: dokümana girmeden burada daktilolanır; bitince Document.Insert ile commit.
-         İmleç bir 7×13px Rectangle'dır (font glyph'i DEĞİL) — design-v1 §2.5. -->
-    <StackPanel x:Name="ActiveLineOverlay" Orientation="Horizontal" Visibility="Collapsed"
-                HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"
-                Margin="12,0,0,8">
-      <TextBlock x:Name="ActiveLineText" FontSize="{DynamicResource FontSize.Xs}" VerticalAlignment="Center"
+         İmleç bir 7×13px Rectangle'dır (font glyph'i DEĞİL) — design-v1 §2.5.
+         [A13/T3 fix-1 · P3] Kolon SIRASI moda göre değişir (ConsoleView.LayoutActiveLine): boşta/idle "ready"
+         satırı otoritenin NarrLine düzenindedir — damga (0) → ▮ imleç (1) → metin (2); BuildApp.jsx:158-160.
+         Daktilo satırında imleç yazılan metnin ARDINDA kalır (A13.2 hibrit aktif satır kararı) — metin (1) →
+         imleç (2). Bu yüzden StackPanel değil, kolonu kod-tarafı atanabilen bir Grid. -->
+    <Grid x:Name="ActiveLineOverlay" Visibility="Collapsed"
+          HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"
+          Margin="12,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <!-- Damga yalnız idle "ready" satırında görünür (daktilo satırının damgası metnin İÇİNDEDİR — anlatı
+           satırları RunViewModel.ComposeNarrativeLine'da damgalanıp colorizer ile text-faint boyanır). -->
+      <TextBlock x:Name="ActiveLineTime" Grid.Column="0" Visibility="Collapsed" Margin="0,0,10,0"
+                 FontSize="{DynamicResource FontSize.Xs}" VerticalAlignment="Center"
+                 TextWrapping="NoWrap" Foreground="{DynamicResource Brush.TextFaint}" />
+      <TextBlock x:Name="ActiveLineText" Grid.Column="1" FontSize="{DynamicResource FontSize.Xs}" VerticalAlignment="Center"
                  TextWrapping="NoWrap" Foreground="{DynamicResource Brush.TextPrimary}" />
-      <Rectangle x:Name="ActiveCursor" Width="7" Height="13" Margin="3,0,0,0"
+      <Rectangle x:Name="ActiveCursor" Grid.Column="2" Width="7" Height="13" Margin="3,0,0,0"
                  Fill="{DynamicResource Brush.TextPrimary}" VerticalAlignment="Center" />
-    </StackPanel>
+    </Grid>
     <!-- [3b] Proje-log modunda building proje için sondaki amber "build in progress ▮" (design-v1 §2.5).
          Kaskat bitince/instant görünür; blink imleç (reduced-motion iken statik). -->
     <StackPanel x:Name="BuildProgressOverlay" Orientation="Horizontal" Visibility="Collapsed"

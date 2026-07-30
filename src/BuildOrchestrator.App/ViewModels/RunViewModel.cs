@@ -1087,7 +1087,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[D4/T56-UI] Bir anlatı satırının önüne "HH:MM:SS " (InvariantCulture — Global Constraint) ekler.
     /// design-v1 §2.5 / plan §222: satırlar düz metin <c>HH:MM:SS ▸ metin</c>. Saat WallClock'tan (stream'le ORTAK).</summary>
     private string ComposeNarrativeLine(string text) =>
-        $"{WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture)} {text}";
+        $"{Console.WallClockFormat.Of(WallClock())} {text}";
 
     /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
     /// TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). UI thread'inde çağrılır; sayaçlar arka plandan

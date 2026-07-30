@@ -121,7 +121,7 @@ public sealed partial class RunViewModel
     {
         bool anyFailed = Counters.Failed > 0; // done glyph/renk yeşil↔kırmızı (prototip c.failed)
         var emission = _stream.Push(isFail: kind == StreamKind.Fail, _nowMs());
-        string time = WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        string time = Console.WallClockFormat.Of(WallClock());
         bool shouldType = _streamHadNewest && !emission.Instant; // ilk-satır type etmez (prevNewest==null)
         _streamHadNewest = true;
         bool isSelected = projectId is not null &&

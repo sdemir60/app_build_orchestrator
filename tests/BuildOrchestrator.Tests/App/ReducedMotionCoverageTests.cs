@@ -227,7 +227,7 @@ public class ReducedMotionCoverageTests
         Assert.Null(BuildOrchestrator.App.App.Motion);
         var view = new ConsoleView();
 
-        view.ShowReady(); // headless App.Motion null → StopBlink
+        view.ShowReady(default); // headless App.Motion null → StopBlink
 
         Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties); // imleç blink saati yok
     }

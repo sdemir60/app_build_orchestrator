@@ -44,6 +44,14 @@ internal static class DsResources
         return (ResourceDictionary)XamlReader.Parse(xaml);
     }
 
+    /// <summary>[A13/T3 fix-1 · B5] Bir token sözlüğünden konsol paleti — <c>ConsoleColorizerTests</c> ve
+    /// <c>ConsoleViewTests</c> bu tek satırı ayrı ayrı taşıyordu (kopya YASAK, CLAUDE.md).</summary>
+    public static BuildOrchestrator.App.Console.ConsolePalette ConsolePaletteFrom(ResourceDictionary tokens)
+    {
+        ArgumentNullException.ThrowIfNull(tokens);
+        return BuildOrchestrator.App.Console.ConsolePalette.FromLookup(k => tokens[k]);
+    }
+
     /// <summary>Üretimdeki App.xaml merge sırası (AppResourcesMergeTests bunu ayrıca pinler).</summary>
     private static readonly string[] MergeChain = ["Motion.xaml", "Tokens.xaml", "Icons.xaml", "Controls.xaml"];
 

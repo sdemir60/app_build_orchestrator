@@ -330,21 +330,42 @@ public partial class ConsoleView : UserControl
         if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true);
     }
 
-    /// <summary>[D4/T56-UI] Boşta (idle/boot) tek satır: <c>ready</c> (dim) + yanıp sönen blok imleç (design-v1
-    /// §2.5). Doküman satırı DEĞİLdir — overlay'de canlı gösterilir; içerik gelince (AppendNarrativeBatch /
-    /// PlayCascade) temizlenir. Uçuştaki daktilo varsa önce commit edilir. Reduced-motion iken imleç statiktir.</summary>
-    public void ShowReady()
+    /// <summary>[D4/T56-UI] Boşta (idle/boot) tek satır: design-v1 §2.5 BİREBİR <c>12:04:07 ▮ ready</c> (dim) —
+    /// duvar-saati damgası + yanıp sönen blok imleç + metin, BU SIRAYLA. Doküman satırı DEĞİLdir — overlay'de
+    /// canlı gösterilir; içerik gelince (AppendNarrativeBatch / PlayCascade) temizlenir. Uçuştaki daktilo varsa
+    /// önce commit edilir. Reduced-motion iken imleç statiktir.
+    ///
+    /// <para>[A13/T3 fix-1 · P3] Damga eskiden HİÇ YOKTU (yalnız <c>"ready"</c> basılıyordu) — otoritede
+    /// (<c>BuildApp.jsx:607</c>) satır <c>&lt;NarrLine type="dim" time={eng.wall()} cursor&gt;</c>'dur, yani
+    /// damga AÇIKÇA taşınır ve <c>NarrLine</c> (<c>:158-160</c>) onu imleç kolonundan ÖNCE basar.</para></summary>
+    /// <param name="now">Duvar saati — üretimde <see cref="ViewModels.RunViewModel.WallClock"/> seam'inden gelir
+    /// (stream/anlatı satırlarıyla ORTAK kaynak), testte deterministik enjekte edilir.</param>
+    public void ShowReady(DateTimeOffset now)
     {
         EnsureColorizer();
         if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true);
         _idleReady = true;
         Brush dim = _palette?.Dim ?? EditorControl.Foreground;
+        LayoutActiveLine(idleReadyOrder: true);
+        ActiveLineTime.Foreground = dim; // README §2.5: idle satır UÇTAN UCA dim
+        ActiveLineTime.Text = WallClockFormat.Of(now);
         ActiveLineText.Foreground = dim;
         ActiveLineText.Text = ConsoleEmptyState.Idle; // "ready"
         ActiveCursor.Fill = dim;
         ActiveCursor.Opacity = 1.0;
         ActiveLineOverlay.Visibility = Visibility.Visible;
         if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
+    }
+
+    /// <summary>[A13/T3 fix-1 · P3] Aktif-satır overlay'inin kolon düzeni. <b>idle "ready"</b>: damga → imleç →
+    /// metin (otorite <c>NarrLine</c>, BuildApp.jsx:158-160). <b>Daktilo</b>: metin → imleç (A13.2 hibrit aktif
+    /// satır; damga metnin içindedir, colorizer boyar).</summary>
+    private void LayoutActiveLine(bool idleReadyOrder)
+    {
+        Grid.SetColumn(ActiveCursor, idleReadyOrder ? 1 : 2);
+        Grid.SetColumn(ActiveLineText, idleReadyOrder ? 2 : 1);
+        ActiveCursor.Margin = idleReadyOrder ? new Thickness(0, 0, 3, 0) : new Thickness(3, 0, 0, 0);
+        ActiveLineTime.Visibility = idleReadyOrder ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void HideReadyIfShown()
@@ -354,6 +375,7 @@ public partial class ConsoleView : UserControl
         StopBlink();
         ActiveLineOverlay.Visibility = Visibility.Collapsed;
         ActiveLineText.Text = "";
+        LayoutActiveLine(idleReadyOrder: false); // damga gizlenir — sonraki daktilo satırı kendi düzeninde açılır
     }
 
     // ---------------------------------------------------------------- hibrit aktif satır (typewriter)
@@ -383,6 +405,7 @@ public partial class ConsoleView : UserControl
 
         _scheduler = new TypewriterScheduler(text.Length, animationsEnabled: true);
         _activeText = text;
+        LayoutActiveLine(idleReadyOrder: false); // idle "ready"den geliniyorsa damga kalkar, imleç metnin ARDINA döner
         ActiveLineText.Foreground = color;
         ActiveLineText.Text = "";
         ActiveCursor.Fill = color;

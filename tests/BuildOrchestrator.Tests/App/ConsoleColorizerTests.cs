@@ -18,14 +18,12 @@ public class ConsoleColorizerTests
     private const char Arrow = '▸';  // ▸
     private const char Check = '✓';  // ✓
 
-    private static ResourceDictionary LoadTokens()
-    {
-        string path = Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", "Tokens.xaml");
-        using var stream = File.OpenRead(path);
-        return (ResourceDictionary)XamlReader.Load(stream);
-    }
+    // [A13/T3 fix-1 · B5] Sözlük yükleme + palet kurulumu ARTIK tek yerde (DsResources) — buradaki kopya
+    // XamlReader.Load(stream) yolunu kullanıyordu ve DsResources.Load'un yaptığı clr-namespace tamamlamasını
+    // ATLIYORDU (Tokens.xaml bir gün App tipine atıf verirse sessizce ayrışırdı).
+    private static ResourceDictionary LoadTokens() => DsResources.Load("Tokens.xaml");
 
-    private static ConsolePalette Palette(ResourceDictionary tokens) => ConsolePalette.FromLookup(k => tokens[k]);
+    private static ConsolePalette Palette(ResourceDictionary tokens) => DsResources.ConsolePaletteFrom(tokens);
 
     [StaFact]
     public void Command_line_with_clock_and_arrow_produces_faint_clock_amber_arrow_and_primary_body()

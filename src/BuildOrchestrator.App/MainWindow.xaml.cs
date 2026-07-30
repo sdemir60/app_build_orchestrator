@@ -257,7 +257,7 @@ public partial class MainWindow : Window
         {
             // [D4/T56-UI] Boşta (idle/boot) konsol tek satır "ready" (dim) gösterir — ilk anlatı satırı gelince
             // (AppendNarrativeBatch) temizlenir.
-            if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
+            if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(_vm.WallClock());
             await StartEngineAsync();
         };
         Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
@@ -397,7 +397,7 @@ public partial class MainWindow : Window
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
         _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
-        if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
+        if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(_vm.WallClock()); // boş run → idle "ready"
     }
 
     /// <summary>[3b] ConsoleHeader.BackRequested'tan çağrılır: kart seçimini kaldırır → konsol run anlatısına
