@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -64,6 +65,66 @@ public class PopoverTests
         popover.SearchBox.Text = "zzz";
         Assert.Empty(popover.VisibleBranches);
         Assert.True(popover.IsEmptyState); // "No branches match “zzz”."
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a4] kopya metinleri (BİREBİR)
+
+    /// <summary>[A13/T3a · a4] design-v1 §2.8: caps başlık <c>SWITCH BRANCH</c>, alt not (BİREBİR) ve boş-eşleşme
+    /// metninin CURLY tırnakları (<c>“…”</c>, BuildApp.jsx:846 — düz <c>"…"</c> DEĞİL).</summary>
+    [StaFact]
+    public void Branch_popover_pins_the_caps_caption_footnote_and_curly_quoted_empty_state()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaaaaaaaaaaa", true, false)]));
+        var host = DsResources.NewHost();
+        var popover = new BranchPopover { DataContext = vm };
+        var window = DsResources.Realize(host, popover);
+
+        var texts = DsResources.RealizedObjects(popover).OfType<TextBlock>().Select(t => t.Text).ToList();
+        Assert.Contains("SWITCH BRANCH", texts);
+        Assert.Contains("Picking a non-active branch requires a worktree; the active branch stays untouched.", texts);
+
+        popover.IsOpen = true;
+        popover.SearchBox.Text = "zzz";
+        Assert.Equal("No branches match “zzz”.", popover.PART_Empty.Text); // curly “ ” — ASCII " " DEĞİL
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a1] Worktree popover kopya metinleri
+
+    /// <summary>[A13/T3a · a1] design-v1 §2.8 üç durum açıklaması + source satırının iki varyantı — BİREBİR
+    /// (WorktreePopover.xaml.cs Refresh()). forced → on → source hiçbiri süitte pinli DEĞİLDİ.</summary>
+    [StaFact]
+    public void Worktree_popover_pins_the_three_state_descriptions_and_both_source_line_variants()
+    {
+        var vm = NewVm();
+        vm.Branch = "main";
+        var host = DsResources.NewHost();
+        var popover = new WorktreePopover { DataContext = vm };
+        var window = DsResources.Realize(host, popover);
+        popover.IsOpen = true;
+
+        // off: UseWorktree=false, forced=false (hiç branch envanteri yok → IsWorktreeForced=false).
+        Assert.Equal("Off: in-place build — local changes included.", popover.PART_Desc.Text);
+        Assert.Equal("working directory — local changes included", popover.PART_Source.Text);
+
+        // on: UseWorktree=true, forced=false.
+        vm.UseWorktree = true;
+        Assert.Equal("The committed HEAD builds in a separate worktree; local changes excluded.", popover.PART_Desc.Text);
+        Assert.Equal($"committed HEAD (main) → {vm.EffectiveWorktreeName}", popover.PART_Source.Text);
+
+        // forced: aktif-olmayan bir branch seçildi (K3) → worktree ZORUNLU.
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", true, false),
+            new BranchRef("release/x", "bbbbbbbbbbbb", false, true),
+        ]));
+        vm.SelectBranch(new BranchRef("release/x", "bbbbbbbbbbbb", false, true));
+        Assert.True(vm.IsWorktreeForced);
+        Assert.Equal(
+            "Different branch selected — worktree required. The committed HEAD is built; active branch and local changes stay untouched.",
+            popover.PART_Desc.Text);
+
         GC.KeepAlive(window);
     }
 
