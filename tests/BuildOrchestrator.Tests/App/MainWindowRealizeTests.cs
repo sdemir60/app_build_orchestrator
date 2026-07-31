@@ -127,8 +127,8 @@ public class MainWindowRealizeTests
 
     /// <summary>
     /// [A13/T3 fix-2 · 3] <b>P2'nin ölçülen bedeli — artık sessiz değil.</b> Eklenen 1px hairline dıştan telafi
-    /// EDİLMEDİ: bant 40'ta kaldı, dolayısıyla iç kutu hairline kadar daraldı ve içerik bir cihaz pikseli yukarı
-    /// kaydı. Bu bilinçli bir karardır ve buraya pinlenmiştir.
+    /// EDİLMEDİ: bant 40'ta kaldı, dolayısıyla iç kutu hairline kadar daraldı ve içerik bandın değil KALAN
+    /// kutunun ortasına oturdu. Bu bilinçli bir karardır ve buraya pinlenmiştir.
     ///
     /// <para><b>Otorite ve karar:</b> design-v1 README §2 bant şeması (<c>:84</c>) <c>TITLE BAR (40px)</c> ve
     /// §2.1 başlığı (<c>:105</c>) <c>## 2.1 Title bar (40px)</c> — görünen bant 40px'tir. DS
@@ -140,10 +140,27 @@ public class MainWindowRealizeTests
     /// bandı 41'e çıkarmak caption/hit-test sözleşmesini bozardı. Seçimin doğrudan aritmetik sonucu: hairline
     /// bandı BÜYÜTMEZ, bandın son piksel satırını YER.</para>
     ///
-    /// <para><b>DPI-bağımsızlık:</b> iç kutu için çıplak bir sabit (39) yazılamaz — <c>UseLayoutRounding</c>
-    /// 1 dip'lik kenarlığı cihaz pikseline yuvarlar (150%'de ölçüldü: iç kutu <c>38,667</c> dip). Bu yüzden
-    /// iddia farkın KENDİSİ üzerinden kurulur: iç kutu dış banttan küçüktür ve fark en fazla bir kenarlık
-    /// kadardır.</para></summary>
+    /// <para><b>DPI: hiçbir iddia dip cinsinden sabit OLAMAZ</b> [A13/B0'da yeniden ölçüldü].
+    /// <c>UseLayoutRounding</c> (<c>MainWindow.xaml:12</c>) yalnız boyları değil her hizalama offset'ini de
+    /// cihaz pikseli ızgarasına oturtur; dolayısıyla dip değerleri ekran ölçeğiyle kayar — hairline 1 dip
+    /// yazıldığı hâlde 150%'de 2 piksel (1,333 dip) yer kaplar ve iç kutuyu <c>38,667</c>'ye, 125%'te 1 piksel
+    /// (0,8 dip) kaplar ve iç kutuyu <c>39,2</c>'ye indirir. Bu yüzden iddialar farkın KENDİSİ üzerinden ve
+    /// <b>cihaz pikseli cinsinden</b> kurulur (bkz. <see cref="InDevicePixels"/>).</para>
+    ///
+    /// <para><b>Merkez iddiası neden ±0 olamaz — B0'ın kırmızısı:</b> iddia
+    /// <c>Assert.Equal(inner.ActualHeight / 2, logoCenter, precision: 1)</c> idi, yani tolerans ±0,05 dip:
+    /// 125%'te bir cihaz pikselinin 1/16'sı. 150%'de şansla yeşildi, 125%'te ÖLÇÜLDÜ ve kırıldı — logo merkezi
+    /// <c>20,4</c>, iç kutu merkezi <c>19,6</c>. Fark TAM bir cihaz pikselidir ve tamamı yuvarlamadan gelir:
+    /// logo ile iç kutu arasında İKİ hizalama adımı vardır (Viewbox → StackPanel → DockPanel) ve ikisinde de
+    /// ideal offset yarım piksele denk düşüp yukarı yuvarlanır — <c>(39,2−16)/2 = 11,6 → 12</c> ve
+    /// <c>(16−15,2)/2 = 0,4 → 0,8</c>. Model doğrulanır: aynı bantta TEK adım uzaktaki gear butonu yalnız
+    /// 0,4 dip (yarım piksel) sapar. Üretim ortalamayı doğru kutuda yapıyor; kırılgan olan iddiaydı.</para>
+    ///
+    /// <para><b>SINIR (bilerek):</b> "iç kutuda ortalı" ile "40 bandında ortalı" arasındaki fark yarım
+    /// hairline'dır (125%'te 0,4 dip) ve yuvarlama zemininin (bir cihaz pikseli) ALTINDA kalır — bu ikisini
+    /// hiçbir DPI-bağımsız assert ayırt edemez. Buradaki iddia ortalamanın KENDİSİNİ pinler (içerik üst/alt
+    /// hizaya kaçarsa kırmızı); hangi kutunun ortası olduğu YAPISAL olarak okunur: ölçü <c>inner</c>
+    /// koordinatında alınır.</para></summary>
     [StaFact]
     public void The_hairline_eats_the_bands_last_pixel_row_instead_of_growing_the_forty_pixel_title_bar()
     {
@@ -158,18 +175,55 @@ public class MainWindowRealizeTests
         Assert.Equal(band, titleBar.ActualHeight);              // DIŞ bant BÜYÜMEDİ (41 olmadı)
         Assert.Equal(band, System.Windows.Shell.WindowChrome.GetWindowChrome(window).CaptionHeight);
 
-        // İÇ kutu hairline kadar daraldı — hairline bandın İÇİNDEN yer alır.
+        var dpi = VisualTreeHelper.GetDpi(window);
+
+        // İÇ kutu hairline kadar daraldı — hairline bandın İÇİNDEN yer alır. Üst sınır DPI'dan türer: 1 dip'lik
+        // bir çizgi ızgarada en çok Ceiling(ölçek) piksel kaplayabilir (125%'te 2, 100%'de 1).
         var inner = (FrameworkElement)titleBar.Child;
         Assert.True(inner.ActualHeight < titleBar.ActualHeight,
             $"hairline iç kutuyu hiç daraltmadı (iç {inner.ActualHeight}, bant {titleBar.ActualHeight}) — çizgi kayıp olabilir");
-        Assert.True(titleBar.ActualHeight - inner.ActualHeight <= 1.5,
-            $"iç kutu bir kenarlıktan FAZLA daraldı: {titleBar.ActualHeight - inner.ActualHeight}dip");
+        double shrink = InDevicePixels(titleBar.ActualHeight - inner.ActualHeight, dpi);
+        Assert.True(shrink <= Math.Ceiling(dpi.DpiScaleY),
+            $"iç kutu bir kenarlıktan FAZLA daraldı: {shrink} cihaz pikseli (bir kenarlık en çok {Math.Ceiling(dpi.DpiScaleY)})");
 
-        // Görünür sonuç: içerik KALAN kutuda dikey ortalı kalır (bandın ortasında değil — bir cihaz pikseli yukarı).
+        // Görünür sonuç: içerik KALAN kutuda dikey ortalı kalır. Tolerans yuvarlama bütçesidir: her hizalama
+        // adımı merkezi en çok YARIM cihaz pikseli kaydırır (bugün 2 adım → TAM bir cihaz pikseli).
         var logo = window.TitleBarLogo;
         double logoCenter = logo.TranslatePoint(new Point(0, logo.ActualHeight / 2), inner).Y;
-        Assert.Equal(inner.ActualHeight / 2, logoCenter, precision: 1);
+        double drift = InDevicePixels(logoCenter - inner.ActualHeight / 2, dpi);
+        double budget = AlignmentSteps(logo, inner) / 2.0;
+        Assert.True(drift <= budget,
+            $"logo iç kutuda ortalı DEĞİL: {drift} cihaz pikseli sapma (yuvarlama bütçesi {budget} piksel)");
         GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [A13/B0] Bir dip farkını CİHAZ PİKSELİNE çevirir ve yarım-piksel ızgarasına oturtur.
+    ///
+    /// <para><c>UseLayoutRounding</c> altında her boy ve her hizalama offset'i tam piksele oturduğundan, iki
+    /// geometri değerinin farkı TAM ARİTMETİKTE yarım cihaz pikselinin katıdır; ölçülende görülen artık
+    /// (<c>20,4 − 19,6 = 0,7999999999999972</c>) yalnız double gösteriminden gelir. Sınır iddiaları — fark tam
+    /// bütçe kadar olduğunda — bu artık yüzünden yazı-turaya döner, bu yüzden ızgaraya oturtmak ZORUNLUDUR.
+    /// Gevşetme değildir: ara değerler zaten oluşamaz.</para>
+    /// </summary>
+    private static double InDevicePixels(double dips, DpiScale dpi) =>
+        Math.Round(Math.Abs(dips) * dpi.DpiScaleY * 2) / 2;
+
+    /// <summary>
+    /// [A13/B0] <paramref name="child"/> ile <paramref name="ancestor"/> arasındaki hizalama adımı sayısı —
+    /// yuvarlama bütçesinin çarpanı (adım × yarım cihaz pikseli). Elle YAZILMAZ, ağaçtan sayılır: araya bir
+    /// sarmalayıcı girerse bütçe de gerçek fizikle birlikte büyür, iddia sessizce kırılmaz. Title bar logosu
+    /// için bugün 2 döner (Viewbox → StackPanel → DockPanel) ⇒ bütçe TAM bir cihaz pikselidir.
+    /// </summary>
+    private static int AlignmentSteps(FrameworkElement child, FrameworkElement ancestor)
+    {
+        int steps = 0;
+        for (DependencyObject? node = child; node is not null && !ReferenceEquals(node, ancestor);
+             node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is FrameworkElement) steps++;
+        }
+        return steps;
     }
 
     /// <summary>
