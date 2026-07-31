@@ -4,6 +4,21 @@
 uygulamanın güven sınırlarını (process, IPC, dosya sistemi, git, kullanıcı girdisi, CPU) tarif eder. Her iddia
 `dosya:satır` ile atıflıdır; doğrulanamayan/eksik olan şeyler ayrı bölümde dürüstçe listelenir.
 
+> ### ⚠ Satır numaralarının provenance'ı — KARIŞIK
+>
+> Belgenin **anlattığı davranış** güncel tutulur, ama `dosya:satır` koordinatları belgenin tamamı için
+> tazelenmiş **değildir**. Bugün iki farklı ağaca ait referanslar yan yana yaşıyor:
+>
+> | Kapsam | Hangi ağaca karşı doğrulandı |
+> |---|---|
+> | `SupervisorHost.cs` ve `Program.cs`'e yapılan **TÜM** atıflar; ayrıca App'in Supervisor'ı başlattığı nokta (`EngineHost.cs:71`, `:77`) | **`3243d4a`** (branch `a13-visual-debt-automation`) — A13/B4'te satır satır yeniden doğrulandı |
+> | Diğer tüm atıflar (`EngineHost.cs`'in kalanı, `NdjsonFraming.cs`, `IpcMessages.cs`, `RunCoordinator.cs`, `Core/*`, `App/*` …) | hâlâ **`804da6b`** — o günden beri kaymış olabilir |
+>
+> Yani ikinci satırdaki bir koordinat **bugün yanlış olabilir**; anlattığı gerçek doğru olsa bile satır
+> numarasına güvenmeden dosyada arayın (bilinen örnekler: §2'deki `EngineHost.cs:9`, `:127`, `:118`).
+> Belgenin tamamını tek bir ağaca çekmek ayrı bir doc-refresh kalemidir; **yarım doğrulanmış bir belgeyi
+> tam doğrulanmış gibi göstermemek** için bu ayrım burada açıkça yazılıdır.
+
 ---
 
 ## 0. Çekirdek ifade
@@ -53,7 +68,7 @@ flowchart TD
 
 | Ebeveyn | Child | Nasıl | Job üyeliği |
 |---|---|---|---|
-| App | Supervisor | `JobProcessLauncher.Launch(_outerJob, …)` — `EngineHost.cs:24-25` | outer job (açık `Assign`) |
+| App | Supervisor | `JobProcessLauncher.Launch(_outerJob, …)` — `EngineHost.cs:71`, `:77` | outer job (açık `Assign`) |
 | Supervisor | `MSBuild.exe` | `JobProcessLauncher.Launch(innerJob, …)` — `MsBuildInvoker.cs:68` | inner **ve** outer (nested) |
 | Supervisor | `git.exe`, `vswhere.exe` | düz `Process.Start` — `ProcessRunner.cs:42` | yalnız outer (ebeveynden miras) |
 | App | `explorer.exe`, `devenv.exe`, `vswhere.exe` | `Process.Start` — `OsActions.cs:47` | **hiçbir job'da değil** |
@@ -77,10 +92,10 @@ uçları çapraz sızar ve EOF hiç gelmezdi.
 - **App → her şey:** `_outerJob.Dispose()` (`EngineHost.cs:127`) son handle'ı kapatır → `KILL_ON_JOB_CLOSE`
   (`JobObject.cs:26`, `:177`) tüm ağacı sonlandırır.
 - **App → Supervisor (hedefli):** `Process.Kill(entireProcessTree: true)` (`EngineHost.cs:118`).
-- **Supervisor → MSBuild ağacı:** `innerJob.Terminate()` — hard Stop (`SupervisorHost.cs:187`,
+- **Supervisor → MSBuild ağacı:** `innerJob.Terminate()` — hard Stop (`SupervisorHost.cs:209`,
   `RunCoordinator.cs:304`); tek proje için `Kill(entireProcessTree: true)` (`MsBuildInvoker.cs:138`).
 - **Supervisor App'i öldüremez.** App'in ölümü Supervisor'a stdin EOF olarak görünür → düzenli çıkış
-  (`SupervisorHost.cs:53`).
+  (`SupervisorHost.cs:75`).
 
 ### Kaskat ölüm garantisi — nerede TUTAR
 
@@ -118,11 +133,11 @@ uçları çapraz sızar ve EOF hiç gelmezdi.
 
 ### Yön ve taşıyıcı
 
-App, Supervisor'ı redirected stdio ile başlatır (`EngineHost.cs:25`); komutlar App→stdin, event'ler
+App, Supervisor'ı redirected stdio ile başlatır (`EngineHost.cs:77`); komutlar App→stdin, event'ler
 Supervisor→stdout. **Supervisor'ın stdout'u yalnız NDJSON taşır**: `Program.cs:60` daha ilk satırda
 `Console.SetOut(Console.Error)` yaparak kaçak bir `Console.WriteLine`'ı stderr'e yönlendirir; Core'un tüm
 uyarı/tanı kanalları da `Console.Error`'dır (`Program.cs:97`, `:118`, `:356`). Tek bir `NdjsonWriter` örneği
-paylaşılır (`Program.cs:84`, `SupervisorHost.cs:93` notu) ve satır bütünlüğü writer'ın kendi semaforuyla
+paylaşılır (`Program.cs:84`, `SupervisorHost.cs:114` notu) ve satır bütünlüğü writer'ın kendi semaforuyla
 korunur (`NdjsonFraming.cs:11`, `:22-29`).
 
 ### App gelen mesaja ne kadar güveniyor
@@ -198,7 +213,7 @@ planlama sırasında yüzeye çıkar — `planFailed` (`RunCoordinator.cs:694-69
 |---|---|---|
 | Run logları | `%LOCALAPPDATA%\BuildOrchestrator\logs\run-<ts>\` — `RunLogPaths.cs:8-12`, `RunLogWriter.cs:22-24` | proje başına dosya adı = SHA256'nın ilk 16 hex'i (`ProjectLogNaming.cs:9-13`) |
 | `build-state.json` | `<cacheRoot>\build-state.json` — `BuildStateStore.cs:20` | atomik temp+rename (`:79-83`), bozuk dosya asla fırlatmaz (`:50-53`) |
-| `evaluation-cache.json` | `Program.cs:114` | atomik temp+rename, IO hatası yutulur (`EvaluationCache.cs:89-105`) |
+| `evaluation-cache.json` | `Program.cs:121` | atomik temp+rename, IO hatası yutulur (`EvaluationCache.cs:89-105`) |
 | `ui-state.json` | `%LOCALAPPDATA%\BuildOrchestrator\ui-state.json` — `UiStateStore.cs:100-102` | bozuk dosya varsayılana düşer (`:111-114`) |
 | Worktree havuzu | `%LOCALAPPDATA%\BuildOrchestrator\worktrees\` — `WorktreeManager.cs:123-124` | 20 GiB cap + LRU budama (`Program.cs:54`, `WorktreeManager.cs:331-358`) |
 | Branch sidecar | `<worktree>\.bo-worktree-branch.txt` — `WorktreeManager.cs:109`, `:195` | best-effort; yazılamazsa build etkilenmez |
@@ -227,7 +242,7 @@ bir argüman üretilmez (grep: yalnız `BaseIntermediateOutputPath` geçer). Son
 solution'ının kendi ortak `OutDir`'ine VS ile birebir aynı şekilde düşer. Simetrik olarak "değişti mi" kararı
 **hiçbir zaman** DLL/bin timestamp'ı okumaz — `Core` içinde çıktı ikililerine ait tek bir `LastWriteTime`
 okuması yoktur (yalnız `EvaluationCache.cs:44` csproj mtime'ı ve `WorktreeManager.cs:460-467` havuz LRU'su);
-karar kaynağı git'in kendi committed blob SHA'ları + dirty listesidir (`Program.cs:298-310` özeti).
+karar kaynağı git'in kendi committed blob SHA'ları + dirty listesidir (`Program.cs:306-318` özeti).
 
 ---
 
@@ -256,8 +271,8 @@ Kaynak ağacında `git.exe`'ye giden **tüm** argüman dizileri (tam liste):
 ### Kullanıcının çalışma ağacı neden güvende
 
 1. Aktif branch hiçbir kod yolunda checkout edilmez; farklı bir branch'i derlemenin **tek** mekanizması
-   ayrı bir worktree'dir (`Program.cs:133-160`). Worktree hazırlanamazsa ve seçili branch aktif branch'ten
-   farklıysa run **hiç başlamaz** (`WorktreePreparationException` → `planFailed`, `Program.cs:155-159`) —
+   ayrı bir worktree'dir (`Program.cs:140-167`). Worktree hazırlanamazsa ve seçili branch aktif branch'ten
+   farklıysa run **hiç başlamaz** (`WorktreePreparationException` → `planFailed`, `Program.cs:162-166`) —
    sessizce yanlış (kirli) ağacı derlemek yerine durmak tercih edilir.
 2. Worktree'ler daima `--detach` ile açılır (`WorktreeManager.cs:187`): hiçbir branch ref'i bir worktree'ye
    bağlanmaz, dolayısıyla havuzdaki bir işlem kullanıcının branch'ini oynatamaz.
