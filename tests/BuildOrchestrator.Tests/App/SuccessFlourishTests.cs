@@ -104,10 +104,19 @@ public class SuccessFlourishTests
     /// <c>Stop</c>→<c>HoldEnd</c> olması. Son keyframe ZATEN <c>Colors.Transparent</c>'tır
     /// (<c>EventStreamView.xaml.cs:513-514</c>), dolayısıyla dolgu tutulsa da tutulmasa da GÖZLENEN renk aynıdır —
     /// ikisi gözlemsel olarak ayırt edilemez. <c>FillBehavior.Stop</c>'un ve tekrar yokluğunun kilidi bu yüzden
-    /// KAYNAK tarafındadır: <see cref="The_flourish_animation_declares_no_repeat_and_stops_filling"/>.</para></summary>
+    /// KAYNAK tarafındadır: <see cref="The_flourish_animation_declares_no_repeat_and_stops_filling"/>.</para>
+    ///
+    /// <para><b>[A13/T4 fix-1 · A3/C1/A5]</b> <c>GlowMs</c> (<see cref="EventStreamRow.GlowMs"/>, otorite
+    /// <c>BuildApp.jsx:19</c> <c>bo-glow-once 1.1s ... 1</c>) artık SAF <c>Assert.Equal</c> ile pinli — önceki
+    /// fix-öncesi sürüm bunu AYRI bir testte gerçek saatle (<c>InRange(900,1700)</c>) ölçüyordu; bu, (a) bu testin
+    /// neredeyse BİREBİR kopyasıydı (m5'in "mevcut teste tek satır" deseninin TERSİ), (b) saati parıltı
+    /// BAŞLAMADAN önce başlatıyordu (ölçülen = glow + pompa gecikmesi), (c) ±%47 pencere 1100→1620 gibi bir sapmayı
+    /// GEÇİRİYORDU. Tek satırlık saf pin ikisini de kapatır; ayrı test SİLİNDİ.</para></summary>
     [StaFact]
     public void The_flourish_ends_by_itself_and_leaves_the_row_background_transparent()
     {
+        Assert.Equal(1100.0, EventStreamRow.GlowMs); // BuildApp.jsx:19 `1.1s` — saf literal pin (A13/T4 fix-1)
+
         var vm = NewVm();
         var (view, window) = Realize(vm, animations: true);
 
@@ -131,32 +140,6 @@ public class SuccessFlourishTests
 
         Assert.Equal(Colors.Transparent, brush.Color);                      // taban renge dönüldü (yeşilde asılı kalmaz)
         Assert.Equal(1, done.GlowPlayCount);                                // ve yeniden başlatılmadı
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[A13/T4 · m4] Otorite <c>BuildApp.jsx:19</c>: <c>.bo-glow-once { animation: bo-glow-once 1.1s
-    /// var(--ease-out) 1; }</c> — <c>GlowMs</c> (<c>EventStreamView.xaml.cs:322</c>) hiçbir testte LİTERAL bir
-    /// süreye karşı pinlenmemişti (yukarıdaki testler yalnız "biter" ve "bir kez" der, "ne kadar sürede" demez).
-    /// Gerçek saatle ölçülür: tetikten (parıltı BAŞLAR) zemin şeffafa dönene (parıltı BİTER) kadarki süre.</summary>
-    [StaFact]
-    public void The_flourish_glow_runs_for_about_1100_milliseconds()
-    {
-        var vm = NewVm();
-        var (view, window) = Realize(vm, animations: true);
-
-        DriveCleanRun(vm);
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        DispatcherPump.PumpUntil(() => view.Rows.Sum(r => r.GlowPlayCount) >= 1, PumpTimeout);
-        var brush = (SolidColorBrush)view.Rows[^1].Background;
-        Assert.True(brush.HasAnimatedProperties, "ön-koşul: parıltı saati hiç kurulmadı");
-
-        DispatcherPump.PumpUntil(() => brush.Color == Colors.Transparent, TimeSpan.FromSeconds(5));
-        clock.Stop();
-
-        Assert.Equal(Colors.Transparent, brush.Color);
-        // BuildApp.jsx:19 `1.1s` — DriveCleanRun/pump gecikmesini barındıran gevşek bir pencere; kaba bir sapmayı
-        // (ör. 300ms/3s) yakalar.
-        Assert.InRange(clock.ElapsedMilliseconds, 900, 1700);
         GC.KeepAlive(window);
     }
 

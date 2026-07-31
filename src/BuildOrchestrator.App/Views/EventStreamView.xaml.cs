@@ -319,7 +319,8 @@ public partial class EventStreamView : UserControl
 public sealed class EventStreamRow : Border
 {
     // design-v1 kaynak sabitleri (inline magic number YASAK — StatusGlyph.PulseMs deseni).
-    private const double GlowMs = 1100;      // BuildApp.jsx:19 `bo-glow-once 1.1s`
+    // [A13/T4 fix-1 · A3] internal — SuccessFlourishTests artık değeri saf `Assert.Equal` ile pinliyor.
+    internal const double GlowMs = 1100;      // BuildApp.jsx:19 `bo-glow-once 1.1s`
     private const double GlyphColumn = 12;   // BuildApp.jsx:653 glyph 12px kolon
     private const double RowMinHeight = 24;  // BuildApp.jsx:645 minHeight 24
     private const double SlotGap = 8;         // BuildApp.jsx:645 gap 8
@@ -363,6 +364,9 @@ public sealed class EventStreamRow : Border
     internal int GlowPlayCount { get; private set; }
     internal Rectangle SelectionStripe => _stripe;
     internal StreamEventViewModel? ViewModel => _vm;
+    /// <summary>[A13/T4 fix-1 · B3] Satırın kendi (akan) metin yüzeyi — <c>Typography.NumeralAlignment</c>'ın
+    /// altıncı üretim yeri (<c>:399</c>) bu alandadır; <c>TabularFiguresTests</c>'in test yüzeyi.</summary>
+    internal TextBlock Text => _text;
     /// <summary>[A13/T3b · b8] Glyph kolonunun host'u (12px genişlik, BuildApp.jsx:653) — dış testlerin
     /// ölçüm iddiasını gerçek bir realize üzerinde doğrulayabilmesi için (kural 5) SelectionStripe deseniyle
     /// AYNI gerekçeyle dışa açılır.</summary>
