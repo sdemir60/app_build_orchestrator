@@ -72,15 +72,23 @@ public sealed partial class RunViewModel
     /// <c>StickyLayerList.SetGroups</c> koşmaz ve <b>o Sync'te kademeli beliriş (bo-reveal) OYNAMAZ</b> — kartlar
     /// yeniden belirmez.
     /// <list type="bullet">
-    ///   <item><b>Bu KASITLIDIR.</b> <c>SetGroups</c> <c>ItemsSource</c> ataması yapar; bu, <c>ItemsControl</c> için
-    ///   TAM reset'tir (container teardown + yeniden üretim). Değişmemiş bir liste için her Sync'te tam reset yemek
-    ///   A13.2'nin "koleksiyon reset'i YASAK" kuralının önlemeye çalıştığı şeyin ta kendisidir ve kullanıcıya
-    ///   sebepsiz bir "kartlar yeniden belirdi" flaşı olarak görünürdü.</item>
-    ///   <item><b>Otorite de aynı yöndedir:</b> prototipte <c>revealKey</c> yalnız topoloji/sync-değişiminde artar
-    ///   (<c>BuildApp.jsx:1378</c>).</item>
+    ///   <item><b>Bu KASITLIDIR — gerekçe "gereksiz churn"dür.</b> <c>SetGroups</c> <c>ItemsSource</c> ataması
+    ///   yapar; bu, <c>ItemsControl</c> için TAM reset'tir (container teardown + yeniden üretim). A13.2'nin
+    ///   yasakladığı şey reset'in KENDİSİ değil, <b>gereksiz/tekrarlayan</b> reset'tir — nitekim
+    ///   <c>StickyLayerList.SetGroups</c>'un XML doc'u ("Reset semantiği BİLEREK KORUNDU") aynı operasyonun
+    ///   MEŞRU olduğu durumu anlatır ve zararsızlığını iki şarta bağlar: (a) seçim satır VM'lerinde yaşar,
+    ///   (b) <b>gereksiz churn ÇAĞIRAN tarafta kapatılır</b>. <b>İşte bu guard, (b)'nin uygulanışıdır</b> —
+    ///   iki doc çelişmez, biri ötekinin şartını sağlar. Guard olmasaydı değişmemiş bir liste her Sync'te tam
+    ///   reset yer ve kullanıcıya sebepsiz bir "kartlar yeniden belirdi" flaşı olarak görünürdü.</item>
+    ///   <item><b>OTORİTE BURADA AYRIŞIYOR (ölçüldü, A13/B3 fix round 1).</b> Prototipte <c>doSync()</c>
+    ///   (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i <b>HER Sync'te KOŞULSUZ</b> artırır — topoloji
+    ///   değişti mi diye BAKMAZ; yani otoritede "no changes" bir Sync'te de kartlar yeniden belirir. Üretim
+    ///   bilerek AYRILIR: gerekçe yukarıdaki churn maddesidir. (<c>BuildApp.jsx:1378</c> Sync yolu DEĞİL,
+    ///   <c>pickFolder()</c>'dır — eski kayıt bu satıra dayanarak otoriteyi yanlışlıkla "destekleyici"
+    ///   gösteriyordu.) Ayrışma task-B3-report.md <c>## Concerns</c>'te de kayıtlıdır.</item>
     ///   <item><b>Bedeli (E5 ile bağı):</b> "bir sonraki reveal eksik kalanı yakalar" gerekçesi bu yüzden
     ///   GEÇERSİZDİR — bir sonraki reveal HİÇ gelmeyebilir. Reveal'in kapsamı bu nedenle kendi içinde eksiksiz
-    ///   olmak zorundadır (bkz. <c>StickyLayerList.PlayRevealStagger</c> E5 telafisi).</item>
+    ///   olmak zorundadır (bkz. <c>StickyLayerList.PlayRevealStagger</c>'ın layout zorlaması).</item>
     /// </list>
     /// Karakterizasyon testi: <c>ProjectListFilterTests.A_no_changes_sync_neither_resets_the_list_nor_replays_the_reveal</c>.</para></summary>
     private string? _lastTopologySignature;
