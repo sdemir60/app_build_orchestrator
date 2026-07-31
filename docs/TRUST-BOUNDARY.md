@@ -121,8 +121,8 @@ uçları çapraz sızar ve EOF hiç gelmezdi.
 App, Supervisor'ı redirected stdio ile başlatır (`EngineHost.cs:25`); komutlar App→stdin, event'ler
 Supervisor→stdout. **Supervisor'ın stdout'u yalnız NDJSON taşır**: `Program.cs:60` daha ilk satırda
 `Console.SetOut(Console.Error)` yaparak kaçak bir `Console.WriteLine`'ı stderr'e yönlendirir; Core'un tüm
-uyarı/tanı kanalları da `Console.Error`'dır (`Program.cs:91`, `:111`, `:348`). Tek bir `NdjsonWriter` örneği
-paylaşılır (`Program.cs:78`, `SupervisorHost.cs:93` notu) ve satır bütünlüğü writer'ın kendi semaforuyla
+uyarı/tanı kanalları da `Console.Error`'dır (`Program.cs:97`, `:118`, `:356`). Tek bir `NdjsonWriter` örneği
+paylaşılır (`Program.cs:84`, `SupervisorHost.cs:93` notu) ve satır bütünlüğü writer'ın kendi semaforuyla
 korunur (`NdjsonFraming.cs:11`, `:22-29`).
 
 ### App gelen mesaja ne kadar güveniyor
