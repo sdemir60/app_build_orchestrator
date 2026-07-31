@@ -18,8 +18,10 @@ public class CascadeKillTests
         try
         {
             using var iocp = outer.AttachCompletionPort();
+            // [A13/B4] Bu testin sentetik ağacını debugSpawnChildren doğuruyor; o kanca artık VARSAYILAN
+            // OLARAK KAPALI, bu yüzden Supervisor bayrakla başlatılır (bayrağın adı TestPaths'te tek yerde).
             var supervisor = JobProcessLauncher.Launch(outer,
-                WindowsCommandLine.Build(TestPaths.SupervisorExe), new LaunchOptions(RedirectStdio: true));
+                TestPaths.DebugHooksCommandLine(), new LaunchOptions(RedirectStdio: true));
             livePids.Add(supervisor.Pid);
             var writer = new NdjsonWriter(supervisor.StandardInput!);
             var reader = new NdjsonReader(supervisor.StandardOutput!);
@@ -59,8 +61,9 @@ public class CascadeKillTests
     public async Task Breakaway_from_inside_job_is_denied_err5() // D1 probe — no-breakaway garantisi
     {
         using var outer = JobObject.CreateKillOnClose();
+        // [A13/B4] breakaway probe'u da debugSpawnChildren üzerinden koşar — bkz. yukarıdaki test.
         var supervisor = JobProcessLauncher.Launch(outer,
-            WindowsCommandLine.Build(TestPaths.SupervisorExe), new LaunchOptions(RedirectStdio: true));
+            TestPaths.DebugHooksCommandLine(), new LaunchOptions(RedirectStdio: true));
         var writer = new NdjsonWriter(supervisor.StandardInput!);
         var reader = new NdjsonReader(supervisor.StandardOutput!);
         // [B1/F2 · fix-1] bkz. yukarıdaki test — aynı kök (Supervisor boot'unu bekleyen sabit 5 sn),

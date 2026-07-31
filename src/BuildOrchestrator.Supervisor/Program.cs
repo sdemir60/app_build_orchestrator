@@ -72,6 +72,12 @@ public static class Program
         // testler kendi temp kökünü verir, kullanıcının gerçek havuzu (N3/D12) ASLA hedef alınmaz.
         string worktreePoolRoot = GetArg(args, "--worktrees") ?? WorktreeManager.DefaultPoolRoot;
 
+        // [A13/B4] Test kancaları (bugün yalnız debugSpawnChildren) VARSAYILAN OLARAK KAPALI. Bayrak DEĞER
+        // ALMAZ, bu yüzden GetArg'ın (isim + değer) sözleşmesine girmez. App bu bayrağı HİÇ göndermez
+        // (EngineHost Supervisor'ı argümansız başlatır) — kapı yalnız Supervisor tarafındadır, çünkü
+        // Supervisor kendi başına da başlatılabilir ve App tarafındaki bir kapı orada koruma sağlamazdı.
+        bool debugHooks = args.Contains(SupervisorHost.DebugHooksArg);
+
         using var innerJob = JobObject.CreateKillOnClose(); // §3: inner Job — MSBuild child'ları burada yaşayacak
         // TEK NdjsonWriter: host ve koordinatör AYNI stdout'a yazar; satır bütünlüğü writer'ın kendi kilidiyle
         // korunur — ikinci bir writer örneği o kilidi baypas edip satırları iç içe geçirirdi.
@@ -92,7 +98,8 @@ public static class Program
             worktreeObjRootResolver: _ => prepared?.WorktreeObjRoot, // [A4] obj izolasyonu artık CANLI
             stateStore: stateStore); // [Task 19] projectSucceeded → BuildState persist
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator,
-            WorkspaceServices.Default(cacheRoot, worktreePoolRoot)); // [A5/T69] sync/branch/worktree komutları
+            WorkspaceServices.Default(cacheRoot, worktreePoolRoot), // [A5/T69] sync/branch/worktree komutları
+            debugHooks); // [A13/B4] kapalıysa debugSpawnChildren error(debugHooksDisabled) ile reddedilir
         return await host.RunAsync();
 
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan → (fresh modda)

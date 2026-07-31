@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.Git;
 
 namespace BuildOrchestrator.Tests.Supervisor;
@@ -25,20 +27,33 @@ public static class TestPaths
     /// <param name="worktreePoolDir">[A5/T69] Worktree havuz kökü — verilmezse üretim varsayılanı
     /// (<c>%LOCALAPPDATA%\BuildOrchestrator\worktrees</c>). Havuza dokunan testler KENDİ temp kökünü verir;
     /// kullanıcının gerçek havuzu ASLA hedef alınmaz (<c>--logs</c>'un cache/state için yaptığının aynısı).</param>
-    public static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null)
+    /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar. Varsayılan <c>false</c> =
+    /// ÜRETİM yolu: kanca kapalıdır ve komut <c>error(debugHooksDisabled)</c> ile reddedilir.</param>
+    public static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null, bool debugHooks = false)
     {
         var psi = new ProcessStartInfo(SupervisorExe)
         { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         if (logsDir is not null) { psi.ArgumentList.Add("--logs"); psi.ArgumentList.Add(logsDir); }
         if (worktreePoolDir is not null) { psi.ArgumentList.Add("--worktrees"); psi.ArgumentList.Add(worktreePoolDir); }
+        if (debugHooks) psi.ArgumentList.Add(SupervisorHost.DebugHooksArg);
         return psi;
     }
+
+    /// <summary>
+    /// [A13/B4] <see cref="Psi"/>'nin İKİNCİ başlatma şekli için karşılığı: <c>JobProcessLauncher</c> yolu
+    /// <see cref="ProcessStartInfo"/> değil ham bir komut satırı ister (<c>CascadeKillTests</c>,
+    /// <c>KillMidBuildTests</c>). Kancayı açan bayrak burada da AYNI tek sabitten
+    /// (<see cref="SupervisorHost.DebugHooksArg"/>) gelir — testlere kopyalanmaz.
+    /// </summary>
+    /// <param name="extraArgs">Bayraktan ÖNCE eklenecek argümanlar (ör. <c>--logs &lt;dir&gt;</c>).</param>
+    public static string DebugHooksCommandLine(params string[] extraArgs) =>
+        WindowsCommandLine.Build(SupervisorExe, [.. extraArgs, SupervisorHost.DebugHooksArg]);
 }
 
 public class SupervisorIpcTests
 {
-    private static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null)
-        => TestPaths.Psi(logsDir, worktreePoolDir);
+    private static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null, bool debugHooks = false)
+        => TestPaths.Psi(logsDir, worktreePoolDir, debugHooks);
 
     [Fact]
     public async Task Stdout_is_ndjson_only_even_after_garbage_command() // [D4 — It-0 kabul maddesi]
@@ -91,7 +106,9 @@ public class SupervisorIpcTests
     [Fact]
     public async Task StopRun_hard_terminates_inner_job_children_and_acks()
     {
-        using var p = Process.Start(Psi())!;
+        // [A13/B4] Öldürülecek child'lar debugSpawnChildren ile doğuruluyor; o kanca artık VARSAYILAN OLARAK
+        // KAPALI, bu yüzden bayrak AÇIKÇA geçilir (test zayıflatılmadı — yalnız kancayı istediği bildiriliyor).
+        using var p = Process.Start(Psi(debugHooks: true))!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
@@ -138,10 +155,11 @@ public class SupervisorIpcTests
     // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree
 
     /// <summary>İzole bir Supervisor: kendi logs/cache kökü + kendi worktree havuzu (kullanıcının gerçek dosyaları korunur).</summary>
-    private static ProcessStartInfo IsolatedPsi()
+    /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar; varsayılan KAPALI = üretim yolu.</param>
+    private static ProcessStartInfo IsolatedPsi(bool debugHooks = false)
     {
         string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
-        return Psi(Path.Combine(sandbox, "logs"), Path.Combine(sandbox, "worktrees"));
+        return Psi(Path.Combine(sandbox, "logs"), Path.Combine(sandbox, "worktrees"), debugHooks);
     }
 
     /// <summary>Tek projelik gerçek bir git repo (bir .csproj + onu içeren bir .sln).</summary>
