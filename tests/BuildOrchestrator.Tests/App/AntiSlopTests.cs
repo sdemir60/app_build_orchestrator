@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace BuildOrchestrator.Tests.App;
@@ -85,6 +86,53 @@ public sealed class AntiSlopTests
         foreach (string file in RepoPaths.AppSourceFiles("*.xaml").Concat(RepoPaths.AppSourceFiles("*.cs")))
             if (globe.IsMatch(File.ReadAllText(file)))
                 offenders.Add(Path.GetRelativePath(RepoPaths.AppSrcRoot, file));
+        Assert.Empty(offenders);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · n1/n2/n3] Bilinçli KARARLAR (§8)
+
+    // README §8: "Toast/popup yok · 'View failures' butonu yok · perf/Build tooltip'i yok · katman eşleşme
+    // sayacı yok." — n1/n2/n3'ün ORTAK otorite kaynağı. (perf/Build tooltip'i n4'tür, ActionBarTests'tedir.)
+    private static readonly Regex ToastVocabulary = new("Toast|Banner|Snackbar", RegexOptions.Compiled);
+    private const string ViewFailuresButton = "View failures";
+    private static readonly Regex LayerMatchCounter = new("MatchCount|Matches\\b|match.count", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>[A13/T4 · n1] design-v1 §8: <i>"Toast/popup yok"</i> — uygulama-içi bir toast/banner/snackbar
+    /// bileşeni (sınıf/kontrol/XAML) hiç YOK. <c>RibbonText.cs:48</c>'deki "Banner/toast YOK" yorumu bu kuralın
+    /// KENDİSİNİ anlatır (kod değil) — <c>skipCommentLines</c> onu eler.</summary>
+    [Fact]
+    public void No_toast_or_banner_component_exists()
+    {
+        var offenders = SourceGuard.ScanApp("*.cs", ToastVocabulary, skipCommentLines: true)
+            .Concat(SourceGuard.ScanApp("*.xaml", ToastVocabulary, skipCommentLines: true)).ToList();
+        Assert.Empty(offenders);
+    }
+
+    /// <summary>[A13/T4 · n2] design-v1 §2.9 (<c>"Eşleşme sayacı gösterilmez (istenmedi)."</c>) + §8 — Settings
+    /// dialog'unun LAYERS bölümü hiçbir katman satırında "bu regex kaç projeyle eşleşiyor" sayacı GÖSTERMEZ.
+    /// Kapsam: <c>SettingsDialog.xaml</c> (görünüm) + <c>LayerEditorViewModel.cs</c> (<c>LayerRowViewModel</c>'i de
+    /// barındırır — VM'de bir <c>MatchCount</c> alanı eklense görünüme hiç bağlanmasa bile bu, özelliğin sessizce
+    /// yarım bırakıldığının işaretidir; bu yüzden VM dosyası da kapsamda).</summary>
+    [Fact]
+    public void Settings_shows_no_layer_match_counter()
+    {
+        // Non-vacuous: dar dosya adı deseni SESSİZCE sıfır dosya bulursa guard hep yeşil kalırdı.
+        Assert.NotEmpty(SourceGuard.ScannedAppFiles("SettingsDialog.xaml"));
+        Assert.NotEmpty(SourceGuard.ScannedAppFiles("LayerEditorViewModel.cs"));
+
+        var offenders = SourceGuard.ScanApp("SettingsDialog.xaml", LayerMatchCounter)
+            .Concat(SourceGuard.ScanApp("LayerEditorViewModel.cs", LayerMatchCounter)).ToList();
+        Assert.Empty(offenders);
+    }
+
+    /// <summary>[A13/T4 · n3] design-v1 §8: <i>"'View failures' butonu yok."</i> — bu TAM metinli bir buton
+    /// hiçbir yerde tanımlı DEĞİLDİR (ör. event stream'in "Completed — 5 failed …" satırından hatalara atlayan
+    /// bir kısayol istenmemiştir).</summary>
+    [Fact]
+    public void No_view_failures_button_exists()
+    {
+        var offenders = SourceGuard.ScanApp("*.cs", new Regex(Regex.Escape(ViewFailuresButton)))
+            .Concat(SourceGuard.ScanApp("*.xaml", new Regex(Regex.Escape(ViewFailuresButton)))).ToList();
         Assert.Empty(offenders);
     }
 
