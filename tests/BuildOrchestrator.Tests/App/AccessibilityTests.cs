@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -103,6 +104,37 @@ public class AccessibilityTests
         // Komşu düğüm etkilenmez (ad düğüm başına, tek bir ortak metin DEĞİL).
         Assert.Equal(AccessibilityNames.GraphNode("OSYS.Domain", "Discovered"),
             AutomationProperties.GetName(window.Shell.GraphHost.NodeVisuals["OSYS.Domain"].Body));
+    }
+
+    /// <summary>
+    /// [A13/T5 fix-1 · bulgu 1] Graf düğümünün UIA <b>rolü ile YETENEĞİ örtüşmeli</b>: peer
+    /// <see cref="AutomationControlType.Button"/> diyorsa <see cref="IInvokeProvider"/> GERÇEKTEN olmalı ve
+    /// invoke, farenin gittiği ÜRETİM YOLUNUN AYNISINA düşmeli (aynı toggle semantiği: ikinci invoke seçimi
+    /// kaldırır — <c>GraphClickTests</c>'in fare için pinlediği davranış).
+    ///
+    /// <para><c>Invoke</c>, WPF'in <c>ButtonAutomationPeer</c> deseniyle dispatcher'a <c>Input</c> önceliğiyle
+    /// post edilir; bu yüzden pompalanır. <see cref="DispatcherPump.PumpUntil"/> timeout'ta HATA VERMEZ, sonuç
+    /// bu yüzden ayrıca assert edilir.</para>
+    /// </summary>
+    [StaFact]
+    public void Invoking_a_graph_node_from_ui_automation_selects_it_through_the_production_path()
+    {
+        using var temp = new TempDir();
+        var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", null));
+        var graph = window.Shell.GraphHost;
+        var peer = UIElementAutomationPeer.CreatePeerForElement(graph.NodeVisuals["OSYS.Base"].Body)!;
+
+        var invoke = peer.GetPattern(PatternInterface.Invoke) as IInvokeProvider;
+        Assert.True(invoke is not null, "Rol Button ama Invoke pattern'i YOK — vaat edilen yetenek gerçek değil.");
+        Assert.Null(graph.SelectedNode); // ön-koşul
+
+        invoke!.Invoke();
+        DispatcherPump.PumpUntil(() => graph.SelectedNode is not null, TimeSpan.FromSeconds(2));
+        Assert.Equal("OSYS.Base", graph.SelectedNode);
+
+        invoke.Invoke(); // aynı düğüm → fare ile AYNI toggle (seçim kalkar)
+        DispatcherPump.PumpUntil(() => graph.SelectedNode is null, TimeSpan.FromSeconds(2));
+        Assert.Null(graph.SelectedNode);
     }
 
     /// <summary>[A13/T5 · n2] Konsol başlığındaki ikon-yalnız copy butonu adlanır; ad ile tooltip AYNI sabitten
@@ -317,14 +349,16 @@ public class AccessibilityTests
     ///   <item><see cref="TextBox"/> — yazılır</item>
     ///   <item><see cref="Thumb"/> — sürüklenir (<c>DsSplitter</c> bir <c>GridSplitter</c>, o da Thumb'dır)</item>
     ///   <item><see cref="GraphNodeBody"/> — graf düğümünün tıklanabilir gövdesi</item>
+    ///   <item><see cref="ProjectRow"/> — proje kartı: <c>Focusable</c> + <c>IsTabStop</c> ve tıklanır; peer'ı
+    ///     <c>UserControlAutomationPeer</c>'dır (ÖLÇÜLDÜ — adı ekran okuyucuya gerçekten ulaşır)</item>
     /// </list>
     /// <b>Bilinçli olarak KAPSAM DIŞI:</b> peer'ı OLMAYAN tıklanabilir <c>Border</c>/<c>Panel</c> satırlar (branch
-    /// listesi, build menüsü, worktree hedef satırı, event stream satırı). Onlar UIA ağacında zaten kendi öğeleri
-    /// olarak görünmez — ad vermek TEK BAŞINA yetmez (graf düğümünde ölçülen durumun aynısı, bkz.
-    /// <see cref="GraphNodeBody"/>) ve düzeltmeleri T5 kapsamı dışıdır.
+    /// listesi, build menüsü, worktree hedef satırı, event stream satırı, VS chooser satırı). Onlar UIA ağacında
+    /// zaten kendi öğeleri olarak görünmez — ad vermek TEK BAŞINA yetmez (graf düğümünde ölçülen durumun aynısı,
+    /// bkz. <see cref="GraphNodeBody"/>) ve düzeltmeleri T5 kapsamı dışıdır.
     /// </summary>
     private static bool IsInteractiveSurface(DependencyObject node) =>
-        node is ButtonBase or TextBox or Thumb or GraphNodeBody;
+        node is ButtonBase or TextBox or Thumb or GraphNodeBody or ProjectRow;
 
     /// <summary>
     /// <b>MEŞRU İSTİSNALAR</b> — her biri TEK SATIR gerekçeyle; sessiz istisna YASAK. Liste bayatlamaz: kapsam
@@ -362,7 +396,7 @@ public class AccessibilityTests
     ///
     /// <para><b>Taranan üç kök (hepsi üretim yoluyla realize):</b>
     /// <list type="number">
-    ///   <item><b>Kabuk</b> (<see cref="MainWindowHost"/>): graf düğümleri, proje listesi, ayraçlar, konsol
+    ///   <item><b>Kabuk</b> (<see cref="MainWindowHost"/>): graf düğümleri, proje kartları, ayraçlar, konsol
     ///     başlığı, üç pill, title bar, Settings diyaloğu. <b>ActionBar alt-ağacı HARİÇ</b> — ActionBar adlarını
     ///     <c>Loaded</c>'da kurar, bu fixture ise pencereyi ASLA <c>Show</c> etmez (motor doğmasın diye); o yüzden
     ///     ActionBar aşağıda KENDİ kökünde, gerçekten realize edilerek taranır.</item>
@@ -376,6 +410,10 @@ public class AccessibilityTests
     {
         using var temp = new TempDir();
         var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", "Core"));
+        // [fix-1 · bulgu 2] Veri SONRASI bir layout turu: liste kaplarını (ProjectRow) ItemsControl ancak measure
+        // sırasında üretir — üretimde bunu bir sonraki render turu yapar. Bu satır olmadan kabukta HİÇ proje kartı
+        // realize olmaz ve kartlar taramadan sessizce düşerdi (ölçüldü: 0 → 1 kart).
+        ((FrameworkElement)window.Content).UpdateLayout();
         var shellObjects = DsResources.RealizedObjects((FrameworkElement)window.Content);
         var actionBarSubtree = DsResources.RealizedObjects(shellObjects.OfType<ActionBar>().Single());
 
@@ -432,6 +470,7 @@ public class AccessibilityTests
                      AccessibilityNames.LayerName,                            // n4
                      AccessibilityNames.LayerPattern,
                      AccessibilityNames.DeleteWorktreeNamed("main-1"),        // n5
+                     "OSYS.Base",                                             // proje kartı (BÖLÜM 2 — bozulmadı)
                  })
             Assert.Contains(expected, names);
 
