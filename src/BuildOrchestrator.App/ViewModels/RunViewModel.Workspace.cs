@@ -73,10 +73,11 @@ public sealed partial class RunViewModel
     /// yeniden belirmez.
     /// <list type="bullet">
     ///   <item><b>Bu KASITLIDIR — gerekçe "gereksiz churn"dür.</b> <c>SetGroups</c> <c>ItemsSource</c> ataması
-    ///   yapar; bu, <c>ItemsControl</c> için TAM reset'tir (container teardown + yeniden üretim). A13.2'nin
-    ///   yasakladığı şey reset'in KENDİSİ değil, <b>gereksiz/tekrarlayan</b> reset'tir — nitekim
-    ///   <c>StickyLayerList.SetGroups</c>'un XML doc'u ("Reset semantiği BİLEREK KORUNDU") aynı operasyonun
-    ///   MEŞRU olduğu durumu anlatır ve zararsızlığını iki şarta bağlar: (a) seçim satır VM'lerinde yaşar,
+    ///   yapar; bu, <c>ItemsControl</c> için TAM reset'tir (container teardown + yeniden üretim). <b>Otoritenin
+    ///   metni niteliksizdir</b> (plan v7, A13.2 Motion maddesi: "koleksiyon reset'i YASAK"); bu repo kuralı
+    ///   <b>DAR okur</b> — yasağın koruduğu şeyler zarar görmedikçe reset meşru sayılır. <b>Bu okuma repoya
+    ///   aittir, otoritenin metni DEĞİLDİR.</b> Gerekçesi <c>StickyLayerList.SetGroups</c>'un XML doc'unda
+    ///   ("Reset semantiği BİLEREK KORUNDU") yazılıdır ve zararsızlık iki şarta bağlanır: (a) seçim satır VM'lerinde yaşar,
     ///   (b) <b>gereksiz churn ÇAĞIRAN tarafta kapatılır</b>. <b>İşte bu guard, (b)'nin uygulanışıdır</b> —
     ///   iki doc çelişmez, biri ötekinin şartını sağlar. Guard olmasaydı değişmemiş bir liste her Sync'te tam
     ///   reset yer ve kullanıcıya sebepsiz bir "kartlar yeniden belirdi" flaşı olarak görünürdü.</item>

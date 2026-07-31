@@ -155,7 +155,7 @@ public class StickyRevealTriggerTests
         var rows = list.RevealRows;
         Assert.Equal(nodes.Count, rows.Count); // ön-koşul: liste GERÇEKTEN realize (vakum yasak)
         Assert.All(rows, r => Assert.True(PlayedReveal(r),
-            $"'{((ProjectRowViewModel)r.DataContext).Name}' satırı reveal OYNAMADI — CollectRows onu sessizce düşürdü."));
+            $"'{((ProjectRowViewModel)r.DataContext).Name}' satırı reveal OYNAMADI — reveal kapsamı eksik kaldı."));
         GC.KeepAlive(window);
     }
 }

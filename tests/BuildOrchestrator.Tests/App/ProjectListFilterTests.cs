@@ -265,9 +265,9 @@ public class ProjectListFilterTests
     /// [A13/B3 · E4 — KARAKTERİZASYON, davranış DEĞİŞTİRİLMEDİ] <b>"No changes" bir Sync listeyi ne resetler ne de
     /// reveal'i yeniden oynatır.</b> Karar ve gerekçesi <c>RunViewModel._lastTopologySignature</c>'ın XML doc'unda
     /// kayıtlıdır (özet: <c>SetGroups</c> = <c>ItemsSource</c> tam reset'i; değişmemiş bir liste için her Sync'te
-    /// container teardown + "kartlar yeniden belirdi" flaşı A13.2'nin yasakladığı <b>gereksiz churn</b>'ün ta
-    /// kendisi olurdu — bu guard, <c>StickyLayerList.SetGroups</c> doc'undaki "churn ÇAĞIRAN tarafta kapatılır"
-    /// şartının uygulanışıdır).
+    /// container teardown + "kartlar yeniden belirdi" flaşı <b>gereksiz churn</b>'ün ta kendisi olurdu — bu guard,
+    /// <c>StickyLayerList.SetGroups</c> doc'undaki "churn ÇAĞIRAN tarafta kapatılır" şartının uygulanışıdır.
+    /// A13.2'nin metni reset'i NİTELİKSİZ yasaklar; "gereksiz olanı yasaktır" bu repo'nun DAR okumasıdır).
     ///
     /// <para><b>Otorite AYRIŞIYOR (A13/B3 fix round 1, ölçüldü):</b> prototipte <c>doSync()</c>
     /// (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i HER Sync'te KOŞULSUZ artırır. Üretim bilerek ayrılır;

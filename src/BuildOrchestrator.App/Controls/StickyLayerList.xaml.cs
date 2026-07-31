@@ -107,8 +107,12 @@ public partial class StickyLayerList : UserControl
     ///
     /// <para><b>Neden ayrım ZORUNLU (A12 sınıfı, ÖLÇÜLDÜ):</b> liste 2.5'te filtreye bağlandı ve
     /// <c>_revealPending</c> koşulsuz kurulduğu sürece <b>her tuş vuruşu stagger'ı baştan oynatıyordu</b> —
-    /// üç harflik bir sorgu <c>RevealGeneration</c>'ı 3'ten 6'ya çıkarıyordu. Prototip otoritesi de aynı
-    /// yöndedir: <c>revealKey</c> yalnız sync/topolojide artar (<c>BuildApp.jsx:1378</c>), filtrede ARTMAZ.</para>
+    /// üç harflik bir sorgu <c>RevealGeneration</c>'ı 3'ten 6'ya çıkarıyordu. Prototip otoritesi bu ayrımı
+    /// destekler — ama <b>tam olarak şu ölçüldü (A13/B3 fix round 1):</b> <c>revealKey</c> yalnız iki yerde
+    /// artar, <c>doSync()</c> (<c>BuildApp.jsx:1186-1193</c>, artış <c>:1190</c>) ve <c>pickFolder()</c>
+    /// (<c>BuildApp.jsx:1378</c>); <b>filtre yolu ona HİÇ dokunmaz</b>. Dikkat — otorite "yalnız topoloji
+    /// değişince artar" DEMEZ: <c>doSync()</c> topolojiye BAKMADAN her Sync'te artırır. Üretim orada bilerek
+    /// ayrılır; gerekçesi <c>RunViewModel._lastTopologySignature</c>'ın XML doc'undadır.</para>
     ///
     /// <para><b>Reset semantiği BİLEREK KORUNDU</b> (filtre tazelemesi de <c>ItemsSource</c> ataması yapar,
     /// yani tam reset). A13.2'nin "koleksiyon reset'i YASAK" kuralı burada ihlal edilmez, çünkü kuralın
