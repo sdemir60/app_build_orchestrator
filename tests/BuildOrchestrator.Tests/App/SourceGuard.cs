@@ -118,11 +118,14 @@ internal static class SourceGuard
         => ScanLiterals(RepoPaths.SrcSourceFiles(searchPattern), RepoPaths.SrcRoot, rule, allowedFiles, ignoredCallers);
 
     /// <summary>TÜM repo ağacının literallerini tarar — <c>src/</c> DIŞINDA yaşayan kullanıcıya görünür
-    /// metinler için (ör. <c>scripts/verify-publish.ps1</c> çıktı satırları).</summary>
+    /// metinler için (ör. <c>scripts/verify-publish.ps1</c> çıktı satırları).
+    /// <para><paramref name="excludedRootFolders"/> repo köküne göre İLK yol parçasıyla eşleşir (ör.
+    /// <c>tests</c>) — çağıranın hangi ağacı kapsam dışı bıraktığını AÇIKÇA yazmasını sağlar.</para></summary>
     public static IReadOnlyList<string> ScanRepoLiterals(
         string searchPattern, Regex rule,
-        IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null)
-        => ScanLiterals(RepoPaths.RepoSourceFiles(searchPattern), RepoPaths.RepoRoot, rule, allowedFiles, ignoredCallers);
+        IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null,
+        IReadOnlyCollection<string>? excludedRootFolders = null)
+        => ScanLiterals(RepoFiles(searchPattern, excludedRootFolders), RepoPaths.RepoRoot, rule, allowedFiles, ignoredCallers);
 
     /// <summary>Taranan literallerin SAYISI — "tarama sessizce hiçbir şey görmedi" vakumunu kapatan
     /// meta-assert'lerin girdisi (dosya sayısı yetmez: dosyalar görülüp literal çıkarılamamış olabilir).</summary>
@@ -130,9 +133,22 @@ internal static class SourceGuard
         RepoPaths.SrcSourceFiles(searchPattern)
                  .Sum(f => SourceLiterals.From(File.ReadAllText(f), Path.GetExtension(f)).Count);
 
-    public static int CountRepoLiterals(string searchPattern) =>
+    public static int CountRepoLiterals(string searchPattern, IReadOnlyCollection<string>? excludedRootFolders = null) =>
+        RepoFiles(searchPattern, excludedRootFolders)
+            .Sum(f => SourceLiterals.From(File.ReadAllText(f), Path.GetExtension(f)).Count);
+
+    /// <summary>Repo ağacındaki dosyalar, <paramref name="excludedRootFolders"/> altındakiler HARİÇ.
+    /// Tarama ile vakum-assert'i AYNI kümeyi görsün diye tek kaynak.</summary>
+    private static IEnumerable<string> RepoFiles(string searchPattern, IReadOnlyCollection<string>? excludedRootFolders) =>
         RepoPaths.RepoSourceFiles(searchPattern)
-                 .Sum(f => SourceLiterals.From(File.ReadAllText(f), Path.GetExtension(f)).Count);
+                 .Where(f => excludedRootFolders is null || !IsUnderRoot(f, excludedRootFolders));
+
+    private static bool IsUnderRoot(string file, IReadOnlyCollection<string> roots)
+    {
+        string first = Path.GetRelativePath(RepoPaths.RepoRoot, file)
+                           .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+        return roots.Contains(first, StringComparer.OrdinalIgnoreCase);
+    }
 
     private static IReadOnlyList<string> ScanLiterals(
         IEnumerable<string> files, string root, Regex rule,
@@ -180,9 +196,10 @@ internal static class SourceGuard
         RepoPaths.SrcSourceFiles(searchPattern)
                  .Select(f => Path.GetRelativePath(RepoPaths.SrcRoot, f)).ToList();
 
-    public static IReadOnlyList<string> ScannedRepoFiles(string searchPattern) =>
-        RepoPaths.RepoSourceFiles(searchPattern)
-                 .Select(f => Path.GetRelativePath(RepoPaths.RepoRoot, f)).ToList();
+    public static IReadOnlyList<string> ScannedRepoFiles(
+        string searchPattern, IReadOnlyCollection<string>? excludedRootFolders = null) =>
+        RepoFiles(searchPattern, excludedRootFolders)
+            .Select(f => Path.GetRelativePath(RepoPaths.RepoRoot, f)).ToList();
 
     public static IReadOnlyList<string> ScannedTestFiles(string searchPattern) =>
         RepoPaths.TestSourceFiles(searchPattern)

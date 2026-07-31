@@ -118,13 +118,34 @@ public class NoTurkishUserTextTests
         Assert.True(offenders.Count == 0, Report("Türkçe KELİME", offenders));
     }
 
+    // ---------------------------------------------------------------- src/ DIŞI taranan yüzeyler
+    /// <summary>
+    /// [fix-1 · V1] <c>src/</c> dışındaki kullanıcıya görünür yüzeyler ve her birinin <b>asgari</b> dosya/
+    /// literal sayısı. Eşik yoksa bir yüzey sessizce boşalabilir ve o eksen sonsuza dek yeşil kalır; bu tablo
+    /// taranan kümenin boş OLMADIĞINI ayrıca assert edilebilir kılar (brief kural 4).
+    /// Eşikler bugünkü gerçek ölçüme yakındır (bkz. <see cref="The_scan_really_reads_the_scripts_and_the_msbuild_files"/>).
+    /// </summary>
+    private static readonly (string Pattern, int MinFiles, int MinLiterals)[] RepoScanSurfaces =
+    [
+        ("*.ps1",    2, 180),   // ölçüm: 2 dosya / 208 literal
+        ("*.csproj", 4,  70),   // ölçüm: 4 dosya /  84 metin (tests/ hariç)
+        ("*.props",  1,   6),   // ölçüm: 1 dosya /   8 metin (kökteki Directory.Build.props)
+    ];
+
+    /// <summary>[fix-1 · S1] Repo taramasından çıkarılan ağaç. <c>tests/</c> GELİŞTİRİCİYE bakar — assert
+    /// mesajları ve fixture'ları projenin konvansiyonu gereği Türkçedir (CLAUDE.md). Guard oraya bakarsa er
+    /// geç meşru bir Türkçe dev-script metninde kırmızı verir ve birileri toptan bir istisna ekler — It-5
+    /// süpürmesini öldüren tam olarak bu kalıptır. Belge ile kod bu kararda AYNI hizada.</summary>
+    private static readonly string[] ExcludedRepoRoots = ["tests"];
+
     [Fact] // src/ DIŞI kullanıcıya görünen yüzeyler: script çıktıları + MSBuild build-error metinleri
     public void No_Turkish_reaches_the_user_from_scripts_and_msbuild_messages()
     {
         var offenders = new List<string>();
-        foreach (string pattern in new[] { "*.ps1", "*.csproj", "*.props", "*.targets" })
+        foreach (var (pattern, _, _) in RepoScanSurfaces)
             foreach (var rule in new[] { TurkishCharacters, TurkishWords })
-                offenders.AddRange(SourceGuard.ScanRepoLiterals(pattern, rule, ignoredCallers: IgnoredCallers));
+                offenders.AddRange(SourceGuard.ScanRepoLiterals(
+                    pattern, rule, ignoredCallers: IgnoredCallers, excludedRootFolders: ExcludedRepoRoots));
 
         Assert.True(offenders.Count == 0, Report("Türkçe (script/MSBuild)", offenders));
     }
@@ -141,8 +162,11 @@ public class NoTurkishUserTextTests
     {
         var csFiles = SourceGuard.ScannedSrcFiles("*.cs");
         var xamlFiles = SourceGuard.ScannedSrcFiles("*.xaml");
-        Assert.True(csFiles.Count > 100, $"yalnız {csFiles.Count} .cs dosyası tarandı — ağaç kurulmamış olabilir.");
-        Assert.True(xamlFiles.Count > 5, $"yalnız {xamlFiles.Count} .xaml dosyası tarandı.");
+        // [fix-1 · V2] Eşikler bugünkü GERÇEK ölçüme yakındır (176 .cs · 21 .xaml · 1056 · 2555); ~%85'e
+        // konumlandırıldı: sessiz bir çöküşü (dosya bulunamadı / tokenizer boş döndü) yakalar ama normal
+        // dosya ekleme-çıkarmada kırılmaz.
+        Assert.True(csFiles.Count >= 150, $"yalnız {csFiles.Count} .cs dosyası tarandı — ağaç kurulmamış olabilir.");
+        Assert.True(xamlFiles.Count >= 18, $"yalnız {xamlFiles.Count} .xaml dosyası tarandı.");
 
         // Her üretim projesi GERÇEKTEN kapsamda mı (guard yalnız App'e bakıyor olmasın).
         Assert.Contains(Path.Combine("BuildOrchestrator.Core", "Git", "GitService.cs"), csFiles);
@@ -152,21 +176,34 @@ public class NoTurkishUserTextTests
 
         int csLiterals = SourceGuard.CountSrcLiterals("*.cs");
         int xamlLiterals = SourceGuard.CountSrcLiterals("*.xaml");
-        Assert.True(csLiterals > 1000, $"yalnız {csLiterals} C# literali çıkarıldı — tokenizer sessizce boş dönüyor olabilir.");
-        Assert.True(xamlLiterals > 200, $"yalnız {xamlLiterals} XAML metni çıkarıldı.");
+        Assert.True(csLiterals >= 900, $"yalnız {csLiterals} C# literali çıkarıldı — tokenizer sessizce boş dönüyor olabilir.");
+        Assert.True(xamlLiterals >= 2200, $"yalnız {xamlLiterals} XAML metni çıkarıldı.");
     }
 
-    [Fact]
+    [Fact] // [fix-1 · V1] her yüzey için AYRI AYRI: dosya var mı VE literal çıktı mı
     public void The_scan_really_reads_the_scripts_and_the_msbuild_files()
     {
-        Assert.Contains(Path.Combine("scripts", "verify-publish.ps1"), SourceGuard.ScannedRepoFiles("*.ps1"));
+        Assert.Contains(Path.Combine("scripts", "verify-publish.ps1"),
+                        SourceGuard.ScannedRepoFiles("*.ps1", ExcludedRepoRoots));
         Assert.Contains(Path.Combine("src", "BuildOrchestrator.App", "BuildOrchestrator.App.csproj"),
-                        SourceGuard.ScannedRepoFiles("*.csproj"));
+                        SourceGuard.ScannedRepoFiles("*.csproj", ExcludedRepoRoots));
 
-        int ps1Literals = SourceGuard.CountRepoLiterals("*.ps1");
-        int csprojLiterals = SourceGuard.CountRepoLiterals("*.csproj");
-        Assert.True(ps1Literals > 100, $"yalnız {ps1Literals} PowerShell literali çıkarıldı.");
-        Assert.True(csprojLiterals > 20, $"yalnız {csprojLiterals} csproj metni çıkarıldı.");
+        foreach (var (pattern, minFiles, minLiterals) in RepoScanSurfaces)
+        {
+            int files = SourceGuard.ScannedRepoFiles(pattern, ExcludedRepoRoots).Count;
+            int literals = SourceGuard.CountRepoLiterals(pattern, ExcludedRepoRoots);
+            Assert.True(files >= minFiles, $"{pattern}: yalnız {files} dosya tarandı (asgari {minFiles}).");
+            Assert.True(literals >= minLiterals, $"{pattern}: yalnız {literals} metin çıkarıldı (asgari {minLiterals}).");
+        }
+    }
+
+    [Fact] // [fix-1 · V1] .targets yüzeyi SESSİZCE vakum olmasın — bugün 0 dosya, bu AÇIKÇA pinlenir
+    public void The_targets_surface_is_pinned_as_empty_rather_than_silently_vacuous()
+    {
+        var targets = SourceGuard.ScannedRepoFiles("*.targets", ExcludedRepoRoots);
+        Assert.True(targets.Count == 0,
+            $"Artık {targets.Count} adet .targets dosyası var ({string.Join(", ", targets)}) — bu yüzey "
+            + "taranmıyor. RepoScanSurfaces'e asgari sayılarıyla EKLE, yoksa MSBuild mesajları guard'sız kalır.");
     }
 
     [Fact] // İstisnalar ÖLÜ kalmasın: muaf tutulan dosya hâlâ var ve hâlâ muafiyeti hak ediyor mu?
@@ -179,10 +216,13 @@ public class NoTurkishUserTextTests
 
             // Muafiyet gerçekten GEREKLİ mi — dosya muaf tutulmasa guard kırmızı düşer mi? Düşmüyorsa
             // istisna gereksizdir ve kaldırılmalıdır (ölü istisna, guard'ın deliğidir).
-            var withoutException = SourceGuard.ScanLiteralText(
-                file, File.ReadAllText(full), Path.GetExtension(full), TurkishWords, IgnoredCallers);
-            Assert.True(withoutException.Count > 0,
-                $"istisna ARTIK GEREKSİZ, kaldır: {file} ({reason})");
+            // [fix-1 · V3] HER İKİ eksen de sorulur: yalnız kelime eksenine bakan bir kontrol, ileride
+            // eklenecek KARAKTER-eksenli bir istisnayı haksız yere "gereksiz" damgalayıp attırırdı.
+            string extension = Path.GetExtension(full);
+            string content = File.ReadAllText(full);
+            int hits = SourceGuard.ScanLiteralText(file, content, extension, TurkishWords, IgnoredCallers).Count
+                     + SourceGuard.ScanLiteralText(file, content, extension, TurkishCharacters, IgnoredCallers).Count;
+            Assert.True(hits > 0, $"istisna ARTIK GEREKSİZ, kaldır: {file} ({reason})");
         }
     }
 
