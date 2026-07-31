@@ -64,8 +64,7 @@ public partial class StickyLayerList : UserControl
         // beklerken satırlar KADEMELİ belirsin (bo-reveal). Bkz. OnGeneratorStatusChanged (deferred).
         Flow.ItemContainerGenerator.StatusChanged += OnGeneratorStatusChanged;
         // Reveal ortasında unload olursa hero'yu bırak (aksi halde bir sonraki hero sonsuza dek bloke olurdu).
-        // [A13/B3 · E5] Bekleyen realize telafisi de sökülür — ağaçtan çıkmış bir listede oynayacak reveal yoktur.
-        Unloaded += (_, _) => { _reveal.Release(); DisarmRevealCatchUp(); };
+        Unloaded += (_, _) => _reveal.Release();
     }
 
     /// <summary>[E4/T48] Motion sinyalinin TAZE okunduğu kapı (GraphView deseni, D8) — testler enjekte eder;
@@ -161,9 +160,6 @@ public partial class StickyLayerList : UserControl
         // reveal'in kendisi generation-guard'lı (<see cref="RevealStagger"/>) olduğundan zararsızdır:
         // en fazla taze listeyi bir kez kademeli gösterir, yanlış satırlara dokunamaz.
         _revealPending = reveal;
-        // [A13/B3 · E5] Bekleyen bir "eksik realize" telafisi varsa BU tazeleme onu geçersiz kılar: kanca eski
-        // entry akışını yakalamak için kurulmuştu; yeni akışın reveal'ini (varsa) normal tetik zaten kuracak.
-        DisarmRevealCatchUp();
         Flow.ItemsSource = entries;
         UpdateOverlay(Scroll.VerticalOffset);
     }
@@ -275,31 +271,29 @@ public partial class StickyLayerList : UserControl
     /// SetGroups gelirse #1'in timer'ı ateşlense bile #2'nin taze hero'suna DOKUNMAZ.</para>
     ///
     /// <para><b>[A13.2]</b> ItemsSource reset/Clear YOK (I-2 fix korunur) — yalnız satır Opacity/Y primitive'i
-    /// animate edilir (virtualization zaten KAPALI, ScrollUnit=Pixel). Telafi de bu kurala tabidir: layout'u
-    /// ZORLAMAK koleksiyona DOKUNMAZ (container teardown yok), yalnız var olan container'ları measure ettirir.</para>
+    /// animate edilir (virtualization zaten KAPALI, ScrollUnit=Pixel). Aşağıdaki layout zorlaması da bu kurala
+    /// tabidir: <c>UpdateLayout</c> koleksiyona DOKUNMAZ (container teardown yok), yalnız var olan container'ları
+    /// measure ettirir.</para>
     ///
-    /// <para><b>[A13/B3 · E5 — KAPSAM GARANTİSİ]</b> Reveal, entry akışındaki HER satıra ulaşır ya da HİÇ
-    /// tüketilmez. Eskiden <see cref="CollectRows"/>'un kısmi sonucu sessizce kabul ediliyordu; kapsam yalnız
-    /// örtük bir dispatcher-önceliği varsayımıyla (Loaded &lt; Render) ayakta duruyordu ve o varsayım hiçbir yerde
-    /// pinli değildi. <see cref="StickyRevealTriggerTests.Every_row_of_a_freshly_synced_list_plays_the_reveal"/>
-    /// artık kapsamı doğrudan pinler.</para>
+    /// <para><b>[A13/B3 · E5]</b> Bu metot, <see cref="CollectRows"/>'u çağırmadan ÖNCE layout'u zorlar — böylece
+    /// kapsamı (hangi satırların reveal aldığı) bir DISPATCHER ÖNCELİĞİ VARSAYIMINA bırakmaz. <b>Ölçülen sınır:</b>
+    /// bugünkü tek üretim tetiği <see cref="OnGeneratorStatusChanged"/>'in <c>DispatcherPriority.Loaded</c>
+    /// ertelemesidir ve <c>Loaded</c>(6) &lt; <c>Render</c>(7) olduğundan otomatik layout turu ZATEN önce koşar;
+    /// yani düşme penceresi üretimde bugün AÇILMIYOR (bkz. task-B3-report.md "Fix round 1 / E5" ölçümü). Zorlama
+    /// bu yüzden bir kusur düzeltmesi DEĞİL, o pinlenmemiş varsayıma olan bağımlılığı kaldıran bir sertleştirmedir:
+    /// tetik bir gün <c>Background</c>'a kaysa ya da senkron çağrılsa satırlar sessizce düşerdi.
+    /// <see cref="StickyRevealTests.A_reveal_driven_while_layout_is_dirty_still_reaches_every_row"/> tam olarak bunu
+    /// pinler (layout kirliyken sürülen reveal).</para>
     /// </summary>
     internal void PlayRevealStagger()
     {
-        // [A13/B3 · E5 — telafi, 1. kademe] Container'lar ZORLA üretilir. Virtualization KAPALI olduğundan TEK bir
-        // senkron layout turu tüm ContentPresenter'ları measure eder ve her birinin ProjectRow çocuğunu kurar
-        // (ölçüm: ListRealizationPerfTests.RealizeOnce — UpdateLayout'tan sonra realize == N). Layout zaten temizse
-        // NO-OP'tur, yani normal (HWND) yolda ek maliyet yoktur. Bu satır, reveal'in tam kapsamını bir DISPATCHER
-        // ÖNCELİĞİ VARSAYIMINDAN (Loaded < Render, yani "layout benden önce koşar") kurtarır: o varsayım hiçbir
-        // yerde pinli değildi ve tetik bir gün Background'a kaysa satırlar SESSİZCE düşerdi.
+        // [A13/B3 · E5] Container'lar ZORLA üretilir. Virtualization KAPALI olduğundan TEK bir senkron layout turu
+        // tüm ContentPresenter'ları measure eder ve her birinin ProjectRow çocuğunu kurar (ölçüm:
+        // ListRealizationPerfTests.RealizeOnce — UpdateLayout'tan sonra realize == N). Layout zaten temizse NO-OP'tur
+        // (ölçüldü: n=500'de 0,225 ms, CollectRows yürüyüşü dâhil), yani normal (HWND) yolda ek maliyet yoktur.
+        // NOT: UIElement.UpdateLayout() elemana kapsanmaz — ContextLayoutManager'ın tamamını sürer.
         Flow.UpdateLayout();
         var rows = CollectRows();
-        // [A13/B3 · E5 — telafi, 2. kademe] Buna rağmen eksik satır kaldıysa (ağaç o an hiç layout edilemiyor —
-        // ör. collapsed bir ata altında) reveal SESSİZCE TÜKETİLMEZ: bir sonraki layout turunda yakalanır.
-        // "Bir sonraki SetGroups onu yakalar" gerekçesi YANLIŞTIR — SetGroups yalnız topoloji değişiminde koşar
-        // (bkz. RunViewModel.OnWorkspaceTopology imza guard'ı), yani o satır KALICI olarak reveal'siz kalırdı.
-        if (rows.Count < RowEntryCount()) { ArmRevealCatchUp(); return; }
-        DisarmRevealCatchUp();
 
         // [W2 fold] Önceki hero + bekleyen release'i bırak, yeni kuşağı damgala, hero'yu al (başka hero sürüyorsa
         // animate düşer → ani sonuç). Muhasebe GraphView ile ORTAK: bkz. RevealStagger.Begin.
@@ -318,14 +312,17 @@ public partial class StickyLayerList : UserControl
 
     /// <summary>Flow'un ŞU AN realize olmuş <see cref="ProjectRow"/> container'ları, in-flow satır sırasında.
     /// <para>Başlıklar atlanır — <b>meşru</b>: reveal index'i yalnız satırları sayar (BuildApp.jsx:503).</para>
-    /// <para><b>[A13/B3 · E5] Bu metot KISMİ bir sonuç dönebilir</b> (container üretilmemiş ya da container'ın
-    /// ProjectRow çocuğu henüz realize değilse o satır listeye girmez) ve bu, kendi başına SESSİZ bir kayıptır.
-    /// Telafi ÇAĞIRANDADIR: <see cref="PlayRevealStagger"/> önce layout'u zorlar, sonra sonucu
-    /// <see cref="RowEntryCount"/> ile karşılaştırır ve eksikse reveal'i tüketmeden bir sonraki layout turuna
-    /// erteler. Eski doc comment burada "bir sonraki reveal onu yakalar" diyordu — bu gerekçe YANLIŞTI:
-    /// <see cref="PlayRevealStagger"/> yalnız <see cref="SetGroups"/>'tan sürülür, o da yalnız TOPOLOJİ
-    /// değiştiğinde koşar (<c>RunViewModel.OnWorkspaceTopology</c> imza guard'ı) — "bir sonraki reveal" hiç
-    /// gelmeyebilir.</para></summary>
+    /// <para><b>[A13/B3 · E5] Bu metot KISMİ bir sonuç DÖNEBİLİR</b> (container üretilmemiş ya da container'ın
+    /// <see cref="ProjectRow"/> çocuğu henüz realize değilse o satır listeye girmez) — kendi başına bir kapsam
+    /// garantisi VERMEZ. Garantiyi çağıran kurar: <see cref="PlayRevealStagger"/> ondan hemen önce layout'u zorlar
+    /// ve virtualization KAPALI olduğu için tek bir tur tüm satırları realize eder.</para>
+    /// <para>Eski doc comment burada "o satır atlanır (<b>bir sonraki reveal onu yakalar</b>)" diyordu — bu gerekçe
+    /// YANLIŞTI ve kaldırıldı: <see cref="PlayRevealStagger"/> yalnız <see cref="SetGroups"/>'tan sürülür, o da
+    /// yalnız TOPOLOJİ değiştiğinde koşar (<c>RunViewModel.OnWorkspaceTopology</c> imza guard'ı, A13/B3 · E4) —
+    /// "bir sonraki reveal" hiç gelmeyebilir.</para>
+    /// <para><b>İkinci çağıran uyarısı:</b> <see cref="RevealRows"/> (test yüzeyi) bu metodu layout zorlamadan
+    /// çağırır ve bu BİLEREK böyledir — test yüzeyi kendini iyileştirirse ölçtüğü durumu maskeler. Üretime yeni bir
+    /// çağıran eklenirse layout zorlamasını O DA yapmalıdır.</para></summary>
     private IReadOnlyList<ProjectRow> CollectRows()
     {
         var generator = Flow.ItemContainerGenerator;
@@ -337,35 +334,6 @@ public partial class StickyLayerList : UserControl
             if (FindDescendant<ProjectRow>(container) is { } row) rows.Add(row);
         }
         return rows;
-    }
-
-    /// <summary>[A13/B3 · E5] Entry akışındaki SATIR sayısı (başlıklar hariç) — <see cref="CollectRows"/>'un
-    /// eksiksiz sonucunun beklenen adedi. Aynı "başlık atla" kuralı iki yerde de geçerlidir.</summary>
-    private int RowEntryCount()
-    {
-        int count = 0;
-        for (int i = 0; i < Flow.Items.Count; i++)
-            if (Flow.Items[i] is not HeaderEntry) count++;
-        return count;
-    }
-
-    // [A13/B3 · E5] Eksik realize'de bir sonraki layout turunu bekleyen kanca. Tek örnektir (idempotent arm) ve
-    // reveal GERÇEKTEN oynayınca ya da yeni bir SetGroups gelince sökülür → ne birikir ne de sonsuz döner
-    // (LayoutUpdated yalnız gerçek layout turlarında ateşlenir, busy-loop değildir).
-    private EventHandler? _revealCatchUp;
-
-    private void ArmRevealCatchUp()
-    {
-        if (_revealCatchUp is not null) return;
-        _revealCatchUp = (_, _) => PlayRevealStagger();
-        Flow.LayoutUpdated += _revealCatchUp;
-    }
-
-    private void DisarmRevealCatchUp()
-    {
-        if (_revealCatchUp is null) return;
-        Flow.LayoutUpdated -= _revealCatchUp;
-        _revealCatchUp = null;
     }
 
     private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject

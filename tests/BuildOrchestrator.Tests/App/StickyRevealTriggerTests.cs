@@ -109,17 +109,21 @@ public class StickyRevealTriggerTests
         DependencyPropertyHelper.GetValueSource(row.Root, UIElement.OpacityProperty).IsAnimated;
 
     /// <summary>
-    /// [A13/B3 · E5] <b>Reveal, listedeki HER satıra ulaşmalıdır.</b> <c>CollectRows</c> iki atlamayı SESSİZCE
-    /// yapıyordu (container yok / container'ın <see cref="ProjectRow"/> çocuğu henüz realize değil) ve doc comment
-    /// bunu "bir sonraki reveal onu yakalar" diye gerekçelendiriyordu — gerekçe YANLIŞ (bkz. E4: <c>SetGroups</c>
-    /// yalnız TOPOLOJİ değişiminde koşar, "bir sonraki reveal" hiç gelmeyebilir).
+    /// [A13/B3 · E5] <b>Reveal, ÜRETİM YOLUNDAN sürüldüğünde listedeki HER satıra ulaşır</b> — uçtan uca kapsam
+    /// karakterizasyonu (gerçek <see cref="MainWindow"/> kablajı: yeni topoloji → <c>TopologyChanged</c> →
+    /// <c>RefreshProjectGroups</c> → <c>SetGroups</c> → generator tetiği → <c>PlayRevealStagger</c>).
     ///
-    /// <para><b>Kırmızı ÖLÇÜLDÜ (üretim fixture'ı, A12 sırası — kabuk ÖNCE realize, veri SONRA):</b> gerçek
-    /// <see cref="MainWindow"/> kablajında <c>SetGroups</c> container'ları SENKRON üretir ama
-    /// <c>ContentPresenter</c>'lar o an henüz measure EDİLMEMİŞTİR; <c>PlayRevealStagger</c> (Loaded önceliği)
-    /// koştuğunda <c>CollectRows</c> <b>0 satır</b> döndürüyordu → hiçbir satır reveal oynamıyor, kartlar tam
-    /// opaklıkta "pat" diye beliriyordu. (Ölçüm: <c>gen=2</c> — reveal iki kez ateşlendi — ama
-    /// <c>HasPendingRevealRelease=False</c>, yani <c>maxDelay</c> hiç -1'in üstüne çıkmadı = HİÇ satır toplanmadı.)</para>
+    /// <para><b>DÜRÜSTLÜK NOTU (fix round 1 — ölçüldü, iki bağımsız review lens'i de aynı sonuca vardı):</b> bu test
+    /// <b>B3 düzeltmesi OLMADAN DA YEŞİLDİR</b>. Sebebi ölçülmüştür: tek üretim tetiği
+    /// <c>DispatcherPriority.Loaded</c>(6) ertelemesidir ve <c>Render</c>(7) ondan ÖNCE koştuğu için satırlar
+    /// <c>CollectRows</c> çağrılmadan realize olur — yani düşme penceresi üretimde bugün AÇILMAZ. Bu testin
+    /// önceki sürümü doc'unda "<c>CollectRows</c> 0 satır döndürüyordu" diye <b>yanlış bir ölçüm iddiası</b>
+    /// taşıyordu; iddia kaldırıldı (bkz. task-B3-report.md "Fix round 1 / E5").</para>
+    ///
+    /// <para><b>Öyleyse ne işe yarıyor:</b> uçtan uca kapsamın bugünkü gerçeğini pinler — tetik zinciri kopar,
+    /// bir satır şablonu değişir ya da <c>SetGroups</c> yolu bozulursa bu test görür. Düzeltmenin KENDİSİNİ
+    /// (<c>PlayRevealStagger</c>'ın layout'a dayanmayan kapsamı) pinleyen test AYRIDIR ve gerçek bir kırmızıya
+    /// dayanır: <see cref="StickyRevealTests.A_reveal_driven_while_layout_is_dirty_still_reaches_every_row"/>.</para>
     ///
     /// <para><b>Vakum değil:</b> satır sayısı ayrıca assert edilir ve reveal'in gerçekten tetiklendiği
     /// (<c>RevealGeneration</c> arttı) ayrıca doğrulanır.</para>
