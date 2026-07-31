@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
@@ -21,10 +22,16 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class ProjectRowTests
 {
-    private static (ProjectRow row, Window window, Border host) Realize(ProjectRowViewModel vm)
+    /// <summary>[A13/T4 fix-1 · C2] <paramref name="animations"/> eklendi — üç yeni test (T4) bu satırları inline
+    /// kopyalıyordu (<c>Breathing_runs_a_real_opacity_clock…</c>'daki T4-öncesi kopyayla birlikte DÖRDÜNCÜ kez).
+    /// Kardeş dosyalardaki AYNI desen: <c>SuccessFlourishTests.Realize(vm, animations)</c>,
+    /// <c>StickyRibbonTests.Realize(vm, forceAnimations)</c>.</summary>
+    private static (ProjectRow row, Window window, Border host) Realize(ProjectRowViewModel vm, bool animations = false)
     {
         var host = DsResources.NewHost();
-        var row = new ProjectRow { DataContext = vm };
+        var row = animations
+            ? new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm }
+            : new ProjectRow { DataContext = vm };
         var window = DsResources.Realize(host, row);
         return (row, window, host);
     }
@@ -45,6 +52,34 @@ public class ProjectRowTests
         vm.IsSelected = false;
         row.UpdateLayout();
         Assert.Equal(2.0, row.Stripe.Width);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · n6] rakamlar tabular
+
+    /// <summary>[A13/T4 · n6 · fix-1 · B3/C3] design-v1 README:48 (§1.2): <i>"makine çıktısı (console, süre, SHA,
+    /// sayaç, yol) = Geist Mono, <b>DAİMA tabular rakam</b>."</i> — üretimde <c>Typography.NumeralAlignment</c>
+    /// ALTI yerde SET edilir: <c>ProjectRow.xaml:74</c> (sha, burada) · <c>:107</c> (süre, burada) ·
+    /// <c>EventStreamView.xaml:41</c> (aktif satır — <see cref="EventStreamTests.The_active_line_and_row_text_are_tabular"/>)
+    /// · <c>EventStreamView.xaml.cs:399</c> (satırın kendi metni — AYNI test, fix-1'de eklenen ALTINCI yer, önceki
+    /// sürüm bunu kaçırıyordu ve doc'u yanlışlıkla "dört yer" sayıyordu) · <c>StickyRibbon.xaml:38</c> (faz metni —
+    /// <see cref="StickyRibbonTests.The_phase_text_is_tabular"/>) · <c>ActionBar.xaml.cs:258</c> (sayaç chip değeri
+    /// — <see cref="ActionBarTests.The_sigma_chip_value_is_tabular"/>).
+    ///
+    /// <para><b>fix-1 · C3:</b> önceki sürüm bunları TEK yeni dosyada (<c>TabularFiguresTests.cs</c>) topluyordu ve
+    /// dört realize kurulumunu + <c>NewVm</c>/<c>NeverTickingBatcher</c> ikilisini SIFIRDAN yeniden yazıyordu
+    /// (kopya YASAK) — o dosya SİLİNDİ; her assert artık KONTROLÜN KENDİ test sınıfına, kendi <c>Realize</c>
+    /// yardımcısıyla tek satır olarak eklendi (m5 deseni). Kapsam beyanı TEK yerde (burada) tutulur, diğerleri
+    /// <c>&lt;see cref&gt;</c> ile buraya bağlanır — yeni bir mono alan eklenirse bu ALTI test OTOMATİK kapsamaz
+    /// (bilinçli — kural kod incelemesiyle korunur).</para></summary>
+    [StaFact]
+    public void The_project_row_sha_and_duration_columns_are_tabular()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded);
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(row.ShaText));
+        Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(row.DurationText));
         GC.KeepAlive(window);
     }
 
@@ -239,9 +274,7 @@ public class ProjectRowTests
         // (nabız) deseniyle: gerçek 30fps opaklık saatini HasAnimatedProperties ile ölç — motion enjekte edilir
         // (headless'ta App.Motion null → hiç saat başlamazdı; GraphView.AnimationsEnabledProvider deseni).
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
-        var host = DsResources.NewHost();
-        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
-        var window = DsResources.Realize(host, row);
+        var (row, window, _) = Realize(vm, animations: true);
 
         // Building iken: nefes katmanında GERÇEK bir (dönen) opaklık saati var.
         Assert.True(row.BreathLayer.HasAnimatedProperties);
@@ -269,15 +302,19 @@ public class ProjectRowTests
         var anim = ProjectRow.BuildBreathingAnimation(row);
         Assert.Equal(30, Timeline.GetDesiredFrameRate(anim));
         Assert.Equal(TimeSpan.FromMilliseconds(3800), anim.KeyFrames[^1].KeyTime.TimeSpan);
-        // [A13/T4 · m5] Tepe opaklık 0.32 — BuildApp.jsx:34 `@keyframes bo-breath { 0%,100% opacity:0; 50% opacity:0.32; }`.
-        // Süre/frame-rate ÖNCEDEN pinliydi; tepe DEĞER testsizdi (ProjectRow.xaml.cs:32 BreathPeakOpacity).
-        Assert.Equal(0.32, anim.KeyFrames[1].Value);
+        // [A13/T4 · m5 · fix-1 · D6] Tepe opaklık 0.32 — BuildApp.jsx:34 `@keyframes bo-breath { 0%,100% opacity:0;
+        // 50% opacity:0.32; }`. Süre/frame-rate ÖNCEDEN pinliydi; tepe DEĞER testsizdi (ProjectRow.xaml.cs:32
+        // BreathPeakOpacity). Sabit `KeyFrames[1]` indeksi yerine dinamik tepe (fabrikaya bir keyframe eklenirse
+        // konum kayabilir, m1#2'nin deseniyle tutarlı) — max DEĞER okunur, sıra/indeks varsayılmaz.
+        double peakOpacity = 0;
+        foreach (DoubleKeyFrame frame in anim.KeyFrames) peakOpacity = Math.Max(peakOpacity, frame.Value);
+        Assert.Equal(0.32, peakOpacity);
         GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- [A13/T4 · m1] shake: 360ms · X ekseni · ±3px · bir kez
 
-    /// <summary>[A13/T4 · m1] Otorite <c>BuildApp.jsx:18,30,360</c>: <c>.bo-shake { animation: bo-shake .36s
+    /// <summary>[A13/T4 · m1] Otorite <c>BuildApp.jsx:18,30</c>: <c>.bo-shake { animation: bo-shake .36s
     /// var(--ease-standard) 1; }</c> + <c>@keyframes bo-shake { 10%,90% translateX(-2px); 25%,75% translateX(3px);
     /// 50% translateX(-3px); }</c> — satır <c>shake &amp;&amp; !REDUCED</c> iken (yalnız hata ANINDA) X ekseninde
     /// sallanır. <b>Önceki tek kanıt</b> (<c>:300,:314</c> — bu dosyanın <c>PlayReveal</c> testleri)
@@ -289,9 +326,7 @@ public class ProjectRowTests
     public void Shake_moves_the_x_axis_translate_not_y_when_a_row_fails()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started); // _prevState tohumu: Failed DEĞİL
-        var host = DsResources.NewHost();
-        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
-        var window = DsResources.Realize(host, row);
+        var (row, window, _) = Realize(vm, animations: true);
 
         vm.State = ProjectRowState.Failed; // ÜRETİM tetikleyicisi: OnVmPropertyChanged → ApplyStateTransition → PlayShake
 
@@ -302,16 +337,33 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T4 · m1] Genlik + süre, KAYNAKTAN (deterministik — sub-ms hassasiyette bir spline tepesini
-    /// gerçek saatle avlamak yük-hassastır, D8 "yeni flake yasak"). <see cref="ProjectRow.BuildShakeAnimation"/>
-    /// KONTROLÜN KENDİSİNİN kullandığı fabrikadır (<see cref="PlayShake"/> onu doğrudan çağırır — bu ayrı bir kopya
-    /// yol DEĞİL); otorite <c>BuildApp.jsx:30</c>: 10/90%→∓2px · 25/75%→±3px · 50%→∓3px · 100%→0, toplam 360ms.</summary>
+    /// <summary>[A13/T4 · m1 · fix-1 · A2/D7/D8/D9] Genlik + süre + tekrarsızlık, KAYNAKTAN (deterministik — sub-ms
+    /// hassasiyette bir spline tepesini gerçek saatle avlamak yük-hassastır, D8 "yeni flake yasak"; ölçüldü, bkz.
+    /// rapor). <see cref="ProjectRow.BuildShakeAnimation"/> KONTROLÜN KENDİSİNİN kullandığı fabrikadır
+    /// (<see cref="PlayShake"/> onu doğrudan çağırır — bu ayrı bir kopya yol DEĞİL); otorite <c>BuildApp.jsx:18,30</c>:
+    /// 10/90%→∓2px · 25/75%→±3px · 50%→∓3px · 100%→0, toplam 360ms, <b>BİR KEZ</b> (<c>animation-iteration-count:1</c>).
+    ///
+    /// <para><b>fix-1 · D7:</b> fabrika artık REALIZE EDİLMİŞ bir satırla çağrılıyor (<c>Realize(vm)</c>) —
+    /// <c>KeySpline.EaseStandard</c> token'ı GERÇEK kaynak ağacından çözülür (önceki <c>new ProjectRow()</c> çıplak
+    /// ağaçta fallback'e düşüyordu, ease token'ı hiç sınanmıyordu).</para>
+    ///
+    /// <para><b>fix-1 · A2:</b> "bir kez" iddiası artık <see cref="RepeatBehavior"/>'ı DOĞRUDAN okur —
+    /// <c>FillBehavior.Stop</c> yalnız "clock takılı kalmaz" demektir, tekrar sayısıyla ilgisi YOKTUR (önceki
+    /// yorum bunu yanlış iddia ediyordu; <c>RepeatBehavior</c> 5x'e çevrilse eski assert bunu YAKALAMAZDI).</para>
+    ///
+    /// <para><b>fix-1 · D8:</b> önceki sürümdeki <c>observedPeak</c>/son-<c>KeyTime</c> assert'leri, aşağıdaki
+    /// per-index döngünün ZATEN kanıtladığı şeyi (i=2'de -3, i=5'te 360ms) yeniden hesaplıyordu — ölü kod,
+    /// silindi.</para></summary>
     [StaFact]
     public void Shake_keyframes_match_the_bo_shake_authority_peaking_at_three_pixels_for_360ms()
     {
-        var anim = ProjectRow.BuildShakeAnimation(new ProjectRow());
+        var (row, window, _) = Realize(new ProjectRowViewModel("id", "Foo", ProjectRowState.Started));
+        var anim = ProjectRow.BuildShakeAnimation(row);
 
-        Assert.Equal(FillBehavior.Stop, anim.FillBehavior); // "bir kez" — clock kendi kendine bırakılır
+        Assert.Equal(FillBehavior.Stop, anim.FillBehavior); // clock BİTİNCE takılı kalmaz ("bir kez" DEĞİL — o iddia aşağıda)
+        Assert.False(anim.AutoReverse);
+        Assert.Equal(new RepeatBehavior(1.0), anim.RepeatBehavior); // BİR KEZ — CSS animation-iteration-count:1 karşılığı
+
         Assert.Equal(6, anim.KeyFrames.Count);
         double[] expectedValues = [-2, 3, -3, 3, -2, 0];
         double[] expectedPct = [0.10, 0.25, 0.50, 0.75, 0.90, 1.0];
@@ -320,37 +372,51 @@ public class ProjectRowTests
             Assert.Equal(expectedValues[i], anim.KeyFrames[i].Value);
             Assert.Equal(TimeSpan.FromMilliseconds(360 * expectedPct[i]), anim.KeyFrames[i].KeyTime.TimeSpan);
         }
-        double observedPeak = 0;
-        foreach (DoubleKeyFrame frame in anim.KeyFrames) observedPeak = Math.Max(observedPeak, Math.Abs(frame.Value));
-        Assert.Equal(3.0, observedPeak); // mutlak tepe TAM 3, ne 2 ne 4
-        Assert.Equal(TimeSpan.FromMilliseconds(360), anim.KeyFrames[^1].KeyTime.TimeSpan); // BuildApp.jsx:18 `.36s`
+        GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T4 · m1] Süre + tekrarsızlık: otorite <c>.36s ... 1</c> (BuildApp.jsx:18) — 360ms'de biter ve
-    /// BİR KEZ oynar (CSS <c>animation-iteration-count: 1</c>; WPF karşılığı <see cref="FillBehavior.Stop"/> +
-    /// <see cref="RepeatBehavior"/> beyan EDİLMEMESİ — Timeline varsayılanı zaten "bir kez"). "Bir kez" iddiası
-    /// özellikle kritik (brief): <c>RepeatBehavior</c> yanlışsa satır sonsuza dek titrer.</summary>
+    /// <summary>[A13/T4 · m1 · fix-1 · A1] Davranışsal kanıt: gerçekten oynar ve kendiliğinden sıfıra oturur.
+    /// Süre/genlik/RepeatBehavior iddiası artık TAMAMEN yukarıdaki deterministik testte — burası yalnız "üretim
+    /// yolundan tetiklenir + kendi kendine biter" iddiasını taşır.
+    ///
+    /// <para><b>fix-1 · A1:</b> önceki sürüm <c>PumpUntil(() =&gt; false, 450ms)</c> ile KOŞULSUZ bekliyordu —
+    /// bu, animasyonun süresini DEĞİL pompanın kendi timeout'unu ölçen bir gizli <c>Thread.Sleep</c>'ti.
+    /// <c>HasAnimatedProperties</c>'i bitiş sinyali olarak kullanmak da DENENDİ ve YANLIŞ çıktı: ÖLÇÜLDÜ —
+    /// <c>FillBehavior.Stop</c> sonrası bu bayrak kendiliğinden false'a DÜŞMÜYOR (WPF'in "fire-and-forget"
+    /// <c>BeginAnimation</c> clock'u, açıkça <c>BeginAnimation(prop,null)</c> çağrılmadıkça iliştirilmiş kalıyor —
+    /// bu kod tabanında hiçbir yerde bu varsayıma dayanan bir örnek YOK, dolayısıyla varsayım DOĞRULANMAMIŞTI).
+    /// Bunun yerine gerçek DEĞER gözlenir: X önce hareket eder (<c>sawMotion</c>), sonra TAM <c>0.0</c>'a oturur —
+    /// bu, animasyonun ORTASINDAKİ geçici sıfır-geçişlerinden (curve sürekli olduğundan ara değerlerde de 0'dan
+    /// geçer) ayırt edilir çünkü kalıcı 0 yalnız 360ms'den SONRA (son keyframe + taban değer, ikisi de 0.0) durur;
+    /// ara geçiş anları kesikli 5ms'lik pompa örneklemesiyle pratikte YAKALANAMAZ (ölçü-sıfır olay).</para>
+    ///
+    /// <para><b>ön-koşul (lens2):</b> tetik SONRASI, bekleme ÖNCESİ <c>HasAnimatedProperties</c> true assert
+    /// edilir — aksi halde shake hiç BAŞLAMASA da (seam kopsa) <c>FillBehavior.Stop</c>'un taban değeri (X=0)
+    /// testi vakumda yeşile düşürürdü.</para></summary>
     [StaFact]
-    public void Shake_plays_exactly_once_and_settles_back_to_zero_around_the_360ms_mark()
+    public void Shake_plays_exactly_once_and_settles_back_to_zero()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
-        var host = DsResources.NewHost();
-        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
-        var window = DsResources.Realize(host, row);
+        var (row, window, _) = Realize(vm, animations: true);
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
         vm.State = ProjectRowState.Failed;
 
-        // 360ms'lik animasyon +güvenlik payı boyunca pompala, sonra DEĞERİ ölç (WPF'in FillBehavior.Stop sonrası
-        // HasAnimatedProperties'i NE ZAMAN düşürdüğüne güvenmek yerine — gözlenen değer daha sağlam bir kanıttır).
-        DispatcherPump.PumpUntil(() => false, TimeSpan.FromMilliseconds(450));
-        double afterOneRun = row.ShakeTranslate.X;
-        long elapsedAtSettle = clock.ElapsedMilliseconds;
+        Assert.True(row.ShakeTranslate.HasAnimatedProperties, "ön-koşul: shake saati kurulmadı — sonraki assert vakum olurdu");
 
-        Assert.Equal(0.0, afterOneRun); // son keyframe 0 (BuildApp.jsx:30 örtük %100 = kimlik dönüşüm)
-        Assert.InRange(elapsedAtSettle, 400, 700); // ~360ms + pompa payı — 3.6s/36ms gibi kaba bir sapmayı yakalar
+        // Animasyonun GERÇEKTEN hareket ettiğini VE kalıcı olarak sıfıra oturduğunu gözle (koşul-tabanlı, D8) —
+        // sabit bir süre BEKLEMİYORUZ; koşul "hareket görüldü + şu an tam 0" ikisi birden sağlanınca çıkılır.
+        bool sawMotion = false;
+        DispatcherPump.PumpUntil(() =>
+        {
+            if (Math.Abs(row.ShakeTranslate.X) > 0.05) sawMotion = true;
+            return sawMotion && row.ShakeTranslate.X == 0.0;
+        }, TimeSpan.FromSeconds(2));
 
-        // "BİR KEZ": bir pencere DAHA pompala — X yeniden 3px'e SIÇRAMAMALI (RepeatBehavior.Forever regresyonu).
+        Assert.True(sawMotion, "shake hiç hareket etmedi");
+        Assert.Equal(0.0, row.ShakeTranslate.X); // son keyframe 0 (BuildApp.jsx:30 örtük %100 = kimlik dönüşüm)
+
+        // "BİR KEZ" DAVRANIŞI: bir pencere DAHA pompala — X yeniden sıçramamalı (RepeatBehavior.Forever regresyonu;
+        // RepeatBehavior'ın KENDİSİ zaten yukarıdaki deterministik testte pinli — bu yalnız gerçek clock'u sınar).
         bool restarted = false;
         DispatcherPump.PumpUntil(() =>
         {

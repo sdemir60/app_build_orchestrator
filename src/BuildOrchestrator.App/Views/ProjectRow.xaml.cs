@@ -29,9 +29,9 @@ public partial class ProjectRow : UserControl
 {
     // design-v1 kaynak sabitleri (inline magic number YASAK — StatusGlyph.PulseMs / BuildingSpinner.RotationMs deseni).
     private const double BreathMs = 3800;          // BuildApp.jsx:22 `bo-breath 3.8s`
-    private const double BreathPeakOpacity = 0.32; // BuildApp.jsx:24 amber-soft katman tepe opaklığı
+    private const double BreathPeakOpacity = 0.32; // [A13/T4 fix-1 · D10] BuildApp.jsx:34 amber-soft katman tepe opaklığı (bayat satır referansı düzeltildi, eskiden :24)
     private const int DecorativeFrameRate = 30;    // brief: DesiredFrameRate=30
-    private const double ShakeMs = 360;            // BuildApp.jsx:27 `bo-shake 360ms`
+    private const double ShakeMs = 360;            // [A13/T4 fix-1 · D10] BuildApp.jsx:18 `bo-shake .36s` (bayat satır referansı düzeltildi, eskiden :27; keyframe'ler :30'da)
     private const double SelectedTranslateX = 4;   // BuildApp.jsx:379 seçili iç-sarmalayıcı translateX
     private const double StripeWidthNormal = 2;    // BuildApp.jsx:373
     private const double StripeWidthSelected = 3;
