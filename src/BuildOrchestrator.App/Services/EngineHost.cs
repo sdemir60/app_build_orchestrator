@@ -45,7 +45,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// hazır olamayabilir) daha geniş bir değer geçebilir — desen <c>ConsoleView.WallClock</c>/
     /// <c>NeverTickingBatcher</c> ile aynı: üretim varsayılanı sabit, seam test için var.
     /// <para><b>fix-1 · İŞ 1b:</b> <c>private</c> değil <c>internal</c> — varsayılanın 5s'de kaldığını
-    /// <c>EngineHostTests.Default_startup_timeout_is_five_seconds</c> saf literal ile pinler (A13/T4'ün
+    /// <c>EngineHostTests.Default_startup_timeout_stays_five_seconds</c> saf literal ile pinler (A13/T4'ün
     /// <c>PopIn.DurationMs</c> deseni). Aksi halde biri flake'i "5 → 60" yaparak susturur ve süit sessiz kalır.</para></summary>
     internal TimeSpan StartupTimeout { get; } = startupTimeout ?? TimeSpan.FromSeconds(5);
     private readonly JobObject _outerJob = JobObject.CreateKillOnClose(); // §3: App = outer Job sahibi

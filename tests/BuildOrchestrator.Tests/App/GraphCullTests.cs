@@ -483,9 +483,32 @@ public class GraphCullTests
 
         // Kesikli OLMAYAN düğümler de tek bir donmuş boş koleksiyonu paylaşır.
         var solid = nodes.Where(n => n.Status != GraphStatus.Discovered).Take(2).ToList();
-        Assert.Same(
-            view.NodeVisuals[solid[0].Name].Square.StrokeDashArray,
-            view.NodeVisuals[solid[1].Name].Square.StrokeDashArray);
+        Assert.Equal(2, solid.Count); // [A13/B3 · k2] vakum yasak — küme boşsa aşağıdaki iddia hiç kurulamaz
+        var firstSolid = view.NodeVisuals[solid[0].Name].Square.StrokeDashArray;
+        Assert.Same(firstSolid, view.NodeVisuals[solid[1].Name].Square.StrokeDashArray);
+        // [A13/B3 · k2] Yorumun İDDİASI ("donmuş BOŞ koleksiyon") artık pinli: paylaşım tek başına, paylaşılan
+        // nesnenin per-tick mutasyona kapalı ve gerçekten boş olduğunu göstermiyordu.
+        Assert.True(firstSolid.IsFrozen);
+        Assert.Empty(firstSolid);
+    }
+
+    /// <summary>
+    /// [A13/B3 · k2] Bir token'ı çözer ve <b>çözüldüğünü ayrıca assert eder</b>. Çıplak
+    /// <c>Assert.Equal(host.FindResource(key), target)</c> deseninin sessiz kör noktası şudur: gün gelip
+    /// <c>FindResource</c> (bulamazsa FIRLATIR) yerine <c>TryFindResource</c> (bulamazsa <c>null</c> döner)
+    /// yazılırsa — bu projede "T49 sınıfı" diye anılan kusur; kaynaklar bir kontrolün ctor'unda yalnız
+    /// <c>Application.Resources</c> üzerinden çözülür, üretimde maskelenir, headless'ta <c>null</c> döner —
+    /// hedef de o an <c>null</c> ise <c>Assert.Equal(null, null)</c> <b>sessizce yeşil</b> geçer ve test
+    /// hiçbir şey pinlemez.
+    ///
+    /// <para><b>Ölçüldü (B3):</b> bugün TÜM bu anahtarlar gerçekten çözülüyor — yani testler vakum DEĞİL; bu
+    /// yardımcı o gerçeği açık bir ön-koşula çevirir (bkz. task-B3-brief.md k2).</para>
+    /// </summary>
+    private static object Resolved(FrameworkElement scope, object key)
+    {
+        object? value = scope.TryFindResource(key);
+        Assert.True(value is not null, $"'{key}' kaynak zincirinde ÇÖZÜLEMEDİ — bu assert bir şey pinlemiyor olurdu.");
+        return value!;
     }
 
     // ---------------------------------------------------------------- REALIZE TESTİ (It-4b dersi · c6e9a21)
@@ -521,11 +544,11 @@ public class GraphCullTests
         view.UpdateLayout();
 
         var visual = view.NodeVisuals[culled.Name];
-        Assert.Equal(host.FindResource("Brush.StatusSuccess"), visual.Square.Stroke);
-        Assert.Equal(host.FindResource("Brush.StatusSuccessSoft"), visual.Square.Fill);
-        Assert.Same(host.FindResource(GraphView.PackageIconKey), visual.Icon.Data);
+        Assert.Equal(Resolved(host, "Brush.StatusSuccess"), visual.Square.Stroke);
+        Assert.Equal(Resolved(host, "Brush.StatusSuccessSoft"), visual.Square.Fill);
+        Assert.Same(Resolved(host, GraphView.PackageIconKey), visual.Icon.Data);
         Assert.Equal(Visibility.Visible, visual.SelectionRing.Visibility);
-        Assert.Equal(host.FindResource("Brush.FocusRing"), visual.SelectionRing.Stroke);
+        Assert.Equal(Resolved(host, "Brush.FocusRing"), visual.SelectionRing.Stroke);
         // [G2/LOD] Bu ölçekte (katman başına ≫9 düğüm, uzun adlar) etiketler zaten üst üste binerdi → hiç
         // kurulmaz; kimlik yerine TOOLTIP taşınır (fix round 1 · A3).
         Assert.Null(visual.Label);
@@ -536,7 +559,7 @@ public class GraphCullTests
         // (headless suite XAML/kaynak çözümlemesini görmez).
         var lazyEdge = view.EdgeVisuals.First(e => !edgesBefore.Contains(e.Model));
         Assert.NotNull(lazyEdge.Style);
-        Assert.Equal(host.FindResource(lazyEdge.Style.BrushKey), lazyEdge.Path.Stroke);
+        Assert.Equal(Resolved(host, lazyEdge.Style.BrushKey), lazyEdge.Path.Stroke);
         Assert.Equal(lazyEdge.Style.Thickness, lazyEdge.Path.StrokeThickness);
         Assert.Equal(lazyEdge.Style.Opacity, lazyEdge.Path.Opacity);
         Assert.False(lazyEdge.Path.Data.IsEmpty());
@@ -548,10 +571,10 @@ public class GraphCullTests
 
         Assert.NotNull(visual.Badge);
         Assert.Equal(Visibility.Visible, visual.Badge.Visibility);
-        Assert.Equal(host.FindResource("Brush.SurfaceBase"), visual.BadgeCircle!.Fill);
-        Assert.Equal(host.FindResource("Brush.StatusFailBorder"), visual.BadgeCircle.Stroke);
-        Assert.Same(host.FindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle!.Data);
-        Assert.Equal(host.FindResource("Brush.StatusFailText"), visual.BadgeTriangle.Fill);
+        Assert.Equal(Resolved(host, "Brush.SurfaceBase"), visual.BadgeCircle!.Fill);
+        Assert.Equal(Resolved(host, "Brush.StatusFailBorder"), visual.BadgeCircle.Stroke);
+        Assert.Same(Resolved(host, GraphView.WarningTriangleIconKey), visual.BadgeTriangle!.Data);
+        Assert.Equal(Resolved(host, "Brush.StatusFailText"), visual.BadgeTriangle.Fill);
         // İkonun DOLU/KONTURLU kipi de sözlükten gelir (IconPaint) — dolu üçgende stroke YOKTUR.
         Assert.Null(visual.BadgeTriangle.Stroke);
 
