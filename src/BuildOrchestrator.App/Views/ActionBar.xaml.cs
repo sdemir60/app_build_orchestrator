@@ -87,6 +87,10 @@ public partial class ActionBar : UserControl
     internal BuildMenu BuildMenuControl => PART_BuildMenu;
     internal BranchPopover BranchPopoverControl => PART_BranchPopover;
     internal WorktreePopover WorktreePopoverControl => PART_WorktreePopover;
+    /// <summary>[A13/T4 · m6] Branch/worktree popover kabuklarının <c>Popup</c>'ı — README §2.8/BuildApp.jsx:821
+    /// (<c>bottom: calc(100% + 8px)</c>) 8px boşluğunun test yüzeyi (<c>ActionBar.xaml:27,:40 VerticalOffset="-8"</c>).</summary>
+    internal Popup BranchPopup => PART_BranchPopup;
+    internal Popup WorktreePopup => PART_WorktreePopup;
 
     // ---------------------------------------------------------------- [E5/T46] Esc zinciri: popover katmanı
     /// <summary>Açık bir branch/worktree popover'ı ya da build menüsü var mı (Esc'in popover katmanı,

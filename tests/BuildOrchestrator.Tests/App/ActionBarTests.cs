@@ -186,6 +186,43 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- [A13/T4 · m6] popover 8px boşluk
+
+    /// <summary>[A13/T4 · m6] design-v1 prototipi (<c>BuildApp.jsx:821</c> <c>bottom: 'calc(100% + 8px)'</c>) —
+    /// branch/worktree popover'ları anchor'larının 8px ÜSTÜNDE açılır. WPF karşılığı <c>Placement="Top"</c> +
+    /// <c>VerticalOffset="-8"</c> (yukarı = negatif). <c>ActionBar.xaml:27,:40</c>'ın runtime karşılığı — bir XAML
+    /// değişikliği (ör. -8 → -4) burada KIRMIZI verir, saf metin taraması vermez.</summary>
+    [StaFact]
+    public void The_branch_and_worktree_popovers_open_eight_pixels_above_their_chip()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Equal(PlacementMode.Top, bar.BranchPopup.Placement);
+        Assert.Equal(-8.0, bar.BranchPopup.VerticalOffset);
+        Assert.Equal(PlacementMode.Top, bar.WorktreePopup.Placement);
+        Assert.Equal(-8.0, bar.WorktreePopup.VerticalOffset);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · n4] perf chip tooltip YOK
+
+    /// <summary>[A13/T4 · n4] Bilinçli KARARLAR listesi (design-v1 README §8: <i>"Toast/popup yok · 'View
+    /// failures' butonu yok · <b>perf/Build tooltip'i yok</b> · katman eşleşme sayacı yok."</i>) + §2.7 madde 8:
+    /// <i>"perf: Balanced chip — tıkla döngü ... <b>Tooltip YOK (istenmedi)</b>."</i> — sayaç chip'lerinin AKSİNE
+    /// (<see cref="ActionBar.AddCounterChip"/> her birine <c>ToolTip = label</c> atar), perf chip'i BİLE BİLE
+    /// tooltipsiz bırakılmıştır. Regresyon: biri "eksik" sanıp <c>BuildPerfChip</c>'e bir <c>ToolTip</c> eklerse
+    /// bu test KIRMIZI verir.</summary>
+    [StaFact]
+    public void The_perf_chip_carries_no_tooltip_by_design()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Null(bar.PerfChip.ToolTip);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- [A13/T3c · c6] chip glyph'leri
 
     /// <summary>Bir sayaç chip'inin İLK çocuğu (StackPanel[icon, value]) — chip glyph'ini okumanın TEK yolu.</summary>
