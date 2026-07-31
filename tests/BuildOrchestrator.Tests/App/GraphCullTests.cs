@@ -217,8 +217,8 @@ public class GraphCullTests
 
         var visual = view.NodeVisuals[culled.Name];
         Assert.Equal(GraphStatus.Failed, visual.Model.Status);
-        Assert.Equal(view.TryFindResource("Brush.StatusFail"), visual.Square.Stroke);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailSoft"), visual.Square.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFail"), visual.Square.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusFailSoft"), visual.Square.Fill);
         // Rozet de tembeldir: cull edilmişken gelen dep-hatası, materyalizasyonda kurulur.
         Assert.NotNull(visual.Badge);
         Assert.Equal(Visibility.Visible, visual.Badge.Visibility);
@@ -279,7 +279,7 @@ public class GraphCullTests
                 touchesSelection: false,
                 hasSelection: false),
             edge.Style);
-        Assert.Equal(view.TryFindResource(edge.Style.BrushKey), edge.Path.Stroke);
+        Assert.Same(view.FindResource(edge.Style.BrushKey), edge.Path.Stroke);
     }
 
     [StaFact]
@@ -410,7 +410,7 @@ public class GraphCullTests
         var changed = nodes.Select((n, i) => i == 0 ? n with { Status = GraphStatus.Cycle } : n).ToList();
         view.UpdateStatuses(changed);
         Assert.Equal(afterFirst + 1, view.NodeStatusApplyCount);
-        Assert.Equal(view.TryFindResource("Brush.StatusCycle"), view.NodeVisuals[nodes[0].Name].Square.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusCycle"), view.NodeVisuals[nodes[0].Name].Square.Stroke);
     }
 
     [StaFact]

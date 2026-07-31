@@ -77,15 +77,11 @@ public class SettingsDialogFocusTests
         GC.KeepAlive(window);
     }
 
-    private static bool IsDescendantOf(DependencyObject node, DependencyObject ancestor)
-    {
-        for (DependencyObject? cur = node; cur is not null; cur = GetParent(cur))
-            if (ReferenceEquals(cur, ancestor)) return true;
-        return false;
-    }
-
-    private static DependencyObject? GetParent(DependencyObject node) =>
-        (node as Visual) is not null ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+    // [A13/T3 fix-2 · 7] Ata yürüyüşü DsResources'a toplandı. Bu çağıran GÖRSEL+MANTIKSAL kipi kullanır ve bu
+    // fark BİLEREK korunmuştur: odaklanan öğe bir Popup/ContentElement altındaysa görsel zincir kopar, mantıksal
+    // zincir devam eder — kardeş iki çağıran (salt görsel) bu kipe geçirilmedi.
+    private static bool IsDescendantOf(DependencyObject node, DependencyObject ancestor) =>
+        DsResources.IsSelfOrDescendantOf(node, ancestor, includeLogical: true);
 
     // ================================================================ [A13/T3b] ölçü/geometri (b2/b3)
 

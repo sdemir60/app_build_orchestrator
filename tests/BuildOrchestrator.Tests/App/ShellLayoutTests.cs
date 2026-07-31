@@ -130,12 +130,10 @@ public class ShellLayoutTests
             $"{result?.VisualHit?.GetType().Name ?? "hiçbir şey"} hit-test edildi.");
     }
 
-    private static bool IsSplitterOrDescendant(DependencyObject? hit, DsSplitter splitter)
-    {
-        for (var d = hit; d is not null; d = VisualTreeHelper.GetParent(d))
-            if (ReferenceEquals(d, splitter)) return true;
-        return false;
-    }
+    // [A13/T3 fix-2 · 7] Ata yürüyüşü DsResources.IsSelfOrDescendantOf'ta (kopya YASAK) — salt görsel kip,
+    // eski davranışla birebir.
+    private static bool IsSplitterOrDescendant(DependencyObject? hit, DsSplitter splitter) =>
+        hit is not null && DsResources.IsSelfOrDescendantOf(hit, splitter);
 
     [StaFact]
     public void Applying_a_layout_records_it_and_leaves_the_graph_visible_in_quad()

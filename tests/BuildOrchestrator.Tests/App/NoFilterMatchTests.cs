@@ -45,9 +45,11 @@ public class NoFilterMatchTests
             .Where(t => IsShown(t, window.Shell))
             .Select(t => t.Text)];
 
+    // [A13/T3 fix-2 · 7] Yürüyüşün kendisi DsResources.SelfAndAncestors'ta (kopya YASAK); buradaki KURAL
+    // (görünürlük + kökte dur) yerinde kalır — semantik değişmedi.
     private static bool IsShown(DependencyObject node, DependencyObject root)
     {
-        for (var n = node; n is not null; n = VisualTreeHelper.GetParent(n))
+        foreach (var n in DsResources.SelfAndAncestors(node))
         {
             if (n is UIElement { Visibility: not Visibility.Visible }) return false;
             if (ReferenceEquals(n, root)) break;
