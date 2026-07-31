@@ -1,7 +1,10 @@
 using System.Windows;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
@@ -91,6 +94,64 @@ public class StickyRevealTriggerTests
         var rows = list.RevealRows;
         Assert.NotEmpty(rows);
         Assert.Contains(rows, r => r.Root.Opacity < 1.0);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/B3 · E5] reveal KAPSAMI
+
+    /// <summary>[A13/B3 · E5] Bir satırın reveal OYNADIĞININ kalıcı, zamandan bağımsız kanıtı: <c>PlayReveal</c>
+    /// açık motion'da <c>PART_Root.Opacity</c>'ye bir <see cref="System.Windows.Media.Animation.AnimationTimeline"/>
+    /// bağlar (<c>FillBehavior.HoldEnd</c> — varsayılan) → <see cref="DependencyPropertyHelper"/> o özelliği
+    /// SONSUZA DEK <c>IsAnimated</c> raporlar. Reveal'i HİÇ almamış satırda ise animasyon yoktur.
+    /// <para>Opaklık DEĞERİNE bakmak yetmez: rampa bitince animasyonlu satır da 1.0'a oturur ve düşürülmüş
+    /// satırdan ayırt edilemez — bu ölçüm zamanlama yarışına girmez.</para></summary>
+    private static bool PlayedReveal(ProjectRow row) =>
+        DependencyPropertyHelper.GetValueSource(row.Root, UIElement.OpacityProperty).IsAnimated;
+
+    /// <summary>
+    /// [A13/B3 · E5] <b>Reveal, listedeki HER satıra ulaşmalıdır.</b> <c>CollectRows</c> iki atlamayı SESSİZCE
+    /// yapıyordu (container yok / container'ın <see cref="ProjectRow"/> çocuğu henüz realize değil) ve doc comment
+    /// bunu "bir sonraki reveal onu yakalar" diye gerekçelendiriyordu — gerekçe YANLIŞ (bkz. E4: <c>SetGroups</c>
+    /// yalnız TOPOLOJİ değişiminde koşar, "bir sonraki reveal" hiç gelmeyebilir).
+    ///
+    /// <para><b>Kırmızı ÖLÇÜLDÜ (üretim fixture'ı, A12 sırası — kabuk ÖNCE realize, veri SONRA):</b> gerçek
+    /// <see cref="MainWindow"/> kablajında <c>SetGroups</c> container'ları SENKRON üretir ama
+    /// <c>ContentPresenter</c>'lar o an henüz measure EDİLMEMİŞTİR; <c>PlayRevealStagger</c> (Loaded önceliği)
+    /// koştuğunda <c>CollectRows</c> <b>0 satır</b> döndürüyordu → hiçbir satır reveal oynamıyor, kartlar tam
+    /// opaklıkta "pat" diye beliriyordu. (Ölçüm: <c>gen=2</c> — reveal iki kez ateşlendi — ama
+    /// <c>HasPendingRevealRelease=False</c>, yani <c>maxDelay</c> hiç -1'in üstüne çıkmadı = HİÇ satır toplanmadı.)</para>
+    ///
+    /// <para><b>Vakum değil:</b> satır sayısı ayrıca assert edilir ve reveal'in gerçekten tetiklendiği
+    /// (<c>RevealGeneration</c> arttı) ayrıca doğrulanır.</para>
+    /// </summary>
+    [StaFact]
+    public void Every_row_of_a_freshly_synced_list_plays_the_reveal()
+    {
+        using var dir = new TempDir();
+        // ÜRETİM FIXTURE'I: kabuk realize edilir, topoloji SONRA akar (MainWindow.RefreshProjectGroups → SetGroups).
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ("Alpha", null), ("Beta", null));
+        // D8 seam'leri: headless'ta App.Motion null (reduced-motion) ve App.HeroMotion yok — reveal'in GÖRSEL
+        // sonucunu ölçebilmek için ikisi de enjekte edilir (StickyRevealTests/GraphRenderTests ile AYNI desen).
+        list.AnimationsEnabledProvider = () => true;
+        list.HeroCoordinator = new MotionCoordinator();
+
+        int before = list.RevealGeneration;
+        // ÜRETİM YOLU: yeni bir Sync topolojiyi değiştirir → RunViewModel.TopologyChanged → RefreshProjectGroups
+        // → SetGroups(reveal: true). Doğrudan PlayRevealStagger çağrısı YOK.
+        var nodes = new[] { "Alpha", "Beta", "Gamma", "Delta" }
+            .Select((n, i) => MainWindowHost.Node(n, i)).ToList();
+        vm.OnEvent(new WorkspaceTopologyEvent(nodes, [], [], []));
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != before, TimeSpan.FromSeconds(3));
+        Assert.NotEqual(before, list.RevealGeneration); // ön-koşul: reveal GERÇEKTEN tetiklendi
+        // Rampanın başlaması için (10ms/satır gecikme) pompala; PumpUntil timeout'ta HATA VERMEZ → altta assert.
+        DispatcherPump.PumpUntil(() => list.RevealRows.Count == nodes.Count && list.RevealRows.All(PlayedReveal),
+            TimeSpan.FromSeconds(3));
+
+        var rows = list.RevealRows;
+        Assert.Equal(nodes.Count, rows.Count); // ön-koşul: liste GERÇEKTEN realize (vakum yasak)
+        Assert.All(rows, r => Assert.True(PlayedReveal(r),
+            $"'{((ProjectRowViewModel)r.DataContext).Name}' satırı reveal OYNAMADI — CollectRows onu sessizce düşürdü."));
         GC.KeepAlive(window);
     }
 }
