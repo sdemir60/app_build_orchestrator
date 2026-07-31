@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.Git;
@@ -40,14 +41,19 @@ public static class TestPaths
     }
 
     /// <summary>
-    /// [A13/B4] <see cref="Psi"/>'nin İKİNCİ başlatma şekli için karşılığı: <c>JobProcessLauncher</c> yolu
-    /// <see cref="ProcessStartInfo"/> değil ham bir komut satırı ister (<c>CascadeKillTests</c>,
-    /// <c>KillMidBuildTests</c>). Kancayı açan bayrak burada da AYNI tek sabitten
-    /// (<see cref="SupervisorHost.DebugHooksArg"/>) gelir — testlere kopyalanmaz.
+    /// [A13/B4] <see cref="Psi"/>'nin İKİNCİ başlatma şekli: <c>JobProcessLauncher</c> yolu
+    /// <see cref="ProcessStartInfo"/> değil ham bir komut satırı ister. Kendiliğinden argüman EKLEMEZ —
+    /// çağıran ne verdiyse o. Kancasız (üretim yolu) başlatmalar bunu doğrudan kullanır.
     /// </summary>
+    public static string SupervisorCommandLine(params string[] args) =>
+        WindowsCommandLine.Build(SupervisorExe, args);
+
+    /// <summary>[A13/B4] <see cref="SupervisorCommandLine"/>'ın debug kancaları AÇIK varyantı. Kancayı açan
+    /// bayrak burada da AYNI tek sabitten (<see cref="SupervisorHost.DebugHooksArg"/>) gelir — testlere
+    /// kopyalanmaz.</summary>
     /// <param name="extraArgs">Bayraktan ÖNCE eklenecek argümanlar (ör. <c>--logs &lt;dir&gt;</c>).</param>
     public static string DebugHooksCommandLine(params string[] extraArgs) =>
-        WindowsCommandLine.Build(SupervisorExe, [.. extraArgs, SupervisorHost.DebugHooksArg]);
+        SupervisorCommandLine([.. extraArgs, SupervisorHost.DebugHooksArg]);
 }
 
 public class SupervisorIpcTests
@@ -188,6 +194,83 @@ public class SupervisorIpcTests
         foreach (var line in rest.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             Assert.NotNull(System.Text.Json.JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options));
         await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
+    /// <summary>
+    /// [A13/B4 · fix-1] <b>Kalemin ASIL teslimi burada pinlenir.</b> Yukarıdaki negatif test yalnız
+    /// PROTOKOLÜ ölçüyor (dönen <c>Code</c> + NDJSON + host ayakta); Supervisor önce çocukları doğurup
+    /// SONRA reddetseydi o test yine yeşil kalırdı — review bunu bir mutasyonla kanıtladı (1646 testin
+    /// tamamı yeşilken üretim ikilisi `cmd.exe`+`powershell` doğurabiliyordu). Bu test DAVRANIŞI ölçer:
+    /// bayrak yokken komut geldiğinde <b>job'da Supervisor'dan başka HİÇBİR process doğmaz</b>.
+    /// <para>Desen icat edilmedi — <see cref="CascadeKillTests"/>'te zaten kanıtlanmış olan outer Job +
+    /// <c>AttachCompletionPort</c> + <c>JOB_OBJECT_MSG_NEW_PROCESS</c> okuması yeniden kullanılıyor.</para>
+    /// </summary>
+    [Fact] // negatif — DAVRANIŞ: reddedilen komut hiçbir çocuk process doğurmaz
+    public async Task Rejected_debugSpawnChildren_spawns_no_cmd_or_powershell_child()
+    {
+        using var outer = JobObject.CreateKillOnClose();
+        using var iocp = outer.AttachCompletionPort(); // Launch'tan ÖNCE — kaçırılan doğum bildirimi olmasın
+
+        using var supervisor = LaunchIsolatedSupervisorIn(outer); // --debug-hooks YOK = üretimin başlattığı Supervisor
+        var writer = new NdjsonWriter(supervisor.StandardInput!);
+        var reader = new NdjsonReader(supervisor.StandardOutput!);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        // Count: 2 — kapı sızsaydı 2×cmd.exe + 2×powershell doğardı; sinyal geniş olsun.
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
+        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("debugHooksDisabled", err.Code);
+
+        // RANDEVU (marker): aynı job'a İKİNCİ bir Supervisor doğuruyoruz. Sızan bir çocuğun doğum bildirimi
+        // komut işlenirken kuyruklandığı için marker'ınkinden ÖNCE gelir ⇒ marker'ı gördüğümüz an doğum
+        // kuyruğu tükenmiştir. Bekleme gerçek bir olaya bağlı (sleep/poll YOK [D8]).
+        // <b>Neden çıkış değil doğum randevusu:</b> hiçbir şey öldürülmediği için doğan process'lerin ADI
+        // hâlâ okunabilir; Supervisor'ın çıkışını beklesek sızan çocuklar inner Job kaskadıyla çoktan ölmüş
+        // ve isimleri okunamaz olurdu (iddia yanlışlıkla yeşile düşerdi).
+        using var marker = LaunchIsolatedSupervisorIn(outer);
+
+        var births = new List<(int Pid, string Name)>();
+        while (true)
+        {
+            var n = iocp.WaitNext(TestPaths.WideStartupTimeout)
+                ?? throw new TimeoutException("IOCP: marker dogum bildirimi gelmedi");
+            if (n.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
+            if (n.Pid == marker.Pid) break;
+            births.Add((n.Pid, NameOfProcess(n.Pid)));
+        }
+
+        // VAKUM KARŞITI: port GERÇEKTEN doğum taşıyor — Supervisor'ın kendi doğumu listede. Bu kontrol
+        // olmasaydı, IOCP hiç bildirim taşımadığında da aşağıdaki iddia yeşil kalırdı.
+        Assert.Contains(supervisor.Pid, births.Select(b => b.Pid));
+
+        // ASIL İDDİA — §6'nın ta kendisi: reddedilen komut `cmd.exe`/`powershell` DOĞURMADI.
+        // İsim süzgeci (ham sayı değil) bilinçli: `CREATE_NO_WINDOW` ile başlatılan her console process'i
+        // yanına bir console-host (conhost) doğurur ve o da job üyesi olur — ham doğum sayısı bu OS
+        // artefaktı yüzünden anlamsızdır. Aynı gerekçe `KillMidBuildTests.IsMsBuildProcess`'te de var.
+        string[] forbidden = ["cmd", "powershell", "pwsh"];
+        var leaked = births.Where(b => forbidden.Contains(b.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+        Assert.True(leaked.Count == 0,
+            $"reddedilen komut process dogurmus: {string.Join(", ", leaked.Select(l => $"{l.Name}({l.Pid})"))}"
+            + $" — job'da gorulen tum dogumlar: {string.Join(", ", births.Select(b => $"{b.Name}({b.Pid})"))}");
+    }
+
+    /// <summary>[A13/B4 · fix-1] Verilen job'da, İZOLE logs/worktree kökleriyle ve <b>bayraksız</b> (üretim
+    /// yolu) bir Supervisor başlatır. Kullanıcının gerçek dosyalarına dokunulmaz (brief kural 4).</summary>
+    private static JobChildProcess LaunchIsolatedSupervisorIn(JobObject job)
+    {
+        string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
+        return JobProcessLauncher.Launch(job,
+            TestPaths.SupervisorCommandLine("--logs", Path.Combine(sandbox, "logs"),
+                                            "--worktrees", Path.Combine(sandbox, "worktrees")),
+            new LaunchOptions(RedirectStdio: true));
+    }
+
+    /// <summary>Doğum ANINDA okunan process adı (hiçbir şey öldürülmediği için okunabilir); pid çoktan
+    /// gitmişse ayırt edilebilir bir yer tutucu. <c>KillMidBuildTests.IsMsBuildProcess</c> ile aynı desen.</summary>
+    private static string NameOfProcess(int pid)
+    {
+        try { return Process.GetProcessById(pid).ProcessName; }
+        catch (ArgumentException) { return "(exited)"; }
     }
 
     [Fact] // pozitif — kapı AÇIK: kanca testler için çalışmaya DEVAM ediyor
