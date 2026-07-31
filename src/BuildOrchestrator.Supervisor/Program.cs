@@ -346,7 +346,7 @@ public static class Program
             // Incremental bir OPTİMİZASYONDUR: git/discovery/hash yolunda HERHANGİ bir hata (I/O, XML, vb.) tüm
             // run'ı ÖLDÜRMEMELİ. Plan AYNEN döner (WillBuild=null) → Build o durumda pre-skip yapmaz (hepsini
             // derler, güvenli taraf). Tanı için stderr'e bir satır düşülür (stdout YALNIZ NDJSON [D4]).
-            Console.Error.WriteLine("incremental pass atlandı (plan aynen, hepsi derlenecek): " + ex);
+            Console.Error.WriteLine("incremental pass skipped (plan kept as-is, everything will be built): " + ex);
             return (plan, null);
         }
     }
