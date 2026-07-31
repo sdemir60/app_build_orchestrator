@@ -1,7 +1,10 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace BuildOrchestrator.App.Graph;
 
@@ -20,15 +23,36 @@ namespace BuildOrchestrator.App.Graph;
 /// </summary>
 internal sealed class GraphNodeBody : StackPanel
 {
+    /// <summary>[A13/T5 fix-1] Düğümün <b>TEK</b> etkinleştirme yolu: fare tıklaması da UIA <c>Invoke</c>'u da
+    /// bu delegate'ten geçer (iki ayrı seçim mantığı YOK — kopya YASAK). <see cref="GraphView"/> düğümü kurarken
+    /// bağlar.</summary>
+    internal Action? Activate { get; set; }
+
     protected override AutomationPeer OnCreateAutomationPeer() => new GraphNodeBodyPeer(this);
 
     /// <summary>Gövdeye tıklamak düğümü seçer → UIA rolü <see cref="AutomationControlType.Button"/>'dır.
     /// Adı (proje adı + statü) düğüm başına <see cref="GraphView"/> verir.</summary>
-    private sealed class GraphNodeBodyPeer(GraphNodeBody owner) : FrameworkElementAutomationPeer(owner)
+    private sealed class GraphNodeBodyPeer(GraphNodeBody owner) : FrameworkElementAutomationPeer(owner), IInvokeProvider
     {
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Button;
 
         protected override string GetClassNameCore() => nameof(GraphNodeBody);
+
+        /// <summary>[A13/T5 fix-1] <b>Rol ile YETENEK örtüşür.</b> <see cref="AutomationControlType.Button"/>
+        /// rolü UIA istemcisine "bu öğe invoke edilebilir" diye söz verir; pattern'i vermezsek söz boşa çıkar
+        /// (ekran okuyucu düğümü duyurur ama etkinleştiremez).</summary>
+        public override object? GetPattern(PatternInterface patternInterface) =>
+            patternInterface == PatternInterface.Invoke ? this : base.GetPattern(patternInterface);
+
+        /// <summary>WPF'in kendi <c>ButtonAutomationPeer</c> deseni birebir: devre dışıysa
+        /// <see cref="ElementNotEnabledException"/>, eylem ise dispatcher'a <c>Input</c> önceliğiyle post edilir
+        /// (UIA çağrısı, seçim + kamera animasyonu bitene kadar bloklanmaz).</summary>
+        void IInvokeProvider.Invoke()
+        {
+            if (!IsEnabled()) throw new ElementNotEnabledException();
+            if (owner.Activate is { } activate)
+                owner.Dispatcher.BeginInvoke(DispatcherPriority.Input, activate);
+        }
     }
 }
 

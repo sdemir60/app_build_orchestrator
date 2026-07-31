@@ -669,10 +669,14 @@ public partial class GraphView : UserControl
         Canvas.SetTop(cell, slot.Center.Y - GraphLayout.NodeSize / 2);
 
         string name = node.Name;
+        // [A13/T5 fix-1] Düğümün etkinleştirilmesi TEK yerde: fare tıklaması da UIA Invoke'u da (ekran okuyucu)
+        // AYNI yerel fonksiyonu çağırır — ikinci bir seçim mantığı YOK (kopya YASAK, CLAUDE.md).
+        void Toggle() => SelectedNode = string.Equals(SelectedNode, name, StringComparison.Ordinal) ? null : name;
+        body.Activate = Toggle;
         body.MouseLeftButtonDown += (_, e) =>
         {
             e.Handled = true; // zemine ulaşmasın (aksi halde hemen ardından seçim kalkardı)
-            SelectedNode = string.Equals(SelectedNode, name, StringComparison.Ordinal) ? null : name;
+            Toggle();
         };
 
         var visual = new GraphNodeVisual
