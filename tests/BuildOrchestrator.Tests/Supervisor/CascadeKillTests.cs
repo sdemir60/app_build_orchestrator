@@ -23,7 +23,10 @@ public class CascadeKillTests
             livePids.Add(supervisor.Pid);
             var writer = new NdjsonWriter(supervisor.StandardInput!);
             var reader = new NdjsonReader(supervisor.StandardOutput!);
-            Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+            // [B1/F2 · fix-1] Taze bir .NET Supervisor process'inin BOOT'unu (CLR + JIT) bekleyen sabit 5 sn,
+            // yük altında ölçülmüş kırılma noktasıydı — bkz. task-B1-report.md İŞ 4. Gerekçe ve tek sahibi:
+            // TestPaths.WideStartupTimeout. Üretim yolu DEĞİŞMEZ; genişleyen yalnız TEST beklemesi.
+            Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
 
             await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
             Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
@@ -60,7 +63,9 @@ public class CascadeKillTests
             WindowsCommandLine.Build(TestPaths.SupervisorExe), new LaunchOptions(RedirectStdio: true));
         var writer = new NdjsonWriter(supervisor.StandardInput!);
         var reader = new NdjsonReader(supervisor.StandardOutput!);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2 · fix-1] bkz. yukarıdaki test — aynı kök (Supervisor boot'unu bekleyen sabit 5 sn),
+        // aynı çözüm (TestPaths.WideStartupTimeout).
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
         await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: true));
         var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("spawnFailed", err.Code);

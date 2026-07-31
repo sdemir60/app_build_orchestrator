@@ -48,7 +48,11 @@ public class KillMidBuildTests
             livePids.Add(supervisor.Pid);
             var writer = new NdjsonWriter(supervisor.StandardInput!);
             var reader = new NdjsonReader(supervisor.StandardOutput!);
-            Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+            // [B1/F2 · fix-1] CascadeKillTests ile aynı kök: taze .NET Supervisor process'inin BOOT'unu bekleyen
+            // sabit 5 sn, yük altında ölçülmüş kırılma noktası (task-B1-report.md İŞ 4). Tek sahibi:
+            // TestPaths.WideStartupTimeout. Aşağıdaki kill→ölüm iddiası (≤2000 ms) BU DEĞİŞİKLİKTEN ETKİLENMEZ —
+            // o, testin asıl spec'i olan §3 kabul ölçütüdür ve dokunulmadı.
+            Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
 
             await writer.WriteAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", Parallelism: 4));
 

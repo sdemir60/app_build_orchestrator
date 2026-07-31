@@ -47,7 +47,10 @@ public class SupervisorIpcTests
         await p.StandardInput.WriteLineAsync("""{"type":"ping","seq":1}""");
         await p.StandardInput.WriteLineAsync("bu bir NDJSON degil");
         await p.StandardInput.WriteLineAsync("""{"type":"shutdown"}""");
-        string all = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        // [B1/F2 · fix-1 sweep] Bu bekleme, gerçek Supervisor'ın BOOT'unu + üç komutu + shutdown'ı + EOF'u birlikte
+        // kapsıyor; yani içinde F2'nin ölçülen kırılma noktası (boot) VAR ve 10 sn'lik payın büyük kısmını boot
+        // yiyebilir. Aynı ilke, aynı tek sabit — bkz. TestPaths.WideStartupTimeout.
+        string all = await p.StandardOutput.ReadToEndAsync().WaitAsync(TestPaths.WideStartupTimeout);
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
         var lines = all.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         Assert.NotEmpty(lines);
