@@ -152,6 +152,66 @@ public class SupervisorIpcTests
         await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
     }
 
+    // ---------------------------------------------------------------- [A13/B4] debugSpawnChildren kapısı
+    // İKİ TARAFLI ayırt edicilik: aşağıdaki iki test AYNI kurulumdan yalnız BAYRAKLA ayrılır.
+    //   negatif → bayrak YOKken komut REDDEDİLİR (üretim ikilisinin varsayılan yüzeyi)
+    //   pozitif → bayrak VARken komut HÂLÂ çalışır (kapı, kancayı testler için öldürmedi)
+    // Tek başına biri yetmez: yalnız negatif yeşilse kapı her şeyi reddediyor olabilir, yalnız pozitif
+    // yeşilse kapı hiç kapanmıyor olabilir.
+
+    [Fact] // negatif — kapı KAPALI
+    public async Task DebugSpawnChildren_is_rejected_when_the_supervisor_starts_without_debug_hooks_and_stdout_stays_ndjson()
+    {
+        using var p = Process.Start(IsolatedPsi())!; // --debug-hooks YOK = üretimin başlattığı Supervisor
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        // [B1/F2] Gerçek Supervisor process'i başlatılıyor — boot beklemesinin tek sahibi WideStartupTimeout.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
+
+        // VAKUM KARŞITI (1): "bir şey döndü" YETMEZ — dönenin KODU tam olarak kapının kodu olmalı.
+        // unknownCommand gelseydi komut hiç bağlanmamış olurdu (IPC sözleşmesi KIRILMIŞ olurdu);
+        // debugChildrenSpawned gelseydi kapı hiç kapanmamış olurdu.
+        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("debugHooksDisabled", err.Code);
+        Assert.Contains(SupervisorHost.DebugHooksArg, err.Message, StringComparison.Ordinal); // hangi bayrakla açıldığı SÖYLENİYOR
+
+        // VAKUM KARŞITI (2): reddetme host'u düşürmedi — sonraki komut hâlâ yanıtlanıyor.
+        await writer.WriteAsync(new PingCommand(4));
+        Assert.Equal(4, Assert.IsType<PongEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5))).Seq);
+
+        // VAKUM KARŞITI (3) — [D4] stdout YALNIZ NDJSON: yukarıda TÜKETİLEN satırlar zaten NdjsonReader'dan
+        // geçti (parse edilemeyen bir satır orada patlardı), KALAN satırlar da burada tek tek çözülüyor.
+        await writer.WriteAsync(new ShutdownCommand());
+        string rest = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        foreach (var line in rest.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            Assert.NotNull(System.Text.Json.JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options));
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
+    [Fact] // pozitif — kapı AÇIK: kanca testler için çalışmaya DEVAM ediyor
+    public async Task DebugSpawnChildren_still_spawns_a_real_child_when_the_supervisor_starts_with_debug_hooks()
+    {
+        using var p = Process.Start(IsolatedPsi(debugHooks: true))!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
+        var spawned = Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // Vakum karşıtı: "event geldi" yetmez — bildirilen pid GERÇEK ve o an CANLI bir process olmalı
+        // (yoksa GetProcessById ArgumentException fırlatır). Handle kill'den ÖNCE açılır (CascadeKillTests deseni).
+        int pid = Assert.Single(spawned.Pids);
+        using var child = Process.GetProcessById(pid);
+
+        // Supervisor'ın inner Job'ı KILL_ON_JOB_CLOSE'dur: düzenli shutdown çocuğu da götürür (sleep/poll YOK).
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+        await child.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
     // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree
 
     /// <summary>İzole bir Supervisor: kendi logs/cache kökü + kendi worktree havuzu (kullanıcının gerçek dosyaları korunur).</summary>
