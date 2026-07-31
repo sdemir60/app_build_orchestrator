@@ -127,8 +127,10 @@ public class MainWindowRealizeTests
 
     /// <summary>
     /// [A13/T3 fix-2 · 3] <b>P2'nin ölçülen bedeli — artık sessiz değil.</b> Eklenen 1px hairline dıştan telafi
-    /// EDİLMEDİ: bant 40'ta kaldı, dolayısıyla iç kutu hairline kadar daraldı ve içerik bandın değil KALAN
-    /// kutunun ortasına oturdu. Bu bilinçli bir karardır ve buraya pinlenmiştir.
+    /// EDİLMEDİ: bant 40'ta kaldı, dolayısıyla iç kutu hairline kadar daraldı. Bu bilinçli bir karardır ve
+    /// ölçülebilir ÜÇ sonucuyla buraya pinlenmiştir: bant BÜYÜMEZ (41 olmaz), iç kutu bir kenarlıktan fazla
+    /// daralmaz, ve içerik <c>inner</c>'ın merkezinden yuvarlama bütçesini (bugün bir cihaz pikseli)
+    /// aşmayacak biçimde dikey ortalı kalır. Bu üçü sırasıyla aşağıdaki üç assert öbeğidir.
     ///
     /// <para><b>Otorite ve karar:</b> design-v1 README §2 bant şeması (<c>:84</c>) <c>TITLE BAR (40px)</c> ve
     /// §2.1 başlığı (<c>:105</c>) <c>## 2.1 Title bar (40px)</c> — görünen bant 40px'tir. DS
@@ -154,7 +156,8 @@ public class MainWindowRealizeTests
     /// logo ile iç kutu arasında İKİ hizalama adımı vardır (Viewbox → StackPanel → DockPanel) ve ikisinde de
     /// ideal offset yarım piksele denk düşüp yukarı yuvarlanır — <c>(39,2−16)/2 = 11,6 → 12</c> ve
     /// <c>(16−15,2)/2 = 0,4 → 0,8</c>. Model doğrulanır: aynı bantta TEK adım uzaktaki gear butonu yalnız
-    /// 0,4 dip (yarım piksel) sapar. Üretim ortalamayı doğru kutuda yapıyor; kırılgan olan iddiaydı.</para>
+    /// 0,4 dip (yarım piksel) sapar. Yani <c>inner</c> merkezine göre ölçülen sapmanın tamamı yuvarlamayla
+    /// açıklanır, artık bırakan yapısal bir kayma YOKTUR; kırılgan olan iddiaydı.</para>
     ///
     /// <para><b>SINIR (bilerek):</b> "iç kutuda ortalı" ile "40 bandında ortalı" arasındaki fark yarım
     /// hairline'dır (125%'te 0,4 dip) ve yuvarlama zemininin (bir cihaz pikseli) ALTINDA kalır — bu ikisini
