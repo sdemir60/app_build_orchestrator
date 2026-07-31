@@ -43,7 +43,7 @@ flowchart TD
 | IPC | App ↔ Supervisor | stdio NDJSON | `NdjsonFraming.cs:33-70`, `SupervisorHost.cs:45-57` |
 | Dosya sistemi | Supervisor ↔ repo/`%LOCALAPPDATA%` | doğrudan I/O | `WorkspaceScanner.cs:18-47`, `RunLogPaths.cs:8-12` |
 | Git | Supervisor ↔ kullanıcının repo'su | `git.exe` argv | `GitService.cs`, `WorktreeManager.cs` |
-| Kullanıcı girdisi | UI ↔ motor | IPC komut alanları | `RunViewModel.cs:425`, `SupervisorHost.cs:61-87` |
+| Kullanıcı girdisi | UI ↔ motor | IPC komut alanları | `RunViewModel.cs:425`, `SupervisorHost.cs:81-110` |
 
 ---
 
@@ -91,7 +91,8 @@ uçları çapraz sızar ve EOF hiç gelmezdi.
 - Bir child kaçmayı **deneyemez**: job `JOB_OBJECT_LIMIT_BREAKAWAY_OK` ile kurulmamıştır
   (`JobObject.cs:25-26` yalnız `KILL_ON_JOB_CLOSE` yazar), bu yüzden `CREATE_BREAKAWAY_FROM_JOB`
   `ERROR_ACCESS_DENIED` alır — bu davranış bir debug komutuyla bilinçli olarak prob edilir
-  (`SupervisorHost.cs:216-220`).
+  (`SupervisorHost.cs:250-256`). O komut (`debugSpawnChildren`) **varsayılan olarak kapalıdır** ve yalnız
+  `--debug-hooks` ile açılır (bkz. §3); prob'u koşturan da testlerin bayrakla başlattığı Supervisor'dır.
 - Kalıcı derleyici sunucuları oluşmaz: `-p:UseSharedCompilation=false -nodeReuse:false`
   (`MsBuildArguments.cs:11`) — aksi halde job dışında yaşayan bir VBCSCompiler/MSBuild node havuzu
   garantiyi anlamsız kılardı.
@@ -139,10 +140,10 @@ Deserialization sırasında **doğrulanan** şeyler:
 
 **Bozuk/kötücül bir satır ne yapar:**
 
-- *Supervisor tarafında* (`SupervisorHost.cs:48-53`): framing hatası **kurtarılamaz** sayılır →
+- *Supervisor tarafında* (`SupervisorHost.cs:70-74`): framing hatası **kurtarılamaz** sayılır →
   `error(framing)` yazılır ve process exit 2 ile kapanır. JSON/şema hatası ise **kurtarılabilir** →
   `error(badCommand)` yazılır, döngü devam eder (satır zaten tüketilmiştir). Tanınmayan ama geçerli bir
-  discriminator zaten yoktur; tanınmayan komut tipi `error(unknownCommand)` alır (`:86`).
+  discriminator zaten yoktur; tanınmayan komut tipi `error(unknownCommand)` alır (`:108`).
 - *App tarafında* (`EngineHost.cs:66-78`): framing hatası kalıcı sağırlık yaratmaz — engine öldürülür,
   generation artırılır ve **tek** bir `EngineExited(null)` sinyali yayınlanır.
 
@@ -154,20 +155,29 @@ planlama sırasında yüzeye çıkar — `planFailed` (`RunCoordinator.cs:694-69
 
 ### Komut yönü (App → Supervisor) hangi girdileri kabul ediyor
 
-`SupervisorHost.DispatchAsync` (`:61-87`) tam 11 komut tanır: `ping`, `shutdown`, `startRun`, `stopRun`,
+`SupervisorHost.DispatchAsync` (`:81-110`) tam 11 komut tanır: `ping`, `shutdown`, `startRun`, `stopRun`,
 `getProjectLog`, `debugSpawnChildren`, `syncWorkspace`, `listBranches`, `listWorktrees`, `deleteWorktree`,
-`setPerfMode`. Girdi kapıları:
+`setPerfMode`. **Tanınmak ≠ yürütülmek:** bunlardan `debugSpawnChildren` varsayılan olarak *reddedilir*
+(aşağıdaki maddeye bakınız), yani üretim ikilisinin fiilen yürüttüğü komut sayısı 10'dur. Girdi kapıları:
 
 - `rootPath`: `Directory.Exists` kapısı Sync'te (`SyncWorkspaceService.cs:58-62` → `planFailed`);
   Continue/RetryFailed için kanonikleştirilip aktif run'ın köküyle karşılaştırılır
   (`RunCoordinator.cs:271-280` — bozuk yol fırlatmaz, `null` döner).
 - `perfMode`: ordinal beyaz liste (`PerfProfile.cs:56-62`); tanınmazsa `error(badPerfMode)`
-  (`SupervisorHost.cs:172-173`).
+  (`SupervisorHost.cs:194-195`).
 - `deleteWorktree.name`: tek güvenli segment doğrulaması (`WorktreeManager.cs:363` → `PathSanitizer.cs:104-113`).
 - `layerPatterns[].regex`: kullanıcı regex'i, 100 ms match timeout ile derlenir (`LayerEngine.cs:49`, `:59-60`).
-- `debugSpawnChildren`: **üretimde de dinlenen bir komuttur** (`SupervisorHost.cs:207-223`) — `cmd.exe`
-  üzerinden `Start-Sleep` çocuğu doğurur. App bunu hiç göndermez; erişim yalnız Supervisor'ın stdin'ini
-  tutabilen için mümkündür (yani zaten App'in yerinde olan biri için).
+- `debugSpawnChildren`: bir **test kancasıdır ve varsayılan olarak KAPALIDIR**. Komut tanınmaya devam eder
+  (tip + `debugSpawnChildren` ayrımcısı `IpcMessages.cs:22`/`:36`'da durur — IPC sözleşmesi kırılmadı), ama
+  Supervisor `--debug-hooks` ile başlatılmadıysa `error(debugHooksDisabled)` ile **reddedilir**
+  (`SupervisorHost.cs:242-243`). Bayrağın adının tek sahibi `SupervisorHost.DebugHooksArg` (`:47`);
+  ayrıştırması `Program.cs:79`, host'a bağlanması `:102`. Bayrak verildiğinde komut eskisi gibi `cmd.exe`
+  üzerinden `Start-Sleep` çocuğu doğurur (`SupervisorHost.cs:250-252`).
+  **App bayrağı hiç göndermez** — `EngineHost` Supervisor'ı argümansız başlatır (`EngineHost.cs:71`), yani
+  kullanıcının çalıştırdığı ikilide bu kanca ölüdür; onu yalnız testler açar.
+  **Bu bir güvenlik sınırı DEĞİL, bir yüzey daraltmasıdır:** erişim zaten yalnız Supervisor'ın stdin'ini
+  tutabilen için mümkündü (yani App'in yerinde olan biri için — §10). Değişen şey, **varsayılan yüzeyin
+  daralmasıdır**.
 
 ---
 
@@ -280,8 +290,9 @@ bunu açıkça belgeler). Havuz, uygulamanın kendi scratch alanıdır.
 
 **Neden git/MSBuild tarafında risk yok:** `ProcessRunner` argümanları `psi.ArgumentList`'e tek tek ekler
 (`ProcessRunner.cs:39` — "elle string birleştirme YASAK"), `UseShellExecute=false`'tur (`:36`) ve hiçbir yerde
-`cmd.exe`/`powershell` bir aracı olarak kullanılmaz (tek istisna `debugSpawnChildren` test komutudur,
-`SupervisorHost.cs:214-215`). Kabuk devrede olmadığı için `&`, `|`, `;`, `` ` `` gibi metakarakterlerin bir
+`cmd.exe`/`powershell` bir aracı olarak kullanılmaz (tek istisna, **varsayılan olarak kapalı** olan
+`debugSpawnChildren` test kancasıdır — yalnız `--debug-hooks` ile açılır, bkz. §3;
+`SupervisorHost.cs:250-251`). Kabuk devrede olmadığı için `&`, `|`, `;`, `` ` `` gibi metakarakterlerin bir
 anlamı yoktur; MSBuild yolunda ise komut satırı elle kurulur ama kaçış `WindowsCommandLine` ile
 CreateProcessW/MSVCRT kurallarına göre yapılır (backslash-tırnak sayımı dahil, `:23-27`).
 
@@ -371,11 +382,16 @@ dolayısıyla IPC'yi de kısardı.
    girerdi (`GitService.cs:196`) — `--` ayracı ya da ön-doğrulama yoktur. Erişim için saldırganın zaten
    kullanıcının hesabında olması gerekir.
 5. **Supervisor argümanları doğrulanmaz.** `--logs` (`Program.cs:62`) ve `--worktrees` (`:73`) ham alınır,
-   `Directory.CreateDirectory` ile oluşturulur. App bunları **hiç göndermez** (`EngineHost.cs:24` argümansız
-   başlatır); yalnız testler kullanır.
+   `Directory.CreateDirectory` ile oluşturulur; `--debug-hooks` (`:79`) ise değer almayan bir bayraktır ve
+   yalnız varlığına bakılır. App bunların **hiçbirini göndermez** (`EngineHost.cs:71` argümansız başlatır);
+   yalnız testler kullanır.
 6. **IPC alan-düzeyi şema doğrulaması yoktur** (bkz. §3): eksik/`null` alanlar ancak kullanım noktasında
    patlar ve `planFailed`/`runFailed`'a dönüşür.
-7. **`debugSpawnChildren` üretim derlemesinde de dinlenir** (`SupervisorHost.cs:73`, `:207-223`).
+7. **`debugSpawnChildren` üretim derlemesinden KALDIRILMADI, bir bayrağın arkasına alındı**
+   (`SupervisorHost.cs:95-96`, `:240-259`): tip ve JSON ayrımcısı yerinde durur, komut varsayılan olarak
+   `error(debugHooksDisabled)` alır ve yalnız `--debug-hooks` ile açılır. **Kalan yüzey:** Supervisor'ı
+   başlatan taraf bayrağı da geçirebilir — ama o taraf zaten App'in kendisidir (§10), yani bu bir sınır
+   değil yüzey daraltmasıdır. Bayrak da, diğer Supervisor argümanları gibi, doğrulanmaz (madde 5).
 8. **Havuz worktree'sindeki elle yapılmış değişiklikler korunmaz** (§5 sonu).
 
 ---
