@@ -188,10 +188,13 @@ public partial class ActionBarTests
 
     // ---------------------------------------------------------------- [A13/T4 · m6] popover 8px boşluk
 
-    /// <summary>[A13/T4 · m6] design-v1 prototipi (<c>BuildApp.jsx:821</c> <c>bottom: 'calc(100% + 8px)'</c>) —
-    /// branch/worktree popover'ları anchor'larının 8px ÜSTÜNDE açılır. WPF karşılığı <c>Placement="Top"</c> +
-    /// <c>VerticalOffset="-8"</c> (yukarı = negatif). <c>ActionBar.xaml:27,:40</c>'ın runtime karşılığı — bir XAML
-    /// değişikliği (ör. -8 → -4) burada KIRMIZI verir, saf metin taraması vermez.</summary>
+    /// <summary>[A13/T4 · m6 · fix-1 · D5] design-v1 prototipi (<c>BuildApp.jsx:821</c> <c>bottom: 'calc(100% +
+    /// 8px)'</c>) — branch/worktree popover'ları anchor'larının 8px ÜSTÜNDE açılır. WPF karşılığı
+    /// <c>Placement="Top"</c> + <c>VerticalOffset="-8"</c> (yukarı = negatif) + <c>PlacementTarget</c>'ın GERÇEKTEN
+    /// chip'e bağlı olması (aksi halde offset doğru olsa da popover yanlış öğenin üstünde açılır — <c>ActionBar.xaml
+    /// :26-27,:39-40</c>'ın <c>PlacementTarget="{Binding ElementName=PART_BranchChip}"</c> bağının runtime karşılığı,
+    /// fix-1'de eklendi). Bir XAML değişikliği (ör. -8 → -4 ya da binding kopması) burada KIRMIZI verir, saf metin
+    /// taraması vermez.</summary>
     [StaFact]
     public void The_branch_and_worktree_popovers_open_eight_pixels_above_their_chip()
     {
@@ -200,26 +203,33 @@ public partial class ActionBarTests
 
         Assert.Equal(PlacementMode.Top, bar.BranchPopup.Placement);
         Assert.Equal(-8.0, bar.BranchPopup.VerticalOffset);
+        Assert.Same(bar.BranchChip, bar.BranchPopup.PlacementTarget); // [fix-1 · D5] doğru chip'in ÜSTÜNDE açılır
         Assert.Equal(PlacementMode.Top, bar.WorktreePopup.Placement);
         Assert.Equal(-8.0, bar.WorktreePopup.VerticalOffset);
+        Assert.Same(bar.WorktreeChip, bar.WorktreePopup.PlacementTarget);
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [A13/T4 · n4] perf chip tooltip YOK
+    // ---------------------------------------------------------------- [A13/T4 · n4] perf/Build tooltip YOK
 
-    /// <summary>[A13/T4 · n4] Bilinçli KARARLAR listesi (design-v1 README §8: <i>"Toast/popup yok · 'View
-    /// failures' butonu yok · <b>perf/Build tooltip'i yok</b> · katman eşleşme sayacı yok."</i>) + §2.7 madde 8:
-    /// <i>"perf: Balanced chip — tıkla döngü ... <b>Tooltip YOK (istenmedi)</b>."</i> — sayaç chip'lerinin AKSİNE
-    /// (<see cref="ActionBar.AddCounterChip"/> her birine <c>ToolTip = label</c> atar), perf chip'i BİLE BİLE
-    /// tooltipsiz bırakılmıştır. Regresyon: biri "eksik" sanıp <c>BuildPerfChip</c>'e bir <c>ToolTip</c> eklerse
-    /// bu test KIRMIZI verir.</summary>
+    /// <summary>[A13/T4 · n4 · fix-1 · B2] Bilinçli KARARLAR listesi (design-v1 README §8: <i>"Toast/popup yok ·
+    /// 'View failures' butonu yok · <b>perf/Build tooltip'i yok</b> · katman eşleşme sayacı yok."</i>) + §2.7 madde
+    /// 8: <i>"perf: Balanced chip — tıkla döngü ... <b>Tooltip YOK (istenmedi)</b>."</i> — sayaç chip'lerinin
+    /// AKSİNE (<see cref="ActionBar.AddCounterChip"/> her birine <c>ToolTip = label</c> atar), perf chip'i ve Build
+    /// split-button'ı (otoritenin İKİNCİ yarısı — önceden testsizdi) BİLE BİLE tooltipsiz bırakılmıştır.
+    ///
+    /// <para><b>fix-1 · B2:</b> pozitif kontrol eklendi — <c>SigmaChip.ToolTip</c>'in dolu olduğu ÖNCE assert
+    /// edilir (chip kurulum yolunun GERÇEKTEN koştuğunun kanıtı); bu olmadan <c>PerfChip</c>/<c>Split</c> hiç
+    /// kurulmasa da iki <c>Null</c> assert'i vakumda yeşil kalırdı.</para></summary>
     [StaFact]
-    public void The_perf_chip_carries_no_tooltip_by_design()
+    public void The_perf_chip_and_build_button_carry_no_tooltip_by_design()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
+        Assert.NotNull(bar.SigmaChip.ToolTip); // ön-koşul: chip kurulum yolu GERÇEKTEN koştu (vakum değil)
         Assert.Null(bar.PerfChip.ToolTip);
+        Assert.Null(bar.Split.ToolTip); // [fix-1 · B2] otoritenin "Build" yarısı — önceden pinsizdi
         GC.KeepAlive(window);
     }
 
@@ -227,6 +237,24 @@ public partial class ActionBarTests
 
     /// <summary>Bir sayaç chip'inin İLK çocuğu (StackPanel[icon, value]) — chip glyph'ini okumanın TEK yolu.</summary>
     private static UIElement ChipIcon(ToggleButton chip) => ((StackPanel)chip.Content).Children[0];
+
+    /// <summary>Bir sayaç chip'inin İKİNCİ çocuğu (StackPanel[icon, value]) — <see cref="ChipIcon"/>'ın simetriği,
+    /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu.</summary>
+    private static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
+
+    /// <summary>[A13/T4 · n6 · fix-1 · B3/C3] design-v1 README:48 "DAİMA tabular rakam" — sayaç chip değeri
+    /// (<c>ActionBar.xaml.cs:258 CounterValue</c>) mono taşıyan altı üretim yerinden biridir. Envanter/kapsam
+    /// kararı XML doc'u: <see cref="ProjectRowTests.The_project_row_sha_and_duration_columns_are_tabular"/>.</summary>
+    [StaFact]
+    public void The_sigma_chip_value_is_tabular()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Equal(System.Windows.FontNumeralAlignment.Tabular,
+            System.Windows.Documents.Typography.GetNumeralAlignment(ChipValue(bar.SigmaChip)));
+        GC.KeepAlive(window);
+    }
 
     /// <summary>[A13/T3c · c6.2] BuildApp.jsx:1550 Σ chip'i <c>I.sigma</c> ikonunu taşır — <c>ActionBar.BuildCounterChips</c>
     /// hangi ikonu bağladığını hiçbir test doğrulamıyordu (Icon.Sigma yerine başka bir anahtar verilse süit yeşil kalırdı).</summary>
