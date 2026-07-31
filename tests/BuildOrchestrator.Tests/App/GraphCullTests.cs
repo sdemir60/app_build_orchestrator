@@ -31,6 +31,14 @@ public class GraphCullTests
         [.. Enumerable.Range(0, perLayer * layers)
             .Select(i => new GraphNode($"{prefix}{i}", i / perLayer, GraphStatus.Discovered))];
 
+    /// <summary>[A13/T6 · t4] Katman başına AYRI düğüm sayısı + ad öneki taşıyan TEK graf. <see cref="ShortNamedNodes"/>
+    /// homojen üretir (her katman aynı yoğunluk, aynı ad genişliği) — LOD kararının gerçekten KATMAN BAŞINA
+    /// verildiği ancak karışık bir grafta ölçülebilir.</summary>
+    private static IReadOnlyList<GraphNode> MixedNamedNodes(params (int PerLayer, string Prefix)[] layers) =>
+        [.. layers.SelectMany((spec, layer) => Enumerable
+            .Range(0, spec.PerLayer)
+            .Select(i => new GraphNode($"{spec.Prefix}{i}", layer, GraphStatus.Discovered)))];
+
     // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer). LOD ölçümü için file:// tabanlı
     // etiket ailesi hâlâ buradan enjekte edilir (pack:// aileler headless'ta çözülmez — TrackedTextBlockTests deseni).
     private static GraphView NewView(Size size, bool animations = false)
@@ -140,6 +148,50 @@ public class GraphCullTests
         Assert.True(longView.IsCullEnabled);
         Assert.NotEmpty(longView.NodeVisuals);
         Assert.All(longView.NodeVisuals.Values, v => Assert.Null(v.Label));
+    }
+
+    [StaFact]
+    public void One_graph_drops_the_crowded_layers_labels_and_keeps_the_sparse_layers_in_the_same_pass()
+    {
+        // [A13/T6 · t4] LOD kararı KATMAN BAŞINA verilir (GraphView.xaml.cs:335-337 — aralık
+        // `_layout.LayerSpacing[node.Layer]`, genişlik `labelWidths[node.Layer]`; GraphLayout.cs:7-14 aralığın
+        // neden katman başına farklı olduğunu anlatır). Bugüne kadarki LOD testlerinin HEPSİ homojen graf
+        // kullanıyordu (hepsi kısa ya da hepsi uzun ad, hepsi aynı yoğunluk) — iki AYRI view üzerinden
+        // (Above_the_gate_short_labels_survive_a_crowded_layer_and_long_ones_do_not: shortView + longView).
+        // Kararı yanlışlıkla GRAF BAŞINA veren bir hata (ör. tüm katmanların en dar aralığı / en geniş etiketi)
+        // o testlerin hepsinde YEŞİL kalırdı. Bu test aynı grafta iki katmanı KARŞIT beklentiyle ölçer.
+        //
+        // Fixture: katman 0 seyrek + kısa adlı (aralık ≈85,3px, etiket ≈2 karakter) → etiket KALIR;
+        //          katman 1 kalabalık + uzun adlı (aralık tabanda = 34px, etiket ≫34px)  → etiket DÜŞER.
+        var nodes = MixedNamedNodes((10, "P"), (145, "Domain.Vehicle.Registration.Long"));
+
+        // Ön-koşullar (vakum yasak): (a) graf tam-detay bandının DIŞINDA, aksi halde LOD hiç koşmaz ve test
+        // "etiketler duruyor" diye sessizce yeşil kalırdı; (b) iki katmanın aralığı gerçekten AYRI bantta.
+        Assert.True(nodes.Count > GraphView.FullDetailMaxNodes, "fixture tam-detay bandında — LOD hiç koşmaz");
+        Assert.Equal(GraphLayout.MinNodeSpacing, GraphLayout.NodeSpacingFor(145));
+        Assert.True(GraphLayout.NodeSpacingFor(10) > GraphLayout.MinNodeSpacing, "iki katman aynı aralığa düştü");
+
+        // Panel, tuvalin TAMAMINI kapsayacak kadar geniş: iki katmandan da düğüm materyalize olsun (cull AÇIK
+        // ama görünen kümenin dışında kalan yok) — karşılaştırma böylece kurulmuş GERÇEK görsellere dayanır.
+        var view = NewView(new Size(6000, 800));
+        view.SetGraph(nodes, []);
+
+        Assert.True(view.IsCullEnabled);
+        var byLayer = nodes
+            .GroupBy(n => n.Layer)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Where(n => view.NodeVisuals.ContainsKey(n.Name)).Select(n => view.NodeVisuals[n.Name]).ToList());
+        // Ön-koşul: HER İKİ katmandan da gerçekten görsel kuruldu (biri boş kalsaydı Assert.All boş kümede
+        // sessizce geçerdi — bu süitte daha önce yaşanmış vakum sınıfı).
+        Assert.NotEmpty(byLayer[0]);
+        Assert.NotEmpty(byLayer[1]);
+
+        // ASIL İDDİA: aynı geçişte iki katman FARKLI davranır.
+        Assert.All(byLayer[0], v => Assert.NotNull(v.Label));
+        Assert.All(byLayer[0], v => Assert.Null(v.Body.ToolTip));   // etiket var → tooltip'e gerek yok
+        Assert.All(byLayer[1], v => Assert.Null(v.Label));
+        Assert.All(byLayer[1], v => Assert.NotNull(v.Body.ToolTip)); // etiketi düşen düğüm anonim kalmaz (A3)
     }
 
     [StaFact]
