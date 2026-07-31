@@ -134,6 +134,32 @@ public class SuccessFlourishTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[A13/T4 · m4] Otorite <c>BuildApp.jsx:19</c>: <c>.bo-glow-once { animation: bo-glow-once 1.1s
+    /// var(--ease-out) 1; }</c> — <c>GlowMs</c> (<c>EventStreamView.xaml.cs:322</c>) hiçbir testte LİTERAL bir
+    /// süreye karşı pinlenmemişti (yukarıdaki testler yalnız "biter" ve "bir kez" der, "ne kadar sürede" demez).
+    /// Gerçek saatle ölçülür: tetikten (parıltı BAŞLAR) zemin şeffafa dönene (parıltı BİTER) kadarki süre.</summary>
+    [StaFact]
+    public void The_flourish_glow_runs_for_about_1100_milliseconds()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm, animations: true);
+
+        DriveCleanRun(vm);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        DispatcherPump.PumpUntil(() => view.Rows.Sum(r => r.GlowPlayCount) >= 1, PumpTimeout);
+        var brush = (SolidColorBrush)view.Rows[^1].Background;
+        Assert.True(brush.HasAnimatedProperties, "ön-koşul: parıltı saati hiç kurulmadı");
+
+        DispatcherPump.PumpUntil(() => brush.Color == Colors.Transparent, TimeSpan.FromSeconds(5));
+        clock.Stop();
+
+        Assert.Equal(Colors.Transparent, brush.Color);
+        // BuildApp.jsx:19 `1.1s` — DriveCleanRun/pump gecikmesini barındıran gevşek bir pencere; kaba bir sapmayı
+        // (ör. 300ms/3s) yakalar.
+        Assert.InRange(clock.ElapsedMilliseconds, 900, 1700);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void A_failed_run_never_flourishes_any_row()
     {
