@@ -1,6 +1,9 @@
-﻿using System.Windows;
+﻿using System.IO;
+using System.Text.RegularExpressions;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
@@ -35,6 +38,33 @@ public class MotionOwnerHygieneTests
         Assert.Equal(TimeSpan.FromMilliseconds(900), spin.Duration.TimeSpan);
         Assert.Equal(RepeatBehavior.Forever, spin.RepeatBehavior);
         Assert.Equal(30, Timeline.GetDesiredFrameRate(spin)); // dekoratif sonsuz → 30fps tavanı (feasibility §3.4)
+    }
+
+    /// <summary>
+    /// [A13/B3 · k3] <b>Daktilo imleç HOLD'unun TEK tanımı vardır.</b> 420 önce üç sahipte ayrı ayrı yazılıydı
+    /// (<c>ConsoleView</c> · <c>EventStreamView</c> · <c>EventStreamRow</c>) ve yalnız BİRİ pinliydi
+    /// (<c>ConsoleMotionPathTests</c>) — kalan iki kopya sessizce sürüklenebilirdi.
+    ///
+    /// <para>İki iddia: (1) <b>değer</b> otorite literaline eşit (<c>BuildApp.jsx:91</c>
+    /// <c>setTimeout(onDone, 420)</c>; beklenen değer ÜRETİMDEN OKUNMAZ — A13/T4'ün <c>PopIn.DurationMs</c>
+    /// deseni), (2) <b>tanım</b> kaynak ağacında TEK — sahipler yalnız derleme-zamanı alias tutar. (2) olmadan
+    /// biri sabiti sahibine geri INLINE edebilir ve (1) yine yeşil kalırdı.</para>
+    /// </summary>
+    [Fact]
+    public void The_typewriter_cursor_hold_has_exactly_one_definition_that_every_owner_aliases()
+    {
+        Assert.Equal(420.0, TypewriterScheduler.CursorHoldMs); // otorite literali (üretimden OKUNMAZ)
+
+        // Üç sahibin üçü de AYNI kaynağı gösterir.
+        Assert.Equal(TypewriterScheduler.CursorHoldMs, ConsoleView.CursorHoldMs);
+        Assert.Equal(TypewriterScheduler.CursorHoldMs, EventStreamView.CursorHoldMs);
+        Assert.Equal(TypewriterScheduler.CursorHoldMs, EventStreamRow.CursorHoldMs);
+
+        // ...ve değeri YAZAN tek yer TypewriterScheduler'dır (geri-inline'a kapalı).
+        var definitions = SourceGuard.ScanApp("*.cs",
+            new Regex(@"CursorHoldMs\s*=\s*[0-9]", RegexOptions.Compiled), skipCommentLines: true);
+        Assert.Single(definitions);
+        Assert.StartsWith(Path.Combine("Console", "TypewriterScheduler.cs"), definitions[0], StringComparison.Ordinal);
     }
 
     [StaFact]

@@ -19,6 +19,22 @@ public sealed class TypewriterScheduler
     /// <summary>Prototipteki üst sınır adım sayısı (satır uzunluğu / 22) — toplam süreyi ≤242ms tutar.</summary>
     public const int MaxSteps = 22;
 
+    /// <summary>
+    /// [A13/B3 · k3] Yazım bittikten sonra imlecin sönmeye başlamadan önce SABİT kaldığı süre —
+    /// otorite <c>BuildApp.jsx:91</c> (<c>doneT = setTimeout(onDone, 420)</c>), design-v1 §2.5
+    /// "imleç ~420ms sonra söner".
+    ///
+    /// <para><b>TEK TANIM burasıdır.</b> Değer önce ÜÇ yerde ayrı ayrı yazılıydı (<c>ConsoleView</c>,
+    /// <c>EventStreamView</c>, <c>EventStreamRow</c>) ve yalnız biri pinliydi — yani iki kopya sessizce
+    /// sürüklenebilirdi. Üç sahip de artık derleme-zamanı alias tutar (<c>RevealStagger.RevealMs</c> ve
+    /// <c>StickyLayerList.RevealHeroKey</c> ile AYNI desen), dolayısıyla ayrışmaları OLANAKSIZDIR.</para>
+    ///
+    /// <para>Buraya ait olmasının gerekçesi: hold, daktilonun BİTİŞİNE göre ölçülür — üç sahibin üçü de
+    /// <c>_scheduler.Duration + CursorHoldMs</c> yazar, yani sabit bu tipin tempo tablosunun parçasıdır
+    /// (<see cref="StepMs"/>/<see cref="MaxSteps"/> ile aynı otorite satırından gelir).</para>
+    /// </summary>
+    public const double CursorHoldMs = 420.0;
+
     private readonly int _length;
     private readonly int _charsPerStep;
 

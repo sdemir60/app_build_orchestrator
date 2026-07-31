@@ -26,7 +26,10 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class EventStreamView : UserControl
 {
-    private const double CursorHoldMs = 420.0; // BuildApp.jsx:91 — daktilo bitince imleç ~420ms sonra söner (aktif satırda KALIR)
+    // [A13/B3 · k3] BuildApp.jsx:91 — daktilo bitince imleç ~420ms sonra söner (aktif satırda KALIR).
+    // Tek tanım TypewriterScheduler.CursorHoldMs'tedir; bu derleme-zamanı alias'tır (internal: otorite
+    // literaline karşı saf assert edilebilsin — ConsoleView.CursorHoldMs ile AYNI desen).
+    internal const double CursorHoldMs = TypewriterScheduler.CursorHoldMs;
 
     private RunViewModel? _vm;
     private readonly BottomAnchorBehavior _bottomAnchor;
@@ -327,7 +330,8 @@ public sealed class EventStreamRow : Border
     private const double RowMinHeight = 24;  // BuildApp.jsx:645 minHeight 24
     private const double SlotGap = 8;         // BuildApp.jsx:645 gap 8
     private const double StripeWidth = 2;     // BuildApp.jsx:651 width 2
-    private const double CursorHoldMs = 420.0;
+    // [A13/B3 · k3] Üçüncü kopyaydı — tek tanım TypewriterScheduler.CursorHoldMs (derleme-zamanı alias).
+    internal const double CursorHoldMs = TypewriterScheduler.CursorHoldMs;
 
     private readonly SolidColorBrush _bgBrush = new(Colors.Transparent); // per-instance (A13.2)
     private readonly Rectangle _stripe = new();

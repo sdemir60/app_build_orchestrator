@@ -31,7 +31,10 @@ public partial class ConsoleView : UserControl
     // [A13/T4 fix-1 · A3] internal (private değil) — motion sabitinin değeri otoriteye karşı SAF assert ile
     // pinlenebilsin diye (ConsoleMotionPathTests). BuildShakeAnimation'ın internal yapıldığı A12-korumalı
     // desenin aynısı; davranış DEĞİŞMEDİ.
-    internal const double CursorHoldMs = 420.0;
+    // [A13/B3 · k3] Değer ARTIK burada TANIMLI DEĞİL: tek tanım TypewriterScheduler.CursorHoldMs'tedir
+    // (aynı 420 üç sahipte ayrı ayrı yazılıydı, ikisi pinsizdi). Bu, derleme-zamanı alias'tır — RevealStagger.RevealMs
+    // deseni; sürüklenmesi OLANAKSIZ.
+    internal const double CursorHoldMs = TypewriterScheduler.CursorHoldMs;
     // [3b Minor 1/2] Off-palette hex YOK: base foreground + FontSize XAML token/resource'ından gelir.
 
     /// <summary>[3b/Ek A #16] Canlı append'te belgede tutulan azami satır (render dilimi). "N lines" sayacı bundan
