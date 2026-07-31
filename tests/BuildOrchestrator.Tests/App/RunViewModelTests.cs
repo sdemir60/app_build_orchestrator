@@ -20,10 +20,14 @@ public class RunViewModelTests
 {
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
-    // [B1/F1] Gerçek Supervisor process'i başlatan testlerden BİRİ (aşağıda) yük altında ölçülmüş bir flake
-    // taşıyordu: üretim varsayılanı (5s, EngineHost.cs) yük altında yetmiyordu. Üretim varsayılanı DEĞİŞMEDİ —
-    // yalnız bu ölçülmüş testin kendi engine'i geniş bir timeout enjekte ediyor (bkz. task-B1-brief.md).
-    private static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
+    // [B1/F1 · fix-1] Bu dosyada GERÇEK Supervisor process'i BAŞLATAN (StartAsync çağıran) sekiz test var ve
+    // hepsi aynı köke bağlı: üretim varsayılanı (5s, EngineHost.StartupTimeout) yük altında yetmiyor. fix-1
+    // öncesi bunlardan yalnız ÜÇÜ (ilk ölçülenler) yamalıydı; yük altındaki koşumda yamasız kalanlardan ikisi
+    // (Continue_sends_StartRunCommand_with_ContinueMode + OnEngineExited_while_IsStarting_...) yine
+    // EngineHost.StartAsync'te TimeoutException ile düştü — bkz. task-B1-report.md İŞ 4. Artık SEKİZİ DE
+    // enjekte ediyor; StartAsync ÇAĞIRMAYAN diğer engine'ler (çoğunluk) bu süreyi hiç kullanmadığı için
+    // dokunulmadı. Sabitin tek sahibi TestPaths.WideStartupTimeout; üretim varsayılanı DEĞİŞMEDİ.
+    private static readonly TimeSpan WideStartupTimeout = TestPaths.WideStartupTimeout;
 
     // ---------------------------------------------------------------- 1) satır ekleme/güncelleme (saf OnEvent)
 
@@ -460,7 +464,7 @@ public class RunViewModelTests
     [Fact]
     public async Task Stop_sends_StopRunCommand_graceful_and_engine_acks_it()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var stopped = new TaskCompletionSource<RunStoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -480,7 +484,7 @@ public class RunViewModelTests
     [Fact]
     public async Task Continue_sends_StartRunCommand_with_ContinueMode()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         string root = Directory.CreateTempSubdirectory("bo-vm-continue-").FullName;
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r2") { RootPath = root };
@@ -719,7 +723,7 @@ public class RunViewModelTests
     [Fact] // startRun gönderildi, runStarted HENÜZ gelmedi (IsStarting=true) — engine bu pencerede ölürse butonlar açılmalı
     public async Task OnEngineExited_while_IsStarting_resets_run_state_and_reenables_Rebuild()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
@@ -849,7 +853,7 @@ public class RunViewModelTests
     [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
     public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         await vm.RebuildCommand.ExecuteAsync(null); // IsStarting=true
@@ -883,7 +887,7 @@ public class RunViewModelTests
                 """);
         }
 
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root };
         var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);

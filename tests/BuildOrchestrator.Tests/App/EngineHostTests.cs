@@ -8,10 +8,9 @@ namespace BuildOrchestrator.Tests.App;
 
 public class EngineHostTests
 {
-    // [B1/F1] Startup timeout GENİŞ geçilir: gerçek bir Supervisor process'i başlatılıyor, yük altındaki
-    // makinede 5s'lik üretim varsayılanı sebepsiz kırmızı verirdi (bkz. task-B1-brief.md ölçümü). Üretim
-    // varsayılanı EngineHost.cs'te 5s'de kalır — bu yalnız test-seam'i kullanır.
-    private static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
+    // [B1/F1 · fix-1] Startup timeout GENİŞ geçilir; sabitin TEK sahibi TestPaths.WideStartupTimeout
+    // (gerekçe orada). Üretim varsayılanı EngineHost.cs'te 5s'de kalır — bunu Default_startup_timeout_stays_five_seconds pinler.
+    private static readonly TimeSpan WideStartupTimeout = TestPaths.WideStartupTimeout;
 
     [Fact]
     public async Task Start_receives_engineReady_and_ping_pong_works()

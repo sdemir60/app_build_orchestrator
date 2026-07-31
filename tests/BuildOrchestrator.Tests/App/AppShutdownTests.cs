@@ -98,7 +98,7 @@ public class AppShutdownTests
     [Trait("Category", "ProcessControl")]
     public async Task EngineHost_disposal_does_not_require_the_callers_synchronization_context()
     {
-        var host = new EngineHost(TestPaths.SupervisorExe);
+        var host = new EngineHost(TestPaths.SupervisorExe, TestPaths.WideStartupTimeout); // [B1/F1 fix-1] gerçek engine BAŞLATILIYOR — gerekçe TestPaths.WideStartupTimeout'ta
         await host.StartAsync(); // _writer canlı — disposal'da GERÇEKTEN askıya alan await'ler oluşur
 
         // DisposeAsync'i bloklu dispatcher context'inde BAŞLAT (App.OnExit ile aynı), Task'ı dışarıda bekle.

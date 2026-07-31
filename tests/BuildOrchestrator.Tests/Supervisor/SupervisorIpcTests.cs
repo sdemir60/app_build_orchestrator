@@ -10,6 +10,17 @@ public static class TestPaths
 {
     public static string SupervisorExe => Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.Supervisor.exe");
 
+    /// <summary>[B1/F1 · fix-1] GERÇEK bir Supervisor process'i başlatan her testin <see cref="SupervisorExe"/>
+    /// ile birlikte <c>EngineHost</c>'a ENJEKTE ETTİĞİ startup timeout. Üretim varsayılanı (5 sn,
+    /// <c>EngineHost.StartupTimeout</c>) yük altında yetmiyor: taze bir process doğup <c>engineReady</c>
+    /// yazana kadar 5 sn'yi aşabiliyor ve test SEBEPSİZ kırmızı veriyor (ölçüm: task-B1-report.md İŞ 4,
+    /// yük altındaki koşum). <b>Üretim varsayılanı DEĞİŞMEZ</b> — donmuş bir supervisor'da uygulamanın
+    /// vazgeçmesi şart; genişleyen yalnız TEST beklemesidir.
+    /// <para>Tek yer: aksi halde aynı sabit <c>EngineHostTests</c>/<c>RunViewModelTests</c>/
+    /// <c>AppShutdownTests</c>'te üç ayrı kopya olarak yaşardı ve bir sonraki start-eden test yine
+    /// yamasız kalırdı (fix-1 öncesi tam olarak bu oldu — 8 start noktasının yalnız 3'ü yamalıydı).</para></summary>
+    public static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).</summary>
     /// <param name="worktreePoolDir">[A5/T69] Worktree havuz kökü — verilmezse üretim varsayılanı
     /// (<c>%LOCALAPPDATA%\BuildOrchestrator\worktrees</c>). Havuza dokunan testler KENDİ temp kökünü verir;
