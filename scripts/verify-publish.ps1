@@ -7,11 +7,17 @@
     1. dotnet publish (framework-dependent, klasor tabanli, win-x64)
     2. Publish yerlesimi: supervisor\BuildOrchestrator.Supervisor.exe + Assets\GEIST-LICENSE.txt
     3. Publish edilen supervisor ikilisi ile NDJSON round-trip (engineReady + surum)
-    4. Publish edilen App.exe baslatilir; supervisor child process'inin AYNI publish klasorunden
+    4. [A13/T6 t6] Publish edilen supervisor ikilisi GERCEK bir Sync + Build kosturur ve en az bir
+       runCompleted uretir. HEDEF KUCUK VE KENDI KENDINE YETER: script'in KENDI olusturdugu gecici
+       is alaninda TEK bir minimal .NET Framework v4.6 class library (tests/.../MsBuild/LegacyFixture.cs
+       CreateClassLib ile ayni sekil) + o dizinde `git init` + tek commit. Kullanicinin gercek reposu,
+       gercek log/cache/state klasoru ve worktree havuzu HIC hedef alinmaz (--logs/--worktrees temp'e
+       yonlendirilir). Maliyet: bir MSBuild.exe cagrisi (~5-15 sn, cogu vswhere + MSBuild acilisi).
+    5. Publish edilen App.exe baslatilir; supervisor child process'inin AYNI publish klasorunden
        dogdugu dogrulanir (WMI olay aboneligi ile beklenir, poll edilmez)
-    5. Calisan pencereden UI Automation ile: konsol boot satiri "Engine ready - v<surum>" VE
+    6. Calisan pencereden UI Automation ile: konsol boot satiri "Engine ready - v<surum>" VE
        seritte "Engine missing/could not start" OLMADIGI dogrulanir
-    6. App sonlandirilir ve §3 CASCADE dogrulanir: supervisor child'ina DOKUNULMADAN kendiliginden
+    7. App sonlandirilir ve §3 CASCADE dogrulanir: supervisor child'ina DOKUNULMADAN kendiliginden
        olmesi beklenir (outer Job = KILL_ON_JOB_CLOSE). Ardindan yalniz KENDI pid'lerimiz icin bir
        guvenlik agi ve publish klasorunun silinmesi.
 
@@ -31,6 +37,9 @@ param(
     [string] $RuntimeIdentifier = 'win-x64',
     [string] $OutputDir = (Join-Path $env:TEMP ("bo-verify-publish-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))),
     [int]    $TimeoutSeconds = 60,
+    # [t6] Adim 4'un (Sync + Build) ust siniri: tek kucuk projede olcum ~5-15 sn, pay birakilmistir.
+    # Sure dolarsa dongu biter ve Check FAIL verir (sessiz bekleme yok).
+    [int]    $BuildTimeoutSeconds = 180,
     [switch] $KeepOutput
 )
 
@@ -40,11 +49,22 @@ $appProj = Join-Path $repoRoot 'src\BuildOrchestrator.App\BuildOrchestrator.App.
 $failures = New-Object System.Collections.Generic.List[string]
 $appProcess = $null
 $child = $null      # App'in dogurdugu supervisor (WMI olayindan) — kapanis dogrulamasi bunu kullanir
+$runSup = $null     # [t6] adim 4'un supervisor'i (Sync + Build) — finally onu da birakir
+$runDirs = @()      # [t6] adim 4'un gecici klasorleri (is alani + logs) — finally siler
 
 function Step([string] $text) { Write-Host "==> $text" }
 function Check([string] $name, [bool] $ok, [string] $detail = '') {
     if ($ok) { Write-Host "    [PASS] $name $detail" }
     else { Write-Host "    [FAIL] $name $detail"; $script:failures.Add($name) }
+}
+
+# [t6] Tek satirlik NDJSON komutu (BOM'suz UTF-8 + '\n'). Anahtar sirasi KORUNUR ([ordered]): polimorfik
+# ayristirmada "type" ayirt edicisi ONCE gelmelidir (Contracts/IpcMessages.cs JsonPolymorphic).
+function SendCommand([System.IO.Stream] $stream, $command) {
+    $json = ($command | ConvertTo-Json -Compress -Depth 5)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json + "`n")
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush()
 }
 
 # --------------------------------------------------------------- 0. on kosul (try'dan ONCE)
@@ -63,6 +83,20 @@ if ($running.Count -gt 0) {
     exit 2
 }
 Write-Host '    [PASS] acik ornek yok'
+
+# --------------------------------------------------------------- stdin encoding (BOM tuzagi)
+# [t6] OLCULDU: Windows PowerShell 5.1'de Console.InputEncoding UTF-8 "BOM'lu" varyantidir; .NET, child'in
+# stdin StreamWriter'ini o encoding ile kurar ve PREAMBLE'i (EF BB BF) pipe'a YAZAR. Sonuc: supervisor'a giden
+# ILK satir "<BOM>{...}" olur ve error(badCommand) ile reddedilir — komut KAYBOLUR. Bu tuzak adim 3'un shutdown
+# komutunu da sessizce yutuyordu (process yalnizca stdin EOF ile kapaniyordu, ki o da calisir — bu yuzden
+# gorunmuyordu). ProcessStartInfo.StandardInputEncoding .NET Framework'te YOK, bu yuzden konsol encoding'i
+# gecici olarak BOM'suz UTF-8'e alinir ve finally'de geri konur.
+$savedInputEncoding = $null
+try {
+    $savedInputEncoding = [Console]::InputEncoding
+    [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+}
+catch { Write-Host '    (not: konsol giris encoding''i degistirilemedi — stdin BOM tuzagi acik olabilir)' }
 
 try {
     # --------------------------------------------------------------- 1. publish
@@ -104,7 +138,138 @@ try {
     if ($firstLine -like '{*') { $engineVersion = ($firstLine | ConvertFrom-Json).engineVersion }
     Check 'engineVersion Directory.Build.props degeri' ($engineVersion -and $engineVersion -notmatch '^\d+\.\d+\.\d+$') "-> $engineVersion"
 
-    # --------------------------------------------------------------- 4. exe'yi calistir
+    # --------------------------------------------------------------- 4. [t6] Sync + Build (publish edilen ikili)
+    # Bu adima kadar publish edilen supervisor yalnizca "acilip engineReady yaziyor" seviyesinde dogrulaniyordu
+    # (adim 3). Kabul kalemi ise publish edilen ikilinin GERCEKTEN is yaptigidir: bir workspace'i Sync edip en az
+    # bir runCompleted uretmesi. Hedef BILINCLI olarak minimum tutulur (asagida) — kullanicinin makinesini yormaz.
+    Step 'publish edilen supervisor ile Sync + Build (tek kucuk proje)'
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host '    [ATLA] git bulunamadi — Sync git repo kapisini gecemez (SyncWorkspaceService), adim olculmedi.'
+    }
+    else {
+        $ws = Join-Path $env:TEMP ("bo-verify-ws-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+        $runLogs = Join-Path $env:TEMP ("bo-verify-logs-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+        $runDirs = @($ws, $runLogs)
+        New-Item -ItemType Directory -Force $ws | Out-Null
+        New-Item -ItemType Directory -Force $runLogs | Out-Null
+
+        # NE KOSUYORUZ: TEK bir minimal .NET Framework v4.6 class library — tek kaynak dosyasi, packages.config YOK,
+        # post-build YOK, proje referansi YOK (tests/BuildOrchestrator.Tests/MsBuild/LegacyFixture.cs CreateClassLib
+        # ile ayni sekil; suite'in gercek MSBuild testleri de bunu derliyor). MSBuild.exe icin en ucuz GERCEK is.
+        $asm = 'VerifyPublishLib'
+        Set-Content -Path (Join-Path $ws 'Class1.cs') -Encoding utf8 -Value @(
+            "namespace $asm",
+            '{',
+            '    public class Class1',
+            '    {',
+            '        public int Answer() { return 42; }',
+            '    }',
+            '}')
+        Set-Content -Path (Join-Path $ws "$asm.csproj") -Encoding utf8 -Value @(
+            '<?xml version="1.0" encoding="utf-8"?>',
+            '<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">',
+            '  <Import Project="$(MSBuildToolsPath)\Microsoft.Common.props" Condition="Exists(''$(MSBuildToolsPath)\Microsoft.Common.props'')" />',
+            '  <PropertyGroup>',
+            '    <Configuration Condition=" ''$(Configuration)'' == '''' ">Debug</Configuration>',
+            '    <Platform Condition=" ''$(Platform)'' == '''' ">AnyCPU</Platform>',
+            "    <ProjectGuid>{$([Guid]::NewGuid().ToString('D').ToUpperInvariant())}</ProjectGuid>",
+            '    <OutputType>Library</OutputType>',
+            "    <RootNamespace>$asm</RootNamespace>",
+            "    <AssemblyName>$asm</AssemblyName>",
+            '    <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>',
+            '  </PropertyGroup>',
+            '  <PropertyGroup Condition=" ''$(Configuration)|$(Platform)'' == ''Debug|AnyCPU'' ">',
+            '    <DebugSymbols>true</DebugSymbols>',
+            '    <DebugType>full</DebugType>',
+            '    <Optimize>false</Optimize>',
+            '    <OutputPath>bin\Debug\</OutputPath>',
+            '    <DefineConstants>DEBUG;TRACE</DefineConstants>',
+            '    <ErrorReport>prompt</ErrorReport>',
+            '    <WarningLevel>4</WarningLevel>',
+            '  </PropertyGroup>',
+            '  <ItemGroup>',
+            '    <Reference Include="System" />',
+            '    <Reference Include="System.Core" />',
+            '  </ItemGroup>',
+            '  <ItemGroup>',
+            '    <Compile Include="Class1.cs" />',
+            '  </ItemGroup>',
+            '  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />',
+            '</Project>')
+
+        # Sync bir git repo'su ISTER (SyncWorkspaceService: HEAD okunamazsa planFailed). Kimlik yalniz BU commit
+        # icin verilir (-c) — kullanicinin global git yapilandirmasina DOKUNULMAZ.
+        & git -C $ws init --quiet 2>$null
+        & git -C $ws add -A 2>$null
+        & git -C $ws -c user.name='verify-publish' -c user.email='verify-publish@local' commit --quiet -m 'fixture' 2>$null
+        $branch = (& git -C $ws rev-parse --abbrev-ref HEAD 2>$null)
+        if (-not $branch) { $branch = 'main' }
+
+        # Supervisor'in log/cache/build-state'i ve worktree havuzu temp'e yonlendirilir: kullanicinin gercek
+        # %LOCALAPPDATA%\BuildOrchestrator icerigi bu olcumden ETKILENMEZ (suite'in TestPaths.Psi deseni).
+        $rpsi = New-Object System.Diagnostics.ProcessStartInfo $supExe
+        $rpsi.Arguments = "--logs `"$runLogs`" --worktrees `"$(Join-Path $runLogs 'worktrees')`""
+        $rpsi.RedirectStandardInput = $true; $rpsi.RedirectStandardOutput = $true; $rpsi.UseShellExecute = $false
+        $runSup = [System.Diagnostics.Process]::Start($rpsi)
+        $runStdin = $runSup.StandardInput.BaseStream
+
+        SendCommand $runStdin ([ordered]@{ type = 'syncWorkspace'; rootPath = $ws; branch = $branch; configuration = 'Debug' })
+
+        # Olay dongusu: her satir BLOKE bir okumadir (poll YOK). startRun, syncCompleted GELINCE gonderilir —
+        # yani sira gercekten "Sync sonra Build"tir. Sure siniri $BuildTimeoutSeconds; dolarsa dongu biter ve
+        # asagidaki Check'ler FAIL verir (sessiz bekleme yok).
+        $deadline = (Get-Date).AddSeconds($BuildTimeoutSeconds)
+        $syncCompleted = $null; $runCompleted = $null; $engineError = $null
+        while ($null -eq $runCompleted -and $null -eq $engineError -and (Get-Date) -lt $deadline) {
+            $remaining = [int][Math]::Max(1, ($deadline - (Get-Date)).TotalMilliseconds)
+            $readTask = $runSup.StandardOutput.ReadLineAsync()
+            if (-not $readTask.Wait($remaining)) { break }   # sure doldu
+            $line = $readTask.Result
+            if ($null -eq $line) { break }                   # stdout kapandi (supervisor oldu)
+            $evt = $null
+            try { $evt = $line | ConvertFrom-Json } catch { continue }
+            switch ($evt.type) {
+                'syncCompleted' {
+                    $syncCompleted = $evt
+                    SendCommand $runStdin ([ordered]@{
+                            type = 'startRun'; runId = 'verify-publish'; mode = 'rebuild'; rootPath = $ws
+                            configuration = 'Debug'; parallelism = 1; branch = $branch
+                        })
+                }
+                'runCompleted' { $runCompleted = $evt }
+                'error' { $engineError = $evt }
+            }
+        }
+
+        Check 'syncCompleted geldi (publish edilen supervisor)' ($null -ne $syncCompleted) `
+            $(if ($syncCompleted) { "-> $($syncCompleted.projectCount) proje, branch $($syncCompleted.branch)" })
+        if ($engineError -and $engineError.code -eq 'msbuildNotFound') {
+            # VS/MSBuild kurulu degil: publish'in degil MAKINENIN eksigi — suite de bu durumda testi atlar
+            # (MsBuildInvokerTests/KillMidBuildTests deseni). FAIL yazmak yaniltici olurdu.
+            # NOT: bu satir CIFT tirnakli — BOM'suz dosyada Windows PowerShell 5.1'in ANSI cozumu yuzunden
+            # cift tirnakli stringlerde ASCII-DISI karakter (em dash) parse'i bozar; burada duz '-' kullanilir.
+            Write-Host "    [ATLA] MSBuild.exe bulunamadi ($($engineError.message)) - build bu makinede kosulamaz."
+        }
+        else {
+            if ($engineError) { Check "engine hatasi yok" $false "-> $($engineError.code): $($engineError.message)" }
+            Check 'runCompleted geldi (publish edilen ikili gercekten derledi)' ($null -ne $runCompleted) `
+                $(if ($runCompleted) { "-> outcome $($runCompleted.outcome), succeeded $($runCompleted.succeeded), failed $($runCompleted.failed)" })
+            if ($runCompleted) {
+                Check 'run outcome = completed' ($runCompleted.outcome -eq 'completed')
+                Check 'tek proje succeeded, hic failed yok' ($runCompleted.succeeded -eq 1 -and $runCompleted.failed -eq 0)
+                Check 'derlenen DLL diskte' (Test-Path (Join-Path $ws "bin\Debug\$asm.dll"))
+            }
+        }
+
+        SendCommand $runStdin ([ordered]@{ type = 'shutdown' })
+        $runStdin.Close()                                   # stdin EOF (adim 3 ile ayni kapanis yolu)
+        $runSup.StandardOutput.ReadToEnd() | Out-Null
+        if (-not $runSup.WaitForExit(15000)) { $runSup.Kill(); $runSup.WaitForExit(5000) | Out-Null }
+        Check 'Sync+Build supervisor exit code 0' ($runSup.ExitCode -eq 0) "(exit $($runSup.ExitCode))"
+        $runSup = $null
+    }
+
+    # --------------------------------------------------------------- 5. exe'yi calistir
     Step 'publish edilen App.exe baslatiliyor'
     $query = "SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process' AND TargetInstance.Name = 'BuildOrchestrator.Supervisor.exe'"
     Register-CimIndicationEvent -Query $query -SourceIdentifier 'BoSupervisorSpawn' | Out-Null
@@ -122,7 +287,7 @@ try {
         Check 'child publish klasorunden calisiyor' ($child.CommandLine -like "*$OutputDir*") "-> $($child.CommandLine)"
     }
 
-    # --------------------------------------------------------------- 5. calisan UI'dan dogrulama
+    # --------------------------------------------------------------- 6. calisan UI'dan dogrulama
     Step 'calisan pencereden UI Automation ile dogrulama'
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
@@ -172,7 +337,7 @@ catch {
     $failures.Add('unhandled: ' + $_.Exception.Message)
 }
 finally {
-    # --------------------------------------------------------------- 6. kapanis: CASCADE + temizlik
+    # --------------------------------------------------------------- 7. kapanis: CASCADE + temizlik
     # [round 2] Eski hal TOTOLOJIKti: "geride process kalmadi" kendi force-kill supurmemizden SONRA
     # kosuyordu, yani hicbir kosulda fail edemezdi. Simdi olculen sey §3 GARANTISI: App olunce outer Job
     # (KILL_ON_JOB_CLOSE) supervisor'i KENDILIGINDEN oldurur. Bu yuzden child pid'ine DOKUNULMAZ; yalnizca
@@ -197,8 +362,16 @@ finally {
         $stray = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
         if ($stray) { $stray.Kill(); $stray.WaitForExit(10000) | Out-Null; Write-Host "    (guvenlik agi: pid $targetPid oldurudu)" }
     }
-    if (-not $KeepOutput) { Remove-Item -Recurse -Force $OutputDir -ErrorAction SilentlyContinue }
+    # [t6] Adim 4'un supervisor'i normalde orada kapanir; buraya bir istisnayla dusulduyse birakilir
+    # (KENDI dogurdugumuz pid — isme gore supurme YOK).
+    if ($runSup -and -not $runSup.HasExited) { $runSup.Kill(); $runSup.WaitForExit(5000) | Out-Null }
+
+    if (-not $KeepOutput) {
+        Remove-Item -Recurse -Force $OutputDir -ErrorAction SilentlyContinue
+        foreach ($dir in $runDirs) { Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue }
+    }
     Unregister-Event -SourceIdentifier 'BoSupervisorSpawn' -ErrorAction SilentlyContinue
+    if ($savedInputEncoding) { try { [Console]::InputEncoding = $savedInputEncoding } catch { } }
 }
 
 Write-Host ''
