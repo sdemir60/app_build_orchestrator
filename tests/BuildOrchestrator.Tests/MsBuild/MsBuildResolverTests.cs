@@ -32,7 +32,7 @@ public class MsBuildResolverTests
         var stub = new StubRunner(new ProcessResult(0, "", "", TimeSpan.Zero, false));
         var ex = await Assert.ThrowsAsync<MsBuildResolveException>(
             () => new MsBuildResolver(stub).ResolveAsync(vswherePath: Environment.ProcessPath!));
-        Assert.Contains("MSBuild.exe bulunamadı", ex.Message);
+        Assert.Contains("MSBuild.exe was not found", ex.Message); // [A13/B2] metin İngilizceye çevrildi (uygulama İngilizce-only)
     }
 
     [SkippableFact] // veya [Trait("Category","Machine")] — VS kurulu makinede koşar

@@ -71,18 +71,18 @@ function SendCommand([System.IO.Stream] $stream, $command) {
 # [round 2] App SINGLE-INSTANCE'tir (App.xaml.cs: ikinci ornek mevcut pencereyi one getirip HEMEN kapanir).
 # Makinede acik bir ornek varken bu script yanlis-KIRMIZI verirdi (baslattigimiz process aninda olurdu).
 # Bu bir dogrulama hatasi DEGIL, kullanim hatasidir: net mesajla ve AYRISAN cikis koduyla (2) dur.
-Step 'on kosul: acik bir Build Orchestrator ornegi yok'
+Step 'precondition: no Build Orchestrator instance is running'
 $running = @(Get-Process -Name 'BuildOrchestrator.App' -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0) {
-    Write-Host "    [DUR] Zaten calisan bir Build Orchestrator var (pid: $($running.Id -join ', '))."
-    Write-Host '          App SINGLE-INSTANCE oldugundan bu script anlamli bir olcum yapamaz:'
-    Write-Host '          baslatilan ikinci ornek mevcut pencereyi one getirip hemen kapanirdi.'
-    Write-Host '          Once acik ornegi kapatin (tepsi ikonu > Exit), sonra tekrar calistirin.'
+    Write-Host "    [STOP] A Build Orchestrator is already running (pid: $($running.Id -join ', '))."
+    Write-Host '           The App is SINGLE-INSTANCE, so this script cannot take a meaningful measurement:'
+    Write-Host '           the second instance it starts would bring the existing window forward and exit at once.'
+    Write-Host '           Close the running instance first (tray icon > Exit), then run this again.'
     Write-Host ''
-    Write-Host 'RESULT: SKIPPED (on kosul saglanmadi)'
+    Write-Host 'RESULT: SKIPPED (precondition not met)'
     exit 2
 }
-Write-Host '    [PASS] acik ornek yok'
+Write-Host '    [PASS] no instance running'
 
 # --------------------------------------------------------------- stdin encoding (BOM tuzagi)
 # [t6] OLCULDU: Windows PowerShell 5.1'de Console.InputEncoding UTF-8 "BOM'lu" varyantidir; .NET, child'in
@@ -96,7 +96,7 @@ try {
     $savedInputEncoding = [Console]::InputEncoding
     [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
 }
-catch { Write-Host '    (not: konsol giris encoding''i degistirilemedi — stdin BOM tuzagi acik olabilir)' }
+catch { Write-Host '    (note: the console input encoding could not be changed - the stdin BOM trap may be open)' }
 
 try {
     # --------------------------------------------------------------- 1. publish
@@ -106,7 +106,7 @@ try {
     if ($LASTEXITCODE -ne 0) { $publishLog | Select-Object -Last 15 | ForEach-Object { Write-Host "        $_" } }
 
     # --------------------------------------------------------------- 2. yerlesim
-    Step 'publish yerlesimi'
+    Step 'publish layout'
     $appExe = Join-Path $OutputDir 'BuildOrchestrator.App.exe'
     $supExe = Join-Path $OutputDir 'supervisor\BuildOrchestrator.Supervisor.exe'
     $licence = Join-Path $OutputDir 'Assets\GEIST-LICENSE.txt'
@@ -115,12 +115,12 @@ try {
     Check 'Assets\GEIST-LICENSE.txt (OFL)' (Test-Path $licence)
     if (Test-Path (Join-Path $OutputDir 'supervisor')) {
         $count = (Get-ChildItem (Join-Path $OutputDir 'supervisor') -File).Count
-        Write-Host "    supervisor\ icerigi: $count dosya"
+        Write-Host "    supervisor\ contents: $count files"
     }
-    if (-not (Test-Path $appExe) -or -not (Test-Path $supExe)) { throw 'publish yerlesimi eksik — devam edilemez' }
+    if (-not (Test-Path $appExe) -or -not (Test-Path $supExe)) { throw 'the publish layout is incomplete - cannot continue' }
 
     # --------------------------------------------------------------- 3. NDJSON round-trip
-    Step 'publish edilen supervisor ile NDJSON round-trip'
+    Step 'NDJSON round-trip with the published supervisor'
     $psi = New-Object System.Diagnostics.ProcessStartInfo $supExe
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.UseShellExecute = $false
     $sup = [System.Diagnostics.Process]::Start($psi)
@@ -136,15 +136,15 @@ try {
     # JSON'dan COZULMUS deger (stdout'ta '+' + olarak kacislidir).
     $engineVersion = $null
     if ($firstLine -like '{*') { $engineVersion = ($firstLine | ConvertFrom-Json).engineVersion }
-    Check 'engineVersion Directory.Build.props degeri' ($engineVersion -and $engineVersion -notmatch '^\d+\.\d+\.\d+$') "-> $engineVersion"
+    Check 'engineVersion is the Directory.Build.props value' ($engineVersion -and $engineVersion -notmatch '^\d+\.\d+\.\d+$') "-> $engineVersion"
 
     # --------------------------------------------------------------- 4. [t6] Sync + Build (publish edilen ikili)
     # Bu adima kadar publish edilen supervisor yalnizca "acilip engineReady yaziyor" seviyesinde dogrulaniyordu
     # (adim 3). Kabul kalemi ise publish edilen ikilinin GERCEKTEN is yaptigidir: bir workspace'i Sync edip en az
     # bir runCompleted uretmesi. Hedef BILINCLI olarak minimum tutulur (asagida) — kullanicinin makinesini yormaz.
-    Step 'publish edilen supervisor ile Sync + Build (tek kucuk proje)'
+    Step 'Sync + Build with the published supervisor (one small project)'
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Host '    [ATLA] git bulunamadi — Sync git repo kapisini gecemez (SyncWorkspaceService), adim olculmedi.'
+        Write-Host '    [SKIP] git was not found - Sync cannot pass the git repository gate (SyncWorkspaceService), step not measured.'
     }
     else {
         $ws = Join-Path $env:TEMP ("bo-verify-ws-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -241,23 +241,23 @@ try {
             }
         }
 
-        Check 'syncCompleted geldi (publish edilen supervisor)' ($null -ne $syncCompleted) `
-            $(if ($syncCompleted) { "-> $($syncCompleted.projectCount) proje, branch $($syncCompleted.branch)" })
+        Check 'syncCompleted arrived (published supervisor)' ($null -ne $syncCompleted) `
+            $(if ($syncCompleted) { "-> $($syncCompleted.projectCount) projects, branch $($syncCompleted.branch)" })
         if ($engineError -and $engineError.code -eq 'msbuildNotFound') {
             # VS/MSBuild kurulu degil: publish'in degil MAKINENIN eksigi — suite de bu durumda testi atlar
             # (MsBuildInvokerTests/KillMidBuildTests deseni). FAIL yazmak yaniltici olurdu.
             # NOT: bu satir CIFT tirnakli — BOM'suz dosyada Windows PowerShell 5.1'in ANSI cozumu yuzunden
             # cift tirnakli stringlerde ASCII-DISI karakter (em dash) parse'i bozar; burada duz '-' kullanilir.
-            Write-Host "    [ATLA] MSBuild.exe bulunamadi ($($engineError.message)) - build bu makinede kosulamaz."
+            Write-Host "    [SKIP] MSBuild.exe was not found ($($engineError.message)) - the build cannot run on this machine."
         }
         else {
-            if ($engineError) { Check "engine hatasi yok" $false "-> $($engineError.code): $($engineError.message)" }
-            Check 'runCompleted geldi (publish edilen ikili gercekten derledi)' ($null -ne $runCompleted) `
+            if ($engineError) { Check "no engine error" $false "-> $($engineError.code): $($engineError.message)" }
+            Check 'runCompleted arrived (the published binary really built)' ($null -ne $runCompleted) `
                 $(if ($runCompleted) { "-> outcome $($runCompleted.outcome), succeeded $($runCompleted.succeeded), failed $($runCompleted.failed)" })
             if ($runCompleted) {
                 Check 'run outcome = completed' ($runCompleted.outcome -eq 'completed')
-                Check 'tek proje succeeded, hic failed yok' ($runCompleted.succeeded -eq 1 -and $runCompleted.failed -eq 0)
-                Check 'derlenen DLL diskte' (Test-Path (Join-Path $ws "bin\Debug\$asm.dll"))
+                Check 'one project succeeded, none failed' ($runCompleted.succeeded -eq 1 -and $runCompleted.failed -eq 0)
+                Check 'the built DLL is on disk' (Test-Path (Join-Path $ws "bin\Debug\$asm.dll"))
             }
         }
 
@@ -270,7 +270,7 @@ try {
     }
 
     # --------------------------------------------------------------- 5. exe'yi calistir
-    Step 'publish edilen App.exe baslatiliyor'
+    Step 'starting the published App.exe'
     $query = "SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process' AND TargetInstance.Name = 'BuildOrchestrator.Supervisor.exe'"
     Register-CimIndicationEvent -Query $query -SourceIdentifier 'BoSupervisorSpawn' | Out-Null
     $appProcess = Start-Process $appExe -PassThru
@@ -281,14 +281,14 @@ try {
         Remove-Event -EventIdentifier $spawn.EventIdentifier
     }
     Unregister-Event -SourceIdentifier 'BoSupervisorSpawn'
-    Check 'supervisor child process dogdu' ($null -ne $child) $(if ($child) { "(pid $($child.ProcessId), parent $($child.ParentProcessId))" })
+    Check 'the supervisor child process was spawned' ($null -ne $child) $(if ($child) { "(pid $($child.ProcessId), parent $($child.ParentProcessId))" })
     if ($child) {
         Check 'child parent = App process' ($child.ParentProcessId -eq $appProcess.Id)
-        Check 'child publish klasorunden calisiyor' ($child.CommandLine -like "*$OutputDir*") "-> $($child.CommandLine)"
+        Check 'the child runs from the publish folder' ($child.CommandLine -like "*$OutputDir*") "-> $($child.CommandLine)"
     }
 
     # --------------------------------------------------------------- 6. calisan UI'dan dogrulama
-    Step 'calisan pencereden UI Automation ile dogrulama'
+    Step 'verifying the running window via UI Automation'
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
     $appProcess.WaitForInputIdle($TimeoutSeconds * 1000) | Out-Null
@@ -326,14 +326,14 @@ try {
         Start-Sleep -Milliseconds 250
     }
     $bootLine = $texts | Where-Object { $_ -like '*Engine ready*' } | Select-Object -First 1
-    if (-not $bootLine) { Write-Host "        okunan UI metinleri: $($texts -join ' | ')" }
-    Check 'konsol boot satiri "Engine ready - v<surum>"' ($null -ne $bootLine) "-> $bootLine"
-    if ($bootLine -and $engineVersion) { Check 'boot satirindaki surum = engineReady surumu' ($bootLine -like "*$engineVersion*") }
-    Check 'seritte engine hata modu YOK' (-not ($texts -match 'Engine missing|Engine could not start'))
-    Check 'pencere gorunur (UIA agaci okundu)' ($texts.Count -gt 0) "($($texts.Count) metin elemani)"
+    if (-not $bootLine) { Write-Host "        UI texts read: $($texts -join ' | ')" }
+    Check 'console boot line "Engine ready - v<version>"' ($null -ne $bootLine) "-> $bootLine"
+    if ($bootLine -and $engineVersion) { Check 'the version on the boot line = the engineReady version' ($bootLine -like "*$engineVersion*") }
+    Check 'NO engine error mode on the ribbon' (-not ($texts -match 'Engine missing|Engine could not start'))
+    Check 'the window is visible (the UIA tree was read)' ($texts.Count -gt 0) "($($texts.Count) text elements)"
 }
 catch {
-    Write-Host "    [FAIL] beklenmeyen hata: $($_.Exception.Message)"
+    Write-Host "    [FAIL] unexpected error: $($_.Exception.Message)"
     $failures.Add('unhandled: ' + $_.Exception.Message)
 }
 finally {
@@ -344,23 +344,23 @@ finally {
     # App sonlandirilir ve child'in kendi kendine olmesi beklenir. (Pencereyi kapatmak App'i sonlandirmaz —
     # tepsiye iner — bu yuzden "normal kapanis" burada App process'ini sonlandirmaktir; cascade'in en sert
     # bicimde sinanmasi da budur: graceful shutdown yok, isi Job Object yapmak zorunda.)
-    Step 'kapanis: cascade dogrulamasi + temizlik'
+    Step 'shutdown: cascade verification + cleanup'
     if ($appProcess) {
         if (-not $appProcess.HasExited) { Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue }
         $appProcess.WaitForExit(15000) | Out-Null                      # olay tabanli bekleme (poll yok)
-        Check 'App process kapandi' $appProcess.HasExited "(pid $($appProcess.Id))"
+        Check 'the App process exited' $appProcess.HasExited "(pid $($appProcess.Id))"
     }
     if ($child) {
         $childProc = Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue
         $cascaded = if ($childProc) { $childProc.WaitForExit(15000) } else { $true }   # KILL cagrisi YOK
-        Check 'supervisor CASCADE ile kendiliginden oldu (child pid oldurulmedi)' $cascaded "(pid $($child.ProcessId))"
+        Check 'the supervisor died on its own via CASCADE (the child pid was never killed)' $cascaded "(pid $($child.ProcessId))"
     }
 
     # Guvenlik agi — YALNIZ bizim dogurdugumuz pid'ler (isme gore makine supurmesi YOK: baskasinin
     # ornegini oldurmeyiz). Buraya bir sey dusuyorsa yukaridaki cascade Check'i ZATEN fail etmistir.
     foreach ($targetPid in @($appProcess.Id, $child.ProcessId | Where-Object { $_ })) {
         $stray = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
-        if ($stray) { $stray.Kill(); $stray.WaitForExit(10000) | Out-Null; Write-Host "    (guvenlik agi: pid $targetPid oldurudu)" }
+        if ($stray) { $stray.Kill(); $stray.WaitForExit(10000) | Out-Null; Write-Host "    (safety net: pid $targetPid was killed)" }
     }
     # [t6] Adim 4'un supervisor'i normalde orada kapanir; buraya bir istisnayla dusulduyse birakilir
     # (KENDI dogurdugumuz pid — isme gore supurme YOK).

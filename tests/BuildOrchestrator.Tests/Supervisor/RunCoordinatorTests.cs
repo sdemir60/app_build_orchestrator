@@ -1071,8 +1071,9 @@ public class RunCoordinatorTests
     // ---------------------------------------------------------------- 13) StaleObjDetector wiring (Task 14/T72)
 
     // OSYS.Types.NewSales.Print vakasının aynısı: v4.6 legacy csproj + obj altında yabancı (netstandard2.0)
-    // restore artığı — Reason metnindeki "yabancı TFM" ifadesi test boyunca stale-warn işareti olarak kullanılır.
-    private const string StaleMarker = "yabancı TFM";
+    // restore artığı — Reason metnindeki "foreign TFM" ifadesi test boyunca stale-warn işareti olarak kullanılır.
+    // [A13/B2] metin İngilizceye çevrildi (uygulama İngilizce-only) — işaretin kendisi aynı ayırt ediciliği taşır.
+    private const string StaleMarker = "foreign TFM";
 
     private static string WriteStaleObjProject(string dir, string assemblyName)
     {
