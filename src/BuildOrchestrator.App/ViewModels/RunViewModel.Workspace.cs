@@ -64,7 +64,25 @@ public sealed partial class RunViewModel
     /// <see cref="TopologyChanged"/> ateşler. Aksi halde mid-run bir Sync (node seti değişmese de) koşan grafı
     /// yeniden-reveal edip kamerayı re-home ediyordu (SetGraph = tam inşa + stagger). Statü değişimleri (InCycle/
     /// WillBuild) BURAYA girmez — onlar zaten <c>UpdateStatuses</c> (PushGraphStatuses) yoluyla akar. <c>null</c> =
-    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur).</summary>
+    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur).
+    ///
+    /// <para><b>[A13/B3 · E4 — KARAR KAYDI, davranış DEĞİŞMEDİ]</b> Bu guard'ın <b>liste tarafındaki</b> sonucu
+    /// bugüne dek hiçbir yerde yazılı değildi: <c>TopologyChanged</c> ateşlemeyen bir Sync (yani "no changes" —
+    /// aynı yapının yeniden yayınlanması) <c>MainWindow.RefreshProjectGroups</c>'u <b>hiç çağırmaz</b>, dolayısıyla
+    /// <c>StickyLayerList.SetGroups</c> koşmaz ve <b>o Sync'te kademeli beliriş (bo-reveal) OYNAMAZ</b> — kartlar
+    /// yeniden belirmez.
+    /// <list type="bullet">
+    ///   <item><b>Bu KASITLIDIR.</b> <c>SetGroups</c> <c>ItemsSource</c> ataması yapar; bu, <c>ItemsControl</c> için
+    ///   TAM reset'tir (container teardown + yeniden üretim). Değişmemiş bir liste için her Sync'te tam reset yemek
+    ///   A13.2'nin "koleksiyon reset'i YASAK" kuralının önlemeye çalıştığı şeyin ta kendisidir ve kullanıcıya
+    ///   sebepsiz bir "kartlar yeniden belirdi" flaşı olarak görünürdü.</item>
+    ///   <item><b>Otorite de aynı yöndedir:</b> prototipte <c>revealKey</c> yalnız topoloji/sync-değişiminde artar
+    ///   (<c>BuildApp.jsx:1378</c>).</item>
+    ///   <item><b>Bedeli (E5 ile bağı):</b> "bir sonraki reveal eksik kalanı yakalar" gerekçesi bu yüzden
+    ///   GEÇERSİZDİR — bir sonraki reveal HİÇ gelmeyebilir. Reveal'in kapsamı bu nedenle kendi içinde eksiksiz
+    ///   olmak zorundadır (bkz. <c>StickyLayerList.PlayRevealStagger</c> E5 telafisi).</item>
+    /// </list>
+    /// Karakterizasyon testi: <c>ProjectListFilterTests.A_no_changes_sync_neither_resets_the_list_nor_replays_the_reveal</c>.</para></summary>
     private string? _lastTopologySignature;
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.

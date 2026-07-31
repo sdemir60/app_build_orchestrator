@@ -261,6 +261,46 @@ public class ProjectListFilterTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [A13/B3 · E4 — KARAKTERİZASYON, davranış DEĞİŞTİRİLMEDİ] <b>"No changes" bir Sync listeyi ne resetler ne de
+    /// reveal'i yeniden oynatır.</b> Karar ve gerekçesi <c>RunViewModel._lastTopologySignature</c>'ın XML doc'unda
+    /// kayıtlıdır (özet: <c>SetGroups</c> = <c>ItemsSource</c> tam reset'i; değişmemiş bir liste için her Sync'te
+    /// container teardown + "kartlar yeniden belirdi" flaşı A13.2'nin yasakladığı şeyin ta kendisi olurdu;
+    /// prototipte de <c>revealKey</c> yalnız topoloji değişiminde artar — <c>BuildApp.jsx:1378</c>).
+    ///
+    /// <para><b>Neden pin gerekiyor:</b> bu davranış tek bir imza karşılaştırmasına dayanıyor. Guard kaldırılırsa
+    /// (ya da imzaya statü alanları sızarsa) kullanıcı KOŞARKEN gelen her mid-run Sync'te listeyi baştan
+    /// belirirken görürdü ve hiçbir test bunu yakalamazdı.</para>
+    ///
+    /// <para><b>Vakum değil:</b> (a) reveal'in taban çizgisi 0'ın ÜSTÜNDE olduğu ayrıca assert edilir,
+    /// (b) yeniden yayınlanan topolojinin gerçekten TÜKETİLDİĞİ (aynı satırlar, aynı sırada) assert edilir.</para>
+    /// </summary>
+    [StaFact]
+    public void A_no_changes_sync_neither_resets_the_list_nor_replays_the_reveal()
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+        list.AnimationsEnabledProvider = () => true; // reveal ancak motion açıkken kuşak ilerletir (kardeş testle AYNI)
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int afterTopology = list.RevealGeneration;
+        Assert.True(afterTopology > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
+
+        int resets = 0;
+        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => resets++;
+
+        // ÜRETİM YOLU: AYNI topoloji yeniden yayınlanır ("no changes" Sync) + syncCompleted.
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Beta", 1, "Core"), MainWindowHost.Node("Gamma", 2, "Ui")],
+            [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != afterTopology || resets > 0, TimeSpan.FromMilliseconds(400));
+
+        Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list)); // topoloji GERÇEKTEN tüketildi
+        Assert.Equal(0, resets);                 // A13.2: koleksiyon reset YOK
+        Assert.Equal(afterTopology, list.RevealGeneration); // ...ve reveal yeniden OYNAMADI
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- [T2 fix-2 · m9] scroll offset ÖLÇÜMÜ
 
     /// <summary>
