@@ -457,15 +457,23 @@ public partial class ProjectRow : UserControl
     private void PlayShake()
     {
         if (!AnimationsEnabledProvider()) return;
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+        PART_ShakeTranslate.BeginAnimation(TranslateTransform.XProperty, BuildShakeAnimation(this), HandoffBehavior.SnapshotAndReplace);
+    }
+
+    /// <summary>[A13/T4 · m1 test seam] Shake animasyonunu üreten TEK yer — kontrol ve test AYNI fabrikayı
+    /// kullanır (<see cref="BuildBreathingAnimation"/> deseni): 360ms süre + BuildApp.jsx:30 keyframe'leri
+    /// (10%,90%→∓2 · 25%,75%→±3 · 50%→∓3 · 100%→0) burada pinlenir (inline magic number YOK).</summary>
+    internal static DoubleAnimationUsingKeyFrames BuildShakeAnimation(FrameworkElement host)
+    {
+        var spline = MotionTokens.ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
         // [Fix wave 1 · D1 review Minor 4] FillBehavior.Stop: keyframe'ler zaten 0'da biter → görsel aynı, ama
         // varsayılan HoldEnd'in aksine clock BİTİNCE serbest kalır (her shake'lenmiş satırda takılı saat kalmaz).
         var anim = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
         void Frame(double v, double pct) =>
             anim.KeyFrames.Add(new SplineDoubleKeyFrame(v, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ShakeMs * pct)), spline));
-        // BuildApp.jsx:27 keyframe'leri: 10%,90% → -2 · 25%,75% → +3 · 50% → -3.
+        // BuildApp.jsx:30 keyframe'leri: 10%,90% → -2 · 25%,75% → +3 · 50% → -3.
         Frame(-2, 0.10); Frame(3, 0.25); Frame(-3, 0.50); Frame(3, 0.75); Frame(-2, 0.90); Frame(0, 1.0);
-        PART_ShakeTranslate.BeginAnimation(TranslateTransform.XProperty, anim, HandoffBehavior.SnapshotAndReplace);
+        return anim;
     }
 
     // ---------------------------------------------------------------- animasyon yardımcıları

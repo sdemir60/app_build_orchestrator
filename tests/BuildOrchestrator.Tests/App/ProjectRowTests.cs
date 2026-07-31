@@ -269,6 +269,97 @@ public class ProjectRowTests
         var anim = ProjectRow.BuildBreathingAnimation(row);
         Assert.Equal(30, Timeline.GetDesiredFrameRate(anim));
         Assert.Equal(TimeSpan.FromMilliseconds(3800), anim.KeyFrames[^1].KeyTime.TimeSpan);
+        // [A13/T4 · m5] Tepe opaklık 0.32 — BuildApp.jsx:34 `@keyframes bo-breath { 0%,100% opacity:0; 50% opacity:0.32; }`.
+        // Süre/frame-rate ÖNCEDEN pinliydi; tepe DEĞER testsizdi (ProjectRow.xaml.cs:32 BreathPeakOpacity).
+        Assert.Equal(0.32, anim.KeyFrames[1].Value);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · m1] shake: 360ms · X ekseni · ±3px · bir kez
+
+    /// <summary>[A13/T4 · m1] Otorite <c>BuildApp.jsx:18,30,360</c>: <c>.bo-shake { animation: bo-shake .36s
+    /// var(--ease-standard) 1; }</c> + <c>@keyframes bo-shake { 10%,90% translateX(-2px); 25%,75% translateX(3px);
+    /// 50% translateX(-3px); }</c> — satır <c>shake &amp;&amp; !REDUCED</c> iken (yalnız hata ANINDA) X ekseninde
+    /// sallanır. <b>Önceki tek kanıt</b> (<c>:300,:314</c> — bu dosyanın <c>PlayReveal</c> testleri)
+    /// <see cref="ProjectRow.ShakeTranslate"/>'i yalnız <b>Y</b> ekseninde okuyordu (o da reveal'in kendi kaymasıdır,
+    /// shake DEĞİL) — <c>PlayShake</c>'in KENDİSİ (state Failed'e geçtiğinde) hiçbir testte tetiklenmiyordu.
+    /// Üretim tetikleyicisi <see cref="ProjectRowViewModel.State"/> ataması (VM property), doğrudan <c>PlayShake()</c>
+    /// çağrısı DEĞİL.</summary>
+    [StaFact]
+    public void Shake_moves_the_x_axis_translate_not_y_when_a_row_fails()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started); // _prevState tohumu: Failed DEĞİL
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        vm.State = ProjectRowState.Failed; // ÜRETİM tetikleyicisi: OnVmPropertyChanged → ApplyStateTransition → PlayShake
+
+        DispatcherPump.PumpUntil(() => Math.Abs(row.ShakeTranslate.X) > 0.05, TimeSpan.FromSeconds(1));
+
+        Assert.True(Math.Abs(row.ShakeTranslate.X) > 0.05, "shake X ekseninde hiç hareket etmedi (yanlış eksene mi bağlı?)");
+        Assert.Equal(0.0, row.ShakeTranslate.Y); // PlayReveal hiç çağrılmadı — Y bu testte ASLA dokunulmamalı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T4 · m1] Genlik + süre, KAYNAKTAN (deterministik — sub-ms hassasiyette bir spline tepesini
+    /// gerçek saatle avlamak yük-hassastır, D8 "yeni flake yasak"). <see cref="ProjectRow.BuildShakeAnimation"/>
+    /// KONTROLÜN KENDİSİNİN kullandığı fabrikadır (<see cref="PlayShake"/> onu doğrudan çağırır — bu ayrı bir kopya
+    /// yol DEĞİL); otorite <c>BuildApp.jsx:30</c>: 10/90%→∓2px · 25/75%→±3px · 50%→∓3px · 100%→0, toplam 360ms.</summary>
+    [StaFact]
+    public void Shake_keyframes_match_the_bo_shake_authority_peaking_at_three_pixels_for_360ms()
+    {
+        var anim = ProjectRow.BuildShakeAnimation(new ProjectRow());
+
+        Assert.Equal(FillBehavior.Stop, anim.FillBehavior); // "bir kez" — clock kendi kendine bırakılır
+        Assert.Equal(6, anim.KeyFrames.Count);
+        double[] expectedValues = [-2, 3, -3, 3, -2, 0];
+        double[] expectedPct = [0.10, 0.25, 0.50, 0.75, 0.90, 1.0];
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.Equal(expectedValues[i], anim.KeyFrames[i].Value);
+            Assert.Equal(TimeSpan.FromMilliseconds(360 * expectedPct[i]), anim.KeyFrames[i].KeyTime.TimeSpan);
+        }
+        double observedPeak = 0;
+        foreach (DoubleKeyFrame frame in anim.KeyFrames) observedPeak = Math.Max(observedPeak, Math.Abs(frame.Value));
+        Assert.Equal(3.0, observedPeak); // mutlak tepe TAM 3, ne 2 ne 4
+        Assert.Equal(TimeSpan.FromMilliseconds(360), anim.KeyFrames[^1].KeyTime.TimeSpan); // BuildApp.jsx:18 `.36s`
+    }
+
+    /// <summary>[A13/T4 · m1] Süre + tekrarsızlık: otorite <c>.36s ... 1</c> (BuildApp.jsx:18) — 360ms'de biter ve
+    /// BİR KEZ oynar (CSS <c>animation-iteration-count: 1</c>; WPF karşılığı <see cref="FillBehavior.Stop"/> +
+    /// <see cref="RepeatBehavior"/> beyan EDİLMEMESİ — Timeline varsayılanı zaten "bir kez"). "Bir kez" iddiası
+    /// özellikle kritik (brief): <c>RepeatBehavior</c> yanlışsa satır sonsuza dek titrer.</summary>
+    [StaFact]
+    public void Shake_plays_exactly_once_and_settles_back_to_zero_around_the_360ms_mark()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var window = DsResources.Realize(host, row);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        vm.State = ProjectRowState.Failed;
+
+        // 360ms'lik animasyon +güvenlik payı boyunca pompala, sonra DEĞERİ ölç (WPF'in FillBehavior.Stop sonrası
+        // HasAnimatedProperties'i NE ZAMAN düşürdüğüne güvenmek yerine — gözlenen değer daha sağlam bir kanıttır).
+        DispatcherPump.PumpUntil(() => false, TimeSpan.FromMilliseconds(450));
+        double afterOneRun = row.ShakeTranslate.X;
+        long elapsedAtSettle = clock.ElapsedMilliseconds;
+
+        Assert.Equal(0.0, afterOneRun); // son keyframe 0 (BuildApp.jsx:30 örtük %100 = kimlik dönüşüm)
+        Assert.InRange(elapsedAtSettle, 400, 700); // ~360ms + pompa payı — 3.6s/36ms gibi kaba bir sapmayı yakalar
+
+        // "BİR KEZ": bir pencere DAHA pompala — X yeniden 3px'e SIÇRAMAMALI (RepeatBehavior.Forever regresyonu).
+        bool restarted = false;
+        DispatcherPump.PumpUntil(() =>
+        {
+            if (Math.Abs(row.ShakeTranslate.X) > 0.05) restarted = true;
+            return restarted;
+        }, TimeSpan.FromMilliseconds(300));
+
+        Assert.False(restarted, "shake YENİDEN BAŞLADI — RepeatBehavior 'bir kez' değil");
+        Assert.Equal(0.0, row.ShakeTranslate.X);
         GC.KeepAlive(window);
     }
 
