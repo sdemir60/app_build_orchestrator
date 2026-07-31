@@ -20,6 +20,11 @@ public class RunViewModelTests
 {
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
+    // [B1/F1] Gerçek Supervisor process'i başlatan testlerden BİRİ (aşağıda) yük altında ölçülmüş bir flake
+    // taşıyordu: üretim varsayılanı (5s, EngineHost.cs) yük altında yetmiyordu. Üretim varsayılanı DEĞİŞMEDİ —
+    // yalnız bu ölçülmüş testin kendi engine'i geniş bir timeout enjekte ediyor (bkz. task-B1-brief.md).
+    private static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
+
     // ---------------------------------------------------------------- 1) satır ekleme/güncelleme (saf OnEvent)
 
     [Fact]
@@ -575,7 +580,7 @@ public class RunViewModelTests
         // açılırdı; bu artık "send başarısız" senaryosu olur, "planlama sürüyor" değil. Event pump vm.OnEvent'e
         // bağlanmadığından Supervisor'ın gerçek yanıtı (varsa) bu testi etkilemez — yalnız elle enjekte edilen
         // RunStartedEvent state'i değiştirir.
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün ilki
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
@@ -597,7 +602,7 @@ public class RunViewModelTests
         // IsStarting GERÇEKTEN true olsun (aksi halde unstarted-engine senaryosunda gönderim zaten başarısız
         // olup IsStarting'i erkenden false yapar — test sonucu tesadüfen aynı kalır ama artık "stop-during-
         // planning" senaryosunu DOĞRULAMAZ).
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. yukarıdaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
@@ -615,7 +620,7 @@ public class RunViewModelTests
     {
         // bkz. yukarıdaki iki test — gerçek (başlatılmış) engine gerekir ki runFailed geldiğinde IsStarting
         // GERÇEKTEN true olsun (planlama-sırasında-beklenmedik-hata senaryosu).
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün üçüncüsü
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi

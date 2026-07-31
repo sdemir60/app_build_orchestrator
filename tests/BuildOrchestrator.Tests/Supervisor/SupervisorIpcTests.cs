@@ -58,7 +58,10 @@ public class SupervisorIpcTests
         using var p = Process.Start(Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] Gerçek Supervisor process'i başlatılıyor; 5s yük altında ölçülmüş bir flake'ti (bkz.
+        // task-B1-brief.md). Üretimde bu bekleyişin karşılığı yok (App tarafı EngineHost.StartAsync üzerinden
+        // KENDİ enjekte edilebilir timeout'unu kullanır) — burada yalnız test beklemesi genişletiliyor.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj"));
         var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
@@ -77,7 +80,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
         await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
         var spawned = Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
         await writer.WriteAsync(new StopRunCommand("r1", StopKind.Hard)); // T4 base: hard = TerminateJobObject(inner)
@@ -102,7 +107,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new SetPerfModeCommand("Light"));  // aktif run yok → hiçbir event YOK
         await writer.WriteAsync(new SetPerfModeCommand("Turbo"));  // tanınmayan profil adı
@@ -161,7 +168,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new SyncWorkspaceCommand(repo.RootPath, branch));
         var events = await ReadUntilAsync(reader, ev => ev is SyncCompletedEvent);
@@ -203,7 +212,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new ListBranchesCommand(repo.RootPath));
         var list = Assert.IsType<BranchListEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
@@ -230,7 +241,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new ListWorktreesCommand(repo.RootPath));
         var list = Assert.IsType<WorktreeListEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));

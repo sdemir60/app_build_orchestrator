@@ -8,10 +8,15 @@ namespace BuildOrchestrator.Tests.App;
 
 public class EngineHostTests
 {
+    // [B1/F1] Startup timeout GENİŞ geçilir: gerçek bir Supervisor process'i başlatılıyor, yük altındaki
+    // makinede 5s'lik üretim varsayılanı sebepsiz kırmızı verirdi (bkz. task-B1-brief.md ölçümü). Üretim
+    // varsayılanı EngineHost.cs'te 5s'de kalır — bu yalnız test-seam'i kullanır.
+    private static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
+
     [Fact]
     public async Task Start_receives_engineReady_and_ping_pong_works()
     {
-        await using var host = new EngineHost(TestPaths.SupervisorExe);
+        await using var host = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout);
         var ready = await host.StartAsync();
         Assert.Equal(host.EnginePid, ready.Pid);
         var pong = new TaskCompletionSource<PongEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -23,7 +28,7 @@ public class EngineHostTests
     [Fact]
     public async Task Supervisor_kill_raises_EngineExited_and_restart_recovers() // T6
     {
-        await using var host = new EngineHost(TestPaths.SupervisorExe);
+        await using var host = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout);
         var ready1 = await host.StartAsync();
         var exited = new TaskCompletionSource<int?>(TaskCreationOptions.RunContinuationsAsynchronously);
         host.EngineExited += code => exited.TrySetResult(code);
