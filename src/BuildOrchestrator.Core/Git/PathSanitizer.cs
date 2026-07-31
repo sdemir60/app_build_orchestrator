@@ -28,7 +28,7 @@ public static class PathSanitizer
     public static string SanitizeBranchSlug(string branch)
     {
         if (string.IsNullOrWhiteSpace(branch))
-            throw new ArgumentException("branch adı boş/whitespace olamaz.", nameof(branch));
+            throw new ArgumentException("the branch name must not be empty/whitespace.", nameof(branch));
 
         var replaced = new StringBuilder(branch.Trim());
         for (int i = 0; i < replaced.Length; i++)
@@ -53,7 +53,7 @@ public static class PathSanitizer
         string slug = collapsed.ToString().Trim('-');
 
         if (slug.Length == 0 || slug == "." || slug == "..")
-            throw new ArgumentException($"branch adından güvenli bir slug türetilemedi: '{branch}'.", nameof(branch));
+            throw new ArgumentException($"no safe slug could be derived from the branch name: '{branch}'.", nameof(branch));
 
         return slug;
     }

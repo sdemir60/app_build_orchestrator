@@ -58,7 +58,7 @@ public static partial class StaleObjDetector
 
         var foreign = targetKeys.Select(k => ForeignTfm().Match(k)).FirstOrDefault(m => m.Success);
         return foreign is { Success: true }
-            ? new StaleObjDiagnosis(csprojPath, true, $"obj/project.assets.json çözülmüş yabancı TFM içeriyor: {foreign.Value} (beklenen {expectedTfm}) — dokunulmadı, build kırılabilir")
+            ? new StaleObjDiagnosis(csprojPath, true, $"obj/project.assets.json contains a resolved foreign TFM: {foreign.Value} (expected {expectedTfm}) — left untouched, the build may break")
             : new StaleObjDiagnosis(csprojPath, false, null);
     }
 }

@@ -37,7 +37,7 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
         ArgumentNullException.ThrowIfNull(onLine);
 
         string workingDirectory = Path.GetDirectoryName(Path.GetFullPath(req.ProjectId))
-            ?? throw new ArgumentException("ProjectId geçerli bir dosya yolu değil.", nameof(req));
+            ?? throw new ArgumentException("ProjectId is not a valid file path.", nameof(req));
         var sw = Stopwatch.StartNew();
 
         // Fix wave 1 / Finding 2: PerProjectTimeout invoke BAŞINA bir kez kurulur (restore + build toplamı) —

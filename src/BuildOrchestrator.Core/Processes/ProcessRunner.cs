@@ -39,7 +39,7 @@ public sealed class ProcessRunner : IProcessRunner
         foreach (var a in spec.Arguments) psi.ArgumentList.Add(a); // elle string birleştirme YASAK (quoting tuzağı)
 
         var sw = Stopwatch.StartNew();
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException($"Process başlatılamadı: {spec.FileName}");
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException($"The process could not be started: {spec.FileName}");
         process.StandardInput.Close(); // child'a anında EOF ver — asla stdin'de bloklamasın
         var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
         var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
