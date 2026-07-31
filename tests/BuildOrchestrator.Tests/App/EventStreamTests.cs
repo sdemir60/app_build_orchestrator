@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Documents;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -82,6 +83,23 @@ public class EventStreamTests
         Assert.Equal("160 events", view.Counter.Text);              // TAM tampon (render dilimi DEĞİL)
         Assert.Equal(StreamComposer.RenderSlice, view.Rows.Count);  // yalnız 150 satır render edildi
         Assert.Equal(160, vm.StreamEventCount);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T4 · n6 · fix-1 · B3] design-v1 README:48 "DAİMA tabular rakam" — panelin aktif-satır metni
+    /// (<c>PART_ActiveText</c>, <c>EventStreamView.xaml:41</c>) VE her satırın kendi akan metni
+    /// (<c>EventStreamRow._text</c>, <c>EventStreamView.xaml.cs:399</c> — fix-1'de eklenen altıncı yer, önceki
+    /// sürüm bunu kaçırıyordu) mono taşıyan üretim yerlerindendir. Envanter/kapsam kararı XML doc'u:
+    /// <see cref="ProjectRowTests.The_project_row_sha_and_duration_columns_are_tabular"/>.</summary>
+    [StaFact]
+    public void The_active_line_and_row_text_are_tabular()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "up to date"));
+        var (view, window, _) = Realize(vm);
+
+        Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(view.ActiveText));
+        Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(view.Rows[0].Text));
         GC.KeepAlive(window);
     }
 

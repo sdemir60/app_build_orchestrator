@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
@@ -59,6 +60,19 @@ public class StickyRibbonTests
         Assert.Equal(32.0, ribbon.ContentRow.Height);
         Assert.Equal(2.0, ribbon.ProgressTrack.Height);
         Assert.Equal(new CornerRadius(0), ribbon.ProgressTrack.CornerRadius);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T4 · n6] design-v1 README:48 "DAİMA tabular rakam" — faz metni (<c>PART_PhaseText</c>,
+    /// <c>StickyRibbon.xaml:38</c>) mono taşıyan altı üretim yerinden biridir (envanter + kapsam kararı:
+    /// <see cref="ProjectRowTests.The_project_row_sha_and_duration_columns_are_tabular"/>'ın XML doc'unda).</summary>
+    [StaFact]
+    public void The_phase_text_is_tabular()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+
+        Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(ribbon.PhaseText));
         GC.KeepAlive(window);
     }
 
