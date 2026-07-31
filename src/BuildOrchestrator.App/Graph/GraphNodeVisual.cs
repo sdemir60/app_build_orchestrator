@@ -1,8 +1,36 @@
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Shapes;
 
 namespace BuildOrchestrator.App.Graph;
+
+/// <summary>
+/// [A13/T5] Bir graf düğümünün TIKLANABİLİR gövdesi (kare + etiket) — davranışça <see cref="StackPanel"/>'in
+/// TA KENDİSİ, tek fark bir automation peer'ı olmasıdır.
+///
+/// <para><b>Neden ayrı bir tip (ölçüldü):</b> düz bir <see cref="StackPanel"/>'in peer'ı YOKTUR
+/// (<c>UIElementAutomationPeer.CreatePeerForElement(new StackPanel())</c> → <c>null</c>), yani UIA ağacında
+/// kendi öğesi olarak HİÇ GÖRÜNMEZ ve ona verilen bir <c>AutomationProperties.Name</c> ekran okuyucuya ASLA
+/// ulaşmaz. Grafın "ekran okuyucuya görünmez" olması bu yüzden tek başına ad eksikliği değildi; düğümün UIA'da
+/// bir öğe HÂLİNE gelmesi gerekiyordu.</para>
+///
+/// <para>Görünüm/ölçü/motion tarafında hiçbir üye override EDİLMEZ — düğümün yerleşimi, opaklık hedefleri ve
+/// hit-test'i birebir eskisi gibidir.</para>
+/// </summary>
+internal sealed class GraphNodeBody : StackPanel
+{
+    protected override AutomationPeer OnCreateAutomationPeer() => new GraphNodeBodyPeer(this);
+
+    /// <summary>Gövdeye tıklamak düğümü seçer → UIA rolü <see cref="AutomationControlType.Button"/>'dır.
+    /// Adı (proje adı + statü) düğüm başına <see cref="GraphView"/> verir.</summary>
+    private sealed class GraphNodeBodyPeer(GraphNodeBody owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Button;
+
+        protected override string GetClassNameCore() => nameof(GraphNodeBody);
+    }
+}
 
 /// <summary>
 /// [G2] Bir düğümün MODELİ + yerleşimi + (varsa) görseli. Cull tembel materyalizasyondur: görünür alana
@@ -51,8 +79,9 @@ internal sealed class GraphNodeVisual
     public required GraphNode Model { get; set; }
     /// <summary>Canvas'a yerleştirilen dış hücre — katman reveal (opacity + 5px yukarıdan) animasyonunun hedefi.</summary>
     public required Grid Cell { get; init; }
-    /// <summary>Tıklanabilir gövde (kare + etiket) — seçim sönmesinin (%25) hedefi.</summary>
-    public required StackPanel Body { get; init; }
+    /// <summary>Tıklanabilir gövde (kare + etiket) — seçim sönmesinin (%25) hedefi. [A13/T5] Ekran-okuyucu adını
+    /// TAŞIYAN öğe de budur (bkz. <see cref="GraphNodeBody"/>: tıklanan öğe = UIA'da adlanan öğe).</summary>
+    public required GraphNodeBody Body { get; init; }
     /// <summary>Kare + rozet kabı — rozet TEMBEL kurulduğunda buraya (nabız kabının KARDEŞİ olarak) eklenir.</summary>
     public required Grid SquareHost { get; init; }
     /// <summary>Halka + kare + ikon kabı — <c>building</c> nabzının (1↔0.5, 1.6s) hedefi. DS'te <c>ds-node-pulse</c>

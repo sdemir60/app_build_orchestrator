@@ -170,7 +170,14 @@ public partial class WorktreePopover : PopoverBase
         Button? trash = null;
         if (onDelete is not null)
         {
-            trash = new Button { Margin = new Thickness(6, 0, 0, 0), Visibility = Visibility.Hidden, ToolTip = "Delete worktree" };
+            trash = new Button
+            {
+                Margin = new Thickness(6, 0, 0, 0), Visibility = Visibility.Hidden,
+                ToolTip = AccessibilityNames.DeleteWorktree,
+            };
+            // [A13/T5] İkon-yalnız buton + listede satır başına BİR tane → ad HANGİ worktree'yi sildiğini
+            // söylemeli (tooltip kısa kalır; ikisi de tek kaynaktan gelir, kopya YASAK).
+            AutomationProperties.SetName(trash, AccessibilityNames.DeleteWorktreeNamed(name));
             if (TryFindResource("Ds.IconButton") is Style s) trash.Style = s;
             trash.Content = IconVisual.Make(this, "Icon.Trash", "Brush.TextSecondary", 14);
             trash.Click += (_, ev) => { ev.Handled = true; onDelete(); };

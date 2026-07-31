@@ -381,7 +381,9 @@ public partial class ProjectRow : UserControl
     {
         var state = _vm?.State ?? ProjectRowState.Pending;
         GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
-        string text = StatusLabel(status);
+        // [A13/T5] design-v1 EN_STATUS eşlemesi artık STATUS_META'nın yanında (StatusGlyph.LabelFor) — graf
+        // düğümünün ekran-okuyucu adı ikinci tüketicisidir, kopya YASAK.
+        string text = StatusGlyph.LabelFor(status);
         if (state == ProjectRowState.Started)
             text += " — " + DurationFormat.Elapsed(_vm?.DurationMs ?? 0);
         else if (_vm?.HasDepIssue ?? false)
@@ -591,20 +593,6 @@ public partial class ProjectRow : UserControl
         }
         return null;
     }
-
-    // ---------------------------------------------------------------- metin
-    /// <summary>design-v1 EN_STATUS (BuildApp.jsx:342) — glyph tooltip'inin İngilizce statü etiketi. Eşlemenin
-    /// KENDİSİ (state+cycle+queued → GraphStatus) artık <see cref="ProjectRowViewModel.Status"/>'tadır (TEK yer).</summary>
-    private static string StatusLabel(GraphStatus status) => status switch
-    {
-        GraphStatus.Queued => "Queued",
-        GraphStatus.Building => "Building",
-        GraphStatus.Succeeded => "Succeeded",
-        GraphStatus.Failed => "Failed",
-        GraphStatus.Skipped => "Skipped",
-        GraphStatus.Cycle => "Cycle",
-        _ => "Discovered",
-    };
 
     private Color ResolveColor(string key, Color fallback) =>
         TryFindResource(key) is SolidColorBrush b ? b.Color : fallback;

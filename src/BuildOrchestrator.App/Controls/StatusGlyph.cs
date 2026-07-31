@@ -111,6 +111,24 @@ public class StatusGlyph : Control
         _ => "Brush.TextFaint",
     };
 
+    /// <summary>[A13/T5] DS <c>STATUS_META</c>'nın ÜÇÜNCÜ üyesi: statünün İngilizce METNİ (design-v1 EN_STATUS,
+    /// BuildApp.jsx:342). Bu kontrol rengi ve glyph'i çizer, metni çağıran verir — metin eşlemesi de bu yüzden
+    /// diğer ikisinin yanında durur.
+    ///
+    /// <para>Eşleme <c>ProjectRow</c>'un private <c>StatusLabel</c>'ıydı; graf düğümünün ekran-okuyucu adı
+    /// (<see cref="AccessibilityNames.GraphNode"/>) ikinci tüketici olunca buraya alındı — ikinci bir kopya
+    /// YASAK (CLAUDE.md). Davranış değişmedi.</para></summary>
+    internal static string LabelFor(GraphStatus status) => status switch
+    {
+        GraphStatus.Queued => "Queued",
+        GraphStatus.Building => "Building",
+        GraphStatus.Succeeded => "Succeeded",
+        GraphStatus.Failed => "Failed",
+        GraphStatus.Skipped => "Skipped",
+        GraphStatus.Cycle => "Cycle",
+        _ => "Discovered",
+    };
+
     /// <summary>Halkanın içine düşen işaret (_ds_bundle.js:1459-1478 <c>inner()</c>); <c>null</c> = işaret yok.</summary>
     internal static string? InnerIconKeyFor(GraphStatus status) => status switch
     {

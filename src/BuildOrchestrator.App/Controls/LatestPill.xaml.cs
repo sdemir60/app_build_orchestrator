@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -27,6 +28,21 @@ public partial class LatestPill : UserControl
         Loaded += (_, _) => EnsureLocalBrushes();
         PillButton.MouseEnter += (_, _) => SetHover(true);
         PillButton.MouseLeave += (_, _) => SetHover(false);
+    }
+
+    /// <summary>
+    /// [A13/T5] Ekran-okuyucu adı. Pill'in ROLÜNÜ ("en sona git") kontrol bilir, ama HANGİ akışın sonuna
+    /// gidildiğini (projeler / konsol / event stream) yalnız host bilir — bu yüzden metni host verir; desen,
+    /// <c>ShellRoot</c>'un <c>DsSplitter</c>'lara ad vermesiyle AYNIdır. Metinler
+    /// <see cref="AccessibilityNames"/>'tedir (çağırma yerinde literal YAZILMAZ).
+    ///
+    /// <para>Ad, kabuğa değil TIKLANAN öğeye (<see cref="PillButton"/>) konur: UIA ağacında buton öğesi odur,
+    /// dıştaki <c>UserControl</c>'e verilen bir ad ekran okuyucuya butonun adı olarak ulaşmaz.</para>
+    /// </summary>
+    public string AccessibleName
+    {
+        get => AutomationProperties.GetName(PillButton);
+        set => AutomationProperties.SetName(PillButton, value);
     }
 
     // ConsoleView.EnsureColorizer ile AYNI desen: headless test host'ta (Application/merged Tokens.xaml yok)

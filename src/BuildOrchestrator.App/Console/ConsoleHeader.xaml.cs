@@ -145,7 +145,9 @@ public partial class ConsoleHeader : UserControl
         _copyClock?.Stop();
         _copyClock = null;
         _copyFeedback.Revert();
-        SetCopyIcon(CopyIconKey, "Copy log", "Brush.TextSecondary");
+        // [A13/T5] Tooltip metni de UIA adıyla AYNI sabitten gelir (kopya YASAK) — ad SABİTTİR, yalnız tooltip
+        // başarılı kopyada geçici olarak "Copied" olur.
+        SetCopyIcon(CopyIconKey, AccessibilityNames.CopyLog, "Brush.TextSecondary");
     }
 
     /// <summary>Copy-log butonunun görselini (ikon geometrisi + boya + tooltip + renk) tek yerden sürer.

@@ -1,7 +1,8 @@
 <UserControl x:Class="BuildOrchestrator.App.Console.ConsoleHeader"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:app="clr-namespace:BuildOrchestrator.App">
   <!-- [T56/3a] Konsol panel başlığı — design-v1 §2.5 PanelHead: 28px, surface zemin, alt 1px border-subtle.
        İki mod: Anlatı (caps "CONSOLE" etiketi) ve Proje-log (← Back + proje adı + statü glyph/adı + ▲ badge).
        Sağda mono "N lines" (TAM tampon uzunluğu — Ek A #23; render dilimi DEĞİL). -->
@@ -21,9 +22,12 @@
            görünümünü verir; bu iki butonun kabuğu ise ÖZELDİR (saydam zemin, kenarsız, rengini code-behind
            sürer) ve DS'in zemin/yükseklik setter'ları onu bozardı. Konsol başlığının DS'e GERÇEKTEN taşınması
            (Ds.IconButton / Ds.Button.Ghost.Sm) C fazının konsol task'ıdır — burada yalnız regresyon kapatılır. -->
+      <!-- [A13/T5] İkon-yalnız buton → ekran okuyucuya adı AÇIKÇA verilir (tek kaynak AccessibilityNames).
+           Buradaki ToolTip="Copy log" literali KALDIRILDI: ctor'daki ShowNarrative → ResetCopyVisual zaten aynı
+           metni sürüyordu (ölü kopya); tooltip de artık aynı sabitten gelir (bkz. ConsoleHeader.xaml.cs). -->
       <Button x:Name="CopyLogButton" Style="{x:Null}" DockPanel.Dock="Right" Visibility="Collapsed" Click="OnCopyLogClick"
               Background="Transparent" BorderThickness="0" Padding="4,0" Margin="0,0,8,0" Cursor="Hand"
-              VerticalAlignment="Center" ToolTip="Copy log"
+              VerticalAlignment="Center" AutomationProperties.Name="{x:Static app:AccessibilityNames.CopyLog}"
               Foreground="{DynamicResource Brush.TextSecondary}">
         <!-- [T60] Data/Stroke/StrokeThickness'ın TAMAMINI code-behind sürer (IconPaint.Apply): geometri
              ve boya semantiği (kontur mu dolgu mu, hangi kalınlıkta) tek kaynaktan — Icons.xaml. -->

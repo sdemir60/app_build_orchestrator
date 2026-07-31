@@ -45,6 +45,9 @@ public partial class ShellRoot : UserControl
         AutomationProperties.SetName(PART_ColumnSplitter, AccessibilityNames.ColumnSplitter);
         AutomationProperties.SetName(PART_LeftSplitter, AccessibilityNames.GraphListSplitter);
         AutomationProperties.SetName(PART_RightSplitter, AccessibilityNames.ConsoleStreamSplitter);
+        // [A13/T5] `⌄ latest` pill'i AYNI ilkeyle adlanır: rolünü kontrol bilir, HANGİ akışın sonu olduğunu host
+        // bilir (burada: proje listesi).
+        PART_ProjectsPill.AccessibleName = AccessibilityNames.LatestProjects;
         ApplyLayout(LayoutState.Default);
     }
 

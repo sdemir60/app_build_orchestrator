@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -624,7 +625,7 @@ public partial class GraphView : UserControl
             Children = { pulseHost },
         };
 
-        var body = new StackPanel
+        var body = new GraphNodeBody
         {
             Orientation = Orientation.Vertical,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -735,6 +736,12 @@ public partial class GraphView : UserControl
     private void ApplyNodeStatus(GraphNodeVisual visual)
     {
         NodeStatusApplyCount++;
+
+        // [A13/T5] Ekran-okuyucu adı: kare/ikon/rozet görselleri ekran okuyucuya HİÇBİR ŞEY söylemez. Ad düğüm
+        // BAŞINA anlamlıdır (tam proje adı + statü) ve statü görselleriyle AYNI yerde sürülür — statü değişince
+        // (UpdateStatuses → buraya) ad da tazelenir, bayat kalmaz.
+        AutomationProperties.SetName(
+            visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Status)));
 
         var (border, background, iconColor, dashed) = visual.Model.Status switch
         {

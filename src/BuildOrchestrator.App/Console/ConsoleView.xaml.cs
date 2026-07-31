@@ -120,6 +120,8 @@ public partial class ConsoleView : UserControl
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
             scrollSmooth: AnimateToBottom);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
+        // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
+        Pill.AccessibleName = AccessibilityNames.LatestConsole;
         // [A13/T1 fix-1 · I-D] EventStreamView.ctor:97 deseni: unload'da SONSUZ blink saatleri bırakılır (aksi
         // halde ağaçtan çıkmış bir görünümün iki clock'u timing engine'de 30fps'te uyanık kalırdı). Uçuştaki
         // daktilo/kaskat BURADA commit EDİLMEZ: commit doküman yazan bir DAVRANIŞTIR ve unload'da yeni bir

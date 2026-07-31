@@ -88,6 +88,8 @@ public partial class EventStreamView : UserControl
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
         ScrollAnimator.EnableUserCancellation(PART_Scroll);
         PART_Pill.Click += (_, _) => _bottomAnchor.JumpToBottom();
+        // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
+        PART_Pill.AccessibleName = AccessibilityNames.LatestEvents;
 
         PART_ActiveLine.MouseLeftButtonUp += OnActiveLineClicked;
 
