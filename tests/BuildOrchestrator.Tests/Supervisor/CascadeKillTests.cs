@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
-using BuildOrchestrator.Core.Processes;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Supervisor;
