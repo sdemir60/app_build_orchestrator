@@ -162,7 +162,7 @@ public class NoTurkishUserTextTests
     {
         var csFiles = SourceGuard.ScannedSrcFiles("*.cs");
         var xamlFiles = SourceGuard.ScannedSrcFiles("*.xaml");
-        // [fix-1 · V2] Eşikler bugünkü GERÇEK ölçüme yakındır (176 .cs · 21 .xaml · 1056 · 2555); ~%85'e
+        // [fix-1 · V2] Eşikler bugünkü GERÇEK ölçüme yakındır (176 .cs · 23 .xaml dosya; 1056 · 2555 metin); ~%85'e
         // konumlandırıldı: sessiz bir çöküşü (dosya bulunamadı / tokenizer boş döndü) yakalar ama normal
         // dosya ekleme-çıkarmada kırılmaz.
         Assert.True(csFiles.Count >= 150, $"yalnız {csFiles.Count} .cs dosyası tarandı — ağaç kurulmamış olabilir.");

@@ -54,6 +54,37 @@ public class SourceLiteralsTests
         Assert.True(Sees(literals, "son"), "interpolated string'in sonu yanlış yerde bitti");
     }
 
+    [Fact] // [fix-2 · N1] hole İÇİNDEKİ {{ }} bir kaçış DEĞİL, gerçek kod ayracıdır
+    public void Braces_inside_an_interpolation_hole_are_code_not_escapes()
+    {
+        // `{{`/`}}` yalnız literalin METİN kısmında (depth 0) kaçıştır. Hole içinde onları kaçış saymak
+        // derinlik sayacını kaydırır ve literal ERKEN kapanır — C1'in çözdüğü semptom geri gelir.
+        const string code = """
+            var a = $"{Foo(new[] {{ }}, y ?? "fallback-hata")} tail6";
+            """;
+
+        var literals = SourceLiterals.FromCSharp(code);
+
+        Assert.True(Sees(literals, "fallback-hata"),
+            "hole içindeki {{ }} kaçış sanıldı — derinlik kaydı, iç literal taramaya girmedi (C1 nüksü).");
+        Assert.True(Sees(literals, "tail6"), "literal erken kapandı — kapanış tırnağı yanlış yerde bulundu");
+    }
+
+    [Fact] // [fix-2 · N1] depth 0'daki {{ }} HÂLÂ kaçış olarak ele alınmalı (düzeltme fazla ileri gitmesin)
+    public void Escaped_braces_in_the_text_part_are_still_treated_as_escapes()
+    {
+        const string code = """
+            var a = $"kacisli {{ ve }} ayraclar {x} tail7";
+            var b = $"{y ?? "ic7"} son7";
+            """;
+
+        var literals = SourceLiterals.FromCSharp(code);
+
+        Assert.True(Sees(literals, "tail7"), "depth 0'daki {{ }} kaçışı bozuldu — literal erken kapandı");
+        Assert.True(Sees(literals, "ic7"), "sonraki satırın iç literali kaydı");
+        Assert.True(Sees(literals, "son7"));
+    }
+
     [Fact] // interpolated string'in SONU doğru bulunuyor mu — sonrası KOD, literal değil
     public void The_end_of_an_interpolated_string_is_found_so_following_code_is_not_treated_as_text()
     {
@@ -181,6 +212,51 @@ public class SourceLiteralsTests
 
         Assert.True(Sees(literals, "metin1"), "tek tırnaklı öznitelik değeri taramaya girmedi");
         Assert.True(Sees(literals, "metin2"));
+    }
+
+    [Fact] // [fix-2 · N2] kırpma EŞLEŞME TÜRÜNE duyarlı olmalı — çift tırnaklı değerin içindeki ' kesilmemeli
+    public void A_double_quoted_value_keeps_its_own_apostrophes()
+    {
+        // MSBuild'in en yaygın deyimi: çift tırnaklı Condition, İÇERİĞİNDE tek tırnak taşır. Türü
+        // gözetmeyen bir Trim('"', '\'') içeriğin İKİ UCUNU da yer.
+        const string xml = """
+            <Error Condition="'$(PublishSingleFile)' == 'true'" Text="mesaj" />
+            """;
+
+        var literals = SourceLiterals.FromXml(xml);
+
+        Assert.Contains(literals, l => l.Text == "'$(PublishSingleFile)' == 'true'");
+        Assert.DoesNotContain(literals, l => l.Text == "$(PublishSingleFile)' == 'true");
+    }
+
+    [Fact] // [fix-2 · N2] simetrik: tek tırnaklı değerin içindeki " de kesilmemeli
+    public void A_single_quoted_value_keeps_its_own_double_quotes()
+    {
+        const string xml = """
+            <Error Text='"alintili" metin' />
+            """;
+
+        Assert.Contains(SourceLiterals.FromXml(xml), l => l.Text == "\"alintili\" metin");
+    }
+
+    [Fact] // [fix-2 · N2] CANLI KANIT: gerçek csproj'un üç Condition satırı KESİLMEDEN çıkarılıyor
+    public void The_real_csproj_conditions_are_extracted_without_being_truncated()
+    {
+        string path = System.IO.Path.Combine(
+            RepoPaths.SrcRoot, "BuildOrchestrator.App", "BuildOrchestrator.App.csproj");
+        var literals = SourceLiterals.FromXml(System.IO.File.ReadAllText(path));
+
+        // BuildOrchestrator.App.csproj:72 · :84 · :126 (mevcut kod, bu task'ta değişmedi)
+        string[] expected =
+        [
+            "'$(_SupervisorOutDir)' == '' or '$(_SupervisorOutDir)' == '\\'",
+            "'@(_SupervisorFiles)' == ''",
+            "'$(PublishSingleFile)' == 'true'",
+        ];
+
+        foreach (string condition in expected)
+            Assert.True(literals.Any(l => l.Text == condition),
+                $"Condition metni KESİLEREK çıkarıldı (kenar tırnakları yendi): {condition}");
     }
 
     [Fact] // [fix-1 · I1] CDATA

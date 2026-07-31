@@ -123,9 +123,13 @@ internal static class SourceLiterals
             if (!verbatim && c == '\\') { i += 2; continue; }                        // \" \\ kaçışı
             if (verbatim && c == '"' && i + 1 < n && text[i + 1] == '"') { i += 2; continue; } // "" kaçışı
 
+            // [fix-2 · N1] `{{`/`}}` YALNIZ literalin METİN kısmında (depth 0) bir kaçıştır. Hole İÇİNDE
+            // (depth > 0) onlar gerçek kod ayracıdır — lambda gövdesi, koleksiyon/nesne initializer'ı vb.
+            // Kaçış saymak derinlik sayacını kaydırır, literal ERKEN kapanır ve C1'in çözdüğü semptom
+            // (iç literalin taramaya hiç girmemesi) dar bir tetikleyiciyle geri gelir.
             if (interpolated && c == '{')
             {
-                if (i + 1 < n && text[i + 1] == '{') { i += 2; continue; }           // {{ = düz '{'
+                if (depth == 0 && i + 1 < n && text[i + 1] == '{') { i += 2; continue; } // {{ = düz '{'
                 depth++; i++; continue;
             }
             if (interpolated && c == '}')
@@ -174,9 +178,14 @@ internal static class SourceLiterals
         const string pattern = @"<!\[CDATA\[[\s\S]*?\]\]>|""[^""]*""|'[^']*'|>[^<>]+<";
         foreach (Match m in Regex.Matches(stripped, pattern))
         {
+            // [fix-2 · N2] Ayraç soyma EŞLEŞME TÜRÜNE duyarlı olmak ZORUNDA. Ortak bir
+            // Trim('"', '\'', '>', '<') içeriğin KENDİ tırnağını da yer: MSBuild'in en yaygın deyimi olan
+            // Condition="'$(X)' == 'true'" böylece $(X)' == 'true diye KESİLİYORDU (gerçek dosyada
+            // BuildOrchestrator.App.csproj:72/:84/:126 üzerinde doğrulandı). Her alternatifin açılış ve
+            // kapanışı TEK karakterdir — CDATA hariç, onun ayraçları 9 ve 3 karakter.
             string value = m.Value.StartsWith("<![CDATA[", StringComparison.Ordinal)
                 ? m.Value[9..^3]
-                : m.Value.Trim('"', '\'', '>', '<');
+                : m.Value[1..^1];
             if (value.Trim().Length == 0) continue;
             result.Add(new SourceLiteral(LineOf(stripped, m.Index), value));
         }
