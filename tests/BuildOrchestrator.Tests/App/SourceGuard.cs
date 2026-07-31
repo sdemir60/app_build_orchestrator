@@ -103,6 +103,73 @@ internal static class SourceGuard
             || trimmed.StartsWith("<!--", StringComparison.Ordinal);
     }
 
+    // ================================================================================================
+    // [A13/B2] LİTERAL TARAMASI — kuralı ham dosya metnine değil, YALNIZ kaynaktan çıkarılmış metin
+    // parçalarına (string literal / XML öznitelik / eleman metni) uygular.
+    //
+    // Gerekçe: yukarıdaki ham-metin taraması "Türkçe metin sızmış mı" sorusuna KULLANILAMAZ, çünkü bu
+    // projenin YORUMLARI tasarım gereği Türkçedir (CLAUDE.md). Ayrıntı: <see cref="SourceLiterals"/>.
+    // ================================================================================================
+
+    /// <summary>TÜM üretim projelerinin (<c>src/</c>) literallerini tarar.</summary>
+    public static IReadOnlyList<string> ScanSrcLiterals(
+        string searchPattern, Regex rule,
+        IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null)
+        => ScanLiterals(RepoPaths.SrcSourceFiles(searchPattern), RepoPaths.SrcRoot, rule, allowedFiles, ignoredCallers);
+
+    /// <summary>TÜM repo ağacının literallerini tarar — <c>src/</c> DIŞINDA yaşayan kullanıcıya görünür
+    /// metinler için (ör. <c>scripts/verify-publish.ps1</c> çıktı satırları).</summary>
+    public static IReadOnlyList<string> ScanRepoLiterals(
+        string searchPattern, Regex rule,
+        IReadOnlyCollection<string>? allowedFiles = null, IReadOnlyCollection<string>? ignoredCallers = null)
+        => ScanLiterals(RepoPaths.RepoSourceFiles(searchPattern), RepoPaths.RepoRoot, rule, allowedFiles, ignoredCallers);
+
+    /// <summary>Taranan literallerin SAYISI — "tarama sessizce hiçbir şey görmedi" vakumunu kapatan
+    /// meta-assert'lerin girdisi (dosya sayısı yetmez: dosyalar görülüp literal çıkarılamamış olabilir).</summary>
+    public static int CountSrcLiterals(string searchPattern) =>
+        RepoPaths.SrcSourceFiles(searchPattern)
+                 .Sum(f => SourceLiterals.From(File.ReadAllText(f), Path.GetExtension(f)).Count);
+
+    public static int CountRepoLiterals(string searchPattern) =>
+        RepoPaths.RepoSourceFiles(searchPattern)
+                 .Sum(f => SourceLiterals.From(File.ReadAllText(f), Path.GetExtension(f)).Count);
+
+    private static IReadOnlyList<string> ScanLiterals(
+        IEnumerable<string> files, string root, Regex rule,
+        IReadOnlyCollection<string>? allowedFiles, IReadOnlyCollection<string>? ignoredCallers)
+    {
+        var offenders = new List<string>();
+        foreach (string file in files)
+        {
+            string relative = Path.GetRelativePath(root, file);
+            if (allowedFiles is not null && allowedFiles.Contains(relative, StringComparer.OrdinalIgnoreCase)) continue;
+            offenders.AddRange(ScanLiteralText(
+                relative, File.ReadAllText(file), Path.GetExtension(file), rule, ignoredCallers));
+        }
+        return offenders;
+    }
+
+    /// <summary>Kuralı TEK bir dosya metninin literallerine uygular — dosya taramasının çekirdeği ve guard'ın
+    /// KENDİ kanıt testlerinin (sahte girdi → ihlal gerçekten raporlanıyor mu) giriş noktası.</summary>
+    public static IReadOnlyList<string> ScanLiteralText(
+        string relative, string text, string extension, Regex rule,
+        IReadOnlyCollection<string>? ignoredCallers = null)
+    {
+        string[] lines = text.Split('\n');
+        var offenders = new List<string>();
+        foreach (var literal in SourceLiterals.From(text, extension))
+        {
+            if (!rule.IsMatch(literal.Text)) continue;
+            // İSTİSNA: belirli çağrıların argümanları taranmaz (ör. Debug.WriteLine — kullanıcıya ULAŞMAZ,
+            // Release'te derlenip çıkar). Literalin BAŞLADIĞI satıra bakılır; bu projedeki tüm bu çağrılar
+            // tek satırlıktır ve istisna guard testinde AÇIK listede gerekçesiyle durur.
+            if (ignoredCallers is not null && literal.Line - 1 < lines.Length
+                && ignoredCallers.Any(c => lines[literal.Line - 1].Contains(c, StringComparison.Ordinal))) continue;
+            offenders.Add($"{relative}:{literal.Line}: {Flatten(literal.Text)}");
+        }
+        return offenders;
+    }
+
     /// <summary>Taramanın GERÇEKTEN dosya gördüğünü doğrulayan meta-testlerin ortak yardımcısı: boş bir tarama
     /// her guard'ı sessizce yeşil bırakırdı.</summary>
     public static IReadOnlyList<string> ScannedAppFiles(string searchPattern) =>
