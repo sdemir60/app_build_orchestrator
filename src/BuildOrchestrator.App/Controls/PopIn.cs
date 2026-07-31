@@ -16,7 +16,8 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 internal static class PopIn
 {
-    private const double DurationMs = 140.0;  // BuildApp.jsx:21 `.14s`
+    // [A13/T4 fix-1 · A3] internal — PopoverTests artık değeri saf `Assert.Equal` ile pinliyor.
+    internal const double DurationMs = 140.0;  // BuildApp.jsx:21 `.14s`
     private const double RiseFromPx = 4.0;    // BuildApp.jsx:33 `translateY(4px)`
     private const double ScaleFrom = 0.985;   // BuildApp.jsx:33 `scale(.985)`
 

@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -262,49 +263,48 @@ public class PopoverTests
 
     // ---------------------------------------------------------------- [A13/T4 · m3] pop-in: 140ms · 4px · .985
 
-    /// <summary>[A13/T4 · m3] Otorite <c>BuildApp.jsx:21,33</c>: <c>.bo-pop-in { animation: bo-pop-in .14s
-    /// var(--ease-out) both; } @keyframes bo-pop-in { from { opacity:0; transform: translateY(4px) scale(.985); }
-    /// to { opacity:1; transform:none; } }</c>. <c>Opening_a_popover_plays_the_pop_in_and_moves_focus_inside</c>
+    /// <summary>[A13/T4 · m3 · fix-1 · A3/C4] Otorite <c>BuildApp.jsx:21,33</c>: <c>.bo-pop-in { animation:
+    /// bo-pop-in .14s var(--ease-out) both; } @keyframes bo-pop-in { from { opacity:0; transform: translateY(4px)
+    /// scale(.985); } to { opacity:1; transform:none; } }</c>. <c>Opening_a_popover_plays_the_pop_in_and_moves_focus_inside</c>
     /// (yukarıda) YALNIZ reduced-motion kolunu (statik <c>App.Motion</c> null → SNAP) sürer — <see cref="PopIn"/>'in
-    /// GERÇEK animasyonlu geometrisi (4px/.985/140ms) hiçbir testte oynamamıştı. <c>App.Motion</c> statik seam'i
-    /// geçici set/restore edilir (<c>MotionOwnerHygieneTests.AssertSubscribesOnce</c> deseni; Console UI serial
-    /// collection → mutasyon serileştirilir).</summary>
+    /// GERÇEK animasyonlu geometrisi (4px/.985/140ms) hiçbir testte oynamamıştı.
+    ///
+    /// <para><b>fix-1 · A3:</b> <c>PopIn.DurationMs</c> artık SAF <c>Assert.Equal</c> ile de pinli (önceden yalnız
+    /// gerçek-saat penceresi vardı, 140→300 gibi bir sapmayı geçirirdi).</para>
+    /// <para><b>fix-1 · C4:</b> <c>App.Motion</c> statik seam set/restore'u artık <see cref="MotionScope"/>
+    /// (paylaşılan, TEK yer) üzerinden — önceden bu try/finally <c>MotionOwnerHygieneTests.AssertSubscribesOnce</c>'ın
+    /// birebir kopyasıydı.</para></summary>
     [StaFact]
     public void Opening_a_popover_plays_a_real_140ms_pop_in_rising_4px_from_a_985_scale()
     {
-        var original = BuildOrchestrator.App.App.Motion;
-        BuildOrchestrator.App.App.Motion = new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true });
-        try
-        {
-            var host = DsResources.NewHost();
-            var popover = new BranchPopover { DataContext = NewVm() };
-            var window = DsResources.Realize(host, popover);
+        Assert.Equal(140.0, PopIn.DurationMs); // BuildApp.jsx:21 `.14s` — saf literal pin (A13/T4 fix-1)
 
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            popover.IsOpen = true; // ÜRETİM yolu: PopoverBase.RefreshContent → PopIn.Play(this)
+        using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
+        var host = DsResources.NewHost();
+        var popover = new BranchPopover { DataContext = NewVm() };
+        var window = DsResources.Realize(host, popover);
 
-            // t≈0: başlangıç geometrisi otoriteyle BİREBİR (translateY(4px) scale(.985), opacity 0).
-            var group = Assert.IsType<TransformGroup>(popover.RenderTransform);
-            var scale = Assert.IsType<ScaleTransform>(group.Children[0]);
-            var translate = Assert.IsType<TranslateTransform>(group.Children[1]);
-            Assert.Equal(0.985, scale.ScaleX);
-            Assert.Equal(0.985, scale.ScaleY);
-            Assert.Equal(4.0, translate.Y);
-            Assert.True(popover.HasAnimatedProperties, "opacity/scale/translate GERÇEKTEN animasyonlu değil");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        popover.IsOpen = true; // ÜRETİM yolu: PopoverBase.RefreshContent → PopIn.Play(this)
 
-            DispatcherPump.PumpUntil(() => popover.Opacity >= 0.99, TimeSpan.FromSeconds(2));
-            clock.Stop();
+        // t≈0: başlangıç geometrisi otoriteyle BİREBİR (translateY(4px) scale(.985), opacity 0).
+        var group = Assert.IsType<TransformGroup>(popover.RenderTransform);
+        var scale = Assert.IsType<ScaleTransform>(group.Children[0]);
+        var translate = Assert.IsType<TranslateTransform>(group.Children[1]);
+        Assert.Equal(0.985, scale.ScaleX);
+        Assert.Equal(0.985, scale.ScaleY);
+        Assert.Equal(4.0, translate.Y);
+        Assert.True(popover.HasAnimatedProperties, "opacity/scale/translate GERÇEKTEN animasyonlu değil");
 
-            Assert.True(popover.Opacity >= 0.99, "pop-in hiç tamamlanmadı");
-            Assert.Equal(0.0, translate.Y, precision: 1); // hedefe ulaştı: translateY(0)
-            // BuildApp.jsx:21 `.14s` — kaba bir sapmayı (ör. 700ms/14ms) yakalayacak gevşek pencere.
-            Assert.InRange(clock.ElapsedMilliseconds, 60, 400);
-            GC.KeepAlive(window);
-        }
-        finally
-        {
-            BuildOrchestrator.App.App.Motion = original;
-        }
+        DispatcherPump.PumpUntil(() => popover.Opacity >= 0.99, TimeSpan.FromSeconds(2));
+        clock.Stop();
+
+        Assert.True(popover.Opacity >= 0.99, "pop-in hiç tamamlanmadı");
+        Assert.Equal(0.0, translate.Y, precision: 1); // hedefe ulaştı: translateY(0)
+        // BuildApp.jsx:21 `.14s` — üretim yolundan GERÇEKTEN oynadığının (zamana bağlı, tamamlayıcı) kanıtı;
+        // asıl 140ms iddiası artık yukarıdaki saf pin'de.
+        Assert.InRange(clock.ElapsedMilliseconds, 60, 400);
+        GC.KeepAlive(window);
     }
 
     /// <summary>[W2 · REALIZE TESTİ] <see cref="BranchPopover"/> AÇIKKEN realize + layout — <see cref="WorktreePopover"/>

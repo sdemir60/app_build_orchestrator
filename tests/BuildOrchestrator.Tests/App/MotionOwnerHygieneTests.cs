@@ -174,18 +174,11 @@ public class MotionOwnerHygieneTests
     private static void AssertSubscribesOnce(FrameworkElement owner)
     {
         var motion = new CountingMotion();
-        var original = BuildOrchestrator.App.App.Motion;
-        BuildOrchestrator.App.App.Motion = motion;
-        try
-        {
-            owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
-            owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
-            Assert.Equal(1, motion.SubscriberCount);
-        }
-        finally
-        {
-            BuildOrchestrator.App.App.Motion = original; // headless varsayılanı (null) geri yükle
-        }
+        using var _ = MotionScope.Enable(motion); // [A13/T4 fix-1 · C4] tek yer — restore Dispose'da (headless varsayılanı null)
+
+        owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Assert.Equal(1, motion.SubscriberCount);
     }
 
     /// <summary>Abone olan delege SAYISINI (guard'ı) gözlemleyen IMotionSettings — çift-abonelik burada görünür.</summary>
