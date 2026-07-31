@@ -40,7 +40,7 @@ flowchart TD
 | Sınır | İki taraf | Taşıyıcı | Doğrulama noktası |
 |---|---|---|---|
 | Process | App ↔ Supervisor ↔ MSBuild | CreateProcessW + nested Job | `JobProcessLauncher.cs:19-104` |
-| IPC | App ↔ Supervisor | stdio NDJSON | `NdjsonFraming.cs:33-70`, `SupervisorHost.cs:45-57` |
+| IPC | App ↔ Supervisor | stdio NDJSON | `NdjsonFraming.cs:33-70`, `SupervisorHost.cs:70-74` |
 | Dosya sistemi | Supervisor ↔ repo/`%LOCALAPPDATA%` | doğrudan I/O | `WorkspaceScanner.cs:18-47`, `RunLogPaths.cs:8-12` |
 | Git | Supervisor ↔ kullanıcının repo'su | `git.exe` argv | `GitService.cs`, `WorktreeManager.cs` |
 | Kullanıcı girdisi | UI ↔ motor | IPC komut alanları | `RunViewModel.cs:425`, `SupervisorHost.cs:81-110` |
