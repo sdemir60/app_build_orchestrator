@@ -230,4 +230,52 @@ public class StickyRibbonTests
         Assert.False(DependencyPropertyHelper.GetValueSource(ribbon.IndicatorTranslate, TranslateTransform.XProperty).IsAnimated);
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [A13/T6 · t5 — <b>ÜRETİM AÇIĞI PİNİ</b>] Şeridin <c>· N warnings</c> segmenti <see cref="RibbonText.Compose"/>'ta
+    /// VAR ve <c>RibbonTextTests</c> onu birebir pinliyor; eksik olan <b>BESLEME</b>dir.
+    ///
+    /// <para><b>Ölçülen gerçek:</b> tek üretim çağrısı sayıyı SABİT sıfır geçiyor
+    /// (<c>StickyRibbon.xaml.cs:211</c> <c>warnings: 0</c>, yanında kendi "wire gap" notuyla) ve App'te
+    /// sayılacak bir kaynak da yok: derleyici warning sayısı IPC sözleşmesinde HİÇ taşınmıyor
+    /// (<c>RunCompletedEvent</c> = Succeeded/Failed/Skipped/Queued/DurationMs/DepIssueCount) — ikinci bir
+    /// üretim notu bunu ayrıca yazıyor (<c>StreamText.cs:50</c>). Otorite ise sayıyı istiyor
+    /// (<c>BuildApp.jsx:768-769</c> + <c>build-data.js:530-537</c>: koşuda derlenen projelerin <c>warn</c> tipli,
+    /// dep-OLMAYAN log satırlarının sayısı).</para>
+    ///
+    /// <para><b>Bu yüzden burada pozitif iddia (sayı görünüyor/artıyor) KURULAMAZ</b> — kurmak, testin değil bir
+    /// ÖZELLİĞİN işi olurdu (log-parse + IPC alanı + VM özelliği + kablo). Kural gereği üretim sapması
+    /// DÜZELTİLMEDİ, RAPORLANDI (T6 raporu · Concerns). Pinlenen şey bugünkü DÜRÜST davranıştır: uygulamaya
+    /// gerçekten bir derleyici warning'i ulaşsa bile şerit uydurma bir sayı GÖSTERMEZ. Kablo bağlandığı gün bu
+    /// test KIRILIR ve pozitif iddiaya (<c>· 1 warnings</c>) çevrilmelidir — açık sessizce kapanamaz.</para>
+    /// </summary>
+    [StaFact]
+    public void A_compiler_warning_that_reaches_the_app_does_not_reach_the_ribbon_because_no_wire_feeds_it()
+    {
+        const string projectId = @"C:\p\A.csproj";
+        const string warningLine = "Class1.cs(7,17): warning CS0219: The variable 'x' is assigned but never used";
+
+        // Üretim sırası: kabuk ÖNCE realize, veri SONRA (A12 dersi).
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+
+        SetTopology(vm, (projectId, "A"));
+        StartRun(vm, (projectId, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectLogEvent("r1", projectId, 1, warningLine));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 120));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 1200));
+
+        // Ön-koşullar (vakum yasak): (a) koşu GERÇEKTEN bitti ve şerit done satırını kurdu; (b) warning satırı
+        // GERÇEKTEN uygulamaya ulaştı — koşu dokümanında (run transkripti) duruyor.
+        Assert.Equal(AppPhase.Done, vm.Phase);
+        Assert.False(vm.AllClean); // willBuild dolu → "Completed — …" dalı (all-clean "Everything up to date" DEĞİL)
+        Assert.Contains(warningLine, vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+        // AÇIK: metin "· N warnings" segmentini TAŞIMAZ. (Segment, Compose biçiminde tam olarak "skipped" ile
+        // geçen süre ARASINA girer — RibbonText.cs:119-125.)
+        Assert.StartsWith("Completed — 1 succeeded · 0 skipped · ", ribbon.PhaseText.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("warnings", ribbon.PhaseText.Text, StringComparison.Ordinal);
+        GC.KeepAlive(window);
+    }
 }
