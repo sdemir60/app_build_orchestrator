@@ -75,6 +75,13 @@ public partial class ConsoleView : UserControl
     // [D4/T56-UI] Boşta (idle/boot) "ready" (dim) satırı overlay'de gösteriliyor mu — doküman satırı DEĞİL.
     private bool _idleReady;
 
+    /// <summary>[A13/T3 fix-2 · 5] Idle "ready" satırının duvar-saati kaynağı. Sahibi (<c>MainWindow</c>) bunu
+    /// ctor'da <see cref="ViewModels.RunViewModel.WallClock"/>'a bağlar — konsol anlatısı, event stream ve idle
+    /// satırı böylece TEK saatten beslenir (kardeş seam deseni: <see cref="AnimationsEnabledProvider"/>).
+    /// Bağ <b>indirection</b>'dır (değer kopyası DEĞİL): VM'in saati sonradan değişirse idle satırı da izler.
+    /// Enjeksiyon yokken üretimdeki varsayılanla aynı ifadedir — davranış-nötr.</summary>
+    internal Func<DateTimeOffset> WallClock { get; set; } = () => DateTimeOffset.Now;
+
     // Kaskat durumu (yalnız UI thread'inde).
     private DispatcherTimer? _cascadeTimer;
     private Stopwatch? _cascadeClock;
@@ -337,11 +344,18 @@ public partial class ConsoleView : UserControl
     ///
     /// <para>[A13/T3 fix-1 · P3] Damga eskiden HİÇ YOKTU (yalnız <c>"ready"</c> basılıyordu) — otoritede
     /// (<c>BuildApp.jsx:607</c>) satır <c>&lt;NarrLine type="dim" time={eng.wall()} cursor&gt;</c>'dur, yani
-    /// damga AÇIKÇA taşınır ve <c>NarrLine</c> (<c>:158-160</c>) onu imleç kolonundan ÖNCE basar.</para></summary>
-    /// <param name="now">Duvar saati — üretimde <see cref="ViewModels.RunViewModel.WallClock"/> seam'inden gelir
-    /// (stream/anlatı satırlarıyla ORTAK kaynak), testte deterministik enjekte edilir.</param>
-    public void ShowReady(DateTimeOffset now)
+    /// damga AÇIKÇA taşınır ve <c>NarrLine</c> (<c>:158-160</c>) onu imleç kolonundan ÖNCE basar.</para>
+    ///
+    /// <para>[A13/T3 fix-2 · 5] Saat ARTIK parametre DEĞİL, <see cref="WallClock"/> seam'idir: sahibi
+    /// (<c>MainWindow</c>) onu ctor'da BİR KEZ VM'in saatine bağlar. Parametreli hâlde kablo iki ayrı çağrı
+    /// yerinde tekrarlanıyordu ve <b>hiçbiri headless olarak sürülemiyordu</b> — <c>ShowRunConsole</c>'un idle
+    /// dalı yalnız run anlatısı BOŞken koşar, oysa testte motor hiç başlamadığı için proje seçimi
+    /// <c>LoadProjectLogAsync</c>'te <c>[error] could not load project log</c> satırını run belgesine düşürüp
+    /// o kapıyı kapatıyor. Seam ctor'a taşındığında kablo doğrudan pinlenebilir hâle gelir
+    /// (<c>MainWindowRealizeTests</c>).</para></summary>
+    public void ShowReady()
     {
+        var now = WallClock();
         EnsureColorizer();
         if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true);
         _idleReady = true;

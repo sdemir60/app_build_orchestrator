@@ -321,7 +321,8 @@ public class ConsoleViewTests
         // gelince temizlenir.
         var view = new ConsoleView();
 
-        view.ShowReady(IdleInstant);
+        view.WallClock = () => IdleInstant;
+        view.ShowReady();
         Assert.Equal("ready", view.ActiveLineText.Text);
         Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
 
@@ -349,7 +350,8 @@ public class ConsoleViewTests
         var view = new ConsoleView();
         view.EnableColorizer(DsResources.ConsolePaletteFrom(tokens));
 
-        view.ShowReady(IdleInstant);
+        view.WallClock = () => IdleInstant;
+        view.ShowReady();
 
         Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineTime.Foreground);
         Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineText.Foreground);
@@ -375,7 +377,8 @@ public class ConsoleViewTests
         var view = new ConsoleView();
         view.EnableColorizer(DsResources.ConsolePaletteFrom(LoadTokens()));
 
-        view.ShowReady(IdleInstant);
+        view.WallClock = () => IdleInstant;
+        view.ShowReady();
         view.Measure(new Size(800, 600));
         view.Arrange(new Rect(0, 0, 800, 600));
         view.UpdateLayout();
@@ -415,7 +418,8 @@ public class ConsoleViewTests
         var host = DsResources.NewHost();
         var window = DsResources.Realize(host, view);
 
-        view.ShowReady(IdleInstant);
+        view.WallClock = () => IdleInstant;
+        view.ShowReady();
         Assert.Equal(Visibility.Visible, view.ActiveLineTime.Visibility); // ön-koşul: idle düzeni kuruldu
 
         view.AppendNarrativeBatch("12:00:01 ▸ git fetch origin main\n"); // ÜRETİM yolu (brief kural 3)

@@ -106,7 +106,7 @@ public class ConsoleMotionPathTests
     {
         var view = RealizeWithMotion(out var window);
 
-        view.ShowReady(default);
+        view.ShowReady();
 
         Assert.Equal("ready", view.ActiveLineText.Text);
         Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties, "ready imlecinin blink saati kurulmadı");
@@ -150,7 +150,7 @@ public class ConsoleMotionPathTests
         var host = DsResources.NewHost();
         var window = DsResources.Realize(host, view);
 
-        view.ShowReady(default);                                            // idle imleç → blink başlar
+        view.ShowReady();                                            // idle imleç → blink başlar
         Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties);   // non-vacuous: saat GERÇEKTEN dönüyor
 
         signal.AnimationsEnabled = false;
@@ -175,7 +175,7 @@ public class ConsoleMotionPathTests
         var host = DsResources.NewHost();
         var window = DsResources.Realize(host, view);
 
-        view.ShowReady(default);                                            // reduced → blink YOK
+        view.ShowReady();                                            // reduced → blink YOK
         Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties);
 
         signal.AnimationsEnabled = true;

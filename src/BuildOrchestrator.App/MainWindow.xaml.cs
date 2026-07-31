@@ -252,12 +252,16 @@ public partial class MainWindow : Window
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
+        // [A13/T3 fix-2 · 5] Konsolun idle "ready" damgası VM'in duvar saatinden beslenir — anlatı satırları
+        // (RunViewModel.ComposeNarrativeLine) ve event stream ile ORTAK kaynak. Lambda ZORUNLU: değer kopyası
+        // alınırsa VM'in saati sonradan değiştiğinde idle satırı eski saatte donar (pin: MainWindowRealizeTests).
+        Shell.ConsoleViewControl.WallClock = () => _vm.WallClock();
 
         Loaded += async (_, _) =>
         {
             // [D4/T56-UI] Boşta (idle/boot) konsol tek satır "ready" (dim) gösterir — ilk anlatı satırı gelince
             // (AppendNarrativeBatch) temizlenir.
-            if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(_vm.WallClock());
+            if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
             await StartEngineAsync();
         };
         Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
@@ -397,7 +401,7 @@ public partial class MainWindow : Window
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
         _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
-        if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(_vm.WallClock()); // boş run → idle "ready"
+        if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
     }
 
     /// <summary>[3b] ConsoleHeader.BackRequested'tan çağrılır: kart seçimini kaldırır → konsol run anlatısına
