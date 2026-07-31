@@ -39,11 +39,15 @@ public sealed class EngineUnavailableException(string exePath, EngineUnavailable
 
 public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeout = null) : IAsyncDisposable
 {
-    // [B1/F1] Üretim varsayılanı 5s'de KALIR — donmuş bir supervisor'da uygulama sonsuza dek asılı kalmasın
-    // diye vazgeçmek şart. Enjekte edilebilir olan yalnız BU süre: testler (yük altında supervisor 5s'de
-    // hazır olamayabilir) daha geniş bir değer geçebilir — desen ConsoleView.WallClock/NeverTickingBatcher
-    // ile aynı: üretim varsayılanı sabit, seam test için var.
-    private readonly TimeSpan _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(5);
+    /// <summary>[B1/F1] <see cref="StartAsync"/>'in <c>engineReady</c>'yi beklerken vazgeçme süresi.
+    /// <b>Üretim varsayılanı 5s'de KALIR</b> — donmuş bir supervisor'da uygulama sonsuza dek asılı kalmasın
+    /// diye vazgeçmek şart. Enjekte edilebilir olan yalnız BU süre: testler (yük altında supervisor 5s'de
+    /// hazır olamayabilir) daha geniş bir değer geçebilir — desen <c>ConsoleView.WallClock</c>/
+    /// <c>NeverTickingBatcher</c> ile aynı: üretim varsayılanı sabit, seam test için var.
+    /// <para><b>fix-1 · İŞ 1b:</b> <c>private</c> değil <c>internal</c> — varsayılanın 5s'de kaldığını
+    /// <c>EngineHostTests.Default_startup_timeout_is_five_seconds</c> saf literal ile pinler (A13/T4'ün
+    /// <c>PopIn.DurationMs</c> deseni). Aksi halde biri flake'i "5 → 60" yaparak susturur ve süit sessiz kalır.</para></summary>
+    internal TimeSpan StartupTimeout { get; } = startupTimeout ?? TimeSpan.FromSeconds(5);
     private readonly JobObject _outerJob = JobObject.CreateKillOnClose(); // §3: App = outer Job sahibi
     private JobChildProcess? _child;
     private NdjsonWriter? _writer;
@@ -94,7 +98,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         }, CancellationToken.None);
         try
         {
-            return await _ready.Task.WaitAsync(_startupTimeout, ct);
+            return await _ready.Task.WaitAsync(StartupTimeout, ct);
         }
         catch
         {
