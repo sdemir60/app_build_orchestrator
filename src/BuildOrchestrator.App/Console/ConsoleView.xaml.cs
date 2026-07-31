@@ -271,7 +271,7 @@ public partial class ConsoleView : UserControl
         // → hata GÖRÜNMEZ). ConsolePalette.FromLookup ile AYNI fail-fast: token'lar merge edilmişken anahtar YOKSA
         // anlaşılır bir hata fırlatılır (sessiz drift yerine) ve punto koda TEK yerden bağlanır (editör + overlay'ler drift edemez).
         double fontSize = Probe("FontSize.Xs") as double?
-            ?? throw new InvalidOperationException("Konsol: 'FontSize.Xs' punto kaynağı bulunamadı (Tokens.xaml).");
+            ?? throw new InvalidOperationException("Console: font-size resource 'FontSize.Xs' was not found (Tokens.xaml).");
         EditorControl.FontSize = fontSize;
         ActiveLineText.FontSize = fontSize;
         BuildProgressText.FontSize = fontSize;

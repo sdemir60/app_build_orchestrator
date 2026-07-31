@@ -47,5 +47,5 @@ public sealed class ConsolePalette
     };
 
     private static Brush Resolve(Func<string, object?> find, string key) =>
-        find(key) as Brush ?? throw new InvalidOperationException($"Konsol paleti: '{key}' brush kaynağı bulunamadı.");
+        find(key) as Brush ?? throw new InvalidOperationException($"Console palette: brush resource '{key}' was not found.");
 }
