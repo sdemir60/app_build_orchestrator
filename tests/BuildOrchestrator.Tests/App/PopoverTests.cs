@@ -260,6 +260,53 @@ public class PopoverTests
         }
     }
 
+    // ---------------------------------------------------------------- [A13/T4 · m3] pop-in: 140ms · 4px · .985
+
+    /// <summary>[A13/T4 · m3] Otorite <c>BuildApp.jsx:21,33</c>: <c>.bo-pop-in { animation: bo-pop-in .14s
+    /// var(--ease-out) both; } @keyframes bo-pop-in { from { opacity:0; transform: translateY(4px) scale(.985); }
+    /// to { opacity:1; transform:none; } }</c>. <c>Opening_a_popover_plays_the_pop_in_and_moves_focus_inside</c>
+    /// (yukarıda) YALNIZ reduced-motion kolunu (statik <c>App.Motion</c> null → SNAP) sürer — <see cref="PopIn"/>'in
+    /// GERÇEK animasyonlu geometrisi (4px/.985/140ms) hiçbir testte oynamamıştı. <c>App.Motion</c> statik seam'i
+    /// geçici set/restore edilir (<c>MotionOwnerHygieneTests.AssertSubscribesOnce</c> deseni; Console UI serial
+    /// collection → mutasyon serileştirilir).</summary>
+    [StaFact]
+    public void Opening_a_popover_plays_a_real_140ms_pop_in_rising_4px_from_a_985_scale()
+    {
+        var original = BuildOrchestrator.App.App.Motion;
+        BuildOrchestrator.App.App.Motion = new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true });
+        try
+        {
+            var host = DsResources.NewHost();
+            var popover = new BranchPopover { DataContext = NewVm() };
+            var window = DsResources.Realize(host, popover);
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            popover.IsOpen = true; // ÜRETİM yolu: PopoverBase.RefreshContent → PopIn.Play(this)
+
+            // t≈0: başlangıç geometrisi otoriteyle BİREBİR (translateY(4px) scale(.985), opacity 0).
+            var group = Assert.IsType<TransformGroup>(popover.RenderTransform);
+            var scale = Assert.IsType<ScaleTransform>(group.Children[0]);
+            var translate = Assert.IsType<TranslateTransform>(group.Children[1]);
+            Assert.Equal(0.985, scale.ScaleX);
+            Assert.Equal(0.985, scale.ScaleY);
+            Assert.Equal(4.0, translate.Y);
+            Assert.True(popover.HasAnimatedProperties, "opacity/scale/translate GERÇEKTEN animasyonlu değil");
+
+            DispatcherPump.PumpUntil(() => popover.Opacity >= 0.99, TimeSpan.FromSeconds(2));
+            clock.Stop();
+
+            Assert.True(popover.Opacity >= 0.99, "pop-in hiç tamamlanmadı");
+            Assert.Equal(0.0, translate.Y, precision: 1); // hedefe ulaştı: translateY(0)
+            // BuildApp.jsx:21 `.14s` — kaba bir sapmayı (ör. 700ms/14ms) yakalayacak gevşek pencere.
+            Assert.InRange(clock.ElapsedMilliseconds, 60, 400);
+            GC.KeepAlive(window);
+        }
+        finally
+        {
+            BuildOrchestrator.App.App.Motion = original;
+        }
+    }
+
     /// <summary>[W2 · REALIZE TESTİ] <see cref="BranchPopover"/> AÇIKKEN realize + layout — <see cref="WorktreePopover"/>
     /// kardeşiyle (aşağıda) AYNI gerekçe: sınıf tabanının değişmesi XAML kökünün taban tipini değiştirir ve headless
     /// suite XAML runtime çözümlemesini görmez (commit <c>c6e9a21</c> dersi: 1198 test yeşil, uygulama açılmıyor).</summary>
