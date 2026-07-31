@@ -399,7 +399,14 @@ public class ConsoleViewTests
     }
 
     /// <summary>Karşı yön (ayırt edicilik): daktilo satırı idle satırı DEĞİLDİR — orada damga GİZLİDİR ve imleç
-    /// yazılan metnin ARDINDA kalır (A13.2 hibrit aktif satır). Aynı overlay iki düzeni de sürebilmeli.</summary>
+    /// yazılan metnin ARDINDA kalır. Aynı overlay iki düzeni de sürebilmeli.
+    ///
+    /// <para><b>[fix-2 · 2] Bu bir KARAKTERİZASYON testidir, bir fidelity pini DEĞİL.</b> Daktilo satırındaki
+    /// imleç konumu otoriteden sapar (<c>NarrLine</c>, <c>BuildApp.jsx:158-160</c>, imleci daktilo satırında da
+    /// metinden ÖNCEKİ sabit 10px kolonda tutar) ve bu sapmanın <b>kaydı YOKTUR</b> — plan v7 A13.2
+    /// (<c>:315-329</c>) imleç konumundan hiç söz etmez. Önceki doc'ta "A13.2 hibrit aktif satır" diye
+    /// etiketlenmesi yanlıştı: kayıtsız bir borç, kayıtlıymış gibi gösteriliyordu. Test bugünkü davranışı
+    /// pinler; borç kapatılırsa <b>bu test kırmızıya döner ve güncellenmeyi zorlar</b> (amaç budur).</para></summary>
     [StaFact]
     public void The_typewriter_line_hides_the_idle_stamp_and_keeps_its_cursor_after_the_text()
     {

@@ -357,9 +357,22 @@ public partial class ConsoleView : UserControl
         if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
     }
 
-    /// <summary>[A13/T3 fix-1 · P3] Aktif-satır overlay'inin kolon düzeni. <b>idle "ready"</b>: damga → imleç →
-    /// metin (otorite <c>NarrLine</c>, BuildApp.jsx:158-160). <b>Daktilo</b>: metin → imleç (A13.2 hibrit aktif
-    /// satır; damga metnin içindedir, colorizer boyar).</summary>
+    /// <summary>[A13/T3 fix-1 · P3] Aktif-satır overlay'inin kolon düzeni.
+    ///
+    /// <para><b>idle "ready"</b>: damga → imleç → metin. Bu OTORİTEDİR: <c>BuildApp.jsx:607</c> satırı
+    /// <c>&lt;NarrLine type="dim" time={eng.wall()} cursor&gt;</c> kurar ve <c>NarrLine</c> (<c>:158-160</c>)
+    /// <c>{time}</c> → 10px imleç kolonu → <c>{children}</c> sırasıyla basar.</para>
+    ///
+    /// <para><b>Daktilo</b>: metin → imleç (damga metnin içindedir, colorizer boyar).
+    /// <b>UYARI — bu otoriteden KAYITSIZ bir sapmadır:</b> <c>NarrLine</c> imleci daktilo satırında da AYNI
+    /// sabit 10px ikon kolonunda, metinden ÖNCE tutar (<c>cursor={l.id === typingLive}</c>, <c>:600</c>).
+    /// Sapmanın kaydı YOKTUR: plan v7 <b>A13.2</b> (<c>:315-329</c>) yalnız "AvalonEdit + hibrit aktif satır"
+    /// der, imleç KONUMUNDAN hiç söz etmez; <c>design-wpf-feasibility-analysis.md</c> de yalnız imlecin bir
+    /// karakter değil <see cref="System.Windows.Shapes.Rectangle"/> olduğunu söyler (<c>:62</c>). Yani bu
+    /// düzen <b>açık bir borçtur</b>, kayıtlı bir istisna DEĞİL — "A13.2 kararı" diye etiketlenmesi yanlıştı
+    /// (fix-2 · 2). Davranış bilinçli olarak DEĞİŞTİRİLMEDİ (T3 fix-1 kapsamı yalnız idle satırıydı) ve
+    /// <c>ConsoleViewTests</c>'te karakterizasyon olarak pinlidir: düzeltilirse o test kırmızıya döner.</para>
+    /// </summary>
     private void LayoutActiveLine(bool idleReadyOrder)
     {
         Grid.SetColumn(ActiveCursor, idleReadyOrder ? 1 : 2);

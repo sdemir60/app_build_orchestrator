@@ -20,8 +20,9 @@
          İmleç bir 7×13px Rectangle'dır (font glyph'i DEĞİL) — design-v1 §2.5.
          [A13/T3 fix-1 · P3] Kolon SIRASI moda göre değişir (ConsoleView.LayoutActiveLine): boşta/idle "ready"
          satırı otoritenin NarrLine düzenindedir — damga (0) → ▮ imleç (1) → metin (2); BuildApp.jsx:158-160.
-         Daktilo satırında imleç yazılan metnin ARDINDA kalır (A13.2 hibrit aktif satır kararı) — metin (1) →
-         imleç (2). Bu yüzden StackPanel değil, kolonu kod-tarafı atanabilen bir Grid. -->
+         Daktilo satırında imleç yazılan metnin ARDINDA kalır — metin (1) → imleç (2). DİKKAT: bu, otoriteden
+         KAYITSIZ bir sapmadır (bkz. LayoutActiveLine XML-doc'u); A13.2'de kaydı YOKTUR. Bu yüzden StackPanel
+         değil, kolonu kod-tarafı atanabilen bir Grid. -->
     <Grid x:Name="ActiveLineOverlay" Visibility="Collapsed"
           HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"
           Margin="12,0,0,8">
