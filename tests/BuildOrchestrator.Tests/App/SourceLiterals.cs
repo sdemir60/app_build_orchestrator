@@ -35,6 +35,12 @@ internal static class SourceLiterals
     /// <summary>
     /// C#: <c>"..."</c>, <c>$"..."</c>, <c>@"..."</c>, <c>$@"..."</c> ve ham (<c>"""..."""</c>) literaller.
     /// <c>//</c> · <c>///</c> · <c>/* */</c> yorumları ve <c>'c'</c> char literalleri ATLANIR.
+    ///
+    /// <para>[fix-1 · C1] Interpolated string'in SONU, <c>{…}</c> hole'ları sayılarak bulunur. Önceki sürüm
+    /// ilk iç tırnakta duruyordu; <c>$"… {x ?? "iç metin"}"</c> gibi bir satırda <b>iç literal taramaya HİÇ
+    /// girmiyordu</b> (canlı örnek: <c>GitService.cs</c>'in fetch fallback satırı) — oraya konan Türkçe
+    /// guard'ı yeşil bırakırdı. Artık literalin metni hole'ların içeriğini de KAPSAR, yani iç içe her
+    /// seviyedeki metin taranır.</para>
     /// </summary>
     public static List<SourceLiteral> FromCSharp(string text)
     {
@@ -56,50 +62,15 @@ internal static class SourceLiterals
                 i += 2;
                 continue;
             }
-            if (c == '"' && i + 2 < n && text[i + 1] == '"' && text[i + 2] == '"')   // ham string """..."""
+            if (c is '"' or '@' or '$')
             {
-                int fenceLen = 0;
-                while (i + fenceLen < n && text[i + fenceLen] == '"') fenceLen++;
-                string fence = new('"', fenceLen);
-                int start = i;
-                int end = text.IndexOf(fence, i + fenceLen, StringComparison.Ordinal);
-                end = end < 0 ? n : end + fenceLen;
-                result.Add(new SourceLiteral(LineOf(text, start), text[start..end]));
-                i = end;
-                continue;
-            }
-            if (c is '@' or '$')                                       // @"..." / $@"..." / @$"..."
-            {
-                int j = i;
-                while (j < n && text[j] is '@' or '$') j++;
-                bool verbatim = text.AsSpan(i, j - i).Contains('@');
-                if (j < n && text[j] == '"' && verbatim)
+                int end = ReadCSharpString(text, i);
+                if (end > i)
                 {
-                    int start = i;
-                    j++;
-                    while (j < n)
-                    {
-                        if (text[j] == '"' && j + 1 < n && text[j + 1] == '"') { j += 2; continue; } // "" kaçışı
-                        if (text[j] == '"') break;
-                        j++;
-                    }
-                    result.Add(new SourceLiteral(LineOf(text, start), text[start..Math.Min(n, j + 1)]));
-                    i = j + 1;
+                    result.Add(new SourceLiteral(LineOf(text, i), text[i..end]));
+                    i = end;
                     continue;
                 }
-            }
-            if (c == '"')                                              // "..." / $"..."
-            {
-                int start = i;
-                i++;
-                while (i < n && text[i] != '"' && text[i] != '\n')
-                {
-                    if (text[i] == '\\') i++;
-                    i++;
-                }
-                result.Add(new SourceLiteral(LineOf(text, start), text[start..Math.Min(n, i + 1)]));
-                i++;
-                continue;
             }
             if (c == '\'')                                             // char literali — metin DEĞİL, atla
             {
@@ -113,17 +84,99 @@ internal static class SourceLiterals
         return result;
     }
 
+    /// <summary>
+    /// <paramref name="start"/>'taki C# string literalinin BİTİŞ indisini (hariç) döner; orada bir literal
+    /// yoksa <paramref name="start"/>'ı döner (ör. <c>@class</c> verbatim identifier'ı ya da tek başına
+    /// <c>$</c>). Tüm biçimleri tanır: ham · verbatim · interpolated · düz, ve bunların bileşimleri.
+    ///
+    /// <para>Interpolated biçimde <c>{…}</c> hole'ları içindeki <b>iç içe string ve char literalleri</b>
+    /// özyinelemeli olarak atlanır — kapanış tırnağının doğru yerde bulunması bunu gerektirir.</para>
+    /// </summary>
+    private static int ReadCSharpString(string text, int start)
+    {
+        int n = text.Length, i = start;
+        bool interpolated = false, verbatim = false;
+
+        while (i < n && text[i] is '$' or '@')                        // $ / @ / $@ / @$ / $$ önekleri
+        {
+            if (text[i] == '$') interpolated = true; else verbatim = true;
+            i++;
+        }
+        if (i >= n || text[i] != '"') return start;                   // literal değil (ör. @identifier)
+
+        // --- ham string: """ … """ (çit uzunluğu kadar tırnak). İçerik AYNEN alınır; iç tırnaklar serbesttir.
+        if (i + 2 < n && text[i + 1] == '"' && text[i + 2] == '"')
+        {
+            int fenceLen = 0;
+            while (i + fenceLen < n && text[i + fenceLen] == '"') fenceLen++;
+            string fence = new('"', fenceLen);
+            int close = text.IndexOf(fence, i + fenceLen, StringComparison.Ordinal);
+            return close < 0 ? n : close + fenceLen;
+        }
+
+        i++;                                                          // açılış tırnağını geç
+        int depth = 0;                                                // interpolation hole derinliği
+        while (i < n)
+        {
+            char c = text[i];
+
+            if (!verbatim && c == '\\') { i += 2; continue; }                        // \" \\ kaçışı
+            if (verbatim && c == '"' && i + 1 < n && text[i + 1] == '"') { i += 2; continue; } // "" kaçışı
+
+            if (interpolated && c == '{')
+            {
+                if (i + 1 < n && text[i + 1] == '{') { i += 2; continue; }           // {{ = düz '{'
+                depth++; i++; continue;
+            }
+            if (interpolated && c == '}')
+            {
+                if (depth == 0 && i + 1 < n && text[i + 1] == '}') { i += 2; continue; } // }} = düz '}'
+                if (depth > 0) depth--;
+                i++; continue;
+            }
+
+            if (depth > 0)                                            // hole İÇİ: burası ifade, metin değil
+            {
+                if (c is '"' or '$' or '@')                           // iç içe string — özyinelemeli atla
+                {
+                    int nested = ReadCSharpString(text, i);
+                    if (nested > i) { i = nested; continue; }
+                }
+                if (c == '\'')                                        // hole içindeki char literali
+                {
+                    i++;
+                    while (i < n && text[i] != '\'' && text[i] != '\n') { if (text[i] == '\\') i++; i++; }
+                    i++; continue;
+                }
+                i++; continue;
+            }
+
+            if (c == '"') return i + 1;                               // kapanış
+            if (!verbatim && c == '\n') return i;                     // kesik/hatalı literal — satırda dur
+            i++;
+        }
+        return n;
+    }
+
     /// <summary>XML/XAML: <c>&lt;!-- --&gt;</c> yorumları elendikten sonra öznitelik değerleri ve eleman içi
     /// metinler. (<c>.csproj</c>/<c>.props</c> de buradan geçer — MSBuild <c>&lt;Error Text="..."/&gt;</c>
     /// metinleri kullanıcının build çıktısında görünür.)</summary>
+    /// <para>[fix-1 · I1/I2] <c>&lt;![CDATA[…]]&gt;</c> blokları ve <b>tek tırnaklı</b> öznitelik değerleri
+    /// (<c>Text='…'</c>) de kapsanır; önceki sürüm ikisini de hiç eşleştirmiyordu.</para>
     public static List<SourceLiteral> FromXml(string text)
     {
         // Yorumları satır sayısını BOZMADAN boşluğa çevir (satır no doğru kalsın).
         string stripped = Regex.Replace(text, "<!--[\\s\\S]*?-->", m => Regex.Replace(m.Value, "[^\r\n]", " "));
         var result = new List<SourceLiteral>();
-        foreach (Match m in Regex.Matches(stripped, "\"[^\"]*\"|>[^<>]+<"))
+
+        // CDATA ÖNCE gelir: içeriği ham metindir, içindeki tırnak/açılı ayraç öznitelik sanılmamalıdır.
+        // Ardından çift ve tek tırnaklı öznitelik değerleri, en son eleman içi metin.
+        const string pattern = @"<!\[CDATA\[[\s\S]*?\]\]>|""[^""]*""|'[^']*'|>[^<>]+<";
+        foreach (Match m in Regex.Matches(stripped, pattern))
         {
-            string value = m.Value.Trim('"', '>', '<');
+            string value = m.Value.StartsWith("<![CDATA[", StringComparison.Ordinal)
+                ? m.Value[9..^3]
+                : m.Value.Trim('"', '\'', '>', '<');
             if (value.Trim().Length == 0) continue;
             result.Add(new SourceLiteral(LineOf(stripped, m.Index), value));
         }
@@ -143,6 +196,20 @@ internal static class SourceLiterals
             if (c == '#')                                              // satır yorumu
             {
                 while (i < n && stripped[i] != '\n') i++;
+                continue;
+            }
+            // [fix-1 · C2] here-string: @" … \n"@  /  @' … \n'@
+            // Kapanış PowerShell'de SATIR BAŞINDA olmak ZORUNDADIR, bu yüzden "\n"@" aranır. Önceki sürüm
+            // here-string'i hiç tanımıyordu: gövdedeki tek bir tırnak tokenizer'ı kaydırıyor ve ARDINDAN
+            // gelen KOD metin sanılıyordu (sonraki gerçek literaller de kayıyordu).
+            if (c == '@' && i + 1 < n && stripped[i + 1] is '"' or '\'')
+            {
+                char fence = stripped[i + 1];
+                int start = i;
+                string terminator = "\n" + fence + "@";
+                int close = stripped.IndexOf(terminator, i + 2, StringComparison.Ordinal);
+                i = close < 0 ? n : close + terminator.Length;
+                result.Add(new SourceLiteral(LineOf(stripped, start), stripped[start..i]));
                 continue;
             }
             if (c is '"' or '\'')
