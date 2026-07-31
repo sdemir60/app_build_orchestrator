@@ -58,19 +58,24 @@ public class SystemParametersMotionSignalTests
 
     // ---------------------------------------------------------------- (b) salt-okur getter
 
-    /// <summary>Getter, OS ayarını BİREBİR yansıtır ve onu DEĞİŞTİRMEZ. Okunan değer ne olursa olsun
-    /// (makineye göre true/false) test geçerlidir — beklenen değer OS'tan okunur, sabitlenmez; burada pinlenen
-    /// şey <b>aynalama</b>, ayarın kendisi değil.</summary>
+    /// <summary>Getter SALT OKURDUR: art arda okumak aynı değeri verir ve OS ayarına HİÇ yazılmaz.
+    ///
+    /// <para><b>NE PİNLEMEZ (fix round 1 — ölçüldü):</b> getter'ın hangi OS property'sini okuduğunu. Üç assert de
+    /// <c>SystemParameters.ClientAreaAnimation</c>'ı kendisiyle karşılaştırır; getter başka bir OS property'sine
+    /// çevrilse (ör. <c>MinimizeAnimation</c>) ve o property makinede AYNI değere sahipse bu test bunu GÖREMEZ
+    /// (review lens3 M-D bunu bizzat ölçtü). Bu kısıt kalıcıdır: makine-global erişilebilirlik ayarını çevirmek
+    /// YASAK olduğundan aynalama davranışsal olarak sınanamaz. <b>Aynalamayı koruyan tek şey</b>
+    /// <see cref="Only_one_class_touches_the_os_animation_setting_and_only_twice"/>'in kaynak guard'ıdır —
+    /// bu ayrım task-B3-report.md <c>## Concerns</c> C1'de de kayıtlıdır.</para></summary>
     [StaFact]
-    public void The_getter_mirrors_the_os_setting_and_never_writes_to_it()
+    public void The_getter_reads_the_os_setting_without_writing_to_it()
     {
         bool osValueBefore = SystemParameters.ClientAreaAnimation;
 
         var signal = new SystemParametersMotionSignal();
 
-        Assert.Equal(osValueBefore, signal.AnimationsEnabled);
-        Assert.Equal(osValueBefore, signal.AnimationsEnabled);          // ikinci okuma da aynı — okuma yan etkisiz
-        Assert.Equal(osValueBefore, SystemParameters.ClientAreaAnimation); // ...ve OS ayarına HİÇ yazılmadı
+        Assert.Equal(signal.AnimationsEnabled, signal.AnimationsEnabled);   // okuma yan etkisiz (idempotent)
+        Assert.Equal(osValueBefore, SystemParameters.ClientAreaAnimation);  // ...ve OS ayarına HİÇ yazılmadı
     }
 
     // ---------------------------------------------------------------- (c) KABLO + tek-kopya
@@ -89,7 +94,13 @@ public class SystemParametersMotionSignalTests
 
     /// <summary><c>ClientAreaAnimation</c>'a (yani OS'a) dokunan TEK yer bu sınıftır ve orada da yalnız İKİ
     /// yerde geçer: getter + saf filtre. Üçüncü bir geçiş = ya seam'in kopyası ya da ikinci bir OS okuma yolu —
-    /// ikisi de "OS'a dokunan tek sınıf" değişmezini bozar.</summary>
+    /// ikisi de "OS'a dokunan tek sınıf" değişmezini bozar.
+    ///
+    /// <para><b>[fix round 1] Bu test AYNI ZAMANDA aynalamanın TEK koruyucusudur</b> (bkz.
+    /// <see cref="The_getter_reads_the_os_setting_without_writing_to_it"/>: davranışsal aynalama testi, makine-global
+    /// ayar çevrilemediği için getter'ın HANGİ property'yi okuduğunu göremez). Bu yüzden yalnız SAYMAK yetmez —
+    /// getter'ın gövdesinin gerçekten <c>ClientAreaAnimation</c>'a bağlı olduğu ayrıca assert edilir. Regex
+    /// boşluğa toleranslıdır; biçim değişikliği testi kırmaz, <b>bağlantının kopması</b> kırar.</para></summary>
     [Fact]
     public void Only_one_class_touches_the_os_animation_setting_and_only_twice()
     {
@@ -99,7 +110,13 @@ public class SystemParametersMotionSignalTests
         Assert.NotEmpty(hits); // vakum yasak: tarama dosya görmediyse bu test hiçbir şey pinlemez
         Assert.All(hits, hit => Assert.StartsWith(
             Path.Combine("BuildOrchestrator.App", "Services", "SystemParametersMotionSignal.cs"), hit, StringComparison.Ordinal));
-        Assert.Equal(2, hits.Count); // getter + IsMotionProperty
+
+        // İki geçişten biri GETTER'ın KENDİSİDİR — aynalamayı koruyan tek assert budur, bu yüzden SAYIMDAN ÖNCE
+        // gelir: getter başka bir OS property'sine çevrildiğinde kırılan ilk (ve tanılayıcı) assert bu olsun.
+        string source = ReadAppSource(Path.Combine("Services", "SystemParametersMotionSignal.cs"));
+        Assert.Matches(@"AnimationsEnabled\s*=>\s*SystemParameters\.ClientAreaAnimation\s*;", source);
+
+        Assert.Equal(2, hits.Count); // getter + IsMotionProperty — üçüncü geçiş = kopya ya da ikinci OS okuma yolu
     }
 
     /// <summary>
