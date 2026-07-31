@@ -125,6 +125,53 @@ public class MainWindowRealizeTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [A13/T3 fix-2 · 3] <b>P2'nin ölçülen bedeli — artık sessiz değil.</b> Eklenen 1px hairline dıştan telafi
+    /// EDİLMEDİ: bant 40'ta kaldı, dolayısıyla iç kutu hairline kadar daraldı ve içerik bir cihaz pikseli yukarı
+    /// kaydı. Bu bilinçli bir karardır ve buraya pinlenmiştir.
+    ///
+    /// <para><b>Otorite ve karar:</b> design-v1 README §2 bant şeması (<c>:84</c>) <c>TITLE BAR (40px)</c> ve
+    /// §2.1 başlığı (<c>:105</c>) <c>## 2.1 Title bar (40px)</c> — görünen bant 40px'tir. DS
+    /// <c>TitleBar</c> (<c>_ds_bundle.js:1188-1190</c>) CSS'te <c>height: 'var(--titlebar-height)'</c> +
+    /// <c>borderBottom: '1px …'</c> yazar; CSS varsayılanı <c>content-box</c> olduğu için orada TOPLAM 41'dir.
+    /// İki okuma çatışır ve <b>40 bandı seçilmiştir</b>: <c>Size.TitleBarHeight</c> aynı anda
+    /// <c>WindowChrome.CaptionHeight</c>'ı besler (bkz.
+    /// <see cref="The_title_bar_height_cast_really_runs_and_feeds_both_the_row_and_the_window_chrome"/>), yani
+    /// bandı 41'e çıkarmak caption/hit-test sözleşmesini bozardı. Seçimin doğrudan aritmetik sonucu: hairline
+    /// bandı BÜYÜTMEZ, bandın son piksel satırını YER.</para>
+    ///
+    /// <para><b>DPI-bağımsızlık:</b> iç kutu için çıplak bir sabit (39) yazılamaz — <c>UseLayoutRounding</c>
+    /// 1 dip'lik kenarlığı cihaz pikseline yuvarlar (150%'de ölçüldü: iç kutu <c>38,667</c> dip). Bu yüzden
+    /// iddia farkın KENDİSİ üzerinden kurulur: iç kutu dış banttan küçüktür ve fark en fazla bir kenarlık
+    /// kadardır.</para></summary>
+    [StaFact]
+    public void The_hairline_eats_the_bands_last_pixel_row_instead_of_growing_the_forty_pixel_title_bar()
+    {
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
+        Realize(window);
+
+        double band = (double)window.FindResource("Size.TitleBarHeight");
+        Assert.Equal(40.0, band); // otorite bandı (README §2 :84 / §2.1 :105)
+
+        var titleBar = (Border)window.TitleBarRow;
+        Assert.Equal(band, titleBar.ActualHeight);              // DIŞ bant BÜYÜMEDİ (41 olmadı)
+        Assert.Equal(band, System.Windows.Shell.WindowChrome.GetWindowChrome(window).CaptionHeight);
+
+        // İÇ kutu hairline kadar daraldı — hairline bandın İÇİNDEN yer alır.
+        var inner = (FrameworkElement)titleBar.Child;
+        Assert.True(inner.ActualHeight < titleBar.ActualHeight,
+            $"hairline iç kutuyu hiç daraltmadı (iç {inner.ActualHeight}, bant {titleBar.ActualHeight}) — çizgi kayıp olabilir");
+        Assert.True(titleBar.ActualHeight - inner.ActualHeight <= 1.5,
+            $"iç kutu bir kenarlıktan FAZLA daraldı: {titleBar.ActualHeight - inner.ActualHeight}dip");
+
+        // Görünür sonuç: içerik KALAN kutuda dikey ortalı kalır (bandın ortasında değil — bir cihaz pikseli yukarı).
+        var logo = window.TitleBarLogo;
+        double logoCenter = logo.TranslatePoint(new Point(0, logo.ActualHeight / 2), inner).Y;
+        Assert.Equal(inner.ActualHeight / 2, logoCenter, precision: 1);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void The_title_bar_height_cast_really_runs_and_feeds_both_the_row_and_the_window_chrome()
     {
