@@ -4,6 +4,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -54,6 +55,32 @@ public class DsControlTemplateTests
 
         var chrome = DsResources.Descendants(button).OfType<Border>().First();
         Assert.Equal((CornerRadius)host.FindResource("Radius.Sm"), chrome.CornerRadius);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · n5] mono asla dekoratif değil
+
+    /// <summary>[A13/T4 · n5] design-v1 §1.2 (README:48): <i>"UI = Geist; makine çıktısı (console, süre, SHA,
+    /// sayaç, yol) = Geist Mono, DAİMA tabular rakam. <b>Mono asla dekoratif kullanılmaz.</b>"</i> —
+    /// <see cref="AppFonts"/> XML doc'u da aynı sözü tekrarlar.
+    ///
+    /// <para><b>Kapsam (bilinçli, dar):</b> bu test TÜM olası "dekoratif metin" yüzeyini taramaz (öznel bir sınır
+    /// olurdu) — bunun yerine İKİ TEK-YERLİ kaynağı pinler: (1) <c>Ds.Button.Base</c> (Controls.xaml) —
+    /// uygulamadaki HER buton metninin (Cancel/Save/Add layer/Sync/Choose Folder/…) FontFamily'si TEK bu style'dan
+    /// gelir; (2) caps panel/dialog başlıkları (<c>PROJECTS</c>/<c>DEPENDENCY GRAPH</c>/<c>LAYERS</c>/…) TEK yerden,
+    /// <see cref="TrackedTextBlock"/>'un varsayılan <c>FontFamily</c>'sinden beslenir — bu ikincisi ZATEN
+    /// <c>TrackedTextBlockTests.Defaults_match_design_v1_caps_label_spec</c>'te pinlidir (<c>"./#Geist"</c>, Mono
+    /// DEĞİL); burada yalnız buton yüzeyi eklenir. İkisi de <b>Ui</b> (Geist) olmalı, <b>Mono</b> DEĞİL —
+    /// birinin Mono'ya kayması TÜM buton metinlerini ya da TÜM caps başlıkları dekoratif mono'ya çevirirdi.</para></summary>
+    [StaFact]
+    public void Every_button_caption_uses_the_ui_typeface_never_mono()
+    {
+        var host = DsResources.NewHost();
+        var button = new Button { Content = "Cancel", Style = (Style)host.FindResource("Ds.Button.Base") };
+        var window = DsResources.Realize(host, button);
+
+        Assert.Same(AppFonts.Ui, button.FontFamily);
+        Assert.NotSame(AppFonts.Mono, button.FontFamily);
         GC.KeepAlive(window);
     }
 
