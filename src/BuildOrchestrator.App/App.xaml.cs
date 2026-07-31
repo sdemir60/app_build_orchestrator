@@ -52,7 +52,11 @@ public partial class App : Application
         Motion = motion;
         HeroMotion = new MotionCoordinator();
 
-        if (e.Args.Contains("--font-ab"))
+        // [A13/T6 · t2] Argüman ayrıştırmasının TEK sahibi: saf, test edilebilir dikiş (SecondInstanceGate deseni).
+        // Yolların önceliği (font-ab > autostart > normal) ve tanınmayan argümanın YUTULMASI orada pinlidir.
+        var route = StartupArgs.Decide(e.Args);
+
+        if (route == StartupRoute.FontAbSpike)
         {
             // [T65/K9] Font A/B karar penceresi — DI/EngineHost kurulmaz, Supervisor spawn edilmez.
             new Spikes.FontAbWindow().Show();
@@ -111,8 +115,8 @@ public partial class App : Application
         _singleInstance.StartListening(() => Dispatcher.Invoke(window.ShowFromTray));
 
         // [E2/T16] Autostart argümanıyla açıldıysa pencere GÖSTERİLMEDEN tepside temiz başlar (oto-Sync YOK — normal
-        // açılışta da yok); aksi halde bugünkü davranış (normal göster).
-        if (e.Args.Contains(AutostartArg)) window.StartInTray();
+        // açılışta da yok); aksi halde bugünkü davranış (normal göster). Karar yukarıdaki TEK dikişten gelir.
+        if (route == StartupRoute.StartInTray) window.StartInTray();
         else window.Show();
     }
 

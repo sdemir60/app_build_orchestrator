@@ -31,11 +31,16 @@ internal static class MainWindowHost
     public static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     /// <summary>Üretim kablajının TAMAMIYLA kurulu bir <see cref="MainWindow"/>'u + onun VM'i.</summary>
-    public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir)
+    /// <param name="beforeVm">[A13/T6 · t1] VM kurulduktan SONRA, pencere ctor'u onu SEED etmeden ÖNCE koşar.
+    /// Pencerenin ctor'unda olan biteni (kalıcı durumdan repo/branch/perf seed'i — <c>MainWindow.xaml.cs:126</c>)
+    /// gözlemek isteyen tek yol budur: <c>New</c> döndüğünde seed ÇOKTAN akmıştır, sonradan takılan bir prob onu
+    /// göremez. Verilmezse davranış birebir eskisi gibidir.</param>
+    public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        beforeVm?.Invoke(vm);
         var store = new JsonUiStateStore(Path.Combine(uiStateDir.Path, "ui-state.json"));
         return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store), vm);
     }
