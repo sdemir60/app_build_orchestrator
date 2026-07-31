@@ -165,11 +165,29 @@ public class TitleBarContextTests
     /// <see cref="FrameworkElement.MaxWidth"/>'inden okur — koordinatör yarın 320'yi 280 yapsa test kırılmaz,
     /// ama kırpma bozulursa kırılır.</para>
     ///
-    /// <para><b>Beş ayrı ayak:</b> (1) öğe gerçekten yerleşti ve kırpılmış metin sınırı DOLDURUYOR (ön-koşul —
-    /// <c>ActualWidth==0</c> ile önemsizce geçen bir vakum penceresi kalmasın), (2) kırpma GERÇEKTEN oldu (ham
-    /// ölçülen genişlik yerleşenden büyük), (3) sınır aşılmadı, (4) kırpma <b>ellipsis</b>'tir —
-    /// <c>TextTrimming</c> silinse <c>MaxWidth</c> metni yine 320'de keserdi ve önceki hâl YEŞİL kalırdı
-    /// (lens2), (5) metin caption/layout butonlarının ALTINA taşmıyor.</para>
+    /// <para><b>WPF gerçeği (fix-2 · 1 — ÖLÇÜLDÜ, lens2'nin gerekçesi ÇÜRÜTÜLDÜ):</b> lens2
+    /// <i>"<c>TextTrimming</c> silinse <c>MaxWidth</c> metni yine 320'de kırpardı ve test yeşil kalırdı"</i>
+    /// diyordu. <b>Öyle değil.</b> <c>MaxWidth</c> yalnız <c>MeasureCore</c>'u sınırlar;
+    /// <c>FrameworkElement.ArrangeCore</c> yerleştirme boyutunu <b><c>unclippedDesiredSize</c></b>'dan alır —
+    /// yani ölçümde kırpılan öğe, ARZULADIĞI (kırpılmamış) genişliğe yerleşir. Bu makinede ölçüldü:
+    /// <c>TextTrimming</c> kaldırılınca <c>MaxWidth="320"</c> DURUYORKEN <c>ActualWidth</c> <b>1086,67</b>
+    /// oluyor (bağımsız re-review probe'u aynı olguyu farklı bir metinle ölçtü: <c>None</c> → 1316,
+    /// <c>CharacterEllipsis</c> → 317,32). Dolayısıyla <c>ActualWidth &lt;= MaxWidth</c> bir WPF garantisi
+    /// DEĞİL, gerçek bir iddiadır: yalnız metin <c>MaxWidth</c>'e GERÇEKTEN sığacak biçimde kırpıldığında
+    /// sağlanır.</para>
+    ///
+    /// <para><b>Testin ayırt ettiği şey (fix-2 · 4):</b> <c>MaxWidth</c> silinirse (2) kırmızı olur (kırpma HİÇ
+    /// olmadı — ham genişlik yerleşenden küçük); <c>TextTrimming</c> silinirse yine (2) kırmızı olur (yerleşen
+    /// 1086,67 &gt; ham 1075,8 — arrange kırpılmamış boyutu kullanıyor) ve (3) de aşılır;
+    /// <c>CharacterEllipsis</c> → <c>WordEllipsis</c> yapılırsa YALNIZ (4) yakalar — bu mutasyon fix-1 öncesi
+    /// hâlde YEŞİL kalırdı, kalemin asıl açığı buydu.</para>
+    ///
+    /// <para><b>Beş ayrı ayak:</b> (1) öğe gerçekten yerleşti (<c>ActualWidth==0</c> ile önemsizce geçen vakum
+    /// penceresi kapalı), (2) kırpma GERÇEKTEN oldu (ham ölçülen genişlik yerleşenden büyük), (3) sınır
+    /// aşılmadı — <b>tam eşitlik DEĞİL</b>: <c>ActualWidth == MaxWidth</c> <c>UseLayoutRounding</c> + DPI'a
+    /// bağlıdır (bu makinede ~320, re-review makinesinde 317,32) ve WPF bunu garanti etmez; garantiye
+    /// çevrilen iddia SINIRdır, (4) kırpma <b>ellipsis</b>'tir, (5) metin caption/layout butonlarının ALTINA
+    /// taşmıyor.</para>
     /// </summary>
     /// <param name="worktreeSuffix"><c>false</c>: gövde (<c>ContextText</c>) · <c>true</c>: ek
     /// (<c>ContextWorktreeText</c>) — iki test karbon kopyaydı (fix-1 · B4).</param>
@@ -202,9 +220,8 @@ public class TitleBarContextTests
         var text = worktreeSuffix ? WorktreeSuffix(window) : window.ContextText;
         Assert.NotNull(text);
 
-        // (1) Kırpılmış metin sınırı TAM doldurur — hem "gerçekten yerleşti" ön-koşulu hem sınırın kendisi.
+        // (1) Ön-koşul: öğe GERÇEKTEN yerleşti (aksi hâlde alttaki sınır iddiaları önemsizce geçerdi).
         Assert.True(text.ActualWidth > 0, "bağlam metni hiç yerleşmedi — sınır iddiaları önemsizce geçerdi");
-        Assert.Equal(text.MaxWidth, text.ActualWidth, precision: 0);
 
         // (2) Kırpma GERÇEKTEN oldu: sınırsız ölçülen ham genişlik yerleşenden BÜYÜK. pack:// font headless
         // çözülmediği için file:// eşdeğeriyle ölçülür (ProjectRowTests.Sha deseni, kopya YASAK).
@@ -212,10 +229,13 @@ public class TitleBarContextTests
         { Text = text.Text, FontFamily = DsResources.MonoFontFamily, FontSize = text.FontSize };
         probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         Assert.True(probe.DesiredSize.Width > text.ActualWidth,
-            $"kontrol grubu önemsiz: kısaltılmamış metin zaten sınırın altında ({probe.DesiredSize.Width}px)");
+            $"kırpma HİÇ olmadı: ham genişlik {probe.DesiredSize.Width}px, yerleşen {text.ActualWidth}px");
 
-        // (3) Sınır aşılmadı (beklenen değer ÜRETİMDEN okunur — otorite sessiz).
-        Assert.True(text.ActualWidth <= text.MaxWidth + 0.01,
+        // (3) Sınır aşılmadı — beklenen değer ÜRETİMDEN okunur (otorite sessiz) ve iddia TAM EŞİTLİK DEĞİL:
+        // ActualWidth == MaxWidth bir WPF garantisi değildir (UseLayoutRounding + DPI; 150%'de 317,32 ölçüldü).
+        // Buna karşılık ActualWidth <= MaxWidth de bedava DEĞİLDİR: ArrangeCore unclippedDesiredSize kullandığı
+        // için trimming olmadan ActualWidth 1316'ya fırlar (fix-2 · 1).
+        Assert.True(text.ActualWidth <= text.MaxWidth,
             $"bağlam metni MaxWidth={text.MaxWidth}'i aştı: {text.ActualWidth}px");
 
         // (4) Kırpma ELLIPSIS'tir — MaxWidth tek başına glyph ortasından keserdi (lens2).
