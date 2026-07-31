@@ -28,7 +28,10 @@ namespace BuildOrchestrator.App.Console;
 public partial class ConsoleView : UserControl
 {
     // Yazım bitince imlecin sönmeden önce kaldığı süre (design-v1 §2.5 "imleç ~420ms sonra söner").
-    private const double CursorHoldMs = 420.0;
+    // [A13/T4 fix-1 · A3] internal (private değil) — motion sabitinin değeri otoriteye karşı SAF assert ile
+    // pinlenebilsin diye (ConsoleMotionPathTests). BuildShakeAnimation'ın internal yapıldığı A12-korumalı
+    // desenin aynısı; davranış DEĞİŞMEDİ.
+    internal const double CursorHoldMs = 420.0;
     // [3b Minor 1/2] Off-palette hex YOK: base foreground + FontSize XAML token/resource'ından gelir.
 
     /// <summary>[3b/Ek A #16] Canlı append'te belgede tutulan azami satır (render dilimi). "N lines" sayacı bundan

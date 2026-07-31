@@ -1,5 +1,7 @@
 using System.Windows;
+using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
 namespace BuildOrchestrator.Tests.App;
@@ -187,60 +189,62 @@ public class ConsoleMotionPathTests
 
     // ---------------------------------------------------------------- [A13/T4 · m2] imleç: 1.1s blink + 420ms sönme
 
-    /// <summary>[A13/T4 · m2] Otorite <c>BuildApp.jsx:16</c>: <c>.bo-cursor { animation: bo-blink 1.1s
-    /// var(--ease-in-out) infinite; }</c> — <see cref="MotionTokens.BlinkMs"/> (550) <c>AutoReverse</c>'lidir, yani
-    /// TAM bir döngü (1.0 → 0.1 → 1.0) 2×550ms = 1100ms sürer. Süre hiçbir testte pinli DEĞİLDİ (yalnız "döndüğü"
-    /// pinliydi, "ne kadar sürede döndüğü" değil). Gerçek saatle ölçülür — bir sabit-ms iddiasının literal'i.</summary>
-    [StaFact]
-    public void The_idle_cursor_completes_one_blink_cycle_in_about_1100_milliseconds()
+    /// <summary>[A13/T4 fix-1 · A3/A4] Otorite <c>BuildApp.jsx:16</c>: <c>.bo-cursor { animation: bo-blink 1.1s
+    /// var(--ease-in-out) infinite; }</c> — <see cref="MotionTokens.CreateBlinkAnimation"/> ÜRETİMİN ÜÇ
+    /// başlatıcısının (<c>ConsoleView</c>'in idle/aktif-satır imleçleri + <c>EventStreamView</c>) ORTAK fabrikasıdır;
+    /// SAF, deterministik değer pinlemesi burada yapılır: 550ms × <c>AutoReverse</c> = otoritenin 1.1s'i.
+    ///
+    /// <para><b>fix-1 notu:</b> önceki sürüm bunu faz-örnekleyen GERÇEK saatle (dip/tepe opaklık eşikleri,
+    /// <c>InRange(800,1500)</c>) ölçüyordu — ÖLÇÜLDÜ ve yük altında yanlış çıktı: <c>BlinkMs</c> 550→200 mutasyonunda
+    /// beklenen ~400ms yerine 1592ms okundu (pompa dip penceresini üst üste kaçırmış — SineEase'in dar penceresi
+    /// + 5ms'lik pompa çözünürlüğü). Üretim yolundan GERÇEKTEN oynadığı iddiası zaten <b>zamandan bağımsız</b>
+    /// kanıtlanıyor (aşağıdaki <see cref="The_idle_ready_cursor_really_blinks_when_motion_is_on"/>,
+    /// <c>HasAnimatedProperties</c>) — bu test SAF değeri taşır, gerçek saat GEREKMEZ.</para></summary>
+    [Fact]
+    public void The_cursor_blink_animation_is_the_authoritys_550ms_autoreverse_cycle()
     {
-        var view = RealizeWithMotion(out var window);
-        view.ShowReady();
-        Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties, "ön-koşul: blink saati kurulmadı");
+        var blink = MotionTokens.CreateBlinkAnimation();
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        DispatcherPump.PumpUntil(() => view.ActiveCursorGlyph.Opacity <= 0.15, TimeSpan.FromSeconds(2)); // dip (~550ms)
-        Assert.True(view.ActiveCursorGlyph.Opacity <= 0.15, "imleç hiç sönmedi — blink hiç dönmüyor");
-
-        DispatcherPump.PumpUntil(() => view.ActiveCursorGlyph.Opacity >= 0.95, TimeSpan.FromSeconds(2)); // tam tur (~1100ms)
-        clock.Stop();
-
-        Assert.True(view.ActiveCursorGlyph.Opacity >= 0.95, "imleç bir tam turu tamamlamadı");
-        // BuildApp.jsx:16 `1.1s` — kaba bir sapmayı (ör. 200ms/5s) yakalayacak gevşek bir pencere.
-        Assert.InRange(clock.ElapsedMilliseconds, 800, 1500);
-        GC.KeepAlive(window);
+        Assert.Equal(TimeSpan.FromMilliseconds(550), blink.Duration.TimeSpan); // BuildApp.jsx:16 `1.1s` ÷ 2 (AutoReverse)
+        Assert.True(blink.AutoReverse);                                       // → tam tur 2×550 = 1100ms
+        Assert.Equal(RepeatBehavior.Forever, blink.RepeatBehavior);           // `infinite`
     }
 
-    /// <summary>[A13/T4 · m2] Otorite <c>BuildApp.jsx:91</c>: <c>doneT = setTimeout(onDone, 420)</c> — daktilo
-    /// bitince imleç ANINDA sönmez, ~420ms daha SABİT kalır, ANCAK ondan sonra fade-out'a girer
-    /// (<see cref="ConsoleView.BeginCursorRemoval"/>'in <c>CursorHoldMs</c>'i). Kısa bir satırla (daktilo süresi
-    /// birkaç 11ms'lik adım) daktilonun kendisi neredeyse anında biter, bu yüzden ölçülen bekleme neredeyse SAF
-    /// 420ms'tir.</summary>
+    /// <summary>[A13/T4 fix-1 · A3] Otorite <c>BuildApp.jsx:91</c>: <c>doneT = setTimeout(onDone, 420)</c> — daktilo
+    /// bitince imleç ANINDA sönmez, <see cref="ConsoleView.CursorHoldMs"/> (420ms) kadar SABİT kalır, ANCAK ondan
+    /// sonra fade-out'a girer (<see cref="ConsoleView.BeginCursorRemoval"/>). İki iddia: (1) sabitin DEĞERİ (saf
+    /// assert), (2) üretim yolundan gerçekten tüketildiği (durum-tabanlı gözlem — sabit süre BEKLENMEZ).
+    ///
+    /// <para><b>fix-1 notu:</b> önceki sürüm <c>PumpUntil(() =&gt; clock.ElapsedMilliseconds &gt;= 250, …)</c> ile
+    /// SÜRE-tabanlı bekliyordu (gizli <c>Sleep(250)</c>, D8) ve 420 sayısı hiçbir yerde LİTERAL okunmuyordu (420→800
+    /// yapılsa test yeşil kalırdı). Artık (a) <c>CursorHoldMs</c> SAF <c>Assert.Equal</c> ile pinli, (b) ara-durum
+    /// kontrolü zamana değil DURUMA bağlı: daktilonun TAMAMEN yazıldığı an (<c>ActiveLineText.Text == shortLine</c>)
+    /// beklenir, o anda overlay'in HÂLÂ açık olması (commit henüz olmamış) hold'un sıfır OLMADIĞININ zamandan
+    /// bağımsız kanıtıdır.</para></summary>
     [StaFact]
     public void The_active_line_cursor_holds_steady_for_420ms_before_it_starts_to_fade()
     {
+        Assert.Equal(420.0, ConsoleView.CursorHoldMs); // BuildApp.jsx:91 `setTimeout(onDone, 420)` — saf literal pin
+
         var view = RealizeWithMotion(out var window);
         const string shortLine = "12:00:01 ▸ a"; // charsPerStep=1 → Duration ≈ 12×11ms ≈ 132ms (küçük, ihmal edilebilir)
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
         view.AppendNarrativeBatch(shortLine + "\n"); // ÜRETİM yolu (brief kural 3)
         Assert.False(view.ActiveLineInstant, "ön-koşul: daktilo kurulmadı");
 
-        // Daktilo bittikten SONRA ama 420ms hold DOLMADAN: satır HÂLÂ commit EDİLMEDİ (overlay açık kalır).
-        // [not: imleç bu aralıkta HÂLÂ blink'in kendisiyle (1↔0.1, autoreverse) oynar — "sabit 1.0" DEĞİL; asıl
-        // iddia (hold süresi) aşağıdaki toplam-süre penceresiyle ölçülür.]
-        DispatcherPump.PumpUntil(() => clock.ElapsedMilliseconds >= 250, TimeSpan.FromSeconds(2));
-        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility); // hold DOLMADI — henüz commit yok
+        // Daktilo TAMAMEN yazılana kadar bekle (durum-tabanlı, D8 — sabit süre DEĞİL).
+        DispatcherPump.PumpUntil(() => view.ActiveLineText.Text == shortLine, TimeSpan.FromSeconds(2));
+        Assert.Equal(shortLine, view.ActiveLineText.Text); // ön-koşul: daktilo GERÇEKTEN bitti
 
-        // Hold + fade (Duration.Base, fallback 180ms) sonunda satır commit edilir, overlay kapanır.
+        // Daktilo BİTTİ ama hold DOLMADI: satır HÂLÂ commit EDİLMEDİ (overlay açık kalır) — bu, hold'un sıfır
+        // OLMADIĞININ zamandan bağımsız kanıtıdır (hold atlansaydı bu an overlay ZATEN kapanmış olurdu).
+        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
+
+        // Hold + fade sonunda satır commit edilir, overlay kapanır — gevşek bir güvenlik ağı (asıl 420ms iddiası
+        // artık yukarıdaki literal'de; bu yalnız "sonunda gerçekten biter" davranışını doğrular).
         DispatcherPump.PumpUntil(() => view.ActiveLineOverlay.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
-        clock.Stop();
-
         Assert.Equal(Visibility.Collapsed, view.ActiveLineOverlay.Visibility);
         Assert.Contains("12:00:01", view.Document.Text); // satır sonunda GERÇEKTEN commit edildi
-        // Daktilo (~130ms) + hold (420ms) + fade (~180ms) ≈ 730ms. Alt sınır 420ms'in KENDİSİNİ garanti eder
-        // (hold atlanıp anında fade'e girilseydi toplam ~310ms'de biterdi — 500 alt sınırını KAÇIRIRDI).
-        Assert.InRange(clock.ElapsedMilliseconds, 500, 1500);
         GC.KeepAlive(window);
     }
 }
