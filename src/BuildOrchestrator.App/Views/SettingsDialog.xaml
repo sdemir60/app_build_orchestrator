@@ -197,7 +197,7 @@
         <!-- ============================ FOOTER ============================ -->
         <Border Grid.Row="2" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0">
           <DockPanel Margin="20,12">
-            <Button DockPanel.Dock="Left" Content="Load sample layers" Click="OnLoadSampleLayers"
+            <Button DockPanel.Dock="Left" Content="Restore default layers" Click="OnRestoreDefaults"
                     Style="{DynamicResource Ds.Button.Ghost.Md}" />
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
               <Button Content="Cancel" Click="OnCancel" Style="{DynamicResource Ds.Button.Secondary.Md}" />

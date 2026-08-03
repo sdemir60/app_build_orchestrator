@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using BuildOrchestrator.App.Console;
@@ -33,6 +34,9 @@ public class SettingsDialogTests
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
     {
         var editor = new SettingsDraftViewModel(null);
+        // [değişti] Taze taslak ARTIK 4 varsayılan satırla gelir (LayerDefaults). Bu testin konusu
+        // Save-validation'dır — tek satırlık bir zeminde ölçülür, o yüzden varsayılanlar önce boşaltılır.
+        for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]);
 
         // [D7 re-review][Fix6] Save butonunun IsEnabled bağlaması CanSave'in PropertyChanged YAYIMLADIĞINA
         // dayanır (XAML: IsEnabled="{Binding CanSave}") — bu olmadan buton canlı GÜNCELLENMEZ (yalnız ilk
@@ -76,6 +80,59 @@ public class SettingsDialogTests
         Assert.True(canSaveNotifications > 0, "Remove layer sonrası CanSave bildirimi YOK");
     }
 
+    [Fact] // Kayıtlı katman YOKKEN taslak varsayılanlarla DOLU gelir — kullanıcı hiç uğraşmadan Save diyebilsin.
+    public async Task A_fresh_draft_is_prefilled_with_the_default_layers()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var store = NewStore();
+        Assert.Null(run.LayerPatterns); // kayıtlı katman yok
+
+        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+
+        Assert.Equal(
+            ["OSYS.Types", "OSYS.Business", "OSYS.Orchestration", "OSYS.UI"],
+            draft.Layers.Select(r => r.Name));
+        Assert.Equal(@"^OSYS\.Types\.", draft.Layers[0].Regex);
+
+        // Taslağın dolu gelmesi tek başına HİÇBİR ŞEY uygulamaz/kaydetmez — açılışta seed YOKtur.
+        Assert.Null(run.LayerPatterns);
+        Assert.Empty(store.State.LayerPatterns);
+    }
+
+    [Fact] // Kayıtlı katman VARSA taslak onların kopyasıdır — varsayılan kullanıcının tanımlarını ASLA ezmez.
+    public async Task A_draft_built_from_saved_layers_never_shows_the_defaults()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")];
+
+        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+
+        var row = Assert.Single(draft.Layers);
+        Assert.Equal("Alpha", row.Name);
+        Assert.Equal("^A", row.Regex);
+    }
+
+    [Fact] // "Restore default layers": düzenlenmiş taslağı varsayılanlara döndürür, Save'siz KALICI DEĞİL.
+    public async Task Restore_default_layers_replaces_the_draft_without_touching_the_live_state()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var store = NewStore();
+        IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
+        run.LayerPatterns = live;
+        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+
+        draft.RestoreDefaults();
+
+        Assert.Equal(4, draft.Layers.Count);
+        Assert.Equal("OSYS.Types", draft.Layers[0].Name);
+        Assert.Equal("OSYS.UI", draft.Layers[3].Name);
+        Assert.Same(live, run.LayerPatterns);        // canlı pattern'lere DOKUNULMADI
+        Assert.Empty(store.State.LayerPatterns);     // diske yazılmadı
+    }
+
     [Fact]
     public async Task Cancel_discards_the_draft()
     {
@@ -107,6 +164,11 @@ public class SettingsDialogTests
         Assert.Equal("^B", run.LayerPatterns[0].Regex);
     }
 
+    /// <summary>Save: BİREBİR konsol notu + <see cref="RunViewModel.LayerPatterns"/> + UiState persist'i.
+    /// <para><b>Eski iddia (değişti):</b> bu test "Load sample layers"in 6 örnek katmanını
+    /// (<c>Layer 0 — Core</c> / <c>^OSYS\.(Base$|Common\.)</c>) pinliyordu. Örnek katmanlar kaldırıldı,
+    /// yerlerini OSYS varsayılanları (<see cref="LayerDefaults"/>, 4 katman) aldı; pinlenen kural aynı —
+    /// Save notu, pattern sırası ve persist şekli.</para></summary>
     [Fact]
     public async Task Saving_layers_writes_the_exact_console_note_and_persists_the_patterns()
     {
@@ -114,25 +176,22 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
-        // 6 örnek katman → Save.
-        var editor = new SettingsDraftViewModel(null);
-        editor.LoadSampleLayers();
-        Assert.Equal(6, editor.Layers.Count);
+        var editor = new SettingsDraftViewModel(null); // taze taslak = 4 varsayılan
+        Assert.Equal(4, editor.Layers.Count);
 
         editor.Commit(run, store);
 
         // (a) BİREBİR konsol notu (BuildApp.jsx:1423).
-        Assert.Contains("Layer definitions updated — 6 layers", run.GetRunDocumentText());
+        Assert.Contains("Layer definitions updated — 4 layers", run.GetRunDocumentText());
 
-        // (b) RunViewModel.LayerPatterns set edildi (Order = 0..5, üstten alta).
+        // (b) RunViewModel.LayerPatterns set edildi (Order = 0..3, üstten alta).
         Assert.NotNull(run.LayerPatterns);
-        Assert.Equal(6, run.LayerPatterns!.Count);
-        Assert.Equal([0, 1, 2, 3, 4, 5], run.LayerPatterns.Select(p => p.Order));
-        Assert.Equal("Layer 0 — Core", run.LayerPatterns[0].Name);
-        Assert.Equal(@"^OSYS\.(Base$|Common\.)", run.LayerPatterns[0].Regex);
+        Assert.Equal([0, 1, 2, 3], run.LayerPatterns!.Select(p => p.Order));
+        Assert.Equal("OSYS.Types", run.LayerPatterns[0].Name);
+        Assert.Equal(@"^OSYS\.Types\.", run.LayerPatterns[0].Regex);
 
         // (c) UiState'e persist edildi (aynı şekil).
-        Assert.Equal(6, store.State.LayerPatterns.Count);
+        Assert.Equal(4, store.State.LayerPatterns.Count);
         Assert.Equal(run.LayerPatterns, store.State.LayerPatterns);
 
         // Emptied → farklı BİREBİR not + persist boşalır.
@@ -197,7 +256,8 @@ public class SettingsDialogViewTests
 {
     /// <summary>[A13/T3a · a2/a3] design-v1 §2.9 BİREBİR: <c>LAYERS</c> caps başlığı, açıklama cümlesi ("Other"
     /// mono Run'la BİRLEŞİK okunur — <c>TextBlock.Text</c> tüm Inline'ları düzleştirir) ve boş-katman kesikli
-    /// kutu metni. Katman yokken (taze <see cref="RunViewModel.LayerPatterns"/> null) boş-durum kutusu görünür.</summary>
+    /// kutu metni. Kutu METNİ burada pinlenir; GÖRÜNÜRLÜK kuralı
+    /// <c>Empty_state_box_appears_only_after_every_layer_row_is_deleted</c>'tedir.</summary>
     [StaFact]
     public void Settings_dialog_pins_the_layers_caption_description_and_empty_state_box_verbatim()
     {
@@ -220,8 +280,29 @@ public class SettingsDialogViewTests
         Assert.Contains("No layers yet — projects show as a single list in build order.", texts);
     }
 
+    /// <summary>Boş-durum kutusu ARTIK taze diyalogda görünmez: taslak varsayılanlarla dolu açılır. Kutu
+    /// yalnız kullanıcı TÜM satırları silince ortaya çıkar.
+    /// <para><b>Eski iddia (değişti):</b> <c>Settings_dialog_pins_the_layers_caption_description_and_empty_state_box_verbatim</c>
+    /// kutuyu "katman yokken (taze LayerPatterns null) görünür" diye pinliyordu. Varsayılan taslak geldiğinden
+    /// taze diyalogda 4 satır vardır; kuralın kendisi (satır yoksa kutu) korunur, tetikleyicisi değişti.</para></summary>
+    [StaFact]
+    public void Empty_state_box_appears_only_after_every_layer_row_is_deleted()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var box = DsResources.RealizedObjects(dialog).OfType<Grid>().Single(g => g.Name == "EmptyState");
+        Assert.Equal(Visibility.Collapsed, box.Visibility); // taze diyalog: 4 varsayılan satır var
+
+        var draft = (SettingsDraftViewModel)dialog.DataContext;
+        for (int i = draft.Layers.Count - 1; i >= 0; i--) draft.RemoveLayer(draft.Layers[i]);
+        dialog.UpdateLayout();
+
+        Assert.Equal(Visibility.Visible, box.Visibility);
+    }
+
     /// <summary>[A13/T3a · a9] design-v1 §2.9: <c>Add layer</c> (ghost, ikon+etiket) · <c>Cancel</c> · <c>Save</c>
-    /// (primary) · <c>Load sample layers</c> (ghost) — davranışları zaten pinliydi (Save/Cancel/LoadSample
+    /// (primary) · <c>Restore default layers</c> (ghost) — davranışları zaten pinliydi (Save/Cancel/LoadSample
     /// testleri), etiketlerin BİREBİR metni testsizdi.</summary>
     [StaFact]
     public void Settings_dialog_footer_and_add_layer_button_labels_are_verbatim()
@@ -232,7 +313,7 @@ public class SettingsDialogViewTests
         var buttons = DsResources.RealizedObjects(dialog).OfType<Button>().ToList();
         Assert.Contains(buttons, b => Equals(b.Content, "Cancel"));
         Assert.Contains(buttons, b => Equals(b.Content, "Save"));
-        Assert.Contains(buttons, b => Equals(b.Content, "Load sample layers"));
+        Assert.Contains(buttons, b => Equals(b.Content, "Restore default layers"));
 
         // "Add layer": Content bir StackPanel'dir (ikon + TextBlock) — etiket ayrı aranır.
         var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();

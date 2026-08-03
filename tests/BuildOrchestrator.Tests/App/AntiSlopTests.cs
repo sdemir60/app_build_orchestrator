@@ -127,7 +127,7 @@ public sealed class AntiSlopTests
     /// <summary>[A13/T4 · n2 · fix-1 · D1/D2] design-v1 §2.9 (<c>"Eşleşme sayacı gösterilmez (istenmedi)."</c>) +
     /// §8 — Settings dialog'unun LAYERS bölümü hiçbir katman satırında "bu regex kaç projeyle eşleşiyor" sayacı
     /// GÖSTERMEZ. Kapsam: <c>SettingsDialog.xaml*</c> (görünüm <b>+ code-behind</b> — <c>SettingsDialog.xaml.cs</c>
-    /// <c>OnAddLayer</c>/<c>OnRemoveLayer</c>/<c>OnLoadSampleLayers</c>'ı barındırır; bir eşleşme sayacı en doğal
+    /// <c>OnAddLayer</c>/<c>OnRemoveLayer</c>/<c>OnRestoreDefaults</c>'ı barındırır; bir eşleşme sayacı en doğal
     /// biçimde ORADA hesaplanırdı, fix-1 ÖNCESİ joker'siz "SettingsDialog.xaml" deseni bunu KAÇIRIYORDU) +
     /// <c>SettingsDraftViewModel.cs</c> (<c>LayerRowViewModel</c>'i de barındırır — VM'de bir <c>MatchCount</c>
     /// alanı eklense görünüme hiç bağlanmasa bile bu, özelliğin sessizce yarım bırakıldığının işaretidir).

@@ -60,7 +60,7 @@ public partial class SettingsDialog : UserControl
         if (sender is FrameworkElement { DataContext: LayerRowViewModel row }) _draft?.RemoveLayer(row);
     }
 
-    private void OnLoadSampleLayers(object sender, RoutedEventArgs e) => _draft?.LoadSampleLayers();
+    private void OnRestoreDefaults(object sender, RoutedEventArgs e) => _draft?.RestoreDefaults();
 
     // ---- Repository (K10) ----
 
