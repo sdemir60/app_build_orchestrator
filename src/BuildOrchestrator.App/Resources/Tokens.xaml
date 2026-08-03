@@ -18,6 +18,12 @@
     <SolidColorBrush x:Key="Brush.Black" Color="#08080a" />
     <SolidColorBrush x:Key="Brush.White" Color="#ffffff" />
     <SolidColorBrush x:Key="Brush.Neutral200" Color="#cdcdd2" />
+    <!-- [SCROLLBAR] colors.css:6 neutral-600/700 — `.bo-scroll` thumb'ının rampası (BuildApp.jsx:35-38):
+         thumb neutral-700; hover/drag rampada BİR adım açık (neutral-600). DEĞERLER colors.css'ten birebir;
+         türetilen yalnız hover KULLANIMIDIR (README:14 "en yakın native karşılık" — native scrollbar'ın
+         etkileşim geri bildirimi; Brush.SurfaceHover'ın "bir üst adım" desenine paralel). -->
+    <SolidColorBrush x:Key="Brush.Neutral600" Color="#3a3a42" />
+    <SolidColorBrush x:Key="Brush.Neutral700" Color="#2a2a30" />
 
     <!-- Yüzeyler -->
     <SolidColorBrush x:Key="Brush.ConsoleBg" Color="#060608" />

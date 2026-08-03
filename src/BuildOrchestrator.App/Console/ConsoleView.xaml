@@ -9,10 +9,14 @@
        (Resources/Tokens.xaml, FontSize.Xs). Editör ile aktif-satır overlay AYNI anahtarı okur → drift edemez. -->
   <Grid Background="{DynamicResource Brush.ConsoleBg}">
     <!-- [3b Minor 1] Base foreground token (Brush.TextPrimary) — colorizer her satırı zaten ezer; off-palette hex YOK. -->
+    <!-- [SCROLLBAR] BuildApp.jsx:616: konsol kutusu overflow AUTO — AvalonEdit default'u Visible olduğundan
+         açıkça çevrilir. Bar'ın kendi görünümü Controls.xaml'in implicit ScrollBar stilinden gelir. -->
     <avalonEdit:TextEditor x:Name="EditorControl"
                             IsReadOnly="True"
                             WordWrap="False"
                             ShowLineNumbers="False"
+                            VerticalScrollBarVisibility="Auto"
+                            HorizontalScrollBarVisibility="Auto"
                             FontSize="{DynamicResource FontSize.Xs}"
                             Padding="12,8"
                             Background="Transparent" Foreground="{DynamicResource Brush.TextPrimary}" />
