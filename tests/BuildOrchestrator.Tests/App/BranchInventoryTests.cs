@@ -43,7 +43,7 @@ public class BranchInventoryTests
     // ---------------------------------------------------------------- gönderim (SAF VM)
 
     /// <summary>Sync = "workspace bilgisini tazele" anıdır ve TEK huniden geçer: ilk repo seçimi
-    /// (<c>ChangeRepositoryAsync</c> → <c>SyncAsync</c>), Settings→Change ve elle Sync hepsi buradan akar.
+    /// (<c>ChangeRepositoryAsync</c> → <c>SyncAsync</c>), Settings→Save ve elle Sync hepsi buradan akar.
     /// Envanter ORADA istenmezse chip sonsuza dek boş kalır.</summary>
     [Fact]
     public async Task Sync_also_asks_the_supervisor_for_the_branch_inventory()

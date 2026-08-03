@@ -101,6 +101,23 @@ public class SettingsDialogTests
         Assert.Empty(store.State.LayerPatterns);
     }
 
+    [Fact] // Kayıtlı liste BOŞ ama null DEĞİL: "tüm katmanları sil + Save" sonrası canlı durum tam olarak budur
+           // (LayerPatterns = boş liste). Diyalog yeniden açıldığında yine varsayılanlar görünmelidir.
+    public void A_draft_built_from_an_emptied_layer_list_still_shows_the_defaults()
+    {
+        IReadOnlyList<LayerPattern> emptied = []; // "hepsini sil + Save" sonrası RunViewModel.LayerPatterns
+
+        var draft = new SettingsDraftViewModel(emptied);
+
+        // Varsayılanların BİREBİR metni A_fresh_draft_is_prefilled_with_the_default_layers'ta pinlidir; burada
+        // pinlenen kural "boş liste null ile AYNI davranır" — ctor koşulu `initial is not null`'a kayarsa bu
+        // taslak SIFIR satırla açılır ve karşılaştırma düşer.
+        Assert.Equal(
+            new SettingsDraftViewModel(null).Layers.Select(r => (r.Name, r.Regex)),
+            draft.Layers.Select(r => (r.Name, r.Regex)));
+        Assert.NotEmpty(draft.Layers); // non-vacuous: iki taraf da boş olsaydı karşılaştırma anlamsız kalırdı
+    }
+
     [Fact] // Kayıtlı katman VARSA taslak onların kopyasıdır — varsayılan kullanıcının tanımlarını ASLA ezmez.
     public async Task A_draft_built_from_saved_layers_never_shows_the_defaults()
     {
@@ -161,10 +178,15 @@ public class SettingsDialogTests
         // GERÇEKTEN değişmeli — bu, yukarıdaki "değişmedi" iddiasının taslak/canlı izolasyonunu (Cancel = bu
         // Commit'in YOKLUĞU) test ettiğini kanıtlar; aksi halde ctor'un yeni satır VM'leri kurması nedeniyle
         // aliasing zaten fiziksel olarak imkânsız olduğundan iddia hep-doğru (anlamsız) kalırdı.
+        // Commit KÖKÜ de taşır: aynı ayrımcı kanıt bekleyen repo kökü için de gerekir (aksi halde "Commit
+        // çağrılmadı → kök eski" iddiası, kökü hiç uygulamayan bir Commit'te de yeşil kalırdı). Commit'in
+        // sürdüğü Sync gönderimi engine hiç başlatılmadığı için hataya düşer ve TrySendAsync onu yutar —
+        // burada gözlenen tek etki kökün kendisidir.
         await editor.CommitAsync(run, store);
         Assert.Equal(2, run.LayerPatterns!.Count);
         Assert.Equal("CHANGED", run.LayerPatterns[0].Name);
         Assert.Equal("^B", run.LayerPatterns[0].Regex);
+        Assert.Equal(@"D:\new\repo", run.RootPath);
     }
 
     /// <summary>Save: BİREBİR konsol notu + <see cref="RunViewModel.LayerPatterns"/> + UiState persist'i.
@@ -302,8 +324,42 @@ public class SettingsDialogTests
         Assert.Empty(sent);
     }
 
-    [Fact] // Koşu UÇUŞTAyken Save: katmanlar kaydedilir, kök DEĞİŞMEZ, Sync GİTMEZ (koşan build'in kökü çekilmez).
-    public async Task Applying_settings_mid_run_keeps_the_root_and_sends_no_sync()
+    /// <summary>MANŞET yolculuk: hiç repo seçmemiş bir kullanıcı Settings'i açar, kökü seçer ve Save'e basar —
+    /// kök uygulanır (faz Empty→Boot) ve TEK Sync YENİ kökte gider (README §"Using it" 1. madde).
+    /// <para><b>Neden ayrı test:</b> <c>Applying_settings_without_a_repository_root…</c> kökü <c>null</c>
+    /// geçtiğinden boş-kök kapısının <c>ApplyRepositoryRoot</c>'tan SONRA olduğunu kanıtlayamaz — kapı yukarı
+    /// taşınsa (ya da <c>repositoryRoot</c> parametresine karşı yazılsa) o test yine yeşil kalırdı. Burada kök
+    /// PARAMETREYLE gelir ve çağrı anında <c>RootPath</c> hâlâ boştur: kapı yukarıda olsaydı Save sessizce
+    /// Boot'ta takılıp Sync göndermezdi.</para></summary>
+    [Fact]
+    public async Task Saving_the_first_repository_root_applies_it_and_syncs_at_that_root()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1"); // kök HİÇ seçilmemiş
+        Assert.Equal("", run.RootPath);
+        Assert.Equal(AppPhase.Empty, run.Phase);
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
+        await run.ApplySettingsAsync(patterns, @"D:\repo");
+
+        Assert.Equal(@"D:\repo", run.RootPath);
+        Assert.True(run.HasWorkspace);
+        Assert.Equal(AppPhase.Boot, run.Phase);   // OnRootPathChanged Empty→Boot
+        Assert.Same(patterns, run.LayerPatterns);
+        var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Equal(@"D:\repo", sync.RootPath);
+        Assert.Same(patterns, sync.LayerPatterns); // katmanlar Sync'ten ÖNCE uygulandı
+    }
+
+    /// <summary>Koşu UÇUŞTAyken Save: katmanlar kaydedilir, kök DEĞİŞMEZ, Sync GİTMEZ (koşan build'in kökü
+    /// çekilmez) — ve düşürülen kök SESSİZCE kaybolmaz.
+    /// <para>Konsol notu ZORUNLUdur: diyaloğun yol etiketi "Change…" anında YENİ yolu göstererek seçimi
+    /// ONAYLAR (etiket taslaktan okur). Kapı burada kökü uygulamadığına göre kullanıcı, onaylanmış görünen
+    /// seçiminin ertelendiğini yalnız konsoldan öğrenebilir.</para></summary>
+    [Fact]
+    public async Task Applying_settings_mid_run_defers_the_repository_change_and_sends_no_sync()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
@@ -318,6 +374,49 @@ public class SettingsDialogTests
         Assert.Same(patterns, run.LayerPatterns);   // katmanlar YİNE uygulanır (sessizce kaybolmaz)
         Assert.Equal(@"D:\repo", run.RootPath);     // kök değişmedi
         Assert.Empty(sent);
+        Assert.Contains("Repository change deferred — run in flight", run.GetRunDocumentText()); // BİREBİR
+    }
+
+    [Fact] // Erteleme notu YALNIZ gerçekten bekleyen bir kök değişimi varsa yazılır — sıradan (katman-only)
+           // bir mid-run Save'de konsola gürültü DÜŞMEZ. Aynı kök (Windows yolu → case-insensitive) değişim DEĞİLDİR.
+    public async Task Applying_settings_mid_run_says_nothing_when_no_repository_change_is_pending()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+            { RootPath = @"D:\repo", IsStarting = true };
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"d:\REPO"); // aynı kök, farklı harf durumu
+
+        string text = run.GetRunDocumentText();
+        Assert.Contains("Layer definitions updated — 1 layers", text); // non-vacuous: konsol boş değil
+        Assert.DoesNotContain("Repository change deferred", text);
+        Assert.Empty(sent);
+    }
+
+    /// <summary>Motor ERİŞİLEMEZ (hiç doğamadı) iken Save: katmanlar uygulanır ve kök taşınır — bunların ikisi
+    /// de motora dokunmaz — ama Sync GİTMEZ.
+    /// <para>Gerekçe <c>RunViewModel.IsEngineUnavailable</c>'da yazılıdır: bu durumda gönderim zaten hataya
+    /// düşer ve şeritteki KALICI mesajla çelişen ikinci bir hata satırı üretirdi. Save, <c>SyncCommand</c>'ın
+    /// aksine bir düğme değildir (devre dışı bırakılamaz) — kapı metodun içinde olmak zorundadır.</para></summary>
+    [Fact]
+    public async Task Applying_settings_while_the_engine_is_unavailable_keeps_the_layers_but_sends_no_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        run.OnEngineUnavailable(@"C:\nowhere\supervisor.exe");
+        Assert.True(run.IsEngineUnavailable);
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
+        await run.ApplySettingsAsync(patterns, @"D:\new\repo");
+
+        Assert.Same(patterns, run.LayerPatterns);       // katmanlar kaydedilir
+        Assert.Equal(@"D:\new\repo", run.RootPath);     // kök de uygulanır (kalıcı duruma yazılır)
+        Assert.Empty(sent);                             // ama TEK bir komut bile gönderilmez
+        Assert.DoesNotContain("failed to send", run.GetRunDocumentText());
     }
 
     [Fact] // "Change…" TEK BAŞINA hiçbir şey uygulamaz: kök değişmez, satırlar sıfırlanmaz, komut GİTMEZ.
@@ -415,8 +514,10 @@ public class SettingsDialogViewTests
     }
 
     /// <summary>[A13/T3a · a9] design-v1 §2.9: <c>Add layer</c> (ghost, ikon+etiket) · <c>Cancel</c> · <c>Save</c>
-    /// (primary) · <c>Restore default layers</c> (ghost) — davranışları zaten pinliydi (Save/Cancel/LoadSample
-    /// testleri), etiketlerin BİREBİR metni testsizdi.</summary>
+    /// (primary) · <c>Restore default layers</c> (ghost) — davranışları <see cref="SettingsDialogTests"/>'te
+    /// pinlidir (<c>Saving_layers_writes_the_exact_console_note_and_persists_the_patterns</c> ·
+    /// <c>Cancel_discards_the_draft</c> · <c>Restore_default_layers_replaces_the_draft_without_touching_the_live_state</c>);
+    /// burada pinlenen yalnız etiketlerin BİREBİR metnidir.</summary>
     [StaFact]
     public void Settings_dialog_footer_and_add_layer_button_labels_are_verbatim()
     {

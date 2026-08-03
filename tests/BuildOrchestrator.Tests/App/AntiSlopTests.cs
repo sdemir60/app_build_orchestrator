@@ -133,7 +133,7 @@ public sealed class AntiSlopTests
     /// alanı eklense görünüme hiç bağlanmasa bile bu, özelliğin sessizce yarım bırakıldığının işaretidir).
     ///
     /// <para><b>fix-1 · D2:</b> <c>skipCommentLines: true</c> eklendi (n1 zaten veriyordu, n2 vermiyordu) —
-    /// <c>SettingsDraftViewModel.cs</c>'in <c>matchTimeout</c> geçen yorum satırları (<c>:33,:68</c>, mevcut kod,
+    /// <c>SettingsDraftViewModel.cs</c>'in <c>matchTimeout</c> geçen yorum satırları (<c>:33,:69</c>, mevcut kod,
     /// değişmez) ileride "…projelerle **match**…" gibi bir cümleye evrilirse kuralı ANLATAN satırı ihlal
     /// SAYMAMALI.</para></summary>
     [Fact]

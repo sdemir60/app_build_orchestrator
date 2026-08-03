@@ -967,9 +967,20 @@ Cancel, Esc and a scrim click discard the draft — the pending root included �
 then the pending repository root (which resets the project rows to hollow), then exactly one Sync is sent. The
 order is load-bearing, because the Sync command carries the current layer patterns — sent before they were
 applied, it would carry stale ones. The Sync itself is unconditional: Save does not compare old and new state
-to decide whether to run it. Two gates still hold: while a run is in flight the layer patterns are applied but
-the repository root is left alone and no Sync is sent, since pulling the root out from under a running build
-would be wrong; and if no repository has ever been selected, there is nothing to Sync.
+to decide whether to run it.
+
+Three gates hold. While a run is in flight the layer patterns are applied but the repository root is left
+alone and no Sync is sent, since pulling the root out from under a running build would be wrong; because the
+dialog's label has already confirmed the picked folder, a root change this gate drops is announced in the
+console as `Repository change deferred — run in flight`, while a Save that carries no root change stays
+silent.
+If no repository has ever been selected, there is nothing to Sync — that gate sits *after* the root is
+applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
+there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers
+and the root are applied but nothing is sent: each send would fail and print an error line contradicting the
+permanent ribbon message, the same reason Sync, Build, Rebuild, Retry failed and Continue are disabled in
+that state. The root is still applied because it is local state that persists, and the first Sync after the
+engine returns carries it.
 
 The shell's own *Choose Folder* invitation, shown before any repository is selected, does not go through this
 dialog: it has no Save step, so the folder it picks applies immediately — the root changes, the project rows
@@ -1543,6 +1554,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
+| Default layer definitions (Settings draft + *Restore default layers*) | `App/Shell/LayerDefaults.cs` |
 | Title bar context text (`OSYS · main · main-2`) | `App/ViewModels/TitleBarContext.cs` |
 
 **Engine and IPC**
@@ -1641,7 +1653,6 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
-| Default layer definitions | `App/Shell/LayerDefaults.cs` |
 | Settings draft state (layers + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
