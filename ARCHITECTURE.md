@@ -10,8 +10,8 @@ reached. Chronological records (iteration plans, review outputs, decision logs) 
 and are not repeated here.
 
 **Reading order.** [`README.md`](README.md) is the entry point — what the tool does and how to run it. This
-document is the technical reference behind it. [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) (Turkish) is
-the security-boundary companion, with every claim cited to `file:line`.
+document is the technical reference behind it. [`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) (Turkish) is the
+security-boundary companion, with every claim cited to `file:line`.
 
 ---
 
@@ -1204,7 +1204,7 @@ closed with effort:
 | [`README.md`](README.md) | Entry point: what the tool does, requirements, how to build/run/publish, how to use it |
 | **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system |
 | [`CLAUDE.md`](CLAUDE.md) | Working conventions for this repository |
-| [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) | Security boundaries with `file:line` citations, and an honest list of what is *not* verified (Turkish) |
+| [`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) | Security boundaries with `file:line` citations, and an honest list of what is *not* verified (Turkish) |
 | `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md` | Plan of record — the binding architectural decisions this document describes (Turkish) |
 | `.claude/outputs/2026-07-15-19-00-design-v1/` | Visual authority: design specification plus the working prototype |
 | `.claude/outputs/` · `.claude/summaries/` · `.claude/handoffs/` | Historical records — iteration plans, measurements, decisions. Not corrected retroactively |
