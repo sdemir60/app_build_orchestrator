@@ -4,6 +4,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -54,6 +55,43 @@ public class DsControlTemplateTests
 
         var chrome = DsResources.Descendants(button).OfType<Border>().First();
         Assert.Equal((CornerRadius)host.FindResource("Radius.Sm"), chrome.CornerRadius);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · n5] mono asla dekoratif değil
+
+    /// <summary>[A13/T4 · n5 · fix-1 · D4] design-v1 §1.2 (README:48): <i>"UI = Geist; makine çıktısı (console,
+    /// süre, SHA, sayaç, yol) = Geist Mono, DAİMA tabular rakam. <b>Mono asla dekoratif kullanılmaz.</b>"</i> —
+    /// <see cref="AppFonts"/> XML doc'u da aynı sözü tekrarlar.
+    ///
+    /// <para><b>Kapsam (bilinçli, dar):</b> bu test TÜM olası "dekoratif metin" yüzeyini taramaz (öznel bir sınır
+    /// olurdu) — bunun yerine İKİ TEK-YERLİ kaynağı pinler: (1) <c>Ds.Button.Base</c> — <b>fix-1'de altı DS buton
+    /// VARYANTININ HEPSİNDE</b> (<c>Button_sizes_match_the_design_height_scale</c>'in AYNI altı anahtarı) sınanır,
+    /// çünkü uygulamadaki buton metinleri o varyantlar üzerinden akar (Primary/Secondary/Ghost/Danger) — önceki
+    /// sürüm yalnız <c>Base</c>'i realize ediyordu ve bir varyanta EKLENECEK bir <c>FontFamily=Mono</c> setter'ı
+    /// (taban değişmediği için) YAKALANMAZDI; (2) caps panel/dialog başlıkları (<c>PROJECTS</c>/<c>DEPENDENCY
+    /// GRAPH</c>/<c>LAYERS</c>/…) TEK yerden, <see cref="TrackedTextBlock"/>'un varsayılan <c>FontFamily</c>'sinden
+    /// beslenir — bu ZATEN <c>TrackedTextBlockTests.Defaults_match_design_v1_caps_label_spec</c>'te pinlidir
+    /// (<c>"./#Geist"</c>, Mono DEĞİL); burada yalnız buton yüzeyi eklenir.</para>
+    ///
+    /// <para><b>fix-1 · D4 (ikinci düzeltme):</b> beklenen değer artık üretim SEMBOLÜ (<c>AppFonts.Ui</c>) değil,
+    /// OTORİTE LİTERALİ (<c>"./#Geist"</c>) — <c>AppFonts.Ui</c>'nin kendisi mono aileye kaysa önceki assert
+    /// (<c>Assert.Same(AppFonts.Ui, …)</c>) sessizce YEŞİL kalırdı. Mantıksal olarak birinciden çıkan ölü
+    /// <c>Assert.NotSame(AppFonts.Mono, …)</c> satırı da kaldırıldı.</para></summary>
+    [StaTheory]
+    [InlineData("Ds.Button.Primary.Sm")]
+    [InlineData("Ds.Button.Primary.Md")]
+    [InlineData("Ds.Button.Primary.Lg")]
+    [InlineData("Ds.Button.Secondary.Sm")]
+    [InlineData("Ds.Button.Ghost.Md")]
+    [InlineData("Ds.Button.Danger.Lg")]
+    public void Every_button_caption_uses_the_ui_typeface_never_mono(string styleKey)
+    {
+        var host = DsResources.NewHost();
+        var button = new Button { Content = "Cancel", Style = (Style)host.FindResource(styleKey) };
+        var window = DsResources.Realize(host, button);
+
+        Assert.Equal("./#Geist", button.FontFamily.Source); // otorite literali — Mono ("./#Geist Mono") DEĞİL
         GC.KeepAlive(window);
     }
 

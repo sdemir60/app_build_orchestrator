@@ -70,7 +70,7 @@
     <!-- [D1 review · C1] Execution-anı guard: yol çözülemediyse GLOB'a hiç girme — boş property + `**`
          "sürücüyü tara" desenidir (bu task sırasında fiilen MSB5029 alındı). Sessiz geçmek YASAK. -->
     <Error Condition="'$(_SupervisorOutDir)' == '' or '$(_SupervisorOutDir)' == '\'"
-           Text="Supervisor cikti dizini cozulemedi (GetTargetPath bos dondu): BuildOrchestrator.Supervisor derlenemedi mi?" />
+           Text="The supervisor output directory could not be resolved (GetTargetPath returned empty): did BuildOrchestrator.Supervisor fail to build?" />
     <ItemGroup>
       <_SupervisorFiles Include="$(_SupervisorOutDir)**\*.*" Exclude="$(_SupervisorOutDir)publish\**" />
     </ItemGroup>
@@ -82,7 +82,7 @@
     <!-- [D1 review · A1] FAIL-FAST: dosya kümesi boşsa build/publish SESSİZCE engine'siz bir paket üretirdi —
          D1'in kapattığı bug'ın bir seviye yukarısı. Boşsa net mesajla dur. -->
     <Error Condition="'@(_SupervisorFiles)' == ''"
-           Text="Supervisor cikti dosyasi bulunamadi: $(_SupervisorOutDir) bos. Engine'siz bir paket uretilmesin diye build durduruldu." />
+           Text="No supervisor output file was found: $(_SupervisorOutDir) is empty. The build was stopped so that no engine-less package is produced." />
   </Target>
 
   <!-- [D1 review · C3] Incremental: hedef, kaynak dosyalardan HERHANGİ biri damgadan yeniyse TÜMÜYLE koşar
@@ -124,7 +124,7 @@
        engine spawn'ı kırılır. Kaynak taraması (PublishLayoutTests) niyeti korur, bu target komut satırını kapatır. -->
   <Target Name="_RejectSingleFilePublish" BeforeTargets="PrepareForBuild;PrepareForPublish">
     <Error Condition="'$(PublishSingleFile)' == 'true'"
-           Text="PublishSingleFile desteklenmiyor: supervisor\ alt klasoru bundle'a giremez ve engine baslatilamaz. Klasor tabanli publish kullanin (v1 karari)." />
+           Text="PublishSingleFile is not supported: the supervisor\ subfolder cannot enter the bundle and the engine could not be started. Use folder-based publish (v1 decision)." />
   </Target>
 
   <ItemGroup>

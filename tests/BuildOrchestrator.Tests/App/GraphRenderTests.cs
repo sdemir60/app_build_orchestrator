@@ -45,28 +45,13 @@ public class GraphRenderTests
         new("OSYS.Data.Core", "OSYS.Web.Portal"),
     ];
 
+    // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.
     private static GraphView NewView(
         bool animationsEnabled, double width = 600, double height = 400, IMotionSettings? motion = null)
-    {
-        var view = new GraphView
-        {
-            MotionSettings = motion,
-            AnimationsEnabledProvider = () => motion?.AnimationsEnabled ?? animationsEnabled,
-        };
-        // pack:// / Application.Resources olmadan (headless host) token'lar çözülmez — Tokens/Motion sözlükleri
-        // dosyadan merge edilir (FontAssetTests/TokenBrushesTests ile AYNI TestAssets deseni). Böylece
-        // SetResourceReference ile bağlanan fırçalar ve Duration/KeySpline token'ları gerçekten çözülür.
-        // [T64 review · fix wave 1] Icons.xaml de merge edilir: düğüm ikonu ve dep-hata üçgeni artık kodda
-        // gömülü path DEĞİL, bu sözlükten çözülen geometrilerdir (CopyLogTests.NewHeaderWithIcons ile aynı desen).
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
-        view.Measure(new Size(width, height));
-        view.Arrange(new Rect(0, 0, width, height));
-        return view;
-    }
+        => GraphTestView.Sized(
+            new Size(width, height),
+            () => motion?.AnimationsEnabled ?? animationsEnabled,
+            motion);
 
     // ---------------------------------------------------------------- düğüm (26px, 4px radius KARE)
 
@@ -107,9 +92,9 @@ public class GraphRenderTests
         // (kök MainWindow Display'i DEĞİŞMEZ, T65).
         Assert.Equal(TextFormattingMode.Ideal, TextOptions.GetTextFormattingMode(label));
         // DS: etiket text-dim, seçiliyken text-primary (varsayılan siyah Foreground'u miras almaz).
-        Assert.Equal(view.TryFindResource("Brush.TextDim"), label.Foreground);
+        Assert.Same(view.FindResource("Brush.TextDim"), label.Foreground);
         view.SelectedNode = "OSYS.Server.Api";
-        Assert.Equal(view.TryFindResource("Brush.TextPrimary"), label.Foreground);
+        Assert.Same(view.FindResource("Brush.TextPrimary"), label.Foreground);
     }
 
     [StaFact]
@@ -174,12 +159,17 @@ public class GraphRenderTests
         Assert.Equal(Visibility.Visible, withBadge.Badge.Visibility);
         Assert.Equal(13.0, withBadge.Badge.Width);
         Assert.Equal(13.0, withBadge.Badge.Height);
+        // [A13/T3c · c11] README §2.3: "sağ üstünde 13px daire" — KONUM hiç okunmuyordu (sol alta kaysa süit
+        // yeşil kalırdı). Otorite: BuildApp.jsx:326 `top:-6, left:calc(50% + 7px)`; düğüm 26px → 13+7=20.
+        Assert.Equal(HorizontalAlignment.Left, withBadge.Badge.HorizontalAlignment);
+        Assert.Equal(VerticalAlignment.Top, withBadge.Badge.VerticalAlignment);
+        Assert.Equal(new Thickness(20, -6, 0, 0), withBadge.Badge.Margin);
         // 13px daire: zemin surface-base, 1px kırmızı border
-        Assert.Equal(view.TryFindResource("Brush.SurfaceBase"), withBadge.BadgeCircle.Fill);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailBorder"), withBadge.BadgeCircle.Stroke);
+        Assert.Same(view.FindResource("Brush.SurfaceBase"), withBadge.BadgeCircle.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailBorder"), withBadge.BadgeCircle.Stroke);
         Assert.Equal(1.0, withBadge.BadgeCircle.StrokeThickness);
         // İçinde DOLU kırmızı üçgen ▲ (stroke YOK — dolu)
-        Assert.Equal(view.TryFindResource("Brush.StatusFailText"), withBadge.BadgeTriangle.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailText"), withBadge.BadgeTriangle.Fill);
         Assert.Null(withBadge.BadgeTriangle.Stroke);
         Assert.False(withBadge.BadgeTriangle.Data.IsEmpty());
         // Rozet, kare kabının (nabız kabının KARDEŞİ) içindedir ve nabız kabında DEĞİLDİR.
@@ -204,7 +194,7 @@ public class GraphRenderTests
         var visual = view.NodeVisuals["OSYS.Web.Portal"];
         Assert.NotNull(visual.Badge);
         Assert.Equal(Visibility.Visible, visual.Badge.Visibility);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailText"), visual.BadgeTriangle!.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailText"), visual.BadgeTriangle!.Fill);
         var badge = visual.Badge;
 
         view.UpdateStatuses(Nodes());
@@ -229,8 +219,8 @@ public class GraphRenderTests
         Assert.NotNull(visual.BadgeTriangle);
         Assert.NotNull(visual.Icon.Data);
         Assert.NotNull(visual.BadgeTriangle.Data);
-        Assert.Same(view.TryFindResource(GraphView.PackageIconKey), visual.Icon.Data);
-        Assert.Same(view.TryFindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle.Data);
+        Assert.Same(view.FindResource(GraphView.PackageIconKey), visual.Icon.Data);
+        Assert.Same(view.FindResource(GraphView.WarningTriangleIconKey), visual.BadgeTriangle.Data);
     }
 
     [StaFact]
@@ -240,13 +230,13 @@ public class GraphRenderTests
         view.SetGraph(Nodes(baseStatus: GraphStatus.Failed, dataStatus: GraphStatus.Building), Edges());
 
         var failed = view.NodeVisuals["OSYS.Base"];
-        Assert.Equal(view.TryFindResource("Brush.StatusFail"), failed.Square.Stroke);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailSoft"), failed.Square.Fill);
-        Assert.Equal(view.TryFindResource("Brush.StatusFailText"), failed.Icon.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusFail"), failed.Square.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusFailSoft"), failed.Square.Fill);
+        Assert.Same(view.FindResource("Brush.StatusFailText"), failed.Icon.Stroke);
 
         // Base failed ⇒ Base→Data.Core hata dalıdır; hedefi building olduğu için AKAR ama kırmızı çizilir.
         var edge = view.EdgeVisuals.Single(e => e.Model.From == "OSYS.Base");
-        Assert.Equal(view.TryFindResource("Brush.StatusFailBorder"), edge.Path.Stroke);
+        Assert.Same(view.FindResource("Brush.StatusFailBorder"), edge.Path.Stroke);
         Assert.True(edge.Style!.IsFlowing);
     }
 
@@ -270,7 +260,9 @@ public class GraphRenderTests
 
         // CSS `both` fill paritesi (feasibility §3.4): gecikme boyunca opaklık 0 tutulur — flash YOK.
         Assert.All(view.NodeVisuals.Values, v => Assert.Equal(0.0, v.Cell.Opacity));
-        Assert.NotNull(view.NodeVisuals["OSYS.Base"].Cell.RenderTransform); // 5px yukarıdan gelir
+        // [A13/T3c · c10] BuildApp.jsx:27 `translateY(-5px)` — yalnız NotNull YETMEZDİ (50px olsa da geçerdi).
+        var rise = Assert.IsType<TranslateTransform>(view.NodeVisuals["OSYS.Base"].Cell.RenderTransform);
+        Assert.Equal(-5.0, rise.Y);
     }
 
     [StaFact]
@@ -679,6 +671,37 @@ public class GraphRenderTests
         // TEK aileyi (AppFonts.Mono) kullanır — pack URI hiçbir yerde kopyalanmaz.
         Assert.Same(BuildOrchestrator.App.Controls.AppFonts.Mono, view.HeaderCountsFontFamily);
         Assert.Equal("./#Geist Mono", BuildOrchestrator.App.Controls.AppFonts.Mono.Source);
+    }
+
+    /// <summary>[A13/T3c · c3 → fix-1 · C3] README §2.3: "Panel başlığı (28px, surface, alt border-subtle)" —
+    /// GraphView bu başlığı <see cref="Controls.PanelHeader"/> KULLANMADAN kendi Border'ıyla çizer
+    /// (GraphView.xaml).
+    ///
+    /// <para>T3c'nin iddiası "bağ" değil <b>iki sayının uyuşması</b>ydı: üretim <c>Height="28"</c> çıplak
+    /// literalini taşıyordu, yani <c>Size.PanelHeaderHeight</c> token'ı 50'ye kaysa başlık 28'de kalır ve
+    /// zemin/çizgi assert'leri yeşil sürerdi. Üretim düzeltildi (<c>DynamicResource</c>) ve iddia
+    /// <b>canlı bağ</b> seviyesine çıkarıldı: token'ın DEĞERİ değişince başlık GERÇEKTEN onu izler.</para>
+    ///
+    /// <para><b>Not (A13.2 kural 6):</b> mutasyon paylaşılan sözlüğe DOKUNMAZ — override, atılacak görünümün
+    /// KENDİ <see cref="FrameworkElement.Resources"/>'ına konur ve testin sonunda geri alınır.</para></summary>
+    [StaFact]
+    public void The_panel_header_is_28px_over_surface_with_a_border_subtle_bottom_line()
+    {
+        var view = NewView(false);
+        view.SetGraph(Nodes(), Edges());
+
+        var header = Assert.IsType<Border>(((DockPanel)view.Content).Children[0]);
+        Assert.Equal((double)view.FindResource("Size.PanelHeaderHeight"), header.Height);
+        Assert.Equal(28.0, header.Height); // otorite literali (README §2.3) — token'ın KENDİSİ sürüklenirse de yakalar
+        Assert.Same(view.FindResource("Brush.Surface"), header.Background);
+        Assert.Same(view.FindResource("Brush.BorderSubtle"), header.BorderBrush);
+        Assert.Equal(new Thickness(0, 0, 0, 1), header.BorderThickness);
+
+        // CANLI BAĞ: token'ı görünümün kendi kapsamında ez → başlık izler. Çıplak literalde bu KIRMIZI olur.
+        view.Resources["Size.PanelHeaderHeight"] = 50.0;
+        Assert.Equal(50.0, header.Height);
+        view.Resources.Remove("Size.PanelHeaderHeight");
+        Assert.Equal(28.0, header.Height); // override kalktı — üretim değeri geri geldi (mutasyon geri alındı)
     }
 
     [StaFact]

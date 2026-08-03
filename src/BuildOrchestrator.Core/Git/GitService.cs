@@ -74,7 +74,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     private readonly IProcessRunner _runner = runner ?? throw new ArgumentNullException(nameof(runner));
     private readonly string _repoRoot = repoRoot ?? throw new ArgumentNullException(nameof(repoRoot));
     private readonly string _gitExecutable = string.IsNullOrWhiteSpace(gitExecutable)
-        ? throw new ArgumentException("gitExecutable boş olamaz.", nameof(gitExecutable))
+        ? throw new ArgumentException(GitMessages.MustNotBeEmpty(nameof(gitExecutable)), nameof(gitExecutable))
         : gitExecutable;
 
     /// <summary>HEAD commit SHA'sı. Normal repo → 40-hex SHA. No-commits (unborn HEAD) → <c>Ok(null)</c> (hata DEĞİL, edge).</summary>
@@ -89,7 +89,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             string sha = r.StandardOutput.Trim();
             return IsFortyHexSha(sha)
                 ? GitResult<string?>.Ok(sha)
-                : GitResult<string?>.Fail($"beklenmeyen 'git rev-parse HEAD' çıktısı: '{sha}'");
+                : GitResult<string?>.Fail($"unexpected 'git rev-parse HEAD' output: '{sha}'");
         }
 
         // rev-parse --verify -q HEAD, unborn HEAD (henüz commit yok) durumunda ve YALNIZ bu durumda
@@ -204,12 +204,12 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             // fetch başarılı ama remote-tracking ref beklenen şekilde okunamadı — beklenmeyen durum,
             // güvenli tarafta kalınarak degrade edilir (throw yok).
             return await DegradeToLocalHeadAsync(
-                $"git fetch başarılı ama remote-tracking ref okunamadı: {tracking.Error ?? "beklenmeyen boş sonuç"}", ct);
+                $"git fetch succeeded but the remote-tracking ref could not be read: {tracking.Error ?? "unexpected empty result"}", ct);
         }
 
         string reason = outcome.Success ? GitCommandExecutor.DescribeGitFailure(outcome.Value!) : outcome.Error!;
         return await DegradeToLocalHeadAsync(
-            $"git fetch başarısız (offline/unreachable/invalid remote) — yerel HEAD'e düşülüyor: {reason}", ct);
+            $"git fetch failed (offline/unreachable/invalid remote) — falling back to the local HEAD: {reason}", ct);
     }
 
     /// <summary>
@@ -228,7 +228,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             string sha = r.StandardOutput.Trim();
             return IsFortyHexSha(sha)
                 ? GitResult<string?>.Ok(sha)
-                : GitResult<string?>.Fail($"beklenmeyen 'git rev-parse refs/remotes/origin/{branch}' çıktısı: '{sha}'");
+                : GitResult<string?>.Fail($"unexpected 'git rev-parse refs/remotes/origin/{branch}' output: '{sha}'");
         }
 
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // ref yok — henüz fetch edilmemiş
@@ -256,7 +256,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
             string sha = r.StandardOutput.Trim();
             return IsFortyHexSha(sha)
                 ? GitResult<string?>.Ok(sha)
-                : GitResult<string?>.Fail($"beklenmeyen 'git rev-parse refs/heads/{branch}' çıktısı: '{sha}'");
+                : GitResult<string?>.Fail($"unexpected 'git rev-parse refs/heads/{branch}' output: '{sha}'");
         }
 
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // yerel ref yok — branch yalnız remote'ta olabilir
@@ -330,7 +330,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         if (!headResult.Success || !branchResult.Success || !dirtyResult.Success || !shallowResult.Success)
         {
             string err = headResult.Error ?? branchResult.Error ?? dirtyResult.Error ?? shallowResult.Error
-                ?? "bilinmeyen git hatası";
+                ?? "unknown git error";
             return new GitRepoState
             {
                 HeadCommit = headResult.Success ? headResult.Value : null,
@@ -338,7 +338,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
                 TreatAsDirty = true,
                 HasError = true,
                 Error = err,
-                Warnings = [$"git sorgusu başarısız — treat-as-dirty: {err}"],
+                Warnings = [$"git query failed — treat-as-dirty: {err}"],
             };
         }
 
@@ -348,8 +348,8 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         var dirtyPaths = dirtyResult.Value!;
 
         var warnings = new List<string>();
-        if (hasNoCommits) warnings.Add("repo henüz commit içermiyor (unborn HEAD) — treat-as-dirty.");
-        if (isDetached) warnings.Add("HEAD detached — branch belirlenemedi.");
+        if (hasNoCommits) warnings.Add("the repository has no commits yet (unborn HEAD) — treat-as-dirty.");
+        if (isDetached) warnings.Add("HEAD detached — the branch could not be determined.");
         if (isShallow) warnings.Add("repo shallow clone — treat-as-dirty.");
 
         return new GitRepoState

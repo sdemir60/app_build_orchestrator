@@ -91,7 +91,7 @@ public sealed class RetryingMsBuildInvoker(
                 // motorun iç kararıdır, kullanıcıya görünen yeni bir cümle üretmez (o pencere zaten run-başı cap
                 // satırıyla ve konsol notlarıyla anlatılan davranışın parçasıdır).
                 _onRetry?.Invoke(string.Format(CultureInfo.InvariantCulture,
-                    "Copy contention algılandı ({0}), deneme {1}/{2} başarısız — {3}ms sonra yeniden denenecek.",
+                    "Copy contention detected ({0}), attempt {1}/{2} failed — retrying in {3}ms.",
                     req.ProjectId, attempt, totalAttempts, wait.TotalMilliseconds));
 
                 await _delay(wait, ct); // ct mid-backoff iptal edilirse delay OperationCanceledException fırlatır — döngü burada aynen yukarı fırlatır.

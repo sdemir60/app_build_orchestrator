@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
+             xmlns:app="clr-namespace:BuildOrchestrator.App"
              Visibility="Collapsed" Focusable="True">
   <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 620px Ds.Dialog
        (Brush.SurfaceRaised — README §2.9'daki surface-overlay sapması burada KAYITLI, kod kazanır). Diyaloğun
@@ -135,17 +136,22 @@
                           </Canvas>
                         </Viewbox>
                       </Button>
-                      <!-- Ad inputu (170px, sabit) -->
+                      <!-- Ad inputu (170px, sabit). [A13/T5] Kolon başlıkları (LAYER NAME / PATTERN) input'a
+                           BAĞLI DEĞİLDİR (ayrı bir Grid'de, satır başına tekrarlamaz) ve watermark bir
+                           ipucudur — ekran okuyucunun okuyacağı ad AÇIKÇA verilir. -->
                       <TextBox DockPanel.Dock="Left" Width="170" Margin="6,0,6,0" VerticalAlignment="Center"
                                Style="{DynamicResource Ds.Input}"
                                controls:DsChrome.Watermark="Layer name"
+                               AutomationProperties.Name="{x:Static app:AccessibilityNames.LayerName}"
                                Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
-                      <!-- Regex inputu (mono, dolar; geçersizse kırmızı) -->
+                      <!-- Regex inputu (mono, dolar; geçersizse kırmızı). Watermark bir ÖRNEK desendir
+                           (`^OSYS\.Domain\.`), etiket değil — ad ayrıca verilir. -->
                       <TextBox Margin="0,0,6,0" VerticalAlignment="Center"
                                Style="{DynamicResource Ds.Input}"
                                FontFamily="{x:Static controls:AppFonts.Mono}"
                                controls:DsChrome.Watermark="^OSYS\.Domain\."
                                controls:DsChrome.IsInvalid="{Binding RegexInvalid}"
+                               AutomationProperties.Name="{x:Static app:AccessibilityNames.LayerPattern}"
                                Text="{Binding Regex, UpdateSourceTrigger=PropertyChanged}" />
                     </DockPanel>
                   </Border>
@@ -153,8 +159,10 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <!-- Add layer (ghost) -->
+            <!-- Add layer (ghost). [A13/T5] Etiket Content'in İÇİNDEKİ TextBlock'tur; WPF'in buton peer'ı adı
+                 yalnız string Content'ten türetir (ölçüldü: burada ad boş kalıyordu) → ad AÇIKÇA verilir. -->
             <Button HorizontalAlignment="Left" Margin="0,4,0,0" Click="OnAddLayer"
+                    AutomationProperties.Name="{x:Static app:AccessibilityNames.AddLayer}"
                     Style="{DynamicResource Ds.Button.Ghost.Sm}">
               <StackPanel Orientation="Horizontal">
                 <Viewbox Width="13" Height="13" Margin="0,0,6,0">

@@ -1,11 +1,15 @@
 using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -68,6 +72,144 @@ public class AccessibilityTests
         Assert.Equal(AccessibilityNames.ColumnSplitter, AutomationProperties.GetName(shell.ColumnSplitter));
         Assert.Equal(AccessibilityNames.GraphListSplitter, AutomationProperties.GetName(shell.LeftSplitter));
         Assert.Equal(AccessibilityNames.ConsoleStreamSplitter, AutomationProperties.GetName(shell.RightSplitter));
+    }
+
+    // ------------------------------------------------------------------ [A13/T5] adı olmayan yüzeyler
+
+    /// <summary>
+    /// [A13/T5 · n1] Graf düğümü ekran okuyucuya <b>görünür ve anlamlı</b> olmalı: kare/ikon/rozet görselleri
+    /// hiçbir şey söylemez, sabit bir "graph node" metni de söylemezdi — ad DÜĞÜM BAŞINA (tam proje adı + statü).
+    ///
+    /// <para><b>İki ayrı iddia:</b> (a) gövde UIA ağacında bir ÖĞE'dir — düz bir <c>StackPanel</c>'in peer'ı
+    /// yoktur ve ona verilen ad ekran okuyucuya hiç ulaşmazdı (bkz. <see cref="GraphNodeBody"/>); (b) ad VERİ
+    /// DEĞİŞİNCE tazelenir. Kurulum üretim sırasıyladır (kabuk ÖNCE realize, veri SONRA) ve statü, üretimin kendi
+    /// yolundan itilir: <c>ProjectStartedEvent</c> → <c>Counters</c> → <c>PushGraphStatuses</c> →
+    /// <c>UpdateStatuses</c>.</para>
+    /// </summary>
+    [StaFact]
+    public void A_graph_node_is_a_named_automation_element_and_its_name_follows_the_data()
+    {
+        using var temp = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", null));
+        var body = window.Shell.GraphHost.NodeVisuals["OSYS.Base"].Body;
+
+        var peer = UIElementAutomationPeer.CreatePeerForElement(body);
+        Assert.True(peer is not null, "Düğüm gövdesinin automation peer'ı YOK — UIA ağacında hiç görünmüyor.");
+        Assert.Equal(AutomationControlType.Button, peer!.GetAutomationControlType()); // tıklanır → buton rolü
+        Assert.Equal(AccessibilityNames.GraphNode("OSYS.Base", "Discovered"), peer.GetName());
+
+        // Veri akınca (bu proje derlenmeye başlayınca) ad da tazelenir — bayat ad YASAK.
+        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("OSYS.Base"), "OSYS.Base"));
+        Assert.Equal(AccessibilityNames.GraphNode("OSYS.Base", "Building"), peer.GetName());
+        // Komşu düğüm etkilenmez (ad düğüm başına, tek bir ortak metin DEĞİL).
+        Assert.Equal(AccessibilityNames.GraphNode("OSYS.Domain", "Discovered"),
+            AutomationProperties.GetName(window.Shell.GraphHost.NodeVisuals["OSYS.Domain"].Body));
+    }
+
+    /// <summary>
+    /// [A13/T5 fix-1 · bulgu 1] Graf düğümünün UIA <b>rolü ile YETENEĞİ örtüşmeli</b>: peer
+    /// <see cref="AutomationControlType.Button"/> diyorsa <see cref="IInvokeProvider"/> GERÇEKTEN olmalı ve
+    /// invoke, farenin gittiği ÜRETİM YOLUNUN AYNISINA düşmeli (aynı toggle semantiği: ikinci invoke seçimi
+    /// kaldırır — <c>GraphClickTests</c>'in fare için pinlediği davranış).
+    ///
+    /// <para><c>Invoke</c>, WPF'in <c>ButtonAutomationPeer</c> deseniyle dispatcher'a <c>Input</c> önceliğiyle
+    /// post edilir; bu yüzden pompalanır. <see cref="DispatcherPump.PumpUntil"/> timeout'ta HATA VERMEZ, sonuç
+    /// bu yüzden ayrıca assert edilir.</para>
+    /// </summary>
+    [StaFact]
+    public void Invoking_a_graph_node_from_ui_automation_selects_it_through_the_production_path()
+    {
+        using var temp = new TempDir();
+        var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", null));
+        var graph = window.Shell.GraphHost;
+        var peer = UIElementAutomationPeer.CreatePeerForElement(graph.NodeVisuals["OSYS.Base"].Body)!;
+
+        var invoke = peer.GetPattern(PatternInterface.Invoke) as IInvokeProvider;
+        Assert.True(invoke is not null, "Rol Button ama Invoke pattern'i YOK — vaat edilen yetenek gerçek değil.");
+        Assert.Null(graph.SelectedNode); // ön-koşul
+
+        invoke!.Invoke();
+        DispatcherPump.PumpUntil(() => graph.SelectedNode is not null, TimeSpan.FromSeconds(2));
+        Assert.Equal("OSYS.Base", graph.SelectedNode);
+
+        invoke.Invoke(); // aynı düğüm → fare ile AYNI toggle (seçim kalkar)
+        DispatcherPump.PumpUntil(() => graph.SelectedNode is null, TimeSpan.FromSeconds(2));
+        Assert.Null(graph.SelectedNode);
+    }
+
+    /// <summary>[A13/T5 · n2] Konsol başlığındaki ikon-yalnız copy butonu adlanır; ad ile tooltip AYNI sabitten
+    /// gelir. Kopyalama geri bildirimi tooltip'i "Copied" yapar ama <b>adı DEĞİŞTİRMEZ</b> — ad kontrolün
+    /// işlevini tarif eder, anlık durumunu değil.</summary>
+    [StaFact]
+    public void The_copy_log_button_is_named_and_keeps_that_name_while_the_tooltip_flips_to_copied()
+    {
+        var header = new ConsoleHeader { LogTextProvider = () => "log", ClipboardWriter = _ => true };
+        Assert.Equal(AccessibilityNames.CopyLog, AutomationProperties.GetName(header.CopyLogButton));
+        Assert.Equal(AccessibilityNames.CopyLog, header.CopyLogButton.ToolTip);
+
+        header.CopyLog(); // gerçek panoya DOKUNMAZ (writer enjekte)
+
+        Assert.Equal("Copied", header.CopyLogButton.ToolTip);
+        Assert.Equal(AccessibilityNames.CopyLog, AutomationProperties.GetName(header.CopyLogButton));
+    }
+
+    /// <summary>[A13/T5 · n3] `⌄ latest` pill'i üç panelde ORTAK bir kontroldür; "latest" etiketi tek başına
+    /// ekran okuyucuya hiçbir şey söylemez → adı HANGİ akışın sonuna gidildiğini bilen host verir ve üç ad
+    /// FARKLIdır. Ad, kabuğa değil TIKLANAN butona konur (UIA'da buton öğesi odur).</summary>
+    [StaFact]
+    public void Each_latest_pill_names_the_stream_it_jumps_to()
+    {
+        using var temp = new TempDir();
+        var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null));
+        var shell = window.Shell;
+
+        string projects = AutomationProperties.GetName(shell.PART_ProjectsPill.PillButton);
+        string console = AutomationProperties.GetName(shell.ConsoleViewControl.Pill.PillButton);
+        string events = AutomationProperties.GetName(shell.EventStreamControl.Pill.PillButton);
+
+        Assert.Equal(AccessibilityNames.LatestProjects, projects);
+        Assert.Equal(AccessibilityNames.LatestConsole, console);
+        Assert.Equal(AccessibilityNames.LatestEvents, events);
+        Assert.Equal(3, new[] { projects, console, events }.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>[A13/T5 · n4] Settings katman kartının iki input'u adlanır. Kolon başlıkları (LAYER NAME /
+    /// PATTERN) input'a BAĞLI değildir ve watermark bir ipucudur (desen kutusununki bir ÖRNEK regex'tir) —
+    /// bu yüzden ad açıkça verilir. Hangi adın hangi kutuya gittiği watermark üzerinden pinlenir.</summary>
+    [StaFact]
+    public void The_layer_editor_inputs_are_named_for_screen_readers()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
+            run => run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
+        using var _scope = scope;
+        dialog.UpdateLayout(); // katman satırı GERÇEKTEN kurulsun (ItemsControl kabı)
+
+        var inputs = DsResources.RealizedObjects(dialog).OfType<TextBox>().ToList();
+        Assert.Equal(2, inputs.Count); // ön-koşul: satır kuruldu (yoksa aşağıdaki iddialar vakum olurdu)
+        var byWatermark = inputs.ToDictionary(t => DsChrome.GetWatermark(t)!, AutomationProperties.GetName,
+            StringComparer.Ordinal);
+        Assert.Equal(AccessibilityNames.LayerName, byWatermark["Layer name"]);
+        Assert.Equal(AccessibilityNames.LayerPattern, byWatermark[@"^OSYS\.Domain\."]);
+    }
+
+    /// <summary>[A13/T5 · n5] Worktree hedef listesindeki çöp kutusu ikon-yalnızdır ve satır başına BİR tane
+    /// vardır → ad HANGİ worktree'nin silineceğini söyler (tooltip kısa kalır, ikisi de tek kaynaktan).
+    /// Hedef satırları yalnız switch AÇIKKEN kurulur — üretim yolu izlenir.</summary>
+    [StaFact]
+    public void The_worktree_delete_button_names_the_worktree_it_removes()
+    {
+        var vm = NewVm();
+        vm.Worktrees.Add(new Worktree("main-1", @"D:\wt\main-1", "main", false, null));
+        var host = DsResources.NewHost();
+        var popover = new WorktreePopover { DataContext = vm };
+        var window = DsResources.Realize(host, popover);
+
+        vm.UseWorktree = true; // → Refresh → BuildTargetRows (auto satırı + "main-1" satırı)
+
+        var trash = Assert.Single(DsResources.RealizedObjects(popover.PART_TargetRows).OfType<Button>());
+        Assert.Equal(AccessibilityNames.DeleteWorktreeNamed("main-1"), AutomationProperties.GetName(trash));
+        Assert.Equal(AccessibilityNames.DeleteWorktree, trash.ToolTip);
+        GC.KeepAlive(window);
     }
 
     // ------------------------------------------------------------------ live region
@@ -195,6 +337,148 @@ public class AccessibilityTests
         var host = DsResources.NewHost();
         var window = DsResources.Realize(host, box);
         return (shell, box, window);
+    }
+
+    // ------------------------------------------------------------------ [A13/T5] KAPSAM TESTİ
+
+    /// <summary>
+    /// <b>"Etkileşimli yüzey" TANIMI</b> — bu testin sözleşmesi. Realize edilmiş ağaçtaki, UIA'ya <b>kendi öğesi
+    /// olarak</b> görünen (automation peer'ı olan) ve kullanıcı eylemi alan öğeler:
+    /// <list type="bullet">
+    ///   <item><see cref="ButtonBase"/> — Button / ToggleButton / CheckBox / RadioButton / RepeatButton (tıklanır)</item>
+    ///   <item><see cref="TextBox"/> — yazılır</item>
+    ///   <item><see cref="Thumb"/> — sürüklenir (<c>DsSplitter</c> bir <c>GridSplitter</c>, o da Thumb'dır)</item>
+    ///   <item><see cref="GraphNodeBody"/> — graf düğümünün tıklanabilir gövdesi</item>
+    ///   <item><see cref="ProjectRow"/> — proje kartı: <c>Focusable</c> + <c>IsTabStop</c> ve tıklanır; peer'ı
+    ///     <c>UserControlAutomationPeer</c>'dır (ÖLÇÜLDÜ — adı ekran okuyucuya gerçekten ulaşır)</item>
+    /// </list>
+    /// <b>Bilinçli olarak KAPSAM DIŞI:</b> peer'ı OLMAYAN tıklanabilir <c>Border</c>/<c>Panel</c> satırlar (branch
+    /// listesi, build menüsü, worktree hedef satırı, event stream satırı, VS chooser satırı). Onlar UIA ağacında
+    /// zaten kendi öğeleri olarak görünmez — ad vermek TEK BAŞINA yetmez (graf düğümünde ölçülen durumun aynısı,
+    /// bkz. <see cref="GraphNodeBody"/>) ve düzeltmeleri T5 kapsamı dışıdır.
+    /// </summary>
+    private static bool IsInteractiveSurface(DependencyObject node) =>
+        node is ButtonBase or TextBox or Thumb or GraphNodeBody or ProjectRow;
+
+    /// <summary>
+    /// <b>MEŞRU İSTİSNALAR</b> — her biri TEK SATIR gerekçeyle; sessiz istisna YASAK. Liste bayatlamaz: kapsam
+    /// testi her girdinin gerçekten bir yüzeye denk geldiğini ayrıca doğrular.
+    /// </summary>
+    private static readonly (Func<DependencyObject, bool> Match, string Reason)[] NamingExceptions =
+    [
+        (el => DsResources.SelfAndAncestors(el).OfType<ScrollBar>().Any(),
+            "WPF ScrollBar şablonunun parçaları (ok RepeatButton'ları + Track Thumb'ı): adları framework'ün kendi " +
+            "scroll pattern'inden gelir, uygulamanın verdiği bir metin değildir."),
+        (el => el is ButtonBase { Name: "PART_Primary", TemplatedParent: SplitButton },
+            "Build split-button'ın SOL yarımı: görünür etiketi ('Build'/'Continue') ActionBar'da dinamik kurulur, " +
+            "UIA adı SplitButton'a yeni bir DP ister → T5 kapsamı dışı BORÇ (task raporunda Concerns)."),
+    ];
+
+    /// <summary>Hata mesajında yüzeyi bulunabilir kılar: tip + x:Name + kısa ata zinciri.</summary>
+    private static string Identify(DependencyObject node) =>
+        $"{node.GetType().Name}{(node is FrameworkElement { Name.Length: > 0 } fe ? "#" + fe.Name : "")}" +
+        $" [{string.Join(" < ", DsResources.SelfAndAncestors(node).Skip(1).Take(4).Select(a => a.GetType().Name))}]";
+
+    /// <summary>Taranan yüzey sayısının alt sınırı — bir tarama testinin en büyük riski sessizce HİÇBİR ŞEY
+    /// taramamaktır (o hâlde sonsuza dek yeşil kalır). Ölçülen sayı bunun epey üstündedir; sınır, ağacın
+    /// çökmesini (ör. fixture'ın artık realize etmemesi) yakalayacak kadar yüksektir.</summary>
+    private const int MinimumScannedSurfaces = 40;
+
+    /// <summary>
+    /// [A13/T5] <b>KAPSAM TESTİ:</b> uygulamanın etkileşimli yüzeylerini realize edilmiş GERÇEK ağaçlar üzerinde
+    /// tarar ve <b>adsız olanı RED eder</b>. Tek tek adları sınayan testlerden farkı: SONRADAN eklenen adsız bir
+    /// yüzeyi de yakalar.
+    ///
+    /// <para><b>Ad = ekran okuyucunun GERÇEKTEN duyacağı ad:</b> ham <c>AutomationProperties.Name</c> değil,
+    /// peer'ın <c>GetName()</c>'i okunur — böylece string <c>Content</c>'ten ("Cancel"/"Save"/"← Back") gelen
+    /// meşru adlar yanlış pozitif üretmez. Peer'ın KENDİSİ de zorunludur: peer'ı olmayan bir öğe UIA ağacında
+    /// hiç yoktur, ona verilen ad ekran okuyucuya ulaşmaz.</para>
+    ///
+    /// <para><b>Taranan üç kök (hepsi üretim yoluyla realize):</b>
+    /// <list type="number">
+    ///   <item><b>Kabuk</b> (<see cref="MainWindowHost"/>): graf düğümleri, proje kartları, ayraçlar, konsol
+    ///     başlığı, üç pill, title bar, Settings diyaloğu. <b>ActionBar alt-ağacı HARİÇ</b> — ActionBar adlarını
+    ///     <c>Loaded</c>'da kurar, bu fixture ise pencereyi ASLA <c>Show</c> etmez (motor doğmasın diye); o yüzden
+    ///     ActionBar aşağıda KENDİ kökünde, gerçekten realize edilerek taranır.</item>
+    ///   <item><b>ActionBar</b>: sayaç chip'leri, sync/stop, split-button, Debug|Release, branch/worktree
+    ///     popover'ları (worktree switch AÇIK → hedef satırı + çöp kutusu da dahil).</item>
+    ///   <item><b>Settings diyaloğu</b> (bir katmanla): katman satırının ad/desen input'ları + footer.</item>
+    /// </list></para>
+    /// </summary>
+    [StaFact]
+    public void Every_interactive_surface_in_the_app_has_a_screen_reader_name()
+    {
+        using var temp = new TempDir();
+        var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", "Core"));
+        // [fix-1 · bulgu 2] Veri SONRASI bir layout turu: liste kaplarını (ProjectRow) ItemsControl ancak measure
+        // sırasında üretir — üretimde bunu bir sonraki render turu yapar. Bu satır olmadan kabukta HİÇ proje kartı
+        // realize olmaz ve kartlar taramadan sessizce düşerdi (ölçüldü: 0 → 1 kart).
+        ((FrameworkElement)window.Content).UpdateLayout();
+        var shellObjects = DsResources.RealizedObjects((FrameworkElement)window.Content);
+        var actionBarSubtree = DsResources.RealizedObjects(shellObjects.OfType<ActionBar>().Single());
+
+        var vm = NewVm();
+        vm.Worktrees.Add(new Worktree("main-1", @"D:\wt\main-1", "main", false, null));
+        var barHost = DsResources.NewHost();
+        var bar = new ActionBar { DataContext = vm };
+        var barWindow = DsResources.Realize(barHost, bar);
+        vm.UseWorktree = true; // → worktree popover'ında hedef satırı + çöp kutusu GERÇEKTEN kurulur
+
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
+            run => run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
+        using var _scope = scope;
+        dialog.UpdateLayout();
+
+        var surfaces = shellObjects.Where(o => !actionBarSubtree.Contains(o))
+            .Concat(DsResources.RealizedObjects(bar))
+            .Concat(DsResources.RealizedObjects(dialog))
+            .Where(IsInteractiveSurface)
+            .ToList();
+
+        var offenders = new List<string>();
+        var names = new List<string>();
+        int[] exceptionHits = new int[NamingExceptions.Length];
+        int scanned = 0;
+
+        foreach (var surface in surfaces)
+        {
+            int exception = Array.FindIndex(NamingExceptions, e => e.Match(surface));
+            if (exception >= 0) { exceptionHits[exception]++; continue; }
+
+            scanned++;
+            var peer = UIElementAutomationPeer.CreatePeerForElement((UIElement)surface);
+            if (peer is null) { offenders.Add(Identify(surface) + " → UIA öğesi DEĞİL (peer yok)"); continue; }
+            string name = peer.GetName();
+            if (string.IsNullOrWhiteSpace(name)) offenders.Add(Identify(surface) + " → ADSIZ");
+            else names.Add(name);
+        }
+
+        Assert.True(offenders.Count == 0,
+            $"Ekran okuyucuya adsız {offenders.Count} etkileşimli yüzey:{Environment.NewLine}" +
+            string.Join(Environment.NewLine, offenders));
+
+        // Tarama VAKUM DEĞİL: hem toplam sayı hem de T5'in beş yüzeyinin her biri gerçekten tarandı — aksi halde
+        // "hepsi adlı" iddiası boş/eksik bir kümede de doğru çıkardı.
+        Assert.True(scanned >= MinimumScannedSurfaces, $"Yalnız {scanned} yüzey tarandı — ağaç kurulmamış olabilir.");
+        foreach (string expected in new[]
+                 {
+                     AccessibilityNames.GraphNode("OSYS.Base", "Discovered"), // n1
+                     AccessibilityNames.CopyLog,                              // n2
+                     AccessibilityNames.LatestProjects,                       // n3
+                     AccessibilityNames.LatestConsole,
+                     AccessibilityNames.LatestEvents,
+                     AccessibilityNames.LayerName,                            // n4
+                     AccessibilityNames.LayerPattern,
+                     AccessibilityNames.DeleteWorktreeNamed("main-1"),        // n5
+                     "OSYS.Base",                                             // proje kartı (BÖLÜM 2 — bozulmadı)
+                 })
+            Assert.Contains(expected, names);
+
+        // İstisna listesi bayatlamaz: her girdi gerçekten taranan bir yüzeye denk gelmeli.
+        for (int i = 0; i < NamingExceptions.Length; i++)
+            Assert.True(exceptionHits[i] > 0, $"Karşılığı kalmamış istisna [{i}]: {NamingExceptions[i].Reason}");
+
+        GC.KeepAlive(barWindow);
     }
 
     // ------------------------------------------------------------------ isim sözlüğü İngilizce

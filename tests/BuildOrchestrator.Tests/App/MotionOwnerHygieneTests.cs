@@ -1,6 +1,9 @@
-﻿using System.Windows;
+﻿using System.IO;
+using System.Text.RegularExpressions;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
@@ -35,6 +38,66 @@ public class MotionOwnerHygieneTests
         Assert.Equal(TimeSpan.FromMilliseconds(900), spin.Duration.TimeSpan);
         Assert.Equal(RepeatBehavior.Forever, spin.RepeatBehavior);
         Assert.Equal(30, Timeline.GetDesiredFrameRate(spin)); // dekoratif sonsuz → 30fps tavanı (feasibility §3.4)
+    }
+
+    /// <summary>
+    /// [A13/B3 · k3] <b>Daktilo imleç HOLD'unun TEK tanımı vardır.</b> 420 önce üç sahipte ayrı ayrı yazılıydı
+    /// (<c>ConsoleView</c> · <c>EventStreamView</c> · <c>EventStreamRow</c>) ve yalnız BİRİ pinliydi
+    /// (<c>ConsoleMotionPathTests</c>) — kalan iki kopya sessizce sürüklenebilirdi.
+    ///
+    /// <para>İki iddia: (1) <b>değer</b> otorite literaline eşit (<c>BuildApp.jsx:91</c>
+    /// <c>setTimeout(onDone, 420)</c>; beklenen değer ÜRETİMDEN OKUNMAZ — A13/T4'ün <c>PopIn.DurationMs</c>
+    /// deseni), (2) <b>tanım</b> kaynak ağacında TEK — sahipler yalnız derleme-zamanı alias tutar. (2) olmadan
+    /// biri sabiti sahibine geri INLINE edebilir ve (1) yine yeşil kalırdı.</para>
+    /// </summary>
+    [Fact]
+    public void The_typewriter_cursor_hold_has_exactly_one_definition_that_every_owner_aliases()
+    {
+        Assert.Equal(420.0, TypewriterScheduler.CursorHoldMs); // otorite literali (üretimden OKUNMAZ)
+
+        // Üç sahibin üçü de AYNI kaynağı gösterir.
+        Assert.Equal(TypewriterScheduler.CursorHoldMs, ConsoleView.CursorHoldMs);
+        Assert.Equal(TypewriterScheduler.CursorHoldMs, EventStreamView.CursorHoldMs);
+        Assert.Equal(TypewriterScheduler.CursorHoldMs, EventStreamRow.CursorHoldMs);
+
+        // ...ve değeri YAZAN tek yer TypewriterScheduler'dır (geri-inline'a kapalı).
+        var definitions = SourceGuard.ScanApp("*.cs",
+            new Regex(@"CursorHoldMs\s*=\s*[0-9]", RegexOptions.Compiled), skipCommentLines: true);
+        Assert.Single(definitions);
+        Assert.StartsWith(Path.Combine("Console", "TypewriterScheduler.cs"), definitions[0], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// [A13/final · lensB Ö1] Hold'un <b>DEĞERİ</b> yukarıda pinliydi ama <b>ÜRETİMDE TÜKETİLDİĞİ</b> hiçbir
+    /// testle pinli değildi: lens B üç tüketim noktasının ÜÇÜNÜ BİRDEN sildi ve 1649 testlik süit tamamen yeşil
+    /// kaldı (M5 + M5b). Bu test o boşluğun KAYNAK yarısını kapatır — üç sahibin üçü de hold'u zamanlayıcısının
+    /// süresine EKLEMEK zorundadır; biri silinirse sayı düşer ve buradan kırmızı gelir.
+    ///
+    /// <para><b>Neden davranışsal değil (ÖLÇÜLDÜ):</b> davranışsal ayrım yalnız <c>ConsoleView</c> için
+    /// yazılabilir — orada hold, imleç fade'inin BAŞLAMA anını geciktirir, yani gözlenebilir bir etkisi vardır
+    /// (<see cref="ConsoleMotionPathTests.The_active_line_cursor_holds_steady_for_420ms_before_it_starts_to_fade"/>).
+    /// <c>EventStreamView</c>'ın iki tüketimi ise <b>render yüzeyinden AYIRT EDİLEMEZ</b> (bu, "etkisi yok"tan
+    /// daha dar bir iddiadır — A13/final lens B düzeltmesi): <c>TypewriterScheduler.RevealedAt</c> zaten
+    /// <c>Duration</c>'da tam uzunluğa doyar, dolayısıyla metin, imleç ve satır durumu iki hâlde de BİREBİR
+    /// aynıdır. Terim yine de ölü DEĞİLDİR — hold, <c>StopTypewriter()</c>'ın <c>_scheduler = null</c> atamasını
+    /// geciktirir ve bunu gerçek bir üretim dalı okur — ama kullanıcıya giden sonuç değişmediği için o iki
+    /// noktanın tek mümkün pini kaynak düzeyindedir; sınırı gizlemek yerine burada AÇIKÇA yazılır.</para>
+    /// </summary>
+    [Fact]
+    public void Every_typewriter_owner_adds_the_cursor_hold_to_its_scheduler_duration()
+    {
+        var usages = SourceGuard.ScanApp("*.cs",
+            new Regex(@"\.Duration\s*\+\s*TimeSpan\.FromMilliseconds\(CursorHoldMs\)", RegexOptions.Compiled),
+            skipCommentLines: true);
+
+        // Vakum kapısı: tarama boş bir dosya kümesi görseydi aşağıdaki sayım anlamsız olurdu.
+        Assert.Contains(Path.Combine("Console", "ConsoleView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
+        Assert.Contains(Path.Combine("Views", "EventStreamView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
+
+        Assert.Equal(3, usages.Count);
+        Assert.Single(usages, u => u.StartsWith(Path.Combine("Console", "ConsoleView.xaml.cs"), StringComparison.Ordinal));
+        Assert.Equal(2, usages.Count(u =>
+            u.StartsWith(Path.Combine("Views", "EventStreamView.xaml.cs"), StringComparison.Ordinal)));
     }
 
     [StaFact]
@@ -174,18 +237,11 @@ public class MotionOwnerHygieneTests
     private static void AssertSubscribesOnce(FrameworkElement owner)
     {
         var motion = new CountingMotion();
-        var original = BuildOrchestrator.App.App.Motion;
-        BuildOrchestrator.App.App.Motion = motion;
-        try
-        {
-            owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
-            owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
-            Assert.Equal(1, motion.SubscriberCount);
-        }
-        finally
-        {
-            BuildOrchestrator.App.App.Motion = original; // headless varsayılanı (null) geri yükle
-        }
+        using var _ = MotionScope.Enable(motion); // [A13/T4 fix-1 · C4] tek yer — restore Dispose'da (headless varsayılanı null)
+
+        owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        owner.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Assert.Equal(1, motion.SubscriberCount);
     }
 
     /// <summary>Abone olan delege SAYISINI (guard'ı) gözlemleyen IMotionSettings — çift-abonelik burada görünür.</summary>

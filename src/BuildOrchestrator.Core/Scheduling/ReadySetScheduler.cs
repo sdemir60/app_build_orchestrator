@@ -169,7 +169,7 @@ public sealed class ReadySetScheduler
         {
             if (!_inFlight.Remove(projectId))
                 throw new InvalidOperationException(
-                    $"'{projectId}' in-flight değil (dispatch edilmemiş ya da zaten complete edilmiş) — Complete çağrılamaz.");
+                    $"'{projectId}' is not in flight (never dispatched, or already completed) — Complete cannot be called.");
             _completed[projectId] = result;
         }
     }

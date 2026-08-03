@@ -64,7 +64,34 @@ public sealed partial class RunViewModel
     /// <see cref="TopologyChanged"/> ateşler. Aksi halde mid-run bir Sync (node seti değişmese de) koşan grafı
     /// yeniden-reveal edip kamerayı re-home ediyordu (SetGraph = tam inşa + stagger). Statü değişimleri (InCycle/
     /// WillBuild) BURAYA girmez — onlar zaten <c>UpdateStatuses</c> (PushGraphStatuses) yoluyla akar. <c>null</c> =
-    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur).</summary>
+    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur).
+    ///
+    /// <para><b>[A13/B3 · E4 — KARAR KAYDI, davranış DEĞİŞMEDİ]</b> Bu guard'ın <b>liste tarafındaki</b> sonucu
+    /// bugüne dek hiçbir yerde yazılı değildi: <c>TopologyChanged</c> ateşlemeyen bir Sync (yani "no changes" —
+    /// aynı yapının yeniden yayınlanması) <c>MainWindow.RefreshProjectGroups</c>'u <b>hiç çağırmaz</b>, dolayısıyla
+    /// <c>StickyLayerList.SetGroups</c> koşmaz ve <b>o Sync'te kademeli beliriş (bo-reveal) OYNAMAZ</b> — kartlar
+    /// yeniden belirmez.
+    /// <list type="bullet">
+    ///   <item><b>Bu KASITLIDIR — gerekçe "gereksiz churn"dür.</b> <c>SetGroups</c> <c>ItemsSource</c> ataması
+    ///   yapar; bu, <c>ItemsControl</c> için TAM reset'tir (container teardown + yeniden üretim). <b>Otoritenin
+    ///   metni niteliksizdir</b> (plan v7, A13.2 Motion maddesi: "koleksiyon reset'i YASAK"); bu repo kuralı
+    ///   <b>DAR okur</b> — yasağın koruduğu şeyler zarar görmedikçe reset meşru sayılır. <b>Bu okuma repoya
+    ///   aittir, otoritenin metni DEĞİLDİR.</b> Gerekçesi <c>StickyLayerList.SetGroups</c>'un XML doc'unda
+    ///   ("Reset semantiği BİLEREK KORUNDU") yazılıdır ve zararsızlık iki şarta bağlanır: (a) seçim satır VM'lerinde yaşar,
+    ///   (b) <b>gereksiz churn ÇAĞIRAN tarafta kapatılır</b>. <b>İşte bu guard, (b)'nin uygulanışıdır</b> —
+    ///   iki doc çelişmez, biri ötekinin şartını sağlar. Guard olmasaydı değişmemiş bir liste her Sync'te tam
+    ///   reset yer ve kullanıcıya sebepsiz bir "kartlar yeniden belirdi" flaşı olarak görünürdü.</item>
+    ///   <item><b>OTORİTE BURADA AYRIŞIYOR (ölçüldü, A13/B3 fix round 1).</b> Prototipte <c>doSync()</c>
+    ///   (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i <b>HER Sync'te KOŞULSUZ</b> artırır — topoloji
+    ///   değişti mi diye BAKMAZ; yani otoritede "no changes" bir Sync'te de kartlar yeniden belirir. Üretim
+    ///   bilerek AYRILIR: gerekçe yukarıdaki churn maddesidir. (<c>BuildApp.jsx:1378</c> Sync yolu DEĞİL,
+    ///   <c>pickFolder()</c>'dır — eski kayıt bu satıra dayanarak otoriteyi yanlışlıkla "destekleyici"
+    ///   gösteriyordu.) Ayrışma task-B3-report.md <c>## Concerns</c>'te de kayıtlıdır.</item>
+    ///   <item><b>Bedeli (E5 ile bağı):</b> "bir sonraki reveal eksik kalanı yakalar" gerekçesi bu yüzden
+    ///   GEÇERSİZDİR — bir sonraki reveal HİÇ gelmeyebilir. Reveal'in kapsamı bu nedenle kendi içinde eksiksiz
+    ///   olmak zorundadır (bkz. <c>StickyLayerList.PlayRevealStagger</c>'ın layout zorlaması).</item>
+    /// </list>
+    /// Karakterizasyon testi: <c>ProjectListFilterTests.A_no_changes_sync_neither_resets_the_list_nor_replays_the_reveal</c>.</para></summary>
     private string? _lastTopologySignature;
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
@@ -225,17 +252,27 @@ public sealed partial class RunViewModel
         // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;
 
-        RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
-
         // [E2/§5-b] TopologyChanged (→ D5 SetGraph = tam inşa + reveal stagger + kamera re-home) YALNIZ graf YAPISI
         // (düğüm Id/Ad/katman + kenar seti) değiştiğinde ateşlenir. Aynı yapının yeniden yayınlanması (ör. mid-run
         // Sync) koşan grafı yeniden-reveal ETMEZ; statü/dep tikleri zaten UpdateStatuses'tan (PushGraphStatuses) akar.
+        //
+        // [T2 fix-1 · I-C] SIRA ÖNEMLİ: TopologyChanged ARTIK RefreshRunSurface'ten ÖNCE ateşlenir.
+        // Ölçülen kusur: ters sırada her topoloji değişimi listeyi İKİ KEZ tam reset ediyordu —
+        // RefreshRunSurface → OnPropertyChanged(VisibleProjects) → RefreshVisibleRows (imza değişti, guard
+        // tutmaz) → ApplyProjectGroups(reveal:false) [1. reset, tamamen çöp], hemen ardından TopologyChanged →
+        // RefreshProjectGroups → ApplyProjectGroups(reveal:true) [2. reset]. "Churn imza guard'ıyla kesiliyor"
+        // savunması bu yol için geçerli DEĞİLDİ: guard yalnız reveal:false dalındadır.
+        // Yeni sırada reveal:true dalı listeyi kurar ve İMZAYI yazar; hemen sonra gelen RefreshRunSurface'in
+        // VisibleProjects bildirimi guard'a çarpıp NO-OP olur. Sayaç tüketicileri sıradan etkilenmez:
+        // TopologyChanged abonelerinden (RefreshProjectGroups/RebuildGraph) hiçbiri Counters okumaz.
         string signature = TopologySignature(e.Nodes);
         if (signature != _lastTopologySignature)
         {
             _lastTopologySignature = signature;
             TopologyChanged?.Invoke(this, EventArgs.Empty);
         }
+
+        RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
     }
 
     /// <summary>[E2/§5-b] Grafın GEOMETRİSİNİ belirleyen alanların (düğüm Id/Ad/<b>LayerIndex</b>/LayerName + kenarlar)
@@ -256,6 +293,60 @@ public sealed partial class RunViewModel
         for (int i = 0; i < Projects.Count; i++)
             if (string.Equals(Projects[i].Id, projectId, StringComparison.OrdinalIgnoreCase)) return i;
         return -1;
+    }
+
+    /// <summary>
+    /// [A13/T2 · 2.2] Branch envanteri geldi: liste tazelenir ve <see cref="Branch"/> HENÜZ BOŞSA aktif
+    /// branch'e SEED edilir.
+    ///
+    /// <para><b>Neden seed gerekli:</b> <see cref="Branch"/> boş başlar ve ona yazan yalnız iki yol vardır —
+    /// kullanıcının popover seçimi (<see cref="SelectBranch"/>) ve diskteki UiState seed'i. <c>syncCompleted</c>
+    /// yazmaz ve zaten bir ECHO'dur (App ne gönderdiyse o döner). Dolayısıyla ilk kurulumda branch chip'i
+    /// SONSUZA DEK boş kalıyordu.</para>
+    ///
+    /// <para><b>Neden YALNIZ boşken:</b> seed bir varsayılan doldurmadır, bir kullanıcı kararı DEĞİL. Kullanıcı
+    /// aktif-olmayan bir branch seçtiyse (ya da UiState'ten öyle geldiyse), her Sync'in envanteri onu aktif
+    /// branch'e geri çekerdi — seçim kaybolur, worktree zorlaması sessizce düşerdi.</para>
+    ///
+    /// <para><b>Aktif branch yoksa</b> (detached HEAD / boş envanter) hiçbir şey yazılmaz: uydurma değer YOK.</para>
+    /// </summary>
+    private void OnBranchList(BranchListEvent e)
+    {
+        Replace(Branches, e.Branches);
+        ReconcileBranchWithInventory();
+        // [T2 fix-1 · C1/I-G] Aktif branch DEĞİŞMİŞ olabilir (kullanıcı terminalde `git checkout` yaptı) →
+        // IsWorktreeForced/EffectiveUseWorktree TÜRETİLMİŞ değerleri de değişmiştir ama kendi bildirimlerini
+        // yayınlamazlar. Bağlı görünümler (açık bir WorktreePopover, ActionBar chip'i) tazelensin diye
+        // AÇIKÇA duyurulur.
+        OnPropertyChanged(nameof(ActiveBranchName));
+        OnPropertyChanged(nameof(IsWorktreeForced));
+        OnPropertyChanged(nameof(EffectiveUseWorktree));
+    }
+
+    /// <summary>
+    /// [T2 fix-1 · C1] Envanter geldi: <see cref="Branch"/>'i gerçekle uzlaştırır.
+    ///
+    /// <para><b>Kullanıcının AÇIK seçimi korunur</b> — o bir niyettir, bir varsayılan değil. TEK istisna:
+    /// seçilen branch envanterde ARTIK YOKSA (silinmiş/yeniden adlandırılmış) seçim düşürülür ve değer aktif
+    /// branch'e döner; aksi halde uygulama var olmayan bir branch'i hedeflemeye çalışır ve build zorunlu
+    /// worktree yolunda "no commit could be resolved" ile ölürdü.</para>
+    ///
+    /// <para><b>Açık olmayan her değer TAZELENİR</b> (boş olsun, diskteki bayat <c>UiState</c> seed'i olsun,
+    /// önceki bir envanter seed'i olsun) → aktif branch. C1'in tam olarak kapattığı yol budur: kullanıcı
+    /// terminalde branch değiştirince bir sonraki Sync uygulamayı kendiliğinden hizaya sokar.</para>
+    /// </summary>
+    private void ReconcileBranchWithInventory()
+    {
+        if (ActiveBranchName is not { } active) return; // detached HEAD / boş envanter → uydurma değer YOK
+
+        if (_branchChosenByUser)
+        {
+            bool stillExists = Branches.Any(b => string.Equals(b.Name, Branch, StringComparison.Ordinal));
+            if (stillExists) return;    // açık seçim GEÇERLİ → dokunma
+            _branchChosenByUser = false; // seçilen branch yok olmuş → seçim düşer, aşağıda aktife dönülür
+        }
+
+        Branch = active;
     }
 
     /// <summary>Bir listeyi gelen anlık görüntüyle değiştirir. <see cref="ObservableCollection{T}.Clear"/>

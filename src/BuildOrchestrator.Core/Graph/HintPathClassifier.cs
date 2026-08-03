@@ -37,7 +37,7 @@ public static class HintPathClassifier
                 {
                     cls = HintPathClass.Unclassified;
                     unc++;
-                    warnings.Add($"{p.Path}: sınıflandırılamayan HintPath → {h.Raw}");
+                    warnings.Add($"{p.Path}: unclassified HintPath → {h.Raw}");
                 }
                 classified.Add(new HintPathRef(h.Raw, h.BaseName, cls, prod));
             }

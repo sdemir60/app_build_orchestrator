@@ -28,7 +28,9 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
     // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + Alt+B (v7Δ-5).
-    private readonly IUiStateStore _uiState = new JsonUiStateStore(JsonUiStateStore.DefaultPath);
+    // [A13/T1 fix-1 · C1] Store ARTIK ctor'dan gelir (varsayılan üretim yolu birebir aynı: JsonUiStateStore
+    // + DefaultPath). Gerekçe <see cref="MainWindow(EngineHost, RunViewModel, ConsoleBatcher, ResourceDictionary, IUiStateStore)"/>'da.
+    private readonly IUiStateStore _uiState;
     private readonly FirstCloseBalloonGate _closeBalloon;
     private AppTrayIcon? _tray;
     private HotkeyRegistration? _hotkey;
@@ -47,6 +49,8 @@ public partial class MainWindow : Window
     // [E4/T48] Liste satır sırası (başlık hariç) — SetGroups ile AYNI sıra; FollowRow/SelectRow satır index'i buradan
     // (her 200ms tick'te BuildLayerGroups'u yeniden kurmamak için yalnız topoloji değişiminde tazelenir).
     private IReadOnlyList<ProjectRowViewModel> _orderedRows = [];
+    // [A13/T2 · 2.5] En son listeye verilen GÖRÜNÜR satır kümesinin imzası — bkz. RefreshVisibleRows guard'ı.
+    private string _visibleRowSignature = "";
 
     /// <param name="resourceScope">
     /// [T49 FINAL PASS] ÜRETİMDE null. Pencerenin token'ları (bkz. aşağıdaki <c>FindResource</c>) üretimde
@@ -56,10 +60,23 @@ public partial class MainWindow : Window
     /// Bu dikiş olmadan MainWindow.xaml hiçbir testte realize EDİLEMEZ — c6e9a21'in launch-fatal sınıfının
     /// (Double token → GridLength/Thickness) testsiz kalan son kökü buydu.
     /// </param>
-    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console, ResourceDictionary? resourceScope = null)
+    /// <param name="uiState">
+    /// [A13/T1 fix-1 · C1] ÜRETİMDE null → <see cref="JsonUiStateStore"/> + <see cref="JsonUiStateStore.DefaultPath"/>
+    /// (<c>%LOCALAPPDATA%\BuildOrchestrator\ui-state.json</c>), yani davranış eskisiyle BİREBİR aynıdır.
+    ///
+    /// <para><b>Neden gerekli — ölçülen gerçek:</b> kalıcı yazma yolu pencerenin <c>Show()</c> edilmesine BAĞLI
+    /// DEĞİLDİR; abonelik ctor'da kurulur (<c>Shell.LayoutChanged += OnShellLayoutChanged</c>) ve oradan
+    /// <c>_uiState.Save(...)</c>'a gider. Yani title-bar layout düğmesine basan bir TEST, pencereyi hiç
+    /// göstermeden KULLANICININ GERÇEK tercih dosyasını yeniden yazardı (ve testler arası sıraya bağlı bir
+    /// yan etki bırakırdı). Bu dikiş, <paramref name="resourceScope"/> ile AYNI desende, o yolu teste
+    /// yönlendirilebilir kılar.</para>
+    /// </param>
+    public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console,
+        ResourceDictionary? resourceScope = null, IUiStateStore? uiState = null)
     {
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
+        _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);
         _engine = engine;
         _vm = vm;
         _console = console;
@@ -121,6 +138,21 @@ public partial class MainWindow : Window
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
+        // [A13/T2 · 2.1] design-v1 §2.1 title-bar bağlamı. AYRI bir abonelik (persist'le AYNI dört alanı dinler
+        // ama ONA BAĞLANMAZ): OnWorkflowPreferenceChanged'in tek sorumluluğu kalıcı duruma yazmaktır, görsel
+        // tazeleme oraya karışmamalı. Seed ATAMALARINDAN SONRA kurulur ve hemen bir kez elle sürülür — böylece
+        // açılışta hatırlanan repo/branch başlıkta ZATEN doğrudur (seed'ler yukarıda, abonelikten önce akıyor).
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(RunViewModel.RootPath) or nameof(RunViewModel.Branch)
+                or nameof(RunViewModel.UseWorktree) or nameof(RunViewModel.WorktreeName)) RefreshTitleContext();
+        };
+        // [T2 fix-1 · I-G] EffectiveWorktreeName auto-ad dalında <see cref="RunViewModel.Worktrees"/>'e de
+        // BAĞLIDIR (AutoWorktreeName mevcut worktree sayısını sayar) — envanter geldiğinde gösterilen ad
+        // değişebilir. Yalnız dört özelliği dinlemek bu kaynağı KAÇIRIYORDU.
+        _vm.Worktrees.CollectionChanged += (_, _) => RefreshTitleContext();
+        RefreshTitleContext();
+
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
         // [D5] Aynı topoloji sinyalinde grafı da yeniden kur (SetGraph = tam yeniden inşa + reveal stagger).
@@ -139,6 +171,33 @@ public partial class MainWindow : Window
         };
         _vm.Projects.CollectionChanged += (_, _) => RefreshListInvite();
         RefreshListInvite();
+
+        // [A13/T2 · 2.5] Proje listesi ARTIK GÖRÜNÜR kümeyi (VisibleProjects) gösterir. Ölçülen kusur: liste
+        // TÜM Projects'ten besleniyordu ve VisibleProjects'in ÜRETİMDE HİÇ TÜKETİCİSİ YOKTU — yani statü
+        // chip'leri de Ctrl+F filtre kutusu da listede görsel olarak hiçbir şey yapmıyordu.
+        //
+        // TEK sinyal VisibleProjects'tir: hem ActiveFilter/ProjectQuery değişimi ([NotifyPropertyChangedFor])
+        // hem de satır statüsü değişimi (RefreshRunSurface) onu yayınlar — böylece "Failed" filtresi açıkken
+        // YENİ bir hata listeye CANLI düşer. Bu, TopologyChanged yolundan AYRI ve ona DOKUNMAZ (E2/§5-b kararı
+        // korunur: graf yalnız YAPI değişince yeniden kurulur).
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(RunViewModel.VisibleProjects)) return;
+            RefreshVisibleRows();
+            // [A13/T2 · 2.4] Görünür küme boşaldıysa panel NEDENİNİ söyler ("No projects match this filter.")
+            // — "hiç proje yok"tan AYRI durum; karar SAF ListInvite.Resolve'de.
+            RefreshListInvite();
+        };
+
+        // [A13/T2 · 2.3] PROJECTS başlığındaki kaldırılabilir filtre chip'i (design-v1 §2.4). Görünürlük/etiket
+        // buradan sürülür (SetListInvite ile AYNI desen: karar dışarıda, kabuk yalnız uygular); chip'e tıklamak
+        // Σ chip'iyle AYNI yolu kullanır (ToggleFilter(null)) — ikinci bir "filtreyi temizle" yolu AÇILMAZ.
+        Shell.ProjectFilterChip.Click += (_, _) => _vm.ToggleFilter(null);
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.ActiveFilter)) RefreshFilterChip();
+        };
+        RefreshFilterChip();
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
         // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
@@ -193,6 +252,10 @@ public partial class MainWindow : Window
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
+        // [A13/T3 fix-2 · 5] Konsolun idle "ready" damgası VM'in duvar saatinden beslenir — anlatı satırları
+        // (RunViewModel.ComposeNarrativeLine) ve event stream ile ORTAK kaynak. Lambda ZORUNLU: değer kopyası
+        // alınırsa VM'in saati sonradan değiştiğinde idle satırı eski saatte donar (pin: MainWindowRealizeTests).
+        Shell.ConsoleViewControl.WallClock = () => _vm.WallClock();
 
         Loaded += async (_, _) =>
         {
@@ -353,16 +416,40 @@ public partial class MainWindow : Window
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te
     /// başlıksızdır.</summary>
-    private void RefreshProjectGroups()
+    private void RefreshProjectGroups() => ApplyProjectGroups(reveal: true);
+
+    /// <summary>[A13/T2 · 2.5] Filtre/sorgu (ya da bir satırın statüsü) yüzünden GÖRÜNÜR küme değişti → listeyi
+    /// tazele, ama kademeli belirişi (bo-reveal) OYNATMA.
+    ///
+    /// <para><b>İmza guard'ı (E2/§5-b <c>_lastTopologySignature</c> deseninin eşi):</b> <c>VisibleProjects</c>
+    /// bildirimi bir run boyunca HER proje event'inde gelir (<c>RefreshRunSurface</c>). Guard olmadan liste
+    /// saniyede onlarca kez tam reset yerdi — oysa filtre yokken küme HİÇ değişmez. Yalnız görünür satırların
+    /// sırası/kimliği gerçekten değiştiğinde WPF'e dokunulur.</para></summary>
+    private void RefreshVisibleRows()
+    {
+        if (VisibleRowSignature() == _visibleRowSignature) return;
+        ApplyProjectGroups(reveal: false);
+    }
+
+    /// <summary>[D1] VM'in katman gruplarını StickyLayerList'e verir. <paramref name="reveal"/> = kademeli
+    /// beliriş oynasın mı: topoloji değişimi OYNATIR (yeni liste), filtre tazelemesi OYNATMAZ (aynı listenin
+    /// alt kümesi) — gerekçe <see cref="StickyLayerList.SetGroups(IReadOnlyList{StickyLayerList.LayerGroup}, bool)"/>'ta.</summary>
+    private void ApplyProjectGroups(bool reveal)
     {
         var groups = _vm.BuildLayerGroups()
             .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
             .ToList();
-        Shell.ProjectsList.SetGroups(groups);
+        Shell.ProjectsList.SetGroups(groups, reveal);
         // [E4/T48] Satır sırasını (başlık hariç) önbelleğe al — FollowRow/SelectRow global satır index'i buradan;
-        // SetGroups'un kurduğu LayoutMetrics satır sırasıyla BİREBİR (aynı groups kaynağı).
+        // SetGroups'un kurduğu LayoutMetrics satır sırasıyla BİREBİR (aynı groups kaynağı). Filtre altında da
+        // tutarlı kalır: ikisi de AYNI groups'tan türer, yani index'ler görünür listeyi adresler.
         _orderedRows = groups.SelectMany(g => g.Rows).OfType<ProjectRowViewModel>().ToList();
+        _visibleRowSignature = VisibleRowSignature();
     }
+
+    /// <summary>Görünür satır kümesinin kimliği+sırası. Ayraç <c>'|'</c>: Windows yol adlarında YASAK bir
+    /// karakterdir, dolayısıyla iki farklı küme birleşince aynı imzaya düşemez.</summary>
+    private string VisibleRowSignature() => string.Join('|', _vm.VisibleProjects.Select(r => r.Id));
 
     /// <summary>[E4/T48] Liste sırasındaki (başlık hariç) İLK eşleşen satırın global index'i — <see cref="Controls.LayoutMetrics"/>
     /// satır index'iyle birebir (StickyLayerList.FollowRow/SelectRow bunu bekler). Eşleşme yoksa -1.</summary>
@@ -534,9 +621,27 @@ public partial class MainWindow : Window
         if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);
     }
 
+    /// <summary>[A13/T2 · 2.1] design-v1 §2.1 başlık bağlamını tazeler — karar SAF <see cref="TitleBarContext"/>'te,
+    /// burada YALNIZ uygulanır. Worktree eki boşsa öğe <c>Collapsed</c> olur: boş metin bırakmak 8px'lik marjını
+    /// yine de ödetirdi (logo/başlık hizası kayardı).</summary>
+    private void RefreshTitleContext()
+    {
+        ContextText.Text = TitleBarContext.Compose(_vm.RootPath, _vm.Branch);
+        // [T2 fix-1 · C1] ETKİN değer — zorunlu worktree'de başlık da worktree'yi göstermeli.
+        string suffix = TitleBarContext.WorktreeSuffix(_vm.RootPath, _vm.EffectiveUseWorktree, _vm.EffectiveWorktreeName);
+        ContextWorktreeText.Text = suffix;
+        ContextWorktreeText.Visibility = suffix.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>[A13/T2 · 2.3] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
+    /// <see cref="ProjectFilter.Label"/>'dır (action bar'ın chip tooltip'leriyle aynı tablo) — burada yeni bir
+    /// eşleme uydurulmaz. Filtre yoksa chip gizlenir.</summary>
+    private void RefreshFilterChip() =>
+        Shell.SetFilterChip(_vm.ActiveFilter is { } f ? ProjectFilter.Label(f) : null);
+
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite() =>
-        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count));
+        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count, _vm.VisibleProjects.Count));
 
     /// <summary>Split sürükleme sonu ya da mod değişimi → kalıcı UiState'e yaz + aktif mod düğmesini eşle.</summary>
     private void OnShellLayoutChanged(object? sender, LayoutState state)

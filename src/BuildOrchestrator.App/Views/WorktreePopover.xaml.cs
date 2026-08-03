@@ -46,6 +46,7 @@ public partial class WorktreePopover : PopoverBase
         ArgumentNullException.ThrowIfNull(vm);
         vm.PropertyChanged += OnVmPropertyChanged;
         vm.Worktrees.CollectionChanged += OnWorktreesChanged;
+        vm.Branches.CollectionChanged += OnBranchesChanged; // [T2 fix-1 · I-G] forced'ın ikinci terimi
     }
 
     protected override void UnsubscribeVm(RunViewModel vm)
@@ -53,9 +54,16 @@ public partial class WorktreePopover : PopoverBase
         ArgumentNullException.ThrowIfNull(vm);
         vm.PropertyChanged -= OnVmPropertyChanged;
         vm.Worktrees.CollectionChanged -= OnWorktreesChanged;
+        vm.Branches.CollectionChanged -= OnBranchesChanged;
     }
 
     private void OnWorktreesChanged(object? sender, NotifyCollectionChangedEventArgs e) => Refresh();
+
+    /// <summary>[T2 fix-1 · I-G] Branch envanteri <see cref="RunViewModel.IsWorktreeForced"/>'ın İKİNCİ
+    /// terimidir (aktif branch oradan gelir) ama türetilmiş bir özellik olduğu için kendi PropertyChanged'ini
+    /// yayınlamaz. Bu abonelik olmadan AÇIK duran bir popover, envanter geldiğinde forced/disabled durumunu
+    /// tazelemiyordu — <c>ActionBar</c>'ın <c>Branches.CollectionChanged</c> aboneliğiyle AYNI desen.</summary>
+    private void OnBranchesChanged(object? sender, NotifyCollectionChangedEventArgs e) => Refresh();
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -82,7 +90,9 @@ public partial class WorktreePopover : PopoverBase
     {
         if (Vm is not { } vm) return;
         bool forced = vm.IsWorktreeForced;
-        bool on = vm.UseWorktree;
+        // [T2 fix-1 · C1] ETKİN değer: forced iken switch İŞARETLİ ve disabled olur (eskiden işaretsiz ve
+        // disabled görünüp source satırı "working directory" diyordu — motor ise worktree açıyordu).
+        bool on = vm.EffectiveUseWorktree;
 
         _syncing = true;
         PART_Switch.IsChecked = on;
@@ -160,7 +170,14 @@ public partial class WorktreePopover : PopoverBase
         Button? trash = null;
         if (onDelete is not null)
         {
-            trash = new Button { Margin = new Thickness(6, 0, 0, 0), Visibility = Visibility.Hidden, ToolTip = "Delete worktree" };
+            trash = new Button
+            {
+                Margin = new Thickness(6, 0, 0, 0), Visibility = Visibility.Hidden,
+                ToolTip = AccessibilityNames.DeleteWorktree,
+            };
+            // [A13/T5] İkon-yalnız buton + listede satır başına BİR tane → ad HANGİ worktree'yi sildiğini
+            // söylemeli (tooltip kısa kalır; ikisi de tek kaynaktan gelir, kopya YASAK).
+            AutomationProperties.SetName(trash, AccessibilityNames.DeleteWorktreeNamed(name));
             if (TryFindResource("Ds.IconButton") is Style s) trash.Style = s;
             trash.Content = IconVisual.Make(this, "Icon.Trash", "Brush.TextSecondary", 14);
             trash.Click += (_, ev) => { ev.Handled = true; onDelete(); };

@@ -7,8 +7,11 @@
        (GraphView.xaml.cs) kurulur — testler doğrudan referans alabilsin ve statü değişiminde şablon yeniden
        kurulmasın diye. Burada yalnız panel kabuğu vardır. -->
   <DockPanel>
-    <!-- Panel başlığı: 28px, surface, altta border-subtle; caps etiket + sağda mono sayaç -->
-    <Border DockPanel.Dock="Top" Height="28"
+    <!-- Panel başlığı: 28px, surface, altta border-subtle; caps etiket + sağda mono sayaç.
+         [A13/T3 fix-1 · C3] Yükseklik ARTIK token'a CANLI bağlı (eskiden çıplak 28 literaliydi ve
+         Size.PanelHeaderHeight ile arasındaki "bağ" yalnız iki sayının uyuşmasıydı — token kaysa başlık
+         28'de kalırdı). Kardeş panel başlıkları (Controls.PanelHeader) aynı token'ı okur. -->
+    <Border DockPanel.Dock="Top" Height="{DynamicResource Size.PanelHeaderHeight}"
             Background="{DynamicResource Brush.Surface}"
             BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
       <DockPanel Margin="10,0" LastChildFill="True">

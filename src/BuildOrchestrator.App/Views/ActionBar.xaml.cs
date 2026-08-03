@@ -87,6 +87,10 @@ public partial class ActionBar : UserControl
     internal BuildMenu BuildMenuControl => PART_BuildMenu;
     internal BranchPopover BranchPopoverControl => PART_BranchPopover;
     internal WorktreePopover WorktreePopoverControl => PART_WorktreePopover;
+    /// <summary>[A13/T4 · m6] Branch/worktree popover kabuklarının <c>Popup</c>'ı — README §2.8/BuildApp.jsx:821
+    /// (<c>bottom: calc(100% + 8px)</c>) 8px boşluğunun test yüzeyi (<c>ActionBar.xaml:27,:40 VerticalOffset="-8"</c>).</summary>
+    internal Popup BranchPopup => PART_BranchPopup;
+    internal Popup WorktreePopup => PART_WorktreePopup;
 
     // ---------------------------------------------------------------- [E5/T46] Esc zinciri: popover katmanı
     /// <summary>Açık bir branch/worktree popover'ı ya da build menüsü var mı (Esc'in popover katmanı,
@@ -127,6 +131,7 @@ public partial class ActionBar : UserControl
         {
             _vm.PropertyChanged -= OnVmPropertyChanged;
             _vm.Branches.CollectionChanged -= OnBranchesChanged;
+            _vm.Worktrees.CollectionChanged -= OnWorktreesChanged;
         }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
@@ -137,11 +142,21 @@ public partial class ActionBar : UserControl
         {
             _vm.PropertyChanged += OnVmPropertyChanged;
             _vm.Branches.CollectionChanged += OnBranchesChanged;
+            _vm.Worktrees.CollectionChanged += OnWorktreesChanged;
         }
         RefreshAll();
     }
 
     private void OnBranchesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => RefreshBranchWorktree();
+
+    /// <summary>[T2 fix-3 · round-3 bulgu 1] <c>EffectiveWorktreeName</c>'in auto-ad dalı (<c>AutoWorktreeName</c>)
+    /// mevcut worktree SAYISINI sayar (<see cref="RunViewModel.Worktrees"/>'ten) — envanter I-G ile canlı
+    /// doldurulduğundan (<c>ListWorktreesCommand</c>) gösterilen ad envanter gelince değişebilir
+    /// (<c>main-1</c> → <c>main-2</c>). <see cref="OnBranchesChanged"/> ile BİREBİR aynı desen: bu abonelik
+    /// olmadan chip bayat adı göstermeye devam ediyordu (title bar ve <c>WorktreePopover</c> zaten
+    /// dinliyordu — üç yüzey iki farklı ad söylüyordu).</summary>
+    private void OnWorktreesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         => RefreshBranchWorktree();
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -333,14 +348,13 @@ public partial class ActionBar : UserControl
     }
 
     // Chip içeriği (ikon/değer/chevron) chip'in ANİMASYONLU Foreground'unu izler (aktif → amber; SplitButton chevron deseni).
-    private Viewbox BoundChipIcon(ToggleButton chip, string iconKey, double size, double viewBox)
+    // [T2 fix-1 · I-B] Gövde IconVisual.BoundToForeground'a taşındı — ShellRoot'un filtre chip'i ikinci çağıran
+    // oldu (kopya YASAK). Burada yalnız bu barın chip-arası boşluğu (Margin) kalır.
+    private static Viewbox BoundChipIcon(ToggleButton chip, string iconKey, double size, double viewBox)
     {
-        var path = new Path { StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round };
-        IconPaint.Apply(path, this, iconKey, "Brush.TextSecondary");
-        path.SetBinding(Shape.StrokeProperty, new Binding(nameof(Control.Foreground)) { Source = chip });
-        var canvas = new Canvas { Width = viewBox, Height = viewBox };
-        canvas.Children.Add(path);
-        return new Viewbox { Width = size, Height = size, Stretch = Stretch.Uniform, Child = canvas, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(ChipContentGap, 0, 0, 0) };
+        var icon = IconVisual.BoundToForeground(chip, iconKey, size, viewBox);
+        icon.Margin = new Thickness(ChipContentGap, 0, 0, 0);
+        return icon;
     }
 
     private static TextBlock ChipLabel(string text)
@@ -360,7 +374,9 @@ public partial class ActionBar : UserControl
     {
         if (!_built) return;
         _branchValue.Text = _vm?.Branch ?? "";
-        bool on = _vm?.UseWorktree ?? false;
+        // [T2 fix-1 · C1] ETKİN değer (forced || kullanıcı toggle'ı) — ham UseWorktree DEĞİL. Aksi halde
+        // zorunlu worktree ile derlenirken chip "off" gösteriyordu.
+        bool on = _vm?.EffectiveUseWorktree ?? false;
         _worktreeValue.Text = on ? (_vm?.EffectiveWorktreeName ?? "") : "off";
     }
 

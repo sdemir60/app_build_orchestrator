@@ -28,7 +28,13 @@ namespace BuildOrchestrator.App.Console;
 public partial class ConsoleView : UserControl
 {
     // Yazım bitince imlecin sönmeden önce kaldığı süre (design-v1 §2.5 "imleç ~420ms sonra söner").
-    private const double CursorHoldMs = 420.0;
+    // [A13/T4 fix-1 · A3] internal (private değil) — motion sabitinin değeri otoriteye karşı SAF assert ile
+    // pinlenebilsin diye (ConsoleMotionPathTests). BuildShakeAnimation'ın internal yapıldığı A12-korumalı
+    // desenin aynısı; davranış DEĞİŞMEDİ.
+    // [A13/B3 · k3] Değer ARTIK burada TANIMLI DEĞİL: tek tanım TypewriterScheduler.CursorHoldMs'tedir
+    // (aynı 420 üç sahipte ayrı ayrı yazılıydı, ikisi pinsizdi). Bu, derleme-zamanı alias'tır — RevealStagger.RevealMs
+    // deseni; sürüklenmesi OLANAKSIZ.
+    internal const double CursorHoldMs = TypewriterScheduler.CursorHoldMs;
     // [3b Minor 1/2] Off-palette hex YOK: base foreground + FontSize XAML token/resource'ından gelir.
 
     /// <summary>[3b/Ek A #16] Canlı append'te belgede tutulan azami satır (render dilimi). "N lines" sayacı bundan
@@ -39,6 +45,24 @@ public partial class ConsoleView : UserControl
 
     private ConsoleColorizer? _colorizer;
     private ConsolePalette? _palette;
+
+    /// <summary>[A13/T1] Motion sinyalinin TAZE okunduğu kapı + CANLI aboneliği — depo <see cref="MotionGate"/>
+    /// (kardeş sahiplerin deseni: <see cref="Views.EventStreamView"/>/<see cref="Views.ProjectRow"/>/
+    /// <see cref="Graph.GraphView"/>). <b>latch'siz abonelikli kip</b> (<c>new MotionGate(this)</c>) —
+    /// <see cref="Controls.StickyLayerList"/>'in aboneliksiz kipi burada YANLIŞ olurdu: o sahip sonsuz saat
+    /// TUTMAZ, bu görünüm ise <c>RepeatBehavior.Forever</c> blink saatleri başlatır (<see cref="StartBlink"/>,
+    /// <see cref="StartBuildBlink"/>).
+    ///
+    /// <para><b>Neden seam gerekliydi (1.8/1.9):</b> bu görünüm motion sinyalini statik
+    /// <see cref="MotionGate.StaticAnimationsEnabled"/> üzerinden DOĞRUDAN okuyordu; headless'ta <c>App.Motion</c>
+    /// null olduğundan üretim append yolunun (<see cref="AppendNarrativeBatch"/>) daktilo kolu HİÇ
+    /// koşturulamıyordu. Enjeksiyon yokken varsayılan provider aynı statik ifadedir — okuma davranışı AYNI.</para>
+    ///
+    /// <para><b>Neden CANLI abonelik gerekliydi (fix-1 · I-D):</b> seam'in ilk hâli aboneliksizdi ve bu gerçek
+    /// bir kapsam boşluğu bırakıyordu: OS "animasyon efektleri" ayarı koşu SIRASINDA kapanırsa konsol imleci
+    /// SONSUZA DEK dönmeye devam ederdi (kardeşi <see cref="Views.EventStreamView"/> bunu <c>:70-71</c>'de
+    /// açıkça kapatmış). Artık <see cref="OnMotionChanged"/> sinyali izler.</para></summary>
+    private readonly MotionGate _motion;
 
     // [T59] Alta-yapışık + `⌄ latest` pill — StickToBottom'ın TEK gerçek kaynağı (bkz. StickToBottom get/set altta).
     private readonly BottomAnchorBehavior _bottomAnchor;
@@ -57,6 +81,13 @@ public partial class ConsoleView : UserControl
     // [D4/T56-UI] Boşta (idle/boot) "ready" (dim) satırı overlay'de gösteriliyor mu — doküman satırı DEĞİL.
     private bool _idleReady;
 
+    /// <summary>[A13/T3 fix-2 · 5] Idle "ready" satırının duvar-saati kaynağı. Sahibi (<c>MainWindow</c>) bunu
+    /// ctor'da <see cref="ViewModels.RunViewModel.WallClock"/>'a bağlar — konsol anlatısı, event stream ve idle
+    /// satırı böylece TEK saatten beslenir (kardeş seam deseni: <see cref="AnimationsEnabledProvider"/>).
+    /// Bağ <b>indirection</b>'dır (değer kopyası DEĞİL): VM'in saati sonradan değişirse idle satırı da izler.
+    /// Enjeksiyon yokken üretimdeki varsayılanla aynı ifadedir — davranış-nötr.</summary>
+    internal Func<DateTimeOffset> WallClock { get; set; } = () => DateTimeOffset.Now;
+
     // Kaskat durumu (yalnız UI thread'inde).
     private DispatcherTimer? _cascadeTimer;
     private Stopwatch? _cascadeClock;
@@ -73,6 +104,9 @@ public partial class ConsoleView : UserControl
 
     public ConsoleView()
     {
+        // [A13/T1 fix-1 · I-D] EventStreamView.ctor deseni birebir: gate + Changed aboneliği InitializeComponent'ten ÖNCE.
+        _motion = new MotionGate(this);
+        _motion.Changed += OnMotionChanged;
         InitializeComponent();
         // Gömülü Geist Mono Console CompositeFont'u (It-0 asset'i) — pack URI burada TEKRARLANMAZ [T64].
         EditorControl.FontFamily = AppFonts.MonoConsole;
@@ -89,6 +123,53 @@ public partial class ConsoleView : UserControl
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
             scrollSmooth: AnimateToBottom);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
+        // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
+        Pill.AccessibleName = AccessibilityNames.LatestConsole;
+        // [A13/T1 fix-1 · I-D] EventStreamView.ctor:97 deseni: unload'da SONSUZ blink saatleri bırakılır (aksi
+        // halde ağaçtan çıkmış bir görünümün iki clock'u timing engine'de 30fps'te uyanık kalırdı). Uçuştaki
+        // daktilo/kaskat BURADA commit EDİLMEZ: commit doküman yazan bir DAVRANIŞTIR ve unload'da yeni bir
+        // satır üretmek bugünkü sözleşmeyi değiştirirdi (mod değişimi yollarının kendi commit/iptal kararları var).
+        Unloaded += (_, _) => { StopBlink(); StopBuildBlink(); };
+    }
+
+    /// <summary>[A13/T1 fix-1 · I-D] Motion sinyali koşu SIRASINDA değişince görünüm uyar
+    /// (<see cref="Views.EventStreamView.OnMotionChanged"/> sözleşmesiyle aynı): SONSUZ saatler (aktif/ready
+    /// satır imleci + "build in progress" imleci) yalnız GÖRÜNÜR olduklarında yeniden değerlendirilir.
+    ///
+    /// <para>Bir kereye mahsus efektler (daktilo, kaskat) burada YENİDEN OYNATILMAZ — sinyal sonradan açılınca
+    /// geriye dönük animasyon başlatmak sözleşme ihlali olurdu (kardeşindeki <c>TypePlayed</c> guard'ının
+    /// tek-yönlülüğüyle aynı gerekçe).</para>
+    ///
+    /// <para><b>[A13/final · lensA Ö1] İLK İŞ DOKÜMANA YAZMAKTIR:</b> uçuştaki bir imleç fade'i varsa
+    /// (<c>_cursorFading</c>) aktif satır önce <c>FinishActiveLine(commit: true)</c> ile kapatılır. Bu, saatleri
+    /// yeniden değerlendirmekten farklı bir iştir — gerekçesi gövdedeki yorumdadır.</para></summary>
+    private void OnMotionChanged(object? sender, EventArgs e)
+    {
+        // [A13/final · lensA Ö1] UÇUŞTAKİ İMLEÇ FADE'İ ÖNCE KURALLI YOLDAN KAPATILIR. Aşağıdaki ilk dal
+        // ActiveCursor'ın Opacity'sinde BeginAnimation çağırır (StartBlink kurar / StopBlink söker) — bu,
+        // BeginCursorRemoval'ın başlattığı fade clock'unu SÖKER ve WPF sökülen bir clock'un Completed'ını
+        // ATEŞLEMEZ. Satırın dokümana yazılması YALNIZ o Completed'a bağlı olduğundan (bkz. BeginCursorRemoval),
+        // bayrak temizlenmezse _cursorFading true ASILI kalır ve satır dokümana HİÇ girmez; sonraki append'lerin
+        // guard'ı (`_typeTimer is not null || _cursorFading`) ancak YENİ bir satır gelirse onarır — run'ın SON
+        // satırında kayıp KALICIDIR. FinishActiveLine aynı iptali yaparken bayrağı zaten elle temizler; kurallı
+        // kapanış yolu odur, burada da o kullanılır.
+        //
+        // Erken `return` YOK (lens A'nın önerdiği biçimden bilinçli sapma): BELİRLEYİCİ GEREKÇE, FinishActiveLine'ın
+        // overlay'i zaten Collapsed yapması — yani aşağıdaki ilk dal kendiliğinden koşmaz, erken dönüşün kazancı
+        // yoktur. İkinci gerekçe (erken dönüş BuildProgressOverlay'in sinyal güncellemesini atlardı) BUGÜN
+        // ERİŞİLEMEZ bir duruma dayanır: _cursorFading yalnız ActiveProjectId null iken (Route.Narrative) kurulabilir,
+        // BuildProgressOverlay ise yalnız proje seçiliyken görünür ve PlayCascade geçişte bayrağı zaten temizler.
+        // Yine de `return` eklenmez — sözleşme değişirse sessizce kırılacak bir kısayol olurdu.
+        if (_cursorFading) FinishActiveLine(commit: true);
+
+        if (ActiveLineOverlay.Visibility == Visibility.Visible)
+        {
+            if (_motion.Enabled) StartBlink(); else StopBlink();
+        }
+        if (BuildProgressOverlay.Visibility == Visibility.Visible)
+        {
+            if (_motion.Enabled) StartBuildBlink(); else StopBuildBlink();
+        }
     }
 
     /// <summary>[E4/T48] Konsolun bottom-anchor'ının merkezi arbiter'a bölgesel suppress bildirimi + pill görünürlüğü.
@@ -106,6 +187,23 @@ public partial class ConsoleView : UserControl
     /// <summary>[E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter; null ise izole (bildirimler no-op).
     /// MainWindow enjekte eder.</summary>
     public ScrollArbiter? Arbiter { get; set; }
+
+    /// <summary>[A13/T1 · ProjectRow/GraphView/EventStreamView deseni · D8] Motion sinyalinin TAZE okunduğu kapı —
+    /// sınıf statik <c>App.Motion</c>'a doğrudan bağlanmaz; testler gerçek bir daktilo/kaskat/blink saatini
+    /// sürebilmek için bunu <c>() =&gt; true</c> ile enjekte eder (headless'ta <c>App.Motion</c> null → reduced).</summary>
+    public Func<bool> AnimationsEnabledProvider
+    {
+        get => _motion.AnimationsEnabledProvider;
+        set => _motion.AnimationsEnabledProvider = value;
+    }
+
+    /// <summary>[A13/T1 fix-1 · I-D] <c>AnimationsEnabledChanged</c>'e abone olunacak kaynak; null ise
+    /// <c>App.Motion</c> (<see cref="Views.EventStreamView.MotionSettings"/> deseni).</summary>
+    public IMotionSettings? MotionSettings
+    {
+        get => _motion.MotionSettings;
+        set => _motion.MotionSettings = value;
+    }
 
     /// <summary>Test/host erişimi için altındaki AvalonEdit kontrolü.</summary>
     public TextEditor Editor => EditorControl;
@@ -197,7 +295,7 @@ public partial class ConsoleView : UserControl
         // → hata GÖRÜNMEZ). ConsolePalette.FromLookup ile AYNI fail-fast: token'lar merge edilmişken anahtar YOKSA
         // anlaşılır bir hata fırlatılır (sessiz drift yerine) ve punto koda TEK yerden bağlanır (editör + overlay'ler drift edemez).
         double fontSize = Probe("FontSize.Xs") as double?
-            ?? throw new InvalidOperationException("Konsol: 'FontSize.Xs' punto kaynağı bulunamadı (Tokens.xaml).");
+            ?? throw new InvalidOperationException("Console: font-size resource 'FontSize.Xs' was not found (Tokens.xaml).");
         EditorControl.FontSize = fontSize;
         ActiveLineText.FontSize = fontSize;
         BuildProgressText.FontSize = fontSize;
@@ -268,21 +366,62 @@ public partial class ConsoleView : UserControl
         if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true);
     }
 
-    /// <summary>[D4/T56-UI] Boşta (idle/boot) tek satır: <c>ready</c> (dim) + yanıp sönen blok imleç (design-v1
-    /// §2.5). Doküman satırı DEĞİLdir — overlay'de canlı gösterilir; içerik gelince (AppendNarrativeBatch /
-    /// PlayCascade) temizlenir. Uçuştaki daktilo varsa önce commit edilir. Reduced-motion iken imleç statiktir.</summary>
+    /// <summary>[D4/T56-UI] Boşta (idle/boot) tek satır: design-v1 §2.5 BİREBİR <c>12:04:07 ▮ ready</c> (dim) —
+    /// duvar-saati damgası + yanıp sönen blok imleç + metin, BU SIRAYLA. Doküman satırı DEĞİLdir — overlay'de
+    /// canlı gösterilir; içerik gelince (AppendNarrativeBatch / PlayCascade) temizlenir. Uçuştaki daktilo varsa
+    /// önce commit edilir. Reduced-motion iken imleç statiktir.
+    ///
+    /// <para>[A13/T3 fix-1 · P3] Damga eskiden HİÇ YOKTU (yalnız <c>"ready"</c> basılıyordu) — otoritede
+    /// (<c>BuildApp.jsx:607</c>) satır <c>&lt;NarrLine type="dim" time={eng.wall()} cursor&gt;</c>'dur, yani
+    /// damga AÇIKÇA taşınır ve <c>NarrLine</c> (<c>:158-160</c>) onu imleç kolonundan ÖNCE basar.</para>
+    ///
+    /// <para>[A13/T3 fix-2 · 5] Saat ARTIK parametre DEĞİL, <see cref="WallClock"/> seam'idir: sahibi
+    /// (<c>MainWindow</c>) onu ctor'da BİR KEZ VM'in saatine bağlar. Parametreli hâlde kablo iki ayrı çağrı
+    /// yerinde tekrarlanıyordu ve <b>hiçbiri headless olarak sürülemiyordu</b> — <c>ShowRunConsole</c>'un idle
+    /// dalı yalnız run anlatısı BOŞken koşar, oysa testte motor hiç başlamadığı için proje seçimi
+    /// <c>LoadProjectLogAsync</c>'te <c>[error] could not load project log</c> satırını run belgesine düşürüp
+    /// o kapıyı kapatıyor. Seam ctor'a taşındığında kablo doğrudan pinlenebilir hâle gelir
+    /// (<c>MainWindowRealizeTests</c>).</para></summary>
     public void ShowReady()
     {
+        var now = WallClock();
         EnsureColorizer();
         if (_typeTimer is not null || _cursorFading) FinishActiveLine(commit: true);
         _idleReady = true;
         Brush dim = _palette?.Dim ?? EditorControl.Foreground;
+        LayoutActiveLine(idleReadyOrder: true);
+        ActiveLineTime.Foreground = dim; // README §2.5: idle satır UÇTAN UCA dim
+        ActiveLineTime.Text = WallClockFormat.Of(now);
         ActiveLineText.Foreground = dim;
         ActiveLineText.Text = ConsoleEmptyState.Idle; // "ready"
         ActiveCursor.Fill = dim;
         ActiveCursor.Opacity = 1.0;
         ActiveLineOverlay.Visibility = Visibility.Visible;
-        if (MotionGate.StaticAnimationsEnabled) StartBlink(); else StopBlink(); // [W2 fix-1] statik sinyalin TEK kapısı
+        if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
+    }
+
+    /// <summary>[A13/T3 fix-1 · P3] Aktif-satır overlay'inin kolon düzeni.
+    ///
+    /// <para><b>idle "ready"</b>: damga → imleç → metin. Bu OTORİTEDİR: <c>BuildApp.jsx:607</c> satırı
+    /// <c>&lt;NarrLine type="dim" time={eng.wall()} cursor&gt;</c> kurar ve <c>NarrLine</c> (<c>:158-160</c>)
+    /// <c>{time}</c> → 10px imleç kolonu → <c>{children}</c> sırasıyla basar.</para>
+    ///
+    /// <para><b>Daktilo</b>: metin → imleç (damga metnin içindedir, colorizer boyar).
+    /// <b>UYARI — bu otoriteden KAYITSIZ bir sapmadır:</b> <c>NarrLine</c> imleci daktilo satırında da AYNI
+    /// sabit 10px ikon kolonunda, metinden ÖNCE tutar (<c>cursor={l.id === typingLive}</c>, <c>:600</c>).
+    /// Sapmanın kaydı YOKTUR: plan v7 <b>A13.2</b> (<c>:315-329</c>) yalnız "AvalonEdit + hibrit aktif satır"
+    /// der, imleç KONUMUNDAN hiç söz etmez; <c>design-wpf-feasibility-analysis.md</c> de yalnız imlecin bir
+    /// karakter değil <see cref="System.Windows.Shapes.Rectangle"/> olduğunu söyler (<c>:62</c>). Yani bu
+    /// düzen <b>açık bir borçtur</b>, kayıtlı bir istisna DEĞİL — "A13.2 kararı" diye etiketlenmesi yanlıştı
+    /// (fix-2 · 2). Davranış bilinçli olarak DEĞİŞTİRİLMEDİ (T3 fix-1 kapsamı yalnız idle satırıydı) ve
+    /// <c>ConsoleViewTests</c>'te karakterizasyon olarak pinlidir: düzeltilirse o test kırmızıya döner.</para>
+    /// </summary>
+    private void LayoutActiveLine(bool idleReadyOrder)
+    {
+        Grid.SetColumn(ActiveCursor, idleReadyOrder ? 1 : 2);
+        Grid.SetColumn(ActiveLineText, idleReadyOrder ? 2 : 1);
+        ActiveCursor.Margin = idleReadyOrder ? new Thickness(0, 0, 3, 0) : new Thickness(3, 0, 0, 0);
+        ActiveLineTime.Visibility = idleReadyOrder ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void HideReadyIfShown()
@@ -292,6 +431,7 @@ public partial class ConsoleView : UserControl
         StopBlink();
         ActiveLineOverlay.Visibility = Visibility.Collapsed;
         ActiveLineText.Text = "";
+        LayoutActiveLine(idleReadyOrder: false); // damga gizlenir — sonraki daktilo satırı kendi düzeninde açılır
     }
 
     // ---------------------------------------------------------------- hibrit aktif satır (typewriter)
@@ -305,7 +445,7 @@ public partial class ConsoleView : UserControl
     {
         EnsureColorizer();
         text ??= "";
-        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
+        bool animationsEnabled = _motion.Enabled; // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
 
         var type = ConsoleLineClassifier.Classify(text);
         Brush color = _palette?.ForType(type) ?? EditorControl.Foreground;
@@ -321,6 +461,7 @@ public partial class ConsoleView : UserControl
 
         _scheduler = new TypewriterScheduler(text.Length, animationsEnabled: true);
         _activeText = text;
+        LayoutActiveLine(idleReadyOrder: false); // idle "ready"den geliniyorsa damga kalkar, imleç metnin ARDINA döner
         ActiveLineText.Foreground = color;
         ActiveLineText.Text = "";
         ActiveCursor.Fill = color;
@@ -358,7 +499,7 @@ public partial class ConsoleView : UserControl
         _typeClock = null;
         StopBlink();
 
-        bool animate = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
+        bool animate = _motion.Enabled; // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
         if (!animate) { FinishActiveLine(commit: true); return; }
 
         _cursorFading = true;
@@ -447,7 +588,7 @@ public partial class ConsoleView : UserControl
         string sliceText = Join(allLines, _loadedFrom, allLines.Count);
         int sliceCount = allLines.Count - _loadedFrom;
 
-        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2 fix-1] statik sinyalin TEK kapısı
+        bool animationsEnabled = _motion.Enabled; // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
 
         var scheduler = new CascadeScheduler(sliceCount, animationsEnabled);
         if (scheduler.Instant)
@@ -482,7 +623,7 @@ public partial class ConsoleView : UserControl
             CancelCascade(); // transformer'ı kaldırır + tam opak redraw
             // Blink dekoratif sonsuz animasyon — motion sinyalini BAŞLATMA anında TAZE oku (motion sözleşmesi).
             if (_buildInProgressPending)
-                ShowBuildInProgress(MotionGate.StaticAnimationsEnabled); // [W2 fix-1] statik sinyalin TEK kapısı
+                ShowBuildInProgress(_motion.Enabled); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
         }
     }
 
@@ -582,6 +723,25 @@ public partial class ConsoleView : UserControl
     /// <summary>[E3/T36 reduced-motion kapsama] İdle "ready" / aktif-satır imleci — blink'in DURDUĞUNU
     /// (<c>HasAnimatedProperties==false</c>) reduced-motion'da doğrulamak için.</summary>
     internal System.Windows.UIElement ActiveCursorGlyph => ActiveCursor;
+
+    /// <summary>[A13/T1 fix-1 · I-C · <see cref="Views.EventStreamView.ActiveLineInstant"/> ikizi] En yeni satır
+    /// için SON kurulan daktilo zamanlayıcısı instant mı — yani üretim append yolu satırı harf harf mi yazıyor,
+    /// yoksa tek hamlede mi bastı. Hiç kurulmadıysa (satır instant basıldı / overlay hiç açılmadı) <c>true</c>
+    /// varsayılır.
+    ///
+    /// <para><b>Neden seam:</b> "daktilo GERÇEKTEN koştu" iddiasını ara-kare avlayarak (belirli bir zaman
+    /// penceresinde <c>0 &lt; len &lt; full</c> yakalamaya çalışarak) kanıtlamak yük-hassastır: daktilo
+    /// <c>DispatcherPriority.Render</c>'da, örnekleyen <see cref="System.Windows.Threading.DispatcherTimer"/> ise
+    /// daha DÜŞÜK önceliktedir → yük altında kare kaçabilir ve test teşhissiz kırmızı verir (D8: yeni flake
+    /// KABUL EDİLEMEZ). Bu seam aynı iddiayı deterministik kılar.</para></summary>
+    internal bool ActiveLineInstant => _scheduler?.Instant ?? true;
+
+    /// <summary>[A13/final · lensA Ö1 + lensB Ö1] Uçuştaki imleç fade-out'u — <see cref="BeginCursorRemoval"/> ile
+    /// <c>true</c> olur, <see cref="FinishActiveLine"/> ile <c>false</c>. <see cref="ActiveLineInstant"/> ile AYNI
+    /// gerekçeyle salt-okunur seam: bu durum DIŞARIDAN ayırt edilemiyordu (hem hold hem fade sırasında overlay açık,
+    /// imleç animasyonlu) — dolayısıyla (a) hold'un GERÇEKTEN tüketildiği ve (b) sinyal fade uçuştayken değişince
+    /// satırın commit edildiği iddiaları zamandan bağımsız olarak kurulamıyordu.</summary>
+    internal bool CursorFading => _cursorFading;
 
     /// <summary>Belgede yüklü ilk satırdan ÖNCEKİ ~<see cref="RenderSliceLines"/> satırı (contiguous, sequence-id
     /// bitişik → tekrar/kayıp yok) tepeye prepend eder ve <c>VerticalOffset</c>'i prepend edilen içeriğin piksel

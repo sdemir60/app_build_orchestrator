@@ -104,10 +104,19 @@ public class SuccessFlourishTests
     /// <c>Stop</c>→<c>HoldEnd</c> olması. Son keyframe ZATEN <c>Colors.Transparent</c>'tır
     /// (<c>EventStreamView.xaml.cs:513-514</c>), dolayısıyla dolgu tutulsa da tutulmasa da GÖZLENEN renk aynıdır —
     /// ikisi gözlemsel olarak ayırt edilemez. <c>FillBehavior.Stop</c>'un ve tekrar yokluğunun kilidi bu yüzden
-    /// KAYNAK tarafındadır: <see cref="The_flourish_animation_declares_no_repeat_and_stops_filling"/>.</para></summary>
+    /// KAYNAK tarafındadır: <see cref="The_flourish_animation_declares_no_repeat_and_stops_filling"/>.</para>
+    ///
+    /// <para><b>[A13/T4 fix-1 · A3/C1/A5]</b> <c>GlowMs</c> (<see cref="EventStreamRow.GlowMs"/>, otorite
+    /// <c>BuildApp.jsx:19</c> <c>bo-glow-once 1.1s ... 1</c>) artık SAF <c>Assert.Equal</c> ile pinli — önceki
+    /// fix-öncesi sürüm bunu AYRI bir testte gerçek saatle (<c>InRange(900,1700)</c>) ölçüyordu; bu, (a) bu testin
+    /// neredeyse BİREBİR kopyasıydı (m5'in "mevcut teste tek satır" deseninin TERSİ), (b) saati parıltı
+    /// BAŞLAMADAN önce başlatıyordu (ölçülen = glow + pompa gecikmesi), (c) ±%47 pencere 1100→1620 gibi bir sapmayı
+    /// GEÇİRİYORDU. Tek satırlık saf pin ikisini de kapatır; ayrı test SİLİNDİ.</para></summary>
     [StaFact]
     public void The_flourish_ends_by_itself_and_leaves_the_row_background_transparent()
     {
+        Assert.Equal(1100.0, EventStreamRow.GlowMs); // BuildApp.jsx:19 `1.1s` — saf literal pin (A13/T4 fix-1)
+
         var vm = NewVm();
         var (view, window) = Realize(vm, animations: true);
 
@@ -390,20 +399,9 @@ public class SuccessFlourishTests
         return (view, DsResources.Realize(host, view));
     }
 
-    /// <summary>Animasyonu AÇIK bir GraphView (ReducedMotionCoverageTests.NewGraphView'ın açık-sinyal eşi):
-    /// pack:// headless'ta çözülmez, sözlükler TestAssets'ten yüklenir.</summary>
-    private static GraphView NewGraphView()
-    {
-        var view = new GraphView { AnimationsEnabledProvider = () => true };
-        foreach (string name in new[] { "Tokens.xaml", "Motion.xaml", "Icons.xaml" })
-        {
-            using var stream = File.OpenRead(IoPath.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", name));
-            view.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-        }
-        view.Measure(new Size(600, 400));
-        view.Arrange(new Rect(0, 0, 600, 400));
-        return view;
-    }
+    /// <summary>Animasyonu AÇIK bir GraphView (ReducedMotionCoverageTests.NewGraphView'ın açık-sinyal eşi).
+    /// [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.</summary>
+    private static GraphView NewGraphView() => GraphTestView.Sized(new Size(600, 400), () => true);
 
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 

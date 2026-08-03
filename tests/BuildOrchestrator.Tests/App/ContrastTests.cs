@@ -21,11 +21,29 @@ namespace BuildOrchestrator.Tests.App;
 /// <b>Kullanıcı kararı (2026-07-25, E6 batch — RATIFY):</b> bu sönük dinlenme-durumu tonları için design fidelity
 /// WCAG-AA'nın önünde gelir (SurfaceBase üstünde TextDim=4.28 / TextFaint=2.57 bilinçli, dokümanlı sub-AA istisna).
 /// Değerler VEYA rol drift ederse aşağıdaki pinler kırılır ve a11y kararı BİLİNÇLİ olarak yeniden gözden geçirilir.
-/// Token DÜZELTİLMEDİ: bir GÖVDE çifti eşiğin altına düşseydi düzeltilirdi — düşmedi.</para>
+/// Token DÜZELTİLMEDİ: bir GÖVDE çifti eşiğin altına düşseydi düzeltilirdi — düşmedi.
+/// <b>[A13/T6 · t3]</b> Bu iki sayı ARTIK TAM DEĞERİYLE pinlidir (<see cref="RatifiedMutedRatios"/>): eskiden
+/// yalnız <c>&lt; 4.5</c> denetleniyordu, yani ratify edilen KARARIN KENDİSİ (4.28 / 2.57) ölçülmüyordu.</para>
 /// </summary>
 public sealed class ContrastTests
 {
     private const double AaNormalText = 4.5;
+
+    /// <summary>
+    /// [A13/T6 · t3] <b>RATIFY kaydının SAYILARI</b> (kullanıcı kararı 2026-07-25, E6 batch — bkz. sınıf özeti):
+    /// sönük dinlenme-durumu tonlarının <c>Brush.SurfaceBase</c> üstündeki oranları. Beklenen değer BURADAN
+    /// gelir — üretimden hesaplanıp yine üretime assert edilmez (totoloji YASAK): ölçülen oran üretim
+    /// token'larından (<c>Tokens.xaml</c>) çıkar, karşılaştırıldığı sayı ratify edilmiş kaydın kendisidir.
+    ///
+    /// <para>Eskiden yalnız <c>&lt; 4.5</c> pinliydi: token 4.40'a KAYSA testler yeşil kalırdı, yani "bilinçli
+    /// istisna" iddiası ölçülmüyordu. Tolerans ±0.01 — kayıt iki ondalıkla tutulmuştur
+    /// (ölçülen: TextDim 4.2820 · TextFaint 2.5709).</para>
+    /// </summary>
+    private static readonly (string Tone, double Ratified)[] RatifiedMutedRatios =
+        [("Brush.TextDim", 4.28), ("Brush.TextFaint", 2.57)];
+
+    /// <summary>RATIFY kaydı iki ondalık taşır — ölçülen oran o hassasiyette eşleşmelidir.</summary>
+    private const double RatifyTolerance = 0.01;
 
     private static readonly IReadOnlyDictionary<string, (double R, double G, double B)> Tokens = LoadOpaqueBrushes();
 
@@ -69,24 +87,31 @@ public sealed class ContrastTests
     }
 
     [Fact]
-    public void The_known_faint_pair_is_a_documented_sub_threshold_decorative_exception()
+    public void The_muted_resting_state_tones_hold_the_exact_ratios_the_user_ratified()
     {
-        // Brief'in "bilinen risk çifti"ni AÇIKÇA hesapla ve pinle: TextFaint-üstünde-SurfaceBase 4.5'in ALTINDA
-        // (kasıtlı, de-emphasized). Bir gün gövde metnine terfi edilirse ya da token açılırsa bu pin kırılır
-        // ve a11y kararı BİLİNÇLİ olarak yeniden gözden geçirilir.
-        double faint = Contrast("Brush.TextFaint", "Brush.SurfaceBase");
-        Assert.True(faint < AaNormalText,
-            $"TextFaint-on-SurfaceBase artık {faint:N2}:1 — sönük-ton istisnası varsayımı geçersizleşti, a11y kararını gözden geçir.");
-    }
-
-    [Fact]
-    public void The_muted_resting_state_tones_stay_below_the_body_bar_by_design()
-    {
-        // design-v1'in kasten-sönük tonları (TextDim şeridin boot/stopped status metninde — BuildApp.jsx:754/765;
-        // TextFaint watermark/sönük sha) SurfaceBase üstünde gövde çubuğunun ALTINDADIR — design-v1 renk-birebir
-        // gereği bilinçli (kullanıcı-ratify). Biri 4.5'i geçseydi aslında bir gövde tonu olurdu → pin kırılır.
-        foreach (string tone in MutedTones)
-            Assert.True(Contrast(tone, "Brush.SurfaceBase") < AaNormalText, $"{tone} beklenmedik şekilde gövde eşiğini geçti");
+        // [A13/T6 · t3] design-v1'in kasten-sönük tonları (TextDim şeridin boot/stopped status metninde —
+        // BuildApp.jsx:754/765; TextFaint watermark/sönük sha) SurfaceBase üstünde gövde çubuğunun ALTINDADIR.
+        // Bu iki oran KULLANICI TARAFINDAN RATIFY EDİLMİŞTİR (bkz. sınıf özeti + RatifiedMutedRatios) — yani
+        // a11y kararının konusu "4.5'in altında bir yerde" değil, TAM OLARAK bu iki sayıdır.
+        //
+        // İki ayrı iddia, ikisi de gerekli:
+        //   (1) ölçülen oran = RATIFY kaydının sayısı (±0.01) → token açılır/koyulaşırsa (ör. 4.40'a kayarsa)
+        //       eski `< 4.5` pini yeşil kalırdı, bu pin KIRILIR ve karar yeniden gözden geçirilir;
+        //   (2) o sayı gerçekten gövde çubuğunun ALTINDA → bu tonların neden sub-AA istisnası olduğu okunur
+        //       kalır (bir gün gövde metnine terfi edilirse ikisi birden kırılır).
+        //
+        // [FOLD] Bu test, E5/T68'in iki gevşek pinini (`The_known_faint_pair_...` ve
+        // `The_muted_resting_state_tones_stay_below_the_body_bar_by_design`) DEVRALIR: ikisi de yalnız
+        // `< 4.5` diyordu ve bu testin yakaladığı her drift'te sessiz kalırlardı (strictly weaker duplicate).
+        Assert.Equal(MutedTones.Length, RatifiedMutedRatios.Length); // iki liste ayrışmasın (yeni bir sönük ton eklenirse kayıt da gelmeli)
+        foreach (var (tone, ratified) in RatifiedMutedRatios)
+        {
+            Assert.Contains(tone, MutedTones);
+            double measured = Contrast(tone, "Brush.SurfaceBase");
+            Assert.Equal(ratified, measured, RatifyTolerance);
+            Assert.True(measured < AaNormalText,
+                $"{tone}-on-SurfaceBase artık {measured:N2}:1 — sönük-ton istisnası varsayımı geçersizleşti, a11y kararını gözden geçir.");
+        }
     }
 
     [Fact]

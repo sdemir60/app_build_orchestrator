@@ -458,22 +458,13 @@ public partial class StickyRibbon : UserControl
         PART_FailureCluster.Children.Add(chipStrip);
     }
 
-    /// <summary>Ribbon chip'i: Ds.Chip stili + ölçü override'ları (height 20, padding '0 6', text-2xs —
-    /// BuildApp.jsx:786). ToggleButton momentary davranır: tıklama sonrası IsChecked sıfırlanır (aktif amber
-    /// yapışmasın — seçim şeritte DEĞİL kartta gösterilir).</summary>
-    private ToggleButton MakeChip(object content, string? brushKey)
-    {
-        var chip = new ToggleButton
-        {
-            Content = content,
-            Height = RibbonChipHeight,
-            Padding = new Thickness(6, 0, 6, 0),
-        };
-        if (TryFindResource("Ds.Chip") is Style s) chip.Style = s;
-        chip.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-        if (brushKey is not null) chip.SetResourceReference(ForegroundProperty, brushKey);
-        return chip;
-    }
+    /// <summary>Ribbon chip'i: Ds.Chip stili + küçük-chip ölçü override'ları (BuildApp.jsx:786). ToggleButton
+    /// momentary davranır: tıklama sonrası IsChecked sıfırlanır (aktif amber yapışmasın — seçim şeritte DEĞİL
+    /// kartta gösterilir).
+    /// <para>[A13/T2 · 2.3] Ölçü override'ları <see cref="DsChipFactory"/>'ye taşındı: 2.3'ün başlık chip'i
+    /// AYNI üçlüyü istiyordu (kopya YASAK).</para></summary>
+    private ToggleButton MakeChip(object content, string? brushKey) =>
+        DsChipFactory.Small(this, content, brushKey);
 
     private static void ResetChip(ToggleButton chip) => chip.IsChecked = false;
 }

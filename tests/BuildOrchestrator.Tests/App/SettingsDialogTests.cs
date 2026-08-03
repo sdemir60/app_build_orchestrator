@@ -1,7 +1,11 @@
+using System.Linq;
+using System.Windows.Controls;
+using System.Windows.Documents;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
@@ -13,18 +17,17 @@ namespace BuildOrchestrator.Tests.App;
 /// Save-validation kuralı, taslak commit/rollback (Cancel), ve Save'in BİREBİR konsol notu + persistence'ı.
 /// RunViewModel D8 desenine göre kurulur (EngineHost hiç başlatılmaz — VM'in AppendRunLine yolu engine'e
 /// dokunmaz).
+///
+/// <para>[A13/T3 fix-1 · C10] Bu sınıfta <b>WPF YOKTUR</b> ve sınıf-düzeyi <c>[Collection]</c> KALDIRILDI:
+/// T3a iki <c>StaFact</c> eklerken tüm sınıfı seri koleksiyona sokmuş, beş saf <c>[Fact]</c>'i de gereksizce
+/// paralellikten çıkarmıştı. Realize edilen (StaFact) kalemler artık <see cref="SettingsDialogViewTests"/>'te.</para>
 /// </summary>
 public class SettingsDialogTests
 {
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
-    /// <summary>Bellek-içi UiStateStore — persistence round-trip'ini WPF/dosya olmadan gözlemler.</summary>
-    private sealed class FakeStore : IUiStateStore
-    {
-        public UiState State { get; private set; } = new();
-        public UiState Load() => State;
-        public void Save(UiState state) => State = state;
-    }
+    /// <summary>[fix-1 · C13] Bellek-içi UiStateStore tek yerde: <see cref="SettingsDialogHost.FakeStore"/>.</summary>
+    private static SettingsDialogHost.FakeStore NewStore() => new();
 
     [Fact]
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
@@ -78,7 +81,7 @@ public class SettingsDialogTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        var store = new FakeStore();
+        var store = NewStore();
         IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
         run.LayerPatterns = live;
 
@@ -109,7 +112,7 @@ public class SettingsDialogTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        var store = new FakeStore();
+        var store = NewStore();
 
         // 6 örnek katman → Save.
         var editor = new LayerEditorViewModel(null);
@@ -148,16 +151,20 @@ public class SettingsDialogTests
         run.OnEvent(new ProjectStartedEvent("r1", @"C:\old\a.csproj", "A")); // eski repo'da bir satır (Started)
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
 
-        IpcCommand? sent = null;
-        run.DebugOnCommandSent = c => sent = c;
+        // [A13/T2 · 2.2] Sync ARTIK İKİ komut gönderir (sync + listBranches) — "son gönderilen" yerine TÜMÜ
+        // toplanır ve aranan komut TÜRÜNE göre seçilir. Assert GEVŞEMEDİ, KESİNLEŞTİ: Sync'in yeni kökte
+        // gittiği hâlâ aynı sıkılıkta pinlenir, üstüne envanterin de istendiği eklenir.
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
 
         await run.ChangeRepositoryAsync(@"D:\new\repo");
 
         Assert.Equal(@"D:\new\repo", run.RootPath);
         Assert.True(run.HasWorkspace);
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State)); // durumlar sıfırlandı (hollow)
-        var sync = Assert.IsType<SyncWorkspaceCommand>(sent);                          // otomatik Sync gönderildi
+        var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());                 // otomatik Sync gönderildi
         Assert.Equal(@"D:\new\repo", sync.RootPath);                                   // yeni kökte
+        Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<ListBranchesCommand>()).RootPath);
     }
 
     [Fact] // [D7 re-review][Fix3] Aynı kökü (case-insensitive — Windows yolu) YENİDEN seçmek no-op olmalı.
@@ -176,5 +183,59 @@ public class SettingsDialogTests
         Assert.Equal(@"D:\repo", run.RootPath);                                    // kök değişmedi
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);  // satırlar sıfırlanmadı (hollow YOK)
         Assert.Null(sent);                                                         // yeniden Sync GÖNDERİLMEDİ
+    }
+
+}
+
+/// <summary>
+/// [A13/T3a · a2/a3/a9 → fix-1 · B6/C10] Settings diyaloğunun GERÇEKTEN realize edilen (WPF) kalemleri.
+/// Kurulum <see cref="SettingsDialogHost"/>'tadır (tek yer); saf VM testleri <see cref="SettingsDialogTests"/>'te
+/// ve orası artık seri koleksiyonda DEĞİL.
+/// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
+public class SettingsDialogViewTests
+{
+    /// <summary>[A13/T3a · a2/a3] design-v1 §2.9 BİREBİR: <c>LAYERS</c> caps başlığı, açıklama cümlesi ("Other"
+    /// mono Run'la BİRLEŞİK okunur — <c>TextBlock.Text</c> tüm Inline'ları düzleştirir) ve boş-katman kesikli
+    /// kutu metni. Katman yokken (taze <see cref="RunViewModel.LayerPatterns"/> null) boş-durum kutusu görünür.</summary>
+    [StaFact]
+    public void Settings_dialog_pins_the_layers_caption_description_and_empty_state_box_verbatim()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
+        var texts = blocks.Select(t => t.Text).ToList();
+        Assert.Contains("LAYERS", texts);
+
+        // description TextBlock 3 <Run>'dan kurulu — headless'ta TextBlock.Text (ContentStart/End tabanlı)
+        // Inlines'ı yansıtmaz; Run'lar doğrudan birleştirilir (aynı okunabilir metin, farklı okuma yolu).
+        string description = string.Concat(
+            blocks.Single(b => b.Inlines.Count == 3).Inlines.OfType<Run>().Select(r => r.Text));
+        Assert.Equal(
+            "Projects are grouped by the first matching pattern (regex on the project name), top to bottom; " +
+            "card order is the layer order in the list. Non-matching projects fall under Other.",
+            description);
+
+        Assert.Contains("No layers yet — projects show as a single list in build order.", texts);
+    }
+
+    /// <summary>[A13/T3a · a9] design-v1 §2.9: <c>Add layer</c> (ghost, ikon+etiket) · <c>Cancel</c> · <c>Save</c>
+    /// (primary) · <c>Load sample layers</c> (ghost) — davranışları zaten pinliydi (Save/Cancel/LoadSample
+    /// testleri), etiketlerin BİREBİR metni testsizdi.</summary>
+    [StaFact]
+    public void Settings_dialog_footer_and_add_layer_button_labels_are_verbatim()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var buttons = DsResources.RealizedObjects(dialog).OfType<Button>().ToList();
+        Assert.Contains(buttons, b => Equals(b.Content, "Cancel"));
+        Assert.Contains(buttons, b => Equals(b.Content, "Save"));
+        Assert.Contains(buttons, b => Equals(b.Content, "Load sample layers"));
+
+        // "Add layer": Content bir StackPanel'dir (ikon + TextBlock) — etiket ayrı aranır.
+        var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
+        Assert.Contains("Add layer", texts);
     }
 }

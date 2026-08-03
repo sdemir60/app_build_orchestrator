@@ -2,6 +2,9 @@ using System.Diagnostics;
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Supervisor;
 using BuildOrchestrator.Tests.Git;
 
 namespace BuildOrchestrator.Tests.Supervisor;
@@ -10,24 +13,53 @@ public static class TestPaths
 {
     public static string SupervisorExe => Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.Supervisor.exe");
 
+    /// <summary>[B1/F1 · fix-1] GERÇEK bir Supervisor process'i başlatan her testin <see cref="SupervisorExe"/>
+    /// ile birlikte <c>EngineHost</c>'a ENJEKTE ETTİĞİ startup timeout. Üretim varsayılanı (5 sn,
+    /// <c>EngineHost.StartupTimeout</c>) yük altında yetmiyor: taze bir process doğup <c>engineReady</c>
+    /// yazana kadar 5 sn'yi aşabiliyor ve test SEBEPSİZ kırmızı veriyor (ölçüm: task-B1-report.md İŞ 4,
+    /// yük altındaki koşum). <b>Üretim varsayılanı DEĞİŞMEZ</b> — donmuş bir supervisor'da uygulamanın
+    /// vazgeçmesi şart; genişleyen yalnız TEST beklemesidir.
+    /// <para>Tek yer: aksi halde aynı sabit <c>EngineHostTests</c>/<c>RunViewModelTests</c>/
+    /// <c>AppShutdownTests</c>'te üç ayrı kopya olarak yaşardı ve bir sonraki start-eden test yine
+    /// yamasız kalırdı (fix-1 öncesi tam olarak bu oldu — 8 start noktasının yalnız 3'ü yamalıydı).</para></summary>
+    public static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).</summary>
     /// <param name="worktreePoolDir">[A5/T69] Worktree havuz kökü — verilmezse üretim varsayılanı
     /// (<c>%LOCALAPPDATA%\BuildOrchestrator\worktrees</c>). Havuza dokunan testler KENDİ temp kökünü verir;
     /// kullanıcının gerçek havuzu ASLA hedef alınmaz (<c>--logs</c>'un cache/state için yaptığının aynısı).</param>
-    public static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null)
+    /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar. Varsayılan <c>false</c> =
+    /// ÜRETİM yolu: kanca kapalıdır ve komut <c>error(debugHooksDisabled)</c> ile reddedilir.</param>
+    public static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null, bool debugHooks = false)
     {
         var psi = new ProcessStartInfo(SupervisorExe)
         { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         if (logsDir is not null) { psi.ArgumentList.Add("--logs"); psi.ArgumentList.Add(logsDir); }
         if (worktreePoolDir is not null) { psi.ArgumentList.Add("--worktrees"); psi.ArgumentList.Add(worktreePoolDir); }
+        if (debugHooks) psi.ArgumentList.Add(SupervisorHost.DebugHooksArg);
         return psi;
     }
+
+    /// <summary>
+    /// [A13/B4] <see cref="Psi"/>'nin İKİNCİ başlatma şekli: <c>JobProcessLauncher</c> yolu
+    /// <see cref="ProcessStartInfo"/> değil ham bir komut satırı ister. Kendiliğinden argüman EKLEMEZ —
+    /// çağıran ne verdiyse o. Kancasız (üretim yolu) başlatmalar bunu doğrudan kullanır.
+    /// </summary>
+    public static string SupervisorCommandLine(params string[] args) =>
+        WindowsCommandLine.Build(SupervisorExe, args);
+
+    /// <summary>[A13/B4] <see cref="SupervisorCommandLine"/>'ın debug kancaları AÇIK varyantı. Kancayı açan
+    /// bayrak burada da AYNI tek sabitten (<see cref="SupervisorHost.DebugHooksArg"/>) gelir — testlere
+    /// kopyalanmaz.</summary>
+    /// <param name="extraArgs">Bayraktan ÖNCE eklenecek argümanlar (ör. <c>--logs &lt;dir&gt;</c>).</param>
+    public static string DebugHooksCommandLine(params string[] extraArgs) =>
+        SupervisorCommandLine([.. extraArgs, SupervisorHost.DebugHooksArg]);
 }
 
 public class SupervisorIpcTests
 {
-    private static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null)
-        => TestPaths.Psi(logsDir, worktreePoolDir);
+    private static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null, bool debugHooks = false)
+        => TestPaths.Psi(logsDir, worktreePoolDir, debugHooks);
 
     [Fact]
     public async Task Stdout_is_ndjson_only_even_after_garbage_command() // [D4 — It-0 kabul maddesi]
@@ -36,7 +68,10 @@ public class SupervisorIpcTests
         await p.StandardInput.WriteLineAsync("""{"type":"ping","seq":1}""");
         await p.StandardInput.WriteLineAsync("bu bir NDJSON degil");
         await p.StandardInput.WriteLineAsync("""{"type":"shutdown"}""");
-        string all = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        // [B1/F2 · fix-1 sweep] Bu bekleme, gerçek Supervisor'ın BOOT'unu + üç komutu + shutdown'ı + EOF'u birlikte
+        // kapsıyor; yani içinde F2'nin ölçülen kırılma noktası (boot) VAR ve 10 sn'lik payın büyük kısmını boot
+        // yiyebilir. Aynı ilke, aynı tek sabit — bkz. TestPaths.WideStartupTimeout.
+        string all = await p.StandardOutput.ReadToEndAsync().WaitAsync(TestPaths.WideStartupTimeout);
         await p.WaitForExitAsync(new CancellationTokenSource(2000).Token);
         var lines = all.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         Assert.NotEmpty(lines);
@@ -58,7 +93,10 @@ public class SupervisorIpcTests
         using var p = Process.Start(Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] Gerçek Supervisor process'i başlatılıyor; 5s yük altında ölçülmüş bir flake'ti (bkz.
+        // task-B1-brief.md). Üretimde bu bekleyişin karşılığı yok (App tarafı EngineHost.StartAsync üzerinden
+        // KENDİ enjekte edilebilir timeout'unu kullanır) — burada yalnız test beklemesi genişletiliyor.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new GetProjectLogCommand(@"d:\yok\yok.csproj"));
         var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
@@ -74,10 +112,14 @@ public class SupervisorIpcTests
     [Fact]
     public async Task StopRun_hard_terminates_inner_job_children_and_acks()
     {
-        using var p = Process.Start(Psi())!;
+        // [A13/B4] Öldürülecek child'lar debugSpawnChildren ile doğuruluyor; o kanca artık VARSAYILAN OLARAK
+        // KAPALI, bu yüzden bayrak AÇIKÇA geçilir (test zayıflatılmadı — yalnız kancayı istediği bildiriliyor).
+        using var p = Process.Start(Psi(debugHooks: true))!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
         await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
         var spawned = Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
         await writer.WriteAsync(new StopRunCommand("r1", StopKind.Hard)); // T4 base: hard = TerminateJobObject(inner)
@@ -102,7 +144,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new SetPerfModeCommand("Light"));  // aktif run yok → hiçbir event YOK
         await writer.WriteAsync(new SetPerfModeCommand("Turbo"));  // tanınmayan profil adı
@@ -114,13 +158,151 @@ public class SupervisorIpcTests
         await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
     }
 
+    // ---------------------------------------------------------------- [A13/B4] debugSpawnChildren kapısı
+    // İKİ TARAFLI ayırt edicilik: aşağıdaki iki test AYNI kurulumdan yalnız BAYRAKLA ayrılır.
+    //   negatif → bayrak YOKken komut REDDEDİLİR (üretim ikilisinin varsayılan yüzeyi)
+    //   pozitif → bayrak VARken komut HÂLÂ çalışır (kapı, kancayı testler için öldürmedi)
+    // Tek başına biri yetmez: yalnız negatif yeşilse kapı her şeyi reddediyor olabilir, yalnız pozitif
+    // yeşilse kapı hiç kapanmıyor olabilir.
+
+    [Fact] // negatif — kapı KAPALI
+    public async Task DebugSpawnChildren_is_rejected_when_the_supervisor_starts_without_debug_hooks_and_stdout_stays_ndjson()
+    {
+        using var p = Process.Start(IsolatedPsi())!; // --debug-hooks YOK = üretimin başlattığı Supervisor
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        // [B1/F2] Gerçek Supervisor process'i başlatılıyor — boot beklemesinin tek sahibi WideStartupTimeout.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
+
+        // VAKUM KARŞITI (1): "bir şey döndü" YETMEZ — dönenin KODU tam olarak kapının kodu olmalı.
+        // unknownCommand gelseydi komut hiç bağlanmamış olurdu (IPC sözleşmesi KIRILMIŞ olurdu);
+        // debugChildrenSpawned gelseydi kapı hiç kapanmamış olurdu.
+        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("debugHooksDisabled", err.Code);
+        Assert.Contains(SupervisorHost.DebugHooksArg, err.Message, StringComparison.Ordinal); // hangi bayrakla açıldığı SÖYLENİYOR
+
+        // VAKUM KARŞITI (2): reddetme host'u düşürmedi — sonraki komut hâlâ yanıtlanıyor.
+        await writer.WriteAsync(new PingCommand(4));
+        Assert.Equal(4, Assert.IsType<PongEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5))).Seq);
+
+        // VAKUM KARŞITI (3) — [D4] stdout YALNIZ NDJSON: yukarıda TÜKETİLEN satırlar zaten NdjsonReader'dan
+        // geçti (parse edilemeyen bir satır orada patlardı), KALAN satırlar da burada tek tek çözülüyor.
+        await writer.WriteAsync(new ShutdownCommand());
+        string rest = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        foreach (var line in rest.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            Assert.NotNull(System.Text.Json.JsonSerializer.Deserialize<IpcEvent>(line, IpcJson.Options));
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
+    /// <summary>
+    /// [A13/B4 · fix-1] <b>Kalemin ASIL teslimi burada pinlenir.</b> Yukarıdaki negatif test yalnız
+    /// PROTOKOLÜ ölçüyor (dönen <c>Code</c> + NDJSON + host ayakta); Supervisor önce çocukları doğurup
+    /// SONRA reddetseydi o test yine yeşil kalırdı — review bunu bir mutasyonla kanıtladı (1646 testin
+    /// tamamı yeşilken üretim ikilisi `cmd.exe`+`powershell` doğurabiliyordu). Bu test DAVRANIŞI ölçer:
+    /// bayrak yokken komut geldiğinde <b>job'da Supervisor'dan başka HİÇBİR process doğmaz</b>.
+    /// <para>Desen icat edilmedi — <see cref="CascadeKillTests"/>'te zaten kanıtlanmış olan outer Job +
+    /// <c>AttachCompletionPort</c> + <c>JOB_OBJECT_MSG_NEW_PROCESS</c> okuması yeniden kullanılıyor.</para>
+    /// </summary>
+    [Fact] // negatif — DAVRANIŞ: reddedilen komut hiçbir çocuk process doğurmaz
+    public async Task Rejected_debugSpawnChildren_spawns_no_cmd_or_powershell_child()
+    {
+        using var outer = JobObject.CreateKillOnClose();
+        using var iocp = outer.AttachCompletionPort(); // Launch'tan ÖNCE — kaçırılan doğum bildirimi olmasın
+
+        using var supervisor = LaunchIsolatedSupervisorIn(outer); // --debug-hooks YOK = üretimin başlattığı Supervisor
+        var writer = new NdjsonWriter(supervisor.StandardInput!);
+        var reader = new NdjsonReader(supervisor.StandardOutput!);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        // Count: 2 — kapı sızsaydı 2×cmd.exe + 2×powershell doğardı; sinyal geniş olsun.
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
+        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("debugHooksDisabled", err.Code);
+
+        // RANDEVU (marker): aynı job'a İKİNCİ bir Supervisor doğuruyoruz. Sızan bir çocuğun doğum bildirimi
+        // komut işlenirken kuyruklandığı için marker'ınkinden ÖNCE gelir ⇒ marker'ı gördüğümüz an doğum
+        // kuyruğu tükenmiştir. Bekleme gerçek bir olaya bağlı (sleep/poll YOK [D8]).
+        // <b>Neden çıkış değil doğum randevusu:</b> hiçbir şey öldürülmediği için doğan process'lerin ADI
+        // hâlâ okunabilir; Supervisor'ın çıkışını beklesek sızan çocuklar inner Job kaskadıyla çoktan ölmüş
+        // ve isimleri okunamaz olurdu (iddia yanlışlıkla yeşile düşerdi).
+        using var marker = LaunchIsolatedSupervisorIn(outer);
+
+        var births = new List<(int Pid, string Name)>();
+        while (true)
+        {
+            var n = iocp.WaitNext(TestPaths.WideStartupTimeout)
+                ?? throw new TimeoutException("IOCP: marker dogum bildirimi gelmedi");
+            if (n.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
+            if (n.Pid == marker.Pid) break;
+            births.Add((n.Pid, NameOfProcess(n.Pid)));
+        }
+
+        // VAKUM KARŞITI: port GERÇEKTEN doğum taşıyor — Supervisor'ın kendi doğumu listede. Bu kontrol
+        // olmasaydı, IOCP hiç bildirim taşımadığında da aşağıdaki iddia yeşil kalırdı.
+        Assert.Contains(supervisor.Pid, births.Select(b => b.Pid));
+
+        // ASIL İDDİA — §6'nın ta kendisi: reddedilen komut `cmd.exe`/`powershell` DOĞURMADI.
+        // İsim süzgeci (ham sayı değil) bilinçli: `CREATE_NO_WINDOW` ile başlatılan her console process'i
+        // yanına bir console-host (conhost) doğurur ve o da job üyesi olur — ham doğum sayısı bu OS
+        // artefaktı yüzünden anlamsızdır. Aynı gerekçe `KillMidBuildTests.IsMsBuildProcess`'te de var.
+        string[] forbidden = ["cmd", "powershell", "pwsh"];
+        var leaked = births.Where(b => forbidden.Contains(b.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+        Assert.True(leaked.Count == 0,
+            $"reddedilen komut process dogurmus: {string.Join(", ", leaked.Select(l => $"{l.Name}({l.Pid})"))}"
+            + $" — job'da gorulen tum dogumlar: {string.Join(", ", births.Select(b => $"{b.Name}({b.Pid})"))}");
+    }
+
+    /// <summary>[A13/B4 · fix-1] Verilen job'da, İZOLE logs/worktree kökleriyle ve <b>bayraksız</b> (üretim
+    /// yolu) bir Supervisor başlatır. Kullanıcının gerçek dosyalarına dokunulmaz (brief kural 4).</summary>
+    private static JobChildProcess LaunchIsolatedSupervisorIn(JobObject job)
+    {
+        string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
+        return JobProcessLauncher.Launch(job,
+            TestPaths.SupervisorCommandLine("--logs", Path.Combine(sandbox, "logs"),
+                                            "--worktrees", Path.Combine(sandbox, "worktrees")),
+            new LaunchOptions(RedirectStdio: true));
+    }
+
+    /// <summary>Doğum ANINDA okunan process adı (hiçbir şey öldürülmediği için okunabilir); pid çoktan
+    /// gitmişse ayırt edilebilir bir yer tutucu. <c>KillMidBuildTests.IsMsBuildProcess</c> ile aynı desen.</summary>
+    private static string NameOfProcess(int pid)
+    {
+        try { return Process.GetProcessById(pid).ProcessName; }
+        catch (ArgumentException) { return "(exited)"; }
+    }
+
+    [Fact] // pozitif — kapı AÇIK: kanca testler için çalışmaya DEVAM ediyor
+    public async Task DebugSpawnChildren_still_spawns_a_real_child_when_the_supervisor_starts_with_debug_hooks()
+    {
+        using var p = Process.Start(IsolatedPsi(debugHooks: true))!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: false));
+        var spawned = Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // Vakum karşıtı: "event geldi" yetmez — bildirilen pid GERÇEK ve o an CANLI bir process olmalı
+        // (yoksa GetProcessById ArgumentException fırlatır). Handle kill'den ÖNCE açılır (CascadeKillTests deseni).
+        int pid = Assert.Single(spawned.Pids);
+        using var child = Process.GetProcessById(pid);
+
+        // Supervisor'ın inner Job'ı KILL_ON_JOB_CLOSE'dur: düzenli shutdown çocuğu da götürür (sleep/poll YOK).
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+        await child.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
     // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree
 
     /// <summary>İzole bir Supervisor: kendi logs/cache kökü + kendi worktree havuzu (kullanıcının gerçek dosyaları korunur).</summary>
-    private static ProcessStartInfo IsolatedPsi()
+    /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar; varsayılan KAPALI = üretim yolu.</param>
+    private static ProcessStartInfo IsolatedPsi(bool debugHooks = false)
     {
         string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
-        return Psi(Path.Combine(sandbox, "logs"), Path.Combine(sandbox, "worktrees"));
+        return Psi(Path.Combine(sandbox, "logs"), Path.Combine(sandbox, "worktrees"), debugHooks);
     }
 
     /// <summary>Tek projelik gerçek bir git repo (bir .csproj + onu içeren bir .sln).</summary>
@@ -161,7 +343,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new SyncWorkspaceCommand(repo.RootPath, branch));
         var events = await ReadUntilAsync(reader, ev => ev is SyncCompletedEvent);
@@ -203,7 +387,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new ListBranchesCommand(repo.RootPath));
         var list = Assert.IsType<BranchListEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
@@ -230,7 +416,9 @@ public class SupervisorIpcTests
         using var p = Process.Start(IsolatedPsi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
+        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
 
         await writer.WriteAsync(new ListWorktreesCommand(repo.RootPath));
         var list = Assert.IsType<WorktreeListEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));

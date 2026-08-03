@@ -136,6 +136,51 @@ public class StickyRevealTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [A13/B3 · E5 — fix round 1] <b>Layout KİRLİYKEN sürülen bir reveal de HER satıra ulaşmalıdır.</b>
+    ///
+    /// <para><b>Neden bu test var (ölçüm):</b> <c>SetGroups</c> <c>ItemsSource</c>'u atadığı anda
+    /// <c>ItemContainerGenerator</c> container'ları SENKRON üretir, ama <c>ContentPresenter</c>'lar henüz measure
+    /// EDİLMEMİŞTİR — yani o an <c>CollectRows</c> <b>SIFIR</b> satır görür (aşağıdaki ön-koşul bunu her koşumda
+    /// yeniden ölçer). Üretimde bu pencere bugün açılmaz, çünkü tetik
+    /// <c>DispatcherPriority.Loaded</c>(6) &lt; <c>Render</c>(7) ertelemesindedir ve otomatik layout turu önce
+    /// koşar. Ama <b>o öncelik varsayımı hiçbir yerde pinli değildi</b>: tetik <c>Background</c>'a kaysa ya da
+    /// senkron çağrılsa satırlar SESSİZCE düşerdi ve süit hiçbir şey söylemezdi.</para>
+    ///
+    /// <para><b>Ne pinliyor:</b> <see cref="StickyLayerList.PlayRevealStagger"/>'ın kapsamı o varsayıma BAĞLI
+    /// DEĞİL. Test, tetiğin ertelemesini bilerek atlayıp reveal'i tam o kirli pencerede sürer — bu, bu dosyanın
+    /// zaten kullandığı desendir (sınıf özeti: reveal DOĞRUDAN çağrılır, deterministik).</para>
+    ///
+    /// <para><b>Ayırt edici (ÖLÇÜLDÜ):</b> <c>StickyLayerList.xaml.cs</c> <c>e2e50aa</c> (B3 ÖNCESİ) sürümüne
+    /// döndürüldüğünde bu test KIRMIZI olur — 4 satırın 4'ü de reveal oynamaz. Ayrıntı: task-B3-report.md.</para>
+    /// </summary>
+    [StaFact]
+    public void A_reveal_driven_while_layout_is_dirty_still_reaches_every_row()
+    {
+        const int rowCount = 4;
+        var coordinator = new MotionCoordinator();
+        // Üretim sırası: kabuk ÖNCE realize (liste boş), veri SONRA — StickyRevealTriggerTests ile aynı kurulum.
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => true, HeroCoordinator = coordinator };
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, list);
+
+        // Üretim API'si. Bundan SONRA pompalama YOK → layout kirli kalır (tam olarak ölçülen pencere).
+        list.SetGroups([new StickyLayerList.LayerGroup("", Rows(rowCount))]);
+        Assert.Empty(list.RevealRows); // ÖN-KOŞUL: pencere gerçekten açık (henüz hiçbir satır realize değil)
+
+        list.PlayRevealStagger();
+
+        list.UpdateLayout(); // iki taraf AYNI satır kümesini görsün (düzeltme yokken satırlar burada realize olur)
+        var rows = list.RevealRows;
+        Assert.Equal(rowCount, rows.Count); // vakum yasak: satırlar GERÇEKTEN var
+        // Gözlem, bu dosyanın mevcut deseni (bkz. The_list_reveal_stagger_takes_the_sync_reveal_hero_while_it_plays):
+        // PlayRevealStagger ile assert arasında pump YOK → clock hiç tick etmedi, reveal ALMIŞ satır gecikmenin
+        // başında 0.0'da DURUR. Reveal ALMAMIŞ satır XAML varsayılanı olan 1.0'da kalır — ikisi ayrışır.
+        Assert.All(rows, r => Assert.True(r.Root.Opacity == 0.0,
+            $"satır reveal OYNAMADI (Opacity={r.Root.Opacity}) — kirli layout'ta CollectRows onu sessizce düşürdü."));
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void The_list_reveal_hero_is_released_when_the_control_unloads()
     {

@@ -44,6 +44,14 @@ internal static class DsResources
         return (ResourceDictionary)XamlReader.Parse(xaml);
     }
 
+    /// <summary>[A13/T3 fix-1 · B5] Bir token sözlüğünden konsol paleti — <c>ConsoleColorizerTests</c> ve
+    /// <c>ConsoleViewTests</c> bu tek satırı ayrı ayrı taşıyordu (kopya YASAK, CLAUDE.md).</summary>
+    public static BuildOrchestrator.App.Console.ConsolePalette ConsolePaletteFrom(ResourceDictionary tokens)
+    {
+        ArgumentNullException.ThrowIfNull(tokens);
+        return BuildOrchestrator.App.Console.ConsolePalette.FromLookup(k => tokens[k]);
+    }
+
     /// <summary>Üretimdeki App.xaml merge sırası (AppResourcesMergeTests bunu ayrıca pinler).</summary>
     private static readonly string[] MergeChain = ["Motion.xaml", "Tokens.xaml", "Icons.xaml", "Controls.xaml"];
 
@@ -198,6 +206,41 @@ internal static class DsResources
         }
         return seen;
     }
+
+    /// <summary>[A13/T3 fix-1 · C11] <see cref="Descendants"/>'ın simetrik karşılığı: görsel ata zinciri (düğümün
+    /// KENDİSİ hariç). Süitte bu yürüyüş dört ayrı yerde elle yazılmıştı; hepsi buradan beslenir
+    /// (kopya YASAK, CLAUDE.md).</summary>
+    public static IEnumerable<DependencyObject> Ancestors(DependencyObject node) =>
+        SelfAndAncestors(node).Skip(1);
+
+    /// <summary>
+    /// [A13/T3 fix-2 · 7] Ata zinciri, düğümün <b>KENDİSİ dahil</b>.
+    ///
+    /// <para><b><paramref name="includeLogical"/> farkı KORUNMUŞTUR</b> (sessizce birleştirilmedi): süitteki üç
+    /// kopyadan ikisi salt GÖRSEL ağacı yürüyordu, biri (<c>SettingsDialogFocusTests.IsDescendantOf</c> — odak
+    /// tuzağı) <b>görsel VE mantıksal</b> yürüyor. Fark gerçektir: <c>Keyboard.FocusedElement</c> bir
+    /// <c>Popup</c>/<c>ContentElement</c> altında olabilir ve orada görsel zincir kopar, mantıksal zincir
+    /// devam eder. Varsayılan (görsel) davranış eski iki çağıranla birebir aynıdır.</para>
+    ///
+    /// <para>Salt-görsel kipte <see cref="Visual"/> olmayan bir düğümde zincir <c>null</c> ile biter —
+    /// <see cref="VisualTreeHelper.GetParent"/> orada fırlatırdı; eski çağıranların hepsi yalnız
+    /// <see cref="Visual"/> zincirleri yürüdüğü için davranış değişmez.</para></summary>
+    public static IEnumerable<DependencyObject> SelfAndAncestors(DependencyObject node, bool includeLogical = false)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        for (DependencyObject? cur = node; cur is not null; cur = ParentOf(cur, includeLogical))
+            yield return cur;
+    }
+
+    private static DependencyObject? ParentOf(DependencyObject node, bool includeLogical) =>
+        node is Visual ? VisualTreeHelper.GetParent(node)
+        : includeLogical ? LogicalTreeHelper.GetParent(node)
+        : null;
+
+    /// <summary>[A13/T3 fix-2 · 7] <paramref name="node"/>, <paramref name="ancestor"/>'ın kendisi ya da onun
+    /// bir torunu mu. <paramref name="includeLogical"/> için bkz. <see cref="SelfAndAncestors"/>.</summary>
+    public static bool IsSelfOrDescendantOf(DependencyObject node, DependencyObject ancestor, bool includeLogical = false) =>
+        SelfAndAncestors(node, includeLogical).Any(n => ReferenceEquals(n, ancestor));
 
     /// <summary>Görsel ağacın tamamı — şablon içindeki şablonlara da iner (split button'ın yarımları gibi).</summary>
     public static IEnumerable<DependencyObject> Descendants(DependencyObject root)

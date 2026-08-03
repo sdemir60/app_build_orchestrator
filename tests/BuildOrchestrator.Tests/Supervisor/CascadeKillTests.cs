@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
-using BuildOrchestrator.Core.Processes;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Supervisor;
@@ -18,12 +17,17 @@ public class CascadeKillTests
         try
         {
             using var iocp = outer.AttachCompletionPort();
+            // [A13/B4] Bu testin sentetik ağacını debugSpawnChildren doğuruyor; o kanca artık VARSAYILAN
+            // OLARAK KAPALI, bu yüzden Supervisor bayrakla başlatılır (bayrağın adı TestPaths'te tek yerde).
             var supervisor = JobProcessLauncher.Launch(outer,
-                WindowsCommandLine.Build(TestPaths.SupervisorExe), new LaunchOptions(RedirectStdio: true));
+                TestPaths.DebugHooksCommandLine(), new LaunchOptions(RedirectStdio: true));
             livePids.Add(supervisor.Pid);
             var writer = new NdjsonWriter(supervisor.StandardInput!);
             var reader = new NdjsonReader(supervisor.StandardOutput!);
-            Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+            // [B1/F2 · fix-1] Taze bir .NET Supervisor process'inin BOOT'unu (CLR + JIT) bekleyen sabit 5 sn,
+            // yük altında ölçülmüş kırılma noktasıydı — bkz. task-B1-report.md İŞ 4. Gerekçe ve tek sahibi:
+            // TestPaths.WideStartupTimeout. Üretim yolu DEĞİŞMEZ; genişleyen yalnız TEST beklemesi.
+            Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
 
             await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 2, Breakaway: false));
             Assert.IsType<DebugChildrenSpawnedEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(10)));
@@ -56,11 +60,14 @@ public class CascadeKillTests
     public async Task Breakaway_from_inside_job_is_denied_err5() // D1 probe — no-breakaway garantisi
     {
         using var outer = JobObject.CreateKillOnClose();
+        // [A13/B4] breakaway probe'u da debugSpawnChildren üzerinden koşar — bkz. yukarıdaki test.
         var supervisor = JobProcessLauncher.Launch(outer,
-            WindowsCommandLine.Build(TestPaths.SupervisorExe), new LaunchOptions(RedirectStdio: true));
+            TestPaths.DebugHooksCommandLine(), new LaunchOptions(RedirectStdio: true));
         var writer = new NdjsonWriter(supervisor.StandardInput!);
         var reader = new NdjsonReader(supervisor.StandardOutput!);
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
+        // [B1/F2 · fix-1] bkz. yukarıdaki test — aynı kök (Supervisor boot'unu bekleyen sabit 5 sn),
+        // aynı çözüm (TestPaths.WideStartupTimeout).
+        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
         await writer.WriteAsync(new DebugSpawnChildrenCommand(Count: 1, Breakaway: true));
         var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("spawnFailed", err.Code);

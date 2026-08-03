@@ -186,11 +186,11 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
         string decisionLog = runDir is not null && File.Exists(Path.Combine(runDir, "decision.log"))
             ? File.ReadAllText(Path.Combine(runDir, "decision.log")) : "";
         int retryLines = decisionLog.Split('\n')
-            .Count(l => l.Contains("Copy contention algılandı", StringComparison.Ordinal));
+            .Count(l => l.Contains("Copy contention detected", StringComparison.Ordinal)); // [A13/B2] metin İngilizceye çevrildi
         var retryProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in decisionLog.Split('\n'))
         {
-            int i = line.IndexOf("Copy contention algılandı (", StringComparison.Ordinal);
+            int i = line.IndexOf("Copy contention detected (", StringComparison.Ordinal);
             if (i < 0) continue;
             int open = line.IndexOf('(', i);
             int close = line.IndexOf(')', open + 1);

@@ -26,7 +26,10 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class EventStreamView : UserControl
 {
-    private const double CursorHoldMs = 420.0; // BuildApp.jsx:91 — daktilo bitince imleç ~420ms sonra söner (aktif satırda KALIR)
+    // [A13/B3 · k3] BuildApp.jsx:91 — daktilo bitince imleç ~420ms sonra söner (aktif satırda KALIR).
+    // Tek tanım TypewriterScheduler.CursorHoldMs'tedir; bu derleme-zamanı alias'tır (internal: otorite
+    // literaline karşı saf assert edilebilsin — ConsoleView.CursorHoldMs ile AYNI desen).
+    internal const double CursorHoldMs = TypewriterScheduler.CursorHoldMs;
 
     private RunViewModel? _vm;
     private readonly BottomAnchorBehavior _bottomAnchor;
@@ -88,6 +91,8 @@ public partial class EventStreamView : UserControl
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
         ScrollAnimator.EnableUserCancellation(PART_Scroll);
         PART_Pill.Click += (_, _) => _bottomAnchor.JumpToBottom();
+        // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
+        PART_Pill.AccessibleName = AccessibilityNames.LatestEvents;
 
         PART_ActiveLine.MouseLeftButtonUp += OnActiveLineClicked;
 
@@ -220,7 +225,7 @@ public partial class EventStreamView : UserControl
 
         PART_ActiveLine.Visibility = Visibility.Visible;
         RefreshEmptyState(); // [D3 §8] canlı aktif satır var → boş-durum gizli
-        PART_ActiveTime.Text = _vm.WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm.WallClock());
         StartCursorBlink();
 
         // [D3 §1] Aktif satır KOŞULSUZ daktilo eder (prototip BuildApp.jsx:723 `<TypingLine instant={false} />`).
@@ -319,12 +324,14 @@ public partial class EventStreamView : UserControl
 public sealed class EventStreamRow : Border
 {
     // design-v1 kaynak sabitleri (inline magic number YASAK — StatusGlyph.PulseMs deseni).
-    private const double GlowMs = 1100;      // BuildApp.jsx:19 `bo-glow-once 1.1s`
+    // [A13/T4 fix-1 · A3] internal — SuccessFlourishTests artık değeri saf `Assert.Equal` ile pinliyor.
+    internal const double GlowMs = 1100;      // BuildApp.jsx:19 `bo-glow-once 1.1s`
     private const double GlyphColumn = 12;   // BuildApp.jsx:653 glyph 12px kolon
     private const double RowMinHeight = 24;  // BuildApp.jsx:645 minHeight 24
     private const double SlotGap = 8;         // BuildApp.jsx:645 gap 8
     private const double StripeWidth = 2;     // BuildApp.jsx:651 width 2
-    private const double CursorHoldMs = 420.0;
+    // [A13/B3 · k3] Üçüncü kopyaydı — tek tanım TypewriterScheduler.CursorHoldMs (derleme-zamanı alias).
+    internal const double CursorHoldMs = TypewriterScheduler.CursorHoldMs;
 
     private readonly SolidColorBrush _bgBrush = new(Colors.Transparent); // per-instance (A13.2)
     private readonly Rectangle _stripe = new();
@@ -363,6 +370,17 @@ public sealed class EventStreamRow : Border
     internal int GlowPlayCount { get; private set; }
     internal Rectangle SelectionStripe => _stripe;
     internal StreamEventViewModel? ViewModel => _vm;
+    /// <summary>[A13/T4 fix-1 · B3] Satırın kendi (akan) metin yüzeyi — <c>Typography.NumeralAlignment</c>'ın
+    /// altıncı üretim yeri (aşağıda, <see cref="_text"/>'in kurulumunda) bu alandadır; tüketicisi
+    /// <c>EventStreamTests.The_active_line_and_row_text_are_tabular</c>'dır.
+    /// <para>[A13/final · lensA Ö3] Atıf DÜZELTİLDİ: doc, bu branch'in KENDİ fix-1 · C3 turunda dağıttığı
+    /// <c>TabularFiguresTests</c> sınıfına işaret ediyordu (o sınıf artık YOK) ve satır referansı da bayattı.
+    /// Satır numarası yerine üye adı yazılır — sürüklenmesi olanaksız.</para></summary>
+    internal TextBlock Text => _text;
+    /// <summary>[A13/T3b · b8] Glyph kolonunun host'u (12px genişlik, BuildApp.jsx:653) — dış testlerin
+    /// ölçüm iddiasını gerçek bir realize üzerinde doğrulayabilmesi için (kural 5) SelectionStripe deseniyle
+    /// AYNI gerekçeyle dışa açılır.</summary>
+    internal Border GlyphHost => _glyphHost;
 
     public EventStreamRow()
     {

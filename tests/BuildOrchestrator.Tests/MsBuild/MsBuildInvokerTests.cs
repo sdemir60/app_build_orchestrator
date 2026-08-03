@@ -141,6 +141,12 @@ public class MsBuildInvokerTests
                      // unbounded `Task.WhenAll(stdoutTask, stderrTask)` bu EOF'u hiç göremez (RED — dış
                      // WaitAsync(20s) TimeoutException fırlatır); fix SONRASI WaitPumpsBoundedAsync
                      // PostKillWait(5s) içinde döner (GREEN). Bkz. task-5-report.md "Fix wave 1" RED/GREEN kanıtı.
+                     // [B1/F3] Eski hâl burada duvar-saati assert ediyordu (`sw.Elapsed < 15s`) — yavaş/yük
+                     // altındaki makinede bu bir ZAMAN iddiasıydı ve sebepsiz kırmızı verirdi (bkz.
+                     // task-B1-brief.md ölçümü). Testin gerçekten kanıtlamak istediği zaman değil SIRALAMA:
+                     // "invoke, grandchild (ping.exe, 60sn uyuyor) HÂLÂ YAŞARKEN döndü". Desen aynı dosyadaki
+                     // LingeringPostBuildGrandchild_no_onLine_after_invoke_returns'ten (aşağıda, IOCP ile
+                     // NEW_PROCESS/EXIT_PROCESS izleme) yeniden kullanılıyor.
     public async Task LingeringPostBuildGrandchild_does_not_stall_success_path()
     {
         string exe = await ResolveMsBuildExeOrSkipAsync();
@@ -148,21 +154,45 @@ public class MsBuildInvokerTests
         string csproj = LegacyFixture.CreateClassLibWithLingeringPostBuild(dir, "LingerLib", sleepSeconds: 60);
 
         using var job = JobObject.CreateKillOnClose(); // grandchild breakaway YAPAMAZ — test sonunda Dispose kaskadıyla temizlenir
+        using var iocp = job.AttachCompletionPort(); // Launch'tan ÖNCE bağlanmalı — kaçırılan bildirim olmasın
         var invoker = new MsBuildInvoker(job, exe);
         var lines = new List<string>();
 
-        var sw = Stopwatch.StartNew();
-        var result = await invoker.InvokeAsync(
+        var invokeTask = invoker.InvokeAsync(
             new MsBuildInvokeRequest(csproj, "Debug", dir, NeedsRestore: false),
             line => { lock (lines) lines.Add(line); },
-            CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20)); // hang'i sonsuza kadar değil, teste çevirir
-        sw.Stop();
+            CancellationToken.None);
+
+        // grandchild (ping.exe) doğana kadar NEW_PROCESS bildirimlerini isme göre süz — MSBuild.exe'nin
+        // kendisi ve CoreCompile'ın kısa ömürlü derleyici child'ı (csc.exe/VBCSCompiler) "ping" DEĞİLDİR,
+        // atlanır. Aynı süzme deseni aşağıdaki testte de var (orada "powershell" için).
+        int pingPid = -1;
+        while (pingPid < 0)
+        {
+            var born = iocp.WaitNext(TimeSpan.FromSeconds(30)) ?? throw new TimeoutException("grandchild (ping.exe) doğum bildirimi gelmedi");
+            if (born.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
+            try
+            {
+                if (string.Equals(Process.GetProcessById(born.Pid).ProcessName, "ping", StringComparison.OrdinalIgnoreCase))
+                    pingPid = born.Pid;
+            }
+            catch (ArgumentException) { /* zaten çıkmış kısa ömürlü job üyesi — ping değil, atla */ }
+        }
+
+        var result = await invokeTask.WaitAsync(TimeSpan.FromSeconds(20)); // hang'i sonsuza kadar değil, teste çevirir (zaman ASSERT değil, yalnız guard)
+
+        // ASIL İDDİA (zaman değil, SIRALAMA): invoke, grandchild (60sn uyuyan ping.exe) HÂLÂ YAŞARKEN döndü.
+        // Fix ÖNCESİ (unbounded Task.WhenAll) invoke ancak grandchild pipe'ı kapatıp (yani ÇIKIP) EOF
+        // üretince dönerdi — o durumda burada ping ZATEN ölmüş olurdu (bkz. rapor RED kanıtı).
+        bool grandchildStillAlive;
+        try { grandchildStillAlive = !Process.GetProcessById(pingPid).HasExited; }
+        catch (ArgumentException) { grandchildStillAlive = false; } // pid artık yok = zaten çıkmış
+        Assert.True(grandchildStillAlive,
+            "invoke, grandchild ÇIKTIKTAN SONRA döndü — WaitPumpsBoundedAsync sınırı bozulmuş olabilir (bkz. Fix wave 1 / Finding 1)");
 
         Assert.Equal(0, result.ExitCode);
         Assert.False(result.TimedOut);
         Assert.False(result.Killed);
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15),
-            $"başarı yolu sınırlı sürede dönmedi: {sw.Elapsed} (grandchild hâlâ ayakta olabilir — fix eksik/bozuk)");
     }
 
     [SkippableFact] // Fix wave 2 / Finding 1 regresyon: WaitPumpsBoundedAsync 5sn sonra pes eder ama pump GÖREVİ

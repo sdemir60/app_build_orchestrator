@@ -824,7 +824,7 @@ public sealed class RunCoordinator(
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapTextUnset : PerfNoteText.CapText(appliedCap)));
         Decide(logs, string.Format(CultureInfo.InvariantCulture,
-            "run {0} başladı: mode={1} projeler={2} parallelism={3} configuration={4} cpuCap={5} elapsedAtStart={6}ms",
+            "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5} elapsedAtStart={6}ms",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap), elapsedAtStart));
 
@@ -832,20 +832,22 @@ public sealed class RunCoordinator(
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.
         try
         {
+            // [A13/B2] Skip satırının metni TEK yerde: iki döngü de aynı cümleyi kuruyordu, çeviri sonrası
+            // birebir aynı literal iki kez yaşardı (kopya YASAK, CLAUDE.md).
+            void DecideSkipped(string projectId, string reason)
+            {
+                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason));
+                Decide(logs, $"{nodeById[projectId].Name}: skipped — {reason}");
+            }
+
             // Cycle üyeleri (construction anında Skipped) — resume edilmiş scheduler'ın PreSkipped'i BOŞTUR,
             // bu yüzden Continue'da tekrar yazılmazlar (yalnız snapshot onları taşımıyorsa savunmacı olarak yazılır).
             foreach (var (projectId, reason) in scheduler.PreSkipped)
-            {
-                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason));
-                Decide(logs, $"{nodeById[projectId].Name}: atlandı — {reason}");
-            }
+                DecideSkipped(projectId, reason);
             // [Task 19] Build modunda incremental "up to date" skip'ler (cycle pre-skip ile AYNI konumda, ilk
             // dispatch'ten ÖNCE): dependent'ları için scheduler'da zaten Skipped/resolved tohumlandı.
             foreach (var (projectId, reason) in upToDateSkips)
-            {
-                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason));
-                Decide(logs, $"{nodeById[projectId].Name}: atlandı — {reason}");
-            }
+                DecideSkipped(projectId, reason);
 
             var run = new RunContext(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs, nodeById,
@@ -872,7 +874,7 @@ public sealed class RunCoordinator(
             {
                 // Worker'lar normalde fırlatmaz (her proje kendi sonucunu raporlar). Yine de fırlarsa: run ASILI
                 // KALMAZ — aşağıdaki finally snapshot alıp runCompleted yazar; kalanlar Queued olarak raporlanır.
-                Decide(logs, "worker beklenmedik şekilde sonlandı: " + ex.Message);
+                Decide(logs, "a worker terminated unexpectedly: " + ex.Message);
             }
         }
         finally
@@ -903,7 +905,7 @@ public sealed class RunCoordinator(
             events.TryWrite(new RunCompletedEvent(cmd.RunId, outcome, succeeded, failed, skipped,
                 snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
             Decide(logs, string.Format(CultureInfo.InvariantCulture,
-                "run {0} bitti: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms depIssues={7}",
+                "run {0} finished: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms depIssues={7}",
                 cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
 
             // [Task-13] Continue backlog'u (Stopped + Queued>0) VEYA en az bir Failed proje varsa (RetryFailed'a
@@ -1022,7 +1024,7 @@ public sealed class RunCoordinator(
                     PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                    "{0}: başarılı ({1}ms)", name, invoke.DurationMs));
+                    "{0}: succeeded ({1}ms)", name, invoke.DurationMs));
             }
             else
             {
@@ -1030,14 +1032,14 @@ public sealed class RunCoordinator(
                 MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
                 run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, invoke.DurationMs, reason, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                    "{0}: başarısız — {1} ({2}ms)", name, reason, invoke.DurationMs));
+                    "{0}: failed — {1} ({2}ms)", name, reason, invoke.DurationMs));
             }
         }
         catch (OperationCanceledException)
         {
             MarkStoppedFailed(run, projectId, "stopped"); // [Task-13]
             run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "stopped", depIssuesForEvent));
-            Decide(run.Logs, $"{name}: başarısız — stopped (iptal)");
+            Decide(run.Logs, $"{name}: failed — stopped (cancelled)");
         }
         catch (Exception ex)
         {
@@ -1045,7 +1047,7 @@ public sealed class RunCoordinator(
             // öldürmez", A3) — ve aşağıdaki finally sayesinde scheduler ASLA askıda kalmaz.
             run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] reason="invoke error: ..." — stopped DEĞİL
             run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "invoke error: " + ex.Message, depIssuesForEvent));
-            Decide(run.Logs, $"{name}: başarısız — invoke error: {ex.Message}");
+            Decide(run.Logs, $"{name}: failed — invoke error: {ex.Message}");
         }
         finally
         {

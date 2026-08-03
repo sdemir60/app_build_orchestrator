@@ -1,6 +1,11 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Shapes;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -117,6 +122,324 @@ public partial class ActionBarTests
     private static void Click(ButtonBase button) =>
         button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
 
+    /// <summary>[A13/T3c · c4] design-v1 BuildApp.jsx:1544-1545: <c>background: var(--surface)</c>,
+    /// <c>borderTop: 1px solid var(--border)</c>. Yükseklik zaten pinliydi (DesignTokenScaleTests); zemin/üst
+    /// çizgi testsizdi — root Border başka bir fırçaya bağlansa süit yeşil kalırdı.</summary>
+    [StaFact]
+    public void The_action_bar_root_is_surface_with_a_border_top_line()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var root = Assert.IsType<Border>(bar.Content);
+        Assert.Same(bar.FindResource("Brush.Surface"), root.Background);
+        Assert.Same(bar.FindResource("Brush.Border"), root.BorderBrush);
+        Assert.Equal(new Thickness(0, 1, 0, 0), root.BorderThickness);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c5] design-v1 BuildApp.jsx:1546-1614 sırası: Sync · ayraç · 6 sayaç chip'i (Σ/building/
+    /// succeeded/failed/skipped/dep) · … · branch · worktree · Debug|Release · perf · ayraç · Stop/Build. Hiçbir
+    /// test bu SIRAYI assert etmiyordu — chip'ler kod-tarafı kurulduğu için ("BuildCounterChips") sıra sessizce
+    /// kayabilirdi.</summary>
+    [StaFact]
+    public void The_left_group_orders_sync_then_a_separator_then_the_six_counter_chips_in_design_order()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var leftGroup = Assert.IsType<StackPanel>(bar.SyncButton.Parent);
+        var leftChildren = leftGroup.Children.Cast<UIElement>().ToList();
+        Assert.Equal(3, leftChildren.Count);
+        Assert.Same(bar.SyncButton, leftChildren[0]);
+        var leftSeparator = Assert.IsType<Border>(leftChildren[1]);
+        Assert.Same(bar.FindResource("Brush.BorderSubtle"), leftSeparator.Background);
+        var counterStrip = Assert.IsType<StackPanel>(leftChildren[2]);
+
+        var chipOrder = counterStrip.Children.Cast<UIElement>().ToList();
+        Assert.Equal(
+            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.SucceededChip, bar.FailedChip, bar.SkippedChip, bar.DepChip },
+            chipOrder);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c5] Sağ grubun sırası: branch · worktree · Debug|Release · perf · ayraç · Stop/Build
+    /// grid'i (BuildApp.jsx:1570-1614).</summary>
+    [StaFact]
+    public void The_right_group_orders_branch_worktree_config_perf_a_separator_then_the_build_area()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
+        var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
+        Assert.Equal(6, rightChildren.Count);
+        Assert.Same(bar.BranchChip, ((Grid)rightChildren[0]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.Segment, rightChildren[2]);
+        Assert.Same(bar.PerfChip, rightChildren[3]);
+        var rightSeparator = Assert.IsType<Border>(rightChildren[4]);
+        Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
+        var buildArea = Assert.IsType<Grid>(rightChildren[5]);
+        Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
+        Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · m6] popover 8px boşluk
+
+    /// <summary>[A13/T4 · m6 · fix-1 · D5] design-v1 prototipi (<c>BuildApp.jsx:821</c> <c>bottom: 'calc(100% +
+    /// 8px)'</c>) — branch/worktree popover'ları anchor'larının 8px ÜSTÜNDE açılır. WPF karşılığı
+    /// <c>Placement="Top"</c> + <c>VerticalOffset="-8"</c> (yukarı = negatif) + <c>PlacementTarget</c>'ın GERÇEKTEN
+    /// chip'e bağlı olması (aksi halde offset doğru olsa da popover yanlış öğenin üstünde açılır — <c>ActionBar.xaml
+    /// :26-27,:39-40</c>'ın <c>PlacementTarget="{Binding ElementName=PART_BranchChip}"</c> bağının runtime karşılığı,
+    /// fix-1'de eklendi). Bir XAML değişikliği (ör. -8 → -4 ya da binding kopması) burada KIRMIZI verir, saf metin
+    /// taraması vermez.</summary>
+    [StaFact]
+    public void The_branch_and_worktree_popovers_open_eight_pixels_above_their_chip()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Equal(PlacementMode.Top, bar.BranchPopup.Placement);
+        Assert.Equal(-8.0, bar.BranchPopup.VerticalOffset);
+        Assert.Same(bar.BranchChip, bar.BranchPopup.PlacementTarget); // [fix-1 · D5] doğru chip'in ÜSTÜNDE açılır
+        Assert.Equal(PlacementMode.Top, bar.WorktreePopup.Placement);
+        Assert.Equal(-8.0, bar.WorktreePopup.VerticalOffset);
+        Assert.Same(bar.WorktreeChip, bar.WorktreePopup.PlacementTarget);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T4 · n4] perf/Build tooltip YOK
+
+    /// <summary>[A13/T4 · n4 · fix-1 · B2] Bilinçli KARARLAR listesi (design-v1 README §8: <i>"Toast/popup yok ·
+    /// 'View failures' butonu yok · <b>perf/Build tooltip'i yok</b> · katman eşleşme sayacı yok."</i>) + §2.7 madde
+    /// 8: <i>"perf: Balanced chip — tıkla döngü ... <b>Tooltip YOK (istenmedi)</b>."</i> — sayaç chip'lerinin
+    /// AKSİNE (<see cref="ActionBar.AddCounterChip"/> her birine <c>ToolTip = label</c> atar), perf chip'i ve Build
+    /// split-button'ı (otoritenin İKİNCİ yarısı — önceden testsizdi) BİLE BİLE tooltipsiz bırakılmıştır.
+    ///
+    /// <para><b>fix-1 · B2:</b> pozitif kontrol eklendi — <c>SigmaChip.ToolTip</c>'in dolu olduğu ÖNCE assert
+    /// edilir (chip kurulum yolunun GERÇEKTEN koştuğunun kanıtı); bu olmadan <c>PerfChip</c>/<c>Split</c> hiç
+    /// kurulmasa da iki <c>Null</c> assert'i vakumda yeşil kalırdı.</para></summary>
+    [StaFact]
+    public void The_perf_chip_and_build_button_carry_no_tooltip_by_design()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.NotNull(bar.SigmaChip.ToolTip); // ön-koşul: chip kurulum yolu GERÇEKTEN koştu (vakum değil)
+        Assert.Null(bar.PerfChip.ToolTip);
+        Assert.Null(bar.Split.ToolTip); // [fix-1 · B2] otoritenin "Build" yarısı — önceden pinsizdi
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3c · c6] chip glyph'leri
+
+    /// <summary>Bir sayaç chip'inin İLK çocuğu (StackPanel[icon, value]) — chip glyph'ini okumanın TEK yolu.</summary>
+    private static UIElement ChipIcon(ToggleButton chip) => ((StackPanel)chip.Content).Children[0];
+
+    /// <summary>Bir sayaç chip'inin İKİNCİ çocuğu (StackPanel[icon, value]) — <see cref="ChipIcon"/>'ın simetriği,
+    /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu.</summary>
+    private static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
+
+    /// <summary>[A13/T4 · n6 · fix-1 · B3/C3] design-v1 README:48 "DAİMA tabular rakam" — sayaç chip değeri
+    /// (<c>ActionBar.xaml.cs:258 CounterValue</c>) mono taşıyan altı üretim yerinden biridir. Envanter/kapsam
+    /// kararı XML doc'u: <see cref="ProjectRowTests.The_project_row_sha_and_duration_columns_are_tabular"/>.</summary>
+    [StaFact]
+    public void The_sigma_chip_value_is_tabular()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Equal(System.Windows.FontNumeralAlignment.Tabular,
+            System.Windows.Documents.Typography.GetNumeralAlignment(ChipValue(bar.SigmaChip)));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c6.2] BuildApp.jsx:1550 Σ chip'i <c>I.sigma</c> ikonunu taşır — <c>ActionBar.BuildCounterChips</c>
+    /// hangi ikonu bağladığını hiçbir test doğrulamıyordu (Icon.Sigma yerine başka bir anahtar verilse süit yeşil kalırdı).</summary>
+    [StaFact]
+    public void The_sigma_chip_paints_the_sigma_glyph()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var canvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.SigmaChip)).Child);
+        var path = Assert.IsType<System.Windows.Shapes.Path>(canvas.Children[0]);
+        Assert.Same(bar.FindResource("Icon.Sigma"), path.Data);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c6.1+c6.2] BuildApp.jsx:1551-1565 chip KÜMESİ (bu SIRAYLA: building/succeeded/failed/
+    /// skipped/dep) ve HER birinin glyph türü. Building = spinner+nokta çifti (BuildApp.jsx:1553); succeeded/
+    /// failed/skipped = <see cref="StatusGlyph"/> (DS.StatusGlyph status=…); dep = ▲ üçgeni (Icon.AlertTri).</summary>
+    [StaFact]
+    public void Each_counter_chip_after_sigma_paints_its_own_designated_glyph()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var buildingIcon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
+        Assert.IsType<Ellipse>(buildingIcon.Children[0]);
+        Assert.IsType<BuildingSpinner>(buildingIcon.Children[1]);
+
+        Assert.Equal(GraphStatus.Succeeded, Assert.IsType<StatusGlyph>(ChipIcon(bar.SucceededChip)).Status);
+        Assert.Equal(GraphStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
+        Assert.Equal(GraphStatus.Skipped, Assert.IsType<StatusGlyph>(ChipIcon(bar.SkippedChip)).Status);
+
+        var depCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.DepChip)).Child);
+        var depPath = Assert.IsType<System.Windows.Shapes.Path>(depCanvas.Children[0]);
+        Assert.Same(bar.FindResource("Icon.AlertTri"), depPath.Data);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3 fix-1 · B1] BuildApp.jsx:1552-1553 building chip'inin glyph'i KOŞULLUdur:
+    /// <c>icon={c.building ? &lt;BuildingSpin size={12}/&gt; : &lt;span 8×8 daire background:'var(--neutral-600)'&gt;}</c>
+    /// (README §2.7: <i>"spinner+4 (building; boşken gri nokta)"</i>). Üretimde kural
+    /// <c>ActionBar.RefreshChips</c>'te yaşar; T3c yalnız İKİ ÇOCUĞUN VARLIĞINI okuyordu — iki satır tersine
+    /// çevrilse (boşken spinner, koşarken nokta) süit YEŞİL kalırdı.
+    ///
+    /// <para>Takas <b>iki yönlü</b> ve ÜRETİM YOLUNDAN sürülür (brief kural 3): gerçek
+    /// <see cref="RunStartedEvent"/>/<see cref="ProjectStartedEvent"/>/<see cref="ProjectSucceededEvent"/>
+    /// zinciri <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN değiştirir; <c>RefreshChips</c> doğrudan
+    /// çağrılmaz. Nokta rengi de pinli: <c>--dot-clean = var(--neutral-600) = #3a3a42 = Brush.DotClean</c>
+    /// (colors.css:39).</para></summary>
+    [StaFact]
+    public void The_building_chip_swaps_its_grey_dot_for_the_spinner_only_while_a_project_is_building()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0)); // → Idle
+        var (bar, window) = Realize(vm);
+
+        var icon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
+        var dot = Assert.IsType<Ellipse>(icon.Children[0]);
+        var spinner = Assert.IsType<BuildingSpinner>(icon.Children[1]);
+
+        // Boşken: gri nokta görünür, spinner gizli.
+        Assert.Equal(0, vm.Counters.Building); // ön-koşul: gerçekten kimse derlenmiyor
+        Assert.Equal(Visibility.Visible, dot.Visibility);
+        Assert.Equal(Visibility.Collapsed, spinner.Visibility);
+        Assert.Same(bar.FindResource("Brush.DotClean"), dot.Fill);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        // Koşarken TAKAS: spinner görünür, nokta gizli.
+        Assert.Equal(1, vm.Counters.Building); // ön-koşul: sayaç GERÇEKTEN arttı
+        Assert.Equal(Visibility.Visible, spinner.Visibility);
+        Assert.Equal(Visibility.Collapsed, dot.Visibility);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+
+        // Bitince geri döner (tek yönlü bir latch DEĞİL).
+        Assert.Equal(0, vm.Counters.Building);
+        Assert.Equal(Visibility.Visible, dot.Visibility);
+        Assert.Equal(Visibility.Collapsed, spinner.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[A13/T3c · c6.3] BuildApp.jsx:1566 <c>color: di ? 'var(--status-fail-text)' : 'var(--text-faint)'</c>
+    /// — ▲'nin kırmızıya dönmesi İKİ YÖNLÜDÜR (0'da faint, &gt;0'da kırmızı) ve ÜRETİM YOLUNDAN (gerçek bir proje
+    /// succeeded + depIssue taşıyarak <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN artırarak) tetiklenir —
+    /// alanı doğrudan set etmek/metodu çağırmak brief kural 6'yı ihlal ederdi.</summary>
+    [StaFact]
+    public void The_dep_triangle_turns_red_only_once_a_project_succeeds_with_a_real_dep_issue()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0)); // → Idle
+        var (bar, window) = Realize(vm);
+
+        var depCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.DepChip)).Child);
+        var depPath = Assert.IsType<System.Windows.Shapes.Path>(depCanvas.Children[0]);
+
+        // ön-koşul: henüz kimse succeeded değil → DepAffected == 0 → faint.
+        Assert.Equal(0, vm.Counters.DepAffected);
+        Assert.Same(bar.FindResource("Brush.TextFaint"), depPath.Stroke);
+
+        // ÜRETİM YOLU: RunStarted → ProjectStarted → ProjectSucceeded(DepIssues: [...]) — RunCounters.From
+        // yalnız succeeded+HasDepIssue satırları sayar (RunCounters.cs).
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100, ["dependent B henüz derlenmedi"]));
+
+        Assert.Equal(1, vm.Counters.DepAffected); // ön-koşul: sayaç GERÇEKTEN arttı
+        Assert.Same(bar.FindResource("Brush.StatusFailText"), depPath.Stroke);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3b · b1] popover kabukları
+
+    /// <summary>[A13/T3b · b1] design-v1 README §2.8: <c>"Branch (272px)"</c> / <c>"Worktree (300px)"</c> —
+    /// OTORİTE LİTERALLERİ. Ölçülen, ActionBar'ın KENDİ sarmalayıcı Border'ıdır (<c>Ds.Popover</c> stilli,
+    /// <c>Width="272"</c>/<c>"300"</c>, ActionBar.xaml) — <see cref="BranchPopover"/>/<see cref="WorktreePopover"/>
+    /// kontrollerinin kendi genişliği DEĞİL (bu ikisi FARKLI kavramlardır).
+    ///
+    /// <para>[fix-1 · B7] Test <c>PopoverTests</c>'ten BURAYA taşındı (kalem ActionBar'ındır) ve oradaki inline
+    /// <see cref="Realize"/> kopyası silindi. [fix-1 · C8] Açılan her popup KAPATILIR: <c>StaysOpen="False"</c> +
+    /// <c>AllowsTransparency="True"</c> bir Popup, kapatılmadan bırakılırsa STA thread'inde canlı bir HWND olarak
+    /// asılı kalır. [fix-1 · C11] Ata yürüyüşü <see cref="DsResources.Ancestors"/>'a çıkarıldı.</para></summary>
+    [StaFact]
+    public void Action_bar_wraps_the_branch_and_worktree_popovers_in_design_v1s_272_and_300_pixel_shells()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        var branchBorder = PopoverShellBorder(bar.BranchPopoverControl);
+        var worktreeBorder = PopoverShellBorder(bar.WorktreePopoverControl);
+        Assert.Equal(272.0, branchBorder.Width);
+        Assert.Equal(300.0, worktreeBorder.Width);
+
+        // Realize zorunlu (kural 5): Popup içeriği yalnız IsOpen=true iken ölçülüp yerleşir — gerçek açılış
+        // olmadan ActualWidth hep 0 kalırdı (bu yüzden literal DP okumak TEK BAŞINA yetmezdi).
+        bar.BranchChip.IsChecked = true;
+        DispatcherPump.PumpUntil(() => branchBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
+        Assert.Equal(272.0, branchBorder.ActualWidth);
+        bar.BranchChip.IsChecked = false;
+
+        bar.WorktreeChip.IsChecked = true;
+        DispatcherPump.PumpUntil(() => worktreeBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
+        Assert.Equal(300.0, worktreeBorder.ActualWidth);
+        bar.WorktreeChip.IsChecked = false; // simetri: açılan popup kapatılır (fix-1 · C8)
+
+        GC.KeepAlive(window);
+    }
+
+    private static Border PopoverShellBorder(FrameworkElement inner) =>
+        DsResources.Ancestors(inner).OfType<Border>().FirstOrDefault()
+        ?? throw new InvalidOperationException("popover'ı saran Ds.Popover Border'ı bulunamadı");
+
+    // ---------------------------------------------------------------- [A13/T3c · c7] Stop takası
+
+    /// <summary>[A13/T3c · c7] BuildApp.jsx:1584-1614: <c>running ? &lt;Stop/&gt; : &lt;split-button/&gt;</c>.
+    /// AccessibilityTests yalnız Stop'un UIA adını pinliyordu — görünürlük TAKASININ KENDİSİ (Idle→running→
+    /// tamamlandı) hiç sürülmemişti. Tetik ÜRETİM YOLU: <see cref="RunStartedEvent"/>/<see cref="RunCompletedEvent"/>
+    /// (brief kural 6) — VM'in <see cref="RunViewModel.IsMidRunLocked"/>'ını doğrudan set etmek YOK.</summary>
+    [StaFact]
+    public void The_stop_button_and_the_build_split_button_swap_visibility_across_a_real_run()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        // Idle: split-button görünür, Stop gizli.
+        Assert.Equal(Visibility.Visible, bar.Split.Visibility);
+        Assert.Equal(Visibility.Collapsed, bar.StopButton.Visibility);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.True(vm.IsRunning); // ön-koşul: gerçekten koşuyor
+
+        Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
+        Assert.Equal(Visibility.Collapsed, bar.Split.Visibility);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0));
+        Assert.False(vm.IsRunning); // ön-koşul: gerçekten bitti
+
+        Assert.Equal(Visibility.Visible, bar.Split.Visibility);
+        Assert.Equal(Visibility.Collapsed, bar.StopButton.Visibility);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Counter_chips_toggle_the_filter_and_sigma_always_clears_it()
     {
@@ -182,6 +505,33 @@ public partial class ActionBarTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
         Assert.Contains(menu.Items, i => i.Kind == "continue");
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a5] kopya metinleri (BİREBİR)
+
+    /// <summary>[A13/T3a · a5] BuildMenu.xaml.cs:82,84 açıklamaları — Kind+Kbd zaten pinliydi (bkz. yukarıdaki
+    /// testler), kopya metni testsizdi: <c>Only changed projects</c> / stopped varyantı <c>Start over — only
+    /// changed projects</c> / <c>All {n} projects — cache ignored</c> (design-v1 §2.7).</summary>
+    [StaFact]
+    public void Build_menu_desc_texts_are_verbatim_for_build_and_rebuild()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1), Node(@"C:\p\c.csproj", "C", 2)],
+            [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0)); // → Idle
+        var (menu, window) = RealizeMenu(vm);
+
+        Assert.Equal("Only changed projects", menu.Items.Single(i => i.Kind == "build").Desc);
+        Assert.Equal("All 3 projects — cache ignored", menu.Items.Single(i => i.Kind == "rebuild").Desc);
+
+        // stopped → Build'in açıklaması "Start over" önekini alır (BuildMenu.ComposeItems).
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 3, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
+        Assert.Equal(AppPhase.Stopped, vm.Phase);
+        Assert.Equal("Start over — only changed projects", menu.Items.Single(i => i.Kind == "build").Desc);
+
         GC.KeepAlive(window);
     }
 

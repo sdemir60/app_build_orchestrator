@@ -157,7 +157,7 @@ public sealed class SingleInstanceGuard : IDisposable
         while (offset < buffer.Length)
         {
             int read = stream.Read(buffer, offset, buffer.Length - offset);
-            if (read == 0) throw new IOException("Single-instance handshake yarıda kesildi.");
+            if (read == 0) throw new IOException("The single-instance handshake was cut short.");
             offset += read;
         }
         return BitConverter.ToInt32(buffer);

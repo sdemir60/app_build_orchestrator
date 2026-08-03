@@ -112,7 +112,7 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     private readonly string _repoRoot = repoRoot ?? throw new ArgumentNullException(nameof(repoRoot));
     private readonly string _poolRoot = poolRoot ?? throw new ArgumentNullException(nameof(poolRoot));
     private readonly string _gitExecutable = string.IsNullOrWhiteSpace(gitExecutable)
-        ? throw new ArgumentException("gitExecutable boş olamaz.", nameof(gitExecutable))
+        ? throw new ArgumentException(GitMessages.MustNotBeEmpty(nameof(gitExecutable)), nameof(gitExecutable))
         : gitExecutable;
 
     // "Aktif branch" sorgusu için mevcut, test edilmiş GitService mantığı (detached HEAD edge dahil) YENİDEN
@@ -139,9 +139,9 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     /// </summary>
     public WorktreePlan PlanWorktree(string activeBranch, string selectedBranch, bool useWorktreeToggle, string selectedSha)
     {
-        if (string.IsNullOrWhiteSpace(activeBranch)) throw new ArgumentException("activeBranch boş olamaz.", nameof(activeBranch));
-        if (string.IsNullOrWhiteSpace(selectedBranch)) throw new ArgumentException("selectedBranch boş olamaz.", nameof(selectedBranch));
-        if (string.IsNullOrWhiteSpace(selectedSha)) throw new ArgumentException("selectedSha boş olamaz.", nameof(selectedSha));
+        if (string.IsNullOrWhiteSpace(activeBranch)) throw new ArgumentException(GitMessages.MustNotBeEmpty(nameof(activeBranch)), nameof(activeBranch));
+        if (string.IsNullOrWhiteSpace(selectedBranch)) throw new ArgumentException(GitMessages.MustNotBeEmpty(nameof(selectedBranch)), nameof(selectedBranch));
+        if (string.IsNullOrWhiteSpace(selectedSha)) throw new ArgumentException(GitMessages.MustNotBeEmpty(nameof(selectedSha)), nameof(selectedSha));
 
         bool differentBranch = !string.Equals(activeBranch, selectedBranch, StringComparison.Ordinal);
 
@@ -180,7 +180,7 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
         ArgumentNullException.ThrowIfNull(plan);
 
         if (plan.Mode != WorktreeMode.Worktree || plan.Path is null)
-            return GitResult<string>.Fail("InPlace plan için worktree hazırlanamaz (PrepareWorktreeAsync yalnız Worktree modunda kullanılabilir).");
+            return GitResult<string>.Fail("a worktree cannot be prepared for an InPlace plan (PrepareWorktreeAsync is only usable in Worktree mode).");
 
         Directory.CreateDirectory(_poolRoot);
 
@@ -261,8 +261,8 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     public async Task<GitResult<string?>> ReuseWorktreeAsync(
         string selectedBranch, string sha, string? preferredName = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(selectedBranch)) return GitResult<string?>.Fail("selectedBranch boş olamaz.");
-        if (string.IsNullOrWhiteSpace(sha)) return GitResult<string?>.Fail("sha boş olamaz.");
+        if (string.IsNullOrWhiteSpace(selectedBranch)) return GitResult<string?>.Fail(GitMessages.MustNotBeEmpty(nameof(selectedBranch)));
+        if (string.IsNullOrWhiteSpace(sha)) return GitResult<string?>.Fail(GitMessages.MustNotBeEmpty(nameof(sha)));
 
         var entriesResult = await ListPoolEntriesAsync(ct);
         if (!entriesResult.Success) return GitResult<string?>.Fail(entriesResult.Error!);
@@ -285,14 +285,14 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
         // GÖSTERİYORSA metinsel prefix kontrolünü geçer ve aşağıdaki `reset --hard` ANA REPO'nun içinde koşardı
         // (K1 ihlali). App'in kendi ürettiği yollarla bu ERİŞİLMEZ — savunma amaçlı son bir kapı.
         if (string.Equals(NormalizeForCompare(chosen.Path), NormalizeForCompare(_repoRoot), StringComparison.OrdinalIgnoreCase))
-            return GitResult<string?>.Fail($"havuz worktree'si ('{chosen.Name}') ana repo köküyle çakışıyor — güvenlik için yeniden kullanılmıyor.");
+            return GitResult<string?>.Fail($"the pool worktree ('{chosen.Name}') collides with the main repository root — not reused, for safety.");
 
         // K1 güvenlik kapısı — bkz. tip özeti: attached HEAD'e reset atmak bir branch ref'ini oynatırdı.
         var branchAtWorktree = await new GitService(_runner, chosen.Path, _gitExecutable).GetCurrentBranchAsync(ct);
         if (!branchAtWorktree.Success)
-            return GitResult<string?>.Fail($"havuz worktree'sinin ('{chosen.Name}') HEAD'i okunamadı: {branchAtWorktree.Error}");
+            return GitResult<string?>.Fail($"the HEAD of the pool worktree ('{chosen.Name}') could not be read: {branchAtWorktree.Error}");
         if (branchAtWorktree.Value is { } attached)
-            return GitResult<string?>.Fail($"havuz worktree'si ('{chosen.Name}') detached değil ('{attached}' checkout edilmiş) — yeniden kullanılmıyor.");
+            return GitResult<string?>.Fail($"the pool worktree ('{chosen.Name}') is not detached ('{attached}' is checked out) — not reused.");
 
         var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["reset", "--hard", sha], chosen.Path, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
@@ -361,7 +361,7 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     public async Task<GitResult<bool>> DeleteAsync(string name, CancellationToken ct = default)
     {
         if (!PathSanitizer.IsSafeSegment(name))
-            return GitResult<bool>.Fail($"güvensiz worktree adı: '{name}'.");
+            return GitResult<bool>.Fail($"unsafe worktree name: '{name}'.");
 
         string path = Path.Combine(_poolRoot, name);
         var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "remove", "--force", path], _repoRoot, CommandTimeout, ct);

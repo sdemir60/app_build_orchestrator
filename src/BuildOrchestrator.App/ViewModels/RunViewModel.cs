@@ -462,8 +462,11 @@ public sealed partial class RunViewModel : ObservableObject
             }
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
+        // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
+        // değeri ≠ niyet; seed'i niyet diye göndermek worktree'yi zorunlu kılıyor ve detached HEAD'de run'ı
+        // hiç başlatmıyordu).
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            Branch, UseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
+            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
             IsStarting = false;
     }
@@ -515,6 +518,20 @@ public sealed partial class RunViewModel : ObservableObject
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
         await TrySendAsync(new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+        // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
+        // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
+        // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder / Settings→Change →
+        // ChangeRepositoryAsync) zaten buraya iner; (c) Sync salt-okurdur, tekrarı zararsızdır.
+        // Ayrı bir komut olarak GİDER (Sync'in kendi event akışına karışmaz): Supervisor sıradaki komut olarak
+        // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
+        // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
+        await TrySendAsync(new ListBranchesCommand(RootPath), "listBranches");
+        // [T2 fix-1 · I-G] Worktree envanteri de BURADAN istenir — branch'in birebir simetriği ve AYNI
+        // gerekçelerle. Gönderilmediği sürece <see cref="Worktrees"/> boş kalıyordu; sonucu yalnız boş bir
+        // popover listesi değil, ÜRETİLEN AD'ın kendisiydi: AutoWorktreeName "aynı slug önekiyle başlayan
+        // mevcut worktree sayısı"nı hep 0 sayıp her seferinde `-1` son ekini veriyor, yani var olan bir
+        // worktree ile ÇAKIŞAN bir ad öneriyordu. Hatası ayrı kodla döner ("worktreeListFailed").
+        await TrySendAsync(new ListWorktreesCommand(RootPath), "listWorktrees");
     }
     private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 
@@ -595,7 +612,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (mimari kural, test pinler). <see cref="Projects"/> zaten build-order'dadır (topoloji sırası). Hiçbir
     /// düğümün <c>LayerName</c>'i yoksa tek isimsiz grup = düz build-order.</summary>
     public IReadOnlyList<LayerGrouping.Group> BuildLayerGroups() =>
-        LayerGrouping.Build(Projects, Topology);
+        LayerGrouping.Build(VisibleProjects, Topology);
 
     private void ClearSelectionAndFilter()
     {
@@ -744,7 +761,7 @@ public sealed partial class RunViewModel : ObservableObject
             case SyncProgressEvent e: AppendRunLine(e.Line); break;
             case SyncCompletedEvent e: OnSyncCompleted(e); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
-            case BranchListEvent e: Replace(Branches, e.Branches); break;
+            case BranchListEvent e: OnBranchList(e); break;
             case WorktreeListEvent e: Replace(Worktrees, e.Worktrees); break;
         }
 
@@ -1070,7 +1087,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[D4/T56-UI] Bir anlatı satırının önüne "HH:MM:SS " (InvariantCulture — Global Constraint) ekler.
     /// design-v1 §2.5 / plan §222: satırlar düz metin <c>HH:MM:SS ▸ metin</c>. Saat WallClock'tan (stream'le ORTAK).</summary>
     private string ComposeNarrativeLine(string text) =>
-        $"{WallClock().ToString("HH:mm:ss", CultureInfo.InvariantCulture)} {text}";
+        $"{Console.WallClockFormat.Of(WallClock())} {text}";
 
     /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
     /// TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). UI thread'inde çağrılır; sayaçlar arka plandan

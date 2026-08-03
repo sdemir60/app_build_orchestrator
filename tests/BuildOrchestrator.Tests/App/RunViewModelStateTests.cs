@@ -165,11 +165,19 @@ public class RunViewModelStateTests
         {
             RootPath = @"D:\repo",
             Configuration = "Release",
-            Branch = "feature/x",
             UseWorktree = true,
-            WorktreeName = "wt-1",
             LayerPatterns = layers,
         };
+        // [T2 fix-1 · C1/I4] Branch ARTIK doğrudan atanamaz: StartRunCommand.Branch bir NİYETtir ve yalnız
+        // kullanıcının AÇIK seçimi oraya gider (bkz. RunViewModel.RunBranchIntent). Doğrudan atama bir
+        // görüntüleme/seed değeridir ve komuta GİTMEZ — bu testin konusu komutun ALANLARININ doğru
+        // taşındığı olduğundan, branch de üretimdeki gerçek yoldan (popover seçimi) kurulur.
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", true, false),
+            new BranchRef("feature/x", "bbbbbbbccccc", false, false),
+        ]));
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
+        vm.WorktreeName = "wt-1"; // SelectBranch hedefi auto'ya (null) döndürür → seçimden SONRA verilir
         StartRunCommand? sent = null;
         vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
 
@@ -263,6 +271,34 @@ public class RunViewModelStateTests
         // K11 kopyası TEK satırdır: prototipte her chip tıklamasında tekrarlanan açıklayıcı cümle YOKTUR
         // (canlı-değişim semantiği XML-doc + README'de anlatılır, konsolda değil).
         Assert.DoesNotContain("applies to the next run", text);
+    }
+
+    // ---------------------------------------------------------------- [A13/T3a · a10/a11] K11 notunun Balanced varyantı + damgası
+
+    /// <summary>
+    /// [A13/T3a · a10/a11] Yukarıdaki test yalnız Light/Full varyantlarını pinliyordu (<c>PerfNoteText.cs:35</c>
+    /// — Balanced testsizdi). Aynı satırın <c>HH:mm:ss</c> önekini (<see cref="RunViewModel.WallClock"/> ile
+    /// deterministik) de BİRLİKTE pinler — <c>ComposeNarrativeLine</c>'ın gerçekten K11 notuna da uygulandığının
+    /// kanıtı (damga başka bir satırda ayrıca doğrulanıyordu, bu notta değil).
+    /// </summary>
+    [Fact]
+    public async Task Perf_change_while_running_writes_the_balanced_variant_with_its_hh_mm_ss_stamp()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        {
+            PerfMode = "Balanced",
+            WallClock = () => new DateTimeOffset(2026, 7, 23, 12, 4, 7, TimeSpan.Zero),
+        };
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, CpuCapPercent: 70));
+        Assert.True(vm.IsRunning);
+
+        await vm.CyclePerfAsync(); // Balanced → Light
+        await vm.CyclePerfAsync(); // Light → Full
+        await vm.CyclePerfAsync(); // Full → Balanced (tam döngü)
+
+        Assert.Equal("Balanced", vm.PerfMode);
+        Assert.Contains("12:04:07 parallelism: 4 · cpu cap 70%", vm.GetRunDocumentText());
     }
 
     // [Fix round 1 — KÖK 1] Planlama penceresi: Build'e basıldı, startRun gönderildi, ama runStarted HENÜZ

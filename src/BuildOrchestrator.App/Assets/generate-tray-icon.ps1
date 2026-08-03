@@ -217,7 +217,7 @@ function Save-Ico([string]$name, $frames) {
   $out = Join-Path $PSScriptRoot $name
   [System.IO.File]::WriteAllBytes($out, $bytes)
   $sizes = ($frames | ForEach-Object { $_.Size }) -join '/'
-  Write-Host "yazildi: $out ($($bytes.Length) byte, kareler: $sizes)"
+  Write-Host "written: $out ($($bytes.Length) bytes, frames: $sizes)"
 }
 
 # --- tepsi ikonu: yalnizca elle netlestirilmis 16px (AppTrayIcon bunu kullanir) ---

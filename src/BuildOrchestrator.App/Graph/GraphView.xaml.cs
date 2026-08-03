@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -624,7 +625,7 @@ public partial class GraphView : UserControl
             Children = { pulseHost },
         };
 
-        var body = new StackPanel
+        var body = new GraphNodeBody
         {
             Orientation = Orientation.Vertical,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -668,10 +669,14 @@ public partial class GraphView : UserControl
         Canvas.SetTop(cell, slot.Center.Y - GraphLayout.NodeSize / 2);
 
         string name = node.Name;
+        // [A13/T5 fix-1] Düğümün etkinleştirilmesi TEK yerde: fare tıklaması da UIA Invoke'u da (ekran okuyucu)
+        // AYNI yerel fonksiyonu çağırır — ikinci bir seçim mantığı YOK (kopya YASAK, CLAUDE.md).
+        void Toggle() => SelectedNode = string.Equals(SelectedNode, name, StringComparison.Ordinal) ? null : name;
+        body.Activate = Toggle;
         body.MouseLeftButtonDown += (_, e) =>
         {
             e.Handled = true; // zemine ulaşmasın (aksi halde hemen ardından seçim kalkardı)
-            SelectedNode = string.Equals(SelectedNode, name, StringComparison.Ordinal) ? null : name;
+            Toggle();
         };
 
         var visual = new GraphNodeVisual
@@ -735,6 +740,12 @@ public partial class GraphView : UserControl
     private void ApplyNodeStatus(GraphNodeVisual visual)
     {
         NodeStatusApplyCount++;
+
+        // [A13/T5] Ekran-okuyucu adı: kare/ikon/rozet görselleri ekran okuyucuya HİÇBİR ŞEY söylemez. Ad düğüm
+        // BAŞINA anlamlıdır (tam proje adı + statü) ve statü görselleriyle AYNI yerde sürülür — statü değişince
+        // (UpdateStatuses → buraya) ad da tazelenir, bayat kalmaz.
+        AutomationProperties.SetName(
+            visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Status)));
 
         var (border, background, iconColor, dashed) = visual.Model.Status switch
         {

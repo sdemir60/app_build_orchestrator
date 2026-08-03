@@ -34,9 +34,24 @@ public sealed record WorkspaceServices(
         root => new WorktreeManager(new ProcessRunner(), root, poolRoot));
 }
 
+/// <param name="debugHooks">[A13/B4] Test kancalarının (bugün yalnız <c>debugSpawnChildren</c>) AÇIK olup
+/// olmadığı. <b>Varsayılan KAPALI</b> — üretim ikilisi bu kancayı dinlemez; yalnız Supervisor'ı
+/// <see cref="SupervisorHost.DebugHooksArg"/> ile başlatan testlerde canlıdır.</param>
 public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob,
-    RunCoordinator coordinator, WorkspaceServices workspace)
+    RunCoordinator coordinator, WorkspaceServices workspace, bool debugHooks = false)
 {
+    /// <summary>[A13/B4] Test kancalarını açan Supervisor argümanı. <b>Değer almaz</b> (varlığı yeterlidir),
+    /// bu yüzden <c>--logs</c>/<c>--worktrees</c>'in isim+değer sözleşmesine (<c>Program.GetArg</c>) girmez.
+    /// <para>Bayrağın adının TEK sahibi burasıdır: <see cref="Program"/> onu ayrıştırırken, testler
+    /// Supervisor'ı başlatırken ve aşağıdaki reddetme metni onu adlandırırken hep BU sabiti okur.</para></summary>
+    public const string DebugHooksArg = "--debug-hooks";
+
+    /// <summary>[A13/B4] Kapalı kancanın reddetme metni. IPC tüketicisine gider ⇒ İngilizce
+    /// (uygulama İngilizce-only, bkz. <c>NoTurkishUserTextTests</c>).</summary>
+    private const string DebugHooksDisabledMessage =
+        $"debugSpawnChildren is a debug hook and is disabled by default; "
+        + $"start the supervisor with {DebugHooksArg} to enable it";
+
     private bool _running = true;
 
     public async Task<int> RunAsync(CancellationToken ct = default)
@@ -211,8 +226,22 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             await writer.WriteAsync(new ProjectLogChunkEvent(g.ProjectId, c.Sequence, c.Text, c.IsLast, throughLineNumber), ct);
     }
 
+    /// <summary>
+    /// [A13/B4] <b>Varsayılan olarak KAPALI bir test kancası.</b> Komut TANINMAYA devam eder (IPC sözleşmesi
+    /// kırılmaz: <c>debugSpawnChildren</c> ayrımcısı ve tipi yerinde) ama Supervisor
+    /// <see cref="DebugHooksArg"/> ile başlatılmadıysa <c>error(debugHooksDisabled)</c> ile REDDEDİLİR.
+    /// <para>Kapı, girdi doğrulamasını KOMUTUN KENDİ handler'ında toplayan mevcut desenin aynısıdır
+    /// (<see cref="ApplyPerfModeAsync"/> → <c>badPerfMode</c>): hata kendi KODUYLA ayrışır, böylece
+    /// "komut hiç bağlanmamış" (<c>unknownCommand</c>) ile karışmaz ve stdout YALNIZ NDJSON kalır [D4].</para>
+    /// <para><b>Bu bir güvenlik sınırı DEĞİL, bir yüzey daraltmasıdır:</b> Supervisor'ın stdin'ini tutabilen
+    /// biri zaten App'in yerindedir (bkz. <c>docs/TRUST-BOUNDARY.md</c> §10). Kazanç, ÜRETİM ikilisinin bu
+    /// kancayı varsayılan olarak DİNLEMEMESİDİR.</para>
+    /// </summary>
     private async Task SpawnDebugChildrenAsync(DebugSpawnChildrenCommand d, CancellationToken ct)
     {
+        if (!debugHooks)
+        { await writer.WriteAsync(new ErrorEvent("debugHooksDisabled", DebugHooksDisabledMessage), ct); return; }
+
         var pids = new List<int>();
         for (int i = 0; i < d.Count; i++)
         {

@@ -72,47 +72,6 @@ public class E5FoldTests
         GC.KeepAlive(window);
     }
 
-    // ------------------------------------------------------------------ [a11y kararı] DsSplitter klavye resize persist
-    [StaFact]
-    public void Keyboard_resizing_the_splitter_commits_through_the_drag_completed_path()
-    {
-        var grid = new Grid { Width = 400, Height = 200 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var splitter = new DsSplitter { LineOrientation = SplitterLine.Vertical };
-        Grid.SetColumn(splitter, 1);
-        grid.Children.Add(splitter);
-
-        var host = DsResources.NewHost();
-        var window = DsResources.Realize(host, grid);
-
-        // Basıştan ÖNCEKİ sol-kolon genişliği (ShellRoot persist'i ActualWidth okur). 2 star-kolon 400px'i
-        // ~yarı yarıya paylaşır (ayraç Auto ~7px) → başlangıçta > 0 ve iki taraf ~eşit.
-        double prePress = grid.ColumnDefinitions[0].ActualWidth;
-        Assert.True(prePress > 0);
-
-        bool committed = false;
-        double atCompletion = double.NaN;
-        splitter.DragCompleted += (_, _) =>
-        {
-            committed = true;
-            // ShellRoot'un persist yolu TAM BURADA ActualWidth okur — ayırt edici gerçek: bu okuma TAZE mi?
-            atCompletion = grid.ColumnDefinitions[0].ActualWidth;
-        };
-
-        splitter.Focus();
-        var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(splitter)!, 0, Key.Left)
-        { RoutedEvent = Keyboard.KeyDownEvent };
-        splitter.RaiseEvent(key);
-
-        Assert.True(key.Handled);   // taban GridSplitter ok-tuşuyla resize etti
-        Assert.True(committed);     // ...ve DsSplitter persist'i DragCompleted ile tetikledi
-        // AYIRT EDİCİ: Sol ok sol-kolonu KÜÇÜLTÜR; DragCompleted anında okunan ActualWidth resize'ı YANSITMALI
-        // (basıştan küçük). UpdateLayout() olmadan taban yalnız async arrange planlar → okuma BAYAT kalır
-        // (atCompletion == prePress) → persist stale oranı yazar. Bu assert o hatayı yakalar.
-        Assert.True(atCompletion < prePress,
-            $"DragCompleted anında ActualWidth taze olmalı (resize sonrası küçülmüş): prePress={prePress}, atCompletion={atCompletion}");
-        GC.KeepAlive(window);
-    }
+    // [A13/T1 fix-1 · S2] DsSplitter klavye-resize persist testi konu olarak ayraca aittir → SplitterDragTests'e
+    // TAŞINDI (aynı kontrolün sürükleme/renk testleriyle bir arada; kurulum artık ortak SplitterHost'ta).
 }

@@ -29,9 +29,9 @@ public partial class ProjectRow : UserControl
 {
     // design-v1 kaynak sabitleri (inline magic number YASAK — StatusGlyph.PulseMs / BuildingSpinner.RotationMs deseni).
     private const double BreathMs = 3800;          // BuildApp.jsx:22 `bo-breath 3.8s`
-    private const double BreathPeakOpacity = 0.32; // BuildApp.jsx:24 amber-soft katman tepe opaklığı
+    private const double BreathPeakOpacity = 0.32; // [A13/T4 fix-1 · D10] BuildApp.jsx:34 amber-soft katman tepe opaklığı (bayat satır referansı düzeltildi, eskiden :24)
     private const int DecorativeFrameRate = 30;    // brief: DesiredFrameRate=30
-    private const double ShakeMs = 360;            // BuildApp.jsx:27 `bo-shake 360ms`
+    private const double ShakeMs = 360;            // [A13/T4 fix-1 · D10] BuildApp.jsx:18 `bo-shake .36s` (bayat satır referansı düzeltildi, eskiden :27; keyframe'ler :30'da)
     private const double SelectedTranslateX = 4;   // BuildApp.jsx:379 seçili iç-sarmalayıcı translateX
     private const double StripeWidthNormal = 2;    // BuildApp.jsx:373
     private const double StripeWidthSelected = 3;
@@ -381,7 +381,9 @@ public partial class ProjectRow : UserControl
     {
         var state = _vm?.State ?? ProjectRowState.Pending;
         GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
-        string text = StatusLabel(status);
+        // [A13/T5] design-v1 EN_STATUS eşlemesi artık STATUS_META'nın yanında (StatusGlyph.LabelFor) — graf
+        // düğümünün ekran-okuyucu adı ikinci tüketicisidir, kopya YASAK.
+        string text = StatusGlyph.LabelFor(status);
         if (state == ProjectRowState.Started)
             text += " — " + DurationFormat.Elapsed(_vm?.DurationMs ?? 0);
         else if (_vm?.HasDepIssue ?? false)
@@ -457,15 +459,23 @@ public partial class ProjectRow : UserControl
     private void PlayShake()
     {
         if (!AnimationsEnabledProvider()) return;
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+        PART_ShakeTranslate.BeginAnimation(TranslateTransform.XProperty, BuildShakeAnimation(this), HandoffBehavior.SnapshotAndReplace);
+    }
+
+    /// <summary>[A13/T4 · m1 test seam] Shake animasyonunu üreten TEK yer — kontrol ve test AYNI fabrikayı
+    /// kullanır (<see cref="BuildBreathingAnimation"/> deseni): 360ms süre + BuildApp.jsx:30 keyframe'leri
+    /// (10%,90%→∓2 · 25%,75%→±3 · 50%→∓3 · 100%→0) burada pinlenir (inline magic number YOK).</summary>
+    internal static DoubleAnimationUsingKeyFrames BuildShakeAnimation(FrameworkElement host)
+    {
+        var spline = MotionTokens.ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
         // [Fix wave 1 · D1 review Minor 4] FillBehavior.Stop: keyframe'ler zaten 0'da biter → görsel aynı, ama
         // varsayılan HoldEnd'in aksine clock BİTİNCE serbest kalır (her shake'lenmiş satırda takılı saat kalmaz).
         var anim = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
         void Frame(double v, double pct) =>
             anim.KeyFrames.Add(new SplineDoubleKeyFrame(v, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ShakeMs * pct)), spline));
-        // BuildApp.jsx:27 keyframe'leri: 10%,90% → -2 · 25%,75% → +3 · 50% → -3.
+        // BuildApp.jsx:30 keyframe'leri: 10%,90% → -2 · 25%,75% → +3 · 50% → -3.
         Frame(-2, 0.10); Frame(3, 0.25); Frame(-3, 0.50); Frame(3, 0.75); Frame(-2, 0.90); Frame(0, 1.0);
-        PART_ShakeTranslate.BeginAnimation(TranslateTransform.XProperty, anim, HandoffBehavior.SnapshotAndReplace);
+        return anim;
     }
 
     // ---------------------------------------------------------------- animasyon yardımcıları
@@ -583,20 +593,6 @@ public partial class ProjectRow : UserControl
         }
         return null;
     }
-
-    // ---------------------------------------------------------------- metin
-    /// <summary>design-v1 EN_STATUS (BuildApp.jsx:342) — glyph tooltip'inin İngilizce statü etiketi. Eşlemenin
-    /// KENDİSİ (state+cycle+queued → GraphStatus) artık <see cref="ProjectRowViewModel.Status"/>'tadır (TEK yer).</summary>
-    private static string StatusLabel(GraphStatus status) => status switch
-    {
-        GraphStatus.Queued => "Queued",
-        GraphStatus.Building => "Building",
-        GraphStatus.Succeeded => "Succeeded",
-        GraphStatus.Failed => "Failed",
-        GraphStatus.Skipped => "Skipped",
-        GraphStatus.Cycle => "Cycle",
-        _ => "Discovered",
-    };
 
     private Color ResolveColor(string key, Color fallback) =>
         TryFindResource(key) is SolidColorBrush b ? b.Color : fallback;

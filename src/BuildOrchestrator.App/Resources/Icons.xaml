@@ -175,6 +175,12 @@
     <!-- _ds_bundle.js:143 Chip chevron — <path d="M4.5 6.5 8 10l3.5-3.5"/> (Select'in ok'u da AYNI, :831) -->
     <PathGeometry x:Key="Icon.Chevron" Figures="M4.5 6.5 8 10l3.5-3.5" />
 
+    <!-- [A13/T2 · 2.3] _ds_bundle.js:206-220 Chip `onRemove` göstergesi — 10x10 çizim, viewBox 16,
+         strokeWidth 1.5, linecap round: <path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>. ÇİZİLMİŞ geometri (tek ikon
+         stratejisi, T64); ham `✕` karakteri YASAK (emoji taraması + ikon dili). Icon.StatusCross'tan AYRI:
+         o, statü halkasının içine yerleşen daha küçük bir çarpıdır. -->
+    <PathGeometry x:Key="Icon.ChipRemove" Figures="M4.5 4.5l7 7 M11.5 4.5l-7 7" />
+
     <!-- ============================ layout seçici ikonları (viewBox 0 0 16 16) ============================ -->
 
     <!-- BuildApp.jsx:70 layQuad — 4x <rect rx="1"/> -->
@@ -269,6 +275,7 @@
 
     <!-- strokeWidth="1.5" (_ds_bundle.js:143 chevron · :1457 StatusGlyph gövdesi · :1389 Spinner) -->
     <sys:Double x:Key="Icon.Chevron.StrokeThickness">1.5</sys:Double>
+    <sys:Double x:Key="Icon.ChipRemove.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.StatusCheck.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.StatusCross.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.StatusDash.StrokeThickness">1.5</sys:Double>

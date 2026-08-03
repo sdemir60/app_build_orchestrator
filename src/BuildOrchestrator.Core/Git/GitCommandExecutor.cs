@@ -24,13 +24,13 @@ internal static class GitCommandExecutor
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
-            return GitResult<ProcessResult>.Fail($"git komutu çalıştırılamadı ('{gitExecutable}'): {ex.Message}");
+            return GitResult<ProcessResult>.Fail($"the git command could not be started ('{gitExecutable}'): {ex.Message}");
         }
     }
 
     /// <summary>Sıfır olmayan exit kodlu bir git komutu için okunabilir hata metni — stderr varsa onu, yoksa exit kodunu döner.</summary>
     public static string DescribeGitFailure(ProcessResult r)
         => string.IsNullOrEmpty(r.StandardError)
-            ? $"git komutu beklenmeyen exit kodu ile sonlandı: {r.ExitCode}"
+            ? $"the git command exited with an unexpected exit code: {r.ExitCode}"
             : r.StandardError.Trim();
 }
