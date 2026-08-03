@@ -76,6 +76,10 @@ public sealed class DesignTokenScaleTests
         Assert.Equal(Hex("#08080a"), ((SolidColorBrush)t["Brush.Black"]).Color);   // --black
         Assert.Equal(Hex("#ffffff"), ((SolidColorBrush)t["Brush.White"]).Color);   // --white
         Assert.Equal(Hex("#cdcdd2"), ((SolidColorBrush)t["Brush.Neutral200"]).Color);
+
+        // [SCROLLBAR] colors.css:6 — `.bo-scroll` thumb rampası (BuildApp.jsx:35-38).
+        Assert.Equal(Hex("#2a2a30"), ((SolidColorBrush)t["Brush.Neutral700"]).Color);
+        Assert.Equal(Hex("#3a3a42"), ((SolidColorBrush)t["Brush.Neutral600"]).Color);
     }
 
     [StaFact]
