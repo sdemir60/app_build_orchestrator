@@ -79,17 +79,18 @@ Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.
 - **Belirsizlikte tahmin yürütme** — ayırt edici soru sor (her seferinde mi, pencere boyutuna bağlı mı,
   reduced-motion açık mı). Nedeni bilinmeyen kusurda `superpowers:systematic-debugging`; hipotezi doğrulamadan
   koda dokunma.
-- **Varsayılan davranış: düzelt.** ARCHITECTURE.md bir davranışı "böyle olması gerekiyor" diye anlatıyor ve
-  kullanıcı yanlış olduğunu söylüyorsa, karar kullanıcınındır: kod düzeltilir ve doküman da ona göre yeniden
-  yazılır. Doküman bir itiraz gerekçesi değildir. Teknik bir engel varsa (WPF yapamıyor, ölçüm aksini söylüyor)
-  bunu **bir cümleyle** söyle ve nasıl yaklaşabileceğini anlat.
+- **Doküman kodla uyuşmuyorsa: sessizce birini seçme, kullanıcıyı uyar.** ARCHITECTURE.md bir şey diyor ama kod
+  başka türlü davranıyorsa, "doküman ile kod uyuşmuyor: doküman şunu diyor, kod şunu yapıyor" de ve kullanıcının
+  hangisinin doğru olduğunu söylemesini bekle.
 - Birden çok bulgu tek kök nedene bağlıysa tek fix, ama **her biri için ayrı test**.
 - Bitişte **tam süit yeşil** (token/motion/D8 guard'ları dahil). 5'ten fazla bulgu varsa önce kısa TDD dökümü
   (`.claude/outputs/`), sonra `superpowers:subagent-driven-development` ile task-by-task.
 
 ## Doküman güncelleme
 
-**Tetikleyici: "dokümanları güncelle"** → o ana kadarki değişiklikleri kalıcı dokümanlara işle.
+Bir hata düzeltildiğinde ya da yeni bir şey eklendiğinde, doküman artık yanlış bir şey söylüyorsa ilgili bölüm
+**aynı işte** güncellenir. Doğru söylüyorsa dokunulmaz. Ayrıca **"dokümanları güncelle"** dendiğinde o ana
+kadarki tüm değişiklikler dokümanlara işlenir.
 
 - **Anlatı üslubu korunur.** Doküman projeyi ANLATIR; "şu oturumda şunu ekledik / eskiden böyleydi" YAZILMAZ.
   Değişen davranış ilgili bölümde **yerinde yeniden yazılır** — doküman changelog biriktirmez.
@@ -99,10 +100,6 @@ Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
 - `.claude/outputs/` ve `.claude/summaries/` **tarihseldir** — geriye dönük düzeltilmez.
-
-Ayrıca her düzeltme dalgasında, yapılan fix bir dokümandaki *olgusal* ifadeyi yalanlıyorsa (mimari/akış
-değişikliği · yeni ya da kaldırılan komut/kısayol/script · TFM veya bağımlılık değişikliği · IPC komutu, dosya
-yolu, process/job davranışı · güven sınırı) o ifade **aynı dalgada** düzeltilir. Yalanlamıyorsa dokunulmaz.
 
 ## Çıktı, özet ve aşama dosyaları
 
