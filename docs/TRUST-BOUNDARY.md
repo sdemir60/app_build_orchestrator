@@ -11,7 +11,7 @@ uygulamanın güven sınırlarını (process, IPC, dosya sistemi, git, kullanıc
 >
 > | Kapsam | Hangi ağaca karşı doğrulandı |
 > |---|---|
-> | `SupervisorHost.cs` ve `Program.cs`'e yapılan **TÜM** atıflar; ayrıca App'in Supervisor'ı başlattığı nokta (`EngineHost.cs:71`, `:77`) | **`3243d4a`** (branch `a13-visual-debt-automation`) — A13/B4'te satır satır yeniden doğrulandı |
+> | `SupervisorHost.cs` ve `Program.cs`'e yapılan **TÜM** atıflar; ayrıca App'in Supervisor'ı başlattığı nokta (`EngineHost.cs:71`, `:77`) | **`0b72803`** (branch `a13-visual-debt-automation`) — A13/B4'te satır satır yeniden doğrulandı |
 > | Diğer tüm atıflar (`EngineHost.cs`'in kalanı, `NdjsonFraming.cs`, `IpcMessages.cs`, `RunCoordinator.cs`, `Core/*`, `App/*` …) | hâlâ **`804da6b`** — o günden beri kaymış olabilir |
 >
 > Yani ikinci satırdaki bir koordinat **bugün yanlış olabilir**; anlattığı gerçek doğru olsa bile satır
@@ -295,9 +295,9 @@ bunu açıkça belgeler). Havuz, uygulamanın kendi scratch alanıdır.
 
 | Girdi | Kaynak | Nereye gider | Enjeksiyon riski |
 |---|---|---|---|
-| Repo kökü | `OpenFolderDialog` (`OsActions.cs:133-138`) veya Settings (`RunViewModel.ActionBar.cs:125-137`) | `StartRunCommand.RootPath` (`RunViewModel.cs:425`) → `ProcessSpec.WorkingDirectory` (`GitCommandExecutor.cs:22` → `ProcessRunner.cs:29`) | **Yok** — argüman değil, çalışma dizini |
+| Repo kökü | `OpenFolderDialog` (`OsActions.cs:133-138`) veya Settings (`RunViewModel.ActionBar.cs:188-200`) | `StartRunCommand.RootPath` (`RunViewModel.cs:425`) → `ProcessSpec.WorkingDirectory` (`GitCommandExecutor.cs:22` → `ProcessRunner.cs:29`) | **Yok** — argüman değil, çalışma dizini |
 | Proje/solution yolları | disk taraması | `WindowsCommandLine.Build` ile MSBuild komut satırı (`MsBuildInvoker.cs:67`) | **Yok** — MSVCRT-uyumlu kaçış (`WindowsCommandLine.cs:16-28`) |
-| Branch | branch listesi (`RunViewModel.ActionBar.cs:45-47`) ya da `ui-state.json` | `git fetch origin <branch>` argv elemanı | **Düşük** — bkz. §8/4 |
+| Branch | branch listesi (`RunViewModel.ActionBar.cs:104-106`) ya da `ui-state.json` | `git fetch origin <branch>` argv elemanı | **Düşük** — bkz. §8/4 |
 | PerfMode | perf chip | ordinal beyaz liste (`PerfProfile.cs:56-62`) | **Yok** |
 | Worktree adı | UI / `ui-state.json` | `PathSanitizer.IsSafeSegment` (`WorktreeManager.cs:363`) | **Yok** |
 | Layer regex | Settings editörü | `Regex` ctor + 100 ms timeout (`LayerEngine.cs:59-60`) | ReDoS **kapalı** (bkz. §8) |
@@ -392,7 +392,7 @@ dolayısıyla IPC'yi de kısardı.
    yollar disk taramasından gelir) ve `UseShellExecute=false` olduğu için kabuk devrede değildir — yine de
    `WindowsCommandLine` kullanılmayan iki yerdir.
 4. **Branch adı git'e opsiyon olarak sızabilir (teorik).** `Branch`, UI'da yalnız listeden seçilir
-   (`RunViewModel.ActionBar.cs:45-47`) ama `ui-state.json`'dan da yüklenir (`MainWindow.xaml.cs:102`).
+   (`RunViewModel.ActionBar.cs:104-106`) ama `ui-state.json`'dan da yüklenir (`MainWindow.xaml.cs:119`).
    Elle düzenlenmiş bir dosyada `-`'la başlayan bir değer `git fetch origin <branch>` argv'sine olduğu gibi
    girerdi (`GitService.cs:196`) — `--` ayracı ya da ön-doğrulama yoktur. Erişim için saldırganın zaten
    kullanıcının hesabında olması gerekir.

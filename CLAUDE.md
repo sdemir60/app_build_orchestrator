@@ -42,9 +42,12 @@ Solution: `BuildOrchestrator.slnx` (kökte). Ana git kökü: bu dizin.
 
 ```powershell
 dotnet build BuildOrchestrator.slnx
-dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj
+dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"
 dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
+
+> Doğrulama süiti **filtrelidir**. Filtresiz koşum `Category=Acceptance` üç testi de alır ve kullanıcının
+> gerçek OSYS reposunu derler (~2 dk + ara sıra kırmızı). Kabul koşumu ayrıdır: `--filter "Category=Acceptance"`.
 
 ---
 

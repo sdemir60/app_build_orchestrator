@@ -74,13 +74,13 @@ Key consequences of that layout:
 
 ```powershell
 dotnet build BuildOrchestrator.slnx
-dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj
+dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"
 dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
 Close any running instance of the app before building — a running Supervisor keeps its own binaries locked.
-The test suite is expected to be fully green; a few acceptance tests need a real large repository and are
-excluded with `--filter "Category!=Acceptance"`.
+The test suite is expected to be fully green. The filter above excludes the three acceptance tests, which
+build a real large repository (~2 min) and are run separately with `--filter "Category=Acceptance"`.
 
 ## Publish
 
@@ -111,8 +111,10 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-publish.ps1
 ```
 
 It first refuses to measure anything if an instance is already running (the app is single-instance), then
-publishes to a temp folder and runs 16 checks: publish exit code, layout (`App.exe`, `supervisor\`,
-font licence), an NDJSON round trip against the published Supervisor binary, launching the published `.exe`
+publishes to a temp folder and runs 22 checks: publish exit code, layout (`App.exe`, `supervisor\`,
+font licence), an NDJSON round trip against the published Supervisor binary, a full Sync + Build driven
+through the published Supervisor against a throwaway workspace (proving the published binary really
+compiles and writes the DLL), launching the published `.exe`
 and confirming via WMI that the Supervisor child was spawned from that same folder, reading the console boot
 line and the ribbon state out of the live window through UI Automation, and finally killing only the App and
 proving the Supervisor dies *by itself* through the job cascade. Exit code `0` = pass, `1` = fail,
