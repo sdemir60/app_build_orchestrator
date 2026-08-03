@@ -7,10 +7,9 @@ output timestamps), and builds only those — in parallel, under a supervisor pr
 It is a developer tool for your own machine: it builds a repository you would otherwise open in Visual Studio,
 with your own privileges.
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the technical reference: process topology, IPC contract, the
-  incremental decision, the build engine, the git surface, the UI architecture and the design system.
-- [`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) (Turkish) — what the process boundaries mean in practice,
-  what git is allowed to do, and what is explicitly out of the threat model.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the technical reference behind this file: process topology, IPC
+contract, the incremental decision, the build engine, the git surface, the UI architecture, the design system,
+and the security boundary.
 
 ## What it does
 
@@ -216,23 +215,15 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 
 The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.md#20-known-limits).
 
-## Design and decision records
+## Documentation
 
-The permanent documentation is [`ARCHITECTURE.md`](ARCHITECTURE.md) (English) and
-[`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) (Turkish). Behind them sits a historical record, written in
-**Turkish**, that is kept as it was written and not corrected retroactively:
+Three files carry everything: this one, [`ARCHITECTURE.md`](ARCHITECTURE.md) — every architectural, technical
+and design decision the implementation rests on — and [`CLAUDE.md`](CLAUDE.md), the working conventions for
+this repository.
 
-- `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md` — the **plan of record**: the
-  binding architectural decisions (nested Job Object, shell-out, read-only git, the perf table, the WPF
-  fidelity framework).
-- `.claude/outputs/2026-07-15-19-00-design-v1/` — the design package: the specification plus the HTML/JSX
-  prototype that is the visual authority for the UI.
-- `.claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md` — the feasibility analysis behind the
-  WPF technical decisions and the accepted structural deviations.
-- `.claude/outputs/` — iteration plans and records, spike results, measurements and closing reports.
-- `.superpowers/sdd/progress.md` — the durable ledger: current state, measurements and parked items. Volatile
-  numbers (test counts, commit hashes) live there rather than in the documents above.
-- [`CLAUDE.md`](CLAUDE.md) — working conventions for this repository.
+`.claude/` holds the historical record of the delivery (iteration plans, the design package, measurements and
+decision logs, in Turkish) and `.superpowers/sdd/progress.md` the ledger with the current numbers. Both are
+history: the documents above are the current truth.
 
 ## Licence
 

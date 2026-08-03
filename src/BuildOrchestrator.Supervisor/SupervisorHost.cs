@@ -234,7 +234,7 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     /// (<see cref="ApplyPerfModeAsync"/> → <c>badPerfMode</c>): hata kendi KODUYLA ayrışır, böylece
     /// "komut hiç bağlanmamış" (<c>unknownCommand</c>) ile karışmaz ve stdout YALNIZ NDJSON kalır [D4].</para>
     /// <para><b>Bu bir güvenlik sınırı DEĞİL, bir yüzey daraltmasıdır:</b> Supervisor'ın stdin'ini tutabilen
-    /// biri zaten App'in yerindedir (bkz. <c>TRUST-BOUNDARY.md</c> §10). Kazanç, ÜRETİM ikilisinin bu
+    /// biri zaten App'in yerindedir (bkz. <c>ARCHITECTURE.md</c> §21.5). Kazanç, ÜRETİM ikilisinin bu
     /// kancayı varsayılan olarak DİNLEMEMESİDİR.</para>
     /// </summary>
     private async Task SpawnDebugChildrenAsync(DebugSpawnChildrenCommand d, CancellationToken ct)

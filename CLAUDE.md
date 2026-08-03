@@ -8,15 +8,15 @@ yönetir; her projeyi **shell-out** (`MSBuild.exe` ayrı child process) ile derl
 
 | Doküman | Ne için |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, bilinçli kararlar, bilinen sınırlar. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
 | [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
-| [TRUST-BOUNDARY.md](TRUST-BOUNDARY.md) | Güven sınırları (process/IPC/dosya/git/CPU) + "ne korunmuyor" dürüst listesi, `dosya:satır` atıflı. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** "Kusur mu, bilinçli karar mı" sorusunun cevabı
 çoğunlukla ARCHITECTURE.md §19 (kabul edilen yapısal farklar) ve §20'dedir (bilinen sınırlar).
 
-**Görsel otorite** — renk, ölçü, süre, kopya metni gerektiğinde birebir kaynak:
-[design-v1](.claude/outputs/2026-07-15-19-00-design-v1/README.md) (spesifikasyon + çalışan prototip).
+**Görsel değer** (renk, ölçü, süre, kopya metni) gerektiğinde birebir kaynak:
+[design-v1](.claude/outputs/2026-07-15-19-00-design-v1/README.md) — tasarım paketi + çalışan prototip.
+`.claude/` altındaki geri kalan her şey tarihsel kayıttır.
 
 ## Proje yapısı
 
@@ -52,8 +52,8 @@ Solution: `BuildOrchestrator.slnx` (kökte).
   constructor vb.) İngilizce bırak.
 - Sade ve öz yaz; gereksiz cümleyle uzatma.
 - Sadece koddaki gerçeğe dayan; emin olmadığını yazma, varsayım ekleme.
-- **Kod, UI metinleri ve loglar İngilizce**; kod yorumları ve `.claude/` kayıtları Türkçe. README ve
-  ARCHITECTURE.md İngilizce, TRUST-BOUNDARY.md Türkçe.
+- **Kod, UI metinleri ve loglar İngilizce**; kod yorumları ve `.claude/` kayıtları Türkçe. README.md ve
+  ARCHITECTURE.md İngilizce.
 
 ## Build / test
 
@@ -91,16 +91,16 @@ Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.
 
 - **Anlatı üslubu korunur.** Doküman projeyi ANLATIR; "şu oturumda şunu ekledik / eskiden böyleydi" YAZILMAZ.
   Değişen davranış ilgili bölümde **yerinde yeniden yazılır** — doküman changelog biriktirmez.
-- **Yer:** teknik/mimari/tasarım → ARCHITECTURE.md · kullanım/komut/gereksinim/kısayol → README.md ·
-  process/IPC/dosya/git/CPU sınırı → TRUST-BOUNDARY.md · çalışma kuralı → CLAUDE.md. README özetler,
-  ARCHITECTURE ayrıntılandırır; aynı şey iki yerde ayrıntısıyla tekrarlanmaz.
+- **Yer:** teknik/mimari/tasarım/güven sınırı → ARCHITECTURE.md · kullanım/komut/gereksinim/kısayol →
+  README.md · çalışma kuralı → CLAUDE.md. README özetler, ARCHITECTURE ayrıntılandırır; aynı şey iki yerde
+  ayrıntısıyla tekrarlanmaz.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
 - `.claude/outputs/` ve `.claude/summaries/` **tarihseldir** — geriye dönük düzeltilmez.
 
 Ayrıca her düzeltme dalgasında, yapılan fix bir dokümandaki *olgusal* ifadeyi yalanlıyorsa (mimari/akış
 değişikliği · yeni ya da kaldırılan komut/kısayol/script · TFM veya bağımlılık değişikliği · IPC komutu, dosya
-yolu, process/job davranışı) o ifade **aynı dalgada** düzeltilir. Yalanlamıyorsa dokunulmaz.
+yolu, process/job davranışı · güven sınırı) o ifade **aynı dalgada** düzeltilir. Yalanlamıyorsa dokunulmaz.
 
 ## Çıktı, özet ve aşama dosyaları
 
