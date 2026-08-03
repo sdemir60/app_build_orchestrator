@@ -120,4 +120,48 @@ public class ScrollBarStyleTests
         Assert.Equal(Visibility.Collapsed, track.Visibility);
         GC.KeepAlive(window);
     }
+
+    [StaFact]
+    public void The_console_editor_realizes_ds_bars_and_a_transparent_corner()
+    {
+        // Console'un GERÇEK yolu: AvalonEdit TextEditor → iç ScrollViewer → ScrollBar'lar. Implicit stilin
+        // AvalonEdit şablonunun içine de ulaştığı ve iki bar'ın kesiştiği köşe karesinin (Corner) şeffaf
+        // olduğu burada, üretimdekiyle aynı kontrol üzerinden kanıtlanır.
+        var host = DsResources.NewHost();
+        var editor = new ICSharpCode.AvalonEdit.TextEditor
+        {
+            Width = 260,
+            Height = 100,
+            WordWrap = false,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Text = string.Join(Environment.NewLine, Enumerable.Repeat(new string('x', 400), 60)),
+        };
+        var window = DsResources.Realize(host, editor);
+
+        var bars = DsResources.Descendants(editor).OfType<ScrollBar>().ToList();
+        Assert.Equal(10.0, bars.Single(b => b.Orientation == Orientation.Vertical).ActualWidth);
+        Assert.Equal(10.0, bars.Single(b => b.Orientation == Orientation.Horizontal).ActualHeight);
+
+        // Default ScrollViewer şablonundaki köşe karesi ControlBrushKey'i DynamicResource ile okur —
+        // Controls.xaml'deki override onu şeffaflaştırır (açık-tema grisi koyu konsolda parlamaz).
+        // Kimlik YAPISAL olarak kurulur: şablondaki x:Name="Corner" örnekte Name olarak GÖRÜNMEZ (ölçüldü),
+        // ama kare iki bar'ın kesiştiği hücrededir (Grid satır 1 / sütun 1) ve şablondaki TEK Rectangle'dır.
+        var corner = DsResources.Descendants(editor).OfType<System.Windows.Shapes.Rectangle>()
+            .Single(r => Grid.GetRow(r) == 1 && Grid.GetColumn(r) == 1);
+        Assert.Equal(Colors.Transparent, DsResources.ColorOf(corner.Fill));
+        GC.KeepAlive(window);
+    }
+
+    [Fact]
+    public void Console_view_declares_auto_visibility_for_both_bars()
+    {
+        // BuildApp.jsx:616 konsol kutusu overflow AUTO'dur — bar yalnız gerektiğinde görünür. AvalonEdit'in
+        // default'u Visible olduğundan ConsoleView bunu AÇIKÇA Auto'ya çevirmek zorundadır (kaynak pinlenir;
+        // ConsoleView pack URI'siz headless kurulamadığı için realize DEĞİL kaynak taraması kullanılır —
+        // NoHardcodedColorTests ile aynı yaklaşım).
+        string xaml = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "Console", "ConsoleView.xaml"));
+        Assert.Contains("VerticalScrollBarVisibility=\"Auto\"", xaml);
+        Assert.Contains("HorizontalScrollBarVisibility=\"Auto\"", xaml);
+    }
 }
