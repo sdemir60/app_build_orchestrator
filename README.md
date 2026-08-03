@@ -9,7 +9,7 @@ with your own privileges.
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the technical reference: process topology, IPC contract, the
   incremental decision, the build engine, the git surface, the UI architecture and the design system.
-- [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) (Turkish) — what the process boundaries mean in practice,
+- [`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) (Turkish) — what the process boundaries mean in practice,
   what git is allowed to do, and what is explicitly out of the threat model.
 
 ## What it does
@@ -219,7 +219,7 @@ The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.m
 ## Design and decision records
 
 The permanent documentation is [`ARCHITECTURE.md`](ARCHITECTURE.md) (English) and
-[`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) (Turkish). Behind them sits a historical record, written in
+[`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) (Turkish). Behind them sits a historical record, written in
 **Turkish**, that is kept as it was written and not corrected retroactively:
 
 - `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md` — the **plan of record**: the

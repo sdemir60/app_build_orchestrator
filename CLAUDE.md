@@ -10,7 +10,7 @@ yönetir; her projeyi **shell-out** (`MSBuild.exe` ayrı child process) ile derl
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, bilinçli kararlar, bilinen sınırlar. |
 | [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
-| [docs/TRUST-BOUNDARY.md](docs/TRUST-BOUNDARY.md) | Güven sınırları (process/IPC/dosya/git/CPU), `dosya:satır` atıflı. |
+| [TRUST-BOUNDARY.md](TRUST-BOUNDARY.md) | Güven sınırları (process/IPC/dosya/git/CPU) + "ne korunmuyor" dürüst listesi, `dosya:satır` atıflı. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** "Kusur mu, bilinçli karar mı" sorusunun cevabı
 çoğunlukla ARCHITECTURE.md §19 (kabul edilen yapısal farklar) ve §20'dedir (bilinen sınırlar).
