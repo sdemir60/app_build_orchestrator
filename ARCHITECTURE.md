@@ -4,13 +4,15 @@ This document describes what the application is made of and why it is made that 
 IPC contract, the incremental build decision, the build engine, the git surface, the UI architecture and the
 design system. It is written to be read by someone who has never opened the planning documents.
 
-**Scope.** Everything here is a statement about the code as it stands. Where a decision was taken deliberately
-against an obvious alternative, the rationale is given in one or two sentences — not the history of how it was
-reached. Chronological records (iteration plans, review outputs, decision logs) live under `.claude/outputs/`
-and are not repeated here.
+**Scope.** Everything here is a statement about the code as it stands, and it is written to be sufficient on
+its own — no historical document needs to be consulted to understand or change this system. Where a decision
+was taken deliberately against an obvious alternative, the rationale is given in one or two sentences, not the
+history of how it was reached. Chronological records (iteration plans, review outputs, decision logs) live
+under `.claude/outputs/` and are not repeated here.
 
 **Reading order.** [`README.md`](README.md) is the entry point — what the tool does and how to run it. This
-document is the technical reference behind it, including the security boundary and the threat model (§21).
+document is the technical reference behind it, including the security boundary and threat model (§21) and a
+code map (§22) that says which file owns which behaviour.
 
 ---
 
@@ -425,7 +427,7 @@ defaults.
 
 ---
 
-## 8. Core — run execution
+## 8. Run planning and execution
 
 ### 8.1 Run modes
 
@@ -477,9 +479,96 @@ displayed rounded to 5 s, and replaced by `· almost done` below 4 s. The per-pr
 ### 8.5 Run logs
 
 Every run writes to `%LOCALAPPDATA%\BuildOrchestrator\logs\run-<timestamp>\`, one file per project named by the
-first 16 hex characters of the SHA-256 of the project id. There is no in-memory ring buffer — the disk is the
-log. Embedded CR/LF inside a single MSBuild output line is normalized to a space so that one appended line is
-always one physical line, and a strange line stitch in MSBuild output cannot desynchronize the chunk reader.
+first 16 hex characters of the SHA-256 of the project id, plus a `decision.log` for orchestration decisions
+(retries, skips, warnings). There is no in-memory ring buffer — the disk is the log. A project's log is written
+by exactly one worker (the scheduler guarantees it); `decision.log` is written from all of them. Embedded CR/LF
+inside a single MSBuild output line is normalized to a space so that one appended line is always one physical
+line, and a strange line stitch in MSBuild output cannot desynchronize the chunk reader.
+
+### 8.6 Planning pipeline
+
+Planning is entirely Core's work; the Supervisor's composition root only wires it. For a fresh run
+(`Build`/`Rebuild`) the sequence is:
+
+```
+prepare workspace (in-place or worktree)          ← must be first: the scan and the signature
+  → scan (once) → evaluate (cached) → producer map    must see the same resolved root
+  → edges → solution map → topological order → BuildPlan
+  → (Build only) incremental pass: per-project signature + willBuild
+  → RunPlan { plan, solutionRefs, incremental }
+```
+
+Two details that are easy to get wrong and are pinned:
+
+- **One scan, not two.** The `.sln` *paths* needed for `-p:SolutionDir` come from the same scan result as the
+  projects; `ProjectNode` carries only solution *names*, so a second walk of the workspace would be needed
+  otherwise.
+- **Planning runs on the run's background task**, not on the IPC dispatch loop. Planning a large repository
+  takes seconds; blocking the loop would freeze command handling for that whole window.
+
+`Continue` and `RetryFailed` never call the planner: they resume from the plan, the log writer and the clock of
+the original run.
+
+### 8.7 Workspace preparation
+
+Worktrees are prepared at **Build** time, not at branch selection — branch selection is intent only (§10.3).
+
+- If no worktree is requested and no branch is selected, the in-place path returns without invoking git at all.
+- If a pool worktree for the selected branch already exists it is **reused** (`reset --hard` inside it); a new
+  one is created only when there is no candidate or reuse fails. Reuse is the reason the pool is persistent:
+  same directory, same `obj`, warm cache.
+- The pool cap is applied **before** the new worktree is added — the classic cache-eviction placement. Pruning
+  is best-effort; its failure warns but does not block the build.
+- **Failure handling is asymmetric on purpose.** If the selected branch *is* the active branch, a preparation
+  failure warns and falls back to in-place. If the selected branch is *different*, worktree is mandatory
+  (§10.3) and any failure raises a preparation error that surfaces as `planFailed` — the run never starts.
+  Falling back there would silently compile the user's dirty working tree instead of the branch they asked for.
+- The resulting "in-place" flag must reflect **reality**, not intent: it can only be false when a worktree was
+  genuinely created. Deriving it from the request would make the signature omit its working-tree term while the
+  build actually ran on a dirty tree, persisting a signature that claims a clean commit was built.
+
+### 8.8 Run coordination
+
+The Supervisor's coordinator owns one run at a time; a `startRun` while one is active answers
+`error(runInProgress)`.
+
+**Worker loop.** N workers drive one scheduler instance. `TryDispatch == false` does **not** mean "the run is
+over" — it means "no ready work right now", because dependencies may still be compiling. A worker that gets
+nothing parks on a wake signal instead of returning, and every completion (and every stop) wakes all parked
+workers. The signal to wait on is captured *before* the condition is checked, so a wakeup arriving between the
+check and the park cannot be lost. There is no polling anywhere in this loop.
+
+**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`. An
+exception escaping that region would leave the project in flight forever, `IsDone` would never become true and
+the run would hang — so even the display-name lookup is written not to throw.
+
+**Event ordering.** All events go through a single unbounded FIFO channel drained by one pump task. MSBuild's
+output callback is invoked *synchronously* from its stdout/stderr pump threads while IPC writing is
+asynchronous; the channel both guarantees the order (`runStarted` → `projectStarted`\* → results →
+`runCompleted`) and keeps those threads unblocked. The pump is deliberately tolerant: a single over-long
+message is skipped without breaking the stream, and if stdout dies entirely the run **continues** — the disk
+log is the real record, and the channel is still drained to completion so no writer ever blocks.
+
+**Per project.** At dispatch time all dependencies are already terminal, so `depIssues` can be computed before
+invoking and used for all three consumers at once (the log's warning lines, the event, and the accumulation
+that this project's own dependents will inherit). The invocation request carries the solution directory, a
+restore flag derived from the presence of `packages.config`, and — in worktree mode only — the isolated
+intermediate path. The project's log file is opened before and closed after the invocation, so a late line
+cannot be silently dropped. The first line written is the real MSBuild command line. On success the build state
+is persisted with the signature computed during planning; on failure the stored state is invalidated so the
+next run does not consider the project up to date.
+
+**Stop bookkeeping.** If a stop was acknowledged, writing `runStopped` is a debt that must be paid even when
+the run never reached `runStarted` (a stop pressed during a multi-second planning window) — otherwise the App
+would wait for an event that never comes. The run slot, the stop state and the whole perf state (applied cap,
+pending intent, copy-floor depth, drain flag) are reset in one critical section, because the IPC loop runs on
+another thread and `setPerfMode` has no run-state precondition: an intent arriving in that window would
+otherwise leak into the next run.
+
+**Continue and RetryFailed** transform the snapshot rather than replanning: *Continue* requeues only the
+projects that failed with a stop reason (the torn-DLL guard) — genuine failures stay failed — while
+*RetryFailed* requeues every failed project plus its transitive dependents. Neither resets the elapsed clock,
+the console or the log writer.
 
 ---
 
@@ -887,11 +976,44 @@ resumes. Text selection inside the console never clears the project selection.
 
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection.
 
+### 13.8 Design-system control library
+
+WPF ships almost none of the design's vocabulary, so `Resources/Controls.xaml` defines it as templates and
+styles, and `Controls/` holds the custom elements that a template cannot express.
+
+| Element | Form |
+|---|---|
+| Buttons | One shared `ControlTemplate` over four variants (primary / secondary / ghost / danger) × three sizes, differing only in brushes and metrics |
+| Split button | A custom control: two halves sharing the primary template, joined by per-corner radius and a 1 px divider — visually one body, semantically two buttons |
+| Chip | A `ToggleButton` style plus a counter text style |
+| Icon button | Its own compact template, with a toggle variant for the layout-mode icons |
+| Switch | A `CheckBox` template — WPF has no toggle switch |
+| Segment | An `ItemsControl` of `RadioButton`s (the `Debug｜Release` control) |
+| Input | A `TextBox` style with watermark, prefix and invalid states |
+| Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements |
+| Status glyph · building spinner · will-build dot | Custom controls drawing rings, arcs and dots |
+| Tracked text | Custom element for letter-spaced caps labels (§14.2) |
+
+Three pieces of shared machinery keep the copies from multiplying:
+
+- **`DsTransition`** implements the design's 120 ms colour transitions. A template's state trigger points an
+  attached property at a *token brush*; the class then installs a template-local, unfrozen brush on the real
+  property and animates that copy. This is the standing answer to the frozen-brush rule of §14.5 — a shared
+  resource brush cannot be animated, and animating one would drive every consumer at once.
+- **`PopIn`** is the single 140 ms entrance animation, shared by both popovers and the Build menu. There is no
+  exit animation; overlays hide immediately.
+- **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
+  reveal. The *cadence* is deliberately not shared — the graph staggers by layer, the list by row (§13.2).
+
+Both popovers derive from a common base that owns the open state, the refresh-then-animate-then-focus sequence,
+the Esc handling (a popover is a separate HWND, so the window-level Esc chain does not reach it) and outside
+click; only the branch search filter and the worktree three-state text remain per-popover.
+
 Filtering is a free-text query (case-insensitive substring on the project *name* only — never the path) ANDed
 with one status chip (`building` — which includes queued — `succeeded`, `failed`, `skipped`, `dep`). The active
 filter appears as a removable chip in the panel header.
 
-### 13.8 Keyboard
+### 13.9 Keyboard
 
 | Key | Action |
 |---|---|
@@ -1060,10 +1182,23 @@ App never passes them; they exist so the test suite never touches the user's rea
 
 ### 17.1 Composition
 
-One test project covers everything: Core unit tests (discovery, graph, signature, planner, scheduler, layers,
-ETA, formatting, git, worktree, MSBuild arguments, log chunking, state), process-control tests, IPC tests,
-Supervisor tests, WPF tests, source guards, integration tests and acceptance tests. It targets
-`net10.0-windows` with `UseWPF` because a meaningful portion of it realizes real WPF trees on an STA thread.
+One test project covers everything, and its folders mirror the source namespaces — `Discovery/`, `Graph/`,
+`Incremental/`, `Planning/`, `Scheduling/`, `MsBuild/`, `Git/`, `Logs/`, `State/`, `ProcessControl/`,
+`Processes/`, `Ipc/`, `Workspace/`, `Supervisor/`, `Contracts/`, `Integration/` — plus `App/`, which holds
+everything WPF: view models, controls, realization, motion, layout, keyboard, accessibility and the source
+guards. It targets `net10.0-windows` with `UseWPF` because a meaningful portion realizes real WPF trees on an
+STA thread.
+
+Shared test infrastructure lives in one place per concern rather than being copied: resource realization
+(`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost`, `SettingsDialogHost`,
+`SplitterHost`, `GraphTestView`), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
+`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`) and measurement
+(`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
+CPU-saturating job tests, the console UI tests and the build-state store tests.
+
+Font and resource assets are copied into the test output so that headless tests can load them from disk;
+`pack://` URIs do not resolve without an `Application` instance. `App.xaml` itself is copied too, so a test can
+assert structurally that it really merges the token and motion dictionaries.
 
 ### 17.2 Source guards
 
@@ -1299,12 +1434,190 @@ privileges. The following are not defended against, deliberately:
 
 ---
 
-## 22. Document map
+## 22. Code map
+
+Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Supervisor` and `Contracts` stand for
+`BuildOrchestrator.*`.
+
+**Startup and window shell**
+
+| Behaviour | File |
+|---|---|
+| Composition root, startup routes, second-instance handling | `App/App.xaml.cs` |
+| Argument parsing (`--font-ab`, `--autostart`) | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
+| Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
+| Maximize overflow fix · DWM corners/border · Snap Layouts · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `SnapLayout.cs`, `SnapLayoutHook.cs`, `CaptionGlyphs.cs` |
+| Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
+| View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
+| Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
+| Title bar context text (`OSYS · main · main-2`) | `App/ViewModels/TitleBarContext.cs` |
+
+**Engine and IPC**
+
+| Behaviour | File |
+|---|---|
+| Command/event records, JSON options | `Contracts/Ipc/IpcMessages.cs` |
+| NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
+| Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
+| Spawning the engine, generation guard, engine-died signal | `App/Services/EngineHost.cs` |
+| Supervisor entry, argument handling, stdout redirect, planner wiring, workspace preparation | `Supervisor/Program.cs` |
+| Command dispatch, per-command input gates | `Supervisor/SupervisorHost.cs` |
+| Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
+
+**Discovery, graph and layers**
+
+| Behaviour | File |
+|---|---|
+| Workspace scan, ignore list | `Core/Discovery/WorkspaceScanner.cs` |
+| Raw csproj XML evaluation | `Core/Discovery/CsprojEvaluator.cs` |
+| Evaluation cache (mtime + length fingerprint) | `Core/Discovery/EvaluationCache.cs` |
+| `.sln` parsing, project↔solution map | `Core/Discovery/SolutionMapper.cs` |
+| Stale-`obj` diagnosis, TFM derivation | `Core/Discovery/StaleObjDetector.cs`, `TargetFrameworkMonikerDeriver.cs`, `Supervisor/StaleObjRunStartWarner.cs` |
+| DLL name → producing project | `Core/Graph/ProducerMap.cs` |
+| Edges (HintPath primary, ProjectReference secondary) | `Core/Graph/GraphBuilder.cs` |
+| HintPath four-way classification and metric | `Core/Graph/HintPathClassifier.cs` |
+| SCC + topological order | `Core/Graph/TopoSort.cs` |
+| Layer assignment, phase barrier, reverse-layer warnings | `Core/Planning/LayerEngine.cs` |
+| Full planning pipeline assembly | `Core/Planning/BuildPlanBuilder.cs` |
+
+**Incremental decision**
+
+| Behaviour | File |
+|---|---|
+| Signature computation | `Core/Incremental/BuildSignature.cs` |
+| Propagation, Safe/Fast, SCC composite hash, committed fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
+| Path normalization glue for the fingerprint | `Core/Incremental/IncrementalRunBinder.cs` |
+| Will-build tri-state decision | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
+| ETA formula (raw estimate, smoothing, rounding) | `Core/Incremental/EtaCalculator.cs` |
+| Build state store, duration persistence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
+
+**Scheduling and run execution**
+
+| Behaviour | File |
+|---|---|
+| Ready-set dispatch, resolved semantics, cycle pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| Dependency-issue propagation | `Core/Scheduling/DepIssueTracker.cs` |
+| Continue / RetryFailed set transformation | `Core/Scheduling/RetryPlanning.cs` |
+| Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
+| Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
+| Worker loop, event pump, stop bookkeeping, perf lifecycle | `Supervisor/RunCoordinator.cs` |
+| Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
+| Log chunking for the UI | `Core/Logs/LogChunker.cs` |
+
+**Build execution**
+
+| Behaviour | File |
+|---|---|
+| `MSBuild.exe` resolution via `vswhere` | `Core/MsBuild/MsBuildResolver.cs` |
+| Argument contract (build and restore) | `Core/MsBuild/MsBuildArguments.cs` |
+| Invocation, output pumping, per-project kill | `Core/MsBuild/MsBuildInvoker.cs` |
+| Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
+| `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |
+| Isolated `obj` path derivation | `Core/MsBuild/WorktreeObjPathResolver.cs` |
+| Output encoding | `Core/MsBuild/MsBuildOutputEncoding.cs` |
+| Process launching, argument list discipline, command-line escaping | `Core/Processes/ProcessRunner.cs`, `WindowsCommandLine.cs` |
+
+**Git and worktrees**
+
+| Behaviour | File |
+|---|---|
+| All git invocations (HEAD, status, refs, ls-tree, fetch) | `Core/Git/GitService.cs` |
+| Command execution wrapper and result shape | `Core/Git/GitCommandExecutor.cs`, `GitMessages.cs` |
+| Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
+| Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
+| Sync flow (fetch → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
+
+**Process control and resource governance**
+
+| Behaviour | File |
+|---|---|
+| Job object: creation, assignment, CPU rate, priority, terminate | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
+| Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
+| Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
+| Perf table, copy-phase floor | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs`, `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs` |
+
+**View models — the pure decision cores**
+
+| Behaviour | File |
+|---|---|
+| Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
+| Ribbon phase lines and ETA display | `App/ViewModels/RibbonText.cs` |
+| Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
+| Filter rule and chip labels | `App/ViewModels/ProjectFilter.cs` |
+| Status counters | `App/ViewModels/RunCounters.cs` |
+| Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
+| Graph feed construction | `App/ViewModels/GraphBinder.cs` |
+| Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
+| Layer editor state | `App/ViewModels/LayerEditorViewModel.cs` |
+
+**Views and controls**
+
+| Behaviour | File |
+|---|---|
+| Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
+| Project row: stripe, dot, sha pair, hover icons, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
+| List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
+| Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
+| Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
+| Build menu (Build / Rebuild / Continue / Retry failed) | `App/Views/BuildMenu.xaml(.cs)` |
+| Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
+| Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
+| DS templates and styles | `App/Resources/Controls.xaml` |
+| Status glyph, spinner, will-build dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `WillBuildDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
+| Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
+| Icon geometries | `App/Resources/Icons.xaml`, `App/Controls/IconVisual.cs`, `IconPaint.cs` |
+
+**Console**
+
+| Behaviour | File |
+|---|---|
+| AvalonEdit host, batching, active line, cascade, chunk paging | `App/Console/ConsoleView.xaml(.cs)` |
+| Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
+| Typewriter and cascade timing (pure) | `App/Console/TypewriterScheduler.cs`, `CascadeScheduler.cs`, `CascadeFadeTransformer.cs` |
+| Batching, routing, render slice | `App/Console/ConsoleBatcher.cs`, `ConsoleBatchRouter.cs`, `ConsoleRenderSlice.cs` |
+| Chunk stitch and scroll compensation | `App/Console/ChunkStitch.cs` |
+| Typing suspension under load | `App/Console/ConsoleTypingGate.cs` |
+| Header, empty states, copy log, timestamps | `App/Console/ConsoleHeader.xaml(.cs)`, `ConsoleEmptyState.cs`, `CopyLogFeedback.cs`, `ClipboardRetry.cs`, `WallClockFormat.cs` |
+
+**Graph rendering**
+
+| Behaviour | File |
+|---|---|
+| Shapes rendering, status tick, selection dimming | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
+| Layered layout and label fit | `App/Graph/GraphLayout.cs`, `GraphLabelMetrics.cs` |
+| Viewport culling | `App/Graph/GraphCulling.cs` |
+| Camera follow and clamping | `App/Graph/GraphCamera.cs` |
+| Edge style resolution (colour, dash, flow) | `App/Graph/EdgeStyleResolver.cs` |
+| Feed models | `App/Graph/GraphModels.cs`, `GraphStatus.cs` |
+
+**Scroll, motion and tokens**
+
+| Behaviour | File |
+|---|---|
+| Cumulative layout arithmetic (rows, headers, scroll targets) | `App/Controls/LayoutMetrics.cs` |
+| Smooth scrolling, bottom anchor, follow mode | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
+| Cross-panel scroll arbitration | `App/Services/ScrollArbiter.cs` |
+| Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
+| One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |
+| Shared entrance/reveal animations, 120 ms transitions | `App/Controls/PopIn.cs`, `RevealStagger.cs`, `DsTransition.cs`, `MotionTokens.cs` |
+| Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
+| OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
+| Accessibility names | `App/AccessibilityNames.cs` |
+
+**Reading the map.** A rule of thumb that holds across the code base: where a behaviour has both a *decision*
+and its *WPF wiring*, the decision lives in a pure, testable class and the control only applies it. Ribbon
+wording, filter rules, scroll arbitration, graph layout and culling, typewriter cadence, keyboard intent and
+layer grouping are all decisions; the views are consumers. When a defect concerns *what* the application
+decided, look at the pure class; when it concerns *how* it was drawn or animated, look at the view.
+
+---
+
+## 23. Document map
 
 | Document | Role |
 |---|---|
 | [`README.md`](README.md) | Entry point: what the tool does, requirements, how to build/run/publish, how to use it |
-| **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary |
+| **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary, code map |
 | [`CLAUDE.md`](CLAUDE.md) | Working conventions for this repository |
 | `.claude/outputs/` · `.claude/summaries/` · `.claude/handoffs/` | Historical record — iteration plans, the design package, measurements and decisions from the delivery. Kept as written, not corrected retroactively |
 | `.superpowers/sdd/progress.md` | Durable ledger: current state, measurements, parked items |
