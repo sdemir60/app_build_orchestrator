@@ -896,8 +896,8 @@ shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click or Esc cl
 
 The Settings dialog carries the LAYERS editor and the REPOSITORY row (current root plus *Change…*). Layer cards
 are reordered by dragging the grip with `Mouse.Capture` and a half-row swap threshold — `DragDrop.DoDragDrop`
-is prohibited, because the OS ghost-drag semantics do not match the design. Neighbours snap without animation,
-matching the prototype. An invalid regex puts its input into the invalid state and disables *Save*.
+is prohibited, because the OS ghost-drag semantics do not match the design. Neighbours snap without animation.
+An invalid regex puts its input into the invalid state and disables *Save*.
 
 ### 13.4 Scroll infrastructure
 
@@ -1032,8 +1032,9 @@ accident.
 
 ## 14. Design system
 
-The visual authority is the design package under `.claude/outputs/2026-07-15-19-00-design-v1/` (specification
-plus a working HTML prototype). Values below are the tokens as implemented.
+The design system is implemented, not referenced: every value below lives in the application's own resource
+dictionaries, and component-specific measurements sit as named constants on the control that draws them. There
+is no external style sheet and no runtime theming.
 
 ### 14.1 Tokens
 
@@ -1243,7 +1244,7 @@ dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filte
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category=Acceptance"
 ```
 
-Current suite counts live in the ledger (`.superpowers/sdd/progress.md`), not in this document.
+Test counts are deliberately not recorded here — run the suite for the current number.
 
 ---
 
@@ -1286,24 +1287,28 @@ not met.
 
 ---
 
-## 19. Accepted structural deviations
+## 19. Platform constraints
 
-WPF was validated as the target before implementation, against a WebView2 hybrid, Avalonia and WinUI 3. The
-following differences from the design prototype are **accepted as perceptually equivalent** and are not to be
-closed with effort:
+WPF was chosen over a WebView2 hybrid, Avalonia and WinUI 3. These are the things the platform genuinely cannot
+do, and how the interface works around each — useful to know before attempting a change in these areas:
 
-1. **Font rasterization.** DirectWrite is not Skia; 11–13 px text is not bit-identical. Rendering mode and
-   anti-aliasing were compared on the target monitor and the result accepted.
-2. **Shadow spread.** `DropShadowEffect` has no spread parameter, so the design's two-layer shadow is
-   approximated with one.
-3. **Console line pop-in.** The cascade tempo is exact, but per-line translate+scale is not achievable inside
-   AvalonEdit; an opacity fade stands in.
-4. **Animation threading.** WPF has no compositor — "animations keep running while the UI is busy" cannot be
-   promised. The compensation is the process split (§4.1) plus a hard rule against work on the UI thread.
-5. **Dashed-corner alignment** does not match CSS exactly (not noticeable in practice).
-6. **OS surfaces** (folder picker, Explorer, Visual Studio) cannot be themed.
-7. **Tooltips are separate HWNDs** and may extend past the window or flip at a screen edge — usually an
-   improvement.
+1. **No letter spacing.** Tracked caps labels are drawn as `GlyphRun`s with explicit advance widths (§14.2).
+2. **No shadow spread.** `DropShadowEffect` offers offset and blur only, so a two-layer shadow is approximated
+   with one.
+3. **No compositor.** Animations tick on the UI thread, so "the interface keeps animating while it is busy"
+   cannot be guaranteed. The countermeasures are the process split (§4.1) and a hard rule against synchronous
+   work on the UI thread.
+4. **No per-line transform inside AvalonEdit.** The console cascade keeps its exact tempo but fades lines in
+   rather than translating and scaling them.
+5. **Frozen resources cannot be animated.** Shared brushes and effects must be copied per instance before being
+   driven (§13.8, §14.5).
+6. **No native smooth scrolling.** It is built from an attached property, an animator and an arbiter (§13.4).
+7. **No toggle switch, no split button, no dashed border.** These are custom templates and controls (§13.8).
+8. **OS surfaces cannot be themed** — the folder picker, Explorer and Visual Studio appear in the system's own
+   styling.
+9. **Tooltips are separate windows** and may extend past the main window or flip at a screen edge.
+10. **Text rasterization is DirectWrite's**, so small text will never be bit-identical to a browser's. Rendering
+    mode and anti-aliasing were compared on the target monitor before the current settings were fixed.
 
 ---
 
@@ -1619,9 +1624,8 @@ decided, look at the pure class; when it concerns *how* it was drawn or animated
 | [`README.md`](README.md) | Entry point: what the tool does, requirements, how to build/run/publish, how to use it |
 | **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary, code map |
 | [`CLAUDE.md`](CLAUDE.md) | Working conventions for this repository |
-| `.claude/outputs/` · `.claude/summaries/` · `.claude/handoffs/` | Historical record — iteration plans, the design package, measurements and decisions from the delivery. Kept as written, not corrected retroactively |
-| `.superpowers/sdd/progress.md` | Durable ledger: current state, measurements, parked items |
+| `.claude/` · `.superpowers/` | Historical record of the delivery, kept as written. Superseded by the three documents above; not an authority for the current system |
 
 **Maintenance.** This document describes the system as it is. When behaviour changes, the affected section is
 rewritten in place, in the same voice — it does not accumulate a change log, and it does not record which
-session made a change. Volatile numbers (test counts, commit hashes) belong in the ledger, not here.
+session made a change. Volatile numbers such as test counts and commit hashes do not belong here at all.

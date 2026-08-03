@@ -12,11 +12,8 @@ yönetir; her projeyi **shell-out** (`MSBuild.exe` ayrı child process) ile derl
 | [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku** — özellikle ARCHITECTURE.md §22 (kod haritası:
-hangi davranış hangi dosyada).
-
-**Görsel değer** (renk, ölçü, süre, kopya metni) gerektiğinde birebir kaynak:
-[design-v1](.claude/outputs/2026-07-15-19-00-design-v1/README.md) — tasarım paketi + çalışan prototip.
-`.claude/` altındaki geri kalan her şey tarihsel kayıttır.
+hangi davranış hangi dosyada). Görsel değerler (renk, ölçü, süre) `Resources/Tokens.xaml` ve
+`Resources/Motion.xaml`'dadır; bileşene özgü ölçüler ilgili kontrolün kendi sabitlerinde.
 
 ## Proje yapısı
 
