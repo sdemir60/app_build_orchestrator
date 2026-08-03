@@ -218,12 +218,8 @@ The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.m
 ## Documentation
 
 Three files carry everything: this one, [`ARCHITECTURE.md`](ARCHITECTURE.md) — every architectural, technical
-and design decision the implementation rests on — and [`CLAUDE.md`](CLAUDE.md), the working conventions for
-this repository.
-
-`.claude/` holds the historical record of the delivery (iteration plans, the design package, measurements and
-decision logs, in Turkish) and `.superpowers/sdd/progress.md` the ledger with the current numbers. Both are
-history: the documents above are the current truth.
+and design decision the implementation rests on, plus a code map of which file owns which behaviour — and
+[`CLAUDE.md`](CLAUDE.md), the working conventions for this repository.
 
 ## Licence
 
