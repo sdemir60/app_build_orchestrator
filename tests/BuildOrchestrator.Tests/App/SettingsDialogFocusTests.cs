@@ -112,7 +112,7 @@ public class SettingsDialogFocusTests
             run.LayerPatterns = [new LayerPattern(0, "^A", "Layer A"), new LayerPattern(1, "^B", "Layer B")]);
         using var _scope = scope;
 
-        var editor = (LayerEditorViewModel)dialog.DataContext;
+        var editor = (SettingsDraftViewModel)dialog.DataContext;
         Assert.Equal(2, editor.Layers.Count); // ön-koşul: iki kart gerçekten var
 
         var card0 = CardBorder(dialog.LayersList, editor.Layers[0]);

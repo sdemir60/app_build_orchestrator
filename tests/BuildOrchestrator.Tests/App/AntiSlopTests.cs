@@ -127,13 +127,13 @@ public sealed class AntiSlopTests
     /// <summary>[A13/T4 · n2 · fix-1 · D1/D2] design-v1 §2.9 (<c>"Eşleşme sayacı gösterilmez (istenmedi)."</c>) +
     /// §8 — Settings dialog'unun LAYERS bölümü hiçbir katman satırında "bu regex kaç projeyle eşleşiyor" sayacı
     /// GÖSTERMEZ. Kapsam: <c>SettingsDialog.xaml*</c> (görünüm <b>+ code-behind</b> — <c>SettingsDialog.xaml.cs</c>
-    /// <c>OnAddLayer</c>/<c>OnRemoveLayer</c>/<c>OnLoadSampleLayers</c>'ı barındırır; bir eşleşme sayacı en doğal
+    /// <c>OnAddLayer</c>/<c>OnRemoveLayer</c>/<c>OnRestoreDefaults</c>'ı barındırır; bir eşleşme sayacı en doğal
     /// biçimde ORADA hesaplanırdı, fix-1 ÖNCESİ joker'siz "SettingsDialog.xaml" deseni bunu KAÇIRIYORDU) +
-    /// <c>LayerEditorViewModel.cs</c> (<c>LayerRowViewModel</c>'i de barındırır — VM'de bir <c>MatchCount</c>
+    /// <c>SettingsDraftViewModel.cs</c> (<c>LayerRowViewModel</c>'i de barındırır — VM'de bir <c>MatchCount</c>
     /// alanı eklense görünüme hiç bağlanmasa bile bu, özelliğin sessizce yarım bırakıldığının işaretidir).
     ///
     /// <para><b>fix-1 · D2:</b> <c>skipCommentLines: true</c> eklendi (n1 zaten veriyordu, n2 vermiyordu) —
-    /// <c>LayerEditorViewModel.cs</c>'in <c>matchTimeout</c> geçen yorum satırları (<c>:33,:68</c>, mevcut kod,
+    /// <c>SettingsDraftViewModel.cs</c>'in <c>matchTimeout</c> geçen yorum satırları (<c>:33,:69</c>, mevcut kod,
     /// değişmez) ileride "…projelerle **match**…" gibi bir cümleye evrilirse kuralı ANLATAN satırı ihlal
     /// SAYMAMALI.</para></summary>
     [Fact]
@@ -141,10 +141,10 @@ public sealed class AntiSlopTests
     {
         // Non-vacuous: dar dosya adı deseni SESSİZCE sıfır dosya bulursa guard hep yeşil kalırdı.
         Assert.NotEmpty(SourceGuard.ScannedAppFiles("SettingsDialog.xaml*"));
-        Assert.NotEmpty(SourceGuard.ScannedAppFiles("LayerEditorViewModel.cs"));
+        Assert.NotEmpty(SourceGuard.ScannedAppFiles("SettingsDraftViewModel.cs"));
 
         var offenders = SourceGuard.ScanApp("SettingsDialog.xaml*", LayerMatchCounter, skipCommentLines: true)
-            .Concat(SourceGuard.ScanApp("LayerEditorViewModel.cs", LayerMatchCounter, skipCommentLines: true)).ToList();
+            .Concat(SourceGuard.ScanApp("SettingsDraftViewModel.cs", LayerMatchCounter, skipCommentLines: true)).ToList();
         Assert.Empty(offenders);
     }
 

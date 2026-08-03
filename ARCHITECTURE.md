@@ -954,6 +954,38 @@ The Settings dialog is 620 px and carries the LAYERS editor and the REPOSITORY r
 threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
 Neighbours snap without animation. An invalid regex puts its input into the invalid state and disables *Save*.
 
+When no layers have been saved yet, the editor opens pre-filled with four OSYS defaults, in match order:
+`OSYS.Types`, `OSYS.Business`, `OSYS.Orchestration`, `OSYS.UI` — each an anchored regex that matches the
+layer's name as a prefix of the project name (`^OSYS\.Types\.` and so on). The footer's *Restore default
+layers* button re-fills the editor from that same list at any time. Neither the initial fill nor the restore
+is a startup seed: the defaults live only in this dialog's draft, and nothing reaches disk or the engine until
+*Save* is pressed.
+
+*Change…* on the REPOSITORY row only writes the picked path into the draft and refreshes the label beside it;
+Cancel, Esc and a scrim click discard the draft — the pending root included — without touching anything live.
+*Save* is the single point where the draft is applied, in a fixed order: the layer patterns are applied first,
+then the pending repository root (which resets the project rows to hollow), then exactly one Sync is sent. The
+order is load-bearing, because the Sync command carries the current layer patterns — sent before they were
+applied, it would carry stale ones. The Sync itself is unconditional: Save does not compare old and new state
+to decide whether to run it.
+
+Three gates hold. While a run is in flight the layer patterns are applied but the repository root is left
+alone and no Sync is sent, since pulling the root out from under a running build would be wrong; because the
+dialog's label has already confirmed the picked folder, a root change this gate drops is announced in the
+console as `Repository change deferred — run in flight`, while a Save that carries no root change stays
+silent.
+If no repository has ever been selected, there is nothing to Sync — that gate sits *after* the root is
+applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
+there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers
+and the root are applied but nothing is sent: each send would fail and print an error line contradicting the
+permanent ribbon message, the same reason Sync, Build, Rebuild, Retry failed and Continue are disabled in
+that state. The root is still applied because it is local state that persists, and the first Sync after the
+engine returns carries it.
+
+The shell's own *Choose Folder* invitation, shown before any repository is selected, does not go through this
+dialog: it has no Save step, so the folder it picks applies immediately — the root changes, the project rows
+reset to hollow, and a Sync starts right away.
+
 ### 13.4 Scroll infrastructure
 
 WPF has no native smooth scrolling, so four pieces cooperate:
@@ -1522,6 +1554,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
+| Default layer definitions (Settings draft + *Restore default layers*) | `App/Shell/LayerDefaults.cs` |
 | Title bar context text (`OSYS · main · main-2`) | `App/ViewModels/TitleBarContext.cs` |
 
 **Engine and IPC**
@@ -1620,7 +1653,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
-| Layer editor state | `App/ViewModels/LayerEditorViewModel.cs` |
+| Settings draft state (layers + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
 **Views and controls**

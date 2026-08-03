@@ -7,7 +7,7 @@
              Visibility="Collapsed" Focusable="True">
   <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 620px Ds.Dialog
        (Brush.SurfaceRaised — README §2.9'daki surface-overlay sapması burada KAYITLI, kod kazanır). Diyaloğun
-       mantığı LayerEditorViewModel'de (test edilebilir, WPF'siz); bu view ince kabuktur. BuildApp.jsx:988-1069. -->
+       mantığı SettingsDraftViewModel'de (test edilebilir, WPF'siz); bu view ince kabuktur. BuildApp.jsx:988-1069. -->
   <!-- [D7 re-review][Fix1] Klavye odak tuzağı: scrim sadece FARE'yi bloklardı, Tab arka plandaki kontrollere
        kaçabiliyordu (ör. Settings açıkken Tab → arka plan Build → Space/Enter run başlatır). Cycle + IsFocusScope
        odağı bu alt-ağaçta HAPSEDER (bkz. SettingsDialog.xaml.cs Open() — ilk odak da buraya taşınır). -->
@@ -197,7 +197,7 @@
         <!-- ============================ FOOTER ============================ -->
         <Border Grid.Row="2" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0">
           <DockPanel Margin="20,12">
-            <Button DockPanel.Dock="Left" Content="Load sample layers" Click="OnLoadSampleLayers"
+            <Button DockPanel.Dock="Left" Content="Restore default layers" Click="OnRestoreDefaults"
                     Style="{DynamicResource Ds.Button.Ghost.Md}" />
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
               <Button Content="Cancel" Click="OnCancel" Style="{DynamicResource Ds.Button.Secondary.Md}" />

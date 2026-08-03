@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -172,8 +173,10 @@ public sealed partial class RunViewModel
     /// (sonraki Sync/Build komutlarıyla motora gider — A1/A5) ve konsola BİREBİR dim not yazılır
     /// (BuildApp.jsx:1423): katman kaldıysa <c>Layer definitions updated — {n} layers</c>, liste boşaltıldıysa
     /// <c>Layers removed — single project list</c>. Yeniden gruplama Core'dan <c>LayerName</c> olarak geri döner
-    /// (App'te regex YOK — mimari kural).</summary>
-    public void ApplyLayerPatterns(IReadOnlyList<LayerPattern> patterns)
+    /// (App'te regex YOK — mimari kural).
+    /// <para>Dışarıya AÇIK DEĞİLDİR: Settings'in tek giriş noktası <see cref="ApplySettingsAsync"/>'tir —
+    /// katmanları kökten/Sync'ten ayrı uygulayan ikinci bir yol olmamalıdır.</para></summary>
+    private void ApplyLayerPatterns(IReadOnlyList<LayerPattern> patterns)
     {
         LayerPatterns = patterns;
         AppendRunLine(patterns.Count > 0
@@ -181,23 +184,83 @@ public sealed partial class RunViewModel
             : "Layers removed — single project list");
     }
 
-    /// <summary>[D7 · K10] Settings "Change…": yeni bir repo kökü seçilince kökü değiştirir, proje durumlarını
-    /// sıfırlar (yeni repo = yeni taban) ve OTOMATİK Sync başlatır. Klasör seçici çağıranın (dialog) enjekte
-    /// ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır, böylece testler gerçek diyalog açmaz.
-    /// <see cref="OnRootPathChanged"/> Empty→Boot geçişini zaten sürer.</summary>
+    /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
+    /// değiştirir ve TEK bir Sync gönderir.
+    ///
+    /// <para><b>Sıra ZORUNLUdur:</b> katmanlar Sync'ten ÖNCE uygulanır — <see cref="SyncWorkspaceCommand"/>
+    /// <see cref="LayerPatterns"/>'i TAŞIR, ters sırada komut ESKİ pattern'lerle giderdi.</para>
+    ///
+    /// <para><b>Sync KOŞULSUZdur:</b> "repo mu katman mı değişti" ayrımı YAPILMAZ — Save'e basmak
+    /// "senkronize et" demektir ve Sync salt-okurdur, tekrarı zararsızdır. ÜÇ kapı vardır:</para>
+    ///
+    /// <para>(a) <b>Koşu uçuşta</b> (<see cref="IsMidRunLocked"/>): katmanlar yine uygulanır ama kök DEĞİŞMEZ
+    /// ve Sync GİTMEZ — koşan bir build'in kökünü altından çekmek doğru değildir
+    /// (<see cref="ChangeRepositoryAsync"/> de mid-run'da no-op'tur). Bekleyen GERÇEK bir kök değişimi varsa
+    /// konsola TEK satır düşer: diyaloğun yol etiketi seçimi "Change…" anında ONAYLAMIŞ olur (etiket taslaktan
+    /// okur), dolayısıyla sessiz bir düşürme kullanıcıya yalan söylerdi. Değişim yoksa satır YAZILMAZ —
+    /// katman-only bir Save'de gürültü olurdu.</para>
+    ///
+    /// <para>(b) <b>Kök yok</b>: gidecek bir kök yoksa Sync anlamsızdır. Bu kapı <see cref="ApplyRepositoryRoot"/>
+    /// çağrısından SONRA gelmek ZORUNDADIR — ilk repo Settings'ten seçildiğinde <see cref="RootPath"/> tam da
+    /// orada dolar; kapı yukarıda olsaydı (ya da <paramref name="repositoryRoot"/> yerine <c>RootPath</c>'in
+    /// ESKİ değerine bakılsaydı) yeni kullanıcının manşet yolculuğu — kökü seç, Save — Sync'siz kalır ve
+    /// açıklamasız Boot'ta takılırdı.</para>
+    ///
+    /// <para>(c) <b>Motor erişilemez</b> (<see cref="IsEngineUnavailable"/>): Sync GİTMEZ. Gerekçe orada
+    /// yazılıdır — gönderim zaten hataya düşer ve şeritteki KALICI mesajla çelişen ikinci bir hata satırı
+    /// üretirdi; Sync/Build/Rebuild/Retry/Continue düğmelerinin o durumda devre dışı kalmasıyla AYNI mantık.
+    /// Save bir düğme DEĞİLDİR (CanExecute'la kapatılamaz), bu yüzden kapı metodun İÇİNDE durur. Katmanlar ve
+    /// kök yine de uygulanır: ikisi de motora dokunmaz, kök kalıcı duruma yazılır (UiState.RepositoryRoot) ve
+    /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para></summary>
+    public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot)
+    {
+        ApplyLayerPatterns(patterns);
+        if (IsMidRunLocked)
+        {
+            if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");
+            return;
+        }
+        ApplyRepositoryRoot(repositoryRoot);
+        if (RootPath.Length == 0) return;
+        if (IsEngineUnavailable) return;
+        await SyncAsync();
+    }
+
+    /// <summary>[D7 · K10] Kabuğun "Choose Folder" yolu: yeni bir repo kökü seçilince kökü değiştirir, proje
+    /// durumlarını sıfırlar (yeni repo = yeni taban) ve HEMEN Sync başlatır — burada bir Save yoktur. Settings
+    /// diyaloğu bu yolu KULLANMAZ; orada seçim Save'e ertelenir (<see cref="ApplySettingsAsync"/>). Klasör
+    /// seçici çağıranın enjekte ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır.</summary>
     public async Task ChangeRepositoryAsync(string path)
     {
-        if (IsMidRunLocked || string.IsNullOrEmpty(path)) return;
-        // [D7 re-review][Fix3] Aynı kökü YENİDEN seçmek (klasör seçicide iptal etmeden aynı klasöre tekrar
-        // gidilmesi) no-op olmalı — Windows yolları case-insensitive; aksi halde her satır boşuna hollow'a
-        // sıfırlanır ve gereksiz bir Sync gönderilir.
-        if (string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase)) return;
-        RootPath = path;         // OnRootPathChanged Empty→Boot geçişini sürer
-        ResetRowsToHollow();     // yeni repo: önceki repo'nun sonuçları artık geçersiz (SelectBranch ile aynı reset)
+        if (IsMidRunLocked) return;
+        if (!ApplyRepositoryRoot(path)) return;
+        await SyncAsync();
+    }
+
+    /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot
+    /// geçişini sürer), satırlar hollow'a sıfırlanır, willBuild kümesi temizlenir ve run yüzeyi tazelenir.
+    /// Sync GÖNDERMEZ — o kararı çağıran verir (Choose Folder hemen, Settings Save'de tek Sync içinde). İki
+    /// yolun ortak adımı burada TEK yerdedir (kopya yasağı).
+    /// <para>Boş yol ya da AYNI kökün yeniden seçilmesi NO-OP'tur ve <c>false</c> döner — aksi halde her satır
+    /// boşuna hollow'a sıfırlanır ve gereksiz bir Sync gönderilirdi. Kararı <see cref="IsRepositoryChange"/>
+    /// verir.</para></summary>
+    private bool ApplyRepositoryRoot(string? path)
+    {
+        if (!IsRepositoryChange(path)) return false;
+        RootPath = path;
+        ResetRowsToHollow();
         _willBuildIds.Clear();
         RefreshRunSurface();
-        await SyncAsync();       // otomatik Sync (aynı gönderim yolu; SelectedProjectId'yi temizler)
+        return true;
     }
+
+    /// <summary>[Settings · K10] Verilen yol GERÇEKTEN bir kök değişimi mi: boş yol DEĞİLDİR, AYNI kökün
+    /// yeniden seçilmesi de DEĞİLDİR (Windows yolları case-insensitive). <see cref="ApplyRepositoryRoot"/>'un
+    /// kapısı ile mid-run erteleme notunun koşulu (<see cref="ApplySettingsAsync"/>) AYNI soruyu sorar; soru
+    /// TEK yerde durur (kopya YASAK) — aksi halde iki karşılaştırma zamanla ayrışır ve UI, motorun yaptığından
+    /// başka bir şey anlatırdı.</summary>
+    private bool IsRepositoryChange([NotNullWhen(true)] string? path) =>
+        !string.IsNullOrEmpty(path) && !string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>[D7] Satırları yeni bir taban için "hollow"a sıfırlar (durum Pending, will bilinmiyor, süre/dep
     /// temizli). Branch değişimi (<see cref="SelectBranch"/>) ve repo değişimi (<see cref="ChangeRepositoryAsync"/>)

@@ -622,9 +622,10 @@ public partial class MainWindow : Window
         return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
     }
 
-    /// <summary>[E2/T10] Boş-durum daveti içindeki "Choose Folder": Settings "Change…" ile AYNI yol —
+    /// <summary>[E2/T10] Boş-durum daveti içindeki "Choose Folder": seçilen klasör HEMEN uygulanır —
     /// <see cref="PickFolder"/> → <see cref="RunViewModel.ChangeRepositoryAsync"/> (kök değişir, durumlar sıfırlanır,
-    /// otomatik Sync). Diyalog iptal edilirse no-op.</summary>
+    /// otomatik Sync). Settings'in "Change…" düğmesi bu yolu KULLANMAZ: orada seçim yalnız taslağa yazılır ve
+    /// uygulanması Save'e ertelenir (<see cref="RunViewModel.ApplySettingsAsync"/>). Diyalog iptal edilirse no-op.</summary>
     private async void OnChooseFolder(object sender, RoutedEventArgs e)
     {
         if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);

@@ -35,32 +35,33 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
 }
 
 /// <summary>
-/// [D7/T66] Settings diyaloğunun LAYERS editör VM'i — <b>saf, WPF'siz</b> (testler Window olmadan sürer).
-/// Canlı katman pattern'lerinin bir TASLAK kopyası üzerinde çalışır: <see cref="Commit"/> = kaydet
-/// (RunViewModel + UiState'e yazılır), Cancel = taslağı at (kopya olduğu için canlı pattern'lere dokunulmaz).
+/// [D7/T66] Settings diyaloğunun LAYERS + REPOSITORY taslak VM'i — <b>saf, WPF'siz</b> (testler Window
+/// olmadan sürer). Canlı katman pattern'lerinin ve bekleyen repo kökünün bir TASLAK kopyası üzerinde çalışır:
+/// <see cref="CommitAsync"/> = kaydet (RunViewModel + UiState'e yazılır), Cancel = taslağı at (kopya olduğu
+/// için canlı duruma dokunulmaz).
 /// </summary>
-public sealed partial class LayerEditorViewModel : ObservableObject
+public sealed partial class SettingsDraftViewModel : ObservableObject
 {
-    /// <summary>[D7] "Load sample layers" — 6 örnek katman (BuildApp.jsx:965-972'den BİREBİR: ad + regex).</summary>
-    public static readonly IReadOnlyList<(string Name, string Regex)> SampleLayers =
-    [
-        ("Layer 0 — Core", @"^OSYS\.(Base$|Common\.)"),
-        ("Layer 1 — Infrastructure", @"^OSYS\.(Data\.|Security$|Shared\.UI$|Integration\.Core$)"),
-        ("Layer 2 — Domain", @"^OSYS\.Domain\."),
-        ("Layer 3 — Services", @"\.(Scheduling|Workshop|Catalog|Invoicing|Accounting|Inventory)$|^OSYS\.(Sales|UsedCars|Reporting)\.Core$"),
-        ("Layer 4 — API", @"^OSYS\.(?!Mobile\.).*\.Api$"),
-        ("Layer 5 — Client", @"^OSYS\.(Web|Client|Mobile)\."),
-    ];
-
     public ObservableCollection<LayerRowViewModel> Layers { get; } = [];
 
-    public LayerEditorViewModel(IReadOnlyList<LayerPattern>? initial)
+    /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
+    /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
+    /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
+    [ObservableProperty] private string? _repositoryRoot;
+
+    /// <summary>Taslak = kayıtlı pattern'lerin DERİN kopyası (Order'a göre; editör sırası = katman sırası).
+    /// Kayıtlı katman YOKSA (null ya da boş) taslak <see cref="LayerDefaults"/> ile DOLU kurulur — araç
+    /// paylaşıldığında kimse katmanları elle yazmasın. Bu YALNIZ taslaktır: Save'e basılmadıkça ne
+    /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.</summary>
+    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot = null)
     {
+        _repositoryRoot = repositoryRoot;
         Layers.CollectionChanged += OnLayersChanged;
-        // [D7] Taslak = canlı pattern'lerin DERİN kopyası (Order'a göre, editör sırası = katman sırası).
-        if (initial is not null)
+        if (initial is { Count: > 0 })
             foreach (var p in initial.OrderBy(p => p.Order))
                 AddRow(new LayerRowViewModel(p.Name, p.Regex));
+        else
+            AddDefaultRows();
     }
 
     /// <summary>[D7] Save yalnız bir katmanın adı BOŞ (trim sonrası) ya da regex'i DERLENEMEZ iken bloklanır;
@@ -68,12 +69,17 @@ public sealed partial class LayerEditorViewModel : ObservableObject
     /// Regex compile-check LayerEngine'in EKLEDİĞİ sınırlı-matchTimeout ctor'uyla AYNI (bkz. <see cref="LayerRowViewModel.RegexInvalid"/>).</summary>
     public bool CanSave => Layers.All(r => r.Name.Trim().Length > 0 && !r.RegexInvalid);
 
-    /// <summary>[D7] "Load sample layers" — taslağı 6 örnek katmanla değiştirir. A13.2 reset yasağı: <c>Clear()</c>
-    /// yerine sondan sil + ekle (yalnız Remove/Add bildirimleri — Reset yok).</summary>
-    public void LoadSampleLayers()
+    /// <summary>"Restore default layers" — taslağı <see cref="LayerDefaults"/> ile değiştirir. A13.2 reset
+    /// yasağı: <c>Clear()</c> yerine sondan sil + ekle (yalnız Remove/Add bildirimleri — Reset yok).</summary>
+    public void RestoreDefaults()
     {
         for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
-        foreach (var (name, regex) in SampleLayers) AddRow(new LayerRowViewModel(name, regex));
+        AddDefaultRows();
+    }
+
+    private void AddDefaultRows()
+    {
+        foreach (var (name, regex) in LayerDefaults.Layers) AddRow(new LayerRowViewModel(name, regex));
     }
 
     public void AddLayer() =>
@@ -86,16 +92,16 @@ public sealed partial class LayerEditorViewModel : ObservableObject
     public IReadOnlyList<LayerPattern> BuildPatterns() =>
         Layers.Select((r, i) => new LayerPattern(i, r.Regex, r.Name.Trim())).ToList();
 
-    /// <summary>[D7] Kaydet (commit): pattern'leri <see cref="RunViewModel.ApplyLayerPatterns"/> ile uygular
-    /// (BİREBİR konsol notu + <see cref="RunViewModel.LayerPatterns"/>) ve <see cref="UiState.LayerPatterns"/>'a
-    /// persist eder. Cancel bu metodu ÇAĞIRMAZ → taslak (kopya) atılır, canlı pattern'lere dokunulmaz.</summary>
-    public void Commit(RunViewModel run, IUiStateStore store)
+    /// <summary>Kaydet (commit): taslağı <see cref="UiState.LayerPatterns"/>'a persist eder ve TEK yoldan
+    /// uygular — <see cref="RunViewModel.ApplySettingsAsync"/> katmanları, bekleyen repo kökünü ve TEK Sync'i
+    /// birlikte sürer. Cancel bu metodu ÇAĞIRMAZ → taslak (kopya) atılır, canlı duruma dokunulmaz.</summary>
+    public async Task CommitAsync(RunViewModel run, IUiStateStore store)
     {
         var patterns = BuildPatterns();
-        run.ApplyLayerPatterns(patterns);
         var state = store.Load();
         state.LayerPatterns = patterns.ToList();
         store.Save(state);
+        await run.ApplySettingsAsync(patterns, RepositoryRoot);
     }
 
     private void AddRow(LayerRowViewModel row) => Layers.Add(row);
