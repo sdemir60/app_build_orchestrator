@@ -49,6 +49,10 @@ public partial class StickyLayerList : UserControl
     {
         InitializeComponent();
         Flow.ItemTemplateSelector = new EntrySelector(this);
+        // Sanallaştırılmış panelin kümülatif tablosu ile LayoutMetrics'inki AYNI iki sabitten türer (kopya YASAK):
+        // başlık 24px, satır 36px. Bu bağ olmadan scroll ekseni yapışık-başlık aritmetiğinden kayardı.
+        FixedHeightVirtualizingPanel.SetEntryHeightSelector(Flow,
+            entry => entry is HeaderEntry ? LayoutMetrics.DefaultHeaderHeight : LayoutMetrics.DefaultRowHeight);
         Overlay.ItemsSource = NoHeaders;
         // Salt aritmetik overlay recompute: kaydırmada yapışık küme değişir (ScrollUnit=Pixel → VerticalOffset px).
         // [E4 fix] AYNI ScrollChanged'de frontier follow "near-bottom'a dönüş → takip sürsün" resume tetiği çalışır

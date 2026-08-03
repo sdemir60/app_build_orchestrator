@@ -41,8 +41,12 @@ public sealed partial class RunViewModel
     /// task'ları koşan bir run'da fazı <c>Running</c>'e çekecek ve Syncing damgası kaybolacaktır.</summary>
     private bool _syncInFlight;
 
-    public ObservableCollection<BranchRef> Branches { get; } = [];
-    public ObservableCollection<Worktree> Worktrees { get; } = [];
+    /// <summary>Branch envanteri. <see cref="SnapshotCollection{T}"/>: yayın başına EN ÇOK bir bildirim, içerik
+    /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
+    public SnapshotCollection<BranchRef> Branches { get; } = [];
+
+    /// <summary>Worktree envanteri — <see cref="Branches"/> ile birebir aynı yayın sözleşmesi.</summary>
+    public SnapshotCollection<Worktree> Worktrees { get; } = [];
 
     /// <summary>Son <c>workspaceTopology</c>'nin düğümleri (build-order) — bağımlılık, katman ve solution
     /// bilgisinin TEK kaynağı; graf paneli (D5) ve katman gruplaması (D1) bunu okur.</summary>
@@ -312,7 +316,7 @@ public sealed partial class RunViewModel
     /// </summary>
     private void OnBranchList(BranchListEvent e)
     {
-        Replace(Branches, e.Branches);
+        Branches.ReplaceAll(e.Branches);
         ReconcileBranchWithInventory();
         // [T2 fix-1 · C1/I-G] Aktif branch DEĞİŞMİŞ olabilir (kullanıcı terminalde `git checkout` yaptı) →
         // IsWorktreeForced/EffectiveUseWorktree TÜRETİLMİŞ değerleri de değişmiştir ama kendi bildirimlerini
@@ -349,11 +353,4 @@ public sealed partial class RunViewModel
         Branch = active;
     }
 
-    /// <summary>Bir listeyi gelen anlık görüntüyle değiştirir. <see cref="ObservableCollection{T}.Clear"/>
-    /// KULLANILMAZ ([A13.2] reset yasağı) — sondan silip yeniden eklemek yalnız Remove/Add bildirimleri üretir.</summary>
-    private static void Replace<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
-    {
-        for (int i = target.Count - 1; i >= 0; i--) target.RemoveAt(i);
-        foreach (var item in source) target.Add(item);
-    }
 }

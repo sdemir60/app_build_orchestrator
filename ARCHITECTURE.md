@@ -45,8 +45,9 @@ rebuilt, in what order, and how do we run that safely.**
 
 Multi-repo. Headless/CLI operation. Light theme. Command palette. Onboarding flow. MSIX packaging.
 `packages.config` migration. Build-output isolation per branch. Graph editing. Attaching to an already-running
-Visual Studio instance via ROT/DTE (the "Open in Visual Studio" action always resolves `devenv.exe` through
-`vswhere` and opens the solution fresh).
+Visual Studio instance via ROT/DTE (the "Open in Visual Studio" action resolves `devenv.exe` through `vswhere`
+— once per session, off the UI thread, since the query can take seconds and its timeout is 30 — and opens the
+solution fresh).
 
 ---
 
@@ -872,6 +873,21 @@ rejected. A failing row shakes once, ±3 px over 360 ms.
 Layer headers are 24 px and stick **cumulatively**: the *i*-th visible header pins at `i × 24 px` and stays
 there as the ones below it pile up underneath.
 
+The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
+the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px
+headers that estimate drifts, and the scroll axis would no longer agree with the cumulative table that sticky
+headers, follow-mode and selection scrolling all read. `FixedHeightVirtualizingPanel` never estimates — it
+asks for each entry's height and builds the same table — so the extent is exact by construction. It does not
+implement `IScrollInfo`: the enclosing `ScrollViewer` still owns the scrolling and receives the true total
+height, which leaves smooth scrolling, the bottom anchor and follow-mode untouched. Containers are recycled,
+so a row control is reused with a new view model rather than rebuilt. On the first measure pass the viewport
+is not yet known; the panel realizes nothing at all that pass — its reported height comes from the table, not
+from realized children, so the `ScrollViewer` still computes a correct viewport and the real window is
+realized in the same layout round.
+
+One consequence is deliberate: the staggered reveal reaches the rows that exist, which is the visible window.
+Rows scrolled into view later simply appear.
+
 Follow-mode keeps the frontier visible while a run is in flight and nothing is selected: at most one scroll
 animation every 550 ms, and none at all if the target is within 54 px. Selecting a row stops it; clearing the
 selection resumes it.
@@ -896,6 +912,18 @@ Popovers open 8 px above their chip on `surface-overlay` with a `border-strong` 
 shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click or Esc closes them. Rows inside them are
 28 px. The branch popover is 272 px wide and carries a search box; the worktree popover is 300 px and carries
 the switch, the target list and the `source` line.
+
+The branch list is virtualized, and a popover only builds rows while it is open — closed, it does nothing at
+all when the inventory changes. Both matter more than they sound: a real repository carries hundreds of refs
+(`refs/heads` plus `refs/remotes`), every Sync republishes the inventory, and four surfaces listen to it.
+
+That is also why the inventories are **snapshots rather than incrementally mutated lists**. `Branches` and
+`Worktrees` are replaced wholesale and emit **at most one** change notification per publish — and none at all
+when the content is identical, which is the common case, since Sync asks for the inventory every time whether
+or not anything changed. Reconciling item by item would emit two notifications per entry, and with several
+listeners each rebuilding on every notification the cost is quadratic in the number of refs. The reset that a
+wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
+selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
 The Settings dialog is 620 px and carries the LAYERS editor and the REPOSITORY row (current root plus
 *Change…*). Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` and a half-row swap
@@ -1227,6 +1255,15 @@ Process-control tests are deterministic by contract: they wait on handles and co
 elapsed time. The cascade-kill bound is measured, not assumed. Scheduler tests assert dispatch *sequences*, not
 just outcomes.
 
+Responsiveness is a tested contract, not an aspiration. A set of budget tests drives the production surfaces at
+the scale of the real repository — a 177-project topology, an inventory of several hundred refs — and asserts
+that **no single step blocks the UI thread past its budget**: a Sync step, a project event during a run, the
+mid-run graph tick, an inventory publish, opening a popover, resolving Visual Studio. Two of them pin the shape
+of the fix rather than the number: the cost of building the list must not scale with the row count, and
+republishing an unchanged inventory must emit no notification at all. Wall-clock numbers vary by machine, so
+the budgets carry the derivation that produced them and sit far enough above the measurement to survive noise
+while still failing an order-of-magnitude regression.
+
 ### 17.4 WPF realization tests
 
 A headless suite does not resolve XAML at runtime — a full suite once passed green while the application could
@@ -1324,11 +1361,10 @@ do, and how the interface works around each — useful to know before attempting
   `OutDir` is intentionally left alone for Visual Studio parity, so builds of different branches write to the
   same place.
 - **The shared-compilation flags cost ~2.9×** and stay off for correctness (§9.2).
-- **The project list is not virtualized.** Row simplification brought the first realization of a 191-row list
-  from 787 ms to 488 ms on the reference machine — short of the 400 ms budget. Virtualization was deliberately
-  deferred: `ScrollUnit=Pixel` estimates unrealized item heights from an average, which breaks the exact
-  cumulative table that sticky headers, follow-mode and selection scrolling all read. Enabling it requires a
-  drift calibration and regression tests for all three.
+- **Filling a viewport of rows costs what it costs.** Virtualization bounds the work to the visible window,
+  but that window still has to be built: a screenful of project rows is a few dozen row controls, tens of
+  milliseconds on the reference machine. That price is paid again whenever the entry list is replaced — a
+  topology change or a filter change — because replacing the items source discards the containers.
 - **The graph is full-detail up to 150 nodes.** Above that, off-screen nodes and edges are culled and labels
   drop out by level of detail. On the reference machine, synthetic graphs of 500 and 1000 nodes open in roughly
   90 ms and 136 ms; panning across the whole graph materializes the rest, for roughly 206 ms and 469 ms in
@@ -1559,6 +1595,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
 | Layer editor state | `App/ViewModels/LayerEditorViewModel.cs` |
+| Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
 **Views and controls**
 
@@ -1567,10 +1604,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, sha pair, hover icons, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
+| Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | Build menu (Build / Rebuild / Continue / Retry failed) | `App/Views/BuildMenu.xaml(.cs)` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
+| Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, will-build dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `WillBuildDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |

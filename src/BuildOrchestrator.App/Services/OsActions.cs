@@ -25,8 +25,13 @@ public interface IOsActions
 
     /// <summary>0 aday → <see cref="OpenInVsOutcome.NoSolution"/>; &gt;1 → <see cref="OpenInVsOutcome.NeedsChoice"/>
     /// (launch/vswhere YOK, seçim üst katmanda); tam 1 → vswhere ile devenv çözülür ve <c>devenv "&lt;sln&gt;"</c>
-    /// başlatılır (bulunamazsa <see cref="OpenInVsOutcome.VisualStudioNotFound"/>).</summary>
-    OpenInVsResult OpenInVisualStudio(IReadOnlyList<SolutionRef> candidates);
+    /// başlatılır (bulunamazsa <see cref="OpenInVsOutcome.VisualStudioNotFound"/>).
+    ///
+    /// <para><b>ASENKRONDUR ve öyle KALMALIDIR.</b> Bu yol bir satırın hover ikonundan, yani UI thread'inden
+    /// çağrılır; içindeki <c>vswhere</c> sorgusu soğuk makinede saniyeler sürebilir (spec timeout'u 30 s).
+    /// Eskiden <c>Task.Run(...).GetAwaiter().GetResult()</c> ile senkron bekleniyordu ve tek bir tıklama
+    /// pencereyi 30 saniyeye kadar ölü bırakabiliyordu.</para></summary>
+    Task<OpenInVsResult> OpenInVisualStudioAsync(IReadOnlyList<SolutionRef> candidates);
 
     /// <summary><see cref="Microsoft.Win32.OpenFolderDialog"/> — iptal edilirse null.</summary>
     string? PickFolder(string? initial);
@@ -112,13 +117,14 @@ public sealed class OsActions : IOsActions
             UseShellExecute = false,
         });
 
-    public OpenInVsResult OpenInVisualStudio(IReadOnlyList<SolutionRef> candidates)
+    public async Task<OpenInVsResult> OpenInVisualStudioAsync(IReadOnlyList<SolutionRef> candidates)
     {
+        ArgumentNullException.ThrowIfNull(candidates);
         if (candidates.Count == 0) return OpenInVsResult.NoSolution;      // launcher/vswhere'e DOKUNMA
         if (candidates.Count > 1) return OpenInVsResult.Choose(candidates); // seçim üst katmanda — launch/vswhere YOK
 
         var solution = candidates[0];
-        string? devenv = ResolveDevenv();
+        string? devenv = await ResolveDevenvAsync().ConfigureAwait(true); // devam UI thread'inde (launcher oradan çağrılır)
         if (string.IsNullOrEmpty(devenv)) return OpenInVsResult.VisualStudioNotFound;
 
         _launcher.Launch(new ProcessStartInfo
@@ -137,11 +143,18 @@ public sealed class OsActions : IOsActions
         return dialog.ShowDialog() == true ? dialog.FolderName : null;
     }
 
-    /// <summary>vswhere ile devenv.exe tam yolunu çözer; vswhere yoksa / sorgu boş dönerse null (= VisualStudioNotFound).
-    /// vswhere sorgusu <see cref="MsBuildResolver.ResolveAsync"/> desenini izler ama sync bir çağrıdan tüketildiğinden
-    /// (UI click), sync-over-async köprüsü <see cref="Task.Run{TResult}(Func{Task{TResult}})"/> ile kurulur — UI
-    /// sync-context yakalanmaz, deadlock olmaz.</summary>
-    private string? ResolveDevenv()
+    /// <summary>vswhere ile devenv.exe tam yolunu çözer; vswhere yoksa / sorgu boş dönerse null
+    /// (= <see cref="OpenInVsOutcome.VisualStudioNotFound"/>).
+    ///
+    /// <para><b>Oturum başına BİR KEZ:</b> kurulu Visual Studio'nun yolu uygulama çalışırken değişmez, bu yüzden
+    /// sonuç (başarısızlık dahil) saklanır — ikinci bir "Open in VS" tıklaması <c>vswhere</c>'i yeniden
+    /// çalıştırmaz. Saklanan şey <see cref="Task{TResult}"/>'in KENDİSİDİR: uçuştaki bir sorgu sırasında gelen
+    /// ikinci çağrı yeni bir process başlatmaz, aynı sonucu bekler.</para></summary>
+    private Task<string?>? _devenvPath; // yalnız UI thread'inden okunup yazılır (satır hover eylemleri)
+
+    private Task<string?> ResolveDevenvAsync() => _devenvPath ??= QueryDevenvAsync();
+
+    private async Task<string?> QueryDevenvAsync()
     {
         if (!File.Exists(_vswherePath)) return null; // vswhere yok → sorgu KOŞMAZ
 
@@ -152,7 +165,7 @@ public sealed class OsActions : IOsActions
         var spec = new ProcessSpec(_vswherePath, args, Timeout: TimeSpan.FromSeconds(30));
 
         ProcessResult result;
-        try { result = Task.Run(() => _runner.RunAsync(spec)).GetAwaiter().GetResult(); }
+        try { result = await _runner.RunAsync(spec).ConfigureAwait(false); }
         catch { return null; } // vswhere başlatılamadı/çöktü → VisualStudioNotFound olarak ele al
 
         if (!result.Success) return null;

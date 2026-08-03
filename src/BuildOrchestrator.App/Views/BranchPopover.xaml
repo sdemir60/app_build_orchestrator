@@ -29,17 +29,39 @@
       </controls:DsChrome.Prefix>
     </TextBox>
 
-    <!-- satırlar: maxHeight 196, dikey scroll (BuildApp.jsx:839) -->
-    <ScrollViewer MaxHeight="196" Margin="0,6,0,0" VerticalScrollBarVisibility="Auto"
-                  HorizontalScrollBarVisibility="Disabled">
-      <Grid>
-        <StackPanel x:Name="PART_Rows" />
-        <!-- boş sonuç: "No branches match “{q}”." (BuildApp.jsx:846) -->
-        <TextBlock x:Name="PART_Empty" Margin="10" Visibility="Collapsed"
-                   FontSize="{DynamicResource FontSize.Xs}"
-                   Foreground="{DynamicResource Brush.TextDim}" />
-      </Grid>
-    </ScrollViewer>
+    <!-- satırlar: maxHeight 196, dikey scroll (BuildApp.jsx:839).
+         SANALLAŞTIRILMIŞ: gerçek bir repo 475 branch taşıyabilir (refs/heads + refs/remotes) ve satırlar
+         eskiden bir StackPanel'e tek tek ekleniyordu — popover'ı açmak (ve aramada her harf) hepsini baştan
+         kuruyor, UI thread'ini yüzlerce ms bloke ediyordu. ScrollViewer ARTIK ItemsControl'ün KENDİ şablonunda:
+         dıştaki bir ScrollViewer panele sonsuz yükseklik ölçtürür ve sanallaştırmayı sessizce KAPATIRDI. -->
+    <Grid MaxHeight="196" Margin="0,6,0,0">
+      <ItemsControl x:Name="PART_Rows"
+                    VirtualizingPanel.IsVirtualizing="True"
+                    VirtualizingPanel.VirtualizationMode="Recycling">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <VirtualizingStackPanel />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <views:BranchRow />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+        <ItemsControl.Template>
+          <ControlTemplate TargetType="ItemsControl">
+            <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" Focusable="False">
+              <ItemsPresenter />
+            </ScrollViewer>
+          </ControlTemplate>
+        </ItemsControl.Template>
+      </ItemsControl>
+      <!-- boş sonuç: "No branches match “{q}”." (BuildApp.jsx:846) -->
+      <TextBlock x:Name="PART_Empty" Margin="10" Visibility="Collapsed"
+                 FontSize="{DynamicResource FontSize.Xs}"
+                 Foreground="{DynamicResource Brush.TextDim}" />
+    </Grid>
 
     <!-- alt not (BİREBİR, BuildApp.jsx:848-850) — text-2xs, text-faint, üstte 1px border-subtle -->
     <Border BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,6,0,0">
