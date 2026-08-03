@@ -63,7 +63,13 @@ public partial class StickyLayerList : UserControl
         ScrollAnimator.EnableUserCancellation(Scroll);
         // [E4/T48] Kullanıcı frontier'i kaydırınca merkezi arbiter'a haber ver (bölgesel suppress — yalnız bu panel
         // duraklar, konsol/stream akmaya devam). Arbiter null ise (izole test) no-op.
-        Scroll.PreviewMouseWheel += (_, _) => Arbiter?.NotifyUserScroll(ScrollPanel.Frontier);
+        // [frontier resume] Tekerlek ANI ayrıca damgalanır: boşta-geri-açılma penceresi (FrontierIdleResumeMs)
+        // buradan ölçülür ve her yeni notch onu SIFIRLAR — kullanıcı aktif kaydırırken takip devreye giremez.
+        Scroll.PreviewMouseWheel += (_, _) =>
+        {
+            _lastUserScrollAtMs = NowMs();
+            Arbiter?.NotifyUserScroll(ScrollPanel.Frontier);
+        };
         // [E4/T48 · E3 fold] Flow container üretimi (ItemContainerGenerator) TAMAMLANINCA + bir SetGroups reveal'i
         // beklerken satırlar KADEMELİ belirsin (bo-reveal). Bkz. OnGeneratorStatusChanged (deferred).
         Flow.ItemContainerGenerator.StatusChanged += OnGeneratorStatusChanged;
@@ -214,12 +220,61 @@ public partial class StickyLayerList : UserControl
     /// FollowRow bunu TAZE okur → uçuştaki tekerlekle dövüşmez; takip pratikte ancak kullanıcı durunca oturur.</item>
     /// </list></para>
     /// </summary>
+    /// <summary>[frontier resume] Boşta-geri-açılma penceresi: listeye bu kadar süre DOKUNULMAZSA takip
+    /// kendiliğinden sürer. Follow throttle'ının (550 ms) birkaç katı — okumakta olan bir kullanıcıyı listenin
+    /// altından çekecek kadar kısa DEĞİL, etkileşimi bırakmış bir kullanıcıyı takibi elle geri açmaya
+    /// zorlayacak kadar uzun da değil.</summary>
+    internal const long FrontierIdleResumeMs = 3000;
+
+    /// <summary>[D8] Boşta penceresinin saat kaynağı — testler deterministik sürer.</summary>
+    internal Func<long> NowMs { get; set; } = () => Environment.TickCount64;
+
+    private long _lastUserScrollAtMs = long.MinValue;
+
+    /// <summary>
+    /// [frontier resume] Tekerlekle duraklatılmış takibi, kullanıcı yeniden "izliyor" sayılabildiğinde geri açar.
+    /// <see cref="ResumeFrontierIfNearBottom"/>'ın eşi ama TİK'ten (frontier satır indeksi bilinerek) çağrılır.
+    ///
+    /// <para>İki koşuldan biri yeter: (a) kullanıcı <b>frontier satırının yanına</b> geri döndü
+    /// (<see cref="FrontierResumeThresholdPx"/>), (b) listeye <see cref="FrontierIdleResumeMs"/> boyunca hiç
+    /// dokunmadı. (a) niyet okur, (b) unutulmuş bir duraklamayı kendiliğinden kapatır; ikisi de "kullanıcı
+    /// scroll'u kazanır" kuralını bozmaz, yalnız duraklamanın SONSUZA DEK sürmesini engeller.</para>
+    /// </summary>
+    internal void ResumeFrontierIfReengaged(int frontierRow)
+    {
+        if (!ScrollAnimator.GetIsUserSuppressed(Scroll)) return; // yalnız kullanıcı-duraklattıysa (edge) — ping-pong yok
+        if (!IsNearFrontier(frontierRow) && !IsIdle()) return;
+        ClearFrontierSuppression();
+    }
+
+    private bool IsIdle() =>
+        _lastUserScrollAtMs != long.MinValue && NowMs() - _lastUserScrollAtMs >= FrontierIdleResumeMs;
+
+    /// <summary>Frontier satırı görünür pencereye (ya da ona <see cref="FrontierResumeThresholdPx"/> kadar yakın
+    /// bir bantla) düşüyor mu. Metrics yoksa karar verilemez → hayır.</summary>
+    private bool IsNearFrontier(int frontierRow)
+    {
+        if (Metrics is not { } metrics || frontierRow < 0 || frontierRow >= metrics.RowCount) return false;
+        double rowTop = metrics.OffsetOfRow(frontierRow);
+        double rowBottom = rowTop + metrics.RowHeight;
+        double viewTop = Scroll.VerticalOffset - FrontierResumeThresholdPx;
+        double viewBottom = Scroll.VerticalOffset + Scroll.ViewportHeight + FrontierResumeThresholdPx;
+        return rowBottom > viewTop && rowTop < viewBottom;
+    }
+
+    /// <summary>İki suppress'i TEK yoldan temizler (ScrollAnimator per-target flag + arbiter regional bit) —
+    /// ayrışmaları imkânsız kalsın diye her geri-açılma yolu buradan geçer.</summary>
+    private void ClearFrontierSuppression()
+    {
+        ScrollAnimator.ClearUserSuppressed(Scroll);
+        Arbiter?.Resume(ScrollPanel.Frontier);
+    }
+
     internal void ResumeFrontierIfNearBottom()
     {
         if (!ScrollAnimator.GetIsUserSuppressed(Scroll)) return;   // yalnız kullanıcı-duraklattıysa (edge) — ping-pong yok
         if (DistanceFromBottom() > FrontierResumeThresholdPx) return; // yalnız near-bottom'da — uzaktayken duraklı kal
-        ScrollAnimator.ClearUserSuppressed(Scroll);                // TEK clear yolu: ScrollAnimator per-target flag (FollowRow okur)
-        Arbiter?.Resume(ScrollPanel.Frontier);                     // ...VE arbiter regional bit (FollowFrontier okur) — asla ayrışmazlar
+        ClearFrontierSuppression();                                // iki suppress TEK yoldan (bkz. o metodun notu)
     }
 
     /// <summary>[T59] Karta tıklama — follow durur, satır 90ms sonra %35 üst-marjla görünür kılınır (Ek A-11).</summary>

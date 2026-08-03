@@ -483,9 +483,14 @@ public partial class MainWindow : Window
         // [E4 fix] Arbiter'ın CANLI frontier gate'i: seçim YOK **ve** frontier bölgesel wheel-suppress YOK. Böylece
         // arbiter'ın _suppressed[Frontier] bit'i yalnız yazılan değil OKUNAN olur — liste wheel'i onu kurar
         // (NotifyUserScroll), near-bottom'a dönüş temizler (StickyLayerList.ResumeFrontierIfNearBottom → Resume).
-        if (!_scrollArbiter.CanFollowFrontier) return;
         int row = FrontierRowIndex(p => p.State == ProjectRowState.Started);
-        if (row >= 0) Shell.ProjectsList.FollowRow(row);
+        if (row < 0) return;
+        // [frontier resume] Kapıdan ÖNCE: tekerlekle duraklatılmış takip, kullanıcı yeniden "izliyor"
+        // sayılabildiğinde geri açılır — frontier'e döndüğünde ya da listeye bir süre hiç dokunmadığında.
+        // Frontier satırın indeksi YALNIZ burada bilinir, bu yüzden yakınlık kararı buradan sürülür.
+        Shell.ProjectsList.ResumeFrontierIfReengaged(row);
+        if (!_scrollArbiter.CanFollowFrontier) return;
+        Shell.ProjectsList.FollowRow(row);
     }
 
     // ==================================== [D5/T50] Graf beslemesi ====================================

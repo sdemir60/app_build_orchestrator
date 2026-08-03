@@ -891,12 +891,17 @@ Rows scrolled into view later simply appear.
 Follow-mode keeps the frontier visible while a run is in flight and nothing is selected: at most one scroll
 animation every 550 ms, and none at all if the target is within 54 px.
 
-Two things stop it, and they resume differently. Selecting a row stops it; clearing the selection resumes it.
-Scrolling the list with the wheel also stops it — and that one resumes only when the list is brought back to
-within 48 px of its **bottom**, the same threshold the console and the stream use for their bottom anchor. The
-symmetry is exact but the meaning is not: for those two panels the bottom is where new content arrives, while
-for the project list the interesting place is the frontier, which during a run sits in the middle. So one
-wheel notch parks follow for the rest of the run unless the user happens to scroll all the way down.
+Two things stop it. Selecting a row stops it, and clearing the selection resumes it. Scrolling the list with
+the wheel also stops it — the user's scroll always wins — but that pause is not permanent: it lifts as soon as
+the user can be considered to be watching again, by either of two routes. Bringing the list back to the
+**frontier row** (within 48 px of the viewport) resumes it, which reads the intent directly. Leaving the list
+untouched for three seconds also resumes it, which closes a pause the user has simply forgotten about; every
+wheel notch restarts that window, so follow cannot cut in while scrolling is still going on. Returning to the
+**bottom** of the list resumes it too, the same 48 px threshold the console and the stream use for their bottom
+anchor — kept for symmetry, though for this panel the bottom is rarely where the action is.
+
+Only routing the resume through the bottom was the original design, and it was wrong in practice: during a run
+the frontier sits in the middle of the list, so a single wheel notch parked follow for the rest of the build.
 
 **Console.** See §13.5.
 
