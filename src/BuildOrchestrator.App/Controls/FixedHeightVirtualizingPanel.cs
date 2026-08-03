@@ -131,14 +131,34 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
         for (int i = first; i <= last; i++, childIndex++)
         {
             if (generator.GenerateNext(out bool isNewlyRealized) is not UIElement child) break;
-            if (isNewlyRealized)
+
+            // [KRİTİK — geri dönüşüm] "isNewlyRealized == false" TEK BAŞINA "container zaten ağaçta" DEMEK
+            // DEĞİLDİR: havuzdan geri verilen bir container da false ile gelir, oysa geri dönüştürülürken
+            // InternalChildren'dan ÇIKARILMIŞTIR. Yalnız isNewlyRealized'a bakan bir panel onu bir daha ağaca
+            // koymaz; sonuç, kullanıcının gördüğü boşluk ve aşağı-yukarı kaydırdıkça "eksile eksile kaybolan"
+            // listedir (pin: ListVirtualizationScrollTests). Bu yüzden container'ın ağaçtaki YERİ doğrulanır.
+            int existing = InternalChildren.IndexOf(child);
+            if (existing < 0)
             {
-                if (childIndex >= InternalChildren.Count) AddInternalChild(child);
-                else InsertInternalChild(childIndex, child);
+                InsertOrAddChild(childIndex, child);
                 generator.PrepareItemContainer(child);
             }
+            else if (existing != childIndex)
+            {
+                // Sıra kaymış (geri dönüşümde olabilir): CleanUp'ın konum aritmetiği InternalChildren sırasının
+                // öğe sırasıyla AYNI olmasına dayanır — düzelt.
+                RemoveInternalChildRange(existing, 1);
+                InsertOrAddChild(childIndex, child);
+            }
+
             child.Measure(new Size(width, _tops[i + 1] - _tops[i]));
         }
+    }
+
+    private void InsertOrAddChild(int childIndex, UIElement child)
+    {
+        if (childIndex >= InternalChildren.Count) AddInternalChild(child);
+        else InsertInternalChild(childIndex, child);
     }
 
     /// <summary>Pencerenin dışına düşen container'ları bırakır. Geri dönüşüm açıksa container HAVUZA döner
