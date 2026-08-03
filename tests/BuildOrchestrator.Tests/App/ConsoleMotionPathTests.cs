@@ -187,6 +187,55 @@ public class ConsoleMotionPathTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [A13/final · lensA Ö1] Motion sinyali imleç fade'i UÇUŞTAYKEN gelirse aktif satır KAYBOLMAZ.
+    ///
+    /// <para><b>Ölçülmüş kusur:</b> <see cref="ConsoleView"/>'ın <c>OnMotionChanged</c>'i (bu branch'te EKLENDİ)
+    /// <c>ActiveCursor</c>'ın <c>Opacity</c>'sinde <c>BeginAnimation</c> çağırır — blink'i kurar ya da söker.
+    /// Bu, <c>BeginCursorRemoval</c>'ın başlattığı fade clock'unu SÖKER ve WPF sökülen bir clock'un
+    /// <c>Completed</c>'ını ATEŞLEMEZ. Satırın dokümana yazılması (<c>FinishActiveLine(commit:true)</c>) YALNIZ o
+    /// <c>Completed</c>'a bağlı olduğundan düzeltme yokken <see cref="ConsoleView.CursorFading"/> true ASILI kalır
+    /// ve satır dokümana HİÇ girmez — bir sonraki append kendini onarır, ama run'ın SON satırında kayıp KALICIDIR.</para>
+    ///
+    /// <para><b>Neden fade penceresi host'tan besleniyor:</b> üretimdeki fade <c>Duration.Base</c> kadar (180ms)
+    /// sürer ve testin sinyali TAM O PENCEREDE çevirmesi gerekir — 180ms'lik bir pencereyi pompayla yakalamak
+    /// yük-hassastır (D8: yeni flake YASAK). Süre üretimde de token'dan okunur
+    /// (<c>MotionTokens.ResolveDuration(this, "Duration.Base", …)</c>), yani host'un kaynak kapsamına konan değer
+    /// üretim YOLUNU değiştirmez, yalnız pencereyi gözlenebilir kılar. Kusur süreden bağımsızdır.</para></summary>
+    [StaTheory]
+    [InlineData(false)] // OS "animasyon efektlerini göster" KAPANDI → OnMotionChanged StopBlink() ile fade'i söker
+    [InlineData(true)]  // sinyal AYNI değerle yeniden ateşlendi     → OnMotionChanged StartBlink() ile fade'i söker
+    public void A_motion_signal_arriving_while_the_cursor_is_fading_still_commits_the_line(bool motionAfterwards)
+    {
+        var signal = new FakeMotionSignal { AnimationsEnabled = true };
+        var motion = new MotionSettings(signal);
+        var view = new ConsoleView
+        {
+            AnimationsEnabledProvider = () => motion.AnimationsEnabled, MotionSettings = motion,
+        };
+        var host = DsResources.NewHost();
+        host.Resources["Duration.Base"] = new Duration(TimeSpan.FromSeconds(5)); // gerekçe: doc'un son paragrafı
+        var window = DsResources.Realize(host, view);
+
+        view.AppendNarrativeBatch(NarrativeLine + "\n"); // ÜRETİM yolu (brief kural 3)
+        Assert.False(view.ActiveLineInstant, "ön-koşul: daktilo kurulmadı");
+
+        // Daktilo + 420ms hold dolunca fade UÇUŞA girer. PumpUntil timeout'ta HATA VERMEZ → ön-koşul AYRICA assert.
+        DispatcherPump.PumpUntil(() => view.CursorFading, TimeSpan.FromSeconds(5));
+        Assert.True(view.CursorFading, "ön-koşul: imleç fade'i hiç başlamadı");
+        Assert.DoesNotContain("refreshing refs", view.Document.Text); // ön-koşul: satır HENÜZ commit EDİLMEDİ
+
+        signal.AnimationsEnabled = motionAfterwards;
+        signal.Raise();                                              // sinyal fade UÇUŞTAYKEN geldi
+
+        // Fade clock'u söküldü → Completed ARTIK hiç ateşlenmeyecek; satırı commit etmek bu handler'ın işidir.
+        Assert.Contains("refreshing refs", view.Document.Text);      // satır KAYBOLMADI (asıl iddia)
+        Assert.False(view.CursorFading, "fade bayrağı ASILI kaldı — sonraki fade/commit yolu da bloke olurdu");
+        Assert.Equal(Visibility.Collapsed, view.ActiveLineOverlay.Visibility);
+        Assert.Equal("", view.ActiveLineText.Text);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- [A13/T4 · m2] imleç: 1.1s blink + 420ms sönme
 
     /// <summary>[A13/T4 fix-1 · A3/A4] Otorite <c>BuildApp.jsx:16</c>: <c>.bo-cursor { animation: bo-blink 1.1s

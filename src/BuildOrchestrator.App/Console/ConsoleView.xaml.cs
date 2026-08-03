@@ -141,6 +141,20 @@ public partial class ConsoleView : UserControl
     /// tek-yönlülüğüyle aynı gerekçe).</para></summary>
     private void OnMotionChanged(object? sender, EventArgs e)
     {
+        // [A13/final · lensA Ö1] UÇUŞTAKİ İMLEÇ FADE'İ ÖNCE KURALLI YOLDAN KAPATILIR. Aşağıdaki ilk dal
+        // ActiveCursor'ın Opacity'sinde BeginAnimation çağırır (StartBlink kurar / StopBlink söker) — bu,
+        // BeginCursorRemoval'ın başlattığı fade clock'unu SÖKER ve WPF sökülen bir clock'un Completed'ını
+        // ATEŞLEMEZ. Satırın dokümana yazılması YALNIZ o Completed'a bağlı olduğundan (bkz. BeginCursorRemoval),
+        // bayrak temizlenmezse _cursorFading true ASILI kalır ve satır dokümana HİÇ girmez; sonraki append'lerin
+        // guard'ı (`_typeTimer is not null || _cursorFading`) ancak YENİ bir satır gelirse onarır — run'ın SON
+        // satırında kayıp KALICIDIR. FinishActiveLine aynı iptali yaparken bayrağı zaten elle temizler; kurallı
+        // kapanış yolu odur, burada da o kullanılır.
+        //
+        // Erken `return` YOK (lens A'nın önerdiği biçimden bilinçli sapma): FinishActiveLine overlay'i zaten
+        // Collapsed yapar, yani aşağıdaki ilk dal kendiliğinden koşmaz; erken dönmek ise BuildProgressOverlay'in
+        // sinyal güncellemesini sessizce atlardı.
+        if (_cursorFading) FinishActiveLine(commit: true);
+
         if (ActiveLineOverlay.Visibility == Visibility.Visible)
         {
             if (_motion.Enabled) StartBlink(); else StopBlink();
@@ -714,6 +728,13 @@ public partial class ConsoleView : UserControl
     /// daha DÜŞÜK önceliktedir → yük altında kare kaçabilir ve test teşhissiz kırmızı verir (D8: yeni flake
     /// KABUL EDİLEMEZ). Bu seam aynı iddiayı deterministik kılar.</para></summary>
     internal bool ActiveLineInstant => _scheduler?.Instant ?? true;
+
+    /// <summary>[A13/final · lensA Ö1 + lensB Ö1] Uçuştaki imleç fade-out'u — <see cref="BeginCursorRemoval"/> ile
+    /// <c>true</c> olur, <see cref="FinishActiveLine"/> ile <c>false</c>. <see cref="ActiveLineInstant"/> ile AYNI
+    /// gerekçeyle salt-okunur seam: bu durum DIŞARIDAN ayırt edilemiyordu (hem hold hem fade sırasında overlay açık,
+    /// imleç animasyonlu) — dolayısıyla (a) hold'un GERÇEKTEN tüketildiği ve (b) sinyal fade uçuştayken değişince
+    /// satırın commit edildiği iddiaları zamandan bağımsız olarak kurulamıyordu.</summary>
+    internal bool CursorFading => _cursorFading;
 
     /// <summary>Belgede yüklü ilk satırdan ÖNCEKİ ~<see cref="RenderSliceLines"/> satırı (contiguous, sequence-id
     /// bitişik → tekrar/kayıp yok) tepeye prepend eder ve <c>VerticalOffset</c>'i prepend edilen içeriğin piksel
