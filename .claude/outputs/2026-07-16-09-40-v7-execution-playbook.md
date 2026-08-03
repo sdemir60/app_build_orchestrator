@@ -25,13 +25,24 @@
 | A10 | It-5: perf + dağıtım + docs | **Opus** | **medium** | Rutin; perf sorunu çıkarsa effort'u high/xhigh'a çıkar |
 | **A11** | CLAUDE.md bayat bilgi denetimi ✅ | **Opus** | **low** | Dört olgusal ifade; karar kullanıcıda, uygulama mekanik |
 | **A12** | Bilinen regresyon: kart animasyonu / renklendirme | **Opus** | **high** | Teşhis işi; yeşil suite'in kaçırdığı runtime kusuru (c6e9a21 sınıfı) |
-| **A13** | Gözle-kontrol borcunun otomatikleştirilmesi + park listesi triyajı | **Opus** | **high** | 81 görsel kalemin pinlenebilenleri süite; kalanı kısa artık liste |
+| **A13** | Gözle-kontrol borcunun otomatikleştirilmesi + park listesi triyajı ✅ | **Opus** | **high** | 81 görsel kalemin pinlenebilenleri süite; kalanı kısa artık liste |
 | **A14** | **Test-düzelt döngüsü** (tekrarlanır) | **Opus** | **high** | Kullanıcının bulguları; her fix'ten önce kırmızı test |
 | **A15** | Kapanış belge pası (CLAUDE.md · README · docs/) | **Opus** | **low** | Mekanik denetim; kanıt zaten koddadır |
 | R | Her iterasyon SONU review | **Opus** | **high** (UI iter. **xhigh**) | Plandaki en güçlü model; her iterasyonun sigortası (`/code-review high` argümanı promptta zaten var); A8/A9 gibi UI iterasyonlarının review'unda xhigh |
 
-> **DURUM (2026-07-30):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti); **A11 de tamamlandı** (aynı gün, commit `4bb6158`).
-> **Kalan 4 adım:** A12 → A13 → A14 (tekrarlanır) → A15. **Kalan bölüm 2026-07-30'da revize edildi** (kullanıcı kararı):
+> **DURUM (2026-08-03):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti); **A11** aynı gün (commit `4bb6158`);
+> **A12** ve **A13** de **tamamlandı**.
+> **Kalan 2 adım:** A14 (tekrarlanır) → A15.
+>
+> **A13 sonucu (branch `a13-visual-debt-automation`, 11 task):** gezintinin **228 alt kaleminin 217'si** artık testle
+> pinli, **20'si göz istiyor** (liste: `.claude/outputs/2026-08-03-09-44-visual-check-residue.md`), 1'i ne test ne göz
+> (ribbon `· N warnings` — **özellik** boşluğu, IPC sözleşmesinde derleyici-uyarı alanı yok → A14).
+> Süit **1433 → 1650**; +201 test metodu. Park listesi triyajı: **106 karar satırı**
+> (`.claude/outputs/2026-08-03-09-44-parked-items-triage.md`) — 14 kapandı · 80 taşındı · 12 geçersiz çıktı.
+> **A14'ün ilk kalemi ölçüldü:** beş test kullanıcının gerçek `%LOCALAPPDATA%\BuildOrchestrator` köklerini
+> kullanıyor (`evaluation-cache.json` 3,2 MB / 1021 girdinin 844'ü ölü fixture; `logs/` altında 460 `run-*`).
+>
+> **Kalan bölüm 2026-07-30'da revize edildi** (kullanıcı kararı):
 > eski A12 (81 kalemlik kullanıcı gözle-kontrol pası) kaldırıldı; onun yerine regresyon fix'i (A12) ve
 > görsel borcun otomatikleştirilmesi (A13) agent'a alındı, kullanıcıya yalnız kısa bir artık liste +
 > tekrarlanan test-düzelt döngüsü (A14) kaldı. Detay için "KALAN ADIMLAR" bölümüne bak.
