@@ -11,8 +11,8 @@ yönetir; her projeyi **shell-out** (`MSBuild.exe` ayrı child process) ile derl
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
 | [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
 
-**Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** "Kusur mu, bilinçli karar mı" sorusunun cevabı
-çoğunlukla ARCHITECTURE.md §19 (kabul edilen yapısal farklar) ve §20'dedir (bilinen sınırlar).
+**Bir kusur veya davranış sorusu geldiğinde önce bunları oku** — özellikle ARCHITECTURE.md §22 (kod haritası:
+hangi davranış hangi dosyada).
 
 **Görsel değer** (renk, ölçü, süre, kopya metni) gerektiğinde birebir kaynak:
 [design-v1](.claude/outputs/2026-07-15-19-00-design-v1/README.md) — tasarım paketi + çalışan prototip.
@@ -79,8 +79,10 @@ Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.
 - **Belirsizlikte tahmin yürütme** — ayırt edici soru sor (her seferinde mi, pencere boyutuna bağlı mı,
   reduced-motion açık mı). Nedeni bilinmeyen kusurda `superpowers:systematic-debugging`; hipotezi doğrulamadan
   koda dokunma.
-- Kusur değil de kabul edilebilir sapmaysa ARCHITECTURE.md §19'a **gerekçesiyle** yaz, düzeltme. Gerekçesiz
-  "eşdeğer" deme.
+- **Varsayılan davranış: düzelt.** ARCHITECTURE.md bir davranışı "böyle olması gerekiyor" diye anlatıyor ve
+  kullanıcı yanlış olduğunu söylüyorsa, karar kullanıcınındır: kod düzeltilir ve doküman da ona göre yeniden
+  yazılır. Doküman bir itiraz gerekçesi değildir. Teknik bir engel varsa (WPF yapamıyor, ölçüm aksini söylüyor)
+  bunu **bir cümleyle** söyle ve nasıl yaklaşabileceğini anlat.
 - Birden çok bulgu tek kök nedene bağlıysa tek fix, ama **her biri için ayrı test**.
 - Bitişte **tam süit yeşil** (token/motion/D8 guard'ları dahil). 5'ten fazla bulgu varsa önce kısa TDD dökümü
   (`.claude/outputs/`), sonra `superpowers:subagent-driven-development` ile task-by-task.
