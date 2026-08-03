@@ -25,8 +25,21 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ListRealizationPerfTests(ITestOutputHelper output)
 {
-    private const double BudgetMs191 = 400;      // brief E6 Step 1 bütçesi
-    private const double SanityCeilingMs = 3000; // bütçe aşılsa bile suite'i patlatma; yalnız felaket regresyon kırar
+    /// <summary>
+    /// Bir liste kurulumunun tavanı — ve <b>ölçekten bağımsızdır</b>: sanallaştırma sayesinde maliyet satır
+    /// SAYISINA değil VIEWPORT'a bağlıdır, dolayısıyla 191 ile 500 AYNI bütçeye tabidir. Testin asıl iddiası
+    /// budur; sayı ondan türer.
+    ///
+    /// <para><b>Türetme (uydurma değil):</b> 760px'lik ölçüm viewport'u + %50 cache ⇒ ~32 satır; bir
+    /// <c>ProjectRow</c>'un kurulumu referans makinede ~3 ms ⇒ ~95 ms. Bu, bir viewport dolusu satırı kurmanın
+    /// İNDİRGENEMEZ maliyetidir (daha aşağısı ancak satırın kendisini ucuzlatarak gelir, sanallaştırmayla
+    /// değil). 120 ms, makine oynaklığı için pay bırakır; satır sayısıyla ölçeklenen bir regresyon ise bu
+    /// tavanın çok üstüne çıkacağı için burada yakalanır.</para>
+    ///
+    /// <para><b>Kıyas:</b> sanallaştırmadan önce aynı ölçüm 191 satırda 488–570 ms, 500 satırda 1.179 ms idi —
+    /// yani hem bütçesizdi hem repo büyüdükçe büyüyordu.</para>
+    /// </summary>
+    private const double BudgetMs = 120;
 
     /// <summary>[L1/It-5] Hover EDİLMEMİŞ bir satırın kurabileceği nesne tavanı (görsel+mantıksal ağaç birleşimi,
     /// bkz. <see cref="DsResources.RealizedObjects"/>). Duvar saati makineye göre oynaktır; sadeleştirmenin
@@ -39,22 +52,26 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
     /// 39 yerine 40; tavan aynı +1 marjı korumak için 41'e alındı. GERÇEK bütçe DEĞİŞMEDİ.</para></summary>
     private const int UnhoveredRowObjectCeiling = 41;
 
+    /// <summary>
+    /// Liste kurulumunun maliyeti satır SAYISINDAN bağımsızdır — sanallaştırma yalnız viewport'u realize eder.
+    ///
+    /// <para><b>Bu test eskiden 191 satır için 400 ms'lik bir bütçeyi "ertelenmiş" tutuyordu</b> (ve o bütçe
+    /// referans makinede zaten aşılıyordu: 488–570 ms). Ölçülen sonuç kullanıcıya bir donma olarak yansıyordu:
+    /// her Sync, her topoloji değişimi ve her filtre değişimi listeyi baştan kuruyordu. Sanallaştırmayla
+    /// (<see cref="FixedHeightVirtualizingPanel"/>) bütçe hem sertleşti hem de ÖLÇEKTEN BAĞIMSIZ hâle geldi:
+    /// 500 satır artık 191 ile aynı bütçeye tabidir ve bu, testin asıl iddiasıdır.</para>
+    /// </summary>
     [StaFact]
-    public void Realizing_191_project_rows_measure_and_arrange_stays_under_the_400ms_budget()
+    public void Realizing_a_large_project_list_costs_the_viewport_not_the_row_count()
     {
         double median191 = MeasureRealizationMs(rowCount: 191, warmups: 2, samples: 5);
-        double median500 = MeasureRealizationMs(rowCount: 500, warmups: 1, samples: 3); // kayıt için (It-5 hedefi)
+        double median500 = MeasureRealizationMs(rowCount: 500, warmups: 1, samples: 3);
 
-        output.WriteLine($"[E6 perf] 191-row realize median = {median191:N1} ms (budget < {BudgetMs191:N0} ms)");
-        output.WriteLine($"[E6 perf] 500-row realize median = {median500:N1} ms (record only — no budget, T51/It-5 target)");
+        output.WriteLine($"[perf] 191-row realize median = {median191:N1} ms (budget < {BudgetMs:N0} ms)");
+        output.WriteLine($"[perf] 500-row realize median = {median500:N1} ms (budget < {BudgetMs:N0} ms)");
 
-        if (median191 < BudgetMs191)
-            Assert.True(median191 < BudgetMs191,
-                $"191-satır realize {median191:N1} ms — bütçe {BudgetMs191:N0} ms.");
-        else
-            // Bütçe aşıldı → T51/It-5'e ertelenir; suite KIRILMAZ. Yalnız felaket bir regresyona karşı gevşek tavan.
-            Assert.True(median191 < SanityCeilingMs,
-                $"191-satır realize {median191:N1} ms — 400ms bütçeyi aştı (T51/It-5'e ertelendi) VE {SanityCeilingMs:N0} ms gevşek tavanı da aştı (felaket regresyon).");
+        Assert.True(median191 < BudgetMs, $"191-satır realize {median191:N1} ms — bütçe {BudgetMs:N0} ms.");
+        Assert.True(median500 < BudgetMs, $"500-satır realize {median500:N1} ms — bütçe {BudgetMs:N0} ms.");
     }
 
     [StaFact]
@@ -84,8 +101,9 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
         => PerfMeasure.MedianOf(() => RealizeOnce(rowCount), warmups, samples);
 
     /// <summary>Tek bir realizasyonu ölçer: N satırlık bir <see cref="StickyLayerList"/> kurar ve YALNIZ
-    /// Measure/Arrange/UpdateLayout duvar-saatini döndürür. Realizasyonun gerçekten tamamlandığını (N satır)
-    /// doğrular.</summary>
+    /// Measure/Arrange/UpdateLayout duvar-saatini döndürür. Realize edilen satır sayısının VIEWPORT'a bağlı
+    /// kaldığını (satır sayısına DEĞİL) doğrular — aksi halde sanallaştırma sessizce kapanmış olurdu ve ölçüm
+    /// "hızlı" görünmeye devam ederdi.</summary>
     private static double RealizeOnce(int rowCount)
     {
         var host = DsResources.NewHost();
@@ -103,11 +121,14 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
         var sw = Stopwatch.StartNew();
         host.Measure(size);
         host.Arrange(new Rect(new Point(0, 0), size));
-        host.UpdateLayout(); // non-virtualized → tüm N container + ProjectRow burada üretilir/measure edilir
+        host.UpdateLayout(); // sanallaştırılmış → yalnız viewport (+ yarım viewport cache) kadar container üretilir
         sw.Stop();
 
+        // 760px viewport + %50 cache ≈ 1140px ⇒ 36px satırdan ~32 tane. Tavanı gevşek ama ANLAMLI tutuyoruz:
+        // satır sayısıyla ölçeklenen bir realizasyon (sanallaştırmanın kapanması) burada kırılır.
         int realized = list.RevealRows.Count;
-        Assert.True(realized == rowCount, $"realizasyon eksik: {realized}/{rowCount} satır — ölçüm anlamsız.");
+        Assert.True(realized < rowCount && realized <= 64,
+            $"{realized}/{rowCount} satır realize oldu — realizasyon viewport'a değil satır sayısına bağlanmış.");
         return sw.Elapsed.TotalMilliseconds;
     }
 }

@@ -6,7 +6,13 @@
   <!-- [T58] Sticky overlay mimarisi (feasibility §3.3 — tasarımın en zor layout parçası): liste ScrollViewer'ının
        üstünde overlay ItemsControl (Canvas). Yapışık başlık kümesi salt aritmetikle (LayoutMetrics: 36px satır +
        24px başlık kümülatif tablosu) hesaplanır; overlay item'ları in-flow başlıkla AYNI DataTemplate + opak
-       zemin (Brush.Surface) → geçiş görünmez. Virtualization KAPALI (§4.1 drift). -->
+       zemin (Brush.Surface) → geçiş görünmez.
+
+       Satır akışı SANALLAŞTIRILMIŞTIR (FixedHeightVirtualizingPanel): yalnız görünür pencereye düşen satırlar
+       realize olur. WPF'in kendi VirtualizingStackPanel'i BURADA KULLANILAMAZ — o, realize edilmemiş öğeleri
+       ORTALAMA yükseklikle tahmin eder ve karışık 36/24 tabloda scroll ekseni yukarıdaki kümülatif aritmetikten
+       kayardı (yapışık başlık + follow + seçim-scroll üçü de o tabloyu okur). Panel yüksekliği tahmin etmez,
+       EntryHeightSelector ile SORAR → VerticalOffset ile tablo asla ayrışmaz. -->
   <UserControl.Resources>
     <!-- design-v1 §2.4: katman başlığı 24px, caps 11px (TrackedTextBlock — letter-spacing 0.07em) + mono satır
          sayısı. In-flow VE overlay AYNI bu şablonu (tek nesne) kullanır — bkz. StickyLayerList.xaml.cs. -->
@@ -30,17 +36,21 @@
   </UserControl.Resources>
 
   <Grid Background="{DynamicResource Brush.SurfaceBase}">
-    <!-- Liste: virtualization KAPALI (§4.1), pixel scroll → VerticalOffset(px) = LayoutMetrics içerik Y'si. -->
+    <!-- Liste: sanallaştırılmış, PİKSEL scroll → VerticalOffset(px) = LayoutMetrics içerik Y'si (birebir).
+         CanContentScroll KAPALI KALIR (varsayılan): kaydırmayı yine BU ScrollViewer yürütür, panel ona gerçek
+         toplam yüksekliği bildirir ve yalnız görünür pencereyi realize eder — mevcut scroll tesisatı
+         (ScrollAnimator, bottom-anchor, follow-mode) hiç değişmez. -->
     <ScrollViewer x:Name="Scroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <!-- [E5/T47] Satırlar (ProjectRow, Focusable) Tab ile ulaşılır; ok tuşları satırlar arası gezinir
            (DirectionalNavigation=Contained → odak liste içinde kalır, başlıklar odaklanamaz → atlanır). -->
       <ItemsControl x:Name="Flow"
                     KeyboardNavigation.DirectionalNavigation="Contained"
                     KeyboardNavigation.TabNavigation="Continue"
-                    VirtualizingPanel.IsVirtualizing="False" VirtualizingPanel.ScrollUnit="Pixel">
+                    VirtualizingPanel.IsVirtualizing="True"
+                    VirtualizingPanel.VirtualizationMode="Recycling">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
-            <StackPanel />
+            <controls:FixedHeightVirtualizingPanel />
           </ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
       </ItemsControl>

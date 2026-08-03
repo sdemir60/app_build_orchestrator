@@ -9,7 +9,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [T58] StickyLayerList: liste ScrollViewer üstünde overlay ItemsControl. Overlay, LayoutMetrics'ten gelen
 /// YAPIŞIK başlıkları (StuckHeader) doğru Y'de (i×24), in-flow başlıkla AYNI DataTemplate + opak zeminle
-/// çizer (geçiş görünmez). Virtualization KAPALI (feasibility §4.1). Katman yoksa overlay boş.
+/// çizer (geçiş görünmez). Satır akışı SANALLAŞTIRILMIŞTIR (<see cref="FixedHeightVirtualizingPanel"/>) ve
+/// scroll extent'i kümülatif tabloyla birebirdir. Katman yoksa overlay boş.
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class StickyOverlayTests
@@ -23,17 +24,39 @@ public class StickyOverlayTests
         new("L2", [new Proj("i"), new Proj("j"), new Proj("k"), new Proj("l"), new Proj("m"), new Proj("n")]), // 6
     ];
 
+    /// <summary>
+    /// Liste SANALLAŞTIRILMIŞTIR ve kaydırma ekseni yine PİKSELDİR.
+    ///
+    /// <para><b>Bu test eskiden tersini pinliyordu</b> (<c>IsVirtualizing == false</c>): aritmetik tablonun
+    /// yalnız sanallaştırma kapalıyken doğru olduğu varsayılıyordu, çünkü WPF'in <c>VirtualizingStackPanel</c>'i
+    /// realize edilmemiş öğeleri ORTALAMA yükseklikle tahmin eder ve karışık 36/24 tabloda kayar.
+    /// <see cref="FixedHeightVirtualizingPanel"/> yüksekliği tahmin ETMEZ (her öğeninkini sorar), dolayısıyla
+    /// gerekçe ortadan kalkmıştır — ölçülen bedel ise gerçekti: 177 satırlık bir liste her kurulumda UI
+    /// thread'ini ~600 ms bloke ediyordu.</para>
+    ///
+    /// <para>Korunan asıl değişmez AYNI kalır ve burada AÇIKÇA sınanır: panelin ürettiği toplam yükseklik
+    /// <see cref="LayoutMetrics.TotalHeight"/> ile BİREBİR olmalıdır — <c>ScrollViewer</c>'ın extent'i budur ve
+    /// yapışık başlık / follow / seçim-scroll üçü de aynı tablodan okur.</para>
+    /// </summary>
     [StaFact]
-    public void List_disables_virtualization_and_scrolls_by_pixel()
+    public void List_virtualizes_rows_while_its_scroll_extent_stays_exact()
     {
-        var list = new StickyLayerList();
+        var host = DsResources.NewHost();
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => false };
         list.SetGroups(SampleGroups());
+        var window = DsResources.Realize(host, list); // 400×200 host; içerik 576px ≫ viewport
 
-        // feasibility §4.1: aritmetik tablo yalnız virtualization KAPALIYKEN birebir doğru.
-        Assert.False(VirtualizingPanel.GetIsVirtualizing(list.Flow));
-        // production XAML'daki VirtualizingPanel.ScrollUnit="Pixel" ayarını pinler (el ile kurulmuş bir
-        // ScrollViewer'ın varsayılanı DEĞİL — list.Scroll.CanContentScroll==false her zaman trivially geçerdi).
-        Assert.Equal(ScrollUnit.Pixel, VirtualizingPanel.GetScrollUnit(list.Flow));
+        Assert.True(VirtualizingPanel.GetIsVirtualizing(list.Flow));
+        Assert.Equal(VirtualizationMode.Recycling, VirtualizingPanel.GetVirtualizationMode(list.Flow));
+
+        // Extent = kümülatif tablonun kendisi (tahmin YOK). 3×24 + 14×36 = 576.
+        Assert.Equal(576, list.Metrics!.TotalHeight);
+        Assert.Equal(list.Metrics.TotalHeight, list.Scroll.ExtentHeight, precision: 6);
+
+        // ...ve gerçekten sanallaştırıyor: 200px'lik bir pencerede 14 satırın hepsi kurulmaz.
+        Assert.True(list.RevealRows.Count < 14,
+            $"200px viewport'ta {list.RevealRows.Count}/14 satır realize oldu — sanallaştırma devrede değil.");
+        GC.KeepAlive(window);
     }
 
     [StaFact]
