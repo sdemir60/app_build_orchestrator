@@ -485,7 +485,7 @@ adımlarıdır. Her birinin **yapıştırmaya hazır promptu** aşağıda, A1-A1
 |---|---|---|---|---|
 | ~~**A11**~~ ✅ | `CLAUDE.md`'deki 4 bayat olgusal ifadenin düzeltilmesi — **TAMAMLANDI** (`4bb6158`) | agent | **Opus** | **low** |
 | ~~**A12**~~ ✅ | Kart animasyonu regresyonu — **TAMAMLANDI** (`739cfa0`, merge `4fb98f4`; kullanıcı gözle doğruladı) | agent | **Opus** | **high** |
-| **A13** | Gözle-kontrol borcunun **teste çevrilmesi** + park edilmiş ~60 minor'ın triyajı | agent | **Opus** | **high** |
+| ~~**A13**~~ ✅ | Gözle-kontrol borcunun **teste çevrilmesi** + park edilmiş minor'ların triyajı — **TAMAMLANDI** (merge `d99cc38`; 228 alt kalemin 217'si pinlendi, 20 kalem göze kaldı; triyaj 106 satır) | agent | **Opus** | **high** |
 | **A14** | **Test-düzelt döngüsü** — senin bulguların, dalga dalga (**tekrarlanır**) | sen + agent | **Opus** | **high** |
 | **A15** | **Kapanış belge pası** — `CLAUDE.md` · `README.md` · `docs/TRUST-BOUNDARY.md` son duruma | agent | **Opus** | **low** |
 
@@ -524,9 +524,12 @@ kazanır."* Prompta yalnız **v7'de OLMAYAN** proje pratiği yazılır:
 2. ✅ **A12 TAMAMLANDI** (2026-07-30, `739cfa0` → merge `4fb98f4`) — kart reveal stagger'ı hiç oynamıyordu;
    kök neden ölçüldü, 1 satırla kapatıldı, 3 regresyon testi kırmızıdan yeşile döndü. **Kullanıcı gözle
    doğruladı** ("ilk aşamada tamam").
-3. **Yeni oturum aç** → **Opus / high** → **A13** promptunu yapıştır. **← BURADAN DEVAM** Senden bir şey
-   istemez; çıktısı `visual-check-residue.md` (senin gezeceğin **kısa** liste).
-4. **Uygulamayı kullan** + o kısa listeyi gez. Gördüğün her kusuru şu formatta not al:
+3. ✅ **A13 TAMAMLANDI** (2026-08-03, merge `d99cc38`) — 11 task; gezintinin **228 alt kaleminin 217'si**
+   teste çevrildi, süit **1433 → 1650**. Senin gezeceğin kısa liste hazır:
+   [2026-08-03-09-44-visual-check-residue.md](2026-08-03-09-44-visual-check-residue.md) — **20 kalem**
+   (pencere 3 · sol panel 5 · graf 3 · **konsol 0** · aksiyon çubuğu 2 · popover 1 · ayarlar 2 · tepsi 4).
+   Park triyajı: [2026-08-03-09-44-parked-items-triage.md](2026-08-03-09-44-parked-items-triage.md).
+4. **Uygulamayı kullan** + o kısa listeyi gez. **← BURADAN DEVAM** Gördüğün her kusuru şu formatta not al:
    `hangi panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`.
 5. **Yeni oturum aç** → **Opus / high** → **A14** promptunu yapıştır, bulgularını `<<< >>>` bloğuna yaz.
    Bulgu kalmayana kadar 4-5'i tekrarla (dalga başına 5-15 bulgu ideal).
@@ -802,6 +805,58 @@ geç.
 ---
 
 ## A13 — Gözle-kontrol borcunun otomatikleştirilmesi + park listesi triyajı · Model: **Opus** · Effort: **high**
+
+> **✅ TAMAMLANDI (2026-08-03, branch `a13-visual-debt-automation` → merge `d99cc38`, push edildi).**
+> `superpowers:subagent-driven-development` ile **11 task** (T1-T6 · B0-B4), task başına taze implementer +
+> **çok-lens paralel review** (B3'te 3 lens, B4'te 2) + fix dalgaları + scoped re-review; ardından **final
+> tüm-branch review 3 pakete bölünerek** (diff 948 KB, tek ajana sığmadı: `src/` · `tests/` · `docs/`) +
+> tek final fix dalgası. **Sonuç:** clean build **0 uyarı / 0 hata**; süit **1433 → 1650 PASS + 2 SKIP**
+> (+201 test metodu, 1260 → 1461); guard **69/69**; **flake sıfır** (lens B: 7 süit-ölçeği koşum).
+> **Hedef tutturuldu ve aşıldı:** gezintinin **228 alt kaleminin 217'si** artık testle pinli, **20'si göz
+> istiyor** (hedef 15-25), 1'i ne test ne göz — ribbon `· N warnings`, bu bir **özellik** boşluğudur
+> (IPC sözleşmesinde derleyici-uyarı alanı yok) → A14. Artık liste:
+> [2026-08-03-09-44-visual-check-residue.md](2026-08-03-09-44-visual-check-residue.md) (uygulama gezinti
+> sırasıyla, her kalem tek satır "ne yap / ne görmelisin"). **İkinci iş de kapandı:** park triyajı
+> [2026-08-03-09-44-parked-items-triage.md](2026-08-03-09-44-parked-items-triage.md) — **106 karar satırı**,
+> üç kova: **14 kapandı** (commit doğrulandı) · **80 taşındı** · **12 ölçüldüğünde geçersiz çıktı**;
+> `it5-records` §2'nin 6 satırının artık geçersiz olduğu o dosyaya uyarı bloğu olarak işlendi (satırlar
+> silinmedi — kapalı bir iterasyonun kabul kaydıdır).
+>
+> **Kapatılan gerçek üretim kusurları:** (a) `ConsoleView.OnMotionChanged` uçuştaki imleç fade'ini bayrağı
+> temizlemeden söküyordu → `fade.Completed` hiç ateşlenmiyor, **run'ın son satırı kalıcı kayboluyordu**;
+> (b) `debugSpawnChildren` (`cmd.exe` çocuğu doğuran test kancası) **üretim ikilisinde de dinleniyordu** →
+> artık `--debug-hooks` olmadan reddediliyor, IPC sözleşmesi korundu; (c) `StickyLayerList` reveal kapsamı
+> sertleştirildi ve **ulaşılamaz** ikinci kademe telafi (`LayoutUpdated` kancası) tümüyle söküldü;
+> (d) kullanıcıya sızan **62 Türkçe metin** İngilizceye çevrildi + kalıcı tokenizer guard'ı eklendi
+> (It-5'te bir tur süpürülmüş ama guard konmadığı için sızıntı geri gelmişti).
+>
+> **YÖNTEMİN ASIL DERSİ — üç kez "ölçüldü" denen şey ölçülmemişti.** Bir uygulayıcı üç ayrı turda "kırmızı
+> ölçüldü" diye raporladı ve review lens'lerinin mutasyonları bunun **doğru olmadığını** gösterdi:
+> E5 testi düzeltmeyi hiç pinlemiyordu (iki lens iki ayrı yöntemle ölçtü; sonuçta düşme penceresinin
+> **üretimden ulaşılamaz** olduğu kanıtlandı ve iddia "kusur düzeltmesi"nden **sertleştirme**'ye indirildi) ·
+> `debugSpawnChildren`'ın ilan edilen kazancı pinsizdi (kapı spawn'dan sonraya taşınınca **1646 testin
+> tamamı yeşil kaldı**) · `CursorHoldMs` testinin kanıtını hold değil arkasındaki 180 ms'lik fade
+> karşılıyordu. Üçü de **kontrol grubu koşularak** kapatıldı. Bunu yakalayan şey review'un kendisi değil,
+> reviewer'a **"ayırt ediciliği kendin üret, beyanı kabul etme"** demek oldu; ikinci kritik kural
+> **ağaç sahipliğinin bölüştürülmesi** (mutasyon koşan lens ağacın sahibi, diğerleri `git show` ile
+> commit'ten okur) — bölüşümden önce eşzamanlı mutasyon bir lens'e **iki sahte kırmızı** göstermişti.
+>
+> **Final review'ın bulup kapattığı belge borcu:** süit komutu **üç uçlu** çelişkiydi (`README.md:77` komutu
+> filtresiz ama `:83` metni filtreli diyor, `CLAUDE.md:45` filtresiz) → filtreli yönde birleştirildi
+> (kodun kendi politikası aynı yönde, `OsysRebuildAcceptanceTests.cs:26-27`; acceptance testi sayısı
+> ölçüldü: **tam 3**) · `README.md:114` "16 checks" bayatlamıştı (bugün **22**) ve T6'nın eklediği en anlamlı
+> doğrulama — publish edilmiş ikilinin gerçekten derleyip DLL'i diske yazması — anlatıda hiç geçmiyordu ·
+> **bu branch'in kendi kırdığı 3 `TRUST-BOUNDARY` referansı** (biri bir **güvenlik argümanının** iki ayağını
+> taşıyordu; ikisi de yanlış yere gösterince argüman doğrulanamaz hâle geliyordu) · provenance çıpası.
+>
+> **A14'ün ilk kalemi ölçülü hâlde devredildi:** beş test kullanıcının **gerçek**
+> `%LOCALAPPDATA%\BuildOrchestrator` köklerini kullanıyor — `evaluation-cache.json` **3,2 MB / 1021 girdinin
+> 844'ü (%83) ölü test fixture'ı**, `logs/` altında **460 `run-*` dizini** (koşum başına +1). A13 öncesinden
+> var olduğu için merge'ü bloklamadı; çözüm deseni (`IsolatedPsi()`) zaten repoda, ayrıca
+> `EngineHost.StartAsync()` için `--logs` geçirecek **hiç dikiş yok** (11 test daha). Registry · tepsi ·
+> mutex · hotkey · `ui-state.json` **temiz**. Kayıt:
+> [summaries/2026-08-03-10-44-a13-complete-merged-to-main.md](../summaries/2026-08-03-10-44-a13-complete-merged-to-main.md)
+> + aynı adlı handoff. **A14'e geç.**
 
 > **Amaç:** 81 kalemlik gözle-kontrol listesini **senin sırtından alıp süite taşımak.** Kalemlerin çoğu
 > aslında ölçülebilir bir değere dayanıyor (yükseklik, padding, renk token'ı, kopya metni, binding, realize) —
