@@ -35,20 +35,27 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
 }
 
 /// <summary>
-/// [D7/T66] Settings diyaloğunun LAYERS editör VM'i — <b>saf, WPF'siz</b> (testler Window olmadan sürer).
-/// Canlı katman pattern'lerinin bir TASLAK kopyası üzerinde çalışır: <see cref="Commit"/> = kaydet
-/// (RunViewModel + UiState'e yazılır), Cancel = taslağı at (kopya olduğu için canlı pattern'lere dokunulmaz).
+/// [D7/T66] Settings diyaloğunun LAYERS + REPOSITORY taslak VM'i — <b>saf, WPF'siz</b> (testler Window
+/// olmadan sürer). Canlı katman pattern'lerinin ve bekleyen repo kökünün bir TASLAK kopyası üzerinde çalışır:
+/// <see cref="CommitAsync"/> = kaydet (RunViewModel + UiState'e yazılır), Cancel = taslağı at (kopya olduğu
+/// için canlı duruma dokunulmaz).
 /// </summary>
 public sealed partial class SettingsDraftViewModel : ObservableObject
 {
     public ObservableCollection<LayerRowViewModel> Layers { get; } = [];
 
+    /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
+    /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
+    /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
+    [ObservableProperty] private string? _repositoryRoot;
+
     /// <summary>Taslak = kayıtlı pattern'lerin DERİN kopyası (Order'a göre; editör sırası = katman sırası).
     /// Kayıtlı katman YOKSA (null ya da boş) taslak <see cref="LayerDefaults"/> ile DOLU kurulur — araç
     /// paylaşıldığında kimse katmanları elle yazmasın. Bu YALNIZ taslaktır: Save'e basılmadıkça ne
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.</summary>
-    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial)
+    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot = null)
     {
+        _repositoryRoot = repositoryRoot;
         Layers.CollectionChanged += OnLayersChanged;
         if (initial is { Count: > 0 })
             foreach (var p in initial.OrderBy(p => p.Order))
@@ -85,16 +92,16 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public IReadOnlyList<LayerPattern> BuildPatterns() =>
         Layers.Select((r, i) => new LayerPattern(i, r.Regex, r.Name.Trim())).ToList();
 
-    /// <summary>[D7] Kaydet (commit): pattern'leri <see cref="RunViewModel.ApplyLayerPatterns"/> ile uygular
-    /// (BİREBİR konsol notu + <see cref="RunViewModel.LayerPatterns"/>) ve <see cref="UiState.LayerPatterns"/>'a
-    /// persist eder. Cancel bu metodu ÇAĞIRMAZ → taslak (kopya) atılır, canlı pattern'lere dokunulmaz.</summary>
-    public void Commit(RunViewModel run, IUiStateStore store)
+    /// <summary>Kaydet (commit): taslağı <see cref="UiState.LayerPatterns"/>'a persist eder ve TEK yoldan
+    /// uygular — <see cref="RunViewModel.ApplySettingsAsync"/> katmanları, bekleyen repo kökünü ve TEK Sync'i
+    /// birlikte sürer. Cancel bu metodu ÇAĞIRMAZ → taslak (kopya) atılır, canlı duruma dokunulmaz.</summary>
+    public async Task CommitAsync(RunViewModel run, IUiStateStore store)
     {
         var patterns = BuildPatterns();
-        run.ApplyLayerPatterns(patterns);
         var state = store.Load();
         state.LayerPatterns = patterns.ToList();
         store.Save(state);
+        await run.ApplySettingsAsync(patterns, RepositoryRoot);
     }
 
     private void AddRow(LayerRowViewModel row) => Layers.Add(row);

@@ -39,7 +39,7 @@ internal static class SettingsDialogHost
     /// hem ekran dışı pencereyi canlı tutar hem de <see cref="EngineHost"/>'u kapatır — o ctor inert DEĞİLDİR:
     /// <c>JobObject.CreateKillOnClose()</c> ile bir Win32 handle açar (lens2/lens3 · C9).</summary>
     public static (SettingsDialog dialog, RunViewModel run, FakeStore store, IDisposable scope) OpenRealized(
-        Action<RunViewModel>? configure = null)
+        Action<RunViewModel>? configure = null, Func<string?>? pickFolder = null)
     {
         var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -50,7 +50,7 @@ internal static class SettingsDialogHost
         var window = DsResources.Realize(host, dialog);
 
         var store = new FakeStore();
-        dialog.Open(run, store, () => null);
+        dialog.Open(run, store, pickFolder ?? (() => null));
         dialog.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange
 
         return (dialog, run, store, new Scope(engine, window));

@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
@@ -137,13 +138,14 @@ public class SettingsDialogTests
     public async Task Cancel_discards_the_draft()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         var store = NewStore();
         IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
         run.LayerPatterns = live;
 
         // Diyalog taslağı canlı pattern'lerin KOPYASI üzerinde çalışır.
-        var editor = new SettingsDraftViewModel(run.LayerPatterns);
+        // [genişletildi] Cancel artık repo seçimini de atar: taslak kökü değişse bile canlı kök DOKUNULMAZ.
+        var editor = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath) { RepositoryRoot = @"D:\new\repo" };
         editor.Layers[0].Name = "CHANGED";
         editor.Layers[0].Regex = "^B";
         editor.AddLayer();
@@ -153,12 +155,13 @@ public class SettingsDialogTests
         Assert.Single(run.LayerPatterns!);
         Assert.Equal("Alpha", run.LayerPatterns![0].Name);
         Assert.Equal("^A", run.LayerPatterns[0].Regex);
+        Assert.Equal(@"D:\repo", run.RootPath); // Commit çağrılmadı → kök eski
 
         // [D7 re-review][Fix5] Ayrımcı güç kanıtı: AYNI (mutasyona uğramış) taslak ŞİMDİ commit edilirse canlı
         // GERÇEKTEN değişmeli — bu, yukarıdaki "değişmedi" iddiasının taslak/canlı izolasyonunu (Cancel = bu
         // Commit'in YOKLUĞU) test ettiğini kanıtlar; aksi halde ctor'un yeni satır VM'leri kurması nedeniyle
         // aliasing zaten fiziksel olarak imkânsız olduğundan iddia hep-doğru (anlamsız) kalırdı.
-        editor.Commit(run, store);
+        await editor.CommitAsync(run, store);
         Assert.Equal(2, run.LayerPatterns!.Count);
         Assert.Equal("CHANGED", run.LayerPatterns[0].Name);
         Assert.Equal("^B", run.LayerPatterns[0].Regex);
@@ -179,7 +182,7 @@ public class SettingsDialogTests
         var editor = new SettingsDraftViewModel(null); // taze taslak = 4 varsayılan
         Assert.Equal(4, editor.Layers.Count);
 
-        editor.Commit(run, store);
+        await editor.CommitAsync(run, store);
 
         // (a) BİREBİR konsol notu (BuildApp.jsx:1423).
         Assert.Contains("Layer definitions updated — 4 layers", run.GetRunDocumentText());
@@ -197,12 +200,16 @@ public class SettingsDialogTests
         // Emptied → farklı BİREBİR not + persist boşalır.
         var empty = new SettingsDraftViewModel(run.LayerPatterns);
         for (int i = empty.Layers.Count - 1; i >= 0; i--) empty.RemoveLayer(empty.Layers[i]);
-        empty.Commit(run, store);
+        await empty.CommitAsync(run, store);
         Assert.Contains("Layers removed — single project list", run.GetRunDocumentText());
         Assert.Empty(store.State.LayerPatterns);
     }
 
-    [Fact] // [D7 · K10] "Change…": kök değişir, durumlar sıfırlanır, YENİ kökte otomatik Sync başlar.
+    /// <summary>[D7 · K10] "Change…": kök değişir, durumlar sıfırlanır, YENİ kökte otomatik Sync başlar.
+    /// <para><b>Kapsam değişti:</b> bu test artık YALNIZ kabuğun "Choose Folder" yolunu pinler. Settings
+    /// diyaloğunun "Change…" düğmesi bu yola girmez — orada seçim Save'e ertelenir
+    /// (<c>Picking_a_folder_only_updates_the_draft</c> / <c>Saving_applies_the_pending_repository_root_and_syncs_once</c>).</para></summary>
+    [Fact]
     public async Task Changing_the_repository_resets_state_and_starts_a_sync_at_the_new_root()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -313,6 +320,43 @@ public class SettingsDialogTests
         Assert.Empty(sent);
     }
 
+    [Fact] // "Change…" TEK BAŞINA hiçbir şey uygulamaz: kök değişmez, satırlar sıfırlanmaz, komut GİTMEZ.
+    public async Task Picking_a_folder_only_updates_the_draft()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        run.OnEvent(new ProjectStartedEvent("r1", @"D:\repo\a.csproj", "A"));
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath);
+        draft.RepositoryRoot = @"D:\new\repo"; // "Change…" yalnız BUNU yapar
+
+        Assert.Equal(@"D:\repo", run.RootPath);
+        Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State); // hollow reset YOK
+        Assert.Empty(sent);                                                       // Sync YOK
+    }
+
+    [Fact] // Save: bekleyen kök UYGULANIR, satırlar hollow, TEK Sync yeni kökte — ve katmanlar da persist edilir.
+    public async Task Saving_applies_the_pending_repository_root_and_syncs_once()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        run.OnEvent(new ProjectStartedEvent("r1", @"D:\repo\a.csproj", "A"));
+        var store = NewStore();
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath) { RepositoryRoot = @"D:\new\repo" };
+
+        await draft.CommitAsync(run, store);
+
+        Assert.Equal(@"D:\new\repo", run.RootPath);
+        Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
+        Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
+        Assert.Equal(4, store.State.LayerPatterns.Count); // varsayılan taslak da aynı Save'de persist edildi
+    }
+
 }
 
 /// <summary>
@@ -387,5 +431,24 @@ public class SettingsDialogViewTests
         // "Add layer": Content bir StackPanel'dir (ikon + TextBlock) — etiket ayrı aranır.
         var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
         Assert.Contains("Add layer", texts);
+    }
+
+    /// <summary>Diyalogda "Change…": yalnız yol ETİKETİ güncellenir; canlı kök ve motor DOKUNULMAZ.</summary>
+    [StaFact]
+    public void Change_button_updates_only_the_dialog_label_until_save()
+    {
+        var (dialog, run, _, scope) = SettingsDialogHost.OpenRealized(pickFolder: () => @"D:\picked\repo");
+        using var _scope = scope;
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        var change = DsResources.RealizedObjects(dialog).OfType<Button>().Single(b => Equals(b.Content, "Change…"));
+        change.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        dialog.UpdateLayout();
+
+        var label = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Single(t => t.Name == "RepoPathText");
+        Assert.Equal(@"D:\picked\repo", label.Text);   // etiket YENİ yolu gösterir
+        Assert.Equal(@"D:\repo", run.RootPath);        // canlı kök ESKİ (fixture kökü)
+        Assert.Empty(sent);                            // Sync YOK
     }
 }

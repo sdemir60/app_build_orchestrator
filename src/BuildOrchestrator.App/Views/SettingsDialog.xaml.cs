@@ -7,10 +7,11 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [D7/T66] Settings modal diyaloğu (ince view). LAYERS bölümü <see cref="SettingsDraftViewModel"/>'e (test
-/// edilebilir taslak) bağlıdır; REPOSITORY bölümü <see cref="RunViewModel"/>'e. Save = commit (konsol notu +
-/// LayerPatterns + UiState persist), Cancel/scrim/Esc = taslağı at. Diyalog MainWindow'un shell overlay'inde
-/// (RowSpan) durur; <see cref="Open"/> ile açılır.
+/// [D7/T66] Settings modal diyaloğu (ince view). LAYERS ve REPOSITORY (K10) bölümlerinin ikisi de
+/// <see cref="SettingsDraftViewModel"/>'e (test edilebilir taslak) bağlıdır — Save'e kadar canlı
+/// <see cref="RunViewModel"/>'e dokunulmaz. Save = commit (persist + katmanlar + bekleyen repo kökü + TEK
+/// Sync, <see cref="SettingsDraftViewModel.CommitAsync"/>), Cancel/scrim/Esc = taslağı at. Diyalog
+/// MainWindow'un shell overlay'inde (RowSpan) durur; <see cref="Open"/> ile açılır.
 /// </summary>
 public partial class SettingsDialog : UserControl
 {
@@ -32,7 +33,7 @@ public partial class SettingsDialog : UserControl
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
-        _draft = new SettingsDraftViewModel(run.LayerPatterns);
+        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath);
         DataContext = _draft;
         UpdateRepoLabel();
         Visibility = Visibility.Visible;
@@ -49,7 +50,7 @@ public partial class SettingsDialog : UserControl
     public void CloseDialog() => Close();
 
     private void UpdateRepoLabel() =>
-        RepoPathText.Text = _run is { RootPath.Length: > 0 } r ? r.RootPath : "no repository";
+        RepoPathText.Text = _draft?.RepositoryRoot is { Length: > 0 } root ? root : "no repository";
 
     // ---- Layers ----
 
@@ -64,20 +65,23 @@ public partial class SettingsDialog : UserControl
 
     // ---- Repository (K10) ----
 
-    private async void OnChangeRepository(object sender, RoutedEventArgs e)
+    // "Change…" YALNIZ taslağa yazar: kök değişimi, satır reset'i ve Sync Save'e ertelenir (Cancel her şeyi atar).
+    private void OnChangeRepository(object sender, RoutedEventArgs e)
     {
-        if (_pickFolder?.Invoke() is not { Length: > 0 } path || _run is null) return;
-        await _run.ChangeRepositoryAsync(path); // kök değişir, durumlar sıfırlanır, otomatik Sync
+        if (_pickFolder?.Invoke() is not { Length: > 0 } path || _draft is null) return;
+        _draft.RepositoryRoot = path;
         UpdateRepoLabel();
     }
 
     // ---- Save / Cancel ----
 
-    private void OnSave(object sender, RoutedEventArgs e)
+    // Diyalog Save'e basıldığı anda kapanır; commit (persist + katmanlar + kök + tek Sync) arkasından sürer.
+    private async void OnSave(object sender, RoutedEventArgs e)
     {
         if (_draft is null || _run is null || _store is null || !_draft.CanSave) return;
-        _draft.Commit(_run, _store); // konsol notu + LayerPatterns + UiState persist
+        var (draft, run, store) = (_draft, _run, _store);
         Close();
+        await draft.CommitAsync(run, store);
     }
 
     private void OnCancel(object sender, RoutedEventArgs e) => Close(); // taslak (kopya) atılır
