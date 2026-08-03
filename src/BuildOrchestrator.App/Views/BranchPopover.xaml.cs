@@ -36,6 +36,7 @@ public partial class BranchPopover : PopoverBase
     {
         InitializeComponent();
         PART_Search.TextChanged += (_, _) => RefreshRows();
+        PART_Rows.AddHandler(MouseLeftButtonUpEvent, new MouseButtonEventHandler(OnRowClicked), handledEventsToo: true);
         AutomationProperties.SetName(PART_Search, AccessibilityNames.BranchFilter);
     }
 
@@ -86,8 +87,11 @@ public partial class BranchPopover : PopoverBase
             .ToList();
         VisibleBranches = list;
 
-        PART_Rows.Children.Clear(); // minik non-virtualized liste (StickyRibbon chip deseni)
-        foreach (var branch in list) PART_Rows.Children.Add(BuildRow(branch));
+        // Seçim satırın DIŞINDA hesaplanır (BranchRow ata ağaçtan hiçbir şey çekmez). Atama O(1)'dir: hangi
+        // satırın GERÇEKTEN kurulacağına sanallaştırılmış panel karar verir (yalnız görünür olanlar).
+        PART_Rows.ItemsSource = list
+            .Select(b => new BranchRowItem(b, string.Equals(b.Name, Vm?.Branch, StringComparison.Ordinal)))
+            .ToList();
 
         if (list.Count == 0)
         {
@@ -100,79 +104,17 @@ public partial class BranchPopover : PopoverBase
         }
     }
 
-    private Border BuildRow(BranchRef branch)
+    /// <summary>Satır tıklaması TEK bir handler'dan geçer (satır başına abonelik YOK): sanallaştırılmış liste
+    /// container'ları geri dönüştürür, satır başına kablo takmak geri dönüşümde sızıntı/çift-abonelik demekti.
+    /// Kaynak öğe satırın herhangi bir çocuğu olabilir (ikon, ad, rozet) — hepsi item'ın DataContext'ini miras alır.</summary>
+    private void OnRowClicked(object sender, MouseButtonEventArgs e)
     {
-        bool selected = string.Equals(branch.Name, Vm?.Branch, StringComparison.Ordinal);
-        bool active = branch.IsActive;
-
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-
-        // ikon: seçilide amber ✓, değilse branch ikonu (BuildApp.jsx:863).
-        var icon = IconVisual.Make(this, selected ? "Icon.Check" : "Icon.Branch",
-            selected ? "Brush.AmberText" : "Brush.TextDim", IconSlot);
-        icon.VerticalAlignment = VerticalAlignment.Center;
-        panel.Children.Add(icon);
-
-        var name = new TextBlock
-        {
-            Text = branch.Name,
-            Margin = new Thickness(RowGap, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            FontFamily = AppFonts.Mono,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        };
-        name.SetResourceReference(FontSizeProperty, "FontSize.Xs");
-        name.SetResourceReference(TextBlock.ForegroundProperty, selected ? "Brush.TextPrimary" : "Brush.TextSecondary");
-        panel.Children.Add(name);
-
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(panel, 0);
-        grid.Children.Add(panel);
-
-        // aktif branch → "active" rozeti; diğerleri → mono 7-hane SHA (BuildApp.jsx:865-867).
-        FrameworkElement trailing = active ? ActiveBadge() : ShaText(branch.Sha);
-        trailing.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(trailing, 1);
-        grid.Children.Add(trailing);
-
-        var row = new Border
-        {
-            Height = RowHeight,
-            Padding = new Thickness(6, 0, 6, 0),
-            Cursor = Cursors.Hand,
-            Child = grid,
-        };
-        row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
-        HoverBackground.Attach(row);
-        row.MouseLeftButtonUp += (_, _) => Pick(branch);
-        return row;
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is BranchRowItem item) Pick(item.Branch);
     }
 
     private void Pick(BranchRef branch)
     {
         BranchPicked?.Invoke();  // popover'ı kapat (BuildApp.jsx:1337 setBranchPop(false))
         Vm?.SelectBranch(branch);
-    }
-
-    private Border ActiveBadge()
-    {
-        var text = new TextBlock { Text = "active", Margin = new Thickness(5, 1, 5, 1) };
-        text.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-        text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.AmberText");
-        var badge = new Border { BorderThickness = new Thickness(1), Child = text };
-        badge.SetResourceReference(Border.BackgroundProperty, "Brush.AmberSoft");
-        badge.SetResourceReference(Border.BorderBrushProperty, "Brush.AmberBorder");
-        badge.SetResourceReference(Border.CornerRadiusProperty, "Radius.Xs");
-        return badge;
-    }
-
-    private TextBlock ShaText(string sha)
-    {
-        var text = new TextBlock { Text = RunViewModel.Short7(sha), FontFamily = AppFonts.Mono };
-        text.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-        text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
-        return text;
     }
 }

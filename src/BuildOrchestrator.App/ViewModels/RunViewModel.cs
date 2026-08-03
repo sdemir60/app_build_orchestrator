@@ -762,7 +762,7 @@ public sealed partial class RunViewModel : ObservableObject
             case SyncCompletedEvent e: OnSyncCompleted(e); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
-            case WorktreeListEvent e: Replace(Worktrees, e.Worktrees); break;
+            case WorktreeListEvent e: Worktrees.ReplaceAll(e.Worktrees); break;
         }
 
         // [D3] Event stream (tampon anlatı + aktif satır) — proje satırları/sayaçlar YUKARIDA güncellendikten
