@@ -889,8 +889,14 @@ One consequence is deliberate: the staggered reveal reaches the rows that exist,
 Rows scrolled into view later simply appear.
 
 Follow-mode keeps the frontier visible while a run is in flight and nothing is selected: at most one scroll
-animation every 550 ms, and none at all if the target is within 54 px. Selecting a row stops it; clearing the
-selection resumes it.
+animation every 550 ms, and none at all if the target is within 54 px.
+
+Two things stop it, and they resume differently. Selecting a row stops it; clearing the selection resumes it.
+Scrolling the list with the wheel also stops it — and that one resumes only when the list is brought back to
+within 48 px of its **bottom**, the same threshold the console and the stream use for their bottom anchor. The
+symmetry is exact but the meaning is not: for those two panels the bottom is where new content arrives, while
+for the project list the interesting place is the frontier, which during a run sits in the middle. So one
+wheel notch parks follow for the rest of the run unless the user happens to scroll all the way down.
 
 **Console.** See §13.5.
 
