@@ -894,8 +894,12 @@ selection resumes it.
 
 **Console.** See §13.5.
 
-**Event stream.** A virtualized list of chronological one-line events; the newest line is typed out, but events
-arriving less than 340 ms apart and all error events print instantly. Rows for projects are clickable and
+**Event stream.** A capped list of chronological one-line events. It is not virtualized and does not need to
+be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
+are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
+cost more than it saves here — each row owns animation state (the newest line is typed out, a done line glows
+once), and recycling containers would swap the model underneath a running animation. Events arriving less than
+340 ms apart and all error events print instantly. Rows for projects are clickable and
 participate in the shared selection. A run that finishes with zero failures glows its done line once
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
