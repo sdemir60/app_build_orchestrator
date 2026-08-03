@@ -57,13 +57,13 @@ public class OsActionsTests
 
     // ============================================================ OpenInVisualStudio — 0/1/N dalları
     [Fact]
-    public void Open_in_visual_studio_with_no_candidates_returns_none_and_launches_nothing()
+    public async Task Open_in_visual_studio_with_no_candidates_returns_none_and_launches_nothing()
     {
         var launcher = new CaptureLauncher();
         var runner = new StubRunner(Ok());
         var os = new OsActions(launcher, runner);
 
-        var result = os.OpenInVisualStudio([]);
+        var result = await os.OpenInVisualStudioAsync([]);
 
         Assert.Equal(OpenInVsOutcome.NoSolution, result.Outcome);
         Assert.Equal(0, launcher.Count);
@@ -71,7 +71,7 @@ public class OsActionsTests
     }
 
     [Fact]
-    public void Open_in_visual_studio_with_one_candidate_launches_devenv_on_that_solution()
+    public async Task Open_in_visual_studio_with_one_candidate_launches_devenv_on_that_solution()
     {
         // File.Exists geçen sahte devenv + sahte vswhere (gerçek VS'e bağımlılık YOK).
         string fakeDevenv = Environment.ProcessPath!;
@@ -81,7 +81,7 @@ public class OsActionsTests
         var os = new OsActions(launcher, runner, vswherePath: fakeVswhere);
         var sln = new SolutionRef("Osys", @"C:\src\My Sln\Osys.sln");
 
-        var result = os.OpenInVisualStudio([sln]);
+        var result = await os.OpenInVisualStudioAsync([sln]);
 
         Assert.Equal(OpenInVsOutcome.Opened, result.Outcome);
         Assert.Equal(fakeDevenv, launcher.Last!.FileName);
@@ -92,7 +92,7 @@ public class OsActionsTests
     }
 
     [Fact]
-    public void Open_in_visual_studio_with_multiple_candidates_returns_a_chooser_and_launches_nothing()
+    public async Task Open_in_visual_studio_with_multiple_candidates_returns_a_chooser_and_launches_nothing()
     {
         var launcher = new CaptureLauncher();
         var runner = new StubRunner(Ok());
@@ -100,7 +100,7 @@ public class OsActionsTests
         var a = new SolutionRef("A", @"C:\a\A.sln");
         var b = new SolutionRef("B", @"C:\b\B.sln");
 
-        var result = os.OpenInVisualStudio([a, b]);
+        var result = await os.OpenInVisualStudioAsync([a, b]);
 
         Assert.Equal(OpenInVsOutcome.NeedsChoice, result.Outcome);
         Assert.Equal([a, b], result.Candidates); // seçtirilecek adaylar taşınır (T32)
@@ -110,14 +110,14 @@ public class OsActionsTests
 
     // ============================================================ vswhere yok → net başarısızlık
     [Fact]
-    public void Open_in_visual_studio_reports_not_found_when_vswhere_is_absent()
+    public async Task Open_in_visual_studio_reports_not_found_when_vswhere_is_absent()
     {
         var launcher = new CaptureLauncher();
         var runner = new StubRunner(Ok());
         string missingVswhere = Path.Combine(Path.GetTempPath(), "e1-no-such-vswhere.exe");
         var os = new OsActions(launcher, runner, vswherePath: missingVswhere);
 
-        var result = os.OpenInVisualStudio([new SolutionRef("A", @"C:\a\A.sln")]);
+        var result = await os.OpenInVisualStudioAsync([new SolutionRef("A", @"C:\a\A.sln")]);
 
         Assert.Equal(OpenInVsOutcome.VisualStudioNotFound, result.Outcome);
         Assert.Equal(0, launcher.Count);
@@ -125,13 +125,13 @@ public class OsActionsTests
     }
 
     [SkippableFact] // gerçek VS/Build Tools kurulu makinede koşar (MsBuildResolverTests deseni)
-    public void Real_machine_resolves_devenv_without_launching_visual_studio_for_real()
+    public async Task Real_machine_resolves_devenv_without_launching_visual_studio_for_real()
     {
         Skip.IfNot(File.Exists(MsBuildResolver.DefaultVswherePath), "vswhere yok");
         var launcher = new CaptureLauncher(); // sahte → gerçek VS ASLA açılmaz
         var os = new OsActions(launcher, new ProcessRunner());
 
-        var result = os.OpenInVisualStudio([new SolutionRef("Osys", @"C:\src\Osys.sln")]);
+        var result = await os.OpenInVisualStudioAsync([new SolutionRef("Osys", @"C:\src\Osys.sln")]);
 
         // Makinede devenv varsa Opened + devenv.exe; yalnız Build Tools varsa VisualStudioNotFound. İki durumda da
         // launcher sahte olduğundan gerçek bir VS penceresi açılmaz.
@@ -156,8 +156,8 @@ public class OsActionsTests
         public IReadOnlyList<SolutionRef>? OpenedCandidates;
         public OpenInVsResult NextOpenResult = OpenInVsResult.NoSolution;
         public void RevealInExplorer(string path) => RevealedPath = path;
-        public OpenInVsResult OpenInVisualStudio(IReadOnlyList<SolutionRef> candidates)
-        { OpenedCandidates = candidates; return NextOpenResult; }
+        public Task<OpenInVsResult> OpenInVisualStudioAsync(IReadOnlyList<SolutionRef> candidates)
+        { OpenedCandidates = candidates; return Task.FromResult(NextOpenResult); }
         public string? PickFolder(string? initial) => null;
     }
 
@@ -220,7 +220,7 @@ public class OsActionsTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "Foo", "Osys.sln")], [], [sln], []));
 
-        var chooser = vm.OpenProjectInVisualStudio(@"C:\p\a.csproj");
+        var chooser = await vm.OpenProjectInVisualStudioAsync(@"C:\p\a.csproj");
 
         Assert.Null(chooser);                        // seçtirme gerekmez
         Assert.Single(os.OpenedCandidates!);         // tam 1 aday delege edildi
@@ -237,7 +237,7 @@ public class OsActionsTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "Foo", "A.sln", "B.sln")], [], [a, b], []));
 
-        var chooser = vm.OpenProjectInVisualStudio(@"C:\p\a.csproj");
+        var chooser = await vm.OpenProjectInVisualStudioAsync(@"C:\p\a.csproj");
 
         Assert.NotNull(chooser);
         Assert.Equal(2, chooser!.Count);
@@ -256,7 +256,7 @@ public class OsActionsTests
             [Node(@"C:\p\a.csproj", "Foo", "A.sln", "B.sln")], [],
             [chosen, new SolutionRef("B.sln", @"C:\src\B.sln")], []));
 
-        vm.OpenSolutionInVisualStudio(@"C:\p\a.csproj", chosen);
+        await vm.OpenSolutionInVisualStudioAsync(@"C:\p\a.csproj", chosen);
 
         Assert.Equal(chosen, Assert.Single(os.OpenedCandidates!)); // tam o aday delege edildi
         Assert.Contains("Foo opened in Visual Studio", vm.GetRunDocumentText(), StringComparison.Ordinal);
@@ -270,7 +270,7 @@ public class OsActionsTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", osActions: os);
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "Foo"));
 
-        var chooser = vm.OpenProjectInVisualStudio(@"C:\p\a.csproj");
+        var chooser = await vm.OpenProjectInVisualStudioAsync(@"C:\p\a.csproj");
 
         Assert.Null(chooser);
         Assert.DoesNotContain("opened in Visual Studio", vm.GetRunDocumentText()); // başarı notu YOK

@@ -1197,10 +1197,10 @@ public sealed partial class RunViewModel : ObservableObject
     /// <item><b>NoSolution</b> → <c>null</c>, not YAZILMAZ.</item>
     /// <item><b>VisualStudioNotFound</b> → <c>null</c>, opened notu YAZILMAZ; makul bir dim başarısızlık notu (pinlenmemiş).</item>
     /// </list></summary>
-    public IReadOnlyList<SolutionRef>? OpenProjectInVisualStudio(string projectId)
+    public async Task<IReadOnlyList<SolutionRef>?> OpenProjectInVisualStudioAsync(string projectId)
     {
         if (_osActions is null) return null;
-        var result = _osActions.OpenInVisualStudio(SolutionCandidatesFor(projectId));
+        var result = await _osActions.OpenInVisualStudioAsync(SolutionCandidatesFor(projectId));
         switch (result.Outcome)
         {
             case Services.OpenInVsOutcome.Opened:
@@ -1217,10 +1217,10 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>[E1/T67] Chooser'dan seçim: seçilen tek solution VS'de açılır + Opened ise verbatim opened not.</summary>
-    public void OpenSolutionInVisualStudio(string projectId, SolutionRef chosen)
+    public async Task OpenSolutionInVisualStudioAsync(string projectId, SolutionRef chosen)
     {
         if (_osActions is null) return;
-        var result = _osActions.OpenInVisualStudio([chosen]);
+        var result = await _osActions.OpenInVisualStudioAsync([chosen]);
         if (result.Outcome == Services.OpenInVsOutcome.Opened)
             AppendOpenedNote(projectId);
         else if (result.Outcome == Services.OpenInVsOutcome.VisualStudioNotFound)

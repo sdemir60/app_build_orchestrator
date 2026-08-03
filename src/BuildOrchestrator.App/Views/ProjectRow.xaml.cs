@@ -535,11 +535,13 @@ public partial class ProjectRow : UserControl
     /// <summary>VS ikonu → bağlı solution'ı VS'de aç. Birden çok solution varsa VM chooser adaylarını döndürür →
     /// küçük seçim popover'ı açılır (D6 deseni). Tek/sıfır solution'da (chooser null/boş) hiçbir şey açılmaz —
     /// eylem zaten VM içinde tamamlandı (opened / no-sln / VS-not-found).</summary>
-    private void OnVsClick(object sender, RoutedEventArgs e)
+    private async void OnVsClick(object sender, RoutedEventArgs e)
     {
         // [L1] Tıklama ancak KURULMUŞ bloktan gelebilir (buton onun içinde doğar) — burada yeniden inşa YOK.
         if (_vm is not { } vm || _actions is not { } actions) return;
-        var chooser = FindRunViewModel()?.OpenProjectInVisualStudio(vm.Id);
+        // await ZORUNLU: devenv çözümü (vswhere) UI thread'inde beklenirse pencere saniyelerce ölür.
+        if (FindRunViewModel() is not { } run) return;
+        var chooser = await run.OpenProjectInVisualStudioAsync(vm.Id);
         if (chooser is not { Count: > 0 }) return;
         BuildVsChooserRows(actions, chooser);
         actions.VsChooser.IsOpen = true;
@@ -573,10 +575,11 @@ public partial class ProjectRow : UserControl
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
         HoverBackground.Attach(row);
-        row.MouseLeftButtonUp += (_, _) =>
+        row.MouseLeftButtonUp += async (_, _) =>
         {
             actions.VsChooser.IsOpen = false; // seçince kapan (BranchPopover.Pick deseni)
-            if (_vm is { } vm) FindRunViewModel()?.OpenSolutionInVisualStudio(vm.Id, sln);
+            if (_vm is { } vm && FindRunViewModel() is { } run)
+                await run.OpenSolutionInVisualStudioAsync(vm.Id, sln); // bkz. OnVsClick: vswhere UI'da beklenmez
         };
         return row;
     }
