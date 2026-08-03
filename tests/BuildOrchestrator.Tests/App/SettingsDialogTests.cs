@@ -244,6 +244,75 @@ public class SettingsDialogTests
         Assert.Null(sent);                                                         // yeniden Sync GÖNDERİLMEDİ
     }
 
+    [Fact] // Save = senkronize et: yalnız katmanlar değişse (kök AYNI) bile TEK Sync gider ve YENİ pattern'leri taşır.
+    public async Task Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, @"^OSYS\.Types\.", "OSYS.Types")];
+        await run.ApplySettingsAsync(patterns, @"D:\repo"); // kök DEĞİŞMEDİ — Sync yine gider
+
+        var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Equal(@"D:\repo", sync.RootPath);
+        Assert.Same(patterns, sync.LayerPatterns);   // SIRA kanıtı: katmanlar Sync'ten ÖNCE uygulandı
+        Assert.Same(patterns, run.LayerPatterns);
+        Assert.Contains("Layer definitions updated — 1 layers", run.GetRunDocumentText());
+    }
+
+    [Fact] // Save kökü de değiştirdiyse: kök yeni, satırlar hollow, Sync YENİ kökte ve TEK.
+    public async Task Applying_settings_with_a_new_root_resets_rows_and_syncs_at_the_new_root()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"C:\old" };
+        run.OnEvent(new ProjectStartedEvent("r1", @"C:\old\a.csproj", "A"));
+        Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
+
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\new\repo");
+
+        Assert.Equal(@"D:\new\repo", run.RootPath);
+        Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
+        Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
+    }
+
+    [Fact] // Kök HİÇ seçilmemişken Save: katmanlar kaydedilir ama gidecek bir kök yoktur → Sync GİTMEZ.
+    public async Task Applying_settings_without_a_repository_root_keeps_the_layers_but_sends_no_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
+        await run.ApplySettingsAsync(patterns, null);
+
+        Assert.Same(patterns, run.LayerPatterns);
+        Assert.Empty(sent);
+    }
+
+    [Fact] // Koşu UÇUŞTAyken Save: katmanlar kaydedilir, kök DEĞİŞMEZ, Sync GİTMEZ (koşan build'in kökü çekilmez).
+    public async Task Applying_settings_mid_run_keeps_the_root_and_sends_no_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+            { RootPath = @"D:\repo", IsStarting = true };
+        Assert.True(run.IsMidRunLocked);
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
+        await run.ApplySettingsAsync(patterns, @"D:\other\repo");
+
+        Assert.Same(patterns, run.LayerPatterns);   // katmanlar YİNE uygulanır (sessizce kaybolmaz)
+        Assert.Equal(@"D:\repo", run.RootPath);     // kök değişmedi
+        Assert.Empty(sent);
+    }
+
 }
 
 /// <summary>

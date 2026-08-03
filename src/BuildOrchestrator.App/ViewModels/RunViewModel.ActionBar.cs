@@ -181,22 +181,52 @@ public sealed partial class RunViewModel
             : "Layers removed — single project list");
     }
 
-    /// <summary>[D7 · K10] Settings "Change…": yeni bir repo kökü seçilince kökü değiştirir, proje durumlarını
-    /// sıfırlar (yeni repo = yeni taban) ve OTOMATİK Sync başlatır. Klasör seçici çağıranın (dialog) enjekte
-    /// ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır, böylece testler gerçek diyalog açmaz.
-    /// <see cref="OnRootPathChanged"/> Empty→Boot geçişini zaten sürer.</summary>
+    /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
+    /// değiştirir ve TEK bir Sync gönderir.
+    ///
+    /// <para><b>Sıra ZORUNLUdur:</b> katmanlar Sync'ten ÖNCE uygulanır — <see cref="SyncWorkspaceCommand"/>
+    /// <see cref="LayerPatterns"/>'i TAŞIR, ters sırada komut ESKİ pattern'lerle giderdi.</para>
+    ///
+    /// <para><b>Sync KOŞULSUZdur:</b> "repo mu katman mı değişti" ayrımı YAPILMAZ — Save'e basmak
+    /// "senkronize et" demektir ve Sync salt-okurdur, tekrarı zararsızdır. İki kapı vardır: (a) koşu
+    /// uçuştaysa (<see cref="IsMidRunLocked"/>) katmanlar yine uygulanır ama kök DEĞİŞMEZ ve Sync GİTMEZ —
+    /// koşan bir build'in kökünü altından çekmek doğru değildir (<see cref="ChangeRepositoryAsync"/> de
+    /// mid-run'da no-op'tur); (b) kök hiç seçilmemişse gidecek bir kök yoktur.</para></summary>
+    public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot)
+    {
+        ApplyLayerPatterns(patterns);
+        if (IsMidRunLocked) return;
+        ApplyRepositoryRoot(repositoryRoot);
+        if (RootPath.Length == 0) return;
+        await SyncAsync();
+    }
+
+    /// <summary>[D7 · K10] Kabuğun "Choose Folder" yolu: yeni bir repo kökü seçilince kökü değiştirir, proje
+    /// durumlarını sıfırlar (yeni repo = yeni taban) ve HEMEN Sync başlatır — burada bir Save yoktur. Settings
+    /// diyaloğu bu yolu KULLANMAZ; orada seçim Save'e ertelenir (<see cref="ApplySettingsAsync"/>). Klasör
+    /// seçici çağıranın enjekte ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır.</summary>
     public async Task ChangeRepositoryAsync(string path)
     {
-        if (IsMidRunLocked || string.IsNullOrEmpty(path)) return;
-        // [D7 re-review][Fix3] Aynı kökü YENİDEN seçmek (klasör seçicide iptal etmeden aynı klasöre tekrar
-        // gidilmesi) no-op olmalı — Windows yolları case-insensitive; aksi halde her satır boşuna hollow'a
-        // sıfırlanır ve gereksiz bir Sync gönderilir.
-        if (string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase)) return;
-        RootPath = path;         // OnRootPathChanged Empty→Boot geçişini sürer
-        ResetRowsToHollow();     // yeni repo: önceki repo'nun sonuçları artık geçersiz (SelectBranch ile aynı reset)
+        if (IsMidRunLocked) return;
+        if (!ApplyRepositoryRoot(path)) return;
+        await SyncAsync();
+    }
+
+    /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot
+    /// geçişini sürer), satırlar hollow'a sıfırlanır, willBuild kümesi temizlenir ve run yüzeyi tazelenir.
+    /// Sync GÖNDERMEZ — o kararı çağıran verir (Choose Folder hemen, Settings Save'de tek Sync içinde). İki
+    /// yolun ortak adımı burada TEK yerdedir (kopya yasağı).
+    /// <para>Boş yol ya da AYNI kökün yeniden seçilmesi (Windows yolları case-insensitive) NO-OP'tur ve
+    /// <c>false</c> döner — aksi halde her satır boşuna hollow'a sıfırlanır ve gereksiz bir Sync gönderilirdi.</para></summary>
+    private bool ApplyRepositoryRoot(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        if (string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase)) return false;
+        RootPath = path;
+        ResetRowsToHollow();
         _willBuildIds.Clear();
         RefreshRunSurface();
-        await SyncAsync();       // otomatik Sync (aynı gönderim yolu; SelectedProjectId'yi temizler)
+        return true;
     }
 
     /// <summary>[D7] Satırları yeni bir taban için "hollow"a sıfırlar (durum Pending, will bilinmiyor, süre/dep
