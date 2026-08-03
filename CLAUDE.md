@@ -11,9 +11,9 @@ yönetir; her projeyi **shell-out** (`MSBuild.exe` ayrı child process) ile derl
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
 | [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
 
-**Bir kusur veya davranış sorusu geldiğinde önce bunları oku** — özellikle ARCHITECTURE.md §22 (kod haritası:
-hangi davranış hangi dosyada). Görsel değerler (renk, ölçü, süre) `Resources/Tokens.xaml` ve
-`Resources/Motion.xaml`'dadır; bileşene özgü ölçüler ilgili kontrolün kendi sabitlerinde.
+**Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** ARCHITECTURE.md §22 kod haritasıdır (hangi
+davranış hangi dosyada), §13-§14 UI ve design system'i — renk, ölçü, tipografi, motion ve bileşen davranışları
+oradadır.
 
 ## Proje yapısı
 

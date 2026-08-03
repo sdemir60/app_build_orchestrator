@@ -855,11 +855,12 @@ Text that the design specifies literally is produced by **pure, testable static 
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Sticky ribbon.** One mono line describing the phase, plus chips for the projects currently building (at most
-four, then `+N`), plus — only when there are failures — a failure cluster on the right: `✗ 5 failed`,
+**Sticky ribbon.** One mono line describing the phase, plus 20 px chips for the projects currently building (at
+most four, then `+N`), plus — only when there are failures — a failure cluster on the right: `✗ 5 failed`,
 `· 4 dependency-affected` dimmed, the first three failing chips, and a `+N more` chip that applies the `failed`
-filter. There is no dismissible banner: a failure summary that can be dismissed is a failure summary that will
-be missed. Underneath, a 2 px progress bar, radius 0, coloured by phase and indeterminate during Sync.
+filter. Glyphs are 13 px in the phase line and 10 px inside chips. There is no dismissible banner: a failure
+summary that can be dismissed is a failure summary that will be missed. Underneath, a 2 px progress bar,
+radius 0, coloured by phase and indeterminate during Sync.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected), the 8 px will-build dot,
 the project name with the solution name beside it, then a right-aligned block — on hover, *Reveal in Explorer*
@@ -892,12 +893,14 @@ branch, worktree and configuration controls lock; the perf chip stays live.
 ### 13.3 Popovers and dialogs
 
 Popovers open 8 px above their chip on `surface-overlay` with a `border-strong` hairline, radius 8, the overlay
-shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click or Esc closes them.
+shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click or Esc closes them. Rows inside them are
+28 px. The branch popover is 272 px wide and carries a search box; the worktree popover is 300 px and carries
+the switch, the target list and the `source` line.
 
-The Settings dialog carries the LAYERS editor and the REPOSITORY row (current root plus *Change…*). Layer cards
-are reordered by dragging the grip with `Mouse.Capture` and a half-row swap threshold — `DragDrop.DoDragDrop`
-is prohibited, because the OS ghost-drag semantics do not match the design. Neighbours snap without animation.
-An invalid regex puts its input into the invalid state and disables *Save*.
+The Settings dialog is 620 px and carries the LAYERS editor and the REPOSITORY row (current root plus
+*Change…*). Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` and a half-row swap
+threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
+Neighbours snap without animation. An invalid regex puts its input into the invalid state and disables *Save*.
 
 ### 13.4 Scroll infrastructure
 
@@ -1032,9 +1035,10 @@ accident.
 
 ## 14. Design system
 
-The design system is implemented, not referenced: every value below lives in the application's own resource
-dictionaries, and component-specific measurements sit as named constants on the control that draws them. There
-is no external style sheet and no runtime theming.
+This section is the design system. There is no external style sheet, no runtime theming and no second
+authority: the values below are declared once in `Resources/Tokens.xaml` and `Resources/Motion.xaml` so the
+application can consume them, and component-specific measurements sit as named constants on the control that
+draws them. Section §13 gives those per-component values in context.
 
 ### 14.1 Tokens
 
