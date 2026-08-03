@@ -794,10 +794,15 @@ Custom dark title bar via `WindowChrome` (caption height 40, no Aero caption but
   edge when maximized.
 - Windows 11 rounded corners come from `DWMWA_WINDOW_CORNER_PREFERENCE`; the 1 px frame from
   `DWMWA_BORDER_COLOR`.
-- Snap Layouts require answering `WM_NCHITTEST` with `HTMAXBUTTON` over the maximize button.
 - The maximize glyph swaps to a restore glyph when the window is maximized.
-- Minimum size 1240 × 620. DPI awareness is PerMonitorV2 (px → DIP 1:1), with `UseLayoutRounding` at the root
-  so hairlines stay hairlines.
+- The Windows 11 **Snap Layouts** flyout is deliberately absent. Windows opens it only for a window that answers
+  `WM_NCHITTEST` with `HTMAXBUTTON`, and that answer turns the button into a non-client region — the WPF button
+  then receives no `Click` and no `IsMouseOver`, so both would have to be re-synthesized from `WM_NCLBUTTONDOWN`
+  / `WM_NCLBUTTONUP`. There is no middle ground between "flyout on" and "ordinary button", and the flyout is not
+  wanted here: the caption buttons are plain WPF buttons, hovered by their own template trigger.
+- The window opens **maximized**; `Width`/`Height` (1400 × 800) remain as the restore size. Minimum size
+  1240 × 620. DPI awareness is PerMonitorV2 (px → DIP 1:1), with `UseLayoutRounding` at the root so hairlines
+  stay hairlines.
 
 ### 12.3 Single instance, tray, hotkey, autostart
 
@@ -1513,7 +1518,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Composition root, startup routes, second-instance handling | `App/App.xaml.cs` |
 | Argument parsing (`--font-ab`, `--autostart`) | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
-| Maximize overflow fix · DWM corners/border · Snap Layouts · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `SnapLayout.cs`, `SnapLayoutHook.cs`, `CaptionGlyphs.cs` |
+| Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |

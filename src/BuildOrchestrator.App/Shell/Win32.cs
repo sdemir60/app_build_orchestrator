@@ -4,18 +4,11 @@ namespace BuildOrchestrator.App.Shell;
 
 /// <summary>
 /// [T62] Pencere kabuğunun user32 P/Invoke yüzeyi — <see cref="Dwm"/> ile aynı üslupta İNCE tutulur: burada karar
-/// mantığı YOKTUR, kararlar saf yardımcılardadır (<see cref="SnapLayout"/>, <see cref="HotkeyBinding"/>,
-/// <see cref="SingleInstanceProtocol"/>).
+/// mantığı YOKTUR, kararlar saf yardımcılardadır (<see cref="HotkeyBinding"/>, <see cref="SingleInstanceProtocol"/>).
 /// </summary>
 internal static class Win32
 {
     // --- pencere mesajları (WndProc hook'unun tanıdıkları)
-    public const int WM_CAPTURECHANGED = 0x0215;
-    public const int WM_NCHITTEST = 0x0084;
-    public const int WM_NCMOUSELEAVE = 0x02A2;
-    public const int WM_NCLBUTTONDOWN = 0x00A1;
-    public const int WM_NCLBUTTONUP = 0x00A5;
-    public const int WM_MOUSELEAVE = 0x02A3;
     public const int WM_HOTKEY = 0x0312;
 
     /// <summary>
