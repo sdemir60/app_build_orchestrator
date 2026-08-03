@@ -20,7 +20,7 @@ namespace BuildOrchestrator.Tests.App;
 /// cast'inin sahibi (<c>MainWindow.xaml.cs</c>, title-bar yüksekliği).</para>
 ///
 /// <para><b>Realize neden <c>Show()</c> İLE DEĞİL:</b> <c>MainWindow.OnSourceInitialized</c> gerçek bir tepsi
-/// ikonu kurar, global kısayol kaydeder ve Snap Layouts hook'u takar; <c>Loaded</c> ise supervisor'ı başlatır.
+/// ikonu kurar ve global kısayol kaydeder; <c>Loaded</c> ise supervisor'ı başlatır.
 /// Bunlar bir testin yan etkisi OLAMAZ (kapatma yolu da K5 gereği kalıcı kullanıcı durumunu yazar). Bu yüzden
 /// pencere ŞABLONU uygulanıp ölçülür/yerleştirilir ve pencere seviyesindeki <c>DynamicResource</c>'lar
 /// AÇIKÇA okunarak çözülmeye zorlanır — tip uyuşmazlığı tam da o anda patlar.</para>

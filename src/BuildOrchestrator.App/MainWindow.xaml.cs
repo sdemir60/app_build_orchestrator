@@ -86,7 +86,6 @@ public partial class MainWindow : Window
         // [T35 fold #1] Title-bar yüksekliğinin TEK kaynağı Size.TitleBarHeight token'ıdır: WindowChrome
         // (CaptionHeight = sürüklenebilir başlık bandı) VE title-bar satırı ONDAN türetilir. WindowChrome bir
         // Freezable olduğundan DynamicResource onda güvenilir çözülmez → kod-tarafı kurulur (kesin çalışır).
-        // WindowChrome burada (OnSourceInitialized'DAN ÖNCE) atanır: Snap Layouts hook sıralaması bozulmaz (M-9).
         double titleBarHeight = (double)FindResource("Size.TitleBarHeight");
         TitleRow.Height = new GridLength(titleBarHeight);
         WindowChrome.SetWindowChrome(this, new WindowChrome
@@ -714,29 +713,12 @@ public partial class MainWindow : Window
         _tray.StopRequested += () => { if (_vm.StopCommand.CanExecute(null)) _vm.StopCommand.Execute(null); };
         _tray.ExitRequested += ExitApplication;
 
-        AttachSnapLayoutHook(hwnd);
         HwndSource.FromHwnd(hwnd)!.AddHook(HotkeyWndProc);
 
         // [v7Δ-5] Alt+B (ayarlanabilir) — çakışmada SESSİZ devre dışı.
         if (!HotkeyBinding.TryParse(_uiState.Load().Hotkey, out var binding))
             HotkeyBinding.TryParse(HotkeyBinding.DefaultGesture, out binding);
         _hotkey = HotkeyRegistration.Register(hwnd, GlobalHotkeyId, binding);
-    }
-
-    /// <summary>
-    /// [T62] Snap Layouts hook'unu bağlar. <c>base.OnSourceInitialized</c>'dan SONRA çağrılması ZORUNLUDUR:
-    /// <c>HwndSource.AddHook</c> hook'u LİSTENİN BAŞINA ekler ve mesaj pompası son eklenen hook'u ÖNCE çağırır —
-    /// bu yüzden burada eklendiğinde bizim hook <c>WindowChrome</c>'un <c>WM_NCHITTEST</c> yanıtından önce çalışır.
-    ///
-    /// <para><b>[M-9]:</b> <c>WindowChromeWorker</c> kendi hook'unu <c>WindowChrome</c> ATANDIĞINDA ekler.
-    /// WindowChrome BU noktadan (OnSourceInitialized) SONRA yeniden atanırsa, worker'ın hook'u BİZİMKİNDEN SONRA
-    /// eklenir → ÖNCE çalışır → Snap Layouts SESSİZCE ÖLÜR. WindowChrome ctor'da (buradan ÖNCE) atanır — sıralama
-    /// korunur; ileride yeniden atanırsa bu metot o atamadan SONRA tekrar çağrılmalıdır.</para>
-    /// </summary>
-    private void AttachSnapLayoutHook(nint hwnd)
-    {
-        var snapLayout = new SnapLayoutHook(MaxButton, SetMaxButtonHover, ToggleMaximizeRestore);
-        HwndSource.FromHwnd(hwnd)!.AddHook(snapLayout.WndProc);
     }
 
     /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir.</summary>
@@ -746,14 +728,6 @@ public partial class MainWindow : Window
         handled = true;
         ShowFromTray();
         return 0;
-    }
-
-    /// <summary>Snap Layouts bölgesinin hover'ı: o alan non-client olduğundan WPF'in IsMouseOver'ı çalışmaz,
-    /// görsel elle sürülür. Kapanışta yerel değer TEMİZLENİR → şablonun kendi (Transparent) değeri geri gelir.</summary>
-    private void SetMaxButtonHover(bool on)
-    {
-        if (on && TryFindResource("Brush.SurfaceRaised") is Brush hover) MaxButton.Background = hover;
-        else MaxButton.ClearValue(BackgroundProperty);
     }
 
     private void ToggleMaximizeRestore()
@@ -832,7 +806,6 @@ public partial class MainWindow : Window
     }
 
     private void OnMinimize(object s, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
-    // Buton tıklaması ile Snap Layouts'un WM_NCLBUTTONUP yolu AYNI davranışa gider (kopya YASAK).
     private void OnMaximizeRestore(object s, RoutedEventArgs e) => ToggleMaximizeRestore();
     private void OnClose(object s, RoutedEventArgs e) => Close(); // OnClosing X'i tepsiye çevirir [K5]
 }

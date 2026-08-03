@@ -4,7 +4,7 @@
         xmlns:local="clr-namespace:BuildOrchestrator.App"
         xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
         xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
-        Title="Build Orchestrator" Width="1400" Height="800"
+        Title="Build Orchestrator" Width="1400" Height="800" WindowState="Maximized"
         Icon="pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
         WindowStyle="SingleBorderWindow"
@@ -15,10 +15,8 @@
        yüksekliği tek kaynaktan (Size.TitleBarHeight token) türetilir; XAML'de 40px literali KALMADI. WindowChrome
        bir Freezable olduğundan DynamicResource onda güvenilir çözülmez — kod-tarafı kurulum kesin çalışır. -->
   <Window.Resources>
-    <!-- [T62] Title bar buton şablonu. GEREKÇE: maximize butonu Snap Layouts için WM_NCHITTEST'te HTMAXBUTTON
-         döndürür → o bölge NON-CLIENT olur ve WPF'in IsMouseOver'ı ORADA HİÇ TETİKLENMEZ; hover görseli elle
-         (MainWindow.SetMaxButtonHover → Button.Background) sürülmek zorundadır ve bunun için Background'ı
-         gerçekten boyayan bir şablon gerekir. Renkler token'dan (hardcode YASAK). -->
+    <!-- Title bar buton şablonu (min/max/close). Üçü de sıradan WPF butonudur: hover şablonun kendi IsMouseOver
+         trigger'ından gelir, tıklama Click'ten. Renkler token'dan (hardcode YASAK). -->
     <Style x:Key="CaptionButton" TargetType="Button">
       <Setter Property="Width" Value="46" />
       <Setter Property="Background" Value="Transparent" />
@@ -73,7 +71,7 @@
       <Border x:Name="TitleBarRow" Grid.Row="0" Background="{DynamicResource Brush.SurfaceBase}"
               BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
         <DockPanel LastChildFill="False">
-          <!-- Caption pencere butonları (min/max/close) — kabuk makinesi (Snap hook MaxButton'a ad ile bağlanır) -->
+          <!-- Caption pencere butonları (min/max/close) — kabuk makinesi -->
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
             <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Click="OnMinimize"
                     AutomationProperties.Name="Minimize">
