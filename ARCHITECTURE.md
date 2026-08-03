@@ -10,8 +10,7 @@ reached. Chronological records (iteration plans, review outputs, decision logs) 
 and are not repeated here.
 
 **Reading order.** [`README.md`](README.md) is the entry point — what the tool does and how to run it. This
-document is the technical reference behind it. [`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) (Turkish) is the
-security-boundary companion, with every claim cited to `file:line`.
+document is the technical reference behind it, including the security boundary and the threat model (§21).
 
 ---
 
@@ -1197,17 +1196,117 @@ closed with effort:
 
 ---
 
-## 21. Document map
+## 21. Security boundary and threat model
+
+### 21.1 The core statement
+
+**The orchestrator builds a repository the user would open in Visual Studio anyway; the trust boundary is the
+repository itself.**
+
+The direct consequence: an arbitrary MSBuild target, `<Exec>` task or pre/post-build event in a `.csproj`
+**runs code with the user's own privileges**. `MSBuild.exe` is started as a child process and executes
+everything inside that file. This is not a vulnerability, it is the definition of the product — opening the
+same repository in Visual Studio would run the same code. The application does not try to restrict that
+execution; it only **contains** it (job object) and **throttles** it (CPU cap).
+
+### 21.2 Input surface
+
+| Input | Source | Where it goes | Injection risk |
+|---|---|---|---|
+| Repository root | folder picker or Settings | working directory of the child process — not an argument | none |
+| Project / solution paths | disk scan | MSBuild command line, escaped per MSVCRT rules | none |
+| Branch name | branch list, or `ui-state.json` | `git fetch origin <branch>` argv element | theoretical (below) |
+| Perf mode | perf chip | ordinal whitelist | none |
+| Worktree name | UI / `ui-state.json` | validated as a single safe path segment | none |
+| Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
+| Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
+
+Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
+manual string concatenation is prohibited — `UseShellExecute` is false everywhere, and neither `cmd.exe` nor
+PowerShell is ever used as an intermediary. With no shell in the path, `&`, `|`, `;` and backticks carry no
+meaning. The one place a command line is assembled by hand (MSBuild) escapes according to the
+`CreateProcessW`/MSVCRT rules, including the backslash-before-quote counting.
+
+### 21.3 Hardened surfaces
+
+- **User regex** compiles with a 100 ms match timeout; a timing-out pattern is treated as a non-match and
+  skipped for the remaining nodes with a warning. An empty or whitespace pattern is made inert rather than
+  matching everything.
+- **NDJSON line limit** (1 MiB) is enforced on both write and read; log chunks are 64 K, far below it.
+- **Branch slug sanitization** replaces path-hostile characters, collapses repeated dashes, and **throws
+  rather than falling back** if the result is empty or `.`/`..`. A separate validator rejects absolute paths,
+  separators and `..` for any name that becomes a directory segment.
+- **Atomic state writes:** `build-state.json` and `evaluation-cache.json` are written to a unique temp name and
+  moved into place; readers open with `FileShare.Delete` so they cannot block the rename, which is retried a
+  bounded number of times on a transient sharing violation.
+- **Corrupt-JSON tolerance:** `build-state.json`, `evaluation-cache.json`, `ui-state.json` and a project's
+  `project.assets.json` all fall back to defaults instead of throwing. `ui-state.json` additionally tolerates a
+  field whose *type* changed between versions, so one stale token cannot wipe the whole file.
+- **Log line normalization:** embedded CR/LF inside one MSBuild line becomes a space, so one appended line is
+  always one physical line.
+- **Single-instance channel** is a session-scoped mutex plus a named pipe carrying the session id; a busy pipe
+  backs off rather than spinning.
+- **`debugSpawnChildren` is rejected by default** and only executes when the Supervisor is started with
+  `--debug-hooks`, which the App never passes. This is a surface reduction, not a boundary — reaching that
+  command already requires holding the Supervisor's stdin.
+
+### 21.4 What the code does not verify
+
+An honest list, kept because omitting it would make the guarantees above read wider than they are:
+
+1. **A `.csproj` `Include` may point outside the repository root.** `ProjectReference`/`Compile` values are
+   resolved to full paths without a containment check, so the graph and the signature may treat a file outside
+   the repository as a source. Accepted — the repository is trusted (§21.1).
+2. **Symlinks and junctions are neither followed deliberately nor detected** during the scan. A self-referential
+   junction could produce deep recursion. (The worktree pool does have a separate junction gate before
+   `reset --hard`.)
+3. **`explorer` and `devenv` arguments are hand-quoted** rather than going through the MSVCRT escaper. A path
+   containing a quote would break the escaping; unreachable in practice, since Windows file names cannot
+   contain one and the paths come from a disk scan.
+4. **A branch name could reach git's argv as an option.** In the UI it can only be chosen from a list, but it is
+   also loaded from `ui-state.json`; a hand-edited value beginning with `-` would be passed through as-is,
+   with no `--` separator and no pre-validation. Reaching it requires already being inside the user's account.
+5. **Supervisor arguments are not validated.** `--logs`, `--worktrees` and `--debug-hooks` are taken raw. The
+   App passes none of them; only tests do.
+6. **There is no field-level IPC schema validation** (§5.4). A missing field binds to `null` and surfaces at
+   the point of use as `planFailed`/`runFailed`.
+7. **Manual edits inside a pool worktree are not preserved** — the next reuse resets it. The pool is the
+   application's scratch space.
+8. **The cascade guarantee has two documented exceptions** (§4.2, §4.4): processes the App starts on the user's
+   behalf are in no job by design, and a build step that delegates work to another parent through COM/WMI/task
+   scheduler creates a process that never enters the job at all.
+
+### 21.5 Explicitly out of the threat model
+
+This is a developer tool that builds the user's own code on the user's own machine with the user's own
+privileges. The following are not defended against, deliberately:
+
+- **A malicious `.csproj`, MSBuild target, `<Exec>` or pre/post-build event** (§21.1). Not sandboxed, not
+  inspected, no prompt.
+- **Escaping the job object** through COM/DCOM/WMI/task scheduler.
+- **A malicious `.sln`, `packages.config` or NuGet package** — `-t:restore` downloads packages and runs their
+  build targets; package contents are not inspected.
+- **An attacker with local file-system access.** `ui-state.json`, `build-state.json`, `evaluation-cache.json`
+  and the autostart registry value are plain text and unsigned. The same person could edit the `.csproj`.
+- **Whoever can write to the Supervisor's stdin.** The IPC has no authentication — anonymous pipes inherited
+  parent-to-child — so that position is equivalent to being the App.
+- **Local privilege escalation.** No admin rights are requested, nothing is written to HKLM, no service is
+  installed.
+- **The network.** The only network touch is `git fetch`; authentication, TLS and host verification are
+  entirely git's own configuration.
+- **Multi-user or multi-tenant isolation.** The single-instance gate is per user and session; isolation between
+  users is the operating system's job.
+
+---
+
+## 22. Document map
 
 | Document | Role |
 |---|---|
 | [`README.md`](README.md) | Entry point: what the tool does, requirements, how to build/run/publish, how to use it |
-| **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system |
+| **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary |
 | [`CLAUDE.md`](CLAUDE.md) | Working conventions for this repository |
-| [`TRUST-BOUNDARY.md`](TRUST-BOUNDARY.md) | Security boundaries with `file:line` citations, and an honest list of what is *not* verified (Turkish) |
-| `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md` | Plan of record — the binding architectural decisions this document describes (Turkish) |
-| `.claude/outputs/2026-07-15-19-00-design-v1/` | Visual authority: design specification plus the working prototype |
-| `.claude/outputs/` · `.claude/summaries/` · `.claude/handoffs/` | Historical records — iteration plans, measurements, decisions. Not corrected retroactively |
+| `.claude/outputs/` · `.claude/summaries/` · `.claude/handoffs/` | Historical record — iteration plans, the design package, measurements and decisions from the delivery. Kept as written, not corrected retroactively |
 | `.superpowers/sdd/progress.md` | Durable ledger: current state, measurements, parked items |
 
 **Maintenance.** This document describes the system as it is. When behaviour changes, the affected section is
