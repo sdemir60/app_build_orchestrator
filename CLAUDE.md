@@ -107,8 +107,8 @@ kadarki tüm değişiklikler dokümanlara işlenir.
 `.claude/temp/`
 
 **İsimlendirme:** `YYYY-MM-DD-HH-mm-{baslik}.md`. Tarih/saat o anki gerçek zaman (Bash `date`). Başlık
-kebab-case ve **İngilizce** (`it0-tdd-plan`, `spike-results` gibi; `plani`/`kayitlari` DEĞİL). Eski Türkçe adlı
-dosyalar olduğu gibi kalır. Çıktı ve özet dosyaları **aynı adı** taşır, sadece klasörleri farklıdır.
+kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari` DEĞİL). Çıktı ve özet dosyaları
+**aynı adı** taşır, sadece klasörleri farklıdır.
 
 **Tetikleyiciler:**
 
