@@ -199,9 +199,9 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 - **`UseSharedCompilation=false` and `nodeReuse:false` are kept**, and they cost real time — roughly 2.9× the
   flags-on build, essentially all of it from shared compilation. They stay because with a compiler server the
   emit happens outside the job, which brings back the risk of a torn DLL when a run is stopped.
-- **The project list is not virtualized.** Row simplification brought the realize time of a 191-row list down
-  substantially but did not reach the 400 ms budget on the reference machine; virtualization was deliberately
-  deferred because it would touch sticky headers, follow-scroll, reveal staggering and selection at once.
+- **Filling a viewport of project rows costs what it costs.** The list is virtualized, so the work is bounded
+  by the visible window rather than by the size of the repository — but that window is still built from
+  scratch whenever the entries are replaced, which a topology change or a filter change both do.
 - **The graph view is full detail only up to 150 nodes.** Above that, off-screen nodes and edges are culled and
   labels drop out by level of detail.
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
