@@ -371,7 +371,11 @@ public sealed class EventStreamRow : Border
     internal Rectangle SelectionStripe => _stripe;
     internal StreamEventViewModel? ViewModel => _vm;
     /// <summary>[A13/T4 fix-1 · B3] Satırın kendi (akan) metin yüzeyi — <c>Typography.NumeralAlignment</c>'ın
-    /// altıncı üretim yeri (<c>:399</c>) bu alandadır; <c>TabularFiguresTests</c>'in test yüzeyi.</summary>
+    /// altıncı üretim yeri (aşağıda, <see cref="_text"/>'in kurulumunda) bu alandadır; tüketicisi
+    /// <c>EventStreamTests.The_active_line_and_row_text_are_tabular</c>'dır.
+    /// <para>[A13/final · lensA Ö3] Atıf DÜZELTİLDİ: doc, bu branch'in KENDİ fix-1 · C3 turunda dağıttığı
+    /// <c>TabularFiguresTests</c> sınıfına işaret ediyordu (o sınıf artık YOK) ve satır referansı da bayattı.
+    /// Satır numarası yerine üye adı yazılır — sürüklenmesi olanaksız.</para></summary>
     internal TextBlock Text => _text;
     /// <summary>[A13/T3b · b8] Glyph kolonunun host'u (12px genişlik, BuildApp.jsx:653) — dış testlerin
     /// ölçüm iddiasını gerçek bir realize üzerinde doğrulayabilmesi için (kural 5) SelectionStripe deseniyle
