@@ -67,6 +67,37 @@ public class MotionOwnerHygieneTests
         Assert.StartsWith(Path.Combine("Console", "TypewriterScheduler.cs"), definitions[0], StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// [A13/final · lensB Ö1] Hold'un <b>DEĞERİ</b> yukarıda pinliydi ama <b>ÜRETİMDE TÜKETİLDİĞİ</b> hiçbir
+    /// testle pinli değildi: lens B üç tüketim noktasının ÜÇÜNÜ BİRDEN sildi ve 1649 testlik süit tamamen yeşil
+    /// kaldı (M5 + M5b). Bu test o boşluğun KAYNAK yarısını kapatır — üç sahibin üçü de hold'u zamanlayıcısının
+    /// süresine EKLEMEK zorundadır; biri silinirse sayı düşer ve buradan kırmızı gelir.
+    ///
+    /// <para><b>Neden davranışsal değil (ÖLÇÜLDÜ):</b> davranışsal ayrım yalnız <c>ConsoleView</c> için
+    /// yazılabilir — orada hold, imleç fade'inin BAŞLAMA anını geciktirir, yani gözlenebilir bir etkisi vardır
+    /// (<see cref="ConsoleMotionPathTests.The_active_line_cursor_holds_steady_for_420ms_before_it_starts_to_fade"/>).
+    /// <c>EventStreamView</c>'ın iki tüketiminde gözlenebilir etki YOKTUR: <c>TypewriterScheduler.RevealedAt</c>
+    /// zaten <c>Duration</c>'da tam uzunluğa doyar, dolayısıyla hold yalnız <c>DispatcherTimer</c>'ın 420ms daha
+    /// yaşamasını sağlar — metin, imleç ve satır durumu iki hâlde de BİREBİR aynıdır. O iki noktanın tek
+    /// mümkün pini kaynak düzeyindedir; sınırı gizlemek yerine burada AÇIKÇA yazılır.</para>
+    /// </summary>
+    [Fact]
+    public void Every_typewriter_owner_adds_the_cursor_hold_to_its_scheduler_duration()
+    {
+        var usages = SourceGuard.ScanApp("*.cs",
+            new Regex(@"\.Duration\s*\+\s*TimeSpan\.FromMilliseconds\(CursorHoldMs\)", RegexOptions.Compiled),
+            skipCommentLines: true);
+
+        // Vakum kapısı: tarama boş bir dosya kümesi görseydi aşağıdaki sayım anlamsız olurdu.
+        Assert.Contains(Path.Combine("Console", "ConsoleView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
+        Assert.Contains(Path.Combine("Views", "EventStreamView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
+
+        Assert.Equal(3, usages.Count);
+        Assert.Single(usages, u => u.StartsWith(Path.Combine("Console", "ConsoleView.xaml.cs"), StringComparison.Ordinal));
+        Assert.Equal(2, usages.Count(u =>
+            u.StartsWith(Path.Combine("Views", "EventStreamView.xaml.cs"), StringComparison.Ordinal)));
+    }
+
     [StaFact]
     public void A_motion_owner_subscribes_to_the_signal_exactly_once_across_repeated_loads()
     {

@@ -261,15 +261,27 @@ public class ConsoleMotionPathTests
 
     /// <summary>[A13/T4 fix-1 · A3] Otorite <c>BuildApp.jsx:91</c>: <c>doneT = setTimeout(onDone, 420)</c> — daktilo
     /// bitince imleç ANINDA sönmez, <see cref="ConsoleView.CursorHoldMs"/> (420ms) kadar SABİT kalır, ANCAK ondan
-    /// sonra fade-out'a girer (<see cref="ConsoleView.BeginCursorRemoval"/>). İki iddia: (1) sabitin DEĞERİ (saf
-    /// assert), (2) üretim yolundan gerçekten tüketildiği (durum-tabanlı gözlem — sabit süre BEKLENMEZ).
+    /// sonra fade-out'a girer (<c>ConsoleView.BeginCursorRemoval</c>). İki iddia: (1) sabitin DEĞERİ (saf assert),
+    /// (2) <c>ConsoleView.OnTypeTick</c>'in o sabiti GERÇEKTEN tükettiği (durum-tabanlı gözlem — süre BEKLENMEZ).
     ///
-    /// <para><b>fix-1 notu:</b> önceki sürüm <c>PumpUntil(() =&gt; clock.ElapsedMilliseconds &gt;= 250, …)</c> ile
-    /// SÜRE-tabanlı bekliyordu (gizli <c>Sleep(250)</c>, D8) ve 420 sayısı hiçbir yerde LİTERAL okunmuyordu (420→800
-    /// yapılsa test yeşil kalırdı). Artık (a) <c>CursorHoldMs</c> SAF <c>Assert.Equal</c> ile pinli, (b) ara-durum
-    /// kontrolü zamana değil DURUMA bağlı: daktilonun TAMAMEN yazıldığı an (<c>ActiveLineText.Text == shortLine</c>)
-    /// beklenir, o anda overlay'in HÂLÂ açık olması (commit henüz olmamış) hold'un sıfır OLMADIĞININ zamandan
-    /// bağımsız kanıtıdır.</para></summary>
+    /// <para><b>[A13/final · lensB Ö1] (2)'nin önceki hâli AYIRT EDİCİ DEĞİLDİ ve doc'u YANLIŞTI.</b> Doc
+    /// "hold atlansaydı bu an overlay ZATEN kapanmış olurdu" diyordu; lens B bunu ölçerek yanlışladı:
+    /// <c>BeginCursorRemoval</c> overlay'i KAPATMAZ, 180ms'lik bir fade başlatır ve overlay ancak onun
+    /// <c>Completed</c>'ında kapanır. Yani <c>Visibility.Visible</c> gözlemi hold'un DEĞİL fade'in süresiyle
+    /// karşılanıyordu — üç tüketim noktası birden silindiğinde süit yeşil kalıyordu (M5/M5b).</para>
+    ///
+    /// <para><b>Bugünkü ayrım:</b> gözlem, overlay'in görünürlüğü değil <see cref="ConsoleView.CursorFading"/>'dir —
+    /// hold varken daktilonun bittiği karede fade HENÜZ başlamamıştır; hold terimi silinirse <c>OnTypeTick</c>
+    /// metni tam yazdığı AYNI karede <c>BeginCursorRemoval</c>'ı çağırır ve bayrak o karede true olur. Gözlem
+    /// pompanın İÇİNDE alınır: pompadan çıkıp assert etmek aradaki süreyi ölçüme sokardı ve 420ms'lik ayrım
+    /// zayıflardı.</para>
+    ///
+    /// <para><b>Kapsam sınırı (ölçüldü):</b> bu davranışsal yarı YALNIZ <c>ConsoleView</c>'ı kapsar. Sabitin
+    /// diğer iki üretim tüketiminin GÖZLENEBİLİR etkisi YOKTUR — bkz.
+    /// <see cref="MotionOwnerHygieneTests.Every_typewriter_owner_adds_the_cursor_hold_to_its_scheduler_duration"/>.</para>
+    ///
+    /// <para><b>fix-1 notu (tarihsel):</b> daha önceki sürüm <c>PumpUntil(() =&gt; clock.ElapsedMilliseconds &gt;= 250, …)</c>
+    /// ile SÜRE-tabanlı bekliyordu (gizli <c>Sleep(250)</c>, D8) ve 420 sayısı hiçbir yerde LİTERAL okunmuyordu.</para></summary>
     [StaFact]
     public void The_active_line_cursor_holds_steady_for_420ms_before_it_starts_to_fade()
     {
@@ -281,13 +293,27 @@ public class ConsoleMotionPathTests
         view.AppendNarrativeBatch(shortLine + "\n"); // ÜRETİM yolu (brief kural 3)
         Assert.False(view.ActiveLineInstant, "ön-koşul: daktilo kurulmadı");
 
-        // Daktilo TAMAMEN yazılana kadar bekle (durum-tabanlı, D8 — sabit süre DEĞİL).
-        DispatcherPump.PumpUntil(() => view.ActiveLineText.Text == shortLine, TimeSpan.FromSeconds(2));
-        Assert.Equal(shortLine, view.ActiveLineText.Text); // ön-koşul: daktilo GERÇEKTEN bitti
+        // Daktilo TAMAMEN yazılana kadar bekle (durum-tabanlı, D8 — sabit süre DEĞİL) ve fade durumunu TAM O
+        // KAREDE örnekle. OnTypeTick DispatcherPriority.Render'da, pompa Background'da koşar → pompa bir kareyi
+        // ORTASINDAN göremez: metin tam görüldüğünde o karenin hold kontrolü de çoktan koşmuştur.
+        bool? fadingWhenTypingFinished = null;
+        DispatcherPump.PumpUntil(
+            () =>
+            {
+                if (view.ActiveLineText.Text != shortLine) return false;
+                fadingWhenTypingFinished ??= view.CursorFading;
+                return true;
+            },
+            TimeSpan.FromSeconds(2));
 
-        // Daktilo BİTTİ ama hold DOLMADI: satır HÂLÂ commit EDİLMEDİ (overlay açık kalır) — bu, hold'un sıfır
-        // OLMADIĞININ zamandan bağımsız kanıtıdır (hold atlansaydı bu an overlay ZATEN kapanmış olurdu).
-        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
+        // PumpUntil timeout'ta HATA VERMEZ → daktilonun gerçekten bittiği AYRICA iddia edilir (vakum kapısı).
+        Assert.Equal(shortLine, view.ActiveLineText.Text);
+        Assert.True(fadingWhenTypingFinished.HasValue, "ön-koşul: daktilonun bittiği kare hiç gözlenmedi");
+
+        // AYIRT EDİCİ İDDİA: yazım bitti ama hold DOLMADI → fade HENÜZ başlamamış olmalı.
+        Assert.False(fadingWhenTypingFinished!.Value,
+            "daktilo biter bitmez imleç fade'i başladı — CursorHoldMs üretim yolunda TÜKETİLMİYOR (ConsoleView.OnTypeTick)");
+        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility); // satır hâlâ overlay'de, commit edilmedi
 
         // Hold + fade sonunda satır commit edilir, overlay kapanır — gevşek bir güvenlik ağı (asıl 420ms iddiası
         // artık yukarıdaki literal'de; bu yalnız "sonunda gerçekten biter" davranışını doğrular).
