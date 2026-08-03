@@ -17,6 +17,10 @@ namespace BuildOrchestrator.Tests.App;
 /// <c>FollowScrollController.FollowRow</c>'un okuduğu <see cref="ScrollAnimator.GetIsUserSuppressed"/> — ikisi de
 /// temiz olmalı ki takip oynasın. Kaydırma near-bottom/away ayrımı için gerçek scroll geometrisi gerektiğinden
 /// <c>[StaFact]</c> + ekran dışı realize (StickyReveal deseni).</para>
+///
+/// <para><b>Kapsam:</b> burası "liste dibine dönüş" yolunu pinler. Diğer iki geri-açılma yolu (frontier'e
+/// dönüş, boşta kalma) ve niyet kapıları (seçim, filtre) üretim zinciri üzerinden ayrı sınıflarda pinlidir —
+/// <see cref="FrontierFollowResumeTests"/> ve <see cref="FrontierFollowIntentTests"/>.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class FrontierFollowArbitrationTests

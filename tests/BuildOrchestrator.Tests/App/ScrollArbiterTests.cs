@@ -114,8 +114,23 @@ public class ScrollArbiterTests
         a.NotifyUserScroll(ScrollPanel.Frontier);           // kullanıcı listeyi kaydırdı (liste wheel'i)
         Assert.False(a.CanFollowFrontier);                  // follow duraklar (regional suppress CANLI okunur)
 
-        a.Resume(ScrollPanel.Frontier);                     // near-bottom'a dönüş (StickyLayerList.ResumeFrontierIfNearBottom)
+        a.Resume(ScrollPanel.Frontier);                     // geri-açılma (frontier'e dönüş / boşta kalma / liste dibi)
         Assert.True(a.CanFollowFrontier);                   // follow sürer
+    }
+
+    /// <summary>Filtre, seçimle AYNI SINIFTAN bir kapıdır: ikisi de kullanıcının "şu an şuna bakıyorum"
+    /// beyanıdır. Süzülü bir listede takip açık kalsaydı kullanıcı alt kümeyi incelerken liste altından
+    /// kayardı (ve süzgeç frontier'ı dışarıda bıraktığında takip zaten hedefsiz kalırdı).</summary>
+    [Fact]
+    public void CanFollowFrontier_pauses_while_a_filter_is_active()
+    {
+        var a = new ScrollArbiter();
+
+        a.SetFilter(true);
+        Assert.False(a.CanFollowFrontier);                  // filtre > follow
+
+        a.SetFilter(false);
+        Assert.True(a.CanFollowFrontier);                   // filtre kalkınca follow kaldığı yerden sürer
     }
 
     [Fact]

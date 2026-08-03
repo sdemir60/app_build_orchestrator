@@ -59,10 +59,15 @@ public sealed class ScrollArbiter
     private readonly bool[] _suppressed = new bool[PanelCount]; // regional: bir panelde kullanıcı scroll'u aktif mi
     private readonly int[] _epoch = new int[PanelCount];        // per-panel animasyon devri (yo-yo guard)
     private bool _hasSelection;                                 // frontier seçimi aktif mi (seçim > follow)
+    private bool _hasFilter;                                    // liste süzülü mü (filtre > follow)
 
     /// <summary>Frontier'de bir kart seçili mi — <see cref="ScrollKind.Follow"/> bu true iken reddedilir (seçim
     /// &gt; follow, <c>BuildApp.jsx:1388</c> <c>follow = running &amp;&amp; !selected</c>).</summary>
     public bool HasSelection => _hasSelection;
+
+    /// <summary>Liste bir filtreyle süzülü mü. Seçimle AYNI SINIFTAN bir sinyaldir: ikisi de kullanıcının
+    /// "şu an şuna bakıyorum" beyanıdır ve otomatik takip onları ezemez.</summary>
+    public bool HasFilter => _hasFilter;
 
     /// <summary>[E4 fix] Frontier follow ŞU AN devreye girebilir mi — bir kart seçili DEĞİL <b>ve</b> frontier
     /// bölgesel wheel-suppress altında DEĞİL. <c>MainWindow.FollowFrontier</c> bunu HER tick'te CANLI tüketir; böylece
@@ -70,11 +75,18 @@ public sealed class ScrollArbiter
     /// (<see cref="NotifyUserScroll"/>) follow duraklar, near-bottom'a dönünce (<see cref="Resume"/>) sürer; seçim de
     /// (<see cref="SetSelection"/>) duraklatır. <c>BuildApp.jsx:1388</c> <c>follow = running &amp;&amp; !selected</c>'ın
     /// regional-suppress'le genişletilmiş CANLI hâli.</summary>
-    public bool CanFollowFrontier => !_hasSelection && !_suppressed[(int)ScrollPanel.Frontier];
+    public bool CanFollowFrontier =>
+        !_hasSelection && !_hasFilter && !_suppressed[(int)ScrollPanel.Frontier];
 
     /// <summary>Seçim durumunu kurar (SelectedProjectId değişiminde). true iken frontier follow duraklatılır;
     /// false olunca follow kaldığı yerden sürebilir.</summary>
     public void SetSelection(bool active) => _hasSelection = active;
+
+    /// <summary>Filtre durumunu kurar (ActiveFilter değişiminde) — <see cref="SetSelection"/> ile aynı sözleşme.
+    /// <para>Süzülü bir listede takip AÇIK KALSAYDI iki şey olurdu: kullanıcı "failed" gibi bir alt kümeyi
+    /// incelerken liste altından kayardı, ve süzgeç frontier satırı dışarıda bıraktığında takip zaten hedefsiz
+    /// kalırdı. Filtre kalkınca takip kaldığı yerden sürer — kapı KALICI değildir.</para></summary>
+    public void SetFilter(bool active) => _hasFilter = active;
 
     /// <summary>Verilen panelin auto-scroll'u kullanıcı scroll'uyla duraklatıldı mı (regional).</summary>
     public bool IsSuppressed(ScrollPanel panel) => _suppressed[(int)panel];
