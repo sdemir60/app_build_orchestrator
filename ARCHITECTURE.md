@@ -993,6 +993,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s (the `Debug｜Release` control) |
 | Input | A `TextBox` style with watermark, prefix and invalid states |
+| Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. Being implicit it crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements |
 | Status glyph · building spinner · will-build dot | Custom controls drawing rings, arcs and dots |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
