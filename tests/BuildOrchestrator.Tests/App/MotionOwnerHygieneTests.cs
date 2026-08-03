@@ -76,10 +76,12 @@ public class MotionOwnerHygieneTests
     /// <para><b>Neden davranışsal değil (ÖLÇÜLDÜ):</b> davranışsal ayrım yalnız <c>ConsoleView</c> için
     /// yazılabilir — orada hold, imleç fade'inin BAŞLAMA anını geciktirir, yani gözlenebilir bir etkisi vardır
     /// (<see cref="ConsoleMotionPathTests.The_active_line_cursor_holds_steady_for_420ms_before_it_starts_to_fade"/>).
-    /// <c>EventStreamView</c>'ın iki tüketiminde gözlenebilir etki YOKTUR: <c>TypewriterScheduler.RevealedAt</c>
-    /// zaten <c>Duration</c>'da tam uzunluğa doyar, dolayısıyla hold yalnız <c>DispatcherTimer</c>'ın 420ms daha
-    /// yaşamasını sağlar — metin, imleç ve satır durumu iki hâlde de BİREBİR aynıdır. O iki noktanın tek
-    /// mümkün pini kaynak düzeyindedir; sınırı gizlemek yerine burada AÇIKÇA yazılır.</para>
+    /// <c>EventStreamView</c>'ın iki tüketimi ise <b>render yüzeyinden AYIRT EDİLEMEZ</b> (bu, "etkisi yok"tan
+    /// daha dar bir iddiadır — A13/final lens B düzeltmesi): <c>TypewriterScheduler.RevealedAt</c> zaten
+    /// <c>Duration</c>'da tam uzunluğa doyar, dolayısıyla metin, imleç ve satır durumu iki hâlde de BİREBİR
+    /// aynıdır. Terim yine de ölü DEĞİLDİR — hold, <c>StopTypewriter()</c>'ın <c>_scheduler = null</c> atamasını
+    /// geciktirir ve bunu gerçek bir üretim dalı okur — ama kullanıcıya giden sonuç değişmediği için o iki
+    /// noktanın tek mümkün pini kaynak düzeyindedir; sınırı gizlemek yerine burada AÇIKÇA yazılır.</para>
     /// </summary>
     [Fact]
     public void Every_typewriter_owner_adds_the_cursor_hold_to_its_scheduler_duration()

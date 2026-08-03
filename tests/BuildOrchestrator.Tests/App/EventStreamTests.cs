@@ -88,7 +88,8 @@ public class EventStreamTests
 
     /// <summary>[A13/T4 · n6 · fix-1 · B3] design-v1 README:48 "DAİMA tabular rakam" — panelin aktif-satır metni
     /// (<c>PART_ActiveText</c>, <c>EventStreamView.xaml:41</c>) VE her satırın kendi akan metni
-    /// (<c>EventStreamRow._text</c>, <c>EventStreamView.xaml.cs:399</c> — fix-1'de eklenen altıncı yer, önceki
+    /// (<c>EventStreamRow._text</c>, <c>EventStreamView.xaml.cs</c>'in <c>_text</c> için yaptığı
+    /// <c>NumeralAlignment</c> ataması — fix-1'de eklenen altıncı yer, önceki
     /// sürüm bunu kaçırıyordu) mono taşıyan üretim yerlerindendir. Envanter/kapsam kararı XML doc'u:
     /// <see cref="ProjectRowTests.The_project_row_sha_and_duration_columns_are_tabular"/>.</summary>
     [StaFact]

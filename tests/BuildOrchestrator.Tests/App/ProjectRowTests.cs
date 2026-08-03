@@ -61,7 +61,8 @@ public class ProjectRowTests
     /// sayaç, yol) = Geist Mono, <b>DAİMA tabular rakam</b>."</i> — üretimde <c>Typography.NumeralAlignment</c>
     /// ALTI yerde SET edilir: <c>ProjectRow.xaml:74</c> (sha, burada) · <c>:107</c> (süre, burada) ·
     /// <c>EventStreamView.xaml:41</c> (aktif satır — <see cref="EventStreamTests.The_active_line_and_row_text_are_tabular"/>)
-    /// · <c>EventStreamView.xaml.cs:399</c> (satırın kendi metni — AYNI test, fix-1'de eklenen ALTINCI yer, önceki
+    /// · <c>EventStreamView.xaml.cs</c>'in <c>_text</c> için yaptığı <c>NumeralAlignment</c> ataması (satırın kendi
+    /// metni — AYNI test, fix-1'de eklenen ALTINCI yer, önceki
     /// sürüm bunu kaçırıyordu ve doc'u yanlışlıkla "dört yer" sayıyordu) · <c>StickyRibbon.xaml:38</c> (faz metni —
     /// <see cref="StickyRibbonTests.The_phase_text_is_tabular"/>) · <c>ActionBar.xaml.cs:258</c> (sayaç chip değeri
     /// — <see cref="ActionBarTests.The_sigma_chip_value_is_tabular"/>).

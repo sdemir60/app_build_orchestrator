@@ -138,7 +138,11 @@ public partial class ConsoleView : UserControl
     ///
     /// <para>Bir kereye mahsus efektler (daktilo, kaskat) burada YENİDEN OYNATILMAZ — sinyal sonradan açılınca
     /// geriye dönük animasyon başlatmak sözleşme ihlali olurdu (kardeşindeki <c>TypePlayed</c> guard'ının
-    /// tek-yönlülüğüyle aynı gerekçe).</para></summary>
+    /// tek-yönlülüğüyle aynı gerekçe).</para>
+    ///
+    /// <para><b>[A13/final · lensA Ö1] İLK İŞ DOKÜMANA YAZMAKTIR:</b> uçuştaki bir imleç fade'i varsa
+    /// (<c>_cursorFading</c>) aktif satır önce <c>FinishActiveLine(commit: true)</c> ile kapatılır. Bu, saatleri
+    /// yeniden değerlendirmekten farklı bir iştir — gerekçesi gövdedeki yorumdadır.</para></summary>
     private void OnMotionChanged(object? sender, EventArgs e)
     {
         // [A13/final · lensA Ö1] UÇUŞTAKİ İMLEÇ FADE'İ ÖNCE KURALLI YOLDAN KAPATILIR. Aşağıdaki ilk dal
@@ -150,9 +154,12 @@ public partial class ConsoleView : UserControl
         // satırında kayıp KALICIDIR. FinishActiveLine aynı iptali yaparken bayrağı zaten elle temizler; kurallı
         // kapanış yolu odur, burada da o kullanılır.
         //
-        // Erken `return` YOK (lens A'nın önerdiği biçimden bilinçli sapma): FinishActiveLine overlay'i zaten
-        // Collapsed yapar, yani aşağıdaki ilk dal kendiliğinden koşmaz; erken dönmek ise BuildProgressOverlay'in
-        // sinyal güncellemesini sessizce atlardı.
+        // Erken `return` YOK (lens A'nın önerdiği biçimden bilinçli sapma): BELİRLEYİCİ GEREKÇE, FinishActiveLine'ın
+        // overlay'i zaten Collapsed yapması — yani aşağıdaki ilk dal kendiliğinden koşmaz, erken dönüşün kazancı
+        // yoktur. İkinci gerekçe (erken dönüş BuildProgressOverlay'in sinyal güncellemesini atlardı) BUGÜN
+        // ERİŞİLEMEZ bir duruma dayanır: _cursorFading yalnız ActiveProjectId null iken (Route.Narrative) kurulabilir,
+        // BuildProgressOverlay ise yalnız proje seçiliyken görünür ve PlayCascade geçişte bayrağı zaten temizler.
+        // Yine de `return` eklenmez — sözleşme değişirse sessizce kırılacak bir kısayol olurdu.
         if (_cursorFading) FinishActiveLine(commit: true);
 
         if (ActiveLineOverlay.Visibility == Visibility.Visible)

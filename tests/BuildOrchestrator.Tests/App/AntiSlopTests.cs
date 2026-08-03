@@ -94,7 +94,8 @@ public sealed class AntiSlopTests
     // README §8: "Toast/popup yok · 'View failures' butonu yok · perf/Build tooltip'i yok · katman eşleşme
     // sayacı yok." — n1/n2/n3'ün ORTAK otorite kaynağı. (perf/Build tooltip'i n4'tür, ActionBarTests'tedir;
     // n5 DsControlTemplateTests'te — realize edilmiş kontrol assert'i, AntiSlopTests'in saf-tarama desenine
-    // uymuyor; n6 TabularFiguresTests'te — aynı gerekçeyle.)
+    // uymuyor; n6 EventStreamTests/ProjectRowTests'te — aynı gerekçeyle. [A13/final] Eskiden TabularFiguresTests
+    // deniyordu; o sınıf T3b fix-1'de SİLİNDİ, assert'ler kontrollerin kendi test sınıflarına dağıtıldı.)
     // [A13/T4 fix-1 · D3] IgnoreCase eklendi — kardeş guard'la (No_spinning_globe_icon_exists) tutarlı.
     private static readonly Regex ToastVocabulary = new("Toast|Banner|Snackbar", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string ViewFailuresButton = "View failures";
