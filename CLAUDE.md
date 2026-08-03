@@ -1,8 +1,6 @@
 # App Build Orchestrator — Claude Talimatları
 
-Çok projeli bir .NET çözümünü akıllıca derleyen **build orchestrator** masaüstü uygulaması. Dependency graph
-çıkarır, sadece değişen projeleri incremental derler, derlemeyi ayrı bir **supervisor process** üzerinden
-yönetir; her projeyi **shell-out** (`MSBuild.exe` ayrı child process) ile derler.
+Çok projeli bir .NET çözümünü, bağımlılık sırasına göre ve yalnız değişenleri derleyen WPF masaüstü aracı.
 
 ## Dokümanlar
 
@@ -45,10 +43,8 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 
 ## Dil ve üslup
 
-- Yanıtları **Türkçe** ver. Teknik terimleri (dependency graph, incremental, process, IPC, handler, worker,
-  constructor vb.) İngilizce bırak.
-- Sade ve öz yaz; gereksiz cümleyle uzatma.
-- Sadece koddaki gerçeğe dayan; emin olmadığını yazma, varsayım ekleme.
+- Yanıtları **Türkçe** ver, teknik terimleri İngilizce bırak. Sade yaz; sadece koddaki gerçeğe dayan, emin
+  olmadığını yazma.
 - **Kod, UI metinleri ve loglar İngilizce**; kod yorumları ve `.claude/` kayıtları Türkçe. README.md ve
   ARCHITECTURE.md İngilizce.
 
