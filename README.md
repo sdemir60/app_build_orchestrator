@@ -5,9 +5,12 @@ for projects, derives the dependency graph, decides which projects actually chan
 output timestamps), and builds only those — in parallel, under a supervisor process it owns.
 
 It is a developer tool for your own machine: it builds a repository you would otherwise open in Visual Studio,
-with your own privileges. See [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) (written in Turkish) for what
-that means in practice — process boundaries, what git is allowed to do, what is explicitly out of the threat
-model.
+with your own privileges.
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the technical reference: process topology, IPC contract, the
+  incremental decision, the build engine, the git surface, the UI architecture and the design system.
+- [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) (Turkish) — what the process boundaries mean in practice,
+  what git is allowed to do, and what is explicitly out of the threat model.
 
 ## What it does
 
@@ -111,14 +114,13 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-publish.ps1
 ```
 
 It first refuses to measure anything if an instance is already running (the app is single-instance), then
-publishes to a temp folder and runs 22 checks: publish exit code, layout (`App.exe`, `supervisor\`,
-font licence), an NDJSON round trip against the published Supervisor binary, a full Sync + Build driven
-through the published Supervisor against a throwaway workspace (proving the published binary really
-compiles and writes the DLL), launching the published `.exe`
-and confirming via WMI that the Supervisor child was spawned from that same folder, reading the console boot
-line and the ribbon state out of the live window through UI Automation, and finally killing only the App and
-proving the Supervisor dies *by itself* through the job cascade. Exit code `0` = pass, `1` = fail,
-`2` = precondition not met (close the running instance first — tray icon → Exit).
+publishes to a temp folder and checks the whole chain: publish exit code, layout, an NDJSON round trip against
+the published Supervisor binary, a full Sync + Build driven through it against a throwaway workspace (proving
+the published binary really compiles and writes the DLL), launching the published `.exe` and confirming via
+WMI that the Supervisor child was spawned from that same folder, reading the console boot line and the ribbon
+state out of the live window through UI Automation, and finally killing only the App and proving the Supervisor
+dies *by itself* through the job cascade. Exit code `0` = pass, `1` = fail, `2` = precondition not met (close
+the running instance first — tray icon → Exit).
 
 ## Using it
 
@@ -176,41 +178,33 @@ while idle changes only the chip, because the profile travels with the next run 
 narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
 (`cpu cap off` for Full).
 
-Three honest qualifications:
+Three qualifications worth knowing:
 
 - **The cap only limits the build.** It is written to the inner Job Object, which holds `MSBuild.exe` children
-  and nothing else. `git` and `vswhere` are started as plain child processes and are never assigned to the
-  inner job, so Sync, branch listing and MSBuild resolution run at full speed even in Light mode. The App
-  itself is not a member of any job either — the UI is never throttled by the cap. This is deliberate: capping
-  those would throttle the IPC and the interface, not the build.
-- **Light's 40% is not an absolute ceiling.** When a post-build copy gets stuck on contention (MSB302x), the
-  cap and priority are deliberately raised to the Balanced floor (70% / BelowNormal) for the duration of that
-  window, because starving a stuck copy is worse than the cap being briefly exceeded. Also, once a graceful
-  stop starts draining, the cap is removed and never re-applied for the rest of that run, and the priority can
-  no longer be lowered past that same floor — switching to Light while a stop is draining will not drop the
-  in-flight compilers to Idle.
-- **Parallelism is fixed at the start of a run.** Workers are created once, and there is no dynamic slot
-  mechanism, so switching modes mid-run changes only the CPU cap and the process priority live; the new
-  parallelism takes effect on the next run.
+  and nothing else. `git` and `vswhere` are never assigned to it, and the App is in no job at all — so Sync,
+  branch listing and the interface itself run at full speed even in Light mode.
+- **Light's 40% is not an absolute ceiling.** While a post-build copy is stuck on contention, the cap and
+  priority are deliberately raised to the Balanced floor, and once a graceful stop starts draining the cap is
+  removed for the rest of the run.
+- **Parallelism is fixed at the start of a run.** Switching mid-run changes only the CPU cap and the priority;
+  the new parallelism takes effect on the next run.
+
+The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11-resource-governance).
 
 ## Known limits (v1)
 
-- **One repository at a time.** Multi-repo is out of scope for v1.
+- **One repository at a time.**
 - **No build-output isolation for worktrees.** Only `obj` is isolated (per project id, in worktree mode); the
   shared `OutDir` is intentionally left alone for Visual Studio parity, so builds of different branches write
   their output to the same place.
-- **`UseSharedCompilation=false` and `nodeReuse:false` are kept**, and they cost real time — measurements put
-  the flags-off build at roughly 2.9× the flags-on build, essentially all of it from shared compilation.
-  They stay because with a compiler server the emit happens in a long-lived process *outside* the job, which
-  brings back the risk of a torn DLL when a run is stopped. Correctness was chosen over the 2.9×; revisiting
-  it is a tracked follow-up, not an oversight.
-- **The project list is not virtualized.** Card simplification brought the realize time of a 191-row list down
+- **`UseSharedCompilation=false` and `nodeReuse:false` are kept**, and they cost real time — roughly 2.9× the
+  flags-on build, essentially all of it from shared compilation. They stay because with a compiler server the
+  emit happens outside the job, which brings back the risk of a torn DLL when a run is stopped.
+- **The project list is not virtualized.** Row simplification brought the realize time of a 191-row list down
   substantially but did not reach the 400 ms budget on the reference machine; virtualization was deliberately
   deferred because it would touch sticky headers, follow-scroll, reveal staggering and selection at once.
-- **The graph view is full detail only up to 150 nodes** (`GraphView.FullDetailMaxNodes`). Above that,
-  off-screen nodes and edges are culled and labels drop out by level of detail. On the reference machine,
-  synthetic graphs of 500 and 1000 nodes open in roughly 90 ms and 136 ms; panning across the whole graph
-  materializes the rest and costs roughly 206 ms and 469 ms in total.
+- **The graph view is full detail only up to 150 nodes.** Above that, off-screen nodes and edges are culled and
+  labels drop out by level of detail.
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
   answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
   as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.
@@ -218,19 +212,27 @@ Three honest qualifications:
   `planFailed`/`runFailed` at the point of use.
 - **Symlinks/junctions are not followed or detected** during the workspace scan, and a `.csproj` may reference
   files outside the repository root. Both are accepted risks — the repository is trusted by definition.
+- **Graph nodes are not keyboard-navigable** and carry no automation name.
+
+The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.md#20-known-limits).
 
 ## Design and decision records
 
-These records are written in **Turkish**; the code, the UI and this README are in English.
+The permanent documentation is [`ARCHITECTURE.md`](ARCHITECTURE.md) (English) and
+[`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) (Turkish). Behind them sits a historical record, written in
+**Turkish**, that is kept as it was written and not corrected retroactively:
 
-- [`docs/TRUST-BOUNDARY.md`](docs/TRUST-BOUNDARY.md) — process, IPC, filesystem, git, input and CPU boundaries,
-  each claim cited to `file:line`, plus an explicit list of what is *not* verified and what is out of the
-  threat model.
-- `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md` — the v7 implementation plan
-  (the binding architectural decisions: nested Job Object, shell-out, read-only git, the perf table).
-- `.claude/outputs/2026-07-15-19-00-design-v1/` — the design package: design system README plus the HTML/JSX
+- `.claude/outputs/2026-07-16-08-39-build-orchestrator-plan-v7-implementation.md` — the **plan of record**: the
+  binding architectural decisions (nested Job Object, shell-out, read-only git, the perf table, the WPF
+  fidelity framework).
+- `.claude/outputs/2026-07-15-19-00-design-v1/` — the design package: the specification plus the HTML/JSX
   prototype that is the visual authority for the UI.
-- `CLAUDE.md` — working conventions for this repository.
+- `.claude/outputs/2026-07-15-23-34-design-wpf-feasibility-analysis.md` — the feasibility analysis behind the
+  WPF technical decisions and the accepted structural deviations.
+- `.claude/outputs/` — iteration plans and records, spike results, measurements and closing reports.
+- `.superpowers/sdd/progress.md` — the durable ledger: current state, measurements and parked items. Volatile
+  numbers (test counts, commit hashes) live there rather than in the documents above.
+- [`CLAUDE.md`](CLAUDE.md) — working conventions for this repository.
 
 ## Licence
 

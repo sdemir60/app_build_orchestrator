@@ -30,9 +30,12 @@
 | **A15** | Kapanış belge pası (CLAUDE.md · README · docs/) | **Opus** | **low** | Mekanik denetim; kanıt zaten koddadır |
 | R | Her iterasyon SONU review | **Opus** | **high** (UI iter. **xhigh**) | Plandaki en güçlü model; her iterasyonun sigortası (`/code-review high` argümanı promptta zaten var); A8/A9 gibi UI iterasyonlarının review'unda xhigh |
 
+> **⛔ BU PLAYBOOK KAPANDI (2026-08-03) — A14/A15 YÜRÜTÜLMEYECEK.** Gerekçe ve devam biçimi dosyanın en
+> sonundaki **"KAPANIŞ NOTU"** bölümündedir. Aşağısı tarihsel kayıttır.
+>
 > **DURUM (2026-08-03):** A1-A10 **tamamlandı** (v7'nin planlı kod iterasyonları bitti); **A11** aynı gün (commit `4bb6158`);
 > **A12** (merge `4fb98f4`) ve **A13** (merge **`d99cc38`**, 2026-08-03) de **tamamlandı** ve `main`'e girdi.
-> **Kalan 2 adım:** A14 (tekrarlanır) → A15.
+> **Kalan 2 adım:** A14 (tekrarlanır) → A15. *(Bu iki adım playbook üzerinden koşulmadı — bkz. KAPANIŞ NOTU.)*
 >
 > **A13 sonucu (branch `a13-visual-debt-automation`, 11 task, 107 commit):** gezintinin **228 alt kaleminin 217'si** artık testle
 > pinli, **20'si göz istiyor** (liste: `.claude/outputs/2026-08-03-09-44-visual-check-residue.md`), 1'i ne test ne göz
@@ -1030,6 +1033,9 @@ var · suite yeşil · main'e merge + push.
 
 ## A14 — Test-düzelt döngüsü (senin pasın · **tekrarlanır**) · Model: **Opus** · Effort: **high**
 
+> **⛔ YÜRÜTÜLMEDİ — kural olarak [CLAUDE.md](../../CLAUDE.md) "Test-Düzelt Döngüsü" bölümüne taşındı
+> (bkz. KAPANIŞ NOTU).** Aşağısı tarihsel kayıttır; promptu yapıştırmaya gerek yok.
+>
 > **Buradan sonrası senin.** Uygulamayı kullanırsın; A13'ün ürettiği `visual-check-residue.md` listesini
 > gezersin ve serbest kullanımda ne görürsen not alırsın. Sonra aşağıdaki promptu **her dalga için yeniden**
 > yapıştırırsın — bulgularını içine yazarak.
@@ -1113,6 +1119,10 @@ tekrarla. Bu adımın "bitti"si yok — proje kapanana kadar döngü budur.
 
 ## A15 — Kapanış belge pası (CLAUDE.md · README.md · docs/) · Model: **Opus** · Effort: **low**
 
+> **⛔ YÜRÜTÜLMEDİ — yerine 2026-08-03'te kalıcı dokümanlar son hâline getirildi (`ARCHITECTURE.md` eklendi,
+> `README.md`/`CLAUDE.md` revize edildi) ve sürekli bir kurala bağlandı: [CLAUDE.md](../../CLAUDE.md)
+> "Doküman Güncelleme" (bkz. KAPANIŞ NOTU).** Aşağısı tarihsel kayıttır.
+>
 > **Ne zaman:** A14 dalgaları seyreldiğinde — yeni bulgu kalmadığında ya da kalanlar yalnız kozmetikken.
 > **Tek seferlik**, en sonda.
 >
@@ -1217,3 +1227,35 @@ kaldığımız yerden devam et
 - **Testleri ben mi yazacağım?** Hayır. Sen kusuru görüp tarif ediyorsun (`panel · ne yaptım · ne bekliyordum · ne gördüm · her seferinde mi`), testi agent yazıyor — ve **her fix'ten önce testin KIRMIZI verdiğini göstermek zorunda.**
 - **Tıkanırsam?** Model değiştirme kolu yok; effort'u yükselt (medium → high → xhigh, Kural 2). Effort modelin tavanını aşmaz — yalnız o tavanı sonuna kadar kullandırır. Review'u hiçbir koşulda atlama — riskli bölgelerin (UI custom render, Stop/copy-aware) tek sigortası o.
 - **Commit ne zaman?** Promptlar commit'i sana bırakıyor (CLAUDE.md kuralı). Her aşama sonunda "commit et" demen yeterli.
+
+---
+
+# KAPANIŞ NOTU (2026-08-03) — playbook burada biter
+
+**A1–A13 tamamlandı. A14 (test-düzelt döngüsü) ve A15 (kapanış belge pası) bu playbook üzerinden
+YÜRÜTÜLMEYECEK.** Kullanıcı kararı: kalan iş bir "adım listesi" değil, süresiz devam eden bir çalışma
+biçimidir; onu bir promptun içinde tutmak yerine **projenin kalıcı kurallarına** taşımak doğrudur.
+
+Yerine geçen düzen:
+
+| Playbook adımı | Nereye taşındı |
+|---|---|
+| **A14** — test-düzelt döngüsü | [CLAUDE.md](../../CLAUDE.md) → **"Test-Düzelt Döngüsü"**. Kırmızı-test kuralı, realize testi, şiddet sıralaması, algısal-eşdeğer kapısı, dalga sonu yeşil süit, git akışı orada bağlayıcıdır. Kullanıcı bulguyu tarif eder, agent testi yazar — prompt yapıştırmaya gerek yok. |
+| **A15** — kapanış belge pası | [CLAUDE.md](../../CLAUDE.md) → **"Doküman Güncelleme"**. Tek seferlik bir kapanış pası yerine sürekli bir kural: "dokümanları güncelle" tetikleyicisi + her dalgada olgusal senkron. |
+
+**Kalıcı dokümanlar** bu kapanışla son hâlini aldı ve bundan sonra tek doğruluk kaynağıdır:
+
+- [ARCHITECTURE.md](../../ARCHITECTURE.md) — **yeni**: mimari, process topolojisi, IPC sözleşmesi, incremental
+  karar, build motoru, git yüzeyi, UI mimarisi, design system, kabul edilen yapısal farklar, bilinen sınırlar.
+- [README.md](../../README.md) — giriş/kullanım; ARCHITECTURE.md'ye bağlandı, tekrarlar sadeleşti.
+- [CLAUDE.md](../../CLAUDE.md) — çalışma kuralları; ana doküman haritası, test-düzelt döngüsü ve doküman
+  güncelleme kuralları eklendi.
+- [docs/TRUST-BOUNDARY.md](../../docs/TRUST-BOUNDARY.md) — değişmedi.
+
+**Otorite hiyerarşisi değişmedi:** ledger → plan v7 → design-v1 → fizibilite analizi. Bu playbook zaten teknik
+otorite değildi; artık yürütme sırası olarak da geçerli değildir. **Tarihsel kayıt olarak korunur** —
+A1–A13'ün ne yapıldığını, hangi ölçümle hangi kararın alındığını anlatan tek yer burasıdır.
+
+**Kullanıcının A13'ten devraldığı kısa gözle-kontrol listesi hâlâ geçerlidir:**
+[2026-08-03-09-44-visual-check-residue.md](2026-08-03-09-44-visual-check-residue.md) (20 kalem) — o liste
+artık A14'ün girdisi değil, doğrudan test-düzelt döngüsünün girdisidir.
