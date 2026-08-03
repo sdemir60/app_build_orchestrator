@@ -13,7 +13,7 @@ using BuildOrchestrator.Tests.Supervisor;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [D7/T66] Settings diyaloğu — LAYERS editör VM'i (<see cref="LayerEditorViewModel"/>). Saf/WPF'siz [Fact]'ler:
+/// [D7/T66] Settings diyaloğu — LAYERS editör VM'i (<see cref="SettingsDraftViewModel"/>). Saf/WPF'siz [Fact]'ler:
 /// Save-validation kuralı, taslak commit/rollback (Cancel), ve Save'in BİREBİR konsol notu + persistence'ı.
 /// RunViewModel D8 desenine göre kurulur (EngineHost hiç başlatılmaz — VM'in AppendRunLine yolu engine'e
 /// dokunmaz).
@@ -32,7 +32,7 @@ public class SettingsDialogTests
     [Fact]
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
     {
-        var editor = new LayerEditorViewModel(null);
+        var editor = new SettingsDraftViewModel(null);
 
         // [D7 re-review][Fix6] Save butonunun IsEnabled bağlaması CanSave'in PropertyChanged YAYIMLADIĞINA
         // dayanır (XAML: IsEnabled="{Binding CanSave}") — bu olmadan buton canlı GÜNCELLENMEZ (yalnız ilk
@@ -40,7 +40,7 @@ public class SettingsDialogTests
         int canSaveNotifications = 0;
         editor.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(LayerEditorViewModel.CanSave)) canSaveNotifications++;
+            if (e.PropertyName == nameof(SettingsDraftViewModel.CanSave)) canSaveNotifications++;
         };
 
         editor.AddLayer(); // "Layer 1", regex boş
@@ -86,7 +86,7 @@ public class SettingsDialogTests
         run.LayerPatterns = live;
 
         // Diyalog taslağı canlı pattern'lerin KOPYASI üzerinde çalışır.
-        var editor = new LayerEditorViewModel(run.LayerPatterns);
+        var editor = new SettingsDraftViewModel(run.LayerPatterns);
         editor.Layers[0].Name = "CHANGED";
         editor.Layers[0].Regex = "^B";
         editor.AddLayer();
@@ -115,7 +115,7 @@ public class SettingsDialogTests
         var store = NewStore();
 
         // 6 örnek katman → Save.
-        var editor = new LayerEditorViewModel(null);
+        var editor = new SettingsDraftViewModel(null);
         editor.LoadSampleLayers();
         Assert.Equal(6, editor.Layers.Count);
 
@@ -136,7 +136,7 @@ public class SettingsDialogTests
         Assert.Equal(run.LayerPatterns, store.State.LayerPatterns);
 
         // Emptied → farklı BİREBİR not + persist boşalır.
-        var empty = new LayerEditorViewModel(run.LayerPatterns);
+        var empty = new SettingsDraftViewModel(run.LayerPatterns);
         for (int i = empty.Layers.Count - 1; i >= 0; i--) empty.RemoveLayer(empty.Layers[i]);
         empty.Commit(run, store);
         Assert.Contains("Layers removed — single project list", run.GetRunDocumentText());

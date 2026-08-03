@@ -39,7 +39,7 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
 /// Canlı katman pattern'lerinin bir TASLAK kopyası üzerinde çalışır: <see cref="Commit"/> = kaydet
 /// (RunViewModel + UiState'e yazılır), Cancel = taslağı at (kopya olduğu için canlı pattern'lere dokunulmaz).
 /// </summary>
-public sealed partial class LayerEditorViewModel : ObservableObject
+public sealed partial class SettingsDraftViewModel : ObservableObject
 {
     /// <summary>[D7] "Load sample layers" — 6 örnek katman (BuildApp.jsx:965-972'den BİREBİR: ad + regex).</summary>
     public static readonly IReadOnlyList<(string Name, string Regex)> SampleLayers =
@@ -54,7 +54,7 @@ public sealed partial class LayerEditorViewModel : ObservableObject
 
     public ObservableCollection<LayerRowViewModel> Layers { get; } = [];
 
-    public LayerEditorViewModel(IReadOnlyList<LayerPattern>? initial)
+    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial)
     {
         Layers.CollectionChanged += OnLayersChanged;
         // [D7] Taslak = canlı pattern'lerin DERİN kopyası (Order'a göre, editör sırası = katman sırası).

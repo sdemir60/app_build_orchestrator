@@ -7,14 +7,14 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [D7/T66] Settings modal diyaloğu (ince view). LAYERS bölümü <see cref="LayerEditorViewModel"/>'e (test
+/// [D7/T66] Settings modal diyaloğu (ince view). LAYERS bölümü <see cref="SettingsDraftViewModel"/>'e (test
 /// edilebilir taslak) bağlıdır; REPOSITORY bölümü <see cref="RunViewModel"/>'e. Save = commit (konsol notu +
 /// LayerPatterns + UiState persist), Cancel/scrim/Esc = taslağı at. Diyalog MainWindow'un shell overlay'inde
 /// (RowSpan) durur; <see cref="Open"/> ile açılır.
 /// </summary>
 public partial class SettingsDialog : UserControl
 {
-    private LayerEditorViewModel? _editor;
+    private SettingsDraftViewModel? _draft;
     private RunViewModel? _run;
     private IUiStateStore? _store;
     private Func<string?>? _pickFolder;
@@ -24,7 +24,7 @@ public partial class SettingsDialog : UserControl
         InitializeComponent();
     }
 
-    /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (LayerEditorViewModel),
+    /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
     /// gerçek diyalog açmaz — E1'deki IOsActions.PickFolder gelene dek OpenFolderDialog doğrudan çağrılır).</summary>
     public void Open(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
@@ -32,8 +32,8 @@ public partial class SettingsDialog : UserControl
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
-        _editor = new LayerEditorViewModel(run.LayerPatterns);
-        DataContext = _editor;
+        _draft = new SettingsDraftViewModel(run.LayerPatterns);
+        DataContext = _draft;
         UpdateRepoLabel();
         Visibility = Visibility.Visible;
         Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bulamazsa bile odak burada kalır)
@@ -53,14 +53,14 @@ public partial class SettingsDialog : UserControl
 
     // ---- Layers ----
 
-    private void OnAddLayer(object sender, RoutedEventArgs e) => _editor?.AddLayer();
+    private void OnAddLayer(object sender, RoutedEventArgs e) => _draft?.AddLayer();
 
     private void OnRemoveLayer(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: LayerRowViewModel row }) _editor?.RemoveLayer(row);
+        if (sender is FrameworkElement { DataContext: LayerRowViewModel row }) _draft?.RemoveLayer(row);
     }
 
-    private void OnLoadSampleLayers(object sender, RoutedEventArgs e) => _editor?.LoadSampleLayers();
+    private void OnLoadSampleLayers(object sender, RoutedEventArgs e) => _draft?.LoadSampleLayers();
 
     // ---- Repository (K10) ----
 
@@ -75,8 +75,8 @@ public partial class SettingsDialog : UserControl
 
     private void OnSave(object sender, RoutedEventArgs e)
     {
-        if (_editor is null || _run is null || _store is null || !_editor.CanSave) return;
-        _editor.Commit(_run, _store); // konsol notu + LayerPatterns + UiState persist
+        if (_draft is null || _run is null || _store is null || !_draft.CanSave) return;
+        _draft.Commit(_run, _store); // konsol notu + LayerPatterns + UiState persist
         Close();
     }
 
