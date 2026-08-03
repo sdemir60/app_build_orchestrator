@@ -195,9 +195,14 @@ public partial class MainWindow : Window
         Shell.ProjectFilterChip.Click += (_, _) => _vm.ToggleFilter(null);
         _vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(RunViewModel.ActiveFilter)) RefreshFilterChip();
+            if (e.PropertyName != nameof(RunViewModel.ActiveFilter)) return;
+            RefreshFilterChip();
+            // [E4] Filtre, seçimle AYNI SINIFTAN bir "şu an şuna bakıyorum" beyanıdır → frontier follow durur
+            // (karar arbiter'da, tek yerde: ScrollArbiter.CanFollowFrontier).
+            _scrollArbiter.SetFilter(_vm.ActiveFilter is not null);
         };
         RefreshFilterChip();
+        _scrollArbiter.SetFilter(_vm.ActiveFilter is not null); // kalıcı durumdan gelen bir filtreyle açılış
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
         // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.

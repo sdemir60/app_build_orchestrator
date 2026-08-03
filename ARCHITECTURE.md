@@ -891,9 +891,13 @@ Rows scrolled into view later simply appear.
 Follow-mode keeps the frontier visible while a run is in flight and nothing is selected: at most one scroll
 animation every 550 ms, and none at all if the target is within 54 px.
 
-Two things stop it. Selecting a row stops it, and clearing the selection resumes it. Scrolling the list with
-the wheel also stops it — the user's scroll always wins — but that pause is not permanent: it lifts as soon as
-the user can be considered to be watching again, by either of two routes. Bringing the list back to the
+Three things stop it, and the first two are the same statement in different words: *I am looking at this*.
+Selecting a row stops it, and clearing the selection resumes it. Filtering the list stops it too — under a
+filter the user is inspecting a subset, and the frontier may not even be in it — and clearing the filter
+resumes it. Neither gate is permanent.
+
+Scrolling the list with the wheel also stops it — the user's scroll always wins — but that pause is not
+permanent either: it lifts as soon as the user can be considered to be watching again, by either of two routes. Bringing the list back to the
 **frontier row** (within 48 px of the viewport) resumes it, which reads the intent directly. Leaving the list
 untouched for three seconds also resumes it, which closes a pause the user has simply forgotten about; every
 wheel notch restarts that window, so follow cannot cut in while scrolling is still going on. Returning to the
@@ -959,7 +963,9 @@ WPF has no native smooth scrolling, so four pieces cooperate:
 `ScrollArbiter` is a pure decision core. Rules: a user scroll suppresses **only** that panel; a panel receives
 at most one grant per frame and each grant bumps that panel's epoch so an in-flight animation from an earlier
 epoch is discarded (no yo-yo); an explicit selection or jump always wins and re-enables the panel; automatic
-follow loses to an active selection; and across panels the priority is frontier > console > stream.
+follow loses to an active selection **or an active filter**; and across panels the priority is
+frontier > console > stream. Keeping both intent gates in the arbiter rather than at the call site is the point:
+"may follow run right now" is answered in exactly one place.
 
 `LayoutMetrics` is the shared arithmetic behind sticky headers, follow-mode and selection scrolling: one
 cumulative offset table over mixed 36 px rows and 24 px headers, giving any row's absolute Y, the pinned header

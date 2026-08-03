@@ -65,6 +65,9 @@ Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.
 
 - **Kırmızı test kuralı:** hiçbir fix, kusuru yakalayan test KIRMIZI verdiği gösterilmeden yapılmaz. Kırmızıyı
   gösteremiyorsan test yanlıştır — testi düzelt, kuralı esnetme.
+- **Davranış değişince testi de değişir.** Bir kural bilerek değiştiyse onu pinleyen eski test sessizce
+  silinmez ya da gevşetilmez: YENİ kuralı pinleyecek şekilde yeniden yazılır ve doc'una eski iddia + değişme
+  gerekçesi (ölçüm) yazılır. Testi yeşile boyamak için bütçe/eşik gevşetmek YASAKTIR.
 - **Realize testi:** yeni XAML kökü/şablonu ekleyen her değişiklik bir realize testi de ekler (headless süit
   XAML runtime çözümlemesini görmez). `Window.Measure/Arrange` HWND'siz içeriğe inmez — realize
   `window.Content` üzerinde yapılır.
