@@ -25,7 +25,7 @@
     <UseWPF>true</UseWPF>
     <!-- [A13.2] PerMonitorV2 DPI (px→DIP 1:1); T65 A/B'si için de önkoşul. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- [T64] .exe'nin Explorer/taskbar ikonu — çok boyutlu ICO (16/24/32/48/256), üreteci Assets/generate-tray-icon.ps1. -->
+    <!-- [T64] .exe'nin Explorer/taskbar ikonu — çok boyutlu ICO (16/24/32/48/256), üreteci Assets/generate-app-icons.ps1. -->
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -129,7 +129,7 @@
 
   <ItemGroup>
     <!-- [T62/T64] Tepsi ikonu (elle ayarlanmış 16px raster) + çok boyutlu uygulama ikonu; ikisi de
-         Assets/generate-tray-icon.ps1 tarafından üretilir. Gömülü kaynak olmaları Window.Icon/AppTrayIcon'ın
+         Assets/generate-app-icons.ps1 tarafından üretilir. Gömülü kaynak olmaları Window.Icon/AppTrayIcon'ın
          pack URI ile çözebilmesi için gerekli. -->
     <Resource Include="Assets\*.ico" />
     <Resource Include="Fonts\*.otf" />
