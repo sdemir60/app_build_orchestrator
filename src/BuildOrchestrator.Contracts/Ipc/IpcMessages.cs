@@ -126,6 +126,7 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(SyncStartedEvent), "syncStarted")]
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
+[JsonDerivedType(typeof(PlanProgressEvent), "planProgress")]
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
@@ -169,6 +170,12 @@ public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Suc
 public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent;
 /// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
+/// <summary>[planlama görünürlüğü] Bir run'ın TAZE segmentinde, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
+/// planlama penceresinin adım satırı (worktree hazırlığı → tarama → graf → topo → incremental → MSBuild
+/// çözümü). Satır metinleri <c>Core.Planning.PlanProgressLines</c>'tan gelir — Sync'in yazdıklarıyla AYNI
+/// kaynak. <c>syncProgress</c>'ten AYRI bir kanaldır: bu pencere Sync DEĞİLDİR ve App'in Sync yüzeyini
+/// (<c>_syncInFlight</c>) hiç ilgilendirmez.</summary>
+public sealed record PlanProgressEvent(string Line) : IpcEvent;
 /// <param name="TargetSha">Sync sonrası HEAD sha'sı; belirlenemediyse null.</param>
 /// <param name="FetchDegraded">true ise fetch başarısız/kısıtlı oldu ve sync yerel state ile devam etti.</param>
 /// <remarks>[A5/T69 bilinen seam] Aşağıdaki ÜÇ sayaç da (<paramref name="ChangedCount"/>/

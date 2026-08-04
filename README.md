@@ -136,11 +136,22 @@ the running instance first — tray icon → Exit).
    - *Build* — only changed projects.
    - *Rebuild* — all projects, cached state ignored.
    - *Retry failed* — appears when there are failures; rebuilds them and their dependents.
+
+   Nothing compiles the moment you click. The engine first works out what to build — preparing the worktree if
+   one is in use, scanning, building the graph, then computing what changed — which on a large repository takes
+   seconds. The ribbon reads *"▸ Starting — resolving what to build"* and the console lists each step as it
+   completes; the button becomes *Stop* right away, so a stop pressed during this window is honoured and no
+   project is compiled at all.
 5. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
    post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
    reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. There is no
    *Continue*: press *Build* again and the run starts from the top, skipping everything that already
    succeeded.
+
+If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
+says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take
+minutes; the action is there for the case where waiting is no longer the answer. Restarting kills the engine
+and every `MSBuild.exe` under it, then brings a fresh engine up.
 
 ### Keyboard shortcuts
 

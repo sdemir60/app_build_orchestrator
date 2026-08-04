@@ -1,7 +1,8 @@
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
-/// [design-v1 §3.1] Uygulamanın faz makinesi: <c>empty → boot → syncing → idle → running → done | stopped</c>.
+/// [design-v1 §3.1] Uygulamanın faz makinesi:
+/// <c>empty → boot → syncing → idle → starting → running → stopping → done | stopped</c>.
 /// <para>
 /// <b>Sahiplik notu:</b> bu enum'un KANONİK tanımı task C2'nindir (dosya yolu ve üye kümesi oradan gelir);
 /// A5/T69 Sync event'lerini uçtan uca bağlarken <c>Syncing → Idle</c> geçişine ihtiyaç duyduğu için burada
@@ -22,6 +23,15 @@ public enum AppPhase
 
     /// <summary>Sync bitti, derleme başlamadı: proje durumları bilinir (dirty/clean).</summary>
     Idle,
+
+    /// <summary>Run istendi ama motor henüz <c>runStarted</c> yazmadı: taze bir segmentte bu pencerede
+    /// planlama koşar (worktree hazırlığı → tarama → graf → topo → incremental) ve 177 projelik bir
+    /// workspace'te saniyeler sürer. Tıklamanın kaydedildiğini gösteren TEK yüzey budur — pencere eskiden
+    /// fazsızdı: konsol <c>BeginRunAsync</c> tarafından temizleniyor, şerit önceki metinde donuyordu.
+    /// <para>Adı "Planning" DEĞİL: <c>RetryFailed</c> planner'ı hiç çağırmaz (aynı plandan devam eder) ama o
+    /// pencerede de tıklama görünmelidir. İlerlemenin ayrıntısı konsola akan <c>planProgress</c>
+    /// satırlarındadır; faz yalnız "başlıyor" der.</para></summary>
+    Starting,
 
     Running,
 

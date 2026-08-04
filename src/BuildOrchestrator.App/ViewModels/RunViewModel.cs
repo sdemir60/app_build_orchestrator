@@ -354,6 +354,36 @@ public sealed partial class RunViewModel : ObservableObject
     public const string EngineCannotStartMessage =
         "Engine could not start — the supervisor next to the app would not launch · reinstall required";
 
+    /// <summary>Motorun bir GEÇİŞ beklenirken susabileceği en uzun süre. Aşılırsa kullanıcıya çıkış kapısı
+    /// gösterilir (<see cref="EngineOverdueMessage"/> + şeritteki "Restart engine").
+    /// <para><b>Neden bu kadar uzun:</b> planlama 177 projelik bir workspace'te on saniyelerce sürebilir ve
+    /// graceful drain uçuştaki en uzun <c>MSBuild.exe</c> kadar sürer; ikisi de MEŞRUdur. Eşik "yavaş"ı
+    /// değil "hiç konuşmuyor"u yakalamalıdır — motorun HERHANGİ bir event'i saati sıfırlar
+    /// (<see cref="OnEvent"/>), yani bu süre boyunca TEK satır bile gelmemiş olması gerekir.</para></summary>
+    internal const long EngineSilenceThresholdMs = 90_000;
+
+    /// <summary>Motor bir geçiş beklenirken <see cref="EngineSilenceThresholdMs"/> boyunca hiç konuşmadı.
+    /// Şerit bunu AMBER gösterir (kırmızı değil: bu bir başarısızlık değil, bir bekleyiştir) ve "Restart
+    /// engine" aksiyonunu açar.
+    ///
+    /// <para><b>Neden gerekiyor:</b> ölçülen üretim vakasında motor planlamanın ortasında dondu — App
+    /// <c>IsStarting</c>'te, ardından <c>Stopping</c>'te SONSUZA DEK kilitli kaldı ve tek çıkış uygulamayı
+    /// kapatmaktı. "Restart engine" aksiyonu ZATEN vardı ama görünürlüğü <see cref="EngineDiedMessage"/>'a,
+    /// yani process'in GERÇEKTEN ölmesine bağlıydı; yaşayan-ama-donmuş motorda hiç görünmüyordu.</para>
+    ///
+    /// <para><b>Neden ping/pong değil:</b> o vakada motorun komut döngüsü canlıydı (run arka plan task'ında
+    /// koşar), yani bir ping'e pong dönerdi. Doğru sinyal "yaşıyor mu" değil "beklenen cevabı veriyor mu".</para>
+    ///
+    /// <para><b>Otomatik kurtarma YOK:</b> bu bayrak hiçbir kilidi kendiliğinden açmaz — graceful drain
+    /// dakikalarca sürebilir ve kilidi açmak, hâlâ koşan bir motora ikinci bir run başlatmaya izin vermek
+    /// olurdu. Yalnız kapı gösterilir; açıp açmamak kullanıcının kararıdır.</para></summary>
+    [ObservableProperty] private string? _engineOverdueMessage;
+
+    /// <summary>Motordan gelen SON event'in zamanı (monotonik). <see cref="OnEvent"/> HER event'te yazar —
+    /// <c>ProjectLogEvent</c> dalı UI thread'ine marshal EDİLMEDİĞİ için erişim <see cref="Volatile"/>'dir;
+    /// değerlendirme (ve tek gözlemlenebilir alanın yazımı) yalnız UI thread'indeki tick'te yapılır.</summary>
+    private long _lastEngineSignalMs;
+
     /// <summary>[E2/T10] Son Sync başarısız olduysa hata gerekçesi (ErrorEvent.Message) — şerit bunu KIRMIZI
     /// <c>Sync failed — {reason}</c> faz-metnine çevirir (<see cref="RibbonText.Compose"/>). Bir sonraki Sync
     /// (<see cref="OnSyncStarted"/> retry) ya da başarılı tamamlanma (<see cref="OnSyncCompleted"/>) temizler.
@@ -461,6 +491,13 @@ public sealed partial class RunViewModel : ObservableObject
                 _runLineCount = 0;
                 _projectLineCount.Clear();
             }
+        // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
+        // bir not düşer. Motor runStarted'a kadar (taze segmentte: worktree hazırlığı → tarama → graf → topo →
+        // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
+        // temizliğinden SONRA yazılır — aksi halde ilk iş olarak silinirdi.
+        var previousPhase = Phase;
+        Phase = AppPhase.Starting;
+        AppendRunLine(RunRequestedLine(mode));
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
         // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
@@ -469,8 +506,16 @@ public sealed partial class RunViewModel : ObservableObject
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
             RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
+        {
             IsStarting = false;
+            Phase = previousPhase; // hiçbir engine event'i gelmeyecek — faz Starting'te asılı bırakılamaz
+        }
     }
+
+    /// <summary>[planlama görünürlüğü] Run dokümanına düşen tek satırlık not: konsol, tıklamanın KALICI
+    /// kaydıdır (şerit bir sonraki faz değişiminde üzerine yazar). Motorun planlama adımları hemen ardından
+    /// akar. Mod adı <see cref="RunModeLabel"/>'dan gelir — gönderim hata satırıyla AYNI kaynak.</summary>
+    internal static string RunRequestedLine(RunMode mode) => RunModeLabel(mode) + " requested";
 
     private static string RunModeLabel(RunMode mode) => mode switch
     {
@@ -612,6 +657,13 @@ public sealed partial class RunViewModel : ObservableObject
         {
             AppendRunLine($"[error] engine restart failed: {ex.Message}");
         }
+        finally
+        {
+            // Eski process (ve tüm MSBuild child'ları) her koşulda gitti — o motorun asla göndermeyeceği
+            // event'leri bekleyen hiçbir durum kalmamalı. Yeni motor başlatılamadıysa da geçerlidir:
+            // orada da bekleyecek bir şey yoktur (bkz. OnEngineUnavailable, komutlar zaten kapanır).
+            ReleaseAfterEngineLoss();
+        }
     }
 
     /// <summary>[C2] Aynı projeye tekrar tıklamak seçimi kaldırır (kanonik deselect, BuildApp.jsx). Proje
@@ -635,7 +687,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// da mevcut değeri alır.</summary>
     private bool RunActive => IsRunning || IsStarting;
     partial void OnIsRunningChanged(bool value) => PropagateRunActive();
-    partial void OnIsStartingChanged(bool value) => PropagateRunActive();
+    partial void OnIsStartingChanged(bool value)
+    {
+        PropagateRunActive();
+        if (value) ArmEngineWatchdog(); // run istendi — motor bundan sonra konuşmalı
+    }
     private void PropagateRunActive()
     {
         bool active = RunActive;
@@ -772,12 +828,46 @@ public sealed partial class RunViewModel : ObservableObject
             // devir notu); şerit canlı "~Ns left"i ve building'in azalan kalanını görebilsin diye her tick'te tazelenir.
             UpdateEta();
         }
+        EvaluateEngineSilence();
     }
+
+    // ---------------------------------------------------------------- motor sessizlik watchdog'u
+
+    /// <summary>Bir GEÇİŞ bekleniyor mu: run istendi ama <c>runStarted</c> gelmedi (<see cref="IsStarting"/>),
+    /// ya da stop istendi ama <c>runStopped</c> gelmedi (faz <see cref="AppPhase.Stopping"/>). Watchdog YALNIZ
+    /// bu iki pencerede kuruludur — koşan bir run'da tek bir projenin sessizce dakikalarca derlenmesi meşrudur
+    /// ve orada uyarmak kullanıcıyı sağlıklı bir build'i öldürmeye davet ederdi.</summary>
+    private bool WaitingOnEngine => IsStarting || Phase == AppPhase.Stopping;
+
+    /// <summary>Sessizlik saatini şimdiye alır: bekleyiş TAM BURADA başlar. Kurulmasaydı, uzun süre boşta
+    /// duran bir uygulamada basılan ilk Build anında "cevap vermiyor" derdi.</summary>
+    private void ArmEngineWatchdog() => Volatile.Write(ref _lastEngineSignalMs, _nowMs());
+
+    /// <summary>UI thread'inde, <see cref="TickElapsed"/> ile 200ms'de bir. Gözlemlenebilir alanın TEK yazıcısı
+    /// burasıdır: <see cref="OnEvent"/> (arka plan thread'inde de koşabilir) yalnız zaman damgasını yazar.
+    /// Bekleyiş bittiğinde ya da motor yeniden konuştuğunda uyarı KENDİLİĞİNDEN kalkar.</summary>
+    private void EvaluateEngineSilence()
+    {
+        bool overdue = WaitingOnEngine
+            && _nowMs() - Volatile.Read(ref _lastEngineSignalMs) >= EngineSilenceThresholdMs;
+        EngineOverdueMessage = overdue ? EngineSilentMessage : null;
+    }
+
+    /// <summary>Şeridin amber satırı. Süre TEK kaynaktan (<see cref="EngineSilenceThresholdMs"/>) biçimlenir —
+    /// eşik değişirse metin de değişir. Dil, mevcut kalıcı satırların (<see cref="EngineMissingMessage"/>)
+    /// em-dash + <c>·</c> idiomuyla aynı; sakin ve kesin (design-v1 §"Ton").</summary>
+    internal static string EngineSilentMessage { get; } = string.Format(CultureInfo.InvariantCulture,
+        "Engine has stopped responding — no reply for {0} · you can restart it",
+        DurationFormat.Elapsed(EngineSilenceThresholdMs));
 
     // ---------------------------------------------------------------- event → durum
 
     public void OnEvent(IpcEvent ev)
     {
+        // Motor KONUŞTU: sessizlik saati sıfırlanır. Event TÜRÜ önemsizdir — sinyal "yaşıyor mu" değil
+        // "susuyor mu". Uyarının kendisi BURADA temizlenmez: bu metot ProjectLogEvent için arka plan
+        // thread'inden de çağrılır ve gözlemlenebilir alanların tek yazıcısı UI thread'indeki tick'tir.
+        Volatile.Write(ref _lastEngineSignalMs, _nowMs());
         switch (ev)
         {
             case RunStartedEvent e: OnRunStarted(e); break;
@@ -794,6 +884,10 @@ public sealed partial class RunViewModel : ObservableObject
             // [A5/T69] Sync yüzeyi — handler'lar RunViewModel.Workspace.cs'te
             case SyncStartedEvent: OnSyncStarted(); break;
             case SyncProgressEvent e: AppendRunLine(e.Line); break;
+            // [planlama görünürlüğü] Motorun planlama adımları. AppendRunLine DIŞINDA hiçbir şeye dokunmaz:
+            // faz zaten Starting'tir (BeginRunAsync yazdı) ve bu satırlar Sync yüzeyine (_syncInFlight) AİT
+            // DEĞİLDİR — oraya bağlanırsa Rebuild/RetryFailed planlama boyunca sessizce kilitlenirdi.
+            case PlanProgressEvent e: AppendRunLine(e.Line); break;
             case SyncCompletedEvent e: OnSyncCompleted(e); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
@@ -1004,7 +1098,9 @@ public sealed partial class RunViewModel : ObservableObject
         // [runFailed] Running'de gelirse (yalnız runFailed bunu yapabilir — kümedeki diğer üç kod runStarted'dan
         // ÖNCE üretilir) şerit donmuş bir "▸ Building 3/10" gösterirdi: derleme bitmiş, uygulama "derliyorum"
         // diyor. Stopped'a DEĞİL dinlenme fazına düşülür — durmadı, düştü; gerekçeyi RunErrorMessage anlatır.
-        if (Phase is AppPhase.Running or AppPhase.Stopping) Phase = RestingPhase;
+        // [planlama görünürlüğü] Starting de aynı kapıdan geçer: planFailed/msbuildNotFound TAM OLARAK bu
+        // pencerede üretilir ve runStarted asla gelmez — faz bırakılmazsa şerit sonsuza dek "▸ Starting" der.
+        if (Phase is AppPhase.Running or AppPhase.Stopping or AppPhase.Starting) Phase = RestingPhase;
         // [runFailed] Gerekçe şeride taşınır — konsol satırı tek başına yeterli değil (kullanıcı konsola
         // bakmıyor olabilir ve şerit o ana kadar aksini söylüyordu). noResumableRun DIŞARIDA: o bir REDdir
         // (RunCoordinator onu `rejection` diye adlandırır), bir başarısızlık değil — kalıcı kırmızı bir satır
@@ -1040,6 +1136,23 @@ public sealed partial class RunViewModel : ObservableObject
         EngineDiedMessage = exitCode is { } code
             ? $"Engine stopped unexpectedly (exit {code})"
             : "Engine stopped unexpectedly (protocol error)";
+        ReleaseAfterEngineLoss();
+    }
+
+    /// <summary>Motor GİTTİ — beklenmedik ölümle (<see cref="OnEngineExited"/>) ya da kullanıcının kasıtlı
+    /// yeniden başlatmasıyla (<see cref="RestartEngineAsync"/>). Her iki yolda da uçuştaki run/Sync pencereleri
+    /// serbest bırakılır: o motorun asla göndermeyeceği event'leri bekleyen hiçbir durum kalmamalıdır.
+    ///
+    /// <para><b>Neden iki çağıran:</b> <see cref="EngineHost.RestartAsync"/> önce <c>_generation</c>'ı artırır
+    /// (eski exit-watcher susturulur) ve ancak sonra child'ı öldürür — yani YAŞAYAN bir motoru yeniden
+    /// başlatmak <c>EngineExited</c> ATEŞLEMEZ. Serbest bırakma yalnız ölüm yolunda kalsaydı, donmuş (ama
+    /// yaşayan) bir motorda Restart'a basmak şeridi temizler, kilidi AÇMAZDI — kapının varlık sebebi de
+    /// tam olarak o kilidi açmaktır.</para>
+    ///
+    /// <para><b>Idempotent:</b> [ObservableProperty] setter'ları eşitlik kontrolüyle çalışır, yani hiçbir run
+    /// aktif değilken çağrılırsa no-op'tur.</para></summary>
+    private void ReleaseAfterEngineLoss()
+    {
         // [E2/F3 fold] Terminal Phase kararı: engine run ORTASINDA (Phase=Running) ölürse Phase Running'de asılı
         // kalıp IsRunning=false ile çelişik bir resting state bırakıyordu. Şerit kalıcı-hata modu EngineDiedMessage
         // != null ÖNCELİĞİYLE Phase'i YOK SAYAR (bkz. RibbonText.Compose), yani terminal Phase seçimi KOZMETİKtir;
@@ -1048,6 +1161,10 @@ public sealed partial class RunViewModel : ObservableObject
         // [Stopping] Stop penceresi de aynı gerekçeye girer: motor öldüyse drain'i bitirecek kimse kalmadı,
         // faz Stopping'de asılı bırakılamaz. Kullanıcı zaten durmayı istemişti — terminal faz Stopped'tır.
         if (Phase is AppPhase.Running or AppPhase.Stopping) Phase = AppPhase.Stopped;
+        // [planlama görünürlüğü] Starting AYRI: orada hiçbir proje derlenmedi, "▸ Stopped — 0/0 · 0 not built"
+        // olmayan bir koşuyu anlatırdı. Dinlenme fazı dürüst tabandır (şerit zaten engine-died önceliğiyle
+        // kırmızı metni gösterir; bu, o metin temizlendikten SONRA görülecek durumdur).
+        else if (Phase == AppPhase.Starting) Phase = RestingPhase;
         IsRunning = false;
         IsStarting = false;
         _currentRunId = null;
@@ -1055,6 +1172,9 @@ public sealed partial class RunViewModel : ObservableObject
         // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada
         // da uçuştaki Sync serbest bırakılır.
         ReleaseSyncPhase();
+        // Beklenen geçiş kalmadı → sessizlik uyarısının konusu da kalmadı. (Tick zaten aynı sonuca varırdı;
+        // burada YAZILMASININ sebebi, kullanıcının Restart'a bastığı KAREde amber satırın kalkmasıdır.)
+        EngineOverdueMessage = null;
     }
 
     /// <summary>

@@ -218,4 +218,23 @@ public sealed class EnginePreflightTests
 
         GC.KeepAlive(window);
     }
+
+    /// <summary>Motor YAŞIYOR ama sustu (donmuş run task'ı — ölçülen üretim vakası). Process çıkmadığı için
+    /// <c>EngineDiedMessage</c> HİÇ yazılmaz; aksiyon yalnız ona bağlı kalsaydı kullanıcının tek çıkışı
+    /// uygulamayı kapatmak olurdu. Kapı, sessizlik uyarısıyla birlikte de açılır.</summary>
+    [StaFact]
+    public void The_realized_ribbon_offers_the_restart_action_when_the_engine_has_gone_silent()
+    {
+        var vm = NewVm();
+        var host = DsResources.NewHost();
+        var ribbon = new StickyRibbon { DataContext = vm, AnimationsEnabledProvider = () => false };
+        var window = DsResources.Realize(host, ribbon);
+        Assert.Equal(Visibility.Collapsed, ribbon.RestartEngineAction.Visibility); // ön-koşul
+
+        vm.EngineOverdueMessage = "Engine has stopped responding — no reply for 1m 30s · you can restart it";
+
+        Assert.Equal(vm.EngineOverdueMessage, ribbon.PhaseText.Text);
+        Assert.Equal(Visibility.Visible, ribbon.RestartEngineAction.Visibility);
+        GC.KeepAlive(window);
+    }
 }

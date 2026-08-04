@@ -112,6 +112,27 @@ public class RibbonTextTests
         Assert.Equal("Engine stopped unexpectedly (exit 139)", engineWins.Text);
     }
 
+    /// <summary>Motor SUSTU (yaşıyor ama cevap vermiyor) — bu, geçmişe ait bir olgu değil CANLI bir durumdur:
+    /// Sync/run hatalarını ve faz-metnini EZER, çünkü o metinlerin hepsi "sistem çalışıyor" varsayar. Motor
+    /// GERÇEKTEN öldüyse (process gitti) o metin daha kesindir ve üstte kalır.
+    /// <para>Renk KIRMIZI DEĞİL amber: bu bir başarısızlık değil, bir bekleyiştir — drain hâlâ meşru olabilir.
+    /// Aynı gerekçeyle glyph de YOK ("failed" rozeti olmayan bir hatayı ilan ederdi).</para></summary>
+    [Fact]
+    public void A_silent_engine_outranks_the_failures_and_the_phase_but_not_a_dead_engine()
+    {
+        const string silent = "Engine has stopped responding — no reply for 1m 30s · you can restart it";
+
+        var overdueWins = RibbonText.Compose(AppPhase.Stopping, true, false, Counters(building: 2), 10, 3, 14, 0, null, null, 0,
+            engineDiedMessage: null, syncError: "fetch failed", runError: "run blew up", engineOverdue: silent);
+        Assert.Equal(silent, overdueWins.Text);
+        Assert.Equal("Brush.AmberText", overdueWins.BrushKey);
+        Assert.Null(overdueWins.Glyph);
+
+        var deathWins = RibbonText.Compose(AppPhase.Stopping, true, false, Counters(building: 2), 10, 3, 14, 0, null, null, 0,
+            engineDiedMessage: "Engine stopped unexpectedly (exit 139)", syncError: null, runError: null, engineOverdue: silent);
+        Assert.Equal("Engine stopped unexpectedly (exit 139)", deathWins.Text);
+    }
+
     // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine öldüyse şerit, HANGİ Phase'de olursa olsun KIRMIZI ölüm metnini
     // gösterir — Phase (burada Running) ve hatta bir Sync hatası bile YOK SAYILIR (en yüksek öncelik).
     [Fact]
@@ -140,6 +161,21 @@ public class RibbonTextTests
         var line = RibbonText.Compose(AppPhase.Running, true, allClean: false, Counters(building: 1, queued: 6),
             willBuild: 14, finishedOfWillBuild: 7, totalProjects: 14, elapsedMs: 24_000, etaMs: 34_000, checkDurMs: null, warnings: 0);
         Assert.Equal("▸ Building 7/14 · 24s · ~35s left", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
+    // [planlama görünürlüğü] Build'e basmakla runStarted arasında geçen pencere: motor planlamayı koşuyor
+    // (177 projelik OSYS'te saniyeler). Şerit burada önceki metinde ("▸ Ready — …" / "▸ Stopped — …") DONUYORDU
+    // ve konsol da BeginRunAsync tarafından temizlendiği için ekranda tıklamanın kaydedildiğine dair tek bir
+    // kanıt kalmıyordu. Sayaç YOK (henüz hiçbir şey planlanmadı — "0/0" yazmak uydurma olurdu); ilerlemeyi
+    // motorun konsola akıttığı planlama adımları taşır. Renk Running/Stopping ile AYNI: faz etkin.
+    [Fact]
+    public void Starting_line_says_the_engine_is_resolving_what_to_build()
+    {
+        var line = RibbonText.Compose(AppPhase.Starting, true, allClean: false, Counters(),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 0, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("▸ Starting — resolving what to build", line.Text);
         Assert.Equal("Brush.TextSecondary", line.BrushKey);
         Assert.Null(line.Glyph);
     }

@@ -63,8 +63,13 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// hem de pump thread'ini BLOKLAMAZ (bkz. MsBuildInvoker: terk edilmiş pump'lar zaten thread-pool baskısı
 /// yaratıyor; buraya bloklu bekleme eklenmez).</para>
 /// </summary>
-/// <param name="planner">(root, configuration) → <see cref="RunPlan"/>. Core'un planlama pipeline'ı; senkron ve
-/// I/O yapar, bu yüzden run'ın arka plan task'ından çağrılır (IPC dispatch loop'u bloklanmaz).</param>
+/// <param name="planner">(komut, ilerleme kanalı) → <see cref="RunPlan"/>. Core'un planlama pipeline'ı; senkron ve
+/// I/O yapar, bu yüzden run'ın arka plan task'ından çağrılır (IPC dispatch loop'u bloklanmaz).
+/// <para>[planlama görünürlüğü] İkinci parametre, planlayıcının adım satırlarını yayınladığı kanaldır: her satır
+/// <see cref="PlanProgressEvent"/> olarak, <c>runStarted</c>'tan ÖNCE App'e gider. Bu pencere 177 projelik bir
+/// workspace'te saniyeler sürer ve eskiden TEK event bile üretmiyordu — App konsolu temizleyip
+/// <c>IsStarting</c>'e giriyor, şerit önceki metinde donuyordu. Kanal SENKRON çağrılabilir (kanal yazımı
+/// bloklamaz) ve yalnız TAZE segmentte kullanılır: Continue/RetryFailed planner'ı hiç çağırmaz.</para></param>
 /// <param name="msbuildFactory">MSBuild takımını (ham invoker + exe yolu) LAZY çözer: vswhere/VS yoksa Supervisor
 /// yine ayağa kalkar, hata ancak <c>startRun</c>'da <c>error(msbuildNotFound)</c> olarak bildirilir.</param>
 /// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; Continue AYNI writer'ı (aynı run
@@ -100,7 +105,7 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// (null) ⇒ <c>Task.Delay</c>.
 /// </param>
 public sealed class RunCoordinator(
-    Func<StartRunCommand, RunPlan> planner,
+    Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
     Func<DateTimeOffset, RunLogWriter> logFactory,
     NdjsonWriter writer,
@@ -710,7 +715,10 @@ public sealed class RunCoordinator(
             // (K1) — in-place'e düşmek YANLIŞ branch'i derlemek olurdu, bu yüzden run HİÇ BAŞLAMAZ. Ayrı bir
             // kanal AÇILMAZ: mevcut planlama-hatası kodu (planFailed) kullanılır — App'in RunEndingErrorCodes
             // kümesi onu zaten tanır (mesaj kullanıcıya gösterilir, Build butonu geri açılır).
-            try { runPlan = planner(cmd); }
+            // [planlama görünürlüğü] Planlayıcının adım satırları AYNI FIFO kanaldan gider: sıra korunur,
+            // yani hepsi aşağıdaki runStarted'dan ÖNCE App'e ulaşır. TryWrite unbounded kanalda hiç bloklamaz —
+            // planlayıcı senkron çalıştığı için bu şarttır.
+            try { runPlan = planner(cmd, line => events.TryWrite(new PlanProgressEvent(line))); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
                 or WorktreePreparationException)
             { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }

@@ -226,6 +226,24 @@ unrecoverable: the Supervisor writes `error(framing)` and exits with code 2; the
 internal generation counter and raises exactly one `EngineExited` signal, so a late read from a dead generation
 cannot produce a second one.
 
+A process that dies announces itself. A process that *hangs* does not, and the App would otherwise wait for an
+event that is never coming — the failure mode §4.3 describes, where a wedged planner leaves the phase on
+`starting` and then on `stopping` forever. So the App also watches for silence, but only inside the two windows
+where an answer is owed: a run has been requested and `runStarted` has not arrived, or a stop has been
+requested and `runStopped` has not. Any event from the engine resets the clock; crossing the threshold with no
+event at all raises an amber ribbon line and reveals the same *Restart engine* action.
+
+A liveness ping would not have caught the measured case. The coordinator runs a run on a background task and
+`startRun` returns immediately, so the command loop stayed responsive while the run task was frozen — a ping
+would have been answered. The useful question is not whether the engine is alive but whether it is answering
+what was asked.
+
+Nothing unlocks on its own. A graceful drain can legitimately outlast any threshold, and releasing the lock
+would let a second run start against an engine that is still compiling. The watchdog only offers the door;
+walking through it is the user's decision. Restarting does release the run state, and it has to: the host
+silences the old exit watcher *before* killing the child, so restarting a live-but-wedged engine raises no
+`EngineExited` — the path that used to unlock everything never ran in exactly the case the action exists for.
+
 ---
 
 ## 5. IPC
@@ -263,9 +281,13 @@ recomputes the worker count, which the App has already resolved from the same ta
 
 Lifecycle: `engineReady` · `pong` · `error`.
 Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted`.
-Run: `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` · `projectSkipped` ·
-`runStopped` · `runCompleted`.
+Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
+`projectSkipped` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `worktreeList` · `projectLogChunk`.
+
+`planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
+segment (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
+transcript, and a run's planning window is not a Sync.
 
 Three of these carry the whole model:
 
@@ -543,6 +565,19 @@ Two details that are easy to get wrong and are pinned:
 
 `Continue` and `RetryFailed` never call the planner: they resume from the plan, the log writer and the clock of
 the original run.
+
+**Planning reports itself.** The planner takes a progress channel and emits a line per step; the coordinator
+turns each into a `planProgress` event on the same FIFO channel as everything else, so they all reach the App
+before `runStarted`. Lines that mark work about to begin — worktree preparation, the incremental pass — are
+written *before* it, because those are the long steps and they produce no count of their own; lines that report
+a count are written after the step that produced it. The window a resumed segment skips has no lines, because
+it does no planning.
+
+This repeats the work Sync already did, and that is correct: the working tree may have changed since, and
+worktree preparation and MSBuild resolution only exist on this path. What was wrong was doing it *silently* —
+the App clears the console on a run request, so a multi-second planning window left the screen with nothing on
+it at all. The step texts therefore live in one place in Core and both callers read them; the same work must
+not acquire two names.
 
 ### 8.7 Workspace preparation
 
@@ -900,14 +935,20 @@ most four, then `+N`), plus — only when there are failures — a failure clust
 `· 4 dependency-affected` dimmed, the first three failing chips, and a `+N more` chip that applies the `failed`
 filter. Glyphs are 13 px in the phase line and 10 px inside chips. There is no dismissible banner: a failure
 summary that can be dismissed is a failure summary that will be missed. Underneath, a 2 px progress bar,
-radius 0, coloured by phase and indeterminate during Sync.
+radius 0, coloured by phase. It runs indeterminate whenever the engine is working without a measurable
+denominator — during Sync, and during `starting`, where there is no plan yet and a determinate bar would sit
+frozen at zero while the line above it says work is under way.
 
-Three failure texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine*
-action), a failed Sync, then a failed run. Each is red, carries the reason, and persists until the user starts
-something new — a Sync clears the run failure, a run start clears both. The order is the order of how much is
-unknown: with no engine nothing can be retried, and with no Sync the project states themselves are stale. A
-rejected request is not a failure and does not take this path — declining a *Continue* with nothing to resume
-leaves the `stopped` line standing, because that line is still true.
+Four texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine* action), an
+engine that has gone silent, a failed Sync, then a failed run. The three failures are red, carry the reason,
+and persist until the user starts something new — a Sync clears the run failure, a run start clears both. Their
+order is the order of how much is unknown: with no engine nothing can be retried, and with no Sync the project
+states themselves are stale. The silence line sits below the death and above the failures because it is the
+only one describing the *present*: the others are facts about something that already finished, and all of them
+assume a working engine. It is amber rather than red and carries no glyph — a drain that is merely slow is not
+a failure — and it clears itself the moment the engine speaks or the wait ends. A rejected request is not a
+failure and does not take this path — declining a request with nothing to resume leaves the `stopped` line
+standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected), the 8 px will-build dot,
 the project name with the solution name beside it, then a right-aligned block — on hover, *Reveal in Explorer*
@@ -970,6 +1011,15 @@ chip (searchable popover); the worktree chip; the `Debug | Release` segment; the
 split-button, whose menu carries *Build*, *Rebuild*, and — when something failed — *Retry failed — N failed +
 dependents*. There is no *Continue*: a stopped run is not resumed, it is started again. While a run is in flight the primary button becomes *Stop*, and the
 branch, worktree and configuration controls lock; the perf chip stays live.
+
+The lock — and the *Stop* button with it — begins at the **click**, not at `runStarted`. The phase moves to
+`starting` and a line goes into the run document before the command is even written, mirroring what a stop
+request does. Anything less leaves a gap the width of a planning window, during which the user has pressed a
+button and the screen still describes the world as it was; on a 177-project workspace that gap is seconds long
+and the console has just been cleared, so nothing on screen contradicts "my click did nothing". The phase
+leaves `starting` by every exit that can happen: `runStarted` moves it on, a run-ending error or a send that
+fails synchronously puts it back, and an engine death drops it to the resting phase rather than to `stopped` —
+nothing was built, and a "stopped" line describing a run that never began would be a fiction.
 
 ### 13.3 Popovers and dialogs
 
@@ -1672,6 +1722,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
 | Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
 | Sync flow (fetch → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
+| Planning step texts (shared by Sync and the run planner) | `Core/Planning/PlanProgressLines.cs` |
 
 **Process control and resource governance**
 

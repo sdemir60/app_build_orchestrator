@@ -86,13 +86,17 @@ public sealed class SyncWorkspaceService(
         if (targetSha is not null) emit(Info($"HEAD {ShortSha(targetSha)} — computing osys-state diff"));
 
         // --- 2) tarama + plan. [v7 A5/N1] granular adım satırları fetch satırından SONRA, dim/info tonunda.
+        // [planlama görünürlüğü] Adım metinleri PlanProgressLines'tan gelir: AYNI satırları Supervisor'ın
+        // BuildRunPlan'ı da yayınlar (Build'e basıldığında planlama yeniden koşar) — metin iki yerde
+        // tanımlanamaz (CLAUDE.md kopya yasağı). Ton (dim/info) burada kalır: o, Sync transkriptinin
+        // sunumudur, satırın kendisi değil.
         var scan = scanner.Scan(cmd.RootPath);
-        emit(Dim($"Scanning solutions ({scan.SlnPaths.Count})"));
-        emit(Dim($"Reading HintPath/Compile items ({scan.CsprojPaths.Count} projects)"));
+        emit(Dim(PlanProgressLines.ScanningSolutions(scan.SlnPaths.Count)));
+        emit(Dim(PlanProgressLines.ReadingProjectItems(scan.CsprojPaths.Count)));
 
         var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, cmd.Configuration, cmd.LayerPatterns);
-        emit(Dim($"Dependency graph — {plan.Cycles.Count} cycles"));
-        emit(Info($"Build order resolved ({plan.Nodes.Count})"));
+        emit(Dim(PlanProgressLines.DependencyGraph(plan.Cycles.Count)));
+        emit(Info(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count)));
 
         // --- 3) will-build pass (v7 A6: "run'dan ÖNCE"; hollow = SYNC ÖNCESİ) — Sync sonrası düğümler artık
         // dirty/clean bilir, hollow kalmaz. SALT-OKUR: build-state yalnız OKUNUR, Sync hiçbir şey PERSIST ETMEZ,

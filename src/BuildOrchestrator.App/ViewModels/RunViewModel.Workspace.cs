@@ -31,6 +31,14 @@ public sealed partial class RunViewModel
     /// ayrı yerde yazılıydı ve biri güncellenirken diğerlerinin sessizce ayrışması işten değildi.</summary>
     private AppPhase RestingPhase => Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
 
+    /// <summary>Stop istendi: motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ile cevap vermelidir —
+    /// sessizlik saati burada da kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe). Faz set eden
+    /// HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
+    partial void OnPhaseChanged(AppPhase value)
+    {
+        if (value == AppPhase.Stopping) ArmEngineWatchdog();
+    }
+
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
     [ObservableProperty] private string? _targetSha;
 

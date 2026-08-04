@@ -42,7 +42,7 @@ public static class RibbonText
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
                                      long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
                                      string? engineDiedMessage = null, string? syncError = null,
-                                     string? runError = null)
+                                     string? runError = null, string? engineOverdue = null)
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
@@ -50,6 +50,14 @@ public static class RibbonText
         // aksiyonu görünümde (StickyRibbon) eklenir.
         if (engineDiedMessage is { Length: > 0 })
             return new RibbonLine(engineDiedMessage, "Brush.StatusFailText", "failed");
+
+        // Motor YAŞIYOR ama beklenen cevabı vermiyor. Bu, geçmişe ait bir olgu (Sync/run hatası) ya da bir
+        // durum betimlemesi (faz) DEĞİL, CANLI bir bekleyiştir: alttaki metinlerin hepsi "sistem çalışıyor"
+        // varsayar ve o varsayım şu an geçerli değildir. Motor GERÇEKTEN öldüyse (yukarıdaki dal) o bilgi
+        // daha kesindir ve üstte kalır. Renk KIRMIZI DEĞİL amber + glyph YOK: bu bir başarısızlık değil —
+        // drain hâlâ meşru olabilir; satır yalnız çıkış kapısını (şerit-içi "Restart engine") gerekçelendirir.
+        if (engineOverdue is { Length: > 0 })
+            return new RibbonLine(engineOverdue, "Brush.AmberText", null);
 
         if (!hasWorkspace)
             return new RibbonLine("Not ready — no repository selected", "Brush.TextFaint", null);
@@ -86,6 +94,14 @@ public static class RibbonText
                         : string.Format(CultureInfo.InvariantCulture,
                             "▸ Ready — {0} to build · {1} up to date", willBuild, totalProjects - willBuild),
                     "Brush.TextSecondary", null);
+
+            // [planlama görünürlüğü] Run istendi, motor henüz runStarted yazmadı — taze bir segmentte bu
+            // pencerede planlama koşar ve 177 projede saniyeler sürer. Şerit burada önceki metinde DONUYORDU
+            // ("▸ Ready — …" / "▸ Stopped — …") ve konsol da temizlendiği için tıklamanın kaydedildiğine dair
+            // ekranda hiçbir kanıt kalmıyordu. Sayaç YOK: henüz plan yok, "0/0" uydurma olurdu — ilerlemeyi
+            // motorun konsola akıttığı planlama adımları taşır. Renk Running/Stopping ile aynı (faz etkin).
+            case AppPhase.Starting:
+                return new RibbonLine("▸ Starting — resolving what to build", "Brush.TextSecondary", null);
 
             case AppPhase.Running:
                 if (allClean)

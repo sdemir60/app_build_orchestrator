@@ -105,7 +105,10 @@ public static class Program
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan → (fresh modda)
         // incremental willBuild + imza. Planlayıcı yalnız fresh (Rebuild/Build) modda çağrılır (Continue/RetryFailed
         // mevcut plan'dan devam eder — bkz. RunCoordinator).
-        RunPlan BuildRunPlan(StartRunCommand cmd)
+        // [planlama görünürlüğü] `progress` satırları PlanProgressEvent olarak, runStarted'tan ÖNCE App'e gider
+        // (bkz. RunCoordinator'ın planner parametresi). Metinler Core'daki PlanProgressLines'tan gelir — Sync'in
+        // yazdıklarıyla AYNI kaynak: iki akış aynı işi anlatır ve tek yerden güncellenir (CLAUDE.md kopya yasağı).
+        RunPlan BuildRunPlan(StartRunCommand cmd, Action<string> progress)
         {
             // [A4/K3] Worktree Build ANINDA hazırlanır (branch seçimi yalnız NİYETTİR, git'e dokunmaz) ve
             // hazırlık planlamanın İLK adımıdır: tarama da, incremental imza da AYNI çözülmüş kökü görmelidir.
@@ -115,7 +118,7 @@ public static class Program
             // hazırlığı ile listWorktrees/deleteWorktree AYNI havuzu görmelidir, aksi halde App'in listelediği
             // worktree'ler build'in kullandıklarından farklı olurdu.
             var workspace = PrepareAsync(cmd, new ProcessRunner(), worktreePoolRoot,
-                Console.Error.WriteLine).GetAwaiter().GetResult();
+                Console.Error.WriteLine, progress).GetAwaiter().GetResult();
             prepared = workspace;
 
             string cachePath = Path.Combine(cacheRoot, "evaluation-cache.json");
@@ -126,11 +129,18 @@ public static class Program
             // restore'un istediği SolutionDir için .sln YOLLARI (ProjectNode yalnız solution ADI taşır) aynı
             // scan'den (`scan.SlnPaths`) elde edilir, workspace ikinci kez taranmaz.
             var scan = scanner.Scan(workspace.ScanRoot);
+            progress(PlanProgressLines.ScanningSolutions(scan.SlnPaths.Count));
+            progress(PlanProgressLines.ReadingProjectItems(scan.CsprojPaths.Count));
             // [A1/T15] Katman pattern'leri komuttan Core'a AKTARILIR — null/boş ise LayerEngine devre dışıdır
             // (varsayılan, mevcut davranış); dolu ise sert faz bariyeri + ters-katman uyarıları devreye girer.
             var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, cmd.Configuration, cmd.LayerPatterns);
+            progress(PlanProgressLines.DependencyGraph(plan.Cycles.Count));
+            progress(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count));
             var solutionRefs = SolutionMapper.MapRefs(scan.SlnPaths, scan.CsprojPaths);
 
+            // Satır işin ÖNCESİNDE: incremental pass (git diff + proje başına imza) planlamanın EN UZUN adımıdır
+            // ve kendi sayısını üretmez — sonrasına bırakılsa akış tam da en uzun beklemede sessizleşirdi.
+            progress(PlanProgressLines.ComputingIncremental(plan.Nodes.Count));
             var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, plan, scan, evaluator, cache, stateStore);
             return new RunPlan(boundPlan, solutionRefs, incremental);
         }
@@ -174,10 +184,15 @@ public static class Program
     /// <param name="poolRoot">Worktree havuzunun kökü (üretimde <see cref="WorktreeManager.DefaultPoolRoot"/>;
     /// testler izole bir temp dizin verir — kullanıcının gerçek havuzu kirletilmez).</param>
     /// <param name="warn">Uyarı kanalı (üretimde <c>Console.Error.WriteLine</c> — stdout YALNIZ NDJSON'dır [D4]).</param>
+    /// <param name="progress">[planlama görünürlüğü] Kullanıcıya görünen adım kanalı (App konsolu). Worktree
+    /// satırı BURADAN basılır, çağırandan DEĞİL: "hazırlık gerçekten koşacak mı" kararı aşağıdaki in-place
+    /// erken-dönüşüdür ve o koşulun çağıran tarafında kopyalanması iki yerin sessizce ayrışması demekti.
+    /// Verilmezse (varsayılan <c>null</c>) hiçbir satır basılmaz — mevcut çağrıların davranışı aynı kalır.</param>
     /// <exception cref="WorktreePreparationException">Seçili branch aktif branch'ten farklıyken worktree
     /// hazırlanamadıysa (bkz. yukarıdaki Finding 3 notu).</exception>
     public static async Task<PreparedWorkspace> PrepareAsync(
-        StartRunCommand cmd, IProcessRunner runner, string poolRoot, Action<string> warn, CancellationToken ct = default)
+        StartRunCommand cmd, IProcessRunner runner, string poolRoot, Action<string> warn,
+        Action<string>? progress = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(cmd);
         ArgumentNullException.ThrowIfNull(runner);
@@ -188,6 +203,10 @@ public static class Program
         // yapılmadan in-place. Branch DOLU ise toggle'a bakılmaz: farklı bir branch, toggle kapalı olsa bile
         // worktree'yi ZORUNLU kılar (PlanWorktree'nin 3-durum matrisi, K1).
         if (!cmd.UseWorktree && string.IsNullOrWhiteSpace(cmd.Branch)) return inPlace;
+
+        // Buradan sonrası GERÇEKTEN git'e dokunur (branch çözümü, havuz prune, worktree add/reuse) ve tek
+        // başına saniyeler sürebilir — satır işin ÖNCESİNDE, erken-dönüşün ARDINDAN basılır.
+        progress?.Invoke(PlanProgressLines.PreparingWorktree(cmd.Branch));
 
         string selectedBranch = cmd.Branch;
         bool mandatory = false; // seçili branch ≠ aktif branch ⇒ in-place'e düşme HAKKI YOK

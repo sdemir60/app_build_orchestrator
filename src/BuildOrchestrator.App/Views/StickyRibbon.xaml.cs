@@ -173,6 +173,7 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.EngineRestartable): // [D1] aksiyonun anlamlı olup olmadığı da metinle birlikte tazelenir
             case nameof(RunViewModel.SyncErrorMessage):
             case nameof(RunViewModel.RunErrorMessage): // [runFailed] aynı öncelik zincirinin üçüncü halkası
+            case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır + "Restart engine" kapısı
                 RefreshText();
                 RefreshProgress();
                 AnnouncePhaseIfChanged(); // [E5/T47] faz değişimini ekran okuyucuya duyur (live region)
@@ -211,14 +212,18 @@ public partial class StickyRibbon : UserControl
             _vm.WillBuildCount, _vm.FinishedOfWillBuild, c.Total,
             _vm.ElapsedMs, _vm.EtaMs, checkDurMs: _vm.ElapsedMs, warnings: 0,
             engineDiedMessage: _vm.EngineDiedMessage, syncError: _vm.SyncErrorMessage,
-            runError: _vm.RunErrorMessage);
+            runError: _vm.RunErrorMessage, engineOverdue: _vm.EngineOverdueMessage);
         // NOT (wire gap): warnings=0 — App derleyici-warning sayısını izlemiyor (RunCompletedEvent'te yok). Bkz. report.
 
-        // [E2/T37] "Restart engine" YALNIZ engine-died kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
+        // [E2/T37] "Restart engine" kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
         // [D1] …ve yalnız yeniden başlatmanın ANLAMI varsa: Supervisor çıktısı hiç yoksa (EngineRestartable=false)
         // aksiyon gizlenir, kullanıcı şeritteki açıklayıcı metni okur (RunViewModel.EngineMissingMessage).
+        // Kapı SESSİZLİK uyarısında da açılır: motor donduğunda process ÇIKMAZ, yani EngineDiedMessage hiç
+        // yazılmaz — aksiyon yalnız ona bağlı kalsaydı kullanıcının tek çıkışı uygulamayı kapatmak olurdu.
+        bool engineNeedsAttention =
+            !string.IsNullOrEmpty(_vm.EngineDiedMessage) || !string.IsNullOrEmpty(_vm.EngineOverdueMessage);
         PART_RestartEngine.Visibility =
-            !string.IsNullOrEmpty(_vm.EngineDiedMessage) && _vm.EngineRestartable ? Visibility.Visible : Visibility.Collapsed;
+            engineNeedsAttention && _vm.EngineRestartable ? Visibility.Visible : Visibility.Collapsed;
 
         PART_PhaseText.Text = line.Text;
         PART_PhaseText.SetResourceReference(TextBlock.ForegroundProperty, line.BrushKey);
@@ -260,7 +265,10 @@ public partial class StickyRibbon : UserControl
     {
         if (_vm is null) return;
 
-        if (_vm.Phase == AppPhase.Syncing)
+        // [planlama görünürlüğü] Starting, Syncing ile AYNI kefede: motor çalışıyor ama henüz PLAN yok, yani
+        // ölçülebilir bir yüzde de yok. Determinate bırakılsaydı çubuk willBuild==0 yüzünden %0'da DONAR ve
+        // "▸ Starting" metniyle çelişirdi — hareketsiz çubuk, takılmış bir uygulamanın en güçlü işaretidir.
+        if (_vm.Phase is AppPhase.Syncing or AppPhase.Starting)
         {
             if (!_isIndeterminate) { _isIndeterminate = true; ApplyIndeterminate(); }
             return;

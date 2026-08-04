@@ -57,6 +57,7 @@ public class RunCoordinatorTests
     {
         RunStartedEvent => "runStarted",
         BuildPreviewEvent => "buildPreview",
+        PlanProgressEvent => "planProgress",
         ProjectStartedEvent p => "projectStarted:" + NameOf(p.ProjectId),
         ProjectLogEvent p => $"projectLog:{NameOf(p.ProjectId)}:{p.LineNumber}",
         ProjectSucceededEvent p => "projectSucceeded:" + NameOf(p.ProjectId),
@@ -135,13 +136,13 @@ public class RunCoordinatorTests
         public RunCoordinator Sut { get; }
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
-        public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, RunPlan>? planner = null,
+        public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
             Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null,
             ICpuGovernor? cpuGovernor = null, MemoryStream? output = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
-                planner: planner ?? (_ => plan),
+                planner: planner ?? ((_, _) => plan),
                 msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
                 logFactory: startedAt =>
                 {
@@ -305,6 +306,70 @@ public class RunCoordinatorTests
         Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(".sln", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(h.ConsoleLines, l => l.Contains("-p:", StringComparison.Ordinal));
         Assert.DoesNotContain(h.ConsoleLines, l => l.Contains("-t:", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// [planlama görünürlüğü] Taze bir segmentte planlama (worktree hazırlığı → tarama → graf → topo →
+    /// incremental) <c>runStarted</c>'tan ÖNCE koşar ve 177 projelik bir workspace'te saniyeler sürer. O
+    /// pencere eskiden TEK event bile üretmiyordu: App konsolu temizleyip <c>IsStarting</c>'e giriyor,
+    /// şerit önceki metinde donuyordu — "Build'e bastım hiçbir şey olmadı".
+    ///
+    /// <para>Planner artık bir ilerleme kanalı alır; koordinatör onu <see cref="PlanProgressEvent"/>'e
+    /// çevirir. Sıra ZORUNLUDUR: satırlar <c>runStarted</c>'tan sonra gelseydi kullanıcı zaten
+    /// "▸ Building 0/N" görüyor olurdu ve satırlar geçmişe ait bir gürültüye dönerdi.</para>
+    /// </summary>
+    [Fact]
+    public async Task planning_progress_reaches_the_app_before_runStarted()
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, planner: (_, progress) =>
+        {
+            progress("Scanning solutions (1)");
+            progress("Computing incremental state (1 projects)");
+            return plan;
+        });
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var events = h.Events;
+        Assert.Equal(["Scanning solutions (1)", "Computing incremental state (1 projects)"],
+                     events.OfType<PlanProgressEvent>().Select(e => e.Line));
+
+        int lastPlanAt = events.Select((e, i) => (e, i)).Last(t => t.e is PlanProgressEvent).i;
+        int startedAt = events.Select((e, i) => (e, i)).First(t => t.e is RunStartedEvent).i;
+        Assert.True(lastPlanAt < startedAt,
+            "planlama satırları runStarted'dan ÖNCE bekleniyor; gelen sıra: " + string.Join(" | ", events.Select(Describe)));
+    }
+
+    /// <summary>Sürdürülen segment (Continue/RetryFailed) planner'ı HİÇ çağırmaz — aynı plan üstünden devam
+    /// eder. Orada planlama satırı basmak, koşmayan bir işi anlatmak olurdu.</summary>
+    [Fact]
+    public async Task a_resumed_segment_prints_no_planning_progress()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        int planned = 0;
+        int aCalls = 0;
+        var invoker = new FakeInvoker((req, _, _) => Task.FromResult(
+            NameOf(req.ProjectId) == "A" && Interlocked.Increment(ref aCalls) == 1 ? Exit(1) : Ok()));
+        using var h = new Harness(plan, invoker, planner: (_, progress) =>
+        {
+            Interlocked.Increment(ref planned);
+            progress("Scanning solutions (1)");
+            return plan;
+        });
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        int afterFirst = h.Events.OfType<PlanProgressEvent>().Count();
+        Assert.Equal(1, afterFirst); // taze segment satırını bastı (vakum değil)
+
+        await h.Sut.StartAsync(Start(RunMode.RetryFailed, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(1, Volatile.Read(ref planned));                            // planner yalnız taze segmentte
+        Assert.Equal(afterFirst, h.Events.OfType<PlanProgressEvent>().Count()); // 2. segment satır EKLEMEDİ
     }
 
     // ---------------------------------------------------------------- 3) graceful stop
@@ -476,7 +541,7 @@ public class RunCoordinatorTests
         // Koordinatör bu borcu yine de kapatmalı — aksi halde App sonsuza dek runStopped bekler.
         var planningReached = Signal();
         var releasePlanning = Signal();
-        Func<StartRunCommand, RunPlan> blockingPlanner = _ =>
+        Func<StartRunCommand, Action<string>, RunPlan> blockingPlanner = (_, _) =>
         {
             planningReached.TrySetResult();
             releasePlanning.Task.GetAwaiter().GetResult(); // deterministik blok (sleep-poll YOK [D8])
@@ -509,7 +574,7 @@ public class RunCoordinatorTests
         const string message = "Cannot build branch 'feature-x': it is not the branch checked out in the workspace, "
             + "so it must be built in an isolated worktree (the active branch is never checked out). "
             + "Worktree preparation failed: fatal: 'C:/pool/feature-x-1' already exists";
-        Func<StartRunCommand, RunPlan> failingPlanner = _ => throw new WorktreePreparationException(message);
+        Func<StartRunCommand, Action<string>, RunPlan> failingPlanner = (_, _) => throw new WorktreePreparationException(message);
         using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())), failingPlanner);
 
         await h.Sut.StartAsync(Start(), default);
@@ -832,8 +897,25 @@ public class RunCoordinatorTests
             if (e is RunCompletedEvent) break;
         }
 
-        Assert.Equal(["runStarted", "buildPreview", "projectSkipped:X", "projectSkipped:Y", "runCompleted:Completed"],
+        // [planlama görünürlüğü] Eski iddia: akış <c>runStarted</c> ile BAŞLARDI. Değişme gerekçesi: taze bir
+        // segmentte planlama (tarama → graf → topo → incremental) runStarted'tan ÖNCE koşar ve 177 projelik
+        // gerçek bir workspace'te saniyeler sürer; o pencerede tek event bile üretilmediği için App konsolu
+        // boş, şerit önceki metinde donuyordu. Sıra artık planlama satırlarıyla BAŞLAR. Bu test o kablajı
+        // GERÇEK Supervisor process'i üzerinden görür — in-process harness'ta planner sahtedir.
+        Assert.Equal(["planProgress", "planProgress", "planProgress", "planProgress", "planProgress",
+                      "runStarted", "buildPreview", "projectSkipped:X", "projectSkipped:Y", "runCompleted:Completed"],
             received.Select(Describe));
+        // Satırlar PAYLAŞILAN kaynaktan (PlanProgressLines — Sync ile aynı) ve GERÇEK sayılarla gelir:
+        // workspace'te 0 .sln, 2 .csproj var ve X↔Y tek bir SCC oluşturur. Worktree satırı YOK: komut
+        // UseWorktree=false + Branch="" taşır, yani hazırlık in-place erken-dönüşüyle hiç koşmaz.
+        Assert.Equal(
+        [
+            PlanProgressLines.ScanningSolutions(0),
+            PlanProgressLines.ReadingProjectItems(2),
+            PlanProgressLines.DependencyGraph(1),
+            PlanProgressLines.BuildOrderResolved(2),
+            PlanProgressLines.ComputingIncremental(2),
+        ], received.OfType<PlanProgressEvent>().Select(e => e.Line));
         var done = Assert.IsType<RunCompletedEvent>(received[^1]);
         Assert.Equal(2, done.Skipped);
         Assert.Equal(0, done.Queued);
@@ -1383,7 +1465,7 @@ public class RunCoordinatorTests
             var inc = Incremental("Up", "Solo"); // imzalar SABİT — kaynak hiçbir run'da değişmiyor
             var basePlan = new BuildPlan([Node("Up") with { BuildOrder = 0 }, Node("Solo") with { BuildOrder = 1 }],
                 Cycles: [], Configuration: "Debug");
-            RunPlan Planner(StartRunCommand _)
+            RunPlan Planner(StartRunCommand _, Action<string> __)
             {
                 var state = store.Load();
                 return new RunPlan(
@@ -1577,7 +1659,7 @@ public class RunCoordinatorTests
         var planningStarted = Signal();
         var releasePlanning = Signal();
         var plan = PlanOf(Node("A"));
-        RunPlan GatedPlanner(StartRunCommand _)
+        RunPlan GatedPlanner(StartRunCommand _, Action<string> __)
         {
             planningStarted.TrySetResult();
             releasePlanning.Task.GetAwaiter().GetResult(); // run task'ını bloklar, test thread'ini DEĞİL [D8]

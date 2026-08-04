@@ -91,6 +91,122 @@ public class RunViewModelStateTests
         Assert.False(vm.SyncInFlight);         // uçuşta Sync yok
     }
 
+    // ---------------------------------------------------------------- [planlama görünürlüğü] Starting fazı
+    //
+    // Build'e basmakla runStarted arasında motor planlamayı koşar (177 projelik OSYS'te saniyeler). O pencerede
+    // App HİÇBİR ŞEY göstermiyordu: BeginRunAsync konsolu TEMİZLİYOR, Phase'e dokunmuyordu — şerit önceki
+    // metinde ("▸ Stopped — …" / "▸ Ready — …") donuyor, konsol bomboş kalıyordu. Kullanıcının bildirdiği
+    // "tekrar build dedim, ui'da bir şey olmadı" cümlesinin yarısı buydu (diğer yarısı motorun donmasıydı).
+    //
+    // Faz adı Planning DEĞİL Starting: RetryFailed planner'ı hiç çağırmaz (aynı plandan devam eder) ama o
+    // pencerede de tıklamanın kaydedildiği görünmelidir — "starting" her modda DOĞRU, "planning" değil.
+
+    [Fact]
+    public async Task Pressing_build_enters_the_starting_phase_and_notes_the_request_in_the_console()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        Assert.Equal(AppPhase.Idle, vm.Phase); // ön-koşul
+
+        // Faz GÖNDERİM ANINDA okunur: bu harness'ta engine başlatılmamıştır, gönderim senkron fırlar ve
+        // aşağıdaki "gönderim başarısız → geri al" dalı fazı hemen dinlenmeye çeker.
+        AppPhase phaseAtSend = AppPhase.Empty;
+        vm.DebugOnCommandSent = _ => phaseAtSend = vm.Phase;
+
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.Equal(AppPhase.Starting, phaseAtSend);
+        Assert.Contains("build requested", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Gönderim SENKRON fırlarsa (motor hiç doğmadı/öldü) hiçbir engine event'i gelmeyecektir: faz
+    /// <see cref="AppPhase.Starting"/>'te asılı kalırsa şerit sonsuza dek "Starting" der. <c>StopAsync</c>'in
+    /// "gönderim başarısız → fazı geri al" deseninin ikizi.
+    /// <para>Geri dönülen faz <b>ÖNCEKİ</b> fazdır, <c>RestingPhase</c> değil: hiçbir şey OLMADI, dolayısıyla
+    /// ekran tam olarak tıklamadan önceki hâline dönmelidir. İki test bunu iki farklı tabandan sürer —
+    /// Sync'lenmiş (Idle) ve Sync'lenmemiş (Boot) — çünkü <c>RestingPhase</c> ikisini de üretebilirdi.</para></summary>
+    [Theory]
+    [InlineData(false, AppPhase.Boot)] // repo seçili ama hiç Sync yok
+    [InlineData(true, AppPhase.Idle)]  // Sync bitmiş, durumlar biliniyor
+    public async Task A_failed_send_takes_the_phase_back_to_where_it_was(bool synced, AppPhase expected)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        if (synced) vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        Assert.Equal(expected, vm.Phase); // ön-koşul
+
+        await vm.BuildCommand.ExecuteAsync(null); // engine başlatılmadı → SendAsync senkron fırlar
+
+        Assert.Equal(expected, vm.Phase);
+        Assert.False(vm.IsStarting);
+    }
+
+    [Fact] // normal akış: motor planlamayı bitirdi ve run'ı açtı
+    public async Task RunStarted_takes_the_phase_out_of_starting()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.Phase = AppPhase.Starting;
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+
+        Assert.Equal(AppPhase.Running, vm.Phase);
+    }
+
+    [Fact] // planlama düştü (planFailed/msbuildNotFound) — runStarted da runCompleted da GELMEYECEK
+    public async Task A_run_ending_error_during_starting_leaves_the_phase_for_the_resting_phase()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.Phase = AppPhase.Starting;
+
+        vm.OnEvent(new ErrorEvent("planFailed", "workspace root not found"));
+
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+    }
+
+    /// <summary>Motor planlama penceresinde öldü. Faz <see cref="AppPhase.Stopped"/>'a DEĞİL dinlenme fazına
+    /// düşer: hiçbir proje derlenmedi, "▸ Stopped — 0/0 · 0 not built" olmayan bir koşuyu anlatırdı. (Şerit
+    /// zaten engine-died önceliğiyle kırmızı metni gösterir — bu, o metin temizlendikten sonraki dürüst
+    /// taban durumdur.)</summary>
+    [Fact]
+    public async Task An_engine_death_during_starting_settles_the_phase_on_the_resting_phase()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.Phase = AppPhase.Starting;
+
+        vm.OnEngineExited(139);
+
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+        Assert.False(vm.IsStarting);
+    }
+
+    /// <summary>Motorun planlama adımları konsola AKAR — pencere artık tek satırlık bir "requested" notundan
+    /// ibaret değil, ilerlemeyi gösterir. Kanal <c>syncProgress</c>'ten AYRIdır ve Sync yüzeyine dokunmaz:
+    /// <c>SyncInFlight</c> bu satırlarla açılmamalıdır (açılsaydı Rebuild/RetryFailed sessizce kilitlenirdi).</summary>
+    [Fact]
+    public async Task Plan_progress_lines_reach_the_console_without_touching_the_sync_surface()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.Phase = AppPhase.Starting;
+
+        vm.OnEvent(new PlanProgressEvent("Scanning solutions (12)"));
+        vm.OnEvent(new PlanProgressEvent("Build order resolved (177)"));
+
+        string text = vm.GetRunDocumentText();
+        Assert.Contains("Scanning solutions (12)", text, StringComparison.Ordinal);
+        Assert.Contains("Build order resolved (177)", text, StringComparison.Ordinal);
+        Assert.Equal(AppPhase.Starting, vm.Phase); // satırlar fazı DEĞİŞTİRMEZ
+        Assert.False(vm.SyncInFlight);
+    }
+
     // ---------------------------------------------------------------- [Stopping] fazdan ÇIKIŞ garantileri
     //
     // Bu dört test "Stopping'e nasıl girildiği"ni değil, "Stopping'ten HER YOLDAN çıkıldığı"nı sürer:
