@@ -4,17 +4,21 @@
 #   tray-icon-16.ico  — sistem tepsisi (AppTrayIcon 16px varyantini kullanir)
 #   app-icon.ico      — cok boyutlu uygulama ikonu: 16 / 24 / 32 / 48 / 256 (<ApplicationIcon> + Window.Icon)
 #
-# Kaynak sanat: `.claude/outputs/2026-08-05-01-26-design-v1.2.1/prototype/assets/app-icon.svg`
-#   tile (near-black gradient + 1px border) + bes pill serit + amber gradient chevron.
-#   Serit ve chevron geometrisi app-mark.svg ile AYNIdir; tile ve gradient'ler yalnizca ikon varyantinda vardir.
+# Kaynak sanat: `.claude/outputs/2026-08-05-01-26-design-v1.2.1/prototype/assets/` — serit ve chevron
+#   geometrisi `app-icon.svg` / `app-mark.svg`'de AYNIdir; gradient'ler app-icon.svg'nin <defs>'inden gelir.
 #
 # ONCEKI SURUM (T62/T64) Delta'nin kendi ikonunu (delta-app-icon.svg) rasterlestiriyordu. design-v1.2.0 ile
 # uygulama kendi markasini kazandi; Delta artik FIRMA logosudur ve ikonda yer almaz.
 #
-# KUCUK BOYUT KARARI — ayrintili gerekce asagida `$SmallSizes`:
-#   16 ve 24px'te BES SERIT OKUNMUYOR (serit yuksekligi 286-biriminde 21 → 16px'te ~1.2 piksel). Bu iki boyut
-#   markanin SADELESTIRILMIS halini cizer: tile + yalnizca amber chevron. Bu, tasarimda LITERAL olarak
-#   verilmemis bir turetmedir (Icon.CaptionRestore ile ayni statu) — gerekcesi burada yazilidir.
+# ZEMIN KARARI — KULLANICI TALEBI, TASARIMDAN BILINCLI SAPMA:
+#   design-v1.2.1 §6 kullanim matrisi `app-icon.svg`i (near-black tile'li) .exe/taskbar/tepsi icin, seffaf
+#   `app-mark.svg`i uygulama ici icin ayirir. Kullanici ikisinde de ZEMIN ISTEMEDI: ikonlar artik SEFFAF
+#   uretilir ve isaret tuvale oturur (tile'in birakacagi %42'lik kucuk yerlesim yerine). Tile'i geri koymak
+#   icin `-WithTile`.
+#   BILINEN BEDEL: markanin iki KOYU seridi (#2A2A30, #44444B) koyu bir taskbar'da neredeyse gorunmez;
+#   gorunen kompozisyon amber serit + beyaz serit + gumus serit + chevron olur. Tile bu sorunu cozuyordu.
+#
+# KUCUK BOYUT KARARI — ayrintili gerekce asagida `$SmallSizes`.
 #
 # Calistirma:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File src/BuildOrchestrator.App/Assets/generate-app-icons.ps1
@@ -25,7 +29,8 @@
 
 param(
   [int]$DumpAscii = 0,
-  [switch]$FullArtAtSmallSizes   # tani: 16/24'u de tam sanatla ciz (sadelestirmeyi ATLA)
+  [switch]$FullArtAtSmallSizes,  # tani: 16/24'u de tam sanatla ciz (sadelestirmeyi ATLA)
+  [switch]$WithTile              # tani: near-black tile'i geri koy (varsayilan: SEFFAF)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,10 +43,15 @@ $StripDx    = 5.5       # <g transform="translate(5.5 0)">
 
 # 16/24'te tam sanat okunmuyor: serit yuksekligi 21/286 → 16px'te 1.18 piksel. Bu boyutlarda yalnizca chevron
 # cizilir (marka tanınırligini tasiyan tek ogedir; amber kontrasti near-black tile'da net kalir).
-$SmallSizes = @(16, 24)
-# Sadelestirilmis varyantta chevron'un tile yuksekligine orani. Tam sanatta isaret %42'dir; serit olmayinca
-# o oran kucuk boyutta bos bir tile birakiyordu (16px'te isaret ~7 piksel). %60 optik olarak dengeli.
+# Yalniz 16px sadelestirilir. Tile kaldirilinca isaret tuvale oturdugu icin BUYUDU (serit yuksekligi 16px'te
+# 1.2 → 1.9 piksel, 24px'te 2.8) ve 24px'te bes serit ARTIK OKUNUYOR — olculdu. 16px'te hala karisik: seritler
+# ve chevron ust uste binip gurultuye donuyor, bu yuzden o tek boyut chevron'u yalniz cizer.
+$SmallSizes = @(16)
+# Sadelestirilmis + TILE'LI varyantta chevron'un tile yuksekligine orani (yalnizca -WithTile yolunda kullanilir).
 $ChevronFill = 0.60
+# Seffaf (tile'siz) varyantta isaretin her kenarda biraktigi bosluk — tuval oraninda. Windows ikonu zaten
+# kendi etrafinda nefes payi birakir; bu, isaretin kenara yapismasini onleyen asgari paydir.
+$MarkPadding = 0.04
 
 function Rgb([string]$hex) {
   return [System.Windows.Media.Color]::FromRgb(
@@ -108,70 +118,104 @@ function New-ChevronBrush {
   return $brush
 }
 
-# Kaynak sanati $size'a rasterlestirir. $simplify: yalnizca tile + chevron (kucuk boyutlar).
-function New-RenderedBitmap([int]$size, [bool]$simplify) {
+# Isaretin sanat uzayindaki sinir kutulari (translate(5.5 0) UYGULANMIS hali).
+#   Tam isaret : seritler x 46..165, chevron x 140.4..224 → 51.5..229.5 ; y 83..203
+#   Yalniz chevron: x 145.9..229.5 ; y 83..203
+$MarkBBox    = @{ X = 51.5;  Y = 83.0; W = 178.0; H = 120.0 }
+$ChevronBBox = @{ X = 145.9; Y = 83.0; W = 83.6;  H = 120.0 }
+
+# Verilen sinir kutusunu KARE tuvale oturtan olcek+oteleme'yi DrawingContext'e iter (Uniform, ortalanmis).
+# $pad: her kenarda birakilan bosluk (tuval oraninda).
+function Push-FitTransform($dc, $bbox, [double]$pad) {
+  $avail = $ArtSize * (1.0 - 2.0 * $pad)
+  $fit = [Math]::Min($avail / $bbox.W, $avail / $bbox.H)
+  $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (
+    (($ArtSize - $bbox.W * $fit) / 2.0), (($ArtSize - $bbox.H * $fit) / 2.0))))
+  $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($fit, $fit)))
+  $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (-$bbox.X, -$bbox.Y)))
+  $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0)))
+}
+
+function Pop-FitTransform($dc) { $dc.Pop(); $dc.Pop(); $dc.Pop(); $dc.Pop() }
+
+# Kaynak sanati $size'a rasterlestirir.
+#   $simplify — yalnizca chevron (kucuk boyutlar; bes serit o olcekte okunmuyor)
+#   $withTile — near-black tile + kenarlik. KAPALI oldugunda isaret SEFFAF zeminde durur ve tuvale OTURUR
+#               (tile varken isaret onun icinde %42'de kalir; zemin yokken o bosluk anlamsizdir).
+function New-RenderedBitmap([int]$size, [bool]$simplify, [bool]$withTile) {
   $scale = $size / $ArtSize
   $root = New-Object System.Windows.Media.ContainerVisual
+  $bbox = if ($simplify) { $ChevronBBox } else { $MarkBBox }
+  # Tile varken isaret kendi SVG konumunda durur; tile yokken tuvale oturtulur.
+  $pad = if ($withTile) { $null } else { $MarkPadding }
 
-  # --- tile ---
-  $tile = New-Object System.Windows.Media.DrawingVisual
-  $dc = $tile.RenderOpen()
-  $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($scale, $scale)))
-  $dc.DrawRoundedRectangle($TileBrush, $null,
-    (New-Object System.Windows.Rect (1, 1, 284, 284)), $TileRadius, $TileRadius)
-  $pen = New-Object System.Windows.Media.Pen ((New-Object System.Windows.Media.SolidColorBrush $TileBorder), 1.0)
-  $dc.DrawRoundedRectangle($null, $pen,
-    (New-Object System.Windows.Rect (1.5, 1.5, 283, 283)), 30.5, 30.5)
-  $dc.Pop()
-  $dc.Close()
-  [void]$root.Children.Add($tile)
+  if ($withTile) {
+    $tile = New-Object System.Windows.Media.DrawingVisual
+    $dc = $tile.RenderOpen()
+    $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($scale, $scale)))
+    $dc.DrawRoundedRectangle($TileBrush, $null,
+      (New-Object System.Windows.Rect (1, 1, 284, 284)), $TileRadius, $TileRadius)
+    $pen = New-Object System.Windows.Media.Pen ((New-Object System.Windows.Media.SolidColorBrush $TileBorder), 1.0)
+    $dc.DrawRoundedRectangle($null, $pen,
+      (New-Object System.Windows.Rect (1.5, 1.5, 283, 283)), 30.5, 30.5)
+    $dc.Pop()
+    $dc.Close()
+    [void]$root.Children.Add($tile)
+  }
 
   if (-not $simplify) {
-    # --- seritler (SVG'de kendi drop-shadow'u var; WPF'te gorsel-seviyesi Effect ile) ---
     $stripVisual = New-Object System.Windows.Media.DrawingVisual
     $dc = $stripVisual.RenderOpen()
     $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($scale, $scale)))
-    $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0)))
+    if ($null -eq $pad) { $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0))) }
+    else { Push-FitTransform $dc $bbox $pad }
     foreach ($s in $Strips) {
       $dc.DrawRoundedRectangle($StripBrushes[$s.Brush], $null,
         (New-Object System.Windows.Rect ($s.X, $s.Y, $s.W, $s.H)), $s.R, $s.R)
     }
-    $dc.Pop(); $dc.Pop(); $dc.Close()
-    $shadow = New-Object System.Windows.Media.Effects.DropShadowEffect
-    $shadow.ShadowDepth = 2 * $scale; $shadow.Direction = 270
-    $shadow.BlurRadius = 3.1 * $scale; $shadow.Opacity = 0.92
-    $shadow.Color = [System.Windows.Media.Colors]::Black
-    $stripVisual.Effect = $shadow
+    if ($null -eq $pad) { $dc.Pop() } else { Pop-FitTransform $dc }
+    $dc.Pop(); $dc.Close()
+    # Golge YALNIZ tile'da: seffaf bir ikonda siyah drop-shadow arkadaki taskbar'a bulasir.
+    if ($withTile) {
+      $shadow = New-Object System.Windows.Media.Effects.DropShadowEffect
+      $shadow.ShadowDepth = 2 * $scale; $shadow.Direction = 270
+      $shadow.BlurRadius = 3.1 * $scale; $shadow.Opacity = 0.92
+      $shadow.Color = [System.Windows.Media.Colors]::Black
+      $stripVisual.Effect = $shadow
+    }
     [void]$root.Children.Add($stripVisual)
   }
 
-  # --- chevron ---
   $arrowVisual = New-Object System.Windows.Media.DrawingVisual
   $dc = $arrowVisual.RenderOpen()
   $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($scale, $scale)))
-  if ($simplify) {
-    # Sadelestirilmis varyantta chevron TILE'A OTURUR: tam sanatta isaret tile'in %42'si kadardir (seritlerle
-    # birlikte dengeli durur), ama serit olmayinca ortada kucucuk kalirdi. Chevron'un bbox'i (145.9..229.5 x,
-    # 83..203 y) tile yuksekliginin $ChevronFill'i olacak sekilde olceklenip ORTALANIR.
-    $bboxX = 140.4 + $StripDx; $bboxY = 83.0; $bboxW = 83.6; $bboxH = 120.0
-    $fit = ($ChevronFill * $ArtSize) / $bboxH
-    $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (
-      (($ArtSize - $bboxW * $fit) / 2.0), (($ArtSize - $bboxH * $fit) / 2.0))))
-    $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($fit, $fit)))
-    $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (-$bboxX, -$bboxY)))
-    $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0)))
+  if ($null -eq $pad) {
+    if ($simplify) {
+      # Tile'li sade varyant: chevron tile'in $ChevronFill'i olacak sekilde ortalanir.
+      $fit = ($ChevronFill * $ArtSize) / $ChevronBBox.H
+      $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (
+        (($ArtSize - $ChevronBBox.W * $fit) / 2.0), (($ArtSize - $ChevronBBox.H * $fit) / 2.0))))
+      $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($fit, $fit)))
+      $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (-$ChevronBBox.X, -$ChevronBBox.Y)))
+      $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0)))
+    }
+    else { $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0))) }
   }
-  else {
-    $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0)))
-  }
+  else { Push-FitTransform $dc $bbox $pad }
+
   $dc.DrawGeometry((New-ChevronBrush), $null, [System.Windows.Media.Geometry]::Parse($ChevronPath))
-  if ($simplify) { $dc.Pop(); $dc.Pop(); $dc.Pop() }
-  $dc.Pop(); $dc.Pop(); $dc.Close()
-  $arrowShadow = New-Object System.Windows.Media.Effects.DropShadowEffect
-  $arrowShadow.ShadowDepth = 2.2 * $scale; $arrowShadow.Direction = 270
-  $arrowShadow.BlurRadius = 3.6 * $scale; $arrowShadow.Opacity = 0.94
-  $arrowShadow.Color = [System.Windows.Media.Colors]::Black
-  $arrowVisual.Effect = $arrowShadow
+
+  if ($null -eq $pad) { if ($simplify) { Pop-FitTransform $dc } else { $dc.Pop() } }
+  else { Pop-FitTransform $dc }
+  $dc.Pop(); $dc.Close()
+
+  if ($withTile) {
+    $arrowShadow = New-Object System.Windows.Media.Effects.DropShadowEffect
+    $arrowShadow.ShadowDepth = 2.2 * $scale; $arrowShadow.Direction = 270
+    $arrowShadow.BlurRadius = 3.6 * $scale; $arrowShadow.Opacity = 0.94
+    $arrowShadow.Color = [System.Windows.Media.Colors]::Black
+    $arrowVisual.Effect = $arrowShadow
+  }
   [void]$root.Children.Add($arrowVisual)
 
   $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap (
@@ -247,7 +291,7 @@ function Save-Ico([string]$name, $frames) {
 
 function Get-Frame([int]$size) {
   $simplify = (-not $FullArtAtSmallSizes) -and ($SmallSizes -contains $size)
-  return New-RenderedBitmap $size $simplify
+  return New-RenderedBitmap $size $simplify ([bool]$WithTile)
 }
 
 # --- tani modu: pikselleri ASCII olarak dokumle (dosya yazmaz) ---
