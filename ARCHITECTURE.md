@@ -1401,11 +1401,16 @@ because a gradient stop takes a colour rather than a brush — the brushes are d
 hex is written twice.
 
 **Raster icons** (`.exe`, taskbar, tray) are generated from the same artwork by `Assets/generate-app-icons.ps1`
-into a multi-size ICO. Above 32 px the full mark is drawn. At 16 and 24 px it is not: a strip is 21 units of a
-286-unit canvas, which lands on roughly one pixel, and the five of them collapse into a smudge — measured, not
-assumed. Those two sizes draw a simplified variant instead, the amber chevron alone, scaled to sit properly in
-the tile rather than floating small inside it. That simplification is a derivation the design does not specify,
-recorded in the generator's header.
+into a multi-size ICO. They ship **without a background**: the mark sits on a transparent canvas and is fitted
+to it. The design's asset matrix reserves the tiled artwork for exactly these surfaces, so this is a deliberate
+departure, with a cost worth knowing — the mark's two dark strips nearly vanish against a dark taskbar, leaving
+the amber, white and silver strips plus the chevron to carry it. The tile is still one switch away in the
+generator.
+
+Dropping the tile made the mark larger at every size, which is why only 16 px still needs help: at 24 px the
+five strips resolve, at 16 px they collide into noise. That one size draws the amber chevron alone. Both the
+fit and the simplification are derivations the design does not specify; the generator's header records them,
+and it can dump any size as ASCII so the judgement can be re-made against pixels rather than opinion.
 
 ### 14.5 Motion
 
@@ -1520,6 +1525,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Brand marks | the product mark's and the company wordmark's path data each live in exactly one source file |
 | Gradient prohibition | no XAML declares a gradient except the product mark — and that exemption still points at a file that really carries one |
 | App icon provenance | the multi-size ICO is rendered from the product mark, not the company icon |
+| App icon background | every ICO frame's corners are transparent — the tile has not come back |
 | Third-party attribution | every `PackageReference` has an entry in the notices table, and each entry resolves a real assembly version |
 
 ### 17.3 Determinism

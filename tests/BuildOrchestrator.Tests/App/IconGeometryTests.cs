@@ -168,6 +168,42 @@ public class IconGeometryTests
             $"amber chevron pikseli yok ({bgra.AmberPixelRatio:P2})");
     }
 
+    /// <summary>
+    /// İkonlar ZEMİNSİZDİR — işaret şeffaf bir tuvalde durur.
+    ///
+    /// <para><b>Bu, design-v1.2.1 §6'dan bilinçli bir sapmadır</b> (kullanıcı talebi): tasarımın kullanım
+    /// matrisi .exe/taskbar/tepsi için tile'lı varyantı ister. Karar ve bedeli üretecin başlığında yazılı;
+    /// burada pinlenen, kararın GERÇEKTEN uygulandığıdır — tile geri gelirse köşeler opaklaşır ve bu test
+    /// kırar.</para>
+    ///
+    /// <para>Köşe seçilir çünkü tile yuvarlak köşeliydi ama köşeye en yakın piksellerde bile opaktı; işaretin
+    /// kendisi ise (pill'ler + chevron) tuvalin köşesine hiç uzanmaz.</para></summary>
+    [StaFact]
+    public void The_icons_have_no_tile_background()
+    {
+        foreach (string file in new[] { "app-icon.ico", "tray-icon-16.ico" })
+        {
+            string path = Path.Combine(RepoPaths.AppSrcRoot, "Assets", file);
+            var decoder = new IconBitmapDecoder(
+                new Uri(path), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+
+            foreach (var frame in decoder.Frames)
+            {
+                var converted = new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0.0);
+                int w = converted.PixelWidth, stride = w * 4;
+                var px = new byte[stride * converted.PixelHeight];
+                converted.CopyPixels(px, stride, 0);
+
+                foreach (var (x, y) in new[] { (0, 0), (w - 1, 0), (0, w - 1), (w - 1, w - 1) })
+                {
+                    byte alpha = px[(y * stride) + (x * 4) + 3];
+                    Assert.True(alpha == 0,
+                        $"{file} {w}px: ({x},{y}) köşesi opak (alpha={alpha}) — zemin geri gelmiş olabilir");
+                }
+            }
+        }
+    }
+
     /// <summary>İkonların üreteci repoda ve csproj'un işaret ettiği adla duruyor — asset'ler elle
     /// düzenlenmez, buradan yeniden üretilir.</summary>
     [Fact]
