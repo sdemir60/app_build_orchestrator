@@ -11,6 +11,11 @@ internal static class Win32
     // --- pencere mesajları (WndProc hook'unun tanıdıkları)
     public const int WM_HOTKEY = 0x0312;
 
+    /// <summary>Yatay tekerlek / precision touchpad'in iki parmakla yatay kaydırması. WPF bu mesajı HİÇ
+    /// dağıtmaz (yalnız <c>WM_MOUSEWHEEL</c> bir routed event'e çevrilir), bu yüzden yatay kaydırma
+    /// uygulamanın kendi hook'undan geçer — bkz. <see cref="Controls.HorizontalWheelScroll"/>.</summary>
+    public const int WM_MOUSEHWHEEL = 0x020E;
+
     /// <summary>
     /// [feasibility §4.3] Tepside bekleyen ilk instance BACKGROUND'dur; kendi <c>Activate()</c>'ı çoğu durumda
     /// yalnız taskbar'ı yakıp söndürür. İKİNCİ instance, sinyali göndermeden ÖNCE bunu çağırarak öne gelme
