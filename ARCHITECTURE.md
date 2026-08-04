@@ -910,8 +910,11 @@ Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No adm
 
 ### 12.4 Layout modes and persistence
 
-The title bar's application commands sit between the context text and the caption buttons, in decreasing order
-of use: the three view-mode toggles, a hairline separator, then the gear (Settings) and the `i` (About).
+The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
+hairline, then the company logo at 10 px and 55 % opacity, and finally the mono repository context. The
+hierarchy is the point — product ahead and vivid, company behind and quiet. Its application commands sit at
+the other end, between the context text and the caption buttons, in decreasing order of use: the three
+view-mode toggles, a hairline separator, then the gear (Settings) and the `i` (About).
 
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
@@ -1106,24 +1109,38 @@ The shell's own *Choose Folder* invitation, shown before any repository is selec
 dialog: it has no Save step, so the folder it picks applies immediately — the root changes, the project rows
 reset to hollow, and a Sync starts right away.
 
-The About dialog is the second modal and reuses that shell exactly: the same full-bleed scrim, the same 620 px
-`Ds.Dialog`, the same focus trap, the same Esc-and-scrim dismissal. Its body is tabbed rather than one long
-scroll, because the four things it carries — product identity, keyboard shortcuts, environment, third-party
-notices — have nothing to say to each other. The tab switch is `Ds.Segment`, the same component the action bar
-uses for Debug/Release, so no new interaction pattern enters the design system. The content area has a **fixed
-height**: switching tabs must not move the footer, and an Auto row would make the dialog jump between a
-six-row and a ten-row tab.
+The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same 620 px
+`Ds.Dialog`, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog
+does not have — a 180 ms fade with a 6 px rise, the duration read from the `Duration.Base` token, snapping to
+the end state under reduced motion.
+
+It has no title row. In its place is an identity block that holds both marks in one composition: the product
+mark at 30 px, the product name, the one-line description, and a single mono line carrying the application
+version and the copyright. The company lock sits opposite — a hairline, a tracked `LICENSED TO` label, and the
+company logo — and drops out entirely when there is no company logo. The version appears **once**; the engine's
+version belongs to the Environment tab, and repeating it in the heading was noise.
+
+The body is tabbed rather than one long scroll, because the things it carries — keyboard shortcuts,
+environment, third-party notices — have nothing to say to each other. The tab switch is `Ds.Segment`, the same
+component the action bar uses for Debug/Release, so no new interaction pattern enters the design system. The
+content area carries a **minimum** height: switching tabs must not move the footer, and an Auto row would make
+the dialog jump between a six-row and a ten-row tab.
 
 Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows from
 the same table the window binds its keys from, the environment rows from the diagnostics model, the notices
 from the third-party table. It composes no text of its own. `MSBuild.exe` resolution is the one asynchronous
 value: `vswhere` is a child process, so it runs when the Environment tab is first selected, not when the
-dialog opens, and the row reads `resolving…` until it lands.
+dialog opens, and the row reads `resolving…` until it lands. *Copy diagnostics* prepends the product and
+version to those rows so a pasted report says what it came from, and confirms with the check icon and the
+success tone for the same 1.4 s the console's copy button uses.
 
-**Only one modal can be open at a time.** The gate is a single predicate over both overlays' visibility, and
-all three consumers read it: Esc resolves its layer from it, the gear no-ops on it, and `F1` no-ops on it. The
-`F1` case is the one that needs it — the key is a window-level `InputBinding` and fires regardless of the
-Settings focus trap, so without the gate it would silently discard an unsaved Settings draft.
+**Both modals can be open at once, and About is always the upper one.** It is declared after Settings, so the
+z-order follows the markup. `F1` toggles it and does so even while Settings is open: Esc closes the topmost
+layer first, which means About goes and the Settings draft stays untouched. An earlier rule deafened `F1`
+whenever any dialog was open — the key is a window-level `InputBinding` and fires regardless of the Settings
+focus trap, so the fear was that it would discard an unsaved draft. Layering answers that better than silence
+did. The gear still no-ops while anything is open, which costs nothing: under the scrim it cannot be clicked
+anyway.
 
 ### 13.4 Scroll infrastructure
 
@@ -1365,8 +1382,30 @@ the reasoning written beside them: the caption restore glyph, and the `info` cir
 drawn on the same grid and at the same stroke weight as the neighbour they sit next to — the info icon shares
 `Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight.
 
-The Delta mark is a control, not a fragment of markup: the title bar draws it at 15 px and the About hero at
-20 px, both from `Controls/BrandLogo.xaml`. A guard asserts the path data appears in exactly one source file.
+**Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
+and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
+the product mark (title bar 19 px, About hero 30 px) and `Controls/BrandLogo.xaml` the company wordmark (title
+bar 10 px at 55 % opacity, About 13 px at 80 %). Guards assert each geometry appears in exactly one source
+file. The company logo is optional; where it is absent, the hairline separating it goes too.
+
+The chevron is the one gradient in the application. Flat surfaces are the rule and a guard enforces it, with a
+single file-scoped exemption for the mark: flattening a logo would mean redrawing it, and source artwork is
+transferred verbatim. The chevron is amber — the same accent the interface uses — which is deliberate: the
+brand speaks the interface's palette. The cost is that the mark carries accent weight in the title bar, so no
+other amber element belongs in that region.
+
+The mark's palette comes from the neutral ramp and the amber family, except two intermediate tones that exist
+only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
+the other values the design source does not name. Two of them are also exposed as raw `Color` resources
+because a gradient stop takes a colour rather than a brush — the brushes are derived from those colours, so no
+hex is written twice.
+
+**Raster icons** (`.exe`, taskbar, tray) are generated from the same artwork by `Assets/generate-app-icons.ps1`
+into a multi-size ICO. Above 32 px the full mark is drawn. At 16 and 24 px it is not: a strip is 21 units of a
+286-unit canvas, which lands on roughly one pixel, and the five of them collapse into a smudge — measured, not
+assumed. Those two sizes draw a simplified variant instead, the amber chevron alone, scaled to sit properly in
+the tile rather than floating small inside it. That simplification is a derivation the design does not specify,
+recorded in the generator's header.
 
 ### 14.5 Motion
 
@@ -1478,7 +1517,9 @@ A category of tests that assert properties of the *source*, not of a run:
 | Design token scale | duplicated size tokens stay equal to their single authority |
 | Shortcut literals | no gesture text (`"F5"`, `"Ctrl+F5"`, …) is written outside the shortcut catalog, and the file the guard exempts still exists |
 | Product name literal | the product name never appears as a literal; it is read from the assembly |
-| Brand mark | the logo path data lives in exactly one source file |
+| Brand marks | the product mark's and the company wordmark's path data each live in exactly one source file |
+| Gradient prohibition | no XAML declares a gradient except the product mark — and that exemption still points at a file that really carries one |
+| App icon provenance | the multi-size ICO is rendered from the product mark, not the company icon |
 | Third-party attribution | every `PackageReference` has an entry in the notices table, and each entry resolves a real assembly version |
 
 ### 17.3 Determinism
@@ -1848,7 +1889,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
-| Brand mark (title bar + About hero) | `App/Controls/BrandLogo.xaml(.cs)` |
+| Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
+| Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, will-build dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `WillBuildDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
