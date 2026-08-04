@@ -873,7 +873,12 @@ Custom dark title bar via `WindowChrome` (caption height 40, no Aero caption but
 `AllowsTransparency` is never used. Consequences that had to be handled explicitly:
 
 - **Maximize padding correction is mandatory** (`dotnet/wpf#3887`): without it the content overflows the screen
-  edge when maximized.
+  edge when maximized. It is driven by a `WindowState` dependency-property watcher rather than the `StateChanged`
+  event, for the same reason as the caption glyph below: the window is *born* maximized, and WPF never raises
+  `StateChanged` for a state set before the HWND exists — an event-driven correction would simply never run on
+  the first launch. The same single application point is re-run on `DpiChanged`, because the correction is a
+  device-pixel frame width whose DIP value depends on the scale, and moving a maximized window to a differently
+  scaled monitor changes the scale without changing the state.
 - Windows 11 rounded corners come from `DWMWA_WINDOW_CORNER_PREFERENCE`; the 1 px frame from
   `DWMWA_BORDER_COLOR`.
 - The maximize glyph swaps to a restore glyph when the window is maximized.

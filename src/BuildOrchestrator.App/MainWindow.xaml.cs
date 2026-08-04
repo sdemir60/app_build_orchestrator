@@ -101,6 +101,10 @@ public partial class MainWindow : Window
 
         // [K8] maximize'da restore glyph'i (çizilmiş geometri, T64) + butonun duruma bağlı UIA adı.
         CaptionGlyphs.BindMaxButton(this, MaxButton, MaxGlyph);
+        // [dotnet/wpf#3887] Maximize taşma düzeltmesi. Kablaj glyph'le AYNI desende ve AYNI gerekçeyle DP
+        // izleyicisidir (bkz. MaximizeFix.Bind): pencere DOĞUŞTAN maximized açıldığından StateChanged'e
+        // dayanan bir kurulum ilk açılışta HİÇ koşmaz.
+        MaximizeFix.Bind(this, RootShell);
 
         // [T35] Kalıcı yerleşimi geri yükle; kullanıcı değişiklikleri (mod düğmesi / split sürükleme sonu) persist.
         // GraphView'ın MotionSettings'i Loaded'dan ÖNCE atanmalı (GraphView.xaml.cs:111-119 sözleşmesi).
@@ -857,17 +861,6 @@ public partial class MainWindow : Window
         _hotkey?.Dispose();
         _tray?.Dispose();
         base.OnClosed(e);
-    }
-
-    protected override void OnStateChanged(EventArgs e)
-    {
-        base.OnStateChanged(e);
-        uint dpi = (uint)(VisualTreeHelper.GetDpi(this).PixelsPerInchX);
-        RootShell.Padding = MaximizeFix.PaddingFor(WindowState,
-            Dwm.GetSystemMetricsForDpi(Dwm.SM_CXSIZEFRAME, dpi),
-            Dwm.GetSystemMetricsForDpi(Dwm.SM_CYSIZEFRAME, dpi),
-            Dwm.GetSystemMetricsForDpi(Dwm.SM_CXPADDEDBORDER, dpi),
-            VisualTreeHelper.GetDpi(this).DpiScaleX);
     }
 
     private void OnMinimize(object s, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
