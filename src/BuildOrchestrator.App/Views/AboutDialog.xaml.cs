@@ -102,6 +102,9 @@ public partial class AboutDialog : UserControl
         ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
         Visibility = Visibility.Visible;
+        // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı. Visibility'den SONRA: animasyon görünür bir öğe
+        // üzerinde kurulur (reduced-motion'da PlayDialog son duruma SNAP eder).
+        Controls.PopIn.PlayDialog(DialogShell);
         Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bir şey bulamazsa bile odak burada kalır)
         Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
     }

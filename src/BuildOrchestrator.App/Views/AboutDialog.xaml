@@ -16,7 +16,7 @@
         KeyboardNavigation.TabNavigation="Cycle"
         KeyboardNavigation.ControlTabNavigation="Cycle"
         FocusManager.IsFocusScope="True">
-    <Border Width="620" HorizontalAlignment="Center" VerticalAlignment="Center"
+    <Border x:Name="DialogShell" Width="620" HorizontalAlignment="Center" VerticalAlignment="Center"
             Style="{DynamicResource Ds.Dialog}" MouseLeftButtonDown="OnDialogClick">
       <Grid>
         <Grid.RowDefinitions>

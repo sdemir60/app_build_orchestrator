@@ -71,6 +71,44 @@ public class AboutDialogTests
             FocusTrap.AssertCannotEscape(dialog.Scrim, background);
     }
 
+    /// <summary>[design-v1.2.1 §2.10] Diyalog giriş animasyonu: 180ms fade + 6px yukarı. Süre bir
+    /// TOKEN'dır (<c>Duration.Base</c> = 0.18s) — çağrı yerinde ms literali YASAK.</summary>
+    [StaFact]
+    public void The_dialog_enters_with_a_180ms_fade_and_a_6px_rise()
+    {
+        Assert.Equal(180.0, PopIn.DialogDurationMs);
+        Assert.Equal(6.0, PopIn.DialogRiseFromPx);
+
+        var host = DsResources.NewHost();
+        Assert.Equal(TimeSpan.FromMilliseconds(PopIn.DialogDurationMs),
+            MotionTokens.ResolveDuration(host, "Duration.Base", fallbackMs: -1).TimeSpan);
+    }
+
+    /// <summary>Giriş GERÇEKTEN kuruluyor: animasyon açıkken kabuğa bir YÜKSELME transform'u takılır
+    /// (ölçek YOK — diyalog girişi yalnız fade + 6px). Motion sinyali headless'ta varsayılan olarak KAPALI,
+    /// bu yüzden açıkça açılır (PopoverTests deseni).</summary>
+    [StaFact]
+    public void Opening_the_dialog_installs_the_entrance_transform_on_the_shell()
+    {
+        using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
+        var (dialog, _run, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+            Assert.IsType<TranslateTransform>(Shell(dialog).RenderTransform);
+    }
+
+    /// <summary>Reduced-motion: hiç animasyon KURULMAZ, diyalog son duruma snap eder (motion sözleşmesi).</summary>
+    [StaFact]
+    public void Reduced_motion_snaps_the_dialog_to_its_final_state()
+    {
+        using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = false }));
+        var (dialog, _run, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Assert.Equal(1.0, Shell(dialog).Opacity);
+            Assert.Equal(Transform.Identity, Shell(dialog).RenderTransform);
+        }
+    }
+
     [StaFact]
     public void Close_dialog_hides_it()
     {

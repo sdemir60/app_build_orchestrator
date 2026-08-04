@@ -113,10 +113,32 @@ public class AboutWiringTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Bir modal AÇIKKEN F1 NO-OP'tur. F1 pencere-seviyesi bir InputBinding'dir ve Settings'in odak
-    /// tuzağına RAĞMEN ateşler; kapı olmasaydı F1, kaydedilmemiş bir Settings taslağını sessizce çöpe atardı.</summary>
+    /// <summary>
+    /// [design-v1.2.1 §2.10] <b>F1 bir TOGGLE'dır</b> — açıkken kapatır.
+    ///
+    /// <para><b>ESKİ İDDİA:</b> "F1 yalnız açar; bir modal açıkken NO-OP'tur." O kural, kaydedilmemiş bir
+    /// Settings taslağını korumak için konmuş AŞIRI TEDBİRLİ bir kapıydı. Tasarım aynı korumayı daha iyi
+    /// sağlıyor: About Settings'in ÜSTÜNE açılır, Esc önce About'u kapatır, taslak yerinde kalır — F1'i
+    /// büsbütün sağır etmeye gerek yok. Test silinmedi; yeni kuralı pinliyor.</para></summary>
     [StaFact]
-    public void F1_does_nothing_while_another_dialog_is_open()
+    public void F1_toggles_the_about_dialog()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        Invoke(window, Key.F1, ModifierKeys.None);
+        Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);
+
+        Invoke(window, Key.F1, ModifierKeys.None);
+        Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design-v1.2.1 §2.10] About, Settings'in ÜSTÜNE açılır ve taslağı YOK ETMEZ: iki katman
+    /// birlikte durur, About üstte (XAML'de sonra geldiği için z-sırası doğru).</summary>
+    [StaFact]
+    public void F1_opens_about_on_top_of_settings_without_discarding_the_draft()
     {
         using var temp = new TempDir();
         var (window, _) = MainWindowHost.New(temp);
@@ -124,11 +146,38 @@ public class AboutWiringTests
 
         Click(window.GearButton);
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility);
+        var draft = window.SettingsOverlay.DataContext;
 
         Invoke(window, Key.F1, ModifierKeys.None);
 
-        Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility); // About AÇILMADI
-        Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // Settings taslağı DURUYOR
+        Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);   // About AÇILDI
+        Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // Settings DURUYOR
+        Assert.Same(draft, window.SettingsOverlay.DataContext);              // taslak AYNI örnek — atılmadı
+
+        // Z-sırası: About, Settings'ten SONRA gelir → üstte çizilir.
+        var shell = (Panel)LogicalTreeHelper.GetParent(window.AboutOverlay);
+        Assert.True(shell.Children.IndexOf(window.SettingsOverlay) < shell.Children.IndexOf(window.AboutOverlay));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design-v1.2.1 §2.10] Esc önceliği: About açıkken Esc ÖNCE About'u kapatır, Settings'i
+    /// bırakır. Zincir tek katman iner, alta sızmaz.</summary>
+    [StaFact]
+    public void Escape_closes_about_before_settings_when_both_are_open()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        Click(window.GearButton);
+        Invoke(window, Key.F1, ModifierKeys.None);
+
+        Invoke(window, Key.Escape, ModifierKeys.None);
+        Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
+        Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // ALT katman DURUYOR
+
+        Invoke(window, Key.Escape, ModifierKeys.None);
+        Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
         GC.KeepAlive(window);
     }
 

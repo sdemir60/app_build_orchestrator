@@ -21,7 +21,27 @@ internal static class PopIn
     private const double RiseFromPx = 4.0;    // BuildApp.jsx:33 `translateY(4px)`
     private const double ScaleFrom = 0.985;   // BuildApp.jsx:33 `scale(.985)`
 
+    /// <summary>[design-v1.2.1 §2.10] Modal DİYALOG girişi: 180ms fade + 6px yukarı, ÖLÇEK YOK. Popover'dan
+    /// ayrı ölçüler — diyalog daha büyük bir yüzeydir, aynı 140/4/.985 orada fazla tez durur.
+    /// <para>180, <c>Duration.Base</c> token'ının ta kendisidir ve çalışma anında ORADAN çözülür; buradaki
+    /// sabit yalnız fallback ve testin pinlediği değerdir (<c>MotionTokens.ResolveDuration</c> deseni).</para></summary>
+    internal const double DialogDurationMs = 180.0;
+    internal const double DialogRiseFromPx = 6.0;
+
+    /// <summary>Popover / Build menüsü girişi (140ms, 4px, .985).</summary>
     public static void Play(FrameworkElement element)
+        => Play(element, TimeSpan.FromMilliseconds(DurationMs), RiseFromPx, ScaleFrom);
+
+    /// <summary>[design-v1.2.1 §2.10] Modal diyalog girişi — süre <c>Duration.Base</c> token'ından taze
+    /// çözülür (motion sözleşmesi: ms literali çağrı yerinde YAZILMAZ).</summary>
+    public static void PlayDialog(FrameworkElement element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        var duration = MotionTokens.ResolveDuration(element, "Duration.Base", DialogDurationMs);
+        Play(element, duration.TimeSpan, DialogRiseFromPx, scaleFrom: 1.0);
+    }
+
+    private static void Play(FrameworkElement element, TimeSpan duration, double riseFromPx, double scaleFrom)
     {
         // Önceki (uçuşta kalmış) animasyonları bırak — her açılışta taze başlar.
         element.BeginAnimation(UIElement.OpacityProperty, null);
@@ -35,18 +55,27 @@ internal static class PopIn
         }
 
         var spline = MotionTokens.ResolveKeySpline(element, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
-        var duration = TimeSpan.FromMilliseconds(DurationMs);
 
         element.RenderTransformOrigin = new Point(0.5, 0.5); // CSS transform-origin varsayılanı = center
-        var scale = new ScaleTransform(ScaleFrom, ScaleFrom);
-        var translate = new TranslateTransform(0, RiseFromPx);
-        element.RenderTransform = new TransformGroup { Children = { scale, translate } };
+        var translate = new TranslateTransform(0, riseFromPx);
+
+        // Ölçek 1.0 ise TransformGroup kurulmaz: diyalog girişinde ölçek YOKTUR ve boş bir grup hem gereksiz
+        // hem de "hangi transform?" sorusunu bulanıklaştırır (test doğrudan TranslateTransform bekler).
+        if (scaleFrom is 1.0)
+        {
+            element.RenderTransform = translate;
+        }
+        else
+        {
+            var scale = new ScaleTransform(scaleFrom, scaleFrom);
+            element.RenderTransform = new TransformGroup { Children = { scale, translate } };
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, Rise(scaleFrom, 1.0, duration, spline));
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, Rise(scaleFrom, 1.0, duration, spline));
+        }
 
         element.Opacity = 0.0;
         element.BeginAnimation(UIElement.OpacityProperty, Rise(0.0, 1.0, duration, spline));
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, Rise(ScaleFrom, 1.0, duration, spline));
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, Rise(ScaleFrom, 1.0, duration, spline));
-        translate.BeginAnimation(TranslateTransform.YProperty, Rise(RiseFromPx, 0.0, duration, spline));
+        translate.BeginAnimation(TranslateTransform.YProperty, Rise(riseFromPx, 0.0, duration, spline));
     }
 
     // GraphView.PlayRevealStagger deseni: 0'da Discrete "from" + hedefe Spline (CSS keyframe `from`/`to` paritesi).
