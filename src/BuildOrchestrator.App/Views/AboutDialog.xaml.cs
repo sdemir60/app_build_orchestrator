@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
@@ -34,8 +35,16 @@ internal readonly record struct NoticeRow(string DisplayName, string Version, st
 /// </summary>
 public partial class AboutDialog : UserControl
 {
-    private const string CopyLabel = "Copy diagnostics";
+    // Görünür etiket ve UIA adı AYNI sabitten (kopya YASAK) — bkz. AccessibilityNames.CopyDiagnostics.
+    private const string CopyLabel = AccessibilityNames.CopyDiagnostics;
     private const string CopiedLabel = "Copied";
+
+    // [design-v1.2.1 §2.10] Kopyalandı geri bildirimi GÖRSELDİR: ikon ✓'ye, renk başarı tonuna döner.
+    // Konsolun copy-log butonuyla AYNI ikon çifti ve AYNI süre (CopyLogFeedback.RevertMs) kullanılır.
+    private const string CopyIconKey = "Icon.Copy";
+    private const string CheckIconKey = "Icon.Check";
+    private const string CopyIdleBrushKey = "Brush.TextSecondary";
+    private const string CopiedBrushKey = "Brush.StatusSuccessText";
 
     // [kopya YASAK] Konsolun copy butonuyla AYNI geri-bildirim saati (CopyLogFeedback.RevertMs) — About kendi
     // süresini uydurmaz.
@@ -51,7 +60,7 @@ public partial class AboutDialog : UserControl
     public AboutDialog()
     {
         InitializeComponent();
-        ResetCopyLabel();
+        ResetCopyVisual();
     }
 
     /// <summary>[T56/3b deseni] Panoya yazma yolu — üretimde retry sarmalayıcı, testte enjekte edilir
@@ -64,6 +73,15 @@ public partial class AboutDialog : UserControl
 
     /// <summary>[test yüzeyi] "Copied" geri bildirimi görünür mü.</summary>
     internal bool IsShowingCopied => _copyFeedback.Copied;
+
+    /// <summary>[test yüzeyi] Butonun ikonu ✓ mü — GERÇEK <c>Path.Data</c> okunur. Icons.xaml bu kontrolün
+    /// kaynak kapsamında değilse (merge yok) her iki durumda da null olurdu, bu yüzden çözülemeyen ikon
+    /// açıkça "kopyalanmadı" sayılır (ConsoleHeader.IsShowingCopied deseni).</summary>
+    internal bool IsShowingCheckIcon
+        => TryFindResource(CheckIconKey) is Geometry check && ReferenceEquals(CopyGlyph.Data, check);
+
+    /// <summary>[test yüzeyi] Butonun o anki ön plan fırçası (başarıda başarı tonuna döner).</summary>
+    internal Brush? CopyButtonForeground => CopyButton.Foreground;
 
     /// <summary>
     /// Diyaloğu açar.
@@ -82,10 +100,10 @@ public partial class AboutDialog : UserControl
 
         ProductText.Text = AppIdentity.Product;
         TaglineText.Text = AppIdentity.Tagline;
-        IdentityText.Text = string.Format(CultureInfo.InvariantCulture, "{0} · engine {1} · {2}",
-            AppIdentity.Version,
-            run.EngineVersion ?? DiagnosticsReport.NotStarted,
-            AppIdentity.Copyright);
+        // [design-v1.1.0] TEK sürüm satırı. Eskiden burada `{app} · engine {engine} · {telif}` vardı; motor
+        // sürümünün yeri Environment sekmesidir, başlıkta tekrarı gürültüydü.
+        IdentityText.Text = string.Format(CultureInfo.InvariantCulture, "{0} · {1}",
+            AppIdentity.Version, AppIdentity.Copyright);
 
         ShortcutRows.ItemsSource = ShortcutCatalog.All
             .Select(e => new ShortcutRow(e.Description, e.Gestures,
@@ -102,6 +120,9 @@ public partial class AboutDialog : UserControl
         ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
         Visibility = Visibility.Visible;
+        // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı. Visibility'den SONRA: animasyon görünür bir öğe
+        // üzerinde kurulur (reduced-motion'da PlayDialog son duruma SNAP eder).
+        Controls.PopIn.PlayDialog(DialogShell);
         Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bir şey bulamazsa bile odak burada kalır)
         Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
     }
@@ -150,16 +171,23 @@ public partial class AboutDialog : UserControl
     /// boyunca "Copied" olur — süre sabiti konsolun copy butonuyla PAYLAŞILIR (kopya YASAK).</summary>
     public void CopyDiagnostics()
     {
-        if (!ClipboardWriter(DiagnosticsReport.ToText(DiagnosticsLines))) return; // kalıcı pano kilidi: sessiz
+        if (!ClipboardWriter(DiagnosticsText())) return; // kalıcı pano kilidi: sessiz
 
         _copyClock = Stopwatch.StartNew();
         _copyFeedback.MarkCopied(TimeSpan.Zero);
-        CopyButton.Content = CopiedLabel;
+        SetCopyVisual(CheckIconKey, CopiedLabel, CopiedBrushKey);
 
         _copyRevertTimer?.Stop();
         _copyRevertTimer ??= CreateRevertTimer();
         _copyRevertTimer.Start();
     }
+
+    /// <summary>[design-v1.2.1 §2.10] Panoya giden metin: ilk satır ürün + sürüm, ardından tüm Environment
+    /// satırları. Başlık satırı olmadan çıktı, nereden geldiği belirsiz bir anahtar/değer yığınıdır.</summary>
+    internal string DiagnosticsText() =>
+        string.Format(CultureInfo.InvariantCulture, "{0} {1}", AppIdentity.Product, AppIdentity.Version)
+        + Environment.NewLine
+        + DiagnosticsReport.ToText(DiagnosticsLines);
 
     private DispatcherTimer CreateRevertTimer()
     {
@@ -177,10 +205,18 @@ public partial class AboutDialog : UserControl
         _copyClock?.Stop();
         _copyClock = null;
         _copyFeedback.Revert();
-        ResetCopyLabel();
+        SetCopyVisual(CopyIconKey, CopyLabel, CopyIdleBrushKey);
     }
 
-    private void ResetCopyLabel() => CopyButton.Content = CopyLabel;
+    /// <summary>Butonun görselini (ikon geometrisi + boya semantiği + etiket + renk) TEK yerden sürer —
+    /// <see cref="Console.ConsoleHeader.SetCopyIcon"/> ile aynı desen; boya <see cref="Controls.IconPaint"/>
+    /// üzerinden sözlükten gelir (kalınlık/dolgu kararı Icons.xaml'indir).</summary>
+    private void SetCopyVisual(string iconKey, string label, string brushKey)
+    {
+        Controls.IconPaint.Apply(CopyGlyph, this, iconKey, brushKey);
+        CopyLabelText.Text = label;
+        CopyButton.SetResourceReference(ForegroundProperty, brushKey);
+    }
 
     // ---------------------------------------------------------------- kapatma
 

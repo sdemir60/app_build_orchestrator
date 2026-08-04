@@ -52,13 +52,29 @@
     <SolidColorBrush x:Key="Brush.TextOnAccent" Color="#1c1304" />
 
     <!-- Amber (TEK marka rengi) -->
-    <SolidColorBrush x:Key="Brush.Amber" Color="#eda10f" />
-    <SolidColorBrush x:Key="Brush.AmberBright" Color="#ffb52e" />
+    <!-- [design-v1.2.1 §6] Bu ikisi AYRICA ham <Color> olarak da açılır: ürün markasının chevron'u bir
+         LinearGradientBrush'tır ve GradientStop bir Brush DEĞİL Color ister. Hex yine TEK yerde durur —
+         fırçalar Color'dan türetilir, değer iki kez yazılmaz. -->
+    <Color x:Key="Color.Amber">#eda10f</Color>
+    <Color x:Key="Color.AmberBright">#ffb52e</Color>
+    <SolidColorBrush x:Key="Brush.Amber" Color="{StaticResource Color.Amber}" />
+    <SolidColorBrush x:Key="Brush.AmberBright" Color="{StaticResource Color.AmberBright}" />
     <SolidColorBrush x:Key="Brush.AmberDim" Color="#b87a0b" />
     <SolidColorBrush x:Key="Brush.AmberText" Color="#f1ab2e" />
     <SolidColorBrush x:Key="Brush.AmberSoft" Color="#1FEDA10F" />
     <SolidColorBrush x:Key="Brush.AmberSoftHover" Color="#2EEDA10F" />
     <SolidColorBrush x:Key="Brush.AmberBorder" Color="#52EDA10F" />
+
+    <!--
+      Ürün markası (design-v1.2.1 §6, prototype/assets/app-mark.svg). İşaretin BEŞ renginden dördünün DS
+      rampasında karşılığı vardır ve AppMark onları oradan çözer (Brush.TextPrimary / Brush.TextSecondary /
+      Brush.Neutral700 / Brush.Amber, chevron'un ilk durağı da Brush.AmberBright). Aşağıdaki İKİSİ rampada
+      YOKTUR — markaya ait ara tonlardır, bu yüzden Brush.StatusQueuedBorder ile AYNI statüde (CSS'te karşılığı
+      olmayan, gerekçesi burada yazılan değer) tanımlanır. Değerler SVG'den birebir; yuvarlama YOK.
+    -->
+    <SolidColorBrush x:Key="Brush.Brand.StripDim" Color="#44444b" />
+    <Color x:Key="Color.Brand.ChevronDeep">#c9860c</Color>
+    <SolidColorBrush x:Key="Brush.Brand.ChevronDeep" Color="{StaticResource Color.Brand.ChevronDeep}" />
 
     <!-- Statü: success -->
     <SolidColorBrush x:Key="Brush.StatusSuccess" Color="#43b16b" />

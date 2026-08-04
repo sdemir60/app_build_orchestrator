@@ -142,6 +142,71 @@ public class IconGeometryTests
     /// bunun yerine BEKLENEN DEĞER mutasyona uğratıldı — <c>16 → 32</c> koşuldu ve
     /// <c>Assert.Equal() Failure: Expected 32 / Actual 16</c> ile kırmızı verdi (bkz. task-T3-fix1-report.md),
     /// yani assert gerçekten dosyanın piksel boyutunu okuyor.</para></summary>
+    /// <summary>
+    /// [design-v1.2.1 §6] İkonlar ÜRÜN markasından üretilir — Delta'nın kendi ikonundan değil.
+    ///
+    /// <para>İki işaret ayırt edicidir: yeni markada <b>açık gri/beyaz pill şeritler</b> vardır
+    /// (<c>#EDEDEE…#A9A9B0</c>), eski Delta ikonunda ise YALNIZ amber "D" + near-black tile vardı — tek bir
+    /// açık piksel bile yoktu. Bu yüzden 256px karesinde hem açık şerit pikselleri hem amber chevron
+    /// pikselleri aranır.</para>
+    ///
+    /// <para><b>Ayırt edicilik ölçüldü:</b> eski <c>app-icon.ico</c> git'ten geri alınıp koşuldu ve bu test
+    /// kırmızı verdi (açık piksel oranı ~0). Yani assert gerçekten dosyanın içeriğini okuyor.</para></summary>
+    [StaFact]
+    public void The_app_icon_is_rendered_from_the_product_mark_not_the_company_icon()
+    {
+        string path = Path.Combine(RepoPaths.AppSrcRoot, "Assets", "app-icon.ico");
+        var decoder = new IconBitmapDecoder(
+            new Uri(path), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+
+        var frame = decoder.Frames.Single(f => f.PixelWidth == 256);
+        var bgra = new BitmapImageAdapter(frame);
+
+        Assert.True(bgra.LightPixelRatio > 0.01,
+            $"açık şerit pikseli yok ({bgra.LightPixelRatio:P2}) — ikon hâlâ eski (şeritsiz) işaretten olabilir");
+        Assert.True(bgra.AmberPixelRatio > 0.01,
+            $"amber chevron pikseli yok ({bgra.AmberPixelRatio:P2})");
+    }
+
+    /// <summary>İkonların üreteci repoda ve csproj'un işaret ettiği adla duruyor — asset'ler elle
+    /// düzenlenmez, buradan yeniden üretilir.</summary>
+    [Fact]
+    public void The_icon_generator_the_csproj_points_at_exists()
+    {
+        string generator = Path.Combine(RepoPaths.AppSrcRoot, "Assets", "generate-app-icons.ps1");
+        Assert.True(File.Exists(generator), $"ikon üreteci yok: {generator}");
+
+        string csproj = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "BuildOrchestrator.App.csproj"));
+        Assert.Contains("generate-app-icons.ps1", csproj, StringComparison.Ordinal);
+    }
+
+    /// <summary>Bir ICO karesinin piksellerini okuyup marka işaretlerini sayar (yalnız bu testin ihtiyacı).</summary>
+    private sealed class BitmapImageAdapter
+    {
+        public double LightPixelRatio { get; }
+        public double AmberPixelRatio { get; }
+
+        public BitmapImageAdapter(BitmapSource frame)
+        {
+            var converted = new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0.0);
+            int w = converted.PixelWidth, h = converted.PixelHeight, stride = w * 4;
+            var px = new byte[stride * h];
+            converted.CopyPixels(px, stride, 0);
+
+            int light = 0, amber = 0, opaque = 0;
+            for (int i = 0; i < px.Length; i += 4)
+            {
+                int b = px[i], g = px[i + 1], r = px[i + 2], a = px[i + 3];
+                if (a < 128) continue;
+                opaque++;
+                if (r > 150 && g > 150 && b > 150) light++;             // beyaz/gümüş şeritler
+                if (r > 150 && g is > 80 and < 200 && b < 90) amber++;  // amber chevron + amber şerit
+            }
+            LightPixelRatio = opaque == 0 ? 0 : (double)light / opaque;
+            AmberPixelRatio = opaque == 0 ? 0 : (double)amber / opaque;
+        }
+    }
+
     [StaFact]
     public void Tray_icon_is_a_16px_square()
     {

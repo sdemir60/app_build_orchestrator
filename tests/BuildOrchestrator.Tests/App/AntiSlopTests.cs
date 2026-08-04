@@ -37,12 +37,31 @@ public sealed class AntiSlopTests
         Assert.Empty(offenders);
     }
 
+    /// <summary>
+    /// design-v1 §8: düz yüzeyler; gradient DEKORASYON YASAK (tek marka rengi amber, düz).
+    ///
+    /// <para><b>Tek istisna — ürün markası.</b> design-v1.2.0/1.2.1 uygulamaya kendi işaretini verdi ve o
+    /// işaretin chevron'u kaynağında (<c>prototype/assets/app-mark.svg</c>) bir <c>linearGradient</c>'tir.
+    /// Yasak arayüz dekorasyonu içindir — logoyu düzleştirmek onu YENİDEN ÇİZMEK olurdu ve "kaynak sanat
+    /// birebir taşınır" kuralını çiğnerdi. İstisna DOSYA BAZINDA ve dar: yalnız markanın kendi çizim dosyası.
+    /// Başka bir XAML gradient kullanırsa test yine kırar.</para></summary>
     [Fact]
-    public void No_xaml_declares_a_gradient_fill()
+    public void No_xaml_declares_a_gradient_fill_except_the_product_mark()
     {
-        // design-v1: düz yüzeyler; gradient dekorasyon YASAK (tek marka rengi amber, düz).
-        var offenders = ScanXaml((rel, text) => Gradient.IsMatch(text) ? rel : null);
+        string brandMark = Path.Combine("Controls", "AppMark.xaml");
+        var offenders = ScanXaml((rel, text) =>
+            Gradient.IsMatch(text) && !rel.Equals(brandMark, StringComparison.OrdinalIgnoreCase) ? rel : null);
         Assert.Empty(offenders);
+    }
+
+    /// <summary>Muafiyet BOŞA DÜŞMESİN: markanın çizim dosyası hâlâ var ve hâlâ bir gradient taşıyor. Dosya
+    /// taşınır ya da chevron düzleşirse yukarıdaki istisna sessizce ölü bir satıra dönerdi.</summary>
+    [Fact]
+    public void The_product_mark_really_is_the_gradient_the_guard_exempts()
+    {
+        string path = Path.Combine(RepoPaths.AppSrcRoot, "Controls", "AppMark.xaml");
+        Assert.True(File.Exists(path), "markanın çizim dosyası taşınmış — gradient muafiyeti bayatladı");
+        Assert.Matches(Gradient, File.ReadAllText(path));
     }
 
     [Fact]

@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:app="clr-namespace:BuildOrchestrator.App"
              Visibility="Collapsed" Focusable="True">
   <!-- [About] İkinci modal diyalog. Kabuk SettingsDialog ile BİREBİR aynı (full-bleed Brush.Scrim + 620px
        Ds.Dialog + odak tuzağı + Esc/scrim ile kapanma) — yeni bir modal deseni GİRMEZ.
@@ -16,7 +17,7 @@
         KeyboardNavigation.TabNavigation="Cycle"
         KeyboardNavigation.ControlTabNavigation="Cycle"
         FocusManager.IsFocusScope="True">
-    <Border Width="620" HorizontalAlignment="Center" VerticalAlignment="Center"
+    <Border x:Name="DialogShell" Width="620" HorizontalAlignment="Center" VerticalAlignment="Center"
             Style="{DynamicResource Ds.Dialog}" MouseLeftButtonDown="OnDialogClick">
       <Grid>
         <Grid.RowDefinitions>
@@ -26,23 +27,43 @@
           <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- ============================ HERO ============================ -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="20,18,20,14">
-          <controls:BrandLogo Height="20" VerticalAlignment="Top" Margin="0,2,14,0" />
+        <!-- ============================ KİMLİK BLOĞU ============================ -->
+        <!-- [design-v1.2.1 §2.10] Başlık SATIRI YOK — yerine kimlik bloğu. İki logo tek kompozisyonda:
+             solda ürün markası (30px, tam renk) + ad + tagline + TEK mono sürüm satırı; sağda firma kilidi
+             (1×30 ayraç + caps LICENSED TO + firma logosu 13px %80). Ürün önde. -->
+        <DockPanel Grid.Row="0" Margin="18,18,18,0">
+          <!-- Firma kilidi. Firma logosu opsiyoneldir — yoksa bu blok tamamen düşer. -->
+          <StackPanel x:Name="CompanyLock" DockPanel.Dock="Right" Orientation="Horizontal"
+                      VerticalAlignment="Top" Margin="12,2,0,0">
+            <Rectangle Width="1" Height="30" Margin="0,0,12,0" VerticalAlignment="Top"
+                       Fill="{DynamicResource Brush.BorderSubtle}" SnapsToDevicePixels="True" />
+            <StackPanel HorizontalAlignment="Right">
+              <controls:TrackedTextBlock Text="LICENSED TO" HorizontalAlignment="Right"
+                                         FontFamily="{x:Static controls:AppFonts.Ui}"
+                                         FontSize="{DynamicResource FontSize.2xs}"
+                                         Foreground="{DynamicResource Brush.TextFaint}" />
+              <controls:BrandLogo Height="13" Opacity="0.8" Margin="0,5,0,0" HorizontalAlignment="Right" />
+            </StackPanel>
+          </StackPanel>
+
+          <controls:AppMark DockPanel.Dock="Left" Height="30" VerticalAlignment="Top" Margin="0,2,14,0" />
+
           <StackPanel>
             <TextBlock x:Name="ProductText"
                        FontSize="{DynamicResource FontSize.Lg}"
                        FontWeight="{DynamicResource FontWeight.Emphasis}"
                        Foreground="{DynamicResource Brush.TextPrimary}" />
-            <TextBlock x:Name="TaglineText" Margin="0,3,0,0" TextWrapping="Wrap" MaxWidth="470"
+            <TextBlock x:Name="TaglineText" Margin="0,2,0,0" TextWrapping="Wrap"
                        FontSize="{DynamicResource FontSize.Xs}"
                        Foreground="{DynamicResource Brush.TextDim}" />
-            <TextBlock x:Name="IdentityText" Margin="0,6,0,0"
+            <!-- TEK sürüm satırı: `{sürüm} · {telif}`. app/engine ayrımı Environment sekmesindedir —
+                 design-v1.1.0 başlıktaki tekrarı bilerek kaldırdı. -->
+            <TextBlock x:Name="IdentityText" Margin="0,8,0,0"
                        FontFamily="{x:Static controls:AppFonts.Mono}"
                        FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextFaint}" />
           </StackPanel>
-        </StackPanel>
+        </DockPanel>
 
         <!-- ============================ SEKMELER ============================ -->
         <ItemsControl Grid.Row="1" Margin="20,0,20,12" Style="{DynamicResource Ds.Segment}">
@@ -58,7 +79,7 @@
         <!-- SABİT yükseklik: sekme değişince diyaloğun boyu ve footer'ın yeri OYNAMAZ. Sayı en uzun sekmeyi
              (Environment, 10 satır) sığdıracak şekilde seçildi — bir bütçe DEĞİLDİR; test sayıyı değil
              "üç sekmede de aynı yükseklik" DAVRANIŞINI pinler (AboutDialogTests). -->
-        <Grid Grid.Row="2" Height="260" Margin="20,0,20,4">
+        <Grid Grid.Row="2" MinHeight="236" Margin="18,0,18,4">
 
           <!-- SHORTCUTS · Görünürlük Style'dan gelir: yerel bir Visibility ataması Style setter'ını EZER,
                bu yüzden burada yerel değer YOKTUR (aynı kural üç panelde de geçerli). -->
@@ -160,25 +181,35 @@
               </Style>
             </ScrollViewer.Style>
             <StackPanel>
+              <TextBlock Text="Bundled components and their licenses." Margin="0,0,0,10"
+                         FontSize="{DynamicResource FontSize.Xs}"
+                         Foreground="{DynamicResource Brush.TextDim}" />
               <ItemsControl x:Name="ThirdPartyRows">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <DockPanel Margin="0,0,0,6">
-                      <TextBlock DockPanel.Dock="Right" Text="{Binding License}" VerticalAlignment="Center"
-                                 FontSize="{DynamicResource FontSize.2xs}"
-                                 Foreground="{DynamicResource Brush.TextDim}" />
-                      <TextBlock DockPanel.Dock="Left" Text="{Binding DisplayName}" VerticalAlignment="Center"
-                                 FontSize="{DynamicResource FontSize.Xs}"
-                                 Foreground="{DynamicResource Brush.TextSecondary}" />
-                      <TextBlock Text="{Binding Version}" Margin="8,0,8,0" VerticalAlignment="Center"
+                    <!-- Üç kolon: ad esner · mono sürüm 70px · sağa yaslı mono lisans 92px. -->
+                    <DockPanel MinHeight="26">
+                      <TextBlock DockPanel.Dock="Right" Width="92" Text="{Binding License}"
+                                 VerticalAlignment="Center" TextAlignment="Right"
                                  FontFamily="{x:Static controls:AppFonts.Mono}"
                                  FontSize="{DynamicResource FontSize.2xs}"
                                  Foreground="{DynamicResource Brush.TextFaint}" />
+                      <TextBlock DockPanel.Dock="Right" Width="70" Text="{Binding Version}"
+                                 VerticalAlignment="Center"
+                                 FontFamily="{x:Static controls:AppFonts.Mono}"
+                                 FontSize="{DynamicResource FontSize.Xs}"
+                                 Foreground="{DynamicResource Brush.TextSecondary}" />
+                      <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis"
+                                 FontSize="{DynamicResource FontSize.Sm}"
+                                 Foreground="{DynamicResource Brush.TextSecondary}" />
                     </DockPanel>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
-              <TextBlock x:Name="FontLicenseNoteText" Margin="0,8,0,0" TextWrapping="Wrap"
+              <!-- Tasarımda YOK: OFL'in "included in all copies" şartı için atfı görünür kılan not. Kaldırmak
+                   bir uyumluluk gerilemesi olurdu, bu yüzden bilinçli EKTİR. -->
+              <TextBlock x:Name="FontLicenseNoteText" Margin="0,10,0,0" TextWrapping="Wrap"
                          FontSize="{DynamicResource FontSize.2xs}"
                          Foreground="{DynamicResource Brush.TextFaint}" />
             </StackPanel>
@@ -187,10 +218,24 @@
 
         <!-- ============================ FOOTER ============================ -->
         <Border Grid.Row="3" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0">
-          <DockPanel Margin="20,12">
-            <!-- Close bir MUTASYON değildir → Secondary (Primary bir commit ima ederdi). -->
+          <DockPanel Margin="16,12">
+            <!-- Copy diagnostics: ikon + etiket. Başarılı kopyada ikon ✓'ye, renk başarı tonuna döner
+                 (design-v1.2.1 §2.10) — ikisini de kod-tarafı sürer, bkz. AboutDialog.xaml.cs. -->
+            <!-- Etiket Content'in İÇİNDEKİ bir TextBlock'tur; WPF'in buton peer'ı adı yalnız string
+                 Content'ten türetir → ad AÇIKÇA verilir ("Add layer" butonuyla aynı kural). -->
             <Button x:Name="CopyButton" DockPanel.Dock="Left" Click="OnCopyDiagnostics"
-                    Style="{DynamicResource Ds.Button.Ghost.Md}" />
+                    AutomationProperties.Name="{x:Static app:AccessibilityNames.CopyDiagnostics}"
+                    Style="{DynamicResource Ds.Button.Ghost.Sm}">
+              <StackPanel Orientation="Horizontal">
+                <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+                  <Canvas Width="24" Height="24">
+                    <Path x:Name="CopyGlyph" />
+                  </Canvas>
+                </Viewbox>
+                <TextBlock x:Name="CopyLabelText" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <!-- Close bir MUTASYON değildir → Secondary (Primary bir commit ima ederdi). -->
             <Button DockPanel.Dock="Right" HorizontalAlignment="Right" Content="Close" Click="OnClose"
                     Style="{DynamicResource Ds.Button.Secondary.Md}" />
           </DockPanel>

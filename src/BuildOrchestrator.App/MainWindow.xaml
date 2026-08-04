@@ -155,16 +155,28 @@
             </Button>
           </StackPanel>
 
-          <!-- Logo + ürün adı + mono bağlam metni (sürükleme alanı — hit-test-visible DEĞİL) -->
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
-            <!-- [T35 → About] Logo ARTIK Controls/BrandLogo.xaml'de (tek çizim yeri — About hero'su aynı
-                 kontrolü 20px'te kullanır). Burada yalnız yüksekliği verilir: design-v1 README §1.1/§2.1
-                 "Delta logosu (dark varyant, 15px yükseklik)". -->
-            <controls:BrandLogo x:Name="TitleBarLogo" Height="15" VerticalAlignment="Center" />
-            <!-- [About] Ürün adı ARTIK literal DEĞİL: AppIdentity onu Directory.Build.props'un <Product>
-                 değerinden okur. About hero'su da AYNI kaynağı kullanır (kopya YASAK). -->
-            <TextBlock Text="{x:Static services:AppIdentity.Product}" VerticalAlignment="Center" Margin="8,0,0,0"
-                       FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
+          <!-- [design-v1.2.1 §2.1] LOGO KİLİDİ (sürükleme alanı — hit-test-visible DEĞİL):
+               ürün markası (19px, tam renk) → ürün adı → 1×13 ayraç → firma logosu (10px, %55) → mono bağlam.
+               Hiyerarşi şart: ürün önde ve tam renk, firma arkada ve soluk. Öğeler arası boşluk 9px
+               (kaynaktaki `gap: 9`) — WPF'te sol marj olarak verilir. -->
+          <StackPanel x:Name="TitleBarLogoLock" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+            <!-- [design-v1.2.0] ÜRÜN markası. 1.2.0'a kadar burada yalnız Delta wordmark'ı vardı; uygulama
+                 artık kendi markasını taşıyor. Çizim Controls/AppMark.xaml'de (tek yer — About hero'su aynı
+                 kontrolü 30px'te kullanır). -->
+            <controls:AppMark Height="19" VerticalAlignment="Center" />
+            <!-- Ürün adı literal DEĞİL: AppIdentity onu Directory.Build.props'un <Product> değerinden okur
+                 (kopya YASAK). Tasarım: 12px/500 text-secondary. -->
+            <TextBlock Text="{x:Static services:AppIdentity.Product}" VerticalAlignment="Center" Margin="9,0,0,0"
+                       FontSize="{DynamicResource FontSize.Xs}"
+                       FontWeight="{DynamicResource FontWeight.Emphasis}"
+                       Foreground="{DynamicResource Brush.TextSecondary}" />
+            <!-- İki markayı ayıran hairline. Firma logosu opsiyoneldir — düşerse bu ayraç da düşer. -->
+            <Rectangle Width="1" Height="13" Margin="9,0,0,0" VerticalAlignment="Center"
+                       Fill="{DynamicResource Brush.Border}" SnapsToDevicePixels="True" />
+            <!-- FİRMA logosu (design-v1.2.0'da 15px tam boydan 10px/%55'e indi — ürün markası öne geçti).
+                 Çizim Controls/BrandLogo.xaml'de. İkon-yalnız olduğu için firma adı tooltip'te verilir. -->
+            <controls:BrandLogo x:Name="TitleBarLogo" Height="10" Opacity="0.55" Margin="9,0,0,0"
+                                VerticalAlignment="Center" ToolTip="Delta" />
             <!-- [A13/T2 · 2.1] design-v1 §2.1 bağlamı: mono 11px, gövde text-dim + worktree eki text-faint.
                  METİN ARTIK KOD-TARAFI sürülür (MainWindow.RefreshTitleContext → TitleBarContext) — XAML'de
                  literal YOKTUR. Eski hâlinde "no repository" burada DONMUŞTU: repo/branch/worktree hiçbir
@@ -173,18 +185,19 @@
                  MaxWidth olmadan TextTrimming HİÇ devreye girmez ve uzun bir repo/branch adı caption
                  butonlarının altına sert kesilirdi. 320/200 için otorite SESSİZDİR (kaynak: bu iki sayı T2'nin
                  kendi kararıdır); pinlenen sayı değil DAVRANIŞTIR — bkz. TitleBarContextTests. -->
-            <TextBlock x:Name="ContextText" VerticalAlignment="Center" Margin="8,0,0,0"
+            <TextBlock x:Name="ContextText" VerticalAlignment="Center" Margin="9,0,0,0"
                        MaxWidth="320" TextTrimming="CharacterEllipsis"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextDim}" />
-            <!-- [T2 fix-2 · m5 kalıntısı — ÖLÇÜLDÜ, marj BİLEREK KORUNDU] Otorite (BuildApp.jsx:1436-1444) gövde
-                 ve worktree ekini İKİ AYRI span olarak, ebeveyn `inline-flex` konteynerin `gap: 8` (8px) ile
-                 ayırdığı iki kutu olarak kurar; ekin KENDİ metni yalnız `· {wtName}` (dot+space, ayraç ÖNÜNDE
-                 fazladan boşluk YOK — bkz. BuildApp.jsx:1442). Yani CSS `gap:8` ile gövde-içi `" · "` metin
-                 ayracı OTORİTEDE de FARKLI iki mekanizmadır (kutular-arası boşluk vs. metin-içi karakter) —
-                 aynı genişlikte olmaları BEKLENMEZ. Bu Margin=8,0,0,0, `gap:8`'in WPF karşılığıdır; TitleBarContext.
-                 WorktreeSuffix zaten "· {name}" döndürür (ek boşluk eklemez). Kaldırılacak bir kusur DEĞİL. -->
-            <TextBlock x:Name="ContextWorktreeText" VerticalAlignment="Center" Margin="8,0,0,0"
+            <!-- [T2 fix-2 · m5 kalıntısı — ÖLÇÜLDÜ, marj BİLEREK KORUNDU] Otorite (BuildApp.jsx) gövde ve
+                 worktree ekini İKİ AYRI span olarak, ebeveyn `inline-flex` konteynerin gap'i ile ayırdığı iki
+                 kutu olarak kurar; ekin KENDİ metni yalnız `· {wtName}` (dot+space, ayraç ÖNÜNDE fazladan
+                 boşluk YOK). Yani CSS gap ile gövde-içi `" · "` metin ayracı OTORİTEDE de FARKLI iki
+                 mekanizmadır (kutular-arası boşluk vs. metin-içi karakter) — aynı genişlikte olmaları
+                 BEKLENMEZ. Bu marj o gap'in WPF karşılığıdır; TitleBarContext.WorktreeSuffix zaten
+                 "· {name}" döndürür (ek boşluk eklemez). Kaldırılacak bir kusur DEĞİL.
+                 [design-v1.2.0] Konteynerin gap'i logo kilidiyle birlikte 8 → 9 oldu; bu marj da onu izler. -->
+            <TextBlock x:Name="ContextWorktreeText" VerticalAlignment="Center" Margin="9,0,0,0"
                        Visibility="Collapsed" MaxWidth="200" TextTrimming="CharacterEllipsis"
                        FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextFaint}" />

@@ -175,19 +175,21 @@ combination — it is silently disabled; the tray icon still restores the window
 that row *unavailable* so the loss is visible rather than mysterious.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
-`F1` is itself gated: while either dialog is open it does nothing, so it can never discard an unsaved
-Settings draft.
+`F1` toggles About and works even while Settings is open: About opens on top, and Esc closes the topmost layer
+first, so an unsaved Settings draft survives.
 
 ### About
 
-The `i` button sits to the right of the gear in the title bar, and `F1` opens the same screen. It carries
-the product identity — name, application and engine version, copyright — over three tabs:
+The `i` button sits to the right of the gear in the title bar, and `F1` toggles the same screen. Its heading
+holds both marks in one composition — the product mark, the product name and one mono line with the version
+and copyright on the left; a *licensed to* block with the company logo on the right. Three tabs follow:
 
 - **Shortcuts** — the table above, rendered from the same source the app binds its keys from, so a rebound
   key can never drift from what the screen claims.
 - **Environment** — application and engine version, engine PID, .NET runtime, OS, the resolved `MSBuild.exe`
   and its version, the repository root, and the state, log and worktree-pool paths. *Copy diagnostics* puts
-  all of it on the clipboard as one aligned block to paste into a support request.
+  all of it on the clipboard as one aligned block, headed by the product and version, to paste into a support
+  request.
 - **Third-party** — the OSS components the app ships with, their runtime versions and licences, including
   the Geist fonts under the SIL Open Font License.
 

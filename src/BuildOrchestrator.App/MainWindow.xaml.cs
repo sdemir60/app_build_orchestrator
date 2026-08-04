@@ -333,9 +333,12 @@ public partial class MainWindow : Window
     /// yerleşimini kullanır.</summary>
     private void SetupAboutButtonTooltip()
     {
+        // [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan
+        // gelir — ikisi de burada elle yazılmaz.
+        var about = ShortcutCatalog.Get(ShortcutId.About);
         var tooltip = new System.Windows.Controls.ToolTip
         {
-            Content = ShortcutCatalog.Get(ShortcutId.About).Description,
+            Content = $"{about.Description} ({about.Gestures[0]})",
         };
         // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
         // ikinci kez yazılmaz.
@@ -352,10 +355,11 @@ public partial class MainWindow : Window
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null))
         {
-            // [About] Hangi modal açıksa o kapanır — ikisi aynı anda AÇILAMAZ (AnyDialogOpen kapısı).
+            // [design-v1.2.1 §2.10] About ÖNCE kapanır: iki modal aynı anda açık olabilir (F1, Settings'in
+            // üstüne biner) ve Esc her zaman EN ÜST katmanı indirir — alta sızmaz, alttaki taslak durur.
             case EscAction.CloseDialog:
-                if (SettingsOverlay.Visibility == Visibility.Visible) SettingsOverlay.CloseDialog();
-                else AboutOverlay.CloseDialog();
+                if (AboutOverlay.Visibility == Visibility.Visible) AboutOverlay.CloseDialog();
+                else SettingsOverlay.CloseDialog();
                 break;
             case EscAction.ClosePopovers: Shell.CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
@@ -653,15 +657,18 @@ public partial class MainWindow : Window
     /// <summary>[About] Info butonu → About modali.</summary>
     private void OnAbout(object sender, RoutedEventArgs e) => OnAboutRequested();
 
-    /// <summary>[About] About'u açar — bir modal ZATEN AÇIKSA no-op. Gerekçe: F1 pencere-seviyesi bir
-    /// <c>InputBinding</c>'dir ve Settings'in odak tuzağına RAĞMEN ateşler; bu kapı olmasaydı F1,
-    /// kaydedilmemiş bir Settings taslağını sessizce çöpe atardı. (Fare yolu zaten scrim'in altında kalır.)
+    /// <summary>[design-v1.2.1 §2.10] About'u AÇAR ya da KAPATIR — F1 bir toggle'dır.
+    ///
+    /// <para>Settings açıkken de açılır: About onun ÜSTÜNE biner (XAML'de sonra geldiği için z-sırası doğru)
+    /// ve Esc önce About'u kapatır, yani kaydedilmemiş taslak yerinde kalır. Bu yüzden F1'i modal açıkken
+    /// sağır etmeye gerek YOKTUR — eskiden öyleydi, aşırı tedbirliydi.</para>
+    ///
     /// <para>Global kısayolun GERÇEKTEN kayıtlı olup olmadığı diyaloğa geçirilir: çakışmada kayıt sessizce
     /// düşer (<see cref="HotkeyRegistration"/>) ve kullanıcının bunu görebileceği tek yer About'tur. Hotkey
     /// yalnız <c>OnSourceInitialized</c>'da kurulur — pencere hiç gösterilmediyse (headless test) null'dır.</para></summary>
     private void OnAboutRequested()
     {
-        if (AnyDialogOpen) return;
+        if (AboutOverlay.Visibility == Visibility.Visible) { AboutOverlay.CloseDialog(); return; }
         AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync);
     }
 
