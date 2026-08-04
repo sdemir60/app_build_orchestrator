@@ -1,0 +1,48 @@
+<UserControl x:Class="BuildOrchestrator.App.Controls.AppMark"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- [design-v1.2.1 §6] ÜRÜN markası — Build Orchestrator'ın kendi işareti. Firma logosundan (BrandLogo,
+       Delta wordmark'ı) AYRIDIR: ikisi title bar'da ve About başlığında birlikte durur, ürün önde (daha
+       büyük, tam renk), firma arkada (küçük, soluk).
+
+       Kaynak: prototype/assets/app-mark.svg — BİREBİR (viewBox 46.5 78 186 128, iki grup da translate(5.5 0),
+       beş pill'in x/y/w/h/rx değerleri ve chevron path'i yeniden çizilmeden taşındı).
+
+       RENKLER token'dan (hardcode YASAK). Dördünün DS rampasında karşılığı var; markaya ait iki ara ton
+       Tokens.xaml'de gerekçesiyle tanımlı (Brush.Brand.*). Chevron 1.2.1'de amber'a çevrildi — logo artık
+       arayüzle tek palette konuşuyor; karşılığında title bar'da chevron accent ağırlığı taşır, o bölgeye
+       başka amber öğe konmaz.
+
+       Tüketiciler yalnız yüksekliği verir (title bar 19px, About 30px); genişlik Viewbox'ın Uniform
+       ölçeğinden gelir — işaret 186×128'dir, oranı bozulmaz. -->
+  <Viewbox Stretch="Uniform" VerticalAlignment="Center">
+    <Canvas Width="186" Height="128">
+      <!-- viewBox min-x/min-y (46.5 / 78) negatif ötelemeyle karşılanır; SVG'nin translate(5.5 0) grup
+           dönüşümü de buraya katlandı → toplam X kayması 5.5 − 46.5 = −41. -->
+      <Canvas Canvas.Left="-41" Canvas.Top="-78">
+        <Rectangle Canvas.Left="68"  Canvas.Top="83"  Width="35" Height="21" RadiusX="10.5" RadiusY="10.5"
+                   Fill="{DynamicResource Brush.Brand.StripDim}" />
+        <Rectangle Canvas.Left="114" Canvas.Top="83"  Width="51" Height="21" RadiusX="10.5" RadiusY="10.5"
+                   Fill="{DynamicResource Brush.Amber}" />
+        <Rectangle Canvas.Left="46"  Canvas.Top="131" Width="39" Height="21" RadiusX="10.5" RadiusY="10.5"
+                   Fill="{DynamicResource Brush.Neutral700}" />
+        <Rectangle Canvas.Left="97"  Canvas.Top="131" Width="60" Height="22" RadiusX="11"   RadiusY="11"
+                   Fill="{DynamicResource Brush.TextPrimary}" />
+        <Rectangle Canvas.Left="60"  Canvas.Top="178" Width="57" Height="21" RadiusX="10.5" RadiusY="10.5"
+                   Fill="{DynamicResource Brush.TextSecondary}" />
+
+        <!-- Chevron. SVG gradient'i userSpaceOnUse (x1,y1)=(156,82) → (x2,y2)=(177,204); WPF'te MappingMode
+             Absolute ile AYNI koordinat uzayında verilir. Üç durak: AmberBright → Amber → Brand.ChevronDeep. -->
+        <Path Data="M151 83 L171.5 83 C176.1 83 179.2 85.1 182.3 88.5 L219.8 131.5 C222.7 134.9 224 138.3 224 142.4 C224 146.5 222.7 149.8 219.8 153.2 L179.1 198.3 C176.0 201.6 172.3 203 168.0 203 L151.0 203 C145.8 203 142.1 200.4 140.5 196.4 C138.8 192.1 140.2 187.8 143.5 184.2 L177.8 146.2 C180.6 143.2 180.8 140.8 178.2 137.8 L144.7 103.7 C141.8 100.7 140.4 96.9 140.4 93.0 C140.4 87.5 145.1 83 151 83 Z">
+          <Path.Fill>
+            <LinearGradientBrush MappingMode="Absolute" StartPoint="156,82" EndPoint="177,204">
+              <GradientStop Offset="0"   Color="{DynamicResource Color.AmberBright}" />
+              <GradientStop Offset="0.5" Color="{DynamicResource Color.Amber}" />
+              <GradientStop Offset="1"   Color="{DynamicResource Color.Brand.ChevronDeep}" />
+            </LinearGradientBrush>
+          </Path.Fill>
+        </Path>
+      </Canvas>
+    </Canvas>
+  </Viewbox>
+</UserControl>
