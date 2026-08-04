@@ -1,0 +1,201 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.AboutDialog"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             Visibility="Collapsed" Focusable="True">
+  <!-- [About] İkinci modal diyalog. Kabuk SettingsDialog ile BİREBİR aynı (full-bleed Brush.Scrim + 620px
+       Ds.Dialog + odak tuzağı + Esc/scrim ile kapanma) — yeni bir modal deseni GİRMEZ.
+
+       Farkı sekmeli gövdesidir: dört içerik sınıfı (kimlik / kısayol / ortam / lisans) birbirine bakmaz ve
+       tek bir uzun scroll'da taranmak zorunda kalırdı. Sekme anahtarı Ds.Segment'tir — ActionBar'ın
+       Debug/Release seçicisiyle AYNI bileşen, yani tasarım sistemine yeni bir kalıp eklenmiyor.
+
+       Gösterilen HİÇBİR metin burada üretilmez: hero AppIdentity'den, kısayollar ShortcutCatalog'dan,
+       ortam satırları DiagnosticsReport'tan, atıflar ThirdPartyNotices'tan gelir (kopya YASAK). -->
+  <Grid x:Name="Scrim" Background="{DynamicResource Brush.Scrim}" MouseLeftButtonDown="OnScrimClick"
+        KeyboardNavigation.TabNavigation="Cycle"
+        KeyboardNavigation.ControlTabNavigation="Cycle"
+        FocusManager.IsFocusScope="True">
+    <Border Width="620" HorizontalAlignment="Center" VerticalAlignment="Center"
+            Style="{DynamicResource Ds.Dialog}" MouseLeftButtonDown="OnDialogClick">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ============================ HERO ============================ -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="20,18,20,14">
+          <controls:BrandLogo Height="20" VerticalAlignment="Top" Margin="0,2,14,0" />
+          <StackPanel>
+            <TextBlock x:Name="ProductText"
+                       FontSize="{DynamicResource FontSize.Lg}"
+                       FontWeight="{DynamicResource FontWeight.Emphasis}"
+                       Foreground="{DynamicResource Brush.TextPrimary}" />
+            <TextBlock x:Name="TaglineText" Margin="0,3,0,0" TextWrapping="Wrap" MaxWidth="470"
+                       FontSize="{DynamicResource FontSize.Xs}"
+                       Foreground="{DynamicResource Brush.TextDim}" />
+            <TextBlock x:Name="IdentityText" Margin="0,6,0,0"
+                       FontFamily="{x:Static controls:AppFonts.Mono}"
+                       FontSize="{DynamicResource FontSize.2xs}"
+                       Foreground="{DynamicResource Brush.TextFaint}" />
+          </StackPanel>
+        </StackPanel>
+
+        <!-- ============================ SEKMELER ============================ -->
+        <ItemsControl Grid.Row="1" Margin="20,0,20,12" Style="{DynamicResource Ds.Segment}">
+          <RadioButton x:Name="ShortcutsTab" GroupName="about" IsChecked="True"
+                       Style="{DynamicResource Ds.Segment.Item}" Content="Shortcuts" />
+          <RadioButton x:Name="EnvironmentTab" GroupName="about" Checked="OnEnvironmentTabChecked"
+                       Style="{DynamicResource Ds.Segment.Item}" Content="Environment" />
+          <RadioButton x:Name="ThirdPartyTab" GroupName="about"
+                       Style="{DynamicResource Ds.Segment.Item}" Content="Third-party" />
+        </ItemsControl>
+
+        <!-- ============================ İÇERİK ============================ -->
+        <!-- SABİT yükseklik: sekme değişince diyaloğun boyu ve footer'ın yeri OYNAMAZ. Sayı en uzun sekmeyi
+             (Environment, 10 satır) sığdıracak şekilde seçildi — bir bütçe DEĞİLDİR; test sayıyı değil
+             "üç sekmede de aynı yükseklik" DAVRANIŞINI pinler (AboutDialogTests). -->
+        <Grid Grid.Row="2" Height="260" Margin="20,0,20,4">
+
+          <!-- SHORTCUTS · Görünürlük Style'dan gelir: yerel bir Visibility ataması Style setter'ını EZER,
+               bu yüzden burada yerel değer YOKTUR (aynı kural üç panelde de geçerli). -->
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ScrollViewer.Style>
+              <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=ShortcutsTab}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </ScrollViewer.Style>
+            <ItemsControl x:Name="ShortcutRows">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel LastChildFill="False" Margin="0,0,0,8">
+                    <ItemsControl DockPanel.Dock="Right" ItemsSource="{Binding Gestures}"
+                                  VerticalAlignment="Center">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <ContentControl Content="{Binding}" Margin="4,0,0,0"
+                                          Style="{DynamicResource Ds.Kbd}" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <!-- Global kısayol kaydı çakışmada SESSİZCE düşer (HotkeyRegistration); kullanıcının bunu
+                         anlamasının tek yolu bu nottur. -->
+                    <TextBlock DockPanel.Dock="Right" Text="unavailable" VerticalAlignment="Center"
+                               Margin="8,0,0,0"
+                               FontSize="{DynamicResource FontSize.2xs}"
+                               Foreground="{DynamicResource Brush.TextFaint}">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding Unavailable}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding Description}" VerticalAlignment="Center" TextWrapping="Wrap"
+                               FontSize="{DynamicResource FontSize.Sm}"
+                               Foreground="{DynamicResource Brush.TextSecondary}" />
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+
+          <!-- ENVIRONMENT -->
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ScrollViewer.Style>
+              <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=EnvironmentTab}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </ScrollViewer.Style>
+            <ItemsControl x:Name="EnvironmentRows">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel Margin="0,0,0,5">
+                    <TextBlock DockPanel.Dock="Left" Width="130" Text="{Binding Label}"
+                               VerticalAlignment="Center"
+                               FontSize="{DynamicResource FontSize.Xs}"
+                               Foreground="{DynamicResource Brush.TextDim}" />
+                    <!-- Yollar uzundur: kırpılır, tam metin tooltip'te durur. -->
+                    <TextBlock Text="{Binding Value}" ToolTip="{Binding Value}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               FontFamily="{x:Static controls:AppFonts.Mono}"
+                               FontSize="{DynamicResource FontSize.Xs}"
+                               Foreground="{DynamicResource Brush.TextSecondary}" />
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+
+          <!-- THIRD-PARTY -->
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ScrollViewer.Style>
+              <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=ThirdPartyTab}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </ScrollViewer.Style>
+            <StackPanel>
+              <ItemsControl x:Name="ThirdPartyRows">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <DockPanel Margin="0,0,0,6">
+                      <TextBlock DockPanel.Dock="Right" Text="{Binding License}" VerticalAlignment="Center"
+                                 FontSize="{DynamicResource FontSize.2xs}"
+                                 Foreground="{DynamicResource Brush.TextDim}" />
+                      <TextBlock DockPanel.Dock="Left" Text="{Binding DisplayName}" VerticalAlignment="Center"
+                                 FontSize="{DynamicResource FontSize.Xs}"
+                                 Foreground="{DynamicResource Brush.TextSecondary}" />
+                      <TextBlock Text="{Binding Version}" Margin="8,0,8,0" VerticalAlignment="Center"
+                                 FontFamily="{x:Static controls:AppFonts.Mono}"
+                                 FontSize="{DynamicResource FontSize.2xs}"
+                                 Foreground="{DynamicResource Brush.TextFaint}" />
+                    </DockPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock x:Name="FontLicenseNoteText" Margin="0,8,0,0" TextWrapping="Wrap"
+                         FontSize="{DynamicResource FontSize.2xs}"
+                         Foreground="{DynamicResource Brush.TextFaint}" />
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+
+        <!-- ============================ FOOTER ============================ -->
+        <Border Grid.Row="3" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0">
+          <DockPanel Margin="20,12">
+            <!-- Close bir MUTASYON değildir → Secondary (Primary bir commit ima ederdi). -->
+            <Button x:Name="CopyButton" DockPanel.Dock="Left" Click="OnCopyDiagnostics"
+                    Style="{DynamicResource Ds.Button.Ghost.Md}" />
+            <Button DockPanel.Dock="Right" HorizontalAlignment="Right" Content="Close" Click="OnClose"
+                    Style="{DynamicResource Ds.Button.Secondary.Md}" />
+          </DockPanel>
+        </Border>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

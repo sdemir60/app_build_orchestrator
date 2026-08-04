@@ -18,5 +18,8 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>Build Orchestrator</Product>
     <Company>Delta</Company>
+    <!-- [About] Telif TEK PARÇA burada yazılır: About hero'su ve title bar AssemblyCopyrightAttribute'tan
+         okur, yıl ile şirket adını UI'da birleştirmez (DateTime.Now.Year bir telif yılı DEĞİLDİR). -->
+    <Copyright>© 2026 Delta</Copyright>
   </PropertyGroup>
 </Project>

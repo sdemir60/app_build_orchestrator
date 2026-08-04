@@ -165,14 +165,34 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `F5` | Build — or Stop while a run is in flight |
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
+| `F1` | About — version, shortcuts and diagnostics |
 | `Esc` | Close the topmost open layer: dialog → popover/menu → selection |
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
-The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it yet
-(Settings only has LAYERS and REPOSITORY). If it cannot be registered — another application already owns that
-combination — it is silently disabled; the tray icon still restores the window.
+The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
+(Settings has LAYERS and REPOSITORY). If it cannot be registered — another application already owns that
+combination — it is silently disabled; the tray icon still restores the window, and the About screen marks
+that row *unavailable* so the loss is visible rather than mysterious.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
+`F1` is itself gated: while either dialog is open it does nothing, so it can never discard an unsaved
+Settings draft.
+
+### About
+
+The `i` button sits to the right of the gear in the title bar, and `F1` opens the same screen. It carries
+the product identity — name, application and engine version, copyright — over three tabs:
+
+- **Shortcuts** — the table above, rendered from the same source the app binds its keys from, so a rebound
+  key can never drift from what the screen claims.
+- **Environment** — application and engine version, engine PID, .NET runtime, OS, the resolved `MSBuild.exe`
+  and its version, the repository root, and the state, log and worktree-pool paths. *Copy diagnostics* puts
+  all of it on the clipboard as one aligned block to paste into a support request.
+- **Third-party** — the OSS components the app ships with, their runtime versions and licences, including
+  the Geist fonts under the SIL Open Font License.
+
+`MSBuild.exe` is located through `vswhere`, which costs a child process, so it resolves the first time the
+Environment tab is opened rather than when the screen appears.
 
 ### State on disk
 

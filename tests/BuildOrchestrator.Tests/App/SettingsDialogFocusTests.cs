@@ -46,7 +46,10 @@ public class SettingsDialogFocusTests
     /// <summary>Gerçek gezinme kanıtı: aynı pencerede arka planda odaklanabilir bir kontrol (Build butonunun
     /// yerini tutan) + açık diyalog dururken, diyalog alt-ağacından başlayarak tekrar tekrar "Sonraki" gezinme
     /// (Tab'ın WPF içindeki gerçek mekanizması — <see cref="UIElement.MoveFocus"/>) yapılır: kontrol sayısından
-    /// FAZLA turda ne odak arka plan kontrolüne kaçar ne de diyalog alt-ağacının dışına çıkar (Cycle sarar).</summary>
+    /// FAZLA turda ne odak arka plan kontrolüne kaçar ne de diyalog alt-ağacının dışına çıkar (Cycle sarar).
+    /// <para>[About] İDDİANIN GÖVDESİ ARTIK <see cref="FocusTrap"/>'te: About modali aynı iddiaya ihtiyaç
+    /// duyuyor ve 20 satırlık yürüyüş ikinci kez yazılacaktı (kopya YASAK, CLAUDE.md). Kurulum ve beklenti
+    /// AYNEN korundu — davranış değişmedi.</para></summary>
     [StaFact]
     public async Task Tab_navigation_cannot_escape_the_open_dialog_to_reach_a_background_control()
     {
@@ -65,23 +68,9 @@ public class SettingsDialogFocusTests
         dialog.Open(run, NewStore(), () => null);
         root.UpdateLayout(); // diyalog artık Visible — satır/buton container'ları yerleşsin
 
-        Assert.True(dialog.Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First)));
-        for (int i = 0; i < 25; i++) // kontrol sayısından kesinlikle fazla — Cycle sarmalıyor, kaçmıyor
-        {
-            var focused = Keyboard.FocusedElement as DependencyObject;
-            Assert.NotNull(focused);
-            Assert.NotSame(background, focused);
-            Assert.True(IsDescendantOf(focused!, dialog.Scrim), "odak diyalog alt-ağacının DIŞINA çıktı");
-            (focused as UIElement)?.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
-        }
+        FocusTrap.AssertCannotEscape(dialog.Scrim, background);
         GC.KeepAlive(window);
     }
-
-    // [A13/T3 fix-2 · 7] Ata yürüyüşü DsResources'a toplandı. Bu çağıran GÖRSEL+MANTIKSAL kipi kullanır ve bu
-    // fark BİLEREK korunmuştur: odaklanan öğe bir Popup/ContentElement altındaysa görsel zincir kopar, mantıksal
-    // zincir devam eder — kardeş iki çağıran (salt görsel) bu kipe geçirilmedi.
-    private static bool IsDescendantOf(DependencyObject node, DependencyObject ancestor) =>
-        DsResources.IsSelfOrDescendantOf(node, ancestor, includeLogical: true);
 
     // ================================================================ [A13/T3b] ölçü/geometri (b2/b3)
 

@@ -84,9 +84,12 @@ public partial class App : Application
             // explorer.exe'ye ASENKRON teslim eder; tray'i AYNI dispatcher turn'ünde yıkarsak (Shutdown → OnExit →
             // Dispose → NIM_DELETE) balloon milisaniyeler içinde iptal olur. Bu yüzden yıkımı ERTELE (aşağıda).
             _secondInstanceTray = new AppTrayIcon();
+            // [About] Ürün adı ve global kısayol jesti tek kaynaktan (kopya YASAK): AppIdentity.Product ve
+            // HotkeyBinding.DefaultGesture. Kısayol ayarlanabilir olduğundan metne gömülü "Alt+B" bayatlardı.
             _secondInstanceTray.ShowNotification(
-                "Build Orchestrator",
-                "Already running — could not bring the existing window forward. Use the tray icon or Alt+B.");
+                AppIdentity.Product,
+                "Already running — could not bring the existing window forward. Use the tray icon or "
+                + HotkeyBinding.DefaultGesture + ".");
             ScheduleSecondInstanceShutdown(outcome.ExitCode);
             return;
         }

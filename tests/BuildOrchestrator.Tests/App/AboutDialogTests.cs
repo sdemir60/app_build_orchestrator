@@ -1,0 +1,303 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// About modali. Kabuk Settings ile AYNI (scrim + 620px Ds.Dialog + odak tuzağı + Esc); farkı sekmeli
+/// gövdesidir. Headless süit XAML runtime çözümlemesini görmez — bu yüzden realize ZORUNLU (CLAUDE.md).
+/// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
+public class AboutDialogTests
+{
+    private static readonly TimeSpan PumpTimeout = TimeSpan.FromSeconds(2);
+
+    private static Border Shell(BuildOrchestrator.App.Views.AboutDialog dialog) =>
+        (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
+
+    private static IReadOnlyList<RadioButton> Tabs(FrameworkElement dialog) =>
+        [.. DsResources.Descendants(dialog).OfType<RadioButton>()];
+
+    private static List<string> VisibleTexts(FrameworkElement dialog) =>
+        [.. DsResources.Descendants(dialog).OfType<TextBlock>().Select(t => t.Text)];
+
+    private static void Select(BuildOrchestrator.App.Views.AboutDialog dialog, int index)
+    {
+        Tabs(dialog)[index].IsChecked = true;
+        dialog.UpdateLayout();
+    }
+
+    // ---------------------------------------------------------------- kabuk
+
+    [StaFact]
+    public void The_dialog_realizes_and_is_six_hundred_twenty_pixels_wide()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Assert.Equal(Visibility.Visible, dialog.Visibility);
+            Assert.Equal(620.0, Shell(dialog).Width);
+            Assert.Equal(620.0, Shell(dialog).ActualWidth); // realize zorunlu — literal okumak yetmez
+        }
+    }
+
+    /// <summary>Yapısal kanıt: scrim bir Cycle klavye-gezinme kapsayıcısı ve bir odak kapsamı. Odak tuzağı
+    /// XAML dosyası BAŞINA kurulur — Settings'te düzeltilen kusur burada kendiliğinden düzelmiş sayılmaz.</summary>
+    [StaFact]
+    public void The_scrim_is_a_cyclic_keyboard_focus_scope()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Assert.Equal(KeyboardNavigationMode.Cycle, KeyboardNavigation.GetTabNavigation(dialog.Scrim));
+            Assert.Equal(KeyboardNavigationMode.Cycle, KeyboardNavigation.GetControlTabNavigation(dialog.Scrim));
+            Assert.True(FocusManager.GetIsFocusScope(dialog.Scrim));
+        }
+    }
+
+    /// <summary>Gerçek gezinme kanıtı: About açıkken arka plandaki odaklanabilir bir kontrole Tab ile
+    /// ULAŞILAMAZ. İddia <see cref="FocusTrap.AssertCannotEscape"/> ile Settings'inkiyle PAYLAŞILIR.</summary>
+    [StaFact]
+    public void Tab_navigation_cannot_escape_the_open_dialog()
+    {
+        var background = new Button { Content = "Background Build", Focusable = true, Width = 90, Height = 24 };
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(backgroundSibling: background);
+        using (scope)
+            FocusTrap.AssertCannotEscape(dialog.Scrim, background);
+    }
+
+    [StaFact]
+    public void Close_dialog_hides_it()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            dialog.CloseDialog();
+            Assert.Equal(Visibility.Collapsed, dialog.Visibility);
+        }
+    }
+
+    // ---------------------------------------------------------------- sekmeler
+
+    [StaFact]
+    public void It_has_three_tabs_and_the_first_one_is_selected()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var tabs = Tabs(dialog);
+            Assert.Equal(3, tabs.Count);
+            Assert.True(tabs[0].IsChecked);
+            Assert.All(tabs.Skip(1), t => Assert.False(t.IsChecked));
+        }
+    }
+
+    /// <summary>Her an TAM BİR panel görünür. Bu, "sekme değişince boy değişmez" iddiasının ÖN KOŞULUdur:
+    /// üç panel birden görünür kalsaydı boy zaten sabit olurdu ve o test hiçbir şeyi ayırt etmezdi.</summary>
+    [StaFact]
+    public void Exactly_one_pane_is_visible_at_a_time()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var panes = DsResources.Descendants(dialog).OfType<ScrollViewer>().ToList();
+            Assert.Equal(3, panes.Count);
+
+            for (int i = 0; i < Tabs(dialog).Count; i++)
+            {
+                Select(dialog, i);
+                Assert.Equal(1, panes.Count(p => p.Visibility == Visibility.Visible));
+            }
+        }
+    }
+
+    /// <summary>Sekme değişince diyalog BOYU DEĞİŞMEZ — footer'ın yeri her sekmede aynı kalır. Test SAYIYI
+    /// değil DAVRANIŞI pinler: üç sekmenin ölçülen yüksekliği birbirine eşit olmalı.
+    /// <para>Ayırt ediciliği <see cref="Exactly_one_pane_is_visible_at_a_time"/>'a bağlıdır: paneller
+    /// gerçekten tek tek göründüğü için içerik alanının SABİT yüksekliği olmasaydı boy sekmeye göre
+    /// değişirdi.</para></summary>
+    [StaFact]
+    public void Switching_tabs_never_resizes_the_dialog()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var heights = new List<double>();
+            for (int i = 0; i < Tabs(dialog).Count; i++)
+            {
+                Select(dialog, i);
+                heights.Add(Shell(dialog).ActualHeight);
+            }
+            Assert.All(heights, h => Assert.True(h > 0, "diyalog hiç yerleşmedi"));
+            Assert.Single(heights.Distinct());
+        }
+    }
+
+    // ---------------------------------------------------------------- içerik
+
+    [StaFact]
+    public void The_hero_shows_the_product_identity_from_the_assembly()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.OnEngineReady("9.9.9+test", 777));
+        using (scope)
+        {
+            var texts = VisibleTexts(dialog);
+            Assert.Contains(AppIdentity.Product, texts);
+            Assert.Contains(AppIdentity.Tagline, texts);
+            Assert.Contains(texts, t => t.Contains(AppIdentity.Version, StringComparison.Ordinal)
+                                     && t.Contains("9.9.9+test", StringComparison.Ordinal)
+                                     && t.Contains(AppIdentity.Copyright, StringComparison.Ordinal));
+            Assert.Single(DsResources.Descendants(dialog).OfType<BrandLogo>());
+        }
+    }
+
+    /// <summary>Motor doğmamışken hero sürüm satırı "engine " sonrası boş kalmaz.</summary>
+    [StaFact]
+    public void The_hero_says_the_engine_is_not_started_before_it_boots()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+            Assert.Contains(VisibleTexts(dialog),
+                t => t.Contains($"engine {DiagnosticsReport.NotStarted}", StringComparison.Ordinal));
+    }
+
+    [StaFact]
+    public void The_shortcuts_tab_lists_every_catalog_entry_with_its_key_badges()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var texts = VisibleTexts(dialog);
+            var badges = DsResources.Descendants(dialog).OfType<ContentControl>()
+                .Select(c => c.Content as string)
+                .Where(c => c is not null)
+                .ToList();
+
+            foreach (var entry in ShortcutCatalog.All)
+            {
+                Assert.Contains(entry.Description, texts);
+                foreach (string gesture in entry.Gestures) Assert.Contains(gesture, badges);
+            }
+        }
+    }
+
+    /// <summary>Global kısayol kaydı çakışma yüzünden düştüğünde bu GÖRÜNÜR olur — README'nin "sessizce devre
+    /// dışı" davranışını kullanıcının anlamasının başka bir yolu yok.</summary>
+    [StaFact]
+    public void An_unregistered_global_hotkey_is_marked_unavailable()
+    {
+        var (registered, _, scope1) = AboutDialogHost.OpenRealized(hotkeyRegistered: true);
+        using (scope1)
+            Assert.DoesNotContain(
+                DsResources.Descendants(registered).OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text),
+                t => t.Contains("unavailable", StringComparison.Ordinal));
+
+        var (disabled, _, scope2) = AboutDialogHost.OpenRealized(hotkeyRegistered: false);
+        using (scope2)
+            Assert.Contains(
+                DsResources.Descendants(disabled).OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text),
+                t => t.Contains("unavailable", StringComparison.Ordinal));
+    }
+
+    [StaFact]
+    public void The_environment_tab_draws_every_diagnostics_line()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.OnEngineReady("9.9.9+test", 777));
+        using (scope)
+        {
+            Select(dialog, 1);
+
+            var texts = VisibleTexts(dialog);
+            Assert.NotEmpty(dialog.DiagnosticsLines);
+            foreach (var line in dialog.DiagnosticsLines)
+            {
+                Assert.Contains(line.Label, texts);
+                Assert.Contains(line.Value, texts);
+            }
+            // Yollar YENİDEN YAZILMAZ — üretimin kendi static'lerinden gelir.
+            Assert.Contains(dialog.DiagnosticsLines, l => l.Value == JsonUiStateStore.DefaultPath);
+        }
+    }
+
+    /// <summary>MSBuild çözümü ASYNC'tir: sekme açılana kadar HİÇ tetiklenmez (About'u açmak bir child process
+    /// başlatmamalı) ve sonuç gelene kadar satır "resolving…" der. Sonuç bir kez çözülür, cache'lenir.</summary>
+    [StaFact]
+    public void Msbuild_is_resolved_lazily_when_the_environment_tab_is_first_opened()
+    {
+        var gate = new TaskCompletionSource<string>();
+        int calls = 0;
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(
+            resolveMsBuild: () => { calls++; return gate.Task; });
+        using (scope)
+        {
+            Assert.Equal(0, calls); // açılışta HİÇ çağrılmadı
+            Assert.Contains(dialog.DiagnosticsLines, l => l.Value == DiagnosticsReport.Resolving);
+
+            Select(dialog, 1);
+            Assert.Equal(1, calls);
+
+            gate.SetResult(AboutDialogHost.FakeMsBuild);
+            DispatcherPump.PumpUntil(
+                () => dialog.DiagnosticsLines.Any(l => l.Value == AboutDialogHost.FakeMsBuild), PumpTimeout);
+            Assert.Contains(dialog.DiagnosticsLines, l => l.Value == AboutDialogHost.FakeMsBuild);
+
+            // Sekmeye geri dönmek yeniden çözmez.
+            Select(dialog, 0);
+            Select(dialog, 1);
+            Assert.Equal(1, calls);
+        }
+    }
+
+    [StaFact]
+    public void The_third_party_tab_lists_every_component_with_its_licence()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Select(dialog, 2);
+
+            var texts = VisibleTexts(dialog);
+            foreach (var component in ThirdPartyNotices.All)
+            {
+                Assert.Contains(component.DisplayName, texts);
+                Assert.Contains(component.License, texts);
+            }
+            Assert.Contains(ThirdPartyNotices.FontLicenseNote, texts);
+        }
+    }
+
+    // ---------------------------------------------------------------- copy diagnostics
+
+    [StaFact]
+    public void Copy_diagnostics_writes_the_report_text_and_shows_feedback()
+    {
+        string? written = null;
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            dialog.ClipboardWriter = text => { written = text; return true; };
+            dialog.CopyDiagnostics();
+
+            Assert.Equal(DiagnosticsReport.ToText(dialog.DiagnosticsLines), written);
+            Assert.True(dialog.IsShowingCopied);
+        }
+    }
+
+    /// <summary>Pano kilitliyse (kalıcı CLIPBRD_E_CANT_OPEN) UI çökmez ve "kopyalandı" YALANI söylemez.</summary>
+    [StaFact]
+    public void A_failed_clipboard_write_shows_no_copied_feedback()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            dialog.ClipboardWriter = _ => false;
+            dialog.CopyDiagnostics();
+            Assert.False(dialog.IsShowingCopied);
+        }
+    }
+}

@@ -1203,10 +1203,24 @@ public sealed partial class RunViewModel : ObservableObject
             : $"[error] engine could not start: {exePath}");
     }
 
+    /// <summary>[About] Motorun bildirdiği sürüm — About'un Environment sekmesi bunu gösterir. Motor
+    /// doğmadan önce <c>null</c>'dır.</summary>
+    public string? EngineVersion { get; private set; }
+
+    /// <summary>[About] Motor process'inin PID'i (<c>EngineReadyEvent.Pid</c>). Bu değer olaydan okunup
+    /// ATILIYORDU; artık tanı raporunda görünür.</summary>
+    public int? EnginePid { get; private set; }
+
     /// <summary>[D1 review · C5] Motor hazır: konsolun boot satırında sürüm gösterilir (design-v1 §2.5 anlatı
     /// dili — "Build started — 14 projects, parallelism 4" ile aynı kalıp). Sürüm kimliği TEK kaynaktan gelir:
-    /// <c>Directory.Build.props</c> → Supervisor assembly'sinin InformationalVersion'ı → <c>engineReady</c>.</summary>
-    public void OnEngineReady(string engineVersion) => AppendRunLine($"Engine ready — v{engineVersion}");
+    /// <c>Directory.Build.props</c> → Supervisor assembly'sinin InformationalVersion'ı → <c>engineReady</c>.
+    /// <para>[About] Sürüm ve PID ayrıca SAKLANIR (Environment sekmesi okur); boot satırı DEĞİŞMEDİ.</para></summary>
+    public void OnEngineReady(string engineVersion, int pid)
+    {
+        EngineVersion = engineVersion;
+        EnginePid = pid;
+        AppendRunLine($"Engine ready — v{engineVersion}");
+    }
 
     // ---------------------------------------------------------------- konsol/log
 
