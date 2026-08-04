@@ -83,6 +83,35 @@ public class RibbonTextTests
         Assert.Equal("failed", line.Glyph);
     }
 
+    // [runFailed] Koşan bir run motor tarafında beklenmeyen bir istisnayla düştüğünde runCompleted ASLA gelmez:
+    // faz Running'de donar ve şerit "▸ Building 3/10" demeye devam ederdi — derleme çoktan bitmişken. Sync
+    // hatasının birebir ikizi: KIRMIZI gerekçe satırı faz-metnini EZER.
+    [Fact]
+    public void Run_failed_shows_a_red_reason_line_over_the_phase_text()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, hasWorkspace: true, allClean: false, Counters(building: 2),
+            willBuild: 10, finishedOfWillBuild: 3, totalProjects: 14, elapsedMs: 12_000, etaMs: 35_000, checkDurMs: null,
+            warnings: 0, engineDiedMessage: null, syncError: null, runError: "access to the log file was denied");
+        Assert.Equal("Run failed — access to the log file was denied", line.Text);
+        Assert.Equal("Brush.StatusFailText", line.BrushKey);
+        Assert.Equal("failed", line.Glyph);
+    }
+
+    // Öncelik zinciri: engine ölümü > Sync hatası > run hatası > faz. Engine ölümü her şeyi ezer (motor yoksa
+    // diğer iki metnin retry yolu da yoktur); Sync hatası run hatasını ezer (durumlar bilinmiyorsa bir sonraki
+    // adım zaten Sync'tir).
+    [Fact]
+    public void A_sync_failure_outranks_a_run_failure_and_the_engine_death_outranks_both()
+    {
+        var syncWins = RibbonText.Compose(AppPhase.Running, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
+            engineDiedMessage: null, syncError: "fetch failed", runError: "run blew up");
+        Assert.Equal("Sync failed — fetch failed", syncWins.Text);
+
+        var engineWins = RibbonText.Compose(AppPhase.Running, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
+            engineDiedMessage: "Engine stopped unexpectedly (exit 139)", syncError: "fetch failed", runError: "run blew up");
+        Assert.Equal("Engine stopped unexpectedly (exit 139)", engineWins.Text);
+    }
+
     // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine öldüyse şerit, HANGİ Phase'de olursa olsun KIRMIZI ölüm metnini
     // gösterir — Phase (burada Running) ve hatta bir Sync hatası bile YOK SAYILIR (en yüksek öncelik).
     [Fact]

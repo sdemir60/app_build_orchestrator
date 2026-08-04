@@ -125,6 +125,9 @@ public sealed partial class RunViewModel
     {
         _syncInFlight = true;
         SyncErrorMessage = null; // [E2/T10] retry başladı — önceki Sync hatası şeritten kalkar
+        // [runFailed] Önceki run'ın hata gerekçesi de kalkar: aksi halde KIRMIZI "Run failed — …" satırı, Sync
+        // ilerlemesini ("▸ Sync — git fetch origin…") kullanıcı yeni bir run başlatana kadar gizlerdi.
+        RunErrorMessage = null;
         Phase = AppPhase.Syncing;
         _willBuildIds.Clear(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
         RebuildCommand.NotifyCanExecuteChanged();

@@ -884,6 +884,13 @@ filter. Glyphs are 13 px in the phase line and 10 px inside chips. There is no d
 summary that can be dismissed is a failure summary that will be missed. Underneath, a 2 px progress bar,
 radius 0, coloured by phase and indeterminate during Sync.
 
+Three failure texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine*
+action), a failed Sync, then a failed run. Each is red, carries the reason, and persists until the user starts
+something new — a Sync clears the run failure, a run start clears both. The order is the order of how much is
+unknown: with no engine nothing can be retried, and with no Sync the project states themselves are stale. A
+rejected request is not a failure and does not take this path — declining a *Continue* with nothing to resume
+leaves the `stopped` line standing, because that line is still true.
+
 **Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected), the 8 px will-build dot,
 the project name with the solution name beside it, then a right-aligned block — on hover, *Reveal in Explorer*
 and *Open in Visual Studio* icons; without hover, `curSha → targetSha` for dirty projects — then the status

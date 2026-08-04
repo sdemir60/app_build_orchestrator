@@ -175,8 +175,11 @@ public sealed partial class RunViewModel : ObservableObject
     // ÖNCE) beklenmedik bir istisnada da bu kodu yayınlar — eklenmezse IsStarting kalıcı true kalır (aynı
     // wedge sınıfı, farklı tetikleyici). Küme BİLEREK genişletilmedi (ör. "tanınmayan her kod run-ending"
     // yapılmadı): badCommand/unknownCommand gibi run'ı bitirmeyen per-command hatalar da vardır.
+    // [runFailed] Kümenin tek REDdi (bkz. OnError'ın RunErrorMessage kapısı) — iki yerde geçtiği için sabit.
+    private const string NoResumableRunCode = "noResumableRun";
+
     private static readonly HashSet<string> RunEndingErrorCodes =
-        new(StringComparer.Ordinal) { "planFailed", "msbuildNotFound", "noResumableRun", "runFailed" };
+        new(StringComparer.Ordinal) { "planFailed", "msbuildNotFound", NoResumableRunCode, "runFailed" };
 
     private readonly EngineHost _engine;
     private readonly ConsoleBatcher _console;
@@ -362,6 +365,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="OnSyncStarted"/> retry) ya da başarılı tamamlanma (<see cref="OnSyncCompleted"/>) temizler.
     /// Sync SALT-OKUR olduğundan Sync ile retry her zaman mümkündür (butonlar kilitlenmez).</summary>
     [ObservableProperty] private string? _syncErrorMessage;
+
+    /// <summary>[runFailed] Koşan bir run motor tarafında beklenmeyen bir istisnayla düştüğünde
+    /// (<c>error(runFailed)</c>) gerekçe — şerit bunu KIRMIZI <c>Run failed — {reason}</c> faz-metnine çevirir.
+    /// <see cref="SyncErrorMessage"/>'ın ikizidir; farkı yalnız temizleme kapılarıdır (yeni run ya da yeni Sync).</summary>
+    [ObservableProperty] private string? _runErrorMessage;
 
     // ---------------------------------------------------------------- [C2] seçim / filtre / workspace hedefi / perf
 
@@ -809,6 +817,9 @@ public sealed partial class RunViewModel : ObservableObject
         // Temizlenmezse EngineDiedMessage tek bir ölümden sonra SONSUZA DEK stale kalır — sıradaki N run tamamen
         // başarılı olsa bile "engine öldü" mesajı güncel engine sağlığını YANLIŞ yansıtmaya devam eder.
         EngineDiedMessage = null;
+        // [runFailed] Aynı gerekçe: yeni bir run GERÇEKTEN başladı (round-trip kanıtı) — önceki run'ın hata
+        // gerekçesi artık geçmiştir ve şeridi bu run'ın ilerlemesine bırakmalıdır.
+        RunErrorMessage = null;
         _elapsedBaseMs = e.ElapsedMsAtStart;
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
@@ -980,10 +991,17 @@ public sealed partial class RunViewModel : ObservableObject
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
         CanContinue = false;
         _sawRunStarted = false;
-        // [Stopping] Run-bitiren bir hata Stop penceresinde gelirse runCompleted GELMEZ; faz bırakılmazsa
-        // buton sonsuza dek pasif, şerit sonsuza dek "Stopping" kalır. (Aynı yolun Running dalı bilerek
-        // DIŞARIDA: o, bu işten önce de var olan ayrı bir davranış ve ayrı bir karar.)
-        if (Phase == AppPhase.Stopping) Phase = RestingPhase;
+        // Run-bitiren bir hata geldiğinde runCompleted ASLA gelmez — fazı bırakan başka kapı yoktur.
+        // [Stopping] Stop penceresinde gelirse buton sonsuza dek pasif, şerit sonsuza dek "Stopping" kalırdı.
+        // [runFailed] Running'de gelirse (yalnız runFailed bunu yapabilir — kümedeki diğer üç kod runStarted'dan
+        // ÖNCE üretilir) şerit donmuş bir "▸ Building 3/10" gösterirdi: derleme bitmiş, uygulama "derliyorum"
+        // diyor. Stopped'a DEĞİL dinlenme fazına düşülür — durmadı, düştü; gerekçeyi RunErrorMessage anlatır.
+        if (Phase is AppPhase.Running or AppPhase.Stopping) Phase = RestingPhase;
+        // [runFailed] Gerekçe şeride taşınır — konsol satırı tek başına yeterli değil (kullanıcı konsola
+        // bakmıyor olabilir ve şerit o ana kadar aksini söylüyordu). noResumableRun DIŞARIDA: o bir REDdir
+        // (RunCoordinator onu `rejection` diye adlandırır), bir başarısızlık değil — kalıcı kırmızı bir satır
+        // hem yanlış olurdu hem de hâlâ doğru olan "▸ Stopped — 3/10 · rest queued" faz-metnini ezerdi.
+        if (e.Code != NoResumableRunCode) RunErrorMessage = e.Message;
     }
 
     /// <summary>[Task 16 — It-2 devir §8, kama düzeltmesi] <see cref="EngineHost.EngineExited"/> eskiden VM'e

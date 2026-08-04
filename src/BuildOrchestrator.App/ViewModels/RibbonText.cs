@@ -41,7 +41,8 @@ public static class RibbonText
     public static RibbonLine Compose(AppPhase phase, bool hasWorkspace, bool allClean, RunCounters c,
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
                                      long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
-                                     string? engineDiedMessage = null, string? syncError = null)
+                                     string? engineDiedMessage = null, string? syncError = null,
+                                     string? runError = null)
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
@@ -58,6 +59,14 @@ public static class RibbonText
         if (syncError is { Length: > 0 })
             return new RibbonLine(
                 string.Format(CultureInfo.InvariantCulture, "Sync failed — {0}", syncError),
+                "Brush.StatusFailText", "failed");
+
+        // [runFailed] Koşan bir run motor tarafında düştü: runCompleted ASLA gelmeyeceği için faz-metni tek
+        // başına bırakılsa donmuş bir "▸ Building 3/10" gösterirdi. Sync hatasının ALTINDA: durumlar bilinmiyorsa
+        // (Sync düştü) kullanıcının bir sonraki adımı zaten Sync'tir, run gerekçesi o zaman ikincildir.
+        if (runError is { Length: > 0 })
+            return new RibbonLine(
+                string.Format(CultureInfo.InvariantCulture, "Run failed — {0}", runError),
                 "Brush.StatusFailText", "failed");
 
         switch (phase)

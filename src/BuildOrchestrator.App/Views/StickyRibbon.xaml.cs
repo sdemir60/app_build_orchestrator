@@ -172,6 +172,7 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.EngineDiedMessage):
             case nameof(RunViewModel.EngineRestartable): // [D1] aksiyonun anlamlı olup olmadığı da metinle birlikte tazelenir
             case nameof(RunViewModel.SyncErrorMessage):
+            case nameof(RunViewModel.RunErrorMessage): // [runFailed] aynı öncelik zincirinin üçüncü halkası
                 RefreshText();
                 RefreshProgress();
                 AnnouncePhaseIfChanged(); // [E5/T47] faz değişimini ekran okuyucuya duyur (live region)
@@ -209,7 +210,8 @@ public partial class StickyRibbon : UserControl
         var line = RibbonText.Compose(_vm.Phase, _vm.HasWorkspace, _vm.AllClean, c,
             _vm.WillBuildCount, _vm.FinishedOfWillBuild, c.Total,
             _vm.ElapsedMs, _vm.EtaMs, checkDurMs: _vm.ElapsedMs, warnings: 0,
-            engineDiedMessage: _vm.EngineDiedMessage, syncError: _vm.SyncErrorMessage);
+            engineDiedMessage: _vm.EngineDiedMessage, syncError: _vm.SyncErrorMessage,
+            runError: _vm.RunErrorMessage);
         // NOT (wire gap): warnings=0 — App derleyici-warning sayısını izlemiyor (RunCompletedEvent'te yok). Bkz. report.
 
         // [E2/T37] "Restart engine" YALNIZ engine-died kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).

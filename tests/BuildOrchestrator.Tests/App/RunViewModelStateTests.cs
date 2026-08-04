@@ -153,6 +153,65 @@ public class RunViewModelStateTests
         Assert.False(vm.IsRunning);
     }
 
+    // ---------------------------------------------------------------- [runFailed] koşarken düşen run görünür olur
+    //
+    // runFailed, run'ın TAMAMINI saran dış catch'ten gelir (RunCoordinator.ExecuteRunAsync) — yani runStarted'dan
+    // SONRA da gelebilir ve o yolda runCompleted ASLA yazılmaz. Kümedeki diğer üç kod (planFailed/msbuildNotFound
+    // planlama penceresinde, noResumableRun bir Continue reddinde) faz Running iken gelemez.
+
+    [Fact]
+    public async Task A_run_that_fails_mid_flight_surfaces_the_reason_and_leaves_the_running_phase()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.Equal(AppPhase.Running, vm.Phase); // ön-koşul
+
+        vm.OnEvent(new ErrorEvent("runFailed", "access to the log file was denied"));
+
+        Assert.Equal("access to the log file was denied", vm.RunErrorMessage); // şerit KIRMIZI gerekçeyi gösterir
+        Assert.Equal(AppPhase.Idle, vm.Phase);   // donmuş "Building 3/10" faz-metni kalmaz
+        Assert.False(vm.IsRunning);
+    }
+
+    // noResumableRun bir REDdir, bir başarısızlık değil (RunCoordinator onu `rejection` diye adlandırır):
+    // Continue'ya basıldığında sürdürülecek run yoktur. Kırmızı kalıcı bir "Run failed" satırı burada hem
+    // yanlış olurdu hem de "▸ Stopped — 3/10 · rest queued" gibi HÂLÂ doğru olan faz-metnini kalıcı ezerdi.
+    [Fact]
+    public async Task A_rejected_continue_does_not_paint_the_ribbon_red()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10)); // → Stopped
+
+        vm.OnEvent(new ErrorEvent("noResumableRun", "No resumable run for 'D:\\repo'."));
+
+        Assert.Null(vm.RunErrorMessage);
+        Assert.Equal(AppPhase.Stopped, vm.Phase); // faz-metni korunur
+    }
+
+    // Kalıcılık kuralı SyncErrorMessage'ın ikizi: metin, kullanıcı YENİ bir şey başlatana kadar durur.
+    [Fact]
+    public async Task The_run_failure_text_is_cleared_by_the_next_run_and_by_the_next_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new ErrorEvent("runFailed", "boom"));
+        Assert.Equal("boom", vm.RunErrorMessage);
+
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug", 0)); // yeni run başladı
+        Assert.Null(vm.RunErrorMessage);
+
+        vm.OnEvent(new ErrorEvent("runFailed", "boom again"));
+        Assert.Equal("boom again", vm.RunErrorMessage);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // Sync başladı — şerit Sync ilerlemesini göstermeli
+        Assert.Null(vm.RunErrorMessage);
+    }
+
     // ---------------------------------------------------------------- seçim / filtre asimetrisi
 
     [Fact]
