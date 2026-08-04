@@ -333,9 +333,12 @@ public partial class MainWindow : Window
     /// yerleşimini kullanır.</summary>
     private void SetupAboutButtonTooltip()
     {
+        // [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan
+        // gelir — ikisi de burada elle yazılmaz.
+        var about = ShortcutCatalog.Get(ShortcutId.About);
         var tooltip = new System.Windows.Controls.ToolTip
         {
-            Content = ShortcutCatalog.Get(ShortcutId.About).Description,
+            Content = $"{about.Description} ({about.Gestures[0]})",
         };
         // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
         // ikinci kez yazılmaz.

@@ -140,15 +140,40 @@ public sealed class ContrastTests
         return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
     }
 
+    /// <summary>
+    /// Tokens.xaml'deki OPAK 6-hane fırçalar. İki yazım biçimi de okunur:
+    /// <list type="bullet">
+    ///   <item>doğrudan: <c>&lt;SolidColorBrush x:Key="Brush.X" Color="#rrggbb" /&gt;</c></item>
+    ///   <item>dolaylı: <c>&lt;Color x:Key="Color.X"&gt;#rrggbb&lt;/Color&gt;</c> + fırça o Color'ı
+    ///         <c>{StaticResource}</c> ile gösterir</item>
+    /// </list>
+    /// <para>Dolaylı biçim design-v1.2.1 ile geldi: ürün markasının chevron'u bir gradient'tir ve
+    /// <c>GradientStop</c> bir Brush değil <b>Color</b> ister — hex'i ikinci kez yazmamak için Color tanım,
+    /// fırça ondan türeyen oldu. Guard bu dolaylılığı ÇÖZER; aksi halde <c>Brush.Amber</c> tabloya hiç
+    /// girmezdi ve kontrast iddiaları o token için SESSİZCE kaybolurdu (fiilen böyle oldu —
+    /// <see cref="The_guard_actually_loaded_the_token_colours_it_claims_to"/> yakaladı).</para>
+    /// <para>Alfa-önekli (8-hane) soft/border tonları BİLEREK atlanır: metin/yüzey tonları hep opaktır.</para>
+    /// </summary>
     private static IReadOnlyDictionary<string, (double, double, double)> LoadOpaqueBrushes()
     {
         string tokensXaml = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "Resources", "Tokens.xaml"));
-        // Yalnız OPAK 6-hane SolidColorBrush'lar (metin/yüzey tonları hep opak) — alfa-önekli soft/border tonlar atlanır.
-        var rx = new Regex("x:Key=\"(Brush\\.[^\"]+)\"\\s+Color=\"#([0-9a-fA-F]{6})\"", RegexOptions.Compiled);
+
+        var colors = new Dictionary<string, string>(StringComparer.Ordinal);
+        var colorRx = new Regex("<Color\\s+x:Key=\"([^\"]+)\"\\s*>\\s*#([0-9a-fA-F]{6})\\s*</Color>", RegexOptions.Compiled);
+        foreach (Match m in colorRx.Matches(tokensXaml)) colors[m.Groups[1].Value] = m.Groups[2].Value;
+
         var map = new Dictionary<string, (double, double, double)>(StringComparer.Ordinal);
-        foreach (Match m in rx.Matches(tokensXaml))
+        var brushRx = new Regex(
+            "x:Key=\"(Brush\\.[^\"]+)\"\\s+Color=\"(?:#(?<hex>[0-9a-fA-F]{6})|\\{StaticResource (?<ref>[^}]+)\\})\"",
+            RegexOptions.Compiled);
+
+        foreach (Match m in brushRx.Matches(tokensXaml))
         {
-            string hex = m.Groups[2].Value;
+            string? hex = m.Groups["hex"].Success ? m.Groups["hex"].Value
+                : colors.TryGetValue(m.Groups["ref"].Value.Trim(), out string? viaColor) ? viaColor
+                : null;
+            if (hex is null) continue; // çözülemeyen dolaylılık → yukarıdaki "gerçekten yüklendi mi" testi yakalar
+
             map[m.Groups[1].Value] = (
                 int.Parse(hex.Substring(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
                 int.Parse(hex.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture),

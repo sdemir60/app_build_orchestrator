@@ -57,8 +57,11 @@ public class AboutWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
+        // [design-v1.2.1 §2.1] Tooltip, katalog cümlesinin SONUNA jesti ekler: "… (F1)". Cümlenin kendisi
+        // yine tek kaynaktan gelir — burada yazılan yalnız parantezli jest, o da katalogdan okunur.
         var tooltip = (ToolTip)window.InfoButton.ToolTip;
-        Assert.Equal(ShortcutCatalog.Get(ShortcutId.About).Description, tooltip.Content);
+        var about = ShortcutCatalog.Get(ShortcutId.About);
+        Assert.Equal($"{about.Description} ({about.Gestures[0]})", tooltip.Content);
         Assert.Equal(AccessibilityNames.About, AutomationProperties.GetName(window.InfoButton));
         GC.KeepAlive(window);
     }

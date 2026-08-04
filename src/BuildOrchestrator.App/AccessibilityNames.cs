@@ -55,6 +55,11 @@ public static class AccessibilityNames
     /// DEĞİŞMEZ: ad kontrolün işlevini tarif eder, anlık geri bildirimini değil.</summary>
     public const string CopyLog = "Copy log";
 
+    /// <summary>[About] Tanı raporunu panoya yazan footer butonu. AYNI metin hem görünür etiket hem UIA
+    /// adıdır (CopyLog kuralının eşi); başarılı kopyada yalnız ETİKET geçici "Copied" olur, ad DEĞİŞMEZ —
+    /// ad kontrolün işlevini tarif eder, anlık geri bildirimini değil.</summary>
+    public const string CopyDiagnostics = "Copy diagnostics";
+
     // ---- [A13/T5] `⌄ latest` pill'leri ----
     // Pill'in ROLÜNÜ (en sona git) kontrol bilir, ama HANGİ akışın sonu olduğunu yalnız host bilir; bu yüzden
     // üç ayrı metin vardır ve adı host verir (ShellRoot'un ayraçlara ad vermesiyle AYNI ilke). "latest"

@@ -338,8 +338,10 @@ public class AboutDialogTests
 
     // ---------------------------------------------------------------- copy diagnostics
 
+    /// <summary>[design-v1.2.1 §2.10] Panoya giden metin ürün ve sürümle BAŞLAR, ardından tüm Environment
+    /// satırları gelir — destek talebine yapıştırıldığında neyin çıktısı olduğu ilk satırda okunur.</summary>
     [StaFact]
-    public void Copy_diagnostics_writes_the_report_text_and_shows_feedback()
+    public void Copy_diagnostics_writes_a_titled_report_and_shows_feedback()
     {
         string? written = null;
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
@@ -348,8 +350,68 @@ public class AboutDialogTests
             dialog.ClipboardWriter = text => { written = text; return true; };
             dialog.CopyDiagnostics();
 
-            Assert.Equal(DiagnosticsReport.ToText(dialog.DiagnosticsLines), written);
+            Assert.NotNull(written);
+            Assert.StartsWith($"{AppIdentity.Product} {AppIdentity.Version}", written, StringComparison.Ordinal);
+            foreach (var line in dialog.DiagnosticsLines)
+                Assert.Contains(line.Value, written, StringComparison.Ordinal);
             Assert.True(dialog.IsShowingCopied);
+        }
+    }
+
+    /// <summary>[design-v1.2.1 §2.10] Kopyalandı geri bildirimi GÖRSELDİR: ikon copy → ✓ döner ve buton
+    /// başarı rengine geçer. Yalnız metin değişimi tasarımın istediği şey değil.</summary>
+    [StaFact]
+    public void Copy_feedback_swaps_the_icon_to_a_check_and_turns_green()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var host = DsResources.NewHost();
+            Assert.False(dialog.IsShowingCheckIcon);
+
+            dialog.ClipboardWriter = _ => true;
+            dialog.CopyDiagnostics();
+
+            Assert.True(dialog.IsShowingCheckIcon);
+            Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSuccessText"),
+                DsResources.ColorOf(dialog.CopyButtonForeground));
+        }
+    }
+
+    /// <summary>[design-v1.2.1 §2.10] Third-party satırı üç kolondur: ad (esner) · mono sürüm 70px ·
+    /// sağa yaslı mono lisans 92px. Üstünde tek satırlık açıklama.</summary>
+    [StaFact]
+    public void The_third_party_rows_use_the_designed_column_widths()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Select(dialog, 2);
+
+            Assert.Contains("Bundled components and their licenses.", VisibleTexts(dialog));
+
+            var versionCells = DsResources.Descendants(dialog).OfType<TextBlock>()
+                .Where(t => t.Width == 70.0).ToList();
+            var licenceCells = DsResources.Descendants(dialog).OfType<TextBlock>()
+                .Where(t => t.Width == 92.0).ToList();
+
+            Assert.Equal(ThirdPartyNotices.All.Count, versionCells.Count);
+            Assert.Equal(ThirdPartyNotices.All.Count, licenceCells.Count);
+            Assert.All(licenceCells, c => Assert.Equal(TextAlignment.Right, c.TextAlignment));
+        }
+    }
+
+    /// <summary>[design-v1.2.1 §2.10] Gövde MIN-yükseklik 236'dır — sabit değil. Sekme değişince zıplamaz
+    /// (o iddia ayrı testte), ama içerik büyürse alan da büyüyebilir.</summary>
+    [StaFact]
+    public void The_body_uses_a_minimum_height_not_a_fixed_one()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            var body = DsResources.Descendants(dialog).OfType<Grid>()
+                .Single(g => g.MinHeight == 236.0);
+            Assert.True(double.IsNaN(body.Height), "gövde SABİT yükseklikte — tasarım min-height istiyor");
         }
     }
 
