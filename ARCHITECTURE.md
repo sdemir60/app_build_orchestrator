@@ -1092,7 +1092,7 @@ reset to hollow, and a Sync starts right away.
 
 ### 13.4 Scroll infrastructure
 
-WPF has no native smooth scrolling, so four pieces cooperate:
+WPF provides neither smooth scrolling nor horizontal wheel input, so the scrolling surface is assembled here:
 
 | Piece | Role |
 |---|---|
@@ -1402,7 +1402,7 @@ STA thread.
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
 (`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost`, `SettingsDialogHost`,
 `SplitterHost`, `GraphTestView`), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
-`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`) and measurement
+`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`) and measurement
 (`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
 CPU-saturating job tests, the console UI tests and the build-state store tests.
 

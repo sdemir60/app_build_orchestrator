@@ -150,6 +150,9 @@ the running instance first — tray icon → Exit).
    *Continue*: press *Build* again and the run starts from the top, skipping everything that already
    succeeded.
 
+The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
+down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.
+
 If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
 says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take
 minutes; the action is there for the case where waiting is no longer the answer. Restarting kills the engine
