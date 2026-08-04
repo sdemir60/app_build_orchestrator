@@ -36,6 +36,9 @@ public enum WindowIntent
     F5StateBranch,
     /// <summary>Ctrl+F → proje filtre input'una odak.</summary>
     FocusFilter,
+    /// <summary>[About] F1 → About diyaloğu (sürüm, kısayollar, tanı) — Windows'un Help geleneği. Bir modal
+    /// AÇIKKEN NO-OP'tur: kaydedilmemiş bir Settings taslağı sessizce atılmamalı.</summary>
+    ShowAbout,
     /// <summary>Esc → EN ÜST açık katmanı kapat (dialog &gt; popover/menü &gt; seçim; bkz. <see cref="ResolveEsc"/>).</summary>
     Escape,
 }
@@ -67,6 +70,7 @@ public static class KeyboardShortcuts
         new(Key.F5, ModifierKeys.Shift, WindowIntent.Rebuild),         // Shift+F5 → Rebuild (doğrudan)
         new(Key.F5, ModifierKeys.None, WindowIntent.F5StateBranch),    // çıplak F5 → Stop/Build (duruma göre)
         new(Key.F, ModifierKeys.Control, WindowIntent.FocusFilter),    // Ctrl+F   → proje filtre odağı
+        new(Key.F1, ModifierKeys.None, WindowIntent.ShowAbout),        // F1       → About (Windows Help geleneği)
         new(Key.Escape, ModifierKeys.None, WindowIntent.Escape),       // Esc      → EN ÜST açık katman
     ];
 

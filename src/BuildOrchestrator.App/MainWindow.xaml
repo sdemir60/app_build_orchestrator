@@ -140,6 +140,19 @@
                 </Canvas>
               </Viewbox>
             </Button>
+            <!-- [About] Gear'ın SAĞINDA, aynı grupta: grup kullanım sıklığı azalan sırada dizilir
+                 (layout > settings > about) ve Windows/Office geleneğinde Help/About uygulama komutlarının en
+                 sonundadır. Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir (kopya YASAK), o yüzden
+                 kod-tarafı kurulur (MainWindow ctor). -->
+            <Button x:Name="InfoButton" Style="{DynamicResource Ds.IconButton}" Click="OnAbout"
+                    AutomationProperties.Name="{x:Static local:AccessibilityNames.About}">
+              <Viewbox Width="16" Height="16">
+                <Canvas Width="24" Height="24">
+                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Info}"
+                        StrokeThickness="{DynamicResource Icon.Info.StrokeThickness}" />
+                </Canvas>
+              </Viewbox>
+            </Button>
           </StackPanel>
 
           <!-- Logo + ürün adı + mono bağlam metni (sürükleme alanı — hit-test-visible DEĞİL) -->
@@ -186,6 +199,12 @@
            bölgesi üzerinde de tıklama alsın diye IsHitTestVisibleInChrome=True. Varsayılan Collapsed. -->
       <views:SettingsDialog x:Name="SettingsOverlay" Grid.Row="0" Grid.RowSpan="2"
                             WindowChrome.IsHitTestVisibleInChrome="True" />
+
+      <!-- [About] İkinci modal: About diyaloğu. Settings ile AYNI katman kuralları — scrim tüm pencereyi
+           (başlık bandı dahil) kaplar, caption bölgesinde de tıklama alsın diye IsHitTestVisibleInChrome=True.
+           İkisi aynı anda AÇILAMAZ (MainWindow.AnyDialogOpen kapısı). Varsayılan Collapsed. -->
+      <views:AboutDialog x:Name="AboutOverlay" Grid.Row="0" Grid.RowSpan="2"
+                         WindowChrome.IsHitTestVisibleInChrome="True" />
     </Grid>
   </Border>
 </Window>

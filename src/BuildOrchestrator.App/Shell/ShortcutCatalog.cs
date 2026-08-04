@@ -9,6 +9,7 @@ public enum ShortcutId
     Build,
     Rebuild,
     FocusFilter,
+    About,
     Escape,
     /// <summary>Global kısayol (tepsiden pencereyi getir) — <see cref="KeyboardShortcuts.WindowBindings"/>'te
     /// DEĞİLDİR, <see cref="HotkeyBinding"/> üzerinden RegisterHotKey ile kaydedilir.</summary>
@@ -58,6 +59,10 @@ public static class ShortcutCatalog
             "Rebuild — all projects, cache ignored"),
         new(ShortcutId.FocusFilter, GesturesFor(WindowIntent.FocusFilter),
             "Focus the project filter"),
+        // Bu cümle AYNI ZAMANDA title bar'daki info butonunun tooltip'idir (MainWindow.xaml) — iki yerde
+        // yazılmaz.
+        new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
+            "About — version, shortcuts and diagnostics"),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
             "Close the topmost open layer: dialog → popover/menu → selection"),
         new(ShortcutId.RestoreFromTray, [HotkeyBinding.DefaultGesture],

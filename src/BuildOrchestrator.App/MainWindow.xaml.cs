@@ -13,6 +13,8 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.App;
 
@@ -277,6 +279,7 @@ public partial class MainWindow : Window
         if (Application.Current is { } app) app.SessionEnding += OnSessionEnding;
 
         SetupKeyboardShortcuts();
+        SetupAboutButtonTooltip();
         _ = RunConsolePumpAsync();
     }
 
@@ -296,6 +299,7 @@ public partial class MainWindow : Window
             [WindowIntent.Rebuild] = _vm.RebuildCommand,                    // Ctrl/Shift+F5 → doğrudan
             [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Continue/Build (duruma göre)
             [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
+            [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (modal açıkken no-op)
             [WindowIntent.Escape] = new RelayCommand(OnEscapePressed),
         };
         foreach (var b in KeyboardShortcuts.WindowBindings)
@@ -319,12 +323,36 @@ public partial class MainWindow : Window
     /// Dialog KATMANI çoğu zaman SettingsDialog'un KENDİ Esc'iyle (odak-tuzağı içinde, handled) kapanır; bu
     /// pencere-seviyesi güvenlik ağı odak dialog dışındayken de doğru katmanı seçer. Filtre input'undaki Esc
     /// buraya HİÇ ULAŞMAZ (ShellRoot.OnFilterKeyDown handled eder).</summary>
+    /// <summary>[About] Info butonunun tooltip'i — metin ELLE yazılmaz, <see cref="ShortcutCatalog"/>'dan gelir
+    /// (About sekmesindeki F1 satırıyla AYNI cümle; kopya YASAK). XAML'de bir <c>x:Static</c> sarmalayıcı
+    /// gerekmesin diye kod-tarafı kurulur — diğer title bar tooltip'leriyle aynı <c>AppTooltip.Side</c>
+    /// yerleşimini kullanır.</summary>
+    private void SetupAboutButtonTooltip()
+    {
+        var tooltip = new System.Windows.Controls.ToolTip
+        {
+            Content = ShortcutCatalog.Get(ShortcutId.About).Description,
+        };
+        // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
+        // ikinci kez yazılmaz.
+        AppTooltip.SetSide(tooltip, AppTooltip.GetSide((System.Windows.Controls.ToolTip)GearButton.ToolTip));
+        InfoButton.ToolTip = tooltip;
+    }
+
+    /// <summary>[About] Bir modal AÇIK MI — Esc zinciri, F1 kapısı ve gear kapısı bu TEK karardan beslenir
+    /// (üç yerde ayrı ayrı sorulsaydı biri güncellenip diğerleri unutulurdu).</summary>
+    private bool AnyDialogOpen =>
+        SettingsOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible;
+
     private void OnEscapePressed()
     {
-        bool dialogOpen = SettingsOverlay.Visibility == Visibility.Visible;
-        switch (KeyboardShortcuts.ResolveEsc(dialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null))
+        switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null))
         {
-            case EscAction.CloseDialog: SettingsOverlay.CloseDialog(); break;
+            // [About] Hangi modal açıksa o kapanır — ikisi aynı anda AÇILAMAZ (AnyDialogOpen kapısı).
+            case EscAction.CloseDialog:
+                if (SettingsOverlay.Visibility == Visibility.Visible) SettingsOverlay.CloseDialog();
+                else AboutOverlay.CloseDialog();
+                break;
             case EscAction.ClosePopovers: Shell.CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
         }
@@ -611,7 +639,43 @@ public partial class MainWindow : Window
     /// <summary>[D7/T66] Dişli → Settings modal diyaloğunu açar: canlı katman pattern'lerinin bir taslak
     /// kopyasını kurar + repo yolunu gösterir. Klasör seçici (<see cref="PickFolder"/>) enjekte edilir (E1'in
     /// IOsActions.PickFolder'ı gelene dek <c>OpenFolderDialog</c> doğrudan; testler bu seam'i by-pass eder).</summary>
-    private void OnSettings(object sender, RoutedEventArgs e) => SettingsOverlay.Open(_vm, _uiState, PickFolder);
+    /// <para>[About] Bir modal zaten açıksa no-op — iki modal aynı anda duramaz.</para>
+    private void OnSettings(object sender, RoutedEventArgs e)
+    {
+        if (AnyDialogOpen) return;
+        SettingsOverlay.Open(_vm, _uiState, PickFolder);
+    }
+
+    /// <summary>[About] Info butonu → About modali.</summary>
+    private void OnAbout(object sender, RoutedEventArgs e) => OnAboutRequested();
+
+    /// <summary>[About] About'u açar — bir modal ZATEN AÇIKSA no-op. Gerekçe: F1 pencere-seviyesi bir
+    /// <c>InputBinding</c>'dir ve Settings'in odak tuzağına RAĞMEN ateşler; bu kapı olmasaydı F1,
+    /// kaydedilmemiş bir Settings taslağını sessizce çöpe atardı. (Fare yolu zaten scrim'in altında kalır.)
+    /// <para>Global kısayolun GERÇEKTEN kayıtlı olup olmadığı diyaloğa geçirilir: çakışmada kayıt sessizce
+    /// düşer (<see cref="HotkeyRegistration"/>) ve kullanıcının bunu görebileceği tek yer About'tur. Hotkey
+    /// yalnız <c>OnSourceInitialized</c>'da kurulur — pencere hiç gösterilmediyse (headless test) null'dır.</para></summary>
+    private void OnAboutRequested()
+    {
+        if (AnyDialogOpen) return;
+        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync);
+    }
+
+    /// <summary>[About] MSBuild yolu + sürümü — About'un Environment sekmesi bunu LAZY çağırır (<c>vswhere</c>
+    /// bir child process başlatır; About'u AÇMAK onu tetiklememeli). Çözülemezse resolver'ın kendi hata mesajı
+    /// olduğu gibi gösterilir — uydurma bir metin YAZILMAZ.</summary>
+    private static async Task<string> ResolveMsBuildAsync()
+    {
+        try
+        {
+            var location = await new MsBuildResolver(new ProcessRunner()).ResolveAsync();
+            return $"{location.MsBuildExePath} (v{location.Version})";
+        }
+        catch (MsBuildResolveException ex)
+        {
+            return ex.Message;
+        }
+    }
 
     /// <summary>[D7 · K10] Repo kökü seçici — <c>Microsoft.Win32.OpenFolderDialog</c> (E1'den önce doğrudan).
     /// İptal edilirse null.</summary>

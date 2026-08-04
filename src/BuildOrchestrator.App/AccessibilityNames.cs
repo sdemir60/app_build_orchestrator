@@ -34,6 +34,12 @@ public static class AccessibilityNames
     public const string BranchFilter = "Filter branches";
     public const string WorktreeSwitch = "Build in worktree";
 
+    // ---- [About] Title bar ----
+    /// <summary>Title bar'daki ikon-yalnız info butonu. Tooltip'ten AYRIDIR: tooltip, kısayolu da anlatan
+    /// katalog cümlesidir (<c>ShortcutCatalog.Get(ShortcutId.About).Description</c>); UIA adı ise kontrolün
+    /// işlevini KISA tarif eder.</summary>
+    public const string About = "About";
+
     // ---- Ayraçlar (resize separator'ları — E5 fold: klavye ile odaklanır + ok tuşlarıyla resize) ----
     public const string ColumnSplitter = "Resize left and right columns";
     public const string GraphListSplitter = "Resize graph and project list";
