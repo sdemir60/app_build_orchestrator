@@ -231,6 +231,26 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[planlama görünürlüğü] <see cref="AppPhase.Starting"/> de <see cref="AppPhase.Syncing"/> gibi
+    /// belirsiz moddadır: motor çalışıyor ama daha PLAN yok, dolayısıyla ölçülebilir bir yüzde de yok.
+    /// Determinate bırakılsaydı çubuk <c>willBuild==0</c> yüzünden %0'da DONAR ve şeridin "▸ Starting" metniyle
+    /// çelişirdi — hareketsiz bir çubuk, takılmış bir uygulamanın en güçlü işaretidir.</summary>
+    [StaFact]
+    public void Starting_phase_puts_the_progress_bar_into_indeterminate_mode()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm, forceAnimations: true);
+        Assert.False(ribbon.IsIndeterminate); // Boot: belirsiz DEĞİL
+
+        vm.Phase = AppPhase.Starting;
+        Assert.True(ribbon.IsIndeterminate);
+
+        // runStarted geldi: artık plan VAR (willBuild biliniyor) → determinate ilerlemeye geçilir.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.False(ribbon.IsIndeterminate);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>
     /// [A13/T6 · t5 — <b>ÜRETİM AÇIĞI PİNİ</b>] Şeridin <c>· N warnings</c> segmenti <see cref="RibbonText.Compose"/>'ta
     /// VAR ve <c>RibbonTextTests</c> onu birebir pinliyor; eksik olan <b>BESLEME</b>dir.

@@ -144,6 +144,21 @@ public class RibbonTextTests
         Assert.Null(line.Glyph);
     }
 
+    // [planlama görünürlüğü] Build'e basmakla runStarted arasında geçen pencere: motor planlamayı koşuyor
+    // (177 projelik OSYS'te saniyeler). Şerit burada önceki metinde ("▸ Ready — …" / "▸ Stopped — …") DONUYORDU
+    // ve konsol da BeginRunAsync tarafından temizlendiği için ekranda tıklamanın kaydedildiğine dair tek bir
+    // kanıt kalmıyordu. Sayaç YOK (henüz hiçbir şey planlanmadı — "0/0" yazmak uydurma olurdu); ilerlemeyi
+    // motorun konsola akıttığı planlama adımları taşır. Renk Running/Stopping ile AYNI: faz etkin.
+    [Fact]
+    public void Starting_line_says_the_engine_is_resolving_what_to_build()
+    {
+        var line = RibbonText.Compose(AppPhase.Starting, true, allClean: false, Counters(),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 0, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("▸ Starting — resolving what to build", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
     // [Stopping] Stop'a basıldıktan SONRA, run gerçekten bitene kadar geçen pencere. Graceful stop uçuştaki
     // MSBuild.exe child'larının bitmesini bekler; şerit bu pencerede "hâlâ Building" DEMEMELİDİR (tıklama
     // kaydedilmiş görünmez) ama "Stopped" da diyemez (henüz durmadı). ETA eki BİLEREK yok: yeni dispatch

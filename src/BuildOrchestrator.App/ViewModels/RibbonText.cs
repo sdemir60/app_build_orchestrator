@@ -87,6 +87,14 @@ public static class RibbonText
                             "▸ Ready — {0} to build · {1} up to date", willBuild, totalProjects - willBuild),
                     "Brush.TextSecondary", null);
 
+            // [planlama görünürlüğü] Run istendi, motor henüz runStarted yazmadı — taze bir segmentte bu
+            // pencerede planlama koşar ve 177 projede saniyeler sürer. Şerit burada önceki metinde DONUYORDU
+            // ("▸ Ready — …" / "▸ Stopped — …") ve konsol da temizlendiği için tıklamanın kaydedildiğine dair
+            // ekranda hiçbir kanıt kalmıyordu. Sayaç YOK: henüz plan yok, "0/0" uydurma olurdu — ilerlemeyi
+            // motorun konsola akıttığı planlama adımları taşır. Renk Running/Stopping ile aynı (faz etkin).
+            case AppPhase.Starting:
+                return new RibbonLine("▸ Starting — resolving what to build", "Brush.TextSecondary", null);
+
             case AppPhase.Running:
                 if (allClean)
                     return new RibbonLine("▸ Checking — scanning for changes…", "Brush.TextSecondary", null);

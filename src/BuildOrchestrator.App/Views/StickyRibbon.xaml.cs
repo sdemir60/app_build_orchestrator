@@ -260,7 +260,10 @@ public partial class StickyRibbon : UserControl
     {
         if (_vm is null) return;
 
-        if (_vm.Phase == AppPhase.Syncing)
+        // [planlama görünürlüğü] Starting, Syncing ile AYNI kefede: motor çalışıyor ama henüz PLAN yok, yani
+        // ölçülebilir bir yüzde de yok. Determinate bırakılsaydı çubuk willBuild==0 yüzünden %0'da DONAR ve
+        // "▸ Starting" metniyle çelişirdi — hareketsiz çubuk, takılmış bir uygulamanın en güçlü işaretidir.
+        if (_vm.Phase is AppPhase.Syncing or AppPhase.Starting)
         {
             if (!_isIndeterminate) { _isIndeterminate = true; ApplyIndeterminate(); }
             return;

@@ -461,6 +461,13 @@ public sealed partial class RunViewModel : ObservableObject
                 _runLineCount = 0;
                 _projectLineCount.Clear();
             }
+        // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
+        // bir not düşer. Motor runStarted'a kadar (taze segmentte: worktree hazırlığı → tarama → graf → topo →
+        // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
+        // temizliğinden SONRA yazılır — aksi halde ilk iş olarak silinirdi.
+        var previousPhase = Phase;
+        Phase = AppPhase.Starting;
+        AppendRunLine(RunRequestedLine(mode));
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
         // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
@@ -469,8 +476,16 @@ public sealed partial class RunViewModel : ObservableObject
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
             RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
+        {
             IsStarting = false;
+            Phase = previousPhase; // hiçbir engine event'i gelmeyecek — faz Starting'te asılı bırakılamaz
+        }
     }
+
+    /// <summary>[planlama görünürlüğü] Run dokümanına düşen tek satırlık not: konsol, tıklamanın KALICI
+    /// kaydıdır (şerit bir sonraki faz değişiminde üzerine yazar). Motorun planlama adımları hemen ardından
+    /// akar. Mod adı <see cref="RunModeLabel"/>'dan gelir — gönderim hata satırıyla AYNI kaynak.</summary>
+    internal static string RunRequestedLine(RunMode mode) => RunModeLabel(mode) + " requested";
 
     private static string RunModeLabel(RunMode mode) => mode switch
     {
@@ -794,6 +809,10 @@ public sealed partial class RunViewModel : ObservableObject
             // [A5/T69] Sync yüzeyi — handler'lar RunViewModel.Workspace.cs'te
             case SyncStartedEvent: OnSyncStarted(); break;
             case SyncProgressEvent e: AppendRunLine(e.Line); break;
+            // [planlama görünürlüğü] Motorun planlama adımları. AppendRunLine DIŞINDA hiçbir şeye dokunmaz:
+            // faz zaten Starting'tir (BeginRunAsync yazdı) ve bu satırlar Sync yüzeyine (_syncInFlight) AİT
+            // DEĞİLDİR — oraya bağlanırsa Rebuild/RetryFailed planlama boyunca sessizce kilitlenirdi.
+            case PlanProgressEvent e: AppendRunLine(e.Line); break;
             case SyncCompletedEvent e: OnSyncCompleted(e); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
@@ -1004,7 +1023,9 @@ public sealed partial class RunViewModel : ObservableObject
         // [runFailed] Running'de gelirse (yalnız runFailed bunu yapabilir — kümedeki diğer üç kod runStarted'dan
         // ÖNCE üretilir) şerit donmuş bir "▸ Building 3/10" gösterirdi: derleme bitmiş, uygulama "derliyorum"
         // diyor. Stopped'a DEĞİL dinlenme fazına düşülür — durmadı, düştü; gerekçeyi RunErrorMessage anlatır.
-        if (Phase is AppPhase.Running or AppPhase.Stopping) Phase = RestingPhase;
+        // [planlama görünürlüğü] Starting de aynı kapıdan geçer: planFailed/msbuildNotFound TAM OLARAK bu
+        // pencerede üretilir ve runStarted asla gelmez — faz bırakılmazsa şerit sonsuza dek "▸ Starting" der.
+        if (Phase is AppPhase.Running or AppPhase.Stopping or AppPhase.Starting) Phase = RestingPhase;
         // [runFailed] Gerekçe şeride taşınır — konsol satırı tek başına yeterli değil (kullanıcı konsola
         // bakmıyor olabilir ve şerit o ana kadar aksini söylüyordu). noResumableRun DIŞARIDA: o bir REDdir
         // (RunCoordinator onu `rejection` diye adlandırır), bir başarısızlık değil — kalıcı kırmızı bir satır
@@ -1048,6 +1069,10 @@ public sealed partial class RunViewModel : ObservableObject
         // [Stopping] Stop penceresi de aynı gerekçeye girer: motor öldüyse drain'i bitirecek kimse kalmadı,
         // faz Stopping'de asılı bırakılamaz. Kullanıcı zaten durmayı istemişti — terminal faz Stopped'tır.
         if (Phase is AppPhase.Running or AppPhase.Stopping) Phase = AppPhase.Stopped;
+        // [planlama görünürlüğü] Starting AYRI: orada hiçbir proje derlenmedi, "▸ Stopped — 0/0 · 0 not built"
+        // olmayan bir koşuyu anlatırdı. Dinlenme fazı dürüst tabandır (şerit zaten engine-died önceliğiyle
+        // kırmızı metni gösterir; bu, o metin temizlendikten SONRA görülecek durumdur).
+        else if (Phase == AppPhase.Starting) Phase = RestingPhase;
         IsRunning = false;
         IsStarting = false;
         _currentRunId = null;
