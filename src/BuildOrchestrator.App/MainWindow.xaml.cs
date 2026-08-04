@@ -584,7 +584,7 @@ public partial class MainWindow : Window
         {
             var ready = await _engine.StartAsync();
             // [D1 review · C5] Sürüm bilgisi UI'da: konsolun boot satırı (design-v1 anlatı dili).
-            _vm.OnEngineReady(ready.EngineVersion);
+            _vm.OnEngineReady(ready.EngineVersion, ready.Pid);
         }
         catch (Services.EngineUnavailableException ex)
         {

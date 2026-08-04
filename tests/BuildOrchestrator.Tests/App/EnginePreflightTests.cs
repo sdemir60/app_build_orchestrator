@@ -156,7 +156,7 @@ public sealed class EnginePreflightTests
     {
         var vm = NewVm();
 
-        vm.OnEngineReady("1.0.0+it5");
+        vm.OnEngineReady("1.0.0+it5", pid: 4242);
 
         Assert.Contains("Engine ready — v1.0.0+it5", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }

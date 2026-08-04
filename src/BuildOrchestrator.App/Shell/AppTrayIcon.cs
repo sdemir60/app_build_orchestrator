@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using BuildOrchestrator.App.Services;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
 
@@ -34,7 +35,7 @@ internal sealed class AppTrayIcon : IDisposable
 
         _icon = new TaskbarIcon
         {
-            ToolTipText = "Build Orchestrator",
+            ToolTipText = AppIdentity.Product, // [About] ürün adı tek kaynaktan (kopya YASAK)
             IconSource = new BitmapImage(new Uri(IconUri)),
             ContextMenu = menu,
             Visibility = Visibility.Visible,
@@ -56,7 +57,7 @@ internal sealed class AppTrayIcon : IDisposable
     /// Uygulama İÇİ toast design §8'de yasaktır — bu bilinçli olarak işletim sisteminin bildirimidir.
     /// </summary>
     public void ShowClosedToTrayNotification() => _icon.ShowNotification(
-        title: "Build Orchestrator",
+        title: AppIdentity.Product,
         message: "Still running in the tray. Right-click the tray icon and choose Exit to quit.",
         icon: NotificationIcon.Info);
 

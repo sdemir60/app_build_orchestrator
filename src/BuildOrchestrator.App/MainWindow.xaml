@@ -4,7 +4,8 @@
         xmlns:local="clr-namespace:BuildOrchestrator.App"
         xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
         xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
-        Title="Build Orchestrator" Width="1400" Height="800" WindowState="Maximized"
+        xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
+        Title="{x:Static services:AppIdentity.Product}" Width="1400" Height="800" WindowState="Maximized"
         Icon="pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
         WindowStyle="SingleBorderWindow"
@@ -147,7 +148,9 @@
                  kontrolü 20px'te kullanır). Burada yalnız yüksekliği verilir: design-v1 README §1.1/§2.1
                  "Delta logosu (dark varyant, 15px yükseklik)". -->
             <controls:BrandLogo x:Name="TitleBarLogo" Height="15" VerticalAlignment="Center" />
-            <TextBlock Text="Build Orchestrator" VerticalAlignment="Center" Margin="8,0,0,0"
+            <!-- [About] Ürün adı ARTIK literal DEĞİL: AppIdentity onu Directory.Build.props'un <Product>
+                 değerinden okur. About hero'su da AYNI kaynağı kullanır (kopya YASAK). -->
+            <TextBlock Text="{x:Static services:AppIdentity.Product}" VerticalAlignment="Center" Margin="8,0,0,0"
                        FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
             <!-- [A13/T2 · 2.1] design-v1 §2.1 bağlamı: mono 11px, gövde text-dim + worktree eki text-faint.
                  METİN ARTIK KOD-TARAFI sürülür (MainWindow.RefreshTitleContext → TitleBarContext) — XAML'de
