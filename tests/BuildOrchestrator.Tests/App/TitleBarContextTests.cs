@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Controls;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -129,29 +130,68 @@ public class TitleBarContextTests
 
     // ================================================================ [A13/T3b] ölçü/geometri (b10/b12)
 
-    /// <summary>[A13/T3b · b10] design-v1 README §1.1/§2.1: "Delta logosu (dark varyant, 15px yükseklik)"
-    /// (otorite ayrıca DS <c>TitleBar</c>: <c>_ds_bundle.js:1201</c> <c>img { height: 15 }</c>). Testsizdi.
+    /// <summary>
+    /// [design-v1.2.1 §2.1] Title bar'ın LOGO KİLİDİ: ürün markası 19px tam renk, firma logosu 10px ve %55
+    /// opaklıkta. Hiyerarşi şarttır — ürün önde, firma arkada.
     ///
-    /// <para>[A13/T3 fix-1 · B8] Seçici ARTIK iddianın kendisi DEĞİL: eski hâli logoyu
-    /// <c>Single(v =&gt; v.Height == 15)</c> ile, yani <b>15 olduğu için</b> buluyordu — "logo 20px oldu" ile
-    /// "logo ağaçtan silindi" ayırt edilemiyordu ve mutasyon bir ölçü hatası değil
-    /// <c>Sequence contains no matching element</c> gürültüsü üretiyordu. Öğe artık KİMLİĞİNDEN
-    /// (<c>MainWindow.xaml x:Name="TitleBarLogo"</c>) seçilir, ölçü SONRA assert edilir.</para></summary>
+    /// <para><b>ESKİ İDDİA (design-v1 §1.1/§2.1):</b> "Delta logosu (dark varyant, <b>15px</b>)" ve title
+    /// bar'da BAŞKA logo yoktu. Kural design-v1.2.0'da BİLEREK DEĞİŞTİ: uygulama kendi markasını kazandı,
+    /// Delta ise firma logosu rolüne geçti ve küçülüp soldu. Bu yüzden 15 sayısı artık yanlıştır; test
+    /// silinmedi, YENİ kuralı pinleyecek şekilde yeniden yazıldı.</para>
+    ///
+    /// <para>[A13/T3 fix-1 · B8'den devralınan kural] Seçici iddianın KENDİSİ değildir: öğeler ölçülerinden
+    /// değil KİMLİKLERİNDEN (<c>x:Name</c> / tip) seçilir, ölçü SONRA assert edilir — aksi halde "logo
+    /// büyüdü" ile "logo ağaçtan silindi" ayırt edilemez.</para></summary>
     [StaFact]
-    public void The_title_bar_logo_is_fifteen_pixels_tall()
+    public void The_title_bar_locks_a_19px_product_mark_ahead_of_a_10px_company_logo()
     {
         using var temp = new TempDir();
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
+        var mark = DsResources.Descendants(window.RootShell).OfType<AppMark>().Single();
         var logo = window.TitleBarLogo;
         Assert.Contains(logo, DsResources.Descendants(window.RootShell)); // gerçekten AĞAÇTA (kurulup atılmamış)
-        Assert.Equal(15.0, logo.Height);
-        // Realize zorunlu (kural 5) — literal okumak yetmez. Tolerans: UseLayoutRounding="True" (MainWindow.xaml)
-        // + test host'unun DPI ölçeği (150%'de ölçüldü: 15dip*1.5=22.5px → 22'ye yuvarlanır → 14.667dip) 15'i
-        // BİR alt-piksele kaydırabilir; 1dip'lik pay bunu yutar ama YANLIŞ bir sabiti (ör. 20) YAKALAR.
-        Assert.True(Math.Abs(logo.ActualHeight - 15.0) < 1.0,
-            $"logo ActualHeight beklenenden ({15.0}) çok uzak: {logo.ActualHeight}");
+
+        Assert.Equal(19.0, mark.Height);
+        Assert.Equal(10.0, logo.Height);
+        Assert.Equal(0.55, logo.Opacity, precision: 2); // firma logosu SOLUK
+        Assert.Equal("Delta", logo.ToolTip);            // ikon-yalnız öğe: firma adı tooltip'te
+
+        // Realize zorunlu (kural 5) — literal okumak yetmez. Tolerans: UseLayoutRounding="True" + test host'unun
+        // DPI ölçeği ölçüyü BİR alt-piksele kaydırabilir; 1dip'lik pay bunu yutar ama yanlış bir sabiti YAKALAR.
+        Assert.True(Math.Abs(mark.ActualHeight - 19.0) < 1.0,
+            $"ürün markası ActualHeight beklenenden (19) çok uzak: {mark.ActualHeight}");
+        Assert.True(Math.Abs(logo.ActualHeight - 10.0) < 1.0,
+            $"firma logosu ActualHeight beklenenden (10) çok uzak: {logo.ActualHeight}");
+
+        // Ürün markası firma logosunun SOLUNDA — hiyerarşinin yerleşim kanıtı.
+        double markX = mark.TranslatePoint(new Point(0, 0), window.RootShell).X;
+        double logoX = logo.TranslatePoint(new Point(0, 0), window.RootShell).X;
+        Assert.True(markX < logoX, $"ürün markası firma logosunun solunda değil ({markX} ≥ {logoX})");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design-v1.2.1 §2.1] Kilidin SIRASI: ürün markası → ürün adı → 1×13 ayraç → firma logosu →
+    /// bağlam. Ayraç, iki markayı ayıran öğedir; firma logosu düşerse onunla birlikte düşmelidir (bugün
+    /// firma logosu her zaman var, ayraç da öyle).</summary>
+    [StaFact]
+    public void The_logo_lock_places_a_hairline_separator_between_the_two_marks()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        var mark = DsResources.Descendants(window.RootShell).OfType<AppMark>().Single();
+        var lockPanel = (Panel)LogicalTreeHelper.GetParent(mark);
+        var children = lockPanel.Children.Cast<UIElement>().ToList();
+
+        var separator = children.OfType<System.Windows.Shapes.Rectangle>().Single();
+        Assert.Equal(1.0, separator.Width);
+        Assert.Equal(13.0, separator.Height);
+
+        Assert.True(children.IndexOf(mark) < children.IndexOf(separator));
+        Assert.True(children.IndexOf(separator) < children.IndexOf(window.TitleBarLogo));
         GC.KeepAlive(window);
     }
 
