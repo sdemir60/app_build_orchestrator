@@ -1,4 +1,4 @@
-using System.Windows.Input;
+﻿using System.Windows.Input;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
@@ -34,7 +34,6 @@ public class KeyboardWiringTests
         Assert.Same(vm.BuildCommand, KeyboardShortcuts.CommandFor(ShortcutAction.Build, vm));
         Assert.Same(vm.RebuildCommand, KeyboardShortcuts.CommandFor(ShortcutAction.Rebuild, vm));
         Assert.Same(vm.StopCommand, KeyboardShortcuts.CommandFor(ShortcutAction.Stop, vm));
-        Assert.Same(vm.ContinueCommand, KeyboardShortcuts.CommandFor(ShortcutAction.Continue, vm));
         // FocusFilter bir VM komutu DEĞİL (MainWindow ayrı ele alır); None de bağlı değil.
         Assert.Null(KeyboardShortcuts.CommandFor(ShortcutAction.FocusFilter, vm));
         Assert.Null(KeyboardShortcuts.CommandFor(ShortcutAction.None, vm));

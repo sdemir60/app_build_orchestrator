@@ -1,4 +1,4 @@
-using BuildOrchestrator.App.Console;
+﻿using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -110,21 +110,36 @@ public class RunViewModelStateTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10));
 
         Assert.Equal(AppPhase.Stopped, vm.Phase);
-        Assert.True(vm.CanContinue);
     }
 
-    [Fact] // planlama sırasında stop: runStarted HİÇ gelmedi → runCompleted de ASLA gelmeyecek
-    public async Task A_stop_during_planning_leaves_stopping_for_the_resting_phase()
+    /// <summary>[B2] <c>runStopped</c> TEK DALLIDIR: faz <see cref="AppPhase.Stopped"/>, run state serbest —
+    /// runStarted görülmüş olsun ya da olmasın.
+    /// <para><b>Eski iddia (değişti):</b> runStarted görülmüşse <c>OnRunStopped</c> ERKEN DÖNERDİ ("runCompleted
+    /// az sonra gelecek, faz orada yazılır"), görülmemişse dinlenme fazına düşerdi. Bu, fazın çözülmesini bir
+    /// OLAY SIRALAMASI varsayımına bağlıyordu ve kullanıcı "Stop dedim, Stopping'te kaldı" durumunu bildirdi.
+    /// <b>Değişme gerekçesi:</b> koordinatör <c>runStopped</c>'ı zaten TÜM in-flight sonuçlarını raporladıktan
+    /// sonra yazar (<c>RunSegmentAsync</c>'in finally'si, <c>_finishing</c> kapısı) — yani bu olay görüldüğünde
+    /// koşan bir şey KALMAMIŞTIR. Tek dallı kural, fazın asılı kalma ihtimalini varsayıma değil YAPIYA bağlar;
+    /// arkadan gelen <c>runCompleted</c> aynı fazı yazdığı için ara bir görüntü de oluşmaz.</para></summary>
+    [Fact]
+    public async Task RunStopped_always_settles_the_phase_whether_or_not_the_run_had_started()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+
+        // (a) planlama sırasında stop — runStarted HİÇ gelmedi
         vm.Phase = AppPhase.Stopping;
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
+        Assert.Equal(AppPhase.Stopped, vm.Phase);
+        Assert.False(vm.IsStarting);
 
-        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
-
-        Assert.Equal(AppPhase.Idle, vm.Phase); // topoloji bilinir → Idle (bilinmeseydi Boot)
-        Assert.False(vm.CanContinue);          // hiç proje derlenmedi — sürdürülecek bir şey yok
+        // (b) koşan run durduruldu — runStarted GÖRÜLDÜ, runCompleted henüz gelmedi
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug", 0));
+        vm.Phase = AppPhase.Stopping;
+        vm.OnEvent(new RunStoppedEvent("r2", WasHard: true));
+        Assert.Equal(AppPhase.Stopped, vm.Phase);
+        Assert.False(vm.IsRunning);
     }
 
     [Fact] // run-bitiren hata Stopping penceresinde geldi (ör. msbuildNotFound) — runCompleted gelmeyecek
@@ -258,21 +273,6 @@ public class RunViewModelStateTests
         await vm.RetryFailedCommand.ExecuteAsync(null);
         Assert.Null(vm.SelectedProjectId);
         Assert.Null(vm.ActiveFilter);
-    }
-
-    [Fact]
-    public async Task Continue_clears_neither_selection_nor_filter()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.SelectProject(@"C:\p\a.csproj");
-        vm.ActiveFilter = ProjectFilter.Failed;
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10)); // CanContinue=true
-
-        await vm.ContinueCommand.ExecuteAsync(null);
-
-        Assert.Equal(@"C:\p\a.csproj", vm.SelectedProjectId);
-        Assert.Equal(ProjectFilter.Failed, vm.ActiveFilter);
     }
 
     // ---------------------------------------------------------------- komut gönderimi (workspace argümanları)

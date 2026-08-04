@@ -18,8 +18,8 @@ files as raw XML (MSBuild is never evaluated for this), builds the dependency gr
 source signature against the stored build state to mark each project as "will build" or "up to date". **Build**
 then runs the plan: each project is shelled out to a separate `MSBuild.exe` child process, ordered by the graph,
 N at a time. Progress streams back to a live project list, a dependency graph view and a console. A run can be
-stopped (in-flight projects are allowed to finish their post-build copy), continued from where it stopped, or
-retried for just the failed projects and their dependents. Building a branch other than the checked-out one
+stopped — everything in flight is killed immediately — or retried for just the failed projects and their
+dependents. Building a branch other than the checked-out one
 happens in a detached git worktree from a pool — your working tree is never checked out, reset or switched.
 
 ## Architecture
@@ -132,21 +132,20 @@ the running instance first — tray icon → Exit).
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
-4. **Build / Rebuild / Continue / Retry failed** — from the split button and its menu:
+4. **Build / Rebuild / Retry failed** — from the split button and its menu:
    - *Build* — only changed projects.
    - *Rebuild* — all projects, cached state ignored.
-   - *Continue* — appears after a stop; resumes the queued remainder.
    - *Retry failed* — appears when there are failures; rebuilds them and their dependents.
-5. **Stop** — a graceful stop: nothing new is dispatched, and in-flight `MSBuild.exe` children are allowed to
-   finish, including their post-build copy, so no half-written DLL is left behind. Until they do, the button
-   reads *Stopping…* and is disabled, and the ribbon reports how many projects are still in flight. The
-   remaining projects stay queued for *Continue*.
+5. **Stop** — kills every in-flight `MSBuild.exe` and everything it spawned, at once; nothing keeps compiling
+   in the background. While the engine acknowledges, the button reads *Stopping…* and is disabled. There is no
+   *Continue*: press *Build* again and the run starts from the top — whatever was killed is rebuilt, whatever
+   had already succeeded is skipped as up to date.
 
 ### Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| `F5` | Build — or Stop while a run is in flight, or Continue when stopped |
+| `F5` | Build — or Stop while a run is in flight |
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
 | `Esc` | Close the topmost open layer: dialog → popover/menu → selection |

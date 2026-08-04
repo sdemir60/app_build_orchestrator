@@ -66,21 +66,21 @@ public partial class BuildMenu : UserControl
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.WillBuildCount):
             case nameof(RunViewModel.FinishedOfWillBuild):
-            case nameof(RunViewModel.CanContinue):
                 RefreshRows();
                 break;
         }
     }
 
-    /// <summary>[T40] VM durumundan menü modelini kurar — koşullu maddeler + F5 rozetinin yeri.</summary>
-    internal static IReadOnlyList<BuildMenuItem> ComposeItems(bool stopped, int total, int remaining, int failed)
+    /// <summary>[T40] VM durumundan menü modelini kurar — koşullu maddeler + F5 rozetinin yeri.
+    /// <para>[B4] <c>continue</c> maddesi KALDIRILDI: yarıda kalan bir run'ı sürdürme yüzeyi yok, Stop'tan sonra
+    /// Build baştan koşar. Dolayısıyla F5 rozeti de her fazda Build'de KALIR (eskiden stopped'ta Continue'ya
+    /// taşınıyordu). <paramref name="stopped"/> yalnız Build'in açıklamasını "Start over" önekiyle ayırmak için
+    /// durur — o ayrım hâlâ doğru bilgi verir.</para></summary>
+    internal static IReadOnlyList<BuildMenuItem> ComposeItems(bool stopped, int total, int failed)
     {
         var items = new List<BuildMenuItem>();
-        if (stopped)
-            items.Add(new("continue", "Continue", Inv($"{remaining} queued projects resume"), "F5"));
         items.Add(new("build", "Build",
-            stopped ? "Start over — only changed projects" : "Only changed projects",
-            stopped ? null : "F5")); // stopped'ta Build'in F5 rozeti KALDIRILIR (Continue'ya taşınır)
+            stopped ? "Start over — only changed projects" : "Only changed projects", "F5"));
         items.Add(new("rebuild", "Rebuild", Inv($"All {total} projects — cache ignored"), "Ctrl+F5"));
         if (failed > 0)
             items.Add(new("retry", "Retry failed", Inv($"{failed} failed + dependents"), null));
@@ -94,9 +94,8 @@ public partial class BuildMenu : UserControl
         bool stopped = _vm?.Phase == AppPhase.Stopped; // BuildApp.jsx:1386
         int total = _vm?.Counters.Total ?? 0;
         int failed = _vm?.Counters.Failed ?? 0;
-        int remaining = Math.Max(0, (_vm?.WillBuildCount ?? 0) - (_vm?.FinishedOfWillBuild ?? 0)); // BuildApp.jsx:1387
 
-        Items = ComposeItems(stopped, total, remaining, failed);
+        Items = ComposeItems(stopped, total, failed);
 
         PART_Rows.Children.Clear(); // minik non-virtualized menü (StickyRibbon chip deseni)
         foreach (var item in Items) PART_Rows.Children.Add(BuildRow(item));
@@ -154,7 +153,6 @@ public partial class BuildMenu : UserControl
     {
         var command = kind switch
         {
-            "continue" => _vm?.ContinueCommand,
             "build" => _vm?.BuildCommand,
             "rebuild" => _vm?.RebuildCommand,
             "retry" => _vm?.RetryFailedCommand,
@@ -168,6 +166,6 @@ public partial class BuildMenu : UserControl
     {
         "rebuild" => "Icon.Rot",   // BuildApp.jsx:1606 <I.rot/>
         "retry" => "Icon.Redo",    // BuildApp.jsx:1609 <I.redo/>
-        _ => "Icon.Play",          // continue/build <I.play/>
+        _ => "Icon.Play",          // build <I.play/>
     };
 }

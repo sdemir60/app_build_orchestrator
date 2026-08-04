@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -178,6 +178,9 @@ public sealed partial class RunViewModel : ObservableObject
     // [runFailed] Kümenin tek REDdi (bkz. OnError'ın RunErrorMessage kapısı) — iki yerde geçtiği için sabit.
     private const string NoResumableRunCode = "noResumableRun";
 
+    // [B1] Run-bitiren kod DEĞİL (koşan run'ı yıkmaz) ama reddedilen isteğin "starting" bayrağını bırakır.
+    private const string RunInProgressCode = "runInProgress";
+
     private static readonly HashSet<string> RunEndingErrorCodes =
         new(StringComparer.Ordinal) { "planFailed", "msbuildNotFound", NoResumableRunCode, "runFailed" };
 
@@ -205,7 +208,6 @@ public sealed partial class RunViewModel : ObservableObject
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde dokunulur (LoadProjectLogAsync + OnProjectLogChunk)
 
     private string? _currentRunId;
-    private bool _sawRunStarted; // bu run denemesinde runStarted görüldü mü — runStopped'ın runCompleted'sız gelip gelmeyeceğini ayırt eder
     private long _elapsedBaseMs;
     private long? _elapsedStartMs; // run başladığında _nowMs() — null iken hiç run başlamamış/durmuş
 
@@ -281,14 +283,13 @@ public sealed partial class RunViewModel : ObservableObject
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
     // ABONE OLMAZ. Bu olmadan Stop/Continue butonları gerçek pencerede İLK bind sonrası ASLA yeniden
-    // sorgulanmaz (StopCommand hep disabled kalır, ContinueCommand hep ölü kalır) — Kısıt 3'ü bozar.
+    // sorgulanmaz (StopCommand hep disabled kalırdı) — Kısıt 3'ü bozar.
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/worktree/config kilidi bundan türetilir
     private bool _isRunning;
 
@@ -303,13 +304,8 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
     private bool _isStarting;
-
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
-    private bool _canContinue;
 
     [ObservableProperty] private string? _activeProjectId; // null = run dokümanı gösteriliyor
 
@@ -324,7 +320,6 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
     private string? _engineDiedMessage;
 
     /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
@@ -338,7 +333,6 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ContinueCommand))]
     private bool _engineRestartable = true;
 
     /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
@@ -456,7 +450,6 @@ public sealed partial class RunViewModel : ObservableObject
     {
         string runId = _newRunId();
         _currentRunId = runId;
-        _sawRunStarted = false;
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers)
@@ -543,10 +536,16 @@ public sealed partial class RunViewModel : ObservableObject
     }
     private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 
-    /// <summary>[Stopping] Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları
-    /// post-build copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz —
-    /// ARCHITECTURE §4.5). Bu, saniyeler ya da dakikalar sürebilen bir penceredir; uygulamanın tıklamayı ALDIĞINI
-    /// göstermesi bu yüzden davranışın kendisi kadar önemlidir.
+    /// <summary>[B3] Hard stop: <c>TerminateJobObject(inner)</c> ile uçuştaki tüm <c>MSBuild.exe</c> ağacı ANINDA
+    /// ölür ve o projeler <c>projectFailed("stopped")</c> raporlanır. Kullanıcı "durdur" dediğinde arkada
+    /// derleme devam etmez.
+    /// <para>Graceful (uçuştakileri bitirme) yolu kontratta durur ama App'ten GÖNDERİLMEZ: onun gerekçesi
+    /// yarıda kalan işi Continue ile sürdürebilmekti; Continue yüzeyi kaldırıldı (Stop'tan sonra Build baştan
+    /// koşar). Torn-DLL koruması bundan bağımsız duruyor — başarısız biten her yol stored <c>BuildState</c>'i
+    /// geçersizleştirir (öldürülen proje bir sonraki Build'de yeniden derlenir) ve öldürülen bir projenin
+    /// dependent'ları sıra gereği henüz BAŞLAMAMIŞTIR.</para>
+    /// <para>Ölüm anlıktır ama motorun ack'i (in-flight sonuçlar → <c>runStopped</c>) bir gidiş-dönüştür;
+    /// uygulamanın tıklamayı ALDIĞINI o pencerede de göstermesi gerekir.</para>
     /// <para><b>Faz gönderimden ÖNCE yazılır:</b> yavaş/tıkalı bir engine'de gönderimin dönmesini beklemek
     /// butonu saniyelerce "Stop" bırakır ve kullanıcı — haklı olarak — tıklamanın kaybolduğunu düşünüp tekrar
     /// basar. Gönderim SENKRON başarısız olursa (engine hazır değil) faz geri alınır: hiçbir runStopped/
@@ -563,22 +562,24 @@ public sealed partial class RunViewModel : ObservableObject
         var previous = Phase;
         Phase = AppPhase.Stopping;
         AppendRunLine(StopRequestedLine(Counters.Building));
-        if (!await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Graceful), "stop"))
+        if (!await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Hard), "stop"))
             Phase = previous;
     }
 
     /// <summary>[Stopping] Run dokümanına düşen tek satırlık not — konsol, tıklamanın kalıcı kaydıdır (şerit
-    /// yalnız ANLIK durumu gösterir). Beklentiyi de kurar: kuyruk durdu ama uçuştakiler bitecek.</summary>
+    /// yalnız ANLIK durumu gösterir). Ne olduğunu da söyler: kuyruk durdu, uçuştakiler öldürüldü.</summary>
     internal static string StopRequestedLine(int inFlight) => string.Format(CultureInfo.InvariantCulture,
-        "stop requested — no new projects will start; {0} in flight will finish", inFlight);
+        "stop requested — terminating {0} in-flight build(s); the rest will not start", inFlight);
 
     // [Stopping] Faz kapısı: Stop bir kez sahiplenilir. İkinci bir tıklama (ya da koşarken F5) ikinci bir
     // stopRun ÜRETMEZ — motor tarafında zararsız olurdu ama buton "sanki hiçbir şey olmuyor" hissini sürdürürdü.
     private bool CanStop() => (IsRunning || IsStarting) && Phase != AppPhase.Stopping;
 
-    [RelayCommand(CanExecute = nameof(CanContinueRun))]
-    private Task ContinueAsync() => BeginRunAsync(RunMode.Continue, clearBuffers: false); // [design doContinue] seçim/filtre KORUNUR
-    private bool CanContinueRun() => !IsRunning && !IsStarting && CanContinue && !IsEngineUnavailable; // [D1 review · A3]
+    // [B4] Continue KOMUTU YOK. Yarıda kalan bir run'ı sürdürme yüzeyi kaldırıldı: Stop'tan sonra kullanıcı
+    // Build'e basar ve run baştan koşar — öldürülen projelerin stored BuildState'i geçersizleştiği için onlar
+    // da yeniden derlenir, Stop'tan önce başarıyla bitenler "up to date" diye atlanır. Motor tarafındaki
+    // RunMode.Continue/HasResumableRun kontratta KALIR (StopKind.Graceful ile aynı durum: yetenek durur,
+    // yüzey kapanır) — App onu hiçbir yoldan göndermez.
 
     /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
     /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
@@ -807,7 +808,6 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
-        _sawRunStarted = true;
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
@@ -951,22 +951,24 @@ public sealed partial class RunViewModel : ObservableObject
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
         Phase = e.Outcome == RunOutcome.Stopped ? AppPhase.Stopped : AppPhase.Done; // [C2] Running → Done/Stopped
-        CanContinue = e.Outcome == RunOutcome.Stopped;
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde (Continue segmentleri dahil) kümülatif özet
-        _sawRunStarted = false;
         RefreshRunSurface();
     }
 
+    /// <summary>[B2] <c>runStopped</c> TEK DALLIDIR — run başlamış olsun ya da olmasın, faz
+    /// <see cref="AppPhase.Stopped"/> ve run state serbest.
+    /// <para>Eskiden runStarted görülmüşse burada ERKEN DÖNÜLÜR, faz <c>runCompleted</c>'a bırakılırdı. Bu,
+    /// fazın çözülmesini bir OLAY SIRALAMASI varsayımına bağlıyordu ve <c>runCompleted</c>'ın gelmediği her
+    /// durumda <c>Stopping</c> asılı kalıyordu (kullanıcı bildirimi). Varsayıma gerek YOKTUR: koordinatör
+    /// <c>runStopped</c>'ı zaten TÜM in-flight sonuçlarını raporladıktan sonra yazar (<c>RunSegmentAsync</c>
+    /// finally + <c>_finishing</c> kapısı; sahiplenemediği durumda ise host anında yazar) — bu olay görüldüğünde
+    /// koşan bir şey KALMAMIŞTIR. Arkadan gelen <c>runCompleted</c> aynı fazı yazdığı için ara görüntü oluşmaz;
+    /// gelmezse de faz doğru yerde kalır.</para></summary>
     private void OnRunStopped()
     {
-        if (_sawRunStarted) return; // normal akış: runCompleted az sonra gelecek, slot orada serbest kalır
-        // [Kısıt 3] Planlama sırasında stop — runStarted hiç gelmedi, runCompleted de ASLA gelmeyecek.
         IsRunning = false;
-        IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama-sırasında-stop ack'i — Rebuild'i geri aç
-        CanContinue = false;
-        // [Stopping] Bu yolda runCompleted ASLA gelmeyecek (hiç runStarted olmadı) — fazı bırakan başka bir
-        // kapı yok. Hiçbir proje derlenmediği için Stopped da denemez: run hiç başlamadı, dinlenmeye dönülür.
-        if (Phase == AppPhase.Stopping) Phase = RestingPhase;
+        IsStarting = false; // planlama sırasında stop ack'i de buradan geçer — Build'i geri aç
+        Phase = AppPhase.Stopped;
     }
 
     private void OnError(ErrorEvent e)
@@ -982,6 +984,13 @@ public sealed partial class RunViewModel : ObservableObject
             _pendingLoad = null;
             pending.Completion.TrySetResult();
         }
+        // [B1] REDDEDİLEN bir başlatma isteği (runInProgress) kendi "starting" bayrağını BIRAKMALIDIR. Motor run
+        // slotunu (_runActive) tüm event'ler yazıldıktan SONRA bırakır (ExecuteRunAsync'in finally'si), yani
+        // runCompleted App'e ulaştıktan sonra kısa bir pencere boyunca slot HÂLÂ doludur — butonlar tam o anda
+        // açıldığı için hızlı bir tıklama bu reddi alır. Bayrak temizlenmezse UI kilit penceresinde SONSUZA DEK
+        // donardı: Build/Rebuild disabled, Stop görünür ama arkada durdurulacak bir şey yok. Koşan run'a
+        // DOKUNULMAZ (aşağıdaki erken dönüş) — kilit gerçekten koşuyorsa IsRunning üzerinden zaten sürer.
+        if (e.Code == RunInProgressCode) IsStarting = false;
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/logNotFound/... aktif run'ı ETKİLEMEZ
         // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten
         // geldiyse (uçuşta bir Sync var ve run planlama penceresinde DEĞİL) run state'ine DOKUNULMAZ — Sync
@@ -989,8 +998,6 @@ public sealed partial class RunViewModel : ObservableObject
         if (TryConsumeSyncFailure(e.Code, e.Message)) return;
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
-        CanContinue = false;
-        _sawRunStarted = false;
         // Run-bitiren bir hata geldiğinde runCompleted ASLA gelmez — fazı bırakan başka kapı yoktur.
         // [Stopping] Stop penceresinde gelirse buton sonsuza dek pasif, şerit sonsuza dek "Stopping" kalırdı.
         // [runFailed] Running'de gelirse (yalnız runFailed bunu yapabilir — kümedeki diğer üç kod runStarted'dan
@@ -1007,10 +1014,10 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[Task 16 — It-2 devir §8, kama düzeltmesi] <see cref="EngineHost.EngineExited"/> eskiden VM'e
     /// hiç BAĞLI DEĞİLDİ: engine process startRun sonrası runStarted'dan ÖNCE ya da run ORTASINDA ölürse,
     /// hiçbir IPC event'i asla gelmeyeceğinden (ne runCompleted ne runStopped ne run-bitiren ErrorEvent)
-    /// IsStarting/IsRunning/CanContinue SONSUZA DEK kilitli kalırdı — "Restart Engine" MainWindow'daki
+    /// IsStarting/IsRunning SONSUZA DEK kilitli kalırdı — "Restart Engine" MainWindow'daki
     /// banner'ı güncelliyordu ama VM'e hiç dokunmadığından butonlar açılmıyordu. <see cref="RunEndingErrorCodes"/>
-    /// deseniyle TUTARLI: aynı üç run-state alanı sıfırlanır; ayrıca bir sonraki run/Restart'ın _currentRunId/
-    /// _sawRunStarted bakiyesiyle karışmaması için o bakiye de temizlenir (StopAsync zaten CanStop=false
+    /// deseniyle TUTARLI: aynı run-state alanları sıfırlanır; ayrıca bir sonraki run/Restart'ın
+    /// <c>_currentRunId</c> bakiyesiyle karışmaması için o bakiye de temizlenir (StopAsync zaten CanStop=false
     /// olduğundan tıklanamaz, ama temiz başlangıç için bilerek sıfırlanır).
     ///
     /// <para><b>Idempotent:</b> [ObservableProperty] setter'ları CommunityToolkit'in eşitlik kontrolüyle
@@ -1042,8 +1049,6 @@ public sealed partial class RunViewModel : ObservableObject
         if (Phase is AppPhase.Running or AppPhase.Stopping) Phase = AppPhase.Stopped;
         IsRunning = false;
         IsStarting = false;
-        CanContinue = false;
-        _sawRunStarted = false;
         _currentRunId = null;
         // [C2 fold — A5 review] Engine Sync ortasında ölürse hiçbir syncCompleted/Sync-hatası gelmez; faz
         // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada

@@ -153,7 +153,9 @@ public class RibbonTextTests
     {
         var line = RibbonText.Compose(AppPhase.Stopping, true, allClean: false, Counters(building: 2, queued: 6),
             willBuild: 14, finishedOfWillBuild: 7, totalProjects: 14, elapsedMs: 24_000, etaMs: 34_000, checkDurMs: null, warnings: 0);
-        Assert.Equal("▸ Stopping — 7/14 · finishing 2 in flight", line.Text);
+        // "finishing" ARTIK YANLIŞ olurdu: hard stop'ta uçuştaki child'lar bitmiyor, öldürülüyor. Eski metin
+        // graceful drain penceresini anlatıyordu (bkz. Stop_sends_a_hard_stop_... testinin gerekçesi).
+        Assert.Equal("▸ Stopping — 7/14 · terminating 2 in flight", line.Text);
         Assert.Equal("Brush.TextSecondary", line.BrushKey);
         Assert.Null(line.Glyph);
     }
@@ -169,12 +171,15 @@ public class RibbonTextTests
         Assert.Equal("Brush.TextSecondary", line.BrushKey);
     }
 
+    /// <summary>Eski metin <c>▸ Stopped — 3/10 · rest queued</c> idi. "queued" SÜRDÜRÜLEBİLİRLİK ima ediyordu
+    /// (Continue butonu vardı); Continue kaldırıldığı için o söz artık karşılıksız — kalanlar bir sonraki
+    /// Build'de baştan işlenir. Yeni metin yalnızca olguyu söyler.</summary>
     [Fact]
-    public void Stopped_line_shows_progress_and_rest_queued_in_dim_text()
+    public void Stopped_line_shows_progress_and_what_was_not_built_in_dim_text()
     {
-        var line = RibbonText.Compose(AppPhase.Stopped, true, false, Counters(),
+        var line = RibbonText.Compose(AppPhase.Stopped, true, false, Counters(queued: 7),
             willBuild: 10, finishedOfWillBuild: 3, totalProjects: 14, elapsedMs: 30_000, etaMs: null, checkDurMs: null, warnings: 0);
-        Assert.Equal("▸ Stopped — 3/10 · rest queued", line.Text);
+        Assert.Equal("▸ Stopped — 3/10 · 7 not built", line.Text);
         Assert.Equal("Brush.TextDim", line.BrushKey);
     }
 

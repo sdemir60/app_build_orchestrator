@@ -12,7 +12,6 @@ public enum ShortcutAction
     Build,
     Rebuild,
     Stop,
-    Continue,
     /// <summary>Proje filtre input'una odak (Ctrl+F).</summary>
     FocusFilter,
 }
@@ -33,7 +32,7 @@ public enum WindowIntent
 {
     /// <summary>Ctrl/Shift+F5 → doğrudan <see cref="RunViewModel.RebuildCommand"/> (CanExecute onurlanır).</summary>
     Rebuild,
-    /// <summary>Çıplak F5 → duruma göre Stop/Continue/Build (OnF5Pressed → <see cref="Resolve"/> → DispatchShortcut).</summary>
+    /// <summary>Çıplak F5 → duruma göre Stop/Build (OnF5Pressed → <see cref="Resolve"/> → DispatchShortcut).</summary>
     F5StateBranch,
     /// <summary>Ctrl+F → proje filtre input'una odak.</summary>
     FocusFilter,
@@ -51,8 +50,8 @@ public readonly record struct WindowBinding(Key Key, ModifierKeys Modifiers, Win
 /// kablajı + CanExecute).
 ///
 /// <para><b>F5 (BuildApp.jsx:1305 + v7 K6 "koşarken Stop"):</b> Ctrl/Shift'li F5 → <see cref="ShortcutAction.Rebuild"/>
-/// (koşarken bile — CanExecute reddeder); aksi halde koşuyorsa → <see cref="ShortcutAction.Stop"/>, stopped'ta →
-/// <see cref="ShortcutAction.Continue"/>, değilse → <see cref="ShortcutAction.Build"/>. <b>Ctrl+F</b> → filtre.
+/// (koşarken bile — CanExecute reddeder); aksi halde koşuyorsa → <see cref="ShortcutAction.Stop"/>, değilse →
+/// <see cref="ShortcutAction.Build"/>. <b>Ctrl+F</b> → filtre.
 /// <b>Negatif-pin:</b> çift-Shift ve Ctrl+P BİLİNÇLİ olarak bağlı DEĞİL (yanlışlıkla eklenmesin).</para>
 /// </summary>
 public static class KeyboardShortcuts
@@ -66,7 +65,7 @@ public static class KeyboardShortcuts
     [
         new(Key.F5, ModifierKeys.Control, WindowIntent.Rebuild),        // Ctrl+F5  → Rebuild (doğrudan)
         new(Key.F5, ModifierKeys.Shift, WindowIntent.Rebuild),         // Shift+F5 → Rebuild (doğrudan)
-        new(Key.F5, ModifierKeys.None, WindowIntent.F5StateBranch),    // çıplak F5 → Stop/Continue/Build (duruma göre)
+        new(Key.F5, ModifierKeys.None, WindowIntent.F5StateBranch),    // çıplak F5 → Stop/Build (duruma göre)
         new(Key.F, ModifierKeys.Control, WindowIntent.FocusFilter),    // Ctrl+F   → proje filtre odağı
         new(Key.Escape, ModifierKeys.None, WindowIntent.Escape),       // Esc      → EN ÜST açık katman
     ];
@@ -83,7 +82,6 @@ public static class KeyboardShortcuts
             ShortcutAction.Build => vm.BuildCommand,
             ShortcutAction.Rebuild => vm.RebuildCommand,
             ShortcutAction.Stop => vm.StopCommand,
-            ShortcutAction.Continue => vm.ContinueCommand,
             _ => null, // None, FocusFilter
         };
     }
@@ -91,15 +89,15 @@ public static class KeyboardShortcuts
     /// <summary>Tuş + modifier + VM durumundan hangi kısayol eyleminin tetikleneceğini verir. Bağlı değilse
     /// <see cref="ShortcutAction.None"/> (Ctrl+P/çıplak Shift dahil).</summary>
     /// <param name="midRun">Bir run uçuşta mı (IsRunning || IsStarting = RunViewModel.IsMidRunLocked).</param>
-    /// <param name="stopped">Faz <c>Stopped</c> mı (Continue erişilebilir).</param>
-    public static ShortcutAction Resolve(Key key, ModifierKeys modifiers, bool midRun, bool stopped)
+    public static ShortcutAction Resolve(Key key, ModifierKeys modifiers, bool midRun)
     {
         if (key == Key.F5)
         {
             // Ctrl VEYA Shift + F5 → her zaman Rebuild (koşarken bile — CanExecute reddeder), BuildApp.jsx:1305.
             if ((modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0) return ShortcutAction.Rebuild;
-            if (midRun) return ShortcutAction.Stop;      // v7 K6: koşarken F5 = Stop
-            if (stopped) return ShortcutAction.Continue; // stopped'ta F5 = Continue
+            if (midRun) return ShortcutAction.Stop; // v7 K6: koşarken F5 = Stop
+            // [B4] Eskiden stopped fazı burada Continue'ya dallanırdı; o yüzey kaldırıldı (Stop'tan sonra Build
+            // baştan koşar), dolayısıyla koşmayan HER durumda F5 = Build. Faz parametresi de gerekmez.
             return ShortcutAction.Build;
         }
         // Ctrl+F (meta yok — Windows) → proje filtre input'u. Shift önemsiz (BuildApp.jsx:1306 ctrl||meta && f).

@@ -305,7 +305,7 @@ public partial class MainWindow : Window
     /// <summary>Çıplak F5: koşarken → Stop, stopped'ta → Continue, aksi → Build (v7 K6). Karar SAF
     /// <see cref="KeyboardShortcuts.Resolve"/>'te; burada yalnız uygulanır (CanExecute reddederse no-op).</summary>
     private void OnF5Pressed() =>
-        DispatchShortcut(KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, _vm.IsMidRunLocked, _vm.Phase == AppPhase.Stopped));
+        DispatchShortcut(KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, _vm.IsMidRunLocked));
 
     private void DispatchShortcut(ShortcutAction action)
     {

@@ -1,4 +1,4 @@
-using System.Collections.Specialized;
+﻿using System.Collections.Specialized;
 using System.IO;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
@@ -459,10 +459,44 @@ public class RunViewModelTests
         Assert.True(vm.IsRunning);
     }
 
+    /// <summary>[B1] Motor, run slotunu (<c>_runActive</c>) TÜM event'ler yazıldıktan SONRA bırakır
+    /// (<c>ExecuteRunAsync</c>'in finally'si) — yani <c>runCompleted</c> App'e ulaştıktan sonra kısa bir pencere
+    /// boyunca slot HÂLÂ doludur. Butonlar o anda açıldığı için hızlı bir tıklama <c>runInProgress</c> alır.
+    /// <para><c>IsStarting</c> REDDEDİLEN isteğin kendi bayrağıdır: temizlenmezse UI kilit penceresinde
+    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SONSUZA DEK donar — Build/Rebuild disabled kalır, Stop
+    /// görünür ama arkada durdurulacak bir şey yoktur. Koşan run'a dokunulmaz; kilit gerçekten koşuyorsa
+    /// <see cref="RunViewModel.IsRunning"/> üzerinden zaten sürer (kardeş test).</para></summary>
+    [Fact]
+    public async Task A_rejected_start_releases_its_own_starting_flag()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r2") { RootPath = @"D:\repo" };
+        // Kilit penceresi doğrudan kurulur: bu harness'ta engine YOK, gönderim senkron düşer ve BeginRunAsync
+        // bayrağı kendi hata dalında zaten geri açar — yani üretim yolu bu ön-koşulu üretemez. Test zaten
+        // "bayrak nasıl kondu"yu değil, REDDİ GÖREN OnError'ın onu bırakıp bırakmadığını sürüyor.
+        vm.IsStarting = true;
+        Assert.True(vm.IsMidRunLocked); // ön-koşul: UI kilit penceresinde
+
+        vm.OnEvent(new ErrorEvent("runInProgress", "A run is already in progress — 'r2' was rejected."));
+
+        Assert.False(vm.IsStarting);
+        Assert.False(vm.IsMidRunLocked);              // UI kilitte donmadı
+        Assert.True(vm.BuildCommand.CanExecute(null)); // kullanıcı tekrar deneyebilir
+    }
+
     // ---------------------------------------------------------------- 6) Stop/Continue komut gönderimi (gerçek Supervisor)
 
+    /// <summary>[B3] Stop ARTIK HARD'dır: <c>TerminateJobObject(inner)</c> ile uçuştaki tüm <c>MSBuild.exe</c>
+    /// ağacı anında ölür.
+    /// <para><b>Eski iddia (değişti):</b> Stop <c>StopKind.Graceful</c> gönderirdi — uçuştaki child'lar
+    /// post-build copy dahil BİTİRİLİR, kalanlar Continue için kuyrukta bırakılırdı. <b>Değişme gerekçesi:</b>
+    /// Continue yüzeyi kaldırıldı (Stop'tan sonra Build baştan koşar), yani "yarıda kalanı sürdürebilmek" diye
+    /// bir gereksinim kalmadı; graceful'ün tek kalan bedeli ise kullanıcının dakikalarca bekleyip "durmuyor"
+    /// görmesiydi. Torn-DLL koruması Continue'dan BAĞIMSIZ olarak zaten duruyor: başarısız biten her yol stored
+    /// <c>BuildState</c>'i geçersizleştirir, öldürülen proje bir sonraki Build'de yeniden derlenir; dependent'ları
+    /// ise sıra gereği henüz BAŞLAMAMIŞTIR.</para></summary>
     [Fact]
-    public async Task Stop_sends_StopRunCommand_graceful_and_engine_acks_it()
+    public async Task Stop_sends_a_hard_stop_and_the_engine_acks_it_as_hard()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
@@ -474,11 +508,11 @@ public class RunViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         // Gerçek Supervisor'da eşleşen bir run YOK (yalnız VM'in inancı kuruldu) → TryRequestStop false →
-        // T4-base yol: hemen runStopped(WasHard=false) döner. Bu, StopRunCommand(r1, Graceful)'ın DOĞRU
-        // gönderildiğinin gözlenebilir kanıtıdır.
+        // host yolu: inner job terminate edilir ve hemen runStopped(WasHard=true) döner. WasHard, gönderilen
+        // StopKind'ın gözlenebilir kanıtıdır — Graceful bu bayrağı ASLA true yapmaz.
         var result = await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("r1", result.RunId);
-        Assert.False(result.WasHard);
+        Assert.True(result.WasHard);
     }
 
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın
@@ -538,25 +572,6 @@ public class RunViewModelTests
     }
 
     [Fact]
-    public async Task Continue_sends_StartRunCommand_with_ContinueMode()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
-        await engine.StartAsync();
-        string root = Directory.CreateTempSubdirectory("bo-vm-continue-").FullName;
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r2") { RootPath = root };
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10)); // CanContinue=true durumu kurar
-        var error = new TaskCompletionSource<ErrorEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        engine.EventReceived += e => { if (e is ErrorEvent er) error.TrySetResult(er); };
-
-        await vm.ContinueCommand.ExecuteAsync(null);
-
-        // Gerçek Supervisor'da sürdürülebilir bir run yok → noResumableRun. Bu, StartRunCommand'ın
-        // Mode=Continue ile DOĞRU gönderildiğinin kanıtıdır (Rebuild bu reddi asla almaz).
-        var result = await error.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("noResumableRun", result.Code);
-    }
-
-    [Fact]
     public async Task Rebuild_is_disabled_while_running_and_reenabled_after_completion()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -572,24 +587,22 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- 6b) [Fix wave 1, Finding 1] CanExecuteChanged canlı UI'a ULAŞMALI
     // CommunityToolkit RelayCommand CommandManager.RequerySuggested'a ABONE OLMAZ — [NotifyCanExecuteChangedFor]
-    // olmadan gerçek pencerede Stop/Continue butonları hiç yeniden sorgulanmaz (Stop hep disabled, Continue hep
-    // ölü kalır). Bu testler CanExecute'in DOĞRU DEĞERİ değil, event'in GERÇEKTEN ATEŞLENDİĞİNİ kanıtlar.
+    // olmadan gerçek pencerede Stop butonu hiç yeniden sorgulanmaz (hep disabled kalır). Bu testler
+    // CanExecute'in DOĞRU DEĞERİ değil, event'in GERÇEKTEN ATEŞLENDİĞİNİ kanıtlar.
 
     [Fact]
-    public async Task RunStarted_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
+    public async Task RunStarted_raises_CanExecuteChanged_for_Rebuild_and_Stop()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        bool rebuildChanged = false, stopChanged = false, continueChanged = false;
+        bool rebuildChanged = false, stopChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
         vm.StopCommand.CanExecuteChanged += (_, _) => stopChanged = true;
-        vm.ContinueCommand.CanExecuteChanged += (_, _) => continueChanged = true;
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0)); // IsRunning false→true
 
         Assert.True(rebuildChanged); // CanRebuild = !IsRunning
         Assert.True(stopChanged);    // CanStop = IsRunning — Kısıt 3: kullanıcı Stop'a hiç basamaz olmasın diye
-        Assert.True(continueChanged); // CanContinueRun = !IsRunning && CanContinue
         Assert.True(vm.StopCommand.CanExecute(null));
         Assert.False(vm.RebuildCommand.CanExecute(null));
     }
@@ -607,24 +620,6 @@ public class RunViewModelTests
 
         Assert.True(stopChanged);
         Assert.False(vm.StopCommand.CanExecute(null));
-    }
-
-    [Fact] // CanContinue'nun KENDİ NotifyCanExecuteChangedFor'unu, IsRunning'in DEĞİŞMEDİĞİ bir senaryoda izole eder
-    public async Task CanContinue_becoming_true_raises_ContinueCommand_CanExecuteChanged_without_an_IsRunning_transition()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        Assert.False(vm.IsRunning); // hiç run başlamadı — IsRunning zaten false
-        bool continueChanged = false;
-        vm.ContinueCommand.CanExecuteChanged += (_, _) => continueChanged = true;
-
-        // OnRunCompleted IsRunning'i false yapar (false→false, DEĞİŞİM YOK, [ObservableProperty] no-op) ama
-        // CanContinue'yu false→true çevirir (outcome Stopped) — yalnız _canContinue'nun kendi annotation'ı
-        // tetiklenirse ContinueCommand.CanExecuteChanged ateşlenir.
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10));
-
-        Assert.True(continueChanged);
-        Assert.True(vm.ContinueCommand.CanExecute(null));
     }
 
     // ---------------------------------------------------------------- 6b-2) [Fix wave 1(It-3), Finding 3] planlama sırasında Stop erişilebilir olmalı
@@ -709,19 +704,6 @@ public class RunViewModelTests
         Assert.True(vm.RebuildCommand.CanExecute(null));
     }
 
-    [Fact] // Continue için aynı senaryo — ContinueCommand da kalıcı kilitlenmemeli
-    public async Task ContinueCommand_recovers_IsStarting_when_the_initial_send_fails_synchronously()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10)); // CanContinue=true durumu kurar
-
-        await vm.ContinueCommand.ExecuteAsync(null);
-
-        Assert.False(vm.IsStarting);
-        Assert.True(vm.ContinueCommand.CanExecute(null));
-    }
-
     // ---------------------------------------------------------------- 6e) [Fix wave 2, Finding 2] engine ölüyken kart tıklaması ASILI KALMAMALI
 
     [Fact] // SendAsync senkron fırlar, hiçbir event Completion'ı tamamlamaz eskiden — LoadProjectLogAsync sonsuza dek asılı kalırdı
@@ -773,7 +755,7 @@ public class RunViewModelTests
     // ---------------------------------------------------------------- 6f) [Task 16 — It-2 devir §8] EngineExited → run-state reset (wedge fix)
     // EngineHost.EngineExited sinyali eskiden VM'e hiç bağlı DEĞİLDİ (yalnız MainWindow'daki banner'ı
     // güncelliyordu) — engine startRun sonrası runStarted'dan ÖNCE ya da run ORTASINDA ölürse hiçbir IPC
-    // event'i asla gelmeyeceğinden IsStarting/IsRunning/CanContinue SONSUZA DEK kilitli kalırdı, "Restart
+    // event'i asla gelmeyeceğinden IsStarting/IsRunning SONSUZA DEK kilitli kalırdı, "Restart
     // Engine" bile açmıyordu. OnEngineExited bu kamayı kapatır.
 
     [Fact] // startRun gönderildi, runStarted HENÜZ gelmedi (IsStarting=true) — engine bu pencerede ölürse butonlar açılmalı
@@ -789,7 +771,6 @@ public class RunViewModelTests
 
         Assert.False(vm.IsStarting);
         Assert.False(vm.IsRunning);
-        Assert.False(vm.CanContinue);
         Assert.True(vm.RebuildCommand.CanExecute(null)); // butonlar artık un-wedged
         Assert.False(vm.StopCommand.CanExecute(null));
     }
@@ -806,7 +787,6 @@ public class RunViewModelTests
 
         Assert.False(vm.IsRunning);
         Assert.False(vm.IsStarting);
-        Assert.False(vm.CanContinue);
         Assert.True(vm.RebuildCommand.CanExecute(null));
     }
 
@@ -823,7 +803,6 @@ public class RunViewModelTests
 
         Assert.False(vm.IsRunning);
         Assert.False(vm.IsStarting);
-        Assert.False(vm.CanContinue);
         Assert.True(vm.RebuildCommand.CanExecute(null));
     }
 

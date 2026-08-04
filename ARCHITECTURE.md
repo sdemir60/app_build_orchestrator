@@ -169,36 +169,40 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Graceful stop** (the default, and what `F5` does while a run is in flight) lets in-flight `MSBuild.exe`
-children finish, *including their post-build copy events*. Nothing new is dispatched. The remaining projects
-stay queued so the run can be continued. This is the reason the shared-compilation flags stay off (§9.2): with
-a compiler server, the emit happens in a long-lived process outside the job, and a stop could catch a DLL
-mid-write.
+**Stop means stop.** The Stop button and `F5` both request a **hard stop**: the inner job is terminated, so
+every in-flight `MSBuild.exe` and everything it spawned dies at once, and those projects are reported as
+`projectFailed("stopped")`. Nothing keeps compiling behind the user's back.
 
-**Hard stop** terminates the inner job at a project boundary. It exists in the contract and in the engine, but
-nothing in the App sends it: the Stop button and `F5` both request a graceful stop.
+Killing a project mid-copy can leave a half-written DLL in the shared output directory, and two existing
+guarantees cover it. Every failing path — including `stopped` — invalidates that project's stored `BuildState`,
+so the next Build rebuilds it. And a killed project's dependents have not started yet, because they only
+become ready once it succeeds. Nothing can be linked against the torn output.
 
-In both paths `runStopped` and `runCompleted` fire exactly once, and the elapsed clock is preserved so that
-*Continue* resumes the same run rather than starting a new one.
+**Graceful stop** — draining in-flight children, post-build copy included, and leaving the rest queued — still
+exists in the contract and in the engine, but the App never sends it. It was the price paid for resuming a
+half-finished run, and there is no resume: after a stop the user presses *Build*, which starts from the top of
+the list, rebuilds whatever was killed (its state was invalidated) and skips whatever had already succeeded as
+up to date. The shared-compilation flags stay off for the same underlying reason (§9.2): with a compiler
+server the emit happens in a long-lived process outside the job, where a terminate cannot reach it.
 
-Because a graceful stop can take as long as the slowest in-flight project, the App has to show that the click
-landed. Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow
-engine would leave the button reading *Stop* for seconds and invite a second click. The button stays visible
-but reads *Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are still in
-flight, and a line goes into the run document. The mid-run lock is deliberately *not* released: the engine is
-still working, so branch, worktree and configuration stay locked and the Build split-button does not come back.
-Rows are left alone — the queued ones really are still queued and *Continue* resumes them, and the in-flight
-ones really are still building.
+`runStopped` and `runCompleted` each fire exactly once, and the elapsed clock is preserved.
 
-Leaving `stopping` belongs to the engine's answer, and every exit is closed: `runCompleted` settles on
-`stopped`; a `runStopped` with no preceding `runStarted` (a stop during planning) and a run-ending error both
-fall back to the resting phase — `idle` when a topology is known, `boot` otherwise; an engine death settles on
-`stopped`. If the command cannot even be sent, the phase is put back. A single open exit would strand the
-button disabled and the ribbon on *Stopping* forever.
+The kill is immediate but the engine's acknowledgement is a round trip, so the App still has to show that the
+click landed. Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on
+a slow engine would leave the button reading *Stop* and invite a second click. The button stays visible but
+reads *Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are being
+terminated, and a line goes into the run document. The mid-run lock is deliberately *not* released until the
+engine answers, so branch, worktree and configuration stay locked and the Build split-button does not come
+back early.
 
-Once a graceful drain begins, the CPU cap is removed and never re-applied for the rest of that run, and the
-priority class can no longer be lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated
-against a resource setting.
+Leaving `stopping` cannot deadlock, because `runStopped` settles it unconditionally: phase `stopped`, run
+state released. The coordinator only writes that event once every in-flight result has been reported, so by
+the time the App sees it nothing is running — there is no ordering assumption left to violate. A trailing
+`runCompleted` writes the same phase. A run-ending error and an engine death settle it too, and if the command
+cannot even be sent the phase is put back.
+
+The CPU cap is removed for the rest of a run once a stop is requested, and the priority class can no longer be
+lowered past the Balanced floor.
 
 ### 4.6 Engine failure and restart
 
@@ -452,7 +456,7 @@ defaults.
 |---|---|
 | `Build` | the will-build set (incremental) |
 | `Rebuild` | all projects; cached state ignored |
-| `Continue` | the remaining queued projects of the stopped run, from the existing plan, with the elapsed clock preserved |
+| `Continue` | the remaining queued projects of the stopped run, from the existing plan, with the elapsed clock preserved — engine capability only; the App has no surface that sends it |
 | `RetryFailed` | the failed projects plus **all** their transitive dependents — independent of the Safe/Fast setting; console and event stream are not reset |
 
 ### 8.2 Ready-set scheduler
@@ -949,8 +953,8 @@ through the list or the graph.
 
 **Action bar.** Sync; the counter chips (`Σ`, building, `✓`, `✗`, `—`, `▲`), each a filter toggle; the branch
 chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf chip; and the Build
-split-button, whose menu carries *Build*, *Rebuild*, and — when applicable — *Continue* and
-*Retry failed — N failed + dependents*. While a run is in flight the primary button becomes *Stop*, and the
+split-button, whose menu carries *Build*, *Rebuild*, and — when something failed — *Retry failed — N failed +
+dependents*. There is no *Continue*: a stopped run is not resumed, it is started again. While a run is in flight the primary button becomes *Stop*, and the
 branch, worktree and configuration controls lock; the perf chip stays live.
 
 ### 13.3 Popovers and dialogs
@@ -1001,7 +1005,7 @@ If no repository has ever been selected, there is nothing to Sync — that gate 
 applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
 there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers
 and the root are applied but nothing is sent: each send would fail and print an error line contradicting the
-permanent ribbon message, the same reason Sync, Build, Rebuild, Retry failed and Continue are disabled in
+permanent ribbon message, the same reason Sync, Build, Rebuild and Retry failed are disabled in
 that state. The root is still applied because it is local state that persists, and the first Sync after the
 engine returns carries it.
 
@@ -1130,7 +1134,7 @@ filter appears as a removable chip in the panel header.
 
 | Key | Action |
 |---|---|
-| `F5` | Build — or Stop while running, or Continue when stopped |
+| `F5` | Build — or Stop while a run is in flight |
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
 | `Esc` | Close the topmost layer (see above) |
@@ -1689,7 +1693,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
-| Build menu (Build / Rebuild / Continue / Retry failed) | `App/Views/BuildMenu.xaml(.cs)` |
+| Build menu (Build / Rebuild / Retry failed) | `App/Views/BuildMenu.xaml(.cs)` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |

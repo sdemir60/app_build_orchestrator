@@ -175,7 +175,6 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
             case nameof(RunViewModel.Phase):
-            case nameof(RunViewModel.CanContinue):
                 RefreshEnabled();
                 RefreshBuildArea();
                 break;
@@ -419,7 +418,6 @@ public partial class ActionBar : UserControl
         // Kilit penceresinin TAMAMINDA (running VEYA planlama/starting) Stop göster — StopCommand da o pencerede
         // etkindir (CanStop = IsRunning || IsStarting). Aksi halde split-button (Build/Continue).
         bool locked = _vm?.IsMidRunLocked ?? false;
-        bool stopped = _vm?.Phase == AppPhase.Stopped;
         PART_Stop.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
         PART_Split.Visibility = locked ? Visibility.Collapsed : Visibility.Visible;
         if (locked)
@@ -432,9 +430,10 @@ public partial class ActionBar : UserControl
             return;
         }
 
-        // stopped → sol yarı Continue (F5 menüde oraya taşınır); aksi halde Build (BuildApp.jsx:1592-1593).
-        PART_Split.PrimaryContent = ButtonContent("Icon.Play", stopped ? "Continue" : "Build", "Brush.TextOnAccent", 24);
-        PART_Split.PrimaryCommand = stopped ? _vm?.ContinueCommand : _vm?.BuildCommand;
+        // [B4] Birincil aksiyon HER fazda Build. Eskiden stopped'ta Continue'ya dönüşürdü; o yüzey kaldırıldı —
+        // Stop'tan sonra Build baştan koşar (öldürülenler yeniden derlenir, bitenler "up to date" atlanır).
+        PART_Split.PrimaryContent = ButtonContent("Icon.Play", "Build", "Brush.TextOnAccent", 24);
+        PART_Split.PrimaryCommand = _vm?.BuildCommand;
     }
 
     private StackPanel ButtonContent(string iconKey, string text, string iconBrushKey, double viewBox)

@@ -509,13 +509,17 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Eski iddia: "stopped fazında menüde <c>continue</c> maddesi BELİRİR". Continue yüzeyi
+    /// kaldırıldı — Stop'tan sonra kullanıcı Build'e basar ve run baştan koşar (öldürülen projelerin kaydı
+    /// geçersizleştiği için onlar da yeniden derlenir). Bu test artık <c>continue</c>'nun HİÇBİR fazda
+    /// üretilmediğini pinler; Retry'ın koşullu davranışı aynen korunur.</summary>
     [StaFact]
-    public void Build_menu_shows_continue_only_when_stopped_and_retry_only_when_something_failed()
+    public void Build_menu_never_offers_continue_and_shows_retry_only_when_something_failed()
     {
         var vm = NewVm();
         var (menu, window) = RealizeMenu(vm);
 
-        // Idle, hiç failure yok: Continue YOK, Retry YOK; Build + Rebuild VAR.
+        // Idle, hiç failure yok: Retry YOK; Build + Rebuild VAR.
         Assert.DoesNotContain(menu.Items, i => i.Kind == "continue");
         Assert.DoesNotContain(menu.Items, i => i.Kind == "retry");
         Assert.Contains(menu.Items, i => i.Kind == "build");
@@ -527,10 +531,10 @@ public partial class ActionBarTests
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 100, "exit 1"));
         Assert.Contains(menu.Items, i => i.Kind == "retry");
 
-        // Stop → Continue görünür.
+        // Stop → yine Continue YOK.
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
-        Assert.Contains(menu.Items, i => i.Kind == "continue");
+        Assert.DoesNotContain(menu.Items, i => i.Kind == "continue");
         GC.KeepAlive(window);
     }
 
@@ -561,23 +565,37 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Eski iddia: "stopped fazında F5 rozeti Build'den Continue'ya TAŞINIR". Continue kalktığı için
+    /// taşınacak yer de kalmadı — rozet Build'de KALIR ve F5 her fazda aynı şeyi yapar (koşuyorsa Stop, aksi
+    /// halde Build). Kardeşi: <c>KeyboardShortcutTests.Plain_f5_builds_when_stopped_too</c>.</summary>
     [StaFact]
-    public void Stopped_state_moves_the_F5_badge_from_build_to_continue()
+    public void The_F5_badge_stays_on_build_even_when_stopped()
     {
         var vm = NewVm();
         var (menu, window) = RealizeMenu(vm);
-
-        // NOT-stopped: F5 rozeti Build'de; Continue maddesi yok.
-        Assert.DoesNotContain(menu.Items, i => i.Kind == "continue");
         Assert.Equal("F5", menu.Items.Single(i => i.Kind == "build").Kbd);
 
-        // Stopped: F5 Continue'ya taşınır, Build'in rozeti KALDIRILIR.
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
 
-        Assert.Equal("F5", menu.Items.Single(i => i.Kind == "continue").Kbd);
-        Assert.Null(menu.Items.Single(i => i.Kind == "build").Kbd);
+        Assert.Equal("F5", menu.Items.Single(i => i.Kind == "build").Kbd);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Split-button'ın birincil aksiyonu HER fazda Build'dir — stopped'ta Continue'ya dönüşmez.</summary>
+    [StaFact]
+    public void The_split_button_primary_action_stays_build_after_a_stop()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10));
+        Assert.Equal(AppPhase.Stopped, vm.Phase); // ön-koşul
+
+        Assert.Equal(Visibility.Visible, bar.Split.Visibility);
+        Assert.Same(vm.BuildCommand, bar.Split.PrimaryCommand);
+        Assert.Equal("Build", ((StackPanel)bar.Split.PrimaryContent).Children.OfType<TextBlock>().Single().Text);
         GC.KeepAlive(window);
     }
 
