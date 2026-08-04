@@ -169,31 +169,30 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Stop means stop.** The Stop button and `F5` both request a **hard stop**: the inner job is terminated, so
-every in-flight `MSBuild.exe` and everything it spawned dies at once, and those projects are reported as
-`projectFailed("stopped")`. Nothing keeps compiling behind the user's back.
+**Graceful stop** is what the Stop button and `F5` request. Nothing new is dispatched; the in-flight
+`MSBuild.exe` children finish, *including their post-build copy events*. This is also why the
+shared-compilation flags stay off (§9.2): with a compiler server the emit happens in a long-lived process
+outside the job, where a stop could catch a DLL mid-write.
 
-Killing a project mid-copy can leave a half-written DLL in the shared output directory, and two existing
-guarantees cover it. Every failing path — including `stopped` — invalidates that project's stored `BuildState`,
-so the next Build rebuilds it. And a killed project's dependents have not started yet, because they only
-become ready once it succeeds. Nothing can be linked against the torn output.
+**Hard stop** terminates the inner job outright. It exists in the contract and in the engine, but the App
+never sends it.
 
-**Graceful stop** — draining in-flight children, post-build copy included, and leaving the rest queued — still
-exists in the contract and in the engine, but the App never sends it. It was the price paid for resuming a
-half-finished run, and there is no resume: after a stop the user presses *Build*, which starts from the top of
-the list, rebuilds whatever was killed (its state was invalidated) and skips whatever had already succeeded as
-up to date. The shared-compilation flags stay off for the same underlying reason (§9.2): with a compiler
-server the emit happens in a long-lived process outside the job, where a terminate cannot reach it.
+The choice between them is not about the wait — it is about how much work a stop throws away. A drained
+project *succeeds*, so its `BuildState` is persisted and the next Build skips it as up to date. A terminated
+project is reported `failed("stopped")`, which invalidates its stored state, so the next Build compiles it
+again from scratch — up to `parallelism` half-finished compiles discarded, and a row the user's own Stop
+turned red. Draining costs the remaining time of the slowest in-flight project and banks the work; terminating
+returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
+pressing *Build* — there is no *Continue* — banking the work is the cheaper trade.
 
 `runStopped` and `runCompleted` each fire exactly once, and the elapsed clock is preserved.
 
-The kill is immediate but the engine's acknowledgement is a round trip, so the App still has to show that the
-click landed. Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on
-a slow engine would leave the button reading *Stop* and invite a second click. The button stays visible but
-reads *Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are being
-terminated, and a line goes into the run document. The mid-run lock is deliberately *not* released until the
-engine answers, so branch, worktree and configuration stay locked and the Build split-button does not come
-back early.
+Because a drain can take as long as the slowest in-flight project, the App has to show that the click landed.
+Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow engine
+would leave the button reading *Stop* and invite a second click. The button stays visible but reads
+*Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are still finishing, and
+a line goes into the run document. The mid-run lock is deliberately *not* released: the engine is still
+working, so branch, worktree and configuration stay locked and the Build split-button does not come back.
 
 Leaving `stopping` cannot deadlock, because `runStopped` settles it unconditionally: phase `stopped`, run
 state released. The coordinator only writes that event once every in-flight result has been reported, so by
@@ -201,8 +200,8 @@ the time the App sees it nothing is running — there is no ordering assumption 
 `runCompleted` writes the same phase. A run-ending error and an engine death settle it too, and if the command
 cannot even be sent the phase is put back.
 
-The CPU cap is removed for the rest of a run once a stop is requested, and the priority class can no longer be
-lowered past the Balanced floor.
+Once a drain begins the CPU cap is removed for the rest of that run, and the priority class can no longer be
+lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated against a resource setting.
 
 ### 4.6 Engine failure and restart
 

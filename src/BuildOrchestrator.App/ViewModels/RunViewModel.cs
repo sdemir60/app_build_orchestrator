@@ -536,16 +536,17 @@ public sealed partial class RunViewModel : ObservableObject
     }
     private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 
-    /// <summary>[B3] Hard stop: <c>TerminateJobObject(inner)</c> ile uçuştaki tüm <c>MSBuild.exe</c> ağacı ANINDA
-    /// ölür ve o projeler <c>projectFailed("stopped")</c> raporlanır. Kullanıcı "durdur" dediğinde arkada
-    /// derleme devam etmez.
-    /// <para>Graceful (uçuştakileri bitirme) yolu kontratta durur ama App'ten GÖNDERİLMEZ: onun gerekçesi
-    /// yarıda kalan işi Continue ile sürdürebilmekti; Continue yüzeyi kaldırıldı (Stop'tan sonra Build baştan
-    /// koşar). Torn-DLL koruması bundan bağımsız duruyor — başarısız biten her yol stored <c>BuildState</c>'i
-    /// geçersizleştirir (öldürülen proje bir sonraki Build'de yeniden derlenir) ve öldürülen bir projenin
-    /// dependent'ları sıra gereği henüz BAŞLAMAMIŞTIR.</para>
-    /// <para>Ölüm anlıktır ama motorun ack'i (in-flight sonuçlar → <c>runStopped</c>) bir gidiş-dönüştür;
-    /// uygulamanın tıklamayı ALDIĞINI o pencerede de göstermesi gerekir.</para>
+    /// <summary>Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları post-build
+    /// copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz — ARCHITECTURE
+    /// §4.5).
+    /// <para><b>Continue kalktıktan sonra da graceful:</b> tek toparlanma yolu Build olduğu için seçim artık
+    /// "kaç projelik iş çöpe gidiyor" sorusudur. Drain'de biten projeler <c>PersistBuildStateOnSuccess</c> ile
+    /// bankaya girer ve bir sonraki Build onları ATLAR — yani Stop'un bedeli SIFIRDIR. Hard kill ise uçuştaki
+    /// projeleri <c>failed("stopped")</c> yapıp stored state'lerini geçersizleştirir: paralellik kadar yarım
+    /// derleme çöpe gider, kullanıcının kendi Stop'u listede KIRMIZI satırlar bırakır ve o projeler bir sonraki
+    /// Build'de baştan derlenir. Hard yolu kontratta/motorda durur, App'ten GÖNDERİLMEZ.</para>
+    /// <para>Drain, uçuştaki en yavaş projenin kalan süresi kadar sürebilir; uygulamanın tıklamayı ALDIĞINI o
+    /// pencerede göstermesi bu yüzden davranışın kendisi kadar önemlidir.</para>
     /// <para><b>Faz gönderimden ÖNCE yazılır:</b> yavaş/tıkalı bir engine'de gönderimin dönmesini beklemek
     /// butonu saniyelerce "Stop" bırakır ve kullanıcı — haklı olarak — tıklamanın kaybolduğunu düşünüp tekrar
     /// basar. Gönderim SENKRON başarısız olursa (engine hazır değil) faz geri alınır: hiçbir runStopped/
@@ -562,14 +563,14 @@ public sealed partial class RunViewModel : ObservableObject
         var previous = Phase;
         Phase = AppPhase.Stopping;
         AppendRunLine(StopRequestedLine(Counters.Building));
-        if (!await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Hard), "stop"))
+        if (!await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Graceful), "stop"))
             Phase = previous;
     }
 
     /// <summary>[Stopping] Run dokümanına düşen tek satırlık not — konsol, tıklamanın kalıcı kaydıdır (şerit
-    /// yalnız ANLIK durumu gösterir). Ne olduğunu da söyler: kuyruk durdu, uçuştakiler öldürüldü.</summary>
+    /// yalnız ANLIK durumu gösterir). Beklentiyi de kurar: kuyruk durdu ama uçuştakiler bitecek.</summary>
     internal static string StopRequestedLine(int inFlight) => string.Format(CultureInfo.InvariantCulture,
-        "stop requested — terminating {0} in-flight build(s); the rest will not start", inFlight);
+        "stop requested — no new projects will start; {0} in flight will finish", inFlight);
 
     // [Stopping] Faz kapısı: Stop bir kez sahiplenilir. İkinci bir tıklama (ya da koşarken F5) ikinci bir
     // stopRun ÜRETMEZ — motor tarafında zararsız olurdu ama buton "sanki hiçbir şey olmuyor" hissini sürdürürdü.

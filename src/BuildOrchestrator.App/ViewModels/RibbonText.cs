@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
 
@@ -95,16 +95,17 @@ public static class RibbonText
                         finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs), EtaSuffix(etaMs, c) ?? ""),
                     "Brush.TextSecondary", null);
 
-            // [Stopping] Stop istendi, motorun ack'i henüz gelmedi. Running satırı BURADA kullanılamaz: Stop'a
+            // [Stopping] Stop istendi, uçuştakiler drain oluyor. Running satırı BURADA kullanılamaz: Stop'a
             // bastıktan sonra "Building 7/14" görmek tıklamanın kaydedilmediği izlenimini verir (kusurun ta
-            // kendisi). ETA eki BİLEREK yok — durdurulan bir run'ın kalan süresi diye bir şey yoktur.
+            // kendisi). ETA eki BİLEREK yok — yeni dispatch olmadığı için kuyruk tahmini gerçeğe karşılık
+            // gelmez; bu pencerede tek anlamlı sayı kaç projenin hâlâ uçuşta olduğudur.
             // Renk Running ile AYNI (TextSecondary): faz hâlâ etkin, Stopped'ın dim'i henüz hak edilmedi.
             case AppPhase.Stopping:
                 return new RibbonLine(
                     c.Building > 0
-                        ? string.Format(CultureInfo.InvariantCulture, "▸ Stopping — {0}/{1} · terminating {2} in flight",
+                        ? string.Format(CultureInfo.InvariantCulture, "▸ Stopping — {0}/{1} · finishing {2} in flight",
                             finishedOfWillBuild, willBuild, c.Building)
-                        : "▸ Stopping — wrapping up", // uçuşta bir şey kalmadı: "terminating 0" yanıltıcı olurdu
+                        : "▸ Stopping — wrapping up", // uçuşta bir şey kalmadı: "finishing 0" yanıltıcı olurdu
                     "Brush.TextSecondary", null);
 
             // Kalanlar için "queued" DENMEZ: Continue yüzeyi yok, o projeler bir sonraki Build'de baştan

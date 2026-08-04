@@ -130,14 +130,14 @@ public class RunViewModelStateTests
 
         // (a) planlama sırasında stop — runStarted HİÇ gelmedi
         vm.Phase = AppPhase.Stopping;
-        vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
         Assert.False(vm.IsStarting);
 
         // (b) koşan run durduruldu — runStarted GÖRÜLDÜ, runCompleted henüz gelmedi
         vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug", 0));
         vm.Phase = AppPhase.Stopping;
-        vm.OnEvent(new RunStoppedEvent("r2", WasHard: true));
+        vm.OnEvent(new RunStoppedEvent("r2", WasHard: false));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
         Assert.False(vm.IsRunning);
     }

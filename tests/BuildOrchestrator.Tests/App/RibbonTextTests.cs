@@ -1,4 +1,4 @@
-using BuildOrchestrator.App.ViewModels;
+﻿using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -153,9 +153,7 @@ public class RibbonTextTests
     {
         var line = RibbonText.Compose(AppPhase.Stopping, true, allClean: false, Counters(building: 2, queued: 6),
             willBuild: 14, finishedOfWillBuild: 7, totalProjects: 14, elapsedMs: 24_000, etaMs: 34_000, checkDurMs: null, warnings: 0);
-        // "finishing" ARTIK YANLIŞ olurdu: hard stop'ta uçuştaki child'lar bitmiyor, öldürülüyor. Eski metin
-        // graceful drain penceresini anlatıyordu (bkz. Stop_sends_a_hard_stop_... testinin gerekçesi).
-        Assert.Equal("▸ Stopping — 7/14 · terminating 2 in flight", line.Text);
+        Assert.Equal("▸ Stopping — 7/14 · finishing 2 in flight", line.Text);
         Assert.Equal("Brush.TextSecondary", line.BrushKey);
         Assert.Null(line.Glyph);
     }

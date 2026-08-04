@@ -486,17 +486,16 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- 6) Stop/Continue komut gönderimi (gerçek Supervisor)
 
-    /// <summary>[B3] Stop ARTIK HARD'dır: <c>TerminateJobObject(inner)</c> ile uçuştaki tüm <c>MSBuild.exe</c>
-    /// ağacı anında ölür.
-    /// <para><b>Eski iddia (değişti):</b> Stop <c>StopKind.Graceful</c> gönderirdi — uçuştaki child'lar
-    /// post-build copy dahil BİTİRİLİR, kalanlar Continue için kuyrukta bırakılırdı. <b>Değişme gerekçesi:</b>
-    /// Continue yüzeyi kaldırıldı (Stop'tan sonra Build baştan koşar), yani "yarıda kalanı sürdürebilmek" diye
-    /// bir gereksinim kalmadı; graceful'ün tek kalan bedeli ise kullanıcının dakikalarca bekleyip "durmuyor"
-    /// görmesiydi. Torn-DLL koruması Continue'dan BAĞIMSIZ olarak zaten duruyor: başarısız biten her yol stored
-    /// <c>BuildState</c>'i geçersizleştirir, öldürülen proje bir sonraki Build'de yeniden derlenir; dependent'ları
-    /// ise sıra gereği henüz BAŞLAMAMIŞTIR.</para></summary>
+    /// <summary>Stop <c>StopKind.Graceful</c> gönderir: yeni proje dispatch edilmez, uçuştaki child'lar
+    /// post-build copy dahil BİTİRİLİR.
+    /// <para><b>Continue kalktıktan sonra da graceful:</b> tek toparlanma yolu Build olduğu için seçim artık
+    /// "kaç projelik iş çöpe gidiyor" sorusudur. Drain'de biten projeler <c>PersistBuildStateOnSuccess</c> ile
+    /// bankaya girer ve bir sonraki Build onları ATLAR; hard kill ise o projeleri
+    /// <c>failed("stopped")</c> yapıp stored state'lerini geçersizleştirir, yani paralellik kadar yarım derleme
+    /// çöpe gider ve Build'de baştan derlenir. Stop'un bedeli graceful'de sıfırdır. Bekleme görünürlüğü ayrı
+    /// çözüldü (<c>Stopping</c> fazı + pasif buton).</para></summary>
     [Fact]
-    public async Task Stop_sends_a_hard_stop_and_the_engine_acks_it_as_hard()
+    public async Task Stop_sends_a_graceful_stop_and_the_engine_acks_it_as_not_hard()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
@@ -508,11 +507,11 @@ public class RunViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         // Gerçek Supervisor'da eşleşen bir run YOK (yalnız VM'in inancı kuruldu) → TryRequestStop false →
-        // host yolu: inner job terminate edilir ve hemen runStopped(WasHard=true) döner. WasHard, gönderilen
-        // StopKind'ın gözlenebilir kanıtıdır — Graceful bu bayrağı ASLA true yapmaz.
+        // host yolu hemen runStopped döner. WasHard, gönderilen StopKind'ın gözlenebilir kanıtıdır — Hard bu
+        // bayrağı her zaman true yapardı.
         var result = await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("r1", result.RunId);
-        Assert.True(result.WasHard);
+        Assert.False(result.WasHard);
     }
 
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın

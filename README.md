@@ -18,8 +18,8 @@ files as raw XML (MSBuild is never evaluated for this), builds the dependency gr
 source signature against the stored build state to mark each project as "will build" or "up to date". **Build**
 then runs the plan: each project is shelled out to a separate `MSBuild.exe` child process, ordered by the graph,
 N at a time. Progress streams back to a live project list, a dependency graph view and a console. A run can be
-stopped — everything in flight is killed immediately — or retried for just the failed projects and their
-dependents. Building a branch other than the checked-out one
+stopped (in-flight projects are allowed to finish their post-build copy) or retried for just the failed
+projects and their dependents. Building a branch other than the checked-out one
 happens in a detached git worktree from a pool — your working tree is never checked out, reset or switched.
 
 ## Architecture
@@ -136,10 +136,11 @@ the running instance first — tray icon → Exit).
    - *Build* — only changed projects.
    - *Rebuild* — all projects, cached state ignored.
    - *Retry failed* — appears when there are failures; rebuilds them and their dependents.
-5. **Stop** — kills every in-flight `MSBuild.exe` and everything it spawned, at once; nothing keeps compiling
-   in the background. While the engine acknowledges, the button reads *Stopping…* and is disabled. There is no
-   *Continue*: press *Build* again and the run starts from the top — whatever was killed is rebuilt, whatever
-   had already succeeded is skipped as up to date.
+5. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
+   post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
+   reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. There is no
+   *Continue*: press *Build* again and the run starts from the top, skipping everything that already
+   succeeded.
 
 ### Keyboard shortcuts
 
