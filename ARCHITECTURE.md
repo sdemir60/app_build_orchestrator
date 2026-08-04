@@ -96,9 +96,15 @@ Solution file: `BuildOrchestrator.slnx` at the repository root.
 ### 3.3 Shared build properties
 
 `Directory.Build.props` holds `Nullable`, `ImplicitUsings`, `LangVersion` and the distribution identity
-(`Version`, `InformationalVersion`, `Product`, `Company`). The informational version carries a delivery tag so
-that the value observed at runtime proves the property file is actually wired: the Supervisor reads it from its
-own assembly and reports it in `engineReady`, and the App prints it in the console boot line.
+(`Version`, `InformationalVersion`, `Product`, `Company`, `Copyright`). The informational version carries a
+delivery tag so that the value observed at runtime proves the property file is actually wired: the Supervisor
+reads it from its own assembly and reports it in `engineReady`, and the App prints it in the console boot line.
+
+That identity is also what the UI displays. `Services/AppIdentity` reads the product name, informational
+version and copyright back off the App assembly, and the window title, the title bar caption, the tray tooltip,
+the tray balloons and the About hero all draw from it — a guard forbids the product name appearing as a literal
+in any App source file. The copyright is read as one string rather than composed from a year and a company,
+because a copyright year is not a runtime value.
 
 The supervisor folder name is declared **once**, as the `SupervisorFolderName` MSBuild property in the App's
 `.csproj`, and travels to runtime as an `AssemblyMetadata` attribute that `Services/SupervisorLayout` reads
@@ -897,6 +903,9 @@ Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No adm
 
 ### 12.4 Layout modes and persistence
 
+The title bar's application commands sit between the context text and the caption buttons, in decreasing order
+of use: the three view-mode toggles, a hairline separator, then the gear (Settings) and the `i` (About).
+
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
 76 % of the right column).
@@ -923,7 +932,7 @@ Text that the design specifies literally is produced by **pure, testable static 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ TITLE BAR 40px — logo · title · OSYS · main [· main-2]   ⊞ ≡ ▣ ⚙ — □ ×│
+│ TITLE BAR 40px — logo · title · OSYS · main [· main-2]  ⊞ ≡ ▣ ⚙ i — □ ×│
 ├──────────────────────────────────────────────────────────────────────┤
 │ STICKY RIBBON 32px — phase · building chips · failure cluster        │
 │ global progress 2px                                                  │
@@ -1090,6 +1099,25 @@ The shell's own *Choose Folder* invitation, shown before any repository is selec
 dialog: it has no Save step, so the folder it picks applies immediately — the root changes, the project rows
 reset to hollow, and a Sync starts right away.
 
+The About dialog is the second modal and reuses that shell exactly: the same full-bleed scrim, the same 620 px
+`Ds.Dialog`, the same focus trap, the same Esc-and-scrim dismissal. Its body is tabbed rather than one long
+scroll, because the four things it carries — product identity, keyboard shortcuts, environment, third-party
+notices — have nothing to say to each other. The tab switch is `Ds.Segment`, the same component the action bar
+uses for Debug/Release, so no new interaction pattern enters the design system. The content area has a **fixed
+height**: switching tabs must not move the footer, and an Auto row would make the dialog jump between a
+six-row and a ten-row tab.
+
+Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows from
+the same table the window binds its keys from, the environment rows from the diagnostics model, the notices
+from the third-party table. It composes no text of its own. `MSBuild.exe` resolution is the one asynchronous
+value: `vswhere` is a child process, so it runs when the Environment tab is first selected, not when the
+dialog opens, and the row reads `resolving…` until it lands.
+
+**Only one modal can be open at a time.** The gate is a single predicate over both overlays' visibility, and
+all three consumers read it: Esc resolves its layer from it, the gear no-ops on it, and `F1` no-ops on it. The
+`F1` case is the one that needs it — the key is a window-level `InputBinding` and fires regardless of the
+Settings focus trap, so without the gate it would silently discard an unsaved Settings draft.
+
 ### 13.4 Scroll infrastructure
 
 WPF provides neither smooth scrolling nor horizontal wheel input, so the scrolling surface is assembled here:
@@ -1228,13 +1256,21 @@ filter appears as a removable chip in the panel header.
 | `F5` | Build — or Stop while a run is in flight |
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
+| `F1` | About — version, shortcuts and diagnostics |
 | `Esc` | Close the topmost layer (see above) |
 | `Alt+B` | Global hotkey: restore the window from the tray |
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s, and
-every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. Double-Shift
-and `Ctrl+P` are *negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by
-accident.
+every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` carries
+an extra gate of its own: it does nothing while any modal is open (§13.3). Double-Shift and `Ctrl+P` are
+*negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by accident.
+
+The table above is not written twice. A **shortcut catalog** derives each gesture's display text from that
+same key → intent table — and the global hotkey's from the hotkey default — and pairs it with the one
+sentence that describes it. The About screen's shortcut rows, the Build menu's `Ds.Kbd` badges and the info
+button's tooltip all read from it, and a source guard forbids any production file from writing a gesture as a
+literal. The badges used to be hand-typed strings living next to a binding table that could change
+underneath them.
 
 ---
 
@@ -1316,6 +1352,14 @@ Lucide geometry, 1.5–2 px stroke, single colour, 12–16 px, authored as XAML 
 building spinner is not a separate drawing — it is the discovered node's dashed ring, in amber, rotating
 linearly over 1.4 s. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
 carets and chevrons are drawn, not typed.
+
+Two icons have no literal counterpart in the design source and are marked *derived* in the dictionary, with
+the reasoning written beside them: the caption restore glyph, and the `info` circle in the title bar. Both are
+drawn on the same grid and at the same stroke weight as the neighbour they sit next to — the info icon shares
+`Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight.
+
+The Delta mark is a control, not a fragment of markup: the title bar draws it at 15 px and the About hero at
+20 px, both from `Controls/BrandLogo.xaml`. A guard asserts the path data appears in exactly one source file.
 
 ### 14.5 Motion
 
@@ -1401,7 +1445,8 @@ STA thread.
 
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
 (`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost`, `SettingsDialogHost`,
-`SplitterHost`, `GraphTestView`), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
+`AboutDialogHost`, `SplitterHost`, `GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap
+proof both dialogs use), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
 `MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`) and measurement
 (`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
 CPU-saturating job tests, the console UI tests and the build-state store tests.
@@ -1424,6 +1469,10 @@ A category of tests that assert properties of the *source*, not of a run:
 | Publish layout | the single-file publish rejection and the supervisor-folder wiring stay in place |
 | Anti-slop | the prohibited visual patterns of §14.7 |
 | Design token scale | duplicated size tokens stay equal to their single authority |
+| Shortcut literals | no gesture text (`"F5"`, `"Ctrl+F5"`, …) is written outside the shortcut catalog, and the file the guard exempts still exists |
+| Product name literal | the product name never appears as a literal; it is read from the assembly |
+| Brand mark | the logo path data lives in exactly one source file |
+| Third-party attribution | every `PackageReference` has an entry in the notices table, and each entry resolves a real assembly version |
 
 ### 17.3 Determinism
 
@@ -1672,6 +1721,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
+| Shortcut display text and descriptions (single source) | `App/Shell/ShortcutCatalog.cs` |
+| Product identity, diagnostics report, third-party notices | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs`, `ThirdPartyNotices.cs` |
 | Default layer definitions (Settings draft + *Restore default layers*) | `App/Shell/LayerDefaults.cs` |
 | Title bar context text (`OSYS · main · main-2`) | `App/ViewModels/TitleBarContext.cs` |
 
@@ -1789,6 +1840,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
+| About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
+| Brand mark (title bar + About hero) | `App/Controls/BrandLogo.xaml(.cs)` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, will-build dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `WillBuildDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
