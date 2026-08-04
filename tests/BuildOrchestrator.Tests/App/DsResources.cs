@@ -78,11 +78,18 @@ internal static class DsResources
 
     /// <summary>Kontrolü host'a koyar, ekran dışı bir pencerede gösterir ve şablonunu uygular — DynamicResource
     /// setter'ları ancak öğe ağaca girince çözülür, bu yüzden ADIM SIRASI önemlidir. Dönen pencere canlı
-    /// tutulmalıdır (çağıranın metodu bitene kadar scope'ta kalır).</summary>
-    public static Window Realize(Border host, FrameworkElement content)
+    /// tutulmalıdır (çağıranın metodu bitene kadar scope'ta kalır).
+    ///
+    /// <para>[About] <b>Boyut ARTIK parametre</b> — varsayılan eski davranışla BİREBİR aynıdır (400×200).
+    /// Gerekçe (ÖLÇÜLDÜ): 200px'lik pencerede 620px'lik bir modal DİKEYDE KIRPILIR ve
+    /// <see cref="FrameworkElement.ActualHeight"/> içeriği ne olursa olsun aynı doymuş değeri döndürür — bu
+    /// hâliyle <c>AboutDialogTests.Switching_tabs_never_resizes_the_dialog</c> içerik alanının sabit
+    /// yüksekliği KALDIRILDIĞINDA BİLE yeşil kalıyordu, yani hiçbir şeyi ayırt etmiyordu. Yükseklik ölçen
+    /// çağıranlar içeriği sığdıran bir pencere ister.</para></summary>
+    public static Window Realize(Border host, FrameworkElement content, double width = 400, double height = 200)
     {
         host.Child = content;
-        var window = AnimationHost.ShowOffscreen(host, width: 400, height: 200);
+        var window = AnimationHost.ShowOffscreen(host, width, height);
         content.ApplyTemplate();
         content.UpdateLayout();
         return window;

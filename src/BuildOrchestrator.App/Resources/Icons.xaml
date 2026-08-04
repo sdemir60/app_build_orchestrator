@@ -131,6 +131,19 @@
         <EllipseGeometry Center="12,12" RadiusX="3" RadiusY="3" />
     </GeometryGroup>
 
+    <!--
+      [About] lucide `info` — <circle cx="12" cy="12" r="10"/> + <path d="M12 16v-4"/> + <path d="M12 8h.01"/>
+
+      TÜRETİLMİŞ: design-v1 BuildApp.jsx:44-72 ikon tablosunda `info` YOKTUR (Icon.CaptionRestore ile aynı
+      statü — kaynaksız değer, gerekçesi burada). Geometri lucide'dan alınmıştır çünkü bu sözlükteki 24-viewBox
+      ikonların TÜMÜ lucide ailesindendir; ikon dili böyle tutarlı kalır. Kalınlığı için aşağıya bakın: title
+      bar'da Icon.Gear'ın KOMŞUSUDUR, optik ağırlıkları eşleşmelidir.
+    -->
+    <GeometryGroup x:Key="Icon.Info">
+        <EllipseGeometry Center="12,12" RadiusX="10" RadiusY="10" />
+        <PathGeometry Figures="M12 16v-4 M12 8h.01" />
+    </GeometryGroup>
+
     <!-- BuildApp.jsx:61 sigma -->
     <PathGeometry x:Key="Icon.Sigma" Figures="M18 7V4H6l6 8-6 8h12v-3" />
 
@@ -266,9 +279,11 @@
     <sys:Double x:Key="Icon.Sigma.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Copy.StrokeThickness">1.8</sys:Double>
 
-    <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60) -->
+    <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60 · Icon.Info TÜRETİLMİŞ: title bar'da Gear'ın KOMŞUSU olduğu
+         için AYNI kalınlıkta çizilir — optik ağırlıkları eşleşmeli) -->
     <sys:Double x:Key="Icon.AlertTri.StrokeThickness">1.7</sys:Double>
     <sys:Double x:Key="Icon.Gear.StrokeThickness">1.7</sys:Double>
+    <sys:Double x:Key="Icon.Info.StrokeThickness">1.7</sys:Double>
 
     <!-- strokeWidth="1.6" (_ds_bundle.js:1633 DependencyGraphNode paket ikonu) -->
     <sys:Double x:Key="Icon.Package.StrokeThickness">1.6</sys:Double>
