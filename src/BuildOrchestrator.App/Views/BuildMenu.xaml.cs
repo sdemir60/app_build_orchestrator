@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Views;
@@ -79,9 +80,14 @@ public partial class BuildMenu : UserControl
     internal static IReadOnlyList<BuildMenuItem> ComposeItems(bool stopped, int total, int failed)
     {
         var items = new List<BuildMenuItem>();
+        // [About] Rozet metni ARTIK literal DEĞİL: ShortcutCatalog jesti bağlama tablosundan türetir, böylece
+        // bir bağlama değişirse rozet de değişir (kopya YASAK — ShortcutCatalogTests kaynak guard'ı pinler).
+        // Menüde her madde TEK rozet gösterir → Gestures[0] (Rebuild'in ikinci jesti Shift+F5 burada çizilmez).
         items.Add(new("build", "Build",
-            stopped ? "Start over — only changed projects" : "Only changed projects", "F5"));
-        items.Add(new("rebuild", "Rebuild", Inv($"All {total} projects — cache ignored"), "Ctrl+F5"));
+            stopped ? "Start over — only changed projects" : "Only changed projects",
+            ShortcutCatalog.Get(ShortcutId.Build).Gestures[0]));
+        items.Add(new("rebuild", "Rebuild", Inv($"All {total} projects — cache ignored"),
+            ShortcutCatalog.Get(ShortcutId.Rebuild).Gestures[0]));
         if (failed > 0)
             items.Add(new("retry", "Retry failed", Inv($"{failed} failed + dependents"), null));
         return items;
