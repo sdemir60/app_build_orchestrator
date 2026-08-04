@@ -154,6 +154,21 @@ Handle inheritance is restricted with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` to exa
 that launch. Without this, parallel redirected launches leak sibling pipe ends into each other and EOF never
 arrives — the symptom is a build that hangs forever rather than one that fails.
 
+**Every redirected pipe must have a consumer.** A redirected child gets three pipes, and the parent owes each
+of them an active end: it writes stdin, and it must *read* stdout and stderr for as long as the child lives. A
+pipe nobody reads fills its buffer — a few kilobytes — and then the next write from the child blocks forever,
+inside whatever the child happened to be doing. The App drains the Supervisor's stderr for exactly this
+reason and discards the bytes: the engine's diagnostics already reach disk through `decision.log`, and
+anything the user must see travels as an IPC event. The drain exists to keep the pipe moving, not to collect
+anything.
+
+This is not theoretical. The engine writes a diagnostic line per stale-obj project at the start of planning; a
+177-project workspace produces tens of kilobytes. With nothing reading stderr, planning froze partway through
+that loop, so `runStarted` never arrived and the App sat in its mid-run lock. Worse, the *stop* that followed
+could not complete either: the coordinator takes ownership of a stop while a run is active and owes the
+`runStopped` acknowledgement to the run task's `finally`, which a frozen planner never reaches — so the phase
+stayed on `stopping` indefinitely. One unread pipe, both symptoms.
+
 ### 4.4 Termination matrix
 
 | Actor | Target | Mechanism |

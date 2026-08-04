@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
@@ -59,6 +59,36 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     public event Action<int?>? EngineExited;
     public int? EnginePid => _child?.Pid;
 
+    /// <summary>Uçuştaki stderr drain'i (test yüzeyi) — motor yaşadığı sürece tamamlanmaz.</summary>
+    internal Task? StderrDrain { get; private set; }
+
+    /// <summary>
+    /// Motorun stderr'ini EOF'a kadar okur ve ATAR. Yönlendirilmiş üç pipe'ın (stdin/stdout/stderr) her biri
+    /// tüketilmek ZORUNDADIR: okunmayan bir pipe'ın tamponu dolduğunda yazan taraf — yani motor —
+    /// <c>Console.Error.WriteLine</c>'ın ortasında SONSUZA DEK bloklanır. Bu, motoru tanı yazdığı HERHANGİ bir
+    /// noktada dondurabilir; ölçülen vakada planlamanın ortasıydı: <c>runStarted</c> hiç gelmedi, App kilit
+    /// penceresinde asılı kaldı ve ardından gelen <c>stopRun</c>'ın ack'i de yazılamadığı için faz sonsuza dek
+    /// <c>Stopping</c>'de kaldı (bkz. <c>EngineStderrDrainTests</c>).
+    /// <para><b>İçerik bilerek ATILIR:</b> motorun stderr'i tanı kanalıdır ve kullanıcıya ulaşması gereken her
+    /// şey zaten iki yoldan gidiyor — <c>decision.log</c>'a disk üstünde, kullanıcıya görünecekler ise IPC
+    /// olayları olarak. Buradaki tek sorumluluk pipe'ı AKIŞTA TUTMAKTIR.</para>
+    /// <para>Child öldüğünde/dispose edildiğinde okuma EOF verir ya da fırlatır; her iki durumda da sessizce
+    /// biter — drain'in kendisi asla bir hata yüzeyi üretmez.</para>
+    /// </summary>
+    internal static async Task DrainEngineStderrAsync(Stream stderr)
+    {
+        ArgumentNullException.ThrowIfNull(stderr);
+        var scratch = new byte[4096];
+        try
+        {
+            while (await stderr.ReadAsync(scratch).ConfigureAwait(false) > 0) { }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
+        {
+            // child öldü / pipe kapandı — drain'in işi bitti.
+        }
+    }
+
     public async Task<EngineReadyEvent> StartAsync(CancellationToken ct = default)
     {
         // [D1] Pre-flight: exe yoksa CreateProcessW'nin ham Win32Exception'ını beklemeyiz — generation'a
@@ -85,6 +115,10 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         _writer = new NdjsonWriter(_child.StandardInput!);
         var reader = new NdjsonReader(_child.StandardOutput!);
         _ = Task.Run(() => ReadLoopAsync(reader, gen), CancellationToken.None);
+        // Yönlendirilen ÜÇ pipe'ın da tüketicisi olmak zorunda: stdin'i biz yazıyoruz, stdout'u yukarıdaki
+        // okuma döngüsü tüketiyor, stderr ise hiç okunmuyordu — tamponu dolduğunda motor kendi tanı satırını
+        // yazarken kilitleniyordu (bkz. DrainEngineStderrAsync).
+        StderrDrain = Task.Run(() => DrainEngineStderrAsync(_child.StandardError!), CancellationToken.None);
         var watched = _child;
         _ = Task.Run(async () =>
         {
