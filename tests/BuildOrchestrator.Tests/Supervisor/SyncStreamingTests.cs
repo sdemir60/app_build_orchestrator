@@ -114,7 +114,7 @@ public class SyncStreamingTests
 
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = new RunCoordinator(
-            planner: _ => throw new InvalidOperationException("bu testte run yok"),
+            planner: (_, _) => throw new InvalidOperationException("bu testte run yok"),
             msbuildFactory: _ => throw new InvalidOperationException("bu testte run yok"),
             logFactory: startedAt => new RunLogWriter(Path.Combine(sandbox, "logs"), startedAt),
             writer: writer, innerJob: job, nowMs: () => 0, console: _ => { });

@@ -261,6 +261,22 @@ public class IpcMessagesTests
         Assert.Contains("\"type\":\"branchList\"", JsonSerializer.Serialize(events[3], IpcJson.Options));
     }
 
+    /// <summary>[planlama görünürlüğü] Run planlaması (Build'e basıldığında koşan tarama/graf/incremental
+    /// pencresi) kendi ilerleme satırlarını yayınlar. <c>syncProgress</c> YENİDEN KULLANILMAZ: App onu Sync
+    /// transkriptinin parçası sayar (<c>_syncInFlight</c> penceresinin dili), bir run'ın planlaması ise
+    /// Sync değildir — iki akışın tek discriminator'a binmesi konsol geçmişini de teşhisi de bulandırırdı.
+    /// <para>Ton alanı YOKTUR (bilinçli): App <c>SyncProgressEvent.Level</c>'ı zaten okumuyor
+    /// (<c>RunViewModel.OnEvent</c> yalnız <c>Line</c>'ı konsola yazar) — kullanılmayan bir alanı ikinci kez
+    /// icat etmek sözleşmeyi büyütür, davranışı değiştirmez.</para></summary>
+    [Fact]
+    public void PlanProgressEvent_roundtrips_with_its_own_discriminator()
+    {
+        IpcEvent ev = new PlanProgressEvent("Build order resolved (177)");
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"planProgress\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
     // ---------------------------------------------------------------- [A5/T69] Sync / branch / worktree / topoloji
 
     // App'in branch seçici, worktree havuzu ve "worktree sil" akışlarını besleyen üç komut: hepsi RootPath
