@@ -24,6 +24,14 @@ public enum AppPhase
     Idle,
 
     Running,
+
+    /// <summary>Stop istendi ama run HENÜZ bitmedi: yeni proje dispatch edilmez, uçuştaki <c>MSBuild.exe</c>
+    /// child'ları (post-build copy dahil) kendi tamamlanmalarını yapar. Graceful stop'un gözlenebilir
+    /// penceresi — tıklamanın kaydedildiğini gösteren tek yüzey budur. <see cref="Running"/>'den ayrıdır
+    /// (şerit "Building" demez, Stop butonu pasifleşir) ve <see cref="Stopped"/>'dan da ayrıdır (henüz
+    /// durmadı, Continue erişilebilir değil).</summary>
+    Stopping,
+
     Done,
     Stopped,
 }

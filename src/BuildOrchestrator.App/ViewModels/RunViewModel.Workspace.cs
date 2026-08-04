@@ -16,8 +16,20 @@ namespace BuildOrchestrator.App.ViewModels;
 public sealed partial class RunViewModel
 {
     /// <summary>[design-v1 §3.1] Faz makinesi. A5 yalnız <c>Syncing</c> (syncStarted) ve <c>Idle</c>
-    /// (syncCompleted) geçişlerini sürer; kalan geçişler (boot/running/done/stopped) sonraki UI task'larınındır.</summary>
-    [ObservableProperty] private AppPhase _phase = AppPhase.Empty;
+    /// (syncCompleted) geçişlerini sürer; kalan geçişler (boot/running/stopping/done/stopped) sonraki UI
+    /// task'larınındır.
+    /// <para>[Stopping] <see cref="StopCommand"/>'ın CanExecute'u fazı OKUR (<c>Stopping</c>'te pasifleşir) —
+    /// bildirim olmadan buton, Stop'a basıldıktan sonra da tıklanabilir kalır ve her tıklama yeni bir
+    /// <c>stopRun</c> üretirdi.</para></summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
+    private AppPhase _phase = AppPhase.Empty;
+
+    /// <summary>[Stopping] Koşmayan/dinlenen faz: elde topoloji varsa <c>Idle</c> (önceki Sync'in sonucu hâlâ
+    /// geçerli), yoksa <c>Boot</c> (repo henüz hiç sync'lenmemiş). Bir run/Sync penceresi SONUÇSUZ kapandığında
+    /// (engine ölümü, run-bitiren hata, planlama sırasında stop) geri düşülecek fazın TEK tanımı — kural üç
+    /// ayrı yerde yazılıydı ve biri güncellenirken diğerlerinin sessizce ayrışması işten değildi.</summary>
+    private AppPhase RestingPhase => Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
 
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
     [ObservableProperty] private string? _targetSha;
@@ -138,8 +150,7 @@ public sealed partial class RunViewModel
     private void ReleaseSyncPhase()
     {
         _syncInFlight = false;
-        if (Phase == AppPhase.Syncing)
-            Phase = Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
+        if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         // [Fix wave 1, C2 review Finding 1] OnSyncStarted'ın simetriği: hem normal syncCompleted hem
         // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Rebuild/RetryFailed'ı tek yerden geri açar.
         RebuildCommand.NotifyCanExecuteChanged();
@@ -179,7 +190,7 @@ public sealed partial class RunViewModel
         if (!SyncErrorCodes.Contains(code) || !_syncInFlight) return false;
         // Faz her iki dalda da bırakılır: hata Sync'e aitse syncCompleted GELMEYECEK (asılı kalırdı); run'a
         // aitse uçuştaki Sync zaten kendi syncCompleted'ıyla fazı tazeleyecek.
-        if (Phase == AppPhase.Syncing) Phase = Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
+        if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
         SyncErrorMessage = message;   // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)

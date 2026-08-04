@@ -115,6 +115,31 @@ public class RibbonTextTests
         Assert.Null(line.Glyph);
     }
 
+    // [Stopping] Stop'a basıldıktan SONRA, run gerçekten bitene kadar geçen pencere. Graceful stop uçuştaki
+    // MSBuild.exe child'larının bitmesini bekler; şerit bu pencerede "hâlâ Building" DEMEMELİDİR (tıklama
+    // kaydedilmiş görünmez) ama "Stopped" da diyemez (henüz durmadı). ETA eki BİLEREK yok: yeni dispatch
+    // olmadığı için kuyruk tahmini artık anlamsız, kalan tek bilgi kaç projenin uçuşta olduğudur.
+    [Fact]
+    public void Stopping_line_reports_the_in_flight_count_and_drops_the_eta()
+    {
+        var line = RibbonText.Compose(AppPhase.Stopping, true, allClean: false, Counters(building: 2, queued: 6),
+            willBuild: 14, finishedOfWillBuild: 7, totalProjects: 14, elapsedMs: 24_000, etaMs: 34_000, checkDurMs: null, warnings: 0);
+        Assert.Equal("▸ Stopping — 7/14 · finishing 2 in flight", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
+    // Uçuşta hiçbir şey kalmadığında sayı vermek yanıltıcı olurdu ("finishing 0 in flight") — run kapanmak
+    // üzeredir, satır da onu söyler.
+    [Fact]
+    public void Stopping_line_says_wrapping_up_when_nothing_is_left_in_flight()
+    {
+        var line = RibbonText.Compose(AppPhase.Stopping, true, allClean: false, Counters(building: 0, queued: 6),
+            willBuild: 14, finishedOfWillBuild: 14, totalProjects: 14, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("▸ Stopping — wrapping up", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+    }
+
     [Fact]
     public void Stopped_line_shows_progress_and_rest_queued_in_dim_text()
     {

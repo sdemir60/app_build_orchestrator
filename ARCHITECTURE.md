@@ -175,10 +175,26 @@ stay queued so the run can be continued. This is the reason the shared-compilati
 a compiler server, the emit happens in a long-lived process outside the job, and a stop could catch a DLL
 mid-write.
 
-**Hard stop** terminates the inner job at a project boundary.
+**Hard stop** terminates the inner job at a project boundary. It exists in the contract and in the engine, but
+nothing in the App sends it: the Stop button and `F5` both request a graceful stop.
 
 In both paths `runStopped` and `runCompleted` fire exactly once, and the elapsed clock is preserved so that
 *Continue* resumes the same run rather than starting a new one.
+
+Because a graceful stop can take as long as the slowest in-flight project, the App has to show that the click
+landed. Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow
+engine would leave the button reading *Stop* for seconds and invite a second click. The button stays visible
+but reads *Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are still in
+flight, and a line goes into the run document. The mid-run lock is deliberately *not* released: the engine is
+still working, so branch, worktree and configuration stay locked and the Build split-button does not come back.
+Rows are left alone — the queued ones really are still queued and *Continue* resumes them, and the in-flight
+ones really are still building.
+
+Leaving `stopping` belongs to the engine's answer, and every exit is closed: `runCompleted` settles on
+`stopped`; a `runStopped` with no preceding `runStarted` (a stop during planning) and a run-ending error both
+fall back to the resting phase — `idle` when a topology is known, `boot` otherwise; an engine death settles on
+`stopped`. If the command cannot even be sent, the phase is put back. A single open exit would strand the
+button disabled and the ribbon on *Stopping* forever.
 
 Once a graceful drain begins, the CPU cap is removed and never re-applied for the rest of that run, and the
 priority class can no longer be lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated
@@ -840,7 +856,7 @@ command set. Rows are `ProjectRowViewModel` — observable state only; every vis
 badge) is made in XAML from that state.
 
 Text that the design specifies literally is produced by **pure, testable static classes**, not by controls:
-`RibbonText` (the eleven ribbon phase lines), `StreamText`, `InteractionText`, `ProjectFilter`, `RunCounters`,
+`RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `ProjectFilter`, `RunCounters`,
 `LayerGrouping`. A control that also decided its own wording would be a second source of truth.
 
 ### 13.2 Panels

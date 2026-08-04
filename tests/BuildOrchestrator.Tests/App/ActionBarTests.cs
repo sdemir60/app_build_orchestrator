@@ -440,6 +440,32 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler. O pencerede buton
+    /// <b>görünür kalır</b> (split-button geri gelirse kullanıcı hâlâ koşan bir run'a Build/Continue
+    /// sunulmuş olurdu), etiketi "Stopping…" olur ve <c>StopCommand</c> pasifleştiği için buton disable
+    /// olur — ikinci bir tıklama ikinci bir stopRun üretmez. Faz doğrudan set edilir: buraya NASIL
+    /// girildiği (StopCommand → gerçek Supervisor) kardeş süitte pinli, burada sürülen GÖRÜNÜM.</summary>
+    [StaFact]
+    public void The_stop_button_reads_stopping_and_goes_disabled_while_the_run_drains()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.Equal("Stop", StopLabel(bar));      // ön-koşul
+        Assert.True(bar.StopButton.IsEnabled);
+
+        vm.Phase = AppPhase.Stopping;
+
+        Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
+        Assert.Equal(Visibility.Collapsed, bar.Split.Visibility);
+        Assert.Equal("Stopping…", StopLabel(bar));
+        Assert.False(bar.StopButton.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
+    private static string StopLabel(ActionBar bar) =>
+        ((StackPanel)bar.StopButton.Content).Children.OfType<TextBlock>().Single().Text;
+
     [StaFact]
     public void Counter_chips_toggle_the_filter_and_sigma_always_clears_it()
     {

@@ -481,6 +481,62 @@ public class RunViewModelTests
         Assert.False(result.WasHard);
     }
 
+    /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın
+    /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve
+    /// <c>StopCommand</c> pasifleşir (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ) — ama kilit
+    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/worktree/configuration
+    /// açılmamalı ve split-button geri gelmemeli.</summary>
+    [Fact]
+    public async Task Stop_moves_the_phase_to_stopping_and_disables_the_stop_command_while_the_lock_holds()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout);
+        await engine.StartAsync();
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        Assert.Equal(AppPhase.Running, vm.Phase);   // ön-koşul
+        Assert.True(vm.StopCommand.CanExecute(null));
+
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Equal(AppPhase.Stopping, vm.Phase);
+        Assert.False(vm.StopCommand.CanExecute(null));
+        Assert.True(vm.IsMidRunLocked);
+    }
+
+    /// <summary>[Stopping] Faz TIKLAMA ANINDA yazılır — gönderimin dönmesi BEKLENMEZ (gecikmeli bir engine'de
+    /// buton saniyelerce "Stop" kalırdı). <c>DebugOnCommandSent</c> gönderimden hemen ÖNCE senkron tetiklenir,
+    /// yani burada gözlenen değer "komut yola çıkarken UI'nın hâli"dir.</summary>
+    [Fact]
+    public async Task The_phase_flips_to_stopping_before_the_command_is_even_sent()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        AppPhase? phaseAtSend = null;
+        vm.DebugOnCommandSent = _ => phaseAtSend = vm.Phase;
+
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Equal(AppPhase.Stopping, phaseAtSend);
+    }
+
+    /// <summary>[Stopping] Engine hazır değilken gönderim SENKRON fırlar: hiçbir runStopped/runCompleted
+    /// gelmeyeceği için faz <see cref="AppPhase.Stopping"/>'te ASILI kalırdı — buton sonsuza dek pasif,
+    /// şerit sonsuza dek "Stopping". Gönderim başarısızsa faz geri alınır (<c>BeginRunAsync</c>'in
+    /// "gönderim başarısız → IsStarting geri açılır" deseninin ikizi).</summary>
+    [Fact]
+    public async Task A_stop_that_cannot_be_sent_puts_the_phase_back()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // BAŞLATILMAZ → SendAsync fırlar
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Equal(AppPhase.Running, vm.Phase);
+        Assert.True(vm.StopCommand.CanExecute(null)); // kullanıcı tekrar deneyebilir
+    }
+
     [Fact]
     public async Task Continue_sends_StartRunCommand_with_ContinueMode()
     {

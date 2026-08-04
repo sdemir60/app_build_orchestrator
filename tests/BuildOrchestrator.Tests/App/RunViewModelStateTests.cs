@@ -91,6 +91,68 @@ public class RunViewModelStateTests
         Assert.False(vm.SyncInFlight);         // uçuşta Sync yok
     }
 
+    // ---------------------------------------------------------------- [Stopping] fazdan ÇIKIŞ garantileri
+    //
+    // Bu dört test "Stopping'e nasıl girildiği"ni değil, "Stopping'ten HER YOLDAN çıkıldığı"nı sürer:
+    // girişin üretim yolu (StopCommand → gerçek Supervisor'a gönderim) kardeş sınıf RunViewModelTests'te
+    // pinlidir ve burada tekrarlanması testlere dört process başlatmaktan başka bir şey katmaz. Çıkışı
+    // sürmek KRİTİKTİR: bir yol açık kalırsa buton sonsuza dek pasif, şerit sonsuza dek "Stopping" kalır —
+    // yani "stop çalışmıyor" kusurunun daha kötü bir biçimi.
+
+    [Fact] // normal akış: uçuştaki child'lar bitti → engine run'ı kapattı
+    public async Task RunCompleted_takes_the_phase_out_of_stopping_and_offers_continue()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.Phase = AppPhase.Stopping;
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10));
+
+        Assert.Equal(AppPhase.Stopped, vm.Phase);
+        Assert.True(vm.CanContinue);
+    }
+
+    [Fact] // planlama sırasında stop: runStarted HİÇ gelmedi → runCompleted de ASLA gelmeyecek
+    public async Task A_stop_during_planning_leaves_stopping_for_the_resting_phase()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.Phase = AppPhase.Stopping;
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+
+        Assert.Equal(AppPhase.Idle, vm.Phase); // topoloji bilinir → Idle (bilinmeseydi Boot)
+        Assert.False(vm.CanContinue);          // hiç proje derlenmedi — sürdürülecek bir şey yok
+    }
+
+    [Fact] // run-bitiren hata Stopping penceresinde geldi (ör. msbuildNotFound) — runCompleted gelmeyecek
+    public async Task A_run_ending_error_during_stopping_leaves_the_phase_for_the_resting_phase()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.Phase = AppPhase.Stopping; // topoloji hiç gelmedi → dinlenme fazı Boot
+
+        vm.OnEvent(new ErrorEvent("msbuildNotFound", "MSBuild.exe bulunamadı"));
+
+        Assert.Equal(AppPhase.Boot, vm.Phase);
+    }
+
+    [Fact] // engine Stopping penceresinde öldü: hiçbir IPC event'i gelmeyecek
+    public async Task An_engine_death_during_stopping_settles_the_phase_on_stopped()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.Phase = AppPhase.Stopping;
+
+        vm.OnEngineExited(139);
+
+        Assert.Equal(AppPhase.Stopped, vm.Phase);
+        Assert.False(vm.IsRunning);
+    }
+
     // ---------------------------------------------------------------- seçim / filtre asimetrisi
 
     [Fact]

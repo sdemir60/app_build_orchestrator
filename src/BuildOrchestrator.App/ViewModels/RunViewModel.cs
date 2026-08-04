@@ -535,13 +535,38 @@ public sealed partial class RunViewModel : ObservableObject
     }
     private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
 
+    /// <summary>[Stopping] Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları
+    /// post-build copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz —
+    /// ARCHITECTURE §4.5). Bu, saniyeler ya da dakikalar sürebilen bir penceredir; uygulamanın tıklamayı ALDIĞINI
+    /// göstermesi bu yüzden davranışın kendisi kadar önemlidir.
+    /// <para><b>Faz gönderimden ÖNCE yazılır:</b> yavaş/tıkalı bir engine'de gönderimin dönmesini beklemek
+    /// butonu saniyelerce "Stop" bırakır ve kullanıcı — haklı olarak — tıklamanın kaybolduğunu düşünüp tekrar
+    /// basar. Gönderim SENKRON başarısız olursa (engine hazır değil) faz geri alınır: hiçbir runStopped/
+    /// runCompleted gelmeyeceği için aksi halde <c>Stopping</c>'te sonsuza dek asılı kalırdı. Bu,
+    /// <see cref="BeginRunAsync"/>'in "gönderim başarısız → IsStarting geri açılır" kapısının ikizidir.</para>
+    /// <para><see cref="IsRunning"/>/<see cref="IsStarting"/>'e DOKUNULMAZ: motor hâlâ koşuyor, dolayısıyla
+    /// <see cref="IsMidRunLocked"/> sürer (branch/worktree/configuration kilidi kalkmaz, split-button geri
+    /// gelmez). Fazdan çıkış motorun sonucuna aittir — bkz. <see cref="OnRunCompleted"/>/
+    /// <see cref="OnRunStopped"/>/<see cref="OnError"/>/<see cref="OnEngineExited"/>.</para></summary>
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
     {
         if (_currentRunId is null) return;
-        await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Graceful), "stop");
+        var previous = Phase;
+        Phase = AppPhase.Stopping;
+        AppendRunLine(StopRequestedLine(Counters.Building));
+        if (!await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Graceful), "stop"))
+            Phase = previous;
     }
-    private bool CanStop() => IsRunning || IsStarting;
+
+    /// <summary>[Stopping] Run dokümanına düşen tek satırlık not — konsol, tıklamanın kalıcı kaydıdır (şerit
+    /// yalnız ANLIK durumu gösterir). Beklentiyi de kurar: kuyruk durdu ama uçuştakiler bitecek.</summary>
+    internal static string StopRequestedLine(int inFlight) => string.Format(CultureInfo.InvariantCulture,
+        "stop requested — no new projects will start; {0} in flight will finish", inFlight);
+
+    // [Stopping] Faz kapısı: Stop bir kez sahiplenilir. İkinci bir tıklama (ya da koşarken F5) ikinci bir
+    // stopRun ÜRETMEZ — motor tarafında zararsız olurdu ama buton "sanki hiçbir şey olmuyor" hissini sürdürürdü.
+    private bool CanStop() => (IsRunning || IsStarting) && Phase != AppPhase.Stopping;
 
     [RelayCommand(CanExecute = nameof(CanContinueRun))]
     private Task ContinueAsync() => BeginRunAsync(RunMode.Continue, clearBuffers: false); // [design doContinue] seçim/filtre KORUNUR
@@ -928,6 +953,9 @@ public sealed partial class RunViewModel : ObservableObject
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama-sırasında-stop ack'i — Rebuild'i geri aç
         CanContinue = false;
+        // [Stopping] Bu yolda runCompleted ASLA gelmeyecek (hiç runStarted olmadı) — fazı bırakan başka bir
+        // kapı yok. Hiçbir proje derlenmediği için Stopped da denemez: run hiç başlamadı, dinlenmeye dönülür.
+        if (Phase == AppPhase.Stopping) Phase = RestingPhase;
     }
 
     private void OnError(ErrorEvent e)
@@ -952,6 +980,10 @@ public sealed partial class RunViewModel : ObservableObject
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
         CanContinue = false;
         _sawRunStarted = false;
+        // [Stopping] Run-bitiren bir hata Stop penceresinde gelirse runCompleted GELMEZ; faz bırakılmazsa
+        // buton sonsuza dek pasif, şerit sonsuza dek "Stopping" kalır. (Aynı yolun Running dalı bilerek
+        // DIŞARIDA: o, bu işten önce de var olan ayrı bir davranış ve ayrı bir karar.)
+        if (Phase == AppPhase.Stopping) Phase = RestingPhase;
     }
 
     /// <summary>[Task 16 — It-2 devir §8, kama düzeltmesi] <see cref="EngineHost.EngineExited"/> eskiden VM'e
@@ -987,7 +1019,9 @@ public sealed partial class RunViewModel : ObservableObject
         // != null ÖNCELİĞİYLE Phase'i YOK SAYAR (bkz. RibbonText.Compose), yani terminal Phase seçimi KOZMETİKtir;
         // yine de tutarlılık için Running → Stopped'a çekilir. YALNIZ Running'e dokunulur: Idle/Boot/Empty gibi
         // resting fazlar (engine repo seçili değilken de ölebilir) Stopped'a çekilmez — yanıltıcı olurdu.
-        if (Phase == AppPhase.Running) Phase = AppPhase.Stopped;
+        // [Stopping] Stop penceresi de aynı gerekçeye girer: motor öldüyse drain'i bitirecek kimse kalmadı,
+        // faz Stopping'de asılı bırakılamaz. Kullanıcı zaten durmayı istemişti — terminal faz Stopped'tır.
+        if (Phase is AppPhase.Running or AppPhase.Stopping) Phase = AppPhase.Stopped;
         IsRunning = false;
         IsStarting = false;
         CanContinue = false;

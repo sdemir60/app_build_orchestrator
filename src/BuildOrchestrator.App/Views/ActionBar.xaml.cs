@@ -407,7 +407,8 @@ public partial class ActionBar : UserControl
     private void BuildButtons()
     {
         PART_Sync.Content = ButtonContent("Icon.Sync", "Sync", "Brush.TextPrimary", 24);
-        PART_Stop.Content = ButtonContent("Icon.Stop", "Stop", "Brush.StatusFailText", 24);
+        // [Stopping] Stop'un İÇERİĞİ artık duruma bağlı (Stop / Stopping…) — tek yazıcısı RefreshBuildArea'dır.
+        // UIA adı burada ve SABİT kalır: buton kimliği değişmiyor, yalnız durumu değişiyor.
         AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
         AutomationProperties.SetName(PART_Stop, AccessibilityNames.StopButton);
     }
@@ -421,7 +422,15 @@ public partial class ActionBar : UserControl
         bool stopped = _vm?.Phase == AppPhase.Stopped;
         PART_Stop.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
         PART_Split.Visibility = locked ? Visibility.Collapsed : Visibility.Visible;
-        if (locked) return;
+        if (locked)
+        {
+            // [Stopping] Kilit SÜRERKEN Stop'un iki hâli var: istenmeden önce "Stop", istendikten sonra
+            // "Stopping…". Pasifleşmeyi bu metot YAZMAZ — buton Command'ına bağlı olduğundan IsEnabled
+            // StopCommand.CanExecute'tan (faz kapısı) gelir; iki ayrı yerden yazılan bir enable hâli olmaz.
+            PART_Stop.Content = ButtonContent("Icon.Stop",
+                _vm?.Phase == AppPhase.Stopping ? "Stopping…" : "Stop", "Brush.StatusFailText", 24);
+            return;
+        }
 
         // stopped → sol yarı Continue (F5 menüde oraya taşınır); aksi halde Build (BuildApp.jsx:1592-1593).
         PART_Split.PrimaryContent = ButtonContent("Icon.Play", stopped ? "Continue" : "Build", "Brush.TextOnAccent", 24);

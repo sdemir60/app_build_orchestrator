@@ -137,8 +137,10 @@ the running instance first — tray icon → Exit).
    - *Rebuild* — all projects, cached state ignored.
    - *Continue* — appears after a stop; resumes the queued remainder.
    - *Retry failed* — appears when there are failures; rebuilds them and their dependents.
-5. **Stop** — a graceful stop: in-flight `MSBuild.exe` children are allowed to finish, including their
-   post-build copy, so no half-written DLL is left behind.
+5. **Stop** — a graceful stop: nothing new is dispatched, and in-flight `MSBuild.exe` children are allowed to
+   finish, including their post-build copy, so no half-written DLL is left behind. Until they do, the button
+   reads *Stopping…* and is disabled, and the ribbon reports how many projects are still in flight. The
+   remaining projects stay queued for *Continue*.
 
 ### Keyboard shortcuts
 

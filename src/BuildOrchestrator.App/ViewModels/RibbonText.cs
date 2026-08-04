@@ -86,6 +86,19 @@ public static class RibbonText
                         finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs), EtaSuffix(etaMs, c) ?? ""),
                     "Brush.TextSecondary", null);
 
+            // [Stopping] Stop istendi, run henüz bitmedi. Running satırı BURADA kullanılamaz: kullanıcı Stop'a
+            // bastıktan sonra "Building 7/14" görmek tıklamanın kaydedilmediği izlenimini verir (kusurun ta
+            // kendisi). ETA eki de BİLEREK yok — yeni dispatch olmadığı için kuyruk tahmini artık gerçeğe
+            // karşılık gelmez; bu pencerede tek anlamlı sayı kaç projenin hâlâ uçuşta olduğudur.
+            // Renk Running ile AYNI (TextSecondary): faz hâlâ etkin, Stopped'ın dim'i henüz hak edilmedi.
+            case AppPhase.Stopping:
+                return new RibbonLine(
+                    c.Building > 0
+                        ? string.Format(CultureInfo.InvariantCulture, "▸ Stopping — {0}/{1} · finishing {2} in flight",
+                            finishedOfWillBuild, willBuild, c.Building)
+                        : "▸ Stopping — wrapping up", // uçuşta bir şey kalmadı: "finishing 0" yanıltıcı olurdu
+                    "Brush.TextSecondary", null);
+
             case AppPhase.Stopped:
                 return new RibbonLine(
                     string.Format(CultureInfo.InvariantCulture, "▸ Stopped — {0}/{1} · rest queued",
