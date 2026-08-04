@@ -126,7 +126,9 @@ the running instance first — tray icon → Exit).
 1. **Pick a repository** — before a repository is selected, the *Choose Folder* button applies the folder
    immediately: project states reset and a Sync starts. Repository *Change…* inside Settings only stages the
    folder in the dialog; *Save* is what applies it, resetting project states and starting a Sync.
-2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here.
+2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. Until it
+   has run, *Build*, *Rebuild* and *Retry failed* are disabled: a run before the first Sync would compile for
+   real while the list and the graph stayed empty.
 3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
    in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
