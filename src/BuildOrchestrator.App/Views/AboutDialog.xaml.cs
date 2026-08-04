@@ -82,10 +82,10 @@ public partial class AboutDialog : UserControl
 
         ProductText.Text = AppIdentity.Product;
         TaglineText.Text = AppIdentity.Tagline;
-        IdentityText.Text = string.Format(CultureInfo.InvariantCulture, "{0} · engine {1} · {2}",
-            AppIdentity.Version,
-            run.EngineVersion ?? DiagnosticsReport.NotStarted,
-            AppIdentity.Copyright);
+        // [design-v1.1.0] TEK sürüm satırı. Eskiden burada `{app} · engine {engine} · {telif}` vardı; motor
+        // sürümünün yeri Environment sekmesidir, başlıkta tekrarı gürültüydü.
+        IdentityText.Text = string.Format(CultureInfo.InvariantCulture, "{0} · {1}",
+            AppIdentity.Version, AppIdentity.Copyright);
 
         ShortcutRows.ItemsSource = ShortcutCatalog.All
             .Select(e => new ShortcutRow(e.Description, e.Gestures,

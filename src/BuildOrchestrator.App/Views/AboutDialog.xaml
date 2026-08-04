@@ -26,23 +26,43 @@
           <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- ============================ HERO ============================ -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="20,18,20,14">
-          <controls:BrandLogo Height="20" VerticalAlignment="Top" Margin="0,2,14,0" />
+        <!-- ============================ KİMLİK BLOĞU ============================ -->
+        <!-- [design-v1.2.1 §2.10] Başlık SATIRI YOK — yerine kimlik bloğu. İki logo tek kompozisyonda:
+             solda ürün markası (30px, tam renk) + ad + tagline + TEK mono sürüm satırı; sağda firma kilidi
+             (1×30 ayraç + caps LICENSED TO + firma logosu 13px %80). Ürün önde. -->
+        <DockPanel Grid.Row="0" Margin="18,18,18,0">
+          <!-- Firma kilidi. Firma logosu opsiyoneldir — yoksa bu blok tamamen düşer. -->
+          <StackPanel x:Name="CompanyLock" DockPanel.Dock="Right" Orientation="Horizontal"
+                      VerticalAlignment="Top" Margin="12,2,0,0">
+            <Rectangle Width="1" Height="30" Margin="0,0,12,0" VerticalAlignment="Top"
+                       Fill="{DynamicResource Brush.BorderSubtle}" SnapsToDevicePixels="True" />
+            <StackPanel HorizontalAlignment="Right">
+              <controls:TrackedTextBlock Text="LICENSED TO" HorizontalAlignment="Right"
+                                         FontFamily="{x:Static controls:AppFonts.Ui}"
+                                         FontSize="{DynamicResource FontSize.2xs}"
+                                         Foreground="{DynamicResource Brush.TextFaint}" />
+              <controls:BrandLogo Height="13" Opacity="0.8" Margin="0,5,0,0" HorizontalAlignment="Right" />
+            </StackPanel>
+          </StackPanel>
+
+          <controls:AppMark DockPanel.Dock="Left" Height="30" VerticalAlignment="Top" Margin="0,2,14,0" />
+
           <StackPanel>
             <TextBlock x:Name="ProductText"
                        FontSize="{DynamicResource FontSize.Lg}"
                        FontWeight="{DynamicResource FontWeight.Emphasis}"
                        Foreground="{DynamicResource Brush.TextPrimary}" />
-            <TextBlock x:Name="TaglineText" Margin="0,3,0,0" TextWrapping="Wrap" MaxWidth="470"
+            <TextBlock x:Name="TaglineText" Margin="0,2,0,0" TextWrapping="Wrap"
                        FontSize="{DynamicResource FontSize.Xs}"
                        Foreground="{DynamicResource Brush.TextDim}" />
-            <TextBlock x:Name="IdentityText" Margin="0,6,0,0"
+            <!-- TEK sürüm satırı: `{sürüm} · {telif}`. app/engine ayrımı Environment sekmesindedir —
+                 design-v1.1.0 başlıktaki tekrarı bilerek kaldırdı. -->
+            <TextBlock x:Name="IdentityText" Margin="0,8,0,0"
                        FontFamily="{x:Static controls:AppFonts.Mono}"
                        FontSize="{DynamicResource FontSize.2xs}"
                        Foreground="{DynamicResource Brush.TextFaint}" />
           </StackPanel>
-        </StackPanel>
+        </DockPanel>
 
         <!-- ============================ SEKMELER ============================ -->
         <ItemsControl Grid.Row="1" Margin="20,0,20,12" Style="{DynamicResource Ds.Segment}">

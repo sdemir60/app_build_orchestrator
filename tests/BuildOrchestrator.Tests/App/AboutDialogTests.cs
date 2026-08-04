@@ -140,8 +140,16 @@ public class AboutDialogTests
 
     // ---------------------------------------------------------------- içerik
 
+    /// <summary>
+    /// [design-v1.2.1 §2.10] Kimlik bloğu: ürün markası 30px + ad + tagline + <b>TEK</b> mono sürüm satırı
+    /// <c>{sürüm} · {telif}</c>.
+    ///
+    /// <para><b>ESKİ İDDİA:</b> sürüm satırı <c>{app} · engine {engine} · {telif}</c> idi. design-v1.1.0 bunu
+    /// BİLEREK kaldırdı ("Eski `1.0.0+it5 · engine 1.0.0+it5` tekrarı kaldırıldı"): app/engine ayrımı
+    /// Environment sekmesinde zaten var, başlıkta tekrarı gürültü. Test silinmedi, YENİ kuralı pinliyor —
+    /// ve "engine" sözcüğünün hero'da GEÇMEDİĞİNİ ayrıca assert ediyor ki eski biçim geri sızmasın.</para></summary>
     [StaFact]
-    public void The_hero_shows_the_product_identity_from_the_assembly()
+    public void The_hero_shows_one_version_line_without_repeating_the_engine()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.OnEngineReady("9.9.9+test", 777));
         using (scope)
@@ -149,21 +157,40 @@ public class AboutDialogTests
             var texts = VisibleTexts(dialog);
             Assert.Contains(AppIdentity.Product, texts);
             Assert.Contains(AppIdentity.Tagline, texts);
-            Assert.Contains(texts, t => t.Contains(AppIdentity.Version, StringComparison.Ordinal)
-                                     && t.Contains("9.9.9+test", StringComparison.Ordinal)
-                                     && t.Contains(AppIdentity.Copyright, StringComparison.Ordinal));
-            Assert.Single(DsResources.Descendants(dialog).OfType<BrandLogo>());
+            Assert.Contains($"{AppIdentity.Version} · {AppIdentity.Copyright}", texts);
+
+            // Motor sürümü hero'da GEÇMEZ — yeri Environment sekmesidir.
+            Assert.DoesNotContain(texts, t => t.Contains("engine", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(texts, t => t.Contains("9.9.9+test", StringComparison.Ordinal));
         }
     }
 
-    /// <summary>Motor doğmamışken hero sürüm satırı "engine " sonrası boş kalmaz.</summary>
+    /// <summary>[design-v1.2.1 §2.10] Başlıkta İKİ logo tek kompozisyonda: solda ürün markası 30px (tam renk),
+    /// sağda <c>LICENSED TO</c> bloğu + firma logosu 13px %80. Ürün önde.</summary>
     [StaFact]
-    public void The_hero_says_the_engine_is_not_started_before_it_boots()
+    public void The_hero_locks_a_30px_product_mark_against_a_licensed_to_company_block()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
-            Assert.Contains(VisibleTexts(dialog),
-                t => t.Contains($"engine {DiagnosticsReport.NotStarted}", StringComparison.Ordinal));
+        {
+            var mark = DsResources.Descendants(dialog).OfType<AppMark>().Single();
+            var logo = DsResources.Descendants(dialog).OfType<BrandLogo>().Single();
+
+            Assert.Equal(30.0, mark.Height);
+            Assert.Equal(13.0, logo.Height);
+            Assert.Equal(0.8, logo.Opacity, precision: 2);
+
+            // Caps etiketi izli (tracked) çizilir — TrackedTextBlock bir TextBlock DEĞİL, GlyphRun çizen
+            // bir FrameworkElement'tir (§14.2), bu yüzden metin ondan okunur.
+            var licensedTo = DsResources.Descendants(dialog).OfType<TrackedTextBlock>()
+                .Single(t => t.Text.Equals("LICENSED TO", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(licensedTo);
+
+            // Ürün markası firma logosunun SOLUNDA.
+            double markX = mark.TranslatePoint(new Point(0, 0), dialog).X;
+            double logoX = logo.TranslatePoint(new Point(0, 0), dialog).X;
+            Assert.True(markX < logoX, $"ürün markası firma bloğunun solunda değil ({markX} ≥ {logoX})");
+        }
     }
 
     [StaFact]
