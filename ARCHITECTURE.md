@@ -313,6 +313,13 @@ requested — a Win32 failure surfaces here as `null` plus a warning line, and d
 | Framing violation (over-long or truncated line) | `error(framing)`, exit 2 | engine killed, one `EngineExited` |
 | Unresolvable perf mode | `error(badPerfMode)` | chip stays on the previous value |
 | Bad root path / planning failure | `error(planFailed)` | run ends, ribbon shows the error |
+| `startRun` while a run is active | `error(runInProgress)` | the *rejected* request drops its own pending flag; the live run is untouched |
+
+The last row is a rejection, not a failure, and the distinction matters: the coordinator releases its run slot
+only after every event has been written, so for a short window after `runCompleted` reaches the App the slot is
+still held — and that is exactly when the buttons come back and a fast click lands. Treating the rejection as
+run-ending would tear down the run that is still going; ignoring it entirely would leave the pending flag set
+forever, locking the UI with nothing behind it to stop.
 
 IPC records are positional and not `required`. A structurally valid command with a missing field binds to
 `null` and surfaces at the point of use as `planFailed`/`runFailed`. No malformed command takes the Supervisor
