@@ -583,6 +583,26 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[topoloji kapısı] Kullanıcının GÖRDÜĞÜ yüzey: Sync yapılmadan (topoloji yokken) Build'in birincil
+    /// yarısı PASİFtir; topoloji gelince açılır. VM kapısı ayrıca pinlidir (<c>RunViewModelStateTests</c>) — burada
+    /// pinlenen, kapının şablondan GERÇEKTEN geçtiğidir: <c>PART_Primary</c>, <c>PrimaryCommand</c>'ın
+    /// CanExecute'unu okuyan bir <see cref="Button"/> olmasaydı ekranda etkin görünmeye devam ederdi.</summary>
+    [StaFact]
+    public void The_build_primary_half_is_disabled_until_a_topology_arrives()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        var primary = (Button)bar.Split.Template.FindName("PART_Primary", bar.Split);
+
+        Assert.Equal(AppPhase.Boot, vm.Phase); // ön-koşul: repo var, Sync yapılmadı
+        Assert.False(primary.IsEnabled);
+
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+
+        Assert.True(primary.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Split-button'ın birincil aksiyonu HER fazda Build'dir — stopped'ta Continue'ya dönüşmez.</summary>
     [StaFact]
     public void The_split_button_primary_action_stays_build_after_a_stop()

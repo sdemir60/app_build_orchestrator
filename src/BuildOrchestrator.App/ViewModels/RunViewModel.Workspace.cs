@@ -29,7 +29,18 @@ public sealed partial class RunViewModel
     /// geçerli), yoksa <c>Boot</c> (repo henüz hiç sync'lenmemiş). Bir run/Sync penceresi SONUÇSUZ kapandığında
     /// (engine ölümü, run-bitiren hata, planlama sırasında stop) geri düşülecek fazın TEK tanımı — kural üç
     /// ayrı yerde yazılıydı ve biri güncellenirken diğerlerinin sessizce ayrışması işten değildi.</summary>
-    private AppPhase RestingPhase => Topology.Count > 0 ? AppPhase.Idle : AppPhase.Boot;
+    private AppPhase RestingPhase => HasTopology ? AppPhase.Idle : AppPhase.Boot;
+
+    /// <summary>Elde bu workspace'in topolojisi VAR MI — yani bir Sync gerçekten koştu ve iş üretti.
+    ///
+    /// <para><b>Neden run komutlarının kapısı budur:</b> tam analiz YALNIZ Sync'te koşar (ARCHITECTURE §6) ve
+    /// App'e topolojiyi yalnız <c>workspaceTopology</c> taşır; bir run yalnız <c>buildPreview</c> yayınlar.
+    /// Dolayısıyla Sync'siz bir Build motoru gerçekten derletir ama ekranda liste, graf ve sayaç BOŞ kalır —
+    /// kullanıcı ne derlendiğini göremeden koşan bir run'a bakar. Kapı bunu baştan keser: önce Sync.</para>
+    ///
+    /// <para>Boş topoloji (klasörün altında hiç proje yok) da kapalıdır — derlenecek bir şey yoktur.
+    /// <see cref="RestingPhase"/> ile AYNI soruyu sorar, bu yüzden soru TEK yerde durur (kopya YASAK).</para></summary>
+    public bool HasTopology => Topology.Count > 0;
 
     /// <summary>Stop istendi: motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ile cevap vermelidir —
     /// sessizlik saati burada da kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe). Faz set eden
@@ -297,6 +308,13 @@ public sealed partial class RunViewModel
             _lastTopologySignature = signature;
             TopologyChanged?.Invoke(this, EventArgs.Empty);
         }
+
+        // [topoloji kapısı] Run komutlarının kapısı <see cref="HasTopology"/>'dir ve o BU olayda açılır/kapanır
+        // (boş bir topoloji onu geri kapatır). RelayCommand CommandManager.RequerySuggested'a abone OLMADIĞINDAN
+        // bildirim elle tetiklenmezse Build gerçek pencerede Sync bittikten sonra da PASİF görünürdü.
+        BuildCommand.NotifyCanExecuteChanged();
+        RebuildCommand.NotifyCanExecuteChanged();
+        RetryFailedCommand.NotifyCanExecuteChanged();
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
     }
