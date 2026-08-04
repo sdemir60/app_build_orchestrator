@@ -116,6 +116,9 @@ public partial class ConsoleView : UserControl
         EditorControl.TextArea.TextView.ScrollOffsetChanged += (_, _) => OnScrollOffsetChanged();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
         ScrollAnimator.EnableUserCancellation(EditorControl);
+        // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
+        // kancasından geçer. Konsol bunu Enable eden TEK panel: yatay taşması olan tek yüzey odur (WordWrap=False).
+        HorizontalWheelScroll.Enable(this);
         _bottomAnchor = new BottomAnchorBehavior(
             getOffset: () => EditorControl.VerticalOffset,
             getExtent: () => EditorControl.ExtentHeight,

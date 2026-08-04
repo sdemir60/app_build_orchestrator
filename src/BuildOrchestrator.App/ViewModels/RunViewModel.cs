@@ -533,7 +533,8 @@ public sealed partial class RunViewModel : ObservableObject
         return BeginRunAsync(RunMode.Rebuild, clearBuffers: true);
     }
     // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
-    private bool CanStartRun() => !IsRunning && !IsStarting && !IsEngineUnavailable;
+    // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
+    private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
 
     // [Fix wave 1, C2 review Finding 1] Rebuild/RetryFailed, Sync uçuştayken (_syncInFlight) EK OLARAK
     // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,

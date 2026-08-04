@@ -164,6 +164,7 @@ public sealed class EngineSilenceWatchdogTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var (vm, clock) = NewVm(engine);
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu sessizlik kapısı
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.Phase = AppPhase.Stopping;
         clock.Advance(RunViewModel.EngineSilenceThresholdMs);

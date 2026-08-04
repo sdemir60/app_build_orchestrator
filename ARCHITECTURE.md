@@ -1019,6 +1019,12 @@ split-button, whose menu carries *Build*, *Rebuild*, and — when something fail
 dependents*. There is no *Continue*: a stopped run is not resumed, it is started again. While a run is in flight the primary button becomes *Stop*, and the
 branch, worktree and configuration controls lock; the perf chip stays live.
 
+**No run without a topology.** *Build*, *Rebuild* and *Retry failed* stay disabled until a Sync has published a
+topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
+runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started before
+the first Sync would compile for real while the list, the graph and the counters stayed empty — the user would
+be watching a run without being able to see what it is doing. Sync itself is never gated; it is the way out.
+
 The lock — and the *Stop* button with it — begins at the **click**, not at `runStarted`. The phase moves to
 `starting` and a line goes into the run document before the command is even written, mirroring what a stop
 request does. Anything less leaves a gap the width of a planning window, during which the user has pressed a
@@ -1094,6 +1100,7 @@ WPF has no native smooth scrolling, so four pieces cooperate:
 | `BottomAnchorBehavior` | bottom-stick with a 48 px release threshold and a jumping window; drives the `⌄ latest` pill |
 | `FollowScrollController` | frontier following (550 ms cadence, 54 px dead-band) |
 | `ScrollArbiter` | the referee |
+| `HorizontalWheelScroll` | horizontal wheel / touchpad input, which WPF never delivers |
 
 `ScrollArbiter` is a pure decision core. Rules: a user scroll suppresses **only** that panel; a panel receives
 at most one grant per frame and each grant bumps that panel's epoch so an in-flight animation from an earlier
@@ -1101,6 +1108,19 @@ epoch is discarded (no yo-yo); an explicit selection or jump always wins and re-
 follow loses to an active selection **or an active filter**; and across panels the priority is
 frontier > console > stream. Keeping both intent gates in the arbiter rather than at the call site is the point:
 "may follow run right now" is answered in exactly one place.
+
+Horizontal scrolling is a separate story, because WPF's input stack turns only `WM_MOUSEWHEEL` into a routed
+event — `WM_MOUSEHWHEEL` is never dispatched, so neither a precision touchpad's two-finger pan nor a tilt wheel
+reaches any element. `HorizontalWheelScroll.Enable` puts a hook on the window's message path; the panel that
+enabled it tests the message's screen point against its own bounds and drives the first horizontally scrollable
+viewer inside it — template included, since the console's viewer lives inside AvalonEdit's. The console is the
+only panel that enables it: it is the only surface with horizontal overflow (`WordWrap=False`). Two details are
+measured rather than assumed, and both are recorded on the class: the scroll must be requested one dispatcher
+turn later (a request issued inside the window procedure is silently dropped), and the target offset is
+accumulated across one gesture instead of being read back from the viewer each time (the viewer publishes the
+new offset only after a layout pass, so reading it back loses steps). A step is the horizontal twin of WPF's
+vertical one — `WheelScrollLines × 16 px` per notch — except that the delta's *magnitude* is honoured, which is
+what makes a touchpad's stream of small deltas track the finger.
 
 `LayoutMetrics` is the shared arithmetic behind sticky headers, follow-mode and selection scrolling: one
 cumulative offset table over mixed 36 px rows and 24 px headers, giving any row's absolute Y, the pinned header
@@ -1803,6 +1823,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Cumulative layout arithmetic (rows, headers, scroll targets) | `App/Controls/LayoutMetrics.cs` |
 | Smooth scrolling, bottom anchor, follow mode | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
+| Horizontal wheel / touchpad routing and step | `App/Controls/HorizontalWheelScroll.cs`, `App/Shell/Win32.cs` |
 | Cross-panel scroll arbitration | `App/Services/ScrollArbiter.cs` |
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
 | One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |

@@ -435,6 +435,9 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1") { RootPath = @"D:\repo" };
+        // [topoloji kapısı] Konu "failure var mı" koşulu — kapının kendisi DEĞİL; ön-koşul satır event'lerinden
+        // ÖNCE kurulur (topoloji, kendinde olmayan satırları budar).
+        VmTopology.Seed(vm, @"C:\p\a.csproj", @"C:\p\b.csproj");
 
         // Henüz failure yok → devre dışı
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
@@ -669,6 +672,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         // Failed satır: RetryFailed'ın "failure var" koşulu Sync'ten BAĞIMSIZ sağlansın, yalnız sync guard'ı test edilsin.
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
@@ -686,6 +690,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
@@ -696,9 +701,10 @@ public class RunViewModelStateTests
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
         vm.RetryFailedCommand.CanExecuteChanged += (_, _) => retryChanged = true;
 
-        // [Not] WorkspaceTopologyEvent kasıtlı olarak GÖNDERİLMEZ: IsRunning false iken satır durumlarını
-        // Pending'e resetler (Sync = yeni taban) — bu testin konusu DEĞİL, Failed satırı burada KORUNMALI ki
-        // RetryFailedCommand'ın yalnız _syncInFlight guard'ı test edilsin.
+        // [Not] Bu Sync'in İÇİNDE ayrıca bir WorkspaceTopologyEvent GÖNDERİLMEZ: IsRunning false iken satır
+        // durumlarını Pending'e resetler (Sync = yeni taban) — bu testin konusu DEĞİL, Failed satırı burada
+        // KORUNMALI ki RetryFailedCommand'ın yalnız _syncInFlight guard'ı test edilsin. Baştaki VmTopology.Seed
+        // satır event'lerinden ÖNCE koştuğu için bu kısıtı bozmaz.
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
 
         Assert.True(vm.RebuildCommand.CanExecute(null));
@@ -712,6 +718,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
@@ -729,6 +736,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
@@ -747,5 +755,76 @@ public class RunViewModelStateTests
         Assert.True(retryChanged);
         Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(vm.RetryFailedCommand.CanExecute(null));
+    }
+
+    // ---------------------------------------------------------------- [topoloji kapısı] Sync yapılmadan run başlatılamaz
+
+    // Ölçülen kusur: uygulama kayıtlı bir repo ile açılıp (Boot) Sync'e hiç basılmadan Build'e basıldığında motor
+    // GERÇEKTEN derlemeye başlıyordu, ama App'e hiç `workspaceTopology` gelmediği için (onu YALNIZ Sync yayınlar —
+    // run yalnız `buildPreview` yayınlar) liste/graf/sayaçlar BOŞ kalıyordu: kullanıcı ne derlendiğini göremeden
+    // koşan bir run'a bakıyordu. Kapı topolojinin VARLIĞIDIR (Sync'in tek gözlemlenebilir ürünü).
+    [Fact]
+    public async Task Build_is_disabled_until_a_topology_arrives()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        Assert.Equal(AppPhase.Boot, vm.Phase);
+        Assert.False(vm.BuildCommand.CanExecute(null));   // Sync yapılmadı → kör run başlatılamaz
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.SyncCommand.CanExecute(null));     // çıkış yolu AÇIK kalır
+
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+
+        Assert.True(vm.BuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
+    }
+
+    // Sync KOŞTU ama klasörün altında hiç proje yok: liste boş kalır ve derlenecek bir şey yoktur — kapı kapalı.
+    [Fact]
+    public async Task Build_stays_disabled_when_the_topology_is_empty()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent([], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0));
+
+        Assert.Empty(vm.Projects);
+        Assert.False(vm.BuildCommand.CanExecute(null));
+    }
+
+    // Kapı, "önceki koşuda failure var" koşulunu geçen RetryFailed'ı da kapsar: satırlar bir şekilde dolmuş olsa
+    // bile (ör. eski bir koşunun event'leri) topoloji YOKSA yeni bir run başlatılamaz.
+    [Fact]
+    public async Task Retry_failed_is_disabled_without_a_topology_even_with_a_failed_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
+
+        Assert.False(vm.RetryFailedCommand.CanExecute(null));
+    }
+
+    // Kapı bir CanExecute değişimidir: topoloji GELDİĞİNDE butonların yeniden sorgulanması gerekir — CommunityToolkit
+    // RelayCommand CommandManager.RequerySuggested'a abone OLMADIĞI için bildirim elle tetiklenmezse gerçek pencerede
+    // Build, Sync bittikten sonra da pasif GÖRÜNÜRDÜ.
+    [Fact]
+    public async Task Topology_arrival_raises_CanExecuteChanged_for_the_run_commands()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        bool buildChanged = false, rebuildChanged = false, retryChanged = false;
+        vm.BuildCommand.CanExecuteChanged += (_, _) => buildChanged = true;
+        vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
+        vm.RetryFailedCommand.CanExecuteChanged += (_, _) => retryChanged = true;
+
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+
+        Assert.True(buildChanged);
+        Assert.True(rebuildChanged);
+        Assert.True(retryChanged);
     }
 }

@@ -117,6 +117,7 @@ public sealed class EnginePreflightTests
     public void An_unreachable_engine_disables_the_actions_but_a_restartable_death_does_not()
     {
         var missing = NewVm();
+        VmTopology.Seed(missing); // [topoloji kapısı] run komutlarının ön-koşulu — konu motor erişilebilirliği
         Assert.True(missing.SyncCommand.CanExecute(null));
         Assert.True(missing.BuildCommand.CanExecute(null));
 
@@ -128,6 +129,7 @@ public sealed class EnginePreflightTests
         Assert.False(missing.RebuildCommand.CanExecute(null));
 
         var died = NewVm();
+        VmTopology.Seed(died); // [topoloji kapısı] aynı ön-koşul
         died.OnEngineExited(1);
 
         Assert.False(died.IsEngineUnavailable);

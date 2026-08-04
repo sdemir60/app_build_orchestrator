@@ -425,6 +425,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Continue, 1, 1, "Debug", 0)); // Continue akışı: IsRunning=true oldu
 
         vm.OnEvent(new ErrorEvent("noResumableRun", "sürdürülebilir run yok"));
@@ -439,6 +440,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         // Rebuild tıklanır tıklanmaz IsRunning=true OLMAZ (yalnız runStarted ile olur) — App bu senaryoda
         // buton durumu için TAMAMEN engine event'lerine güvenir; burada doğrudan senaryoyu event'lerle kurarız.
         vm.OnEvent(new ErrorEvent("planFailed", "disk okunamadı"));
@@ -471,6 +473,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r2") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         // Kilit penceresi doğrudan kurulur: bu harness'ta engine YOK, gönderim senkron düşer ve BeginRunAsync
         // bayrağı kendi hata dalında zaten geri açar — yani üretim yolu bu ön-koşulu üretemez. Test zaten
         // "bayrak nasıl kondu"yu değil, REDDİ GÖREN OnError'ın onu bırakıp bırakmadığını sürüyor.
@@ -575,6 +578,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         Assert.True(vm.RebuildCommand.CanExecute(null));
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
@@ -659,6 +663,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. yukarıdaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
 
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
@@ -677,6 +682,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün üçüncüsü
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
         Assert.True(vm.IsStarting);
         Assert.False(vm.RebuildCommand.CanExecute(null));
@@ -697,6 +703,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — writer null, SendAsync senkron fırlar
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarısız — hiçbir engine event'i asla gelmeyecek
 
         Assert.False(vm.IsStarting);
@@ -763,6 +770,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         await vm.RebuildCommand.ExecuteAsync(null); // gönderim başarılı — IsStarting=true, runStarted HENÜZ gelmedi
         Assert.True(vm.IsStarting);
 
@@ -779,6 +787,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
         Assert.True(vm.IsRunning);
 
@@ -794,6 +803,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         Assert.False(vm.IsRunning);
         Assert.False(vm.IsStarting);
         Assert.True(vm.RebuildCommand.CanExecute(null));
@@ -810,6 +820,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         Assert.False(vm.IsRunning);
@@ -1422,6 +1433,8 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        // [topoloji kapısı] Koşan bir run ancak bir Sync'ten SONRA var olabilir — senaryo bu yüzden topolojiyle kurulur.
+        VmTopology.Seed(vm);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         Assert.True(vm.IsRunning);
@@ -1431,7 +1444,7 @@ public class RunViewModelTests
 
         Assert.True(vm.IsRunning);                      // run YAŞIYOR — motor hâlâ derliyor
         Assert.True(vm.StopCommand.CanExecute(null));   // Stop erişilebilir kaldı [Kısıt 3]
-        Assert.Equal(AppPhase.Boot, vm.Phase);          // faz Syncing'de ASILI kalmadı (topoloji yok → Boot)
+        Assert.Equal(AppPhase.Idle, vm.Phase);          // faz Syncing'de ASILI kalmadı (elde topoloji var → Idle)
 
         // Motor derlemeye devam etti: sonraki event'ler hâlâ AYAKTA bir state'e düşer
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200));
