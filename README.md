@@ -265,6 +265,9 @@ and design decision the implementation rests on, plus a code map of which file o
 There is **no licence file for this project** — the repository ships no `LICENSE`, so no licence is granted
 here by default.
 
-The one third-party licence that is included and redistributed is the **Geist** and **Geist Mono** fonts,
-licensed under the **SIL Open Font License 1.1**: `src/BuildOrchestrator.App/Assets/GEIST-LICENSE.txt`, which
-is copied into the publish output as `Assets\GEIST-LICENSE.txt`.
+The one third-party licence *text* that is included and redistributed is the **Geist** and **Geist Mono**
+fonts, licensed under the **SIL Open Font License 1.1**: `src/BuildOrchestrator.App/Assets/GEIST-LICENSE.txt`,
+which is copied into the publish output as `Assets\GEIST-LICENSE.txt`.
+
+The full inventory of third-party components — the NuGet packages the application ships with, their runtime
+versions and their licences — is listed in the About screen's *Third-party* tab.

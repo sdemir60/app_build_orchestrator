@@ -897,7 +897,9 @@ Closing the window with `X` minimizes to the tray. The first time this happens, 
 it, once — in-app toasts are prohibited by the design.
 
 The global hotkey (`Alt+B` by default, read from `ui-state.json`) is registered with `RegisterHotKey`. A
-conflict disables it silently; the tray icon still restores the window. There is no UI for changing it yet.
+conflict disables it silently; the tray icon still restores the window. There is no UI for changing it yet,
+but the loss is no longer invisible: the About screen marks that shortcut row *unavailable* when the
+registration did not take.
 
 Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No admin rights, no HKLM, no service.
 
@@ -1223,7 +1225,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Chip | A `ToggleButton` style plus a counter text style |
 | Icon button | Its own compact template, with a toggle variant for the layout-mode icons |
 | Switch | A `CheckBox` template — WPF has no toggle switch |
-| Segment | An `ItemsControl` of `RadioButton`s (the `Debug｜Release` control) |
+| Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. Being implicit it crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements |
