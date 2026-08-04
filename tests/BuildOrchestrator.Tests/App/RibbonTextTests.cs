@@ -112,6 +112,27 @@ public class RibbonTextTests
         Assert.Equal("Engine stopped unexpectedly (exit 139)", engineWins.Text);
     }
 
+    /// <summary>Motor SUSTU (yaşıyor ama cevap vermiyor) — bu, geçmişe ait bir olgu değil CANLI bir durumdur:
+    /// Sync/run hatalarını ve faz-metnini EZER, çünkü o metinlerin hepsi "sistem çalışıyor" varsayar. Motor
+    /// GERÇEKTEN öldüyse (process gitti) o metin daha kesindir ve üstte kalır.
+    /// <para>Renk KIRMIZI DEĞİL amber: bu bir başarısızlık değil, bir bekleyiştir — drain hâlâ meşru olabilir.
+    /// Aynı gerekçeyle glyph de YOK ("failed" rozeti olmayan bir hatayı ilan ederdi).</para></summary>
+    [Fact]
+    public void A_silent_engine_outranks_the_failures_and_the_phase_but_not_a_dead_engine()
+    {
+        const string silent = "Engine has stopped responding — no reply for 1m 30s · you can restart it";
+
+        var overdueWins = RibbonText.Compose(AppPhase.Stopping, true, false, Counters(building: 2), 10, 3, 14, 0, null, null, 0,
+            engineDiedMessage: null, syncError: "fetch failed", runError: "run blew up", engineOverdue: silent);
+        Assert.Equal(silent, overdueWins.Text);
+        Assert.Equal("Brush.AmberText", overdueWins.BrushKey);
+        Assert.Null(overdueWins.Glyph);
+
+        var deathWins = RibbonText.Compose(AppPhase.Stopping, true, false, Counters(building: 2), 10, 3, 14, 0, null, null, 0,
+            engineDiedMessage: "Engine stopped unexpectedly (exit 139)", syncError: null, runError: null, engineOverdue: silent);
+        Assert.Equal("Engine stopped unexpectedly (exit 139)", deathWins.Text);
+    }
+
     // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine öldüyse şerit, HANGİ Phase'de olursa olsun KIRMIZI ölüm metnini
     // gösterir — Phase (burada Running) ve hatta bir Sync hatası bile YOK SAYILIR (en yüksek öncelik).
     [Fact]

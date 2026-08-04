@@ -42,7 +42,7 @@ public static class RibbonText
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
                                      long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
                                      string? engineDiedMessage = null, string? syncError = null,
-                                     string? runError = null)
+                                     string? runError = null, string? engineOverdue = null)
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
@@ -50,6 +50,14 @@ public static class RibbonText
         // aksiyonu görünümde (StickyRibbon) eklenir.
         if (engineDiedMessage is { Length: > 0 })
             return new RibbonLine(engineDiedMessage, "Brush.StatusFailText", "failed");
+
+        // Motor YAŞIYOR ama beklenen cevabı vermiyor. Bu, geçmişe ait bir olgu (Sync/run hatası) ya da bir
+        // durum betimlemesi (faz) DEĞİL, CANLI bir bekleyiştir: alttaki metinlerin hepsi "sistem çalışıyor"
+        // varsayar ve o varsayım şu an geçerli değildir. Motor GERÇEKTEN öldüyse (yukarıdaki dal) o bilgi
+        // daha kesindir ve üstte kalır. Renk KIRMIZI DEĞİL amber + glyph YOK: bu bir başarısızlık değil —
+        // drain hâlâ meşru olabilir; satır yalnız çıkış kapısını (şerit-içi "Restart engine") gerekçelendirir.
+        if (engineOverdue is { Length: > 0 })
+            return new RibbonLine(engineOverdue, "Brush.AmberText", null);
 
         if (!hasWorkspace)
             return new RibbonLine("Not ready — no repository selected", "Brush.TextFaint", null);
