@@ -32,6 +32,9 @@ public static class InteractionText
     /// <summary>Graf paneli Sync öncesi boş-durum etiketi (GraphView).</summary>
     public const string GraphEmpty = "Graph appears after Sync";
 
+    /// <summary>[sinema] Takip askıdayken graf başlığında görünen pil (GraphView) — tıklanınca takip döner.</summary>
+    public const string GraphFollowPaused = "FOLLOW PAUSED";
+
     /// <summary>Event stream paneli boş-durum etiketi (EventStreamView, BuildApp.jsx:705-707).</summary>
     public const string StreamEmpty = "No events yet.";
 }

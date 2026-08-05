@@ -90,4 +90,10 @@ public static class AccessibilityNames
     /// okuyucuya hiçbir şey söylemez. Tam proje adı + statü etiketi (<see cref="Controls.StatusGlyph.LabelFor"/>,
     /// design-v1 EN_STATUS) birleşir; ayraç, uygulamanın diğer birleşik adlarıyla aynı em-dash'tır.</summary>
     public static string GraphNode(string projectName, string statusLabel) => $"{projectName} — {statusLabel}";
+
+    /// <summary>[sinema] Graf başlığındaki <c>FOLLOW PAUSED</c> pili — görünür etiketi yalnız DURUMU söyler,
+    /// ad ayrıca EYLEMİ de söyler (tıklama takibi hemen döndürür). Pil bir <c>Border</c>'dır, dolayısıyla
+    /// (tıklanabilir diğer Border satırları gibi) UIA ağacında kendi öğesi olarak görünmez — ad, o sınır
+    /// kapandığında hazır dursun diye ve iki yerde ayrışmasın diye burada durur (bkz. ARCHITECTURE §15).</summary>
+    public const string GraphFollowPill = "Follow paused — resume automatic follow";
 }

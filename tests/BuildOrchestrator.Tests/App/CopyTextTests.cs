@@ -30,9 +30,13 @@ public class CopyTextTests
         var shell = new ShellRoot();
         var window = DsResources.Realize(host, shell);
 
-        // "DEPENDENCY GRAPH" — GraphView.xaml:19, adsız TrackedTextBlock (kod-tarafı erişilemez → ağaçtan bulunur).
-        var caption = DsResources.RealizedObjects(shell.GraphHost).OfType<TrackedTextBlock>().Single();
-        Assert.Equal("DEPENDENCY GRAPH", caption.Text);
+        // "DEPENDENCY GRAPH" — GraphView.xaml, başlık DockPanel'inin son (fill) çocuğu.
+        // ESKİ LOCATOR: `RealizedObjects(GraphHost).OfType<TrackedTextBlock>().Single()` — başlık o zaman adsızdı
+        // ve "graf panelinde TEK bir TrackedTextBlock var" olgusuna yaslanıyordu. Bu olgu [sinema] FOLLOW PAUSED
+        // pili (aynı caps idiomunu kullanan ikinci bir TrackedTextBlock) ile bozuldu ve Single() fırlattı.
+        // İDDİA GEVŞETİLMEDİ, yalnız locator sağlamlaştırıldı: başlık artık x:Name taşır, karşılaştırma birebir
+        // aynı kalır — ve "kaç TrackedTextBlock var" gibi bu testin ölçmediği bir olguya bir daha bağlanmaz.
+        Assert.Equal("DEPENDENCY GRAPH", shell.GraphHost.CaptionText.Text);
 
         // "PROJECTS" (ShellRoot.xaml:48) + "EVENT STREAM" (EventStreamView.xaml:13) — ikisi de PanelHeader.Text.
         var headers = DsResources.RealizedObjects(shell).OfType<PanelHeader>().Select(h => h.Text).ToList();

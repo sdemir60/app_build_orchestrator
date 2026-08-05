@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Input;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -329,5 +330,443 @@ public class GraphPanZoomTests
         view.HandlePanMove(Anchor + DragDelta);
         Assert.Equal(before, view.CurrentCamera);
         Assert.Null(view.Ground.Cursor);
+    }
+
+    // ---------------------------------------------------------------- takip dönüşü (spec §3.5)
+    // Düğüm/kenar/statü fixture'larının TAMAMI GraphCinemaTests'tedir (kopya YASAK); burada yalnız birleştirilir.
+    // Gecikme değeri de tekrarlanmaz: sınırın iki yakası GraphCamera.FollowResumeDelayMs'ten türetilir.
+
+    /// <summary>Damganın <c>TickCount64</c> uzayındaki tam sınırı — üretimin sabiti, kopyası değil.</summary>
+    private static long ResumeDelayTicks => (long)GraphCamera.FollowResumeDelayMs;
+
+    [StaFact]
+    public void Follow_resumes_only_after_the_delay_and_only_with_a_target()
+    {
+        var view = CinemaView(out var nodes);
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building)); // hedef VAR
+        view.HandleWheel(Anchor, 120);                                                       // manuel mod
+        long t0 = view.LastManualInputTicks;
+        // Ön-koşul: zoom kamerayı cepheden GERÇEKTEN ayırdı — aksi halde aşağıdaki ölçek iddiası boşlukta kalırdı.
+        Assert.NotEqual(GraphCamera.FollowMaxScale, view.CurrentCamera.Scale);
+
+        Assert.False(view.TryResumeFollow(t0 + ResumeDelayTicks - 1)); // 1 ms eksik → dönüş YOK
+        Assert.True(view.IsManualCamera);
+
+        Assert.True(view.TryResumeFollow(t0 + ResumeDelayTicks));      // tam sınır → takip devralır
+        Assert.False(view.IsManualCamera);
+        Assert.Equal(GraphCamera.FollowMaxScale, view.CurrentCamera.Scale); // cepheyi yeniden çerçeveledi
+    }
+
+    [StaFact]
+    public void Manual_camera_persists_while_there_is_nothing_to_follow()
+    {
+        // Kamera kullanıcıyla KAVGA ETMEZ (spec §3.5): koşu bittiyse ve seçim yoksa "dönülecek" tek yer
+        // kuşbakışı merkezdir — kullanıcıyı oraya geri sürüklemek onun gezindiği yeri elinden almak olurdu.
+        var view = CinemaView(out _);
+        view.IsSettled = true;
+        view.HandleWheel(Anchor, 120);
+        long t0 = view.LastManualInputTicks;
+
+        Assert.False(view.TryResumeFollow(t0 + 25 * ResumeDelayTicks)); // süre KAT KAT geçse de dönüş yok
+        Assert.True(view.IsManualCamera);
+    }
+
+    [StaFact]
+    public void A_selection_counts_as_a_follow_target()
+    {
+        var view = CinemaView(out _);
+        view.SelectedNode = "N5";
+        view.HandleWheel(Anchor, 120);
+        long t0 = view.LastManualInputTicks;
+        Assert.NotEqual(GraphCamera.SelectionScale, view.CurrentCamera.Scale); // ön-koşul: zoom seçimden ayırdı
+
+        Assert.True(view.TryResumeFollow(t0 + ResumeDelayTicks));
+
+        Assert.Equal(GraphCamera.SelectionScale, view.CurrentCamera.Scale);
+    }
+
+    [StaFact]
+    public void Selecting_a_project_resumes_follow_immediately_instead_of_waiting_out_the_delay()
+    {
+        // Duraklama OTOMATİK yeniden hedeflemeye (statü tick'i) karşıdır; seçim ise kullanıcının KENDİ
+        // navigasyonudur (§13.7'nin tek jesti: liste satırı / graf düğümü / stream satırı). Bastırılırsa
+        // kullanıcı "tıkladım, hiçbir şey olmadı" görür — bu bir kusurdur, özellik değil.
+        var view = CinemaView(out _);
+        view.HandleWheel(Anchor, 120);
+        Assert.True(view.IsManualCamera);
+        Assert.NotEqual(GraphCamera.SelectionScale, view.CurrentCamera.Scale); // ön-koşul
+
+        view.SelectedNode = "N5";
+
+        Assert.False(view.IsManualCamera);                                  // 4 sn BEKLENMEDİ
+        Assert.Equal(GraphCamera.SelectionScale, view.CurrentCamera.Scale); // ...ve kamera gerçekten gitti
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility);
+        Assert.False(view.IsFollowResumeTimerArmed);
+    }
+
+    // ---------------------------------------------------------------- manuel çıkışta Zeno latch'leri sıfırlanır
+
+    /// <summary>Kalabalık katmanın ORTASINA oturan bir cephe: kuşbakışı kelepçesine (ClampPan) takılmadığı için
+    /// odak farkı kamerada gerçekten görünür. Genişlik 5'tir ve bu ALT SINIRDIR: bir aralıklık kayma cepheyi
+    /// <c>34/genişlik</c> px oynatır, 4'te 8.5px (eşiğin ÜSTÜ — bastırma hiç olmazdı, test boşa düşerdi).</summary>
+    private const int FrontierStart = 17;
+    private const int FrontierWidth = 5;
+
+    /// <summary>Panelin manuel excursion sırasındaki büyümesi. Ölçek hedefini 0.0316 kaydırır — 0.05'lik Zeno
+    /// eşiğinin ALTINDA, yani bayat bir latch onu bastırırdı (testin ön-koşulu bunu ayrıca doğrular).</summary>
+    private const double PanelGrowthPx = 13.0;
+
+    private static Point[] Centres(GraphView view, IEnumerable<string> names) => [.. names.Select(view.NodeCenter)];
+
+    /// <summary>Cephenin ağırlık merkezi — ÜRETİMİN kendi fonksiyonundan, latch'siz. Elde ortalama almak
+    /// ResolveFocus'un aritmetiğini teste kopyalamak olurdu.</summary>
+    private static Point Cog(GraphView view, IReadOnlyList<string> names) =>
+        GraphCamera.ResolveFocus(null, Centres(view, names), settled: false, view.GraphSize, previousFocus: null);
+
+    [StaFact]
+    public void Leaving_manual_mode_retargets_the_focus_even_under_the_frontier_threshold()
+    {
+        // Kullanıcı saniyelerce gezindi; bu arada gelen statü güncellemeleri manuel guard'da kesildi, yani
+        // latch EXCURSION ÖNCESİNE aittir. Gerçek senaryo (geniş paralel cephe): bir proje biter, bir aralık
+        // sağındaki komşusu başlar → ağırlık merkezi 34/5 = 6.8px, yani 8px eşiğinin ALTINDA oynar. Latch
+        // korunsaydı kamera dönerken ESKİ odağa oturur ve cepheyi ıskalardı.
+        var view = CinemaView(out var nodes);
+        string[] layer0 = [.. nodes.Where(n => n.Layer == 0).Select(n => n.Name)];
+        string[] frontier = [.. layer0[FrontierStart..(FrontierStart + FrontierWidth)]];
+        string finishing = frontier[^1];
+        string starting = layer0[FrontierStart + FrontierWidth];
+        string[] swapped = [.. frontier[..^1], starting];
+
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, frontier, GraphStatus.Building));
+        var focusBefore = Cog(view, frontier);
+        Assert.Equal(focusBefore, view.PreviousFocus); // ön-koşul: frontier odağı GERÇEKTEN latch'lendi
+
+        view.HandleWheel(Anchor, 120); // manuel excursion
+        var moved = GraphCinemaTests.WithStatus(nodes, swapped, GraphStatus.Building);
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(moved, finishing, GraphStatus.Succeeded));
+
+        var focusAfter = Cog(view, swapped);
+        Assert.Equal(focusBefore, view.PreviousFocus);                     // ön-koşul: latch bayat kaldı
+        Assert.NotEqual(focusBefore, focusAfter);                          // ön-koşul: cephe gerçekten kaydı...
+        Assert.False(GraphCamera.ShouldRetarget(focusBefore, focusAfter)); // ...ama eşiğin ALTINDA
+
+        view.ResumeFollowNow();
+
+        double scale = GraphCamera.FrontierScale(view.ViewportSize, Centres(view, swapped));
+        var viewport = view.ViewportSize;
+        var graph = view.GraphSize;
+        Assert.Equal(GraphCamera.Compute(viewport, graph, focusAfter, scale), view.CurrentCamera);
+        // Bayat latch korunsaydı kamera BAŞKA bir yere otururdu — iddia boşlukta durmuyor.
+        Assert.NotEqual(GraphCamera.Compute(viewport, graph, focusBefore, scale), view.CurrentCamera);
+    }
+
+    [StaFact]
+    public void Leaving_manual_mode_retargets_the_scale_even_under_the_rescale_threshold()
+    {
+        // Odak eşiğinin ÖLÇEK kardeşi — ve kasten YALNIZ ölçeği oynatır: cephe hiç değişmez (odak sabit),
+        // excursion sırasında yalnız PANEL büyür. Manuel guard SizeChanged'i de kestiği için latch bayattır.
+        var view = CinemaView(out var nodes);
+        string[] column = ["N0", "N1", "N2", "N3"]; // dört katmanın İLK düğümü: tek sütun, dikey cephe
+        var centres = Centres(view, column);
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, column, GraphStatus.Building));
+
+        double before = GraphCamera.FrontierScale(view.ViewportSize, centres);
+        Assert.Equal(before, view.PreviousScale); // ön-koşul: frontier ölçeği GERÇEKTEN latch'lendi
+
+        view.HandleWheel(Anchor, 120); // manuel excursion
+        GraphTestView.Resize(view, new Size(view.ActualWidth, view.ActualHeight + PanelGrowthPx));
+        view.UpdateLayout();
+
+        double after = GraphCamera.FrontierScale(view.ViewportSize, centres);
+        Assert.Equal(before, view.PreviousScale);              // ön-koşul: latch bayat kaldı
+        Assert.NotEqual(before, after);                        // ön-koşul: hedef ölçek gerçekten değişti...
+        Assert.False(GraphCamera.ShouldRescale(before, after)); // ...ama eşiğin ALTINDA
+        Assert.Equal(Cog(view, column), view.PreviousFocus);   // ön-koşul: odak SABİT — ölçülen yalnız ölçek
+
+        view.ResumeFollowNow();
+
+        Assert.Equal(after, view.CurrentCamera.Scale);
+    }
+
+    // ---------------------------------------------------------------- tek atımlık tetik (spec §3.6)
+
+    /// <summary>Uzun bir sürüklemenin hareket sayısı — üretimde saniyede 100+'tır; buradaki sayı yalnız
+    /// "damga tazelenir ama tetik yeniden kurulmaz" ayrımını gözle görülür kılacak kadar büyüktür.</summary>
+    private const int LongDragMoves = 12;
+
+    [StaFact]
+    public void A_long_drag_refreshes_the_stamp_on_every_move_but_arms_the_resume_trigger_once()
+    {
+        // NoteManualInput HER harekette koşar (Task 6: yavaş bir sürükleme jestin ortasında kesilmesin diye).
+        // Tetiği de her harekette Stop()/Start() etmek "sürekli çalışan YENİ bir şey" olurdu (spec §3.6).
+        // Sayaçla ölçülür: iki damga aynı milisaniyeye düşer, duvar saati onları ayırt edemez.
+        var view = CinemaView(out _);
+        view.SelectedNode = "N5"; // dönülecek bir hedef olsun (hedefsiz manuel mod tetik KURMAZ)
+        view.HandlePanStart(Anchor);
+
+        for (int i = 1; i <= LongDragMoves; i++) view.HandlePanMove(Anchor + DragDelta * i);
+        view.HandlePanEnd();
+
+        Assert.Equal(LongDragMoves + 1, view.ManualInputCount); // her hareket + bırakma damgalandı
+        Assert.Equal(1, view.FollowResumeArmCount);             // ...ama tetik BİR kez kuruldu
+        Assert.True(view.IsFollowResumeTimerArmed);
+    }
+
+    /// <summary>Tick'in erken geldiği varsayılan aralık: damgadan bu yana geçen süre. Kalanı (gecikme eksi bu)
+    /// tam olarak hesaplanabilir kılar — "tam süre mi kalan mı" ayrımı ancak böyle gözlenir.</summary>
+    private const long EarlyTickElapsedMs = 1000;
+
+    [StaFact]
+    public void A_tick_that_lands_inside_a_still_running_gesture_rearms_for_the_remainder()
+    {
+        // Tetik tek atımlıktır; jest sürerken gelen bir tick kamerayı ÇALMAZ (damga taze) ama tetiği de
+        // öldürmemelidir — aksi halde 4 saniyeden uzun bir sürükleme takibi sonsuza dek askıda bırakırdı.
+        // Yeniden kurulum KALAN süre içindir: her seferinde tam 4 sn verilseydi dönüş katlanarak gecikirdi.
+        var view = CinemaView(out var nodes);
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building)); // hedef VAR
+        view.HandlePanStart(Anchor);
+        view.HandlePanMove(Anchor + DragDelta);
+        long t0 = view.LastManualInputTicks;
+        Assert.Equal(1, view.FollowResumeArmCount);
+
+        view.HandleFollowResumeTick(t0 + EarlyTickElapsedMs); // süre dolmadan geldi
+
+        Assert.True(view.IsManualCamera);           // jestin ortasında kamera ÇALINMAZ
+        Assert.Equal(2, view.FollowResumeArmCount); // ...ve tetik yeniden kuruldu
+        Assert.True(view.IsFollowResumeTimerArmed);
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(GraphCamera.FollowResumeDelayMs - EarlyTickElapsedMs),
+            view.FollowResumeInterval);
+    }
+
+    [StaFact]
+    public void Nothing_to_follow_means_no_trigger_at_all_so_the_view_stays_asleep()
+    {
+        // Kardeş kural: dönülecek yer yokken uyanacak bir tetik de OLMAZ (boşta dönen bir timer §3.6 ihlalidir).
+        var view = CinemaView(out _);
+        view.IsSettled = true;
+        view.HandleWheel(Anchor, 120);
+
+        Assert.True(view.IsManualCamera);
+        Assert.Equal(1, view.ManualInputCount);     // girdi damgalandı...
+        Assert.Equal(0, view.FollowResumeArmCount); // ...ama kurulacak bir tetik yok
+        Assert.False(view.IsFollowResumeTimerArmed);
+    }
+
+    [StaFact]
+    public void A_run_that_starts_while_the_camera_is_manual_revives_the_resume_trigger()
+    {
+        // Hedefsiz manuel modda tetik yoktur; hedef koşu SIRASINDA doğarsa onu uyandıran statü tick'idir —
+        // aksi halde kullanıcı, ekranda bir build akarken manuel modda sonsuza dek asılı kalırdı.
+        var view = CinemaView(out var nodes);
+        view.IsSettled = true;
+        view.HandleWheel(Anchor, 120);
+        Assert.Equal(0, view.FollowResumeArmCount);
+
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building));
+
+        Assert.True(view.IsManualCamera);            // 4 sn dolmadı → henüz dönmedi
+        Assert.Equal(1, view.FollowResumeArmCount);  // ...ama dönüş artık GARANTİ
+        Assert.True(view.IsFollowResumeTimerArmed);
+    }
+
+    [StaFact]
+    public void A_gesture_cancelled_by_a_capture_loss_still_leaves_a_live_resume_trigger()
+    {
+        // Tetik yalnız jest SONUNDA (HandlePanEnd) kurulsaydı burada HİÇ kurulmazdı: capture kaybı
+        // ResetPanGesture'a gider ve başka damga atılmaz. Alt+Tab'layan kullanıcı manuel modda ASILI kalırdı —
+        // buradaki hedef SEÇİMDİR, yani onu uyandıracak bir statü tick'i de yok.
+        var view = CinemaView(out _);
+        view.SelectedNode = "N5";
+        view.HandlePanStart(Anchor);
+        view.HandlePanMove(Anchor + DragDelta);
+        Assert.True(view.IsManualCamera);
+
+        MouseInput.LoseCapture(view.Ground);
+
+        Assert.True(view.IsManualCamera);           // iptal manuel modu bitirmez (kamera bırakıldığı yerde)
+        Assert.True(view.IsFollowResumeTimerArmed); // ...ama dönüş yine de gelecek
+    }
+
+    [StaFact]
+    public void A_new_topology_stops_the_pending_trigger_and_hides_the_pill()
+    {
+        var view = CinemaView(out var nodes);
+        var building = GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building);
+        view.UpdateStatuses(building);
+        view.HandleWheel(Anchor, 120);
+        Assert.True(view.IsFollowResumeTimerArmed);
+        Assert.Equal(Visibility.Visible, view.FollowPillVisibility);
+
+        // Statü KORUNUR (hedef hâlâ var) — pilin kapanmasının tek açıklaması manuel modun bitmesi olsun.
+        view.SetGraph(building, GraphCinemaTests.ChainEdges(building));
+
+        Assert.False(view.IsManualCamera);
+        Assert.False(view.IsFollowResumeTimerArmed);
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility);
+    }
+
+    [StaFact]
+    public void An_empty_graph_hides_the_pill_even_though_the_camera_never_runs()
+    {
+        // Gerçek yol: kullanıcı gezinirken Sync 0 proje bulur. SetGraph boş grafta ERKEN döner, yani pili
+        // tazeleyen huni (ApplyCamera) HİÇ koşmaz — pil ekranda asılı kalırdı.
+        var view = CinemaView(out var nodes);
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building));
+        view.HandleWheel(Anchor, 120);
+        Assert.Equal(Visibility.Visible, view.FollowPillVisibility);
+
+        view.SetGraph([], []);
+
+        Assert.True(view.IsEmptyStateVisible); // ön-koşul: gerçekten boş-durum yoluna girdik
+        Assert.False(view.IsManualCamera);
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility);
+    }
+
+    [StaFact]
+    public void The_pill_sits_just_left_of_the_counter_so_the_machine_output_never_moves()
+    {
+        // Pil, başlık DockPanel'inde sayaçtan SONRA bildirilir (= sayacın İÇİNDE kalır). Ters sırada — brief'in
+        // önerdiği gibi sayaçtan ÖNCE — sayaç, pil her belirip kaybolduğunda pilin genişliği kadar SIÇRAR;
+        // design-v1 §1.2'nin makine çıktısı panelin sağ kenarına çakılı durmalıdır.
+        var view = CinemaView(out var nodes);
+        view.UpdateLayout(); // SetGraph sayacın METNİNİ yazar; yerleşim ancak burada oturur
+        double before = CountsLeft(view);
+
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building));
+        view.HandleWheel(Anchor, 120);
+        view.UpdateLayout();
+
+        var pill = view.FollowPillElement;
+        Assert.Equal(Visibility.Visible, view.FollowPillVisibility); // ön-koşul: pil gerçekten belirdi...
+        Assert.True(pill.ActualWidth > 0, "pil yer kaplamıyor — iddia boşlukta kalırdı");
+        Assert.Equal(before, CountsLeft(view)); // ...ama sayaç kıpırdamadı
+        // ...ve pil TAM sayacın solunda duruyor (başlığın soluna ya da sayacın sağına kaçmadı).
+        Assert.Equal(
+            CountsLeft(view),
+            pill.TranslatePoint(new Point(pill.ActualWidth, 0), view).X + pill.Margin.Right,
+            precision: 6);
+    }
+
+    private static double CountsLeft(GraphView view) => view.CountsText.TranslatePoint(new Point(0, 0), view).X;
+
+    [StaFact]
+    public void Unloading_the_view_stops_the_pending_trigger_so_the_dispatcher_cannot_root_it()
+    {
+        // [M-d deseni] Uçuştaki bir DispatcherTimer dispatcher tarafından köklenir ve view ağaçtan düşse bile
+        // onu (ve tüm graf ağacını) canlı tutardı — dash clock'la AYNI sınıf sızıntı.
+        var view = CinemaView(out var nodes);
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building));
+        view.HandleWheel(Anchor, 120);
+        Assert.True(view.IsFollowResumeTimerArmed);
+
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+
+        Assert.False(view.IsFollowResumeTimerArmed);
+    }
+
+    // ---------------------------------------------------------------- FOLLOW PAUSED pili (spec §3.5)
+
+    [StaFact]
+    public void The_pill_shows_while_follow_is_suspended_and_a_click_resumes_immediately()
+    {
+        var view = CinemaView(out var nodes);
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility); // başlangıç: gizli
+
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building));
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility); // hedef var ama takip ÇALIŞIYOR
+        view.HandleWheel(Anchor, 120);
+        Assert.Equal(Visibility.Visible, view.FollowPillVisibility);   // hedef + manuel → görünür
+
+        var click = MouseInput.PressLeft(view.FollowPillElement);      // XAML'deki GERÇEK handler kablosu
+
+        Assert.True(click.Handled); // tıklama başlığın ötesine sızmaz
+        Assert.False(view.IsManualCamera);
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility);
+        Assert.Equal(GraphCamera.FollowMaxScale, view.CurrentCamera.Scale);
+        Assert.False(view.IsFollowResumeTimerArmed);
+    }
+
+    [StaFact]
+    public void The_pill_stays_hidden_while_there_is_nothing_to_follow()
+    {
+        // Tıklansa hiçbir şey olmayacak bir kısayolu göstermek yalan olurdu (TryResumeFollow'un hedef klozu).
+        var view = CinemaView(out _);
+        view.IsSettled = true;
+        view.HandleWheel(Anchor, 120);
+
+        Assert.True(view.IsManualCamera);
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility);
+    }
+
+    [StaFact]
+    public void The_pill_hides_again_when_the_run_ends_while_the_camera_is_still_manual()
+    {
+        var view = CinemaView(out var nodes);
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building));
+        view.HandleWheel(Anchor, 120);
+        Assert.Equal(Visibility.Visible, view.FollowPillVisibility);
+
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Succeeded)); // cephe boşaldı
+
+        Assert.True(view.IsManualCamera); // kullanıcı hâlâ gezinmede...
+        Assert.Equal(Visibility.Collapsed, view.FollowPillVisibility); // ...ama dönülecek yer kalmadı
+    }
+
+    [StaFact]
+    public void The_pill_carries_the_shared_copy_and_the_uia_name()
+    {
+        var view = CinemaView(out _);
+
+        Assert.Equal(BuildOrchestrator.App.ViewModels.InteractionText.GraphFollowPaused, view.FollowPillText);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.GraphFollowPill,
+            AutomationProperties.GetName(view.FollowPillElement));
+    }
+
+    /// <summary>Realize testinde token sözlüğüne enjekte edilen yarıçap — hiçbir <c>Radius.*</c> token'ının
+    /// değeri DEĞİLDİR, yani "bağ canlı mı" sorusunu ham bir kopyadan ayırt eder.</summary>
+    private const double SwappedRadius = 17.0;
+
+    [StaFact]
+    public void The_pill_realises_in_a_real_window_with_its_tokens_resolved()
+    {
+        // Headless süit XAML'i InitializeComponent ile çözer, ama DynamicResource bağları ancak GERÇEK bir
+        // kaynak kapsamında TALEP edilince çözülür ve WPF okuma yolunda TİP doğrulaması YAPMAZ (c6e9a21 sınıfı
+        // hata sessizce geçerdi). Pil bu yüzden üretimin merge zinciriyle bir pencerede realize edilir ve
+        // başlıkta gerçekten YER KAPLADIĞI ölçülür.
+        var view = GraphTestView.New(labelFontFamily: DsResources.MonoFontFamily);
+        // Pilin ailesi (AppFonts.Ui) bir pack:// URI'sidir ve Application olmadan çözülmez ⇒ TrackedTextBlock
+        // ölçümü 0 döner. Metnin yerleşime GERÇEKTEN katıldığını görebilmek için file:// tabanlı aile enjekte
+        // edilir (GraphView.LabelFontFamily seam'iyle aynı gerekçe).
+        view.FollowPillLabel.FontFamily = DsResources.MonoFontFamily;
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, view, width: 600, height: 400);
+
+        var nodes = GraphCinemaTests.BigNodes();
+        view.SetGraph(nodes, GraphCinemaTests.ChainEdges(nodes));
+        view.UpdateStatuses(GraphCinemaTests.WithStatus(nodes, "N0", GraphStatus.Building));
+        view.HandleWheel(Anchor, 120);
+        view.UpdateLayout();
+
+        var pill = view.FollowPillElement;
+        Assert.Equal(Visibility.Visible, view.FollowPillVisibility);
+        Assert.True(view.FollowPillLabel.ActualWidth > 0, "pil metni hiç ölçülmedi (glyph yolu kurulmadı)");
+        Assert.True(pill.ActualWidth > view.FollowPillLabel.ActualWidth,
+            $"pil metnini sarmıyor ({pill.ActualWidth} ≤ {view.FollowPillLabel.ActualWidth})");
+        Assert.True(pill.ActualHeight > 0);
+        // Token bağları GERÇEKTEN çözüldü: fırçalarda örnek BİREBİR sözlüktekidir (ham bir hex ayrı bir
+        // SolidColorBrush üretir ve Assert.Same düşer).
+        Assert.Same(view.FindResource("Brush.SurfaceRaised"), pill.Background);
+        Assert.Same(view.FindResource("Brush.Border"), pill.BorderBrush);
+        Assert.Empty(DsResources.DynamicResourceTypeMismatches(pill));
+
+        // CornerRadius bir DEĞER TİPİDİR: Assert.Same yok, dolayısıyla `CornerRadius="4"` yazan bir mutant
+        // token'la aynı sayıyı verir ve sessizce hayatta kalırdı (ölçüldü). Ayırt edici olan bağın CANLI
+        // olmasıdır — token değişince pil de değişmelidir (§14.5: DynamicResource, StaticResource DEĞİL).
+        Assert.Equal((CornerRadius)view.FindResource("Radius.Sm"), pill.CornerRadius);
+        view.Resources["Radius.Sm"] = new CornerRadius(SwappedRadius);
+        view.UpdateLayout();
+        Assert.Equal(new CornerRadius(SwappedRadius), pill.CornerRadius);
+        GC.KeepAlive(window);
     }
 }

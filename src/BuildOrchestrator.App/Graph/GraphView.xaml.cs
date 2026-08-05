@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
@@ -167,8 +168,8 @@ public partial class GraphView : UserControl
     private long _revealEndTicks;
 
     // ---------------------------------------------------------------- [sinema] manuel kamera (jestler, §3.4)
-    /// <summary>Kamera KULLANICIDA mı — otomatik hedefleme askıda (spec §3.5). Task 7 bunu 4sn'lik dönüş
-    /// kuralıyla geri kapatır.</summary>
+    /// <summary>Kamera KULLANICIDA mı — otomatik hedefleme askıda (spec §3.5). Son manuel girdiden
+    /// <see cref="GraphCamera.FollowResumeDelayMs"/> sonra takip devralır (<see cref="TryResumeFollow"/>).</summary>
     private bool _manualCamera;
     /// <summary>Zeminde sol tuş basılı; henüz sürükleme olmayabilir (eşik aşılmadıysa bu bir TIKLAMADIR).</summary>
     private bool _panPressed;
@@ -177,6 +178,10 @@ public partial class GraphView : UserControl
     /// <summary>Son jest noktası, <c>Ground</c>'un EKRAN koordinatında (pan deltası da ekran uzayındadır).</summary>
     private Point _panLast;
     private long _lastManualInputTicks;
+    /// <summary>[sinema] Takip dönüşünün TEK ATIMLIK tetiği (spec §3.5) — talep üzerine kurulur, manuel moddan
+    /// çıkışta / yeni topolojide / unload'da durdurulur. Kurulum kuralı
+    /// <see cref="KeepFollowResumeTriggerAlive"/>'dedir.</summary>
+    private DispatcherTimer? _followResumeTimer;
 
     public GraphView()
     {
@@ -277,6 +282,9 @@ public partial class GraphView : UserControl
         // [M-d] View unload olurken paylaşımlı dash clock'u da bırak — aksi halde (M-3'ün kapsamadığı bu yol
         // için) timing engine, view artık ağaçta olmasa bile 30fps'te uyanık kalırdı.
         ReleaseDashClock();
+        // [sinema] AYNI gerekçe takip dönüşü tetiği için: uçuştaki bir DispatcherTimer dispatcher tarafından
+        // köklenir ve view ağaçtan düşse bile onu (ve tüm graf ağacını) canlı tutardı.
+        _followResumeTimer?.Stop();
         // [E3/T41] Reveal ortasında unload olursa hero'yu bırak — aksi halde bir sonraki hero sonsuza dek bloke olurdu.
         _reveal.Release();
     }
@@ -318,6 +326,12 @@ public partial class GraphView : UserControl
             MaterializeSelection();
             ApplySelection();
             ApplyEdgeStyles();
+            // [sinema] Seçim değişimi manuel modu ANINDA bitirir — 4 sn beklenmez. Duraklama OTOMATİK yeniden
+            // hedeflemenin (statü tick'i) kullanıcının görüşünü çalmasına karşıdır; seçim ise kullanıcının KENDİ
+            // navigasyonudur (liste satırı, graf düğümü, stream satırı — §13.7'nin tek jesti). Bastırılsaydı
+            // "tıkladım, hiçbir şey olmadı" olurdu. Manuel değilken no-op'tur; manuelken kamerayı zaten uygular,
+            // aşağıdaki çağrı o durumda hedefi değişmemiş bulup erken döner.
+            ResumeFollowNow();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
         }
@@ -356,6 +370,8 @@ public partial class GraphView : UserControl
         // karşılığı yoktur. Sürmekte olan bir jest varsa iptal edilir (el imleci ekranda kalmasın).
         _manualCamera = false;
         ResetPanGesture();
+        _followResumeTimer?.Stop(); // bekleyen dönüş tetiği yeni grafa taşınmaz — manuel mod zaten bitti
+        UpdateFollowPill();         // 0 düğümlü grafta ApplyCamera hiç çağrılmaz, pil BURADA kapanır
         CurrentCamera = default;
         _scannedRegion = Rect.Empty;
         _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
@@ -513,6 +529,10 @@ public partial class GraphView : UserControl
         }
 
         ApplyEdgeStyles();
+        // [sinema] Statü tick'i de aynı kapıdan geçer: takip hedefi koşu SIRASINDA doğabilir (kullanıcı durgun
+        // bir grafta gezinirken yeni bir build başlar) — o ana kadar uçuşta hiçbir tetik YOKTUR, çünkü hedefsiz
+        // bir manuel mod tetik kurmaz. 4 sn çoktan geçmişse takip hemen devralır, geçmemişse tetik burada doğar.
+        TryResumeOrKeepWaiting(Environment.TickCount64);
         ApplyCamera(animate: true);
     }
 
@@ -1362,17 +1382,132 @@ public partial class GraphView : UserControl
         LastCameraAnimated = false; // bu yol TANIMI GEREĞİ animasyonsuzdur — seam bayat bilgi taşımaz
     }
 
-    /// <summary>Son manuel girdinin damgası. <b>Task 7</b> buraya takip dönüşünün tek atımlık timer'ını ekler;
-    /// bu task'ta yalnız damga tutulur (<see cref="LastManualInputTicks"/> onu okur).</summary>
+    /// <summary>Son manuel girdinin damgası. Damga HER girdide tazelenir (sürüklerken de — Task 6'nın kuralı);
+    /// tetiğin kurulup kurulmayacağına <see cref="KeepFollowResumeTriggerAlive"/> karar verir. Dönüşü DENEMEYE
+    /// gerek yoktur: az önce damgalanan girdi sıfır saniye önce olmuştur.</summary>
     private void NoteManualInput(long nowTicks)
     {
         _lastManualInputTicks = nowTicks;
         ManualInputCount++;
+        KeepFollowResumeTriggerAlive(nowTicks);
     }
 
-    /// <summary>FOLLOW PAUSED pilinin görünürlüğü. <b>Task 7</b>'de gövde kazanır (pil XAML'i orada eklenir);
-    /// çağrı yeri burada kurulur ki o task yalnız gövdeyi doldursun.</summary>
-    private void UpdateFollowPill() { }
+    /// <summary>[sinema] Dönüş kuralının uygulanma KAPISI: önce dener, dönmediyse sorunun yeniden sorulacağını
+    /// garanti eder. Timer tick'i ve statü tick'i buradan geçer (kopya YASAK).</summary>
+    private void TryResumeOrKeepWaiting(long nowTicks)
+    {
+        if (TryResumeFollow(nowTicks)) return;
+        KeepFollowResumeTriggerAlive(nowTicks);
+    }
+
+    /// <summary>
+    /// Manuel moddayken uçuşta <b>tam bir</b> dönüş tetiği bulunmasını garanti eder.
+    ///
+    /// <para><b>Zaten kuruluysa DOKUNULMAZ.</b> Bu metot <see cref="HandlePanMove"/>'dan da beslenir, yani
+    /// sürüklerken saniyede 100+ kez koşar — her çağrıda <c>Stop()</c>/<c>Start()</c> demek "sürekli çalışan
+    /// yeni bir şey" olurdu (spec §3.6). Kapı "kuruluysa dokunma" biçimindedir, "sürüklerken kurma" biçiminde
+    /// DEĞİL: fark ölçülebilir — jest <see cref="HandlePanEnd"/> ile değil capture kaybıyla (Alt+Tab, popup)
+    /// biterse başka hiçbir damga atılmaz, tetik yalnız jest sonunda kurulsaydı kullanıcı manuel modda ASILI
+    /// kalırdı.</para>
+    ///
+    /// <para><b>Hedef yoksa HİÇ kurulmaz.</b> Kamera kullanıcıyla kavga etmez (spec §3.5) ⇒ dönülecek yer
+    /// yokken uyanacak bir tetik de olmamalıdır. Hedef sonradan doğarsa iki yol uyandırır: statü tick'i
+    /// (<see cref="UpdateStatuses"/>) ve seçim (<see cref="SelectedNode"/> — o zaten ANINDA döndürür).</para>
+    /// </summary>
+    private void KeepFollowResumeTriggerAlive(long nowTicks)
+    {
+        if (_manualCamera && HasFollowTarget && !IsFollowResumeTimerArmed) ArmFollowResumeTimer(nowTicks);
+    }
+
+    /// <summary>Uçuşta bir dönüş tetiği var mı — kurulum kapısı ve testler AYNI yüklemi okur (kopya YASAK).</summary>
+    internal bool IsFollowResumeTimerArmed => _followResumeTimer is { IsEnabled: true };
+
+    /// <summary>Tetiği <b>KALAN</b> süre için kurar — taze bir 4 sn için değil. Fark gerçektir: jest sürerken
+    /// gelen bir tick tetiği yeniden kurar ve her seferinde tam süre verilseydi uzun bir sürüklemenin ardından
+    /// dönüş 4 sn yerine 8 sn sonra gelirdi. Tetik tek atımlıktır (tick ilk işi olarak durdurur).</summary>
+    private void ArmFollowResumeTimer(long nowTicks)
+    {
+        if (_followResumeTimer is null)
+        {
+            _followResumeTimer = new DispatcherTimer();
+            _followResumeTimer.Tick += OnFollowResumeTick; // abonelik ÖMÜRDE BİR kez — çifte tick olmaz
+        }
+
+        _followResumeTimer.Stop();
+        // Taban 1 ms: Interval = 0 olan bir DispatcherTimer kuyruğa sürekli yeniden girer — tam olarak
+        // §3.6'nın yasakladığı şey. (Bugün buraya ancak pozitif bir kalan gelir; taban savunma amaçlıdır.)
+        _followResumeTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(
+            1.0, GraphCamera.FollowResumeDelayMs - (nowTicks - _lastManualInputTicks)));
+        _followResumeTimer.Start();
+        FollowResumeArmCount++;
+    }
+
+    private void OnFollowResumeTick(object? sender, EventArgs e) => HandleFollowResumeTick(Environment.TickCount64);
+
+    /// <summary>Tick'in gövdesi — zaman PARAMETREDİR ki testler 4 saniyeyi duvar saatinde beklemeden hem
+    /// "süre doldu" hem "erken geldi" dallarını sürebilsin (D8).</summary>
+    internal void HandleFollowResumeTick(long nowTicks)
+    {
+        _followResumeTimer?.Stop(); // TEK ATIMLIK: bundan sonrası kurala bağlı
+        TryResumeOrKeepWaiting(nowTicks);
+    }
+
+    /// <summary>Takip edilecek bir hedef var mı: seçim VEYA o an derlenen bir düğüm. <see cref="GraphCamera"/>'nın
+    /// hedef sıralamasının (seçim → building frontier → merkez) ilk iki basamağıdır; üçüncüsü "hedef" sayılmaz,
+    /// çünkü kullanıcıyı kuşbakışına geri sürüklemek onun gezindiği yeri elinden almak olurdu.</summary>
+    private bool HasFollowTarget
+    {
+        get
+        {
+            if (_selectedNode is not null) return true;
+            foreach (var slot in _slotOrder)
+                if (slot.Model.Status == GraphStatus.Building) return true;
+            return false;
+        }
+    }
+
+    /// <summary>[sinema] Dönüş kuralının TEK yeri (spec §3.5): takip edilecek bir hedef varken ve son manuel
+    /// girdiden bu yana ≥ <see cref="GraphCamera.FollowResumeDelayMs"/> geçmişse kamera takibe geri döner.
+    /// Timer tick'i, <see cref="UpdateStatuses"/> ve testler AYNI metodu çağırır (kopya YASAK).</summary>
+    /// <param name="nowTicks">Şimdinin <c>TickCount64</c> damgası — parametredir ki testler duvar saati
+    /// beklemeden sınırın iki yakasını da sürebilsin (D8: testte gerçek zaman beklenmez).</param>
+    /// <returns><c>true</c> = takip devraldı.</returns>
+    internal bool TryResumeFollow(long nowTicks)
+    {
+        if (!_manualCamera) return false;
+        if (!HasFollowTarget) return false;
+        if (nowTicks - _lastManualInputTicks < (long)GraphCamera.FollowResumeDelayMs) return false;
+
+        ResumeFollowNow();
+        return true;
+    }
+
+    /// <summary>Pil tıklamasının ve dönüş kuralının ORTAK sonucu: manuel mod biter, kamera hedefine animasyonla
+    /// (reduced-motion'da ani) döner.</summary>
+    internal void ResumeFollowNow()
+    {
+        _followResumeTimer?.Stop();
+        if (!_manualCamera) return;
+        _manualCamera = false;
+        // [sinema] Zeno latch'leri excursion'ı AŞMAZ. Kullanıcı saniyelerce gezindi; bu arada gelen statü
+        // güncellemeleri manuel guard'da kesildiği için latch'ler o eski ana aittir. İlk manuel-sonrası hedefleme
+        // 8px (odak) ve 0.05 (ölçek) eşiklerine karşı ÖLÇÜLMEZ — koşulsuzdur; aksi halde meşru bir yeniden
+        // hedefleme bayat bir değere takılıp bastırılabilirdi.
+        _previousFocus = null;
+        _previousScale = null;
+        ApplyCamera(animate: true); // pil görünürlüğünü de bu huni tazeler (bkz. ApplyCamera)
+    }
+
+    private void FollowPillMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true; // tıklama başlığın ötesine sızmasın
+        ResumeFollowNow();
+    }
+
+    /// <summary>FOLLOW PAUSED pilinin görünürlüğü: takip askıdayken VE gerçekten dönülecek bir hedef varken.
+    /// Hedefsizken pil GİZLİDİR — tıklansa hiçbir şey olmayacak bir kısayolu göstermek yalan olurdu.</summary>
+    private void UpdateFollowPill() =>
+        FollowPill.Visibility = _manualCamera && HasFollowTarget ? Visibility.Visible : Visibility.Collapsed;
 
     // ---------------------------------------------------------------- kamera
 
@@ -1387,6 +1522,10 @@ public partial class GraphView : UserControl
         //   · panel henüz ölçülmemişken (viewport 0) gelen seçim, MaterializeSelection viewport'a BAKMADIĞI
         //     için düğüm kurar ⇒ o rejimde materyalize düğüm vardır ama karar hiç tazelenmezdi.
         UpdateLabelVisibility();
+        // [sinema] Pilin girdileri de (manuel bayrak + hedef varlığı) AYNI huniden geçer ve hiçbiri kamera
+        // hedefine bakmaz ⇒ aşağıdaki üç erken dönüşün de üstünde tazelenir. En görünür yolu: koşu biterken
+        // building düğüm kalmaz, kamera hedefi ise manuel guard'da zaten hesaplanmaz — pil orada kapanmalıdır.
+        UpdateFollowPill();
 
         if (_slotOrder.Count == 0) return;
 
@@ -1505,6 +1644,16 @@ public partial class GraphView : UserControl
     /// iki damga aynı milisaniyeye düştüğünde duvar saati onları ayırt EDEMEZ, sayaç deterministik kanıttır
     /// (sürükleme sırasında damgalama ile bırakmada damgalama ayrı kurallardır ve ayrı ayrı pinlenir).</summary>
     internal int ManualInputCount { get; private set; }
+    /// <summary>[sinema] Dönüş tetiği kaç kez KURULDU — <see cref="ManualInputCount"/> ile birlikte okunur:
+    /// ikisinin ayrışması, "damga her harekette tazelenir ama timer yeniden kurulmaz" kuralının deterministik
+    /// kanıtıdır (duvar saati bunu ölçemez).</summary>
+    internal int FollowResumeArmCount { get; private set; }
+    /// <summary>[sinema] Uçuştaki tetiğin kalan süresi — "tam süre değil KALAN" kuralının gözlenebilir yüzü.</summary>
+    internal TimeSpan FollowResumeInterval => _followResumeTimer?.Interval ?? TimeSpan.Zero;
+    /// <summary>[sinema] FOLLOW PAUSED pili — görünürlük, metin ve elemanın kendisi (UIA adı + gerçek tıklama).</summary>
+    internal Visibility FollowPillVisibility => FollowPill.Visibility;
+    internal string FollowPillText => FollowPillLabel.Text;
+    internal Border FollowPillElement => FollowPill;
     /// <summary>[M-5] Yalnız FRONTIER dalından gelen odak hatırlanır (8px eşiği yalnız orada geçerli).</summary>
     internal Point? PreviousFocus => _previousFocus;
     /// <summary>[sinema] Yalnız FRONTIER dalından gelen ölçek hatırlanır (0.05 eşiği yalnız orada geçerli) —
