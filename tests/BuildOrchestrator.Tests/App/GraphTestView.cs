@@ -60,9 +60,15 @@ internal static class GraphTestView
         Size size,
         Func<bool>? animationsEnabled = null,
         IMotionSettings? motion = null,
-        FontFamily? labelFontFamily = null)
+        FontFamily? labelFontFamily = null) =>
+        Resize(New(animationsEnabled, motion, labelFontFamily), size);
+
+    /// <summary>VAR OLAN bir view'ı yeniden ölçer/yerleştirir — panel boyut değişimini (<c>Ground.SizeChanged</c>)
+    /// süren testlerin yolu. Ölçüm ikilisi <see cref="Sized"/> ile ORTAK (kopya YASAK); yerleşimi işletmek için
+    /// çağıran ayrıca <c>UpdateLayout</c> der (bkz. <see cref="Realized"/>).</summary>
+    public static GraphView Resize(GraphView view, Size size)
     {
-        var view = New(animationsEnabled, motion, labelFontFamily);
+        ArgumentNullException.ThrowIfNull(view);
         view.Measure(size);
         view.Arrange(new Rect(new Point(0, 0), size));
         return view;

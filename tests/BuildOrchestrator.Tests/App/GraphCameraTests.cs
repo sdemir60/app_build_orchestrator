@@ -293,4 +293,76 @@ public class GraphCameraTests
         Assert.Equal(GraphCamera.Compute(viewport, Graph, new Point(440, 292),
             GraphCamera.FitScale(viewport, Graph)), GraphCamera.Compute(viewport, Graph, new Point(440, 292)));
     }
+
+    // ---------------------------------------------------------------- [sinema] manuel jest aritmetiği
+
+    /// <summary>Manuel jest testlerinin grafı: her iki eksende de 600×400 panelden BÜYÜK, dolayısıyla kelepçe
+    /// "sığmayan eksen" dalını kullanır (sığan eksenin dalı ayrı bir testin konusudur).</summary>
+    private static readonly Size BigGraph = new(2000, 1000);
+    private static readonly Size Panel = new(600, 400);
+
+    [Fact]
+    public void Zooming_at_the_cursor_keeps_the_world_point_under_it_fixed()
+    {
+        var camera = new CameraTransform(1.0, -500, -300);
+        // İmleç panel MERKEZİNİN dışındadır ve bu ŞARTTIR: merkeze konsaydı "imleç merkezli" ile "panel
+        // merkezli" zoom AYNI sonucu verir ve iddia hiçbir şey ölçmezdi (ölçüldü — merkeze sabitleyen mutant
+        // 300,200 imleciyle TÜM süiti yeşil bırakıyordu).
+        var cursor = new Point(450, 120); // dünya: (450−(−500))/1 = 950, (120−(−300))/1 = 420
+
+        var zoomed = GraphCamera.ZoomAt(camera, cursor, GraphCamera.WheelZoomStep, Panel, BigGraph);
+
+        Assert.Equal(camera.Scale * GraphCamera.WheelZoomStep, zoomed.Scale, 10);
+        // İmlecin ALTINDAKİ dünya noktası sabit kalır; tx/ty piksele yuvarlandığı için ±0.5px band verilir.
+        Assert.InRange((cursor.X - zoomed.Tx) / zoomed.Scale, 950 - 0.5, 950 + 0.5);
+        Assert.InRange((cursor.Y - zoomed.Ty) / zoomed.Scale, 420 - 0.5, 420 + 0.5);
+    }
+
+    [Fact]
+    public void Manual_zoom_is_clamped_to_the_manual_band()
+    {
+        // Bandın DEĞERLERİ The_cinema_scale_values_are_pinned_to_their_spec_numbers'ta kilitlidir; burada
+        // ölçülen DAVRANIŞ: tavandaki bir kamera yakınlaşamaz, tabandaki bir kamera uzaklaşamaz.
+        Assert.Equal(GraphCamera.ManualMaxScale, GraphCamera.ZoomAt(
+            new CameraTransform(GraphCamera.ManualMaxScale, -500, -300),
+            new Point(300, 200), GraphCamera.WheelZoomStep, Panel, BigGraph).Scale);
+        Assert.Equal(GraphCamera.ManualMinScale, GraphCamera.ZoomAt(
+            new CameraTransform(GraphCamera.ManualMinScale, -10, -10),
+            new Point(300, 200), 1 / GraphCamera.WheelZoomStep, Panel, BigGraph).Scale);
+    }
+
+    [Fact]
+    public void Panning_moves_the_camera_and_stays_inside_the_12px_margins()
+    {
+        var camera = new CameraTransform(1.0, -500, -300);
+
+        var panned = GraphCamera.Pan(camera, new Vector(40, -25), Panel, BigGraph);
+        Assert.Equal(-460, panned.Tx);
+        Assert.Equal(-325, panned.Ty);
+        Assert.Equal(camera.Scale, panned.Scale); // pan ölçeğe DOKUNMAZ
+
+        // Kelepçe: dev bir delta 12px kenar payında durur (ClampPan tek kaynak — Compute ile AYNI sınır).
+        var clamped = GraphCamera.Pan(camera, new Vector(100_000, 100_000), Panel, BigGraph);
+        Assert.Equal(GraphCamera.PanMarginPx, clamped.Tx);
+        Assert.Equal(GraphCamera.PanMarginPx, clamped.Ty);
+    }
+
+    [Fact]
+    public void Zooming_out_below_the_fit_band_centers_the_axis_that_now_fits()
+    {
+        // [Task 3'ten devreden kapsam] ClampPan'in "eksen sığıyor → ortala" dalı bugüne dek YALNIZ fit
+        // ölçeğinde (Compute üzerinden) sınanmıştı. Manuel bant fit bandının ALTINA iner (0.45 < 0.68) ve
+        // aşağıdaki graf ancak orada panele sığar ⇒ dal fit DIŞI bir ölçekte de doğru çalışmalıdır.
+        var graph = new Size(2000, 800);
+        Assert.True(graph.Height * GraphCamera.FitScale(Panel, graph) > Panel.Height,
+            "fit ölçeğinde de sığıyor — 'yalnız manuel bantta ulaşılan dal' iddiası ölçülemez");
+
+        var panned = GraphCamera.Pan(
+            new CameraTransform(GraphCamera.ManualMinScale, -300, -50),
+            new Vector(100_000, 100_000), Panel, graph);
+
+        // Dikey eksen SIĞAR ⇒ 12px payı değil, ORTALAMA: (400 − 800×0.45)/2 = 20 (elle hesap).
+        Assert.Equal(20.0, panned.Ty);
+        Assert.Equal(GraphCamera.PanMarginPx, panned.Tx); // sığmayan eksen payında durur
+    }
 }

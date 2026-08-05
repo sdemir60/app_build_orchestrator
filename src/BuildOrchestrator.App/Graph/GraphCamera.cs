@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace BuildOrchestrator.App.Graph;
 
@@ -168,4 +168,25 @@ public static class GraphCamera
     /// <summary>JS <c>Math.round</c> paritesi: .5 HER ZAMAN yukarı (+∞ yönünde). .NET'in
     /// <c>Math.Round</c>'u banker's rounding yapar — prototiple sapmamak için kullanılmaz.</summary>
     public static double RoundPixels(double value) => Math.Floor(value + 0.5);
+
+    // ---------------------------------------------------------------- [sinema] manuel jestler (spec §3.4)
+
+    /// <summary>[sinema] Manuel pan: <paramref name="delta"/> EKRAN pikselidir (öteleme de ekran uzayındadır,
+    /// dolayısıyla ölçeğe bölünmez). Sonuç <see cref="ClampPan"/>'in sınırlarına oturur — kelepçe aritmetiği
+    /// TEK yerdedir, burada kopyalanmaz.</summary>
+    public static CameraTransform Pan(CameraTransform camera, Vector delta, Size viewport, Size graph) =>
+        ClampPan(viewport, graph, camera.Scale, camera.Tx + delta.X, camera.Ty + delta.Y);
+
+    /// <summary>[sinema] İmleç merkezli zoom: imlecin ALTINDAKİ dünya noktası sabit kalır — dünya noktası
+    /// <c>w = (cursor − t) / s</c>, yeni öteleme <c>t' = cursor − w·s'</c>. Ölçek otomatik banda değil MANUEL
+    /// banda (<see cref="ManualMinScale"/>–<see cref="ManualMaxScale"/>) kıstırılır; öteleme yine
+    /// <see cref="ClampPan"/>'den geçer, yani kullanıcı grafı kenar payının dışına süremez.</summary>
+    public static CameraTransform ZoomAt(
+        CameraTransform camera, Point cursor, double factor, Size viewport, Size graph)
+    {
+        double scale = Math.Clamp(camera.Scale * factor, ManualMinScale, ManualMaxScale);
+        double wx = (cursor.X - camera.Tx) / camera.Scale;
+        double wy = (cursor.Y - camera.Ty) / camera.Scale;
+        return ClampPan(viewport, graph, scale, cursor.X - wx * scale, cursor.Y - wy * scale);
+    }
 }

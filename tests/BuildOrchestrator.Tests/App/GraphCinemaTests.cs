@@ -27,7 +27,10 @@ public class GraphCinemaTests
             .Select(n => new GraphEdge(
                 nodes.First(m => m.Layer == n.Layer - 1).Name, n.Name))];
 
-    private static GraphView NewView() => GraphTestView.Realized(Panel, labelFontFamily: DsResources.MonoFontFamily);
+    /// <summary>Sinema testlerinin ölçülmüş view'ı (600×400 panel ⇒ 600×372 viewport: başlık 28px).
+    /// <see cref="GraphPanZoomTests"/> de kullanır — fixture tek yerde, kopya YASAK.</summary>
+    internal static GraphView NewView() =>
+        GraphTestView.Realized(Panel, labelFontFamily: DsResources.MonoFontFamily);
 
     // ---------------------------------------------------------------- kenar sisi kablajı
 

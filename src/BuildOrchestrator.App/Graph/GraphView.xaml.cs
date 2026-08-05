@@ -166,6 +166,18 @@ public partial class GraphView : UserControl
     private long _revealStartTicks;
     private long _revealEndTicks;
 
+    // ---------------------------------------------------------------- [sinema] manuel kamera (jestler, §3.4)
+    /// <summary>Kamera KULLANICIDA mı — otomatik hedefleme askıda (spec §3.5). Task 7 bunu 4sn'lik dönüş
+    /// kuralıyla geri kapatır.</summary>
+    private bool _manualCamera;
+    /// <summary>Zeminde sol tuş basılı; henüz sürükleme olmayabilir (eşik aşılmadıysa bu bir TIKLAMADIR).</summary>
+    private bool _panPressed;
+    /// <summary>Platform drag eşiği aşıldı — pan sürüyor.</summary>
+    private bool _dragging;
+    /// <summary>Son jest noktası, <c>Ground</c>'un EKRAN koordinatında (pan deltası da ekran uzayındadır).</summary>
+    private Point _panLast;
+    private long _lastManualInputTicks;
+
     public GraphView()
     {
         _motion = new MotionGate(this, latchFirst: true);
@@ -178,8 +190,29 @@ public partial class GraphView : UserControl
         World.RenderTransform = new TransformGroup { Children = { _cameraScale, _cameraTranslate } };
         World.RenderTransformOrigin = new Point(0, 0);
 
-        // Boş alana tıklama → seçim kalkar (düğüm tıklaması Handled=true yaptığından buraya ulaşmaz).
-        Ground.MouseLeftButtonDown += (_, _) => SelectedNode = null;
+        // [sinema] Jest kablosu. Sinema DIŞINDA boş alana tıklama seçimi DOWN anında kaldırır — bugünkü
+        // davranış birebir (spec §3.4; düğüm tıklaması Handled=true yaptığından buraya ulaşmaz). Sinemada aynı
+        // basış bir sürüklemenin başı olabileceği için kaldırma release'e taşınır (click-vs-drag ayrımı).
+        // Handler'lar İNCE KABUKTUR: mantığın tamamı internal seam'lerdedir (HandlePan*/HandleWheel) — headless
+        // testler gerçek mouse capture'a güvenemediği için onları doğrudan sürer.
+        Ground.MouseLeftButtonDown += (_, e) =>
+        {
+            if (!_cullEnabled) { SelectedNode = null; return; }
+            HandlePanStart(e.GetPosition(Ground));
+            Ground.CaptureMouse();
+        };
+        Ground.MouseMove += (_, e) => { if (_panPressed) HandlePanMove(e.GetPosition(Ground)); };
+        // Bitiş iki yoldan gelebilir: normal tuş bırakma ve capture'ın başka bir sebeple düşmesi (Alt+Tab,
+        // pencere kaybı — jest yarım kalmasın, el imleci ekranda unutulmasın). HandlePanEnd İDEMPOTENTTİR
+        // (_panPressed guard'ı), dolayısıyla ikisi peş peşe koşsa da jest bir kez biter.
+        Ground.MouseLeftButtonUp += (_, _) => { Ground.ReleaseMouseCapture(); HandlePanEnd(); };
+        Ground.LostMouseCapture += (_, _) => HandlePanEnd();
+        Ground.MouseWheel += (_, e) =>
+        {
+            if (!_cullEnabled) return; // sinema dışı: tekerlek bugünkü gibi bu panele ait DEĞİL
+            e.Handled = true;
+            HandleWheel(e.GetPosition(Ground), e.Delta);
+        };
         Ground.SizeChanged += (_, _) => ApplyCamera(animate: false);
 
         // [M-2] Canlı reduced-motion: OS ayarı koşu SIRASINDA değişirse akan dash ve nabız ANINDA durur/başlar
@@ -312,6 +345,10 @@ public partial class GraphView : UserControl
         _previousFocus = null;
         _previousScale = null;
         _hasCamera = false; // yeni topoloji → kamera hedefi baştan hesaplanır
+        // [sinema] Yeni topoloji manuel kamerayı da bitirir: kullanıcının gezdiği koordinatların yeni grafta
+        // karşılığı yoktur. Sürmekte olan bir jest varsa iptal edilir (el imleci ekranda kalmasın).
+        _manualCamera = false;
+        EndPanGesture();
         CurrentCamera = default;
         _scannedRegion = Rect.Empty;
         _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
@@ -1195,6 +1232,125 @@ public partial class GraphView : UserControl
     /// <see cref="RevealStagger.ReleaseIfCurrent"/>). Test bunu doğrudan çağırır (gerçek timer tick'i beklemeden).</summary>
     internal void ReleaseRevealHeroIfCurrent(int gen) => _reveal.ReleaseIfCurrent(gen);
 
+    // ---------------------------------------------------------------- [sinema] manuel jestler (spec §3.4)
+
+    /// <summary>
+    /// Zeminde sol tuş basıldı. Henüz hiçbir şey OLMAZ: bu basış bir tıklama da olabilir, bir sürüklemenin başı
+    /// da — ayrımı platform drag eşiği yapar (<see cref="HandlePanMove"/>).
+    ///
+    /// <para>İki kapı: jestler yalnız sinema modunda (<see cref="_cullEnabled"/> = sinema kapısı) çalışır ve
+    /// kamera hedefi HESAPLANMIŞ olmalıdır — <see cref="GraphCamera.Pan"/>/<see cref="GraphCamera.ZoomAt"/>
+    /// ikisi de MEVCUT kameradan türetir, ölçek 0 iken sonuç tanımsızdır.</para>
+    /// </summary>
+    internal void HandlePanStart(Point position)
+    {
+        if (!_cullEnabled || !_hasCamera) return;
+        _panPressed = true;
+        _dragging = false;
+        _panLast = position;
+    }
+
+    /// <summary>Sürükleme: eşik aşıldığı KAREDE manuel moda geçilir ve el imleci takılır; sonrasında her hareket
+    /// kamerayı ekran deltası kadar öteler. Cull manuel gezinme sırasında da çalışır (spec §3.4).</summary>
+    internal void HandlePanMove(Point position)
+    {
+        if (!_panPressed) return;
+
+        if (!_dragging)
+        {
+            var offset = position - _panLast;
+            // Platform drag eşiği: tıklama ile sürükleme ayrımı (spec §3.4). Eşik altındaki titreme bir
+            // TIKLAMADIR — kamerayı oynatmaz, manuel moda da sokmaz.
+            if (Math.Abs(offset.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(offset.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+            _dragging = true;
+            EnterManualCamera();
+            Ground.Cursor = Cursors.Hand; // el imleci YALNIZ sürüklerken (spec §3.4)
+        }
+
+        var delta = position - _panLast;
+        _panLast = position;
+        SnapCameraTo(GraphCamera.Pan(CurrentCamera, delta, ViewportSize, GraphSize));
+        UpdateMaterialization();
+    }
+
+    /// <summary>Bırakma. Eşik hiç aşılmadıysa bu bir TIKLAMADIR ⇒ bugünkü "boş alana tıkla → seçim kalkar"
+    /// davranışı burada (release'te) çalışır; aşıldıysa jest manuel girdi olarak damgalanır.</summary>
+    internal void HandlePanEnd()
+    {
+        if (!_panPressed) return;
+        bool wasDragging = _dragging;
+        EndPanGesture();
+
+        if (!wasDragging)
+        {
+            SelectedNode = null;
+            return;
+        }
+        NoteManualInput(Environment.TickCount64);
+    }
+
+    /// <summary>Wheel: imleç merkezli zoom (spec §3.4). Yön yalnız <paramref name="delta"/>'nın işaretinden
+    /// okunur — kademe çarpansaldır, dolayısıyla ileri/geri simetriktir.</summary>
+    internal void HandleWheel(Point cursor, int delta)
+    {
+        if (!_cullEnabled || !_hasCamera) return; // bkz. HandlePanStart'ın iki kapısı
+        EnterManualCamera();
+        double factor = delta > 0 ? GraphCamera.WheelZoomStep : 1 / GraphCamera.WheelZoomStep;
+        SnapCameraTo(GraphCamera.ZoomAt(CurrentCamera, cursor, factor, ViewportSize, GraphSize));
+        // Yeni görünür olan düğümler kurulur. Etiket kararı BURADA tazelenmez ve bu KASITLIDIR: etiketler
+        // kameranın ALTINDA yaşadığı için örtüşme ölçek-DEĞİŞMEZDİR (GraphLayout.LabelsFit) ⇒ zoom hiçbir
+        // etiket kararını değiştirmez. Yeni materyalize olan düğüm zaten MaterializeNode → ApplyLabelVisibility
+        // yolundan GÜNCEL kararı okur.
+        UpdateMaterialization();
+        NoteManualInput(Environment.TickCount64);
+    }
+
+    /// <summary>Jest durumunu ve el imlecini bırakır. Bırakma yolu (<see cref="HandlePanEnd"/>) ve yeni topoloji
+    /// (<see cref="SetGraph"/>) AYNI yerden temizler — kopya YASAK ve SetGraph sırasında sürmekte olan bir
+    /// sürükleme el imlecini ekranda bırakmamalıdır.</summary>
+    private void EndPanGesture()
+    {
+        _panPressed = false;
+        _dragging = false;
+        Ground.ClearValue(CursorProperty);
+    }
+
+    /// <summary>Manuel moda giriş: uçuştaki kamera animasyonu O ANKİ karede DONDURULUR (canlı değer okunup
+    /// animasyon bırakılır), sonrası kullanıcıya aittir. Zaten manuelse hiçbir şey yapmaz.</summary>
+    private void EnterManualCamera()
+    {
+        if (_manualCamera) return;
+        _manualCamera = true;
+        SnapCameraTo(LiveCamera); // argüman ÖNCE okunur: dondurulan değer ara karenin kendisidir
+        UpdateFollowPill();
+    }
+
+    /// <summary>Kamerayı ANİMASYONSUZ uygular — <see cref="ApplyCamera"/>'nın reduced-motion dalıyla AYNI yol
+    /// (o dal bu metodu çağırır; kopya YASAK).</summary>
+    private void SnapCameraTo(CameraTransform camera)
+    {
+        _cameraScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        _cameraScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _cameraTranslate.BeginAnimation(TranslateTransform.XProperty, null);
+        _cameraTranslate.BeginAnimation(TranslateTransform.YProperty, null);
+        _cameraScale.ScaleX = camera.Scale;
+        _cameraScale.ScaleY = camera.Scale;
+        _cameraTranslate.X = camera.Tx;
+        _cameraTranslate.Y = camera.Ty;
+        CurrentCamera = camera;
+        _hasCamera = true;
+    }
+
+    /// <summary>Son manuel girdinin damgası. <b>Task 7</b> buraya takip dönüşünün tek atımlık timer'ını ekler;
+    /// bu task'ta yalnız damga tutulur (<see cref="LastManualInputTicks"/> onu okur).</summary>
+    private void NoteManualInput(long nowTicks) => _lastManualInputTicks = nowTicks;
+
+    /// <summary>FOLLOW PAUSED pilinin görünürlüğü. <b>Task 7</b>'de gövde kazanır (pil XAML'i orada eklenir);
+    /// çağrı yeri burada kurulur ki o task yalnız gövdeyi doldursun.</summary>
+    private void UpdateFollowPill() { }
+
     // ---------------------------------------------------------------- kamera
 
     private void ApplyCamera(bool animate)
@@ -1213,6 +1369,15 @@ public partial class GraphView : UserControl
 
         var viewport = ViewportSize;
         if (viewport.Width <= 0 || viewport.Height <= 0) return;
+
+        // [sinema] Kamera KULLANICIDA: hiçbir otomatik hedefleme yapılmaz (spec §3.5). Askıya alınan yalnız
+        // HEDEFLEMEDİR — cull çalışmaya devam eder, çünkü panel bu arada büyümüş olabilir (SizeChanged) ve
+        // yeni görünür olan düğümler kurulmazsa kullanıcı boş şerit görürdü.
+        if (_manualCamera)
+        {
+            UpdateMaterialization();
+            return;
+        }
 
         // [G2] Odak TÜM modellerden hesaplanır — cull edilmiş bir building düğümü de frontier'e katılır, aksi
         // halde kamera görünmeyen bir cepheye hiç yönelmezdi (kendi kendini kilitleyen bir cull).
@@ -1254,14 +1419,9 @@ public partial class GraphView : UserControl
 
         if (!animationsEnabled)
         {
-            _cameraScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            _cameraScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-            _cameraTranslate.BeginAnimation(TranslateTransform.XProperty, null);
-            _cameraTranslate.BeginAnimation(TranslateTransform.YProperty, null);
-            _cameraScale.ScaleX = camera.Scale;
-            _cameraScale.ScaleY = camera.Scale;
-            _cameraTranslate.X = camera.Tx;
-            _cameraTranslate.Y = camera.Ty;
+            // [sinema] Animasyonsuz uygulama TEK yerdedir (kopya YASAK): manuel jestler de aynı metodu çağırır.
+            // CurrentCamera/_hasCamera'yı yukarıda zaten yazdık; SnapCameraTo'nun tekrarı idempotenttir.
+            SnapCameraTo(camera);
             return;
         }
 
@@ -1314,6 +1474,10 @@ public partial class GraphView : UserControl
     internal AnimationClock? ThickDashClock => _thickDashClock;
     internal CameraTransform CurrentCamera { get; private set; }
     internal bool LastCameraAnimated { get; private set; }
+    /// <summary>[sinema] Kamera kullanıcıda mı — otomatik hedefleme askıda (spec §3.5).</summary>
+    internal bool IsManualCamera => _manualCamera;
+    /// <summary>[sinema] Son manuel girdinin <c>TickCount64</c> damgası; Task 7'nin dönüş kuralı bundan sayar.</summary>
+    internal long LastManualInputTicks => _lastManualInputTicks;
     /// <summary>[M-5] Yalnız FRONTIER dalından gelen odak hatırlanır (8px eşiği yalnız orada geçerli).</summary>
     internal Point? PreviousFocus => _previousFocus;
     /// <summary>[sinema] Yalnız FRONTIER dalından gelen ölçek hatırlanır (0.05 eşiği yalnız orada geçerli) —
