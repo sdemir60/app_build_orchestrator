@@ -29,8 +29,9 @@
 
 param(
   [int]$DumpAscii = 0,
-  [switch]$FullArtAtSmallSizes,  # tani: 16/24'u de tam sanatla ciz (sadelestirmeyi ATLA)
-  [switch]$WithTile              # tani: near-black tile'i geri koy (varsayilan: SEFFAF)
+  [int[]]$ChevronOnlyAt = @(),   # tani: verilen boyutlarda yalnizca chevron ciz (varsayilan: HICBIRI — tam isaret)
+  [switch]$WithTile,             # tani: near-black tile'i geri koy (varsayilan: SEFFAF)
+  [double]$Padding = -1          # tani: kenar boslugunu gecici olarak degistir (-1 = varsayilani kullan)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,15 +44,19 @@ $StripDx    = 5.5       # <g transform="translate(5.5 0)">
 
 # 16/24'te tam sanat okunmuyor: serit yuksekligi 21/286 → 16px'te 1.18 piksel. Bu boyutlarda yalnizca chevron
 # cizilir (marka tanınırligini tasiyan tek ogedir; amber kontrasti near-black tile'da net kalir).
-# Yalniz 16px sadelestirilir. Tile kaldirilinca isaret tuvale oturdugu icin BUYUDU (serit yuksekligi 16px'te
-# 1.2 → 1.9 piksel, 24px'te 2.8) ve 24px'te bes serit ARTIK OKUNUYOR — olculdu. 16px'te hala karisik: seritler
-# ve chevron ust uste binip gurultuye donuyor, bu yuzden o tek boyut chevron'u yalniz cizer.
-$SmallSizes = @(16)
-# Sadelestirilmis + TILE'LI varyantta chevron'un tile yuksekligine orani (yalnizca -WithTile yolunda kullanilir).
+# TAM ISARET HER BOYUTTA — tepside de. Chevron-yalniz yol yalnizca tani icin durur (-ChevronOnlyAt).
+$SmallSizes = $ChevronOnlyAt
+# Chevron-yalniz + TILE'LI varyantta chevron'un tile yuksekligine orani (yalnizca o kombinasyonda kullanilir).
 $ChevronFill = 0.60
-# Seffaf (tile'siz) varyantta isaretin her kenarda biraktigi bosluk — tuval oraninda. Windows ikonu zaten
-# kendi etrafinda nefes payi birakir; bu, isaretin kenara yapismasini onleyen asgari paydir.
-$MarkPadding = 0.04
+
+# Seffaf varyantta isaretin her kenarda biraktigi bosluk (tuval orani). SIFIRA yakin: isaret 1.48:1 oranindadir
+# ve kare tuvale GENISLIGINDEN sigar — dikeyde tuvalin ~%67'sini kaplar, bu oranin kendi sonucudur (germek
+# bozulma olurdu). Dolayisiyla algilanan buyuklugu genislik belirler ve genislik sonuna kadar kullanilir.
+# Tam 0 degil: kenardaki yumusatma pikselleri kirpilmasin.
+$MarkPadding = if ($Padding -ge 0) { $Padding } else { 0.012 }
+
+# Bu boyuta kadar seritler HEDEF PIKSEL izgarasina oturtulur (bkz. Get-SnappedStripRect).
+$SnapBelow = 32
 
 function Rgb([string]$hex) {
   return [System.Windows.Media.Color]::FromRgb(
@@ -124,19 +129,51 @@ function New-ChevronBrush {
 $MarkBBox    = @{ X = 51.5;  Y = 83.0; W = 178.0; H = 120.0 }
 $ChevronBBox = @{ X = 145.9; Y = 83.0; W = 83.6;  H = 120.0 }
 
-# Verilen sinir kutusunu KARE tuvale oturtan olcek+oteleme'yi DrawingContext'e iter (Uniform, ortalanmis).
-# $pad: her kenarda birakilan bosluk (tuval oraninda).
-function Push-FitTransform($dc, $bbox, [double]$pad) {
+# Sinir kutusunu KARE tuvale oturtan Uniform olcek + ortalama oteleme (sanat uzayinda).
+function Get-FitParams($bbox, [double]$pad) {
   $avail = $ArtSize * (1.0 - 2.0 * $pad)
   $fit = [Math]::Min($avail / $bbox.W, $avail / $bbox.H)
-  $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (
-    (($ArtSize - $bbox.W * $fit) / 2.0), (($ArtSize - $bbox.H * $fit) / 2.0))))
-  $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($fit, $fit)))
+  return @{
+    Fit = $fit
+    Ox  = ($ArtSize - $bbox.W * $fit) / 2.0
+    Oy  = ($ArtSize - $bbox.H * $fit) / 2.0
+  }
+}
+
+# Ayni oturtmayi DrawingContext'e iter (egri geometriler icin — onlar piksele oturtulamaz).
+function Push-FitTransform($dc, $bbox, [double]$pad) {
+  $p = Get-FitParams $bbox $pad
+  $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($p.Ox, $p.Oy)))
+  $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($p.Fit, $p.Fit)))
   $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform (-$bbox.X, -$bbox.Y)))
   $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0)))
 }
 
 function Pop-FitTransform($dc) { $dc.Pop(); $dc.Pop(); $dc.Pop(); $dc.Pop() }
+
+# Bir seridin HEDEF PIKSEL uzayindaki dikdortgeni, kenarlari TAM piksele yuvarlanmis.
+#
+# Neden: 16px'te serit yuksekligi ~1.9 pikseldir. Yuvarlanmadan cizilirse her serit iki piksel satirina
+# yayilir, ikisi de yarim opaklikta cikar ve bes serit gri bir bulanikliga doner. Kenarlari tam piksele
+# oturtmak seritleri KESKIN yapar — kucuk raster ikonlarda standart yaklasim. Egri chevron ayni islemi
+# kaldirmaz, o oturtulmadan cizilir (seritlere degmedigi icin hizalama sorunu olmaz).
+function Get-SnappedStripRect($strip, $bbox, [double]$pad, [double]$scale) {
+  $p = Get-FitParams $bbox $pad
+  $ax = $strip.X + $StripDx
+  $x0 = ((($ax - $bbox.X) * $p.Fit) + $p.Ox) * $scale
+  $y0 = ((($strip.Y - $bbox.Y) * $p.Fit) + $p.Oy) * $scale
+  $x1 = $x0 + ($strip.W * $p.Fit * $scale)
+  $y1 = $y0 + ($strip.H * $p.Fit * $scale)
+
+  $left = [Math]::Round($x0); $right = [Math]::Round($x1)
+  $top = [Math]::Round($y0);  $bottom = [Math]::Round($y1)
+  if ($right - $left -lt 1) { $right = $left + 1 }
+  if ($bottom - $top -lt 1) { $bottom = $top + 1 }
+
+  $w = $right - $left; $h = $bottom - $top
+  $r = [Math]::Min($strip.R * $p.Fit * $scale, [Math]::Min($w, $h) / 2.0)
+  return @{ Rect = (New-Object System.Windows.Rect ($left, $top, $w, $h)); R = $r }
+}
 
 # Kaynak sanati $size'a rasterlestirir.
 #   $simplify — yalnizca chevron (kucuk boyutlar; bes serit o olcekte okunmuyor)
@@ -166,15 +203,27 @@ function New-RenderedBitmap([int]$size, [bool]$simplify, [bool]$withTile) {
   if (-not $simplify) {
     $stripVisual = New-Object System.Windows.Media.DrawingVisual
     $dc = $stripVisual.RenderOpen()
-    $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($scale, $scale)))
-    if ($null -eq $pad) { $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0))) }
-    else { Push-FitTransform $dc $bbox $pad }
-    foreach ($s in $Strips) {
-      $dc.DrawRoundedRectangle($StripBrushes[$s.Brush], $null,
-        (New-Object System.Windows.Rect ($s.X, $s.Y, $s.W, $s.H)), $s.R, $s.R)
+    # Kucuk boyutlarda seritler HEDEF PIKSEL uzayinda, kenarlari tam piksele oturtularak cizilir; buyuk
+    # boyutlarda oturtmaya gerek yok (serit zaten cok piksel yuksekliginde) ve sanat uzayi daha sadiktir.
+    $snapStrips = ($null -ne $pad) -and ($size -le $SnapBelow)
+    if ($snapStrips) {
+      foreach ($s in $Strips) {
+        $r = Get-SnappedStripRect $s $bbox $pad $scale
+        $dc.DrawRoundedRectangle($StripBrushes[$s.Brush], $null, $r.Rect, $r.R, $r.R)
+      }
     }
-    if ($null -eq $pad) { $dc.Pop() } else { Pop-FitTransform $dc }
-    $dc.Pop(); $dc.Close()
+    else {
+      $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform ($scale, $scale)))
+      if ($null -eq $pad) { $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform ($StripDx, 0))) }
+      else { Push-FitTransform $dc $bbox $pad }
+      foreach ($s in $Strips) {
+        $dc.DrawRoundedRectangle($StripBrushes[$s.Brush], $null,
+          (New-Object System.Windows.Rect ($s.X, $s.Y, $s.W, $s.H)), $s.R, $s.R)
+      }
+      if ($null -eq $pad) { $dc.Pop() } else { Pop-FitTransform $dc }
+      $dc.Pop()
+    }
+    $dc.Close()
     # Golge YALNIZ tile'da: seffaf bir ikonda siyah drop-shadow arkadaki taskbar'a bulasir.
     if ($withTile) {
       $shadow = New-Object System.Windows.Media.Effects.DropShadowEffect
@@ -290,8 +339,7 @@ function Save-Ico([string]$name, $frames) {
 }
 
 function Get-Frame([int]$size) {
-  $simplify = (-not $FullArtAtSmallSizes) -and ($SmallSizes -contains $size)
-  return New-RenderedBitmap $size $simplify ([bool]$WithTile)
+  return New-RenderedBitmap $size ($SmallSizes -contains $size) ([bool]$WithTile)
 }
 
 # --- tani modu: pikselleri ASCII olarak dokumle (dosya yazmaz) ---
