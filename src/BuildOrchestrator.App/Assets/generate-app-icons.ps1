@@ -30,7 +30,8 @@
 param(
   [int]$DumpAscii = 0,
   [int[]]$ChevronOnlyAt = @(),   # tani: verilen boyutlarda yalnizca chevron ciz (varsayilan: HICBIRI — tam isaret)
-  [switch]$WithTile              # tani: near-black tile'i geri koy (varsayilan: SEFFAF)
+  [switch]$WithTile,             # tani: near-black tile'i geri koy (varsayilan: SEFFAF)
+  [double]$Padding = -1          # tani: kenar boslugunu gecici olarak degistir (-1 = varsayilani kullan)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,7 +53,7 @@ $ChevronFill = 0.60
 # ve kare tuvale GENISLIGINDEN sigar — dikeyde tuvalin ~%67'sini kaplar, bu oranin kendi sonucudur (germek
 # bozulma olurdu). Dolayisiyla algilanan buyuklugu genislik belirler ve genislik sonuna kadar kullanilir.
 # Tam 0 degil: kenardaki yumusatma pikselleri kirpilmasin.
-$MarkPadding = 0.012
+$MarkPadding = if ($Padding -ge 0) { $Padding } else { 0.012 }
 
 # Bu boyuta kadar seritler HEDEF PIKSEL izgarasina oturtulur (bkz. Get-SnappedStripRect).
 $SnapBelow = 32
