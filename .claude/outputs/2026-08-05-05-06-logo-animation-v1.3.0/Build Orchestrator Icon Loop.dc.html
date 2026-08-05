@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  html, body { margin: 0; padding: 0; }
+  a { color: #F1AB2E; text-decoration: none; }
+  a:hover { color: #FFD27A; }
+  @keyframes bo-chevron {
+    0% { transform: translateX(-170px); opacity: 0; animation-timing-function: cubic-bezier(.32,.5,.4,1) }
+    3.33% { transform: translateX(-170px); animation-timing-function: cubic-bezier(.14,.62,.2,1) }
+    10% { opacity: 1 }
+    38.33%, 70% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.34,0,.68,.6) }
+    82% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    93.33%, 100% { transform: translateX(110px); opacity: 0 }
+  }
+  @keyframes bo-sweep {
+    0%, 3.33% { transform: translateX(-170px); animation-timing-function: cubic-bezier(.14,.62,.2,1) }
+    38.33%, 70% { transform: translateX(0); animation-timing-function: cubic-bezier(.34,0,.68,.6) }
+    93.33%, 100% { transform: translateX(260px) }
+  }
+  @keyframes bo-amber {
+    0%, 6.67% { transform: translateX(-89px); opacity: 1; animation-timing-function: cubic-bezier(.16,.7,.22,1) }
+    39.33%, 71% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.42,0,.75,.5) }
+    81.33% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    92.67%, 100% { transform: translateX(80px); opacity: 0 }
+  }
+  @keyframes bo-white {
+    0%, 8.67% { transform: translateX(-72px); opacity: 1; animation-timing-function: cubic-bezier(.12,.66,.18,1) }
+    40.67%, 72.5% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.42,0,.75,.5) }
+    83.33% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    94.67%, 100% { transform: translateX(88px); opacity: 0 }
+  }
+  @keyframes bo-topdark {
+    0%, 10% { transform: translateX(-43px); opacity: 1; animation-timing-function: cubic-bezier(.16,.7,.22,1) }
+    42%, 74.17% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.45,0,.78,.52) }
+    85% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    96.33%, 100% { transform: translateX(142px); opacity: 0 }
+  }
+  @keyframes bo-silver {
+    0%, 12% { transform: translateX(-35px); opacity: 1; animation-timing-function: cubic-bezier(.12,.66,.18,1) }
+    43.33%, 75.83% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.45,0,.78,.52) }
+    86.67% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    98%, 100% { transform: translateX(128px); opacity: 0 }
+  }
+  @keyframes bo-middark {
+    0%, 13.33% { transform: translateX(-21px); opacity: 1; animation-timing-function: cubic-bezier(.16,.7,.22,1) }
+    44.67%, 77.5% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.42,0,.75,.5) }
+    88.67% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    100% { transform: translateX(160px); opacity: 0 }
+  }
+</style>
+</helmet>
+
+<div ref="{{ stageRef }}" style="min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 40px; padding: 72px 24px; background: #E9E9E6; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">
+
+  <div ref="{{ iconRef }}" style="line-height: 0;">
+    <svg width="578" height="384" viewBox="-70 0 430 286" style="display: block; overflow: visible;">
+      <defs>
+        <linearGradient id="stripTopDark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#54545C"></stop>
+          <stop offset="0.20" stop-color="#494950"></stop>
+          <stop offset="0.50" stop-color="#414147"></stop>
+          <stop offset="0.80" stop-color="#3A3A42"></stop>
+          <stop offset="1" stop-color="#44444B"></stop>
+        </linearGradient>
+        <linearGradient id="stripTopBlue" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#FFB52E"></stop>
+          <stop offset="0.20" stop-color="#F7AE25"></stop>
+          <stop offset="0.50" stop-color="#F1AB2E"></stop>
+          <stop offset="0.80" stop-color="#EDA10F"></stop>
+          <stop offset="1" stop-color="#D9910D"></stop>
+        </linearGradient>
+        <linearGradient id="stripMiddleDark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3A3A42"></stop>
+          <stop offset="0.20" stop-color="#313136"></stop>
+          <stop offset="0.50" stop-color="#2A2A30"></stop>
+          <stop offset="1" stop-color="#202024"></stop>
+        </linearGradient>
+        <linearGradient id="stripWhite" x1="0" y1="0" x2="0.12" y2="1">
+          <stop offset="0" stop-color="#EDEDEE"></stop>
+          <stop offset="0.18" stop-color="#DADADD"></stop>
+          <stop offset="0.50" stop-color="#C8C8CD"></stop>
+          <stop offset="0.80" stop-color="#B9B9BF"></stop>
+          <stop offset="1" stop-color="#A9A9B0"></stop>
+        </linearGradient>
+        <linearGradient id="stripSilver" x1="0" y1="0" x2="0.12" y2="1">
+          <stop offset="0" stop-color="#A9A9B0"></stop>
+          <stop offset="0.20" stop-color="#929299"></stop>
+          <stop offset="0.50" stop-color="#85858D"></stop>
+          <stop offset="0.80" stop-color="#76767E"></stop>
+          <stop offset="1" stop-color="#83838B"></stop>
+        </linearGradient>
+        <linearGradient id="arrow" gradientUnits="userSpaceOnUse" x1="156" y1="82" x2="177" y2="204">
+          <stop offset="0" stop-color="#FFB52E"></stop>
+          <stop offset="0.13" stop-color="#F9AE25"></stop>
+          <stop offset="0.26" stop-color="#F4A91D"></stop>
+          <stop offset="0.38" stop-color="#EDA10F"></stop>
+          <stop offset="0.51" stop-color="#DE940D"></stop>
+          <stop offset="0.64" stop-color="#CF880C"></stop>
+          <stop offset="0.76" stop-color="#B87A0B"></stop>
+          <stop offset="0.89" stop-color="#A66D09"></stop>
+          <stop offset="1" stop-color="#8B5907"></stop>
+        </linearGradient>
+        <filter id="stripShadow" x="-40%" y="-60%" width="300%" height="220%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2.4" flood-color="#000000" flood-opacity="0.3"></feDropShadow>
+        </filter>
+        <filter id="arrowShadow" x="-40%" y="-40%" width="190%" height="190%">
+          <feDropShadow dx="0" dy="2.6" stdDeviation="2.8" flood-color="#000000" flood-opacity="0.32"></feDropShadow>
+        </filter>
+        <clipPath id="sweep">
+          <path d="M -600 -30 L 158.5 -30 L 158.5 83 L 147 95 L 152 104 L 186 140 L 186 148 L 151 184 L 148 196 L 158.5 203 L 158.5 320 L -600 320 Z" style="animation: bo-sweep 3s linear infinite both;"></path>
+        </clipPath>
+      </defs>
+
+      <g clip-path="url(#sweep)">
+        <g transform="translate(5.5 0)" filter="url(#stripShadow)">
+          <rect x="68" y="83" width="35" height="21" rx="10.5" fill="url(#stripTopDark)" style="animation: bo-topdark 3s linear infinite both;"></rect>
+          <rect x="114" y="83" width="51" height="21" rx="10.5" fill="url(#stripTopBlue)" style="animation: bo-amber 3s linear infinite both;"></rect>
+          <rect x="46" y="131" width="39" height="21" rx="10.5" fill="url(#stripMiddleDark)" style="animation: bo-middark 3s linear infinite both;"></rect>
+          <rect x="97" y="131" width="60" height="22" rx="11" fill="url(#stripWhite)" style="animation: bo-white 3s linear infinite both;"></rect>
+          <rect x="60" y="178" width="57" height="21" rx="10.5" fill="url(#stripSilver)" style="animation: bo-silver 3s linear infinite both;"></rect>
+        </g>
+      </g>
+
+      <g transform="translate(5.5 0)" filter="url(#arrowShadow)">
+        <path d="M151 83 L171.5 83 C176.1 83 179.2 85.1 182.3 88.5 L219.8 131.5 C222.7 134.9 224 138.3 224 142.4 C224 146.5 222.7 149.8 219.8 153.2 L179.1 198.3 C176.0 201.6 172.3 203 168.0 203 L151.0 203 C145.8 203 142.1 200.4 140.5 196.4 C138.8 192.1 140.2 187.8 143.5 184.2 L177.8 146.2 C180.6 143.2 180.8 140.8 178.2 137.8 L144.7 103.7 C141.8 100.7 140.4 96.9 140.4 93.0 C140.4 87.5 145.1 83 151 83 Z" fill="url(#arrow)" style="animation: bo-chevron 3s linear infinite both;"></path>
+      </g>
+    </svg>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 18px;">
+    <span data-caption="1" style="font-size: 12px; letter-spacing: .08em; color: #8A8A82; text-transform: uppercase;">build orchestrator — 3s kesintisiz döngü · zeminsiz</span>
+    <button onClick="{{ replay }}" style="appearance: none; border: 1px solid #C9C9C2; background: #F5F5F2; color: #55554F; font-family: inherit; font-size: 12px; letter-spacing: .06em; padding: 9px 16px; border-radius: 999px; cursor: pointer;" style-hover="border-color: #EDA10F; color: #A66D09;">TEKRAR OYNAT</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 1000, &quot;height&quot;: 640 },
+  &quot;speed&quot;: { &quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 1, &quot;min&quot;: 0.4, &quot;max&quot;: 2, &quot;step&quot;: 0.1, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Animasyon&quot; },
+  &quot;loop&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Animasyon&quot; },
+  &quot;stage&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;Açık&quot;, &quot;Damalı&quot;, &quot;Koyu&quot;], &quot;default&quot;: &quot;Açık&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Sahne&quot; }
+}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.stageRef = React.createRef();
+    this.iconRef = React.createRef();
+  }
+  componentDidMount() { this.apply(); }
+  componentDidUpdate() { this.apply(); }
+
+  anims() {
+    const el = this.iconRef.current;
+    if (!el || !el.getAnimations) return [];
+    return el.getAnimations({ subtree: true });
+  }
+
+  apply() {
+    const speed = this.props.speed ?? 1;
+    const loop = this.props.loop ?? true;
+    const stage = this.props.stage ?? 'Açık';
+
+    const st = this.stageRef.current;
+    if (st) {
+      const looks = {
+        'Açık': { bg: '#E9E9E6', img: 'none', fg: '#8A8A82', btnB: '#C9C9C2', btnF: '#55554F', btnBg: '#F5F5F2' },
+        'Koyu': { bg: '#16161A', img: 'none', fg: '#6E6E78', btnB: '#33333B', btnF: '#C8C8CD', btnBg: '#1E1E23' },
+        'Damalı': {
+          bg: '#D8D8D4',
+          img: 'linear-gradient(45deg, #C4C4BF00 75%, #C4C4BF 75%), linear-gradient(45deg, #C4C4BF 25%, #C4C4BF00 25%)',
+          fg: '#6E6E68', btnB: '#B4B4AE', btnF: '#44443F', btnBg: '#EFEFEC'
+        }
+      };
+      const look = looks[stage] || looks['Açık'];
+      st.style.background = look.bg;
+      st.style.backgroundImage = look.img;
+      st.style.backgroundSize = stage === 'Damalı' ? '24px 24px' : 'auto';
+      st.style.backgroundPosition = stage === 'Damalı' ? '0 0, 12px 12px' : '0 0';
+      const cap = st.querySelector('[data-caption]');
+      if (cap) cap.style.color = look.fg;
+      const btn = st.querySelector('button');
+      if (btn) {
+        btn.style.borderColor = look.btnB;
+        btn.style.color = look.btnF;
+        btn.style.background = look.btnBg;
+      }
+    }
+
+    this.anims().forEach(a => {
+      a.playbackRate = speed;
+      try { a.effect.updateTiming({ iterations: loop ? Infinity : 1, fill: 'both' }); } catch (e) {}
+    });
+  }
+
+  replay() {
+    this.anims().forEach(a => { a.currentTime = 0; a.play(); });
+  }
+
+  renderVals() {
+    return {
+      stageRef: this.stageRef,
+      iconRef: this.iconRef,
+      replay: () => this.replay()
+    };
+  }
+}
+</script>
+</body>
+</html>
