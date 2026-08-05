@@ -345,11 +345,12 @@ public partial class GraphView : UserControl
                 Bounds = GraphCulling.NodeBounds(center),
                 // Açılış kararı da AYNI kaynaktan okunur — gerekçe KOPYA YASAĞI, muafiyet DEĞİL. [fix round 2]
                 // Ölçüldü: muafiyet kolunun buradaki payı GÖZLENEBİLİR değildir (o kolu buradan düşüren mutant
-                // tüm süiti yeşil bırakıyor), çünkü ShowsLabel'ı okuyan tek yer BuildNodeVisual'dır ve onu
-                // yalnız MaterializeNode çağırır — hemen ardından da ApplyLabelVisibility kararın TAMAMINI
-                // yeniden uygular, yani düğüm daha ilk kareye çıkmadan doğru hâline oturur. Buraya ikinci,
-                // FARKLI bir predicate yazmak ise gerçek bir kopya olurdu; katman kolu ise burada gözlenebilir
-                // (bu kararı sabit `true` yapan mutant sekiz testi düşürüyor).
+                // tüm süiti yeşil bırakıyor), çünkü kararı GÖRSELE çeviren tek yer BuildNodeVisual'dır (tek
+                // çağıranı MaterializeNode) ve aynı ifade bloğunda ApplyLabelVisibility kararın TAMAMINI
+                // yeniden uygular — araya bir render turu girmez. Arada koşan tek okuyucu ApplyNodeSelection'ın
+                // Label boyamasıdır, o da nötrdür: EnsureLabel fırçayı kendisi _selectedNode'dan seçer. Buraya
+                // ikinci, FARKLI bir predicate yazmak ise gerçek bir kopya olurdu; katman kolu ise burada
+                // gözlenebilir (bu kararı sabit `true` yapan mutant sekiz testi düşürüyor).
                 ShowsLabel = ShowsLabelFor(node),
             };
             _slots[node.Name] = slot;

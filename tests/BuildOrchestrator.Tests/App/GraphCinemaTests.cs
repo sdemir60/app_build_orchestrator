@@ -443,7 +443,7 @@ public class GraphCinemaTests
     }
 
     [StaFact]
-    public void A_node_materialised_before_the_first_camera_target_still_lands_on_the_right_decision()
+    public void A_node_materialised_before_the_first_camera_target_lands_on_the_right_decision_and_gives_the_name_back_when_the_selection_moves()
     {
         // ESKİ İDDİA (af6f261 · A_node_materialised_before_the_first_camera_target_keeps_the_static_label_
         // decision): "kamera hedefi yokken ölçek 0'dır, ölçek kararı verilemez ⇒ !_hasCamera guard'ı statik
@@ -466,7 +466,7 @@ public class GraphCinemaTests
         Assert.Null(visual.Body.ToolTip);
 
         // ...ve seçim BAŞKA bir düğüme geçtiğinde adını GERİ BIRAKIR. [fix round 2 · Important #1] Bu, aynı
-        // hunimin İKİNCİ kesiğidir: ApplyCamera iki erken dönüşle başlar (slot yok / viewport ölçülmemiş) ve
+        // huninin İKİNCİ kesiğidir: ApplyCamera iki erken dönüşle başlar (slot yok / viewport ölçülmemiş) ve
         // MaterializeSelection viewport'a BAKMADAN düğüm kurduğu için bu rejimde materyalize düğüm gerçekten
         // vardır. Karar viewport okumaz — dolayısıyla o guard'ların da ÜSTÜNDE tazelenmelidir. (İlk gerçek
         // SizeChanged kendini onarırdı, ama kural kuraldır: muafiyet biten düğüm adını taşımaya devam edemez.)
