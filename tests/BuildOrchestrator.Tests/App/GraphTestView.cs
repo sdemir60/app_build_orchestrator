@@ -67,4 +67,17 @@ internal static class GraphTestView
         view.Arrange(new Rect(new Point(0, 0), size));
         return view;
     }
+
+    /// <summary>Sized + <c>UpdateLayout</c>: cull/etiket/kamera kablajını gerçek yerleşimle test eden
+    /// STA testlerinin kurulumu (GraphCullTests'in yerel Layout deseni; artık ortak).</summary>
+    public static GraphView Realized(
+        Size size,
+        Func<bool>? animationsEnabled = null,
+        IMotionSettings? motion = null,
+        FontFamily? labelFontFamily = null)
+    {
+        var view = Sized(size, animationsEnabled, motion, labelFontFamily);
+        view.UpdateLayout();
+        return view;
+    }
 }

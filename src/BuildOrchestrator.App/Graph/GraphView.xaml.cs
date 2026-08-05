@@ -910,7 +910,8 @@ public partial class GraphView : UserControl
             source?.Model.HasDepIssue ?? false,
             target?.Model.Status ?? GraphStatus.Discovered,
             touchesSelection,
-            _selectedNode is not null);
+            _selectedNode is not null,
+            fogged: _cullEnabled); // [sinema] kapı = cull kapısı (FullDetailMaxNodes) — spec §3.0
 
         // "Her tick'te full binding refresh yapma" (feasibility §3.4): stil DEĞİŞMEDİYSE fırça/dash/clock
         // kablajına hiç dokunulmaz. EdgeStyle bir record'dur ve Dash alanı daima aynı statik örnektir

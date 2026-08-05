@@ -638,7 +638,7 @@ public class GraphRenderTests
         Assert.Equal(0.25, view.NodeVisuals["OSYS.Web.Portal"].Body.Opacity);
 
         var untouched = view.EdgeVisuals.Single(e => e.Model.From == "OSYS.Base");
-        Assert.Equal(0.16, untouched.Path.Opacity);
+        Assert.Equal(EdgeStyleResolver.DimmedOpacity, untouched.Path.Opacity);
         var touching = view.EdgeVisuals.Single(e => e.Model.To == "OSYS.Server.Api");
         Assert.Equal(1.0, touching.Path.Opacity);
         Assert.Equal(1.6, touching.Path.StrokeThickness);
