@@ -83,6 +83,10 @@ public class GraphCinemaTests
         view.UpdateStatuses(WithStatus(nodes, "N0", GraphStatus.Building));
 
         view.UpdateStatuses(nodes); // frontier bitti
+        // Ölçek TAM BURADA kuşbakışına döner (takip ölçeği view'da yapışıp kalmaz) — settled'dan ÖNCE ölçülür,
+        // aksi halde bu iddia hiçbir adımda test edilmiş olmazdı.
+        Assert.Equal(GraphCamera.FitScale(view.ViewportSize, view.GraphSize), view.CurrentCamera.Scale);
+
         view.IsSettled = true;
 
         Assert.Equal(GraphCamera.FitScale(view.ViewportSize, view.GraphSize), view.CurrentCamera.Scale);
@@ -95,6 +99,8 @@ public class GraphCinemaTests
         var view = NewView();
         view.SetGraph(nodes, ChainEdges(nodes));
         double before = view.CurrentCamera.Scale;
+        // "Sabit" yetmez, DOĞRU değerde sabit olmalı: küçük grafın kuşbakışı fit'e oturduğu da pinlenir.
+        Assert.Equal(GraphCamera.FitScale(view.ViewportSize, view.GraphSize), before);
 
         view.UpdateStatuses(WithStatus(nodes, "N0", GraphStatus.Building));
 
@@ -111,5 +117,44 @@ public class GraphCinemaTests
         view.SelectedNode = "N3";
 
         Assert.Equal(GraphCamera.SelectionScale, view.CurrentCamera.Scale);
+    }
+
+    [StaFact]
+    public void Only_a_FRONTIER_scale_is_remembered_so_it_cannot_suppress_the_next_frontier_retarget()
+    {
+        // [sinema] 0.05'lik "yeniden ölçekleme" eşiği YALNIZ frontier dalında uygulanır
+        // (GraphCamera.ResolveScale) — GraphRenderTests.Only_a_FRONTIER_focus_is_remembered... testinin ölçek
+        // eşi. Seçimden sızacak 1.1, ilk frontier hedefi [1.05, 1.15]'e düşerse onu eşiğin altında kalarak
+        // BASTIRIR ve kamera cepheye hiç yönelmez; bu yüzden yalnız frontier ölçeği saklanır.
+        var nodes = BigNodes();
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+        Assert.Null(view.PreviousScale); // seçim yok + frontier yok → kuşbakışı fit, HATIRLANMAZ
+
+        view.UpdateStatuses(WithStatus(nodes, "N0", GraphStatus.Building));
+        Assert.Equal(GraphCamera.FollowMaxScale, view.PreviousScale); // frontier → hatırlanır
+
+        view.SelectedNode = "N3";
+        Assert.Null(view.PreviousScale); // seçim dalı → HATIRLANMAZ
+
+        view.SelectedNode = null;
+        Assert.Equal(GraphCamera.FollowMaxScale, view.PreviousScale); // frontier yeniden hedeflenir
+
+        view.UpdateStatuses(nodes); // frontier boşaldı → kuşbakışı fit
+        Assert.Null(view.PreviousScale);
+    }
+
+    [StaFact]
+    public void A_small_graph_never_latches_a_follow_scale_the_cinema_gate_closes_the_latch_too()
+    {
+        var nodes = BigNodes(GraphView.FullDetailMaxNodes); // tam sınırda: sinema KAPALI
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+
+        view.UpdateStatuses(WithStatus(nodes, "N0", GraphStatus.Building));
+
+        // Sinema dışında ölçek zaten hep fit'tir; latch'in de HİÇ kurulmaması, bayat bir fit değerinin
+        // graf sinema bandına büyüdüğünde ilk frontier hedefini bastıramamasını garanti eder.
+        Assert.Null(view.PreviousScale);
     }
 }

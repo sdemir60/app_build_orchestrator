@@ -1188,6 +1188,9 @@ public partial class GraphView : UserControl
     internal bool LastCameraAnimated { get; private set; }
     /// <summary>[M-5] Yalnız FRONTIER dalından gelen odak hatırlanır (8px eşiği yalnız orada geçerli).</summary>
     internal Point? PreviousFocus => _previousFocus;
+    /// <summary>[sinema] Yalnız FRONTIER dalından gelen ölçek hatırlanır (0.05 eşiği yalnız orada geçerli) —
+    /// <see cref="PreviousFocus"/>'un ölçek eşi. Sinema kapalıyken HİÇ latch'lenmez.</summary>
+    internal double? PreviousScale => _previousScale;
     internal string HeaderCountsText => CountsText.Text;
     internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;
     internal bool IsEmptyStateVisible => EmptyState.Visibility == Visibility.Visible;
