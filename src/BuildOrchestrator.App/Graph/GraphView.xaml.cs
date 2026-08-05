@@ -132,6 +132,9 @@ public partial class GraphView : UserControl
     private HashSet<string> _neighbourSet = new(StringComparer.Ordinal);
     private bool _isSettled;
     private Point? _previousFocus;
+    /// <summary>[sinema] YALNIZ frontier dalından gelen ölçek hedefi hatırlanır (Zeno eşiği yalnız orada
+    /// geçerlidir) — <c>_previousFocus</c> sözleşmesinin ölçek eşi.</summary>
+    private double? _previousScale;
     private ClockGroup? _dashClockRoot;
     private AnimationClock? _thinDashClock;
     private AnimationClock? _thickDashClock;
@@ -301,6 +304,7 @@ public partial class GraphView : UserControl
         _neighbours.Clear();
         _flowingEdges.Clear();
         _previousFocus = null;
+        _previousScale = null;
         _hasCamera = false; // yeni topoloji → kamera hedefi baştan hesaplanır
         CurrentCamera = default;
         _scannedRegion = Rect.Empty;
@@ -1096,7 +1100,13 @@ public partial class GraphView : UserControl
         bool focusCameFromFrontier = selected is null && building.Count > 0;
         _previousFocus = focusCameFromFrontier ? focus : null;
 
-        var camera = GraphCamera.Compute(viewport, GraphSize, focus);
+        // [sinema] Ölçek de hedefin parçasıdır (spec §3.1). Sinema dışında ResolveScale = FitScale ⇒ birebir
+        // bugünkü davranış (yapısal garanti, GraphCinemaTests pinler).
+        double scale = GraphCamera.ResolveScale(
+            viewport, GraphSize, _cullEnabled, selected, building, _isSettled, _previousScale);
+        _previousScale = _cullEnabled && focusCameFromFrontier ? scale : null;
+
+        var camera = GraphCamera.Compute(viewport, GraphSize, focus, scale);
         // Hedef DEĞİŞMEDİYSE hiçbir animasyon yeniden başlatılmaz: koşarken UpdateStatuses saniyede birkaç kez
         // çağrılır ve aynı hedefe her seferinde yeni bir 460ms geçişi başlatmak uçuştaki geçişi sürekli
         // "yeniden doğurur" (Zeno etkisi — kamera hedefe hiç oturmaz).

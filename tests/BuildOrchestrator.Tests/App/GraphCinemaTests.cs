@@ -53,4 +53,63 @@ public class GraphCinemaTests
         Assert.False(view.IsCullEnabled);
         Assert.Equal(0.8, view.EdgeVisuals.First().Path.Opacity);
     }
+
+    // ---------------------------------------------------------------- follow-zoom kablajı
+
+    /// <summary>Tek düğümün statüsünü değiştirir — GraphPanZoomTests de kullanır (fixture tek yerde).</summary>
+    internal static IReadOnlyList<GraphNode> WithStatus(
+        IReadOnlyList<GraphNode> nodes, string name, GraphStatus status) =>
+        [.. nodes.Select(n => n.Name == name ? n with { Status = status } : n)];
+
+    [StaFact]
+    public void A_building_frontier_zooms_the_camera_into_the_follow_band()
+    {
+        var nodes = BigNodes();
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+
+        view.UpdateStatuses(WithStatus(nodes, "N0", GraphStatus.Building));
+
+        // Tek düğümlük frontier tavana çerçevelenir (saf tarafı Task 3 pinledi; burada KABLAJ pinlenir).
+        Assert.Equal(GraphCamera.FollowMaxScale, view.CurrentCamera.Scale);
+    }
+
+    [StaFact]
+    public void Settled_returns_the_camera_to_the_overview_fit()
+    {
+        var nodes = BigNodes();
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+        view.UpdateStatuses(WithStatus(nodes, "N0", GraphStatus.Building));
+
+        view.UpdateStatuses(nodes); // frontier bitti
+        view.IsSettled = true;
+
+        Assert.Equal(GraphCamera.FitScale(view.ViewportSize, view.GraphSize), view.CurrentCamera.Scale);
+    }
+
+    [StaFact]
+    public void A_small_graph_never_changes_scale_when_building_todays_behavior_pinned()
+    {
+        var nodes = BigNodes(GraphView.FullDetailMaxNodes);
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+        double before = view.CurrentCamera.Scale;
+
+        view.UpdateStatuses(WithStatus(nodes, "N0", GraphStatus.Building));
+
+        Assert.Equal(before, view.CurrentCamera.Scale); // sinema dışı: ölçek fit'te sabit
+    }
+
+    [StaFact]
+    public void A_selection_zooms_to_the_selection_scale_in_cinema()
+    {
+        var nodes = BigNodes();
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+
+        view.SelectedNode = "N3";
+
+        Assert.Equal(GraphCamera.SelectionScale, view.CurrentCamera.Scale);
+    }
 }
