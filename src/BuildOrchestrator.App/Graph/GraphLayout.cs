@@ -72,8 +72,8 @@ public static class GraphLayout
     public const double LabelHeight = 14.0;
 
     /// <summary>
-    /// [G2/LOD · fix round 1] Bir katmanın ETİKETLERİ kurulur mu: komşu iki etiket <b>gerçekten</b> örtüşüyor
-    /// mu.
+    /// [G2/LOD] Bir katmanın ETİKETLERİ kurulur mu: komşu iki etiket <b>gerçekten</b> örtüşüyor mu. Bu, etiket
+    /// kararının KATMAN kolu — düğüm kolu (odak muafiyeti) <c>GraphView.ShowsLabelFor</c>'dadır.
     ///
     /// <para>Etiketler düğüm merkezinde ortalanır, dolayısıyla iki komşu etiket ancak
     /// <c>aralık &lt; çizilen genişlik</c> olduğunda üst üste biner. <paramref name="widestLabelWidth"/> o
@@ -85,24 +85,17 @@ public static class GraphLayout
     /// <para>Etiket düşen düğüm anonim kalmaz: o düğüme proje adını veren bir tooltip kurulur
     /// (<c>GraphView.BuildNodeVisual</c>).</para>
     ///
-    /// <para><b>[sinema]</b> Bu, aynı kararın <b>ölçek 1</b> hâlidir: kamera yakınlaştıkça aralık EKRANDA büyür
-    /// ve etiket sığmaya başlar — genel kural <see cref="LabelVisibleAtScale"/>'dedir, burası ona delege eder
-    /// (kopya YASAK).</para>
+    /// <para><b>Karar ÖLÇEK ALMAZ — alamaz.</b> Etiketler kameranın ALTINDA yaşar
+    /// (<c>GraphView.World.RenderTransform</c> = ölçek + öteleme; düğüm katmanı onun çocuğudur), ölçüm ise
+    /// ölçeksiz DÜNYA biriminde yapılır ⇒ ekranda hem aralık hem etiket genişliği AYNI ölçekle çarpılır.
+    /// Dolayısıyla örtüşme <b>ölçek-DEĞİŞMEZDİR</b>: <c>genişlik &gt; aralık</c> ise HER zoom'da örtüşür,
+    /// <c>genişlik ≤ aralık</c> ise HİÇ örtüşmez. Bir zoom eşiği geometrik olarak savunulamaz — ölçülen iki
+    /// sonucu vardı: 34px aralık / 42px etiket katmanında 1.4× "sığıyor" derken çift başına 11.2px FİZİKSEL
+    /// örtüşme gösteriyor, 96px aralık / 78px etiket katmanında ise 0.68 kuşbakışında (dünyada 18px BOŞLUK
+    /// varken) etiketi düşürüyordu. Kalabalık bir katmanda adı okunur kılmanın yolu zoom değil ODAK
+    /// MUAFİYETİDİR (<c>GraphView.IsFocusExempt</c>: building ya da seçili düğüm).</para>
     /// </summary>
-    public static bool LabelsFit(double spacing, double widestLabelWidth) =>
-        LabelVisibleAtScale(spacing, widestLabelWidth, 1.0, currentlyVisible: false);
-
-    /// <summary>[sinema] Gizli bir etiketin belirme eşiği (oran = aralık×ölçek / en geniş etiket).</summary>
-    public const double LabelShowRatio = 1.0;
-    /// <summary>[sinema] Görünür bir etiketin tutunma eşiği — histerezis bandı titremeyi önler (spec §3.3).</summary>
-    public const double LabelHideRatio = 0.85;
-
-    /// <summary>[sinema] Etiket verilen kamera hedef ölçeğinde görünür mü. Histerezisli: gizliyken
-    /// <see cref="LabelShowRatio"/>, görünürken <see cref="LabelHideRatio"/> eşiği geçerlidir — aksi halde eşiğin
-    /// tam üzerindeki bir katman, kameranın her küçük yeniden hedeflemesinde etiketlerini yakıp söndürürdü.</summary>
-    public static bool LabelVisibleAtScale(
-        double spacing, double widestLabelWidth, double scale, bool currentlyVisible) =>
-        spacing * scale >= widestLabelWidth * (currentlyVisible ? LabelHideRatio : LabelShowRatio);
+    public static bool LabelsFit(double spacing, double widestLabelWidth) => spacing >= widestLabelWidth;
 
     /// <summary>[G1] <paramref name="count"/> düğümlü bir katmanın düğüm aralığı. Prototipin formülü TABAN
     /// tuvalden hesaplanır (<c>(880-70)/(n-0.5)</c>) ve <see cref="MinNodeSpacing"/>–<see cref="MaxNodeSpacing"/>

@@ -146,9 +146,10 @@ public partial class GraphView : UserControl
     private bool _hasCamera;
     private bool _cullEnabled;
     /// <summary>[sinema] Katman → o katmandaki EN GENİŞ etiketin çizilen genişliği; TAM DETAY bandında
-    /// <c>null</c>'dır. Null olması yalnız bir optimizasyon değil YAPISAL GARANTİDİR: etiket görünürlüğünü
-    /// ölçeğe göre yeniden değerlendiren yol (<see cref="ApplyLabelVisibility"/>) küçük grafta HİÇ koşmaz,
-    /// dolayısıyla ≤<see cref="FullDetailMaxNodes"/> düğümlü graf birebir bugünkü gibi kalır.</summary>
+    /// <c>null</c>'dır. Null olması yalnız bir optimizasyon değil YAPISAL GARANTİDİR: etiket kararı
+    /// (<see cref="ShowsLabelFor"/>) o durumda koşulsuz "göster"e kısa devre yapar, dolayısıyla
+    /// ≤<see cref="FullDetailMaxNodes"/> düğümlü grafta hiçbir etiket düşmez ve görünüm birebir bugünkü gibi
+    /// kalır — bu bir davranışsal varsayım değil, kararın ilk klozudur.</summary>
     private Dictionary<int, double>? _labelWidths;
     /// <summary>[G2 · fix round 1 B1] EN SON taranmış dünya bölgesi — <b>kümülatif DEĞİL</b>, her taramada
     /// DEĞİŞTİRİLİR. Yalnız gereksiz taramayı eler: bu bölgedeki her şey materyalize edilmiş olduğundan, onun
@@ -331,7 +332,7 @@ public partial class GraphView : UserControl
         _cullEnabled = !fullDetail;
         // [fix round 1 A1] LOD eşiği katmanın EN GENİŞ etiketinin ÇİZİLEN genişliğinden türetilir (kelepçeden
         // değil). Ölçüm katman başına TEK kez yapılır ve yalnız tam-detay bandının DIŞINDA gerekir. [sinema]
-        // Ölçüm SAKLANIR: kamera yakınlaştıkça karar yeniden verilir (ApplyLabelVisibility).
+        // Ölçüm SAKLANIR: statü/seçim değiştikçe karar yeniden verilir (ApplyLabelVisibility).
         _labelWidths = fullDetail ? null : MeasureLayerLabelWidths(nodes);
 
         foreach (var node in nodes)
@@ -342,9 +343,9 @@ public partial class GraphView : UserControl
                 Model = node,
                 Center = center,
                 Bounds = GraphCulling.NodeBounds(center),
-                // Açılış kararı ölçek 1 varsayar; ilk ApplyCamera onu kameranın GERÇEK hedef ölçeğine oturtur.
-                ShowsLabel = _labelWidths is null || GraphLayout.LabelsFit(
-                    LayerSpacing(node.Layer), LayerLabelWidth(node.Layer)),
+                // Açılış kararı da AYNI kaynaktan okunur (kopya YASAK): rebuild sırasında zaten building olan
+                // ya da seçili kalan bir düğüm adını ilk karede taşır.
+                ShowsLabel = ShowsLabelFor(node),
             };
             _slots[node.Name] = slot;
             _slotOrder.Add(slot);
@@ -399,6 +400,34 @@ public partial class GraphView : UserControl
     /// katman) hücre kelepçesine — yani MUHAFAZAKÂR üst sınıra — düşülür.</summary>
     private double LayerLabelWidth(int layer) =>
         _labelWidths?.GetValueOrDefault(layer, GraphLayout.NodeCellWidth) ?? GraphLayout.NodeCellWidth;
+
+    /// <summary>
+    /// [sinema · fix round 1] Bir düğümün etiketi görünür mü — kararın <b>TEK KAYNAĞI</b>. Açılıştaki statik
+    /// karar (<see cref="SetGraph"/>) ve sonraki her yeniden değerlendirme (<see cref="ApplyLabelVisibility"/>)
+    /// buradan okur.
+    /// <list type="number">
+    ///   <item><b>Tam detay</b> (<see cref="_labelWidths"/> null): etiket HER ZAMAN vardır — küçük grafın
+    ///     "hiçbir şey değişmedi" güvencesi.</item>
+    ///   <item><b>Katman kolu</b>: komşu iki etiket gerçekten örtüşüyor mu
+    ///     (<see cref="GraphLayout.LabelsFit"/>) — <b>ÖLÇEKTEN BAĞIMSIZ</b>, çünkü etiket de aralık da aynı
+    ///     kamera transform'unun altındadır (gerekçe orada yazılıdır).</item>
+    ///   <item><b>Düğüm kolu</b>: odak muafiyeti (<see cref="IsFocusExempt"/>).</item>
+    /// </list>
+    /// </summary>
+    private bool ShowsLabelFor(GraphNode node) =>
+        _labelWidths is null
+        || GraphLayout.LabelsFit(LayerSpacing(node.Layer), LayerLabelWidth(node.Layer))
+        || IsFocusExempt(node);
+
+    /// <summary>[sinema · fix round 1] Odak muafiyeti: kalabalık bir katmanda etiketler örtüştüğü için düşse
+    /// bile <b>o an derlenen</b> ve <b>seçili</b> düğümün adı YAZILIDIR — build sürerken sakin, sisli bir graf
+    /// görülür, kamera 0.85–1.4 bandında frontier'i çerçeveler ve yalnız oradaki adlar okunur.
+    ///
+    /// <para>Muafiyet KOMŞULARA YAYILMAZ (bilinçli YAGNI): seçim zaten komşu-olmayanları
+    /// <see cref="DimmedNodeOpacity"/>'ye söndürüyor, ikinci bir vurgu katmanı gerekmiyor.</para></summary>
+    private bool IsFocusExempt(GraphNode node) =>
+        node.Status == GraphStatus.Building
+        || string.Equals(node.Name, _selectedNode, StringComparison.Ordinal);
 
     /// <summary>[G2 fix round 1 · A1] Etiket ölçümünde kullanılan aile; null ise <see cref="AppFonts.Mono"/>.
     /// TEST SEAM'i: <c>pack://</c> aileler gerçek bir <c>Application</c> olmadan çözülmez, testler
@@ -536,9 +565,9 @@ public partial class GraphView : UserControl
         _nodeLayer.Children.Add(visual.Cell);
         ApplyNodeSelection(visual, animate: false);
         JoinRevealIfPlaying(visual);
-        // [sinema] Pencere içinde SONRADAN görünen düğüm de kameranın GÜNCEL ölçeğine oturur — aksi halde
-        // yakınlaşılmış bir grafta yeni materyalize olan düğüm etiketsiz kalırdı.
-        ApplyLabelVisibility(slot, visual, CurrentCamera.Scale);
+        // [sinema] Pencere içinde SONRADAN görünen düğüm de GÜNCEL kararı okur — aksi halde ekran dışından
+        // seçilen ya da cull edilmişken derlenmeye başlayan düğüm, materyalize olduğunda adsız kalırdı.
+        ApplyLabelVisibility(slot, visual);
     }
 
     /// <summary>
@@ -736,22 +765,20 @@ public partial class GraphView : UserControl
     }
 
     /// <summary>
-    /// [sinema] Tek düğümün etiket görünürlüğünü kamera HEDEF ölçeğine göre uygular (spec §3.3).
+    /// [sinema · fix round 1] Tek düğümün etiketini GÜNCEL karara (<see cref="ShowsLabelFor"/>) oturtur.
     ///
-    /// <para><b>İki durumda HİÇ çalışmaz.</b> (a) Tam-detay bandında (<see cref="_labelWidths"/> null): küçük
-    /// grafın "hiçbir şey değişmedi" güvencesi YAPISALDIR, ikinci bir eşiğe bağlı değildir. (b) Kamera hedefi
-    /// henüz hesaplanmamışken (<see cref="_hasCamera"/> false ⇒ ölçek 0): panel ölçülmeden gelen bir seçim de
-    /// düğüm materyalize eder (<see cref="MaterializeSelection"/>) ve ölçek 0'a göre karar vermek o düğümün
-    /// etiketini haksız yere düşürürdü — üstelik geri alacak bir kamera geçişi de olmazdı. O ana kadar
-    /// açılıştaki statik karar geçerlidir; ilk <see cref="ApplyCamera"/> materyalize olan HEPSİNİ birden
-    /// yeniden değerlendirir.</para>
+    /// <para><b>Tam-detay bandında hiçbir şeye DOKUNMAZ ve bu YAPISALDIR:</b> orada karar koşulsuz "göster"dir
+    /// (<see cref="ShowsLabelFor"/>'un ilk klozu) ⇒ aşağıdaki karşılaştırma her düğümde erken döner ve görsel
+    /// açılıştaki hâlinde kalır. Kapı ikinci kez BURAYA yazılmaz: ölçüldü — kopyalandığında onu düşüren bir
+    /// mutasyon yoktur (karar zaten kısa devre yapıyor), yani ölü ağırlık olurdu.</para>
+    ///
+    /// <para>Karar <see cref="GraphNodeSlot.ShowsLabel"/>'ı yalnız YAZAR, okumaz: görünürlük durumunu karara
+    /// geri beslemek (histerezis) muafiyeti LATCH'e çevirirdi — bir kez derlenen düğüm adını sonsuza dek
+    /// taşırdı. Aşağıdaki karşılaştırma yalnız "değişmediyse dokunma" içindir.</para>
     /// </summary>
-    private void ApplyLabelVisibility(GraphNodeSlot slot, GraphNodeVisual visual, double targetScale)
+    private void ApplyLabelVisibility(GraphNodeSlot slot, GraphNodeVisual visual)
     {
-        if (_labelWidths is null || !_hasCamera) return;
-
-        bool show = GraphLayout.LabelVisibleAtScale(
-            LayerSpacing(visual.Model.Layer), LayerLabelWidth(visual.Model.Layer), targetScale, slot.ShowsLabel);
+        bool show = ShowsLabelFor(slot.Model);
         // "Değişmediyse dokunma": görselin etiket/tooltip durumunun TAMAMI slot.ShowsLabel'ın fonksiyonudur —
         // onu yazan iki yol da (BuildNodeVisual ve aşağıdaki dallar) bu değişmezi korur, etiket de bir kez
         // kurulduktan sonra sökülmez. Dolayısıyla kararın kendisini karşılaştırmak yeterlidir.
@@ -771,15 +798,17 @@ public partial class GraphView : UserControl
         }
     }
 
-    /// <summary>[sinema] Kamera hedefi değiştiğinde MATERYALİZE düğümlerin etiket kararını tazeler — KARE
-    /// başına değil, yalnız yeniden hedeflemede (ara kareler zaten hedefe doğru gidiyordur). Tam-detay bandında
-    /// gezinme HİÇ yapılmaz: buradaki kontrol <see cref="ApplyLabelVisibility"/>'ninkinin tekrarı değil, O(N)
-    /// döngünün kendisinden kaçınmaktır.</summary>
-    private void UpdateLabelVisibility(double targetScale)
+    /// <summary>[sinema · fix round 1] MATERYALİZE düğümlerin etiket kararını tazeler. Kararın iki girdisi de
+    /// (statü ve seçim) <see cref="ApplyCamera"/> hunisinden geçtiği için çağrı oradadır:
+    /// <see cref="UpdateStatuses"/> ve <see cref="SelectedNode"/> setter'ı ikisi de orada biter. Tam-detay
+    /// bandında gezinme HİÇ yapılmaz — buradaki kontrol bir KARAR değil, koşarken saniyede birkaç kez koşan
+    /// O(N) döngünün kendisinden kaçınmaktır (karar zaten <see cref="ShowsLabelFor"/>'da kısa devre yapıyor,
+    /// yani kaldırılsa da davranış aynı kalırdı).</summary>
+    private void UpdateLabelVisibility()
     {
         if (_labelWidths is null) return;
         foreach (var visual in _nodes.Values)
-            ApplyLabelVisibility(_slots[visual.Model.Name], visual, targetScale);
+            ApplyLabelVisibility(_slots[visual.Model.Name], visual);
     }
 
     /// <summary>[G2] Dep-hata rozetini TALEP ÜZERİNE kurar (bir kez). Rozet nabız kabının KARDEŞİDİR ve ondan
@@ -1189,6 +1218,11 @@ public partial class GraphView : UserControl
         _previousScale = _cullEnabled && focusCameFromFrontier ? scale : null;
 
         var camera = GraphCamera.Compute(viewport, GraphSize, focus, scale);
+        // [sinema · fix round 1] Etiket kararı KAMERADAN BAĞIMSIZDIR (girdileri statü ve seçim) — bu yüzden
+        // aşağıdaki Zeno erken-dönüşünün ÜSTÜNDE durur. Altında kalsaydı, geniş bir cephede bir proje bitip
+        // komşusu başladığında (ağırlık merkezi 8px'ten az kayar, ölçek zaten takip tavanına kelepçelidir ⇒
+        // hedef BİREBİR aynı çıkar) biten proje adını bırakamaz, başlayan proje adını alamazdı.
+        UpdateLabelVisibility();
         // Hedef DEĞİŞMEDİYSE hiçbir animasyon yeniden başlatılmaz: koşarken UpdateStatuses saniyede birkaç kez
         // çağrılır ve aynı hedefe her seferinde yeni bir 460ms geçişi başlatmak uçuştaki geçişi sürekli
         // "yeniden doğurur" (Zeno etkisi — kamera hedefe hiç oturmaz).
@@ -1200,9 +1234,6 @@ public partial class GraphView : UserControl
         }
         CurrentCamera = camera;
         _hasCamera = true;
-        // [sinema] Etiket kararı kameranın HEDEF ölçeğinden verilir (spec §3.3) — ara karelerden değil.
-        // Materyalizasyondan ÖNCE: bu turda kurulacak düğümler kararı MaterializeNode'da zaten okur.
-        UpdateLabelVisibility(camera.Scale);
 
         bool animationsEnabled = animate && AnimationsEnabledProvider();
         LastCameraAnimated = animationsEnabled;

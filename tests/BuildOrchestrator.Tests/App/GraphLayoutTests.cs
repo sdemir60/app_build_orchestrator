@@ -188,26 +188,39 @@ public class GraphLayoutTests
         Assert.False(GraphLayout.LabelsFit(spacing, GraphLabelMetrics.WidestLabelWidth(["Domain.Vehicle.Registration"], mono)));
     }
 
-    // ---------------------------------------------------------------- [sinema] zoom'a duyarlı etiket
+    // ---------------------------------------------------------------- [sinema] etiket kararı ölçek-değişmez
 
     [Fact]
-    public void A_label_appears_at_ratio_1_and_survives_down_to_0_85_hysteresis()
+    public void Label_overlap_is_scale_invariant_so_a_zoom_threshold_cannot_be_defended()
     {
-        // r = spacing×scale / widest. Gizliyken ancak r ≥ 1.0'da belirir; görünürken r ≥ 0.85 oldukça kalır.
-        Assert.False(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.35, currentlyVisible: false)); // r≈0.967 < 1
-        Assert.True(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.40, currentlyVisible: false));  // r≈1.003 ≥ 1
-        Assert.True(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.25, currentlyVisible: true));   // r≈0.895 ≥ .85
-        Assert.False(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.15, currentlyVisible: true));  // r≈0.824 < .85
-        Assert.Equal(1.0, GraphLayout.LabelShowRatio);
-        Assert.Equal(0.85, GraphLayout.LabelHideRatio);
+        // ESKİ İDDİA (af6f261 · A_label_appears_at_ratio_1_and_survives_down_to_0_85_hysteresis): "etiket
+        // r = aralık×ölçek / genişlik oranı 1.0'a ulaşınca belirir, 0.85'e kadar tutunur".
+        //
+        // DEĞİŞME GEREKÇESİ (ölçüldü): etiketler kameranın ALTINDA yaşar (World.RenderTransform =
+        // {cameraScale, cameraTranslate}; düğüm katmanı onun çocuğu), GraphLabelMetrics ise ölçeksiz DÜNYA
+        // biriminde ölçer ⇒ ekranda hem aralık hem etiket AYNI ölçekle çarpılır, yani örtüşme
+        // ölçek-DEĞİŞMEZDİR. Oran kuralı bu yüzden İKİ YÖNDE de yanlış karar veriyordu:
+        //   · 34px aralık / 42px etiket, ölçek 1.4 → ekranda 47.6px arayla 58.8px metin: çift başına 11.2px
+        //     FİZİKSEL örtüşme, ama eski kural "sığıyor" derdi;
+        //   · 96px aralık / 78px etiket, ölçek 0.68 → dünyada 18px BOŞLUK, ama 96×0.68 = 65.28 < 78×0.85 = 66.3
+        //     olduğu için eski kural etiketi düşürürdü (~%20'lik haksız bant — Task 5 ÖNCESİNE göre gerileme).
+        // Yeni kural her iki ölçekte de AYNI (doğru) kararı verir; bu yüzden ölçek parametresi YOKTUR.
+        Assert.False(GraphLayout.LabelsFit(spacing: 34, widestLabelWidth: 42)); // 1.4×'te de örtüşür
+        Assert.True(GraphLayout.LabelsFit(spacing: 96, widestLabelWidth: 78));  // 0.68'de de örtüşmez
     }
 
     [Fact]
-    public void The_static_labels_fit_rule_is_the_scale_1_case_of_the_same_predicate()
+    public void The_removed_hysteresis_band_left_no_slack_in_the_label_rule()
     {
-        // Tek doğruluk kaynağı: LabelsFit(s,w) ≡ LabelVisibleAtScale(s,w,1,false).
-        Assert.Equal(GraphLayout.LabelsFit(96, 90), GraphLayout.LabelVisibleAtScale(96, 90, 1.0, false));
-        Assert.Equal(GraphLayout.LabelsFit(34.4, 90), GraphLayout.LabelVisibleAtScale(34.4, 90, 1.0, false));
+        // ESKİ İDDİA (af6f261 · The_static_labels_fit_rule_is_the_scale_1_case_of_the_same_predicate):
+        // "tek doğruluk kaynağı ölçekli predicate'tir; LabelsFit(s,w) ≡ LabelVisibleAtScale(s,w,1,false)".
+        // DEĞİŞME GEREKÇESİ: ölçekli predicate — ve onunla gelen 1.0/0.85 histerezis bandı — kaldırıldı; tek
+        // doğruluk kaynağı artık LabelsFit'in KENDİSİDİR. Histerezis, görünürlük durumunu karara geri besleyen
+        // bir DURUM makinesiydi ve yeni kuralda muafiyeti latch'e çevirirdi. Burada bandın geri sızmadığı
+        // pinlenir: eski TUTUNMA eşiği geçerli olsaydı 42×0.85 = 35.7px aralık "sığıyor" sayılırdı.
+        Assert.False(GraphLayout.LabelsFit(spacing: 42 * 0.85, widestLabelWidth: 42)); // eski tutunma eşiği
+        Assert.False(GraphLayout.LabelsFit(spacing: 42 * 0.99, widestLabelWidth: 42)); // bandın üst ucu da pay değil
+        Assert.True(GraphLayout.LabelsFit(spacing: 42, widestLabelWidth: 42));         // örtüşmenin TAM sınırı
     }
 
     [Fact]

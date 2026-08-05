@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -59,7 +60,13 @@ public class GraphCinemaTests
     /// <summary>Tek düğümün statüsünü değiştirir — GraphPanZoomTests de kullanır (fixture tek yerde).</summary>
     internal static IReadOnlyList<GraphNode> WithStatus(
         IReadOnlyList<GraphNode> nodes, string name, GraphStatus status) =>
-        [.. nodes.Select(n => n.Name == name ? n with { Status = status } : n)];
+        WithStatus(nodes, [name], status);
+
+    /// <summary>Bir KÜMENİN statüsünü değiştirir (paralel frontier senaryoları); tek düğümlük hâli buna delege
+    /// eder — kopya YASAK.</summary>
+    internal static IReadOnlyList<GraphNode> WithStatus(
+        IReadOnlyList<GraphNode> nodes, IReadOnlyCollection<string> names, GraphStatus status) =>
+        [.. nodes.Select(n => names.Contains(n.Name) ? n with { Status = status } : n)];
 
     [StaFact]
     public void A_building_frontier_zooms_the_camera_into_the_follow_band()
@@ -158,85 +165,267 @@ public class GraphCinemaTests
         Assert.Null(view.PreviousScale);
     }
 
-    // ---------------------------------------------------------------- zoom'a duyarlı etiketler
+    // ---------------------------------------------------------------- etiket kuralı: örtüşme + odak muafiyeti
 
-    /// <summary>Etiketleri STATİK kararla düşen ama takip tavanında (1.4×) sığan graf: 4 katman × 40 düğüm ⇒
-    /// aralık TABANA oturur (<see cref="GraphLayout.MinNodeSpacing"/> = 34px) ve 7 karakterlik adlar Geist
-    /// Mono 10px'te tam 42px çizilir (ÖLÇÜLDÜ — karakter başına 6px). Böylece 34 &lt; 42 ⇒ ölçek 1'de sığmaz;
-    /// 34 × 1.4 = 47.6 ≥ 42 ⇒ takip tavanında sığar.
-    ///
-    /// <para>Ad genişliği <c>D3</c> ile SABİTLENİR: 1-2 haneli bir biçim, düğüm sayısı 100'ü geçtiğinde
-    /// katmanın en geniş adını sessizce 6'dan 7 karaktere çıkarır ve eşiği fixture'ın büyüklüğüne bağlardı.</para>
+    /// <summary>Kalabalık graf: 4 katman × 40 düğüm ⇒ düğüm aralığı TABANA oturur
+    /// (<see cref="GraphLayout.MinNodeSpacing"/> = 34px). Etiket genişliğini yalnız AD UZUNLUĞU belirler —
+    /// Geist Mono 10px'te karakter başına tam 6.0px (ÖLÇÜLDÜ) ⇒ genişlik = <paramref name="nameLength"/> × 6px.
+    /// Testler bandı bu parametreyle seçer (bkz. <see cref="CrowdedNameLength"/>,
+    /// <see cref="NeverFitNameLength"/>, <see cref="RoomyNameLength"/>).
     ///
     /// <para><paramref name="count"/> tam-detay bandına indirildiğinde AYNI şekil sinema kapısının ALTINDA
     /// kalır (aralık ve ad genişliği değişmez) — küçük graf güvencesi böylece "etiketleri düşürecek bir grafta"
     /// ölçülür, düşmeyeceği zaten belli olan bir grafta değil.</para></summary>
-    private static IReadOnlyList<GraphNode> CrowdedNodes(int count = GraphView.FullDetailMaxNodes + 10) =>
+    private static IReadOnlyList<GraphNode> CrowdedNodes(
+        int count = GraphView.FullDetailMaxNodes + 10, int nameLength = CrowdedNameLength) =>
         [.. Enumerable.Range(0, count)
-            .Select(i => new GraphNode($"Node{i:D3}", i % 4, GraphStatus.Discovered))];
+            .Select(i => new GraphNode(CrowdedName(i, nameLength), i % 4, GraphStatus.Discovered))];
 
-    /// <summary>Katman 0'ın ORTASINDAKİ düğüm (40'ın 19. sırası, i = 4×19). Kalabalık katmanın UÇLARI 600×400
-    /// panelde kuşbakışı (0.68) pencerenin dışında kalır ve hiç materyalize olmaz — etiket iddiaları gerçekten
-    /// kurulmuş bir görsele dayanmalıdır.</summary>
-    private const string CrowdedTarget = "Node076";
+    /// <summary>SABİT genişlikte ad: "Node…" önekinden <paramref name="nameLength"/> − 3 karakter + D3 sıra
+    /// numarası. Sıra numarasının D3 olması ŞART: 1-2 haneli bir biçim, düğüm sayısı 100'ü geçtiğinde katmanın
+    /// en geniş adını sessizce bir karakter büyütür ve eşiği fixture'ın BÜYÜKLÜĞÜNE bağlardı.</summary>
+    private static string CrowdedName(int index, int nameLength) =>
+        "Nodexxxxxx"[..(nameLength - 3)] + index.ToString("D3", CultureInfo.InvariantCulture);
 
-    private static GraphNodeVisual MaterialisedTarget(GraphView view)
+    /// <summary>42px etiket: 34 &lt; 42 ⇒ katman kararı FALSE; ama 34 × 1.4 = 47.6 ≥ 42, yani ESKİ oran kuralı
+    /// takip tavanında bu etiketleri GÖSTERİRDİ — ekranda 47.6px arayla 58.8px metin, çift başına 11.2px
+    /// FİZİKSEL örtüşme.</summary>
+    private const int CrowdedNameLength = 7;
+    /// <summary>60px etiket: 34 × 1.4 = 47.6 &lt; 60 ⇒ katman HİÇBİR otomatik ölçekte sığmaz. Muafiyet
+    /// testlerinin fixture'ı budur: beliren bir etiketin TEK açıklaması muafiyettir, zoom DEĞİL.</summary>
+    private const int NeverFitNameLength = 10;
+    /// <summary>30px etiket: 30 ≤ 34 ⇒ dünyada 4px BOŞLUK var, örtüşme YOK. Eski oran kuralı bunu yine de
+    /// kuşbakışında düşürürdü (34 × 0.68 = 23.12 &lt; 30 × 0.85 = 25.5) — I2 gerilemesinin tam ortası.</summary>
+    private const int RoomyNameLength = 5;
+
+    /// <summary>Katman 0'ın ORTASINDAKİ düğümün sırası (40'ın 19'u, i = 4×19). Kalabalık katmanın UÇLARI
+    /// 600×372 panelde kuşbakışı ölçekte (0.68) pencerenin DIŞINDA kalır ve hiç materyalize olmaz — etiket
+    /// iddiaları gerçekten kurulmuş bir görsele dayanmalıdır.</summary>
+    private const int CrowdedTargetIndex = 76;
+
+    /// <summary>Materyalize OLMUŞ görseli döndürür; olmamışsa testi açık bir mesajla düşürür (boşlukta kalan
+    /// bir etiket iddiası sessizce yeşil geçerdi).</summary>
+    private static GraphNodeVisual Materialised(GraphView view, string name)
     {
-        Assert.True(view.NodeVisuals.ContainsKey(CrowdedTarget),
-            $"{CrowdedTarget} materyalize olmadı — etiket iddiası boşlukta kalırdı.");
-        return view.NodeVisuals[CrowdedTarget];
+        Assert.True(view.NodeVisuals.ContainsKey(name), $"{name} materyalize olmadı — iddia boşlukta kalırdı.");
+        return view.NodeVisuals[name];
     }
 
+    /// <summary>Fixture'ın etiket genişliği ÜRETİMİN ölçümünden okunur — sabit bir sayı yazılsaydı font
+    /// değiştiğinde testler sessizce anlamsızlaşırdı.</summary>
+    private static double LabelWidthOf(IReadOnlyList<GraphNode> nodes) =>
+        GraphLabelMetrics.WidestLabelWidth(nodes.Select(n => n.ShortName), DsResources.MonoFontFamily);
+
     [StaFact]
-    public void Zooming_into_the_frontier_materialises_the_labels_that_fit_at_that_scale()
+    public void A_building_node_is_named_even_where_its_layers_labels_overlap()
     {
-        var nodes = CrowdedNodes();
+        // ESKİ İDDİA (af6f261 · Zooming_into_the_frontier_materialises_the_labels_that_fit_at_that_scale):
+        // "kamera 1.4×'e yakınlaşınca etiket SIĞAR ve belirir". DEĞİŞME GEREKÇESİ (ölçüldü): etiketler
+        // kameranın ALTINDA yaşar (World.RenderTransform), ölçüm ise ölçeksiz dünya birimindedir — ekranda hem
+        // aralık hem etiket AYNI ölçekle çarpılır, yani örtüşme ölçek-DEĞİŞMEZDİR. O kural 34px aralık / 42px
+        // etiket fixture'ında 1.4×'te çift başına 11.2px FİZİKSEL örtüşen etiketleri "sığıyor" sayıyordu.
+        // Yeni kural: katman kararı ölçeksiz, building/seçili düğüm ise katman kararından MUAF.
+        var nodes = CrowdedNodes(nameLength: NeverFitNameLength);
         var view = NewView();
         view.SetGraph(nodes, ChainEdges(nodes));
 
-        var target = MaterialisedTarget(view);
-        Assert.Null(target.Label); // statik LOD düşürdü (kalabalık katman, ölçek 1 varsayımı)
+        string name = CrowdedName(CrowdedTargetIndex, NeverFitNameLength);
+        double width = LabelWidthOf(nodes);
+        // Ön-koşullar: (a) katmanın etiketleri gerçekten örtüşüyor, (b) katman TAKİP TAVANINDA bile sığmıyor ⇒
+        // beliren etiketin tek açıklaması MUAFİYETTİR, zoom değil.
+        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, width));
+        Assert.True(GraphLayout.MinNodeSpacing * GraphCamera.FollowMaxScale < width,
+            "fixture takip tavanında sığıyor — muafiyet zoom'dan ayırt edilemez.");
+        var target = Materialised(view, name);
+        Assert.Null(target.Label);
+        Assert.Equal(name, target.Body.ToolTip);
 
-        view.UpdateStatuses(WithStatus(nodes, CrowdedTarget, GraphStatus.Building)); // kamera 1.4'e çerçeveler
+        view.UpdateStatuses(WithStatus(nodes, name, GraphStatus.Building));
 
-        Assert.Equal(GraphCamera.FollowMaxScale, view.CurrentCamera.Scale); // ön-koşul: gerçekten yakınlaştı
         Assert.NotNull(target.Label);
         Assert.Equal(Visibility.Visible, target.Label!.Visibility);
-        Assert.Equal(CrowdedTarget, target.Label.Text);
+        Assert.Equal(name, target.Label.Text);
         Assert.Null(target.Body.ToolTip); // etiket görünürken tam-ad tooltip'i kalkar
+        // Muafiyet DÜĞÜM başınadır: katman açılmaz, kardeşleri isimsiz silüet olarak kalır.
+        var siblings = view.NodeVisuals.Values
+            .Where(v => v.Model.Layer == 0 && !string.Equals(v.Model.Name, name, StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(siblings);
+        Assert.All(siblings, v => Assert.Null(v.Label));
     }
 
     [StaFact]
-    public void Zooming_back_out_hides_the_labels_and_restores_the_tooltip()
+    public void The_selected_node_is_named_even_where_its_layers_labels_overlap()
     {
-        var nodes = CrowdedNodes();
+        var nodes = CrowdedNodes(nameLength: NeverFitNameLength);
         var view = NewView();
         view.SetGraph(nodes, ChainEdges(nodes));
-        view.UpdateStatuses(WithStatus(nodes, CrowdedTarget, GraphStatus.Building));
-        var target = MaterialisedTarget(view);
+        string name = CrowdedName(CrowdedTargetIndex, NeverFitNameLength);
+        var target = Materialised(view, name);
+        Assert.Null(target.Label);
+
+        view.SelectedNode = name;
+
         Assert.NotNull(target.Label);
+        Assert.Equal(Visibility.Visible, target.Label!.Visibility);
+        Assert.Equal(name, target.Label.Text);
+        Assert.Null(target.Body.ToolTip);
+        // Seçim geçişinin DIŞINDA (muafiyet yoluyla) doğan etiket de doğru boyayı alır — EnsureLabel seçim
+        // durumunu kendisi okur, ardından düzeltecek bir ApplyNodeSelection geçişi gelmez.
+        Assert.Same(view.FindResource("Brush.TextPrimary"), target.Label.Foreground);
 
-        view.UpdateStatuses(nodes);
-        view.IsSettled = true; // kuşbakışına dönüş (0.68): r histerezis tabanının çok altında
+        view.SelectedNode = null; // muafiyet biter → etiket geri düşer (seçim kolu da LATCH değildir)
 
-        Assert.Equal(Visibility.Collapsed, target.Label!.Visibility);
-        Assert.Equal(CrowdedTarget, target.Body.ToolTip);
+        Assert.Equal(Visibility.Collapsed, target.Label.Visibility);
+        Assert.Equal(name, target.Body.ToolTip);
     }
 
     [StaFact]
-    public void Small_graph_labels_are_untouched_by_the_scale_machinery()
+    public void A_finished_node_gives_its_label_back_because_the_exemption_is_not_a_latch()
+    {
+        // ESKİ İDDİA (af6f261 · Zooming_back_out_hides_the_labels_and_restores_the_tooltip): "kuşbakışına
+        // dönünce oran histerezis tabanının (0.85) altına iner ve etiket gizlenir". DEĞİŞME GEREKÇESİ:
+        // histerezis — yani görünürlük durumunun karara GERİ BESLENMESİ — kaldırıldı; karar slot.ShowsLabel'ı
+        // yalnız YAZAR, okumaz. Etiketi geri alan artık zoom değil, MUAFİYETİN BİTMESİDİR.
+        var nodes = CrowdedNodes(nameLength: NeverFitNameLength);
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+        string name = CrowdedName(CrowdedTargetIndex, NeverFitNameLength);
+        view.UpdateStatuses(WithStatus(nodes, name, GraphStatus.Building));
+        var target = Materialised(view, name);
+        Assert.NotNull(target.Label);
+        Assert.Equal(Visibility.Visible, target.Label!.Visibility);
+
+        view.UpdateStatuses(WithStatus(nodes, name, GraphStatus.Succeeded)); // build bitti, seçili DEĞİL
+
+        Assert.Equal(Visibility.Collapsed, target.Label.Visibility);
+        Assert.Equal(name, target.Body.ToolTip); // kimlik yine tooltip'e döner
+    }
+
+    [StaFact]
+    public void The_neighbours_of_the_selected_node_stay_unnamed_because_the_exemption_does_not_spread()
+    {
+        // [BİLİNÇLİ KAPSAM DIŞI · YAGNI] Seçim zaten komşu-OLMAYANLARI %25'e söndürüyor; komşuları ayrıca
+        // adlandırmak ikinci bir vurgu katmanı olurdu. Pinlenmezse "muafiyeti komşulara yay" mutantı sessizce
+        // yeşil kalır.
+        var nodes = CrowdedNodes(nameLength: NeverFitNameLength);
+        var edges = ChainEdges(nodes);
+        var view = NewView();
+        view.SetGraph(nodes, edges);
+        // ChainEdges katman 1'in TÜM düğümlerini katman 0'ın İLK düğümüne bağlar ⇒ onu seçmek 40 komşu üretir
+        // ve MaterializeSelection hepsini kurar.
+        string selected = CrowdedName(0, NeverFitNameLength);
+        string neighbour = CrowdedName(1, NeverFitNameLength);
+        Assert.Contains(edges, e =>
+            string.Equals(e.From, selected, StringComparison.Ordinal) &&
+            string.Equals(e.To, neighbour, StringComparison.Ordinal));
+
+        view.SelectedNode = selected;
+
+        Assert.NotNull(Materialised(view, selected).Label); // seçili düğüm MUAF
+        var neighbourVisual = Materialised(view, neighbour);
+        Assert.Null(neighbourVisual.Label);                 // komşusu muaf DEĞİL
+        Assert.Equal(neighbour, neighbourVisual.Body.ToolTip);
+    }
+
+    [StaFact]
+    public void The_layer_decision_is_scale_invariant_so_zooming_neither_wins_nor_loses_labels()
+    {
+        // [fix round 1 · I2] Etiket de aralık da AYNI kamera transform'unun altındadır, dolayısıyla
+        // etiket–etiket örtüşmesi ölçek-DEĞİŞMEZDİR. Eski oran kuralı iki uçta da yanılıyordu; bu test ikisini
+        // birden kapatır (yalnız bir yön pinlenseydi diğer yönün mutantı yeşil kalırdı).
+
+        // --- yön 1: kuşbakışı (0.68) SIĞAN katmanın etiketini KAYBETMEZ ---
+        // Eski kural: 34 × 0.68 = 23.12 < 30 × 0.85 = 25.5 ⇒ dünyada 4px boşluk olmasına rağmen düşürürdü.
+        var roomy = CrowdedNodes(nameLength: RoomyNameLength);
+        var roomyView = NewView();
+        roomyView.SetGraph(roomy, ChainEdges(roomy));
+
+        Assert.True(roomyView.IsCullEnabled); // ön-koşul: sinema bandı (aksi halde karar hiç koşmaz)
+        Assert.True(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, LabelWidthOf(roomy)),
+            "fixture'ın etiketleri zaten örtüşüyor — 'kaybetmiyor' iddiası ölçülemez.");
+        Assert.Equal(GraphCamera.MinScale, roomyView.CurrentCamera.Scale); // gerçekten kuşbakışında
+        Assert.NotEmpty(roomyView.NodeVisuals);
+        Assert.All(roomyView.NodeVisuals.Values, v => Assert.NotNull(v.Label));
+        Assert.All(roomyView.NodeVisuals.Values, v => Assert.Equal(Visibility.Visible, v.Label!.Visibility));
+
+        // --- yön 2: takip tavanı (1.4) SIĞMAYAN katmana etiket KAZANDIRMAZ ---
+        var crowded = CrowdedNodes();
+        var crowdedView = NewView();
+        crowdedView.SetGraph(crowded, ChainEdges(crowded));
+        string name = CrowdedName(CrowdedTargetIndex, CrowdedNameLength);
+        double width = LabelWidthOf(crowded);
+
+        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, width));
+        Assert.True(GraphLayout.MinNodeSpacing * GraphCamera.FollowMaxScale >= width,
+            "fixture 1.4×'te de sığmıyor — eski kuralın 'kazandırdığı' bant ölçülmüyor.");
+
+        crowdedView.UpdateStatuses(WithStatus(crowded, name, GraphStatus.Building));
+
+        Assert.Equal(GraphCamera.FollowMaxScale, crowdedView.CurrentCamera.Scale); // gerçekten 1.4'e gitti
+        var siblings = crowdedView.NodeVisuals.Values
+            .Where(v => v.Model.Layer == 0 && !string.Equals(v.Model.Name, name, StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(siblings);
+        Assert.All(siblings, v => Assert.Null(v.Label));           // zoom etiket KAZANDIRMAZ...
+        Assert.NotNull(Materialised(crowdedView, name).Label);     // ...muaf düğüm hariç
+    }
+
+    [StaFact]
+    public void A_frontier_swap_that_does_not_move_the_camera_still_refreshes_the_labels()
+    {
+        // [fix round 1 · brief DIŞI, ölçüldü] Muafiyetin girdileri (statü, seçim) ApplyCamera hunisinden geçer
+        // — ama ApplyCamera'nın Zeno erken-dönüşü ("hedef DEĞİŞMEDİYSE hiçbir animasyon yeniden başlatılmaz")
+        // o huniyi KESEBİLİR. Eski kuralda zararsızdı: karar yalnız ÖLÇEĞE bakıyordu, ölçek değişmediyse karar
+        // da değişmezdi. Yeni kuralda karar kameradan BAĞIMSIZ girdilerle değişir, dolayısıyla erken dönüşün
+        // ALTINDA kalmamalıdır.
+        //
+        // Gerçek senaryo (paralel build, geniş cephe): bir proje biter, bir aralık sağındaki komşusu başlar.
+        //   · frontier ağırlık merkezi 34/5 = 6.8px kayar → FrontierRetargetThresholdPx (8px) ALTINDA ⇒ odak
+        //     KORUNUR (GraphCamera.ResolveFocus);
+        //   · frontier bbox'ı büyür ama ölçek zaten FollowMaxScale'e kelepçelidir ⇒ ölçek AYNI;
+        //   ⇒ kamera hedefi BİREBİR aynı çıkar ve etiketler hiç tazelenmezdi.
+        var nodes = CrowdedNodes(nameLength: NeverFitNameLength);
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+
+        // Katman 0'ın ilk BEŞ sırası (i = 4j) derleniyor; sonra 5. sıra biter, 6. sıra başlar.
+        string[] frontier = [.. Enumerable.Range(0, 5).Select(j => CrowdedName(j * 4, NeverFitNameLength))];
+        string finishing = frontier[^1];
+        string starting = CrowdedName(5 * 4, NeverFitNameLength);
+        view.UpdateStatuses(WithStatus(nodes, frontier, GraphStatus.Building));
+
+        var finished = Materialised(view, finishing);
+        var started = Materialised(view, starting);
+        Assert.NotNull(finished.Label); // ön-koşul: derlenen düğüm adını almış
+        Assert.Null(started.Label);     // ön-koşul: henüz derlenmeyen komşusu adsız
+        var pinned = view.CurrentCamera;
+
+        var swapped = WithStatus(nodes, [.. frontier[..^1], starting], GraphStatus.Building);
+        view.UpdateStatuses(WithStatus(swapped, finishing, GraphStatus.Succeeded));
+
+        Assert.Equal(pinned, view.CurrentCamera); // ön-koşul: kamera hedefi GERÇEKTEN kıpırdamadı
+        Assert.Equal(Visibility.Collapsed, finished.Label!.Visibility); // biten proje adını BIRAKIR
+        Assert.Equal(finishing, finished.Body.ToolTip);
+        Assert.NotNull(started.Label);                                  // başlayan proje adını ALIR
+        Assert.Equal(Visibility.Visible, started.Label!.Visibility);
+    }
+
+    [StaFact]
+    public void Small_graph_labels_are_untouched_by_the_label_decision_machinery()
     {
         // Fixture KASTEN "düşürülebilir": aynı 34px aralık, aynı 42px adlar — yalnız düğüm sayısı tam-detay
-        // bandının SINIRINDA. Ölçek makinesi burada koşsaydı kuşbakışı (0.68) oranı histerezis tabanının çok
-        // altında kalır ve HER etiket Collapsed olurdu; "etiket null mı" diye bakmak bu kusuru GÖREMEZ (etiket
-        // kurulmuştur, yalnız gizlenmiştir) — bu yüzden görünürlük de tooltip de ayrıca pinlenir.
+        // bandının SINIRINDA. Karar makinesi burada koşsaydı katman kararı FALSE çıkar ve HER etiket düşerdi;
+        // "etiket null mı" diye bakmak kusuru tek başına GÖREMEZ (bir kez kurulmuş etiket yalnız gizlenir) —
+        // bu yüzden görünürlük de tooltip de ayrıca pinlenir.
         var nodes = CrowdedNodes(GraphView.FullDetailMaxNodes);
         var view = NewView();
         view.SetGraph(nodes, ChainEdges(nodes));
         Assert.False(view.IsCullEnabled); // ön-koşul: tam-detay bandı
-        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, 42), "fixture kalabalık değil");
+        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, LabelWidthOf(nodes)),
+            "fixture kalabalık değil");
 
-        view.UpdateStatuses(WithStatus(nodes, "Node000", GraphStatus.Building));
+        view.UpdateStatuses(WithStatus(nodes, CrowdedName(0, CrowdedNameLength), GraphStatus.Building));
 
         Assert.Equal(nodes.Count, view.NodeVisuals.Count); // cull kapalı: hepsi kurulu
         Assert.All(view.NodeVisuals.Values, v => Assert.NotNull(v.Label)); // tam-detay garantisi
@@ -245,22 +434,24 @@ public class GraphCinemaTests
     }
 
     [StaFact]
-    public void A_node_materialised_before_the_first_camera_target_keeps_the_static_label_decision()
+    public void A_node_materialised_before_the_first_camera_target_still_lands_on_the_right_decision()
     {
-        // Panel HENÜZ ölçülmemişken (ViewportSize = 0) kamera hedefi HESAPLANMAZ — ApplyCamera erken döner ve
-        // CurrentCamera.Scale 0'da kalır. Seçim yine de düğüm materyalize eder (MaterializeSelection ekran
-        // dışından gelen seçimi kurar): o düğümün etiketi "ölçek 0" ile değerlendirilseydi HAKSIZ yere düşer,
-        // üstelik hiçbir kamera geçişi bunu geri almazdı. Ölçek kararı ancak GERÇEK bir kamera hedefi varken
-        // verilir; yoksa statik karar (BuildNodeVisual) geçerli kalır.
-        var nodes = BigNodes(); // aralık 34px, adlar ≤4 karakter (24px) ⇒ statik kararla etiket SIĞAR
+        // ESKİ İDDİA (af6f261 · A_node_materialised_before_the_first_camera_target_keeps_the_static_label_
+        // decision): "kamera hedefi yokken ölçek 0'dır, ölçek kararı verilemez ⇒ !_hasCamera guard'ı statik
+        // kararı korur". DEĞİŞME GEREKÇESİ: karar artık ölçeği HİÇ okumuyor (örtüşme ölçek-değişmezdir), guard
+        // KONUSUZ kaldı ve kaldırıldı. Yeni iddia daha güçlüdür: kamera hiç hesaplanmamışken bile karar DOĞRU
+        // çıkar — kalabalık bir katmanda seçilen düğüm adını alır, üstelik ekran dışından gelen bir seçimle.
+        var nodes = CrowdedNodes(nameLength: NeverFitNameLength);
         var view = GraphTestView.New(labelFontFamily: DsResources.MonoFontFamily); // Measure/Arrange YOK
         view.SetGraph(nodes, ChainEdges(nodes));
         Assert.Equal(0.0, view.CurrentCamera.Scale); // ön-koşul: kamera hedefi yok
-        Assert.True(view.IsCullEnabled);             // ön-koşul: sinema bandı (aksi halde LOD hiç koşmaz)
+        Assert.True(view.IsCullEnabled);             // ön-koşul: sinema bandı (aksi halde karar hiç koşmaz)
+        Assert.Empty(view.NodeVisuals);              // ön-koşul: viewport yok ⇒ hiçbir şey materyalize olmadı
 
-        view.SelectedNode = "N3";
+        string name = CrowdedName(CrowdedTargetIndex, NeverFitNameLength);
+        view.SelectedNode = name; // MaterializeSelection kurar — ApplyCamera viewport yokken erken döner
 
-        var visual = view.NodeVisuals["N3"];
+        var visual = Materialised(view, name);
         Assert.NotNull(visual.Label);
         Assert.Equal(Visibility.Visible, visual.Label!.Visibility);
         Assert.Null(visual.Body.ToolTip);

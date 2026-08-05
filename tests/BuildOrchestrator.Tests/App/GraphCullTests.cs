@@ -556,10 +556,19 @@ public class GraphCullTests
         Assert.Same(Resolved(host, GraphView.PackageIconKey), visual.Icon.Data);
         Assert.Equal(Visibility.Visible, visual.SelectionRing.Visibility);
         Assert.Equal(Resolved(host, "Brush.FocusRing"), visual.SelectionRing.Stroke);
-        // [G2/LOD] Bu ölçekte (katman başına ≫9 düğüm, uzun adlar) etiketler zaten üst üste binerdi → hiç
-        // kurulmaz; kimlik yerine TOOLTIP taşınır (fix round 1 · A3).
-        Assert.Null(visual.Label);
-        Assert.Equal(culled.Name, visual.Body.ToolTip);
+        // [sinema · fix round 1] ESKİ İDDİA: "bu ölçekte (katman başına ≫9 düğüm, uzun adlar) etiketler zaten
+        // üst üste binerdi → hiç kurulmaz; kimlik yerine TOOLTIP taşınır". DEĞİŞME GEREKÇESİ: etiket kuralı
+        // artık KATMAN kararı VEYA ODAK MUAFİYETİ'dir (building ya da seçili düğüm) — bu düğüm tam da seçim
+        // yoluyla materyalize oluyor, yani muaf. Test gevşetilmedi, YÖN değiştirdi ve testin ASIL konusuna
+        // (canlı ağaçta SONRADAN doğan alt-ağaç kaynak zincirini çözebiliyor mu — c6e9a21 sınıfı) bir üçüncü
+        // tembel alt-ağaç daha ekledi: etiketin kendisi.
+        Assert.NotNull(visual.Label);
+        Assert.Equal(Visibility.Visible, visual.Label!.Visibility);
+        Assert.Equal(culled.ShortName, visual.Label.Text);
+        // Seçim geçişinin DIŞINDA doğan etiket boyasını EnsureLabel'in kendisi seçer (ardından düzeltecek bir
+        // ApplyNodeSelection geçişi gelmez) — ve o boya GERÇEK kaynak zincirinden çözülür.
+        Assert.Equal(Resolved(host, "Brush.TextPrimary"), visual.Label.Foreground);
+        Assert.Null(visual.Body.ToolTip); // etiket görünürken tam-ad tooltip'i kalkar
 
         // (1b) [fix round 1 · C2] Seçimle birlikte TEMBEL materyalize edilen KENARLAR da kaynak zincirini
         // çözmeli — MaterializeEdge, Stroke'u SetResourceReference ile bağlar ve bu tam c6e9a21'in sınıfıdır
