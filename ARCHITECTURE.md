@@ -1407,10 +1407,18 @@ departure, with a cost worth knowing — the mark's two dark strips nearly vanis
 the amber, white and silver strips plus the chevron to carry it. The tile is still one switch away in the
 generator.
 
-Dropping the tile made the mark larger at every size, which is why only 16 px still needs help: at 24 px the
-five strips resolve, at 16 px they collide into noise. That one size draws the amber chevron alone. Both the
-fit and the simplification are derivations the design does not specify; the generator's header records them,
-and it can dump any size as ASCII so the judgement can be re-made against pixels rather than opinion.
+**Every size carries the whole mark, 16 px included.** That is only possible because the strips are snapped to
+the pixel grid below 32 px: a strip lands on roughly 1.9 px at 16, and drawn unsnapped it bleeds across two
+rows at half opacity until the five of them read as one grey blur. Rounding each strip's edges to whole pixels
+makes them solid bars with real gaps between them — the ordinary answer for small raster icons. The chevron is
+curved and cannot be snapped, but it never touches the strips so nothing misaligns.
+
+The mark is 1.48∶1, so a square canvas constrains it by width; it fills the width edge to edge and leaves the
+canvas about a third empty top and bottom. That is the proportion, not a margin — stretching it to fill would
+distort the logo. The padding is a hair above zero only so the antialiased edge is not clipped.
+
+The fit and the pixel snapping are derivations the design does not specify; the generator's header records
+them, and it can dump any size as ASCII so the judgement can be re-made against pixels rather than opinion.
 
 ### 14.5 Motion
 
