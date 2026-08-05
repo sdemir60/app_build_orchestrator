@@ -213,7 +213,7 @@ public partial class GraphView : UserControl
         // Capture BAŞKA bir sebeple düşerse (Alt+Tab, popup, başka öğe capture alır) bu bir BIRAKMA DEĞİL
         // İPTALDİR: spec §3.4 seçimi "eşik aşılmadan BIRAKILIRSA" kaldırır. Jest durumu ve el imleci temizlenir,
         // seçime DOKUNULMAZ.
-        Ground.LostMouseCapture += (_, _) => CancelPanGesture();
+        Ground.LostMouseCapture += (_, _) => ResetPanGesture();
         Ground.MouseWheel += (_, e) =>
         {
             if (!_cullEnabled) return; // sinema dışı: tekerlek bugünkü gibi bu panele ait DEĞİL
@@ -355,7 +355,7 @@ public partial class GraphView : UserControl
         // [sinema] Yeni topoloji manuel kamerayı da bitirir: kullanıcının gezdiği koordinatların yeni grafta
         // karşılığı yoktur. Sürmekte olan bir jest varsa iptal edilir (el imleci ekranda kalmasın).
         _manualCamera = false;
-        CancelPanGesture();
+        ResetPanGesture();
         CurrentCamera = default;
         _scannedRegion = Rect.Empty;
         _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
@@ -1296,7 +1296,7 @@ public partial class GraphView : UserControl
     {
         if (!_panPressed) return;
         bool wasDragging = _dragging;
-        CancelPanGesture();
+        ResetPanGesture();
 
         if (!wasDragging)
         {
@@ -1323,11 +1323,12 @@ public partial class GraphView : UserControl
         NoteManualInput(Environment.TickCount64);
     }
 
-    /// <summary>Jesti SONUÇSUZ bitirir: durum sıfırlanır, el imleci bırakılır, seçime DOKUNULMAZ. Üç çağıranı
-    /// vardır ve üçü de "bu bir bırakma değil" der: capture kaybı (Alt+Tab/popup — iptal), yeni topoloji
-    /// (<see cref="SetGraph"/>) ve <see cref="HandlePanEnd"/>'in temizlik adımı. Tek yerde durur ki SetGraph
-    /// sırasında sürmekte olan bir sürükleme el imlecini ekranda unutmasın (kopya YASAK).</summary>
-    private void CancelPanGesture()
+    /// <summary>Jest durumunu sıfırlar ve el imlecini bırakır; seçime DOKUNMAZ — bu yüzden nötrdür ve üç ayrı
+    /// anlamda çağrılabilir: capture kaybı (Alt+Tab/popup — İPTAL), yeni topoloji (<see cref="SetGraph"/> —
+    /// jest artık geçersiz) ve <see cref="HandlePanEnd"/>'in temizlik adımı (BIRAKMA; seçim kararını çağıran
+    /// kendisi verir). Tek yerde durur ki SetGraph sırasında sürmekte olan bir sürükleme el imlecini ekranda
+    /// unutmasın (kopya YASAK).</summary>
+    private void ResetPanGesture()
     {
         _panPressed = false;
         _dragging = false;
