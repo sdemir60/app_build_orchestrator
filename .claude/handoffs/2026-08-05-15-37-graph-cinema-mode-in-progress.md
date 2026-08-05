@@ -8,10 +8,17 @@ Branch **`graph-live-camera`** @ `af6f261` (main'den ayrık, merge EDİLMEDİ). 
 **Canlı durum ledger'da:** `.superpowers/sdd/2026-08-05-12-27-graph-live-camera-implementation-plan/progress.md`
 — hangi task kapandı, hangi bulgu ertelendi, hangi karar neden verildi hepsi orada. **Devam ederken önce onu oku.**
 
-**Kesildiği an:** Task 5'in fix round'u (etiket kuralı yeniden tasarımı) bir subagent'a gönderilmişti ve arka
-planda çalışıyordu. `git status` çalışma ağacında `GraphLayoutTests.cs`'i **kirli** gösteriyor — o agent'ın
-yarım işi. Devam ederken: ledger + `git log` + `git diff` ile gerçek durumu doğrula, gerekiyorsa yarım işi geri
-alıp Task 5'i temiz baştan yürüt (Task 1'de aynısı yapıldı, çalıştı).
+**Kesildiği an:** Task 5'in fix round'u (etiket kuralı yeniden tasarımı) bir subagent'a gönderilmişti; agent
+**durduruldu (kill)**, commit ATMADI. Çalışma ağacında 5 dosya **kirli** kaldı — o agent'ın yarım işi:
+`GraphLayout.cs`, `GraphNodeVisual.cs`, `GraphView.xaml.cs`, `GraphCinemaTests.cs`, `GraphLayoutTests.cs`.
+
+Devam ederken **yarım işi `git checkout -- <dosyalar>` ile geri al ve Task 5'i temiz baştan yürüt** — Task 1'de
+aynı durum yaşandı, aynı çözüm uygulandı ve çalıştı. Kırmızı-önce disiplini yarım bir başlangıçta bozulur.
+
+**Agent'ın kesilmeden önceki son bulgusu (değerli, kaybolmasın):** mevcut testlerden biri, incelediği düğüm
+**seçili** olduğu için yeni kuralda muafiyet kapsamına giriyor ve kırmızıya dönüyor. Bu gerçek bir davranış
+değişimidir; CLAUDE.md gereği o test silinmez/gevşetilmez, YENİ kuralı pinleyecek şekilde yeniden yazılır ve
+doc'una eski iddia + değişme gerekçesi yazılır.
 
 **Task 5'in kararı (kullanıcı "en doğru yöntemi sen seç" dedi):** etiket kuralı ölçek-değişmez örtüşmeye
 (bugünkü `LabelsFit`) döner + **odak muafiyeti** eklenir (Building veya seçili düğüm katman kararından bağımsız
