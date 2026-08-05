@@ -29,8 +29,10 @@ public class GraphCinemaTests
 
     /// <summary>Sinema testlerinin ölçülmüş view'ı (600×400 panel ⇒ 600×372 viewport: başlık 28px).
     /// <see cref="GraphPanZoomTests"/> de kullanır — fixture tek yerde, kopya YASAK.</summary>
-    internal static GraphView NewView() =>
-        GraphTestView.Realized(Panel, labelFontFamily: DsResources.MonoFontFamily);
+    /// <param name="animations">Motion kapısı; varsayılan KAPALI (headless varsayılanı). Yalnız "kamera
+    /// UÇUŞTAYKEN" ölçülebilen davranışlar (manuel moda giriş) açık kip ister.</param>
+    internal static GraphView NewView(bool animations = false) =>
+        GraphTestView.Realized(Panel, () => animations, labelFontFamily: DsResources.MonoFontFamily);
 
     // ---------------------------------------------------------------- kenar sisi kablajı
 

@@ -17,11 +17,9 @@ namespace BuildOrchestrator.Tests.App;
 /// <c>MouseLeftButtonDown</c> bağlar (<c>e.Handled = true</c> + aynı düğümde toggle) ve <c>:172</c>
 /// <c>Ground.MouseLeftButtonDown</c> ile seçimi kaldırır.</para>
 ///
-/// <para><b>Tetikleme nasıl GERÇEK:</b> WPF'te <c>UIElement.MouseLeftButtonDown</c> <b>Direct</b> yönlendirmelidir;
-/// "kabarma" görüntüsünü <see cref="Mouse.MouseDownEvent"/> (bubbling) üzerindeki sınıf handler'ı üretir —
-/// kabarma yolundaki her öğede tek tek yeniden yükseltir ve <c>Handled</c>'ı geri kopyalar. Bu yüzden testler
-/// gövdeye <see cref="Mouse.MouseDownEvent"/> yükseltir: düğümün handler'ı da, zeminin handler'ı da üretimde
-/// hangi sırayla/koşulla koşuyorsa burada da öyle koşar (doğrudan handler çağrısı DEĞİL).</para>
+/// <para><b>Tetikleme nasıl GERÇEK:</b> basış <see cref="MouseInput.PressLeft"/> ile yükseltilir (doğrudan
+/// handler çağrısı DEĞİL); gerekçesi ve WPF mekaniği orada anlatılır. Aynı yardımcıyı <c>GraphPanZoomTests</c>
+/// de kullanır — kopya YASAK.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphClickTests
@@ -38,17 +36,7 @@ public class GraphClickTests
     /// o bloğun ALTINCI inline kopyasını taşıyordu.</summary>
     private static GraphView NewView() => GraphTestView.Sized(new Size(600, 400));
 
-    /// <summary>Gerçek sol-tuş basışı: <see cref="Mouse.MouseDownEvent"/> kabarır ve WPF'in kendi sınıf
-    /// handler'ı yol üstündeki her öğede <c>MouseLeftButtonDown</c>'ı yükseltir (bkz. sınıf özeti).</summary>
-    private static MouseButtonEventArgs PressLeft(UIElement target)
-    {
-        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
-        {
-            RoutedEvent = Mouse.MouseDownEvent,
-        };
-        target.RaiseEvent(args);
-        return args;
-    }
+    private static MouseButtonEventArgs PressLeft(UIElement target) => MouseInput.PressLeft(target);
 
     [StaFact]
     public void Clicking_a_node_selects_it_and_clicking_the_same_node_again_clears_the_selection()

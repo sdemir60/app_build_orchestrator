@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -193,20 +193,27 @@ public partial class GraphView : UserControl
         // [sinema] Jest kablosu. Sinema DIŞINDA boş alana tıklama seçimi DOWN anında kaldırır — bugünkü
         // davranış birebir (spec §3.4; düğüm tıklaması Handled=true yaptığından buraya ulaşmaz). Sinemada aynı
         // basış bir sürüklemenin başı olabileceği için kaldırma release'e taşınır (click-vs-drag ayrımı).
-        // Handler'lar İNCE KABUKTUR: mantığın tamamı internal seam'lerdedir (HandlePan*/HandleWheel) — headless
-        // testler gerçek mouse capture'a güvenemediği için onları doğrudan sürer.
+        // Jest mantığının tamamı internal seam'lerdedir (HandlePan*/HandleWheel) ve testler onları doğrudan
+        // sürer — headless'ta gerçek mouse capture ALINAMAZ (PresentationSource yok). Ama buradaki İKİ karar
+        // seam'lerin üstündedir (sinema kolu · capture kaybı = iptal) ve gerçek routed event'le pinlenir
+        // (GraphPanZoomTests, MouseInput üzerinden).
         Ground.MouseLeftButtonDown += (_, e) =>
         {
-            if (!_cullEnabled) { SelectedNode = null; return; }
-            HandlePanStart(e.GetPosition(Ground));
-            Ground.CaptureMouse();
+            // Kapı TEK yerde (HandlePanStart): jest başlayabildiyse capture alınır, aksi halde
+            // bugünkü DOWN-anında seçim kaldırma çalışır. Kapının kopyası buraya YAZILMAZ — aksi halde
+            // "jest başlamadı ama capture alındı ve tıklama da yutuldu" deliği açılırdı.
+            if (HandlePanStart(e.GetPosition(Ground))) Ground.CaptureMouse();
+            else SelectedNode = null;
         };
         Ground.MouseMove += (_, e) => { if (_panPressed) HandlePanMove(e.GetPosition(Ground)); };
-        // Bitiş iki yoldan gelebilir: normal tuş bırakma ve capture'ın başka bir sebeple düşmesi (Alt+Tab,
-        // pencere kaybı — jest yarım kalmasın, el imleci ekranda unutulmasın). HandlePanEnd İDEMPOTENTTİR
-        // (_panPressed guard'ı), dolayısıyla ikisi peş peşe koşsa da jest bir kez biter.
-        Ground.MouseLeftButtonUp += (_, _) => { Ground.ReleaseMouseCapture(); HandlePanEnd(); };
-        Ground.LostMouseCapture += (_, _) => HandlePanEnd();
+        // Bırakma ÖNCE işlenir, capture SONRA bırakılır: ReleaseMouseCapture senkron olarak LostMouseCapture'ı
+        // yükseltir ve o yol İPTAL semantiğindedir (aşağı bak). Ters sırada üretimde jesti iptal yolu bitirir,
+        // headless'ta (capture hiç alınamaz) bırakma yolu — iki ortam ayrışırdı.
+        Ground.MouseLeftButtonUp += (_, _) => { HandlePanEnd(); Ground.ReleaseMouseCapture(); };
+        // Capture BAŞKA bir sebeple düşerse (Alt+Tab, popup, başka öğe capture alır) bu bir BIRAKMA DEĞİL
+        // İPTALDİR: spec §3.4 seçimi "eşik aşılmadan BIRAKILIRSA" kaldırır. Jest durumu ve el imleci temizlenir,
+        // seçime DOKUNULMAZ.
+        Ground.LostMouseCapture += (_, _) => CancelPanGesture();
         Ground.MouseWheel += (_, e) =>
         {
             if (!_cullEnabled) return; // sinema dışı: tekerlek bugünkü gibi bu panele ait DEĞİL
@@ -348,7 +355,7 @@ public partial class GraphView : UserControl
         // [sinema] Yeni topoloji manuel kamerayı da bitirir: kullanıcının gezdiği koordinatların yeni grafta
         // karşılığı yoktur. Sürmekte olan bir jest varsa iptal edilir (el imleci ekranda kalmasın).
         _manualCamera = false;
-        EndPanGesture();
+        CancelPanGesture();
         CurrentCamera = default;
         _scannedRegion = Rect.Empty;
         _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
@@ -1242,12 +1249,16 @@ public partial class GraphView : UserControl
     /// kamera hedefi HESAPLANMIŞ olmalıdır — <see cref="GraphCamera.Pan"/>/<see cref="GraphCamera.ZoomAt"/>
     /// ikisi de MEVCUT kameradan türetir, ölçek 0 iken sonuç tanımsızdır.</para>
     /// </summary>
-    internal void HandlePanStart(Point position)
+    /// <returns><c>true</c> = jest başladı (çağıran capture alır). <c>false</c> = bu basış jest DEĞİL; çağıran
+    /// bugünkü davranışı uygular (boş alana tıklama seçimi DOWN anında kaldırır). Karar tek yerde kalsın diye
+    /// kapı bir <c>bool</c> olarak dışarı verilir; ctor onu kopyalamaz.</returns>
+    internal bool HandlePanStart(Point position)
     {
-        if (!_cullEnabled || !_hasCamera) return;
+        if (!_cullEnabled || !_hasCamera) return false;
         _panPressed = true;
         _dragging = false;
         _panLast = position;
+        return true;
     }
 
     /// <summary>Sürükleme: eşik aşıldığı KAREDE manuel moda geçilir ve el imleci takılır; sonrasında her hareket
@@ -1256,23 +1267,27 @@ public partial class GraphView : UserControl
     {
         if (!_panPressed) return;
 
+        var delta = position - _panLast;
         if (!_dragging)
         {
-            var offset = position - _panLast;
             // Platform drag eşiği: tıklama ile sürükleme ayrımı (spec §3.4). Eşik altındaki titreme bir
             // TIKLAMADIR — kamerayı oynatmaz, manuel moda da sokmaz.
-            if (Math.Abs(offset.X) < SystemParameters.MinimumHorizontalDragDistance &&
-                Math.Abs(offset.Y) < SystemParameters.MinimumVerticalDragDistance)
+            if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
                 return;
             _dragging = true;
             EnterManualCamera();
             Ground.Cursor = Cursors.Hand; // el imleci YALNIZ sürüklerken (spec §3.4)
         }
 
-        var delta = position - _panLast;
+        // Delta HER hareketten sonra sıfırlanır: birikirse kamera imleç hızının katlarıyla kayar ve elin
+        // altındaki nokta grafı takip etmez.
         _panLast = position;
         SnapCameraTo(GraphCamera.Pan(CurrentCamera, delta, ViewportSize, GraphSize));
         UpdateMaterialization();
+        // Sürüklemenin KENDİSİ de manuel girdidir: yalnız bırakmada damgalasaydık, 4 saniyeden uzun yavaş bir
+        // sürüklemede takip dönüş timer'ı (Task 7) jestin ORTASINDA kamerayı geri alırdı.
+        NoteManualInput(Environment.TickCount64);
     }
 
     /// <summary>Bırakma. Eşik hiç aşılmadıysa bu bir TIKLAMADIR ⇒ bugünkü "boş alana tıkla → seçim kalkar"
@@ -1281,13 +1296,14 @@ public partial class GraphView : UserControl
     {
         if (!_panPressed) return;
         bool wasDragging = _dragging;
-        EndPanGesture();
+        CancelPanGesture();
 
         if (!wasDragging)
         {
             SelectedNode = null;
             return;
         }
+        // Bırakma da damgalanır: hareketsiz beklenip bırakılan bir sürüklemede son hareketin damgası bayattır.
         NoteManualInput(Environment.TickCount64);
     }
 
@@ -1307,14 +1323,15 @@ public partial class GraphView : UserControl
         NoteManualInput(Environment.TickCount64);
     }
 
-    /// <summary>Jest durumunu ve el imlecini bırakır. Bırakma yolu (<see cref="HandlePanEnd"/>) ve yeni topoloji
-    /// (<see cref="SetGraph"/>) AYNI yerden temizler — kopya YASAK ve SetGraph sırasında sürmekte olan bir
-    /// sürükleme el imlecini ekranda bırakmamalıdır.</summary>
-    private void EndPanGesture()
+    /// <summary>Jesti SONUÇSUZ bitirir: durum sıfırlanır, el imleci bırakılır, seçime DOKUNULMAZ. Üç çağıranı
+    /// vardır ve üçü de "bu bir bırakma değil" der: capture kaybı (Alt+Tab/popup — iptal), yeni topoloji
+    /// (<see cref="SetGraph"/>) ve <see cref="HandlePanEnd"/>'in temizlik adımı. Tek yerde durur ki SetGraph
+    /// sırasında sürmekte olan bir sürükleme el imlecini ekranda unutmasın (kopya YASAK).</summary>
+    private void CancelPanGesture()
     {
         _panPressed = false;
         _dragging = false;
-        Ground.ClearValue(CursorProperty);
+        Ground.ClearValue(FrameworkElement.CursorProperty);
     }
 
     /// <summary>Manuel moda giriş: uçuştaki kamera animasyonu O ANKİ karede DONDURULUR (canlı değer okunup
@@ -1341,11 +1358,16 @@ public partial class GraphView : UserControl
         _cameraTranslate.Y = camera.Ty;
         CurrentCamera = camera;
         _hasCamera = true;
+        LastCameraAnimated = false; // bu yol TANIMI GEREĞİ animasyonsuzdur — seam bayat bilgi taşımaz
     }
 
     /// <summary>Son manuel girdinin damgası. <b>Task 7</b> buraya takip dönüşünün tek atımlık timer'ını ekler;
     /// bu task'ta yalnız damga tutulur (<see cref="LastManualInputTicks"/> onu okur).</summary>
-    private void NoteManualInput(long nowTicks) => _lastManualInputTicks = nowTicks;
+    private void NoteManualInput(long nowTicks)
+    {
+        _lastManualInputTicks = nowTicks;
+        ManualInputCount++;
+    }
 
     /// <summary>FOLLOW PAUSED pilinin görünürlüğü. <b>Task 7</b>'de gövde kazanır (pil XAML'i orada eklenir);
     /// çağrı yeri burada kurulur ki o task yalnız gövdeyi doldursun.</summary>
@@ -1478,6 +1500,10 @@ public partial class GraphView : UserControl
     internal bool IsManualCamera => _manualCamera;
     /// <summary>[sinema] Son manuel girdinin <c>TickCount64</c> damgası; Task 7'nin dönüş kuralı bundan sayar.</summary>
     internal long LastManualInputTicks => _lastManualInputTicks;
+    /// <summary>[sinema] Kaç kez manuel girdi damgalandı — <see cref="NodeStatusApplyCount"/> ile AYNI gerekçe:
+    /// iki damga aynı milisaniyeye düştüğünde duvar saati onları ayırt EDEMEZ, sayaç deterministik kanıttır
+    /// (sürükleme sırasında damgalama ile bırakmada damgalama ayrı kurallardır ve ayrı ayrı pinlenir).</summary>
+    internal int ManualInputCount { get; private set; }
     /// <summary>[M-5] Yalnız FRONTIER dalından gelen odak hatırlanır (8px eşiği yalnız orada geçerli).</summary>
     internal Point? PreviousFocus => _previousFocus;
     /// <summary>[sinema] Yalnız FRONTIER dalından gelen ölçek hatırlanır (0.05 eşiği yalnız orada geçerli) —
