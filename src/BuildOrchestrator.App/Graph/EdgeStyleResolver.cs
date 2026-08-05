@@ -69,12 +69,15 @@ public static class EdgeStyleResolver
         => thickness == SelectedThickness ? thick : thin;
 
     /// <summary>
-    /// Prototipteki zincirin BİREBİR portu (sıra önemlidir — sonraki dallar öncekini ezer):
+    /// Prototipteki zincirin portu (sıra önemlidir — sonraki dallar öncekini ezer). Zincir BİREBİR aynıdır;
+    /// tek eklenti <c>fogged</c>'dir — prototipte YOKTUR, büyük graf için app tarafında eklenmiştir ([sinema]
+    /// işaretli iki satır). <c>fogged=false</c> iken çıktı prototiple birebir aynı kalır:
     /// <code>
-    /// let stroke = border, w = 1, op = selected ? .16 : .8
+    /// let stroke = border, w = 1, op = (selected || fogged) ? .16 : .8   // [sinema] sis, seçim-dim seviyesine iner
     /// if (flow)            → amber, op .2/.85, akan
     /// else if (succeeded)  → success-border
     /// else if (failed)     → fail-border
+    /// if (!selected && fogged && (succeeded || failed)) → op .35         // [sinema] biten dal sakinleşir, silinmez
     /// if (bad)             → fail-border, op .3/.95, (akmıyorsa) statik dash 3 4
     /// if (hot)             → bad ? fail-border : amber-border, w 1.6, op 1, (bad değilse) akış İPTAL
     /// </code>
@@ -110,13 +113,17 @@ public static class EdgeStyleResolver
         else if (target == GraphStatus.Succeeded)
         {
             brushKey = "Brush.StatusSuccessBorder";
-            if (!hasSelection && fogged) opacity = FogFinishedOpacity;
         }
         else if (target == GraphStatus.Failed)
         {
             brushKey = "Brush.StatusFailBorder";
-            if (!hasSelection && fogged) opacity = FogFinishedOpacity;
         }
+
+        // [sinema] Biten dallar sisi TEK yerde alır (kopya yasak). Zincirden sonra ama bad/hot'tan ÖNCE durur —
+        // o iki blok bu değeri ezmeye devam eder (davranış birebir aynı: `flow` ile succeeded/failed ayrık
+        // kümelerdir, dolayısıyla koşul yalnız zincirin o iki dalının girdiği durumlarda doğrudur).
+        if (!hasSelection && fogged && target is GraphStatus.Succeeded or GraphStatus.Failed)
+            opacity = FogFinishedOpacity;
 
         if (bad)
         {

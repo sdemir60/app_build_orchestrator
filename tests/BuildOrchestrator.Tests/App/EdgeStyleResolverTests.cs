@@ -298,9 +298,13 @@ public class EdgeStyleResolverTests
             Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, touchesSelection: true, hasSelection: true),
             Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, touchesSelection: true, hasSelection: true, fogged: true));
         // Seçime DEĞMEYEN biten kenar: yukarıdaki dördünde sis zaten başka bir kural tarafından eziliyor (flow/bad
-        // kendi opaklığını, hot 1.0'ı yazar) — bu tek şekil `FogFinishedOpacity`'nin seçim-dim'i ezmediğini pinler.
+        // kendi opaklığını, hot 1.0'ı yazar) — `FogFinishedOpacity`'nin seçim-dim'i ezmediğini YALNIZ bu şekil
+        // pinler. İki biten renk de ayrı ayrı yazılır; kaynak SAĞLIKLI seçilir, `Failed` kaynak `bad`'i tetikleyip
+        // opaklığı kendi 0.3'üyle ezer ve assert boşa düşerdi.
         Assert.Equal(EdgeStyleResolver.DimmedOpacity,
             Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, hasSelection: true, fogged: true).Opacity);
+        Assert.Equal(EdgeStyleResolver.DimmedOpacity,
+            Resolve(GraphStatus.Succeeded, GraphStatus.Failed, hasSelection: true, fogged: true).Opacity);
     }
 
     [Fact]
