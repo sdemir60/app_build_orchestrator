@@ -326,12 +326,18 @@ public partial class GraphView : UserControl
             MaterializeSelection();
             ApplySelection();
             ApplyEdgeStyles();
-            // [sinema] Seçim değişimi manuel modu ANINDA bitirir — 4 sn beklenmez. Duraklama OTOMATİK yeniden
+            // [sinema] BİR DÜĞÜM SEÇMEK manuel modu ANINDA bitirir — 4 sn beklenmez. Duraklama OTOMATİK yeniden
             // hedeflemenin (statü tick'i) kullanıcının görüşünü çalmasına karşıdır; seçim ise kullanıcının KENDİ
             // navigasyonudur (liste satırı, graf düğümü, stream satırı — §13.7'nin tek jesti). Bastırılsaydı
             // "tıkladım, hiçbir şey olmadı" olurdu. Manuel değilken no-op'tur; manuelken kamerayı zaten uygular,
             // aşağıdaki çağrı o durumda hedefi değişmemiş bulup erken döner.
-            ResumeFollowNow();
+            //
+            // SEÇİMİ KALDIRMAK bu kuralın DIŞINDADIR ve bu ayrım zorunludur: null bir "gidilecek yer" değildir.
+            // Boş zemine tıklayarak (HandlePanEnd) ya da grafta karşılığı olmayan bir projeye geçerek
+            // (MainWindow.PushGraphSelection null iter) seçim kalkabilir; koşulsuz dönseydik takip edilecek
+            // hiçbir şey yokken kamera kullanıcının excursion'ını silip kuşbakışına yapışırdı — TryResumeFollow'un
+            // hedef klozunun (HasFollowTarget) tam olarak yasakladığı şey. Hedef varsa 4 sn kuralı zaten döndürür.
+            if (value is not null) ResumeFollowNow();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
         }
@@ -363,15 +369,13 @@ public partial class GraphView : UserControl
         _edgeSlots.Clear();
         _neighbours.Clear();
         _flowingEdges.Clear();
-        _previousFocus = null;
-        _previousScale = null;
         _hasCamera = false; // yeni topoloji → kamera hedefi baştan hesaplanır
         // [sinema] Yeni topoloji manuel kamerayı da bitirir: kullanıcının gezdiği koordinatların yeni grafta
-        // karşılığı yoktur. Sürmekte olan bir jest varsa iptal edilir (el imleci ekranda kalmasın).
-        _manualCamera = false;
+        // karşılığı yoktur (Zeno latch'leri de o eski koordinatlara aitti — ExitManualCamera onları da bırakır).
+        // Sürmekte olan bir jest ayrıca iptal edilir (el imleci ekranda kalmasın).
+        ExitManualCamera();
         ResetPanGesture();
-        _followResumeTimer?.Stop(); // bekleyen dönüş tetiği yeni grafa taşınmaz — manuel mod zaten bitti
-        UpdateFollowPill();         // 0 düğümlü grafta ApplyCamera hiç çağrılmaz, pil BURADA kapanır
+        UpdateFollowPill(); // 0 düğümlü grafta ApplyCamera hiç çağrılmaz, pil BURADA kapanır
         CurrentCamera = default;
         _scannedRegion = Rect.Empty;
         _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
@@ -1296,10 +1300,16 @@ public partial class GraphView : UserControl
                 Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
                 return;
             _dragging = true;
-            EnterManualCamera();
             Ground.Cursor = Cursors.Hand; // el imleci YALNIZ sürüklerken (spec §3.4)
         }
 
+        // Manuel moda giriş HER harekette denenir, yalnız eşiğin aşıldığı karede değil: metot zaten
+        // idempotenttir (`if (_manualCamera) return;`), dolayısıyla normal akışta bedava. Kazandırdığı şey
+        // durum makinesinin kendi kendini onarmasıdır — jest SÜRERKEN manuel mod dışarıdan bitebilir (liste/
+        // klavye kaynaklı bir seçim ApplyCamera'yı manuel moddan çıkarır). Giriş yalnız eşik karesinde
+        // yapılsaydı, elin altındaki graf o andan sonra `_manualCamera == false` iken kayardı: pil kapalı
+        // kalır, dönüş tetiği hiç kurulmaz ve ilk statü tick'i kamerayı kullanıcının elinden alırdı.
+        EnterManualCamera();
         // Delta HER hareketten sonra sıfırlanır: birikirse kamera imleç hızının katlarıyla kayar ve elin
         // altındaki nokta grafı takip etmez.
         _panLast = position;
@@ -1416,7 +1426,9 @@ public partial class GraphView : UserControl
     /// </summary>
     private void KeepFollowResumeTriggerAlive(long nowTicks)
     {
-        if (_manualCamera && HasFollowTarget && !IsFollowResumeTimerArmed) ArmFollowResumeTimer(nowTicks);
+        // Kloz SIRASI gerekçenin parçasıdır: bu metot sürüklerken saniyede 100+ kez koşar, o yüzden önce iki
+        // ALAN OKUMASI elenir; O(N) olan HasFollowTarget (seçim yokken tüm slotları gezer) en sona kalır.
+        if (_manualCamera && !IsFollowResumeTimerArmed && HasFollowTarget) ArmFollowResumeTimer(nowTicks);
     }
 
     /// <summary>Uçuşta bir dönüş tetiği var mı — kurulum kapısı ve testler AYNI yüklemi okur (kopya YASAK).</summary>
@@ -1437,10 +1449,25 @@ public partial class GraphView : UserControl
         // Taban 1 ms: Interval = 0 olan bir DispatcherTimer kuyruğa sürekli yeniden girer — tam olarak
         // §3.6'nın yasakladığı şey. (Bugün buraya ancak pozitif bir kalan gelir; taban savunma amaçlıdır.)
         _followResumeTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(
-            1.0, GraphCamera.FollowResumeDelayMs - (nowTicks - _lastManualInputTicks)));
+            1.0, GraphCamera.FollowResumeDelayMs - (nowTicks - FollowResumeSince(nowTicks))));
         _followResumeTimer.Start();
         FollowResumeArmCount++;
     }
+
+    /// <summary>
+    /// Dönüş sayacının başladığı an.
+    ///
+    /// <para><b>Tuş BASILIYKEN sayaç hiç başlamamıştır</b> (damga "şimdi"dir): jest sürüyordur, kullanıcı
+    /// yalnız duraklamış olabilir — okumak için elini kıpırdatmadan tutmak da bir jesttir. Damga mekanizması
+    /// tek başına yalnız HAREKET EDEN sürüklemeyi korur (<see cref="HandlePanMove"/> her harekette damgalar);
+    /// duran sürükleme 4 sn sonra takibi devreye sokar ve kamera, tuş hâlâ basılıyken hedefe uçardı.</para>
+    ///
+    /// <para>Kural neden burada, <see cref="TryResumeFollow"/>'da bir <c>if</c> olarak DEĞİL: iki okuyucu var
+    /// ve ikisi de aynı cevabı istiyor. <see cref="ArmFollowResumeTimer"/> ham damgayı okusaydı, tuş basılıyken
+    /// gelen bir tick "kalan = 0" hesaplar ve tetiği 1 ms sonrasına kurardı — jest boyunca ~1 kHz dönen bir
+    /// DispatcherTimer, yani §3.6'nın yasakladığı şeyin ta kendisi (ÖLÇÜLDÜ, fix round 1).</para>
+    /// </summary>
+    private long FollowResumeSince(long nowTicks) => _panPressed ? nowTicks : _lastManualInputTicks;
 
     private void OnFollowResumeTick(object? sender, EventArgs e) => HandleFollowResumeTick(Environment.TickCount64);
 
@@ -1476,7 +1503,7 @@ public partial class GraphView : UserControl
     {
         if (!_manualCamera) return false;
         if (!HasFollowTarget) return false;
-        if (nowTicks - _lastManualInputTicks < (long)GraphCamera.FollowResumeDelayMs) return false;
+        if (nowTicks - FollowResumeSince(nowTicks) < (long)GraphCamera.FollowResumeDelayMs) return false;
 
         ResumeFollowNow();
         return true;
@@ -1486,16 +1513,33 @@ public partial class GraphView : UserControl
     /// (reduced-motion'da ani) döner.</summary>
     internal void ResumeFollowNow()
     {
+        if (!_manualCamera)
+        {
+            _followResumeTimer?.Stop(); // manuel değilken bekleyen bir tetik zaten konusuzdur
+            return;
+        }
+
+        ExitManualCamera();
+        ApplyCamera(animate: true); // pil görünürlüğünü de bu huni tazeler (bkz. ApplyCamera)
+    }
+
+    /// <summary>
+    /// Manuel kamera durumunun TAMAMINI bırakır — kamerayı UYGULAMAZ. "Manuel moddan çıkarken neyin
+    /// sıfırlanacağı" sorusunun TEK cevabı burasıdır (kopya YASAK): iki çıkış yolu vardır ve ikisi de buradan
+    /// geçer — takip dönüşü/pil (<see cref="ResumeFollowNow"/>, ardından kamerayı uygular) ve yeni topoloji
+    /// (<see cref="SetGraph"/>, kamerayı kendi akışında baştan kurar).
+    ///
+    /// <para><b>Zeno latch'leri excursion'ı AŞMAZ.</b> Kullanıcı saniyelerce gezindi; bu arada gelen statü
+    /// güncellemeleri manuel guard'da kesildiği için latch'ler o eski ana aittir. İlk manuel-sonrası hedefleme
+    /// 8px (odak) ve 0.05 (ölçek) eşiklerine karşı ÖLÇÜLMEZ — koşulsuzdur; aksi halde meşru bir yeniden
+    /// hedefleme bayat bir değere takılıp bastırılabilirdi.</para>
+    /// </summary>
+    private void ExitManualCamera()
+    {
         _followResumeTimer?.Stop();
-        if (!_manualCamera) return;
         _manualCamera = false;
-        // [sinema] Zeno latch'leri excursion'ı AŞMAZ. Kullanıcı saniyelerce gezindi; bu arada gelen statü
-        // güncellemeleri manuel guard'da kesildiği için latch'ler o eski ana aittir. İlk manuel-sonrası hedefleme
-        // 8px (odak) ve 0.05 (ölçek) eşiklerine karşı ÖLÇÜLMEZ — koşulsuzdur; aksi halde meşru bir yeniden
-        // hedefleme bayat bir değere takılıp bastırılabilirdi.
         _previousFocus = null;
         _previousScale = null;
-        ApplyCamera(animate: true); // pil görünürlüğünü de bu huni tazeler (bkz. ApplyCamera)
     }
 
     private void FollowPillMouseDown(object sender, MouseButtonEventArgs e)
