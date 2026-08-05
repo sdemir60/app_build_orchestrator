@@ -1513,11 +1513,12 @@ public partial class GraphView : UserControl
     /// (reduced-motion'da ani) döner.</summary>
     internal void ResumeFollowNow()
     {
-        if (!_manualCamera)
-        {
-            _followResumeTimer?.Stop(); // manuel değilken bekleyen bir tetik zaten konusuzdur
-            return;
-        }
+        // Manuel değilken bekleyen bir tetik VAR OLAMAZ: tetiği kuran tek yol
+        // (KeepFollowResumeTriggerAlive) _manualCamera şart koşar, çıkışın iki yolu da ExitManualCamera'dan
+        // geçer ve orada durdurulur. Burada savunma amaçlı ikinci bir Stop() yazmak, "tetik nerede durdurulur"
+        // sorusuna ikinci bir cevap üretirdi (kopya YASAK) — üstelik ulaşılamaz olduğu için kırmızıyla da
+        // gösterilemezdi.
+        if (!_manualCamera) return;
 
         ExitManualCamera();
         ApplyCamera(animate: true); // pil görünürlüğünü de bu huni tazeler (bkz. ApplyCamera)
