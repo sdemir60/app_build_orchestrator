@@ -34,13 +34,15 @@ statü tick'i "değişmediyse dokunma" fast-path'li, akan dash'ler tek paylaşı
 
 ### 3.0 Tek kapı: sinema modu
 
-Yeni davranışların TAMAMI tek bir kapıya bağlıdır: **sinema modu**, graf panele okunur ölçekte sığmıyorken —
-`FitScale(viewport, graph) < 0.9` (sabit: `CinemaEngageFitScale`, tek yerde) — etkindir. Sığan graflarda
-(bugünkü ~36 düğümlük tasarım hedefi dahil) kamera, kenarlar, etiketler ve jestler **birebir bugünkü gibi**
-kalır; bu, testlerle pinlenen yapısal bir garantidir. Pencere yeniden boyutlanınca kapı yeniden değerlendirilir.
+Yeni davranışların TAMAMI tek bir kapıya bağlıdır: **sinema modu = büyük graf**, yani düğüm sayısı
+`FullDetailMaxNodes`'u (150) aşmışken — **cull ve etiket LOD'uyla AYNI, zaten var olan kapı**; yeni eşik icat
+edilmez. Küçük graflarda (bugünkü ~36 düğümlük tasarım hedefi dahil) kamera, kenarlar, etiketler ve jestler
+**birebir bugünkü gibi** kalır; bu, testlerle iki taraftan pinlenen yapısal bir garantidir.
 
-`FullDetailMaxNodes` (150) AYRI bir eşiktir ve anlamı değişmez: o, nesne KURULUM maliyetinin kapısıdır
-(cull + kurulum LOD'u). İki kapının alanları farklıdır: biri geometri/okunurluk, öteki inşa maliyeti.
+> Not — fit-ölçeği tabanlı kapı (`FitScale < 0.9`) değerlendirildi ve REDDEDİLDİ: taban tuval 880px olduğundan
+> küçük graf bile tipik panel genişliğinde 0.9'un altında kalır; o kapı küçük grafı da sinemaya sokar ve
+> "küçük grafta birebir aynı" garantisini bozardı. Düğüm-sayısı kapısı garantiyi yapısal kılar ve panel
+> yeniden boyutlanınca kip değiştirmez (daha öngörülebilir).
 
 ### 3.1 Kamera politikası — `GraphCamera` (saf aritmetik)
 
@@ -73,7 +75,7 @@ Sinema modunda ve **seçim yokken** devreye girer (kapı bilgisi `Resolve`'a par
 | Idle (`Brush.Border`) | 0.8 | **0.16** |
 
 - 0.16, seçim-dim değeriyle AYNI sabittir ve **tek kaynaktan** tanımlanır (kopya yasak — bugün `Resolve`
-  içinde iki kez inline 0.16 var; sabite çıkarılır, her dal onu okur).
+  içinde inline 0.16 literali var; sabite çıkarılır, seçim-dim ve sis aynı sabiti okur).
 - Seçim varken bugünkü dim kuralları aynen kazanır; sinema modu dışında hiçbir kenar stili değişmez.
 - `EdgeStyle` record eşitliği ve fast-path aynen çalışır; akan-dash clock kablajı değişmez.
 
@@ -96,8 +98,9 @@ Sinema modunda etiket kararı ölçeğe bağlanır (sinema dışı: bugünkü st
 - **Sürükleme:** boş zeminde (`Ground`) sol tuş + platform drag eşiği
   (`SystemParameters.MinimumHorizontalDragDistance`) aşılınca pan başlar; sürüklerken imleç **el**
   (`Cursors.Hand`), bırakınca normale döner; mouse capture kullanılır. Eşik aşılmadan bırakılırsa bugünkü
-  "boş alana tıkla → seçim kalkar" davranışı çalışır (bugün `MouseLeftButtonDown`'da olan seçim kaldırma
-  click-vs-drag ayrımı için release'e taşınır; sinema dışı graf da dahil davranış sonucu aynı kalır).
+  "boş alana tıkla → seçim kalkar" davranışı çalışır (SİNEMA modunda seçim kaldırma click-vs-drag ayrımı için
+  release'e taşınır; sinema DIŞINDA bugünkü down-anında-kaldırma birebir korunur — mevcut tıklama testleri
+  değişmez).
 - **Wheel:** imleç merkezli zoom (imlecin altındaki dünya noktası sabit kalır); çarpansal adım **1.1/kademe**
   (sabit); manuel bant [0.45, 2.0].
 - Manuel pan/zoom SIRASINDA culling çalışmaya devam eder — `UpdateMaterialization` canlı kamera
@@ -133,10 +136,10 @@ Sonuçları:
 
 ## 4. Test stratejisi (kırmızı-önce)
 
-- **Saf birim:** sinema kapısı (fit ölçeği eşiği, resize ile giriş/çıkış); frontier bbox → ölçek çerçeveleme
-  + bant kelepçeleri; ölçek Zeno eşiği; seçim ölçeği; settled'ın bugünkü `FitScale`'e denkliği; sinema dışı
-  kipte bugünkü kameranın birebir korunumu; sis matrisi (sinema × statü × seçim); `LabelsFit(scale)` +
-  histerezis.
+- **Saf birim:** frontier bbox → ölçek çerçeveleme + bant kelepçeleri; ölçek Zeno eşiği; seçim ölçeği;
+  settled'ın bugünkü `FitScale`'e denkliği; sinema dışı kipte bugünkü kameranın birebir korunumu; sis matrisi
+  (sinema × statü × seçim); `LabelsFit(scale)` + histerezis. Sinema kapısının cull kapısıyla AYNI eşik olduğu
+  iki taraftan pinlenir (150 → kapalı, 151 → açık).
 - **WPF/STA:** wheel → imleç altı dünya noktasının sabitliği; drag → pan + el imleci + seçim korunumu;
   eşik altı tıklama → seçim kalkar; manuel modda `ApplyCamera`'nın hedeflememesi; zaman enjeksiyonuyla 4 sn
   dönüşü; settled+seçimsiz manuel kalıcılığı; manuel pan sırasında materyalizasyon; zoom-in'de etiket
