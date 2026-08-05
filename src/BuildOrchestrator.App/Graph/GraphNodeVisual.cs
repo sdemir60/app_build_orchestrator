@@ -69,8 +69,11 @@ internal sealed class GraphNodeSlot
     public required Point Center { get; init; }
     /// <summary>Cull testinde kullanılan dünya sınırları (<see cref="GraphCulling.NodeBounds"/>).</summary>
     public required Rect Bounds { get; init; }
-    /// <summary>[G2/LOD] Bu düğümün katmanında etiket kurulur mu (<see cref="GraphLayout.LabelsFit"/>).</summary>
-    public required bool ShowsLabel { get; init; }
+    /// <summary>[G2/LOD] Bu düğümün katmanında etiket kurulur mu (<see cref="GraphLayout.LabelsFit"/>). Sinema
+    /// modunda SABİT DEĞİLDİR: kamera hedef ölçeğiyle güncellenir (spec §3.3 —
+    /// <see cref="GraphLayout.LabelVisibleAtScale"/>), çünkü kamera yakınlaştıkça aralık EKRANDA büyür ve
+    /// etiket sığmaya başlar. Sonradan materyalize olan düğüm de bu GÜNCEL kararı okur.</summary>
+    public required bool ShowsLabel { get; set; }
     public GraphNodeVisual? Visual { get; set; }
 }
 
@@ -131,8 +134,13 @@ internal sealed class GraphNodeVisual
     /// kısa adlı bir katman dar aralıkta da etiketlerini korur. LOD, cull ile aynı kapıya bağlıdır
     /// (<see cref="GraphView.FullDetailMaxNodes"/>): o bandın altında etiket ASLA düşmez.</para>
     ///
+    /// <para><b>[sinema]</b> Karar SABİT DEĞİLDİR: kamera hedef ölçeğiyle güncellenir (spec §3.3). Kamera
+    /// yakınlaşınca etiket TALEP ÜZERİNE kurulur (<c>GraphView.EnsureLabel</c>) ve uzaklaşınca
+    /// <c>Collapsed</c>'a döner — bir kez kurulan etiket sökülmez, dolayısıyla burası "hiç yakınlaşılmadı"
+    /// demektir.</para>
+    ///
     /// <para>Etiketi düşen düğüm anonim kalmaz — tam proje adını veren bir tooltip taşır.</para></summary>
-    public TextBlock? Label { get; init; }
+    public TextBlock? Label { get; set; }
     /// <summary>[G2] Dep-hata rozeti kabı (13px, sağ üst köşe) — yalnız <c>HasDepIssue</c> olan düğümde KURULUR
     /// (eskiden her düğümde kurulup gizleniyordu). Yoksa <c>null</c>.</summary>
     public Grid? Badge { get; set; }

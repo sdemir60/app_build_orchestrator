@@ -84,8 +84,25 @@ public static class GraphLayout
     ///
     /// <para>Etiket düşen düğüm anonim kalmaz: o düğüme proje adını veren bir tooltip kurulur
     /// (<c>GraphView.BuildNodeVisual</c>).</para>
+    ///
+    /// <para><b>[sinema]</b> Bu, aynı kararın <b>ölçek 1</b> hâlidir: kamera yakınlaştıkça aralık EKRANDA büyür
+    /// ve etiket sığmaya başlar — genel kural <see cref="LabelVisibleAtScale"/>'dedir, burası ona delege eder
+    /// (kopya YASAK).</para>
     /// </summary>
-    public static bool LabelsFit(double spacing, double widestLabelWidth) => spacing >= widestLabelWidth;
+    public static bool LabelsFit(double spacing, double widestLabelWidth) =>
+        LabelVisibleAtScale(spacing, widestLabelWidth, 1.0, currentlyVisible: false);
+
+    /// <summary>[sinema] Gizli bir etiketin belirme eşiği (oran = aralık×ölçek / en geniş etiket).</summary>
+    public const double LabelShowRatio = 1.0;
+    /// <summary>[sinema] Görünür bir etiketin tutunma eşiği — histerezis bandı titremeyi önler (spec §3.3).</summary>
+    public const double LabelHideRatio = 0.85;
+
+    /// <summary>[sinema] Etiket verilen kamera hedef ölçeğinde görünür mü. Histerezisli: gizliyken
+    /// <see cref="LabelShowRatio"/>, görünürken <see cref="LabelHideRatio"/> eşiği geçerlidir — aksi halde eşiğin
+    /// tam üzerindeki bir katman, kameranın her küçük yeniden hedeflemesinde etiketlerini yakıp söndürürdü.</summary>
+    public static bool LabelVisibleAtScale(
+        double spacing, double widestLabelWidth, double scale, bool currentlyVisible) =>
+        spacing * scale >= widestLabelWidth * (currentlyVisible ? LabelHideRatio : LabelShowRatio);
 
     /// <summary>[G1] <paramref name="count"/> düğümlü bir katmanın düğüm aralığı. Prototipin formülü TABAN
     /// tuvalden hesaplanır (<c>(880-70)/(n-0.5)</c>) ve <see cref="MinNodeSpacing"/>–<see cref="MaxNodeSpacing"/>

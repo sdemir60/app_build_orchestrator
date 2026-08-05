@@ -188,6 +188,28 @@ public class GraphLayoutTests
         Assert.False(GraphLayout.LabelsFit(spacing, GraphLabelMetrics.WidestLabelWidth(["Domain.Vehicle.Registration"], mono)));
     }
 
+    // ---------------------------------------------------------------- [sinema] zoom'a duyarlı etiket
+
+    [Fact]
+    public void A_label_appears_at_ratio_1_and_survives_down_to_0_85_hysteresis()
+    {
+        // r = spacing×scale / widest. Gizliyken ancak r ≥ 1.0'da belirir; görünürken r ≥ 0.85 oldukça kalır.
+        Assert.False(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.35, currentlyVisible: false)); // r≈0.967 < 1
+        Assert.True(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.40, currentlyVisible: false));  // r≈1.003 ≥ 1
+        Assert.True(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.25, currentlyVisible: true));   // r≈0.895 ≥ .85
+        Assert.False(GraphLayout.LabelVisibleAtScale(34.4, 48.0, 1.15, currentlyVisible: true));  // r≈0.824 < .85
+        Assert.Equal(1.0, GraphLayout.LabelShowRatio);
+        Assert.Equal(0.85, GraphLayout.LabelHideRatio);
+    }
+
+    [Fact]
+    public void The_static_labels_fit_rule_is_the_scale_1_case_of_the_same_predicate()
+    {
+        // Tek doğruluk kaynağı: LabelsFit(s,w) ≡ LabelVisibleAtScale(s,w,1,false).
+        Assert.Equal(GraphLayout.LabelsFit(96, 90), GraphLayout.LabelVisibleAtScale(96, 90, 1.0, false));
+        Assert.Equal(GraphLayout.LabelsFit(34.4, 90), GraphLayout.LabelVisibleAtScale(34.4, 90, 1.0, false));
+    }
+
     [Fact]
     public void The_layout_reports_the_spacing_of_every_layer_so_the_LOD_decision_has_a_single_source()
     {

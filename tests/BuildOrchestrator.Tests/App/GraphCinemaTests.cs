@@ -157,4 +157,112 @@ public class GraphCinemaTests
         // graf sinema bandına büyüdüğünde ilk frontier hedefini bastıramamasını garanti eder.
         Assert.Null(view.PreviousScale);
     }
+
+    // ---------------------------------------------------------------- zoom'a duyarlı etiketler
+
+    /// <summary>Etiketleri STATİK kararla düşen ama takip tavanında (1.4×) sığan graf: 4 katman × 40 düğüm ⇒
+    /// aralık TABANA oturur (<see cref="GraphLayout.MinNodeSpacing"/> = 34px) ve 7 karakterlik adlar Geist
+    /// Mono 10px'te tam 42px çizilir (ÖLÇÜLDÜ — karakter başına 6px). Böylece 34 &lt; 42 ⇒ ölçek 1'de sığmaz;
+    /// 34 × 1.4 = 47.6 ≥ 42 ⇒ takip tavanında sığar.
+    ///
+    /// <para>Ad genişliği <c>D3</c> ile SABİTLENİR: 1-2 haneli bir biçim, düğüm sayısı 100'ü geçtiğinde
+    /// katmanın en geniş adını sessizce 6'dan 7 karaktere çıkarır ve eşiği fixture'ın büyüklüğüne bağlardı.</para>
+    ///
+    /// <para><paramref name="count"/> tam-detay bandına indirildiğinde AYNI şekil sinema kapısının ALTINDA
+    /// kalır (aralık ve ad genişliği değişmez) — küçük graf güvencesi böylece "etiketleri düşürecek bir grafta"
+    /// ölçülür, düşmeyeceği zaten belli olan bir grafta değil.</para></summary>
+    private static IReadOnlyList<GraphNode> CrowdedNodes(int count = GraphView.FullDetailMaxNodes + 10) =>
+        [.. Enumerable.Range(0, count)
+            .Select(i => new GraphNode($"Node{i:D3}", i % 4, GraphStatus.Discovered))];
+
+    /// <summary>Katman 0'ın ORTASINDAKİ düğüm (40'ın 19. sırası, i = 4×19). Kalabalık katmanın UÇLARI 600×400
+    /// panelde kuşbakışı (0.68) pencerenin dışında kalır ve hiç materyalize olmaz — etiket iddiaları gerçekten
+    /// kurulmuş bir görsele dayanmalıdır.</summary>
+    private const string CrowdedTarget = "Node076";
+
+    private static GraphNodeVisual MaterialisedTarget(GraphView view)
+    {
+        Assert.True(view.NodeVisuals.ContainsKey(CrowdedTarget),
+            $"{CrowdedTarget} materyalize olmadı — etiket iddiası boşlukta kalırdı.");
+        return view.NodeVisuals[CrowdedTarget];
+    }
+
+    [StaFact]
+    public void Zooming_into_the_frontier_materialises_the_labels_that_fit_at_that_scale()
+    {
+        var nodes = CrowdedNodes();
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+
+        var target = MaterialisedTarget(view);
+        Assert.Null(target.Label); // statik LOD düşürdü (kalabalık katman, ölçek 1 varsayımı)
+
+        view.UpdateStatuses(WithStatus(nodes, CrowdedTarget, GraphStatus.Building)); // kamera 1.4'e çerçeveler
+
+        Assert.Equal(GraphCamera.FollowMaxScale, view.CurrentCamera.Scale); // ön-koşul: gerçekten yakınlaştı
+        Assert.NotNull(target.Label);
+        Assert.Equal(Visibility.Visible, target.Label!.Visibility);
+        Assert.Equal(CrowdedTarget, target.Label.Text);
+        Assert.Null(target.Body.ToolTip); // etiket görünürken tam-ad tooltip'i kalkar
+    }
+
+    [StaFact]
+    public void Zooming_back_out_hides_the_labels_and_restores_the_tooltip()
+    {
+        var nodes = CrowdedNodes();
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+        view.UpdateStatuses(WithStatus(nodes, CrowdedTarget, GraphStatus.Building));
+        var target = MaterialisedTarget(view);
+        Assert.NotNull(target.Label);
+
+        view.UpdateStatuses(nodes);
+        view.IsSettled = true; // kuşbakışına dönüş (0.68): r histerezis tabanının çok altında
+
+        Assert.Equal(Visibility.Collapsed, target.Label!.Visibility);
+        Assert.Equal(CrowdedTarget, target.Body.ToolTip);
+    }
+
+    [StaFact]
+    public void Small_graph_labels_are_untouched_by_the_scale_machinery()
+    {
+        // Fixture KASTEN "düşürülebilir": aynı 34px aralık, aynı 42px adlar — yalnız düğüm sayısı tam-detay
+        // bandının SINIRINDA. Ölçek makinesi burada koşsaydı kuşbakışı (0.68) oranı histerezis tabanının çok
+        // altında kalır ve HER etiket Collapsed olurdu; "etiket null mı" diye bakmak bu kusuru GÖREMEZ (etiket
+        // kurulmuştur, yalnız gizlenmiştir) — bu yüzden görünürlük de tooltip de ayrıca pinlenir.
+        var nodes = CrowdedNodes(GraphView.FullDetailMaxNodes);
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+        Assert.False(view.IsCullEnabled); // ön-koşul: tam-detay bandı
+        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, 42), "fixture kalabalık değil");
+
+        view.UpdateStatuses(WithStatus(nodes, "Node000", GraphStatus.Building));
+
+        Assert.Equal(nodes.Count, view.NodeVisuals.Count); // cull kapalı: hepsi kurulu
+        Assert.All(view.NodeVisuals.Values, v => Assert.NotNull(v.Label)); // tam-detay garantisi
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(Visibility.Visible, v.Label!.Visibility));
+        Assert.All(view.NodeVisuals.Values, v => Assert.Null(v.Body.ToolTip));
+    }
+
+    [StaFact]
+    public void A_node_materialised_before_the_first_camera_target_keeps_the_static_label_decision()
+    {
+        // Panel HENÜZ ölçülmemişken (ViewportSize = 0) kamera hedefi HESAPLANMAZ — ApplyCamera erken döner ve
+        // CurrentCamera.Scale 0'da kalır. Seçim yine de düğüm materyalize eder (MaterializeSelection ekran
+        // dışından gelen seçimi kurar): o düğümün etiketi "ölçek 0" ile değerlendirilseydi HAKSIZ yere düşer,
+        // üstelik hiçbir kamera geçişi bunu geri almazdı. Ölçek kararı ancak GERÇEK bir kamera hedefi varken
+        // verilir; yoksa statik karar (BuildNodeVisual) geçerli kalır.
+        var nodes = BigNodes(); // aralık 34px, adlar ≤4 karakter (24px) ⇒ statik kararla etiket SIĞAR
+        var view = GraphTestView.New(labelFontFamily: DsResources.MonoFontFamily); // Measure/Arrange YOK
+        view.SetGraph(nodes, ChainEdges(nodes));
+        Assert.Equal(0.0, view.CurrentCamera.Scale); // ön-koşul: kamera hedefi yok
+        Assert.True(view.IsCullEnabled);             // ön-koşul: sinema bandı (aksi halde LOD hiç koşmaz)
+
+        view.SelectedNode = "N3";
+
+        var visual = view.NodeVisuals["N3"];
+        Assert.NotNull(visual.Label);
+        Assert.Equal(Visibility.Visible, visual.Label!.Visibility);
+        Assert.Null(visual.Body.ToolTip);
+    }
 }

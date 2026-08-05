@@ -145,6 +145,11 @@ public partial class GraphView : UserControl
     private bool _edgesAnimated;
     private bool _hasCamera;
     private bool _cullEnabled;
+    /// <summary>[sinema] Katman → o katmandaki EN GENİŞ etiketin çizilen genişliği; TAM DETAY bandında
+    /// <c>null</c>'dır. Null olması yalnız bir optimizasyon değil YAPISAL GARANTİDİR: etiket görünürlüğünü
+    /// ölçeğe göre yeniden değerlendiren yol (<see cref="ApplyLabelVisibility"/>) küçük grafta HİÇ koşmaz,
+    /// dolayısıyla ≤<see cref="FullDetailMaxNodes"/> düğümlü graf birebir bugünkü gibi kalır.</summary>
+    private Dictionary<int, double>? _labelWidths;
     /// <summary>[G2 · fix round 1 B1] EN SON taranmış dünya bölgesi — <b>kümülatif DEĞİL</b>, her taramada
     /// DEĞİŞTİRİLİR. Yalnız gereksiz taramayı eler: bu bölgedeki her şey materyalize edilmiş olduğundan, onun
     /// İÇİNDE kalan yeni bir bölge için tekrar gezinmeye gerek yoktur. (İlk turda burada kümülatif bir birleşim
@@ -325,8 +330,9 @@ public partial class GraphView : UserControl
         bool fullDetail = nodes.Count <= FullDetailMaxNodes;
         _cullEnabled = !fullDetail;
         // [fix round 1 A1] LOD eşiği katmanın EN GENİŞ etiketinin ÇİZİLEN genişliğinden türetilir (kelepçeden
-        // değil). Ölçüm katman başına TEK kez yapılır ve yalnız tam-detay bandının DIŞINDA gerekir.
-        var labelWidths = fullDetail ? null : MeasureLayerLabelWidths(nodes);
+        // değil). Ölçüm katman başına TEK kez yapılır ve yalnız tam-detay bandının DIŞINDA gerekir. [sinema]
+        // Ölçüm SAKLANIR: kamera yakınlaştıkça karar yeniden verilir (ApplyLabelVisibility).
+        _labelWidths = fullDetail ? null : MeasureLayerLabelWidths(nodes);
 
         foreach (var node in nodes)
         {
@@ -336,9 +342,9 @@ public partial class GraphView : UserControl
                 Model = node,
                 Center = center,
                 Bounds = GraphCulling.NodeBounds(center),
-                ShowsLabel = labelWidths is null || GraphLayout.LabelsFit(
-                    _layout.LayerSpacing.TryGetValue(node.Layer, out double s) ? s : GraphLayout.MaxNodeSpacing,
-                    labelWidths.GetValueOrDefault(node.Layer, GraphLayout.NodeCellWidth)),
+                // Açılış kararı ölçek 1 varsayar; ilk ApplyCamera onu kameranın GERÇEK hedef ölçeğine oturtur.
+                ShowsLabel = _labelWidths is null || GraphLayout.LabelsFit(
+                    LayerSpacing(node.Layer), LayerLabelWidth(node.Layer)),
             };
             _slots[node.Name] = slot;
             _slotOrder.Add(slot);
@@ -383,6 +389,16 @@ public partial class GraphView : UserControl
             widths[layer] = GraphLabelMetrics.WidestLabelWidth([longest], LabelFontFamily);
         return widths;
     }
+
+    /// <summary>Katmanın düğüm aralığı — LOD kararının iki yolu (açılıştaki statik karar ve
+    /// <see cref="ApplyLabelVisibility"/>) AYNI kaynaktan okur (kopya YASAK).</summary>
+    private double LayerSpacing(int layer) =>
+        _layout.LayerSpacing.TryGetValue(layer, out double spacing) ? spacing : GraphLayout.MaxNodeSpacing;
+
+    /// <summary>Katmandaki EN GENİŞ etiketin çizilen genişliği; ölçüm yoksa (tam-detay bandı ya da bilinmeyen
+    /// katman) hücre kelepçesine — yani MUHAFAZAKÂR üst sınıra — düşülür.</summary>
+    private double LayerLabelWidth(int layer) =>
+        _labelWidths?.GetValueOrDefault(layer, GraphLayout.NodeCellWidth) ?? GraphLayout.NodeCellWidth;
 
     /// <summary>[G2 fix round 1 · A1] Etiket ölçümünde kullanılan aile; null ise <see cref="AppFonts.Mono"/>.
     /// TEST SEAM'i: <c>pack://</c> aileler gerçek bir <c>Application</c> olmadan çözülmez, testler
@@ -520,6 +536,9 @@ public partial class GraphView : UserControl
         _nodeLayer.Children.Add(visual.Cell);
         ApplyNodeSelection(visual, animate: false);
         JoinRevealIfPlaying(visual);
+        // [sinema] Pencere içinde SONRADAN görünen düğüm de kameranın GÜNCEL ölçeğine oturur — aksi halde
+        // yakınlaşılmış bir grafta yeni materyalize olan düğüm etiketsiz kalırdı.
+        ApplyLabelVisibility(slot, visual, CurrentCamera.Scale);
     }
 
     /// <summary>
@@ -638,36 +657,6 @@ public partial class GraphView : UserControl
             Children = { squareHost },
         };
 
-        TextBlock? label = null;
-        if (slot.ShowsLabel)
-        {
-            label = new TextBlock
-            {
-                FontFamily = AppFonts.Mono,
-                FontSize = 10,
-                MaxWidth = GraphLayout.NodeCellWidth,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                TextAlignment = TextAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, GraphLayout.LabelGap, 0, 0),
-                Text = node.ShortName,
-            };
-            // feasibility §3.4/§4.4: kök TextOptions.TextFormattingMode="Display" scale transform ALTINDA bozulur —
-            // graf etiketlerinde LOKAL Ideal override (kök MainWindow ayarına DOKUNULMAZ, T65).
-            TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
-            label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim"); // seçiliyken text-primary (DS)
-            body.Children.Add(label);
-        }
-        else
-        {
-            // [G2 · fix round 1 A3] Etiketi düşen düğüm ANONİM KALMAZ: tam proje adını veren bir tooltip
-            // taşır ve hedefi düğüm karesinin TAMAMIDIR (body = tıklama alanının kendisi). Tooltip DÜZ METİN
-            // atanır — WPF, ToolTip kontrolünü ancak gösterilirken kurar, dolayısıyla düğüm başına HİÇBİR ek
-            // nesne kurulmaz (WillBuildDot.cs:66 ile aynı desen; Controls.xaml'deki implicit ToolTip stili —
-            // InitialShowDelay=0 + CustomPopupPlacementCallback, A13.2 — otomatik sarılan tooltip'e de uygulanır).
-            body.ToolTip = node.Name;
-        }
-
         var cell = new Grid { Width = GraphLayout.NodeCellWidth, Children = { body } };
         Canvas.SetLeft(cell, slot.Center.X - GraphLayout.NodeCellWidth / 2);
         Canvas.SetTop(cell, slot.Center.Y - GraphLayout.NodeSize / 2);
@@ -693,11 +682,104 @@ public partial class GraphView : UserControl
             Square = square,
             SelectionRing = ring,
             Icon = icon,
-            Label = label,
+            Label = null, // aşağıda TALEP ÜZERİNE kurulur (EnsureLabel) — sinema modunda kamera da kurabilir
             Center = slot.Center,
         };
+
+        if (slot.ShowsLabel)
+        {
+            EnsureLabel(visual);
+        }
+        else
+        {
+            // [G2 · fix round 1 A3] Etiketi düşen düğüm ANONİM KALMAZ: tam proje adını veren bir tooltip
+            // taşır ve hedefi düğüm karesinin TAMAMIDIR (body = tıklama alanının kendisi). Tooltip DÜZ METİN
+            // atanır — WPF, ToolTip kontrolünü ancak gösterilirken kurar, dolayısıyla düğüm başına HİÇBİR ek
+            // nesne kurulmaz (WillBuildDot.cs:66 ile aynı desen; Controls.xaml'deki implicit ToolTip stili —
+            // InitialShowDelay=0 + CustomPopupPlacementCallback, A13.2 — otomatik sarılan tooltip'e de uygulanır).
+            visual.Body.ToolTip = node.Name;
+        }
+
         ApplyNodeStatus(visual);
         return visual;
+    }
+
+    /// <summary>[sinema] Etiket kurulumunun TEK yolu — statik yol (<see cref="BuildNodeVisual"/>) ve zoom yolu
+    /// (<see cref="ApplyLabelVisibility"/>) aynı metodu kullanır (kopya YASAK). Bir kez kurulan etiket
+    /// SÖKÜLMEZ; uzaklaşmada yalnız <c>Collapsed</c>'a döner (cull'un tek yönlü materyalizasyonuyla aynı
+    /// gerekçe: sökmek kazanç getirmez, yeniden kurmak maliyetlidir).</summary>
+    private void EnsureLabel(GraphNodeVisual visual)
+    {
+        if (visual.Label is not null) return;
+
+        var label = new TextBlock
+        {
+            FontFamily = AppFonts.Mono,
+            FontSize = GraphLabelMetrics.LabelFontSize,
+            MaxWidth = GraphLayout.NodeCellWidth,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, GraphLayout.LabelGap, 0, 0),
+            Text = visual.Model.ShortName,
+        };
+        // feasibility §3.4/§4.4: kök TextOptions.TextFormattingMode="Display" scale transform ALTINDA bozulur —
+        // graf etiketlerinde LOKAL Ideal override (kök MainWindow ayarına DOKUNULMAZ, T65).
+        TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
+        // DS DependencyGraphNode: etiket seçiliyken text-primary, aksi halde text-dim. Seçim durumu BURADA
+        // okunur — etiket, seçim geçişinin dışında (kamera yakınlaşınca) da doğabilir.
+        label.SetResourceReference(TextBlock.ForegroundProperty,
+            string.Equals(visual.Model.Name, _selectedNode, StringComparison.Ordinal)
+                ? "Brush.TextPrimary" : "Brush.TextDim");
+        visual.Body.Children.Add(label); // squareHost'un ARDINDAN: kare üstte, etiket altında
+        visual.Label = label;
+    }
+
+    /// <summary>
+    /// [sinema] Tek düğümün etiket görünürlüğünü kamera HEDEF ölçeğine göre uygular (spec §3.3).
+    ///
+    /// <para><b>İki durumda HİÇ çalışmaz.</b> (a) Tam-detay bandında (<see cref="_labelWidths"/> null): küçük
+    /// grafın "hiçbir şey değişmedi" güvencesi YAPISALDIR, ikinci bir eşiğe bağlı değildir. (b) Kamera hedefi
+    /// henüz hesaplanmamışken (<see cref="_hasCamera"/> false ⇒ ölçek 0): panel ölçülmeden gelen bir seçim de
+    /// düğüm materyalize eder (<see cref="MaterializeSelection"/>) ve ölçek 0'a göre karar vermek o düğümün
+    /// etiketini haksız yere düşürürdü — üstelik geri alacak bir kamera geçişi de olmazdı. O ana kadar
+    /// açılıştaki statik karar geçerlidir; ilk <see cref="ApplyCamera"/> materyalize olan HEPSİNİ birden
+    /// yeniden değerlendirir.</para>
+    /// </summary>
+    private void ApplyLabelVisibility(GraphNodeSlot slot, GraphNodeVisual visual, double targetScale)
+    {
+        if (_labelWidths is null || !_hasCamera) return;
+
+        bool show = GraphLayout.LabelVisibleAtScale(
+            LayerSpacing(visual.Model.Layer), LayerLabelWidth(visual.Model.Layer), targetScale, slot.ShowsLabel);
+        // "Değişmediyse dokunma": görselin etiket/tooltip durumunun TAMAMI slot.ShowsLabel'ın fonksiyonudur —
+        // onu yazan iki yol da (BuildNodeVisual ve aşağıdaki dallar) bu değişmezi korur, etiket de bir kez
+        // kurulduktan sonra sökülmez. Dolayısıyla kararın kendisini karşılaştırmak yeterlidir.
+        if (show == slot.ShowsLabel) return;
+
+        slot.ShowsLabel = show;
+        if (show)
+        {
+            EnsureLabel(visual);
+            visual.Label!.Visibility = Visibility.Visible;
+            visual.Body.ToolTip = null;
+        }
+        else
+        {
+            if (visual.Label is { } label) label.Visibility = Visibility.Collapsed;
+            visual.Body.ToolTip = visual.Model.Name;
+        }
+    }
+
+    /// <summary>[sinema] Kamera hedefi değiştiğinde MATERYALİZE düğümlerin etiket kararını tazeler — KARE
+    /// başına değil, yalnız yeniden hedeflemede (ara kareler zaten hedefe doğru gidiyordur). Tam-detay bandında
+    /// gezinme HİÇ yapılmaz: buradaki kontrol <see cref="ApplyLabelVisibility"/>'ninkinin tekrarı değil, O(N)
+    /// döngünün kendisinden kaçınmaktır.</summary>
+    private void UpdateLabelVisibility(double targetScale)
+    {
+        if (_labelWidths is null) return;
+        foreach (var visual in _nodes.Values)
+            ApplyLabelVisibility(_slots[visual.Model.Name], visual, targetScale);
     }
 
     /// <summary>[G2] Dep-hata rozetini TALEP ÜZERİNE kurar (bir kez). Rozet nabız kabının KARDEŞİDİR ve ondan
@@ -1118,6 +1200,9 @@ public partial class GraphView : UserControl
         }
         CurrentCamera = camera;
         _hasCamera = true;
+        // [sinema] Etiket kararı kameranın HEDEF ölçeğinden verilir (spec §3.3) — ara karelerden değil.
+        // Materyalizasyondan ÖNCE: bu turda kurulacak düğümler kararı MaterializeNode'da zaten okur.
+        UpdateLabelVisibility(camera.Scale);
 
         bool animationsEnabled = animate && AnimationsEnabledProvider();
         LastCameraAnimated = animationsEnabled;
