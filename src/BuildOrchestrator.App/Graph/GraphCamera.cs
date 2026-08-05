@@ -96,7 +96,10 @@ public static class GraphCamera
         GraphLayout.NodeSize / 2 + GraphLayout.LabelGap + GraphLayout.LabelHeight + FitPadding;
 
     /// <summary>Ölçek hedefi (spec §3.1 tablosu). <paramref name="previousScale"/> YALNIZ frontier dalında
-    /// Zeno eşiği için kullanılır — <see cref="ResolveFocus"/>'un previousFocus sözleşmesinin ölçek eşi.</summary>
+    /// Zeno eşiği için kullanılır — <see cref="ResolveFocus"/>'un previousFocus sözleşmesinin ölçek eşi.
+    /// <paramref name="settled"/> ölçeği DEĞİŞTİRMEZ (settled de idle de kuşbakışı fit'e döner); dal unutulmuş
+    /// değildir, parametre imzayı <see cref="ResolveFocus"/> ile paritede tutar — çağıran ikisine AYNI argüman
+    /// kümesini geçer. Ayrımı ODAK yapar: settled tam merkez, idle y = H×<see cref="DefaultCenterYFactor"/>.</summary>
     public static double ResolveScale(
         Size viewport, Size graph, bool cinema,
         Point? selected, IReadOnlyList<Point> building, bool settled, double? previousScale)

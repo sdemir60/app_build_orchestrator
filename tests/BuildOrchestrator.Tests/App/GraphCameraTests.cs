@@ -168,10 +168,15 @@ public class GraphCameraTests
     }
 
     [Fact]
-    public void A_selection_zooms_to_the_fixed_readable_scale_in_cinema()
+    public void A_selection_beats_the_frontier_and_ignores_the_zeno_guard_in_cinema()
+        // GERÇEK senaryo: koşu sürerken listeden bir proje tıklanır. Seçim frontier'in ÖNÜNDE gelmeli —
+        // bu building tek başına tabanı (0.85) verirdi, seçim 1.1'i dayatır. previousScale ise seçim
+        // ölçeğine eşiğin ALTINDA (|1.1−1.13| = 0.03 < 0.05) tutulur: Zeno guard'ı yanlışlıkla bu dala
+        // yayılsaydı 1.13 dönerdi. Böylece "dal sırası" ve "guard yalnız frontier'in" iddiaları ölçülür.
         => Assert.Equal(GraphCamera.SelectionScale, GraphCamera.ResolveScale(
             new Size(600, 400), Graph, cinema: true,
-            selected: new Point(100, 100), building: [], settled: false, previousScale: null));
+            selected: new Point(100, 100), building: [new Point(100, 200), new Point(1700, 200)],
+            settled: false, previousScale: 1.13));
 
     [Fact]
     public void A_single_building_node_frames_at_the_follow_ceiling()
@@ -194,23 +199,51 @@ public class GraphCameraTests
     }
 
     [Fact]
+    public void The_frontier_margins_are_derived_from_the_layout_cell_and_the_fit_padding()
+    {
+        // BAĞIMSIZ oracle: beklenen değerler sabitin kendisinden DEĞİL, GraphLayout ölçülerinden elle
+        // yeniden hesaplanır — aksi hâlde iddia kendine referans verir ve her değeri kabul eder.
+        //   X = NodeCellWidth/2 + FitPadding = (26×3.4)/2 + 30 = 44.2 + 30 = 74.2
+        //   Y = NodeSize/2 + LabelGap + LabelHeight + FitPadding = 13 + 5 + 14 + 30 = 62
+        // X'te precision kullanılır: 26.0×3.4 double'da 88.39999999999999 çıkar, yani sabit 74.2'nin
+        // bit-birebir eşi değil (fark 1.4e-14). Yanlış bir GraphLayout terimi bu farktan MİLYON kat
+        // büyük sapma yaratacağı için pin niteliği bozulmaz.
+        Assert.Equal(74.2, GraphCamera.FrontierMarginX, 10);
+        Assert.Equal(62.0, GraphCamera.FrontierMarginY);
+    }
+
+    [Fact]
     public void The_frontier_frame_includes_the_cell_margins_and_fit_padding()
     {
         // Dikey eksen kısıt olsun: iki düğüm alt alta, panel alçak.
+        // h = 200 (bbox) + 2×62 = 324 — elle hesap; sabitten türetilmez ki MarginY nicel olarak kilitlensin.
         var viewport = new Size(2000, 300);
         var building = new List<Point> { new(400, 100), new(400, 300) };
-        double h = 200 + 2 * GraphCamera.FrontierMarginY;
 
-        Assert.Equal(Math.Clamp(300 / h, GraphCamera.FollowMinScale, GraphCamera.FollowMaxScale),
-            GraphCamera.FrontierScale(viewport, building), 10);
+        Assert.Equal(300.0 / 324.0, GraphCamera.FrontierScale(viewport, building), 10);
+    }
+
+    [Fact]
+    public void The_frontier_frame_applies_the_horizontal_margin_on_a_narrow_panel()
+    {
+        // Yatay eksen kısıt olsun: iki düğüm yan yana, panel dar ve çok yüksek.
+        // w = 200 (bbox) + 2×74.2 = 348.4 → 300/348.4 ≈ 0.8611, bandın İÇİNDE (kelepçe devrede değil),
+        // dolayısıyla sonuç MarginX'e nicel olarak bağımlı: pay 0 olsaydı 300/200 = 1.5 → tavana (1.4)
+        // kelepçelenirdi. Beklenti yine elle hesaptır.
+        var scale = GraphCamera.FrontierScale(new Size(300, 2000), [new Point(0, 0), new Point(200, 0)]);
+
+        Assert.Equal(300.0 / 348.4, scale, 10);
+        Assert.InRange(scale, GraphCamera.FollowMinScale, GraphCamera.FollowMaxScale);
     }
 
     [Fact]
     public void Settled_or_idle_cinema_returns_to_the_overview_fit_scale()
     {
         var viewport = new Size(600, 400);
+        // previousScale fit'e (0.68) eşiğin ALTINDA (|0.68−0.70| = 0.02 < 0.05): Zeno guard'ı bu dala da
+        // uygulansaydı 0.70'te takılı kalırdık. Guard YALNIZ frontier dalının — burada hiç okunmaz.
         Assert.Equal(GraphCamera.FitScale(viewport, Graph), GraphCamera.ResolveScale(
-            viewport, Graph, cinema: true, selected: null, building: [], settled: true, previousScale: null));
+            viewport, Graph, cinema: true, selected: null, building: [], settled: true, previousScale: 0.70));
         Assert.Equal(GraphCamera.FitScale(viewport, Graph), GraphCamera.ResolveScale(
             viewport, Graph, cinema: true, selected: null, building: [], settled: false, previousScale: null));
     }
@@ -228,6 +261,23 @@ public class GraphCameraTests
             viewport, Graph, cinema: true, selected: null, building: building, settled: false, previousScale: 0.90));
         Assert.False(GraphCamera.ShouldRescale(1.00, 1.04));
         Assert.True(GraphCamera.ShouldRescale(1.00, 1.05));
+    }
+
+    [Fact]
+    public void The_cinema_scale_values_are_pinned_to_their_spec_numbers()
+    {
+        // Bu sabitlerin SAHİBİ GraphCamera, dolayısıyla değerleri burada kilitlenir. Tüketici testlerin
+        // (Task 6: wheel'in bu kademeyle çarpması, takibe dönüş gecikmesi) iddiası DAVRANIŞTIR, değer değil —
+        // ikisi farklı sorular olduğu için bu pin bir kopya değildir.
+        Assert.Equal(1.1, GraphCamera.SelectionScale);
+        // Manuel bant otomatik bandı KAPSAR: kullanıcı istediğinde tüm silueti görebilsin, istediğinde
+        // takibin gittiğinden daha yakına inebilsin.
+        Assert.Equal(0.45, GraphCamera.ManualMinScale);
+        Assert.Equal(2.0, GraphCamera.ManualMaxScale);
+        Assert.True(GraphCamera.ManualMinScale < GraphCamera.FollowMinScale);
+        Assert.True(GraphCamera.ManualMaxScale > GraphCamera.FollowMaxScale);
+        Assert.Equal(1.1, GraphCamera.WheelZoomStep);
+        Assert.Equal(4000.0, GraphCamera.FollowResumeDelayMs);
     }
 
     [Fact]
