@@ -152,4 +152,95 @@ public class GraphCameraTests
         Assert.Equal(3.0, GraphCamera.RoundPixels(2.5));
         Assert.Equal(-2.0, GraphCamera.RoundPixels(-2.5));
     }
+
+    // ---------------------------------------------------------------- [sinema] follow-zoom ölçeği
+
+    [Fact]
+    public void Outside_cinema_the_scale_is_always_the_fit_scale()
+    {
+        var viewport = new Size(600, 400);
+        double scale = GraphCamera.ResolveScale(
+            viewport, Graph, cinema: false,
+            selected: new Point(100, 100), building: [new Point(1, 1)], settled: false, previousScale: null);
+
+        // Sinema dışında seçim de frontier de ölçeği DEĞİŞTİRMEZ — bugünkü davranış birebir (spec §3.0).
+        Assert.Equal(GraphCamera.FitScale(viewport, Graph), scale);
+    }
+
+    [Fact]
+    public void A_selection_zooms_to_the_fixed_readable_scale_in_cinema()
+        => Assert.Equal(GraphCamera.SelectionScale, GraphCamera.ResolveScale(
+            new Size(600, 400), Graph, cinema: true,
+            selected: new Point(100, 100), building: [], settled: false, previousScale: null));
+
+    [Fact]
+    public void A_single_building_node_frames_at_the_follow_ceiling()
+    {
+        // Tek düğümlük frontier: bbox = 2×kenar payı ⇒ ölçek tavana kelepçelenir (26px kare ~36px görünür).
+        double scale = GraphCamera.FrontierScale(new Size(600, 400), [new Point(440, 200)]);
+
+        Assert.Equal(GraphCamera.FollowMaxScale, scale);
+        Assert.Equal(1.4, GraphCamera.FollowMaxScale);
+    }
+
+    [Fact]
+    public void A_wide_frontier_clamps_at_the_follow_floor()
+    {
+        // 1600px'e yayılmış cephe 600'lük panele 0.85'in altında sığardı — tabana kelepçelenir.
+        double scale = GraphCamera.FrontierScale(new Size(600, 400), [new Point(100, 200), new Point(1700, 200)]);
+
+        Assert.Equal(GraphCamera.FollowMinScale, scale);
+        Assert.Equal(0.85, GraphCamera.FollowMinScale);
+    }
+
+    [Fact]
+    public void The_frontier_frame_includes_the_cell_margins_and_fit_padding()
+    {
+        // Dikey eksen kısıt olsun: iki düğüm alt alta, panel alçak.
+        var viewport = new Size(2000, 300);
+        var building = new List<Point> { new(400, 100), new(400, 300) };
+        double h = 200 + 2 * GraphCamera.FrontierMarginY;
+
+        Assert.Equal(Math.Clamp(300 / h, GraphCamera.FollowMinScale, GraphCamera.FollowMaxScale),
+            GraphCamera.FrontierScale(viewport, building), 10);
+    }
+
+    [Fact]
+    public void Settled_or_idle_cinema_returns_to_the_overview_fit_scale()
+    {
+        var viewport = new Size(600, 400);
+        Assert.Equal(GraphCamera.FitScale(viewport, Graph), GraphCamera.ResolveScale(
+            viewport, Graph, cinema: true, selected: null, building: [], settled: true, previousScale: null));
+        Assert.Equal(GraphCamera.FitScale(viewport, Graph), GraphCamera.ResolveScale(
+            viewport, Graph, cinema: true, selected: null, building: [], settled: false, previousScale: null));
+    }
+
+    [Fact]
+    public void A_scale_change_below_the_threshold_keeps_the_previous_scale_zeno_guard()
+    {
+        var viewport = new Size(600, 400);
+        var building = new List<Point> { new(100, 200), new(1700, 200) }; // taban: 0.85
+        // Önceki ölçek hedefe 0.05'ten yakın → ESKİ ölçek korunur (kamera mikro-zoom'la titremez).
+        Assert.Equal(0.86, GraphCamera.ResolveScale(
+            viewport, Graph, cinema: true, selected: null, building: building, settled: false, previousScale: 0.86));
+        // Eşik ve üstü → yeni hedef kazanır.
+        Assert.Equal(0.85, GraphCamera.ResolveScale(
+            viewport, Graph, cinema: true, selected: null, building: building, settled: false, previousScale: 0.90));
+        Assert.False(GraphCamera.ShouldRescale(1.00, 1.04));
+        Assert.True(GraphCamera.ShouldRescale(1.00, 1.05));
+    }
+
+    [Fact]
+    public void Compute_with_an_explicit_scale_centers_the_focus_and_the_3_arg_overload_stays_fit()
+    {
+        var viewport = new Size(500, 300);
+        var t = GraphCamera.Compute(viewport, Graph, new Point(440, 292), 1.4);
+
+        Assert.Equal(1.4, t.Scale);
+        // Odak panel merkezinde: tx = vw/2 − fx·s (pan payı sınırları içinde).
+        Assert.Equal(Math.Floor(250 - 440 * 1.4 + 0.5), t.Tx);
+        // 3-arg overload = FitScale (mevcut testlerin tamamı bunun üstünden yeşil kalır).
+        Assert.Equal(GraphCamera.Compute(viewport, Graph, new Point(440, 292),
+            GraphCamera.FitScale(viewport, Graph)), GraphCamera.Compute(viewport, Graph, new Point(440, 292)));
+    }
 }
