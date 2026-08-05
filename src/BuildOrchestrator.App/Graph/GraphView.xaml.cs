@@ -343,8 +343,13 @@ public partial class GraphView : UserControl
                 Model = node,
                 Center = center,
                 Bounds = GraphCulling.NodeBounds(center),
-                // Açılış kararı da AYNI kaynaktan okunur (kopya YASAK): rebuild sırasında zaten building olan
-                // ya da seçili kalan bir düğüm adını ilk karede taşır.
+                // Açılış kararı da AYNI kaynaktan okunur — gerekçe KOPYA YASAĞI, muafiyet DEĞİL. [fix round 2]
+                // Ölçüldü: muafiyet kolunun buradaki payı GÖZLENEBİLİR değildir (o kolu buradan düşüren mutant
+                // tüm süiti yeşil bırakıyor), çünkü ShowsLabel'ı okuyan tek yer BuildNodeVisual'dır ve onu
+                // yalnız MaterializeNode çağırır — hemen ardından da ApplyLabelVisibility kararın TAMAMINI
+                // yeniden uygular, yani düğüm daha ilk kareye çıkmadan doğru hâline oturur. Buraya ikinci,
+                // FARKLI bir predicate yazmak ise gerçek bir kopya olurdu; katman kolu ise burada gözlenebilir
+                // (bu kararı sabit `true` yapan mutant sekiz testi düşürüyor).
                 ShowsLabel = ShowsLabelFor(node),
             };
             _slots[node.Name] = slot;
@@ -733,9 +738,9 @@ public partial class GraphView : UserControl
         return visual;
     }
 
-    /// <summary>[sinema] Etiket kurulumunun TEK yolu — statik yol (<see cref="BuildNodeVisual"/>) ve zoom yolu
-    /// (<see cref="ApplyLabelVisibility"/>) aynı metodu kullanır (kopya YASAK). Bir kez kurulan etiket
-    /// SÖKÜLMEZ; uzaklaşmada yalnız <c>Collapsed</c>'a döner (cull'un tek yönlü materyalizasyonuyla aynı
+    /// <summary>[sinema] Etiket kurulumunun TEK yolu — açılış yolu (<see cref="BuildNodeVisual"/>) ve muafiyet
+    /// yolu (<see cref="ApplyLabelVisibility"/>) aynı metodu kullanır (kopya YASAK). Bir kez kurulan etiket
+    /// SÖKÜLMEZ; muafiyet bitince yalnız <c>Collapsed</c>'a döner (cull'un tek yönlü materyalizasyonuyla aynı
     /// gerekçe: sökmek kazanç getirmez, yeniden kurmak maliyetlidir).</summary>
     private void EnsureLabel(GraphNodeVisual visual)
     {
@@ -756,7 +761,8 @@ public partial class GraphView : UserControl
         // graf etiketlerinde LOKAL Ideal override (kök MainWindow ayarına DOKUNULMAZ, T65).
         TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
         // DS DependencyGraphNode: etiket seçiliyken text-primary, aksi halde text-dim. Seçim durumu BURADA
-        // okunur — etiket, seçim geçişinin dışında (kamera yakınlaşınca) da doğabilir.
+        // okunur — etiket, seçim geçişinin DIŞINDA (muafiyet doğduğunda) da doğabilir, o yolda ardından
+        // düzeltecek bir ApplyNodeSelection geçişi gelmez.
         label.SetResourceReference(TextBlock.ForegroundProperty,
             string.Equals(visual.Model.Name, _selectedNode, StringComparison.Ordinal)
                 ? "Brush.TextPrimary" : "Brush.TextDim");
@@ -794,7 +800,7 @@ public partial class GraphView : UserControl
         else
         {
             if (visual.Label is { } label) label.Visibility = Visibility.Collapsed;
-            visual.Body.ToolTip = visual.Model.Name;
+            visual.Body.ToolTip = slot.Model.Name; // karar da tooltip de AYNI modelden okunur
         }
     }
 
@@ -1192,6 +1198,16 @@ public partial class GraphView : UserControl
 
     private void ApplyCamera(bool animate)
     {
+        // [sinema · fix round 1/2] Etiket kararı KAMERADAN BAĞIMSIZDIR: girdileri statü ve seçim, ikisi de bu
+        // metodun hunisinden geçer (UpdateStatuses ve SelectedNode setter'ı burada biter). Bu yüzden aşağıdaki
+        // ÜÇ erken dönüşün de (slot yok · viewport ölçülmemiş · Zeno "hedef değişmedi") ÜSTÜNDE durur ve
+        // hiçbir kamera girdisi okumaz. Altında kalsaydı iki gerçek yol kesilirdi:
+        //   · geniş bir cephede bir proje bitip komşusu başlayınca ağırlık merkezi 8px'ten az kayar ve ölçek
+        //     zaten takip tavanına kelepçelidir ⇒ hedef BİREBİR aynı çıkar (Zeno dönüşü);
+        //   · panel henüz ölçülmemişken (viewport 0) gelen seçim, MaterializeSelection viewport'a BAKMADIĞI
+        //     için düğüm kurar ⇒ o rejimde materyalize düğüm vardır ama karar hiç tazelenmezdi.
+        UpdateLabelVisibility();
+
         if (_slotOrder.Count == 0) return;
 
         var viewport = ViewportSize;
@@ -1218,11 +1234,6 @@ public partial class GraphView : UserControl
         _previousScale = _cullEnabled && focusCameFromFrontier ? scale : null;
 
         var camera = GraphCamera.Compute(viewport, GraphSize, focus, scale);
-        // [sinema · fix round 1] Etiket kararı KAMERADAN BAĞIMSIZDIR (girdileri statü ve seçim) — bu yüzden
-        // aşağıdaki Zeno erken-dönüşünün ÜSTÜNDE durur. Altında kalsaydı, geniş bir cephede bir proje bitip
-        // komşusu başladığında (ağırlık merkezi 8px'ten az kayar, ölçek zaten takip tavanına kelepçelidir ⇒
-        // hedef BİREBİR aynı çıkar) biten proje adını bırakamaz, başlayan proje adını alamazdı.
-        UpdateLabelVisibility();
         // Hedef DEĞİŞMEDİYSE hiçbir animasyon yeniden başlatılmaz: koşarken UpdateStatuses saniyede birkaç kez
         // çağrılır ve aynı hedefe her seferinde yeni bir 460ms geçişi başlatmak uçuştaki geçişi sürekli
         // "yeniden doğurur" (Zeno etkisi — kamera hedefe hiç oturmaz).

@@ -193,8 +193,19 @@ public class GraphLayoutTests
     [Fact]
     public void Label_overlap_is_scale_invariant_so_a_zoom_threshold_cannot_be_defended()
     {
-        // ESKİ İDDİA (af6f261 · A_label_appears_at_ratio_1_and_survives_down_to_0_85_hysteresis): "etiket
+        // af6f261'in İKİ saf testi de kalkan aynı predicate'i (LabelVisibleAtScale) pinliyordu; ikisinin
+        // yerine geçen tek test budur (fix round 1 brief §3.1 bunu öngörüyordu). Tarihsel iddiaları:
+        //
+        // ESKİ İDDİA 1 (A_label_appears_at_ratio_1_and_survives_down_to_0_85_hysteresis): "etiket
         // r = aralık×ölçek / genişlik oranı 1.0'a ulaşınca belirir, 0.85'e kadar tutunur".
+        // ESKİ İDDİA 2 (The_static_labels_fit_rule_is_the_scale_1_case_of_the_same_predicate): "tek doğruluk
+        // kaynağı ÖLÇEKLİ predicate'tir; LabelsFit(s,w) ≡ LabelVisibleAtScale(s,w,1,false)". [fix round 2]
+        // Bu ikincisi ayrı bir test olarak yeniden yazılmadı: ölçekli predicate silindiği için "delege ediyor
+        // mu" diye bakılacak bir şey kalmadı, tek doğruluk kaynağı artık LabelsFit'in KENDİSİDİR ve iki
+        // okuyucusunun (SetGraph açılış kararı + ApplyLabelVisibility) aynı predicate'ten okuduğu SAF değil
+        // KABLAJ iddiasıdır — onu düşüren mutant (açılış kararını sabit `true` yapmak) zaten sekiz mevcut
+        // testi kırmızıya çeviriyor (GraphCullTests.Above_the_gate… / One_graph_drops… /
+        // A_node_that_lost_its_label… + GraphCinemaTests'in beş etiket testi), yeni bir test kopya olurdu.
         //
         // DEĞİŞME GEREKÇESİ (ölçüldü): etiketler kameranın ALTINDA yaşar (World.RenderTransform =
         // {cameraScale, cameraTranslate}; düğüm katmanı onun çocuğu), GraphLabelMetrics ise ölçeksiz DÜNYA
@@ -207,20 +218,6 @@ public class GraphLayoutTests
         // Yeni kural her iki ölçekte de AYNI (doğru) kararı verir; bu yüzden ölçek parametresi YOKTUR.
         Assert.False(GraphLayout.LabelsFit(spacing: 34, widestLabelWidth: 42)); // 1.4×'te de örtüşür
         Assert.True(GraphLayout.LabelsFit(spacing: 96, widestLabelWidth: 78));  // 0.68'de de örtüşmez
-    }
-
-    [Fact]
-    public void The_removed_hysteresis_band_left_no_slack_in_the_label_rule()
-    {
-        // ESKİ İDDİA (af6f261 · The_static_labels_fit_rule_is_the_scale_1_case_of_the_same_predicate):
-        // "tek doğruluk kaynağı ölçekli predicate'tir; LabelsFit(s,w) ≡ LabelVisibleAtScale(s,w,1,false)".
-        // DEĞİŞME GEREKÇESİ: ölçekli predicate — ve onunla gelen 1.0/0.85 histerezis bandı — kaldırıldı; tek
-        // doğruluk kaynağı artık LabelsFit'in KENDİSİDİR. Histerezis, görünürlük durumunu karara geri besleyen
-        // bir DURUM makinesiydi ve yeni kuralda muafiyeti latch'e çevirirdi. Burada bandın geri sızmadığı
-        // pinlenir: eski TUTUNMA eşiği geçerli olsaydı 42×0.85 = 35.7px aralık "sığıyor" sayılırdı.
-        Assert.False(GraphLayout.LabelsFit(spacing: 42 * 0.85, widestLabelWidth: 42)); // eski tutunma eşiği
-        Assert.False(GraphLayout.LabelsFit(spacing: 42 * 0.99, widestLabelWidth: 42)); // bandın üst ucu da pay değil
-        Assert.True(GraphLayout.LabelsFit(spacing: 42, widestLabelWidth: 42));         // örtüşmenin TAM sınırı
     }
 
     [Fact]

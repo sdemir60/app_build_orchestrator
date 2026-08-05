@@ -7,7 +7,8 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [sinema] Büyük grafta (düğüm sayısı > FullDetailMaxNodes — cull/LOD ile AYNI kapı) devreye giren
-/// sinema modunun WPF kablajı: kenar sisi, follow-zoom kamera ve zoom'a duyarlı etiketler.
+/// sinema modunun WPF kablajı: kenar sisi, follow-zoom kamera ve etiket kararı (ölçek-değişmez katman
+/// örtüşmesi + odak muafiyeti: building ya da seçili düğüm adını taşır).
 /// Küçük grafta HER ŞEYİN birebir bugünkü gibi kaldığı da burada pinlenir (spec §3.0).
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
@@ -216,6 +217,23 @@ public class GraphCinemaTests
     private static double LabelWidthOf(IReadOnlyList<GraphNode> nodes) =>
         GraphLabelMetrics.WidestLabelWidth(nodes.Select(n => n.ShortName), DsResources.MonoFontFamily);
 
+    /// <summary>Kalabalık bir fixture'ın geometrisini AÇIK ön-koşula çevirir: (a) katmanın etiketleri
+    /// gerçekten örtüşüyor — örtüşmeseydi hiçbir iddia ölçülemezdi; (b) katmanın takip TAVANINDA (1.4×) sığıp
+    /// sığmadığı testin ihtiyacına göre seçilir. Muafiyet testleri "sığmayan" bandı ister (beliren etiketin
+    /// tek açıklaması muafiyet olsun), ölçek-değişmezlik testinin ikinci yönü ise "sığan" bandı (eski oran
+    /// kuralının etiket KAZANDIRDIĞI bant).</summary>
+    private static void AssertCrowdedLayer(IReadOnlyList<GraphNode> nodes, bool fitsAtFollowMax)
+    {
+        double width = LabelWidthOf(nodes);
+        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, width),
+            "fixture'ın etiketleri örtüşmüyor — katman kararı zaten TRUE, iddia ölçülemez.");
+        Assert.True(
+            (GraphLayout.MinNodeSpacing * GraphCamera.FollowMaxScale >= width) == fitsAtFollowMax,
+            fitsAtFollowMax
+                ? "fixture 1.4×'te de sığmıyor — eski kuralın 'kazandırdığı' bant ölçülmüyor."
+                : "fixture takip tavanında sığıyor — muafiyet zoom'dan ayırt edilemez.");
+    }
+
     [StaFact]
     public void A_building_node_is_named_even_where_its_layers_labels_overlap()
     {
@@ -230,12 +248,7 @@ public class GraphCinemaTests
         view.SetGraph(nodes, ChainEdges(nodes));
 
         string name = CrowdedName(CrowdedTargetIndex, NeverFitNameLength);
-        double width = LabelWidthOf(nodes);
-        // Ön-koşullar: (a) katmanın etiketleri gerçekten örtüşüyor, (b) katman TAKİP TAVANINDA bile sığmıyor ⇒
-        // beliren etiketin tek açıklaması MUAFİYETTİR, zoom değil.
-        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, width));
-        Assert.True(GraphLayout.MinNodeSpacing * GraphCamera.FollowMaxScale < width,
-            "fixture takip tavanında sığıyor — muafiyet zoom'dan ayırt edilemez.");
+        AssertCrowdedLayer(nodes, fitsAtFollowMax: false); // beliren etiketin tek açıklaması MUAFİYET olsun
         var target = Materialised(view, name);
         Assert.Null(target.Label);
         Assert.Equal(name, target.Body.ToolTip);
@@ -354,11 +367,7 @@ public class GraphCinemaTests
         var crowdedView = NewView();
         crowdedView.SetGraph(crowded, ChainEdges(crowded));
         string name = CrowdedName(CrowdedTargetIndex, CrowdedNameLength);
-        double width = LabelWidthOf(crowded);
-
-        Assert.False(GraphLayout.LabelsFit(GraphLayout.MinNodeSpacing, width));
-        Assert.True(GraphLayout.MinNodeSpacing * GraphCamera.FollowMaxScale >= width,
-            "fixture 1.4×'te de sığmıyor — eski kuralın 'kazandırdığı' bant ölçülmüyor.");
+        AssertCrowdedLayer(crowded, fitsAtFollowMax: true); // eski kural TAM burada etiket kazandırırdı
 
         crowdedView.UpdateStatuses(WithStatus(crowded, name, GraphStatus.Building));
 
@@ -455,5 +464,17 @@ public class GraphCinemaTests
         Assert.NotNull(visual.Label);
         Assert.Equal(Visibility.Visible, visual.Label!.Visibility);
         Assert.Null(visual.Body.ToolTip);
+
+        // ...ve seçim BAŞKA bir düğüme geçtiğinde adını GERİ BIRAKIR. [fix round 2 · Important #1] Bu, aynı
+        // hunimin İKİNCİ kesiğidir: ApplyCamera iki erken dönüşle başlar (slot yok / viewport ölçülmemiş) ve
+        // MaterializeSelection viewport'a BAKMADAN düğüm kurduğu için bu rejimde materyalize düğüm gerçekten
+        // vardır. Karar viewport okumaz — dolayısıyla o guard'ların da ÜSTÜNDE tazelenmelidir. (İlk gerçek
+        // SizeChanged kendini onarırdı, ama kural kuraldır: muafiyet biten düğüm adını taşımaya devam edemez.)
+        string other = CrowdedName(CrowdedTargetIndex + 4, NeverFitNameLength);
+        view.SelectedNode = other;
+
+        Assert.Equal(Visibility.Collapsed, visual.Label.Visibility);
+        Assert.Equal(name, visual.Body.ToolTip);
+        Assert.NotNull(Materialised(view, other).Label); // yeni seçim adını ALIR
     }
 }
