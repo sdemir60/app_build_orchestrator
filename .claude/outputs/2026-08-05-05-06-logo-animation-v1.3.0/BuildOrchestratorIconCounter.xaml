@@ -1,0 +1,302 @@
+<!--
+  Build Orchestrator logosu — SAYAÇLI SÜRÜM — 3s sonsuz döngü (WPF Storyboard)
+  ============================================================================
+  Orijinalden tek farki: beyaz serit 60 -> 66 birim genisletildi ve uzerinde
+  derlenen proje sayacini tasiyor (3 haneye kadar: "139/248").
+
+    Sayaci guncellemek icin:  CountText.Text = $"{done}/{total}";
+    (veya CountText uzerinde bir Binding kurun)
+
+  Yazi kabartma gorunumunu tek bir beyaz DropShadowEffect ile alir
+  (asagi dogru 0.7 px, blur 0). Metin rengi #5A5A63 %72 opaklikta —
+  logonun okunurlugunu bozmayacak kadar soft.
+  Serit genisledigi icin cikis mesafesi 88 -> 82 olarak yeniden hesaplandi;
+  boylece sag ucu diger parcalarla ayni hizada (x=250.5) yok olur.
+  ==========================================================================
+  ZEMİNSİZ. Sahne 430x286 (logo 286x286 alanın içinde, iki yanda 72px pay)
+  Hiçbir yerde kırpma sınırı yok — elemanlar giriş/çıkışta kesilmez.
+
+  AKIŞ
+  ----
+  GİRİŞ  Amber şevron en solda belirir (0-0.3s soluk açılış), sağa doğru
+         süzülür. Şevron siluetini takip eden kaplama (SweepShift) şeritleri
+         SİLEREK açar; şeritler aynı anda kendi gecikmeleriyle sağa kayar,
+         yani şevronun arkasından sürüklenerek yetişir ve şevron yerine
+         oturduktan hemen sonra (0.03-0.19s arayla) onlar da oturur.
+  DURUŞ  ~1.34-2.10s: orijinal logo karesi.
+  ÇIKIŞ  Şevron ilk hareket eder ve hızlanarak uzaklaşır; şeritler farklı
+         hız/mesafelerle (+70..+100) peşinden gider, yetişemeden hepsi
+         soluklaşıp kapanır. Opaklık eğrisi öne yüklü (cubic .3,.4 .5,1) —
+         bu yüzden "kesilmiş" değil, erimiş gibi kaybolur.
+  DÖNGÜ  Son şerit 3.000sde kaybolur; storyboard tam o anda başa döner,
+         yani şevron aynı karede soldan tekrar girer. Boş kare yoktur.
+
+  Zamanlar (saniye)
+    eleman    giriş baş.  yerine oturma  çıkış baş.  çıkış sonu  opaklık 0   çıkış X
+    Chevron   0.100       1.150          2.100       2.800       2.46-2.80   +110
+    Amber     0.200       1.180          2.130       2.780       2.44-2.78   +80
+    White     0.260       1.220          2.175       2.840       2.50-2.84   +88
+    TopDark   0.300       1.260          2.225       2.890       2.55-2.89   +142
+    Silver    0.360       1.300          2.275       2.940       2.60-2.94   +128
+    MidDark   0.400       1.340          2.325       3.000       2.66-3.00   +160
+
+  Cikis mesafeleri, her seridin SAG UCU ayni hizada (x=250.5) yok olacak
+  sekilde hesaplandi; orasi sevronun kayboldugu nokta. Serit genisligi ve
+  duruş konumu farkli oldugu icin mesafeler farkli, varis noktasi ayni.
+
+  Solma: her parça icin 340 ms, ve tam kendi hareketinin bittigi anda 0 olur.
+  Bitisler farkli oldugu icin damla damla kaybolurlar.
+
+  Giriş başlangıç X: Amber -89, White -72, TopDark -43, Silver -35, MidDark -21
+  (hepsinin sol ucu x=30.5te, yani şevronun başlangıç noktasında üst üste durur;
+   oradan yayılırlar — şevrona en yakın olan en çok yol alır)
+
+  KRİTİK: ChevronShift.X ile SweepShift.X birebir aynı keyframe + KeySpline
+  değerlerine sahip olmalı. "Şevron şeritleri siliyor" etkisi bu senkrona
+  bağlı; birini değiştirirsen diğerini de değiştir.
+
+  Gölge opaklığı zemin olmadığı için 0.30'a çekildi (orijinal SVG'de siyah
+  tile üzerine 0.92 idi).
+
+  WinUI 3 / UWP: PathGeometry.Transform animasyonu desteklenmez; kaplamayı
+  CompositionGeometricClip + ScalarKeyFrameAnimation ile kurmak gerekir.
+-->
+<UserControl
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  Background="Transparent">
+
+  <UserControl.Resources>
+    <LinearGradientBrush x:Key="StripTopDark" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Offset="0" Color="#54545C"/>
+      <GradientStop Offset="0.20" Color="#494950"/>
+      <GradientStop Offset="0.50" Color="#414147"/>
+      <GradientStop Offset="0.80" Color="#3A3A42"/>
+      <GradientStop Offset="1" Color="#44444B"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="StripAmber" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Offset="0" Color="#FFB52E"/>
+      <GradientStop Offset="0.20" Color="#F7AE25"/>
+      <GradientStop Offset="0.50" Color="#F1AB2E"/>
+      <GradientStop Offset="0.80" Color="#EDA10F"/>
+      <GradientStop Offset="1" Color="#D9910D"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="StripMiddleDark" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Offset="0" Color="#3A3A42"/>
+      <GradientStop Offset="0.20" Color="#313136"/>
+      <GradientStop Offset="0.50" Color="#2A2A30"/>
+      <GradientStop Offset="1" Color="#202024"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="StripWhite" StartPoint="0,0" EndPoint="0.12,1">
+      <GradientStop Offset="0" Color="#EDEDEE"/>
+      <GradientStop Offset="0.18" Color="#DADADD"/>
+      <GradientStop Offset="0.50" Color="#C8C8CD"/>
+      <GradientStop Offset="0.80" Color="#B9B9BF"/>
+      <GradientStop Offset="1" Color="#A9A9B0"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="StripSilver" StartPoint="0,0" EndPoint="0.12,1">
+      <GradientStop Offset="0" Color="#A9A9B0"/>
+      <GradientStop Offset="0.20" Color="#929299"/>
+      <GradientStop Offset="0.50" Color="#85858D"/>
+      <GradientStop Offset="0.80" Color="#76767E"/>
+      <GradientStop Offset="1" Color="#83838B"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="ChevronFill" MappingMode="Absolute" StartPoint="161.5,82" EndPoint="182.5,204">
+      <GradientStop Offset="0" Color="#FFB52E"/>
+      <GradientStop Offset="0.13" Color="#F9AE25"/>
+      <GradientStop Offset="0.26" Color="#F4A91D"/>
+      <GradientStop Offset="0.38" Color="#EDA10F"/>
+      <GradientStop Offset="0.51" Color="#DE940D"/>
+      <GradientStop Offset="0.64" Color="#CF880C"/>
+      <GradientStop Offset="0.76" Color="#B87A0B"/>
+      <GradientStop Offset="0.89" Color="#A66D09"/>
+      <GradientStop Offset="1" Color="#8B5907"/>
+    </LinearGradientBrush>
+  </UserControl.Resources>
+
+  <UserControl.Triggers>
+    <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+      <BeginStoryboard>
+        <Storyboard Duration="0:0:3" RepeatBehavior="Forever">
+
+          <!-- ===== ŞEVRON: kayma ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ChevronShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-170"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:0.100" Value="-170"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:1.150" Value="0" KeySpline="0.14,0.62 0.2,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.100" Value="0"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.800" Value="110" KeySpline="0.34,0 0.68,0.6"/>
+          </DoubleAnimationUsingKeyFrames>
+
+          <!-- ===== ŞEVRON: opaklık ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Chevron" Storyboard.TargetProperty="Opacity" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:0.300" Value="1" KeySpline="0.32,0.5 0.4,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.460" Value="1"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.800" Value="0" KeySpline="0.45,0.15 0.6,1"/>
+          </DoubleAnimationUsingKeyFrames>
+
+          <!-- ===== SİLME KAPLAMASI: şevronla BİREBİR aynı ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="SweepShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-170"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:0.100" Value="-170"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:1.150" Value="0" KeySpline="0.14,0.62 0.2,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.100" Value="0"/>
+            <!-- Cikista kaplama sevrondan daha uzaga gider (260): serit yollari
+                 uzadigi icin hicbir serit kaplama kenarina takilip kesilmesin.
+                 Giris kismi sevronla BIREBIR ayni kalmali. -->
+            <SplineDoubleKeyFrame KeyTime="0:0:2.800" Value="260" KeySpline="0.34,0 0.68,0.6"/>
+          </DoubleAnimationUsingKeyFrames>
+
+          <!-- ===== AMBER ŞERİT ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="AmberShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-89"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:0.200" Value="-89"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:1.180" Value="0" KeySpline="0.16,0.7 0.22,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.130" Value="0"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.780" Value="80" KeySpline="0.42,0 0.75,0.5"/>
+          </DoubleAnimationUsingKeyFrames>
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="StripAmberRect" Storyboard.TargetProperty="Opacity" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.440" Value="1"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.780" Value="0" KeySpline="0.45,0.15 0.6,1"/>
+          </DoubleAnimationUsingKeyFrames>
+
+          <!-- ===== BEYAZ ŞERİT ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="WhiteShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-72"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:0.260" Value="-72"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:1.220" Value="0" KeySpline="0.12,0.66 0.18,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.175" Value="0"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.840" Value="82" KeySpline="0.42,0 0.75,0.5"/>
+          </DoubleAnimationUsingKeyFrames>
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="StripWhiteGroup" Storyboard.TargetProperty="Opacity" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.500" Value="1"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.840" Value="0" KeySpline="0.45,0.15 0.6,1"/>
+          </DoubleAnimationUsingKeyFrames>
+
+          <!-- ===== ÜST KOYU ŞERİT ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="TopDarkShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-43"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:0.300" Value="-43"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:1.260" Value="0" KeySpline="0.16,0.7 0.22,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.225" Value="0"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.890" Value="142" KeySpline="0.45,0 0.78,0.52"/>
+          </DoubleAnimationUsingKeyFrames>
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="StripTopDarkRect" Storyboard.TargetProperty="Opacity" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.550" Value="1"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.890" Value="0" KeySpline="0.45,0.15 0.6,1"/>
+          </DoubleAnimationUsingKeyFrames>
+
+          <!-- ===== GÜMÜŞ ŞERİT ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="SilverShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-35"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:0.360" Value="-35"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:1.300" Value="0" KeySpline="0.12,0.66 0.18,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.275" Value="0"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.940" Value="128" KeySpline="0.45,0 0.78,0.52"/>
+          </DoubleAnimationUsingKeyFrames>
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="StripSilverRect" Storyboard.TargetProperty="Opacity" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.600" Value="1"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:2.940" Value="0" KeySpline="0.45,0.15 0.6,1"/>
+          </DoubleAnimationUsingKeyFrames>
+
+          <!-- ===== ORTA KOYU ŞERİT ===== -->
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="MidDarkShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-21"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:0.400" Value="-21"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:1.340" Value="0" KeySpline="0.16,0.7 0.22,1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.325" Value="0"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:3.000" Value="160" KeySpline="0.42,0 0.75,0.5"/>
+          </DoubleAnimationUsingKeyFrames>
+          <DoubleAnimationUsingKeyFrames Storyboard.TargetName="StripMidDarkRect" Storyboard.TargetProperty="Opacity" Duration="0:0:3">
+            <LinearDoubleKeyFrame KeyTime="0:0:0" Value="1"/>
+            <LinearDoubleKeyFrame KeyTime="0:0:2.660" Value="1"/>
+            <SplineDoubleKeyFrame KeyTime="0:0:3.000" Value="0" KeySpline="0.45,0.15 0.6,1"/>
+          </DoubleAnimationUsingKeyFrames>
+
+        </Storyboard>
+      </BeginStoryboard>
+    </EventTrigger>
+  </UserControl.Triggers>
+
+  <Viewbox Stretch="Uniform">
+    <!-- 430x286 sahne: logo ortada, iki yanda hareket payı -->
+    <Canvas Width="430" Height="286" ClipToBounds="False" Background="Transparent">
+      <Canvas Canvas.Left="72" Width="286" Height="286" ClipToBounds="False">
+
+        <!-- Şeritler: şevron siluetiyle silinerek açılır (kaplama şevronla kayar) -->
+        <Canvas Width="286" Height="286" ClipToBounds="False">
+          <Canvas.Clip>
+            <PathGeometry Figures="M -600 -30 L 158.5 -30 L 158.5 83 L 147 95 L 152 104 L 186 140 L 186 148 L 151 184 L 148 196 L 158.5 203 L 158.5 320 L -600 320 Z">
+              <PathGeometry.Transform>
+                <TranslateTransform x:Name="SweepShift" X="-170"/>
+              </PathGeometry.Transform>
+            </PathGeometry>
+          </Canvas.Clip>
+
+          <!-- Gölge kırpmadan ÖNCE hesaplansın diye ayrı katman -->
+          <Canvas Width="286" Height="286" ClipToBounds="False">
+            <Canvas.Effect>
+              <DropShadowEffect ShadowDepth="2" Direction="270" BlurRadius="4.8" Color="#000000" Opacity="0.30"/>
+            </Canvas.Effect>
+
+            <Rectangle x:Name="StripTopDarkRect" Canvas.Left="73.5" Canvas.Top="83" Width="35" Height="21"
+                       RadiusX="10.5" RadiusY="10.5" Fill="{StaticResource StripTopDark}">
+              <Rectangle.RenderTransform><TranslateTransform x:Name="TopDarkShift" X="-43"/></Rectangle.RenderTransform>
+            </Rectangle>
+
+            <Rectangle x:Name="StripAmberRect" Canvas.Left="119.5" Canvas.Top="83" Width="51" Height="21"
+                       RadiusX="10.5" RadiusY="10.5" Fill="{StaticResource StripAmber}">
+              <Rectangle.RenderTransform><TranslateTransform x:Name="AmberShift" X="-89"/></Rectangle.RenderTransform>
+            </Rectangle>
+
+            <Rectangle x:Name="StripMidDarkRect" Canvas.Left="51.5" Canvas.Top="131" Width="39" Height="21"
+                       RadiusX="10.5" RadiusY="10.5" Fill="{StaticResource StripMiddleDark}">
+              <Rectangle.RenderTransform><TranslateTransform x:Name="MidDarkShift" X="-21"/></Rectangle.RenderTransform>
+            </Rectangle>
+
+            <!-- Serit + sayac birlikte hareket etsin diye tek kapsayici -->
+            <Grid x:Name="StripWhiteGroup" Canvas.Left="102.5" Canvas.Top="131" Width="66" Height="22">
+              <Grid.RenderTransform><TranslateTransform x:Name="WhiteShift" X="-72"/></Grid.RenderTransform>
+              <Rectangle RadiusX="11" RadiusY="11" Fill="{StaticResource StripWhite}"/>
+              <TextBlock x:Name="CountText" Text="139/248"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         FontFamily="Cascadia Mono, Consolas, Courier New" FontSize="10.5"
+                         FontWeight="SemiBold" Foreground="#B85A5A63">
+                <TextBlock.Effect>
+                  <DropShadowEffect Color="#FFFFFF" Direction="270" ShadowDepth="0.7" BlurRadius="0" Opacity="0.45"/>
+                </TextBlock.Effect>
+              </TextBlock>
+            </Grid>
+
+            <Rectangle x:Name="StripSilverRect" Canvas.Left="65.5" Canvas.Top="178" Width="57" Height="21"
+                       RadiusX="10.5" RadiusY="10.5" Fill="{StaticResource StripSilver}">
+              <Rectangle.RenderTransform><TranslateTransform x:Name="SilverShift" X="-35"/></Rectangle.RenderTransform>
+            </Rectangle>
+          </Canvas>
+        </Canvas>
+
+        <!-- Amber şevron -->
+        <Path x:Name="Chevron" Fill="{StaticResource ChevronFill}" Opacity="0"
+              Data="M156.5 83 L177 83 C181.6 83 184.7 85.1 187.8 88.5 L225.3 131.5 C228.2 134.9 229.5 138.3 229.5 142.4 C229.5 146.5 228.2 149.8 225.3 153.2 L184.6 198.3 C181.5 201.6 177.8 203 173.5 203 L156.5 203 C151.3 203 147.6 200.4 146 196.4 C144.3 192.1 145.7 187.8 149 184.2 L183.3 146.2 C186.1 143.2 186.3 140.8 183.7 137.8 L150.2 103.7 C147.3 100.7 145.9 96.9 145.9 93 C145.9 87.5 150.6 83 156.5 83 Z">
+          <Path.RenderTransform>
+            <TranslateTransform x:Name="ChevronShift" X="-170"/>
+          </Path.RenderTransform>
+          <Path.Effect>
+            <DropShadowEffect ShadowDepth="2.6" Direction="270" BlurRadius="5.6" Color="#000000" Opacity="0.32"/>
+          </Path.Effect>
+        </Path>
+
+      </Canvas>
+    </Canvas>
+  </Viewbox>
+</UserControl>

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  html, body { margin: 0; padding: 0; }
+  a { color: #F1AB2E; text-decoration: none; }
+  a:hover { color: #FFD27A; }
+  @keyframes bo-chevron {
+    0% { transform: translateX(-170px); opacity: 0; animation-timing-function: cubic-bezier(.32,.5,.4,1) }
+    3.33% { transform: translateX(-170px); animation-timing-function: cubic-bezier(.14,.62,.2,1) }
+    10% { opacity: 1 }
+    38.33%, 70% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.34,0,.68,.6) }
+    82% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    93.33%, 100% { transform: translateX(110px); opacity: 0 }
+  }
+  @keyframes bo-sweep {
+    0%, 3.33% { transform: translateX(-170px); animation-timing-function: cubic-bezier(.14,.62,.2,1) }
+    38.33%, 70% { transform: translateX(0); animation-timing-function: cubic-bezier(.34,0,.68,.6) }
+    93.33%, 100% { transform: translateX(260px) }
+  }
+  @keyframes bo-amber {
+    0%, 6.67% { transform: translateX(-89px); opacity: 1; animation-timing-function: cubic-bezier(.16,.7,.22,1) }
+    39.33%, 71% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.42,0,.75,.5) }
+    81.33% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    92.67%, 100% { transform: translateX(80px); opacity: 0 }
+  }
+  @keyframes bo-white {
+    0%, 8.67% { transform: translateX(-72px); opacity: 1; animation-timing-function: cubic-bezier(.12,.66,.18,1) }
+    40.67%, 72.5% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.42,0,.75,.5) }
+    83.33% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    94.67%, 100% { transform: translateX(82px); opacity: 0 }
+  }
+  @keyframes bo-topdark {
+    0%, 10% { transform: translateX(-43px); opacity: 1; animation-timing-function: cubic-bezier(.16,.7,.22,1) }
+    42%, 74.17% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.45,0,.78,.52) }
+    85% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    96.33%, 100% { transform: translateX(142px); opacity: 0 }
+  }
+  @keyframes bo-silver {
+    0%, 12% { transform: translateX(-35px); opacity: 1; animation-timing-function: cubic-bezier(.12,.66,.18,1) }
+    43.33%, 75.83% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.45,0,.78,.52) }
+    86.67% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    98%, 100% { transform: translateX(128px); opacity: 0 }
+  }
+  @keyframes bo-middark {
+    0%, 13.33% { transform: translateX(-21px); opacity: 1; animation-timing-function: cubic-bezier(.16,.7,.22,1) }
+    44.67%, 77.5% { transform: translateX(0); opacity: 1; animation-timing-function: cubic-bezier(.42,0,.75,.5) }
+    88.67% { opacity: 1; animation-timing-function: cubic-bezier(.45,.15,.6,1) }
+    100% { transform: translateX(160px); opacity: 0 }
+  }
+  @keyframes bo-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-end; background: #1E2126; font-family: 'Segoe UI', ui-sans-serif, system-ui, sans-serif;">
+
+  <div style="flex: 1; display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 14px 14px;">
+
+    <div style="width: 412px; box-sizing: border-box; padding: 16px 18px 18px; background: #1C1C20; border: 1px solid #2E2E35; border-radius: 8px; box-shadow: 0 18px 44px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);">
+
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+        <span style="width: 6px; height: 6px; border-radius: 50%; background: #F1AB2E; animation: bo-pulse 1.6s ease-in-out infinite;"></span>
+        <span style="font-size: 10px; letter-spacing: .1em; color: #7A7A84; text-transform: uppercase;">build orchestrator</span>
+        <span style="flex: 1;"></span>
+        <span style="font-size: 10px; letter-spacing: .06em; color: #7A7A84;">{{ statusLabel }}</span>
+      </div>
+
+      <div ref="{{ iconRef }}" style="line-height: 0;">
+        <svg width="375" height="134" viewBox="-30 76 375 134" style="display: block;">
+          <defs>
+            <linearGradient id="tStripTopDark" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#54545C"></stop>
+              <stop offset="0.20" stop-color="#494950"></stop>
+              <stop offset="0.50" stop-color="#414147"></stop>
+              <stop offset="0.80" stop-color="#3A3A42"></stop>
+              <stop offset="1" stop-color="#44444B"></stop>
+            </linearGradient>
+            <linearGradient id="tStripAmber" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#FFB52E"></stop>
+              <stop offset="0.20" stop-color="#F7AE25"></stop>
+              <stop offset="0.50" stop-color="#F1AB2E"></stop>
+              <stop offset="0.80" stop-color="#EDA10F"></stop>
+              <stop offset="1" stop-color="#D9910D"></stop>
+            </linearGradient>
+            <linearGradient id="tStripMiddleDark" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#3A3A42"></stop>
+              <stop offset="0.20" stop-color="#313136"></stop>
+              <stop offset="0.50" stop-color="#2A2A30"></stop>
+              <stop offset="1" stop-color="#202024"></stop>
+            </linearGradient>
+            <linearGradient id="tStripWhite" x1="0" y1="0" x2="0.12" y2="1">
+              <stop offset="0" stop-color="#EDEDEE"></stop>
+              <stop offset="0.18" stop-color="#DADADD"></stop>
+              <stop offset="0.50" stop-color="#C8C8CD"></stop>
+              <stop offset="0.80" stop-color="#B9B9BF"></stop>
+              <stop offset="1" stop-color="#A9A9B0"></stop>
+            </linearGradient>
+            <linearGradient id="tStripSilver" x1="0" y1="0" x2="0.12" y2="1">
+              <stop offset="0" stop-color="#A9A9B0"></stop>
+              <stop offset="0.20" stop-color="#929299"></stop>
+              <stop offset="0.50" stop-color="#85858D"></stop>
+              <stop offset="0.80" stop-color="#76767E"></stop>
+              <stop offset="1" stop-color="#83838B"></stop>
+            </linearGradient>
+            <linearGradient id="tArrow" gradientUnits="userSpaceOnUse" x1="156" y1="82" x2="177" y2="204">
+              <stop offset="0" stop-color="#FFB52E"></stop>
+              <stop offset="0.13" stop-color="#F9AE25"></stop>
+              <stop offset="0.26" stop-color="#F4A91D"></stop>
+              <stop offset="0.38" stop-color="#EDA10F"></stop>
+              <stop offset="0.51" stop-color="#DE940D"></stop>
+              <stop offset="0.64" stop-color="#CF880C"></stop>
+              <stop offset="0.76" stop-color="#B87A0B"></stop>
+              <stop offset="0.89" stop-color="#A66D09"></stop>
+              <stop offset="1" stop-color="#8B5907"></stop>
+            </linearGradient>
+            <filter id="tStripShadow" x="-40%" y="-60%" width="300%" height="220%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2.2" flood-color="#000000" flood-opacity="0.55"></feDropShadow>
+            </filter>
+            <filter id="tArrowShadow" x="-40%" y="-40%" width="190%" height="190%">
+              <feDropShadow dx="0" dy="2.6" stdDeviation="2.8" flood-color="#000000" flood-opacity="0.6"></feDropShadow>
+            </filter>
+            <clipPath id="tSweep">
+              <path d="M -600 -30 L 158.5 -30 L 158.5 83 L 147 95 L 152 104 L 186 140 L 186 148 L 151 184 L 148 196 L 158.5 203 L 158.5 320 L -600 320 Z" style="animation: bo-sweep 3s linear infinite both;"></path>
+            </clipPath>
+          </defs>
+
+          <g clip-path="url(#tSweep)">
+            <g transform="translate(5.5 0)" filter="url(#tStripShadow)">
+
+              <rect x="68" y="83" width="35" height="21" rx="10.5" fill="url(#tStripTopDark)" style="animation: bo-topdark 3s linear infinite both;"></rect>
+
+              <rect x="114" y="83" width="51" height="21" rx="10.5" fill="url(#tStripAmber)" style="animation: bo-amber 3s linear infinite both;"></rect>
+
+              <rect x="46" y="131" width="39" height="21" rx="10.5" fill="url(#tStripMiddleDark)" style="animation: bo-middark 3s linear infinite both;"></rect>
+
+              <g style="animation: bo-white 3s linear infinite both;">
+                <rect x="97" y="131" width="66" height="22" rx="11" fill="url(#tStripWhite)"></rect>
+                <text x="130" y="146.5" text-anchor="middle" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="10.5" font-weight="600" fill="#FFFFFF" opacity="0.45" data-t="count">0/0</text>
+                <text x="130" y="145.9" text-anchor="middle" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="10.5" font-weight="600" fill="#5A5A63" opacity="0.72" data-t="count">0/0</text>
+              </g>
+
+              <rect x="60" y="178" width="57" height="21" rx="10.5" fill="url(#tStripSilver)" style="animation: bo-silver 3s linear infinite both;"></rect>
+            </g>
+          </g>
+
+          <g transform="translate(5.5 0)" filter="url(#tArrowShadow)">
+            <path d="M151 83 L171.5 83 C176.1 83 179.2 85.1 182.3 88.5 L219.8 131.5 C222.7 134.9 224 138.3 224 142.4 C224 146.5 222.7 149.8 219.8 153.2 L179.1 198.3 C176.0 201.6 172.3 203 168.0 203 L151.0 203 C145.8 203 142.1 200.4 140.5 196.4 C138.8 192.1 140.2 187.8 143.5 184.2 L177.8 146.2 C180.6 143.2 180.8 140.8 178.2 137.8 L144.7 103.7 C141.8 100.7 140.4 96.9 140.4 93.0 C140.4 87.5 145.1 83 151 83 Z" fill="url(#tArrow)" style="animation: bo-chevron 3s linear infinite both;"></path>
+          </g>
+        </svg>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="height: 44px; flex: none; background: #16181C; border-top: 1px solid #23262B; display: flex; align-items: center; padding: 0 14px; gap: 10px;">
+    <span style="width: 26px; height: 26px; border-radius: 5px; background: #23262B;"></span>
+    <span style="width: 26px; height: 26px; border-radius: 5px; background: #23262B;"></span>
+    <span style="width: 26px; height: 26px; border-radius: 5px; background: #23262B;"></span>
+    <span style="flex: 1;"></span>
+    <span style="width: 12px; height: 12px; border-radius: 3px; background: #F1AB2E;"></span>
+    <span style="font-size: 11px; color: #6E727A; letter-spacing: .04em;">14:32</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 900, &quot;height&quot;: 620 },
+  &quot;mode&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;Sürekli döngü&quot;, &quot;Bir kez gir, sabit dur&quot;], &quot;default&quot;: &quot;Sürekli döngü&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Davranış&quot; },
+  &quot;speed&quot;: { &quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 1, &quot;min&quot;: 0.4, &quot;max&quot;: 2, &quot;step&quot;: 0.1, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Davranış&quot; },
+  &quot;totalProjects&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 248, &quot;min&quot;: 1, &quot;max&quot;: 999, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Veri&quot; }
+}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.iconRef = React.createRef();
+    this.state = { seconds: 0, done: 137 };
+  }
+
+  componentDidMount() {
+    this.tick = setInterval(() => this.setState(s => ({ seconds: s.seconds + 1 })), 1000);
+    this.build = setInterval(() => {
+      const total = this.props.totalProjects ?? 248;
+      this.setState(s => ({ done: s.done < total ? s.done + 1 : s.done }));
+    }, 2200);
+    this.applyMode();
+    this.paint();
+  }
+
+  componentDidUpdate(prev) {
+    if (prev.mode !== this.props.mode || prev.speed !== this.props.speed) this.applyMode();
+    this.paint();
+  }
+
+  // SVG <text> icine {{ }} konulamiyor (runtime span sariyor, SVG onu cizmez).
+  // Her deger iki kopyaya yazilir: ustteki golge + asagidaki asil metin (kabartma).
+  paint() {
+    const el = this.iconRef.current;
+    if (!el) return;
+    const total = this.props.totalProjects ?? 248;
+    const s = this.state.seconds;
+    const done = Math.min(this.state.done, total);
+    const fail = Math.floor(done / 19);
+    const vals = {
+      time: String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'),
+      count: done + '/' + total,
+      ok: String(done - fail),
+      fail: String(fail)
+    };
+    Object.keys(vals).forEach(k => {
+      el.querySelectorAll('[data-t="' + k + '"]').forEach(n => { n.textContent = vals[k]; });
+    });
+  }
+
+  componentWillUnmount() {
+    clearInterval(this.tick);
+    clearInterval(this.build);
+    clearTimeout(this.freeze);
+  }
+
+  anims() {
+    const el = this.iconRef.current;
+    if (!el || !el.getAnimations) return [];
+    return el.getAnimations({ subtree: true });
+  }
+
+  applyMode() {
+    const speed = this.props.speed ?? 1;
+    const stat = (this.props.mode ?? 'Sürekli döngü') === 'Bir kez gir, sabit dur';
+    clearTimeout(this.freeze);
+    const list = this.anims();
+    list.forEach(a => { a.playbackRate = speed; a.play(); });
+    if (stat) {
+      list.forEach(a => { a.currentTime = 0; });
+      // girişin bittiği + kısa duruş anında dondur
+      this.freeze = setTimeout(() => {
+        this.anims().forEach(a => { a.currentTime = 1500; a.pause(); });
+      }, 1500 / speed);
+    }
+  }
+
+  renderVals() {
+    const total = this.props.totalProjects ?? 248;
+    return {
+      iconRef: this.iconRef,
+      statusLabel: this.state.done >= total ? 'tamamlandı' : 'derleniyor'
+    };
+  }
+}
+</script>
+</body>
+</html>
