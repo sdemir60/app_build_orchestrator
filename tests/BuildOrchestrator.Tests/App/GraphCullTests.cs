@@ -41,13 +41,13 @@ public class GraphCullTests
 
     // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer). LOD ölçümü için file:// tabanlı
     // etiket ailesi hâlâ buradan enjekte edilir (pack:// aileler headless'ta çözülmez — TrackedTextBlockTests deseni).
-    private static GraphView NewView(Size size, bool animations = false)
-    {
-        var view = GraphTestView.New(() => animations, labelFontFamily: DsResources.MonoFontFamily);
-        Layout(view, size);
-        return view;
-    }
+    // [sinema] Kurulum (New + Measure/Arrange + UpdateLayout) artık GraphTestView.Realized'da — buradaki yerel
+    // Layout ile birebir aynıydı, kopya YASAK.
+    private static GraphView NewView(Size size, bool animations = false) =>
+        GraphTestView.Realized(size, () => animations, labelFontFamily: DsResources.MonoFontFamily);
 
+    /// <summary>Var olan bir görünümü YENİDEN yerleştirir (panel boyutu değişti / kamera oturdu senaryoları).
+    /// <c>GraphTestView.Realized</c> kurulum yoludur, yeniden yerleşim değil — bu yüzden ikisi ayrı durur.</summary>
     private static void Layout(FrameworkElement view, Size size)
     {
         view.Measure(size);
@@ -323,13 +323,20 @@ public class GraphCullTests
         var edge = view.EdgeVisuals.First(e => !view.NodeVisuals.ContainsKey(e.Model.From));
 
         Assert.NotNull(edge.Style);
+        // [sinema] Beklenti `fogged: true` ile yeniden yazıldı. ESKİ İDDİA: bu çağrı 5 argümanlıydı, yani
+        // "sis diye bir kural yok" varsayıyordu ve opaklık 0.8 çıkıyordu. DEĞİŞME GEREKÇESİ (ölçüldü:
+        // beklenen 0.8 / gerçek 0.16): sinema kapısı cull kapısının TA KENDİSİDİR (FullDetailMaxNodes = 150),
+        // buradaki 500 düğümlük graf o eşiğin üstünde ⇒ sis AÇIK. Test gevşetilmedi: tam EdgeStyle record
+        // eşitliği duruyor ve artık İKİ kuralı birden pinliyor — stil cull edilmiş uçta da modelden gelir VE
+        // kapıyı `_cullEnabled` besler (kapı ayrılırsa bu test yine kırılır).
         Assert.Equal(
             EdgeStyleResolver.Resolve(
                 byName[edge.Model.From].Status,
                 byName[edge.Model.From].HasDepIssue,
                 byName[edge.Model.To].Status,
                 touchesSelection: false,
-                hasSelection: false),
+                hasSelection: false,
+                fogged: true),
             edge.Style);
         Assert.Same(view.FindResource(edge.Style.BrushKey), edge.Path.Stroke);
     }
@@ -549,10 +556,19 @@ public class GraphCullTests
         Assert.Same(Resolved(host, GraphView.PackageIconKey), visual.Icon.Data);
         Assert.Equal(Visibility.Visible, visual.SelectionRing.Visibility);
         Assert.Equal(Resolved(host, "Brush.FocusRing"), visual.SelectionRing.Stroke);
-        // [G2/LOD] Bu ölçekte (katman başına ≫9 düğüm, uzun adlar) etiketler zaten üst üste binerdi → hiç
-        // kurulmaz; kimlik yerine TOOLTIP taşınır (fix round 1 · A3).
-        Assert.Null(visual.Label);
-        Assert.Equal(culled.Name, visual.Body.ToolTip);
+        // [sinema · fix round 1] ESKİ İDDİA: "bu ölçekte (katman başına ≫9 düğüm, uzun adlar) etiketler zaten
+        // üst üste binerdi → hiç kurulmaz; kimlik yerine TOOLTIP taşınır". DEĞİŞME GEREKÇESİ: etiket kuralı
+        // artık KATMAN kararı VEYA ODAK MUAFİYETİ'dir (building ya da seçili düğüm) — bu düğüm tam da seçim
+        // yoluyla materyalize oluyor, yani muaf. Test gevşetilmedi, YÖN değiştirdi ve testin ASIL konusuna
+        // (canlı ağaçta SONRADAN doğan alt-ağaç kaynak zincirini çözebiliyor mu — c6e9a21 sınıfı) bir üçüncü
+        // tembel alt-ağaç daha ekledi: etiketin kendisi.
+        Assert.NotNull(visual.Label);
+        Assert.Equal(Visibility.Visible, visual.Label!.Visibility);
+        Assert.Equal(culled.ShortName, visual.Label.Text);
+        // Seçim geçişinin DIŞINDA doğan etiket boyasını EnsureLabel'in kendisi seçer (ardından düzeltecek bir
+        // ApplyNodeSelection geçişi gelmez) — ve o boya GERÇEK kaynak zincirinden çözülür.
+        Assert.Equal(Resolved(host, "Brush.TextPrimary"), visual.Label.Foreground);
+        Assert.Null(visual.Body.ToolTip); // etiket görünürken tam-ad tooltip'i kalkar
 
         // (1b) [fix round 1 · C2] Seçimle birlikte TEMBEL materyalize edilen KENARLAR da kaynak zincirini
         // çözmeli — MaterializeEdge, Stroke'u SetResourceReference ile bağlar ve bu tam c6e9a21'in sınıfıdır

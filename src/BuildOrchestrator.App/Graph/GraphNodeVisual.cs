@@ -69,8 +69,12 @@ internal sealed class GraphNodeSlot
     public required Point Center { get; init; }
     /// <summary>Cull testinde kullanılan dünya sınırları (<see cref="GraphCulling.NodeBounds"/>).</summary>
     public required Rect Bounds { get; init; }
-    /// <summary>[G2/LOD] Bu düğümün katmanında etiket kurulur mu (<see cref="GraphLayout.LabelsFit"/>).</summary>
-    public required bool ShowsLabel { get; init; }
+    /// <summary>[G2/LOD] Bu düğümün etiketi görünür mü. Kararın TEK kaynağı <c>GraphView.ShowsLabelFor</c>'dur
+    /// ve İKİ kolu vardır: katmanın etiketleri gerçekten örtüşüyor mu (<see cref="GraphLayout.LabelsFit"/> —
+    /// ölçekten BAĞIMSIZ) ve düğüm odak muafiyetinde mi (building ya da seçili). İkinci kol yüzünden SABİT
+    /// DEĞİLDİR: statü/seçim değiştikçe güncellenir ve sonradan materyalize olan düğüm de GÜNCEL kararı okur.
+    /// Burası kararın SONUCUDUR, girdisi değil — kendisini okuyup geri beslemek muafiyeti latch'e çevirirdi.</summary>
+    public required bool ShowsLabel { get; set; }
     public GraphNodeVisual? Visual { get; set; }
 }
 
@@ -131,8 +135,13 @@ internal sealed class GraphNodeVisual
     /// kısa adlı bir katman dar aralıkta da etiketlerini korur. LOD, cull ile aynı kapıya bağlıdır
     /// (<see cref="GraphView.FullDetailMaxNodes"/>): o bandın altında etiket ASLA düşmez.</para>
     ///
+    /// <para><b>[sinema]</b> Karar SABİT DEĞİLDİR — ama ölçekle değil, ODAKLA değişir: kalabalık bir katmanda
+    /// bile <b>building</b> ya da <b>seçili</b> düğüm adını taşır (odak muafiyeti). Etiket o anda TALEP ÜZERİNE
+    /// kurulur (<c>GraphView.EnsureLabel</c>), muafiyet bitince <c>Collapsed</c>'a döner — bir kez kurulan
+    /// etiket sökülmez, dolayısıyla burası "bu düğüm hiç muaf olmadı" demektir.</para>
+    ///
     /// <para>Etiketi düşen düğüm anonim kalmaz — tam proje adını veren bir tooltip taşır.</para></summary>
-    public TextBlock? Label { get; init; }
+    public TextBlock? Label { get; set; }
     /// <summary>[G2] Dep-hata rozeti kabı (13px, sağ üst köşe) — yalnız <c>HasDepIssue</c> olan düğümde KURULUR
     /// (eskiden her düğümde kurulup gizleniyordu). Yoksa <c>null</c>.</summary>
     public Grid? Badge { get; set; }

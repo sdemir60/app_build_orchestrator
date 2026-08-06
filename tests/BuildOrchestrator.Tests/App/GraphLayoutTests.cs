@@ -188,6 +188,38 @@ public class GraphLayoutTests
         Assert.False(GraphLayout.LabelsFit(spacing, GraphLabelMetrics.WidestLabelWidth(["Domain.Vehicle.Registration"], mono)));
     }
 
+    // ---------------------------------------------------------------- [sinema] etiket kararı ölçek-değişmez
+
+    [Fact]
+    public void Label_overlap_is_scale_invariant_so_a_zoom_threshold_cannot_be_defended()
+    {
+        // af6f261'in İKİ saf testi de kalkan aynı predicate'i (LabelVisibleAtScale) pinliyordu; ikisinin
+        // yerine geçen tek test budur (fix round 1 brief §3.1 bunu öngörüyordu). Tarihsel iddiaları:
+        //
+        // ESKİ İDDİA 1 (A_label_appears_at_ratio_1_and_survives_down_to_0_85_hysteresis): "etiket
+        // r = aralık×ölçek / genişlik oranı 1.0'a ulaşınca belirir, 0.85'e kadar tutunur".
+        // ESKİ İDDİA 2 (The_static_labels_fit_rule_is_the_scale_1_case_of_the_same_predicate): "tek doğruluk
+        // kaynağı ÖLÇEKLİ predicate'tir; LabelsFit(s,w) ≡ LabelVisibleAtScale(s,w,1,false)". [fix round 2]
+        // Bu ikincisi ayrı bir test olarak yeniden yazılmadı: ölçekli predicate silindiği için "delege ediyor
+        // mu" diye bakılacak bir şey kalmadı, tek doğruluk kaynağı artık LabelsFit'in KENDİSİDİR ve iki
+        // okuyucusunun (SetGraph açılış kararı + ApplyLabelVisibility) aynı predicate'ten okuduğu SAF değil
+        // KABLAJ iddiasıdır — onu düşüren mutant (açılış kararını sabit `true` yapmak) zaten sekiz mevcut
+        // testi kırmızıya çeviriyor (GraphCullTests.Above_the_gate… / One_graph_drops… /
+        // A_node_that_lost_its_label… + GraphCinemaTests'in beş etiket testi), yeni bir test kopya olurdu.
+        //
+        // DEĞİŞME GEREKÇESİ (ölçüldü): etiketler kameranın ALTINDA yaşar (World.RenderTransform =
+        // {cameraScale, cameraTranslate}; düğüm katmanı onun çocuğu), GraphLabelMetrics ise ölçeksiz DÜNYA
+        // biriminde ölçer ⇒ ekranda hem aralık hem etiket AYNI ölçekle çarpılır, yani örtüşme
+        // ölçek-DEĞİŞMEZDİR. Oran kuralı bu yüzden İKİ YÖNDE de yanlış karar veriyordu:
+        //   · 34px aralık / 42px etiket, ölçek 1.4 → ekranda 47.6px arayla 58.8px metin: çift başına 11.2px
+        //     FİZİKSEL örtüşme, ama eski kural "sığıyor" derdi;
+        //   · 96px aralık / 78px etiket, ölçek 0.68 → dünyada 18px BOŞLUK, ama 96×0.68 = 65.28 < 78×0.85 = 66.3
+        //     olduğu için eski kural etiketi düşürürdü (~%20'lik haksız bant — Task 5 ÖNCESİNE göre gerileme).
+        // Yeni kural her iki ölçekte de AYNI (doğru) kararı verir; bu yüzden ölçek parametresi YOKTUR.
+        Assert.False(GraphLayout.LabelsFit(spacing: 34, widestLabelWidth: 42)); // 1.4×'te de örtüşür
+        Assert.True(GraphLayout.LabelsFit(spacing: 96, widestLabelWidth: 78));  // 0.68'de de örtüşmez
+    }
+
     [Fact]
     public void The_layout_reports_the_spacing_of_every_layer_so_the_LOD_decision_has_a_single_source()
     {

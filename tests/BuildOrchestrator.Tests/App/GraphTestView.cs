@@ -60,11 +60,30 @@ internal static class GraphTestView
         Size size,
         Func<bool>? animationsEnabled = null,
         IMotionSettings? motion = null,
-        FontFamily? labelFontFamily = null)
+        FontFamily? labelFontFamily = null) =>
+        Resize(New(animationsEnabled, motion, labelFontFamily), size);
+
+    /// <summary>VAR OLAN bir view'ı yeniden ölçer/yerleştirir — panel boyut değişimini (<c>Ground.SizeChanged</c>)
+    /// süren testlerin yolu. Ölçüm ikilisi <see cref="Sized"/> ile ORTAK (kopya YASAK); yerleşimi işletmek için
+    /// çağıran ayrıca <c>UpdateLayout</c> der (bkz. <see cref="Realized"/>).</summary>
+    public static GraphView Resize(GraphView view, Size size)
     {
-        var view = New(animationsEnabled, motion, labelFontFamily);
+        ArgumentNullException.ThrowIfNull(view);
         view.Measure(size);
         view.Arrange(new Rect(new Point(0, 0), size));
+        return view;
+    }
+
+    /// <summary>Sized + <c>UpdateLayout</c>: cull/etiket/kamera kablajını gerçek yerleşimle test eden
+    /// STA testlerinin kurulumu (GraphCullTests'in yerel Layout deseni; artık ortak).</summary>
+    public static GraphView Realized(
+        Size size,
+        Func<bool>? animationsEnabled = null,
+        IMotionSettings? motion = null,
+        FontFamily? labelFontFamily = null)
+    {
+        var view = Sized(size, animationsEnabled, motion, labelFontFamily);
+        view.UpdateLayout();
         return view;
     }
 }

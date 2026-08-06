@@ -90,4 +90,15 @@ public static class AccessibilityNames
     /// okuyucuya hiçbir şey söylemez. Tam proje adı + statü etiketi (<see cref="Controls.StatusGlyph.LabelFor"/>,
     /// design-v1 EN_STATUS) birleşir; ayraç, uygulamanın diğer birleşik adlarıyla aynı em-dash'tır.</summary>
     public static string GraphNode(string projectName, string statusLabel) => $"{projectName} — {statusLabel}";
+
+    /// <summary>[sinema] Graf başlığındaki <c>FOLLOW PAUSED</c> pili — görünür etiketi yalnız DURUMU söyler,
+    /// ad ayrıca EYLEMİ de söyler (tıklama takibi hemen döndürür).
+    ///
+    /// <para><b>Bu ad bugün ekran okuyucuya ULAŞMIYOR ve sebebi WPF değil, ELEMAN SEÇİMİDİR.</b> Pil düz bir
+    /// <c>Border</c>'dır; WPF ona automation peer vermez, dolayısıyla UIA ağacında kendi öğesi olarak
+    /// görünmez. Aynı repoda <see cref="Controls.LatestPill"/> tam bu sorunu pili özel <c>Border</c> şablonlu
+    /// bir <c>Button</c> yaparak çözüyor ve adı KABUĞA değil tıklanan öğeye koyuyor — graf pili de öyle
+    /// kurulduğunda sınır kapanır. Ad şimdiden burada durur ki o gün iki yerde ayrışmasın
+    /// (bkz. ARCHITECTURE §20).</para></summary>
+    public const string GraphFollowPill = "Follow paused — resume automatic follow";
 }

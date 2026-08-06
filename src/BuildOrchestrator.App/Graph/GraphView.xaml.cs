@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
@@ -132,6 +133,9 @@ public partial class GraphView : UserControl
     private HashSet<string> _neighbourSet = new(StringComparer.Ordinal);
     private bool _isSettled;
     private Point? _previousFocus;
+    /// <summary>[sinema] YALNIZ frontier dalından gelen ölçek hedefi hatırlanır (Zeno eşiği yalnız orada
+    /// geçerlidir) — <c>_previousFocus</c> sözleşmesinin ölçek eşi.</summary>
+    private double? _previousScale;
     private ClockGroup? _dashClockRoot;
     private AnimationClock? _thinDashClock;
     private AnimationClock? _thickDashClock;
@@ -142,6 +146,12 @@ public partial class GraphView : UserControl
     private bool _edgesAnimated;
     private bool _hasCamera;
     private bool _cullEnabled;
+    /// <summary>[sinema] Katman → o katmandaki EN GENİŞ etiketin çizilen genişliği; TAM DETAY bandında
+    /// <c>null</c>'dır. Null olması yalnız bir optimizasyon değil YAPISAL GARANTİDİR: etiket kararı
+    /// (<see cref="ShowsLabelFor"/>) o durumda koşulsuz "göster"e kısa devre yapar, dolayısıyla
+    /// ≤<see cref="FullDetailMaxNodes"/> düğümlü grafta hiçbir etiket düşmez ve görünüm birebir bugünkü gibi
+    /// kalır — bu bir davranışsal varsayım değil, kararın ilk klozudur.</summary>
+    private Dictionary<int, double>? _labelWidths;
     /// <summary>[G2 · fix round 1 B1] EN SON taranmış dünya bölgesi — <b>kümülatif DEĞİL</b>, her taramada
     /// DEĞİŞTİRİLİR. Yalnız gereksiz taramayı eler: bu bölgedeki her şey materyalize edilmiş olduğundan, onun
     /// İÇİNDE kalan yeni bir bölge için tekrar gezinmeye gerek yoktur. (İlk turda burada kümülatif bir birleşim
@@ -157,6 +167,22 @@ public partial class GraphView : UserControl
     private long _revealStartTicks;
     private long _revealEndTicks;
 
+    // ---------------------------------------------------------------- [sinema] manuel kamera (jestler, §3.4)
+    /// <summary>Kamera KULLANICIDA mı — otomatik hedefleme askıda (spec §3.5). Son manuel girdiden
+    /// <see cref="GraphCamera.FollowResumeDelayMs"/> sonra takip devralır (<see cref="TryResumeFollow"/>).</summary>
+    private bool _manualCamera;
+    /// <summary>Zeminde sol tuş basılı; henüz sürükleme olmayabilir (eşik aşılmadıysa bu bir TIKLAMADIR).</summary>
+    private bool _panPressed;
+    /// <summary>Platform drag eşiği aşıldı — pan sürüyor.</summary>
+    private bool _dragging;
+    /// <summary>Son jest noktası, <c>Ground</c>'un EKRAN koordinatında (pan deltası da ekran uzayındadır).</summary>
+    private Point _panLast;
+    private long _lastManualInputTicks;
+    /// <summary>[sinema] Takip dönüşünün TEK ATIMLIK tetiği (spec §3.5) — talep üzerine kurulur, manuel moddan
+    /// çıkışta / yeni topolojide / unload'da durdurulur. Kurulum kuralı
+    /// <see cref="KeepFollowResumeTriggerAlive"/>'dedir.</summary>
+    private DispatcherTimer? _followResumeTimer;
+
     public GraphView()
     {
         _motion = new MotionGate(this, latchFirst: true);
@@ -169,8 +195,36 @@ public partial class GraphView : UserControl
         World.RenderTransform = new TransformGroup { Children = { _cameraScale, _cameraTranslate } };
         World.RenderTransformOrigin = new Point(0, 0);
 
-        // Boş alana tıklama → seçim kalkar (düğüm tıklaması Handled=true yaptığından buraya ulaşmaz).
-        Ground.MouseLeftButtonDown += (_, _) => SelectedNode = null;
+        // [sinema] Jest kablosu. Sinema DIŞINDA boş alana tıklama seçimi DOWN anında kaldırır — bugünkü
+        // davranış birebir (spec §3.4; düğüm tıklaması Handled=true yaptığından buraya ulaşmaz). Sinemada aynı
+        // basış bir sürüklemenin başı olabileceği için kaldırma release'e taşınır (click-vs-drag ayrımı).
+        // Jest mantığının tamamı internal seam'lerdedir (HandlePan*/HandleWheel) ve testler onları doğrudan
+        // sürer — headless'ta gerçek mouse capture ALINAMAZ (PresentationSource yok). Ama buradaki İKİ karar
+        // seam'lerin üstündedir (sinema kolu · capture kaybı = iptal) ve gerçek routed event'le pinlenir
+        // (GraphPanZoomTests, MouseInput üzerinden).
+        Ground.MouseLeftButtonDown += (_, e) =>
+        {
+            // Kapı TEK yerde (HandlePanStart): jest başlayabildiyse capture alınır, aksi halde
+            // bugünkü DOWN-anında seçim kaldırma çalışır. Kapının kopyası buraya YAZILMAZ — aksi halde
+            // "jest başlamadı ama capture alındı ve tıklama da yutuldu" deliği açılırdı.
+            if (HandlePanStart(e.GetPosition(Ground))) Ground.CaptureMouse();
+            else SelectedNode = null;
+        };
+        Ground.MouseMove += (_, e) => { if (_panPressed) HandlePanMove(e.GetPosition(Ground)); };
+        // Bırakma ÖNCE işlenir, capture SONRA bırakılır: ReleaseMouseCapture senkron olarak LostMouseCapture'ı
+        // yükseltir ve o yol İPTAL semantiğindedir (aşağı bak). Ters sırada üretimde jesti iptal yolu bitirir,
+        // headless'ta (capture hiç alınamaz) bırakma yolu — iki ortam ayrışırdı.
+        Ground.MouseLeftButtonUp += (_, _) => { HandlePanEnd(); Ground.ReleaseMouseCapture(); };
+        // Capture BAŞKA bir sebeple düşerse (Alt+Tab, popup, başka öğe capture alır) bu bir BIRAKMA DEĞİL
+        // İPTALDİR: spec §3.4 seçimi "eşik aşılmadan BIRAKILIRSA" kaldırır. Jest durumu ve el imleci temizlenir,
+        // seçime DOKUNULMAZ.
+        Ground.LostMouseCapture += (_, _) => ResetPanGesture();
+        Ground.MouseWheel += (_, e) =>
+        {
+            if (!_cullEnabled) return; // sinema dışı: tekerlek bugünkü gibi bu panele ait DEĞİL
+            e.Handled = true;
+            HandleWheel(e.GetPosition(Ground), e.Delta);
+        };
         Ground.SizeChanged += (_, _) => ApplyCamera(animate: false);
 
         // [M-2] Canlı reduced-motion: OS ayarı koşu SIRASINDA değişirse akan dash ve nabız ANINDA durur/başlar
@@ -228,6 +282,9 @@ public partial class GraphView : UserControl
         // [M-d] View unload olurken paylaşımlı dash clock'u da bırak — aksi halde (M-3'ün kapsamadığı bu yol
         // için) timing engine, view artık ağaçta olmasa bile 30fps'te uyanık kalırdı.
         ReleaseDashClock();
+        // [sinema] AYNI gerekçe takip dönüşü tetiği için: uçuştaki bir DispatcherTimer dispatcher tarafından
+        // köklenir ve view ağaçtan düşse bile onu (ve tüm graf ağacını) canlı tutardı.
+        _followResumeTimer?.Stop();
         // [E3/T41] Reveal ortasında unload olursa hero'yu bırak — aksi halde bir sonraki hero sonsuza dek bloke olurdu.
         _reveal.Release();
     }
@@ -269,6 +326,18 @@ public partial class GraphView : UserControl
             MaterializeSelection();
             ApplySelection();
             ApplyEdgeStyles();
+            // [sinema] BİR DÜĞÜM SEÇMEK manuel modu ANINDA bitirir — 4 sn beklenmez. Duraklama OTOMATİK yeniden
+            // hedeflemenin (statü tick'i) kullanıcının görüşünü çalmasına karşıdır; seçim ise kullanıcının KENDİ
+            // navigasyonudur (liste satırı, graf düğümü, stream satırı — §13.7'nin tek jesti). Bastırılsaydı
+            // "tıkladım, hiçbir şey olmadı" olurdu. Manuel değilken no-op'tur; manuelken kamerayı zaten uygular,
+            // aşağıdaki çağrı o durumda hedefi değişmemiş bulup erken döner.
+            //
+            // SEÇİMİ KALDIRMAK bu kuralın DIŞINDADIR ve bu ayrım zorunludur: null bir "gidilecek yer" değildir.
+            // Boş zemine tıklayarak (HandlePanEnd) ya da grafta karşılığı olmayan bir projeye geçerek
+            // (MainWindow.PushGraphSelection null iter) seçim kalkabilir; koşulsuz dönseydik takip edilecek
+            // hiçbir şey yokken kamera kullanıcının excursion'ını silip kuşbakışına yapışırdı — TryResumeFollow'un
+            // hedef klozunun (HasFollowTarget) tam olarak yasakladığı şey. Hedef varsa 4 sn kuralı zaten döndürür.
+            if (value is not null) ResumeFollowNow();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
         }
@@ -300,8 +369,13 @@ public partial class GraphView : UserControl
         _edgeSlots.Clear();
         _neighbours.Clear();
         _flowingEdges.Clear();
-        _previousFocus = null;
         _hasCamera = false; // yeni topoloji → kamera hedefi baştan hesaplanır
+        // [sinema] Yeni topoloji manuel kamerayı da bitirir: kullanıcının gezdiği koordinatların yeni grafta
+        // karşılığı yoktur (Zeno latch'leri de o eski koordinatlara aitti — ExitManualCamera onları da bırakır).
+        // Sürmekte olan bir jest ayrıca iptal edilir (el imleci ekranda kalmasın).
+        ExitManualCamera();
+        ResetPanGesture();
+        UpdateFollowPill(); // 0 düğümlü grafta ApplyCamera hiç çağrılmaz, pil BURADA kapanır
         CurrentCamera = default;
         _scannedRegion = Rect.Empty;
         _revealPlaying = false; // eski grafın reveal penceresi yeni grafın materyalizasyonuna sızmasın
@@ -321,8 +395,9 @@ public partial class GraphView : UserControl
         bool fullDetail = nodes.Count <= FullDetailMaxNodes;
         _cullEnabled = !fullDetail;
         // [fix round 1 A1] LOD eşiği katmanın EN GENİŞ etiketinin ÇİZİLEN genişliğinden türetilir (kelepçeden
-        // değil). Ölçüm katman başına TEK kez yapılır ve yalnız tam-detay bandının DIŞINDA gerekir.
-        var labelWidths = fullDetail ? null : MeasureLayerLabelWidths(nodes);
+        // değil). Ölçüm katman başına TEK kez yapılır ve yalnız tam-detay bandının DIŞINDA gerekir. [sinema]
+        // Ölçüm SAKLANIR: statü/seçim değiştikçe karar yeniden verilir (ApplyLabelVisibility).
+        _labelWidths = fullDetail ? null : MeasureLayerLabelWidths(nodes);
 
         foreach (var node in nodes)
         {
@@ -332,9 +407,15 @@ public partial class GraphView : UserControl
                 Model = node,
                 Center = center,
                 Bounds = GraphCulling.NodeBounds(center),
-                ShowsLabel = labelWidths is null || GraphLayout.LabelsFit(
-                    _layout.LayerSpacing.TryGetValue(node.Layer, out double s) ? s : GraphLayout.MaxNodeSpacing,
-                    labelWidths.GetValueOrDefault(node.Layer, GraphLayout.NodeCellWidth)),
+                // Açılış kararı da AYNI kaynaktan okunur — gerekçe KOPYA YASAĞI, muafiyet DEĞİL. [fix round 2]
+                // Ölçüldü: muafiyet kolunun buradaki payı GÖZLENEBİLİR değildir (o kolu buradan düşüren mutant
+                // tüm süiti yeşil bırakıyor), çünkü kararı GÖRSELE çeviren tek yer BuildNodeVisual'dır (tek
+                // çağıranı MaterializeNode) ve aynı ifade bloğunda ApplyLabelVisibility kararın TAMAMINI
+                // yeniden uygular — araya bir render turu girmez. Arada koşan tek okuyucu ApplyNodeSelection'ın
+                // Label boyamasıdır, o da nötrdür: EnsureLabel fırçayı kendisi _selectedNode'dan seçer. Buraya
+                // ikinci, FARKLI bir predicate yazmak ise gerçek bir kopya olurdu; katman kolu ise burada
+                // gözlenebilir (bu kararı sabit `true` yapan mutant sekiz testi düşürüyor).
+                ShowsLabel = ShowsLabelFor(node),
             };
             _slots[node.Name] = slot;
             _slotOrder.Add(slot);
@@ -380,6 +461,44 @@ public partial class GraphView : UserControl
         return widths;
     }
 
+    /// <summary>Katmanın düğüm aralığı — LOD kararının iki yolu (açılıştaki statik karar ve
+    /// <see cref="ApplyLabelVisibility"/>) AYNI kaynaktan okur (kopya YASAK).</summary>
+    private double LayerSpacing(int layer) =>
+        _layout.LayerSpacing.TryGetValue(layer, out double spacing) ? spacing : GraphLayout.MaxNodeSpacing;
+
+    /// <summary>Katmandaki EN GENİŞ etiketin çizilen genişliği; ölçüm yoksa (tam-detay bandı ya da bilinmeyen
+    /// katman) hücre kelepçesine — yani MUHAFAZAKÂR üst sınıra — düşülür.</summary>
+    private double LayerLabelWidth(int layer) =>
+        _labelWidths?.GetValueOrDefault(layer, GraphLayout.NodeCellWidth) ?? GraphLayout.NodeCellWidth;
+
+    /// <summary>
+    /// [sinema · fix round 1] Bir düğümün etiketi görünür mü — kararın <b>TEK KAYNAĞI</b>. Açılıştaki statik
+    /// karar (<see cref="SetGraph"/>) ve sonraki her yeniden değerlendirme (<see cref="ApplyLabelVisibility"/>)
+    /// buradan okur.
+    /// <list type="number">
+    ///   <item><b>Tam detay</b> (<see cref="_labelWidths"/> null): etiket HER ZAMAN vardır — küçük grafın
+    ///     "hiçbir şey değişmedi" güvencesi.</item>
+    ///   <item><b>Katman kolu</b>: komşu iki etiket gerçekten örtüşüyor mu
+    ///     (<see cref="GraphLayout.LabelsFit"/>) — <b>ÖLÇEKTEN BAĞIMSIZ</b>, çünkü etiket de aralık da aynı
+    ///     kamera transform'unun altındadır (gerekçe orada yazılıdır).</item>
+    ///   <item><b>Düğüm kolu</b>: odak muafiyeti (<see cref="IsFocusExempt"/>).</item>
+    /// </list>
+    /// </summary>
+    private bool ShowsLabelFor(GraphNode node) =>
+        _labelWidths is null
+        || GraphLayout.LabelsFit(LayerSpacing(node.Layer), LayerLabelWidth(node.Layer))
+        || IsFocusExempt(node);
+
+    /// <summary>[sinema · fix round 1] Odak muafiyeti: kalabalık bir katmanda etiketler örtüştüğü için düşse
+    /// bile <b>o an derlenen</b> ve <b>seçili</b> düğümün adı YAZILIDIR — build sürerken sakin, sisli bir graf
+    /// görülür, kamera 0.85–1.4 bandında frontier'i çerçeveler ve yalnız oradaki adlar okunur.
+    ///
+    /// <para>Muafiyet KOMŞULARA YAYILMAZ (bilinçli YAGNI): seçim zaten komşu-olmayanları
+    /// <see cref="DimmedNodeOpacity"/>'ye söndürüyor, ikinci bir vurgu katmanı gerekmiyor.</para></summary>
+    private bool IsFocusExempt(GraphNode node) =>
+        node.Status == GraphStatus.Building
+        || string.Equals(node.Name, _selectedNode, StringComparison.Ordinal);
+
     /// <summary>[G2 fix round 1 · A1] Etiket ölçümünde kullanılan aile; null ise <see cref="AppFonts.Mono"/>.
     /// TEST SEAM'i: <c>pack://</c> aileler gerçek bir <c>Application</c> olmadan çözülmez, testler
     /// <c>TestAssets/Fonts</c>'a <c>file://</c> tabanlı bir aile enjekte eder (<c>TrackedTextBlockTests</c>
@@ -414,6 +533,10 @@ public partial class GraphView : UserControl
         }
 
         ApplyEdgeStyles();
+        // [sinema] Statü tick'i de aynı kapıdan geçer: takip hedefi koşu SIRASINDA doğabilir (kullanıcı durgun
+        // bir grafta gezinirken yeni bir build başlar) — o ana kadar uçuşta hiçbir tetik YOKTUR, çünkü hedefsiz
+        // bir manuel mod tetik kurmaz. 4 sn çoktan geçmişse takip hemen devralır, geçmemişse tetik burada doğar.
+        TryResumeOrKeepWaiting(Environment.TickCount64);
         ApplyCamera(animate: true);
     }
 
@@ -516,6 +639,9 @@ public partial class GraphView : UserControl
         _nodeLayer.Children.Add(visual.Cell);
         ApplyNodeSelection(visual, animate: false);
         JoinRevealIfPlaying(visual);
+        // [sinema] Pencere içinde SONRADAN görünen düğüm de GÜNCEL kararı okur — aksi halde ekran dışından
+        // seçilen ya da cull edilmişken derlenmeye başlayan düğüm, materyalize olduğunda adsız kalırdı.
+        ApplyLabelVisibility(slot, visual);
     }
 
     /// <summary>
@@ -634,36 +760,6 @@ public partial class GraphView : UserControl
             Children = { squareHost },
         };
 
-        TextBlock? label = null;
-        if (slot.ShowsLabel)
-        {
-            label = new TextBlock
-            {
-                FontFamily = AppFonts.Mono,
-                FontSize = 10,
-                MaxWidth = GraphLayout.NodeCellWidth,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                TextAlignment = TextAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, GraphLayout.LabelGap, 0, 0),
-                Text = node.ShortName,
-            };
-            // feasibility §3.4/§4.4: kök TextOptions.TextFormattingMode="Display" scale transform ALTINDA bozulur —
-            // graf etiketlerinde LOKAL Ideal override (kök MainWindow ayarına DOKUNULMAZ, T65).
-            TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
-            label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim"); // seçiliyken text-primary (DS)
-            body.Children.Add(label);
-        }
-        else
-        {
-            // [G2 · fix round 1 A3] Etiketi düşen düğüm ANONİM KALMAZ: tam proje adını veren bir tooltip
-            // taşır ve hedefi düğüm karesinin TAMAMIDIR (body = tıklama alanının kendisi). Tooltip DÜZ METİN
-            // atanır — WPF, ToolTip kontrolünü ancak gösterilirken kurar, dolayısıyla düğüm başına HİÇBİR ek
-            // nesne kurulmaz (WillBuildDot.cs:66 ile aynı desen; Controls.xaml'deki implicit ToolTip stili —
-            // InitialShowDelay=0 + CustomPopupPlacementCallback, A13.2 — otomatik sarılan tooltip'e de uygulanır).
-            body.ToolTip = node.Name;
-        }
-
         var cell = new Grid { Width = GraphLayout.NodeCellWidth, Children = { body } };
         Canvas.SetLeft(cell, slot.Center.X - GraphLayout.NodeCellWidth / 2);
         Canvas.SetTop(cell, slot.Center.Y - GraphLayout.NodeSize / 2);
@@ -689,11 +785,105 @@ public partial class GraphView : UserControl
             Square = square,
             SelectionRing = ring,
             Icon = icon,
-            Label = label,
+            Label = null, // aşağıda TALEP ÜZERİNE kurulur (EnsureLabel) — sinema modunda kamera da kurabilir
             Center = slot.Center,
         };
+
+        if (slot.ShowsLabel)
+        {
+            EnsureLabel(visual);
+        }
+        else
+        {
+            // [G2 · fix round 1 A3] Etiketi düşen düğüm ANONİM KALMAZ: tam proje adını veren bir tooltip
+            // taşır ve hedefi düğüm karesinin TAMAMIDIR (body = tıklama alanının kendisi). Tooltip DÜZ METİN
+            // atanır — WPF, ToolTip kontrolünü ancak gösterilirken kurar, dolayısıyla düğüm başına HİÇBİR ek
+            // nesne kurulmaz (WillBuildDot.cs:66 ile aynı desen; Controls.xaml'deki implicit ToolTip stili —
+            // InitialShowDelay=0 + CustomPopupPlacementCallback, A13.2 — otomatik sarılan tooltip'e de uygulanır).
+            visual.Body.ToolTip = node.Name;
+        }
+
         ApplyNodeStatus(visual);
         return visual;
+    }
+
+    /// <summary>[sinema] Etiket kurulumunun TEK yolu — açılış yolu (<see cref="BuildNodeVisual"/>) ve muafiyet
+    /// yolu (<see cref="ApplyLabelVisibility"/>) aynı metodu kullanır (kopya YASAK). Bir kez kurulan etiket
+    /// SÖKÜLMEZ; muafiyet bitince yalnız <c>Collapsed</c>'a döner (cull'un tek yönlü materyalizasyonuyla aynı
+    /// gerekçe: sökmek kazanç getirmez, yeniden kurmak maliyetlidir).</summary>
+    private void EnsureLabel(GraphNodeVisual visual)
+    {
+        if (visual.Label is not null) return;
+
+        var label = new TextBlock
+        {
+            FontFamily = AppFonts.Mono,
+            FontSize = GraphLabelMetrics.LabelFontSize,
+            MaxWidth = GraphLayout.NodeCellWidth,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, GraphLayout.LabelGap, 0, 0),
+            Text = visual.Model.ShortName,
+        };
+        // feasibility §3.4/§4.4: kök TextOptions.TextFormattingMode="Display" scale transform ALTINDA bozulur —
+        // graf etiketlerinde LOKAL Ideal override (kök MainWindow ayarına DOKUNULMAZ, T65).
+        TextOptions.SetTextFormattingMode(label, TextFormattingMode.Ideal);
+        // DS DependencyGraphNode: etiket seçiliyken text-primary, aksi halde text-dim. Seçim durumu BURADA
+        // okunur — etiket, seçim geçişinin DIŞINDA (muafiyet doğduğunda) da doğabilir, o yolda ardından
+        // düzeltecek bir ApplyNodeSelection geçişi gelmez.
+        label.SetResourceReference(TextBlock.ForegroundProperty,
+            string.Equals(visual.Model.Name, _selectedNode, StringComparison.Ordinal)
+                ? "Brush.TextPrimary" : "Brush.TextDim");
+        visual.Body.Children.Add(label); // squareHost'un ARDINDAN: kare üstte, etiket altında
+        visual.Label = label;
+    }
+
+    /// <summary>
+    /// [sinema · fix round 1] Tek düğümün etiketini GÜNCEL karara (<see cref="ShowsLabelFor"/>) oturtur.
+    ///
+    /// <para><b>Tam-detay bandında hiçbir şeye DOKUNMAZ ve bu YAPISALDIR:</b> orada karar koşulsuz "göster"dir
+    /// (<see cref="ShowsLabelFor"/>'un ilk klozu) ⇒ aşağıdaki karşılaştırma her düğümde erken döner ve görsel
+    /// açılıştaki hâlinde kalır. Kapı ikinci kez BURAYA yazılmaz: ölçüldü — kopyalandığında onu düşüren bir
+    /// mutasyon yoktur (karar zaten kısa devre yapıyor), yani ölü ağırlık olurdu.</para>
+    ///
+    /// <para>Karar <see cref="GraphNodeSlot.ShowsLabel"/>'ı yalnız YAZAR, okumaz: görünürlük durumunu karara
+    /// geri beslemek (histerezis) muafiyeti LATCH'e çevirirdi — bir kez derlenen düğüm adını sonsuza dek
+    /// taşırdı. Aşağıdaki karşılaştırma yalnız "değişmediyse dokunma" içindir.</para>
+    /// </summary>
+    private void ApplyLabelVisibility(GraphNodeSlot slot, GraphNodeVisual visual)
+    {
+        bool show = ShowsLabelFor(slot.Model);
+        // "Değişmediyse dokunma": görselin etiket/tooltip durumunun TAMAMI slot.ShowsLabel'ın fonksiyonudur —
+        // onu yazan iki yol da (BuildNodeVisual ve aşağıdaki dallar) bu değişmezi korur, etiket de bir kez
+        // kurulduktan sonra sökülmez. Dolayısıyla kararın kendisini karşılaştırmak yeterlidir.
+        if (show == slot.ShowsLabel) return;
+
+        slot.ShowsLabel = show;
+        if (show)
+        {
+            EnsureLabel(visual);
+            visual.Label!.Visibility = Visibility.Visible;
+            visual.Body.ToolTip = null;
+        }
+        else
+        {
+            if (visual.Label is { } label) label.Visibility = Visibility.Collapsed;
+            visual.Body.ToolTip = slot.Model.Name; // karar da tooltip de AYNI modelden okunur
+        }
+    }
+
+    /// <summary>[sinema · fix round 1] MATERYALİZE düğümlerin etiket kararını tazeler. Kararın iki girdisi de
+    /// (statü ve seçim) <see cref="ApplyCamera"/> hunisinden geçtiği için çağrı oradadır:
+    /// <see cref="UpdateStatuses"/> ve <see cref="SelectedNode"/> setter'ı ikisi de orada biter. Tam-detay
+    /// bandında gezinme HİÇ yapılmaz — buradaki kontrol bir KARAR değil, koşarken saniyede birkaç kez koşan
+    /// O(N) döngünün kendisinden kaçınmaktır (karar zaten <see cref="ShowsLabelFor"/>'da kısa devre yapıyor,
+    /// yani kaldırılsa da davranış aynı kalırdı).</summary>
+    private void UpdateLabelVisibility()
+    {
+        if (_labelWidths is null) return;
+        foreach (var visual in _nodes.Values)
+            ApplyLabelVisibility(_slots[visual.Model.Name], visual);
     }
 
     /// <summary>[G2] Dep-hata rozetini TALEP ÜZERİNE kurar (bir kez). Rozet nabız kabının KARDEŞİDİR ve ondan
@@ -910,7 +1100,8 @@ public partial class GraphView : UserControl
             source?.Model.HasDepIssue ?? false,
             target?.Model.Status ?? GraphStatus.Discovered,
             touchesSelection,
-            _selectedNode is not null);
+            _selectedNode is not null,
+            fogged: _cullEnabled); // [sinema] kapı = cull kapısı (FullDetailMaxNodes) — spec §3.0
 
         // "Her tick'te full binding refresh yapma" (feasibility §3.4): stil DEĞİŞMEDİYSE fırça/dash/clock
         // kablajına hiç dokunulmaz. EdgeStyle bir record'dur ve Dash alanı daima aynı statik örnektir
@@ -1072,14 +1263,328 @@ public partial class GraphView : UserControl
     /// <see cref="RevealStagger.ReleaseIfCurrent"/>). Test bunu doğrudan çağırır (gerçek timer tick'i beklemeden).</summary>
     internal void ReleaseRevealHeroIfCurrent(int gen) => _reveal.ReleaseIfCurrent(gen);
 
+    // ---------------------------------------------------------------- [sinema] manuel jestler (spec §3.4)
+
+    /// <summary>
+    /// Zeminde sol tuş basıldı. Henüz hiçbir şey OLMAZ: bu basış bir tıklama da olabilir, bir sürüklemenin başı
+    /// da — ayrımı platform drag eşiği yapar (<see cref="HandlePanMove"/>).
+    ///
+    /// <para>İki kapı: jestler yalnız sinema modunda (<see cref="_cullEnabled"/> = sinema kapısı) çalışır ve
+    /// kamera hedefi HESAPLANMIŞ olmalıdır — <see cref="GraphCamera.Pan"/>/<see cref="GraphCamera.ZoomAt"/>
+    /// ikisi de MEVCUT kameradan türetir, ölçek 0 iken sonuç tanımsızdır.</para>
+    /// </summary>
+    /// <returns><c>true</c> = jest başladı (çağıran capture alır). <c>false</c> = bu basış jest DEĞİL; çağıran
+    /// bugünkü davranışı uygular (boş alana tıklama seçimi DOWN anında kaldırır). Karar tek yerde kalsın diye
+    /// kapı bir <c>bool</c> olarak dışarı verilir; ctor onu kopyalamaz.</returns>
+    internal bool HandlePanStart(Point position)
+    {
+        if (!_cullEnabled || !_hasCamera) return false;
+        _panPressed = true;
+        _dragging = false;
+        _panLast = position;
+        return true;
+    }
+
+    /// <summary>Sürükleme: eşik aşıldığı KAREDE manuel moda geçilir ve el imleci takılır; sonrasında her hareket
+    /// kamerayı ekran deltası kadar öteler. Cull manuel gezinme sırasında da çalışır (spec §3.4).</summary>
+    internal void HandlePanMove(Point position)
+    {
+        if (!_panPressed) return;
+
+        var delta = position - _panLast;
+        if (!_dragging)
+        {
+            // Platform drag eşiği: tıklama ile sürükleme ayrımı (spec §3.4). Eşik altındaki titreme bir
+            // TIKLAMADIR — kamerayı oynatmaz, manuel moda da sokmaz.
+            if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+            _dragging = true;
+            Ground.Cursor = Cursors.Hand; // el imleci YALNIZ sürüklerken (spec §3.4)
+        }
+
+        // Manuel moda giriş HER harekette denenir, yalnız eşiğin aşıldığı karede değil: metot zaten
+        // idempotenttir (`if (_manualCamera) return;`), dolayısıyla normal akışta bedava. Kazandırdığı şey
+        // durum makinesinin kendi kendini onarmasıdır — jest SÜRERKEN manuel mod dışarıdan bitebilir (liste/
+        // klavye kaynaklı bir seçim ApplyCamera'yı manuel moddan çıkarır). Giriş yalnız eşik karesinde
+        // yapılsaydı, elin altındaki graf o andan sonra `_manualCamera == false` iken kayardı: pil kapalı
+        // kalır, dönüş tetiği hiç kurulmaz ve ilk statü tick'i kamerayı kullanıcının elinden alırdı.
+        EnterManualCamera();
+        // Delta HER hareketten sonra sıfırlanır: birikirse kamera imleç hızının katlarıyla kayar ve elin
+        // altındaki nokta grafı takip etmez.
+        _panLast = position;
+        SnapCameraTo(GraphCamera.Pan(CurrentCamera, delta, ViewportSize, GraphSize));
+        UpdateMaterialization();
+        // Sürüklemenin KENDİSİ de manuel girdidir: yalnız bırakmada damgalasaydık, 4 saniyeden uzun yavaş bir
+        // sürüklemede takip dönüş timer'ı (Task 7) jestin ORTASINDA kamerayı geri alırdı.
+        NoteManualInput(Environment.TickCount64);
+    }
+
+    /// <summary>Bırakma. Eşik hiç aşılmadıysa bu bir TIKLAMADIR ⇒ bugünkü "boş alana tıkla → seçim kalkar"
+    /// davranışı burada (release'te) çalışır; aşıldıysa jest manuel girdi olarak damgalanır.</summary>
+    internal void HandlePanEnd()
+    {
+        if (!_panPressed) return;
+        bool wasDragging = _dragging;
+        ResetPanGesture();
+
+        if (!wasDragging)
+        {
+            SelectedNode = null;
+            return;
+        }
+        // Bırakma da damgalanır: hareketsiz beklenip bırakılan bir sürüklemede son hareketin damgası bayattır.
+        NoteManualInput(Environment.TickCount64);
+    }
+
+    /// <summary>Wheel: imleç merkezli zoom (spec §3.4). Yön yalnız <paramref name="delta"/>'nın işaretinden
+    /// okunur — kademe çarpansaldır, dolayısıyla ileri/geri simetriktir.</summary>
+    internal void HandleWheel(Point cursor, int delta)
+    {
+        if (!_cullEnabled || !_hasCamera) return; // bkz. HandlePanStart'ın iki kapısı
+        EnterManualCamera();
+        double factor = delta > 0 ? GraphCamera.WheelZoomStep : 1 / GraphCamera.WheelZoomStep;
+        SnapCameraTo(GraphCamera.ZoomAt(CurrentCamera, cursor, factor, ViewportSize, GraphSize));
+        // Yeni görünür olan düğümler kurulur. Etiket kararı BURADA tazelenmez ve bu KASITLIDIR: etiketler
+        // kameranın ALTINDA yaşadığı için örtüşme ölçek-DEĞİŞMEZDİR (GraphLayout.LabelsFit) ⇒ zoom hiçbir
+        // etiket kararını değiştirmez. Yeni materyalize olan düğüm zaten MaterializeNode → ApplyLabelVisibility
+        // yolundan GÜNCEL kararı okur.
+        UpdateMaterialization();
+        NoteManualInput(Environment.TickCount64);
+    }
+
+    /// <summary>Jest durumunu sıfırlar ve el imlecini bırakır; seçime DOKUNMAZ — bu yüzden nötrdür ve üç ayrı
+    /// anlamda çağrılabilir: capture kaybı (Alt+Tab/popup — İPTAL), yeni topoloji (<see cref="SetGraph"/> —
+    /// jest artık geçersiz) ve <see cref="HandlePanEnd"/>'in temizlik adımı (BIRAKMA; seçim kararını çağıran
+    /// kendisi verir). Tek yerde durur ki SetGraph sırasında sürmekte olan bir sürükleme el imlecini ekranda
+    /// unutmasın (kopya YASAK).</summary>
+    private void ResetPanGesture()
+    {
+        _panPressed = false;
+        _dragging = false;
+        Ground.ClearValue(FrameworkElement.CursorProperty);
+    }
+
+    /// <summary>Manuel moda giriş: uçuştaki kamera animasyonu O ANKİ karede DONDURULUR (canlı değer okunup
+    /// animasyon bırakılır), sonrası kullanıcıya aittir. Zaten manuelse hiçbir şey yapmaz.</summary>
+    private void EnterManualCamera()
+    {
+        if (_manualCamera) return;
+        _manualCamera = true;
+        SnapCameraTo(LiveCamera); // argüman ÖNCE okunur: dondurulan değer ara karenin kendisidir
+        UpdateFollowPill();
+    }
+
+    /// <summary>Kamerayı ANİMASYONSUZ uygular — <see cref="ApplyCamera"/>'nın reduced-motion dalıyla AYNI yol
+    /// (o dal bu metodu çağırır; kopya YASAK).</summary>
+    private void SnapCameraTo(CameraTransform camera)
+    {
+        _cameraScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        _cameraScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _cameraTranslate.BeginAnimation(TranslateTransform.XProperty, null);
+        _cameraTranslate.BeginAnimation(TranslateTransform.YProperty, null);
+        _cameraScale.ScaleX = camera.Scale;
+        _cameraScale.ScaleY = camera.Scale;
+        _cameraTranslate.X = camera.Tx;
+        _cameraTranslate.Y = camera.Ty;
+        CurrentCamera = camera;
+        _hasCamera = true;
+        LastCameraAnimated = false; // bu yol TANIMI GEREĞİ animasyonsuzdur — seam bayat bilgi taşımaz
+    }
+
+    /// <summary>Son manuel girdinin damgası. Damga HER girdide tazelenir (sürüklerken de — Task 6'nın kuralı);
+    /// tetiğin kurulup kurulmayacağına <see cref="KeepFollowResumeTriggerAlive"/> karar verir. Dönüşü DENEMEYE
+    /// gerek yoktur: az önce damgalanan girdi sıfır saniye önce olmuştur.</summary>
+    private void NoteManualInput(long nowTicks)
+    {
+        _lastManualInputTicks = nowTicks;
+        ManualInputCount++;
+        KeepFollowResumeTriggerAlive(nowTicks);
+    }
+
+    /// <summary>[sinema] Dönüş kuralının uygulanma KAPISI: önce dener, dönmediyse sorunun yeniden sorulacağını
+    /// garanti eder. Timer tick'i ve statü tick'i buradan geçer (kopya YASAK).</summary>
+    private void TryResumeOrKeepWaiting(long nowTicks)
+    {
+        if (TryResumeFollow(nowTicks)) return;
+        KeepFollowResumeTriggerAlive(nowTicks);
+    }
+
+    /// <summary>
+    /// Manuel moddayken uçuşta <b>tam bir</b> dönüş tetiği bulunmasını garanti eder.
+    ///
+    /// <para><b>Zaten kuruluysa DOKUNULMAZ.</b> Bu metot <see cref="HandlePanMove"/>'dan da beslenir, yani
+    /// sürüklerken saniyede 100+ kez koşar — her çağrıda <c>Stop()</c>/<c>Start()</c> demek "sürekli çalışan
+    /// yeni bir şey" olurdu (spec §3.6). Kapı "kuruluysa dokunma" biçimindedir, "sürüklerken kurma" biçiminde
+    /// DEĞİL: fark ölçülebilir — jest <see cref="HandlePanEnd"/> ile değil capture kaybıyla (Alt+Tab, popup)
+    /// biterse başka hiçbir damga atılmaz, tetik yalnız jest sonunda kurulsaydı kullanıcı manuel modda ASILI
+    /// kalırdı.</para>
+    ///
+    /// <para><b>Hedef yoksa HİÇ kurulmaz.</b> Kamera kullanıcıyla kavga etmez (spec §3.5) ⇒ dönülecek yer
+    /// yokken uyanacak bir tetik de olmamalıdır. Hedef sonradan doğarsa iki yol uyandırır: statü tick'i
+    /// (<see cref="UpdateStatuses"/>) ve seçim (<see cref="SelectedNode"/> — o zaten ANINDA döndürür).</para>
+    /// </summary>
+    private void KeepFollowResumeTriggerAlive(long nowTicks)
+    {
+        // Kloz SIRASI gerekçenin parçasıdır: bu metot sürüklerken saniyede 100+ kez koşar, o yüzden önce iki
+        // ALAN OKUMASI elenir; O(N) olan HasFollowTarget (seçim yokken tüm slotları gezer) en sona kalır.
+        if (_manualCamera && !IsFollowResumeTimerArmed && HasFollowTarget) ArmFollowResumeTimer(nowTicks);
+    }
+
+    /// <summary>Uçuşta bir dönüş tetiği var mı — kurulum kapısı ve testler AYNI yüklemi okur (kopya YASAK).</summary>
+    internal bool IsFollowResumeTimerArmed => _followResumeTimer is { IsEnabled: true };
+
+    /// <summary>Tetiği <b>KALAN</b> süre için kurar — taze bir 4 sn için değil. Fark gerçektir: jest sürerken
+    /// gelen bir tick tetiği yeniden kurar ve her seferinde tam süre verilseydi uzun bir sürüklemenin ardından
+    /// dönüş 4 sn yerine 8 sn sonra gelirdi. Tetik tek atımlıktır (tick ilk işi olarak durdurur).</summary>
+    private void ArmFollowResumeTimer(long nowTicks)
+    {
+        if (_followResumeTimer is null)
+        {
+            _followResumeTimer = new DispatcherTimer();
+            _followResumeTimer.Tick += OnFollowResumeTick; // abonelik ÖMÜRDE BİR kez — çifte tick olmaz
+        }
+
+        _followResumeTimer.Stop();
+        // Taban 1 ms: Interval = 0 olan bir DispatcherTimer kuyruğa sürekli yeniden girer — tam olarak
+        // §3.6'nın yasakladığı şey. (Bugün buraya ancak pozitif bir kalan gelir; taban savunma amaçlıdır.)
+        _followResumeTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(
+            1.0, GraphCamera.FollowResumeDelayMs - (nowTicks - FollowResumeSince(nowTicks))));
+        _followResumeTimer.Start();
+        FollowResumeArmCount++;
+    }
+
+    /// <summary>
+    /// Dönüş sayacının başladığı an.
+    ///
+    /// <para><b>Tuş BASILIYKEN sayaç hiç başlamamıştır</b> (damga "şimdi"dir): jest sürüyordur, kullanıcı
+    /// yalnız duraklamış olabilir — okumak için elini kıpırdatmadan tutmak da bir jesttir. Damga mekanizması
+    /// tek başına yalnız HAREKET EDEN sürüklemeyi korur (<see cref="HandlePanMove"/> her harekette damgalar);
+    /// duran sürükleme 4 sn sonra takibi devreye sokar ve kamera, tuş hâlâ basılıyken hedefe uçardı.</para>
+    ///
+    /// <para>Kural neden burada, <see cref="TryResumeFollow"/>'da bir <c>if</c> olarak DEĞİL: iki okuyucu var
+    /// ve ikisi de aynı cevabı istiyor. <see cref="ArmFollowResumeTimer"/> ham damgayı okusaydı, tuş basılıyken
+    /// gelen bir tick "kalan = 0" hesaplar ve tetiği 1 ms sonrasına kurardı — jest boyunca ~1 kHz dönen bir
+    /// DispatcherTimer, yani §3.6'nın yasakladığı şeyin ta kendisi (ÖLÇÜLDÜ, fix round 1).</para>
+    /// </summary>
+    private long FollowResumeSince(long nowTicks) => _panPressed ? nowTicks : _lastManualInputTicks;
+
+    private void OnFollowResumeTick(object? sender, EventArgs e) => HandleFollowResumeTick(Environment.TickCount64);
+
+    /// <summary>Tick'in gövdesi — zaman PARAMETREDİR ki testler 4 saniyeyi duvar saatinde beklemeden hem
+    /// "süre doldu" hem "erken geldi" dallarını sürebilsin (D8).</summary>
+    internal void HandleFollowResumeTick(long nowTicks)
+    {
+        _followResumeTimer?.Stop(); // TEK ATIMLIK: bundan sonrası kurala bağlı
+        TryResumeOrKeepWaiting(nowTicks);
+    }
+
+    /// <summary>Takip edilecek bir hedef var mı: seçim VEYA o an derlenen bir düğüm. <see cref="GraphCamera"/>'nın
+    /// hedef sıralamasının (seçim → building frontier → merkez) ilk iki basamağıdır; üçüncüsü "hedef" sayılmaz,
+    /// çünkü kullanıcıyı kuşbakışına geri sürüklemek onun gezindiği yeri elinden almak olurdu.</summary>
+    private bool HasFollowTarget
+    {
+        get
+        {
+            if (_selectedNode is not null) return true;
+            foreach (var slot in _slotOrder)
+                if (slot.Model.Status == GraphStatus.Building) return true;
+            return false;
+        }
+    }
+
+    /// <summary>[sinema] Dönüş kuralının TEK yeri (spec §3.5): takip edilecek bir hedef varken ve son manuel
+    /// girdiden bu yana ≥ <see cref="GraphCamera.FollowResumeDelayMs"/> geçmişse kamera takibe geri döner.
+    /// Timer tick'i, <see cref="UpdateStatuses"/> ve testler AYNI metodu çağırır (kopya YASAK).</summary>
+    /// <param name="nowTicks">Şimdinin <c>TickCount64</c> damgası — parametredir ki testler duvar saati
+    /// beklemeden sınırın iki yakasını da sürebilsin (D8: testte gerçek zaman beklenmez).</param>
+    /// <returns><c>true</c> = takip devraldı.</returns>
+    internal bool TryResumeFollow(long nowTicks)
+    {
+        if (!_manualCamera) return false;
+        if (!HasFollowTarget) return false;
+        if (nowTicks - FollowResumeSince(nowTicks) < (long)GraphCamera.FollowResumeDelayMs) return false;
+
+        ResumeFollowNow();
+        return true;
+    }
+
+    /// <summary>Pil tıklamasının ve dönüş kuralının ORTAK sonucu: manuel mod biter, kamera hedefine animasyonla
+    /// (reduced-motion'da ani) döner.</summary>
+    internal void ResumeFollowNow()
+    {
+        // Manuel değilken bekleyen bir tetik VAR OLAMAZ: tetiği kuran tek yol
+        // (KeepFollowResumeTriggerAlive) _manualCamera şart koşar, çıkışın iki yolu da ExitManualCamera'dan
+        // geçer ve orada durdurulur. Burada savunma amaçlı ikinci bir Stop() yazmak, "tetik nerede durdurulur"
+        // sorusuna ikinci bir cevap üretirdi (kopya YASAK) — üstelik ulaşılamaz olduğu için kırmızıyla da
+        // gösterilemezdi.
+        if (!_manualCamera) return;
+
+        ExitManualCamera();
+        ApplyCamera(animate: true); // pil görünürlüğünü de bu huni tazeler (bkz. ApplyCamera)
+    }
+
+    /// <summary>
+    /// Manuel kamera durumunun TAMAMINI bırakır — kamerayı UYGULAMAZ. "Manuel moddan çıkarken neyin
+    /// sıfırlanacağı" sorusunun TEK cevabı burasıdır (kopya YASAK): iki çıkış yolu vardır ve ikisi de buradan
+    /// geçer — takip dönüşü/pil (<see cref="ResumeFollowNow"/>, ardından kamerayı uygular) ve yeni topoloji
+    /// (<see cref="SetGraph"/>, kamerayı kendi akışında baştan kurar).
+    ///
+    /// <para><b>Zeno latch'leri excursion'ı AŞMAZ.</b> Kullanıcı saniyelerce gezindi; bu arada gelen statü
+    /// güncellemeleri manuel guard'da kesildiği için latch'ler o eski ana aittir. İlk manuel-sonrası hedefleme
+    /// 8px (odak) ve 0.05 (ölçek) eşiklerine karşı ÖLÇÜLMEZ — koşulsuzdur; aksi halde meşru bir yeniden
+    /// hedefleme bayat bir değere takılıp bastırılabilirdi.</para>
+    /// </summary>
+    private void ExitManualCamera()
+    {
+        _followResumeTimer?.Stop();
+        _manualCamera = false;
+        _previousFocus = null;
+        _previousScale = null;
+    }
+
+    private void FollowPillMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true; // tıklama başlığın ötesine sızmasın
+        ResumeFollowNow();
+    }
+
+    /// <summary>FOLLOW PAUSED pilinin görünürlüğü: takip askıdayken VE gerçekten dönülecek bir hedef varken.
+    /// Hedefsizken pil GİZLİDİR — tıklansa hiçbir şey olmayacak bir kısayolu göstermek yalan olurdu.</summary>
+    private void UpdateFollowPill() =>
+        FollowPill.Visibility = _manualCamera && HasFollowTarget ? Visibility.Visible : Visibility.Collapsed;
+
     // ---------------------------------------------------------------- kamera
 
     private void ApplyCamera(bool animate)
     {
+        // [sinema · fix round 1/2] Etiket kararı KAMERADAN BAĞIMSIZDIR: girdileri statü ve seçim, ikisi de bu
+        // metodun hunisinden geçer (UpdateStatuses ve SelectedNode setter'ı burada biter). Bu yüzden aşağıdaki
+        // ÜÇ erken dönüşün de (slot yok · viewport ölçülmemiş · Zeno "hedef değişmedi") ÜSTÜNDE durur ve
+        // hiçbir kamera girdisi okumaz. Altında kalsaydı iki gerçek yol kesilirdi:
+        //   · geniş bir cephede bir proje bitip komşusu başlayınca ağırlık merkezi 8px'ten az kayar ve ölçek
+        //     zaten takip tavanına kelepçelidir ⇒ hedef BİREBİR aynı çıkar (Zeno dönüşü);
+        //   · panel henüz ölçülmemişken (viewport 0) gelen seçim, MaterializeSelection viewport'a BAKMADIĞI
+        //     için düğüm kurar ⇒ o rejimde materyalize düğüm vardır ama karar hiç tazelenmezdi.
+        UpdateLabelVisibility();
+        // [sinema] Pilin girdileri de (manuel bayrak + hedef varlığı) AYNI huniden geçer ve hiçbiri kamera
+        // hedefine bakmaz ⇒ aşağıdaki üç erken dönüşün de üstünde tazelenir. En görünür yolu: koşu biterken
+        // building düğüm kalmaz, kamera hedefi ise manuel guard'da zaten hesaplanmaz — pil orada kapanmalıdır.
+        UpdateFollowPill();
+
         if (_slotOrder.Count == 0) return;
 
         var viewport = ViewportSize;
         if (viewport.Width <= 0 || viewport.Height <= 0) return;
+
+        // [sinema] Kamera KULLANICIDA: hiçbir otomatik hedefleme yapılmaz (spec §3.5). Askıya alınan yalnız
+        // HEDEFLEMEDİR — cull çalışmaya devam eder, çünkü panel bu arada büyümüş olabilir (SizeChanged) ve
+        // yeni görünür olan düğümler kurulmazsa kullanıcı boş şerit görürdü.
+        if (_manualCamera)
+        {
+            UpdateMaterialization();
+            return;
+        }
 
         // [G2] Odak TÜM modellerden hesaplanır — cull edilmiş bir building düğümü de frontier'e katılır, aksi
         // halde kamera görünmeyen bir cepheye hiç yönelmezdi (kendi kendini kilitleyen bir cull).
@@ -1095,7 +1600,13 @@ public partial class GraphView : UserControl
         bool focusCameFromFrontier = selected is null && building.Count > 0;
         _previousFocus = focusCameFromFrontier ? focus : null;
 
-        var camera = GraphCamera.Compute(viewport, GraphSize, focus);
+        // [sinema] Ölçek de hedefin parçasıdır (spec §3.1). Sinema dışında ResolveScale = FitScale ⇒ birebir
+        // bugünkü davranış (yapısal garanti, GraphCinemaTests pinler).
+        double scale = GraphCamera.ResolveScale(
+            viewport, GraphSize, _cullEnabled, selected, building, _isSettled, _previousScale);
+        _previousScale = _cullEnabled && focusCameFromFrontier ? scale : null;
+
+        var camera = GraphCamera.Compute(viewport, GraphSize, focus, scale);
         // Hedef DEĞİŞMEDİYSE hiçbir animasyon yeniden başlatılmaz: koşarken UpdateStatuses saniyede birkaç kez
         // çağrılır ve aynı hedefe her seferinde yeni bir 460ms geçişi başlatmak uçuştaki geçişi sürekli
         // "yeniden doğurur" (Zeno etkisi — kamera hedefe hiç oturmaz).
@@ -1115,14 +1626,9 @@ public partial class GraphView : UserControl
 
         if (!animationsEnabled)
         {
-            _cameraScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            _cameraScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-            _cameraTranslate.BeginAnimation(TranslateTransform.XProperty, null);
-            _cameraTranslate.BeginAnimation(TranslateTransform.YProperty, null);
-            _cameraScale.ScaleX = camera.Scale;
-            _cameraScale.ScaleY = camera.Scale;
-            _cameraTranslate.X = camera.Tx;
-            _cameraTranslate.Y = camera.Ty;
+            // [sinema] Animasyonsuz uygulama TEK yerdedir (kopya YASAK): manuel jestler de aynı metodu çağırır.
+            // CurrentCamera/_hasCamera'yı yukarıda zaten yazdık; SnapCameraTo'nun tekrarı idempotenttir.
+            SnapCameraTo(camera);
             return;
         }
 
@@ -1175,8 +1681,29 @@ public partial class GraphView : UserControl
     internal AnimationClock? ThickDashClock => _thickDashClock;
     internal CameraTransform CurrentCamera { get; private set; }
     internal bool LastCameraAnimated { get; private set; }
+    /// <summary>[sinema] Kamera kullanıcıda mı — otomatik hedefleme askıda (spec §3.5).</summary>
+    internal bool IsManualCamera => _manualCamera;
+    /// <summary>[sinema] Son manuel girdinin <c>TickCount64</c> damgası; Task 7'nin dönüş kuralı bundan sayar.</summary>
+    internal long LastManualInputTicks => _lastManualInputTicks;
+    /// <summary>[sinema] Kaç kez manuel girdi damgalandı — <see cref="NodeStatusApplyCount"/> ile AYNI gerekçe:
+    /// iki damga aynı milisaniyeye düştüğünde duvar saati onları ayırt EDEMEZ, sayaç deterministik kanıttır
+    /// (sürükleme sırasında damgalama ile bırakmada damgalama ayrı kurallardır ve ayrı ayrı pinlenir).</summary>
+    internal int ManualInputCount { get; private set; }
+    /// <summary>[sinema] Dönüş tetiği kaç kez KURULDU — <see cref="ManualInputCount"/> ile birlikte okunur:
+    /// ikisinin ayrışması, "damga her harekette tazelenir ama timer yeniden kurulmaz" kuralının deterministik
+    /// kanıtıdır (duvar saati bunu ölçemez).</summary>
+    internal int FollowResumeArmCount { get; private set; }
+    /// <summary>[sinema] Uçuştaki tetiğin kalan süresi — "tam süre değil KALAN" kuralının gözlenebilir yüzü.</summary>
+    internal TimeSpan FollowResumeInterval => _followResumeTimer?.Interval ?? TimeSpan.Zero;
+    /// <summary>[sinema] FOLLOW PAUSED pili — görünürlük, metin ve elemanın kendisi (UIA adı + gerçek tıklama).</summary>
+    internal Visibility FollowPillVisibility => FollowPill.Visibility;
+    internal string FollowPillText => FollowPillLabel.Text;
+    internal Border FollowPillElement => FollowPill;
     /// <summary>[M-5] Yalnız FRONTIER dalından gelen odak hatırlanır (8px eşiği yalnız orada geçerli).</summary>
     internal Point? PreviousFocus => _previousFocus;
+    /// <summary>[sinema] Yalnız FRONTIER dalından gelen ölçek hatırlanır (0.05 eşiği yalnız orada geçerli) —
+    /// <see cref="PreviousFocus"/>'un ölçek eşi. Sinema kapalıyken HİÇ latch'lenmez.</summary>
+    internal double? PreviousScale => _previousScale;
     internal string HeaderCountsText => CountsText.Text;
     internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;
     internal bool IsEmptyStateVisible => EmptyState.Visibility == Visibility.Visible;

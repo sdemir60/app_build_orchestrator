@@ -12,8 +12,9 @@ public class EdgeStyleResolverTests
 {
     private static EdgeStyle Resolve(
         GraphStatus source, GraphStatus target,
-        bool sourceHasDepIssue = false, bool touchesSelection = false, bool hasSelection = false)
-        => EdgeStyleResolver.Resolve(source, sourceHasDepIssue, target, touchesSelection, hasSelection);
+        bool sourceHasDepIssue = false, bool touchesSelection = false, bool hasSelection = false,
+        bool fogged = false)
+        => EdgeStyleResolver.Resolve(source, sourceHasDepIssue, target, touchesSelection, hasSelection, fogged);
 
     // ---------------------------------------------------------------- varsayılan
 
@@ -243,4 +244,70 @@ public class EdgeStyleResolverTests
         Assert.Equal(Resolve(GraphStatus.Succeeded, GraphStatus.Building),
                      Resolve(GraphStatus.Succeeded, GraphStatus.Building));
     }
+
+    // ---------------------------------------------------------------- [sinema] kenar sisi
+
+    [Fact]
+    public void Fog_dims_an_idle_edge_to_the_shared_selection_dim_level()
+    {
+        var style = Resolve(GraphStatus.Discovered, GraphStatus.Discovered, fogged: true);
+
+        // Sis, seçim-dim ile AYNI sabiti okur (kopya yasak — tek doğruluk kaynağı).
+        Assert.Equal(EdgeStyleResolver.DimmedOpacity, style.Opacity);
+        Assert.Equal(0.16, EdgeStyleResolver.DimmedOpacity);
+        Assert.Equal("Brush.Border", style.BrushKey);
+        Assert.Equal(1.0, style.Thickness);
+        Assert.False(style.IsFlowing);
+    }
+
+    [Fact]
+    public void Fog_keeps_finished_branches_visible_at_35_percent()
+    {
+        Assert.Equal(EdgeStyleResolver.FogFinishedOpacity,
+            Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, fogged: true).Opacity);
+        Assert.Equal(EdgeStyleResolver.FogFinishedOpacity,
+            Resolve(GraphStatus.Succeeded, GraphStatus.Failed, fogged: true).Opacity);
+        Assert.Equal(0.35, EdgeStyleResolver.FogFinishedOpacity);
+        // Renk anahtarları sisten etkilenmez.
+        Assert.Equal("Brush.StatusSuccessBorder",
+            Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, fogged: true).BrushKey);
+    }
+
+    [Fact]
+    public void Fog_does_not_touch_the_run_story_flowing_and_error_branches()
+    {
+        // Akan amber kenar: sisli ve sissiz BİREBİR aynı.
+        Assert.Equal(Resolve(GraphStatus.Succeeded, GraphStatus.Building),
+                     Resolve(GraphStatus.Succeeded, GraphStatus.Building, fogged: true));
+        // Statik kırmızı hata dalı: aynı.
+        Assert.Equal(Resolve(GraphStatus.Failed, GraphStatus.Queued),
+                     Resolve(GraphStatus.Failed, GraphStatus.Queued, fogged: true));
+    }
+
+    [Fact]
+    public void Fog_is_inert_while_a_selection_exists_selection_dim_rules_win()
+    {
+        // Seçim varken sisli çıktı, sissiz seçimli çıktıyla BİREBİR aynıdır (idle/flow/bad/hot dördü de).
+        Assert.Equal(Resolve(GraphStatus.Discovered, GraphStatus.Discovered, hasSelection: true),
+                     Resolve(GraphStatus.Discovered, GraphStatus.Discovered, hasSelection: true, fogged: true));
+        Assert.Equal(Resolve(GraphStatus.Succeeded, GraphStatus.Building, hasSelection: true),
+                     Resolve(GraphStatus.Succeeded, GraphStatus.Building, hasSelection: true, fogged: true));
+        Assert.Equal(Resolve(GraphStatus.Failed, GraphStatus.Queued, hasSelection: true),
+                     Resolve(GraphStatus.Failed, GraphStatus.Queued, hasSelection: true, fogged: true));
+        Assert.Equal(
+            Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, touchesSelection: true, hasSelection: true),
+            Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, touchesSelection: true, hasSelection: true, fogged: true));
+        // Seçime DEĞMEYEN biten kenar: yukarıdaki dördünde sis zaten başka bir kural tarafından eziliyor (flow/bad
+        // kendi opaklığını, hot 1.0'ı yazar) — `FogFinishedOpacity`'nin seçim-dim'i ezmediğini YALNIZ bu şekil
+        // pinler. İki biten renk de ayrı ayrı yazılır; kaynak SAĞLIKLI seçilir, `Failed` kaynak `bad`'i tetikleyip
+        // opaklığı kendi 0.3'üyle ezer ve assert boşa düşerdi.
+        Assert.Equal(EdgeStyleResolver.DimmedOpacity,
+            Resolve(GraphStatus.Succeeded, GraphStatus.Succeeded, hasSelection: true, fogged: true).Opacity);
+        Assert.Equal(EdgeStyleResolver.DimmedOpacity,
+            Resolve(GraphStatus.Succeeded, GraphStatus.Failed, hasSelection: true, fogged: true).Opacity);
+    }
+
+    [Fact]
+    public void Fog_defaults_off_so_small_graphs_keep_todays_styles()
+        => Assert.Equal(0.8, Resolve(GraphStatus.Discovered, GraphStatus.Discovered).Opacity);
 }

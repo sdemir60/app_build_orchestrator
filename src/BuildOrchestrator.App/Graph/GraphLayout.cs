@@ -72,8 +72,8 @@ public static class GraphLayout
     public const double LabelHeight = 14.0;
 
     /// <summary>
-    /// [G2/LOD · fix round 1] Bir katmanın ETİKETLERİ kurulur mu: komşu iki etiket <b>gerçekten</b> örtüşüyor
-    /// mu.
+    /// [G2/LOD] Bir katmanın ETİKETLERİ kurulur mu: komşu iki etiket <b>gerçekten</b> örtüşüyor mu. Bu, etiket
+    /// kararının KATMAN kolu — düğüm kolu (odak muafiyeti) <c>GraphView.ShowsLabelFor</c>'dadır.
     ///
     /// <para>Etiketler düğüm merkezinde ortalanır, dolayısıyla iki komşu etiket ancak
     /// <c>aralık &lt; çizilen genişlik</c> olduğunda üst üste biner. <paramref name="widestLabelWidth"/> o
@@ -84,6 +84,16 @@ public static class GraphLayout
     ///
     /// <para>Etiket düşen düğüm anonim kalmaz: o düğüme proje adını veren bir tooltip kurulur
     /// (<c>GraphView.BuildNodeVisual</c>).</para>
+    ///
+    /// <para><b>Karar ÖLÇEK ALMAZ — alamaz.</b> Etiketler kameranın ALTINDA yaşar
+    /// (<c>GraphView.World.RenderTransform</c> = ölçek + öteleme; düğüm katmanı onun çocuğudur), ölçüm ise
+    /// ölçeksiz DÜNYA biriminde yapılır ⇒ ekranda hem aralık hem etiket genişliği AYNI ölçekle çarpılır.
+    /// Dolayısıyla örtüşme <b>ölçek-DEĞİŞMEZDİR</b>: <c>genişlik &gt; aralık</c> ise HER zoom'da örtüşür,
+    /// <c>genişlik ≤ aralık</c> ise HİÇ örtüşmez. Bir zoom eşiği geometrik olarak savunulamaz — ölçülen iki
+    /// sonucu vardı: 34px aralık / 42px etiket katmanında 1.4× "sığıyor" derken çift başına 11.2px FİZİKSEL
+    /// örtüşme gösteriyor, 96px aralık / 78px etiket katmanında ise 0.68 kuşbakışında (dünyada 18px BOŞLUK
+    /// varken) etiketi düşürüyordu. Kalabalık bir katmanda adı okunur kılmanın yolu zoom değil ODAK
+    /// MUAFİYETİDİR (<c>GraphView.IsFocusExempt</c>: building ya da seçili düğüm).</para>
     /// </summary>
     public static bool LabelsFit(double spacing, double widestLabelWidth) => spacing >= widestLabelWidth;
 

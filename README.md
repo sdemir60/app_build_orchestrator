@@ -153,6 +153,14 @@ the running instance first — tray icon → Exit).
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.
 
+The dependency graph becomes a camera on large repositories. Up to 150 projects it draws everything at once and
+none of this applies; above that it follows the run — zooming to whatever is compiling and fading back the
+edges the run has not touched — and you can take it over. Drag the empty background to pan (the cursor turns
+into a hand) and the mouse wheel zooms at the pointer. Automatic follow steps aside while you navigate and
+returns four seconds after your last input, or immediately if you click the *FOLLOW PAUSED* pill in the panel
+header. If nothing is building and nothing is selected there is nowhere to follow, so the view simply stays
+where you left it.
+
 If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
 says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take
 minutes; the action is there for the case where waiting is no longer the answer. Restarting kills the engine
@@ -243,8 +251,8 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 - **Filling a viewport of project rows costs what it costs.** The list is virtualized, so the work is bounded
   by the visible window rather than by the size of the repository — but that window is still built from
   scratch whenever the entries are replaced, which a topology change or a filter change both do.
-- **The graph view is full detail only up to 150 nodes.** Above that, off-screen nodes and edges are culled and
-  labels drop out by level of detail.
+- **The graph view is full detail only up to 150 nodes.** Above that, off-screen nodes and edges are culled,
+  labels drop out by level of detail, and the panel becomes a camera that follows the run (see *Using it*).
 - **The IPC has no field-level schema validation.** A malformed *JSON* line is recoverable — the Supervisor
   answers `error(badCommand)` and keeps going — but a **framing** error (over-long or truncated line) is treated
   as unrecoverable: it writes `error(framing)` and exits with code 2, and the App reports the engine as dead.
@@ -252,7 +260,11 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   `planFailed`/`runFailed` at the point of use.
 - **Symlinks/junctions are not followed or detected** during the workspace scan, and a `.csproj` may reference
   files outside the repository root. Both are accepted risks — the repository is trusted by definition.
-- **Graph nodes are not keyboard-navigable** and carry no automation name.
+- **Graph nodes are not keyboard-navigable.** A screen reader can read and invoke them — each node is named
+  with its project and status — but there is no keyboard route into the canvas.
+- **The *FOLLOW PAUSED* pill is invisible to a screen reader.** Neither the pill nor its label enters the
+  automation tree — a consequence of the elements it is built out of rather than a platform limit — so the
+  shortcut is pointer-only; follow also returns on its own four seconds after the last manual input.
 
 The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.md#20-known-limits).
 

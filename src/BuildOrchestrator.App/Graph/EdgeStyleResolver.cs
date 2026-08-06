@@ -35,6 +35,13 @@ public static class EdgeStyleResolver
     /// <summary>Seçili düğüme değen kenarın kalınlığı (design-v1 §2.3: "1.6px, tam opak").</summary>
     public const double SelectedThickness = 1.6;
 
+    /// <summary>Seçim-dim VE sinema sisi ortak opaklığı (design-v1 §2.3 `op .16`; kopya yasak — iki kural
+    /// da BU sabiti okur).</summary>
+    public const double DimmedOpacity = 0.16;
+    /// <summary>[sinema] Succeeded/failed'e varan renkli kenarın sis opaklığı — biten bölge sakinleşir ama
+    /// hikâye silinmez (spec §3.2).</summary>
+    public const double FogFinishedOpacity = 0.35;
+
     /// <summary>Akan dash'in bir turda aldığı MUTLAK yol (px) — mutlak desenin (4+7=11px) tam 2 periyodu ⇒
     /// dikişsiz loop, HER kalınlıkta (feasibility §3.4 / A13.2).</summary>
     public const double FlowTravelPx = 22.0;
@@ -62,12 +69,15 @@ public static class EdgeStyleResolver
         => thickness == SelectedThickness ? thick : thin;
 
     /// <summary>
-    /// Prototipteki zincirin BİREBİR portu (sıra önemlidir — sonraki dallar öncekini ezer):
+    /// Prototipteki zincirin portu (sıra önemlidir — sonraki dallar öncekini ezer). Zincir BİREBİR aynıdır;
+    /// tek eklenti <c>fogged</c>'dir — prototipte YOKTUR, büyük graf için app tarafında eklenmiştir ([sinema]
+    /// işaretli iki satır). <c>fogged=false</c> iken çıktı prototiple birebir aynı kalır:
     /// <code>
-    /// let stroke = border, w = 1, op = selected ? .16 : .8
+    /// let stroke = border, w = 1, op = (selected || fogged) ? .16 : .8   // [sinema] sis, seçim-dim seviyesine iner
     /// if (flow)            → amber, op .2/.85, akan
     /// else if (succeeded)  → success-border
     /// else if (failed)     → fail-border
+    /// if (!selected && fogged && (succeeded || failed)) → op .35         // [sinema] biten dal sakinleşir, silinmez
     /// if (bad)             → fail-border, op .3/.95, (akmıyorsa) statik dash 3 4
     /// if (hot)             → bad ? fail-border : amber-border, w 1.6, op 1, (bad değilse) akış İPTAL
     /// </code>
@@ -77,8 +87,11 @@ public static class EdgeStyleResolver
     /// <param name="target">Kenarın hedefi (bağımlı proje) — akış/renk kararını verir.</param>
     /// <param name="touchesSelection">Kenarın iki ucundan biri seçili düğüm mü.</param>
     /// <param name="hasSelection">Grafta herhangi bir seçim var mı (seçim yokken "hot" hiç oluşmaz, sönme de).</param>
+    /// <param name="fogged">[sinema] Büyük grafta koşuya karışmamış kenar geri çekilsin mi — YALNIZ seçim
+    /// yokken etkilidir; koşu hikâyesine (akan/hata) hiç dokunmaz.</param>
     public static EdgeStyle Resolve(
-        GraphStatus source, bool sourceHasDepIssue, GraphStatus target, bool touchesSelection, bool hasSelection)
+        GraphStatus source, bool sourceHasDepIssue, GraphStatus target, bool touchesSelection, bool hasSelection,
+        bool fogged = false)
     {
         bool flow = target == GraphStatus.Building;
         bool bad = source == GraphStatus.Failed || sourceHasDepIssue;
@@ -86,7 +99,8 @@ public static class EdgeStyleResolver
 
         string brushKey = "Brush.Border";
         double thickness = DefaultThickness;
-        double opacity = hasSelection ? 0.16 : 0.8;
+        // [sinema] Sis, seçim-dim ile AYNI seviyeye iner — koşuya karışmamış kenar büyük grafta fısıltıdır.
+        double opacity = hasSelection || fogged ? DimmedOpacity : 0.8;
         bool hasErrorDash = false;
         bool isFlowing = false;
 
@@ -104,6 +118,12 @@ public static class EdgeStyleResolver
         {
             brushKey = "Brush.StatusFailBorder";
         }
+
+        // [sinema] Biten dallar sisi TEK yerde alır (kopya yasak). Zincirden sonra ama bad/hot'tan ÖNCE durur —
+        // o iki blok bu değeri ezmeye devam eder (davranış birebir aynı: `flow` ile succeeded/failed ayrık
+        // kümelerdir, dolayısıyla koşul yalnız zincirin o iki dalının girdiği durumlarda doğrudur).
+        if (!hasSelection && fogged && target is GraphStatus.Succeeded or GraphStatus.Failed)
+            opacity = FogFinishedOpacity;
 
         if (bad)
         {
