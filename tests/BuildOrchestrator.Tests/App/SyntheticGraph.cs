@@ -49,8 +49,7 @@ internal static class SyntheticGraph
             {
                 string name = $"{NamePrefix}Synth.L{layer}.P{layerNames[layer].Count:D4}";
                 layerNames[layer].Add(name);
-                var (status, depIssue) = NextStatus(rng);
-                nodes.Add(new GraphNode(name, layer, status, depIssue, NamePrefix));
+                nodes.Add(new GraphNode(name, layer, NextStatus(rng)));
             }
         }
 
@@ -113,19 +112,16 @@ internal static class SyntheticGraph
         return sizes;
     }
 
-    /// <summary>Koşu-ortası bir grafın statü karışımı (yüzdeler tohumdan deterministik olarak çekilir).</summary>
-    private static (GraphStatus Status, bool DepIssue) NextStatus(Random rng)
+    /// <summary>Koşu-ortası bir grafın statü karışımı (yüzdeler tohumdan deterministik olarak çekilir).
+    /// [quiet] Dep-hata oranı düştü: graf içi dep-issue rozeti v1.3.0 §2.3 ile kaldırıldı, dolayısıyla
+    /// <see cref="GraphNode"/> o bayrağı artık taşımıyor.</summary>
+    private static GraphStatus NextStatus(Random rng) => rng.NextDouble() switch
     {
-        double roll = rng.NextDouble();
-        var status = roll switch
-        {
-            < 0.55 => GraphStatus.Succeeded,
-            < 0.70 => GraphStatus.Discovered,
-            < 0.85 => GraphStatus.Queued,
-            < 0.93 => GraphStatus.Building,
-            < 0.97 => GraphStatus.Failed,
-            _ => GraphStatus.Skipped,
-        };
-        return (status, rng.NextDouble() < 0.03); // ~%3 dep-hata rozeti
-    }
+        < 0.55 => GraphStatus.Succeeded,
+        < 0.70 => GraphStatus.Discovered,
+        < 0.85 => GraphStatus.Queued,
+        < 0.93 => GraphStatus.Building,
+        < 0.97 => GraphStatus.Failed,
+        _ => GraphStatus.Skipped,
+    };
 }

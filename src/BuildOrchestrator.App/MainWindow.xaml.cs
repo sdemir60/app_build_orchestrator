@@ -550,8 +550,7 @@ public partial class MainWindow : Window
         }
 
         Shell.GraphHost.SetGraph(GraphBinder.Nodes(topology, RowsById()), GraphBinder.Edges(topology));
-        Shell.GraphHost.IsSettled = !_vm.IsMidRunLocked; // koşarken frontier-follow, boşta/bitince merkeze otur
-        PushGraphSelection();                            // mevcut seçim taze grafa yansısın
+        PushGraphSelection(); // mevcut seçim taze grafa yansısın
     }
 
     /// <summary>[D5] Statü/dep-badge/kenar/kamera'yı YERİNDE günceller (geometri korunur, stagger tekrar oynamaz).
@@ -605,7 +604,6 @@ public partial class MainWindow : Window
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
-                Shell.GraphHost.IsSettled = !_vm.IsMidRunLocked; // run bitince true → kamera merkeze oturur
                 PushGraphStatuses();
                 break;
             case nameof(RunViewModel.SelectedProjectId):

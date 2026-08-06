@@ -20,9 +20,13 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public static class GraphBinder
 {
-    /// <summary>Topolojiyi graf düğümlerine çevirir (build-order KORUNUR — katman-içi sıra da build-order'dır).
-    /// Katman = <see cref="LayerOf"/>, statü = <see cref="StatusOf"/> (satır Id ile eşlenir), kısa-ad öneki
-    /// veriden türetilir (<see cref="GraphNode.CommonDotPrefix"/> — tek otorite).</summary>
+    /// <summary>Topolojiyi graf düğümlerine çevirir (build-order KORUNUR — bant-içi sıra da build-order'dır).
+    /// Katman = <see cref="LayerOf"/>, statü = <see cref="StatusOf"/> (satır Id ile eşlenir).
+    ///
+    /// <para>[quiet] Kısa-ad öneki ve dep-hata bayrağı ARTIK TAŞINMAZ: v1.3.0 §2.3'te düğümün üstünde ad
+    /// etiketi ve graf içi dep-issue rozeti yoktur, dolayısıyla grafın ikisini de okuyan bir yeri kalmadı.
+    /// (Önek otoritesi <see cref="GraphNode.CommonDotPrefix"/> olarak duruyor — onu liste kartı ve şerit
+    /// okuyor.)</para></summary>
     public static IReadOnlyList<GraphNode> Nodes(
         IReadOnlyList<ProjectNode> topology, IReadOnlyDictionary<string, ProjectRowViewModel> rows)
     {
@@ -30,7 +34,6 @@ public static class GraphBinder
         ArgumentNullException.ThrowIfNull(rows);
 
         var depth = TopologicalDepths(topology);
-        string prefix = GraphNode.CommonDotPrefix([.. topology.Select(n => n.Name)]);
 
         var result = new List<GraphNode>(topology.Count);
         foreach (var node in topology)
@@ -38,7 +41,7 @@ public static class GraphBinder
             rows.TryGetValue(node.Id, out var row);
             // Elde topoloji varsa Sync yapılmıştır (bu metot yalnız o zaman çağrılır) → synced: true.
             var status = StatusOf(row, node.InCycle, synced: true);
-            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, row?.HasDepIssue ?? false, prefix));
+            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status));
         }
         return result;
     }

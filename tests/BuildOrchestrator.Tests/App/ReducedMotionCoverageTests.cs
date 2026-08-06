@@ -79,20 +79,22 @@ public class ReducedMotionCoverageTests
         GC.KeepAlive(window);
     }
 
-    // ================================================================ 3) GraphView (dash-flow + düğüm nabzı + reveal)
+    // ================================================================ 3) GraphView (building animasyonu + açılış dalgası)
 
+    /// <summary>[quiet] <b>Eski iddia:</b> bu test ayrıca <c>view.SharedDashClock</c>'un null olduğunu
+    /// pinliyordu (kalıcı kenar ağının akan dash saati). v1.3.0 §2.3 kalıcı ağı kaldırdı — kenarlar yalnız
+    /// seçimde çizilir — dolayısıyla o saatin sahibi de yok oldu.</summary>
     [StaFact]
-    public void GraphView_keeps_no_dash_clock_no_pulse_and_an_instant_reveal_under_reduced_motion()
+    public void GraphView_keeps_no_building_animation_and_an_instant_reveal_under_reduced_motion()
     {
         var view = NewGraphView();
         view.SetGraph(
-            [new("OSYS.Base", 0, GraphStatus.Building, Prefix: "OSYS."),
-             new("OSYS.Data", 1, GraphStatus.Discovered, Prefix: "OSYS.")],
+            [new("OSYS.Base", 0, GraphStatus.Building),
+             new("OSYS.Data", 1, GraphStatus.Discovered)],
             [new("OSYS.Base", "OSYS.Data")]);
 
-        Assert.Null(view.SharedDashClock);                                  // akan dash saati yok
-        Assert.False(view.NodeVisuals["OSYS.Base"].IsPulsing);             // building nabzı yok
-        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity)); // reveal ANİ (stagger yok)
+        Assert.False(view.NodeVisuals["OSYS.Base"].IsPulsing);                       // building animasyonu yok
+        Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity)); // reveal ANİ (dalga yok)
     }
 
     // ================================================================ 4) ProjectRow (3.8s nefes + mount reveal)

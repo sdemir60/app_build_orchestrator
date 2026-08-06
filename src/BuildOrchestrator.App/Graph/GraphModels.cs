@@ -5,23 +5,28 @@ namespace BuildOrchestrator.App.Graph;
 // [D1 fold — B3 review] GraphStatus enum'ı nötr Controls namespace'ine taşındı (Controls/GraphStatus.cs) —
 // StatusGlyph'in graf-dışı ilk tüketicisi D1'dir. Buradaki kullanımlar için yukarıdaki using yeterlidir.
 
-/// <summary>[T63] Graf düğümü — kimlik (tam proje adı), katman indeksi, statü, dep-hata bayrağı ve
-/// (D5) etiketten atılacak veri-türevli ortak önek (<see cref="Prefix"/>).</summary>
-public sealed record GraphNode(string Name, int Layer, GraphStatus Status, bool HasDepIssue = false, string Prefix = "")
+/// <summary>
+/// [quiet] Graf düğümü — kimlik (tam proje adı), katman indeksi ve statü. Hepsi bu kadardır.
+///
+/// <para><b>Ne taşımadığı da bir karardır.</b> v1.3.0 §2.3'te düğümün üstünde ad etiketi yoktur (ad hover
+/// tooltip'i ve seçim etiketiyle verilir) ve graf içi dep-issue rozeti kaldırılmıştır (dep bilgisi liste
+/// kartlarında yaşar). Bu yüzden kısa-ad öneki ve <c>HasDepIssue</c> bayrağı bu kayıttan SÖKÜLDÜ — grafta
+/// hiçbir okuyucuları kalmamıştı.</para>
+/// </summary>
+public sealed record GraphNode(string Name, int Layer, GraphStatus Status)
 {
-    /// <summary>[D5] design-v1 §2.3: düğüm etiketinde ortak önek atılır (prototype <c>BO.shortName</c> portu).
-    /// Önek artık HARDCODED <c>"OSYS."</c> DEĞİL: <paramref name="prefix"/> workspace proje adlarından türetilir
-    /// (<see cref="CommonDotPrefix"/>) — TEK önek otoritesi odur. Ad önekle başlamıyorsa kırpılmaz.</summary>
+    /// <summary>[D5] Ortak öneği atılmış kısa ad. Grafın kendisi ARTIK kullanmaz (§2.3: node üstü etiket
+    /// yok) ama proje adını dar bir yerde gösteren diğer yüzeyler kullanır: liste kartının dep-tooltip'i
+    /// (<c>ProjectRow</c>) ve şeritteki building chip'leri (<c>StickyRibbon</c>). Önek HARDCODED değildir —
+    /// <see cref="CommonDotPrefix"/> ile workspace proje adlarından türetilir; TEK önek otoritesi odur.</summary>
     public static string ShortLabel(string fullName, string prefix) =>
         prefix.Length > 0 && fullName.StartsWith(prefix, StringComparison.Ordinal)
             ? fullName[prefix.Length..] : fullName;
 
-    public string ShortName => ShortLabel(Name, Prefix);
-
     /// <summary>[D5] Verilen adların en uzun ortak NOKTA-SINIRLI öneki (sondaki nokta DAHİL). Örn. tümü
     /// <c>OSYS.</c> altındaysa → <c>"OSYS."</c>; ortak nokta-segmenti yoksa → <c>""</c>. Bir adın TAMAMI asla önek
     /// olamaz (her adın son/yaprak segmenti hariç tutulur) — aksi halde etiket boşalırdı. Hardcode edilmiş
-    /// <c>"OSYS."</c>'in yerini alan TEK önek otoritesidir (graf etiketi + şerit chip'i + dep-tooltip hep buradan).</summary>
+    /// <c>"OSYS."</c>'in yerini alan TEK önek otoritesidir.</summary>
     public static string CommonDotPrefix(IReadOnlyList<string> names)
     {
         ArgumentNullException.ThrowIfNull(names);
