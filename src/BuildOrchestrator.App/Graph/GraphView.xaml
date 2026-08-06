@@ -41,6 +41,13 @@
                      FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
                      Foreground="{DynamicResource Brush.TextPrimary}" />
         </Border>
+
+        <Border x:Name="SelectionLabelBox" Visibility="Collapsed"
+                Style="{DynamicResource Ds.GraphSelectionLabel}">
+          <TextBlock x:Name="SelectionLabelText"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="10"
+                     Foreground="{DynamicResource Brush.AmberText}" />
+        </Border>
       </Canvas>
 
       <!-- Sync öncesi boş durum: kesikli çerçeveli kutu (WPF Border dashed desteklemez → Rectangle) -->

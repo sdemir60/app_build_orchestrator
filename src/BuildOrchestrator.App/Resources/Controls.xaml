@@ -712,6 +712,18 @@
     <Setter Property="SnapsToDevicePixels" Value="True" />
   </Style>
 
+  <!-- [quiet] Grafın seçim AD ETİKETİ (design v1.3.0 §2.3: mono 10px amber-text, surface-overlay zemin,
+       1px amber-border, radius-sm). Tooltip kardeşiyle aynı overlay katmanında yaşar; görünüm sözlüğü
+       burada durur ki panel dosyası DS vokabülerini kopyalamasın (§13.8). -->
+  <Style x:Key="Ds.GraphSelectionLabel" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.AmberBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Radius.Sm}" />
+    <Setter Property="Padding" Value="6,2" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+  </Style>
+
   <Style TargetType="ToolTip">
     <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />

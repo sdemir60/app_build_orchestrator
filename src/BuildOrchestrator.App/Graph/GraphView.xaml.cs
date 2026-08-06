@@ -90,8 +90,15 @@ public partial class GraphView : UserControl
     /// <summary>TÜM düğümler — model + yerleşim + görsel. Sıra BESLEME sırasıdır (build-order).</summary>
     private readonly Dictionary<string, GraphNodeSlot> _slots = new(StringComparer.Ordinal);
     private readonly List<GraphNodeSlot> _slotOrder = [];
-    /// <summary>Komşuluk (odak kümesi + Task 8'in seçim kenarları) — kenarların TAMAMINDAN kurulur.</summary>
-    private readonly Dictionary<string, List<string>> _neighbours = new(StringComparer.Ordinal);
+    /// <summary>Düğüm → DOĞRUDAN bağımlılıkları (yukarıdaki komşular). Seçim kenarları YÖNLÜ çizildiği
+    /// için birleşik bir komşuluk kümesi yetmez.</summary>
+    private readonly Dictionary<string, List<string>> _deps = new(StringComparer.Ordinal);
+    /// <summary>Düğüm → DOĞRUDAN bağımlıları (aşağıdaki komşular).</summary>
+    private readonly Dictionary<string, List<string>> _dependents = new(StringComparer.Ordinal);
+    /// <summary>Seçimde kurulan kenar görselleri — seçim kalkınca SÖKÜLÜR.</summary>
+    private readonly List<Path> _selectionEdges = [];
+    /// <summary>Akan kesiklerin PAYLAŞTIĞI tek saat (en fazla komşu sayısı kadar çizgi vardır).</summary>
+    private AnimationClock? _edgeFlowClock;
 
     private readonly ScaleTransform _cameraScale = new(1, 1);
     private readonly TranslateTransform _cameraTranslate = new();
@@ -241,6 +248,7 @@ public partial class GraphView : UserControl
         // [M-d] Paylaşımlı beads saati ve onun spin-down tetiği: view ağaçtan düşse bile timing engine 30fps'te
         // uyanık kalır, DispatcherTimer ise view'ı (ve tüm graf ağacını) kökler.
         ReleaseBeadsClock();
+        ReleaseEdgeFlowClock();
     }
 
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
@@ -361,10 +369,12 @@ public partial class GraphView : UserControl
     {
         _edgeLayer.Children.Clear();
         _nodeLayer.Children.Clear();
-        ReleaseBeadsClock(); // eski görsellerin yörüngeleri atılıyor — saat onlarla birlikte bırakılır
+        ReleaseBeadsClock();     // eski görsellerin yörüngeleri atılıyor — saat onlarla birlikte bırakılır
+        ReleaseEdgeFlowClock();  // aynı gerekçe: eski seçimin akan kesikleri
         _slots.Clear();
         _slotOrder.Clear();
-        _neighbours.Clear();
+        _deps.Clear();
+        _dependents.Clear();
         ResetPanGesture();
         CurrentCamera = GraphCamera.Default;
 
@@ -394,8 +404,9 @@ public partial class GraphView : UserControl
         foreach (var edge in edges)
         {
             if (!_slots.ContainsKey(edge.From) || !_slots.ContainsKey(edge.To)) continue;
-            AddNeighbour(edge.From, edge.To);
-            AddNeighbour(edge.To, edge.From);
+            // GraphEdge yönü: From = bağımlılık, To = bağımlı proje.
+            Link(_deps, edge.To, edge.From);
+            Link(_dependents, edge.From, edge.To);
         }
 
         ApplySizes();
@@ -423,11 +434,10 @@ public partial class GraphView : UserControl
         }
     }
 
-    private void AddNeighbour(string from, string to)
+    private static void Link(Dictionary<string, List<string>> map, string key, string value)
     {
-        if (!_neighbours.TryGetValue(from, out var list))
-            _neighbours[from] = list = [];
-        list.Add(to);
+        if (!map.TryGetValue(key, out var list)) map[key] = list = [];
+        list.Add(value);
     }
 
     // ---------------------------------------------------------------- yerleşim
@@ -831,10 +841,11 @@ public partial class GraphView : UserControl
         if (_selectedNode is { } selected)
         {
             _focusSet.Add(selected);
-            if (_neighbours.TryGetValue(selected, out var list))
-                foreach (string name in list)
-                    _focusSet.Add(name);
+            foreach (string name in DirectNeighboursOf(selected))
+                _focusSet.Add(name);
         }
+        RebuildSelectionEdges();
+        UpdateSelectionLabel();
 
         foreach (var slot in _slotOrder)
         {
@@ -847,6 +858,101 @@ public partial class GraphView : UserControl
                 isSelected || hovered ? SelectedNodeBorderThickness : NodeBorderThickness;
             ApplyNodeOpacity(slot.Visual, leftBuilding: false);
         }
+    }
+
+    // ---------------------------------------------------------------- seçim kenarları (§2.3)
+
+    /// <summary>Seçili düğümün DOĞRUDAN komşuları (bağımlılıklar + bağımlılar) — odak kümesinin kaynağı.</summary>
+    private IEnumerable<string> DirectNeighboursOf(string node)
+    {
+        if (_deps.TryGetValue(node, out var deps))
+            foreach (string name in deps) yield return name;
+        if (_dependents.TryGetValue(node, out var dependents))
+            foreach (string name in dependents) yield return name;
+    }
+
+    /// <summary>
+    /// [quiet] §2.3: "Bağımlılık çizgileri YALNIZ seçimde: deps→node ve node→dependents." Seçim değişince
+    /// eski çizgiler SÖKÜLÜR — kalıcı bir ağ yoktur, dolayısıyla koşarken stillenecek kenar da yoktur.
+    /// </summary>
+    private void RebuildSelectionEdges()
+    {
+        _edgeLayer.Children.Clear();
+        _selectionEdges.Clear();
+        ReleaseEdgeFlowClock();
+
+        if (_selectedNode is not { } selected || !_slots.TryGetValue(selected, out var target)) return;
+
+        var centre = ToWorld(target.Center);
+        if (_deps.TryGetValue(selected, out var deps))
+            foreach (string name in deps) AddSelectionEdge(name, centre, dependencyAbove: true);
+        if (_dependents.TryGetValue(selected, out var dependents))
+            foreach (string name in dependents) AddSelectionEdge(name, centre, dependencyAbove: false);
+
+        if (_selectionEdges.Count > 0 && AnimationsEnabledProvider()) EnsureEdgeFlowClock();
+    }
+
+    private void AddSelectionEdge(string otherName, Point selectedCentre, bool dependencyAbove)
+    {
+        if (!_slots.TryGetValue(otherName, out var other)) return;
+        var otherCentre = ToWorld(other.Center);
+
+        var path = new Path
+        {
+            // Yön ÖNEMLİ: eğri yukarıdan aşağı akar (bağımlılık → bağımlı), böylece kontrol noktaları
+            // iki ucun orta yüksekliğinde kalır ve çizgi grafın okuma yönünü izler.
+            Data = dependencyAbove
+                ? SelectionEdgeStyle.Curve(otherCentre, selectedCentre)
+                : SelectionEdgeStyle.Curve(selectedCentre, otherCentre),
+            StrokeThickness = SelectionEdgeStyle.Thickness,
+            Opacity = SelectionEdgeStyle.Opacity,
+            StrokeDashArray = SelectionEdgeStyle.DashArray,
+            IsHitTestVisible = false,
+        };
+        path.SetResourceReference(Shape.StrokeProperty, SelectionEdgeStyle.BrushKey);
+        _edgeLayer.Children.Add(path);
+        _selectionEdges.Add(path);
+    }
+
+    /// <summary>Akan kesiklerin PAYLAŞILAN saati — beads ile aynı gerekçe (çizgi başına ayrı sonsuz
+    /// animasyon kurulmaz). Desen tek olduğu için tek saat hepsini faz-kilitli sürer.</summary>
+    private void EnsureEdgeFlowClock()
+    {
+        var flow = new DoubleAnimation
+        {
+            From = 0,
+            To = SelectionEdgeStyle.DashOffsetTarget,
+            Duration = TimeSpan.FromMilliseconds(SelectionEdgeStyle.FlowDurationMs),
+            RepeatBehavior = RepeatBehavior.Forever,
+        };
+        Timeline.SetDesiredFrameRate(flow, DecorativeFrameRate);
+        _edgeFlowClock = flow.CreateClock();
+        foreach (var path in _selectionEdges)
+            path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, _edgeFlowClock);
+    }
+
+    private void ReleaseEdgeFlowClock()
+    {
+        if (_edgeFlowClock is null) return;
+        foreach (var path in _selectionEdges)
+            path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, null);
+        _edgeFlowClock = null;
+    }
+
+    /// <summary>§2.3: "Seçili node'un altında 6px boşlukla ad etiketi … ekran koordinatında." Tooltip'le
+    /// AYNI overlay katmanında, TEK bir öğe olarak yaşar.</summary>
+    private void UpdateSelectionLabel()
+    {
+        if (_selectedNode is not { } selected || !_slots.TryGetValue(selected, out var slot))
+        {
+            SelectionLabelBox.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        SelectionLabelText.Text = selected;
+        SelectionLabelBox.Visibility = Visibility.Visible;
+        PlaceOverlayBox(SelectionLabelBox, box => GraphOverlay.NameLabelTopLeft(
+            slot.Center, CurrentCamera, _layout.NodeSize, ViewportSize, box));
     }
 
     // ---------------------------------------------------------------- koşu yaşam döngüsü (opaklık)
@@ -1121,7 +1227,8 @@ public partial class GraphView : UserControl
     private void SnapCameraTo(CameraTransform camera)
     {
         CurrentCamera = camera;
-        UpdateTooltip(); // ankraj kameradan türer — zoom/pan onu taşır ama BOYUTUNU değiştirmez
+        UpdateTooltip();        // ankraj kameradan türer — zoom/pan onu taşır ama BOYUTUNU değiştirmez
+        UpdateSelectionLabel(); // aynı gerekçe: ekran koordinatlı, kamerayla birlikte kayar
         _cameraScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _cameraScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         _cameraTranslate.BeginAnimation(TranslateTransform.XProperty, null);
@@ -1179,6 +1286,13 @@ public partial class GraphView : UserControl
     internal Point TooltipTopLeft => new(Canvas.GetLeft(TooltipBox), Canvas.GetTop(TooltipBox));
     internal Size TooltipBoxSize => TooltipBox.DesiredSize;
     internal Border TooltipElement => TooltipBox;
+    /// <summary>Seçimde kurulan bağımlılık çizgileri — seçim yokken BOŞ.</summary>
+    internal IReadOnlyList<Path> SelectionEdgePaths => _selectionEdges;
+    /// <summary>Akan kesiklerin paylaşımlı saati (akmıyorsa <c>null</c>).</summary>
+    internal AnimationClock? EdgeFlowClock => _edgeFlowClock;
+    internal Visibility SelectionLabelVisibility => SelectionLabelBox.Visibility;
+    internal string SelectionLabelContent => SelectionLabelText.Text;
+    internal Point SelectionLabelTopLeft => new(Canvas.GetLeft(SelectionLabelBox), Canvas.GetTop(SelectionLabelBox));
     /// <summary>HER ZAMAN <c>null</c> olmalı — overlay kamera transform'unun DIŞINDA yaşar (§2.3).</summary>
     internal Transform? OverlayLayerTransform => OverlayLayer.RenderTransform as MatrixTransform is { } m
         && m.Matrix.IsIdentity ? null : OverlayLayer.RenderTransform;
