@@ -26,8 +26,8 @@ public class GraphClickTests
 {
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new("OSYS.Base", 0, GraphStatus.Discovered, Prefix: "OSYS."),
-        new("OSYS.Data.Core", 1, GraphStatus.Discovered, Prefix: "OSYS."),
+        new("OSYS.Base", 0, GraphStatus.Discovered),
+        new("OSYS.Data.Core", 1, GraphStatus.Discovered),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() => [new("OSYS.Base", "OSYS.Data.Core")];
@@ -64,6 +64,14 @@ public class GraphClickTests
         Assert.Equal("OSYS.Data.Core", view.SelectedNode);
     }
 
+    /// <summary>
+    /// Boş zemine tıklamak seçimi bırakır.
+    ///
+    /// <para><b>Eski iddia:</b> seçim BASIŞ (down) anında kalkıyordu. v1.3.0 §2.3 boş zeminde sürüklemeyi
+    /// (pan) her graf boyutunda açtı ⇒ bir basış artık bir sürüklemenin başı da olabilir. Karar bu yüzden
+    /// BIRAKMAYA taşındı: eşik (3px) aşılmadan biten basış tıklamadır, aşılan pan'dır ve seçime dokunmaz.
+    /// Down/up ayrımı <c>GraphPanZoomTests</c>'te ayrıca pinlidir; burada tam jest sürülür.</para>
+    /// </summary>
     [StaFact]
     public void Clicking_the_empty_ground_clears_the_selection()
     {
@@ -71,12 +79,14 @@ public class GraphClickTests
         view.SetGraph(Nodes(), Edges());
 
         // [fix-1 · I-E] Ön-koşul da ÜRETİM TETİĞİYLE kurulur (programatik setter DEĞİL) ve AÇIKÇA assert edilir:
-        // setter'a bir kapı eklense (bilinmeyen düğüm yok say / materyalizasyon başarısızsa geri al) bu test
-        // sessizce vakum-yeşile düşer ve zemin kablosu koptuğunda kırmızı VERMEZDİ.
+        // setter'a bir kapı eklense (bilinmeyen düğüm yok say) bu test sessizce vakum-yeşile düşer ve zemin
+        // kablosu koptuğunda kırmızı VERMEZDİ.
         PressLeft(view.NodeVisuals["OSYS.Base"].Body);
         Assert.Equal("OSYS.Base", view.SelectedNode);
 
         PressLeft(view.Ground);
+        Assert.Equal("OSYS.Base", view.SelectedNode); // basış tek başına seçimi kaldırmaz
+        MouseInput.ReleaseLeft(view.Ground);
 
         Assert.Null(view.SelectedNode);
     }

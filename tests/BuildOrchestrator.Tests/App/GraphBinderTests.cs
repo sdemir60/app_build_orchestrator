@@ -137,21 +137,10 @@ public class GraphBinderTests
         Assert.NotEqual(GraphStatus.Cycle, nodes.Single(n => n.Name == "Y").Status);
     }
 
-    [Fact]
-    public void Nodes_source_the_dep_badge_from_row_HasDepIssue()
-    {
-        // [D5 fix wave/Fix 1] Nodes() beslemesinde `row?.HasDepIssue ?? false` sabit değil — satırdan gelmeli.
-        // Base'in satırında DepIssues set edilir (HasDepIssue==true); Data.Core'unkinde set edilmez (false kalır).
-        var topology = new[] { Node("Base", []), Node("Data.Core", ["Base"]) };
-        var rows = RowsFor(topology);
-        rows[Id("Base")].DepIssues = ["Data.Core"]; // ▲ tetikler → HasDepIssue == true
-        // Data.Core satırında DepIssues atanmaz → HasDepIssue == false (varsayılan).
-
-        var nodes = GraphBinder.Nodes(topology, rows);
-
-        Assert.True(nodes.Single(n => n.Name == "Base").HasDepIssue);
-        Assert.False(nodes.Single(n => n.Name == "Data.Core").HasDepIssue);
-    }
+    // [quiet · SİLİNDİ] `Nodes_source_the_dep_badge_from_row_HasDepIssue` — v1.3.0 §2.3 "Kaldırılanlar" graf
+    // içi dep-issue rozetini kaldırdı (dep bilgisi liste kartlarında yaşıyor), dolayısıyla GraphNode artık
+    // HasDepIssue taşımıyor ve binder'ın onu üretecek bir sebebi yok. Bayrağın kendisi
+    // ProjectRowViewModel.HasDepIssue olarak duruyor ve ProjectRowTests'te pinli.
 
     [Fact]
     public void Node_order_within_a_layer_follows_build_order()
@@ -174,22 +163,28 @@ public class GraphBinderTests
             "aynı katmanda düğüm sırası topolojinin build-order'ını izlemeli (alfabetik DEĞİL — Zeta < Alpha alfabetik olarak yanlış olurdu)");
     }
 
+    /// <summary>
+    /// Kısa ad, ortak öneki VERİDEN türeterek atar — hardcode edilmiş bir <c>"OSYS."</c> DEĞİL.
+    ///
+    /// <para><b>Eski iddia:</b> bu test <c>GraphBinder.Nodes(...)</c>'ın ürettiği <c>GraphNode.ShortName</c>
+    /// üzerinden koşuyordu, çünkü kısa ad grafın düğüm etiketiydi. v1.3.0 §2.3 node üstü etiketleri
+    /// kaldırdı ⇒ <c>GraphNode</c> artık önek taşımıyor. Kural değişmedi, SAHİBİ değişti: kısa adı hâlâ
+    /// liste kartının dep-tooltip'i (<c>ProjectRow</c>) ve şeritteki building chip'leri
+    /// (<c>StickyRibbon</c>) kullanıyor, ikisi de aynı iki statik yardımcıyı çağırıyor — test artık
+    /// doğrudan onları hedefliyor.</para>
+    /// </summary>
     [Fact]
     public void Short_label_strips_the_common_prefix_derived_from_the_data_not_a_hardcoded_one()
     {
         // Adlar OSYS DEĞİL: önek VERİDEN türetilir (Contoso.). Hardcode "OSYS." olsaydı hiçbir şey kırpılmazdı.
-        var topology = new[]
-        {
-            Node("Contoso.Web", []),
-            Node("Contoso.Data.Core", ["Contoso.Web"]),
-        };
-        var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
-        Assert.Equal("Web", nodes.Single(n => n.Name == "Contoso.Web").ShortName);
-        Assert.Equal("Data.Core", nodes.Single(n => n.Name == "Contoso.Data.Core").ShortName);
+        string prefix = GraphNode.CommonDotPrefix(["Contoso.Web", "Contoso.Data.Core"]);
+        Assert.Equal("Contoso.", prefix);
+        Assert.Equal("Web", GraphNode.ShortLabel("Contoso.Web", prefix));
+        Assert.Equal("Data.Core", GraphNode.ShortLabel("Contoso.Data.Core", prefix));
 
         // Ortak nokta-segmenti yoksa hiç kırpılmaz (tam ad kalır).
-        var noCommon = new[] { Node("Alpha.One", []), Node("Beta.Two", []) };
-        var n2 = GraphBinder.Nodes(noCommon, RowsFor(noCommon));
-        Assert.Equal("Alpha.One", n2.Single(n => n.Name == "Alpha.One").ShortName);
+        string none = GraphNode.CommonDotPrefix(["Alpha.One", "Beta.Two"]);
+        Assert.Equal("", none);
+        Assert.Equal("Alpha.One", GraphNode.ShortLabel("Alpha.One", none));
     }
 }

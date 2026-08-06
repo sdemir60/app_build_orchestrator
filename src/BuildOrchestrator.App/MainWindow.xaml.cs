@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.Input;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -210,7 +211,7 @@ public partial class MainWindow : Window
         _scrollArbiter.SetFilter(_vm.ActiveFilter is not null); // kalıcı durumdan gelen bir filtreyle açılış
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
-        // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
+        // sinyalleri → grafı besle (UpdateStatuses/RunPhase/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
 
@@ -550,8 +551,8 @@ public partial class MainWindow : Window
         }
 
         Shell.GraphHost.SetGraph(GraphBinder.Nodes(topology, RowsById()), GraphBinder.Edges(topology));
-        Shell.GraphHost.IsSettled = !_vm.IsMidRunLocked; // koşarken frontier-follow, boşta/bitince merkeze otur
-        PushGraphSelection();                            // mevcut seçim taze grafa yansısın
+        PushGraphRunPhase();  // koşarken soluk/parlak sistemi, boşta tümü tam opak (design v1.3.0 §2.3)
+        PushGraphSelection(); // mevcut seçim taze grafa yansısın
     }
 
     /// <summary>[D5] Statü/dep-badge/kenar/kamera'yı YERİNDE günceller (geometri korunur, stagger tekrar oynamaz).
@@ -566,7 +567,14 @@ public partial class MainWindow : Window
         Shell.GraphHost.UpdateStatuses(GraphBinder.Nodes(_vm.Topology, RowsById()));
     }
 
-    /// <summary>[D5] Id → satır VM haritası (GraphBinder statü/dep-badge'i buradan okur). Id'ler Windows yolu → OIC.</summary>
+    /// <summary>[quiet] Koşu fazını grafa iter (design v1.3.0 §2.3 "Koşu yaşam döngüsü"): koşarken graf
+    /// soluklaşır ve yalnız derlenenler parlak kalır; koşu bitince tümü sonuç renginde tam opak canlanır.
+    /// Kaynak, kamerayı besleyen eski sinyalin ta kendisidir (<see cref="RunViewModel.IsMidRunLocked"/>) —
+    /// kamera artık koşuyla ilgilenmiyor (§2.3: koşarken durur), opaklık sistemi ilgileniyor.</summary>
+    private void PushGraphRunPhase() =>
+        Shell.GraphHost.RunPhase = _vm.IsMidRunLocked ? GraphRunPhase.Running : GraphRunPhase.Idle;
+
+    /// <summary>[D5] Id → satır VM haritası (GraphBinder statüyü buradan okur). Id'ler Windows yolu → OIC.</summary>
     private IReadOnlyDictionary<string, ProjectRowViewModel> RowsById()
     {
         var dict = new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase);
@@ -594,7 +602,7 @@ public partial class MainWindow : Window
         _vm.SelectProject(id);
     }
 
-    /// <summary>[D5] VM sinyalleri → graf: statü tikleri (Counters), run başlangıç/bitiş (IsSettled + statü),
+    /// <summary>[D5] VM sinyalleri → graf: statü tikleri (Counters), run başlangıç/bitiş (RunPhase + statü),
     /// seçim değişimi (view'e iter).</summary>
     private void OnVmPropertyChangedForGraph(object? sender, PropertyChangedEventArgs e)
     {
@@ -605,7 +613,7 @@ public partial class MainWindow : Window
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
-                Shell.GraphHost.IsSettled = !_vm.IsMidRunLocked; // run bitince true → kamera merkeze oturur
+                PushGraphRunPhase();
                 PushGraphStatuses();
                 break;
             case nameof(RunViewModel.SelectedProjectId):

@@ -244,16 +244,23 @@ public class SuccessFlourishTests
             [new("OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", 1, GraphStatus.Queued)],
             [new("OSYS.Base", "OSYS.Data")]);
 
-        Assert.True(view.NodeVisuals["OSYS.Base"].IsPulsing);               // non-vacuous: building düğüm nabzı DÖNER
+        // non-vacuous: building düğümün beads yörüngesi GERÇEKTEN döner.
+        // [quiet] Eski iddia: building animasyonu DS ds-node-pulse'tı (PulseHost'un opaklık nabzı);
+        // v1.3.0 §2.3 onu düğümün 2.8px dışında dolanan beads yörüngesiyle değiştirdi.
+        Assert.True(view.NodeVisuals["OSYS.Base"].BeadsVisible);
+        Assert.NotNull(view.BeadsClock);
 
         view.UpdateStatuses([new("OSYS.Base", 0, GraphStatus.Succeeded), new("OSYS.Data", 1, GraphStatus.Succeeded)]);
+        view.HandleBeadsSpindownTick(); // §2.3: saat bitişten 700ms sonra bırakılır
 
+        Assert.Null(view.BeadsClock);                                       // saat bırakıldı…
         foreach (var visual in view.NodeVisuals.Values)
         {
-            Assert.False(visual.IsPulsing);                                 // nabız bırakıldı…
-            Assert.False(visual.PulseHost.HasAnimatedProperties);           // …ve yerine KUTLAMA saati geçmedi
+            Assert.False(visual.BeadsVisible);
+            // …ve yerine KUTLAMA saati geçmedi. Kare, başarıda hiçbir animasyon taşımaz.
+            // (Cell ve Body kasten DIŞARIDA: Cell açılış dalgasını, Body koşu opaklığını taşır — ikisi de
+            // meşrudur ve başarıya özel DEĞİLDİR.)
             Assert.False(visual.Square.HasAnimatedProperties);
-            Assert.Equal(1.0, visual.PulseHost.Opacity);
         }
     }
 
@@ -364,7 +371,7 @@ public class SuccessFlourishTests
         // (c) Aynı dosyada UZAKTAKİ meşru kullanım (statü tablosu ile nabız arasında 8 satır) → temiz kalır;
         // guard "aynı dosyada geçiyor" demiyor, "animasyonun DİBİNDE" diyor.
         string legitimate = string.Join('\n',
-            ["GraphStatus.Succeeded => (\"Brush.StatusSuccess\", \"Brush.StatusSuccessSoft\", \"…\", false),", .. Enumerable.Repeat("// ara satır", 8), "visual.PulseHost.BeginAnimation(OpacityProperty, pulse);"]);
+            ["GraphStatus.Succeeded => (\"Brush.StatusSuccess\", \"Brush.StatusSuccessSoft\", \"…\", false),", .. Enumerable.Repeat("// ara satır", 8), "visual.Body.BeginAnimation(OpacityProperty, animation);"]);
         Assert.Empty(SourceGuard.ScanText(IoPath.Combine("Graph", "GraphView.xaml.cs"), legitimate, SuccessTintAnimated));
     }
 

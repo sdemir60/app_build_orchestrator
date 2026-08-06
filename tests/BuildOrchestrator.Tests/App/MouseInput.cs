@@ -30,6 +30,19 @@ internal static class MouseInput
         return args;
     }
 
+    /// <summary>Sol tuş BIRAKMA. [quiet] Grafta "boş zemine tıklama" kararı artık bırakmaya aittir
+    /// (basış bir sürüklemenin başı olabilir), dolayısıyla tam jesti sürmek için gerekir.</summary>
+    public static MouseButtonEventArgs ReleaseLeft(UIElement target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        {
+            RoutedEvent = Mouse.MouseUpEvent,
+        };
+        target.RaiseEvent(args);
+        return args;
+    }
+
     /// <summary>Capture'ın DÜŞMESİ (Alt+Tab, popup, başka öğenin capture alması). Bu bir bırakma DEĞİL
     /// iptaldir — <c>GraphView</c> onu tuş bırakmadan ayrı bir yola bağlar.</summary>
     public static void LoseCapture(UIElement target)

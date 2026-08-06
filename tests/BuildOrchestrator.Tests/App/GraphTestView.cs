@@ -36,19 +36,15 @@ internal static class GraphTestView
     /// </summary>
     /// <param name="animationsEnabled">Motion sinyalinin taze okuma kapısı; verilmezse KAPALI (headless varsayılanı).</param>
     /// <param name="motion">Canlı <c>AnimationsEnabledChanged</c> kaynağı (latch-first — <c>Loaded</c>'dan ÖNCE atanır).</param>
-    /// <param name="labelFontFamily">Etiket ailesi: <c>pack://</c> aileler headless'ta çözülmez, LOD/ölçüm
-    /// isteyen testler <c>file://</c> tabanlı aileyi enjekte eder (üretimde bu seam ASLA set edilmez).</param>
     public static GraphView New(
         Func<bool>? animationsEnabled = null,
-        IMotionSettings? motion = null,
-        FontFamily? labelFontFamily = null)
+        IMotionSettings? motion = null)
     {
         var view = new GraphView
         {
             MotionSettings = motion,
             AnimationsEnabledProvider = animationsEnabled ?? (() => false),
         };
-        if (labelFontFamily is not null) view.LabelFontFamily = labelFontFamily;
         foreach (string name in GraphMergeChain)
             view.Resources.MergedDictionaries.Add(DsResources.Load(name));
         return view;
@@ -59,9 +55,8 @@ internal static class GraphTestView
     public static GraphView Sized(
         Size size,
         Func<bool>? animationsEnabled = null,
-        IMotionSettings? motion = null,
-        FontFamily? labelFontFamily = null) =>
-        Resize(New(animationsEnabled, motion, labelFontFamily), size);
+        IMotionSettings? motion = null) =>
+        Resize(New(animationsEnabled, motion), size);
 
     /// <summary>VAR OLAN bir view'ı yeniden ölçer/yerleştirir — panel boyut değişimini (<c>Ground.SizeChanged</c>)
     /// süren testlerin yolu. Ölçüm ikilisi <see cref="Sized"/> ile ORTAK (kopya YASAK); yerleşimi işletmek için
@@ -79,10 +74,9 @@ internal static class GraphTestView
     public static GraphView Realized(
         Size size,
         Func<bool>? animationsEnabled = null,
-        IMotionSettings? motion = null,
-        FontFamily? labelFontFamily = null)
+        IMotionSettings? motion = null)
     {
-        var view = Sized(size, animationsEnabled, motion, labelFontFamily);
+        var view = Sized(size, animationsEnabled, motion);
         view.UpdateLayout();
         return view;
     }
