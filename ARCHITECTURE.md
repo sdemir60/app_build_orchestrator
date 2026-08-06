@@ -1718,9 +1718,9 @@ do, and how the interface works around each — useful to know before attempting
 - **The graph is full-detail up to 150 nodes.** Above that the panel changes character (§13.6): off-screen
   nodes and edges are culled, labels drop out by level of detail, edges outside the run fog back, the camera
   zooms to follow the frontier, and the pointer can take that camera over. Opening builds only what the first
-  viewport shows — about a third of a 500-node graph and a sixth of a 1000-node one. On the reference machine
-  those two open in roughly 37 ms and 75 ms; panning across the whole graph materializes the rest, for roughly
-  120 ms and 290 ms in total.
+  viewport shows — at the reference panel size, about a third of a 500-node graph and a sixth of a 1000-node
+  one. On the reference machine those two open in roughly 37 ms and 75 ms; panning across the whole graph
+  materializes the rest, for roughly 120 ms and 290 ms in total.
 - **No field-level IPC schema validation** (§5.4).
 - **Symlinks/junctions are not followed or detected** during the scan, and a `.csproj` may reference files
   outside the repository root. Both are accepted risks — the repository is trusted by definition.
