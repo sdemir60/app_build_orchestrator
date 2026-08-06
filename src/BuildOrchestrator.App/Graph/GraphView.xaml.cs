@@ -104,6 +104,9 @@ public partial class GraphView : UserControl
     private QuietLayoutResult _layout = QuietGraphLayout.Compute([], new Size(0, 0));
     private string? _selectedNode;
     private HashSet<string> _focusSet = new(StringComparer.Ordinal);
+    private GraphRunPhase _runPhase = GraphRunPhase.Idle;
+    /// <summary>İmlecin altındaki düğüm — opaklık kararının son (ve her şeyi ezen) girdisi.</summary>
+    private string? _hoveredNode;
 
     /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
     /// (<see cref="MotionGate"/>). <b>latch-first</b> kipi: ilk abonelikten sonra <see cref="MotionSettings"/>
@@ -229,6 +232,21 @@ public partial class GraphView : UserControl
             ApplySelection();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
+        }
+    }
+
+    /// <summary>
+    /// [quiet] Koşu fazı (§2.3 "Koşu yaşam döngüsü"). Değişince TÜM düğümlerin opaklığı yeniden uygulanır:
+    /// koşu başlayınca graf soluklaşır, bitince (done/stopped) tümü sonuç renginde tam opak canlanır.
+    /// </summary>
+    public GraphRunPhase RunPhase
+    {
+        get => _runPhase;
+        set
+        {
+            if (_runPhase == value) return;
+            _runPhase = value;
+            ApplyAllOpacities();
         }
     }
 
@@ -360,9 +378,13 @@ public partial class GraphView : UserControl
             // görselinin TAMAMI yalnız bu modelden türetilir. Eskiden her tick her düğümde iki
             // SetResourceReference + IconPaint.Apply (ağaç yukarı TryFindResource yürüyüşü) yapılıyordu.
             if (slot.Model == node) continue;
+            // §2.3'ün hold-fade'i building'den ÇIKIŞ anına bağlıdır — bu yüzden geçişin KENDİSİ burada,
+            // model değişmeden önce okunur.
+            bool leftBuilding = slot.Model.Status == GraphStatus.Building && node.Status != GraphStatus.Building;
             slot.Model = node;
             slot.Visual.Model = node;
             ApplyNodeStatus(slot.Visual);
+            ApplyNodeOpacity(slot.Visual, leftBuilding);
         }
     }
 
@@ -535,9 +557,23 @@ public partial class GraphView : UserControl
             _ => ("Brush.BorderStrong", "Brush.SurfaceRaised", "Brush.TextFaint", true),
         };
 
+        // [quiet · ÖLÇÜLMÜŞ SAPMA] §2.3 "Zemin/kenar/glyph renk geçişleri 380ms ease-standard" der; burada
+        // renkler ANINDA uygulanır ve bu bilinçlidir.
+        //
+        // WPF'te bir fırça DP'si interpolate EDİLEMEZ: geçiş, düğüm başına yerel bir SolidColorBrush kurup
+        // onun Color'ını animasyonlamayı gerektirir. Uygulandı ve ölçüldü — 177 projenin statüsünün tek
+        // tick'te değiştiği durumda (koşu başlangıcı: hepsi Discovered → Queued) üç yüzey × 177 düğüm = 531
+        // fırça + 531 ColorAnimation, tick'i 11 ms'den 51 ms'ye çıkarıyor ve UI olay bütçesini (50 ms,
+        // UiResponsivenessBudgetTests.EventBudgetMs) AŞIYOR. Ayrıca bir kez yerel fırçaya devreden yüzey
+        // token referansını da kaybeder.
+        //
+        // 8–24px'lik bir karede, opaklığı zaten animasyonlu değişen bir yüzeyin renk geçişi için bütçenin
+        // %80'ini harcamak savunulabilir değil. Bütçeyi gevşetmek YASAK (CLAUDE.md), o yüzden geçiş
+        // uygulanmadı. Gözle doğrulama listesinde açık madde olarak duruyor.
         visual.Square.SetResourceReference(Shape.StrokeProperty, border);
         visual.Square.SetResourceReference(Shape.FillProperty, background);
         IconPaint.Apply(visual.Icon, this, PackageIconKey, iconColor);
+
         // WPF Border dashed desteklemez → kesikli çerçeve Rectangle.StrokeDashArray ile. Dash birimi
         // StrokeThickness çarpanıdır: 1.5px'lik çerçevede {2,2} = 3px dolu / 3px boş.
         visual.Square.StrokeDashArray = dashed ? DiscoveredDash : SolidDash;
@@ -597,42 +633,73 @@ public partial class GraphView : UserControl
                     _focusSet.Add(name);
         }
 
-        bool animate = AnimationsEnabledProvider();
         foreach (var slot in _slotOrder)
-            ApplyNodeSelection(slot.Visual, animate);
-    }
-
-    private void ApplyNodeSelection(GraphNodeVisual visual, bool animate)
-    {
-        string name = visual.Model.Name;
-        bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
-        visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
-        // DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
-        visual.Square.StrokeThickness = isSelected ? SelectedNodeBorderThickness : NodeBorderThickness;
-        double target = _selectedNode is null || _focusSet.Contains(name) ? 1.0 : UnfocusedNodeOpacity;
-        SetBodyOpacity(visual.Body, target, animate);
-    }
-
-    private void SetBodyOpacity(UIElement body, double target, bool animate)
-    {
-        if (!animate)
         {
-            body.BeginAnimation(OpacityProperty, null);
-            body.Opacity = target;
-            return;
+            string name = slot.Model.Name;
+            bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
+            slot.Visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
+            // DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
+            slot.Visual.Square.StrokeThickness = isSelected ? SelectedNodeBorderThickness : NodeBorderThickness;
+            ApplyNodeOpacity(slot.Visual, leftBuilding: false);
         }
+    }
 
-        var duration = MotionTokens.ResolveDuration(this, "Duration.Slow", 280.0);
-        if (duration.TimeSpan <= TimeSpan.Zero)
+    // ---------------------------------------------------------------- koşu yaşam döngüsü (opaklık)
+
+    private void ApplyAllOpacities()
+    {
+        foreach (var slot in _slotOrder)
+            ApplyNodeOpacity(slot.Visual, leftBuilding: false);
+    }
+
+    /// <summary>
+    /// [quiet] §2.3'ün opaklık sistemi. Değer kararı SAF (<see cref="GraphNodeOpacity.Resolve"/>); burada
+    /// yalnız ZAMANLAMA yaşar.
+    ///
+    /// <para><b>Hold-fade YALNIZ building'den çıkış anında doğar</b> (<paramref name="leftBuilding"/>): CSS'in
+    /// gecikmeli transition'ı da yalnız değer 1'den 0.2'ye DEĞİŞTİĞİNDE koşar. Sonraki tick'ler değeri zaten
+    /// 0.2 bulur ve <see cref="GraphNodeVisual.OpacityTarget"/> kapısı hiçbir animasyon başlatmaz — aksi halde
+    /// saniyede birkaç kez yeniden doğan 3.1 saniyelik bir animasyon sönmeyi hiç tamamlatmazdı.</para>
+    /// </summary>
+    private void ApplyNodeOpacity(GraphNodeVisual visual, bool leftBuilding)
+    {
+        double target = GraphNodeOpacity.Resolve(
+            visual.Model.Status,
+            _runPhase,
+            _selectedNode is not null,
+            _focusSet.Contains(visual.Model.Name),
+            string.Equals(_hoveredNode, visual.Model.Name, StringComparison.Ordinal));
+
+        if (target.Equals(visual.OpacityTarget)) return;
+        visual.OpacityTarget = target;
+
+        if (!AnimationsEnabledProvider())
         {
-            body.BeginAnimation(OpacityProperty, null);
-            body.Opacity = target;
+            SnapOpacity(visual, target);
             return;
         }
 
         var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
-        body.BeginAnimation(OpacityProperty,
-            MotionTokens.SplineTo(target, duration.TimeSpan, spline), HandoffBehavior.SnapshotAndReplace);
+        // Bekleme bir BeginTime'dır, bir timer DEĞİL: CSS'teki `transition ... 700ms 2400ms` hilesinin
+        // birebir karşılığı. Bekleme boyunca değer TAM OPAK tutulur (CSS `both` fill paritesi).
+        double durationMs = leftBuilding ? GraphNodeOpacity.FadeMs : GraphNodeOpacity.GlideMs;
+        var animation = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), spline);
+        if (leftBuilding)
+        {
+            animation.BeginTime = TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs);
+            animation.KeyFrames.Insert(0,
+                new DiscreteDoubleKeyFrame(GraphNodeOpacity.Full, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        }
+
+        visual.OpacityAnimation = animation;
+        visual.Body.BeginAnimation(OpacityProperty, animation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    private static void SnapOpacity(GraphNodeVisual visual, double target)
+    {
+        visual.OpacityAnimation = null;
+        visual.Body.BeginAnimation(OpacityProperty, null);
+        visual.Body.Opacity = target;
     }
 
     // ---------------------------------------------------------------- ilk açılış dalgası
@@ -894,4 +961,8 @@ public partial class GraphView : UserControl
     internal double NodeSize => _layout.NodeSize;
     /// <summary>Canlı düğüm adımı.</summary>
     internal double Pitch => _layout.Pitch;
+    /// <summary>Bir düğümün opaklığını süren animasyon (anında uygulandıysa <c>null</c>) — hold-fade'in
+    /// zamanlamasını pinleyen testlerin okuduğu yüzey.</summary>
+    internal Timeline? OpacityAnimationOf(string nodeName) =>
+        _slots.TryGetValue(nodeName, out var slot) ? slot.Visual.OpacityAnimation : null;
 }

@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.Input;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -550,6 +551,7 @@ public partial class MainWindow : Window
         }
 
         Shell.GraphHost.SetGraph(GraphBinder.Nodes(topology, RowsById()), GraphBinder.Edges(topology));
+        PushGraphRunPhase();  // koşarken soluk/parlak sistemi, boşta tümü tam opak (design v1.3.0 §2.3)
         PushGraphSelection(); // mevcut seçim taze grafa yansısın
     }
 
@@ -565,7 +567,14 @@ public partial class MainWindow : Window
         Shell.GraphHost.UpdateStatuses(GraphBinder.Nodes(_vm.Topology, RowsById()));
     }
 
-    /// <summary>[D5] Id → satır VM haritası (GraphBinder statü/dep-badge'i buradan okur). Id'ler Windows yolu → OIC.</summary>
+    /// <summary>[quiet] Koşu fazını grafa iter (design v1.3.0 §2.3 "Koşu yaşam döngüsü"): koşarken graf
+    /// soluklaşır ve yalnız derlenenler parlak kalır; koşu bitince tümü sonuç renginde tam opak canlanır.
+    /// Kaynak, kamerayı besleyen eski <c>IsSettled</c> ile AYNI sinyaldir (<see cref="RunViewModel.IsMidRunLocked"/>) —
+    /// kamera artık koşuyla ilgilenmiyor, opaklık sistemi ilgileniyor.</summary>
+    private void PushGraphRunPhase() =>
+        Shell.GraphHost.RunPhase = _vm.IsMidRunLocked ? GraphRunPhase.Running : GraphRunPhase.Idle;
+
+    /// <summary>[D5] Id → satır VM haritası (GraphBinder statüyü buradan okur). Id'ler Windows yolu → OIC.</summary>
     private IReadOnlyDictionary<string, ProjectRowViewModel> RowsById()
     {
         var dict = new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase);
@@ -604,6 +613,7 @@ public partial class MainWindow : Window
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
+                PushGraphRunPhase();
                 PushGraphStatuses();
                 break;
             case nameof(RunViewModel.SelectedProjectId):

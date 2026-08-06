@@ -3,6 +3,7 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
@@ -103,4 +104,12 @@ internal sealed class GraphNodeVisual
     public required Rectangle SelectionRing { get; init; }
     /// <summary>Lucide <c>box</c> glyph'i — node'un %52'si (§2.3).</summary>
     public required Path Icon { get; init; }
+    /// <summary>[quiet] En son UYGULANAN opaklık hedefi. "Değişmediyse dokunma" kapısının girdisi: koşarken
+    /// statü itişi saniyede birkaç kez gelir ve her seferinde 3.1 saniyelik bir hold-fade doğurmak sönmeyi
+    /// sonsuza dek ertelerdi (kameradaki Zeno korumasının eşi). <c>NaN</c> = henüz hiç uygulanmadı.</summary>
+    public double OpacityTarget { get; set; } = double.NaN;
+    /// <summary>[quiet] O hedefi süren animasyon (yoksa/anında uygulandıysa <c>null</c>) — test yüzeyi
+    /// <c>GraphView.OpacityAnimationOf</c> bunu okur.</summary>
+    public Timeline? OpacityAnimation { get; set; }
+
 }

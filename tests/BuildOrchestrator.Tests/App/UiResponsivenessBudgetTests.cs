@@ -26,7 +26,10 @@ public class UiResponsivenessBudgetTests(ITestOutputHelper output)
 {
     private const int ProjectCount = 177;   // gerçek OSYS: 177 .csproj
     private const double BudgetMs = 120;    // tek UI bloğu tavanı — türetme ListRealizationPerfTests.BudgetMs'te
-    private const double EventBudgetMs = 50; // koşan bir run'da TEK event'in tavanı (akış boyunca sürekli tekrarlar)
+    /// <summary>Koşan bir run'da TEK event'in tavanı (akış boyunca sürekli tekrarlar). [quiet] internal:
+    /// grafın hold-fade ölçümü (<c>GraphRunLifecycleTests</c>) AYNI bütçeyi okur — ikinci bir sayı yazılmaz
+    /// (kopya YASAK, CLAUDE.md).</summary>
+    internal const double EventBudgetMs = 50;
 
     private static List<ProjectNode> Topology(int count)
     {
