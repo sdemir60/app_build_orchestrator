@@ -347,6 +347,23 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- veri girişi
 
+    /// <summary>
+    /// [quiet] Panel GİZLİYKEN gelen besleme SAKLANIR, görsele çevrilmez.
+    ///
+    /// <para><b>Neden:</b> <c>list</c>/<c>focus</c> yerleşim modunda graf paneli <c>Collapsed</c>'dır ama
+    /// besleme yolu (<c>MainWindow.PushGraphStatuses</c>) buna bakmıyordu — panel ekranda YOKKEN de her
+    /// 200ms'lik tick'te her düğümün (ve kenarın) stili yeniden hesaplanıyordu. Kapı ÇAĞIRANDA değil
+    /// BURADA: aksi halde her çağıran aynı kontrolü ve "panel geri geldiğinde kaçırılanı yakalama"
+    /// mantığını kopyalamak zorunda kalırdı.</para>
+    ///
+    /// <para>Kapı bir SUSTURUCU değil ERTELEYİCİDİR: yalnız EN SON besleme tutulur (ara durumlar zaten
+    /// hiç görülmedi) ve panel görünür olduğunda TOPOLOJİ ÖNCE, statüler SONRA uygulanır.</para>
+    /// </summary>
+    private (IReadOnlyList<GraphNode> Nodes, IReadOnlyList<GraphEdge> Edges)? _pendingTopology;
+    private IReadOnlyList<GraphNode>? _pendingStatuses;
+
+    private bool IsPanelVisible => Visibility == Visibility.Visible;
+
     /// <summary>Topolojiyi (düğüm + kenar) kurar: yerleşim, görseller, kenar geometrileri ve ilk açılış
     /// stagger'ı. Yalnız topoloji DEĞİŞTİĞİNDE çağrılır — statü güncellemeleri için
     /// <see cref="UpdateStatuses"/> kullanılır (yeniden inşa YOK).</summary>
@@ -355,6 +372,19 @@ public partial class GraphView : UserControl
         ArgumentNullException.ThrowIfNull(nodes);
         ArgumentNullException.ThrowIfNull(edges);
 
+        if (!IsPanelVisible)
+        {
+            // Yeni topoloji bekleyen statüleri GEÇERSİZ kılar: o statüler ESKİ grafın düğümlerine aitti.
+            _pendingTopology = (nodes, edges);
+            _pendingStatuses = null;
+            return;
+        }
+
+        ApplyGraph(nodes, edges);
+    }
+
+    private void ApplyGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges)
+    {
         _edgeLayer.Children.Clear();
         _nodeLayer.Children.Clear();
         // [M-d] Atılacak eski görsellerin (varsa) sonsuz nabız animasyonunu bırak — aksi halde bunlar artık
@@ -518,6 +548,35 @@ public partial class GraphView : UserControl
     {
         ArgumentNullException.ThrowIfNull(nodes);
 
+        if (!IsPanelVisible) { _pendingStatuses = nodes; return; }
+        ApplyStatuses(nodes);
+    }
+
+    /// <summary>Görünürlük DEĞİŞİMİNİ yakalamanın headless'ta da çalışan TEK yolu. <c>IsVisible</c> ve
+    /// <c>IsVisibleChanged</c> KULLANILAMAZ: bağlı olmayan bir görsel ağaçta <c>IsVisible</c> her zaman
+    /// false'tur ve olay hiç ateşlenmez — süit ile üretim ayrışırdı. <c>Visibility</c> öğenin KENDİ
+    /// özelliğidir (<c>ShellRoot.ApplyLayout</c>'un sürdüğü sinyalin ta kendisi) ve iki ortamda da aynı
+    /// davranır.</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property != VisibilityProperty || (Visibility)e.NewValue != Visibility.Visible) return;
+
+        // SIRA bağlayıcıdır: statüler kurulmuş bir grafın üstüne yazılır.
+        if (_pendingTopology is { } topology)
+        {
+            _pendingTopology = null;
+            ApplyGraph(topology.Nodes, topology.Edges);
+        }
+        if (_pendingStatuses is { } statuses)
+        {
+            _pendingStatuses = null;
+            ApplyStatuses(statuses);
+        }
+    }
+
+    private void ApplyStatuses(IReadOnlyList<GraphNode> nodes)
+    {
         foreach (var node in nodes)
         {
             if (!_slots.TryGetValue(node.Name, out var slot)) continue;
