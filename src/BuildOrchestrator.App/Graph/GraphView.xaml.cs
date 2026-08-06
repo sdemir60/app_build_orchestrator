@@ -63,6 +63,12 @@ public partial class GraphView : UserControl
     public const double IconFactor = 0.52;
     /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
     public const double IconStroke = 1.8;
+    /// <summary>Hover büyütmesi (§2.3: "Node scale(1.7)").</summary>
+    public const double HoverScale = 1.7;
+    /// <summary>Hover'da çerçeve kalınlığı (§2.3: "border 2px").</summary>
+    public const double HoverBorderThickness = 2.0;
+    /// <summary>Hover büyütmesinin süresi (§2.3: "120ms ease-out").</summary>
+    public const double HoverScaleMs = 120.0;
     /// <summary>Boş zeminde bir basış-bırakışın TIKLAMA sayıldığı azami hareket (§2.3: "≤3px hareket
     /// tıklama sayılır, üstü pan"). Platform sürükleme eşiğinin yerine tasarımın kendi sayısı kullanılır.</summary>
     public const double DragThresholdPx = 3.0;
@@ -256,6 +262,9 @@ public partial class GraphView : UserControl
         {
             if (string.Equals(_selectedNode, value, StringComparison.Ordinal)) return;
             _selectedNode = value;
+            // §2.3: "Seçim değişince hover temizlenir (odak kayması sonrası imleç altında bayat hover
+            // kalmaz)." Kamera 460ms'de başka bir yere gider; imleç artık o düğümün üstünde değildir.
+            SetHover(null);
             ApplySelection();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
@@ -537,10 +546,9 @@ public partial class GraphView : UserControl
             Background = Brushes.Transparent, // tıklama alanı
             Cursor = Cursors.Hand,
             Children = { selectionRing, square, iconBox },
-            // [quiet] §2.3: düğümün üstünde ad yoktur — TAM proje adı tooltip'ten gelir. Düz metin atanır:
-            // WPF ToolTip kontrolünü ancak gösterirken kurar, dolayısıyla düğüm başına HİÇBİR ek nesne
-            // kurulmaz (WillBuildDot.cs ile aynı desen).
-            ToolTip = node.Name,
+            // §2.3 "Hover": scale(1.7) — merkezden büyür, komşularını itmez (RenderTransform layout'a girmez).
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = new ScaleTransform(1, 1),
         };
 
         var cell = new Grid { Children = { body } };
@@ -555,6 +563,9 @@ public partial class GraphView : UserControl
             e.Handled = true; // zemine ulaşmasın (aksi halde bırakışta seçim kalkardı)
             Toggle();
         };
+        // §2.3: tooltip GECİKMESİZ — native ToolTipService değil, ekran koordinatlı overlay kullanılır.
+        body.MouseEnter += (_, _) => SetHover(name);
+        body.MouseLeave += (_, _) => { if (string.Equals(_hoveredNode, name, StringComparison.Ordinal)) SetHover(null); };
 
         var visual = new GraphNodeVisual
         {
@@ -741,6 +752,76 @@ public partial class GraphView : UserControl
         _beadsClock = null;
     }
 
+    // ---------------------------------------------------------------- hover + ekran koordinatlı tooltip
+
+    /// <summary>
+    /// [quiet] §2.3 "Hover": node scale(1.7) (120ms ease-out), border 2px, opacity 1 (soluk moddayken bile),
+    /// z-index öne; tooltip GECİKMESİZ ve TAM proje adıyla.
+    /// </summary>
+    private void SetHover(string? nodeName)
+    {
+        if (string.Equals(_hoveredNode, nodeName, StringComparison.Ordinal)) return;
+
+        string? previous = _hoveredNode;
+        _hoveredNode = nodeName;
+        if (previous is not null) ApplyHover(previous);
+        if (nodeName is not null) ApplyHover(nodeName);
+        UpdateTooltip();
+    }
+
+    private void ApplyHover(string nodeName)
+    {
+        if (!_slots.TryGetValue(nodeName, out var slot)) return;
+        var visual = slot.Visual;
+        bool hovered = string.Equals(_hoveredNode, nodeName, StringComparison.Ordinal);
+
+        double target = hovered ? HoverScale : 1.0;
+        var scale = (ScaleTransform)visual.Body.RenderTransform;
+        if (AnimationsEnabledProvider())
+        {
+            var glide = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(HoverScaleMs), EaseOut);
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, glide, HandoffBehavior.SnapshotAndReplace);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, glide, HandoffBehavior.SnapshotAndReplace);
+        }
+        else
+        {
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            scale.ScaleX = scale.ScaleY = target;
+        }
+
+        // Büyüyen düğüm komşularının ÜSTÜNDE kalmalı; seçili düğümün kalın çerçevesi hover'dan etkilenmez.
+        Panel.SetZIndex(visual.Cell, hovered ? 1 : 0);
+        bool isSelected = string.Equals(nodeName, _selectedNode, StringComparison.Ordinal);
+        visual.Square.StrokeThickness = hovered || isSelected ? HoverBorderThickness : NodeBorderThickness;
+        ApplyNodeOpacity(visual, leftBuilding: false);
+    }
+
+    /// <summary>Tooltip'i (tek, yeniden kullanılan öğe) günceller ve EKRAN koordinatına yerleştirir.</summary>
+    private void UpdateTooltip()
+    {
+        if (_hoveredNode is not { } name || !_slots.TryGetValue(name, out var slot))
+        {
+            TooltipBox.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        TooltipText.Text = name; // §2.3: TAM proje adı, kısaltmasız
+        TooltipBox.Visibility = Visibility.Visible;
+        PlaceOverlayBox(TooltipBox, box => GraphOverlay.TooltipTopLeft(
+            slot.Center, CurrentCamera, _layout.NodeSize, ViewportSize, box));
+    }
+
+    /// <summary>Overlay kutusunu ÖLÇÜP yerleştirir. Ölçüm şart: kelepçe kutunun TAMAMINA uygulanır ve
+    /// genişliği ancak ölçtükten sonra bilinir (prototipin karakter-genişliği tahmini yerine).</summary>
+    private static void PlaceOverlayBox(FrameworkElement box, Func<Size, Point> place)
+    {
+        box.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var topLeft = place(box.DesiredSize);
+        Canvas.SetLeft(box, topLeft.X);
+        Canvas.SetTop(box, topLeft.Y);
+    }
+
     // ---------------------------------------------------------------- seçim (halka + sönme)
 
     /// <summary>Odak kümesi = seçili düğüm + DOĞRUDAN bağımlılıkları + DOĞRUDAN bağımlıları (§2.3).</summary>
@@ -761,7 +842,9 @@ public partial class GraphView : UserControl
             bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
             slot.Visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
             // DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
-            slot.Visual.Square.StrokeThickness = isSelected ? SelectedNodeBorderThickness : NodeBorderThickness;
+            bool hovered = string.Equals(name, _hoveredNode, StringComparison.Ordinal);
+            slot.Visual.Square.StrokeThickness =
+                isSelected || hovered ? SelectedNodeBorderThickness : NodeBorderThickness;
             ApplyNodeOpacity(slot.Visual, leftBuilding: false);
         }
     }
@@ -1038,6 +1121,7 @@ public partial class GraphView : UserControl
     private void SnapCameraTo(CameraTransform camera)
     {
         CurrentCamera = camera;
+        UpdateTooltip(); // ankraj kameradan türer — zoom/pan onu taşır ama BOYUTUNU değiştirmez
         _cameraScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _cameraScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         _cameraTranslate.BeginAnimation(TranslateTransform.XProperty, null);
@@ -1084,6 +1168,20 @@ public partial class GraphView : UserControl
     internal AnimationClock? BeadsClock => _beadsClock;
     /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>
     internal BeadsGeometry BeadsGeometry => _beadsGeometry;
+
+    /// <summary>Hover'ı testten sürer — headless'ta gerçek <c>MouseEnter</c> yükseltilemez
+    /// (<c>PresentationSource</c> yok). Seam'in ÜSTÜNDEKİ kablo (Body.MouseEnter/MouseLeave) gerçek routed
+    /// event'le ayrıca pinlenir.</summary>
+    internal void SetHoverForTest(string? nodeName) => SetHover(nodeName);
+    internal string? HoveredNode => _hoveredNode;
+    internal Visibility TooltipVisibility => TooltipBox.Visibility;
+    internal string TooltipContent => TooltipText.Text;
+    internal Point TooltipTopLeft => new(Canvas.GetLeft(TooltipBox), Canvas.GetTop(TooltipBox));
+    internal Size TooltipBoxSize => TooltipBox.DesiredSize;
+    internal Border TooltipElement => TooltipBox;
+    /// <summary>HER ZAMAN <c>null</c> olmalı — overlay kamera transform'unun DIŞINDA yaşar (§2.3).</summary>
+    internal Transform? OverlayLayerTransform => OverlayLayer.RenderTransform as MatrixTransform is { } m
+        && m.Matrix.IsIdentity ? null : OverlayLayer.RenderTransform;
     /// <summary>Bir düğümün opaklığını süren animasyon (anında uygulandıysa <c>null</c>) — hold-fade'in
     /// zamanlamasını pinleyen testlerin okuduğu yüzey.</summary>
     internal Timeline? OpacityAnimationOf(string nodeName) =>

@@ -209,16 +209,17 @@ public class QuietGraphNodeTests
         Assert.Equal(view.NodeSize + GraphView.SelectionRingInset * 2, visual.SelectionRing.Width, 6);
     }
 
-    /// <summary>Ad, düğümün ÜSTÜNDE değil tooltip'inde yaşar — TAM proje adı, kısaltmasız (§2.3). Düz metin
-    /// atanır: WPF <c>ToolTip</c> kontrolünü ancak gösterirken kurar, düğüm başına ek nesne KURULMAZ.</summary>
+    /// <summary>Ad düğümün ÜSTÜNDE değil overlay tooltip'inde yaşar; düğümün kendisi hiçbir isim nesnesi
+    /// KURMAZ — ne etiket ne native <see cref="ToolTip"/>. Tooltip'in davranışı
+    /// <see cref="GraphHoverTests"/>'te; burada pinlenen, düğüm başına nesne kurulmadığıdır.</summary>
     [StaFact]
-    public void Every_node_carries_its_full_project_name_as_a_tooltip_without_building_objects()
+    public void A_node_builds_no_naming_objects_because_the_name_lives_in_the_shared_overlay()
     {
         var view = Built(new Size(640, 400));
 
-        foreach (var (name, visual) in view.NodeVisuals)
+        foreach (var visual in view.NodeVisuals.Values)
         {
-            Assert.Equal(name, visual.Body.ToolTip);
+            Assert.Null(visual.Body.ToolTip);
             Assert.DoesNotContain(DsResources.RealizedObjects(visual.Cell), o => o is ToolTip);
         }
     }

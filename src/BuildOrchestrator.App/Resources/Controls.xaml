@@ -697,6 +697,21 @@
     Bu stil bir ControlTemplate.Triggers/Storyboard TAŞIMAZ (Step 1 kararı, T60) — burada zaten animasyon
     istenmiyor (brief).
   -->
+  <!-- [quiet] Grafın EKRAN KOORDİNATLI hover tooltip'i (design v1.3.0 §2.3). Native ToolTip DEĞİL: konumu
+       §2.3'ün 8px/6px kuralına uyar ve kamera transform'unun dışındaki bir overlay Canvas'ında yaşar
+       (GraphView.xaml). Görünüm sözlüğü kardeş ToolTip stiliyle AYNI token'lardan okur; burada yaşar ki
+       panel dosyaları gölge taşımasın (AntiSlopTests.Only_floating_overlays_carry_a_drop_shadow) — bu bir
+       FLOATING OVERLAY'dir, panelin kendisi değil. -->
+  <Style x:Key="Ds.GraphOverlayTooltip" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Radius.Md}" />
+    <Setter Property="Padding" Value="8,4" />
+    <Setter Property="Effect" Value="{DynamicResource Effect.PopoverShadow}" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+  </Style>
+
   <Style TargetType="ToolTip">
     <Setter Property="Background" Value="{DynamicResource Brush.SurfaceOverlay}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />

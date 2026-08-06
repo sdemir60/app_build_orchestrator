@@ -30,6 +30,19 @@
         <Canvas x:Name="World" />
       </Canvas>
 
+      <!-- [quiet] §2.3: hover tooltip'i ve seçim ad etiketi EKRAN koordinatındadır. Kamera transform'unun
+           ALTINDA yaşasalardı 5× zoom'da metin de 5× ölçeklenip bulanıklaşırdı — bu Canvas World'ün
+           KARDEŞİDİR ve hiçbir RenderTransform taşımaz. İkisi de TEK, yeniden kullanılan birer öğedir;
+           düğüm başına nesne kurulmaz. -->
+      <Canvas x:Name="OverlayLayer" IsHitTestVisible="False">
+        <Border x:Name="TooltipBox" Visibility="Collapsed"
+                Style="{DynamicResource Ds.GraphOverlayTooltip}">
+          <TextBlock x:Name="TooltipText"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
+                     Foreground="{DynamicResource Brush.TextPrimary}" />
+        </Border>
+      </Canvas>
+
       <!-- Sync öncesi boş durum: kesikli çerçeveli kutu (WPF Border dashed desteklemez → Rectangle) -->
       <Grid x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center">
         <Rectangle Stroke="{DynamicResource Brush.Border}" StrokeThickness="1"
