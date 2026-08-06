@@ -26,8 +26,10 @@ public class GraphPanZoomTests
 
     /// <summary>Jestlerin başladığı ekran noktası. Panel MERKEZİNİN (300, 186) dışında olması ŞARTTIR:
     /// merkezdeki bir imleç, "imleç merkezli zoom" ile "panel merkezli zoom"u ayırt edilemez kılar (ölçüldü —
-    /// bkz. <c>GraphCameraTests.Zooming_at_the_cursor_keeps_the_world_point_under_it_fixed</c>).</summary>
-    private static readonly Point Anchor = new(430, 120);
+    /// bkz. <c>GraphCameraTests.Zooming_at_the_cursor_keeps_the_world_point_under_it_fixed</c>).
+    /// <see cref="GraphCinemaTests"/> de kullanır (manuel moddayken etiket kararı) — jest noktası tek yerde,
+    /// düğüm/statü fixture'larının ters yönde paylaşılmasıyla aynı gerekçe (kopya YASAK).</summary>
+    internal static readonly Point Anchor = new(430, 120);
 
     /// <summary>Sinema bandında ölçülmüş view + zincir kenarları. Düğüm/kenar/statü fixture'larının TAMAMI
     /// <see cref="GraphCinemaTests"/>'tedir (kopya YASAK); burada yalnız bir araya getirilirler.</summary>
@@ -255,6 +257,60 @@ public class GraphPanZoomTests
             $"panel büyüdü ama hiçbir yeni düğüm materyalize olmadı ({before} → {view.NodeVisuals.Count})");
         Assert.True(view.IsManualCamera); // büyüme manuel modu BOZMAZ
     }
+
+    /// <summary>
+    /// [final review · I1] Cull'un JESTİN KENDİSİ sırasında koşması ayrı bir kuraldır ve ayrı ölçülür.
+    ///
+    /// <para><see cref="A_panel_resize_still_materialises_while_the_camera_is_manual"/> yalnız
+    /// <c>SizeChanged</c> yolunu (<c>ApplyCamera</c>'nın manuel dalı) ölçer: <c>before</c> sayacını jestten
+    /// SONRA aldığı için jestin kendi <c>UpdateMaterialization</c>'ını silen mutant onu yeşil bırakır
+    /// (ölçüldü) — <c>before</c> yalnız küçülür, iki iddiası da geçmeye devam eder.</para>
+    ///
+    /// <para>Fixture KOŞU BİTMİŞ (<c>IsSettled</c>) ve seçimsizdir; hasarın en ağır olduğu rejim budur:
+    /// koşarken 200 ms'lik statü tick'i <c>ApplyCamera</c> üzerinden cull'u yine çalıştırır ve boş şeridi
+    /// ≤200 ms'de onarır, durgunda ise onaracak HİÇBİR yol yoktur — kullanıcı pencereyi yeniden
+    /// boyutlandırana kadar ekranın kenarı boş kalır.</para>
+    /// </summary>
+    private static GraphView SettledCinemaView(out IReadOnlyList<GraphNode> nodes)
+    {
+        var view = CinemaView(out nodes);
+        view.IsSettled = true;
+        return view;
+    }
+
+    [StaFact]
+    public void Zooming_out_materialises_the_newly_visible_nodes_even_with_the_run_finished()
+    {
+        var view = SettledCinemaView(out var nodes);
+        int before = view.NodeVisuals.Count;
+        Assert.True(before < nodes.Count, "ön-koşul: cull gerçekten bir şey eliyor");
+
+        view.HandleWheel(Anchor, -120); // uzaklaş → görünür dünya dikdörtgeni büyür
+
+        Assert.True(view.NodeVisuals.Count > before,
+            $"uzaklaşıldı ama hiçbir yeni düğüm kurulmadı ({before} → {view.NodeVisuals.Count})");
+    }
+
+    [StaFact]
+    public void Dragging_materialises_the_nodes_the_pan_brings_into_view_even_with_the_run_finished()
+    {
+        var view = SettledCinemaView(out var nodes);
+        int before = view.NodeVisuals.Count;
+        Assert.True(before < nodes.Count, "ön-koşul: cull gerçekten bir şey eliyor");
+
+        view.HandlePanStart(Anchor);
+        // Sağa doğru sürükleme grafı sağa iter ⇒ SOLDAKİ bant görünür alana girer. Tek adım yeterli olmalı,
+        // ama jest gerçekçi olsun diye üç adım sürülür (her adım kendi deltasıyla panler).
+        for (int i = 1; i <= 3; i++) view.HandlePanMove(Anchor + PanRight * i);
+
+        Assert.True(view.NodeVisuals.Count > before,
+            $"pan yapıldı ama hiçbir yeni düğüm kurulmadı ({before} → {view.NodeVisuals.Count})");
+    }
+
+    /// <summary>Yatay, eşik ÜSTÜ bir sürükleme adımı. <see cref="DragDelta"/>'dan ayrıdır: orada dikey bileşen
+    /// bu fixture'da <c>ClampPan</c> tarafından yutulur (graf dikeyde sığar), burada ölçülen şey yeni düğüm
+    /// KURULMASI olduğu için deltanın tamamı yatay tutulur.</summary>
+    private static readonly Vector PanRight = new(60, 0);
 
     // ---------------------------------------------------------------- kamera UÇUŞTAYKEN (motion AÇIK)
 

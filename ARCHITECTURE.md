@@ -1717,9 +1717,10 @@ do, and how the interface works around each — useful to know before attempting
   topology change or a filter change — because replacing the items source discards the containers.
 - **The graph is full-detail up to 150 nodes.** Above that the panel changes character (§13.6): off-screen
   nodes and edges are culled, labels drop out by level of detail, edges outside the run fog back, the camera
-  zooms to follow the frontier, and the pointer can take that camera over. On the reference machine, synthetic
-  graphs of 500 and 1000 nodes open in roughly 90 ms and 136 ms; panning across the whole graph materializes
-  the rest, for roughly 206 ms and 469 ms in total.
+  zooms to follow the frontier, and the pointer can take that camera over. Opening builds only what the first
+  viewport shows — about a third of a 500-node graph and a sixth of a 1000-node one. On the reference machine
+  those two open in roughly 37 ms and 75 ms; panning across the whole graph materializes the rest, for roughly
+  120 ms and 290 ms in total.
 - **No field-level IPC schema validation** (§5.4).
 - **Symlinks/junctions are not followed or detected** during the scan, and a `.csproj` may reference files
   outside the repository root. Both are accepted risks — the repository is trusted by definition.
@@ -1727,8 +1728,11 @@ do, and how the interface works around each — useful to know before attempting
 - **The `FOLLOW PAUSED` pill does not reach a screen reader at all.** Its name is defined in the central table
   and correctly attached, but neither the pill nor its label enters the automation tree: WPF gives a plain
   `Border` no automation peer, and the letter-spaced label is a bare `FrameworkElement`, which gets none
-  either. The limit is on WPF's side, not in the naming. Follow also resumes by itself after
-  `FollowResumeDelayMs`, which is the non-pointer path back.
+  either. That follows from the elements the pill is built out of, not from a platform limit — the `latest`
+  pill answers the same problem by being a `Button` wearing a custom border template, so the name lands on the
+  element the pointer actually hits, and the graph pill could be rebuilt the same way. Until it is, the
+  shortcut is pointer-only; follow also resumes by itself after `FollowResumeDelayMs`, which is the
+  non-pointer path back.
 - **The global hotkey has no settings UI** (§12.3).
 
 ---

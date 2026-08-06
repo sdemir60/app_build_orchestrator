@@ -299,6 +299,38 @@ public class GraphCinemaTests
     }
 
     [StaFact]
+    public void A_building_node_is_named_even_while_the_camera_is_manual()
+    {
+        // [final review · I1/I2] Etiket kararının kameradan bağımsız olması ApplyCamera'nın ÜÇ erken dönüşünün
+        // de üstünde durmasını gerektirir. İkisi pinliydi (viewport guard'ı ve Zeno guard'ı); ÜÇÜNCÜSÜ —
+        // manuel kamera guard'ı — pinsizdi: UpdateLabelVisibility'yi o bloğun ALTINA taşıyan mutant süiti
+        // yeşil bırakıyordu (ölçüldü).
+        //
+        // Düşme senaryosu: kullanıcı koşu sırasında grafı sürüklerken bir proje derlenmeye başlar. Odak
+        // muafiyeti gereği adı belirmelidir; mutantta belirmez — üstelik kullanıcı el sürdükçe damga her
+        // harekette tazelendiği için 4 sn kuralı da devreye girmez ⇒ etiketler JEST BOYUNCA DONAR. Bu, Task
+        // 5'in "muafiyet latch değildir, karar kameradan bağımsızdır" değişmezinin tam karşıtıdır.
+        var nodes = CrowdedNodes(nameLength: NeverFitNameLength);
+        var view = NewView();
+        view.SetGraph(nodes, ChainEdges(nodes));
+        string name = CrowdedName(CrowdedTargetIndex, NeverFitNameLength);
+        AssertCrowdedLayer(nodes, fitsAtFollowMax: false); // beliren etiketin tek açıklaması MUAFİYET olsun
+        var target = Materialised(view, name);
+        Assert.Null(target.Label);
+
+        view.HandleWheel(GraphPanZoomTests.Anchor, 120); // kamera KULLANICIDA
+        Assert.True(view.IsManualCamera);
+
+        view.UpdateStatuses(WithStatus(nodes, name, GraphStatus.Building));
+
+        Assert.True(view.IsManualCamera); // ön-koşul: statü tick'i manuel modu BİTİRMEDİ (4 sn dolmadı)
+        Assert.NotNull(target.Label);
+        Assert.Equal(Visibility.Visible, target.Label!.Visibility);
+        Assert.Equal(name, target.Label.Text);
+        Assert.Null(target.Body.ToolTip);
+    }
+
+    [StaFact]
     public void A_finished_node_gives_its_label_back_because_the_exemption_is_not_a_latch()
     {
         // ESKİ İDDİA (af6f261 · Zooming_back_out_hides_the_labels_and_restores_the_tooltip): "kuşbakışına

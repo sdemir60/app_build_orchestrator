@@ -92,8 +92,13 @@ public static class AccessibilityNames
     public static string GraphNode(string projectName, string statusLabel) => $"{projectName} — {statusLabel}";
 
     /// <summary>[sinema] Graf başlığındaki <c>FOLLOW PAUSED</c> pili — görünür etiketi yalnız DURUMU söyler,
-    /// ad ayrıca EYLEMİ de söyler (tıklama takibi hemen döndürür). Pil bir <c>Border</c>'dır, dolayısıyla
-    /// (tıklanabilir diğer Border satırları gibi) UIA ağacında kendi öğesi olarak görünmez — ad, o sınır
-    /// kapandığında hazır dursun diye ve iki yerde ayrışmasın diye burada durur (bkz. ARCHITECTURE §20).</summary>
+    /// ad ayrıca EYLEMİ de söyler (tıklama takibi hemen döndürür).
+    ///
+    /// <para><b>Bu ad bugün ekran okuyucuya ULAŞMIYOR ve sebebi WPF değil, ELEMAN SEÇİMİDİR.</b> Pil düz bir
+    /// <c>Border</c>'dır; WPF ona automation peer vermez, dolayısıyla UIA ağacında kendi öğesi olarak
+    /// görünmez. Aynı repoda <see cref="Controls.LatestPill"/> tam bu sorunu pili özel <c>Border</c> şablonlu
+    /// bir <c>Button</c> yaparak çözüyor ve adı KABUĞA değil tıklanan öğeye koyuyor — graf pili de öyle
+    /// kurulduğunda sınır kapanır. Ad şimdiden burada durur ki o gün iki yerde ayrışmasın
+    /// (bkz. ARCHITECTURE §20).</para></summary>
     public const string GraphFollowPill = "Follow paused — resume automatic follow";
 }

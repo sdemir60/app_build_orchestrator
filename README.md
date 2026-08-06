@@ -263,8 +263,8 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 - **Graph nodes are not keyboard-navigable.** A screen reader can read and invoke them — each node is named
   with its project and status — but there is no keyboard route into the canvas.
 - **The *FOLLOW PAUSED* pill is invisible to a screen reader.** Neither the pill nor its label enters the
-  automation tree, so the shortcut is pointer-only; follow also returns on its own four seconds after the last
-  manual input.
+  automation tree — a consequence of the elements it is built out of rather than a platform limit — so the
+  shortcut is pointer-only; follow also returns on its own four seconds after the last manual input.
 
 The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.md#20-known-limits).
 
