@@ -1218,11 +1218,11 @@ margin. Scale is a target as well, not a constant: `ResolveScale` gives a select
 follow band (0.85–1.4), and with neither returns to the overview `FitScale` — the panel-fitted scale clamped to
 `MinScale`–`MaxScale` (0.68–1.08). Inside the full-detail band (below) the scale is *always* that overview fit.
 
-Two thresholds keep the camera still: a focus that moved less than `FrontierRetargetThresholdPx` (8 px) and a
-scale that changed by less than `ScaleRetargetThreshold` (0.05) do not retarget. Without them the 200 ms status
-tick would restart the 460 ms transition faster than it can finish and the camera would never arrive. Both are
-latched **only** when they came from the frontier branch — a selection or an overview writes `null` — so a
-stale frontier value can never suppress the first legitimate move after one.
+Two thresholds keep the camera still: a focus that moved less than `FrontierRetargetThresholdPx`, and a scale
+that changed by less than `ScaleRetargetThreshold`, do not retarget. Without them the 200 ms status tick would
+restart the 460 ms transition faster than it can finish and the camera would never arrive. Both are latched
+**only** when they came from the frontier branch — a selection or an overview writes `null` — so a stale
+frontier value can never suppress the first legitimate move after one.
 
 Rendering stays on the **Shapes path** — every node and edge is a `UIElement`, so hit-testing and tooltips are
 native. A migration to `DrawingVisual` layers was prepared and then **not performed**, because measurement
@@ -1234,9 +1234,10 @@ the 200 ms status tick does not touch unchanged nodes.
 
 **One gate, not five.** Culling, label level of detail, the edge fog, the camera's scale policy and the manual
 gestures all hang off the same number — `GraphView.FullDetailMaxNodes` (150). There is no second threshold, so
-a graph of 150 nodes or fewer is not merely *expected* to look and behave exactly as it always did: it is
-structurally unable to do otherwise, since every one of those mechanisms reads the same flag. Above the gate
-the panel stops being a picture of the whole graph and becomes a camera over one too large to read at once.
+a graph of 150 nodes or fewer is not merely *expected* to look and behave exactly as it does with none of these
+mechanisms engaged: it is structurally unable to do otherwise, since every one of them reads the same flag.
+Above the gate the panel stops being a picture of the whole graph and becomes a camera over one too large to
+read at once.
 
 **Fog.** Edges the run has not touched fall to `EdgeStyleResolver.DimmedOpacity` — the very constant the
 selection dim uses, not a second one beside it — while edges reaching a succeeded or failed node hold at
@@ -1256,27 +1257,30 @@ nothing. Labels are built on demand and, once built, are never torn down; they o
 reason culling's materialization is one-way. Below the gate no label ever drops. A node that loses its label
 does not become anonymous: it carries a tooltip with the full project name.
 
-**Gestures.** Pressing the left button on empty ground and moving past the platform drag threshold
-(`SystemParameters.MinimumHorizontalDragDistance`/`MinimumVerticalDragDistance`) starts a pan — the cursor
-becomes a hand and the mouse is captured. Releasing without ever crossing that threshold is a click and keeps
-its established meaning: it clears the selection. Losing capture instead (Alt+Tab, a popup) is a *cancel*, not
-a release, and leaves the selection alone. The wheel zooms at the cursor — the world point under the pointer
-stays under it — by a multiplicative `WheelZoomStep` per notch, inside the wider manual band
-`ManualMinScale`–`ManualMaxScale` (0.45–2.0).
-Entering manual mode freezes an in-flight camera animation at the frame it is on rather than letting it snap to
-its target. Culling keeps working while the user navigates, against the camera they are holding, so no empty
-strip is left behind them. Every one of these paths clamps through the same `ClampPan`.
+**Gestures.** Pressing the left button on empty ground captures the mouse; moving past the platform drag
+threshold (`SystemParameters.MinimumHorizontalDragDistance`/`MinimumVerticalDragDistance`) is what turns that
+press into a pan and the cursor into a hand. Releasing without ever crossing the threshold is therefore a
+click, and keeps its established meaning: it clears the selection. Losing the capture instead (Alt+Tab, a
+popup) is a *cancel*, not a release, and leaves the selection alone. The wheel zooms at the cursor — the world
+point under the pointer stays under it — by a multiplicative `WheelZoomStep` per notch, inside the wider
+manual band `ManualMinScale`–`ManualMaxScale` (0.45–2.0). Entering manual mode freezes an in-flight camera
+animation at the frame it is on rather than letting it snap to its target. Culling keeps working while the
+user navigates, against the camera they are holding, so no empty strip is left behind them. Every one of these
+paths clamps through the same `ClampPan`.
 
-**Handing the camera back.** `GraphCamera.FollowResumeDelayMs` (4 s) after the last manual input, follow takes
-over again — but only if there is somewhere to go: a building frontier or a selection. With no target the user stays
-where they are, because dragging them back to the overview would take away the place they navigated to. While
-follow is suspended *and* a target exists, a `FOLLOW PAUSED` pill appears in the panel header; it is clickable
-and returns the camera immediately. So does an explicit selection — clicking a project in the list is the
-user's own navigation. *Clearing* a selection does not, because `null` is not a place to go. On resume the two
-retarget latches are cleared, so a value stale from before the excursion cannot suppress a legitimate target.
-While the button is held the delay never starts counting: holding still to read is also a gesture. Nothing new
-runs continuously — the trigger is armed once, re-arms itself only for the time remaining, and is never armed
-at all while there is no target.
+**Handing the camera back.** `GraphCamera.FollowResumeDelayMs` after the last manual input, follow takes over
+again — but only if there is somewhere to go: a building frontier or a selection. With no target the user
+stays where they are, because dragging them back to the overview would take away the place they navigated to.
+While follow is suspended *and* a target exists, a `FOLLOW PAUSED` pill appears in the panel header; it is
+clickable and returns the camera immediately. So does an explicit selection — clicking a project in the list
+is the user's own navigation. *Clearing* a selection does not, because `null` is not a place to go. A new
+topology is the one thing that ends the excursion outright, delay and target rule alike: a Sync replaces the
+graph, and the coordinates the user navigated to have no counterpart in the new one, so the manual camera, the
+in-flight gesture and the hand cursor all go with the old graph. On resume the two retarget latches are
+cleared, so a value stale from before the excursion cannot suppress a legitimate target. While the button is
+held the delay never starts counting: holding still to read is also a gesture. Nothing new runs continuously —
+the trigger is armed once, re-arms itself only for the time remaining, and is never armed at all while there
+is no target.
 
 All animations read the reduced-motion setting **fresh at start**; durations and easings come from
 `Duration.*`/`KeySpline.*` resources and colours from `Brush.*` resources — no hex, no milliseconds inline.
@@ -1711,18 +1715,20 @@ do, and how the interface works around each — useful to know before attempting
   but that window still has to be built: a screenful of project rows is a few dozen row controls, tens of
   milliseconds on the reference machine. That price is paid again whenever the entry list is replaced — a
   topology change or a filter change — because replacing the items source discards the containers.
-- **The graph is full-detail up to 150 nodes.** Above that, off-screen nodes and edges are culled and labels
-  drop out by level of detail. On the reference machine, synthetic graphs of 500 and 1000 nodes open in roughly
-  90 ms and 136 ms; panning across the whole graph materializes the rest, for roughly 206 ms and 469 ms in
-  total.
+- **The graph is full-detail up to 150 nodes.** Above that the panel changes character (§13.6): off-screen
+  nodes and edges are culled, labels drop out by level of detail, edges outside the run fog back, the camera
+  zooms to follow the frontier, and the pointer can take that camera over. On the reference machine, synthetic
+  graphs of 500 and 1000 nodes open in roughly 90 ms and 136 ms; panning across the whole graph materializes
+  the rest, for roughly 206 ms and 469 ms in total.
 - **No field-level IPC schema validation** (§5.4).
 - **Symlinks/junctions are not followed or detected** during the scan, and a `.csproj` may reference files
   outside the repository root. Both are accepted risks — the repository is trusted by definition.
 - **Graph nodes are not keyboard-accessible** (§15).
-- **The `FOLLOW PAUSED` pill's automation name does not reach a screen reader.** The name is defined in the
-  central table and correctly attached, but the pill is a `Border` and WPF gives a `Border` no automation peer,
-  so the element never enters the automation tree for the name to hang on. The limit is on WPF's side, not in
-  the naming. Follow also resumes by itself after `FollowResumeDelayMs`, which is the non-pointer path back.
+- **The `FOLLOW PAUSED` pill does not reach a screen reader at all.** Its name is defined in the central table
+  and correctly attached, but neither the pill nor its label enters the automation tree: WPF gives a plain
+  `Border` no automation peer, and the letter-spaced label is a bare `FrameworkElement`, which gets none
+  either. The limit is on WPF's side, not in the naming. Follow also resumes by itself after
+  `FollowResumeDelayMs`, which is the non-pointer path back.
 - **The global hotkey has no settings UI** (§12.3).
 
 ---

@@ -23,7 +23,7 @@
 
         <!-- [sinema] Takip askıdayken görünen pil; tıklama takibi hemen döndürür (spec §3.5). Pil dekoratif
              değil YEDEK bir kısayoldur: dönüş 4sn'de kendiliğinden de olur — klavye erişimi olmaması bilinen
-             graf sınırının (ARCHITECTURE §15) içinde kalır.
+             graf sınırının (ARCHITECTURE §20) içinde kalır.
              SAYAÇTAN SONRA bildirilir (DockPanel'de sonra gelen İÇERİDE kalır): sayaç panelin sağ kenarına
              çakılı durur ve pil belirip kaybolurken YERİNDEN OYNAMAZ — ters sırada 156 projects · … metni
              pilin genişliği kadar sıçrardı. -->
