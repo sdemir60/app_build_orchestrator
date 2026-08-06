@@ -371,7 +371,7 @@ public class SuccessFlourishTests
         // (c) Aynı dosyada UZAKTAKİ meşru kullanım (statü tablosu ile nabız arasında 8 satır) → temiz kalır;
         // guard "aynı dosyada geçiyor" demiyor, "animasyonun DİBİNDE" diyor.
         string legitimate = string.Join('\n',
-            ["GraphStatus.Succeeded => (\"Brush.StatusSuccess\", \"Brush.StatusSuccessSoft\", \"…\", false),", .. Enumerable.Repeat("// ara satır", 8), "visual.PulseHost.BeginAnimation(OpacityProperty, pulse);"]);
+            ["GraphStatus.Succeeded => (\"Brush.StatusSuccess\", \"Brush.StatusSuccessSoft\", \"…\", false),", .. Enumerable.Repeat("// ara satır", 8), "visual.Body.BeginAnimation(OpacityProperty, animation);"]);
         Assert.Empty(SourceGuard.ScanText(IoPath.Combine("Graph", "GraphView.xaml.cs"), legitimate, SuccessTintAnimated));
     }
 

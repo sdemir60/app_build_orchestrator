@@ -211,7 +211,7 @@ public partial class MainWindow : Window
         _scrollArbiter.SetFilter(_vm.ActiveFilter is not null); // kalıcı durumdan gelen bir filtreyle açılış
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
-        // sinyalleri → grafı besle (UpdateStatuses/IsSettled/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
+        // sinyalleri → grafı besle (UpdateStatuses/RunPhase/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
 
@@ -569,8 +569,8 @@ public partial class MainWindow : Window
 
     /// <summary>[quiet] Koşu fazını grafa iter (design v1.3.0 §2.3 "Koşu yaşam döngüsü"): koşarken graf
     /// soluklaşır ve yalnız derlenenler parlak kalır; koşu bitince tümü sonuç renginde tam opak canlanır.
-    /// Kaynak, kamerayı besleyen eski <c>IsSettled</c> ile AYNI sinyaldir (<see cref="RunViewModel.IsMidRunLocked"/>) —
-    /// kamera artık koşuyla ilgilenmiyor, opaklık sistemi ilgileniyor.</summary>
+    /// Kaynak, kamerayı besleyen eski sinyalin ta kendisidir (<see cref="RunViewModel.IsMidRunLocked"/>) —
+    /// kamera artık koşuyla ilgilenmiyor (§2.3: koşarken durur), opaklık sistemi ilgileniyor.</summary>
     private void PushGraphRunPhase() =>
         Shell.GraphHost.RunPhase = _vm.IsMidRunLocked ? GraphRunPhase.Running : GraphRunPhase.Idle;
 
@@ -602,7 +602,7 @@ public partial class MainWindow : Window
         _vm.SelectProject(id);
     }
 
-    /// <summary>[D5] VM sinyalleri → graf: statü tikleri (Counters), run başlangıç/bitiş (IsSettled + statü),
+    /// <summary>[D5] VM sinyalleri → graf: statü tikleri (Counters), run başlangıç/bitiş (RunPhase + statü),
     /// seçim değişimi (view'e iter).</summary>
     private void OnVmPropertyChangedForGraph(object? sender, PropertyChangedEventArgs e)
     {
