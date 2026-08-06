@@ -47,14 +47,29 @@ public class GraphRenderTests
 
     // ---------------------------------------------------------------- ilk açılış dalgası
 
+    /// <summary>
+    /// §2.3 "İlk açılış": gecikme = build-order index × 9ms, tavan 520ms.
+    ///
+    /// <para><b>Eski iddia:</b> <c>The_layer_stagger_is_55ms_per_layer_capped_at_330ms</c> — gecikme KATMAN
+    /// başınaydı, yani bir katmandaki 40 düğüm AYNI ANDA beliriyordu. v1.3.0 dalgayı DÜĞÜM başına yaptı ki
+    /// grafın okuma yönünü (üstten alta, soldan sağa) izlesin.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0.0)]
+    [InlineData(1, 9.0)]
+    [InlineData(57, 513.0)]
+    [InlineData(58, 520.0)]   // 522 → tavan
+    [InlineData(1000, 520.0)]
+    public void The_reveal_delay_is_nine_ms_per_build_order_index_capped_at_520(int index, double expected)
+        => Assert.Equal(expected, GraphView.RevealDelayMs(index), 6);
+
+    /// <summary>Beliriş 300ms ease-out ve 5px yukarıdandır — sabitler liste satırıyla ORTAK
+    /// (<see cref="RevealStagger"/>), yani ikisi asla sürüklenemez.</summary>
     [Fact]
-    public void The_layer_stagger_is_55ms_per_layer_capped_at_330ms()
+    public void A_node_rises_five_pixels_over_300ms_exactly_like_a_list_row()
     {
-        Assert.Equal(0.0, GraphView.RevealDelayMs(0));
-        Assert.Equal(55.0, GraphView.RevealDelayMs(1));
-        Assert.Equal(275.0, GraphView.RevealDelayMs(5));
-        Assert.Equal(330.0, GraphView.RevealDelayMs(6));
-        Assert.Equal(330.0, GraphView.RevealDelayMs(20)); // tavan
+        Assert.Equal(RevealStagger.RevealMs, GraphView.RevealMs, 6);
+        Assert.Equal(RevealStagger.RevealRisePx, GraphView.RevealRisePx, 6);
     }
 
     [StaFact]

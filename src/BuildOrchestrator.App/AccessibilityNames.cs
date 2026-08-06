@@ -100,5 +100,4 @@ public static class AccessibilityNames
     /// bir <c>Button</c> yaparak çözüyor ve adı KABUĞA değil tıklanan öğeye koyuyor — graf pili de öyle
     /// kurulduğunda sınır kapanır. Ad şimdiden burada durur ki o gün iki yerde ayrışmasın
     /// (bkz. ARCHITECTURE §20).</para></summary>
-    public const string GraphFollowPill = "Follow paused — resume automatic follow";
 }

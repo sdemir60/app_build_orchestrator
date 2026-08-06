@@ -112,5 +112,9 @@ internal sealed class GraphNodeVisual
     /// <summary>[quiet] O hedefi süren animasyon (yoksa/anında uygulandıysa <c>null</c>) — test yüzeyi
     /// <c>GraphView.OpacityAnimationOf</c> bunu okur.</summary>
     public Timeline? OpacityAnimation { get; set; }
+    /// <summary>[quiet] Açılış dalgasında bu düğüme UYGULANAN gecikme (dalga oynamadıysa <c>null</c>).
+    /// WPF uçuştaki bir animasyonun <c>BeginTime</c>'ını geri vermez; dalga sırasını pinleyen testin tek
+    /// okuyabileceği yer burasıdır.</summary>
+    public double? RevealDelayMs { get; set; }
 
 }

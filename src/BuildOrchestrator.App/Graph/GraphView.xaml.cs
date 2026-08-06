@@ -35,10 +35,12 @@ namespace BuildOrchestrator.App.Graph;
 /// </summary>
 public partial class GraphView : UserControl
 {
-    /// <summary>Katman başına açılış gecikmesi (design-v1 §2.3: "katman başına 55ms").</summary>
-    public const double LayerStaggerMs = 55.0;
-    /// <summary>Stagger tavanı (Ek A #9: grafta 55ms/katman, tavan 330ms).</summary>
-    public const double LayerStaggerCapMs = 330.0;
+    /// <summary>[quiet] Açılış dalgasında DÜĞÜM başına gecikme (§2.3: "gecikme = build-order index × 9ms").
+    /// <b>Eski kural KATMAN başınaydı</b> (55ms/katman, tavan 330) — v1.3.0 dalgayı derleme sırasına bağladı,
+    /// yani dalga üstten alta VE soldan sağa akar.</summary>
+    public const double RevealStepMs = 9.0;
+    /// <summary>Dalganın tavanı (§2.3: "max 520ms") — 58. düğümden sonrası aynı anda belirir.</summary>
+    public const double RevealDelayCapMs = 520.0;
     /// <summary>Bir düğümün beliriş süresi (prototip <c>bo-reveal .3s</c>). [W2 fix-1] Değer
     /// <see cref="RevealStagger.RevealMs"/>'in derleme-zamanı ALIAS'ıdır — liste satırıyla (ProjectRow) ASLA
     /// sürüklenemez; ikisi de AYNI <c>bo-reveal</c> ailesindendir.</summary>
@@ -273,6 +275,7 @@ public partial class GraphView : UserControl
             // §2.3: "Seçim değişince hover temizlenir (odak kayması sonrası imleç altında bayat hover
             // kalmaz)." Kamera 460ms'de başka bir yere gider; imleç artık o düğümün üstünde değildir.
             SetHover(null);
+            UpdateHint();
             ApplySelection();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
@@ -1014,8 +1017,11 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- ilk açılış dalgası
 
-    /// <summary>Katman başına gecikme — 55ms, 330ms'de tavanlanır (Ek A #9).</summary>
-    internal static double RevealDelayMs(int layer) => Math.Min(layer * LayerStaggerMs, LayerStaggerCapMs);
+    /// <summary>Bir düğümün beliriş gecikmesi: BUILD-ORDER indeksinden (besleme sırası), katmandan DEĞİL.
+    /// Dalga bu yüzden grafın okuma yönünü (üstten alta, soldan sağa) izler — bantlar da build-order'a göre
+    /// dizildiği için ikisi aynı sırayı verir.</summary>
+    internal static double RevealDelayMs(int buildOrderIndex) =>
+        Math.Min(buildOrderIndex * RevealStepMs, RevealDelayCapMs);
 
     private void PlayRevealStagger()
     {
@@ -1023,25 +1029,23 @@ public partial class GraphView : UserControl
         // damgalanır ve hero alınmaya çalışılır. Başka bir hero sürerken dekoratif dalga ATLANIR.
         var (animate, gen) = _reveal.Begin(AnimationsEnabledProvider(), ActiveHeroCoordinator, RevealHeroKey);
 
-        double maxDelay = -1;
-        foreach (var slot in _slotOrder)
-        {
-            double delay = RevealDelayMs(slot.Model.Layer);
-            if (delay > maxDelay) maxDelay = delay;
-        }
+        double maxDelay = RevealDelayMs(Math.Max(0, _slotOrder.Count - 1));
 
-        foreach (var slot in _slotOrder)
+        for (int index = 0; index < _slotOrder.Count; index++)
         {
-            var visual = slot.Visual;
+            var visual = _slotOrder[index].Visual;
             visual.Cell.BeginAnimation(OpacityProperty, null);
             if (!animate)
             {
+                visual.RevealDelayMs = null;
                 visual.Cell.Opacity = 1.0;
                 visual.Cell.RenderTransform = Transform.Identity;
                 continue;
             }
 
-            ApplyRevealTo(visual, RevealDelayMs(slot.Model.Layer));
+            double delay = RevealDelayMs(index);
+            visual.RevealDelayMs = delay;
+            ApplyRevealTo(visual, delay);
         }
 
         // [E3/T41 — release fix] Hero, reveal PENCERESİ boyunca tutulur ve en geç biten düğümün reveal'i
@@ -1243,7 +1247,14 @@ public partial class GraphView : UserControl
     {
         EmptyState.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         Viewport.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
+        // Sync'ten önce gezinecek bir şey yok — ipucu da yok.
+        HintLabel.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    /// <summary>§2.3: sağ alttaki mono ipucu seçime göre değişir.</summary>
+    private void UpdateHint() => HintLabel.Text = _selectedNode is null
+        ? ViewModels.InteractionText.GraphHintNavigate
+        : ViewModels.InteractionText.GraphHintRelease;
 
     // ---------------------------------------------------------------- test/görünürlük yüzeyi
 
@@ -1271,6 +1282,11 @@ public partial class GraphView : UserControl
     internal double NodeSize => _layout.NodeSize;
     /// <summary>Canlı düğüm adımı.</summary>
     internal double Pitch => _layout.Pitch;
+    internal string HintText => HintLabel.Text;
+    /// <summary>Açılış dalgasında bir düğüme uygulanan gecikme (dalga oynamadıysa <c>null</c>).</summary>
+    internal double? RevealDelayOf(string nodeName) =>
+        _slots.TryGetValue(nodeName, out var slot) ? slot.Visual.RevealDelayMs : null;
+    internal Visibility HintVisibility => HintLabel.Visibility;
     /// <summary>TÜM beads yörüngelerinin paylaştığı saat (hiç dönmüyorsa <c>null</c>).</summary>
     internal AnimationClock? BeadsClock => _beadsClock;
     /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>
