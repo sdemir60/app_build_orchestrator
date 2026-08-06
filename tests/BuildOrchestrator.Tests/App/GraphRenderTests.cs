@@ -168,77 +168,125 @@ public class GraphRenderTests
         Assert.False(coordinator.IsHeroActive);
     }
 
-    // ---------------------------------------------------------------- building nabzı (DS ds-node-pulse)
+    // ---------------------------------------------------------------- beads (§2.3 building animasyonu)
 
+    /// <summary>
+    /// Yörünge TALEP ÜZERİNE kurulur ve TÜM yörüngeler TEK paylaşımlı saate bağlanır.
+    ///
+    /// <para><b>Eski iddia:</b> <c>A_building_node_breathes_1_to_half_and_back_over_1_6s_at_30fps</c> —
+    /// building düğüm DS <c>ds-node-pulse</c> ile 1.6s'de nefes alıyordu. v1.3.0 §2.3 nabzı kaldırdı ve
+    /// yerine düğümün 2.8px dışında dolanan amber noktaları koydu. 30fps tavanı KORUNDU.</para>
+    /// </summary>
     [StaFact]
-    public void A_building_node_breathes_1_to_half_and_back_over_1_6s_at_30fps()
+    public void Every_beads_orbit_hangs_off_ONE_shared_clock_no_matter_how_many_nodes_build()
     {
         var view = NewView(true);
-        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building, apiStatus: GraphStatus.Building), Edges());
 
-        var building = view.NodeVisuals["OSYS.Data.Core"];
-        Assert.True(building.IsPulsing);
-        // Cell (açılış dalgası) ve Body (seçim sönmesi) DOLU olduğundan nabzın ÜÇÜNCÜ bir opaklık taşıyıcısı olmalı.
-        Assert.True(building.PulseHost.HasAnimatedProperties);
-        Assert.NotSame(building.PulseHost, building.Cell);
-        Assert.NotSame(building.PulseHost, building.Body);
+        Assert.NotNull(view.NodeVisuals["OSYS.Data.Core"].Beads);
+        Assert.NotNull(view.NodeVisuals["OSYS.Server.Api"].Beads);
+        Assert.Null(view.NodeVisuals["OSYS.Base"].Beads); // building olmayan düğüm yörünge kurmaz
 
-        // Nabız dışındaki düğümler animasyonsuz ve tam opak.
-        var idle = view.NodeVisuals["OSYS.Base"];
-        Assert.False(idle.IsPulsing);
-        Assert.False(idle.PulseHost.HasAnimatedProperties);
-        Assert.Equal(1.0, idle.PulseHost.Opacity);
+        var clock = view.BeadsClock;
+        Assert.NotNull(clock);
+        var spin = Assert.IsType<DoubleAnimation>(clock.Timeline);
+        Assert.Equal(0.0, spin.From);
+        Assert.Equal(-view.BeadsGeometry.Perimeter, spin.To!.Value, 6);
+        Assert.Equal(TimeSpan.FromMilliseconds(GraphBeads.CycleMs), spin.Duration.TimeSpan);
+        Assert.Equal(RepeatBehavior.Forever, spin.RepeatBehavior);
+        Assert.Equal(GraphView.DecorativeFrameRate, Timeline.GetDesiredFrameRate(spin));
     }
 
+    /// <summary>§2.3: "Animasyon sınıfı bitişten sonra 700ms daha kalır → noktalar DÖNERKEN söner, donup
+    /// kaybolmaz." Son building düğüm bittiğinde saat ANINDA bırakılmaz.</summary>
     [StaFact]
-    public void The_pulse_stops_when_the_node_leaves_building()
+    public void The_shared_clock_keeps_spinning_after_the_last_node_stops_building_and_is_released_later()
     {
         var view = NewView(true);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
-        Assert.True(view.NodeVisuals["OSYS.Data.Core"].IsPulsing);
+        Assert.NotNull(view.BeadsClock);
 
         view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Succeeded));
+        Assert.NotNull(view.BeadsClock); // hâlâ dönüyor — noktalar sönerken de dönmeli
 
-        var settled = view.NodeVisuals["OSYS.Data.Core"];
-        Assert.False(settled.IsPulsing);
-        Assert.False(settled.PulseHost.HasAnimatedProperties);
-        Assert.Equal(1.0, settled.PulseHost.Opacity);
+        view.HandleBeadsSpindownTick();
+        Assert.Null(view.BeadsClock);
     }
 
+    /// <summary>Spin-down penceresi içinde YENİ bir cephe doğarsa saat KORUNUR.</summary>
     [StaFact]
-    public void Re_SetGraph_stops_the_pulse_on_the_discarded_old_visuals()
+    public void A_new_build_inside_the_spindown_window_keeps_the_clock_alive()
     {
-        // [M-d] SetGraph eski görselleri ATAR ama GC'ye bırakılmadan önce sonsuz animasyon durdurulmazsa
-        // timing engine 30fps'te uyanık kalırdı.
         var view = NewView(true);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
-        var stale = view.NodeVisuals["OSYS.Data.Core"];
-        Assert.True(stale.PulseHost.HasAnimatedProperties); // gerçekten dönüyor
+        view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Succeeded));
 
-        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges()); // yeni topoloji → eski görsel ATILIR
+        view.UpdateStatuses(Nodes(dataStatus: GraphStatus.Succeeded, apiStatus: GraphStatus.Building));
+        view.HandleBeadsSpindownTick(); // gecikmiş tetik ateşlense bile
 
-        Assert.False(stale.PulseHost.HasAnimatedProperties, "atılan eski görselin animasyonu hâlâ dönüyor — sızıntı");
-        Assert.Equal(1.0, stale.PulseHost.Opacity);
-        var fresh = view.NodeVisuals["OSYS.Data.Core"];
-        Assert.NotSame(stale, fresh);
-        Assert.True(fresh.PulseHost.HasAnimatedProperties);
+        Assert.NotNull(view.BeadsClock);
+    }
+
+    /// <summary>Panel yeniden boyutlanınca düğüm boyutu → yörünge ÇEVRESİ değişir ⇒ desen ve saat yeniden
+    /// kurulur; aksi halde noktalar yeni çevreye tam bölünmez ve ek yerinde bindirirdi.</summary>
+    [StaFact]
+    public void Resizing_the_panel_rebuilds_the_pattern_because_the_orbit_perimeter_changed()
+    {
+        var view = NewView(true);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        double before = view.BeadsGeometry.Perimeter;
+
+        GraphTestView.Resize(view, new Size(300, 200));
+        view.UpdateLayout();
+
+        Assert.NotEqual(before, view.BeadsGeometry.Perimeter);
+        var orbit = view.NodeVisuals["OSYS.Data.Core"].Beads!;
+        Assert.Equal(view.BeadsGeometry.Side, orbit.Width, 6);
+        Assert.Equal(GraphBeads.DashArrayFor(view.BeadsGeometry), orbit.StrokeDashArray);
+        Assert.NotNull(view.BeadsClock); // hâlâ derleniyor → saat yeni çevreyle geri kuruldu
+        Assert.Equal(-view.BeadsGeometry.Perimeter, ((DoubleAnimation)view.BeadsClock!.Timeline).To!.Value, 6);
+    }
+
+    /// <summary>[M-d] Yeni topoloji eski görselleri atar — paylaşımlı saat onlarla birlikte bırakılır, aksi
+    /// halde timing engine 30fps'te uyanık kalırdı.</summary>
+    [StaFact]
+    public void Re_SetGraph_releases_the_shared_beads_clock()
+    {
+        var view = NewView(true);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        Assert.NotNull(view.BeadsClock);
+
+        view.SetGraph(Nodes(), Edges()); // building yok
+
+        Assert.Null(view.BeadsClock);
     }
 
     [StaFact]
-    public void Reduced_motion_never_starts_the_building_pulse()
+    public void Unloading_the_view_releases_a_running_beads_clock()
+    {
+        var view = NewView(true);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        Assert.NotNull(view.BeadsClock);
+
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+
+        Assert.Null(view.BeadsClock);
+    }
+
+    /// <summary>§2.3 son madde: <c>prefers-reduced-motion</c>'da beads TAMAMEN kapalı — yörünge hiç kurulmaz.</summary>
+    [StaFact]
+    public void Reduced_motion_builds_no_beads_at_all()
     {
         var view = NewView(false);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
 
-        var building = view.NodeVisuals["OSYS.Data.Core"];
-        Assert.False(building.IsPulsing);
-        Assert.False(building.PulseHost.HasAnimatedProperties);
-        Assert.Equal(1.0, building.PulseHost.Opacity);
+        Assert.Null(view.NodeVisuals["OSYS.Data.Core"].Beads);
+        Assert.Null(view.BeadsClock);
     }
 
-    /// <summary>[M-2] Canlı reduced-motion. <b>Eski iddia:</b> bu test ayrıca akan kenar dash saatinin
-    /// (<c>SharedDashClock</c>) durduğunu pinliyordu — v1.3.0 §2.3 kalıcı kenar ağını kaldırdı, saatin sahibi
-    /// kalmadı.</summary>
+    /// <summary>[M-2] Canlı reduced-motion. <b>Eski iddia:</b> bu test akan kenar dash saatinin
+    /// (<c>SharedDashClock</c>) ve building NABZININ durduğunu pinliyordu — kalıcı kenar ağı kalktı, nabzın
+    /// yerini beads aldı.</summary>
     [StaFact]
     public void Flipping_the_motion_signal_at_runtime_stops_the_building_animation_immediately()
     {
@@ -246,15 +294,16 @@ public class GraphRenderTests
         var view = NewView(true, motion: motion);
         view.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent)); // aboneliği kur
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
-        Assert.True(view.NodeVisuals["OSYS.Data.Core"].IsPulsing);
+        Assert.NotNull(view.BeadsClock);
 
         motion.Flip(false); // OS reduced-motion'a geçti — bir sonraki UpdateStatuses BEKLENMEZ
 
-        Assert.False(view.NodeVisuals["OSYS.Data.Core"].IsPulsing);
+        Assert.Null(view.BeadsClock);
+        Assert.False(view.NodeVisuals["OSYS.Data.Core"].BeadsVisible);
 
         view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
         motion.Flip(true); // abonelik bırakıldı → view artık tepki vermez
-        Assert.False(view.NodeVisuals["OSYS.Data.Core"].IsPulsing);
+        Assert.Null(view.BeadsClock);
     }
 
     private sealed class FakeMotionSettings : IMotionSettings

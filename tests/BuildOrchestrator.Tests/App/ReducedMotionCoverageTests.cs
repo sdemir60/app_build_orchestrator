@@ -93,7 +93,8 @@ public class ReducedMotionCoverageTests
              new("OSYS.Data", 1, GraphStatus.Discovered)],
             [new("OSYS.Base", "OSYS.Data")]);
 
-        Assert.False(view.NodeVisuals["OSYS.Base"].IsPulsing);                       // building animasyonu yok
+        Assert.Null(view.NodeVisuals["OSYS.Base"].Beads);                            // beads yörüngesi HİÇ kurulmaz
+        Assert.Null(view.BeadsClock);                                                // paylaşımlı saat doğmaz
         Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity)); // reveal ANİ (dalga yok)
     }
 

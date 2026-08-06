@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
@@ -58,10 +59,6 @@ public partial class GraphView : UserControl
     public const double NodeCornerRadius = 4.0;
     /// <summary>Seçim halkasının kareden dışarı taşma payı: 2px offset + yarım kalem.</summary>
     public const double SelectionRingInset = 3.0;
-    /// <summary>Building düğümün nabzı — DS <c>ds-node-pulse 1.6s var(--ease-in-out) infinite</c>.</summary>
-    public const double PulseMs = 1600.0;
-    /// <summary>Nabzın orta noktadaki opaklığı (DS <c>@keyframes: 50% { opacity: .5 }</c>).</summary>
-    public const double PulseMinOpacity = 0.5;
     /// <summary>Glyph, düğüm kenarının bu kadarıdır (§2.3: "node'un %52'si").</summary>
     public const double IconFactor = 0.52;
     /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
@@ -100,6 +97,24 @@ public partial class GraphView : UserControl
     /// panel yeniden boyutlandığında tek bir nesneyi mutasyona uğratmak yeter (düğüm başına transform yok).
     /// Donmaz — donmuş bir transform güncellenemezdi.</summary>
     private readonly ScaleTransform _iconScale = new(1, 1);
+
+    /// <summary>[quiet] TÜM beads yörüngelerinin PAYLAŞTIĞI tek saat. Düğüm boyutu graf genelinde tek
+    /// olduğu için çevre de tektir ⇒ tek saat bütün noktaları faz-kilitli döndürür. N paralel derlemede N
+    /// ayrı sonsuz animasyon kurmak timing engine'i gereksiz yere meşgul ederdi.</summary>
+    private AnimationClock? _beadsClock;
+    private BeadsGeometry _beadsGeometry;
+    private DoubleCollection _beadsDash = GraphBeads.DashArrayFor(GraphBeads.For(QuietGraphLayout.MinNodeSize));
+    /// <summary>Son building düğüm bittikten sonra saati bırakan TEK ATIMLIK tetik (§2.3: noktalar dönerken
+    /// söner). Talep üzerine kurulur; yeni bir building doğarsa iptal edilir.</summary>
+    private DispatcherTimer? _beadsSpindown;
+
+    /// <summary>[quiet] Eğri token'ları ÖNBELLEKLENİR. Süreler bilerek her başlangıçta taze okunur
+    /// (reduced-motion onları CANLI 0'a çeker) ama <c>KeySpline</c>'lar sabittir — <c>Motion.xaml</c>'in
+    /// kendi başlığı bunu yazar: "0 süreli bir animasyonda eğri şekli zaten etkisizdir". Ölçüldü: 177
+    /// düğümlük bir statü tick'inde düğüm başına iki kaynak yürüyüşü (354 <c>TryFindResource</c>) tick'in
+    /// gözlenebilir bir bölümünü yiyordu.</summary>
+    private KeySpline? _easeOut;
+    private KeySpline? _easeStandard;
 
     private QuietLayoutResult _layout = QuietGraphLayout.Compute([], new Size(0, 0));
     private string? _selectedNode;
@@ -173,6 +188,14 @@ public partial class GraphView : UserControl
         ShowEmptyState(true);
     }
 
+    /// <summary>Giriş eğrisi (ease-out) — ilk kullanımda çözülür, sonra önbellekten.</summary>
+    private KeySpline EaseOut =>
+        _easeOut ??= MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+
+    /// <summary>Durum değişimi eğrisi (ease-standard) — aynı gerekçe.</summary>
+    private KeySpline EaseStandard =>
+        _easeStandard ??= MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+
     private static DoubleCollection FrozenDash(double[] values)
     {
         var collection = new DoubleCollection(values);
@@ -209,6 +232,9 @@ public partial class GraphView : UserControl
     {
         // [E3/T41] Reveal ortasında unload olursa hero'yu bırak — aksi halde bir sonraki hero sonsuza dek bloke olurdu.
         _reveal.Release();
+        // [M-d] Paylaşımlı beads saati ve onun spin-down tetiği: view ağaçtan düşse bile timing engine 30fps'te
+        // uyanık kalır, DispatcherTimer ise view'ı (ve tüm graf ağacını) kökler.
+        ReleaseBeadsClock();
     }
 
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
@@ -218,7 +244,8 @@ public partial class GraphView : UserControl
     internal void ReapplyMotion()
     {
         foreach (var slot in _slotOrder)
-            ApplyBuildingPulse(slot.Visual);
+            ApplyBeads(slot.Visual);
+        if (!AnimationsEnabledProvider()) ReleaseBeadsClock();
     }
 
     /// <summary>Seçili düğüm (null = seçim yok). Değişince: halka + sönme + kamera güncellenir.</summary>
@@ -325,8 +352,7 @@ public partial class GraphView : UserControl
     {
         _edgeLayer.Children.Clear();
         _nodeLayer.Children.Clear();
-        foreach (var stale in _slotOrder)
-            StopPulse(stale.Visual);
+        ReleaseBeadsClock(); // eski görsellerin yörüngeleri atılıyor — saat onlarla birlikte bırakılır
         _slots.Clear();
         _slotOrder.Clear();
         _neighbours.Clear();
@@ -439,6 +465,20 @@ public partial class GraphView : UserControl
         double ring = size + SelectionRingInset * 2;
         _iconScale.ScaleX = _iconScale.ScaleY = size * IconFactor / IconViewBox;
 
+        // Düğüm boyutu değiştiyse yörüngenin ÇEVRESİ de değişir ⇒ desen ve paylaşımlı saat yeniden kurulur;
+        // aksi halde noktalar yeni çevreye tam bölünmez ve ek yerinde bindirirdi.
+        var beads = GraphBeads.For(size);
+        if (beads != _beadsGeometry)
+        {
+            _beadsGeometry = beads;
+            _beadsDash = GraphBeads.DashArrayFor(beads);
+            bool wasSpinning = _beadsClock is not null;
+            ReleaseBeadsClock();
+            foreach (var slot in _slotOrder)
+                if (slot.Visual.Beads is { } orbit) ApplyBeadsGeometry(orbit);
+            if (wasSpinning) EnsureBeadsClock();
+        }
+
         // Dünya tuvali PANELİN kendisidir: ölçek 1'de graf tam oturur, öteleme 0'dır.
         World.Width = Math.Max(0, ViewportSize.Width);
         World.Height = Math.Max(0, ViewportSize.Height);
@@ -448,7 +488,6 @@ public partial class GraphView : UserControl
             var visual = slot.Visual;
             visual.Cell.Width = visual.Cell.Height = size;
             visual.Body.Width = visual.Body.Height = size;
-            visual.PulseHost.Width = visual.PulseHost.Height = size;
             visual.Square.Width = visual.Square.Height = size;
             visual.SelectionRing.Width = visual.SelectionRing.Height = ring;
         }
@@ -493,13 +532,11 @@ public partial class GraphView : UserControl
             Children = { icon },
         };
 
-        var pulseHost = new Grid { Children = { selectionRing, square, iconBox } };
-
         var body = new GraphNodeBody
         {
             Background = Brushes.Transparent, // tıklama alanı
             Cursor = Cursors.Hand,
-            Children = { pulseHost },
+            Children = { selectionRing, square, iconBox },
             // [quiet] §2.3: düğümün üstünde ad yoktur — TAM proje adı tooltip'ten gelir. Düz metin atanır:
             // WPF ToolTip kontrolünü ancak gösterirken kurar, dolayısıyla düğüm başına HİÇBİR ek nesne
             // kurulmaz (WillBuildDot.cs ile aynı desen).
@@ -524,7 +561,6 @@ public partial class GraphView : UserControl
             Model = node,
             Cell = cell,
             Body = body,
-            PulseHost = pulseHost,
             Square = square,
             SelectionRing = selectionRing,
             Icon = icon,
@@ -578,45 +614,131 @@ public partial class GraphView : UserControl
         // StrokeThickness çarpanıdır: 1.5px'lik çerçevede {2,2} = 3px dolu / 3px boş.
         visual.Square.StrokeDashArray = dashed ? DiscoveredDash : SolidDash;
 
-        ApplyBuildingPulse(visual);
+        ApplyBeads(visual);
     }
 
-    /// <summary>
-    /// [I-3] DS <c>ds-node-pulse</c> paritesi: building düğümün karesi 1.6s'de <c>1 → 0.5 → 1</c> nefes alır
-    /// (<c>ease-in-out</c>, sonsuz). Reduced-motion'da HİÇ kurulmaz ve sinyal TAZE okunur.
-    ///
-    /// <para>Zaten dönen bir nabız YENİDEN BAŞLATILMAZ: <c>UpdateStatuses</c> koşarken saniyede birkaç kez
-    /// çağrılır ve her çağrıda animasyonu baştan kurmak nabzı "takılı" gösterirdi.</para>
-    /// </summary>
-    private void ApplyBuildingPulse(GraphNodeVisual visual)
-    {
-        bool shouldPulse = visual.Model.Status == GraphStatus.Building && AnimationsEnabledProvider();
-        if (shouldPulse == visual.IsPulsing) return;
-        visual.IsPulsing = shouldPulse;
+    // ---------------------------------------------------------------- beads (§2.3 building animasyonu)
 
-        if (!shouldPulse)
+    /// <summary>
+    /// [quiet] §2.3 "Building animasyonu — beads": derlenen düğümün 2.8px dışında dolanan sık amber
+    /// noktalar. Yörünge DOM'da sürekli durur, yalnız OPAKLIĞI değişir — girişte 420ms, çıkışta 640ms
+    /// ease-out; noktalar DÖNERKEN söner, donup kaybolmaz.
+    ///
+    /// <para>Zaten doğru durumdaki bir yörünge YENİDEN kurulmaz (<see cref="GraphNodeVisual.BeadsVisible"/>):
+    /// koşarken statü itişi saniyede birkaç kez gelir ve her çağrıda animasyonu baştan başlatmak yörüngeyi
+    /// "takılı" gösterirdi.</para>
+    /// </summary>
+    private void ApplyBeads(GraphNodeVisual visual)
+    {
+        bool live = visual.Model.Status == GraphStatus.Building && AnimationsEnabledProvider();
+        if (live == visual.BeadsVisible) return;
+        visual.BeadsVisible = live;
+
+        if (live)
         {
-            StopPulse(visual);
+            _beadsSpindown?.Stop(); // yeni bir cephe doğdu — saat bırakılmayacak
+            EnsureBeads(visual);
+            EnsureBeadsClock();
+            FadeBeads(visual, 1.0, GraphBeads.FadeInMs);
             return;
         }
 
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
-        var half = TimeSpan.FromMilliseconds(PulseMs / 2);
-        var full = TimeSpan.FromMilliseconds(PulseMs);
-        var pulse = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
-        pulse.KeyFrames.Add(new DiscreteDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        pulse.KeyFrames.Add(new SplineDoubleKeyFrame(PulseMinOpacity, KeyTime.FromTimeSpan(half), spline));
-        pulse.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(full), spline));
-        Timeline.SetDesiredFrameRate(pulse, DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
-        visual.PulseHost.BeginAnimation(OpacityProperty, pulse);
+        if (visual.Beads is null) return;
+        FadeBeads(visual, 0.0, GraphBeads.FadeOutMs);
+        ArmBeadsSpindown();
     }
 
-    /// <summary>[M-d] Nabız animasyonunu (varsa) bırakıp opaklığı 1.0'a sabitler — hem building'den çıkan
-    /// düğümler hem <see cref="ApplyGraph"/>'ta atılan eski görseller için TEK durdurma yolu.</summary>
-    private static void StopPulse(GraphNodeVisual visual)
+    private void FadeBeads(GraphNodeVisual visual, double target, double durationMs)
     {
-        visual.PulseHost.BeginAnimation(OpacityProperty, null);
-        visual.PulseHost.Opacity = 1.0;
+        visual.Beads!.BeginAnimation(OpacityProperty,
+            MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut),
+            HandoffBehavior.SnapshotAndReplace);
+    }
+
+    /// <summary>Yörüngeyi TALEP ÜZERİNE kurar (bir kez) — düğümlerin çoğu bir koşuda hiç derlenmez.</summary>
+    private void EnsureBeads(GraphNodeVisual visual)
+    {
+        if (visual.Beads is not null) return;
+
+        var orbit = new Rectangle
+        {
+            Fill = null,
+            StrokeThickness = GraphBeads.StrokeThickness,
+            StrokeDashCap = PenLineCap.Round,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Opacity = 0.0, // giriş animasyonu 0'dan başlar
+        };
+        orbit.SetResourceReference(Shape.StrokeProperty, "Brush.AmberText");
+        ApplyBeadsGeometry(orbit);
+        // Kareyi ÖRTMEZ (2.8px dışında) ama gövdenin DIŞINDA durur: gövde tıklama alanıdır ve yörünge
+        // taşmasının hit-test'e karışmaması gerekir.
+        visual.Cell.Children.Add(orbit);
+        visual.Beads = orbit;
+        if (_beadsClock is { } clock) orbit.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, clock);
+    }
+
+    private void ApplyBeadsGeometry(Rectangle orbit)
+    {
+        orbit.Width = orbit.Height = _beadsGeometry.Side;
+        orbit.RadiusX = orbit.RadiusY = _beadsGeometry.CornerRadius;
+        orbit.StrokeDashArray = _beadsDash;
+    }
+
+    /// <summary>Paylaşımlı saati kurar (yoksa) ve mevcut TÜM yörüngelere bağlar.</summary>
+    private void EnsureBeadsClock()
+    {
+        if (_beadsClock is not null) return;
+
+        var spin = new DoubleAnimation
+        {
+            From = 0,
+            To = -_beadsGeometry.Perimeter,
+            Duration = TimeSpan.FromMilliseconds(GraphBeads.CycleMs),
+            RepeatBehavior = RepeatBehavior.Forever,
+        };
+        Timeline.SetDesiredFrameRate(spin, DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
+        _beadsClock = spin.CreateClock();
+
+        foreach (var slot in _slotOrder)
+            slot.Visual.Beads?.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, _beadsClock);
+    }
+
+    /// <summary>§2.3: saat bitişten <see cref="GraphBeads.SpinAfterStopMs"/> sonra bırakılır — çıkış
+    /// animasyonu (640ms) o pencerenin içinde biter, yani noktalar dönerken söner.</summary>
+    private void ArmBeadsSpindown()
+    {
+        _beadsSpindown ??= new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(GraphBeads.SpinAfterStopMs),
+        };
+        if (_beadsSpindown.Tag is null)
+        {
+            _beadsSpindown.Tag = this; // abonelik BİR kez kurulur
+            _beadsSpindown.Tick += (_, _) => HandleBeadsSpindownTick();
+        }
+        _beadsSpindown.Stop();
+        _beadsSpindown.Start();
+    }
+
+    /// <summary>Spin-down penceresi doldu. Bu arada yeni bir cephe doğduysa saat KORUNUR — tetik yalnız
+    /// gerçekten boşalmış bir grafta saati bırakır.</summary>
+    internal void HandleBeadsSpindownTick()
+    {
+        _beadsSpindown?.Stop();
+        foreach (var slot in _slotOrder)
+            if (slot.Visual.BeadsVisible) return;
+        ReleaseBeadsClock();
+    }
+
+    private void ReleaseBeadsClock()
+    {
+        _beadsSpindown?.Stop();
+        if (_beadsClock is null) return;
+        foreach (var slot in _slotOrder)
+            slot.Visual.Beads?.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, null);
+        _beadsClock = null;
     }
 
     // ---------------------------------------------------------------- seçim (halka + sönme)
@@ -679,11 +801,10 @@ public partial class GraphView : UserControl
             return;
         }
 
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
         // Bekleme bir BeginTime'dır, bir timer DEĞİL: CSS'teki `transition ... 700ms 2400ms` hilesinin
         // birebir karşılığı. Bekleme boyunca değer TAM OPAK tutulur (CSS `both` fill paritesi).
         double durationMs = leftBuilding ? GraphNodeOpacity.FadeMs : GraphNodeOpacity.GlideMs;
-        var animation = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), spline);
+        var animation = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseStandard);
         if (leftBuilding)
         {
             animation.BeginTime = TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs);
@@ -750,14 +871,12 @@ public partial class GraphView : UserControl
 
         var begin = TimeSpan.FromMilliseconds(delayMs);
         var duration = TimeSpan.FromMilliseconds(RevealMs);
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
-
-        var fade = MotionTokens.SplineTo(1.0, duration, spline);
+        var fade = MotionTokens.SplineTo(1.0, duration, EaseOut);
         fade.BeginTime = begin;
         fade.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
         visual.Cell.BeginAnimation(OpacityProperty, fade);
 
-        var slide = MotionTokens.SplineTo(0.0, duration, spline);
+        var slide = MotionTokens.SplineTo(0.0, duration, EaseOut);
         slide.BeginTime = begin;
         slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
         rise.BeginAnimation(TranslateTransform.YProperty, slide);
@@ -961,6 +1080,10 @@ public partial class GraphView : UserControl
     internal double NodeSize => _layout.NodeSize;
     /// <summary>Canlı düğüm adımı.</summary>
     internal double Pitch => _layout.Pitch;
+    /// <summary>TÜM beads yörüngelerinin paylaştığı saat (hiç dönmüyorsa <c>null</c>).</summary>
+    internal AnimationClock? BeadsClock => _beadsClock;
+    /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>
+    internal BeadsGeometry BeadsGeometry => _beadsGeometry;
     /// <summary>Bir düğümün opaklığını süren animasyon (anında uygulandıysa <c>null</c>) — hold-fade'in
     /// zamanlamasını pinleyen testlerin okuduğu yüzey.</summary>
     internal Timeline? OpacityAnimationOf(string nodeName) =>

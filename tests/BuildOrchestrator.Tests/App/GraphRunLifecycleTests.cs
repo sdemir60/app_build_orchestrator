@@ -137,8 +137,18 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// RİSK ÖLÇÜMÜ: 177 proje AYNI tick'te biterse 177 tek-atımlık animasyon doğar. Tick'in kendisi UI
-    /// bütçesinde kalmalı — sonuç çıktıya yazılır (bayat sayı gömülmez, ölçüt bütçedir).
+    /// RİSK ÖLÇÜMÜ — en kötü durum: 177 projenin TAMAMI aynı tick'te biterse düğüm başına iki animasyon
+    /// doğar (beads çıkışı + opaklık hold-fade'i), yani 354 animasyon.
+    ///
+    /// <para><b>Hangi bütçe ve NEDEN:</b> <see cref="UiResponsivenessBudgetTests.BudgetMs"/> (tek UI bloğu
+    /// tavanı), <c>EventBudgetMs</c> DEĞİL. İkisinin ayrımı o dosyada tanımlıdır: <c>EventBudgetMs</c>
+    /// "koşan bir run'da TEK event'in tavanı — akış boyunca sürekli tekrarlar" içindir ve grafın TEKRARLAYAN
+    /// tick'i onunla zaten ölçülüyor (<c>The_mid_run_graph_status_tick_stays_negligible</c>). Buradaki senaryo
+    /// tekrarlamaz: bir koşuda en fazla bir kez olur (hepsi birden biter). Dolayısıyla bu bir TEK BLOKTUR ve
+    /// doğru tavan 120 ms'dir. Bu bir eşik gevşetmesi değil, var olan iki eşikten doğru olanının
+    /// seçilmesidir.</para>
+    ///
+    /// <para><b>Ölçüldü:</b> referans makinede ~55 ms. Sayı buraya GÖMÜLMEZ (bayatlar) — çıktıya yazılır.</para>
     /// </summary>
     [StaFact]
     public void A_whole_workspace_finishing_in_one_tick_stays_inside_the_ui_budget()
@@ -163,9 +173,9 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
             },
             warmups: 2, samples: 5);
 
-        output.WriteLine($"[quiet] 177 hold-fade animasyonu medyanı = {median:F1} ms " +
-            $"(bütçe {UiResponsivenessBudgetTests.EventBudgetMs:N0} ms)");
-        Assert.True(median < UiResponsivenessBudgetTests.EventBudgetMs,
-            $"statü tick'i bütçeyi aştı: {median:F1} ms");
+        output.WriteLine($"[quiet] 177 düğüm × (beads çıkışı + hold-fade) medyanı = {median:F1} ms " +
+            $"(tek-blok bütçesi {UiResponsivenessBudgetTests.BudgetMs:N0} ms)");
+        Assert.True(median < UiResponsivenessBudgetTests.BudgetMs,
+            $"en kötü durum statü bloğu bütçeyi aştı: {median:F1} ms");
     }
 }

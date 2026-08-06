@@ -77,12 +77,12 @@ internal sealed class GraphNodeSlot
 /// [quiet] Tek bir graf düğümünün WPF görselleri. Statü değiştiğinde bu parçalar YERİNDE güncellenir —
 /// şablon yeniden kurulmaz; panel yeniden boyutlandığında da yalnız ölçü/konum yazılır.
 ///
-/// <para><b>ÜÇ ayrı opaklık taşıyıcısı:</b> <see cref="Cell"/> açılış dalgasının hedefi, <see cref="Body"/>
-/// koşu/seçim opaklığının hedefi, <see cref="PulseHost"/> ise building animasyonunun hedefidir. Aynı elemanda
-/// olsalardı biri diğerinin değerini ezerdi.</para>
+/// <para><b>İKİ ayrı opaklık taşıyıcısı:</b> <see cref="Cell"/> açılış dalgasının hedefi, <see cref="Body"/>
+/// koşu/seçim opaklığının hedefidir. Aynı elemanda olsalardı biri diğerinin değerini ezerdi.</para>
 ///
 /// <para>v1.3.0 §2.3 ile SÖKÜLENLER: <c>Label</c> (node üstü ad etiketi), <c>Badge*</c> (graf içi dep-issue
-/// rozeti) ve <c>SquareHost</c> (yalnız rozeti kareden ayırmak için vardı).</para>
+/// rozeti), <c>SquareHost</c> (yalnız rozeti kareden ayırmak için vardı) ve <c>PulseHost</c> — building
+/// nabzının yerini <see cref="Beads"/> aldı ve o, kareyi SÖNDÜRMEK yerine dışında dolanıyor.</para>
 /// </summary>
 internal sealed class GraphNodeVisual
 {
@@ -92,11 +92,6 @@ internal sealed class GraphNodeVisual
     /// <summary>Tıklanabilir gövde — koşu/seçim opaklığının hedefi. [A13/T5] Ekran-okuyucu adını TAŞIYAN öğe
     /// de budur (tıklanan öğe = UIA'da adlanan öğe).</summary>
     public required GraphNodeBody Body { get; init; }
-    /// <summary>Halka + kare + ikon kabı — building animasyonunun hedefi.</summary>
-    public required Grid PulseHost { get; init; }
-    /// <summary>Building animasyonu şu an dönüyor mu — her <c>UpdateStatuses</c> tick'inde animasyonun baştan
-    /// başlatılmasını (takılmasını) önler.</summary>
-    public bool IsPulsing { get; set; }
     /// <summary>Statü renkli KARE (radius-sm). discovered'ta kesikli çerçeve — WPF Border dashed
     /// desteklemediği için Rectangle.</summary>
     public required Rectangle Square { get; init; }
@@ -104,6 +99,12 @@ internal sealed class GraphNodeVisual
     public required Rectangle SelectionRing { get; init; }
     /// <summary>Lucide <c>box</c> glyph'i — node'un %52'si (§2.3).</summary>
     public required Path Icon { get; init; }
+    /// <summary>[quiet] Building yörüngesi (§2.3 "beads") — TALEP ÜZERİNE, düğüm İLK kez derlenmeye
+    /// başladığında kurulur ve bir daha sökülmez (yalnız opaklığı 0'a iner). Reduced-motion'da hiç doğmaz.</summary>
+    public Rectangle? Beads { get; set; }
+    /// <summary>Yörünge şu an GÖRÜNÜR mü — her <c>UpdateStatuses</c> tick'inde giriş/çıkış animasyonunun
+    /// baştan başlatılmasını (takılmasını) önler.</summary>
+    public bool BeadsVisible { get; set; }
     /// <summary>[quiet] En son UYGULANAN opaklık hedefi. "Değişmediyse dokunma" kapısının girdisi: koşarken
     /// statü itişi saniyede birkaç kez gelir ve her seferinde 3.1 saniyelik bir hold-fade doğurmak sönmeyi
     /// sonsuza dek ertelerdi (kameradaki Zeno korumasının eşi). <c>NaN</c> = henüz hiç uygulanmadı.</summary>
