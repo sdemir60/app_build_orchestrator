@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <script src="./ds-base.js"></script>
+  <script src="./app/build-data.js"></script>
+</helmet>
+<div style="height:100vh; background:var(--surface-sunken); box-sizing:border-box; overflow:auto">
+<div style="height:100%; min-height:620px; min-width:1240px; display:flex; flex-direction:column; background:var(--surface-sunken); box-sizing:border-box; font-family:var(--font-sans, 'Geist', sans-serif)">
+  <sc-if value="{{ showBar }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:none; display:flex; align-items:center; gap:10px; height:44px; padding:0 14px; box-sizing:border-box; user-select:none; min-width:0">
+      <img src="assets/app-icon.svg" alt="Build Orchestrator" style="width:18px; height:18px; border-radius:4px; flex:none"></img>
+      <span style="font-size:11px; font-weight:500; letter-spacing:0.07em; text-transform:uppercase; color:var(--text-faint, #54545c); white-space:nowrap">Build Orchestrator · UI prototype</span>
+      <div style="display:flex; gap:4px; margin-left:12px; flex:none">
+        <sc-for list="{{ scenes }}" as="s" hint-placeholder-count="7">
+          <button type="button" title="{{ s.desc }}" onClick="{{ s.pick }}"
+            style="display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 9px; background:{{ s.bg }}; border:1px solid {{ s.bd }}; border-radius:4px; color:{{ s.fg }}; font-family:inherit; font-size:12px; font-weight:500; line-height:1; cursor:pointer; white-space:nowrap"
+            style-hover="background:var(--surface-overlay, #202024)">
+            <span style="font-family:var(--font-mono, monospace); font-size:11px; opacity:0.75">{{ s.id }}</span>
+            <span>{{ s.label }}</span>
+          </button>
+        </sc-for>
+      </div>
+      <span style="font-size:12px; color:var(--text-dim, #76767e); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0">{{ sceneDesc }}</span>
+    </div>
+  </sc-if>
+  <div style="flex:1; min-height:0; padding:0 12px 12px; box-sizing:border-box">
+    <x-import component-from-global-scope="BuildApp" from="./app/BuildApp.jsx"
+      scene="{{ scene }}" auto-play="{{ autoPlay }}" sim-speed="{{ simSpeed }}" logo-base="assets"
+      hint-size="100%,100%"></x-import>
+  </div>
+</div>
+</div>
+</x-dc>
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#0a0a0c"/><rect x="30" y="34" width="40" height="7" rx="3.5" fill="#54545c"/><rect x="30" y="46" width="28" height="7" rx="3.5" fill="#3a3a41"/><path d="M62 46 L74 49.5 L62 53 Z" fill="#eda10f"/><rect x="30" y="58" width="40" height="7" rx="3.5" fill="#54545c"/></svg></template>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;autoPlay&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Demo&quot;, &quot;description&quot;: &quot;Auto-start the simulated build on the Hero scene&quot; },
+  &quot;simSpeed&quot;: { &quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 1, &quot;min&quot;: 0.5, &quot;max&quot;: 2.5, &quot;step&quot;: 0.25, &quot;unit&quot;: &quot;×&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Demo&quot;, &quot;description&quot;: &quot;Simulation speed&quot; },
+  &quot;showSceneBar&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Demo&quot;, &quot;description&quot;: &quot;Show the scene picker strip at the top&quot; }
+}">
+class Component extends DCLogic {
+  state = { scene: 1 };
+
+  scenes() {
+    return [
+      { id: 1, label: 'Hero', desc: 'Live parallel build — the frontier flows in sync across graph and list; finishes clean.' },
+      { id: 2, label: 'Detail', desc: 'A card selected: full log, Back, node centered in the graph; sim keeps running.' },
+      { id: 3, label: 'Failure', desc: 'Five failures — Sales.Core mid-chain, dependents still build; failed cluster overflows to “+2 more”.' },
+      { id: 4, label: 'Up to date', desc: 'Everything current — quick check, nothing to build; calm green tone.' },
+      { id: 5, label: 'First run', desc: 'Empty state: no repo selected; warm invite + Choose Folder.' },
+      { id: 6, label: 'Ready', desc: 'Idle + will-build dots; branch and worktree pickers open.' },
+      { id: 7, label: 'Graph focus', desc: 'Graph enlarged, node selected. Reduced-motion: static layout, color only.' },
+    ];
+  }
+
+  renderVals() {
+    const scene = this.state.scene;
+    const list = this.scenes();
+    return {
+      scene,
+      autoPlay: this.props.autoPlay ?? true,
+      simSpeed: this.props.simSpeed ?? 1,
+      showBar: this.props.showSceneBar ?? true,
+      sceneDesc: (list[scene - 1] || list[0]).desc,
+      scenes: list.map((s) => ({
+        ...s,
+        active: s.id === scene,
+        pick: () => this.setState({ scene: s.id }),
+        bg: s.id === scene ? 'var(--amber-soft, rgba(237,161,15,0.12))' : 'var(--surface-raised, #1a1a1e)',
+        bd: s.id === scene ? 'var(--amber-border, rgba(237,161,15,0.32))' : 'var(--border, #2a2a30)',
+        fg: s.id === scene ? 'var(--amber-text, #f1ab2e)' : 'var(--text-secondary, #a9a9b0)',
+      })),
+    };
+  }
+}
+</script>
+</body>
+</html>
