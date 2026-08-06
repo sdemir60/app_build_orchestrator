@@ -1210,9 +1210,19 @@ Edge styling encodes the run: default hairline; amber with a flowing dash toward
 red toward a finished one; a static red dash along a branch carrying a failure; amber (or red) at 1.6 px and
 full opacity when it touches the selection. Selecting dims everything else — nodes to 25 %, edges to 16 %.
 
-The camera follows automatically: the selected node, else the centre of gravity of the building frontier, else
-the centre; 460 ms ease-in-out, scale fitted to the panel and clamped to 0.68–1.08. A small-deviation threshold
-prevents jitter.
+The camera follows automatically. Focus goes to the selected node, else to the centre of gravity of the
+building frontier, else to the centre of the canvas; the move is a 460 ms ease-in-out, and the translation is
+clamped by `GraphCamera.ClampPan` so an axis that fits is centred and one that does not stops at a 12 px
+margin. Scale is a target as well, not a constant: `ResolveScale` gives a selection the fixed readable
+`SelectionScale` (1.1), frames a building frontier's bounding box inside the `FollowMinScale`–`FollowMaxScale`
+follow band (0.85–1.4), and with neither returns to the overview `FitScale` — the panel-fitted scale clamped to
+`MinScale`–`MaxScale` (0.68–1.08). Inside the full-detail band (below) the scale is *always* that overview fit.
+
+Two thresholds keep the camera still: a focus that moved less than `FrontierRetargetThresholdPx` (8 px) and a
+scale that changed by less than `ScaleRetargetThreshold` (0.05) do not retarget. Without them the 200 ms status
+tick would restart the 460 ms transition faster than it can finish and the camera would never arrive. Both are
+latched **only** when they came from the frontier branch — a selection or an overview writes `null` — so a
+stale frontier value can never suppress the first legitimate move after one.
 
 Rendering stays on the **Shapes path** — every node and edge is a `UIElement`, so hit-testing and tooltips are
 native. A migration to `DrawingVisual` layers was prepared and then **not performed**, because measurement
@@ -1220,8 +1230,53 @@ showed the bottleneck is visual-tree *construction* (64–72 %) and WPF's measur
 with pure layout arithmetic at 0.03 % — a drawing-cost optimization would have targeted the wrong thing.
 What was done instead: viewport culling (off-screen nodes and edges are never constructed), lazy badges and
 label level-of-detail (17 → 9 objects per node), and a status fast-path with shared frozen dash collections so
-the 200 ms status tick does not touch unchanged nodes. Full detail holds up to 150 nodes; above that, culling
-and LOD carry it.
+the 200 ms status tick does not touch unchanged nodes.
+
+**One gate, not five.** Culling, label level of detail, the edge fog, the camera's scale policy and the manual
+gestures all hang off the same number — `GraphView.FullDetailMaxNodes` (150). There is no second threshold, so
+a graph of 150 nodes or fewer is not merely *expected* to look and behave exactly as it always did: it is
+structurally unable to do otherwise, since every one of those mechanisms reads the same flag. Above the gate
+the panel stops being a picture of the whole graph and becomes a camera over one too large to read at once.
+
+**Fog.** Edges the run has not touched fall to `EdgeStyleResolver.DimmedOpacity` — the very constant the
+selection dim uses, not a second one beside it — while edges reaching a succeeded or failed node hold at
+`FogFinishedOpacity`, so a finished region quietens without its story being erased. Two kinds are exempt: an
+edge flowing into a building target, and an edge carrying a failure (a failed source, or one with a dependency
+issue). While anything is selected the fog is inert — selection dimming already owns that state.
+
+**Labels.** The decision is per layer and purely geometric: `GraphLayout.LabelsFit` asks whether the layer's
+node spacing is at least the measured width of its widest label. Scale does not enter it, and that is a
+conclusion rather than an omission — labels live *under* the camera's `RenderTransform`, so on screen the
+spacing and the label are multiplied by the same factor and overlap is scale-invariant. A label that overlaps
+its neighbour overlaps at every zoom; one that fits, fits at every zoom. A zoom threshold would be
+geometrically indefensible. Over the layer decision sits a focus exemption: a node that is building, or that is
+selected, carries its name whatever its layer decided. The exemption deliberately does not spread to the
+selection's neighbours — selection already dims everything that is not one, and a second highlight layer buys
+nothing. Labels are built on demand and, once built, are never torn down; they only collapse, for the same
+reason culling's materialization is one-way. Below the gate no label ever drops. A node that loses its label
+does not become anonymous: it carries a tooltip with the full project name.
+
+**Gestures.** Pressing the left button on empty ground and moving past the platform drag threshold
+(`SystemParameters.MinimumHorizontalDragDistance`/`MinimumVerticalDragDistance`) starts a pan — the cursor
+becomes a hand and the mouse is captured. Releasing without ever crossing that threshold is a click and keeps
+its established meaning: it clears the selection. Losing capture instead (Alt+Tab, a popup) is a *cancel*, not
+a release, and leaves the selection alone. The wheel zooms at the cursor — the world point under the pointer
+stays under it — by a multiplicative `WheelZoomStep` per notch, inside the wider manual band
+`ManualMinScale`–`ManualMaxScale` (0.45–2.0).
+Entering manual mode freezes an in-flight camera animation at the frame it is on rather than letting it snap to
+its target. Culling keeps working while the user navigates, against the camera they are holding, so no empty
+strip is left behind them. Every one of these paths clamps through the same `ClampPan`.
+
+**Handing the camera back.** `GraphCamera.FollowResumeDelayMs` (4 s) after the last manual input, follow takes
+over again — but only if there is somewhere to go: a building frontier or a selection. With no target the user stays
+where they are, because dragging them back to the overview would take away the place they navigated to. While
+follow is suspended *and* a target exists, a `FOLLOW PAUSED` pill appears in the panel header; it is clickable
+and returns the camera immediately. So does an explicit selection — clicking a project in the list is the
+user's own navigation. *Clearing* a selection does not, because `null` is not a place to go. On resume the two
+retarget latches are cleared, so a value stale from before the excursion cannot suppress a legitimate target.
+While the button is held the delay never starts counting: holding still to read is also a gesture. Nothing new
+runs continuously — the trigger is armed once, re-arms itself only for the time remaining, and is never armed
+at all while there is no target.
 
 All animations read the reduced-motion setting **fresh at start**; durations and easings come from
 `Duration.*`/`KeySpline.*` resources and colours from `Brush.*` resources — no hex, no milliseconds inline.
@@ -1467,8 +1522,12 @@ at 50 % with a 1 px offset. Dialogs trap focus; popovers manage it explicitly. `
 set from one central name table so the same element cannot be named two ways, and the ribbon acts as a live
 region. Contrast is asserted by test for every text token, including the dim ones.
 
-Known gap: graph nodes are not keyboard-navigable and carry no automation name, so the label level-of-detail's
-only fallback is a mouse-hover tooltip.
+Known gap: graph nodes are not keyboard-navigable. They are not silent, though — each node body is a `Button`
+in the automation tree, named with the project and its status from the same central table and refreshed by the
+status tick, and it answers `Invoke` through the exact activation path a click takes. What is missing is the
+way in: there is no tab order and no arrow-key route into the canvas, so a pointer or a screen reader's invoke
+is the only way to reach a node. The name earns its keep above the full-detail gate, where the label level of
+detail leaves squares unlabelled — a sighted user gets the tooltip there, a screen reader gets the name.
 
 ---
 
@@ -1660,6 +1719,10 @@ do, and how the interface works around each — useful to know before attempting
 - **Symlinks/junctions are not followed or detected** during the scan, and a `.csproj` may reference files
   outside the repository root. Both are accepted risks — the repository is trusted by definition.
 - **Graph nodes are not keyboard-accessible** (§15).
+- **The `FOLLOW PAUSED` pill's automation name does not reach a screen reader.** The name is defined in the
+  central table and correctly attached, but the pill is a `Border` and WPF gives a `Border` no automation peer,
+  so the element never enters the automation tree for the name to hang on. The limit is on WPF's side, not in
+  the naming. Follow also resumes by itself after `FollowResumeDelayMs`, which is the non-pointer path back.
 - **The global hotkey has no settings UI** (§12.3).
 
 ---
@@ -1927,11 +1990,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Shapes rendering, status tick, selection dimming | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
-| Layered layout and label fit | `App/Graph/GraphLayout.cs`, `GraphLabelMetrics.cs` |
+| Manual pan/zoom gestures, follow suspension and resume, the pill | `App/Graph/GraphView.xaml(.cs)` |
+| Layered layout and the label overlap rule | `App/Graph/GraphLayout.cs`, `GraphLabelMetrics.cs` |
 | Viewport culling | `App/Graph/GraphCulling.cs` |
-| Camera follow and clamping | `App/Graph/GraphCamera.cs` |
-| Edge style resolution (colour, dash, flow) | `App/Graph/EdgeStyleResolver.cs` |
-| Feed models | `App/Graph/GraphModels.cs`, `GraphStatus.cs` |
+| Camera focus, scale policy, pan/zoom arithmetic and clamping | `App/Graph/GraphCamera.cs` |
+| Edge style resolution (colour, dash, flow, fog) | `App/Graph/EdgeStyleResolver.cs` |
+| Feed models | `App/Graph/GraphModels.cs`, `App/Controls/GraphStatus.cs` |
 
 **Scroll, motion and tokens**
 
