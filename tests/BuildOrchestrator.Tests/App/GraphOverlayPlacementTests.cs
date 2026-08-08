@@ -86,26 +86,71 @@ public class GraphOverlayPlacementTests
     }
 
     /// <summary>
-    /// AYIRT EDİCİ — etiket seçili düğümün HALKASINA değmez.
+    /// AYIRT EDİCİ — <b>hangi düğüm seçilirse seçilsin</b> ad etiketi düğümün ALTINDA ve panelin iç payının
+    /// İÇİNDE durur. Yeri kamera açar: seçim zaten kamerayı hareket ettirir, dolayısıyla yer açmanın doğru
+    /// yeri orasıdır.
     ///
-    /// <para><b>Kusur:</b> "proje adı amber border'a neredeyse bitişik". Konum prototipin
-    /// <c>0.95 × düğüm kenarı</c> katsayısından geliyordu; o katsayı büyümeyen ve halkası CSS outline olan
-    /// bir düğüm için kalibreliydi. Bizim seçili düğümümüz hover ölçeğinde durur ve halkası kareden taşar,
-    /// dolayısıyla etiket halkanın İÇİNE düşüyordu.</para>
+    /// <para><b>Kusur:</b> en alttaki bantta etiket düğümün ÜSTÜNE geçiyordu (takla), kenardaki sütunlarda
+    /// ise panelin dışına taşıyordu. İkisi de kullanıcı gözlemi.</para>
     /// </summary>
     [StaFact]
-    public void The_selection_label_clears_the_ring_of_the_enlarged_selected_node()
+    public void Every_selection_keeps_its_label_below_the_node_and_inside_the_inset()
+    {
+        var (nodes, edges) = SyntheticGraph.Build(96, 5, 2.2);
+        var view = GraphTestView.Realized(Panel, () => false);
+        view.Resources.MergedDictionaries.Add(DsResources.Load("Controls.xaml"));
+        view.SetGraph(nodes, edges);
+
+        double inset = QuietGraphLayout.ContentInset;
+        foreach (var node in nodes)
+        {
+            view.SelectedNode = node.Name;
+            var screen = GraphOverlay.Project(view.NodeCenter(node.Name), view.CurrentCamera);
+            var topLeft = view.SelectionLabelTopLeft;
+            var box = view.SelectionLabelBoxSize;
+
+            Assert.True(topLeft.Y > screen.Y, $"{node.Name}: etiket düğümün ÜSTÜNDE ({topLeft.Y} <= {screen.Y})");
+            // Konumlar ZEMİNE (Ground) göredir — panel başlığı bu ölçünün dışındadır.
+            Assert.InRange(topLeft.X, inset - 0.51, view.ViewportSize.Width - inset - box.Width + 0.51);
+            Assert.InRange(topLeft.Y, inset - 0.51, view.ViewportSize.Height - inset - box.Height + 0.51);
+        }
+    }
+
+    /// <summary>
+    /// Tooltip'in KAREYE mesafesi, ad etiketinin HALKAYA mesafesiyle aynıdır (kullanıcı kararı). İki yüzey
+    /// aynı sayıyı kullanır ama farklı kenardan ölçer: hover edilen düğümün halkası yoktur.
+    ///
+    /// <para>Bu eşitlik aynı zamanda "etiket halkaya değmez" iddiasını da taşır — mesafe halkanın DIŞINDAN
+    /// ölçülür. Kusur şuydu: konum prototipin <c>0.95 × düğüm kenarı</c> katsayısından geliyordu, o katsayı
+    /// ise büyümeyen ve halkası CSS outline olan bir düğüm için kalibreliydi; bizimkinde etiket halkanın
+    /// İÇİNE düşüyordu ("amber border'a neredeyse bitişik").</para>
+    /// </summary>
+    [StaFact]
+    public void The_tooltip_clears_the_square_by_the_same_gap_the_label_clears_the_ring()
     {
         var view = Built();
+        double scale = GraphView.HoverScale;
+
+        view.SetHoverForTest(Short);
+        var hovered = GraphOverlay.Project(view.NodeCenter(Short), view.CurrentCamera);
+        double squareTop = hovered.Y - view.NodeSize / 2 * scale;
+        double tooltipGap = squareTop - (view.TooltipTopLeft.Y + view.TooltipBoxSize.Height);
+
+        view.SetHoverForTest(null);
         view.SelectedNode = Short;
+        var selected = GraphOverlay.Project(view.NodeCenter(Short), view.CurrentCamera);
+        double ringBottom = selected.Y
+            + (view.NodeSize / 2 + GraphView.SelectionRingInset) * scale * view.CurrentCamera.Scale;
+        double labelGap = view.SelectionLabelTopLeft.Y - ringBottom;
 
-        var screen = GraphOverlay.Project(view.NodeCenter(Short), view.CurrentCamera);
-        double ringBottom = screen.Y
-            + (view.NodeSize / 2 + GraphView.CellOverhang) * GraphView.HoverScale * view.CurrentCamera.Scale;
-
-        Assert.True(view.SelectionLabelTopLeft.Y >= ringBottom + GraphOverlay.LabelGapPx - 0.001,
-            $"etiket {view.SelectionLabelTopLeft.Y}, halkanın altı {ringBottom} — halkaya biniyor");
+        Assert.Equal(GraphOverlay.OverlayGapPx, tooltipGap, 3);
+        Assert.Equal(GraphOverlay.OverlayGapPx, labelGap, 3);
     }
+
+    // [kopya YASAK] "Etiket halkaya değmez" iddiası artık yukarıdaki eşitlik testinin İÇİNDEDİR: mesafe
+    // halkanın dışından ölçülür ve tam OverlayGapPx'tir. Ayrı bir ">= " testi onun zayıf kopyası olurdu.
+    // Eski hâli (The_selection_label_clears_the_ring_of_the_enlarged_selected_node) buradan geldi; kusuru —
+    // prototipin 0.95 × düğüm-kenarı katsayısı yüzünden etiketin halkanın içine düşmesi — orada yazılıdır.
 
     /// <summary>
     /// Hover büyütmesi komşusuna YAPIŞMAZ.

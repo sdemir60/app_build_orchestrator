@@ -1290,12 +1290,19 @@ tooltip tens of pixels away from the node it belonged to. Staying centred beats 
 pulled into the graph's own inset, which is what keeps a label off the corner when the focus camera has zoomed
 in.
 
-Vertically, a box that does not fit on its preferred side **flips to the other side** rather than being
-clamped back: clamping slid the label onto the node it names, which is what the bottom band looked like. The
-distance it is placed at is the node's *painted* half height — the square, plus whatever the highlight scale
-and the ring add — not a fraction of the node edge. The prototype's 0.9 and 0.95 coefficients were calibrated
-for a node that does not grow when selected and whose ring is a CSS outline; ours does both, and with those
-numbers the name label landed inside its own amber ring.
+Both boxes sit the same distance from the node — one number, not the design's two — but they measure from
+different edges: the tooltip from the square, since a merely hovered node has no ring, and the name label from
+the ring's outer edge. The distance itself is the node's *painted* half height plus that gap, never a fraction
+of the node edge: the prototype's 0.9 and 0.95 coefficients were calibrated for a node that does not grow when
+selected and whose ring is a CSS outline, and with those numbers the label landed inside its own amber ring.
+
+The **name label is always below the node** — no clamp, no flip. Both of those were tried and both made the
+label unpredictable: the clamp slid it onto the node it names, the flip threw it to a side the eye was not
+looking at. Making room is the *camera's* job instead, which is the natural place for it because selecting a
+node already moves the camera: the focus transform is nudged by the smallest translation that brings the
+label's box inside the panel's inset, horizontally and vertically. Only the translation changes, so the
+focus-and-fit scale is untouched. The tooltip keeps its flip, because hovering moves nothing and a node in the
+top band has nowhere else to put it.
 
 Both boxes are single reused elements, and each is explicitly invalidated before it is measured. That is not
 defensive coding: changing a `TextBlock`'s text marks only the `TextBlock` dirty, and the walk up to its

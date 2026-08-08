@@ -32,9 +32,10 @@ public class GraphOverlayTests
         Assert.Equal((50 + Inset) * 2 - 30, screen.Y, 6);
     }
 
-    /// <summary>Tooltip düğümün BOYANMIŞ üst kenarının 8px üstündedir ve yatayda ona ortalanır.</summary>
+    /// <summary>Tooltip düğümün BOYANMIŞ üst kenarının bir boşluk kadar üstündedir ve yatayda ona
+    /// ortalanır.</summary>
     [Fact]
-    public void The_tooltip_sits_8px_above_the_painted_edge_and_is_centred_on_the_node()
+    public void The_tooltip_sits_one_gap_above_the_painted_edge_and_is_centred_on_the_node()
     {
         var camera = new CameraTransform(1.0, 0, 0);
         var box = new Size(120, 20);
@@ -43,7 +44,32 @@ public class GraphOverlayTests
 
         var screen = GraphOverlay.Project(new Point(200, 150), camera);
         Assert.Equal(screen.X - box.Width / 2, topLeft.X, 6);
-        Assert.Equal(screen.Y - HalfExtent - GraphOverlay.TooltipGapPx - box.Height, topLeft.Y, 6);
+        Assert.Equal(screen.Y - HalfExtent - GraphOverlay.OverlayGapPx - box.Height, topLeft.Y, 6);
+    }
+
+    /// <summary>
+    /// AYIRT EDİCİ — iki yüzey AYNI boşluğu kullanır.
+    ///
+    /// <para><b>Eski iddia:</b> §2.3'ün iki ayrı sayısı (tooltip 8px, ad etiketi 6px) ayrı sabitlerde
+    /// pinliydi. <b>Değişme gerekçesi:</b> aynı düğümün etrafında dönen iki kutunun farklı mesafede durması
+    /// gözle tutarsız okunuyordu (kullanıcı: "proje adı ile amber border arasındaki mesafe ne ise, tooltip
+    /// ile node border arasındaki de o olsun"). Tek sayı — ve bir mesafe iki yerde tanımlanmaz.</para>
+    /// </summary>
+    [Fact]
+    public void The_tooltip_and_the_name_label_keep_the_same_distance_from_the_painted_edge()
+    {
+        var camera = new CameraTransform(1.0, 0, 0);
+        var node = new Point(200, 150);
+        var box = new Size(120, 20);
+        var screen = GraphOverlay.Project(node, camera);
+
+        var tooltip = GraphOverlay.TooltipTopLeft(node, camera, HalfExtent, Panel, box);
+        var label = GraphOverlay.NameLabelTopLeft(node, camera, HalfExtent, Panel, box);
+
+        double aboveGap = (screen.Y - HalfExtent) - (tooltip.Y + box.Height);
+        double belowGap = label.Y - (screen.Y + HalfExtent);
+        Assert.Equal(aboveGap, belowGap, 6);
+        Assert.Equal(GraphOverlay.OverlayGapPx, belowGap, 6);
     }
 
     /// <summary>
@@ -112,32 +138,31 @@ public class GraphOverlayTests
 
         var screen = GraphOverlay.Project(new Point(200, 150), camera);
         Assert.Equal(screen.X - box.Width / 2, topLeft.X, 6);
-        Assert.Equal(screen.Y + HalfExtent + GraphOverlay.LabelGapPx, topLeft.Y, 6);
+        Assert.Equal(screen.Y + HalfExtent + GraphOverlay.OverlayGapPx, topLeft.Y, 6);
     }
 
     /// <summary>
-    /// AYIRT EDİCİ — en alttaki bant. Etiket aşağı sığmıyorsa düğümün ÜSTÜNE taklar; ASLA düğümün üstüne
-    /// binmez.
+    /// AYIRT EDİCİ — ad etiketi HER ZAMAN düğümün altındadır; kaçmaz.
     ///
-    /// <para><b>Eski iddia:</b> <c>A_label_pushed_past_the_bottom_stops_at_the_content_inset</c> kutuyu
-    /// panelin iç payına kelepçeliyordu. <b>Değişme gerekçesi:</b> kelepçe kutuyu düğüme doğru geri çekiyor
-    /// ve gözle görüldüğü gibi düğümle ÜST ÜSTE bindiriyordu (ekran görüntüsü: en alt banttaki düğümün adı
-    /// düğümün içinde). Kelepçe yerine takla: kutu okunur kalır ve sahibini göstermeye devam eder.</para>
+    /// <para><b>Eski iddia:</b> <c>A_label_that_cannot_fit_below_flips_above_the_node_instead_of_overlapping_it</c>
+    /// etiketi aşağı sığmadığında düğümün üstüne taklatıyordu; ondan önceki sürüm de kelepçeliyordu.
+    /// <b>Değişme gerekçesi:</b> kullanıcı kararı — "standart olsun, her zaman altta çıksın". İki çare de
+    /// etiketi tahmin edilemez kılıyordu (kelepçe düğümün üstüne bindiriyor, takla beklenmedik tarafa
+    /// atıyordu). Yer açmak artık KAMERANIN işi; bu saf fonksiyon yalnız kuralı söyler.</para>
     /// </summary>
     [Fact]
-    public void A_label_that_cannot_fit_below_flips_above_the_node_instead_of_overlapping_it()
+    public void The_name_label_stays_below_the_node_even_when_it_leaves_the_panel()
     {
         var box = new Size(120, 16);
-        var camera = new CameraTransform(1, 0, 190); // düğüm panelin dibine yakın
+        var camera = new CameraTransform(1, 0, 190); // düğüm panelin dibinin de altında
         var node = new Point(200, 150);
         var screen = GraphOverlay.Project(node, camera);
 
         var topLeft = GraphOverlay.NameLabelTopLeft(node, camera, HalfExtent, Panel, box);
 
-        Assert.True(screen.Y + HalfExtent + GraphOverlay.LabelGapPx + box.Height > Panel.Height - Inset,
-            "kurulum hatalı: etiket aşağıya sığmamalıydı");
-        Assert.Equal(screen.Y - HalfExtent - GraphOverlay.LabelGapPx - box.Height, topLeft.Y, 6);
-        Assert.True(topLeft.Y + box.Height <= screen.Y - HalfExtent, "etiket düğümün üstüne biniyor");
+        Assert.Equal(screen.Y + HalfExtent + GraphOverlay.OverlayGapPx, topLeft.Y, 6);
+        Assert.True(topLeft.Y + box.Height > Panel.Height - Inset,
+            "kurulum hatalı: etiket paya sığmamalıydı — kurtarma kameranın işi");
     }
 
     /// <summary>Simetrik kural: tooltip yukarı sığmıyorsa (en üstteki bant) düğümün ALTINA taklar.</summary>
@@ -151,21 +176,7 @@ public class GraphOverlayTests
 
         var topLeft = GraphOverlay.TooltipTopLeft(node, camera, HalfExtent, Panel, box);
 
-        Assert.Equal(screen.Y + HalfExtent + GraphOverlay.TooltipGapPx, topLeft.Y, 6);
-    }
-
-    /// <summary>İki taraf da sığmazsa (kutu panelden büyük) son çare kelepçedir — kutu iç payın dışına
-    /// çıkmaz.</summary>
-    [Fact]
-    public void A_box_that_fits_on_neither_side_falls_back_to_the_inset_clamp()
-    {
-        var tiny = new Size(200, 120);
-        var box = new Size(80, 60);
-
-        var topLeft = GraphOverlay.NameLabelTopLeft(
-            new Point(0, 0), new CameraTransform(1, 0, 0), HalfExtent, tiny, box);
-
-        Assert.InRange(topLeft.Y, Inset - 0.001, Math.Max(Inset, tiny.Height - Inset - box.Height) + 0.001);
+        Assert.Equal(screen.Y + HalfExtent + GraphOverlay.OverlayGapPx, topLeft.Y, 6);
     }
 
     /// <summary>§2.3'ün sayıları — birinin sessizce kayması bu testi düşürür. Kelepçe payı AYRI bir sayı
@@ -173,8 +184,7 @@ public class GraphOverlayTests
     [Fact]
     public void The_overlay_numbers_are_pinned_to_their_spec_values()
     {
-        Assert.Equal(8.0, GraphOverlay.TooltipGapPx, 6);
-        Assert.Equal(6.0, GraphOverlay.LabelGapPx, 6);
+        Assert.Equal(6.0, GraphOverlay.OverlayGapPx, 6);
         Assert.Equal(QuietGraphLayout.ContentInset, Inset, 6);
     }
 }
