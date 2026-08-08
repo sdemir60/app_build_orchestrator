@@ -11,10 +11,12 @@ namespace BuildOrchestrator.Tests.App;
 /// design v1.3.0 §2.3 "Koşu yaşam döngüsü" — WPF kablajı. Saf karar
 /// <see cref="GraphNodeOpacityTests"/>'te; burada ZAMANLAMA yaşar.
 ///
-/// <para>§2.3: "Proje bitince sonuç rengine döner ve <b>2400ms tam opak KALIR</b>, sonra <b>700ms'de
-/// 0.2'ye</b> söner. Uygulama hilesi: opacity değeri anında 0.2 yazılır, beklemeyi CSS taşır →
-/// <c>transition: opacity 700ms var(--ease-standard) 2400ms</c> (timer/ek render yok)." WPF karşılığı
-/// <c>BeginTime</c>'lı TEK ATIMLIK bir animasyondur — aynı gerekçeyle ne timer ne ek render turu.</para>
+/// <para>§2.3: "Proje bitince sonuç rengine döner ve tam opak KALIR, sonra <b>700ms'de 0.2'ye</b> söner.
+/// Uygulama hilesi: opacity değeri anında 0.2 yazılır, beklemeyi CSS taşır → <c>transition: opacity 700ms
+/// var(--ease-standard) hold</c> (timer/ek render yok)." WPF karşılığı <c>BeginTime</c>'lı TEK ATIMLIK bir
+/// animasyondur — aynı gerekçeyle ne timer ne ek render turu. Bekleme süresi
+/// <see cref="GraphNodeOpacity.HoldMs"/>'te yaşar (§2.3'ün 2400'ü kullanıcı kararıyla kısaldı); sayı buraya
+/// GÖMÜLMEZ.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphRunLifecycleTests(ITestOutputHelper output)
@@ -40,11 +42,11 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// AYIRT EDİCİ — hold-fade. Building'den çıkan düğüm 2400ms bekleyip 700ms'de 0.2'ye söner; bekleme
+    /// AYIRT EDİCİ — hold-fade. Building'den çıkan düğüm parlak bekleyip sonra 0.2'ye söner; bekleme
     /// bir <c>BeginTime</c>'dır, bir timer DEĞİL.
     /// </summary>
     [StaFact]
-    public void A_node_that_leaves_building_holds_bright_for_2400ms_and_then_fades_to_0_2_over_700ms()
+    public void A_node_that_leaves_building_holds_bright_and_then_fades_to_0_2()
     {
         var view = Running();
 
@@ -63,15 +65,24 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
         Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.FadeMs), end.KeyTime.TimeSpan);
     }
 
-    /// <summary>Hold-fade YALNIZ building'den ÇIKIŞ anında doğar: queued → succeeded gibi bir sıçrama
-    /// (koşuya hiç girmemiş düğüm) normal 280ms geçişini kullanır — aksi halde hiç parlamamış bir düğüm
-    /// 2.4 saniye parlar gibi görünürdü.</summary>
+    /// <summary>
+    /// Hold-fade yalnız SONUÇ statüsüne girişte doğar: koşu içindeki ara geçişler (discovered → queued)
+    /// normal 280ms'lik düz geçişi kullanır.
+    ///
+    /// <para><b>Eski iddia:</b> bu test <c>A_node_that_never_built_gets_the_plain_280ms_glide_not_the_hold_fade</c>
+    /// adıyla <c>queued → skipped</c> geçişini düz geçişe pinliyordu; gerekçesi "hiç parlamamış bir düğüm
+    /// 2.4 saniye parlar gibi görünmesin"di. <b>Değişme gerekçesi:</b> gerçek koşuda gözlenen sonuç tersiydi —
+    /// atlanan projeler hiç canlanmadığı için "bunlar hiç işlem görmedi" hissi veriyordu, oysa atlanmak bir
+    /// karardır. Kural artık <see cref="GraphNodeOpacity.IsSettled"/>'dır ve atlanan düğüm de parlak
+    /// bekler; o davranış <see cref="GraphSkipFlashTests"/>'te pinlidir. Test burada YENİ kuralın ara-geçiş
+    /// tarafını tutuyor.</para>
+    /// </summary>
     [StaFact]
-    public void A_node_that_never_built_gets_the_plain_280ms_glide_not_the_hold_fade()
+    public void A_transition_that_lands_on_no_result_gets_the_plain_280ms_glide()
     {
         var view = Running();
 
-        view.UpdateStatuses(Nodes(GraphStatus.Building, GraphStatus.Skipped));
+        view.UpdateStatuses([new("OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", 1, GraphStatus.Discovered)]);
 
         var animation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf("OSYS.Data"));
         Assert.Equal(TimeSpan.Zero, animation.BeginTime); // bekleme YOK

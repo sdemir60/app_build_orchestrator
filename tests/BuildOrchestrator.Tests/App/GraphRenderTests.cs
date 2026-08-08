@@ -212,6 +212,32 @@ public class GraphRenderTests
         Assert.Equal(GraphView.DecorativeFrameRate, Timeline.GetDesiredFrameRate(spin));
     }
 
+    /// <summary>
+    /// AYIRT EDİCİ — noktalar GERÇEKTEN dolanıyor mu? Yukarıdaki test saatin KURULDUĞUNU pinler, döndüğünü
+    /// değil: bağlanmamış (ya da hiç başlamamış) bir saat de aynı <c>Timeline</c>'ı taşır ve o testi
+    /// geçerdi — yörünge ekranda kıpırdamadan durur.
+    ///
+    /// <para>Headless'ta compositor saati kendiliğinden ilerlemez; <c>SeekAlignedToLastTick</c> saati bir
+    /// tick beklemeden konumlandırır ve DP'ye yazdırır. Yarım turda yol yarım çevre, bir turdan sonra desen
+    /// başa sarar — <c>RepeatBehavior.Forever</c>'ın gözlenebilir hâli.</para>
+    /// </summary>
+    [StaFact]
+    public void The_shared_clock_actually_carries_the_dots_around_the_orbit()
+    {
+        var view = NewView(true);
+        view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
+        var orbit = view.NodeVisuals["OSYS.Data.Core"].Beads!;
+        Assert.Equal(0.0, orbit.StrokeDashOffset, 6);
+
+        var controller = view.BeadsClock!.Controller!;
+        controller.SeekAlignedToLastTick(TimeSpan.FromMilliseconds(GraphBeads.CycleMs / 2), TimeSeekOrigin.BeginTime);
+        Assert.Equal(-view.BeadsGeometry.Perimeter / 2, orbit.StrokeDashOffset, 3);
+
+        controller.SeekAlignedToLastTick(
+            TimeSpan.FromMilliseconds(GraphBeads.CycleMs * 2.5), TimeSeekOrigin.BeginTime);
+        Assert.Equal(-view.BeadsGeometry.Perimeter / 2, orbit.StrokeDashOffset, 3); // 2.5 tur → yine yarım
+    }
+
     /// <summary>§2.3: "Animasyon sınıfı bitişten sonra 700ms daha kalır → noktalar DÖNERKEN söner, donup
     /// kaybolmaz." Son building düğüm bittiğinde saat ANINDA bırakılmaz.</summary>
     [StaFact]

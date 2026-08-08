@@ -1211,23 +1211,34 @@ top, and inside a band the first project to build sits leftmost — so reading t
 reading the build order. The node pitch is searched, not fixed: `QuietGraphLayout` walks from 44 px down to
 5 px in half-pixel steps and takes the first value where every band, plus a `0.7 × pitch` gap between bands,
 fits the panel height. A band whose last row is short is centred against the rows above it, and the whole
-block is centred in the content box — a symmetric 28 px inset on every side, which is what makes the graph
-read as a picture with a margin rather than as a panel that has been filled to the edges. The consequence is
+block is centred in the content box — a symmetric 36 px inset on every side, which is what makes the graph
+read as a picture with a margin rather than as a panel that has been filled to the edges. That inset is a
+single source: the overlay layer clamps to it as well, so a label never ends up hugging a corner. The consequence is
 that the graph always fits — there is no scrollbar, and no canvas larger than the panel. A node is a square
 of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
 its edge; discovered nodes get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot be dashed.
 Under the status square sits an opaque base in the panel's own colour: the status fill is only 12 % alpha, so
-without it a selection edge passing behind a node would show straight through it. Because the layout depends on the panel, `SizeChanged` recomputes it and
+without it a selection edge passing behind a node would show straight through it.
+
+The node's cell is deliberately **larger than the node** — by whichever overhangs further, the selection ring
+or the bead orbit. WPF clips a child to its arrange slot, and everything that reaches outside the square lives
+in that cell: with a cell exactly the size of the node the ring's straight edges were clipped away entirely
+and only the corner arcs, which curve back inside the clip rectangle, survived. The clickable body stays at
+node size, because growing it would put the hit area over the neighbours at a tight pitch. The ring itself is
+the CSS `outline: 2px solid; outline-offset: 2` translated honestly: WPF draws a stroke *inside* the
+rectangle, so the rectangle is a full pen wider than the offset alone would suggest. Because the layout depends on the panel, `SizeChanged` recomputes it and
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
 
 **The run is told with opacity, not with edges.** Idle, everything is fully opaque. Once a run starts the
 graph quietens: queued and discovered nodes drop to 0.13 and only the projects actually building stay
-bright. A project that finishes returns to its result colour, holds bright for 1400 ms, then fades to 0.2
-over 700 ms — in CSS that is a delayed transition, and the WPF equivalent is one shot of an animation with a
-`BeginTime`, so there is no timer and no extra render pass. The hold only starts on the edge out of
-`Building`; later ticks find the value already settled and start nothing, which matters because status
-pushes arrive several times a second. When the run ends every node comes back to full opacity in its result
+bright. A project that reaches a result returns to its result colour, holds bright for 1400 ms, then fades to
+0.2 over 700 ms — in CSS that is a delayed transition, and the WPF equivalent is one shot of an animation with
+a `BeginTime`, so there is no timer and no extra render pass. The hold starts on the edge *into* a result
+status rather than on the edge out of `Building`, and that distinction is the whole point for **skipped**
+projects: a project found up to date never builds, so under the older rule it slid from 0.13 to 0.2 without
+ever being bright and the run read as though nothing had looked at it. Later ticks find the value already
+settled and start nothing, which matters because status pushes arrive several times a second. When the run ends every node comes back to full opacity in its result
 colour. The decision itself is pure (`GraphNodeOpacity.Resolve`) and its precedence is fixed: selection beats
 the run, and hover beats both.
 
@@ -1247,6 +1258,15 @@ perimeter is too, and N parallel builds would otherwise mean N infinite animatio
 fade *while still turning* rather than freezing in place. Resizing the panel changes the perimeter, so the
 pattern and the clock are rebuilt.
 
+The same orbit plays **once** around a project that gets skipped: it fades in, turns while the node holds
+bright, and fades out as the node dims. Skipping is a decision, not an absence — the incremental check ran and
+found the project current — and without the orbit the graph said nothing about it. It is one keyframe
+animation on an element that already exists, not a timer per node, because a run where nothing changed can
+skip every project in a single tick. The shared clock's release is pushed out to cover the longer tail, since
+cutting it short would freeze those dots instead of fading them. What is *not* done is repainting the square
+amber for a moment: that would state a status the project never had, and the colour transition has a measured
+price of its own (above).
+
 **Names live in an overlay, not on the nodes.** There are no labels under the squares. Hovering a node scales
 it 1.7× over 120 ms, thickens its border, pulls it to full opacity even in the quiet run state, pulls it to
 the front, and shows a tooltip with the full project name — no delay. The scale is one transform shared by the
@@ -1255,9 +1275,12 @@ one overlay `Canvas` that is a *sibling* of the camera's world, carrying no tran
 the camera would scale the text along with the graph and blur it at 5× zoom. Their positions come from the
 node's world point projected through the camera's **live** transform, refreshed on every frame the transform
 changes — reading the camera's *target* instead would leave the label parked where the camera has not arrived
-yet for the whole 460 ms of a selection glide. The clamp applies to the whole box rather than just its anchor,
-so a long project name at the panel edge stays entirely readable. Both are single reused elements; nothing is
-built per node. Changing the selection clears the hover, because the camera is about to move somewhere else
+yet for the whole 460 ms of a selection glide. The box is centred on its node and the clamp applies to the
+**anchor**, not to the box: clamping the whole box was tried and measured badly, because real project names
+are long — a 30-character name is a ~215 px box, so in a 500 px panel every node near an edge dragged its
+tooltip tens of pixels away from the node it belonged to. Staying centred beats staying whole; the anchor is
+pulled into the graph's own inset, which is what keeps a label off the corner when the focus camera has zoomed
+in. Both are single reused elements; nothing is built per node. Changing the selection clears the hover, because the camera is about to move somewhere else
 and the pointer is no longer over what it was.
 
 **Selection focuses and fits.** Clicking a node — or a list row, or a stream line — fits the bounding box of

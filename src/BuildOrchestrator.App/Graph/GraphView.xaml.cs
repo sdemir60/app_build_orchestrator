@@ -59,8 +59,28 @@ public partial class GraphView : UserControl
     public const double SelectedNodeBorderThickness = 2.0;
     /// <summary>Düğüm karesinin köşe yarıçapı — DS <c>--radius-sm</c> (§2.3: "radius-sm").</summary>
     public const double NodeCornerRadius = 4.0;
-    /// <summary>Seçim halkasının kareden dışarı taşma payı: 2px offset + yarım kalem.</summary>
-    public const double SelectionRingInset = 3.0;
+    /// <summary>Seçim halkasının kareden dışarı taşma payı: 2px offset + <b>TAM</b> kalem.
+    ///
+    /// <para>Prototipin halkası CSS <c>outline: 2px solid var(--focus-ring); outline-offset: 2</c>'dir —
+    /// iç kenarı kareden 2px, dış kenarı 4px dışarıda. WPF'te kalem Rectangle'ın <b>İÇİNE</b> çizilir
+    /// (<c>Rectangle.DefiningGeometry</c> geometriyi yarım kalem kadar içeri alır), dolayısıyla halkanın
+    /// dış kenarını 4px dışarı taşıtmak için dikdörtgenin kendisi 4px büyütülür. <b>Eski değer 3'tü</b>
+    /// (kalem yola ORTALANIYOR varsayılmıştı) ve halka 2px fazla sıkı duruyordu.</para></summary>
+    public const double SelectionRingInset = 4.0;
+    /// <summary>[quiet · taşma] Hücrenin düğüm kenarına HER YANDAN eklediği pay.
+    ///
+    /// <para><b>Neden var (ÖLÇÜLDÜ):</b> WPF bir çocuğu ARRANGE SLOT'una kırpar. Hücre düğüm kadarken
+    /// (24px) 30px'lik seçim halkasının layout clip'i <c>(3,3,24,24)</c>, 29.6px'lik beads yörüngesininki
+    /// <c>(2.8,2.8,24,24)</c> idi: düz kenarlar tamamen kırpılıyor, geriye yalnız yarıçapı büyük olduğu için
+    /// kırpma dikdörtgeninin içine giren KÖŞE YAYLARI kalıyordu — kullanıcının gördüğü "tıklayınca köşelerde
+    /// beliren sarı noktalar" halkanın ta kendisiydi, yörünge ise hiç görünmüyordu.</para>
+    ///
+    /// <para>Prototip bu sorunu hiç yaşamaz: düğüm kabı <c>width:0;height:0</c>'dır ve çocuklar mutlak
+    /// konumla dışarı taşar (BuildApp.jsx:437). WPF'te aynı sonuç kabı taşmaya YETECEK kadar büyüterek
+    /// alınır — tıklama alanı ise gövdede kalır, dolayısıyla büyümez.</para></summary>
+    public static readonly double CellOverhang = Math.Max(
+        SelectionRingInset,
+        GraphBeads.OrbitGapPx + GraphBeads.StrokeThickness / 2);
     /// <summary>Glyph, düğüm kenarının bu kadarıdır (§2.3: "node'un %52'si").</summary>
     public const double IconFactor = 0.52;
     /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
@@ -122,6 +142,9 @@ public partial class GraphView : UserControl
     /// <summary>Son building düğüm bittikten sonra saati bırakan TEK ATIMLIK tetik (§2.3: noktalar dönerken
     /// söner). Talep üzerine kurulur; yeni bir building doğarsa iptal edilir.</summary>
     private DispatcherTimer? _beadsSpindown;
+    /// <summary>Uçuştaki spin-down'ın vade anı (<c>Environment.TickCount64</c> ölçeğinde). Daha kısa bir
+    /// yeni istek uzun bir kuyruğu kısaltmasın diye tutulur; <c>DispatcherTimer</c> kalan süreyi vermez.</summary>
+    private long _beadsSpindownDueMs;
 
     /// <summary>[quiet] Eğri token'ları ÖNBELLEKLENİR. Süreler bilerek her başlangıçta taze okunur
     /// (reduced-motion onları CANLI 0'a çeker) ama <c>KeySpline</c>'lar sabittir — <c>Motion.xaml</c>'in
@@ -446,13 +469,17 @@ public partial class GraphView : UserControl
             // görselinin TAMAMI yalnız bu modelden türetilir. Eskiden her tick her düğümde iki
             // SetResourceReference + IconPaint.Apply (ağaç yukarı TryFindResource yürüyüşü) yapılıyordu.
             if (slot.Model == node) continue;
-            // §2.3'ün hold-fade'i building'den ÇIKIŞ anına bağlıdır — bu yüzden geçişin KENDİSİ burada,
-            // model değişmeden önce okunur.
-            bool leftBuilding = slot.Model.Status == GraphStatus.Building && node.Status != GraphStatus.Building;
+            // §2.3'ün hold-fade'i BUILDING'den çıkışa bağlıydı. <b>Kural artık SONUÇ statüsüne GİRİŞ.</b>
+            // Atlanan proje hiç building olmaz; eski kuralla tek "parlak an"ı hiç almıyor ve koşu sonunda
+            // "bu hiç işlem görmedi" hissi veriyordu. Geçişin KENDİSİ burada, model değişmeden önce okunur.
+            bool settled = !GraphNodeOpacity.IsSettled(slot.Model.Status)
+                && GraphNodeOpacity.IsSettled(node.Status);
+            bool skipped = settled && node.Status == GraphStatus.Skipped && _runPhase == GraphRunPhase.Running;
             slot.Model = node;
             slot.Visual.Model = node;
             ApplyNodeStatus(slot.Visual);
-            ApplyNodeOpacity(slot.Visual, leftBuilding);
+            ApplyNodeOpacity(slot.Visual, settled);
+            if (skipped) FlashBeads(slot.Visual);
         }
     }
 
@@ -492,10 +519,12 @@ public partial class GraphView : UserControl
     /// kullanır (kopya YASAK).</summary>
     private void PlaceNode(GraphNodeSlot slot)
     {
-        double size = _layout.NodeSize;
+        // Hücre düğümden CellOverhang kadar büyüktür ama düğümün MERKEZİNE oturur — taşan görseller
+        // (halka, yörünge) hücrenin içinde eş-merkezli kalır.
+        double cell = _layout.NodeSize + CellOverhang * 2;
         var world = ToWorld(slot.Center);
-        Canvas.SetLeft(slot.Visual.Cell, world.X - size / 2);
-        Canvas.SetTop(slot.Visual.Cell, world.Y - size / 2);
+        Canvas.SetLeft(slot.Visual.Cell, world.X - cell / 2);
+        Canvas.SetTop(slot.Visual.Cell, world.Y - cell / 2);
     }
 
     /// <summary>Düğüm ÖLÇÜSÜ graf genelinde tektir (pitch'ten türer) — bu yüzden tek turda hepsine yazılır ve
@@ -504,6 +533,7 @@ public partial class GraphView : UserControl
     {
         double size = _layout.NodeSize;
         double ring = size + SelectionRingInset * 2;
+        double cell = size + CellOverhang * 2;
         _iconScale.ScaleX = _iconScale.ScaleY = size * IconFactor / IconViewBox;
 
         // Düğüm boyutu değiştiyse yörüngenin ÇEVRESİ de değişir ⇒ desen ve paylaşımlı saat yeniden kurulur;
@@ -527,7 +557,7 @@ public partial class GraphView : UserControl
         foreach (var slot in _slotOrder)
         {
             var visual = slot.Visual;
-            visual.Cell.Width = visual.Cell.Height = size;
+            visual.Cell.Width = visual.Cell.Height = cell;
             visual.Body.Width = visual.Body.Height = size;
             visual.Base.Width = visual.Base.Height = size;
             visual.Square.Width = visual.Square.Height = size;
@@ -588,15 +618,22 @@ public partial class GraphView : UserControl
         {
             Background = Brushes.Transparent, // tıklama alanı
             Cursor = Cursors.Hand,
-            Children = { selectionRing, opaqueBase, square, iconBox },
+            Children = { opaqueBase, square, iconBox },
             // §2.3 "Hover": scale(1.7) — merkezden büyür, komşularını itmez (RenderTransform layout'a girmez).
-            // Aynı transform beads yörüngesiyle PAYLAŞILIR: prototipte ölçek iki öğeye birden uygulanır
-            // (BuildApp.jsx:442 kare, :457 beads) ve ayrı iki transform zamanla ayrışabilirdi.
+            // Aynı transform halka ve beads yörüngesiyle PAYLAŞILIR: prototipte ölçek kareye uygulanır ve
+            // halka (CSS outline) ile yörünge onunla birlikte büyür (BuildApp.jsx:442, :457); ayrı üç
+            // transform zamanla ayrışabilirdi.
             RenderTransformOrigin = new Point(0.5, 0.5),
             RenderTransform = new ScaleTransform(1, 1),
         };
 
-        var cell = new Grid { Children = { body } };
+        // Halka gövdenin İÇİNDE değil YANINDA yaşar: gövde düğüm kadardır ve WPF taşan bir çocuğu arrange
+        // slot'una KIRPAR (bkz. CellOverhang). Gövdeyi halka kadar büyütmek ise tıklama alanını büyütür ve
+        // dar pitch'te komşunun üstüne bindirirdi.
+        selectionRing.RenderTransformOrigin = new Point(0.5, 0.5);
+        selectionRing.RenderTransform = body.RenderTransform;
+
+        var cell = new Grid { Children = { selectionRing, body } };
 
         string name = node.Name;
         // [A13/T5 fix-1] Düğümün etkinleştirilmesi TEK yerde: fare tıklaması da UIA Invoke'u da (ekran okuyucu)
@@ -702,14 +739,51 @@ public partial class GraphView : UserControl
 
         if (visual.Beads is null) return;
         FadeBeads(visual, 0.0, GraphBeads.FadeOutMs);
-        ArmBeadsSpindown();
+        ArmBeadsSpindown(GraphBeads.SpinAfterStopMs);
+    }
+
+    /// <summary>
+    /// [quiet] <b>Atlanan projenin "işlem gördü" anı.</b> §2.3'ün yörüngesi yalnız <c>building</c>'e bağlıdır;
+    /// atlanan proje hiç building olmaz, dolayısıyla graf onu hiç canlandırmıyordu ve koşu sonunda "bunlar
+    /// derlenmedi" hissi veriyordu — oysa atlanmak da bir karardır (incremental kontrol yapıldı ve proje
+    /// güncel bulundu). Aynı amber yörünge TEK ATIMLIK oynar: girer, düğüm parlak dururken döner, düğüm
+    /// soluklaşmaya başlarken söner.
+    ///
+    /// <para><b>Düğüm başına timer YOK</b>: giriş + bekleme + çıkış tek bir keyframe animasyonudur. Hiçbir
+    /// şeyin değişmediği bir koşuda projelerin TAMAMI tek tick'te atlanabilir; düğüm başına bir tetik kurmak
+    /// UI olay bütçesini yerdi.</para>
+    ///
+    /// <para><b>Bilinçli sapma:</b> kullanıcının tarifi "önce sarı olsun, sonra parlak gri, sonra soluklaşsın"
+    /// idi. Karenin RENGİNİ geçici olarak amber yapmak statüyü yanlış söylerdi (ve renk geçişinin ölçülmüş
+    /// bedeli <see cref="ApplyNodeStatus"/>'te yazılıdır); amber olan, işin kendisini anlatan yörüngedir.</para>
+    /// </summary>
+    private void FlashBeads(GraphNodeVisual visual)
+    {
+        if (!AnimationsEnabledProvider()) return;
+        EnsureBeads(visual);
+        EnsureBeadsClock();
+
+        var flash = new DoubleAnimationUsingKeyFrames();
+        flash.KeyFrames.Add(new SplineDoubleKeyFrame(
+            1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GraphBeads.FadeInMs)), EaseOut));
+        // Bekleme: değer önceki kareden devralınır, yalnız SÜRE uzar (CSS'teki transition-delay paritesi).
+        flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(
+            1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GraphBeads.SkipFlashHoldMs))));
+        flash.KeyFrames.Add(new SplineDoubleKeyFrame(
+            0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GraphBeads.SkipFlashTotalMs)), EaseOut));
+
+        visual.BeadsAnimation = flash;
+        visual.Beads!.BeginAnimation(OpacityProperty, flash, HandoffBehavior.SnapshotAndReplace);
+        // Çakış normal bir çıkıştan UZUNDUR: paylaşımlı saat onun sonuna kadar dönmeli, yoksa noktalar
+        // sönmeden DONAR.
+        ArmBeadsSpindown(GraphBeads.SkipFlashTotalMs);
     }
 
     private void FadeBeads(GraphNodeVisual visual, double target, double durationMs)
     {
-        visual.Beads!.BeginAnimation(OpacityProperty,
-            MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut),
-            HandoffBehavior.SnapshotAndReplace);
+        var fade = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut);
+        visual.BeadsAnimation = fade;
+        visual.Beads!.BeginAnimation(OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
     }
 
     /// <summary>Yörüngeyi TALEP ÜZERİNE kurar (bir kez) — düğümlerin çoğu bir koşuda hiç derlenmez.</summary>
@@ -766,20 +840,25 @@ public partial class GraphView : UserControl
             slot.Visual.Beads?.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, _beadsClock);
     }
 
-    /// <summary>§2.3: saat bitişten <see cref="GraphBeads.SpinAfterStopMs"/> sonra bırakılır — çıkış
-    /// animasyonu (640ms) o pencerenin içinde biter, yani noktalar dönerken söner.</summary>
-    private void ArmBeadsSpindown()
+    /// <summary>§2.3: saat, işin bitişinden <paramref name="delayMs"/> sonra bırakılır — sönme animasyonu o
+    /// pencerenin içinde biter, yani noktalar DÖNERKEN söner, donup kaybolmaz.
+    ///
+    /// <para>Uçuştaki daha UZUN bir kuyruk KISALTILMAZ: atlanma çakışı (<see cref="FlashBeads"/>) normal
+    /// çıkıştan uzundur ve arkasından biten bir build onu yarıda kesseydi o noktalar donardı.</para></summary>
+    private void ArmBeadsSpindown(double delayMs)
     {
-        _beadsSpindown ??= new DispatcherTimer(DispatcherPriority.Background)
-        {
-            Interval = TimeSpan.FromMilliseconds(GraphBeads.SpinAfterStopMs),
-        };
+        long due = Environment.TickCount64 + (long)delayMs;
+        if (_beadsSpindown is { IsEnabled: true } && due <= _beadsSpindownDueMs) return;
+        _beadsSpindownDueMs = due;
+
+        _beadsSpindown ??= new DispatcherTimer(DispatcherPriority.Background);
         if (_beadsSpindown.Tag is null)
         {
             _beadsSpindown.Tag = this; // abonelik BİR kez kurulur
             _beadsSpindown.Tick += (_, _) => HandleBeadsSpindownTick();
         }
         _beadsSpindown.Stop();
+        _beadsSpindown.Interval = TimeSpan.FromMilliseconds(delayMs);
         _beadsSpindown.Start();
     }
 
@@ -853,7 +932,7 @@ public partial class GraphView : UserControl
         // Büyüyen düğüm — ve halkası — komşuların ÜSTÜNDE kalmalı.
         Panel.SetZIndex(visual.Cell, hovered ? 1 : 0);
         visual.Square.StrokeThickness = hovered ? HoverBorderThickness : NodeBorderThickness;
-        ApplyNodeOpacity(visual, leftBuilding: false);
+        ApplyNodeOpacity(visual, settled: false);
     }
 
     /// <summary>Tooltip'i (tek, yeniden kullanılan öğe) günceller ve EKRAN koordinatına yerleştirir.</summary>
@@ -1006,19 +1085,19 @@ public partial class GraphView : UserControl
     private void ApplyAllOpacities()
     {
         foreach (var slot in _slotOrder)
-            ApplyNodeOpacity(slot.Visual, leftBuilding: false);
+            ApplyNodeOpacity(slot.Visual, settled: false);
     }
 
     /// <summary>
     /// [quiet] §2.3'ün opaklık sistemi. Değer kararı SAF (<see cref="GraphNodeOpacity.Resolve"/>); burada
     /// yalnız ZAMANLAMA yaşar.
     ///
-    /// <para><b>Hold-fade YALNIZ building'den çıkış anında doğar</b> (<paramref name="leftBuilding"/>): CSS'in
+    /// <para><b>Hold-fade YALNIZ sonuç statüsüne giriş anında doğar</b> (<paramref name="settled"/>): CSS'in
     /// gecikmeli transition'ı da yalnız değer 1'den 0.2'ye DEĞİŞTİĞİNDE koşar. Sonraki tick'ler değeri zaten
     /// 0.2 bulur ve <see cref="GraphNodeVisual.OpacityTarget"/> kapısı hiçbir animasyon başlatmaz — aksi halde
-    /// saniyede birkaç kez yeniden doğan 3.1 saniyelik bir animasyon sönmeyi hiç tamamlatmazdı.</para>
+    /// saniyede birkaç kez yeniden doğan 2.1 saniyelik bir animasyon sönmeyi hiç tamamlatmazdı.</para>
     /// </summary>
-    private void ApplyNodeOpacity(GraphNodeVisual visual, bool leftBuilding)
+    private void ApplyNodeOpacity(GraphNodeVisual visual, bool settled)
     {
         double target = GraphNodeOpacity.Resolve(
             visual.Model.Status,
@@ -1038,9 +1117,9 @@ public partial class GraphView : UserControl
 
         // Bekleme bir BeginTime'dır, bir timer DEĞİL: CSS'teki `transition ... 700ms 2400ms` hilesinin
         // birebir karşılığı. Bekleme boyunca değer TAM OPAK tutulur (CSS `both` fill paritesi).
-        double durationMs = leftBuilding ? GraphNodeOpacity.FadeMs : GraphNodeOpacity.GlideMs;
+        double durationMs = settled ? GraphNodeOpacity.FadeMs : GraphNodeOpacity.GlideMs;
         var animation = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseStandard);
-        if (leftBuilding)
+        if (settled)
         {
             animation.BeginTime = TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs);
             animation.KeyFrames.Insert(0,
@@ -1333,6 +1412,10 @@ public partial class GraphView : UserControl
     internal AnimationClock? BeadsClock => _beadsClock;
     /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>
     internal BeadsGeometry BeadsGeometry => _beadsGeometry;
+    /// <summary>Bir düğümün yörüngesini süren opaklık animasyonu — atlanma çakışının BİÇİMİNİ pinleyen
+    /// testin okuyabileceği tek yüzey (WPF uçuştaki bir animasyonu geri vermez).</summary>
+    internal Timeline? BeadsAnimationOf(string nodeName) =>
+        _slots.TryGetValue(nodeName, out var slot) ? slot.Visual.BeadsAnimation : null;
 
     /// <summary>Hover'ı testten sürer — headless'ta gerçek <c>MouseEnter</c> yükseltilemez
     /// (<c>PresentationSource</c> yok). Seam'in ÜSTÜNDEKİ kablo (Body.MouseEnter/MouseLeave) gerçek routed

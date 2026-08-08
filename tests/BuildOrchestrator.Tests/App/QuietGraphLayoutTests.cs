@@ -27,20 +27,20 @@ public class QuietGraphLayoutTests
     }
 
     /// <summary>
-    /// Hesap alanı = panel − 2×28 kenar payı, DÖRT YANDA SİMETRİK.
+    /// Hesap alanı = panel − 2×36 kenar payı, DÖRT YANDA SİMETRİK.
     ///
-    /// <para><b>Eski iddia:</b> pay 12px'ti ve yükseklikte ayrıca 18px'lik mono ipucu rezervi vardı
-    /// (JSX:339-341: <c>graphLayout(W - 24, H - 24 - 18)</c>). İkisi de kullanıcı kararıyla değişti:
-    /// gerçek koşuda graf panele yapışık ve "ferah değil" duruyordu (pay 12 → 28), ipucu satırı da
-    /// kaldırıldı (rezerv → yok).</para>
+    /// <para><b>Eski iddia:</b> pay önce 12px'ti (ve yükseklikte ayrıca 18px'lik mono ipucu rezervi vardı —
+    /// JSX:339-341: <c>graphLayout(W - 24, H - 24 - 18)</c>), sonra 28. Hepsi kullanıcı kararıyla değişti:
+    /// gerçek koşuda graf panele yapışık ve "ferah değil" duruyordu (12 → 28 → 36), ipucu satırı da
+    /// kaldırıldı (rezerv → yok). Sayı buraya GÖMÜLMEZ; iddia token'ın kendisine bağlıdır.</para>
     /// </summary>
     [Fact]
-    public void The_content_box_is_the_panel_minus_a_symmetric_28px_inset()
+    public void The_content_box_is_the_panel_minus_a_symmetric_inset_on_all_four_sides()
     {
         var content = QuietGraphLayout.ContentSize(new Size(640, 360));
 
-        Assert.Equal(640 - 56, content.Width, 3);
-        Assert.Equal(360 - 56, content.Height, 3);
+        Assert.Equal(640 - 2 * QuietGraphLayout.ContentInset, content.Width, 3);
+        Assert.Equal(360 - 2 * QuietGraphLayout.ContentInset, content.Height, 3);
     }
 
     /// <summary>Panel çok küçükse hesap 240×160 tabanına oturur (JSX:339
@@ -51,8 +51,8 @@ public class QuietGraphLayoutTests
     {
         var content = QuietGraphLayout.ContentSize(new Size(100, 80));
 
-        Assert.Equal(240 - 56, content.Width, 3);
-        Assert.Equal(160 - 56, content.Height, 3);
+        Assert.Equal(240 - 2 * QuietGraphLayout.ContentInset, content.Width, 3);
+        Assert.Equal(160 - 2 * QuietGraphLayout.ContentInset, content.Height, 3);
     }
 
     /// <summary>Bol yer varsa tarama İLK adımda (44) durur; sütun sayısı en kalabalık bandı ASLA aşmaz
@@ -69,21 +69,22 @@ public class QuietGraphLayoutTests
     /// <summary>
     /// AYIRT EDİCİ: tarama 0.5 adımlıdır ve SIĞAN İLK değeri alır — tam sayıya yuvarlamaz.
     ///
-    /// <para>6 bant × 40 düğüm, 640×360 panel (hesap alanı 584×304): 20 ve üstü sığmaz
-    /// (15.5 satır-birimi × 20 = 310 &gt; 304), 19.5 sığar (15.5 × 19.5 = 302.25 ≤ 304). Adımı 1px'e
-    /// yuvarlayan bir uygulama burada 19 verir ve KIRMIZI olur.</para>
+    /// <para>6 bant × 40 düğüm, 640×360 panel (hesap alanı 568×288): 19 ve üstü sığmaz
+    /// (19'da 24 satır + 3.5 boşluk = 27.5 birim × 19 = 522.5 &gt; 288 — sütun sayısı 29'da kalır), 18.5
+    /// sığar (30 sütun ⇒ 12 satır + 3.5 = 15.5 birim × 18.5 = 286.75 ≤ 288). Adımı 1px'e yuvarlayan bir
+    /// uygulama burada 18 verir ve KIRMIZI olur.</para>
     /// </summary>
     [Fact]
     public void The_pitch_scan_walks_down_in_half_pixel_steps_and_takes_the_FIRST_value_that_fits()
     {
         var result = QuietGraphLayout.Compute(Bands(40, 40, 40, 40, 40, 40), new Size(640, 360));
 
-        Assert.Equal(19.5, result.Pitch, 3);
-        Assert.Equal(29, result.Columns);
+        Assert.Equal(18.5, result.Pitch, 3);
+        Assert.Equal(30, result.Columns);
     }
 
     /// <summary>Düğüm kenarı = pitch × 0.6, 8–24 kelepçesiyle (JSX:288). Bol yerde tavana çarpar
-    /// (44 × 0.6 = 26.4 → 24), kalabalıkta banttan gelir (19.5 × 0.6 = 11.7).</summary>
+    /// (44 × 0.6 = 26.4 → 24), kalabalıkta banttan gelir (18.5 × 0.6 = 11.1).</summary>
     [Fact]
     public void The_node_edge_is_60_percent_of_the_pitch_clamped_to_8_and_24()
     {
@@ -91,7 +92,7 @@ public class QuietGraphLayoutTests
         var crowded = QuietGraphLayout.Compute(Bands(40, 40, 40, 40, 40, 40), new Size(640, 360));
 
         Assert.Equal(QuietGraphLayout.MaxNodeSize, roomy.NodeSize, 3); // 26.4 tavana kelepçelendi
-        Assert.Equal(11.7, crowded.NodeSize, 3);
+        Assert.Equal(11.1, crowded.NodeSize, 3);
         Assert.Equal(crowded.Pitch * QuietGraphLayout.NodeSizeFactor, crowded.NodeSize, 6);
     }
 
@@ -136,13 +137,13 @@ public class QuietGraphLayoutTests
     [Fact]
     public void An_incomplete_last_row_is_centred_against_the_full_row_above_it()
     {
-        // 640px panel (hesap alanı 584) / pitch 44 → 13 sütun; bant 17 düğümlü ⇒ satır 1 = 13, satır 2 = 4.
+        // 640px panel (hesap alanı 568) / pitch 44 → 12 sütun; bant 17 düğümlü ⇒ satır 1 = 12, satır 2 = 5.
         var result = QuietGraphLayout.Compute(Bands(17), new Size(640, 360));
         var p = result.Positions;
 
-        Assert.Equal(13, result.Columns);
-        double fullRowMid = (p["L0.P000"].X + p["L0.P012"].X) / 2;
-        double shortRowMid = (p["L0.P013"].X + p["L0.P016"].X) / 2;
+        Assert.Equal(12, result.Columns);
+        double fullRowMid = (p["L0.P000"].X + p["L0.P011"].X) / 2;
+        double shortRowMid = (p["L0.P012"].X + p["L0.P016"].X) / 2;
         Assert.Equal(fullRowMid, shortRowMid, 3);
     }
 

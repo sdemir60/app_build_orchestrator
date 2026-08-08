@@ -51,6 +51,18 @@ public static class GraphNodeOpacity
     // aynı tick'te statü değiştirdiği durumda tick 11 ms'den 51 ms'ye çıkıp UI olay bütçesini aşıyor.
 
     /// <summary>
+    /// Düğüm bir SONUCA oturdu mu — hold-fade'i (parlak bekle, sonra sön) doğuran geçişin hedef kümesi.
+    ///
+    /// <para><b>Eski kural "building'den çıkış"tı.</b> Atlanan proje hiç building olmaz: incremental kontrol
+    /// onu güncel bulur ve doğrudan <see cref="GraphStatus.Skipped"/>'a geçer. Eski kuralla o düğüm tek bir
+    /// parlak an bile almıyor, 0.13'ten 0.2'ye sessizce kayıyordu — koşu sonunda "bunlar hiç işlem görmedi"
+    /// hissi buradan geliyordu. Kural artık statünün KENDİSİNE bakar: nasıl gelindiği değil, bir sonuca
+    /// gelinmiş olması önemlidir.</para>
+    /// </summary>
+    public static bool IsSettled(GraphStatus status) => status
+        is GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Skipped or GraphStatus.Cycle;
+
+    /// <summary>
     /// Bir düğümün NİHAİ opaklığı. Sıra prototiple birebirdir (BuildApp.jsx:421-429).
     /// </summary>
     /// <param name="status">Düğümün statüsü.</param>
