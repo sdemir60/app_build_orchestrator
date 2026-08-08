@@ -169,6 +169,17 @@ public partial class GraphView : UserControl
         World.RenderTransform = new TransformGroup { Children = { _cameraScale, _cameraTranslate } };
         World.RenderTransformOrigin = new Point(0, 0);
         CurrentCamera = GraphCamera.Default;
+        // [quiet · görsel geçiş] Overlay (tooltip + ad etiketi) EKRAN koordinatındadır, yani konumu kameranın
+        // CANLI hâlinden türer. Yalnız hedef değiştiğinde tazelemek yetmez: kamera 460ms (seçim) / 160ms
+        // (wheel) boyunca ANİMASYONLA kayar ve o ara karelerde etiket hedefte, graf ise yolda olurdu. Freezable
+        // Changed her ara karede ateşlenir — tek kanal, iki öğe.
+        _cameraScale.Changed += OnCameraFrame;
+        _cameraTranslate.Changed += OnCameraFrame;
+
+        // Kenarlar düğümlerin ALTINDA kalmalı. Sıra AÇIKÇA ilan edilir: ekleme sırasına güvenmek, katmanlardan
+        // biri sonradan yeniden eklendiğinde sessizce bozulabilirdi.
+        Panel.SetZIndex(_edgeLayer, 0);
+        Panel.SetZIndex(_nodeLayer, 1);
 
         // Jest kablosu. Basış bir sürüklemenin başı OLABİLECEĞİ için seçim kararı release'e taşınır
         // (click-vs-drag ayrımı; düğüm tıklaması Handled=true yaptığından buraya ulaşmaz). Jest mantığının
@@ -210,6 +221,15 @@ public partial class GraphView : UserControl
     /// <summary>Durum değişimi eğrisi (ease-standard) — aynı gerekçe.</summary>
     private KeySpline EaseStandard =>
         _easeStandard ??= MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+
+    /// <summary>Kameranın o an EKRANA uygulanmış hâli (animasyon sürüyorsa ara kare) — hedefi değil.</summary>
+    private CameraTransform LiveCamera => new(_cameraScale.ScaleX, _cameraTranslate.X, _cameraTranslate.Y);
+
+    private void OnCameraFrame(object? sender, EventArgs e)
+    {
+        UpdateTooltip();
+        UpdateSelectionLabel();
+    }
 
     private static DoubleCollection FrozenDash(double[] values)
     {
@@ -275,7 +295,6 @@ public partial class GraphView : UserControl
             // §2.3: "Seçim değişince hover temizlenir (odak kayması sonrası imleç altında bayat hover
             // kalmaz)." Kamera 460ms'de başka bir yere gider; imleç artık o düğümün üstünde değildir.
             SetHover(null);
-            UpdateHint();
             ApplySelection();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
@@ -510,6 +529,7 @@ public partial class GraphView : UserControl
             var visual = slot.Visual;
             visual.Cell.Width = visual.Cell.Height = size;
             visual.Body.Width = visual.Body.Height = size;
+            visual.Base.Width = visual.Base.Height = size;
             visual.Square.Width = visual.Square.Height = size;
             visual.SelectionRing.Width = visual.SelectionRing.Height = ring;
         }
@@ -530,6 +550,16 @@ public partial class GraphView : UserControl
             IsHitTestVisible = false,
         };
         selectionRing.SetResourceReference(Shape.StrokeProperty, "Brush.FocusRing");
+
+        var opaqueBase = new Rectangle
+        {
+            RadiusX = NodeCornerRadius,
+            RadiusY = NodeCornerRadius,
+            IsHitTestVisible = false,
+        };
+        // Panel zemini rengi: düğüm neyin üstünde duruyorsa onun rengindedir ⇒ görünüm DEĞİŞMEZ, yalnız
+        // altından geçen seçim çizgisi %12 alfalı statü zemininin içinden görünmez olur.
+        opaqueBase.SetResourceReference(Shape.FillProperty, "Brush.SurfaceBase");
 
         var square = new Rectangle
         {
@@ -558,8 +588,10 @@ public partial class GraphView : UserControl
         {
             Background = Brushes.Transparent, // tıklama alanı
             Cursor = Cursors.Hand,
-            Children = { selectionRing, square, iconBox },
+            Children = { selectionRing, opaqueBase, square, iconBox },
             // §2.3 "Hover": scale(1.7) — merkezden büyür, komşularını itmez (RenderTransform layout'a girmez).
+            // Aynı transform beads yörüngesiyle PAYLAŞILIR: prototipte ölçek iki öğeye birden uygulanır
+            // (BuildApp.jsx:442 kare, :457 beads) ve ayrı iki transform zamanla ayrışabilirdi.
             RenderTransformOrigin = new Point(0.5, 0.5),
             RenderTransform = new ScaleTransform(1, 1),
         };
@@ -585,6 +617,7 @@ public partial class GraphView : UserControl
             Model = node,
             Cell = cell,
             Body = body,
+            Base = opaqueBase,
             Square = square,
             SelectionRing = selectionRing,
             Icon = icon,
@@ -693,6 +726,10 @@ public partial class GraphView : UserControl
             VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false,
             Opacity = 0.0, // giriş animasyonu 0'dan başlar
+            // Hover/seçim büyütmesini GÖVDEYLE PAYLAŞIR — aksi halde kare büyürken yörünge yerinde kalır ve
+            // kare onun içinden taşar (gözle bulunan kusur).
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = visual.Body.RenderTransform,
         };
         orbit.SetResourceReference(Shape.StrokeProperty, "Brush.AmberText");
         ApplyBeadsGeometry(orbit);
@@ -782,11 +819,21 @@ public partial class GraphView : UserControl
         UpdateTooltip();
     }
 
+    /// <summary>
+    /// Bir düğümün VURGU durumunu uygular: ölçek, çerçeve kalınlığı, z-order ve opaklık.
+    ///
+    /// <para>[quiet · görsel geçiş] Vurgu iki kaynaktan gelir ve ikisi de AYNI görünümü verir: hover VE
+    /// seçim. Seçili düğümün hover ölçeğinde KALMASI ana prototipte yok (orada <c>scale</c> yalnız hover'a
+    /// bağlı, BuildApp.jsx:442) — Graph Lab denemesinde vardı ve ana prototipe taşınmamış; kullanıcı istenen
+    /// davranışın o olduğunu doğruladı. Öne alma ise bir düzeltmedir: seçim halkası düğümden
+    /// <see cref="SelectionRingInset"/> kadar taşar ve dar pitch'te komşular onun üstünü örtüyordu.</para>
+    /// </summary>
     private void ApplyHover(string nodeName)
     {
         if (!_slots.TryGetValue(nodeName, out var slot)) return;
         var visual = slot.Visual;
-        bool hovered = string.Equals(_hoveredNode, nodeName, StringComparison.Ordinal);
+        bool hovered = string.Equals(_hoveredNode, nodeName, StringComparison.Ordinal)
+            || string.Equals(nodeName, _selectedNode, StringComparison.Ordinal);
 
         double target = hovered ? HoverScale : 1.0;
         var scale = (ScaleTransform)visual.Body.RenderTransform;
@@ -803,10 +850,9 @@ public partial class GraphView : UserControl
             scale.ScaleX = scale.ScaleY = target;
         }
 
-        // Büyüyen düğüm komşularının ÜSTÜNDE kalmalı; seçili düğümün kalın çerçevesi hover'dan etkilenmez.
+        // Büyüyen düğüm — ve halkası — komşuların ÜSTÜNDE kalmalı.
         Panel.SetZIndex(visual.Cell, hovered ? 1 : 0);
-        bool isSelected = string.Equals(nodeName, _selectedNode, StringComparison.Ordinal);
-        visual.Square.StrokeThickness = hovered || isSelected ? HoverBorderThickness : NodeBorderThickness;
+        visual.Square.StrokeThickness = hovered ? HoverBorderThickness : NodeBorderThickness;
         ApplyNodeOpacity(visual, leftBuilding: false);
     }
 
@@ -822,7 +868,7 @@ public partial class GraphView : UserControl
         TooltipText.Text = name; // §2.3: TAM proje adı, kısaltmasız
         TooltipBox.Visibility = Visibility.Visible;
         PlaceOverlayBox(TooltipBox, box => GraphOverlay.TooltipTopLeft(
-            slot.Center, CurrentCamera, _layout.NodeSize, ViewportSize, box));
+            slot.Center, LiveCamera, _layout.NodeSize, ViewportSize, box));
     }
 
     /// <summary>Overlay kutusunu ÖLÇÜP yerleştirir. Ölçüm şart: kelepçe kutunun TAMAMINA uygulanır ve
@@ -856,10 +902,7 @@ public partial class GraphView : UserControl
             bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
             slot.Visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
             // DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
-            bool hovered = string.Equals(name, _hoveredNode, StringComparison.Ordinal);
-            slot.Visual.Square.StrokeThickness =
-                isSelected || hovered ? SelectedNodeBorderThickness : NodeBorderThickness;
-            ApplyNodeOpacity(slot.Visual, leftBuilding: false);
+            ApplyHover(name); // ölçek + çerçeve + z-order + opaklık TEK yerden (kopya YASAK)
         }
     }
 
@@ -955,7 +998,7 @@ public partial class GraphView : UserControl
         SelectionLabelText.Text = selected;
         SelectionLabelBox.Visibility = Visibility.Visible;
         PlaceOverlayBox(SelectionLabelBox, box => GraphOverlay.NameLabelTopLeft(
-            slot.Center, CurrentCamera, _layout.NodeSize, ViewportSize, box));
+            slot.Center, LiveCamera, _layout.NodeSize, ViewportSize, box));
     }
 
     // ---------------------------------------------------------------- koşu yaşam döngüsü (opaklık)
@@ -1231,8 +1274,8 @@ public partial class GraphView : UserControl
     private void SnapCameraTo(CameraTransform camera)
     {
         CurrentCamera = camera;
-        UpdateTooltip();        // ankraj kameradan türer — zoom/pan onu taşır ama BOYUTUNU değiştirmez
-        UpdateSelectionLabel(); // aynı gerekçe: ekran koordinatlı, kamerayla birlikte kayar
+        // Overlay'i BURADA tazelemeye gerek yok: aşağıdaki transform yazımları Changed'i ateşler ve tek
+        // kanaldan (OnCameraFrame) güncellenir — ikinci bir çağrı kopya olurdu.
         _cameraScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _cameraScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         _cameraTranslate.BeginAnimation(TranslateTransform.XProperty, null);
@@ -1247,14 +1290,7 @@ public partial class GraphView : UserControl
     {
         EmptyState.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         Viewport.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
-        // Sync'ten önce gezinecek bir şey yok — ipucu da yok.
-        HintLabel.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
     }
-
-    /// <summary>§2.3: sağ alttaki mono ipucu seçime göre değişir.</summary>
-    private void UpdateHint() => HintLabel.Text = _selectedNode is null
-        ? ViewModels.InteractionText.GraphHintNavigate
-        : ViewModels.InteractionText.GraphHintRelease;
 
     // ---------------------------------------------------------------- test/görünürlük yüzeyi
 
@@ -1282,11 +1318,17 @@ public partial class GraphView : UserControl
     internal double NodeSize => _layout.NodeSize;
     /// <summary>Canlı düğüm adımı.</summary>
     internal double Pitch => _layout.Pitch;
-    internal string HintText => HintLabel.Text;
+    /// <summary>Kameranın CANLI (uygulanmış) hâlini testten oynatır — bir animasyon ara karesinin yaptığı
+    /// şeyin ta kendisi. Headless'ta compositor saati ilerlemez, bu yüzden ara kare elle sürülür.</summary>
+    internal void MoveLiveCameraForTest(CameraTransform camera)
+    {
+        _cameraScale.ScaleX = _cameraScale.ScaleY = camera.Scale;
+        _cameraTranslate.X = camera.Tx;
+        _cameraTranslate.Y = camera.Ty;
+    }
     /// <summary>Açılış dalgasında bir düğüme uygulanan gecikme (dalga oynamadıysa <c>null</c>).</summary>
     internal double? RevealDelayOf(string nodeName) =>
         _slots.TryGetValue(nodeName, out var slot) ? slot.Visual.RevealDelayMs : null;
-    internal Visibility HintVisibility => HintLabel.Visibility;
     /// <summary>TÜM beads yörüngelerinin paylaştığı saat (hiç dönmüyorsa <c>null</c>).</summary>
     internal AnimationClock? BeadsClock => _beadsClock;
     /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>

@@ -38,19 +38,24 @@ public static class QuietGraphLayout
     public const double NodeSizeFactor = 0.6;
     public const double MinNodeSize = 8.0;
     public const double MaxNodeSize = 24.0;
-    /// <summary>Hesap alanının panel kenarlarına bıraktığı pay (her yandan).</summary>
-    public const double ContentInset = 12.0;
-    /// <summary>Sağ alttaki mono ipucu satırı için yükseklikte ayrılan rezerv — düğümler ona değmez.</summary>
-    public const double HintReservePx = 18.0;
+    /// <summary>Hesap alanının panel kenarlarına bıraktığı pay (her yandan).
+    ///
+    /// <para><b>§2.3'ün sayısı 12px'ti; kullanıcı kararıyla 28px.</b> 12px'te graf panele yapışık ve
+    /// "ferah değil" duruyordu. Pay büyüdükçe hesap alanı daralır, yani aynı panelde pitch bir miktar
+    /// küçülür — bilinçli takas.</para>
+    ///
+    /// <para>Pay artık dört yanda SİMETRİKTİR: sağ alttaki mono ipucu satırı kaldırıldığı için ona ayrılan
+    /// dikey rezerv de yok.</para></summary>
+    public const double ContentInset = 28.0;
     /// <summary>Hesabın taban panel ölçüsü: panel bundan küçükse yerleşim yine de üretilir (taşan kırpılır).</summary>
     public const double MinPanelWidth = 240.0;
     public const double MinPanelHeight = 160.0;
 
-    /// <summary>Yerleşimin hesap alanı: panel eksi kenar payı, yükseklikte ayrıca ipucu rezervi. Panel
+    /// <summary>Yerleşimin hesap alanı: panel eksi kenar payı (dört yanda simetrik). Panel
     /// tabanın altındaysa taban kullanılır — aksi halde negatif bir alan taramayı anlamsız kılardı.</summary>
     public static Size ContentSize(Size panel) => new(
         Math.Max(MinPanelWidth, panel.Width) - 2 * ContentInset,
-        Math.Max(MinPanelHeight, panel.Height) - 2 * ContentInset - HintReservePx);
+        Math.Max(MinPanelHeight, panel.Height) - 2 * ContentInset);
 
     /// <summary>
     /// Pitch taraması: 44'ten 5'e 0.5 adımla iner, TÜM bantların satırları + bant boşlukları hesap

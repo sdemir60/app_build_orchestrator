@@ -25,6 +25,24 @@ bulalım" demek gerekiyor.
 
 ---
 
+## 1b. Gözle bulunup DÜZELTİLENLER (2026-08-07 geçişi)
+
+Uygulama gerçek OSYS reposuyla açılıp prototiple karşılaştırıldı. Bulunan dokuz kusurun her biri
+`GraphVisualPassTests`'te kırmızı gösterilip düzeltildi:
+
+| Bulgu | Kök neden | Düzeltme |
+|---|---|---|
+| Ad etiketi/tooltip ortalamıyor | Overlay konumu kameranın HEDEFİNDEN hesaplanıyor ve yalnız anlık atlamalarda tazeleniyordu — 460ms'lik seçim geçişi boyunca hiç güncellenmiyordu | Konum CANLI transform'dan okunur, transform her değiştiğinde tazelenir |
+| Seçili node'da amber çerçeve yok · "köşelerde noktalar" | Halka düğümden taşıyor, dar pitch'te komşular üstünü örtüyordu (geriye köşe parçaları kalıyordu) | Seçili düğüm hover gibi ÖNE alınır |
+| Seçili node vurgusuz | Ana prototipte seçim düğümü büyütmez; istenen davranış Graph Lab'dekiydi | Seçili düğüm 1.7×'te kalır + amber halka |
+| Beads "estetik değil" | Hover ölçeği yalnız gövdeye uygulanıyordu; prototipte beads'e de uygulanır | Gövde ve yörünge AYNI transform'u paylaşır |
+| Çizgi node içinden görünüyor | Statü zemini %12 alfa | Kareye panel zemini renginde opak taban + katman z-index'i AÇIKÇA ilan edildi |
+| Biten node fazla parlak kalıyor | §2.3'ün 2400ms'i | 1400ms (sönme 700ms aynı) |
+| Graf ferah değil | §2.3'ün 12px kenar payı | 28px, dört yanda simetrik (ipucu rezervi de kalktı) |
+| Sağ alt ipucu satırı | — | Kaldırıldı |
+
+---
+
 ## 2. Kodla kapanmayan görsel maddeler
 
 1. **8px düğümde üç opaklık kademesi (RİSK #2).** 177 projelik bir koşuda 0.13 (soluk) / 1.0 (derlenen) /
@@ -33,20 +51,23 @@ bulalım" demek gerekiyor.
 2. **8px karede %52 glyph** (≈4px, 1.8px stroke) görünür mü, yoksa gürültü mü? Pitch tabana indiğinde
    (çok büyük workspace) kutu neye benziyor?
 3. **Beads.** 8–24px düğümün 2.8px dışında gerçekten "sık noktalar" gibi mi görünüyor, yoksa kesintisiz bir
-   halka mı? Ek yerinde bindirme/boşluk var mı? 4.2 saniyelik tur çok mu yavaş?
+   halka mı? Ek yerinde bindirme/boşluk var mı? 4.2 saniyelik tur çok mu yavaş? (Hover'da artık kareyle
+   birlikte büyüyor — o kısım düzeldi mi?)
 4. **Beads giriş/çıkış.** Bir proje bitince noktalar DÖNERKEN mi sönüyor, donup mu kayboluyor?
 5. **Hold-fade ritmi.** Biten proje 2.4sn parlak kalıp 0.7sn'de sönüyor mu? Paralel 6 projede göz yoruluyor mu?
 6. **Splitter sürüklerken** yerleşim yeniden hesabı akıcı mı — takılma, zıplama, düğümlerin "kaynaması" var mı?
-7. **Tooltip.** Her zoom'da net mi (ölçeklenmiyor mu)? Panel kenarındaki bir düğümde tamamen okunuyor mu?
-   Gecikmesiz açılışı sinir bozucu mu?
+7. **Tooltip ve ad etiketi.** Her zoom'da net mi (ölçeklenmiyor mu)? Panel kenarındaki bir düğümde tamamen
+   okunuyor mu? **Seçimde kamera kayarken etiket düğümün altında kalıyor mu** (ana düzeltme buydu)?
 8. **Seçim odağı.** Çok bağımlısı olan bir proje seçildiğinde (geniş odak kümesi) zoom 0.7 tabanına iniyor —
    okunabilir kalıyor mu? Kenardaki bir düğüm seçildiğinde çerçeveleme doğru hissettiriyor mu?
 9. **Seçim çizgileri.** Amber akan kesikler 640ms'de çok mu hızlı? 1.2px çizgi near-black zeminde görünüyor mu?
 10. **Açılış dalgası.** Üstten alta / soldan sağa akıyor mu? 177 projede 520ms tavanı doğru hissettiriyor mu,
     yoksa son 120 proje tek blok gibi mi patlıyor?
-11. **Reduced-motion.** (Windows → Ayarlar → Erişilebilirlik → Görsel efektler → Animasyon efektleri KAPALI)
+11. **Seçim çizgileri hâlâ node üstünden geçiyor mu?** Opak taban eklendi ve katman z-index'i açıkça
+    ilan edildi — "bazen üstünde" gözlemi kapandı mı?
+12. **Reduced-motion.** (Windows → Ayarlar → Erişilebilirlik → Görsel efektler → Animasyon efektleri KAPALI)
     beads, akan çizgiler, açılış dalgası ve kamera geçişi TAMAMEN kapalı mı?
-12. **`list` / `focus` moduna geçince** koşu sürerken CPU düşüyor mu (gizli panel kapısının gözle karşılığı)?
+13. **`list` / `focus` moduna geçince** koşu sürerken CPU düşüyor mu (gizli panel kapısının gözle karşılığı)?
 
 ---
 

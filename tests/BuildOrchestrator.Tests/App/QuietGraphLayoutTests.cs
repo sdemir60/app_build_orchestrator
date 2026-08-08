@@ -26,15 +26,21 @@ public class QuietGraphLayoutTests
         return nodes;
     }
 
-    /// <summary>Hesap alanı = panel − 2×12 kenar payı; yükseklikte ayrıca 18px mono ipucu rezervi
-    /// (JSX:339-341: <c>graphLayout(W - 24, H - 24 - 18)</c>).</summary>
+    /// <summary>
+    /// Hesap alanı = panel − 2×28 kenar payı, DÖRT YANDA SİMETRİK.
+    ///
+    /// <para><b>Eski iddia:</b> pay 12px'ti ve yükseklikte ayrıca 18px'lik mono ipucu rezervi vardı
+    /// (JSX:339-341: <c>graphLayout(W - 24, H - 24 - 18)</c>). İkisi de kullanıcı kararıyla değişti:
+    /// gerçek koşuda graf panele yapışık ve "ferah değil" duruyordu (pay 12 → 28), ipucu satırı da
+    /// kaldırıldı (rezerv → yok).</para>
+    /// </summary>
     [Fact]
-    public void The_content_box_is_the_panel_minus_the_12px_inset_and_the_18px_hint_reserve()
+    public void The_content_box_is_the_panel_minus_a_symmetric_28px_inset()
     {
         var content = QuietGraphLayout.ContentSize(new Size(640, 360));
 
-        Assert.Equal(616, content.Width, 3);
-        Assert.Equal(318, content.Height, 3);
+        Assert.Equal(640 - 56, content.Width, 3);
+        Assert.Equal(360 - 56, content.Height, 3);
     }
 
     /// <summary>Panel çok küçükse hesap 240×160 tabanına oturur (JSX:339
@@ -45,8 +51,8 @@ public class QuietGraphLayoutTests
     {
         var content = QuietGraphLayout.ContentSize(new Size(100, 80));
 
-        Assert.Equal(240 - 24, content.Width, 3);
-        Assert.Equal(160 - 24 - 18, content.Height, 3);
+        Assert.Equal(240 - 56, content.Width, 3);
+        Assert.Equal(160 - 56, content.Height, 3);
     }
 
     /// <summary>Bol yer varsa tarama İLK adımda (44) durur; sütun sayısı en kalabalık bandı ASLA aşmaz
@@ -63,21 +69,21 @@ public class QuietGraphLayoutTests
     /// <summary>
     /// AYIRT EDİCİ: tarama 0.5 adımlıdır ve SIĞAN İLK değeri alır — tam sayıya yuvarlamaz.
     ///
-    /// <para>6 bant × 40 düğüm, 640×360 panel (hesap alanı 616×318): 21 ve üstü sığmaz
-    /// (15.5 satır-birimi × 21 = 325.5 &gt; 318), 20.5 sığar (15.5 × 20.5 = 317.75 ≤ 318). Adımı 1px'e
-    /// yuvarlayan bir uygulama burada 20 verir ve KIRMIZI olur.</para>
+    /// <para>6 bant × 40 düğüm, 640×360 panel (hesap alanı 584×304): 20 ve üstü sığmaz
+    /// (15.5 satır-birimi × 20 = 310 &gt; 304), 19.5 sığar (15.5 × 19.5 = 302.25 ≤ 304). Adımı 1px'e
+    /// yuvarlayan bir uygulama burada 19 verir ve KIRMIZI olur.</para>
     /// </summary>
     [Fact]
     public void The_pitch_scan_walks_down_in_half_pixel_steps_and_takes_the_FIRST_value_that_fits()
     {
         var result = QuietGraphLayout.Compute(Bands(40, 40, 40, 40, 40, 40), new Size(640, 360));
 
-        Assert.Equal(20.5, result.Pitch, 3);
-        Assert.Equal(30, result.Columns);
+        Assert.Equal(19.5, result.Pitch, 3);
+        Assert.Equal(29, result.Columns);
     }
 
     /// <summary>Düğüm kenarı = pitch × 0.6, 8–24 kelepçesiyle (JSX:288). Bol yerde tavana çarpar
-    /// (44 × 0.6 = 26.4 → 24), kalabalıkta banttan gelir (20.5 × 0.6 = 12.3).</summary>
+    /// (44 × 0.6 = 26.4 → 24), kalabalıkta banttan gelir (19.5 × 0.6 = 11.7).</summary>
     [Fact]
     public void The_node_edge_is_60_percent_of_the_pitch_clamped_to_8_and_24()
     {
@@ -85,7 +91,7 @@ public class QuietGraphLayoutTests
         var crowded = QuietGraphLayout.Compute(Bands(40, 40, 40, 40, 40, 40), new Size(640, 360));
 
         Assert.Equal(QuietGraphLayout.MaxNodeSize, roomy.NodeSize, 3); // 26.4 tavana kelepçelendi
-        Assert.Equal(12.3, crowded.NodeSize, 3);
+        Assert.Equal(11.7, crowded.NodeSize, 3);
         Assert.Equal(crowded.Pitch * QuietGraphLayout.NodeSizeFactor, crowded.NodeSize, 6);
     }
 
@@ -130,13 +136,13 @@ public class QuietGraphLayoutTests
     [Fact]
     public void An_incomplete_last_row_is_centred_against_the_full_row_above_it()
     {
-        // 640px panel / pitch 44 → 14 sütun; bant 17 düğümlü ⇒ satır 1 = 14, satır 2 = 3.
+        // 640px panel (hesap alanı 584) / pitch 44 → 13 sütun; bant 17 düğümlü ⇒ satır 1 = 13, satır 2 = 4.
         var result = QuietGraphLayout.Compute(Bands(17), new Size(640, 360));
         var p = result.Positions;
 
-        Assert.Equal(14, result.Columns);
-        double fullRowMid = (p["L0.P000"].X + p["L0.P013"].X) / 2;
-        double shortRowMid = (p["L0.P014"].X + p["L0.P016"].X) / 2;
+        Assert.Equal(13, result.Columns);
+        double fullRowMid = (p["L0.P000"].X + p["L0.P012"].X) / 2;
+        double shortRowMid = (p["L0.P013"].X + p["L0.P016"].X) / 2;
         Assert.Equal(fullRowMid, shortRowMid, 3);
     }
 

@@ -32,12 +32,6 @@ public static class InteractionText
     /// <summary>Graf paneli Sync öncesi boş-durum etiketi (GraphView).</summary>
     public const string GraphEmpty = "Graph appears after Sync";
 
-    /// <summary>[quiet] Grafın sağ alt köşesindeki mono ipucu — seçim YOKKEN (design v1.3.0 §2.3).</summary>
-    public const string GraphHintNavigate = "scroll = zoom · drag = pan";
-
-    /// <summary>[quiet] Aynı ipucu, seçim VARKEN: bırakma jestini duyurur (§2.3). Kelepçesiz pan'ın
-    /// kurtarma yolu da budur — boş alana tıkla, görünüm varsayılana döner.</summary>
-    public const string GraphHintRelease = "click again to release";
 
     /// <summary>Event stream paneli boş-durum etiketi (EventStreamView, BuildApp.jsx:705-707).</summary>
     public const string StreamEmpty = "No events yet.";
