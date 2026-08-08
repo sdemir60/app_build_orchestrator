@@ -51,15 +51,6 @@ public static class GraphBeads
     /// kaybolmaz." Paylaşımlı saat son building düğüm bittikten bu kadar sonra bırakılır.</summary>
     public const double SpinAfterStopMs = 700.0;
 
-    /// <summary>[quiet] ATLANAN projenin tek atımlık yörünge çakışında noktaların tam opak durduğu süre.
-    /// Düğümün parlak bekleme süresiyle AYNIDIR (kopya YASAK — tek doğruluk kaynağı
-    /// <see cref="GraphNodeOpacity.SkipHoldMs"/>): yörünge, kare soluklaşmaya başladığı anda sönmeye
-    /// başlar.</summary>
-    public const double SkipFlashHoldMs = GraphNodeOpacity.SkipHoldMs;
-    /// <summary>Çakışın toplam ömrü — bekleme + normal çıkış süresi. Paylaşımlı saat bu kadar dönmelidir,
-    /// yoksa noktalar sönmeden donar.</summary>
-    public const double SkipFlashTotalMs = SkipFlashHoldMs + FadeOutMs;
-
     /// <summary>Verilen düğüm kenarı için yörünge geometrisi.</summary>
     public static BeadsGeometry For(double nodeSize)
     {

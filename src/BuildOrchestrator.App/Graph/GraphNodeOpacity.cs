@@ -44,21 +44,6 @@ public static class GraphNodeOpacity
     /// <summary>Bekleme bitince <see cref="Finished"/>'a sönme süresi (§2.3).</summary>
     public const double FadeMs = 700.0;
 
-    /// <summary>[quiet] ATLANAN projenin parlak bekleme süresi — derlenenin çok altında.
-    ///
-    /// <para>Kullanıcı kararı: "atlandığı için çok hafif, görülüp geçilecek seviyede kısa tutabiliriz."
-    /// Atlanma bir işlemdir ama bir DERLEME değildir; anlatımı da o kadar yer kaplamamalı.</para></summary>
-    public const double SkipHoldMs = 520.0;
-    /// <summary>Aynı tick'te atlanan iki proje arasındaki gecikme.
-    ///
-    /// <para><b>Neden var:</b> atlanan projeler derleme kuyruğuna hiç girmez — hiçbir şeyin değişmediği bir
-    /// koşuda planlayıcı hepsini TEK tick'te işaretler. Gecikmesiz hâlde yüzlerce düğüm aynı anda yanıp aynı
-    /// anda sönüyor ve "sırası geldi, bakıldı, geçildi" yerine tek bir flaş gibi okunuyordu. Adım, dalgayı
-    /// build-order boyunca yürütür.</para></summary>
-    public const double SkipStepMs = 45.0;
-    /// <summary>Atlanma dalgasının tavanı — 177 projelik bir koşuda dalga bu süreye sığar, sonrakiler
-    /// birlikte gelir (açılış dalgasının <c>RevealDelayCapMs</c> ile aynı gerekçesi).</summary>
-    public const double SkipStaggerCapMs = 900.0;
     /// <summary>Normal opaklık geçişi (§2.3: "opaklık geçişi 280ms — hold-fade hariç").</summary>
     public const double GlideMs = 280.0;
     // [quiet · ÖLÇÜLMÜŞ SAPMA] §2.3'ün "renk geçişi 380ms ease-standard" kuralı UYGULANMADI ve bu yüzden
@@ -67,16 +52,22 @@ public static class GraphNodeOpacity
     // aynı tick'te statü değiştirdiği durumda tick 11 ms'den 51 ms'ye çıkıp UI olay bütçesini aşıyor.
 
     /// <summary>
-    /// Düğüm bir SONUCA oturdu mu — hold-fade'i (parlak bekle, sonra sön) doğuran geçişin hedef kümesi.
+    /// Düğüm bir İŞ sonucuna oturdu mu — hold-fade'i (parlak bekle, sonra sön) doğuran geçişin hedef kümesi.
     ///
-    /// <para><b>Eski kural "building'den çıkış"tı.</b> Atlanan proje hiç building olmaz: incremental kontrol
-    /// onu güncel bulur ve doğrudan <see cref="GraphStatus.Skipped"/>'a geçer. Eski kuralla o düğüm tek bir
-    /// parlak an bile almıyor, 0.13'ten 0.2'ye sessizce kayıyordu — koşu sonunda "bunlar hiç işlem görmedi"
-    /// hissi buradan geliyordu. Kural artık statünün KENDİSİNE bakar: nasıl gelindiği değil, bir sonuca
-    /// gelinmiş olması önemlidir.</para>
+    /// <para><b>Eski kural "building'den çıkış"tı.</b> Yeterli değil: statü itişi 200ms'de bir gelir ve hızlı
+    /// bir proje <c>queued → succeeded</c> diye tek tick'te görünebilir; o düğüm parlak anını hiç almazdı.
+    /// Kural artık nasıl gelindiğine değil NEREYE gelindiğine bakar.</para>
+    ///
+    /// <para><b><see cref="GraphStatus.Skipped"/> BURADA DEĞİLDİR ve bu bilinçlidir.</b> Bir ara sürümde
+    /// atlanan düğüme de parlak bekleme + amber yörünge çakışı verilmişti; gerekçe "atlanmak da bir karardır,
+    /// işlem gördüğü belli olsun"du. Gözle bakıldığında yanlış olduğu görüldü: sessiz grafın anlattığı şey
+    /// "ne oldu" değil "ne DEĞİŞTİ"dir ve atlanmak tam olarak hiçbir şeyin değişmemesidir. Üstelik bu araçta
+    /// en sık koşu "hiçbir şey değişmedi" koşusudur — o durumda grafın tamamı her Derle'de saniyelerce
+    /// kıpırdardı. Atlanan proje artık sonuç renginde sessizce yerine oturur (düz 280ms geçiş); bilgi zaten
+    /// liste satırındaki will-build noktasında, şerit sayacında ve konsolda vardır.</para>
     /// </summary>
     public static bool IsSettled(GraphStatus status) => status
-        is GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Skipped or GraphStatus.Cycle;
+        is GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Cycle;
 
     /// <summary>
     /// Bir düğümün NİHAİ opaklığı. Sıra prototiple birebirdir (BuildApp.jsx:421-429).
