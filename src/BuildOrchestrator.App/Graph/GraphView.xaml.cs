@@ -147,9 +147,6 @@ public partial class GraphView : UserControl
     /// <summary>Son building düğüm bittikten sonra saati bırakan TEK ATIMLIK tetik (§2.3: noktalar dönerken
     /// söner). Talep üzerine kurulur; yeni bir building doğarsa iptal edilir.</summary>
     private DispatcherTimer? _beadsSpindown;
-    /// <summary>Uçuştaki spin-down'ın vade anı (<c>Environment.TickCount64</c> ölçeğinde). Daha kısa bir
-    /// yeni istek uzun bir kuyruğu kısaltmasın diye tutulur; <c>DispatcherTimer</c> kalan süreyi vermez.</summary>
-    private long _beadsSpindownDueMs;
 
     /// <summary>[quiet] Eğri token'ları ÖNBELLEKLENİR. Süreler bilerek her başlangıçta taze okunur
     /// (reduced-motion onları CANLI 0'a çeker) ama <c>KeySpline</c>'lar sabittir — <c>Motion.xaml</c>'in
@@ -467,10 +464,6 @@ public partial class GraphView : UserControl
 
     private void ApplyStatuses(IReadOnlyList<GraphNode> nodes)
     {
-        // Atlanan projeler derleme kuyruğuna hiç girmez: hiçbir şeyin değişmediği bir koşuda planlayıcı
-        // hepsini TEK tick'te işaretler. Sıra sayacı dalgayı build-order boyunca yürütür — besleme sırası
-        // build-order olduğu için ek bir sıralama gerekmez.
-        int skipOrder = 0;
         foreach (var node in nodes)
         {
             if (!_slots.TryGetValue(node.Name, out var slot)) continue;
@@ -483,18 +476,10 @@ public partial class GraphView : UserControl
             // "bu hiç işlem görmedi" hissi veriyordu. Geçişin KENDİSİ burada, model değişmeden önce okunur.
             bool settled = !GraphNodeOpacity.IsSettled(slot.Model.Status)
                 && GraphNodeOpacity.IsSettled(node.Status);
-            bool skipped = settled && node.Status == GraphStatus.Skipped && _runPhase == GraphRunPhase.Running;
-            double delayMs = skipped
-                ? Math.Min(skipOrder++ * GraphNodeOpacity.SkipStepMs, GraphNodeOpacity.SkipStaggerCapMs)
-                : 0;
-            double holdMs = settled
-                ? (skipped ? GraphNodeOpacity.SkipHoldMs : GraphNodeOpacity.HoldMs)
-                : 0;
             slot.Model = node;
             slot.Visual.Model = node;
             ApplyNodeStatus(slot.Visual);
-            ApplyNodeOpacity(slot.Visual, holdMs, delayMs);
-            if (skipped) FlashBeads(slot.Visual, delayMs);
+            ApplyNodeOpacity(slot.Visual, settled ? GraphNodeOpacity.HoldMs : 0);
         }
     }
 
@@ -754,51 +739,14 @@ public partial class GraphView : UserControl
 
         if (visual.Beads is null) return;
         FadeBeads(visual, 0.0, GraphBeads.FadeOutMs);
-        ArmBeadsSpindown(GraphBeads.SpinAfterStopMs);
-    }
-
-    /// <summary>
-    /// [quiet] <b>Atlanan projenin "işlem gördü" anı.</b> §2.3'ün yörüngesi yalnız <c>building</c>'e bağlıdır;
-    /// atlanan proje hiç building olmaz, dolayısıyla graf onu hiç canlandırmıyordu ve koşu sonunda "bunlar
-    /// derlenmedi" hissi veriyordu — oysa atlanmak da bir karardır (incremental kontrol yapıldı ve proje
-    /// güncel bulundu). Aynı amber yörünge TEK ATIMLIK oynar: girer, düğüm parlak dururken döner, düğüm
-    /// soluklaşmaya başlarken söner.
-    ///
-    /// <para><b>Düğüm başına timer YOK</b>: giriş + bekleme + çıkış tek bir keyframe animasyonudur. Hiçbir
-    /// şeyin değişmediği bir koşuda projelerin TAMAMI tek tick'te atlanabilir; düğüm başına bir tetik kurmak
-    /// UI olay bütçesini yerdi.</para>
-    ///
-    /// <para><b>Bilinçli sapma:</b> kullanıcının tarifi "önce sarı olsun, sonra parlak gri, sonra soluklaşsın"
-    /// idi. Karenin RENGİNİ geçici olarak amber yapmak statüyü yanlış söylerdi (ve renk geçişinin ölçülmüş
-    /// bedeli <see cref="ApplyNodeStatus"/>'te yazılıdır); amber olan, işin kendisini anlatan yörüngedir.</para>
-    /// </summary>
-    private void FlashBeads(GraphNodeVisual visual, double delayMs)
-    {
-        if (!AnimationsEnabledProvider()) return;
-        EnsureBeads(visual);
-        EnsureBeadsClock();
-
-        var flash = new DoubleAnimationUsingKeyFrames { BeginTime = TimeSpan.FromMilliseconds(delayMs) };
-        flash.KeyFrames.Add(new SplineDoubleKeyFrame(
-            1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GraphBeads.FadeInMs)), EaseOut));
-        // Bekleme: değer önceki kareden devralınır, yalnız SÜRE uzar (CSS'teki transition-delay paritesi).
-        flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(
-            1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GraphBeads.SkipFlashHoldMs))));
-        flash.KeyFrames.Add(new SplineDoubleKeyFrame(
-            0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GraphBeads.SkipFlashTotalMs)), EaseOut));
-
-        visual.BeadsAnimation = flash;
-        visual.Beads!.BeginAnimation(OpacityProperty, flash, HandoffBehavior.SnapshotAndReplace);
-        // Çakış normal bir çıkıştan UZUNDUR: paylaşımlı saat onun sonuna kadar dönmeli, yoksa noktalar
-        // sönmeden DONAR.
-        ArmBeadsSpindown(delayMs + GraphBeads.SkipFlashTotalMs);
+        ArmBeadsSpindown();
     }
 
     private void FadeBeads(GraphNodeVisual visual, double target, double durationMs)
     {
-        var fade = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut);
-        visual.BeadsAnimation = fade;
-        visual.Beads!.BeginAnimation(OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+        visual.Beads!.BeginAnimation(OpacityProperty,
+            MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut),
+            HandoffBehavior.SnapshotAndReplace);
     }
 
     /// <summary>Yörüngeyi TALEP ÜZERİNE kurar (bir kez) — düğümlerin çoğu bir koşuda hiç derlenmez.</summary>
@@ -855,25 +803,20 @@ public partial class GraphView : UserControl
             slot.Visual.Beads?.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, _beadsClock);
     }
 
-    /// <summary>§2.3: saat, işin bitişinden <paramref name="delayMs"/> sonra bırakılır — sönme animasyonu o
-    /// pencerenin içinde biter, yani noktalar DÖNERKEN söner, donup kaybolmaz.
-    ///
-    /// <para>Uçuştaki daha UZUN bir kuyruk KISALTILMAZ: atlanma çakışı (<see cref="FlashBeads"/>) normal
-    /// çıkıştan uzundur ve arkasından biten bir build onu yarıda kesseydi o noktalar donardı.</para></summary>
-    private void ArmBeadsSpindown(double delayMs)
+    /// <summary>§2.3: saat bitişten <see cref="GraphBeads.SpinAfterStopMs"/> sonra bırakılır — çıkış
+    /// animasyonu (640ms) o pencerenin içinde biter, yani noktalar DÖNERKEN söner, donup kaybolmaz.</summary>
+    private void ArmBeadsSpindown()
     {
-        long due = Environment.TickCount64 + (long)delayMs;
-        if (_beadsSpindown is { IsEnabled: true } && due <= _beadsSpindownDueMs) return;
-        _beadsSpindownDueMs = due;
-
-        _beadsSpindown ??= new DispatcherTimer(DispatcherPriority.Background);
+        _beadsSpindown ??= new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(GraphBeads.SpinAfterStopMs),
+        };
         if (_beadsSpindown.Tag is null)
         {
             _beadsSpindown.Tag = this; // abonelik BİR kez kurulur
             _beadsSpindown.Tick += (_, _) => HandleBeadsSpindownTick();
         }
         _beadsSpindown.Stop();
-        _beadsSpindown.Interval = TimeSpan.FromMilliseconds(delayMs);
         _beadsSpindown.Start();
     }
 
@@ -1146,8 +1089,7 @@ public partial class GraphView : UserControl
     /// ÇIKARMASI gerekir, yoksa hiç parlamadan söner.</para>
     /// </summary>
     /// <param name="holdMs">Sonuç renginde PARLAK bekleme; 0 = bekleme yok (düz 280ms geçiş).</param>
-    /// <param name="delayMs">Bu düğümün dalgadaki sırası — aynı tick'te toplu oturan düğümleri ayırır.</param>
-    private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs, double delayMs = 0)
+    private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs)
     {
         double target = GraphNodeOpacity.Resolve(
             visual.Model.Status,
@@ -1169,7 +1111,7 @@ public partial class GraphView : UserControl
         DoubleAnimationUsingKeyFrames animation;
         if (holdMs > 0)
         {
-            animation = new DoubleAnimationUsingKeyFrames { BeginTime = TimeSpan.FromMilliseconds(delayMs) };
+            animation = new DoubleAnimationUsingKeyFrames();
             animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(
                 GraphNodeOpacity.Full, KeyTime.FromTimeSpan(TimeSpan.Zero)));
             animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(
@@ -1511,10 +1453,6 @@ public partial class GraphView : UserControl
     internal AnimationClock? BeadsClock => _beadsClock;
     /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>
     internal BeadsGeometry BeadsGeometry => _beadsGeometry;
-    /// <summary>Bir düğümün yörüngesini süren opaklık animasyonu — atlanma çakışının BİÇİMİNİ pinleyen
-    /// testin okuyabileceği tek yüzey (WPF uçuştaki bir animasyonu geri vermez).</summary>
-    internal Timeline? BeadsAnimationOf(string nodeName) =>
-        _slots.TryGetValue(nodeName, out var slot) ? slot.Visual.BeadsAnimation : null;
 
     /// <summary>Hover'ı testten sürer — headless'ta gerçek <c>MouseEnter</c> yükseltilemez
     /// (<c>PresentationSource</c> yok). Seam'in ÜSTÜNDEKİ kablo (Body.MouseEnter/MouseLeave) gerçek routed

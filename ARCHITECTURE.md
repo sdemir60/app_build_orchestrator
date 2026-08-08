@@ -1235,13 +1235,12 @@ graph quietens: queued and discovered nodes drop to 0.13 and only the projects a
 bright. A project that reaches a result returns to its result colour, holds bright for 1400 ms, then fades to
 0.2 over 700 ms — in CSS that is a delayed transition, and the WPF equivalent is one shot of an animation with
 three key frames — bright, still bright, then the result value — so there is no timer and no extra render
-pass. The hold is written out rather than left to the node's previous value, because a skipped node arrives
-*dim*: something has to lift it to bright, and only a node coming out of `Building` was bright already. The
-hold starts on the edge *into* a result status rather than on the edge out of `Building`, and that distinction
-is the whole point for **skipped**
-projects: a project found up to date never builds, so under the older rule it slid from 0.13 to 0.2 without
-ever being bright and the run read as though nothing had looked at it. Later ticks find the value already
-settled and start nothing, which matters because status pushes arrive several times a second. When the run ends every node comes back to full opacity in its result
+pass. The hold is written out rather than left to the node's previous value, because a node can arrive *dim*:
+status pushes land every 200 ms, so a fast project can appear as `queued → succeeded` inside one tick and
+something has to lift it to bright. That is also why the hold starts on the edge *into* a **work result**
+rather than on the edge out of `Building`. Being skipped is not a work result and takes the plain glide
+instead. Later ticks find the value already settled and start nothing, which matters because status pushes
+arrive several times a second. When the run ends every node comes back to full opacity in its result
 colour. The decision itself is pure (`GraphNodeOpacity.Resolve`) and its precedence is fixed: selection beats
 the run, and hover beats both.
 
