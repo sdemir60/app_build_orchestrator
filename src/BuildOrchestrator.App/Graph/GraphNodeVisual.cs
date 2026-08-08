@@ -107,6 +107,9 @@ internal sealed class GraphNodeVisual
     /// <summary>[quiet] Building yörüngesi (§2.3 "beads") — TALEP ÜZERİNE, düğüm İLK kez derlenmeye
     /// başladığında kurulur ve bir daha sökülmez (yalnız opaklığı 0'a iner). Reduced-motion'da hiç doğmaz.</summary>
     public Rectangle? Beads { get; set; }
+    /// <summary>[quiet] Yörüngenin opaklığını süren animasyon — WPF uçuştaki bir animasyonu geri vermez,
+    /// atlanma çakışının biçimini pinleyen testin okuyabileceği tek yer burasıdır.</summary>
+    public Timeline? BeadsAnimation { get; set; }
     /// <summary>Yörünge şu an GÖRÜNÜR mü — her <c>UpdateStatuses</c> tick'inde giriş/çıkış animasyonunun
     /// baştan başlatılmasını (takılmasını) önler.</summary>
     public bool BeadsVisible { get; set; }

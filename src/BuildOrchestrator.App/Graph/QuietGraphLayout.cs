@@ -40,13 +40,15 @@ public static class QuietGraphLayout
     public const double MaxNodeSize = 24.0;
     /// <summary>Hesap alanının panel kenarlarına bıraktığı pay (her yandan).
     ///
-    /// <para><b>§2.3'ün sayısı 12px'ti; kullanıcı kararıyla 28px.</b> 12px'te graf panele yapışık ve
-    /// "ferah değil" duruyordu. Pay büyüdükçe hesap alanı daralır, yani aynı panelde pitch bir miktar
-    /// küçülür — bilinçli takas.</para>
+    /// <para><b>§2.3'ün sayısı 12px'ti; kullanıcı kararıyla önce 28, sonra 36px.</b> 12px'te graf panele
+    /// yapışık ve "ferah değil" duruyordu; 28 doğru yönde ama yetersiz bulundu. Pay büyüdükçe hesap alanı
+    /// daralır, yani aynı panelde pitch bir miktar küçülür — bilinçli takas.</para>
     ///
-    /// <para>Pay artık dört yanda SİMETRİKTİR: sağ alttaki mono ipucu satırı kaldırıldığı için ona ayrılan
-    /// dikey rezerv de yok.</para></summary>
-    public const double ContentInset = 28.0;
+    /// <para>Pay artık dört yanda SİMETRİKTİR (sağ alttaki mono ipucu satırı kaldırıldığı için ona ayrılan
+    /// dikey rezerv de yok) ve <b>tek doğruluk kaynağıdır</b>: overlay katmanı da (tooltip, ad etiketi)
+    /// kelepçesini bu sayıdan okur (<see cref="GraphOverlay"/>), böylece odak kipinde etiket köşeye yapışmak
+    /// yerine grafın kendi nefes payının içinde durur.</para></summary>
+    public const double ContentInset = 36.0;
     /// <summary>Hesabın taban panel ölçüsü: panel bundan küçükse yerleşim yine de üretilir (taşan kırpılır).</summary>
     public const double MinPanelWidth = 240.0;
     public const double MinPanelHeight = 160.0;
