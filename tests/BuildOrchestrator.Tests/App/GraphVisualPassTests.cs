@@ -53,11 +53,15 @@ public class GraphVisualPassTests
         // Kameranın CANLI hâlini oynat (animasyonun bir ara karesinin yaptığı şey) — hedef DEĞİŞMEDİ.
         view.MoveLiveCameraForTest(new CameraTransform(1.0, 120, -40));
 
+        var moved = new CameraTransform(1.0, 120, -40);
+        // Hover edilen (ama seçili OLMAYAN) düğümün boyanmış yarım yüksekliği: kare yarısı × vurgu ölçeği,
+        // halka yok.
+        double halfExtent = view.NodeSize / 2 * GraphView.HoverScale * moved.Scale;
+
         Assert.NotEqual(before, view.TooltipTopLeft);
         Assert.Equal(
             GraphOverlay.TooltipTopLeft(
-                view.NodeCenter("OSYS.Data"), new CameraTransform(1.0, 120, -40),
-                view.NodeSize, view.ViewportSize, view.TooltipBoxSize),
+                view.NodeCenter("OSYS.Data"), moved, halfExtent, view.ViewportSize, view.TooltipBoxSize),
             view.TooltipTopLeft);
     }
 

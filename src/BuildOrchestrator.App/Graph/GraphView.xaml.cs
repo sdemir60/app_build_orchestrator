@@ -961,9 +961,10 @@ public partial class GraphView : UserControl
 
         TooltipText.Text = name; // §2.3: TAM proje adı, kısaltmasız
         TooltipBox.Visibility = Visibility.Visible;
-        // Hover edilen düğüm vurgu ölçeğindedir — tooltip onun BOYANMIŞ kenarının dışında durmalı.
+        // Hover edilen düğüm vurgu ölçeğindedir; halkası ancak AYNI ZAMANDA seçiliyse vardır.
+        bool ringed = string.Equals(name, _selectedNode, StringComparison.Ordinal);
         PlaceOverlayBox(TooltipBox, box => GraphOverlay.TooltipTopLeft(
-            slot.Center, LiveCamera, PaintedHalfExtent(highlighted: true), ViewportSize, box));
+            slot.Center, LiveCamera, PaintedHalfExtent(ringed, LiveCamera.Scale), ViewportSize, box));
     }
 
     /// <summary>
@@ -993,9 +994,13 @@ public partial class GraphView : UserControl
     /// <para>Prototipin 0.9/0.95 katsayıları (JSX:471, :481) kendi düğümü için kalibreliydi: orada seçili
     /// düğüm BÜYÜMEZ ve halkası CSS outline'dır. Bizim seçili düğümümüz hover ölçeğinde DURUR ve halkası
     /// var — o katsayılarla ad etiketi halkanın içine düşüyordu ("borderla neredeyse bitişik").</para>
+    ///
+    /// <para><paramref name="withRing"/> düğümün HALKASI olup olmadığıdır: seçili düğümün etiketi halkanın,
+    /// yalnız hover edilen bir düğümün tooltip'i ise KARENİN dışında durur. İkisi arasındaki mesafe aynı
+    /// (<see cref="GraphOverlay.OverlayGapPx"/>) ama ölçtükleri kenar farklıdır — kullanıcı kararı budur.</para>
     /// </summary>
-    private double PaintedHalfExtent(bool highlighted) =>
-        (_layout.NodeSize / 2 + CellOverhang) * (highlighted ? HoverScale : 1.0) * LiveCamera.Scale;
+    private double PaintedHalfExtent(bool withRing, double scale) =>
+        (_layout.NodeSize / 2 + (withRing ? SelectionRingInset : 0)) * HoverScale * scale;
 
     // ---------------------------------------------------------------- seçim (halka + sönme)
 
@@ -1113,9 +1118,9 @@ public partial class GraphView : UserControl
 
         SelectionLabelText.Text = selected;
         SelectionLabelBox.Visibility = Visibility.Visible;
-        // Seçili düğüm de vurgu ölçeğinde durur ve halkası kareden taşar.
+        // Seçili düğüm vurgu ölçeğinde durur VE halkası kareden taşar.
         PlaceOverlayBox(SelectionLabelBox, box => GraphOverlay.NameLabelTopLeft(
-            slot.Center, LiveCamera, PaintedHalfExtent(highlighted: true), ViewportSize, box));
+            slot.Center, LiveCamera, PaintedHalfExtent(withRing: true, LiveCamera.Scale), ViewportSize, box));
     }
 
     // ---------------------------------------------------------------- koşu yaşam döngüsü (opaklık)
@@ -1352,7 +1357,8 @@ public partial class GraphView : UserControl
 
     private CameraTransform ResolveCameraTarget(Size panel)
     {
-        if (_selectedNode is not { } selected || !_slots.ContainsKey(selected)) return GraphCamera.Default;
+        if (_selectedNode is not { } selected || !_slots.TryGetValue(selected, out var target))
+            return GraphCamera.Default;
 
         double x0 = double.PositiveInfinity, x1 = double.NegativeInfinity;
         double y0 = double.PositiveInfinity, y1 = double.NegativeInfinity;
@@ -1364,11 +1370,50 @@ public partial class GraphView : UserControl
         }
         if (double.IsInfinity(x0)) return GraphCamera.Default;
 
-        return GraphCamera.FocusAndFit(
+        var camera = GraphCamera.FocusAndFit(
             panel,
             new Rect(x0, y0, x1 - x0, y1 - y0),
             _layout.NodeSize,
             new Vector(QuietGraphLayout.ContentInset, QuietGraphLayout.ContentInset));
+        return ReserveRoomForSelectionLabel(camera, target.Center, panel);
+    }
+
+    /// <summary>
+    /// [quiet] Kamerayı, seçili düğümün AD ETİKETİ panelin iç payının içinde kalacak kadar öteler.
+    ///
+    /// <para>Etiket her zaman düğümün ALTINDA durur (kullanıcı kararı) — dolayısıyla yer açmak etiketin
+    /// değil kameranın işidir: en alttaki bantta ya da kenardaki bir sütunda seçilen düğümün etiketi
+    /// paneli taşıyordu. Seçim zaten kamerayı hareket ettirdiği için doğru yer burasıdır.</para>
+    ///
+    /// <para>Düzeltme yalnız ÖTELEMEDİR; ölçek <see cref="GraphCamera.FocusAndFit"/>'in verdiği gibi kalır,
+    /// böylece odak kümesinin sığdırması bozulmaz. Öteleme düğümü de etiketi de birlikte taşıdığı için tek
+    /// adım yeter.</para>
+    /// </summary>
+    private CameraTransform ReserveRoomForSelectionLabel(CameraTransform camera, Point contentCentre, Size panel)
+    {
+        if (SelectionLabelBox.Visibility != Visibility.Visible) return camera;
+
+        var box = SelectionLabelBox.DesiredSize;
+        var topLeft = GraphOverlay.NameLabelTopLeft(
+            contentCentre, camera, PaintedHalfExtent(withRing: true, camera.Scale), panel, box);
+
+        return camera with
+        {
+            Tx = GraphCamera.RoundPixels(camera.Tx + Nudge(topLeft.X, box.Width, panel.Width)),
+            Ty = GraphCamera.RoundPixels(camera.Ty + Nudge(topLeft.Y, box.Height, panel.Height)),
+        };
+    }
+
+    /// <summary>Bir kutuyu panelin iç payına sokmak için gereken EN KÜÇÜK kayma. Kutu paya hiç sığmıyorsa
+    /// ortalanır — iki yandan eşit taşmak, bir yana yaslanmaktan okunaklıdır.</summary>
+    private static double Nudge(double start, double length, double panelLength)
+    {
+        double low = QuietGraphLayout.ContentInset;
+        double high = panelLength - QuietGraphLayout.ContentInset - length;
+        if (high < low) return (panelLength - length) / 2 - start;
+        if (start < low) return low - start;
+        if (start > high) return high - start;
+        return 0;
     }
 
     private void AnimateCameraTo(
