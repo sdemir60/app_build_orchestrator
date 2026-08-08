@@ -53,8 +53,9 @@ public static class GraphBeads
 
     /// <summary>[quiet] ATLANAN projenin tek atımlık yörünge çakışında noktaların tam opak durduğu süre.
     /// Düğümün parlak bekleme süresiyle AYNIDIR (kopya YASAK — tek doğruluk kaynağı
-    /// <see cref="GraphNodeOpacity.HoldMs"/>): yörünge, kare soluklaşmaya başladığı anda sönmeye başlar.</summary>
-    public const double SkipFlashHoldMs = GraphNodeOpacity.HoldMs;
+    /// <see cref="GraphNodeOpacity.SkipHoldMs"/>): yörünge, kare soluklaşmaya başladığı anda sönmeye
+    /// başlar.</summary>
+    public const double SkipFlashHoldMs = GraphNodeOpacity.SkipHoldMs;
     /// <summary>Çakışın toplam ömrü — bekleme + normal çıkış süresi. Paylaşımlı saat bu kadar dönmelidir,
     /// yoksa noktalar sönmeden donar.</summary>
     public const double SkipFlashTotalMs = SkipFlashHoldMs + FadeOutMs;

@@ -162,9 +162,10 @@ background, to let go.
 
 While a build runs the graph quietens rather than moving: untouched projects fade back, the ones compiling
 stay bright and carry a ring of circling amber dots, and each project that reaches a result holds its colour
-bright for a moment before settling. A project that gets skipped is treated the same way — the dots circle it
-once and it holds bright before dimming — because being found up to date is something the run did, not
-something it left out. The camera does not follow the run — it stays where you left it.
+bright for a moment before settling. A project that gets skipped is treated the same way, only briefer — the
+dots circle it once and it holds bright before dimming — because being found up to date is something the run
+did, not something it left out. Skipped projects are marked all at once rather than one at a time, so the
+graph plays them as a wave through the build order instead of a single flash. The camera does not follow the run — it stays where you left it.
 Drag the empty background to pan (the cursor turns into a hand) and the mouse wheel zooms at the pointer;
 clicking empty background with nothing selected returns the view to its default.
 

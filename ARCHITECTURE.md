@@ -1234,8 +1234,11 @@ hundreds of nodes on each one would freeze the panel it is resizing.
 graph quietens: queued and discovered nodes drop to 0.13 and only the projects actually building stay
 bright. A project that reaches a result returns to its result colour, holds bright for 1400 ms, then fades to
 0.2 over 700 ms — in CSS that is a delayed transition, and the WPF equivalent is one shot of an animation with
-a `BeginTime`, so there is no timer and no extra render pass. The hold starts on the edge *into* a result
-status rather than on the edge out of `Building`, and that distinction is the whole point for **skipped**
+three key frames — bright, still bright, then the result value — so there is no timer and no extra render
+pass. The hold is written out rather than left to the node's previous value, because a skipped node arrives
+*dim*: something has to lift it to bright, and only a node coming out of `Building` was bright already. The
+hold starts on the edge *into* a result status rather than on the edge out of `Building`, and that distinction
+is the whole point for **skipped**
 projects: a project found up to date never builds, so under the older rule it slid from 0.13 to 0.2 without
 ever being bright and the run read as though nothing had looked at it. Later ticks find the value already
 settled and start nothing, which matters because status pushes arrive several times a second. When the run ends every node comes back to full opacity in its result
@@ -1258,19 +1261,24 @@ perimeter is too, and N parallel builds would otherwise mean N infinite animatio
 fade *while still turning* rather than freezing in place. Resizing the panel changes the perimeter, so the
 pattern and the clock are rebuilt.
 
-The same orbit plays **once** around a project that gets skipped: it fades in, turns while the node holds
-bright, and fades out as the node dims. Skipping is a decision, not an absence — the incremental check ran and
-found the project current — and without the orbit the graph said nothing about it. It is one keyframe
-animation on an element that already exists, not a timer per node, because a run where nothing changed can
-skip every project in a single tick. The shared clock's release is pushed out to cover the longer tail, since
-cutting it short would freeze those dots instead of fading them. What is *not* done is repainting the square
+The same orbit plays **once** around a project that gets skipped, briefly: it fades in, turns while the node
+holds bright, and fades out as the node dims. Skipping is a decision, not an absence — the incremental check
+ran and found the project current — and without the orbit the graph said nothing about it. The hold is much
+shorter than a real build's, because being skipped should be seen and passed over rather than announced.
+Skipped projects never enter the build queue, so a run where nothing changed marks all of them in one tick;
+they are therefore **staggered in build order**, one every 45 ms up to a 900 ms cap, so the graph shows a wave
+moving through the workspace instead of one flash. It is one keyframe animation per node on an element that
+already exists, not a timer per node. The shared clock's release is pushed out to cover the longest tail,
+since cutting it short would freeze those dots instead of fading them. What is *not* done is repainting the square
 amber for a moment: that would state a status the project never had, and the colour transition has a measured
 price of its own (above).
 
 **Names live in an overlay, not on the nodes.** There are no labels under the squares. Hovering a node scales
-it 1.7× over 120 ms, thickens its border, pulls it to full opacity even in the quiet run state, pulls it to
+it 1.5× over 120 ms, thickens its border, pulls it to full opacity even in the quiet run state, pulls it to
 the front, and shows a tooltip with the full project name — no delay. The scale is one transform shared by the
-square and its bead orbit, so the two can never drift apart. The tooltip and the selection's name label share
+square, its ring and its bead orbit, so they can never drift apart. §2.3 asks for 1.7×, and the arithmetic
+says that is exactly one cell: a node is `0.6 × pitch`, so `1.7 × 0.6 = 1.02` of the pitch — an enlarged node
+fills its cell and touches its neighbour. At 1.5 it takes 0.9 of the pitch and the gap stays visible. The tooltip and the selection's name label share
 one overlay `Canvas` that is a *sibling* of the camera's world, carrying no transform of its own: living under
 the camera would scale the text along with the graph and blur it at 5× zoom. Their positions come from the
 node's world point projected through the camera's **live** transform, refreshed on every frame the transform
@@ -1280,7 +1288,20 @@ yet for the whole 460 ms of a selection glide. The box is centred on its node an
 are long — a 30-character name is a ~215 px box, so in a 500 px panel every node near an edge dragged its
 tooltip tens of pixels away from the node it belonged to. Staying centred beats staying whole; the anchor is
 pulled into the graph's own inset, which is what keeps a label off the corner when the focus camera has zoomed
-in. Both are single reused elements; nothing is built per node. Changing the selection clears the hover, because the camera is about to move somewhere else
+in.
+
+Vertically, a box that does not fit on its preferred side **flips to the other side** rather than being
+clamped back: clamping slid the label onto the node it names, which is what the bottom band looked like. The
+distance it is placed at is the node's *painted* half height — the square, plus whatever the highlight scale
+and the ring add — not a fraction of the node edge. The prototype's 0.9 and 0.95 coefficients were calibrated
+for a node that does not grow when selected and whose ring is a CSS outline; ours does both, and with those
+numbers the name label landed inside its own amber ring.
+
+Both boxes are single reused elements, and each is explicitly invalidated before it is measured. That is not
+defensive coding: changing a `TextBlock`'s text marks only the `TextBlock` dirty, and the walk up to its
+ancestors happens during a layout pass. A `Measure` call from outside a pass therefore found the border clean
+and returned early, leaving `DesiredSize` at the *previous* name's width — so a long name was centred on a
+short name's box and sat well to the left of its node. Nothing is built per node. Changing the selection clears the hover, because the camera is about to move somewhere else
 and the pointer is no longer over what it was.
 
 **Selection focuses and fits.** Clicking a node — or a list row, or a stream line — fits the bounding box of
