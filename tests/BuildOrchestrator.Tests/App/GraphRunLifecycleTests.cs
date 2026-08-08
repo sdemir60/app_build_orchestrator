@@ -43,7 +43,14 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
 
     /// <summary>
     /// AYIRT EDİCİ — hold-fade. Building'den çıkan düğüm parlak bekleyip sonra 0.2'ye söner; bekleme
-    /// bir <c>BeginTime</c>'dır, bir timer DEĞİL.
+    /// keyframe'lerle taşınır, bir timer DEĞİL.
+    ///
+    /// <para><b>Eski iddia:</b> bekleme bir <c>BeginTime</c>'dı ve animasyonun İKİ keyframe'i vardı
+    /// (<c>Discrete(1)@0</c> + <c>Spline(0.2)@700</c>); parlaklık, düğümün bekleme boyunca ZATEN parlak
+    /// olmasına bırakılıyordu. <b>Değişme gerekçesi:</b> o varsayım yalnız building'den çıkan düğüm için
+    /// doğru. Atlanan düğüm 0.13'ten gelir — parlaklığa onu bir şeyin ÇIKARMASI gerekir, yoksa hiç
+    /// parlamadan söner. Bekleme artık üçüncü bir keyframe'de AÇIKÇA yazılı ve <c>BeginTime</c> dalgadaki
+    /// sıraya (atlanma için) ayrıldı. Görünen davranış değişmedi.</para>
     /// </summary>
     [StaFact]
     public void A_node_that_leaves_building_holds_bright_and_then_fades_to_0_2()
@@ -53,16 +60,20 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
         view.UpdateStatuses(Nodes(GraphStatus.Succeeded, GraphStatus.Queued));
 
         var animation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf("OSYS.Base"));
-        Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs), animation.BeginTime);
+        Assert.Equal(TimeSpan.Zero, animation.BeginTime); // derlenen düğüm dalgaya girmez
 
-        // Süre son key frame'in zamanıdır (Duration = Automatic — MotionTokens.SplineTo deseni).
-        // Bekleme boyunca değer TAM OPAK tutulur (CSS `both` fill paritesi), sonunda 0.2'ye iner.
+        // Süre son key frame'in zamanıdır (Duration = Automatic). Bekleme boyunca değer TAM OPAK tutulur
+        // (CSS `both` fill paritesi), sonunda 0.2'ye iner.
         var start = Assert.IsType<DiscreteDoubleKeyFrame>(animation.KeyFrames[0]);
         Assert.Equal(GraphNodeOpacity.Full, start.Value, 6);
         Assert.Equal(TimeSpan.Zero, start.KeyTime.TimeSpan);
-        var end = Assert.IsType<SplineDoubleKeyFrame>(animation.KeyFrames[1]);
+        var hold = Assert.IsType<DiscreteDoubleKeyFrame>(animation.KeyFrames[1]);
+        Assert.Equal(GraphNodeOpacity.Full, hold.Value, 6);
+        Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs), hold.KeyTime.TimeSpan);
+        var end = Assert.IsType<SplineDoubleKeyFrame>(animation.KeyFrames[2]);
         Assert.Equal(GraphNodeOpacity.Finished, end.Value, 6);
-        Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.FadeMs), end.KeyTime.TimeSpan);
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs + GraphNodeOpacity.FadeMs), end.KeyTime.TimeSpan);
     }
 
     /// <summary>

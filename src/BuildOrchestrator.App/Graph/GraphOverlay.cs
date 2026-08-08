@@ -23,12 +23,8 @@ namespace BuildOrchestrator.App.Graph;
 /// </summary>
 public static class GraphOverlay
 {
-    /// <summary>Tooltip'in düğümün üstünde bıraktığı boşluk (§2.3: "node'un üstünde 8px").</summary>
+    /// <summary>Tooltip ile düğümün BOYANMIŞ üst kenarı arasındaki boşluk (§2.3: "node'un üstünde 8px").</summary>
     public const double TooltipGapPx = 8.0;
-    /// <summary>Tooltip ankrajının düğüm merkezinden yukarı kayması, düğüm kenarının katı olarak (JSX:471).</summary>
-    public const double TooltipRisePerNode = 0.9;
-    /// <summary>Ad etiketi ankrajının düğüm merkezinden aşağı kayması (JSX:481).</summary>
-    public const double LabelDropPerNode = 0.95;
     /// <summary>Seçili düğüm ile ad etiketi arasındaki boşluk (§2.3: "altında 6px boşlukla").</summary>
     public const double LabelGapPx = 6.0;
 
@@ -37,26 +33,30 @@ public static class GraphOverlay
         (contentCentre.X + QuietGraphLayout.ContentInset) * camera.Scale + camera.Tx,
         (contentCentre.Y + QuietGraphLayout.ContentInset) * camera.Scale + camera.Ty);
 
-    /// <summary>Tooltip kutusunun SOL-ÜST köşesi: düğümün 8px üstünde ve düğüme ORTALI.</summary>
+    /// <summary>
+    /// Tooltip kutusunun SOL-ÜST köşesi: düğümün boyanmış üst kenarının 8px üstünde ve düğüme ortalı.
+    /// Üstte yer kalmadıysa düğümün ALTINA taklar.
+    /// </summary>
+    /// <param name="halfExtent">Düğümün ekranda kapladığı YARIM yükseklik. Karenin yarısı DEĞİLDİR: vurgu
+    /// ölçeği, taşan halka/yörünge ve kamera dahildir (bkz. <c>GraphView.PaintedHalfExtent</c>).</param>
     public static Point TooltipTopLeft(
-        Point contentCentre, CameraTransform camera, double nodeSize, Size panel, Size box)
+        Point contentCentre, CameraTransform camera, double halfExtent, Size panel, Size box)
     {
         var screen = Project(contentCentre, camera);
-        double top = screen.Y - nodeSize * TooltipRisePerNode * camera.Scale - TooltipGapPx - box.Height;
         return new Point(
             ClampAnchor(screen.X, panel.Width) - box.Width / 2,
-            ClampInside(top, box.Height, panel.Height));
+            PlaceAbovePreferred(screen.Y, halfExtent + TooltipGapPx, box.Height, panel.Height));
     }
 
-    /// <summary>Seçim ad etiketinin SOL-ÜST köşesi: düğümün 6px altında ve düğüme ORTALI.</summary>
+    /// <summary>Seçim ad etiketinin SOL-ÜST köşesi: düğümün boyanmış alt kenarının 6px altında ve düğüme
+    /// ortalı. Altta yer kalmadıysa düğümün ÜSTÜNE taklar.</summary>
     public static Point NameLabelTopLeft(
-        Point contentCentre, CameraTransform camera, double nodeSize, Size panel, Size box)
+        Point contentCentre, CameraTransform camera, double halfExtent, Size panel, Size box)
     {
         var screen = Project(contentCentre, camera);
-        double top = screen.Y + nodeSize * LabelDropPerNode * camera.Scale + LabelGapPx;
         return new Point(
             ClampAnchor(screen.X, panel.Width) - box.Width / 2,
-            ClampInside(top, box.Height, panel.Height));
+            PlaceBelowPreferred(screen.Y, halfExtent + LabelGapPx, box.Height, panel.Height));
     }
 
     /// <summary>Ankrajı (düğümün ekran noktasını) panelin iç payına çeker. Kutu buna ORTALANIR, yani düğüm
@@ -65,8 +65,34 @@ public static class GraphOverlay
         screenX, QuietGraphLayout.ContentInset,
         Math.Max(QuietGraphLayout.ContentInset, panelWidth - QuietGraphLayout.ContentInset));
 
-    /// <summary>Kutuyu dikeyde panelin iç payının içinde tutar — yatayın aksine burada kelepçe kutunun
-    /// TAMAMINA uygulanır, çünkü dikeyde kaydırmak ortalamayı bozmaz.</summary>
+    /// <summary>
+    /// Kutuyu düğümün ÜSTÜNE koyar; sığmıyorsa ALTINA taklar.
+    ///
+    /// <para>Takla bir kelepçenin yerine geçer ve gerekçesi gözle bulundu: dikey kelepçe kutuyu panele geri
+    /// çekerken DÜĞÜMÜN ÜSTÜNE bindiriyordu — en alttaki bantta ad etiketi düğümle üst üste geliyordu.
+    /// Aynı tarafta kalıp kaymaktansa öbür tarafa geçmek hem okunur kalır hem de sahibini göstermeye devam
+    /// eder.</para>
+    /// </summary>
+    private static double PlaceAbovePreferred(double screenY, double offset, double boxHeight, double panelHeight)
+    {
+        double above = screenY - offset - boxHeight;
+        if (above >= QuietGraphLayout.ContentInset) return above;
+        double below = screenY + offset;
+        return below + boxHeight <= panelHeight - QuietGraphLayout.ContentInset
+            ? below
+            : ClampInside(above, boxHeight, panelHeight);
+    }
+
+    /// <summary>Kutuyu düğümün ALTINA koyar; sığmıyorsa ÜSTÜNE taklar (bkz. <see cref="PlaceAbovePreferred"/>).</summary>
+    private static double PlaceBelowPreferred(double screenY, double offset, double boxHeight, double panelHeight)
+    {
+        double below = screenY + offset;
+        if (below + boxHeight <= panelHeight - QuietGraphLayout.ContentInset) return below;
+        double above = screenY - offset - boxHeight;
+        return above >= QuietGraphLayout.ContentInset ? above : ClampInside(below, boxHeight, panelHeight);
+    }
+
+    /// <summary>İki taraf da sığmadığında son çare: kutuyu panelin iç payının içinde tut.</summary>
     private static double ClampInside(double top, double boxHeight, double panelHeight) => Math.Clamp(
         top, QuietGraphLayout.ContentInset,
         Math.Max(QuietGraphLayout.ContentInset, panelHeight - QuietGraphLayout.ContentInset - boxHeight));

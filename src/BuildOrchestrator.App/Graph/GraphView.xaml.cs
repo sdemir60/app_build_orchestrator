@@ -85,8 +85,13 @@ public partial class GraphView : UserControl
     public const double IconFactor = 0.52;
     /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
     public const double IconStroke = 1.8;
-    /// <summary>Hover büyütmesi (§2.3: "Node scale(1.7)").</summary>
-    public const double HoverScale = 1.7;
+    /// <summary>Hover büyütmesi.
+    ///
+    /// <para><b>§2.3'ün sayısı 1.7'ydi; kullanıcı kararıyla 1.5.</b> Aritmetik neden: düğüm kenarı pitch'in
+    /// 0.6'sıdır, dolayısıyla 1.7× büyüyen bir düğüm <c>1.7 × 0.6 = 1.02 pitch</c> yer kaplar — yani hücresini
+    /// tam doldurur ve yanındaki düğüme YAPIŞIR. 1.5'te oran 0.9 pitch olur ve komşuyla arada görünür bir
+    /// boşluk kalır.</para></summary>
+    public const double HoverScale = 1.5;
     /// <summary>Hover'da çerçeve kalınlığı (§2.3: "border 2px").</summary>
     public const double HoverBorderThickness = 2.0;
     /// <summary>Hover büyütmesinin süresi (§2.3: "120ms ease-out").</summary>
@@ -462,6 +467,10 @@ public partial class GraphView : UserControl
 
     private void ApplyStatuses(IReadOnlyList<GraphNode> nodes)
     {
+        // Atlanan projeler derleme kuyruğuna hiç girmez: hiçbir şeyin değişmediği bir koşuda planlayıcı
+        // hepsini TEK tick'te işaretler. Sıra sayacı dalgayı build-order boyunca yürütür — besleme sırası
+        // build-order olduğu için ek bir sıralama gerekmez.
+        int skipOrder = 0;
         foreach (var node in nodes)
         {
             if (!_slots.TryGetValue(node.Name, out var slot)) continue;
@@ -475,11 +484,17 @@ public partial class GraphView : UserControl
             bool settled = !GraphNodeOpacity.IsSettled(slot.Model.Status)
                 && GraphNodeOpacity.IsSettled(node.Status);
             bool skipped = settled && node.Status == GraphStatus.Skipped && _runPhase == GraphRunPhase.Running;
+            double delayMs = skipped
+                ? Math.Min(skipOrder++ * GraphNodeOpacity.SkipStepMs, GraphNodeOpacity.SkipStaggerCapMs)
+                : 0;
+            double holdMs = settled
+                ? (skipped ? GraphNodeOpacity.SkipHoldMs : GraphNodeOpacity.HoldMs)
+                : 0;
             slot.Model = node;
             slot.Visual.Model = node;
             ApplyNodeStatus(slot.Visual);
-            ApplyNodeOpacity(slot.Visual, settled);
-            if (skipped) FlashBeads(slot.Visual);
+            ApplyNodeOpacity(slot.Visual, holdMs, delayMs);
+            if (skipped) FlashBeads(slot.Visual, delayMs);
         }
     }
 
@@ -757,13 +772,13 @@ public partial class GraphView : UserControl
     /// idi. Karenin RENGİNİ geçici olarak amber yapmak statüyü yanlış söylerdi (ve renk geçişinin ölçülmüş
     /// bedeli <see cref="ApplyNodeStatus"/>'te yazılıdır); amber olan, işin kendisini anlatan yörüngedir.</para>
     /// </summary>
-    private void FlashBeads(GraphNodeVisual visual)
+    private void FlashBeads(GraphNodeVisual visual, double delayMs)
     {
         if (!AnimationsEnabledProvider()) return;
         EnsureBeads(visual);
         EnsureBeadsClock();
 
-        var flash = new DoubleAnimationUsingKeyFrames();
+        var flash = new DoubleAnimationUsingKeyFrames { BeginTime = TimeSpan.FromMilliseconds(delayMs) };
         flash.KeyFrames.Add(new SplineDoubleKeyFrame(
             1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GraphBeads.FadeInMs)), EaseOut));
         // Bekleme: değer önceki kareden devralınır, yalnız SÜRE uzar (CSS'teki transition-delay paritesi).
@@ -776,7 +791,7 @@ public partial class GraphView : UserControl
         visual.Beads!.BeginAnimation(OpacityProperty, flash, HandoffBehavior.SnapshotAndReplace);
         // Çakış normal bir çıkıştan UZUNDUR: paylaşımlı saat onun sonuna kadar dönmeli, yoksa noktalar
         // sönmeden DONAR.
-        ArmBeadsSpindown(GraphBeads.SkipFlashTotalMs);
+        ArmBeadsSpindown(delayMs + GraphBeads.SkipFlashTotalMs);
     }
 
     private void FadeBeads(GraphNodeVisual visual, double target, double durationMs)
@@ -932,7 +947,7 @@ public partial class GraphView : UserControl
         // Büyüyen düğüm — ve halkası — komşuların ÜSTÜNDE kalmalı.
         Panel.SetZIndex(visual.Cell, hovered ? 1 : 0);
         visual.Square.StrokeThickness = hovered ? HoverBorderThickness : NodeBorderThickness;
-        ApplyNodeOpacity(visual, settled: false);
+        ApplyNodeOpacity(visual, holdMs: 0);
     }
 
     /// <summary>Tooltip'i (tek, yeniden kullanılan öğe) günceller ve EKRAN koordinatına yerleştirir.</summary>
@@ -946,19 +961,41 @@ public partial class GraphView : UserControl
 
         TooltipText.Text = name; // §2.3: TAM proje adı, kısaltmasız
         TooltipBox.Visibility = Visibility.Visible;
+        // Hover edilen düğüm vurgu ölçeğindedir — tooltip onun BOYANMIŞ kenarının dışında durmalı.
         PlaceOverlayBox(TooltipBox, box => GraphOverlay.TooltipTopLeft(
-            slot.Center, LiveCamera, _layout.NodeSize, ViewportSize, box));
+            slot.Center, LiveCamera, PaintedHalfExtent(highlighted: true), ViewportSize, box));
     }
 
-    /// <summary>Overlay kutusunu ÖLÇÜP yerleştirir. Ölçüm şart: kelepçe kutunun TAMAMINA uygulanır ve
-    /// genişliği ancak ölçtükten sonra bilinir (prototipin karakter-genişliği tahmini yerine).</summary>
+    /// <summary>
+    /// Overlay kutusunu ÖLÇÜP yerleştirir. Ölçüm şart: kutu ankraja ORTALANIR ve genişliği ancak ölçtükten
+    /// sonra bilinir (prototipin karakter-genişliği tahmini yerine).
+    ///
+    /// <para><b><see cref="UIElement.InvalidateMeasure"/> çağrısı zorunludur</b> ve gözle bulunan bir kusurun
+    /// düzeltmesidir: metin değiştiğinde WPF yalnız <c>TextBlock</c>'u kirli işaretler, ata zinciri ise
+    /// LAYOUT TURUNDA yürütülür. Tur dışından çağrılan <c>Measure</c> Border'ı temiz görüp ERKEN ÇIKIYOR ve
+    /// <c>DesiredSize</c> BİR ÖNCEKİ adın genişliğinde kalıyordu — ölçüldü: hangi proje seçilirse seçilsin
+    /// kutu genişliği ilk ölçümdeki 24.6px'te takılı kalıyor, dolayısıyla uzun adlar düğümün epey soluna
+    /// kayıyordu ("proje adına göre her zaman ortalı değil").</para>
+    /// </summary>
     private static void PlaceOverlayBox(FrameworkElement box, Func<Size, Point> place)
     {
+        box.InvalidateMeasure();
         box.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         var topLeft = place(box.DesiredSize);
         Canvas.SetLeft(box, topLeft.X);
         Canvas.SetTop(box, topLeft.Y);
     }
+
+    /// <summary>
+    /// Düğümün EKRANDA kapladığı YARIM yükseklik: kare yarısı + dışarı taşan halka/yörünge, vurgu ölçeği ve
+    /// kamera dahil. Overlay kutuları bunun DIŞINA konumlanır.
+    ///
+    /// <para>Prototipin 0.9/0.95 katsayıları (JSX:471, :481) kendi düğümü için kalibreliydi: orada seçili
+    /// düğüm BÜYÜMEZ ve halkası CSS outline'dır. Bizim seçili düğümümüz hover ölçeğinde DURUR ve halkası
+    /// var — o katsayılarla ad etiketi halkanın içine düşüyordu ("borderla neredeyse bitişik").</para>
+    /// </summary>
+    private double PaintedHalfExtent(bool highlighted) =>
+        (_layout.NodeSize / 2 + CellOverhang) * (highlighted ? HoverScale : 1.0) * LiveCamera.Scale;
 
     // ---------------------------------------------------------------- seçim (halka + sönme)
 
@@ -1076,8 +1113,9 @@ public partial class GraphView : UserControl
 
         SelectionLabelText.Text = selected;
         SelectionLabelBox.Visibility = Visibility.Visible;
+        // Seçili düğüm de vurgu ölçeğinde durur ve halkası kareden taşar.
         PlaceOverlayBox(SelectionLabelBox, box => GraphOverlay.NameLabelTopLeft(
-            slot.Center, LiveCamera, _layout.NodeSize, ViewportSize, box));
+            slot.Center, LiveCamera, PaintedHalfExtent(highlighted: true), ViewportSize, box));
     }
 
     // ---------------------------------------------------------------- koşu yaşam döngüsü (opaklık)
@@ -1085,19 +1123,26 @@ public partial class GraphView : UserControl
     private void ApplyAllOpacities()
     {
         foreach (var slot in _slotOrder)
-            ApplyNodeOpacity(slot.Visual, settled: false);
+            ApplyNodeOpacity(slot.Visual, holdMs: 0);
     }
 
     /// <summary>
     /// [quiet] §2.3'ün opaklık sistemi. Değer kararı SAF (<see cref="GraphNodeOpacity.Resolve"/>); burada
     /// yalnız ZAMANLAMA yaşar.
     ///
-    /// <para><b>Hold-fade YALNIZ sonuç statüsüne giriş anında doğar</b> (<paramref name="settled"/>): CSS'in
-    /// gecikmeli transition'ı da yalnız değer 1'den 0.2'ye DEĞİŞTİĞİNDE koşar. Sonraki tick'ler değeri zaten
-    /// 0.2 bulur ve <see cref="GraphNodeVisual.OpacityTarget"/> kapısı hiçbir animasyon başlatmaz — aksi halde
-    /// saniyede birkaç kez yeniden doğan 2.1 saniyelik bir animasyon sönmeyi hiç tamamlatmazdı.</para>
+    /// <para><b>Hold-fade YALNIZ sonuç statüsüne giriş anında doğar</b> (<paramref name="holdMs"/> &gt; 0):
+    /// CSS'in gecikmeli transition'ı da yalnız değer 1'den 0.2'ye DEĞİŞTİĞİNDE koşar. Sonraki tick'ler değeri
+    /// zaten 0.2 bulur ve <see cref="GraphNodeVisual.OpacityTarget"/> kapısı hiçbir animasyon başlatmaz —
+    /// aksi halde saniyede birkaç kez yeniden doğan bir animasyon sönmeyi hiç tamamlatmazdı.</para>
+    ///
+    /// <para><b>Bekleme artık AÇIKÇA yazılır</b> (üç keyframe: parlak → parlak → sonuç). Eski kodlama
+    /// beklemeyi bir <c>BeginTime</c>'a yıkıyor ve düğümün o sırada ZATEN parlak olduğuna güveniyordu — bu
+    /// yalnız building'den çıkan düğüm için doğruydu. Atlanan düğüm 0.13'ten gelir: parlaklığa onu bir şeyin
+    /// ÇIKARMASI gerekir, yoksa hiç parlamadan söner.</para>
     /// </summary>
-    private void ApplyNodeOpacity(GraphNodeVisual visual, bool settled)
+    /// <param name="holdMs">Sonuç renginde PARLAK bekleme; 0 = bekleme yok (düz 280ms geçiş).</param>
+    /// <param name="delayMs">Bu düğümün dalgadaki sırası — aynı tick'te toplu oturan düğümleri ayırır.</param>
+    private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs, double delayMs = 0)
     {
         double target = GraphNodeOpacity.Resolve(
             visual.Model.Status,
@@ -1115,15 +1160,24 @@ public partial class GraphView : UserControl
             return;
         }
 
-        // Bekleme bir BeginTime'dır, bir timer DEĞİL: CSS'teki `transition ... 700ms 2400ms` hilesinin
-        // birebir karşılığı. Bekleme boyunca değer TAM OPAK tutulur (CSS `both` fill paritesi).
-        double durationMs = settled ? GraphNodeOpacity.FadeMs : GraphNodeOpacity.GlideMs;
-        var animation = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseStandard);
-        if (settled)
+        // Bekleme keyframe'lerle taşınır, bir timer DEĞİL: CSS'teki gecikmeli transition'ın karşılığı.
+        DoubleAnimationUsingKeyFrames animation;
+        if (holdMs > 0)
         {
-            animation.BeginTime = TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs);
-            animation.KeyFrames.Insert(0,
-                new DiscreteDoubleKeyFrame(GraphNodeOpacity.Full, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            animation = new DoubleAnimationUsingKeyFrames { BeginTime = TimeSpan.FromMilliseconds(delayMs) };
+            animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(
+                GraphNodeOpacity.Full, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(
+                GraphNodeOpacity.Full, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs))));
+            animation.KeyFrames.Add(new SplineDoubleKeyFrame(
+                target,
+                KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs + GraphNodeOpacity.FadeMs)),
+                EaseStandard));
+        }
+        else
+        {
+            animation = MotionTokens.SplineTo(
+                target, TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs), EaseStandard);
         }
 
         visual.OpacityAnimation = animation;
@@ -1434,6 +1488,7 @@ public partial class GraphView : UserControl
     internal Visibility SelectionLabelVisibility => SelectionLabelBox.Visibility;
     internal string SelectionLabelContent => SelectionLabelText.Text;
     internal Point SelectionLabelTopLeft => new(Canvas.GetLeft(SelectionLabelBox), Canvas.GetTop(SelectionLabelBox));
+    internal Size SelectionLabelBoxSize => SelectionLabelBox.DesiredSize;
     /// <summary>HER ZAMAN <c>null</c> olmalı — overlay kamera transform'unun DIŞINDA yaşar (§2.3).</summary>
     internal Transform? OverlayLayerTransform => OverlayLayer.RenderTransform as MatrixTransform is { } m
         && m.Matrix.IsIdentity ? null : OverlayLayer.RenderTransform;

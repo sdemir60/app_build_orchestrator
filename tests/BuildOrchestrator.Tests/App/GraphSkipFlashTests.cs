@@ -51,9 +51,65 @@ public class GraphSkipFlashTests(ITestOutputHelper output)
         view.UpdateStatuses(Nodes(GraphStatus.Skipped));
 
         var animation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf("OSYS.Data"));
-        Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.HoldMs), animation.BeginTime);
-        var end = Assert.IsType<SplineDoubleKeyFrame>(animation.KeyFrames[1]);
+        // Parlaklığa ÇIKIŞ açıkça yazılır: atlanan düğüm 0.13'ten gelir, "zaten parlaktı" varsayımı yalnız
+        // building'den çıkan düğüm için doğruydu.
+        Assert.Equal(GraphNodeOpacity.Full, animation.KeyFrames[0].Value, 6);
+        Assert.Equal(TimeSpan.Zero, animation.KeyFrames[0].KeyTime.TimeSpan);
+        Assert.Equal(GraphNodeOpacity.Full, animation.KeyFrames[1].Value, 6);
+        Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.SkipHoldMs), animation.KeyFrames[1].KeyTime.TimeSpan);
+        var end = Assert.IsType<SplineDoubleKeyFrame>(animation.KeyFrames[2]);
         Assert.Equal(GraphNodeOpacity.Finished, end.Value, 6);
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(GraphNodeOpacity.SkipHoldMs + GraphNodeOpacity.FadeMs),
+            end.KeyTime.TimeSpan);
+    }
+
+    /// <summary>Atlanma anlatımı derlemeninkinden KISADIR — kullanıcı kararı: "atlandığı için çok hafif,
+    /// görülüp geçilecek seviyede."</summary>
+    [Fact]
+    public void The_skipped_hold_is_shorter_than_the_built_one() =>
+        Assert.True(GraphNodeOpacity.SkipHoldMs < GraphNodeOpacity.HoldMs);
+
+    /// <summary>
+    /// AYIRT EDİCİ — aynı tick'te atlanan projeler SIRAYLA yanar, hepsi birden değil.
+    ///
+    /// <para><b>Neden:</b> atlanan projeler derleme kuyruğuna hiç girmez; hiçbir şeyin değişmediği bir
+    /// koşuda planlayıcı hepsini tek tick'te işaretler. Gecikmesiz hâlde yüzlerce düğüm aynı anda yanıp aynı
+    /// anda sönüyor ve "sırası geldi, bakıldı, geçildi" yerine tek bir flaş gibi okunuyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void Projects_skipped_in_the_same_tick_ripple_in_build_order()
+    {
+        var (nodes, _) = SyntheticGraph.Build(24, 4, 2.0);
+        var view = GraphTestView.Realized(new Size(640, 400), () => true);
+        view.SetGraph([.. nodes.Select(n => n with { Status = GraphStatus.Queued })], []);
+        view.RunPhase = GraphRunPhase.Running;
+
+        view.UpdateStatuses([.. nodes.Select(n => n with { Status = GraphStatus.Skipped })]);
+
+        var delays = nodes
+            .Select(n => view.OpacityAnimationOf(n.Name)!.BeginTime!.Value.TotalMilliseconds)
+            .ToList();
+        Assert.Equal(0, delays[0], 3);
+        Assert.Equal(GraphNodeOpacity.SkipStepMs, delays[1], 3);
+        Assert.Equal(delays.OrderBy(d => d), delays); // besleme sırası = build-order
+        Assert.All(delays, d => Assert.True(d <= GraphNodeOpacity.SkipStaggerCapMs));
+        // Yörünge çakışı AYNI sıraya bağlanır — kare ile yörünge ayrı zamanlarda oynayamaz.
+        Assert.Equal(delays[1], view.BeadsAnimationOf(nodes[1].Name)!.BeginTime!.Value.TotalMilliseconds, 3);
+    }
+
+    /// <summary>Dalga yalnız ATLANANLAR arasındadır: derlenip biten bir düğüm sıraya girmez, o zaten kendi
+    /// zamanında bitmiştir.</summary>
+    [StaFact]
+    public void A_finished_build_is_not_part_of_the_skip_ripple()
+    {
+        var view = Running();
+
+        view.UpdateStatuses(
+            [new("OSYS.Base", 0, GraphStatus.Succeeded), new("OSYS.Data", 1, GraphStatus.Skipped)]);
+
+        Assert.Equal(TimeSpan.Zero, view.OpacityAnimationOf("OSYS.Base")!.BeginTime);
+        Assert.Equal(TimeSpan.Zero, view.OpacityAnimationOf("OSYS.Data")!.BeginTime); // dalganın ilki
     }
 
     /// <summary>Kural statünün kendisinde: sonuç statülerinin HEPSİ (bitti, hata, atlandı, döngü) parlak
@@ -100,7 +156,7 @@ public class GraphSkipFlashTests(ITestOutputHelper output)
     [Fact]
     public void The_flash_is_locked_to_the_nodes_bright_hold()
     {
-        Assert.Equal(GraphNodeOpacity.HoldMs, GraphBeads.SkipFlashHoldMs, 6);
+        Assert.Equal(GraphNodeOpacity.SkipHoldMs, GraphBeads.SkipFlashHoldMs, 6);
         Assert.Equal(GraphBeads.SkipFlashHoldMs + GraphBeads.FadeOutMs, GraphBeads.SkipFlashTotalMs, 6);
         // Paylaşımlı saat çakıştan ÖNCE bırakılamaz: normal çıkış penceresi (700ms) çakışı yarıda keserdi.
         Assert.True(GraphBeads.SkipFlashTotalMs > GraphBeads.SpinAfterStopMs);

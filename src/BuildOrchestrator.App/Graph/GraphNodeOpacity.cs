@@ -43,6 +43,22 @@ public static class GraphNodeOpacity
     public const double HoldMs = 1400.0;
     /// <summary>Bekleme bitince <see cref="Finished"/>'a sönme süresi (§2.3).</summary>
     public const double FadeMs = 700.0;
+
+    /// <summary>[quiet] ATLANAN projenin parlak bekleme süresi — derlenenin çok altında.
+    ///
+    /// <para>Kullanıcı kararı: "atlandığı için çok hafif, görülüp geçilecek seviyede kısa tutabiliriz."
+    /// Atlanma bir işlemdir ama bir DERLEME değildir; anlatımı da o kadar yer kaplamamalı.</para></summary>
+    public const double SkipHoldMs = 520.0;
+    /// <summary>Aynı tick'te atlanan iki proje arasındaki gecikme.
+    ///
+    /// <para><b>Neden var:</b> atlanan projeler derleme kuyruğuna hiç girmez — hiçbir şeyin değişmediği bir
+    /// koşuda planlayıcı hepsini TEK tick'te işaretler. Gecikmesiz hâlde yüzlerce düğüm aynı anda yanıp aynı
+    /// anda sönüyor ve "sırası geldi, bakıldı, geçildi" yerine tek bir flaş gibi okunuyordu. Adım, dalgayı
+    /// build-order boyunca yürütür.</para></summary>
+    public const double SkipStepMs = 45.0;
+    /// <summary>Atlanma dalgasının tavanı — 177 projelik bir koşuda dalga bu süreye sığar, sonrakiler
+    /// birlikte gelir (açılış dalgasının <c>RevealDelayCapMs</c> ile aynı gerekçesi).</summary>
+    public const double SkipStaggerCapMs = 900.0;
     /// <summary>Normal opaklık geçişi (§2.3: "opaklık geçişi 280ms — hold-fade hariç").</summary>
     public const double GlideMs = 280.0;
     // [quiet · ÖLÇÜLMÜŞ SAPMA] §2.3'ün "renk geçişi 380ms ease-standard" kuralı UYGULANMADI ve bu yüzden
