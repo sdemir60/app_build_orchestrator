@@ -63,14 +63,20 @@ public class GraphNodeOpacityTests
         Assert.Equal(1.0, Op(GraphStatus.Succeeded, GraphRunPhase.Running, hover: true), 6);
     }
 
-    /// <summary>§2.3'ün sayıları — birinin sessizce kayması bu testi düşürür.</summary>
+    /// <summary>
+    /// §2.3'ün sayıları — birinin sessizce kayması bu testi düşürür.
+    ///
+    /// <para><b>Eski iddia:</b> <see cref="GraphNodeOpacity.HoldMs"/> 2400ms'ti (§2.3'ün verdiği sayı).
+    /// Gerçek koşuda "biraz fazla kalıyor" hissi verdiği için kullanıcı kararıyla 1400ms oldu. Sönme
+    /// (<see cref="GraphNodeOpacity.FadeMs"/>) DEĞİŞMEDİ — geçiş hâlâ yumuşak, yalnız bekleme kısaldı.</para>
+    /// </summary>
     [Fact]
     public void The_opacity_and_timing_numbers_are_pinned_to_their_spec_values()
     {
         Assert.Equal(0.13, GraphNodeOpacity.RunDim, 6);
         Assert.Equal(0.2, GraphNodeOpacity.Finished, 6);
         Assert.Equal(0.1, GraphNodeOpacity.Unfocused, 6);
-        Assert.Equal(2400.0, GraphNodeOpacity.HoldMs, 6);
+        Assert.Equal(1400.0, GraphNodeOpacity.HoldMs, 6);
         Assert.Equal(700.0, GraphNodeOpacity.FadeMs, 6);
         Assert.Equal(280.0, GraphNodeOpacity.GlideMs, 6);
     }

@@ -1211,17 +1211,19 @@ top, and inside a band the first project to build sits leftmost — so reading t
 reading the build order. The node pitch is searched, not fixed: `QuietGraphLayout` walks from 44 px down to
 5 px in half-pixel steps and takes the first value where every band, plus a `0.7 × pitch` gap between bands,
 fits the panel height. A band whose last row is short is centred against the rows above it, and the whole
-block is centred in the content box (12 px inset all round, plus 18 px reserved at the bottom for the hint
-line). The consequence is that the graph always fits — there is no scrollbar, and no canvas larger than the
-panel. A node is a square of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a
-Lucide `box` glyph at 52 % of its edge; discovered nodes get a dashed frame, drawn as a `Rectangle` because a
-WPF `Border` cannot be dashed. Because the layout depends on the panel, `SizeChanged` recomputes it and
+block is centred in the content box — a symmetric 28 px inset on every side, which is what makes the graph
+read as a picture with a margin rather than as a panel that has been filled to the edges. The consequence is
+that the graph always fits — there is no scrollbar, and no canvas larger than the panel. A node is a square
+of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
+its edge; discovered nodes get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot be dashed.
+Under the status square sits an opaque base in the panel's own colour: the status fill is only 12 % alpha, so
+without it a selection edge passing behind a node would show straight through it. Because the layout depends on the panel, `SizeChanged` recomputes it and
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
 
 **The run is told with opacity, not with edges.** Idle, everything is fully opaque. Once a run starts the
 graph quietens: queued and discovered nodes drop to 0.13 and only the projects actually building stay
-bright. A project that finishes returns to its result colour, holds bright for 2400 ms, then fades to 0.2
+bright. A project that finishes returns to its result colour, holds bright for 1400 ms, then fades to 0.2
 over 700 ms — in CSS that is a delayed transition, and the WPF equivalent is one shot of an animation with a
 `BeginTime`, so there is no timer and no extra render pass. The hold only starts on the edge out of
 `Building`; later ticks find the value already settled and start nothing, which matters because status
@@ -1246,19 +1248,26 @@ fade *while still turning* rather than freezing in place. Resizing the panel cha
 pattern and the clock are rebuilt.
 
 **Names live in an overlay, not on the nodes.** There are no labels under the squares. Hovering a node scales
-it 1.7× over 120 ms, thickens its border, pulls it to full opacity even in the quiet run state, and shows a
-tooltip with the full project name — no delay. The tooltip and the selection's name label share one overlay
-`Canvas` that is a *sibling* of the camera's world, carrying no transform of its own: living under the camera
-would scale the text along with the graph and blur it at 5× zoom. Their positions are the node's world point
-projected through the camera, and the clamp applies to the whole box rather than just its anchor, so a long
-project name at the panel edge stays entirely readable. Both are single reused elements; nothing is built per
-node. Changing the selection clears the hover, because the camera is about to move somewhere else and the
-pointer is no longer over what it was.
+it 1.7× over 120 ms, thickens its border, pulls it to full opacity even in the quiet run state, pulls it to
+the front, and shows a tooltip with the full project name — no delay. The scale is one transform shared by the
+square and its bead orbit, so the two can never drift apart. The tooltip and the selection's name label share
+one overlay `Canvas` that is a *sibling* of the camera's world, carrying no transform of its own: living under
+the camera would scale the text along with the graph and blur it at 5× zoom. Their positions come from the
+node's world point projected through the camera's **live** transform, refreshed on every frame the transform
+changes — reading the camera's *target* instead would leave the label parked where the camera has not arrived
+yet for the whole 460 ms of a selection glide. The clamp applies to the whole box rather than just its anchor,
+so a long project name at the panel edge stays entirely readable. Both are single reused elements; nothing is
+built per node. Changing the selection clears the hover, because the camera is about to move somewhere else
+and the pointer is no longer over what it was.
 
 **Selection focuses and fits.** Clicking a node — or a list row, or a stream line — fits the bounding box of
 the selection plus its direct dependencies and dependents into the panel: scale is `min(W/bw, H/bh)` clamped
 to 0.7–2.6 with a padding of `3 × node + 48 px`, and the camera glides there over 460 ms. Everything outside
-that focus set drops to 0.1, and the selected node gains a 2 px focus ring. **Only then are dependency lines
+that focus set drops to 0.1, and the selected node holds the hover treatment: it stays at 1.7×, keeps its
+thicker border, is pulled to the front so nothing can cover its ring, and gains a 2 px amber focus ring. (The
+main prototype does not enlarge a selected node — that came from the Graph Lab study and is a deliberate
+departure from §2.3.) Pulling it forward is a fix rather than a flourish: the ring extends past the node, and
+at a tight pitch a neighbour drawn later would cover all but its corners. **Only then are dependency lines
 drawn** — from each dependency down to the node and from the node down to each dependent, as vertical cubic
 beziers whose control points sit at the mid-height of their two ends, in amber dashes that flow along one
 shared clock. Clearing the selection tears them down again. Because WPF measures dash arrays in multiples of
@@ -1272,8 +1281,9 @@ and otherwise returns the view to its default. Losing capture instead (Alt+Tab, 
 leaves the selection alone. There is no pan clamp, and that is a conclusion rather than an omission: the world
 canvas *is* the panel, so a clamp of the "an axis that fits is centred" kind would force the translation to
 the graph's centre on every selection whose fit scale falls below 1, overriding focus-and-fit entirely. The
-design supplies its own recovery instead, and the hint line in the bottom-right announces it: `scroll = zoom ·
-drag = pan`, or `click again to release` while something is selected.
+design supplies its own recovery instead: clicking empty ground with nothing selected returns the view to its
+default. (§2.3 puts a mono hint line in the bottom-right corner announcing the two gestures; it was removed —
+the panel reads more quietly without it.)
 
 **Opening.** After a Sync the nodes appear in build order — each one delayed by `index × 9 ms`, capped at
 520 ms, rising 5 px over 300 ms. The wave therefore runs top-down and left-to-right, the same direction the

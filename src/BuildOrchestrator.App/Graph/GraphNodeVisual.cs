@@ -92,6 +92,11 @@ internal sealed class GraphNodeVisual
     /// <summary>Tıklanabilir gövde — koşu/seçim opaklığının hedefi. [A13/T5] Ekran-okuyucu adını TAŞIYAN öğe
     /// de budur (tıklanan öğe = UIA'da adlanan öğe).</summary>
     public required GraphNodeBody Body { get; init; }
+    /// <summary>[quiet] Statü karesinin ALTINDAKİ OPAK taban. Statü zemini <c>--status-*-soft</c>, yani
+    /// %12 alfadır: altından geçen bir seçim çizgisi karenin İÇİNDEN görünüyordu. Taban panel zemini
+    /// renginde olduğu için görünüm değişmez — düğüm neyin üstünde duruyorsa onun rengindedir — ama çizgi
+    /// artık düğümün arkasında kalır.</summary>
+    public required Rectangle Base { get; init; }
     /// <summary>Statü renkli KARE (radius-sm). discovered'ta kesikli çerçeve — WPF Border dashed
     /// desteklemediği için Rectangle.</summary>
     public required Rectangle Square { get; init; }

@@ -164,8 +164,7 @@ While a build runs the graph quietens rather than moving: untouched projects fad
 stay bright and carry a ring of circling amber dots, and each project that finishes holds its result colour
 for a couple of seconds before settling. The camera does not follow the run — it stays where you left it.
 Drag the empty background to pan (the cursor turns into a hand) and the mouse wheel zooms at the pointer;
-clicking empty background with nothing selected returns the view to its default. The hint in the bottom-right
-corner says which is which.
+clicking empty background with nothing selected returns the view to its default.
 
 If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
 says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take

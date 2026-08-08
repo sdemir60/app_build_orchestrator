@@ -35,8 +35,12 @@ public static class GraphNodeOpacity
     public const double Unfocused = 0.1;
     public const double Full = 1.0;
 
-    /// <summary>Biten düğümün sonuç renginde PARLAK kaldığı süre (§2.3).</summary>
-    public const double HoldMs = 2400.0;
+    /// <summary>Biten düğümün sonuç renginde PARLAK kaldığı süre.
+    ///
+    /// <para><b>§2.3'ün sayısı 2400ms'ti; kullanıcı kararıyla 1400ms.</b> Gerçek koşuda 2.4 saniye "fazla
+    /// kalıyor" hissi verdi. Sönme süresi (<see cref="FadeMs"/>) DEĞİŞMEDİ — geçiş hâlâ yumuşak, yalnız
+    /// bekleme kısaldı.</para></summary>
+    public const double HoldMs = 1400.0;
     /// <summary>Bekleme bitince <see cref="Finished"/>'a sönme süresi (§2.3).</summary>
     public const double FadeMs = 700.0;
     /// <summary>Normal opaklık geçişi (§2.3: "opaklık geçişi 280ms — hold-fade hariç").</summary>

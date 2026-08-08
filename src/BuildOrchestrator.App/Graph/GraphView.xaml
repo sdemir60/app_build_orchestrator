@@ -50,14 +50,6 @@
         </Border>
       </Canvas>
 
-      <!-- [quiet] §2.3: sağ altta mono ipucu. Yerleşim onun için 18px rezerv ayırır
-           (QuietGraphLayout.HintReservePx) — düğümler bu banda değmez. -->
-      <TextBlock x:Name="HintLabel" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                 Margin="0,0,10,6" IsHitTestVisible="False"
-                 FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="11"
-                 Foreground="{DynamicResource Brush.TextFaint}"
-                 Text="{x:Static vm:InteractionText.GraphHintNavigate}" />
-
       <!-- Sync öncesi boş durum: kesikli çerçeveli kutu (WPF Border dashed desteklemez → Rectangle) -->
       <Grid x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center">
         <Rectangle Stroke="{DynamicResource Brush.Border}" StrokeThickness="1"
