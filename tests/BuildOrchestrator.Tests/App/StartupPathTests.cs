@@ -119,3 +119,4 @@ public class StartupPathTests
         GC.KeepAlive(window);
     }
 }
+

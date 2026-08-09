@@ -191,6 +191,7 @@
                          FontSize="{DynamicResource FontSize.Xs}"
                          Foreground="{DynamicResource Brush.TextSecondary}" />
             </DockPanel>
+
           </StackPanel>
         </ScrollViewer>
 

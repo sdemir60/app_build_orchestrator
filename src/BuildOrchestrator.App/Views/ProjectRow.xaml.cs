@@ -36,6 +36,13 @@ public partial class ProjectRow : UserControl
     private const double StripeWidthNormal = 2;    // BuildApp.jsx:373
     private const double StripeWidthSelected = 3;
 
+    // [cycle rounds/Task 9] Dep-slot tooltip metinleri — TEK doğruluk kaynağı burası (CLAUDE.md kopya YASAK).
+    // "Failed dependency: …" metni ApplyDep içinde kalır (adlar interpolasyonlu, tek kullanım yeri zaten oradaydı).
+    private const string CycleUnsettledTooltip =
+        "Cycle did not fully settle — output may be one generation stale";
+    private const string CycleUnconvergedTooltip =
+        "Cycle did not build — not retried until the source changes";
+
     // [E3/T42] design-v1 bo-reveal (BuildApp.jsx:15/:27): opacity 0→1 + translateY(-5px)→0, .3s, ease-out —
     // GraphView katman reveal'iyle AYNI animasyon ailesi (GraphView.RevealMs/RevealRisePx). Liste satırı gecikmesi
     // graf'tan FARKLI formül: 10ms/satır, 380ms tavan (BuildApp.jsx:367 `Math.min(revealIndex*10, 380)`).
@@ -120,6 +127,9 @@ public partial class ProjectRow : UserControl
     internal int ApplyAllCount { get; private set; }
     internal FrameworkElement DepSlot => PART_DepSlot;
     internal FrameworkElement DepIcon => PART_DepIcon;
+    /// <summary>[cycle rounds/Task 9 Part 2] Kalıcı yakınsamayan döngü rozeti — AYNI 14px dep-slotunda, üçgenle
+    /// karşılıklı dışlayıcı (bkz. ApplyDep). StatusGlyph'in KENDİ cycle çizimini reuse eder (yeni geometri YOK).</summary>
+    internal StatusGlyph CycleBadge => PART_CycleBadge;
     internal FrameworkElement BreathLayer => PART_Breath;
     internal void SimulateHover(bool hover) => SetHover(hover);
     internal TranslateTransform InnerTranslate => PART_InnerTranslate;
@@ -201,6 +211,8 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.DepIssues):
             case nameof(ProjectRowViewModel.HasDepIssue):
             case nameof(ProjectRowViewModel.NamePrefix): // [D5] önek sonradan değişirse dep-tooltip'i tazele
+            case nameof(ProjectRowViewModel.CycleUnsettled):   // [cycle rounds/Task 9] üçgen tooltip dalı
+            case nameof(ProjectRowViewModel.CycleUnconverged): // [cycle rounds/Task 9] dep-slot rozeti
                 ApplyDep();
                 break;
             case nameof(ProjectRowViewModel.DurationMs):
@@ -300,11 +312,36 @@ public partial class ProjectRow : UserControl
             state == ProjectRowState.Failed ? "Brush.StatusFailText" : "Brush.TextDim");
     }
 
+    /// <summary>[cycle rounds/Task 9] AYNI 14px slotu ÜÇ sinyal paylaşır, birbirini KARŞILIKLI DIŞLAR:
+    /// <list type="bullet">
+    /// <item><b>CycleUnconverged</b> (rozet, Part 2) — HER ZAMAN kazanır. Satır bu run'da hiç invoke edilmedi;
+    /// hem üçgeni (yanlış "last successful output referenced" iması — bir çıktı üretilmedi Kİ) hem de bayat bir
+    /// <see cref="ProjectRowViewModel.DepIssues"/> kalıntısını (Continue segment'lerinde satır nesnesi ARTIK
+    /// temizlenmez — <see cref="ProjectRowViewModel.CycleUnconverged"/> XML dokümanı) EZER: en güncel/kesin
+    /// sinyal budur. <b>[review fix 1] Yalnız <c>Skipped</c>'te ANLAMLI</b> — <c>RunCounters.cs</c>'in
+    /// <c>case ProjectRowState.Skipped:</c> kapısıyla AYNI kural. Kök neden <see cref="RunViewModel.OnProjectDone"/>'da
+    /// temizlenir (proje GERÇEKTEN invoke edilince bayrak düşer); buradaki <c>State == Skipped</c> kapısı
+    /// SAVUNMA HATTIDIR — bayrak her nasılsa bayat kalıp Succeeded/Failed'e sızsa bile render katmanı yine de
+    /// rozet/tooltip basmaz ("az önce düzelen proje kalıcı-kırık gibi görünür" hatası ikinci kez mümkün olmasın).</item>
+    /// <item><b>HasDepIssue</b> (üçgen, mevcut) — dep-issue metni CycleUnsettled'tan daha spesifik/actionable,
+    /// ikisi de true ise üçgen KAZANIR ama metin eskisiyle birebir kalır.</item>
+    /// <item><b>CycleUnsettled</b> (üçgen, Part 1) — yalnız yukarıdaki ikisi yokken kendi metnini basar.</item>
+    /// </list></summary>
     private void ApplyDep()
     {
-        bool has = _vm?.HasDepIssue ?? false;
-        PART_DepIcon.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
-        if (has && _vm?.DepIssues is { } issues)
+        bool cycleUnconverged = (_vm?.CycleUnconverged ?? false) && _vm?.State == ProjectRowState.Skipped;
+        bool hasDepIssue = _vm?.HasDepIssue ?? false;
+        bool cycleUnsettled = _vm?.CycleUnsettled ?? false;
+        bool showTriangle = !cycleUnconverged && (hasDepIssue || cycleUnsettled);
+
+        PART_CycleBadge.Visibility = cycleUnconverged ? Visibility.Visible : Visibility.Collapsed;
+        PART_DepIcon.Visibility = showTriangle ? Visibility.Visible : Visibility.Collapsed;
+
+        if (cycleUnconverged)
+        {
+            PART_DepTip.Content = CycleUnconvergedTooltip;
+        }
+        else if (hasDepIssue && _vm?.DepIssues is { } issues)
         {
             // Kısa adlar (veri-türevli ortak önek atılmış — D5, artık hardcode "OSYS." değil), virgülle;
             // önek satıra RunViewModel'den itilir (NamePrefix). Tooltip BİREBİR (brief slot 6).
@@ -312,7 +349,17 @@ public partial class ProjectRow : UserControl
             string names = string.Join(", ", issues.Select(n => GraphNode.ShortLabel(n, prefix)));
             PART_DepTip.Content = $"Failed dependency: {names} — last successful output referenced";
         }
-        UpdateGlyphTooltip(); // depIssue eki glyph tooltip'ini de değiştirir
+        else if (cycleUnsettled)
+        {
+            PART_DepTip.Content = CycleUnsettledTooltip;
+        }
+        else
+        {
+            // [review fix Minor] Slot boşken hayalet tooltip kalmasın — bugün zararsız (slot sıfır yükseklikte
+            // çöker) ama savunmacı: layout yarın değişirse eski metin asılı kalmaz.
+            PART_DepTip.Content = null;
+        }
+        UpdateGlyphTooltip(); // [review fix 2] ARTIK yalnız dep-issue değil — CycleUnsettled/CycleUnconverged da glyph tooltip'ini değiştirir
     }
 
     private void ApplySha()
@@ -377,6 +424,12 @@ public partial class ProjectRow : UserControl
         MotionTokens.TransitionColor(this, _bgBrush, target);
     }
 
+    /// <summary>[review fix 2] <c>PART_Glyph</c> satırın TEK her-zaman-görünür yüzeyidir — dep-slot boşken sıfır
+    /// yükseklikte çöker (<c>DepSlot</c>), bu yüzden döngü durumları BURADA da duyurulmalı, yalnız dep-slot'un
+    /// kendi tooltip'inde değil. Sıra <see cref="ApplyDep"/>'in 3-yollu önceliğiyle AYNI (CycleUnconverged —
+    /// yalnız Skipped'te, RunCounters kapısıyla aynı — &gt; dep-issue &gt; CycleUnsettled); metinler TEKRAR
+    /// YAZILMAZ, dep-slot'un KENDİ sabitleri (<see cref="CycleUnconvergedTooltip"/>/<see cref="CycleUnsettledTooltip"/>)
+    /// reuse edilir.</summary>
     private void UpdateGlyphTooltip()
     {
         var state = _vm?.State ?? ProjectRowState.Pending;
@@ -386,8 +439,12 @@ public partial class ProjectRow : UserControl
         string text = StatusGlyph.LabelFor(status);
         if (state == ProjectRowState.Started)
             text += " — " + DurationFormat.Elapsed(_vm?.DurationMs ?? 0);
+        else if (state == ProjectRowState.Skipped && (_vm?.CycleUnconverged ?? false))
+            text += " — " + CycleUnconvergedTooltip;
         else if (_vm?.HasDepIssue ?? false)
             text += " — dependency issue";
+        else if (_vm?.CycleUnsettled ?? false)
+            text += " — " + CycleUnsettledTooltip;
         PART_GlyphTip.Content = text;
     }
 

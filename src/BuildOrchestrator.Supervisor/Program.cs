@@ -364,7 +364,7 @@ public static class Program
             // burası true kalır ve imza local-diff terimini DAHİL eder — derlemenin gerçekte üzerinde koştuğu ağaç.
             var (bound, signatures) = IncrementalRunBinder.Bind(
                 plan, evaluatedById, workspace.ScanRoot, head, tracked, dirty,
-                stateStore.Load(), workspace.InPlace, cmd.DependentMode);
+                stateStore.Load(), workspace.InPlace, cmd.Mode == RunMode.Cycles, cmd.DependentMode);
             return (bound, new IncrementalPlan(signatures, head, branch));
         }
         catch (Exception ex)

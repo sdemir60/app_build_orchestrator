@@ -154,6 +154,71 @@ public class IpcMessagesTests
         Assert.Equal(["dep C broken", "dep D broken"], backWithIssues.DepIssues);
     }
 
+    // [cycle rounds] Tur göstergesinin sözleşmesi: bir SCC'nin kaçıncı turunun başladığı. Task 8 bunu konsol
+    // satırına çevirir; burada yalnız NDJSON round-trip'i ve ayırt edicisi pinlenir.
+    [Fact]
+    public void CycleRoundStartedEvent_roundtrips_with_its_discriminator()
+    {
+        IpcEvent ev = new CycleRoundStartedEvent("r1", @"C:\p\a.csproj", Round: 2, RoundCap: 3, MemberCount: 4);
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"cycleRoundStarted\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
+    // [cycle rounds] "Oturmamış döngü" bayrağı: tavana dayanmış bir SCC'nin BAŞARILI üyeleri bunu taşır.
+    // Varsayılanı false'tur ve alanı hiç taşımayan (bu sürümden ÖNCE yazılmış) bir projectSucceeded satırı
+    // aynen çözülmeye devam eder — geriye dönük uyum.
+    [Fact]
+    public void ProjectSucceededEvent_cycleUnsettled_defaults_to_false_and_roundtrips_when_set()
+    {
+        const string legacyLine = """{"type":"projectSucceeded","runId":"r1","projectId":"C:\\p\\a.csproj","durationMs":2400}""";
+        var legacy = Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(legacyLine, IpcJson.Options));
+        Assert.False(legacy.CycleUnsettled);
+
+        IpcEvent unsettled = new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400, DepIssues: null, CycleUnsettled: true);
+        string json = JsonSerializer.Serialize(unsettled, IpcJson.Options);
+        Assert.Contains("\"cycleUnsettled\":true", json);
+        Assert.Equal(unsettled, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
+    // [cycle rounds/Task 8] "Yakınsamadı" bayrağı — bir SCC ÖNCEKİ bir Build'de yakınsamadığı için bu run'da
+    // hiç invoke edilmeden pre-skip edildiğini işaretler (bkz. RunCoordinator "cycle did not converge at this
+    // signature" seed'i). Ayrım metinden (Reason) DEĞİL bu tipli alandan yapılır — string-matching YASAK.
+    // Varsayılanı false'tur; alanı hiç taşımayan eski bir projectSkipped satırı aynen çözülmeye devam eder.
+    [Fact]
+    public void ProjectSkippedEvent_cycleUnconverged_defaults_to_false_and_roundtrips_when_set()
+    {
+        const string legacyLine = """{"type":"projectSkipped","runId":"r1","projectId":"C:\\p\\c.csproj","reason":"in dependency cycle"}""";
+        var legacy = Assert.IsType<ProjectSkippedEvent>(JsonSerializer.Deserialize<IpcEvent>(legacyLine, IpcJson.Options));
+        Assert.False(legacy.CycleUnconverged);
+
+        IpcEvent unconverged = new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "cycle did not converge at this signature", CycleUnconverged: true);
+        string json = JsonSerializer.Serialize(unconverged, IpcJson.Options);
+        Assert.Contains("\"cycleUnconverged\":true", json);
+        Assert.Equal(unconverged, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
+    /// <summary>[cycles] Döngü derlemesinin KOMUT yüzeyi artık bir bayrak değil, bir MOD'dur: <see
+    /// cref="RunMode.Cycles"/>. İki iddia:
+    /// (a) tel üzerinde camelCase METİN olarak gider (<c>"cycles"</c>) — sayı olarak DEĞİL, bu yüzden enum'a
+    ///     değer eklemek eski satırların anlamını kaydırmaz;
+    /// (b) round-trip eder.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Burada eskiden iki test vardı: <c>StartRunCommand</c> ve
+    /// <c>SyncWorkspaceCommand</c> üzerindeki <c>buildDependencyCycles</c> bayrağının sözleşme varsayılanının
+    /// <c>false</c> olduğunu ve set edildiğinde round-trip ettiğini pinliyorlardı. Bayrak KALDIRILDI: döngü
+    /// derlemesi Build'in bir seçeneği olmaktan çıkıp kendi koşusu oldu (Sync'in yanındaki düğme), dolayısıyla
+    /// "alanı hiç göndermeyen bir gönderici ne alsın" sorusunun öznesi de kalmadı. Sync artık bu kararı hiç
+    /// taşımaz — önizlemesi her zaman Build'i tarif eder.</para></summary>
+    [Fact]
+    public void StartRunCommand_carries_the_cycles_mode_as_text_and_roundtrips()
+    {
+        IpcCommand cycles = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 4);
+        string json = JsonSerializer.Serialize(cycles, IpcJson.Options);
+
+        Assert.Contains("\"mode\":\"cycles\"", json);                     // (a)
+        Assert.Equal(cycles, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options)); // (b)
+    }
+
     [Fact]
     public void RunCompletedEvent_depIssueCount_roundtrips()
     {

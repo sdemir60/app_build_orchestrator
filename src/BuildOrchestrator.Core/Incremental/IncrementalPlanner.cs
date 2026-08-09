@@ -77,6 +77,11 @@ public static class IncrementalPlanner
     /// <param name="committedFingerprintForNode">[A6 refinement — Task 7b] Düğüm → bu projenin PER-PROJECT committed fingerprint'i (bkz. <see cref="ComputeCommittedFingerprint"/> — GitService.GetTrackedBlobHashesAsync haritası ∩ projenin build-etkileyen dosyaları üzerinden çağıran tarafından önceden hesaplanır). Repo-GLOBAL headCommit'in YERİNİ alır: bir commit, yalnız BU projenin committed dosyalarını gerçekten değiştirdiyse bu terim değişir. <c>null</c> tolere edilir (proje hiç commit'lenmemiş / no-commits repo).</param>
     /// <param name="state">projectId → <see cref="BuildState"/> (bkz. <see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>). Kayıt yoksa never-built.</param>
     /// <param name="inPlace">true → in-place mod (local-diff dahil); false → worktree/committed (local-diff atlanır).</param>
+    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>'ta <c>true</c>.
+    /// <c>false</c> ⇒ üyeler <c>WillBuild=false</c>'a kısa devre yapar (<see cref="WillBuildEvaluator"/>),
+    /// <c>true</c> ⇒ sıradan imza/state mantığına tabidirler — SCC'nin bileşik imzası (bkz.
+    /// <c>ComputeComponent</c>) tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün
+    /// olarak "güncel" görünür. <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını AÇIKÇA yazar.</param>
     /// <param name="mode">Safe (varsayılan, dirty+transitive) veya Fast (yalnız dirty, cascade yok).</param>
     /// <returns><paramref name="plan"/> ile aynı düğümler, her birinin <see cref="ProjectNode.WillBuild"/> alanı doldurulmuş.</returns>
     public static BuildPlan ComputeWillBuild(
@@ -87,9 +92,11 @@ public static class IncrementalPlanner
         Func<ProjectNode, string?> committedFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
         bool inPlace,
+        bool buildCycles,
         DependentMode mode = DependentMode.Safe)
         => ComputeWillBuildWithSignatures(
-            plan, headCommit, dirtyFilesForNode, readFileContent, committedFingerprintForNode, state, inPlace, mode).Plan;
+            plan, headCommit, dirtyFilesForNode, readFileContent, committedFingerprintForNode, state, inPlace,
+            buildCycles, mode).Plan;
 
     /// <summary>
     /// [Task 19 wiring] <see cref="ComputeWillBuild"/> ile AYNI hesap, ek olarak her düğüm için hesaplanan
@@ -106,6 +113,7 @@ public static class IncrementalPlanner
         Func<ProjectNode, string?> committedFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
         bool inPlace,
+        bool buildCycles,
         DependentMode mode = DependentMode.Safe)
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -122,7 +130,7 @@ public static class IncrementalPlanner
             // committedFingerprintForNode BURADA hiç çağrılmaz (kısa devre) — bkz. tip özeti "Hollow" notu.
             var hollowSignatures = plan.Nodes.ToDictionary(
                 n => n.Id, _ => (string?)null, StringComparer.OrdinalIgnoreCase);
-            return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup), hollowSignatures);
+            return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup, buildCycles), hollowSignatures);
         }
 
         var byId = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
@@ -191,8 +199,10 @@ public static class IncrementalPlanner
         // NullMarker'a düşüyordu, dolayısıyla SCC İÇİNDEKİ gerçek bir kaynak değişimi, SCC DIŞINDAKİ bir
         // downstream'e (o üyenin imzasını okuyor olmasına rağmen) ZİYARET SIRASINA bağlı olarak hiç
         // yansımayabiliyordu: dependent bir sonraki Build'de sessizce "up to date" sayılıp atlanırdı
-        // (cycle-tangled transitive under-build). Üyeler yine hiç DERLENMEZ (WillBuildEvaluator, InCycle) —
-        // bu düzeltme yalnız downstream'in GÖRDÜĞÜ değeri onarır.
+        // (cycle-tangled transitive under-build). Bu düzeltmenin KENDİSİ yalnız downstream'in GÖRDÜĞÜ değeri
+        // onarır; üyelerin derlenip derlenmediği [Task 11] kill switch'inin (buildCycles) işidir — kapalıyken
+        // hiç derlenmezler, açıkken kompozit onların KENDİ WillBuild'ini de belirler (grup bütün olarak ya
+        // "derlenecek" ya "güncel" görünür, çünkü değer üyeler arasında ORTAKTIR).
         // Fast'te kompozit KULLANILMAZ: Fast zaten hiçbir upstream'i takip etmez (frozen/stored imza okur),
         // yani kompozitin çözdüğü cascade sorunu orada tanım gereği yoktur — semantiği değiştirmemek için
         // Fast'in yolu A1'deki gibi bırakılır.
@@ -228,7 +238,7 @@ public static class IncrementalPlanner
 
         foreach (var node in plan.Nodes) Compute(node);
 
-        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup), computedMemo);
+        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup, buildCycles), computedMemo);
     }
 
     /// <summary>

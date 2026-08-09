@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -41,6 +42,12 @@ public sealed partial class RunViewModel
     /// <para>Boş topoloji (klasörün altında hiç proje yok) da kapalıdır — derlenecek bir şey yoktur.
     /// <see cref="RestingPhase"/> ile AYNI soruyu sorar, bu yüzden soru TEK yerde durur (kopya YASAK).</para></summary>
     public bool HasTopology => Topology.Count > 0;
+
+    /// <summary>[cycles] Son topolojide en az bir dairesel bağımlılık (SCC) var mı — <see cref="RunViewModel.BuildCyclesCommand"/>'ın
+    /// kapısı. Soru üyelik haritasına sorulur (<c>_cycleGroups</c>), satırların <c>InCycle</c> bayrağına DEĞİL:
+    /// harita motorun grubu sürdüğü gövdenin aynısıdır, satır bayrağı ise onun bir türevi — kapıyı türevden
+    /// sormak iki tarafın sessizce ayrışabileceği ikinci bir cevap yaratırdı.</summary>
+    public bool HasCycles => _cycleGroups is { Count: > 0 };
 
     /// <summary>Stop istendi: motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ile cevap vermelidir —
     /// sessizlik saati burada da kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe). Faz set eden
@@ -151,6 +158,7 @@ public sealed partial class RunViewModel
         _willBuildIds.Clear(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
         RebuildCommand.NotifyCanExecuteChanged();
         RetryFailedCommand.NotifyCanExecuteChanged();
+        BuildCyclesCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>[A5/T69] Sync bitti: hedef commit + degrade bayrağı kaydedilir, faz <c>Idle</c>'a geçer
@@ -177,6 +185,7 @@ public sealed partial class RunViewModel
         // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Rebuild/RetryFailed'ı tek yerden geri açar.
         RebuildCommand.NotifyCanExecuteChanged();
         RetryFailedCommand.NotifyCanExecuteChanged();
+        BuildCyclesCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
@@ -221,6 +230,7 @@ public sealed partial class RunViewModel
         // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
         RebuildCommand.NotifyCanExecuteChanged();
         RetryFailedCommand.NotifyCanExecuteChanged();
+        BuildCyclesCommand.NotifyCanExecuteChanged();
         return true;
     }
 
@@ -248,6 +258,10 @@ public sealed partial class RunViewModel
     {
         Topology = e.Nodes;
         Solutions = e.Solutions;
+        // [cycle rounds/I2] SCC üyelik haritası topolojinin İKİNCİ yarısından (Cycles) kurulur — motorun grubu
+        // sürdüğü haritanın AYNI gövdesiyle (kopya YASAK). App'in tek sorusu üyeliktir: koşan bir grupta hangi
+        // Started üye sırasını bekliyor (bkz. OnProjectStarted).
+        _cycleGroups = CycleGroups.From(e.Nodes, e.Cycles);
         // [D5] Kısa-ad öneki topoloji adlarından türetilir (tek otorite) — aşağıda her satıra itilir.
         _graphNamePrefix = GraphNode.CommonDotPrefix(e.Nodes.Select(n => n.Name).ToList());
 
@@ -315,6 +329,7 @@ public sealed partial class RunViewModel
         BuildCommand.NotifyCanExecuteChanged();
         RebuildCommand.NotifyCanExecuteChanged();
         RetryFailedCommand.NotifyCanExecuteChanged();
+        BuildCyclesCommand.NotifyCanExecuteChanged();
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
     }

@@ -13,9 +13,12 @@ using BuildOrchestrator.Contracts.Model;
 /// öldürmez", A3). Bu durumun raporlanması (depIssue zinciri, ▲ badge — It-3/T54) artık <see cref="DepIssueTracker"/>
 /// ile gerçeklendi: bu class'ın resolved semantiği DEĞİŞMEDİ, yalnız <see cref="Completed"/> üzerinden okunur.
 ///
-/// InCycle=true node'lar (TopoSort'un SCC üyeleri, Nodes içinde hâlâ mevcut) construction anında
-/// Skipped("in dependency cycle") sayılıp PreSkipped'e yazılır; böylece bağımlıları için çözülmüş kabul
-/// edilirler (yoksa asla ready olamayacakları için run kilitlenir) — plan A6.
+/// InCycle=true node'lar (TopoSort'un SCC üyeleri, Nodes içinde hâlâ mevcut), <see cref="CycleGroups"/>
+/// verilmediyse (null — kill switch kapalı) construction anında Skipped("in dependency cycle") sayılıp
+/// PreSkipped'e yazılır; böylece bağımlıları için çözülmüş kabul edilirler (yoksa asla ready olamayacakları
+/// için run kilitlenir) — plan A6. <see cref="CycleGroups"/> verildiyse pre-skip YAPILMAZ: her SCC TEK iş
+/// kalemi olarak ele alınır — hazırlığı TÜM üyelerin DIŞ bağımlılıklarına bakar (grup-içi/dairesel kenarlar
+/// hariç), dispatch build-order'daki İLK dispatch edilebilir üyeyi verirken TÜM üyeleri in-flight işaretler.
 ///
 /// Saf Core state: I/O, process, async, log YOK [D3]. Thread-safety: TryDispatch/Complete/RequestStop ve tüm
 /// okuma üyeleri (QueuedProjectIds/Completed/IsDone/InFlight) tek bir lock (_gate) altında senkronize edilir.
@@ -31,6 +34,7 @@ public sealed class ReadySetScheduler
     private readonly Dictionary<string, BuildResult> _completed;             // Succeeded/Failed/Skipped (cycle dahil)
     private readonly HashSet<string> _inFlight;                              // dispatch edildi, henüz Complete olmadı
     private readonly List<(string ProjectId, string Reason)> _preSkipped;    // construction'da cycle nedeniyle Skipped
+    private readonly CycleGroups? _groups;                                   // [cycle rounds] null = kill switch kapalı
 
     private bool _stopRequested;
 
@@ -43,7 +47,8 @@ public sealed class ReadySetScheduler
     private static readonly RunSnapshot EmptySnapshot =
         new(new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase), [], 0);
 
-    public ReadySetScheduler(BuildPlan plan) : this(plan, EmptySnapshot)
+    public ReadySetScheduler(BuildPlan plan, CycleGroups? cycleGroups = null)
+        : this(plan, EmptySnapshot, cycleGroups)
     {
     }
 
@@ -62,8 +67,13 @@ public sealed class ReadySetScheduler
     /// [Task 18] fresh ctor'un devrettiği <see cref="EmptySnapshot"/>), yine de burada pre-skip edilirler —
     /// aksi halde bağımlılıkları birbirine dairesel olduğu için asla ready olamazlar ve run kilitlenir (plan
     /// A6, fresh ctor ile aynı garanti — artık TEK gövde, iki ayrı garanti değil).
+    ///
+    /// <paramref name="cycleGroups"/> [cycle rounds]: null (varsayılan) = kill switch KAPALI, yukarıdaki
+    /// pre-skip davranışı BİREBİR korunur — mevcut tüm çağrı yerleri hiç değişmeden aynı sonucu almaya devam
+    /// eder. Doldurulduğunda SCC'ler artık pre-skip EDİLMEZ; bunun yerine <see cref="IsReadyLocked"/> ve
+    /// <see cref="TryDispatch"/> her SCC'yi TEK iş kalemi olarak ele alır (bkz. ilgili doc'lar).
     /// </summary>
-    public ReadySetScheduler(BuildPlan plan, RunSnapshot snapshot)
+    public ReadySetScheduler(BuildPlan plan, RunSnapshot snapshot, CycleGroups? cycleGroups = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -73,11 +83,15 @@ public sealed class ReadySetScheduler
         _completed = new Dictionary<string, BuildResult>(snapshot.Completed, StringComparer.OrdinalIgnoreCase);
         _inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _preSkipped = new List<(string, string)>();
+        _groups = cycleGroups;
 
         foreach (var node in _nodesInOrder)
         {
             _byId[node.Id] = node;
-            if (node.InCycle && !_completed.ContainsKey(node.Id))
+            // [cycle rounds] Gruplar VERİLDİYSE pre-skip YOK — SCC tek iş kalemi olarak dispatch edilir ve
+            // turlarla derlenir. Gruplar null ise (kill switch kapalı) eski davranış birebir korunur: üyeler
+            // burada Skipped sayılır, yoksa dairesel bağımlılık nedeniyle asla ready olamaz ve run kilitlenirdi [A6].
+            if (_groups is null && node.InCycle && !_completed.ContainsKey(node.Id))
             {
                 _completed[node.Id] = BuildResult.Skipped;
                 _preSkipped.Add((node.Id, "in dependency cycle"));
@@ -139,6 +153,14 @@ public sealed class ReadySetScheduler
     /// <summary>
     /// Ready set'ten (bağımlılıkları çözülmüş, henüz dispatch/complete edilmemiş) build-order'da EN ÖNDE
     /// olanı verir; bloklu olanların üzerinden atlar (K2). Stop istendiyse veya ready hiçbir şey yoksa false.
+    ///
+    /// [cycle rounds] Bir grup (SCC) dispatch edildiğinde dönen id yalnızca grubun LİDERİDİR (build-order'daki
+    /// ilk dispatch edilebilir üye) — ama bu TEK çağrıda grubun TÜM üyeleri in-flight'a girer (aşağıda).
+    /// Çağıran bu yüzden ZORUNLUDUR: dispatch edilen id bir grup üyesiyse, <see cref="CycleGroups.MembersOf"/>
+    /// (id)'nin döndürdüğü üyelerden — çağrı ANINDA zaten <see cref="Completed"/>'te olanlar HARİÇ, çünkü
+    /// onlar bu çağrıda in-flight'a hiç girmedi — HER biri için <see cref="Complete"/>'i tam olarak BİR KEZ
+    /// çağırmalıdır; stop/cancellation yolları DAHİL. Aksi halde o üye(ler) sonsuza dek in-flight kalır ve
+    /// <see cref="IsDone"/> (InFlight == 0 şartı) hiçbir zaman true olmaz, run askıda kalır.
     /// </summary>
     public bool TryDispatch(out string projectId)
     {
@@ -151,8 +173,33 @@ public sealed class ReadySetScheduler
                     if (_completed.ContainsKey(node.Id) || _inFlight.Contains(node.Id)) continue;
                     if (!IsReadyLocked(node)) continue;
 
-                    _inFlight.Add(node.Id);
-                    projectId = node.Id;
+                    var members = _groups?.MembersOf(node.Id) ?? [];
+                    if (members.Count == 0)
+                    {
+                        _inFlight.Add(node.Id);
+                        projectId = node.Id;
+                        return true;
+                    }
+
+                    // [cycle rounds] Grup: yalnız build-order'da İLK dispatch edilebilir üye (`head`) verilir;
+                    // TÜM üyeler tek seferde in-flight'a eklenir (aşağıda). `head` pratikte hiçbir zaman null
+                    // olamaz: `node` bu satıra kadar zaten yukarıdaki `:165` guard'ından geçmiştir (completed
+                    // değil, in-flight değil) ve `node.Id` kendi `members` listesinin bir üyesidir —
+                    // `FirstOrDefault` en azından `node`'u bulur. İkinci bir worker'ın AYNI gruba tekrar
+                    // girmesini engelleyen de bu satır DEĞİL, o `:165` guard'ıdır: grup bir kez dispatch
+                    // edildiğinde TÜM üyeleri in-flight'a girer, bu yüzden sonraki her TryDispatch çağrısında
+                    // grubun her üyesi outer loop'un başında `_inFlight.Contains(node.Id)` ile elenir ve bu
+                    // satıra hiç ulaşmaz.
+                    string? head = members.FirstOrDefault(
+                        m => !_completed.ContainsKey(m) && !_inFlight.Contains(m));
+                    if (head is null) continue;   // savunmacı: yukarıdaki akıl yürütmeyle asla girilmez
+                    foreach (string m in members)
+                        // _byId.ContainsKey: plan'da karşılığı olmayan bir üye (savunmacı — CycleGroups
+                        // böyle bir id'yi de listeye alabilir) in-flight'a hiç girmez; girerse asla
+                        // Complete edilemez (hiçbir node onu temsil etmez) ve run sonsuza dek askıda kalırdı —
+                        // IsResolvedLocked'ın (:255-258) aynı savunmacı deseni.
+                        if (!_completed.ContainsKey(m) && _byId.ContainsKey(m)) _inFlight.Add(m);
+                    projectId = head;
                     return true;
                 }
             }
@@ -206,7 +253,22 @@ public sealed class ReadySetScheduler
     }
 
     // _gate zaten tutulu iken çağrılmalı.
-    private bool IsReadyLocked(ProjectNode node) => node.Dependencies.All(IsResolvedLocked);
+    // [cycle rounds] node bir SCC üyesiyse (_groups != null ve node.Id grup üyesi) hazırlık TEK kalem olarak
+    // hesaplanır: TÜM üyelerin DIŞ (grup dışı) bağımlılıkları çözülmüş olmalı. Grup-içi kenarlar (tanımı
+    // gereği dairesel) hariç tutulur — aksi halde grup asla ready olamazdı. _groups null ise (kill switch
+    // kapalı) members her zaman boştur ve eski tek-satırlık davranış birebir korunur.
+    private bool IsReadyLocked(ProjectNode node)
+    {
+        var members = _groups?.MembersOf(node.Id) ?? [];
+        if (members.Count == 0) return node.Dependencies.All(IsResolvedLocked);
+
+        foreach (string memberId in members)
+            if (_byId.TryGetValue(memberId, out var member))
+                foreach (string dep in member.Dependencies)
+                    if (!members.Contains(dep, StringComparer.OrdinalIgnoreCase) && !IsResolvedLocked(dep))
+                        return false;
+        return true;
+    }
 
     // Bilinmeyen (plan'da node olarak bulunmayan) bağımlılık id'si, node'u sonsuza dek bloklamasın diye
     // çözülmüş sayılır — savunmacı: ProducerMap/GraphBuilder her zaman geçerli id üretir ama scheduler

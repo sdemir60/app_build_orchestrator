@@ -53,6 +53,7 @@ public sealed class UiState
     /// <c>List&lt;string&gt;</c> hiç var olmadı (PerfMode'daki gibi bir toleranslı converter GEREKMEZ).</para></summary>
     public List<LayerPattern> LayerPatterns { get; set; } = [];
     public bool Autostart { get; set; }
+
 }
 
 /// <summary>

@@ -53,7 +53,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// Kayıtlı katman YOKSA (null ya da boş) taslak <see cref="LayerDefaults"/> ile DOLU kurulur — araç
     /// paylaşıldığında kimse katmanları elle yazmasın. Bu YALNIZ taslaktır: Save'e basılmadıkça ne
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.</summary>
-    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot = null)
+    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot)
     {
         _repositoryRoot = repositoryRoot;
         Layers.CollectionChanged += OnLayersChanged;

@@ -137,7 +137,12 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(overall.Token));
 
             var sw = Stopwatch.StartNew();
-            await w.WriteAsync(new StartRunCommand("acc-full", RunMode.Rebuild, OsysRoot, "Debug", Parallelism), overall.Token);
+            // [cycles] Rebuild bir SCC'ye HİÇ dokunmaz (üyeler "in dependency cycle" ile atlanır) — bu koşu
+            // ürünün sevk ettiği Rebuild'in ta kendisidir. Döngü turlarının kapsamı burada DEĞİL, kendi
+            // modunda (RunMode.Cycles) ve kendi süitindedir (CycleRoundsTests + RunCoordinatorTests'in
+            // gerçek-process tur kablajı testi).
+            await w.WriteAsync(
+                new StartRunCommand("acc-full", RunMode.Rebuild, OsysRoot, "Debug", Parallelism), overall.Token);
 
             while (true)
             {
@@ -411,7 +416,8 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
             var w = new NdjsonWriter(proc.StandardInput.BaseStream);
             var r = new NdjsonReader(proc.StandardOutput.BaseStream);
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(ct));
-            await w.WriteAsync(new StartRunCommand("acc-det", RunMode.Rebuild, OsysRoot, "Debug", Parallelism), ct);
+            await w.WriteAsync(
+                new StartRunCommand("acc-det", RunMode.Rebuild, OsysRoot, "Debug", Parallelism), ct);
 
             bool stopSent = false;
             while (true)

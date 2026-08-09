@@ -133,13 +133,22 @@ public static class RibbonText
                     "Brush.TextDim", null);
 
             case AppPhase.Done:
+                // [cycle rounds/Task 8 review] Kalıcı kırık (yakınsamayan) bir grup pre-skip edilse bile AllClean
+                // true olabilir: önizleme (WillBuild) yalnız İMZAYA bakar, "bu grup daha önce yakınsamadı"
+                // bilgisini görmez — bkz. WillBuildEvaluator tip özetindeki BİLİNEN AYRIŞMA notu ([Task 11]'de
+                // bilerek açık bırakıldı). Bu dal RunCounters'ı HİÇ okumadan sabit metin döndürüyordu — "Completed — … skipped …"
+                // dalından bile daha güçlü bir false-green (döngünün VAR OLMADIĞINI ima eder). AYNI StuckCyclesSuffix
+                // (kopya YASAK) burada da eklenir; StuckCycles==0 iken ek boş kalır, metin BYTE-FOR-BYTE aynı kalır.
                 if (allClean)
                     return new RibbonLine(
                         string.Format(CultureInfo.InvariantCulture,
-                            "Everything up to date — {0} projects checked in {1}, nothing to build",
-                            totalProjects, DurationFormat.Duration(checkDurMs)),
+                            "Everything up to date — {0} projects checked in {1}, nothing to build{2}",
+                            totalProjects, DurationFormat.Duration(checkDurMs), StuckCyclesSuffix(c)),
                         "Brush.StatusSuccessText", "succeeded");
 
+                // [cycle rounds/Task 8] Kalıcı kırık (yakınsamayan) döngüler plain "skipped" görünür — bu
+                // ek olmadan 0-failed bir run tamamen yeşil okunurdu (StuckCyclesSuffix TEK kaynak, iki dal
+                // da aynı segmenti çağırır — kopya YASAK).
                 if (c.Failed > 0)
                 {
                     string dep = c.DepAffected > 0
@@ -150,8 +159,8 @@ public static class RibbonText
                         : "";
                     return new RibbonLine(
                         string.Format(CultureInfo.InvariantCulture,
-                            "Completed — {0} failed · {1} succeeded{2} · {3} skipped{4} · {5}",
-                            c.Failed, c.Succeeded, dep, c.Skipped, warn, DurationFormat.Elapsed(elapsedMs)),
+                            "Completed — {0} failed · {1} succeeded{2} · {3} skipped{4}{5} · {6}",
+                            c.Failed, c.Succeeded, dep, c.Skipped, StuckCyclesSuffix(c), warn, DurationFormat.Elapsed(elapsedMs)),
                         "Brush.StatusFailText", "failed");
                 }
                 else
@@ -161,8 +170,8 @@ public static class RibbonText
                         : "";
                     return new RibbonLine(
                         string.Format(CultureInfo.InvariantCulture,
-                            "Completed — {0} succeeded · {1} skipped{2} · {3}",
-                            c.Succeeded, c.Skipped, warn, DurationFormat.Elapsed(elapsedMs)),
+                            "Completed — {0} succeeded · {1} skipped{2}{3} · {4}",
+                            c.Succeeded, c.Skipped, StuckCyclesSuffix(c), warn, DurationFormat.Elapsed(elapsedMs)),
                         "Brush.StatusSuccessText", "succeeded");
                 }
 
@@ -190,6 +199,14 @@ public static class RibbonText
             (long)Math.Round(eta / (double)EtaCalculator.DisplayRoundingMs, MidpointRounding.AwayFromZero) * 5);
         return string.Format(CultureInfo.InvariantCulture, " · ~{0}s left", roundedSec);
     }
+
+    /// <summary>[cycle rounds/Task 8] Done özetinin "skipped" segmentine eklenen ek — bir run kalıcı kırık
+    /// (yakınsamayan) döngü içeriyorsa "0 failed" bile koşulsuz başarı OKUNMASIN diye. Skipped sayısına
+    /// bitişik yazılır (dep-affected'in succeeded'e bitişik yazılması gibi); yoksa boş.</summary>
+    public static string StuckCyclesSuffix(RunCounters c) =>
+        c.StuckCycles > 0
+            ? string.Format(CultureInfo.InvariantCulture, " ({0} stuck in a cycle)", c.StuckCycles)
+            : "";
 
     /// <summary>[T38] İlerleme yüzdesi (0..100) — design-v1 <c>BuildApp.jsx:773-775</c>: allClean →
     /// (done ? 100 : skipped/total*100); aksi wb&gt;0 ? fin/wb*100 : 0. Sıfıra bölme savunmacı korunur.</summary>

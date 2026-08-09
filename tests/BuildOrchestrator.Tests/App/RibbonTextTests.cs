@@ -9,10 +9,10 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class RibbonTextTests
 {
-    // RunCounters(Total, Building, Queued, Succeeded, Failed, Skipped, DepAffected)
+    // RunCounters(Total, Building, Queued, Succeeded, Failed, Skipped, DepAffected, StuckCycles)
     private static RunCounters Counters(int building = 0, int queued = 0, int succeeded = 0,
-                                        int failed = 0, int skipped = 0, int dep = 0, int total = 14)
-        => new(total, building, queued, succeeded, failed, skipped, dep);
+                                        int failed = 0, int skipped = 0, int dep = 0, int total = 14, int stuck = 0)
+        => new(total, building, queued, succeeded, failed, skipped, dep, stuck);
 
     [Fact]
     public void No_repository_line_is_the_neutral_invitation_in_faint_text()
@@ -227,6 +227,32 @@ public class RibbonTextTests
         Assert.Equal("succeeded", line.Glyph);
     }
 
+    // [cycle rounds/Task 8 review] The preview decides from the signature alone and cannot see that a group was
+    // memorized as non-convergent (see the KNOWN DIVERGENCE note on WillBuildEvaluator — deliberately left open
+    // in [Task 11]), so AllClean can be true with a stuck cycle silently pre-skipped underneath it: this
+    // branch used to return a FIXED string that never read RunCounters at all, which is an even stronger false-
+    // green than "Completed — … skipped …" (it implies the cycle doesn't exist). Both directions pinned exactly:
+    // the unqualified string is untouched byte-for-byte when there is nothing stuck (this path is heavily
+    // pinned elsewhere and must not shift), and the same StuckCyclesSuffix used by the Completed branches
+    // qualifies it when there is.
+    [Fact]
+    public void Done_allClean_line_is_unqualified_when_there_are_no_stuck_cycles()
+    {
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: true, Counters(stuck: 0),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 4200, etaMs: null, checkDurMs: 4200, warnings: 0);
+        Assert.Equal("Everything up to date — 14 projects checked in 4.2s, nothing to build", line.Text);
+    }
+
+    [Fact]
+    public void Done_allClean_line_mentions_stuck_cycles_so_a_memorized_non_convergent_SCC_is_never_silent()
+    {
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: true, Counters(stuck: 1),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 4200, etaMs: null, checkDurMs: 4200, warnings: 0);
+        Assert.Equal("Everything up to date — 14 projects checked in 4.2s, nothing to build (1 stuck in a cycle)", line.Text);
+        Assert.Equal("Brush.StatusSuccessText", line.BrushKey); // renk/glyph değişmez — yalnız metin uyarır (Part 2 idiomu)
+        Assert.Equal("succeeded", line.Glyph);
+    }
+
     [Fact]
     public void Done_with_failures_line_lists_failed_succeeded_dep_skipped_warnings_and_elapsed()
     {
@@ -256,6 +282,41 @@ public class RibbonTextTests
         var line = RibbonText.Compose(AppPhase.Done, true, allClean: false, c,
             willBuild: 9, finishedOfWillBuild: 9, totalProjects: 14, elapsedMs: 12_000, etaMs: null, checkDurMs: null, warnings: 0);
         Assert.Equal("Completed — 1 failed · 8 succeeded · 0 skipped · 12s", line.Text);
+    }
+
+    // [cycle rounds/Task 8] Bir run kalıcı kırık (yakınsamayan) döngüler içeriyorsa özet satırı hiçbir zaman
+    // "0 failed" ile koşulsuz başarı gibi okunmamalıdır — bu satırlar plain "skipped" görünse bile.
+    [Fact]
+    public void Done_clean_line_mentions_stuck_cycles_so_the_run_never_reads_as_unqualified_success()
+    {
+        var c = Counters(succeeded: 12, failed: 0, skipped: 3, stuck: 1);
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: false, c,
+            willBuild: 12, finishedOfWillBuild: 12, totalProjects: 15, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("Completed — 12 succeeded · 3 skipped (1 stuck in a cycle) · 24s", line.Text);
+        Assert.Equal("Brush.StatusSuccessText", line.BrushKey); // renk/glyph değişmez — yalnız metin uyarır
+        Assert.Equal("succeeded", line.Glyph);
+    }
+
+    [Fact]
+    public void Done_with_failures_line_also_mentions_stuck_cycles_when_present()
+    {
+        var c = Counters(succeeded: 4, failed: 5, skipped: 2, dep: 4, stuck: 1);
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: false, c,
+            willBuild: 11, finishedOfWillBuild: 11, totalProjects: 14, elapsedMs: 65_000, etaMs: null, checkDurMs: null, warnings: 3);
+        Assert.Equal("Completed — 5 failed · 4 succeeded (4 dependency-affected) · 2 skipped (1 stuck in a cycle) · 3 warnings · 1m 05s",
+            line.Text);
+    }
+
+    [Fact]
+    public void Done_lines_omit_the_stuck_cycles_segment_when_there_are_none()
+    {
+        var clean = RibbonText.Compose(AppPhase.Done, true, allClean: false, Counters(succeeded: 12, skipped: 2),
+            willBuild: 12, finishedOfWillBuild: 12, totalProjects: 14, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("Completed — 12 succeeded · 2 skipped · 24s", clean.Text);
+
+        var withFailures = RibbonText.Compose(AppPhase.Done, true, allClean: false, Counters(succeeded: 8, failed: 1, skipped: 0),
+            willBuild: 9, finishedOfWillBuild: 9, totalProjects: 14, elapsedMs: 12_000, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("Completed — 1 failed · 8 succeeded · 0 skipped · 12s", withFailures.Text);
     }
 
     [Theory]

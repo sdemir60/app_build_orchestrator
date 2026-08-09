@@ -918,8 +918,8 @@ public class RunViewModelTests
     public async Task Rebuild_wires_through_the_real_engine_and_populates_rows()
     {
         string root = Directory.CreateTempSubdirectory("bo-vm-rebuild-").FullName;
-        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): gerçek MSBuild child'ı DOĞMADAN
-        // deterministik pre-skip üretir.
+        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — [cycle rounds] artık
+        // pre-skip edilmez, turlarla derlenir.
         foreach (var (self, other) in new[] { ("X", "Y"), ("Y", "X") })
         {
             Directory.CreateDirectory(Path.Combine(root, self));
@@ -943,10 +943,18 @@ public class RunViewModelTests
         };
 
         await vm.RebuildCommand.ExecuteAsync(null);
-        var outcome = await final.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        // [cycle rounds] Hang-guard; 15 sn idi. Fixture artık GERÇEKTEN derliyor (2 tur × 2 üye) — gerekçe ve
+        // ölçüm sabitin tek sahibinde: TestPaths.WideRunTimeout. İddiaların hiçbiri süreye bakmaz.
+        var outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout);
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
         var done = Assert.IsType<RunCompletedEvent>(outcome);
+        // [DEĞİŞEN KURAL — iki kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
+        // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles, Sync'in
+        // yanındaki düğme) taşınınca yeniden pre-skip'e döndü. Sebep ölçümdür: katlanmış hâlde iki dakikalık
+        // bir Build on beş dakikaya çıkıyordu. Rebuild bir SCC'ye artık HİÇ dokunmaz.
+        // Testin ASIL iddiası (Rebuild gerçek motora kablolu, satırlar doluyor, IsRunning düşüyor) her üç
+        // sürümde de aynı kaldı.
         Assert.Equal(2, done.Skipped);
         Assert.Equal(2, vm.Projects.Count);
         Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Skipped, p.State));
@@ -998,6 +1006,105 @@ public class RunViewModelTests
         var row = Assert.Single(vm.Projects);
         Assert.False(row.HasDepIssue);
         Assert.Null(row.DepIssues);
+    }
+
+    // ---------------------------------------------------------------- 8b) [cycle rounds/Task 8] round + unsettled/unconverged VM state
+
+    [Fact]
+    public async Task ProjectSucceeded_carries_CycleUnsettled_onto_the_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100, DepIssues: null, CycleUnsettled: true));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnsettled);
+    }
+
+    [Fact]
+    public async Task ProjectSucceeded_without_cycleUnsettled_leaves_the_row_flag_false()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100)); // CycleUnsettled default false
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.CycleUnsettled);
+    }
+
+    [Fact]
+    public async Task ProjectSkipped_carries_CycleUnconverged_onto_the_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnconverged);
+    }
+
+    [Fact]
+    public async Task ProjectSkipped_without_cycleUnconverged_leaves_the_row_flag_false()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\b.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "skipped — up to date")); // CycleUnconverged default false
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.CycleUnconverged);
+    }
+
+    /// <summary>[cycle rounds/Task 9 review fix 1] Kök neden: <c>CycleUnconverged</c>'i yazan TEK yer
+    /// <see cref="RunViewModel"/>'in <c>OnProjectSkipped</c>'idir; satır nesneleri segmentler arası HAYATTA
+    /// KALIR (<c>Projects.Clear()</c> yalnız <see cref="RunMode.Rebuild"/>'de) — kaynak düzeltilip proje
+    /// GERÇEKTEN derlenirse bayat bayrak temizlenmezse "az önce düzelen proje" kalıcı-kırık gibi render edilir
+    /// (Task 9'un önlemeye çalıştığı yanlış bilginin TERSİ). <c>OnProjectDone</c> artık her terminal derleme
+    /// sonucunda (Succeeded/Failed — ikisi de proje GERÇEKTEN invoke edildi demektir) bayrağı temizler.</summary>
+    [Fact]
+    public async Task ProjectSucceeded_after_a_prior_CycleUnconverged_skip_clears_the_flag()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnconverged); // ön-koşul: bayrak gerçekten set edildi
+
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+
+        Assert.False(row.CycleUnconverged);
+    }
+
+    /// <summary>[cycle rounds/Task 9 review fix 1] Aynı temizlik <c>Failed</c> için de geçerli — proje bu run'da
+    /// GERÇEKTEN invoke edildiyse (başarılı ya da başarısız fark etmez) artık "hiç invoke edilmeden pre-skip"
+    /// hikayesi doğru DEĞİLDİR.</summary>
+    [Fact]
+    public async Task ProjectFailed_after_a_prior_CycleUnconverged_skip_clears_the_flag()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnconverged); // ön-koşul
+
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectFailedEvent("r1", projectId, 100, "boom"));
+
+        Assert.False(row.CycleUnconverged);
     }
 
     [Fact]

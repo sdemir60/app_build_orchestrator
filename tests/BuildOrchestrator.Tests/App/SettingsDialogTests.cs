@@ -34,7 +34,7 @@ public class SettingsDialogTests
     [Fact]
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
     {
-        var editor = new SettingsDraftViewModel(null);
+        var editor = new SettingsDraftViewModel(null, null);
         // [değişti] Taze taslak ARTIK 4 varsayılan satırla gelir (LayerDefaults). Bu testin konusu
         // Save-validation'dır — tek satırlık bir zeminde ölçülür, o yüzden varsayılanlar önce boşaltılır.
         for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]);
@@ -89,7 +89,7 @@ public class SettingsDialogTests
         var store = NewStore();
         Assert.Null(run.LayerPatterns); // kayıtlı katman yok
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
         Assert.Equal(
             ["OSYS.Types", "OSYS.Business", "OSYS.Orchestration", "OSYS.UI"],
@@ -107,13 +107,13 @@ public class SettingsDialogTests
     {
         IReadOnlyList<LayerPattern> emptied = []; // "hepsini sil + Save" sonrası RunViewModel.LayerPatterns
 
-        var draft = new SettingsDraftViewModel(emptied);
+        var draft = new SettingsDraftViewModel(emptied, null);
 
         // Varsayılanların BİREBİR metni A_fresh_draft_is_prefilled_with_the_default_layers'ta pinlidir; burada
         // pinlenen kural "boş liste null ile AYNI davranır" — ctor koşulu `initial is not null`'a kayarsa bu
         // taslak SIFIR satırla açılır ve karşılaştırma düşer.
         Assert.Equal(
-            new SettingsDraftViewModel(null).Layers.Select(r => (r.Name, r.Regex)),
+            new SettingsDraftViewModel(null, null).Layers.Select(r => (r.Name, r.Regex)),
             draft.Layers.Select(r => (r.Name, r.Regex)));
         Assert.NotEmpty(draft.Layers); // non-vacuous: iki taraf da boş olsaydı karşılaştırma anlamsız kalırdı
     }
@@ -125,7 +125,7 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")];
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
         var row = Assert.Single(draft.Layers);
         Assert.Equal("Alpha", row.Name);
@@ -140,7 +140,7 @@ public class SettingsDialogTests
         var store = NewStore();
         IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
         run.LayerPatterns = live;
-        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
         draft.RestoreDefaults();
 
@@ -201,7 +201,7 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
-        var editor = new SettingsDraftViewModel(null); // taze taslak = 4 varsayılan
+        var editor = new SettingsDraftViewModel(null, null); // taze taslak = 4 varsayılan
         Assert.Equal(4, editor.Layers.Count);
 
         await editor.CommitAsync(run, store);
@@ -220,7 +220,7 @@ public class SettingsDialogTests
         Assert.Equal(run.LayerPatterns, store.State.LayerPatterns);
 
         // Emptied → farklı BİREBİR not + persist boşalır.
-        var empty = new SettingsDraftViewModel(run.LayerPatterns);
+        var empty = new SettingsDraftViewModel(run.LayerPatterns, null);
         for (int i = empty.Layers.Count - 1; i >= 0; i--) empty.RemoveLayer(empty.Layers[i]);
         await empty.CommitAsync(run, store);
         Assert.Contains("Layers removed — single project list", run.GetRunDocumentText());

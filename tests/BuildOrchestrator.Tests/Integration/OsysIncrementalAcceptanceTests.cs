@@ -148,7 +148,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 
         var (dirtyPlan, _) = IncrementalRunBinder.Bind(
             plan, evaluatedById, OsysRoot, head, tracked, [dirtyRel],
-            stateAfterRun1, inPlace: true, DependentMode.Safe);
+            stateAfterRun1, inPlace: true, buildCycles: false, mode: DependentMode.Safe);
         var dirtyById = dirtyPlan.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
 
         var transitiveDependents = TransitiveDependents(targetNode.Id, dependentsOf);
@@ -290,7 +290,10 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             var w = new NdjsonWriter(proc.StandardInput.BaseStream);
             var r = new NdjsonReader(proc.StandardOutput.BaseStream);
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(ct));
-            await w.WriteAsync(new StartRunCommand(runId, RunMode.Build, OsysRoot, "Debug", Parallelism), ct);
+            // [cycles] Build bir SCC'ye HİÇ dokunmaz — üyeler "in dependency cycle" ile atlanır. Bu koşu
+            // ürünün sevk ettiği Build'in ta kendisidir; turlar kendi modundadır (RunMode.Cycles).
+            await w.WriteAsync(
+                new StartRunCommand(runId, RunMode.Build, OsysRoot, "Debug", Parallelism), ct);
 
             while (true)
             {

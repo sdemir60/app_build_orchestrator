@@ -24,6 +24,18 @@ public static class TestPaths
     /// yamasız kalırdı (fix-1 öncesi tam olarak bu oldu — 8 start noktasının yalnız 3'ü yamalıydı).</para></summary>
     public static readonly TimeSpan WideStartupTimeout = TimeSpan.FromSeconds(60);
 
+    /// <summary>[cycle rounds] GERÇEK bir run'ın TAMAMLANMASINI bekleyen e2e testlerinin hang-guard'ı — bir
+    /// PERF BÜTÇESİ DEĞİL, sonsuz beklemeyi test hatasına çeviren üst sınır (iddiaların hiçbiri süreye
+    /// bakmaz). <b>Neden genişledi:</b> tek kullanıcısı <c>RunViewModelTests</c>'in Rebuild e2e testiydi ve
+    /// 15 sn bekliyordu; o test X↔Y cycle fixture'ı sayesinde eskiden HİÇ <c>MSBuild.exe</c> child'ı
+    /// doğurmuyordu (üyeler pre-skip ediliyordu). Dairesel bağımlılıklar artık turlarla DERLENDİĞİ için aynı
+    /// fixture 2 tur × 2 üye = 4 gerçek invoke yapar: tek başına ~2 sn, ama TÜM süit paralel koşarken 15 sn
+    /// aşıldı ve test sebepsiz kırmızı verdi (ölçüm: task-6 fix turu, <c>Category!=Acceptance</c> koşumu).
+    /// Aynı iş yükünü bekleyen kardeş e2e testi (<c>RunCoordinatorTests</c>) zaten 30 sn'lik bir guard
+    /// kullanıyor ve yük altında geçiyor; buradaki pay <see cref="WideStartupTimeout"/> ile aynı tutuldu —
+    /// bu test AYRICA gerçek bir EngineHost başlatır.</summary>
+    public static readonly TimeSpan WideRunTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).</summary>
     /// <param name="worktreePoolDir">[A5/T69] Worktree havuz kökü — verilmezse üretim varsayılanı
     /// (<c>%LOCALAPPDATA%\BuildOrchestrator\worktrees</c>). Havuza dokunan testler KENDİ temp kökünü verir;

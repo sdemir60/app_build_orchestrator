@@ -283,17 +283,33 @@ the worktree intent, the dependent-propagation mode, the layer patterns and the 
 perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name but never
 recomputes the worker count, which the App has already resolved from the same table.
 
+Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
+camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
+`syncWorkspace` carries no cycle decision at all: its preview always describes a `Build`, and `Build` never
+compiles a cycle.
+
 ### 5.3 Events
 
 Lifecycle: `engineReady` · `pong` · `error`.
 Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
-`projectSkipped` · `runStopped` · `runCompleted`.
+`projectSkipped` · `cycleRoundStarted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `worktreeList` · `projectLogChunk`.
 
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
 segment (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
 transcript, and a run's planning window is not a Sync.
+
+`cycleRoundStarted` is run-level rather than per-project, and it names the group's leader, the round, the cap
+and the member count. A strongly-connected component is one build unit whose per-round results are never
+published (§8.8), so the round number is the only progress the group itself emits; its members still emit
+their own `projectStarted` on every round, because on every round they really are compiling.
+
+Two per-project results carry a cycle flag of their own, as typed fields rather than as text the App would
+have to match: `projectSucceeded.cycleUnsettled` marks a member of a group that ran out of rounds, and
+`projectSkipped.cycleUnconverged` marks a group held back by non-convergence memory. The `depIssues` list is
+not reused for either — it answers "which dependency failed", and a second meaning would make the `▲ N`
+counter and its filter chip count the wrong rows.
 
 Three of these carry the whole model:
 
@@ -391,8 +407,12 @@ reference surface the strategy resolves.
 
 Tarjan's algorithm finds strongly-connected components; Kahn's algorithm produces the topological order.
 Iteration order is stabilized (`OrdinalIgnoreCase` on the project path) so the same repository always yields the
-same plan. Cycle members remain in the plan, flagged `InCycle`, and are pre-skipped by the scheduler — otherwise
-their dependents could never become ready and the run would deadlock.
+same plan. Cycle members remain in the plan, flagged `InCycle`. Kahn runs over the *condensation*, so a
+component is ordered as a unit and lands where its dependencies put it; nothing needs a phase of its own.
+What happens to it at run time depends on the run's mode: a `Cycles` run dispatches the component as a single
+work item and compiles it in rounds (§8.2, §8.8); every other mode leaves its members to be pre-skipped by the
+scheduler, which is also what keeps the run from deadlocking — their dependents could otherwise never become
+ready.
 
 ### 6.6 Layers
 
@@ -465,11 +485,15 @@ configuration's binaries are simply gone.
 
 ### 7.3 Cycles in the signature
 
-Members of a strongly-connected component are never built, but their signatures still feed dependents outside
-the component. Each SCC therefore gets **one composite hash** over all members' own terms plus their
-outside-the-SCC upstreams, with intra-SCC edges collapsed to a fixed marker to break the recursion. Members and
-downstream nodes all read that same value. Without this, a real source change inside a cycle could fail to
-reach a dependent outside it, and that dependent would be silently skipped on the next build.
+A strongly-connected component is one unit of change: each SCC gets **one composite hash** over all members'
+own terms plus their outside-the-SCC upstreams, with intra-SCC edges collapsed to a fixed marker to break the
+recursion. Members and downstream nodes all read that same value. Without this, a real source change inside a
+cycle could fail to reach a dependent outside it, and that dependent would be silently skipped on the next
+build.
+
+The composite is also what decides the members themselves. Since they all carry the same value, a component is
+either wholly dirty or wholly up to date — members never disagree, and a group whose every member is up to date
+is skipped as a group rather than rebuilt on every run.
 
 ### 7.4 Will-build tri-state
 
@@ -484,12 +508,20 @@ Before a run — and after every Sync — each project carries `WillBuild` as a 
 If there is no usable HEAD, *every* node is hollow and the counters are not reported at all — printing zeros
 would assert "everything is up to date", which is a different and false claim.
 
+A cycle member is evaluated by the same three rules; what it evaluates is the component's composite signature
+(§7.3), so a group's dots move together. The run's scope is the one short circuit: outside a `Cycles` run every
+member reads `false`, which is the truth — nothing in that run will compile them. Idle dots, which come from
+Sync, therefore always describe a `Build`.
+
 During a run the dot is live: the moment a project succeeds, its dot turns grey.
 
 ### 7.5 Build state
 
 `build-state.json` is **global**, keyed by project id (the full csproj path), holding the built signature, the
-built commit, the last result, the last run timestamp, the last branch and the last duration. It is written by
+built commit, the last result, the last run timestamp, the last branch, the last duration and the signature at
+which this project's cycle last failed to converge (§8.8). That last field is deliberately *not* folded into
+the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a
+frozen upstream baseline — a signature that was never built would be taken for a clean one. It is written by
 a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every project
 completes. Readers open with `FileShare.Delete` so they cannot block the writer's rename, and a transient
 sharing violation is retried a bounded number of times. A corrupt file never throws — it falls back to
@@ -507,6 +539,20 @@ defaults.
 | `Rebuild` | all projects; cached state ignored |
 | `Continue` | the remaining queued projects of the stopped run, from the existing plan, with the elapsed clock preserved — engine capability only; the App has no surface that sends it |
 | `RetryFailed` | the failed projects plus **all** their transitive dependents — independent of the Safe/Fast setting; console and event stream are not reset |
+| `Cycles` | **only** the projects in a dependency cycle, compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not in a dependency cycle` |
+
+`Cycles` is not a degree of difference from the others but a separate job, and the two halves are disjoint:
+`Build` and `Rebuild` never compile a cycle, `Cycles` compiles nothing else. It has its own button beside Sync
+(§13.2) and is meant to be run before a build, not instead of one.
+
+Why it is separate rather than folded into `Build`: a group's cost is members × rounds, which next to an
+ordinary incremental build is unbounded. Folded in, the user waited behind work they had not asked for and
+could not see — a two-minute build measured fifteen. As its own button the decision is theirs: when, and how
+much.
+
+Like `Build`, a `Cycles` run is incremental — a group whose composite signature is already clean is skipped as
+`skipped — up to date`, so pressing the button again after a group has converged costs nothing. It is also the
+only mode that reads the non-convergence memory (§8.8).
 
 ### 8.2 Ready-set scheduler
 
@@ -518,6 +564,20 @@ sequence.
 A dependency counts as resolved when it is `Succeeded`, `Failed` **or** `Skipped`. Failure does not block
 dependents; a single failure must not stall a run forever. Clean projects are skipped in waves as their
 dependencies resolve, not all at once.
+
+**A strongly-connected component is one work item.** Given the component map, the scheduler stops treating
+members individually: readiness is asked of the group — every member's dependencies *outside* the group must
+be resolved, and the intra-group edges, circular by definition, are excluded, since waiting on them would mean
+waiting forever. One dispatch then hands back a single id — the first member still to be built, which stands
+for the group — and marks every remaining member in flight at once. The caller owes exactly one `Complete` per
+member it was given, on every path including stop and cancellation, or the run's in-flight count never returns
+to zero. Driving the rounds from here rather than beside the scheduler is what keeps "are the dependencies
+terminal?" in one place instead of two.
+
+Without the component map — which is how the scheduler is built in every mode but `Cycles` — members are marked
+`Skipped` at construction with the reason `in dependency cycle`. Nothing else distinguishes the two modes:
+there is no code path written for cycles being out of scope, the mode only chooses between passing the map and
+passing nothing.
 
 The scheduler is pure state: no I/O, no processes, no async, no logging. Its mutable state is guarded by one
 lock — with a few hundred projects and a handful of calls per second, finer-grained locking would be
@@ -539,12 +599,29 @@ hidden:
 - The event stream reads `built — dependency issue (2.4s)`, and the completion line reports
   `N dependency-affected`.
 
+That slot has two other tenants, both about cycles: a member of a group that ran out of rounds borrows the
+same triangle with its own tooltip, and a group held back by non-convergence memory replaces it with an orange
+cycle badge (§14.3). A row shows exactly one of the three, never two.
+
 ### 8.4 ETA
 
 `(sum of duration estimates for queued projects + remaining time of in-flight projects) / parallelism`, plus
-400 ms when anything is building. The result is exponentially smoothed (`0.75 × previous + 0.25 × new`),
-displayed rounded to 5 s, and replaced by `· almost done` below 4 s. The per-project estimate comes from
-`BuildState.LastDurationMs`; with no history the ribbon shows progress and elapsed time without an estimate.
+400 ms when anything is building, plus the cycle members' estimates multiplied by the baseline round count.
+The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
+replaced by `· almost done` below 4 s. The per-project estimate comes from `BuildState.LastDurationMs`; with
+no history the ribbon shows progress and elapsed time without an estimate.
+
+Cycle members are the one term that is **not** divided by parallelism: their work is sequential by
+construction and the group runs at least twice (§8.8), so both assumptions the division encodes are false for
+them. A member counts in that term from the moment it is planned until its group is finished — while the group
+runs as well, not only while it is queued — because intermediate rounds are never published (§8.8) and a
+member's elapsed time within one round says nothing about how much of the group is left. Entering a third
+round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded.
+
+Every component lands in that single undivided term, even though independent components genuinely do run on
+different workers at the same time. The estimate is therefore pessimistic in exactly one direction whenever a
+run contains more than one cycle. That is deliberate: cycles are rare and small next to the rest of a run, and
+an ETA that runs long is a better failure than one that promises an early finish.
 
 ### 8.5 Run logs
 
@@ -640,6 +717,81 @@ intermediate path. The project's log file is opened before and closed after the 
 cannot be silently dropped. The first line written is the real MSBuild command line. On success the build state
 is persisted with the signature computed during planning; on failure the stored state is invalidated so the
 next run does not consider the project up to date.
+
+**Cycle rounds.** These run in one mode only — `Cycles` (§8.1), the button beside Sync. A worker that is
+handed a strongly-connected component runs the whole group. Every member is
+invoked in build order and **one at a time** — never concurrently, because one member reads the DLL another is
+in the middle of writing — and then the whole set is invoked again. Each member's log file is opened once and
+kept open for every round: opening it per round would truncate the previous rounds away and restart the line
+numbers.
+
+The stopping rule is a pure function in Core, given the round number, this round's failing members and the
+previous round's. Two consecutive all-clean rounds mean **converged**; the identical failure *set* twice means
+**no progress**; the round ceiling means **cap reached**; anything else means another round. The baseline is
+two rounds because the source does not change between them: the first round settles every member's public API,
+the second recompiles everyone against those settled APIs. One clean round is not evidence — a member compiled
+in the first round was compiled against the previous generation's DLL, so it can bind to a method that no
+longer exists and fail at run time rather than at compile time; breaking that silence is the point of the
+second round. The comparison is on the set and not its size, since `{A,C}` followed by `{B,D}` is oscillation,
+not progress. The ceiling is three, which is what the rule needs: a group that is clean twice converges at
+two, a group that fails identically twice stops at two, and only the "failed, then recovered" branch reaches a
+third. A low ceiling loses nothing, because rounds are idempotent against what is on disk and the next `Build`
+picks up where this one left off.
+
+**Intermediate rounds are not published.** A member gets no `projectSucceeded`/`projectFailed` until the group
+is finished, and then exactly one, carrying the **sum** of its rounds as the duration — the real cost, not the
+last round's. Publishing per round would send progress backwards, a project going from succeeded back to
+building, and would give the same project two result lines in the event stream. `projectStarted` is still
+emitted every round, because the project really is compiling, and `cycleRoundStarted` announces the round
+itself (§5.3). Those starts accumulate — with no intermediate results, a member stays started for the whole
+life of the group — so the App reads only the most recent start *within a component* as actually compiling and
+counts the rest of the component as still queued. Without that, a 32-member component would report 32
+projects building on a four-worker run.
+
+**A group that did not converge persists nothing.** Only `Converged` is trusted: on no-progress, on the
+ceiling, on a stop, on cancellation and on an unexpected exception, every member is invalidated — including
+members that came back green — and a group cut short reports every member as failed rather than carrying an
+intermediate round's verdict out. Stop is deliberately asymmetric here: a single in-flight project is allowed
+to finish and persist, but a group is cut at the end of the round it is in, because the unit of work is all of
+the rounds, and continuing them after a stop would mean dozens more invocations.
+
+**Non-convergence memory.** A group that ends in **no progress** records the composite signature it gave up
+at, per member, beside that member's build state (§7.5). The next `Cycles` run that computes the same signature
+pre-skips the whole group with the reason `cycle did not converge at this signature` instead of spending
+rounds on a guaranteed red. A stop or an unexpected error never writes this — neither is evidence that a cycle
+cannot converge, and the next run must get a real attempt. This is the same principle as every other
+incremental decision, driven by the source signature; no DLL or `bin` timestamp is consulted. A member with no
+state row at all gets one created for the purpose, otherwise the very case this solves — a component that has
+never been built successfully — would never accumulate a memory. Failing to write it warns and nothing more:
+the cost is wasted rounds, not a wrong build.
+
+Hitting the ceiling is **not** recorded, and the difference is one of evidence. No progress means the
+identical set failed twice, which is proof that more rounds cannot help. The ceiling means the group was still
+moving when the budget ran out — a group that fails `{A,B}`, then `{A}`, then nothing is one round from done.
+Remembering that case would void the ceiling's own justification, which is that no information is lost because
+the next run continues where this one stopped; a pre-skipped group never gets that continuation, and the
+only way out would be an unrelated source change. The accepted cost is that a cycle needing four to six rounds
+spends its rounds again on the next press or two until it settles.
+
+Reaching any real verdict clears the memory, at the same place that writes it — convergence and the ceiling
+alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
+lose it anyway as a side effect of persisting a fresh build state; the explicit clear is what keeps that from
+being load-bearing, since the pre-skip requires *every* member to be remembered and a single member that
+failed to persist would keep a converged group pre-skipped forever. Within a `Cycles` run no member can reach
+that state — a dependency issue needs a *failed* dependency (§8.3) and nothing outside the group is built —
+but the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
+
+Which member's signature stands for the group is decided in one place for both the writing and the reading
+side, since the two hold the component in different orders. In the mode the App actually sends every member
+carries the same composite signature, so the choice is immaterial there; under frozen-upstream evaluation
+members share no composite at all and this memory is simply inert.
+
+Whichever verdict a group ends on, it is named in `decision.log` — the per-member failure lines alone cannot
+tell an operator whether a group hit the ceiling, stopped making progress or converged, and the line carries
+the remembered signature when one was written.
+
+Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
+rounds were never observed and their output may be one generation stale (§14.3).
 
 **Stop bookkeeping.** If a stop was acknowledged, writing `runStopped` is a debt that must be paid even when
 the run never reached `runStarted` (a stop pressed during a multi-second planning window) — otherwise the App
@@ -951,8 +1103,8 @@ Text that the design specifies literally is produced by **pure, testable static 
 │ ═══════ horizontal splitter ═══│═══════ horizontal splitter ═════════│
 │ PROJECTS                       │ EVENT STREAM                        │
 ├────────────────────────────────┴─────────────────────────────────────┤
-│ ACTION BAR 42px — Sync · counters · branch · worktree · cfg · perf ·  │
-│                                                          Build ▴     │
+│ ACTION BAR 42px — Sync · Cycles · counters · branch · worktree ·      │
+│                   cfg · perf ·                            Build ▴     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1032,13 +1184,21 @@ participate in the shared selection. A run that finishes with zero failures glow
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
 
-**Action bar.** Sync; the counter chips (`Σ`, building, `✓`, `✗`, `—`, `▲`), each a filter toggle; the branch
+**Action bar.** Sync; *Cycles*; the counter chips (`Σ`, building, `✓`, `✗`, `—`, `▲`), each a filter toggle;
+the branch
 chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf chip; and the Build
 split-button, whose menu carries *Build*, *Rebuild*, and — when something failed — *Retry failed — N failed +
 dependents*. There is no *Continue*: a stopped run is not resumed, it is started again. While a run is in flight the primary button becomes *Stop*, and the
 branch, worktree and configuration controls lock; the perf chip stays live.
 
-**No run without a topology.** *Build*, *Rebuild* and *Retry failed* stay disabled until a Sync has published a
+*Cycles* sits next to Sync rather than next to Build, and the placement carries the meaning: both are things
+you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
+as a variant of the primary action, which it is not — it is a run of its own (§8.1) with the same icon the
+rows and the graph use for "this project is in a cycle". It is disabled unless the workspace actually has one,
+because in a workspace without cycles that run would skip every project and do nothing; a disabled button says
+so before the click rather than after.
+
+**No run without a topology.** *Build*, *Rebuild*, *Cycles* and *Retry failed* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
 runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started before
 the first Sync would compile for real while the list, the graph and the counters stayed empty — the user would
@@ -1073,7 +1233,11 @@ wholesale replacement implies is safe here, unlike in the projects list: there i
 selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
 The Settings dialog is 620 px and carries the LAYERS editor and the REPOSITORY row (current root plus
-*Change…*). Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` and a half-row swap
+*Change…*). Building dependency cycles is **not** a setting: it is a run of its own, reached from the Cycles
+button beside Sync (§8.1, §13.2). A preference would have been the wrong shape — the question is not "should
+this tool ever build cycles" but "do I want to pay for it right now", and that is answered per run.
+
+Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` and a half-row swap
 threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
 Neighbours snap without animation. An invalid regex puts its input into the invalid state and disables *Save*.
 
@@ -1087,15 +1251,16 @@ is a startup seed: the defaults live only in this dialog's draft, and nothing re
 *Change…* on the REPOSITORY row only writes the picked path into the draft and refreshes the label beside it;
 Cancel, Esc and a scrim click discard the draft — the pending root included — without touching anything live.
 *Save* is the single point where the draft is applied, in a fixed order: the layer patterns are applied first,
-then the pending repository root (which resets the project rows to hollow), then exactly one Sync is sent. The
-order is load-bearing, because the Sync command carries the current layer patterns — sent before they were
-applied, it would carry stale ones. The Sync itself is unconditional: Save does not compare old and new state
-to decide whether to run it.
+then the pending repository root (which resets the project rows to
+hollow), then exactly one Sync is sent. The order is load-bearing, because the Sync command carries the
+layer patterns — sent before they were applied, it would carry stale ones and the idle dots
+would be wrong for a whole Sync. The Sync itself is unconditional: Save does not compare old and new state to
+decide whether to run it.
 
-Three gates hold. While a run is in flight the layer patterns are applied but the repository root is left
-alone and no Sync is sent, since pulling the root out from under a running build would be wrong; because the
-dialog's label has already confirmed the picked folder, a root change this gate drops is announced in the
-console as `Repository change deferred — run in flight`, while a Save that carries no root change stays
+Three gates hold. While a run is in flight the layer patterns are applied but the repository
+root is left alone and no Sync is sent, since pulling the root out from under a running build would be wrong;
+because the dialog's label has already confirmed the picked folder, a root change this gate drops is announced
+in the console as `Repository change deferred — run in flight`, while a Save that carries no root change stays
 silent.
 If no repository has ever been selected, there is nothing to Sync — that gate sits *after* the root is
 applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
@@ -1496,10 +1661,35 @@ meets 4.5:1.
 | Succeeded | ✓ in a ring | Succeeded |
 | Failed | ✗ in a ring | Failed |
 | Skipped | — in a ring | Skipped |
-| Cycle | warning triangle + red badge | in dependency cycle |
+| Cycle | warning triangle, no ring | Cycle |
+
+`Cycle` says the project is *in* a dependency cycle. A `Build` will not compile it; the Cycles button will
+(§8.1). The badge is there to keep a structural problem visible rather than to normalise it, since the real
+repair is to break the back edge in the source.
 
 Two channels are **orthogonal** to status and must not be conflated with it: the will-build dot (§7.4) and the
 dependency-issue triangle (§8.3).
+
+Two cycle outcomes speak through that second channel rather than through status, because both are about how
+much a result can be trusted rather than about what the result was:
+
+| Outcome | Slot | Tooltip |
+|---|---|---|
+| The group ran out of rounds and this member is green | the dependency triangle | `Cycle did not fully settle — output may be one generation stale` |
+| The group is held back by non-convergence memory | the orange cycle badge, same slot and same 12 px | `Cycle did not build — not retried until the source changes` |
+
+The first shares the triangle deliberately: it says the same sentence the dependency-issue triangle says —
+*this compiled, but something upstream is unresolved, do not fully trust the output* — and only the wording
+differs. The second may not: the row was never invoked at all, so "last successful output referenced" would be
+a claim about an output that does not exist. It therefore takes the badge and outranks anything stale left on
+the row, and it is drawn only while the row is skipped, the same gate the counter uses. Both also extend the
+status glyph's own tooltip, since the slot collapses to nothing when it is empty and the glyph is the row's
+one always-visible surface.
+
+The run summary carries the same news at run level: `(N stuck in a cycle)` beside the skipped count, on the
+completion line and on the *everything up to date* line alike. Without it a run whose only casualty is a
+permanently broken cycle reads as an unqualified success — those rows are plain skips, and the up-to-date line
+would go further still and imply the cycle is not there.
 
 ### 14.4 Iconography
 
@@ -1614,7 +1804,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs | — |
-| `build-state.json` | per-project signature, commit, result, duration | falls back to empty |
+| `build-state.json` | per-project signature, commit, result, duration, non-convergent cycle signature | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, hotkey, autostart, tray-balloon-shown | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 | `worktrees\` | the worktree pool | LRU pruned to 20 GiB |
@@ -1793,6 +1983,13 @@ do, and how the interface works around each — useful to know before attempting
   in roughly 130 ms and a 1000-node one in roughly 300 ms. Below that the pitch keeps shrinking until nodes
   reach their 8 px floor, at which point a very large workspace is legible as a shape rather than as
   individual projects.
+- **The will-build preview can under-promise on cycles.** A run's own preview is projected through what that
+  run has actually pre-skipped, so it never promises work it will not do. The remaining gap is the other
+  direction and lives inside a `Cycles` run: the preview is computed per node from signatures alone, while the
+  group's up-to-date gate is per group, so in a component whose members are only *partly* up to date — in
+  practice, one member with no state row — the gate does not hold and members the preview drew grey are built.
+  It errs safely: more work happens than promised, and nothing broken can look healthy. Closing it means
+  computing the preview per component, which is a larger change than the divergence costs.
 - **No field-level IPC schema validation** (§5.4).
 - **Symlinks/junctions are not followed or detected** during the scan, and a `.csproj` may reference files
   outside the repository root. Both are accepted risks — the repository is trusted by definition.
@@ -1967,19 +2164,21 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Propagation, Safe/Fast, SCC composite hash, committed fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
 | Path normalization glue for the fingerprint | `Core/Incremental/IncrementalRunBinder.cs` |
 | Will-build tri-state decision | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
-| ETA formula (raw estimate, smoothing, rounding) | `Core/Incremental/EtaCalculator.cs` |
-| Build state store, duration persistence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
+| ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
+| Build state store, duration persistence, non-convergence lookup | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
 
 **Scheduling and run execution**
 
 | Behaviour | File |
 |---|---|
-| Ready-set dispatch, resolved semantics, cycle pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| Ready-set dispatch, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
+| Cycle round stopping rule (converged / no progress / cap) | `Core/Planning/CycleRoundPolicy.cs` |
 | Dependency-issue propagation | `Core/Scheduling/DepIssueTracker.cs` |
 | Continue / RetryFailed set transformation | `Core/Scheduling/RetryPlanning.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
-| Worker loop, event pump, stop bookkeeping, perf lifecycle | `Supervisor/RunCoordinator.cs` |
+| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory | `Supervisor/RunCoordinator.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
 

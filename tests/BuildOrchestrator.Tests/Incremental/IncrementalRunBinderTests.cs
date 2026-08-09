@@ -47,7 +47,7 @@ public sealed class IncrementalRunBinderTests
 
             // Önce state YOK → willBuild=true, imza döner (persist edilebilir).
             var (planA, sigA) = IncrementalRunBinder.Bind(plan, Ev(evaluated), root, "HEAD1", tracked,
-                [], new Dictionary<string, BuildState>(), inPlace: true, DependentMode.Safe);
+                [], new Dictionary<string, BuildState>(), inPlace: true, buildCycles: false, mode: DependentMode.Safe);
             Assert.True(planA.Nodes[0].WillBuild);              // hiç derlenmemiş → dirty
             Assert.True(sigA.ContainsKey(csproj));              // imza persist edilebilir (non-null)
 
@@ -57,7 +57,7 @@ public sealed class IncrementalRunBinderTests
                 [csproj] = new BuildState(csproj, sigA[csproj], LastResult: BuildResult.Succeeded),
             };
             var (planB, _) = IncrementalRunBinder.Bind(plan, Ev(evaluated), root, "HEAD1", tracked,
-                [], state, inPlace: true, DependentMode.Safe);
+                [], state, inPlace: true, buildCycles: false, mode: DependentMode.Safe);
             Assert.False(planB.Nodes[0].WillBuild);            // temiz + imza eşit + Succeeded → skip
         }
         finally { TryDelete(root); }
@@ -87,7 +87,7 @@ public sealed class IncrementalRunBinderTests
 
             // Temiz koşuda imzayı al, Succeeded state kur.
             var (_, sigClean) = IncrementalRunBinder.Bind(plan, Ev(evaluated), root, "HEAD1", tracked,
-                [], new Dictionary<string, BuildState>(), inPlace: true, DependentMode.Safe);
+                [], new Dictionary<string, BuildState>(), inPlace: true, buildCycles: false, mode: DependentMode.Safe);
             var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
             {
                 [csproj] = new BuildState(csproj, sigClean[csproj], LastResult: BuildResult.Succeeded),
@@ -95,7 +95,7 @@ public sealed class IncrementalRunBinderTests
 
             // Şimdi A.cs working-tree'de dirty (git porcelain repo-relative "src/A/A.cs") → imza değişir → dirty.
             var (planDirty, _) = IncrementalRunBinder.Bind(plan, Ev(evaluated), root, "HEAD1", tracked,
-                ["src/A/A.cs"], state, inPlace: true, DependentMode.Safe);
+                ["src/A/A.cs"], state, inPlace: true, buildCycles: false, mode: DependentMode.Safe);
             Assert.True(planDirty.Nodes[0].WillBuild);
         }
         finally { TryDelete(root); }

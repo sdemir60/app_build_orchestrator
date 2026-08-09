@@ -20,8 +20,8 @@ public class RunViewModelStateTests
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     private static ProjectNode Node(string id, string name, int buildOrder, bool? willBuild = null,
-        IReadOnlyList<string>? deps = null, string? layerName = null) =>
-        new(id, name, id, ["Osys"], deps ?? [], buildOrder, layerName is null ? null : 0, layerName, false, willBuild);
+        IReadOnlyList<string>? deps = null, string? layerName = null, bool inCycle = false) =>
+        new(id, name, id, ["Osys"], deps ?? [], buildOrder, layerName is null ? null : 0, layerName, inCycle, willBuild);
 
     // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 2] Parallelism, varsayılan PerfMode'dan tohumlanır
 
@@ -430,6 +430,33 @@ public class RunViewModelStateTests
         Assert.Same(layers, sent.LayerPatterns);
     }
 
+    /// <summary>[cycles] <b>Cycles</b> düğmesi KENDİ modunu gönderir ve YALNIZ elde döngü varken etkindir.
+    /// Üç iddia tek testte, çünkü üçü aynı kararın parçalarıdır:
+    /// (a) topoloji hiç döngü taşımıyorken komut PASİF — o koşu döngüsüz bir workspace'te her projeyi kapsam
+    ///     dışı sayıp atlar, yani hiçbir şey yapmaz; kullanıcı bunu tıklamadan ÖNCE görmelidir;
+    /// (b) döngü GELİNCE etkinleşir — kapı canlıdır, ilk topolojide donmuş kalmaz;
+    /// (c) gönderilen komut <see cref="RunMode.Cycles"/> taşır — Build'in modunu DEĞİL.
+    /// <para>(a) non-vacuous'tur: aynı VM'de <see cref="RunViewModel.BuildCommand"/> o anda ETKİNdir, yani
+    /// pasiflik ortak run kapısından (topoloji/motor/mid-run) değil, DÖNGÜ kapısından gelir.</para></summary>
+    [Fact]
+    public async Task The_cycles_command_needs_a_cycle_and_sends_RunMode_Cycles()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1") { RootPath = @"D:\repo" };
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(D, "D", 0)], [], [], []));
+        Assert.True(vm.BuildCommand.CanExecute(null));         // ortak run kapısı AÇIK
+        Assert.False(vm.BuildCyclesCommand.CanExecute(null));  // (a) ama döngü YOK
+
+        vm.OnEvent(CycleTopology());
+        Assert.True(vm.BuildCyclesCommand.CanExecute(null));   // (b)
+
+        await vm.BuildCyclesCommand.ExecuteAsync(null);
+        Assert.Equal(RunMode.Cycles, Assert.Single(sent.OfType<StartRunCommand>()).Mode); // (c)
+    }
+
     [Fact]
     public async Task Retry_failed_command_sends_RunMode_RetryFailed_and_is_enabled_only_when_a_failure_exists()
     {
@@ -826,5 +853,83 @@ public class RunViewModelStateTests
         Assert.True(buildChanged);
         Assert.True(rebuildChanged);
         Assert.True(retryChanged);
+    }
+
+    // ---------------------------------------------------------------- [cycle rounds/I2] koşan SCC'nin sayaç + ETA yüzeyi
+
+    /// <summary>Bir SCC (A↔B↔C) ve grup DIŞINDA bir D — motorun gönderdiği topolojinin App'teki karşılığı.
+    /// <c>Cycles</c> alanı DOLDURULUR: App üyelik haritasını (hangi Started üye hangi grubun sırasını bekliyor)
+    /// yalnız oradan kurabilir.</summary>
+    private static WorkspaceTopologyEvent CycleTopology() =>
+        new([Node(D, "D", 0), Node(A, "A", 1, inCycle: true), Node(B, "B", 2, inCycle: true),
+             Node(C, "C", 3, inCycle: true)], [[A, B, C]], [], []);
+
+    private const string A = @"C:\p\a.csproj";
+    private const string B = @"C:\p\b.csproj";
+    private const string C = @"C:\p\c.csproj";
+    private const string D = @"C:\p\d.csproj";
+
+    /// <summary>Topoloji + runStarted; ardından SCC üyeleri motorun SIRALI invoke sırasıyla Started'a alınır
+    /// (ara tur sonucu yayılmadığı için hiçbiri terminale dönmez — grup bitene kadar ÜÇÜ DE Started'tır).</summary>
+    private static void StartCycleGroup(RunViewModel vm)
+    {
+        var topology = CycleTopology();
+        vm.OnEvent(topology);
+        foreach (var node in topology.Nodes) // cycle üyeliği topolojiden satıra taşınır
+            Assert.Equal(node.InCycle, vm.Projects.Single(p => p.Id == node.Id).InCycle);
+    }
+
+    [Fact]
+    public async Task A_running_cycle_group_never_reports_more_building_than_the_run_has_workers()
+    {
+        // [I2] Kusur: ProjectStarted HER turda ve HER üye için yayılır, ara tur sonucu ise HİÇ yayılmaz —
+        // dolayısıyla grup bitene kadar bütün üyeler Started'ta birikir. 32 üyeli bir SCC 4 worker'lı bir
+        // run'da "32 building" raporluyordu ve şerit "finishing 32 in flight" yazıyordu; bir SCC ise TEK bir
+        // iş kalemidir, o an derlenen tek bir üyesi vardır.
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));
+
+        Assert.Equal(1, vm.Counters.Building);              // yalnız SON başlayan üye gerçekten derleniyor
+        Assert.True(vm.Counters.Building <= vm.Parallelism); // hiçbir koşulda worker sayısını aşamaz
+        Assert.Equal(3, vm.Counters.Queued);                // A + B (sıra bekliyor) + D (hiç başlamadı)
+        Assert.Equal(4, vm.Counters.Total);
+
+        // Grup bitince bayrak DÜŞER: bekleyen üye sonsuza dek "queued" görünmez.
+        vm.OnEvent(new ProjectSucceededEvent("r1", A, 10, null, false));
+        Assert.False(vm.Projects.Single(p => p.Id == A).CycleWaiting);
+    }
+
+    [Fact]
+    public async Task The_eta_keeps_the_cycle_round_multiplier_while_the_group_is_running()
+    {
+        // [I2] Kusur: cycle katkısı (paralelliğe BÖLÜNMEYEN, BaselineRounds ile ÇARPILAN terim) yalnız Pending
+        // üyeleri sayıyordu. Grup dispatch edilir edilmez üyeler Started'a geçtiği ve orada KALDIĞI için,
+        // çarpan tam da işin yapıldığı pencerede kayboluyor; üyeler paralelliğe bölünen building kovasına
+        // düşüyordu. Sabit saat: 4 proje, D 1000ms'te bitti ⇒ gözlenen ortalama 1000ms.
+        long now = 5_000;
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now);
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", D, "D"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", D, 1000, null, false));
+
+        // Üç queued cycle üyesi: 3 × 1000ms × BaselineRounds(2) = 6000ms, paralelliğe BÖLÜNMEDEN.
+        Assert.Equal(6000, vm.EtaMs);
+
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));
+        vm.TickElapsed(); // canlı tick — ETA'yı yeniden hesaplar
+
+        // Grup KOŞARKEN de aynı terim: tahmin 6000'de kalır. Kusurlu hâlde üçü building kovasına düşer ve
+        // 4'e bölünürdü — ham tahmin 3000/4 + 400 = 1150, EMA ile 4788.
+        Assert.Equal(6000, vm.EtaMs);
     }
 }

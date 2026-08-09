@@ -4,11 +4,13 @@ using System.IO;
 using System.Text;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.ProcessControl;
+using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 // [T20-b] VM'in KENDİ `PerfMode` string property'si, Core'daki aynı adlı enum'u basit-ad çözümlemesinde gölgeler
@@ -103,6 +105,25 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
     public bool HasDepIssue => DepIssues is { Count: > 0 };
+
+    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti (iki
+    /// ardışık yeşil tur hiç olmadı) — <see cref="ProjectSucceededEvent.CycleUnsettled"/>'tan AYNEN taşınır.
+    /// Derleme başarılı ama çıktı bir kuşak geride OLABİLİR. RENDER Task 9'undur — burası yalnız veri taşır.</summary>
+    [ObservableProperty] private bool _cycleUnsettled;
+
+    /// <summary>[cycle rounds/I2] Bu satır bir SCC üyesidir, grubu ŞU AN koşuyor ama SIRASI KENDİSİNDE DEĞİL:
+    /// motor grubun üyelerini sıralı invoke eder ve ara tur sonuçlarını yayınlamaz, bu yüzden üye grubun tüm
+    /// ömrü boyunca <see cref="ProjectRowState.Started"/>'ta kalır — o an gerçekten derlenen tek üye, grubun EN
+    /// SON <c>projectStarted</c> alanıdır. Bayrak <see cref="RunCounters"/>'ın <c>Building</c>'ini gerçekten
+    /// derlenenlerle sınırlar (32 üyeli bir grup 4 worker'lı bir run'da "32 building" diyordu). GÖRSEL durumu
+    /// (<see cref="Status"/>) DEĞİŞTİRMEZ: satır hâlâ grubun içinde ve hâlâ işleniyor.</summary>
+    [ObservableProperty] private bool _cycleWaiting;
+
+    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
+    /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
+    /// AYNEN taşınır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir alandır
+    /// (<see cref="Status"/> bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER Task 9'undur.</summary>
+    [ObservableProperty] private bool _cycleUnconverged;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
     /// <see cref="InCycle"/> + <see cref="WillBuild"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
@@ -221,6 +242,12 @@ public sealed partial class RunViewModel : ObservableObject
     private int? _runParallelism;
     private readonly Dictionary<string, long> _projectStartedAtMs = new(StringComparer.OrdinalIgnoreCase);
 
+    // [cycle rounds/I2] SCC üyelik haritası — topolojiden (WorkspaceTopologyEvent.Cycles) kurulur, Core'un
+    // AYNI gövdesiyle (CycleGroups) çünkü motor da grubu ondan sürer. Tek tüketicisi "bu Started üye grubunun
+    // SIRASINI mı bekliyor" sorusudur: üyeler sıralı invoke edildiği için grubun EN SON projectStarted alanı
+    // dışındaki her üyesi beklemededir. Topoloji hiç gelmediyse null — o hâlde InCycle satır da yoktur.
+    private CycleGroups? _cycleGroups;
+
     // [D2/T38] Sticky şeridin "wb/fin/allClean"i için SABİT willBuild kümesi: prototipte (BuildApp.jsx) willBuild
     // koşu boyunca değişmez (eng.willBuild). VM'de satırların WillBuild bayrağı succeeded olunca false'a döndüğü
     // için CANLI sayılamaz — bu yüzden run başında BuildPreviewEvent'ten (WillBuild==true olanlar) DONDURULUR.
@@ -289,6 +316,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/worktree/config kilidi bundan türetilir
     private bool _isRunning;
@@ -303,6 +331,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
     private bool _isStarting;
@@ -320,6 +349,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private string? _engineDiedMessage;
 
     /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
@@ -333,6 +363,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private bool _engineRestartable = true;
 
     /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
@@ -523,6 +554,7 @@ public sealed partial class RunViewModel : ObservableObject
         RunMode.Build => "build",
         RunMode.Continue => "continue",
         RunMode.RetryFailed => "retry",
+        RunMode.Cycles => "cycles",
         _ => "run",
     };
 
@@ -550,6 +582,30 @@ public sealed partial class RunViewModel : ObservableObject
         return BeginRunAsync(RunMode.Build, clearBuffers: true);
     }
 
+    /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
+    /// projeleri, sıralı turlarla derler. Build'in yerine geçmez, ONDAN ÖNCE gelir — Build bir SCC'yi asla
+    /// derlemez, bu koşu ise sadece onları derler.
+    ///
+    /// <para><b>Neden ayrı bir düğme:</b> bir SCC'yi turlarla derlemenin bedeli üye sayısı × tur sayısıdır ve
+    /// normal bir Build'in yanında ölçülemeyecek kadar büyüyebilir. Build'in içine katlandığında kullanıcı,
+    /// istemediği ve göremediği bir işin arkasında bekliyordu. Ayrı düğme kararı kullanıcıya verir: ne zaman,
+    /// ne kadar.</para>
+    ///
+    /// <para><see cref="RebuildCommand"/>/<see cref="RetryFailedCommand"/> ile AYNI guard'a tabidir
+    /// (<see cref="CanRebuildOrRetry"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
+    /// bozulmasını üretirdi.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanBuildCycles))]
+    private Task BuildCyclesAsync()
+    {
+        ClearSelectionAndFilter();
+        return BeginRunAsync(RunMode.Cycles, clearBuffers: true);
+    }
+
+    /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
+    /// workspace'te bu koşu her projeyi "not in a dependency cycle" ile atlar, yani hiçbir şey yapmaz — pasif
+    /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
+    private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
+
     [RelayCommand(CanExecute = nameof(CanRetryFailed))]
     private Task RetryFailedAsync()
     {
@@ -564,7 +620,8 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task SyncAsync()
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
-        await TrySendAsync(new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+        await TrySendAsync(
+            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
         // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,
@@ -876,7 +933,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectStartedEvent e: OnProjectStarted(e); break;
             case ProjectLogEvent e: OnProjectLog(e); break;
             case ProjectLogChunkEvent e: OnProjectLogChunk(e); break;
-            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues); break;
+            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled); break;
             case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues); break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;
@@ -961,26 +1018,47 @@ public sealed partial class RunViewModel : ObservableObject
     /// yüzden burada AYRICA atanır (ProjectSkipped'in zaten yaptığı gibi).</summary>
     private void OnProjectStarted(ProjectStartedEvent e)
     {
-        EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started).State = ProjectRowState.Started;
+        var row = EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started);
+        row.State = ProjectRowState.Started;
+        row.CycleWaiting = false; // sıra ONDA: bu event'in anlamı tam olarak budur
         _projectStartedAtMs[e.ProjectId] = _nowMs();
+        // [cycle rounds/I2] Bir SCC üyesi başladıysa, KARDEŞLERİ artık beklemededir: grup içinde eşzamanlı
+        // invoke YOKTUR (biri diğerinin az önce yazdığı DLL'i okur). Ara tur sonuçları yayılmadığı için
+        // kardeşler Started'ta KALIR — bayrak, "Started" ile "şu an derleniyor"u ayıran tek şeydir.
+        foreach (string sibling in _cycleGroups?.MembersOf(e.ProjectId) ?? [])
+            if (!string.Equals(sibling, e.ProjectId, StringComparison.OrdinalIgnoreCase)
+                && Projects.FirstOrDefault(p => string.Equals(p.Id, sibling, StringComparison.OrdinalIgnoreCase))
+                    is { State: ProjectRowState.Started } waiting)
+                waiting.CycleWaiting = true;
         RefreshRunSurface();
     }
 
     private void OnProjectSkipped(ProjectSkippedEvent e)
     {
-        EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped).State = ProjectRowState.Skipped;
+        var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
+        row.State = ProjectRowState.Skipped;
+        row.CycleUnconverged = e.CycleUnconverged; // [cycle rounds/Task 8] kalıcı kırık döngü — render Task 9'undur
+        row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         _projectStartedAtMs.Remove(e.ProjectId);
         UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
         RefreshRunSurface();
     }
 
-    private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues)
+    private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues,
+        bool cycleUnsettled = false)
     {
         var row = Projects.FirstOrDefault(p => p.Id == projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
         row.State = state;
         row.DurationMs = durationMs;
         row.DepIssues = depIssues; // [Task 17] ▲ sinyali — HasDepIssue bundan türetilir
+        row.CycleUnsettled = cycleUnsettled; // [cycle rounds/Task 8] ProjectFailedEvent bu alanı taşımaz → varsayılan false
+        // [cycle rounds/Task 9 review fix 1] Proje bu run'da GERÇEKTEN invoke edildi (Succeeded ya da Failed
+        // fark etmez) — önceki bir segmentten kalma "hiç invoke edilmeden pre-skip edildi" bayrağı artık
+        // YANLIŞ; satır nesneleri segmentler arası hayatta kaldığı için (Projects.Clear() yalnız Rebuild'de)
+        // burada temizlenmezse "az önce düzelen proje" render katmanında kalıcı-kırık gibi görünürdü.
+        row.CycleUnconverged = false;
+        row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         // [Task 17][v7Δ8] "succeeded→clean" CANLI geçiş: proje bu run içinde başarıyla derlendiği ANDA artık
         // güncel (clean) sayılır — preview'ın dirty=true'sunu (ya da hollow=null'ını) burada EZER.
         if (state == ProjectRowState.Succeeded) row.WillBuild = false;
@@ -1017,9 +1095,26 @@ public sealed partial class RunViewModel : ObservableObject
         if (total <= 0) { EtaText = ""; return; }
 
         int completed = Projects.Count(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped);
-        var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started).ToList();
+        // [cycle rounds/I2] "building" kovası PARALEL çalışan işler içindir (toplamı paralelliğe bölünür) —
+        // bir SCC üyesi oraya AİT DEĞİLDİR, koşuyor olsa bile: grubun üyeleri sıralı invoke edilir ve grup en
+        // az BaselineRounds tur çalışır. Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur
+        // çarpanını YOK EDİYORDU (üye Pending'den çıktığı an cycle kovasından da düşüyordu).
+        var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started && !p.InCycle).ToList();
         int remaining = Math.Max(0, total - completed);
         int queuedCount = Math.Max(0, remaining - buildingRows.Count);
+
+        // [cycle rounds/Task 10] cycle (SCC) üyeleri EtaCalculator'a AYRI listeyle beslenir — onlar paralel
+        // değil sıralı invoke edilir ve küme en az iki tur çalışır (EtaCalculator kendi içinde
+        // CycleRoundPolicy.BaselineRounds ile çarpar, paralelliğe bölmez). InCycle bayrağı satırda zaten var
+        // (topoloji uzlaştırmasından, bkz. ProjectRowViewModel.InCycle) — burada YENİDEN türetilmez.
+        // [I2] Henüz BAŞLAMAMIŞ (Pending) üyeler kadar KOŞAN (Started) üyeler de bu kovadadır: ikisinin de
+        // kalan maliyeti "grup, turlarıyla birlikte" terimidir. Geçen süre kasıtlı olarak DÜŞÜLMEZ — tur
+        // döngüsünde her üyenin kendi başlangıcı her turda sıfırlanır, tek bir turun elapsed'i grubun kalanı
+        // hakkında bir şey söylemez; tahmin bu yönde bilerek KARAMSARDIR (bkz. ARCHITECTURE.md §8.4).
+        int cycleQueuedCount = Projects.Count(
+            p => p.InCycle && p.State is ProjectRowState.Pending or ProjectRowState.Started);
+        cycleQueuedCount = Math.Min(cycleQueuedCount, queuedCount); // savunmacı — total henüz satırlaşmamış projeler içerebilir
+        int ordinaryQueuedCount = queuedCount - cycleQueuedCount;
 
         var knownDurations = Projects
             .Where(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed)
@@ -1027,7 +1122,8 @@ public sealed partial class RunViewModel : ObservableObject
             .ToList();
         long? observedAverageMs = knownDurations.Count > 0 ? (long)knownDurations.Average() : null;
 
-        var queuedEstimatesMs = Enumerable.Repeat(observedAverageMs, queuedCount).ToList();
+        var queuedEstimatesMs = Enumerable.Repeat(observedAverageMs, ordinaryQueuedCount).ToList();
+        var cycleQueuedEstimatesMs = Enumerable.Repeat(observedAverageMs, cycleQueuedCount).ToList();
         long now = _nowMs();
         var building = buildingRows
             .Select(p => new EtaCalculator.BuildingProject(
@@ -1035,7 +1131,7 @@ public sealed partial class RunViewModel : ObservableObject
                 LastDurationMs: observedAverageMs))
             .ToList();
 
-        long? rawEstimateMs = EtaCalculator.ComputeRawEstimateMs(queuedEstimatesMs, building, _runParallelism ?? Parallelism);
+        long? rawEstimateMs = EtaCalculator.ComputeRawEstimateMs(queuedEstimatesMs, building, _runParallelism ?? Parallelism, cycleQueuedEstimatesMs);
         long? smoothedEtaMs = rawEstimateMs is { } raw ? EtaCalculator.Smooth(_previousEtaMs, raw) : null;
         _previousEtaMs = smoothedEtaMs;
         EtaMs = smoothedEtaMs; // [D2/T70] şeridin numeric ETA kaynağı (RibbonText.EtaSuffix)

@@ -35,7 +35,9 @@ public sealed record StopRunCommand(string RunId, StopKind Kind) : IpcCommand;
 public sealed record GetProjectLogCommand(string ProjectId) : IpcCommand;
 public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcCommand;
 
-public enum RunMode { Rebuild, Build, Continue, RetryFailed }
+/// <summary>Bir koşunun KAPSAMINI seçer; NDJSON'a camelCase METİN olarak yazılır (<c>"cycles"</c>), sayı olarak
+/// DEĞİL — bu yüzden yeni bir değer sona eklemek mevcut satırların anlamını kaydırmaz.</summary>
+public enum RunMode { Rebuild, Build, Continue, RetryFailed, Cycles }
 /// <summary>Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c> Safe/Fast, Task 7):
 /// Build modunda WillBuild hesabını besler — Safe = dirty + tüm transitive dependent'lar yeniden derlenir;
 /// Fast = yalnız dirty (cascade yok). RetryFailed her zaman failed + tüm transitive dependent'ları derler
@@ -43,7 +45,12 @@ public enum RunMode { Rebuild, Build, Continue, RetryFailed }
 public enum DependentMode { Safe, Fast }
 /// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty); Continue = önceki run'ın
 /// queued'larından sürer (elapsed korunur); RetryFailed = önceki run'da failed olanlar + tüm transitive
-/// dependent'ları (DependentMode'dan bağımsız — her zaman full cascade). [v7Δ-4] [It-3]</param>
+/// dependent'ları (DependentMode'dan bağımsız — her zaman full cascade). [v7Δ-4] [It-3]
+/// <para><b>Cycles</b> = YALNIZ dairesel bağımlılık (SCC) oluşturan projeler, sıralı turlarla. Diğer TÜM
+/// projeler <c>"skipped — not in a dependency cycle"</c> ile pre-skip edilir; kapsam dışıdırlar. Bu, diğer
+/// modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez (üyeleri
+/// <c>"in dependency cycle"</c> ile atlanır), bu mod ise SADECE onları derler. İkisi ardışık kullanılır —
+/// önce Cycles, sonra Build.</para></param>
 /// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
 /// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
 /// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>
@@ -131,6 +138,7 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
 [JsonDerivedType(typeof(WorktreeListEvent), "worktreeList")]
+[JsonDerivedType(typeof(CycleRoundStartedEvent), "cycleRoundStarted")]
 public abstract record IpcEvent;
 
 public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
@@ -155,12 +163,23 @@ public sealed record ProjectStartedEvent(string RunId, string ProjectId, string 
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
 /// yoksa null (JSON'a yazılmaz). [It-3]</param>
+/// <param name="CycleUnsettled">[cycle rounds] Bu proje bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti
+/// (iki ardışık yeşil tur hiç olmadı): derleme başarılı, ama çıktı bir kuşak geride OLABİLİR. <b>Ayrı bir
+/// alandır, <see cref="DepIssues"/>'a sahte bir isim enjekte EDİLMEZ</b> — o liste "hangi bağımlılık patladı"
+/// sorusunun cevabıdır ve ikinci bir anlam yüklenirse App'in <c>▲ N</c> sayacı ile filtre chip'i yanlış sayar.
+/// Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
 public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long DurationMs,
-    IReadOnlyList<string>? DepIssues = null) : IpcEvent;
+    IReadOnlyList<string>? DepIssues = null, bool CycleUnsettled = false) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları; yoksa null (JSON'a yazılmaz). [It-3]</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
     IReadOnlyList<string>? DepIssues = null) : IpcEvent;
-public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason) : IpcEvent;
+/// <param name="CycleUnconverged">[cycle rounds/Task 8] Bu skip, bir SCC'nin ÖNCEKİ bir Build'de yakınsamayıp
+/// aynı bileşik imzada bir daha hiç tur harcanmadan pre-skip edildiğini işaretler (bkz. <c>RunCoordinator</c>'ın
+/// "cycle did not converge at this signature" seed'i). <b>Ayrı bir tipli alandır, Reason metninden ÇIKARILMAZ</b>
+/// — sıradan "güncel" (up-to-date) skip'iyle Reason dışında hiçbir farkı olmadığı için App'in metin eşleştirmesi
+/// yapması YASAKTIR (tek doğruluk kaynağı Reason string'i Supervisor'da kalır). Varsayılan <c>false</c>: bu
+/// alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
+public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
     int Queued, long DurationMs, int DepIssueCount = 0) : IpcEvent;
@@ -211,6 +230,19 @@ public sealed record WorkspaceTopologyEvent(
 /// <summary>[A5/T69] Worktree havuzunun envanteri — <see cref="ListWorktreesCommand"/>/<see
 /// cref="DeleteWorktreeCommand"/> yanıtı.</summary>
 public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcEvent;
+
+/// <summary>
+/// [cycle rounds] Bir SCC'nin (dairesel bağımlılık grubunun) yeni bir turu başladı. Grup TEK bir derleme
+/// birimidir: üyeleri her turda build-order sırasıyla ve sıralı derlenir, ara tur sonuçları YAYILMAZ — bu
+/// yüzden kullanıcının gördüğü tek ilerleme sinyali budur (üyelerin kendi <see cref="ProjectStartedEvent"/>'i
+/// her turda tekrarlanır, ama hangi TURDA olunduğunu yalnız bu olay söyler).
+/// </summary>
+/// <param name="ProjectId">Grubun build-order'daki İLK üyesi (lider) — konsol satırı grubu bu adla anar.</param>
+/// <param name="Round">Başlayan turun 1-tabanlı numarası.</param>
+/// <param name="RoundCap">Bu run'da bir SCC için yürütülecek azami tur sayısı (<c>CycleRoundPolicy.RoundCap</c>).</param>
+/// <param name="MemberCount">Grubun bu turda derlenecek üye sayısı.</param>
+public sealed record CycleRoundStartedEvent(string RunId, string ProjectId, int Round, int RoundCap, int MemberCount)
+    : IpcEvent;
 
 /// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
