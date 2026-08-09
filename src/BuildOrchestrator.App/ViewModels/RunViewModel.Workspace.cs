@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -248,6 +249,10 @@ public sealed partial class RunViewModel
     {
         Topology = e.Nodes;
         Solutions = e.Solutions;
+        // [cycle rounds/I2] SCC üyelik haritası topolojinin İKİNCİ yarısından (Cycles) kurulur — motorun grubu
+        // sürdüğü haritanın AYNI gövdesiyle (kopya YASAK). App'in tek sorusu üyeliktir: koşan bir grupta hangi
+        // Started üye sırasını bekliyor (bkz. OnProjectStarted).
+        _cycleGroups = CycleGroups.From(e.Nodes, e.Cycles);
         // [D5] Kısa-ad öneki topoloji adlarından türetilir (tek otorite) — aşağıda her satıra itilir.
         _graphNamePrefix = GraphNode.CommonDotPrefix(e.Nodes.Select(n => n.Name).ToList());
 

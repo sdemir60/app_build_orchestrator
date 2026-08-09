@@ -9,6 +9,13 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <b>skipped</b> + <see cref="ProjectRowViewModel.CycleUnconverged"/> taşıyan satırları sayar — kalıcı kırık
 /// bir SCC'nin pre-skip'i, sıradan "güncel" skip'iyle GÖRÜNÜRDE aynıdır (ikisi de plain <c>Skipped</c>); bu
 /// sayaç ikisini ayırt eden TEK yerdir.
+///
+/// <para>[cycle rounds/I2] <c>Building</c> "ŞU AN derlenen" demektir, "Started durumundaki satır" değil: bir
+/// SCC'nin üyeleri sıralı invoke edilir ve ara tur sonuçları yayılmadığı için grup bitene kadar HEPSİ
+/// <see cref="ProjectRowState.Started"/>'ta durur. Sırasını bekleyen üye (<see
+/// cref="ProjectRowViewModel.CycleWaiting"/>) <c>Queued</c>'a taşınır — bölme değil TAŞIMA, toplam korunur.
+/// Aksi halde 32 üyeli bir SCC 4 worker'lı bir run'da "32 building" raporlardı ve şerit "finishing 32 in
+/// flight" derdi.</para>
 /// </summary>
 public readonly record struct RunCounters(int Total, int Building, int Queued, int Succeeded,
                                           int Failed, int Skipped, int DepAffected, int StuckCycles)
@@ -21,6 +28,7 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
             total++;
             switch (r.State)
             {
+                case ProjectRowState.Started when r.CycleWaiting: queued++; break; // grubu koşuyor, sırası değil
                 case ProjectRowState.Started: building++; break;
                 case ProjectRowState.Pending: queued++; break;
                 case ProjectRowState.Succeeded:

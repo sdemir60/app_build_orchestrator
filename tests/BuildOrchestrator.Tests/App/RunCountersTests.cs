@@ -9,11 +9,13 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class RunCountersTests
 {
-    private static ProjectRowViewModel Row(string name, ProjectRowState state, bool dep = false, bool stuck = false)
+    private static ProjectRowViewModel Row(string name, ProjectRowState state, bool dep = false, bool stuck = false,
+                                           bool cycleWaiting = false)
     {
         var r = new ProjectRowViewModel($@"C:\p\{name}.csproj", name, state);
         if (dep) r.DepIssues = ["X"];
         if (stuck) r.CycleUnconverged = true;
+        if (cycleWaiting) { r.InCycle = true; r.CycleWaiting = true; }
         return r;
     }
 
@@ -78,5 +80,28 @@ public class RunCountersTests
         Assert.Equal(1, c.StuckCycles);
         Assert.Equal(2, c.Skipped);
         Assert.Equal(3, c.Total);
+    }
+
+    // [cycle rounds/I2] Bir SCC'nin üyeleri motor tarafında SIRALI derlenir ve ara tur sonuçları YAYILMADIĞI
+    // için grup bitene kadar HEPSİ Started'ta kalır — ama o anda gerçekten derlenen tek bir üye vardır.
+    // Started'ı olduğu gibi saymak "32 building" gibi düpedüz yanlış bir sayı üretiyordu (şerit: "finishing 32
+    // in flight"). Bekleyen üye Started'ı KORUR (görsel durumu değişmez) ama sayaçta Queued'a düşer: henüz
+    // bitmemiştir, yalnız ŞU AN derlenmiyordur. Bölme değil taşımadır — toplam korunur.
+    [Fact]
+    public void A_cycle_member_waiting_for_its_turn_counts_as_queued_not_building()
+    {
+        var rows = new[]
+        {
+            Row("A", ProjectRowState.Started, cycleWaiting: true),  // grup içinde, sırasını bekliyor
+            Row("B", ProjectRowState.Started, cycleWaiting: true),
+            Row("C", ProjectRowState.Started),                      // GERÇEKTEN derlenen üye
+            Row("D", ProjectRowState.Pending),
+        };
+
+        var c = RunCounters.From(rows);
+
+        Assert.Equal(1, c.Building);
+        Assert.Equal(3, c.Queued);   // A + B + D
+        Assert.Equal(4, c.Total);    // hiçbir satır kaybolmaz
     }
 }
