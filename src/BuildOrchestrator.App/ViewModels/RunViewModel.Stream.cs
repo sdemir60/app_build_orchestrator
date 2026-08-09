@@ -69,10 +69,14 @@ public sealed partial class RunViewModel
                 if (_pendingRunStartMode is { } mode)
                 {
                     int parallelism = _runParallelism ?? Parallelism;
-                    PushStream(StreamKind.Info, null,
-                        mode == RunMode.Continue
-                            ? StreamText.Continue(_willBuildIds.Count - FinishedOfWillBuild, parallelism)
-                            : StreamText.BuildStarted(_willBuildIds.Count, parallelism));
+                    PushStream(StreamKind.Info, null, mode switch
+                    {
+                        RunMode.Continue => StreamText.Continue(_willBuildIds.Count - FinishedOfWillBuild, parallelism),
+                        // [cycles] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin üyeleri
+                        // sıralı derlenir. Kullanıcıyı bekleten sayı tur tavanıdır, satır onu söyler.
+                        RunMode.Cycles => StreamText.CyclesStarted(_willBuildIds.Count),
+                        _ => StreamText.BuildStarted(_willBuildIds.Count, parallelism),
+                    });
                     _pendingRunStartMode = null;
                 }
                 break;

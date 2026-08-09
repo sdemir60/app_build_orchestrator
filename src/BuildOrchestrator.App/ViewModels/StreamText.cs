@@ -37,6 +37,14 @@ public static class StreamText
     public static string BuildStarted(int projects, int parallelism) =>
         string.Format(CultureInfo.InvariantCulture, "Build started — {0} projects, parallelism {1}", projects, parallelism);
 
+    /// <summary>[cycles] Bir <c>RunMode.Cycles</c> koşusunun açılış satırı. "Build started"ı yeniden
+    /// kullanmaz: bu koşu bir build DEĞİLDİR ve kullanıcıyı bekleten şey de proje sayısı değil, TUR sayısıdır —
+    /// satır tam olarak ne satın alındığını söyler. Tavan literal DEĞİL, tek kaynağı
+    /// <see cref="Core.Planning.CycleRoundPolicy.RoundCap"/>'tir.</summary>
+    public static string CyclesStarted(int projects) =>
+        string.Format(CultureInfo.InvariantCulture, "Cycles started — {0} projects, up to {1} rounds each",
+            projects, Core.Planning.CycleRoundPolicy.RoundCap);
+
     /// <summary>build-data.js:321 — <c>Stopped — {n} remaining projects queued</c>.</summary>
     public static string Stopped(int remaining) =>
         string.Format(CultureInfo.InvariantCulture, "Stopped — {0} remaining projects queued", remaining);

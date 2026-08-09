@@ -144,21 +144,61 @@ public class CycleRoundsTests
     }
 
     /// <summary>
-    /// <b>Cycles koşusunun kapsamı TERSİdir:</b> yalnız SCC üyeleri derlenir, döngü DIŞINDA kalan her proje
-    /// kendi gerekçesiyle pre-skip edilir. Ve koşu başındaki önizleme bununla UYUŞUR — kapsam dışı satır
-    /// "derlenecek" diye amber yanıp hemen ardından "skipped" olarak geçmez.
-    /// <para>Önizleme iddiası ayrı bir kaprisin değil, kullanıcının gördüğü ekranın konusudur: bu koşuda
-    /// yüzlerce proje kapsam dışıdır ve hepsinin amber yanması, düğmenin ne yaptığını okunamaz hâle getirirdi.</para>
+    /// <b>Cycles koşusunun kapsamı SCC üyeleri + onların TRANSİTİF UPSTREAM'idir.</b> Kirli bir upstream (X)
+    /// gerçekten derlenir ve gruptan ÖNCE gelir; kapsamın tamamen dışında kalan proje (Z, gruba BAĞLI olan
+    /// dependent) kendi gerekçesiyle pre-skip edilir.
+    ///
+    /// <para><b>Neden upstream kapsamda:</b> üye kirli bir X'in bir önceki nesil DLL'ine karşı derlenseydi
+    /// derleme yeşil olur, çıktı bayat olurdu — ve koşu sonunda üyenin imzası (X'in KAYNAK terimini zaten
+    /// içerir) persist edildiği için bir sonraki Build onu "güncel" sayıp bir daha derlemezdi. Proje kalıcı
+    /// olarak bayat bir binary'e link'li kalırdı; §4 gereği DLL timestamp'i okunmadığından bunu yakalayacak
+    /// başka bir mekanizma yok.</para>
+    ///
+    /// <para><b>Neden downstream DEĞİL:</b> Z'yi de almak kapsamı sessizce tüm repoya genişletirdi (bir
+    /// çekirdek kütüphanenin dependent kümesi pratikte her şeydir). Z'yi Build derler — düğmenin sırası
+    /// Build'den ÖNCEdir.</para>
+    ///
+    /// <para>Önizleme iddiası ayrı bir kapris değil, kullanıcının gördüğü ekranın konusudur: kapsam dışı bir
+    /// satır "derlenecek" diye amber yanıp hemen ardından "skipped" olarak geçmez.</para>
     /// </summary>
     [Fact]
-    public async Task a_cycles_run_pre_skips_every_project_outside_a_cycle_and_the_preview_agrees()
+    public async Task a_cycles_run_builds_the_dirty_upstream_of_a_cycle_and_pre_skips_everything_else()
     {
         var rec = new RoundRecorder();
         var invoker = rec.Invoker((_, _) => Ok());
-        // X döngü DIŞINDA ve planlayıcı onu "derlenecek" (WillBuild=true) diye işaretlemiş — yani iddia
-        // önemsiz değil: kapsam kapısı olmasaydı X derlenir ve önizlemede amber kalırdı.
+        // X: döngünün UPSTREAM'i ve kirli (WillBuild=true) → derlenmeli, hem de gruptan ÖNCE.
+        // Z: döngünün DOWNSTREAM'i ve o da kirli → yine de kapsam DIŞI (aksi halde iddia önemsiz olurdu:
+        //    "kirli olan derlenir" değil, "kapsamdaki kirli olan derlenir" pinleniyor).
         var plan = CyclePlanOf(["A", "B"],
             Node("X", willBuild: true),
+            Node("A", deps: ["X", "B"], inCycle: true),
+            Node("B", deps: ["A"], inCycle: true),
+            Node("Z", deps: ["A"], willBuild: true));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["X#1", "A#1", "B#1", "A#2", "B#2"], rec.Calls); // X önce, sonra grup iki tur
+
+        var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+        Assert.Equal(Id("Z"), skipped.ProjectId);
+        Assert.Equal("skipped — not needed by a dependency cycle", skipped.Reason);
+        Assert.False(skipped.CycleUnconverged);
+
+        // Önizleme koşunun GERÇEKTEN yapacağını gösterir: kapsam dışı Z gri, kapsamdaki X amber kalır.
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+        Assert.False(Assert.Single(preview.Items, i => i.ProjectId == Id("Z")).WillBuild);
+        Assert.True(Assert.Single(preview.Items, i => i.ProjectId == Id("X")).WillBuild);
+    }
+
+    [Fact] // Kapsamdaki upstream de INCREMENTAL'dır: temizse (WillBuild=false) sıradan "güncel" skip'i alır.
+    public async Task a_clean_upstream_inside_the_scope_is_skipped_as_up_to_date_not_as_out_of_scope()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        var plan = CyclePlanOf(["A", "B"],
+            Node("X", willBuild: false),
             Node("A", deps: ["X", "B"], inCycle: true),
             Node("B", deps: ["A"], inCycle: true));
         using var h = new Harness(plan, invoker);
@@ -166,14 +206,10 @@ public class CycleRoundsTests
         await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // yalnız SCC derlendi — X'e hiç dokunulmadı
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // X derlenmedi
         var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
         Assert.Equal(Id("X"), skipped.ProjectId);
-        Assert.Equal("skipped — not in a dependency cycle", skipped.Reason);
-        Assert.False(skipped.CycleUnconverged);
-
-        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
-        Assert.False(Assert.Single(preview.Items, i => i.ProjectId == Id("X")).WillBuild);
+        Assert.Equal("skipped — up to date", skipped.Reason);    // kapsam dışı DEĞİL — sıradan incremental
     }
 
     /// <summary>Cycles koşusu da INCREMENTAL'dır: bileşik imzası TEMİZ (state'teki <c>BuiltSignature</c> ile

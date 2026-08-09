@@ -232,6 +232,26 @@ public class EventStreamTests
             StreamText.Completed(2, 10, 1, 3, 72000));
         // [cycle rounds/Task 8] Tur göstergesi — tek metin kaynağı (task-8-brief.md).
         Assert.Equal("cycle round 2/3 — A (+3 more)", StreamText.CycleRound(2, 3, "A", 4));
+        // [cycles] Cycles koşusunun açılış satırı: "Build started" DEĞİL, ve sayı paralellik değil TUR tavanıdır
+        // (tek kaynak CycleRoundPolicy.RoundCap — bu satır tavanı literal olarak yeniden yazMAZ).
+        Assert.Equal(
+            $"Cycles started — 8 projects, up to {BuildOrchestrator.Core.Planning.CycleRoundPolicy.RoundCap} rounds each",
+            StreamText.CyclesStarted(8));
+    }
+
+    /// <summary>[cycles] Ve koşu GERÇEKTEN o satırı yayar: mod, ertelenen açılış satırının hangi metni
+    /// seçeceğini belirler (satır <c>buildPreview</c>'a ertelenir — will-build sayısı orada hazırdır).</summary>
+    [Fact]
+    public async Task A_cycles_run_opens_the_stream_with_its_own_line_not_the_build_one()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        Assert.Contains(vm.StreamEvents, l => l.Text == StreamText.CyclesStarted(1));
+        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.StartsWith("Build started", StringComparison.Ordinal));
     }
 
     // ============================================================ [cycle rounds/Task 8] — tur göstergesi

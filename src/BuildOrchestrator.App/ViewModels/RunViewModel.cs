@@ -114,10 +114,15 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <summary>[cycle rounds/I2] Bu satır bir SCC üyesidir, grubu ŞU AN koşuyor ama SIRASI KENDİSİNDE DEĞİL:
     /// motor grubun üyelerini sıralı invoke eder ve ara tur sonuçlarını yayınlamaz, bu yüzden üye grubun tüm
     /// ömrü boyunca <see cref="ProjectRowState.Started"/>'ta kalır — o an gerçekten derlenen tek üye, grubun EN
-    /// SON <c>projectStarted</c> alanıdır. Bayrak <see cref="RunCounters"/>'ın <c>Building</c>'ini gerçekten
-    /// derlenenlerle sınırlar (32 üyeli bir grup 4 worker'lı bir run'da "32 building" diyordu). GÖRSEL durumu
-    /// (<see cref="Status"/>) DEĞİŞTİRMEZ: satır hâlâ grubun içinde ve hâlâ işleniyor.</summary>
-    [ObservableProperty] private bool _cycleWaiting;
+    /// SON <c>projectStarted</c> alanıdır.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bayrak önce yalnız <see cref="RunCounters"/>'ın <c>Building</c>'ini
+    /// sınırlıyordu ve <see cref="Status"/>'a BİLEREK dokunmuyordu. Ölçülen sonuç: 15 üyeli bir grupta listede
+    /// 15, grafta 15 dönen spinner — sayaç chip'i "1 building" derken. Ekran, aracın aynı anda on beş iş
+    /// yaptığını söylüyordu; bir iş yapıyordu. Bayrak artık <see cref="Status"/>'u da sürer, böylece satır ile
+    /// sayaç AYNI soruyu aynı şekilde cevaplar (tek kural, iki tüketici).</para></summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool _cycleWaiting;
 
     /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
     /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
@@ -130,27 +135,36 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// (kart yalnız bunu okur; eşleme mantığı kontrolde kopyalanmaz). <c>cycle</c> ve <c>queued</c> ayrı IPC
     /// alanları TAŞIMAZ — ikisi de eldeki topoloji/run sinyallerinden TÜRETİLİR:
     /// <list type="bullet">
-    /// <item><b>cycle</b>: <see cref="InCycle"/>=true olan bir satır (Pending ya da pre-skipped Skipped) — tasarım
-    /// onu skipped değil cycle gösterir (alt-durumu ezer).</item>
+    /// <item><b>cycle</b>: <see cref="InCycle"/>=true olan, bu koşu hakkında HENÜZ BİR ŞEY SÖYLENMEMİŞ satır.
+    /// Bkz. aşağıdaki "döngü glyph'i koşu-öncesidir" notu.</item>
     /// <item><b>queued</b>: bir run uçuştayken (<see cref="IsRunActive"/>) planlanmış (<see cref="WillBuild"/>==true)
     /// ama henüz başlamamış (Pending) satır. Run bitince <see cref="IsRunActive"/> düşer → yine Discovered.</item>
-    /// </list></summary>
-    public Controls.GraphStatus Status
+    /// </list>
+    ///
+    /// <para><b>Döngü glyph'i bir KOŞU-ÖNCESİ ifadedir.</b> Motor bu satır hakkında konuştuğu anda —
+    /// başladı, bitti, atlandı ya da bu koşuda derlenmek üzere planlandı — statü glyph'i MOTORUN cevabını
+    /// gösterir, döngü üyeliğini değil; üyelik dep-slotundaki turuncu rozete taşınır (<c>ProjectRow.ApplyDep</c>).
+    /// Sonuç: soldaki ikon "bu koşuda ne oldu", sağdaki rozet "bu proje bir döngüde" der ve ikisi birbirini
+    /// gizlemez.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> <see cref="InCycle"/> eskiden <c>Skipped</c> alt-durumunu da EZİYORDU. Bunun
+    /// bedeli ölçüldü: bir Build'den sonra döngüdeki her satır Sync'ten hemen sonraki hâliyle BİREBİR aynı
+    /// görünüyordu, yani "bu koşu onları atladı" ile "bunlar bir döngüde" ayırt edilemiyordu — ve döngüleri
+    /// gerçekten derleyen koşu (<c>RunMode.Cycles</c>) geldiğinde aynı satırlar sonuçlarını da gizlerdi.</para></summary>
+    public Controls.GraphStatus Status => State switch
     {
-        get
-        {
-            if (InCycle && State is ProjectRowState.Pending or ProjectRowState.Skipped)
-                return Controls.GraphStatus.Cycle;
-            return State switch
-            {
-                ProjectRowState.Started => Controls.GraphStatus.Building,
-                ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
-                ProjectRowState.Failed => Controls.GraphStatus.Failed,
-                ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
-                _ => IsRunActive && WillBuild == true ? Controls.GraphStatus.Queued : Controls.GraphStatus.Discovered,
-            };
-        }
-    }
+        // Grubu koşuyor ama SIRASI kendisinde değil: gerçekten derlenen tek üye vardır (bkz. CycleWaiting).
+        ProjectRowState.Started when CycleWaiting => Controls.GraphStatus.Queued,
+        ProjectRowState.Started => Controls.GraphStatus.Building,
+        ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
+        ProjectRowState.Failed => Controls.GraphStatus.Failed,
+        ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
+        // Buradan aşağısı YALNIZ Pending'dir: koşu bu satırı planladıysa kuyruk, planlamadıysa (ya da koşu
+        // yoksa) döngü üyeliği — o da yoksa ölü envanter.
+        _ when IsRunActive && WillBuild == true => Controls.GraphStatus.Queued,
+        _ when InCycle => Controls.GraphStatus.Cycle,
+        _ => Controls.GraphStatus.Discovered,
+    };
 
     public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)
     {
@@ -602,7 +616,7 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
-    /// workspace'te bu koşu her projeyi "not in a dependency cycle" ile atlar, yani hiçbir şey yapmaz — pasif
+    /// workspace'te bu koşunun kapsamı BOŞTUR (bkz. <c>CycleRunScope</c>) ve her projeyi atlar — pasif
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
     private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
 

@@ -84,10 +84,18 @@ public class RunViewModelTests
         Assert.Equal("Osys.sln", Assert.Single(vm.Projects).SolutionName);
     }
 
-    // [Fix wave 1, Finding 1] cycle verisi IPC'de VAR: ProjectNode.InCycle topolojiden satıra taşınır ve
-    // Status onu cycle görsel statüsüne çevirir (Pending/pre-skipped alt-durumu ezer).
+    /// <summary>[Fix wave 1, Finding 1] cycle verisi IPC'de VAR: <c>ProjectNode.InCycle</c> topolojiden satıra
+    /// taşınır ve <c>Status</c> onu — <b>satır hakkında bu koşuda henüz bir şey söylenmemişken</b> — cycle
+    /// görsel statüsüne çevirir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> İkinci iddia tersine döndü. Eskiden pre-skip edilen bir üyede görsel
+    /// "cycle KALIR (skipped değil)" diye pinliydi; şimdi motor konuştuğunda glyph MOTORUN cevabını gösterir
+    /// (<c>Skipped</c>) ve döngü üyeliği dep-slotundaki rozete taşınır. Gerekçe ölçüldü: eski kuralla bir
+    /// Build'den sonra döngüdeki her satır Sync'ten hemen sonraki hâliyle BİREBİR aynı görünüyordu — "bu koşu
+    /// onları atladı" ile "bunlar bir döngüde" ayırt edilemiyordu; ve döngüleri gerçekten derleyen koşu
+    /// (<c>RunMode.Cycles</c>) geldiğinde aynı kural sonucu da gizlerdi. Rozetin kendisi
+    /// <c>ProjectRowTests</c>'te pinlidir.</para></summary>
     [Fact]
-    public async Task A_cycle_member_node_maps_the_row_to_cycle_status()
+    public async Task A_cycle_member_node_maps_the_row_to_cycle_status_until_the_engine_speaks()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
@@ -101,9 +109,10 @@ public class RunViewModelTests
         Assert.True(row.InCycle);
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status); // pending ama cycle üyesi
 
-        // Motor cycle üyesini pre-skip etse bile görsel cycle KALIR (skipped değil).
-        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "cycle"));
-        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status);
+        // Motor konuştu: glyph artık ONUN cevabıdır; üyelik satırda (InCycle) DURUR ve rozete taşınır.
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "in dependency cycle"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Skipped, row.Status);
+        Assert.True(row.InCycle);
     }
 
     // [Fix wave 1, Finding 1] queued verisi TÜRETİLİR: willBuild=true + Pending + run uçuşta → Queued;

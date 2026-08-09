@@ -46,11 +46,13 @@ public enum DependentMode { Safe, Fast }
 /// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty); Continue = önceki run'ın
 /// queued'larından sürer (elapsed korunur); RetryFailed = önceki run'da failed olanlar + tüm transitive
 /// dependent'ları (DependentMode'dan bağımsız — her zaman full cascade). [v7Δ-4] [It-3]
-/// <para><b>Cycles</b> = YALNIZ dairesel bağımlılık (SCC) oluşturan projeler, sıralı turlarla. Diğer TÜM
-/// projeler <c>"skipped — not in a dependency cycle"</c> ile pre-skip edilir; kapsam dışıdırlar. Bu, diğer
-/// modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez (üyeleri
-/// <c>"in dependency cycle"</c> ile atlanır), bu mod ise SADECE onları derler. İkisi ardışık kullanılır —
-/// önce Cycles, sonra Build.</para></param>
+/// <para><b>Cycles</b> = dairesel bağımlılık (SCC) oluşturan projeler, sıralı turlarla — ve onların
+/// TRANSİTİF UPSTREAM'i (gerekçe <c>Core/Planning/CycleRunScope.cs</c>'te: kirli bir upstream'in eski DLL'ine
+/// karşı derlenen üye yeşil döner, bayat çıktı verir ve imzası persist edildiği için bir daha ASLA
+/// derlenmez). Kapsam dışı kalan her proje <c>"skipped — not needed by a dependency cycle"</c> ile pre-skip
+/// edilir. Bu, diğer modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez
+/// (üyeleri <c>"in dependency cycle"</c> ile atlanır). İkisi ardışık kullanılır — önce Cycles, sonra
+/// Build.</para></param>
 /// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
 /// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
 /// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>

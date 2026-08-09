@@ -161,12 +161,20 @@ one after another, then the whole set compiles again, until two rounds in a row 
 at the most. That is members × rounds of compiling, which next to an ordinary incremental build is a large and
 unpredictable bill. Behind a button you decide when to pay it.
 
-During such a run only the cycles compile; everything else is skipped as `not in a dependency cycle`, and the
-event stream announces each round. Pressing it again costs nothing when nothing changed — a cycle that has
-settled is skipped as up to date, and a cycle that never settles is not tried again until its source changes.
-The summary line says how many projects are stuck in one, so a run whose only casualty is a broken cycle never
-reads as an unqualified success. Rows in such a cycle carry an orange badge; rows that compiled but never saw
-two clean rounds carry the dependency triangle, whose tooltip says their output may be one generation stale.
+Such a run compiles the cycles **and whatever they depend on that is out of date** — otherwise a member would
+be compiled against a stale DLL, come back green, and then be recorded as up to date so that no later build
+ever fixed it. Everything past that is skipped as `not needed by a dependency cycle`, including the projects
+that depend *on* the cycle: those are Build's job, and Build is what you press next.
+
+The run reads like any other: skipped rows, built rows, and a summary that says how many were skipped, how
+many succeeded and how many failed. Cycle rows show the normal build icons — green, red, the spinner — and
+carry a small orange cycle badge on the right to say where they sit. The event stream announces each round.
+Pressing the button again costs nothing when nothing changed: a cycle that has settled is skipped as up to
+date, and a cycle that never settles is not tried again until its source changes. The summary line says how
+many projects are stuck in one, so a run whose only casualty is a broken cycle never reads as an unqualified
+success — those rows keep the orange badge with a tooltip saying they will not be retried, and rows that
+compiled but never saw two clean rounds carry the dependency triangle, whose tooltip says their output may be
+one generation stale.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.

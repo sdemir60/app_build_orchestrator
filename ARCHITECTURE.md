@@ -539,11 +539,24 @@ defaults.
 | `Rebuild` | all projects; cached state ignored |
 | `Continue` | the remaining queued projects of the stopped run, from the existing plan, with the elapsed clock preserved — engine capability only; the App has no surface that sends it |
 | `RetryFailed` | the failed projects plus **all** their transitive dependents — independent of the Safe/Fast setting; console and event stream are not reset |
-| `Cycles` | **only** the projects in a dependency cycle, compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not in a dependency cycle` |
+| `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
 
-`Cycles` is not a degree of difference from the others but a separate job, and the two halves are disjoint:
-`Build` and `Rebuild` never compile a cycle, `Cycles` compiles nothing else. It has its own button beside Sync
-(§13.2) and is meant to be run before a build, not instead of one.
+`Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
+a cycle, `Cycles` compiles the cycles. It has its own button beside Sync (§13.2) and is meant to be run before
+a build, not instead of one.
+
+**Why the scope reaches upstream.** A member compiled against a *dirty* dependency's previous-generation DLL
+comes back green while its output is stale — and the run then persists that member's signature. Because the
+signature already contains the upstream's source term, the next `Build` reads the member as up to date and
+never recompiles it: the project stays linked to a stale binary, permanently, with no second mechanism to
+catch it since no DLL or `bin` timestamp is ever read (§4). Pulling the transitive upstream into scope closes
+that: the run is self-consistent, compiling everything it compiles against fresh inputs. Inside the scope the
+ordinary incremental rule applies, so a clean upstream is still skipped as `skipped — up to date`.
+
+**Why the scope stops there.** Downstream is deliberately excluded. A cycle's dependents may well need
+recompiling once the group has moved, but that is `Build`'s job and `Build` is the next thing the user
+presses. Including them would quietly widen the scope to the whole repository — the dependent set of a core
+library is, in practice, everything — which is exactly the cost the separate button exists to keep visible.
 
 Why it is separate rather than folded into `Build`: a group's cost is members × rounds, which next to an
 ordinary incremental build is unbounded. Folded in, the user waited behind work they had not asked for and
@@ -599,9 +612,11 @@ hidden:
 - The event stream reads `built — dependency issue (2.4s)`, and the completion line reports
   `N dependency-affected`.
 
-That slot has two other tenants, both about cycles: a member of a group that ran out of rounds borrows the
-same triangle with its own tooltip, and a group held back by non-convergence memory replaces it with an orange
-cycle badge (§14.3). A row shows exactly one of the three, never two.
+That slot has three other tenants, all about cycles: a member of a group that ran out of rounds borrows the
+same triangle with its own tooltip, a group held back by non-convergence memory replaces it with an orange
+cycle badge, and plain membership of a cycle takes that same badge once the row's status glyph has stopped
+carrying it (§14.3). A row shows exactly one of the four, never two; membership is the weakest of them and
+loses to all three.
 
 ### 8.4 ETA
 
@@ -1664,25 +1679,46 @@ meets 4.5:1.
 | Cycle | warning triangle, no ring | Cycle |
 
 `Cycle` says the project is *in* a dependency cycle. A `Build` will not compile it; the Cycles button will
-(§8.1). The badge is there to keep a structural problem visible rather than to normalise it, since the real
-repair is to break the back edge in the source.
+(§8.1). It is there to keep a structural problem visible rather than to normalise it, since the real repair is
+to break the back edge in the source.
+
+**`Cycle` is a pre-run statement.** It holds while nothing has been said about the row in this run — after a
+Sync, or in a run that has not planned it. The moment the engine speaks about the row (started, finished,
+skipped, or planned for this run) the status glyph carries the engine's answer instead, and membership of the
+cycle moves to the badge in the dependency slot. Otherwise the two facts overwrite each other: with the glyph
+holding `Cycle` through `Skipped`, every cycle row looked identical after a `Build` to how it looked straight
+after a Sync — "this run skipped them" and "these are in a cycle" were indistinguishable — and a `Cycles` run
+would have hidden its own results the same way. Now the left slot answers *what happened in this run* and the
+right slot answers *where this project sits*, and neither hides the other.
+
+A member waiting its turn inside a running group reads `Queued`, not `Building`. Members are invoked one at a
+time and intermediate rounds are never published (§8.8), so the whole group sits in the engine's `Started`
+state for the group's whole life while exactly one member is really compiling. Painting them all as building
+made a 15-member group show fifteen spinners on the list and fifteen orbiting nodes on the graph while the
+counter chip said one — the screen claiming fifteen things were happening when one was. The row and the
+counter now answer that question the same way, from one rule.
 
 Two channels are **orthogonal** to status and must not be conflated with it: the will-build dot (§7.4) and the
 dependency-issue triangle (§8.3).
 
-Two cycle outcomes speak through that second channel rather than through status, because both are about how
-much a result can be trusted rather than about what the result was:
+Three cycle facts speak through that second channel rather than through status. The first two are about how
+much a result can be trusted rather than about what the result was; the third is the membership the glyph
+has just handed over:
 
 | Outcome | Slot | Tooltip |
 |---|---|---|
 | The group ran out of rounds and this member is green | the dependency triangle | `Cycle did not fully settle — output may be one generation stale` |
 | The group is held back by non-convergence memory | the orange cycle badge, same slot and same 12 px | `Cycle did not build — not retried until the source changes` |
+| The row is in a cycle and its glyph now shows a result | the same orange badge | `In a dependency cycle` |
 
 The first shares the triangle deliberately: it says the same sentence the dependency-issue triangle says —
 *this compiled, but something upstream is unresolved, do not fully trust the output* — and only the wording
 differs. The second may not: the row was never invoked at all, so "last successful output referenced" would be
 a claim about an output that does not exist. It therefore takes the badge and outranks anything stale left on
-the row, and it is drawn only while the row is skipped, the same gate the counter uses. Both also extend the
+the row, and it is drawn only while the row is skipped, the same gate the counter uses. The third is the
+weakest of them and loses to all three: it asserts nothing about the output, only about the graph, and it is
+drawn only when the status glyph has stopped carrying `Cycle` itself — the alternative would be saying the
+same thing twice on one row. All of them also extend the
 status glyph's own tooltip, since the slot collapses to nothing when it is empty and the glyph is the row's
 one always-visible surface.
 
@@ -2174,6 +2210,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Ready-set dispatch, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Cycle round stopping rule (converged / no progress / cap) | `Core/Planning/CycleRoundPolicy.cs` |
+| Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Dependency-issue propagation | `Core/Scheduling/DepIssueTracker.cs` |
 | Continue / RetryFailed set transformation | `Core/Scheduling/RetryPlanning.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |

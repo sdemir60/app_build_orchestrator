@@ -762,10 +762,12 @@ public sealed class RunCoordinator(
             // pre-skip edilir — scheduler'a Skipped tohumlanır (dependent'ları için resolved), dispatch
             // edilmezler. Rebuild HER ŞEYİ derler (tohum yok).
             //
-            // [cycles] Cycles modunda KAPSAM tersine döner: iş yalnız SCC'lerdir, cycle DIŞI her proje kapsam
-            // dışı sayılıp koşulsuz pre-skip edilir. SCC'ler ise iki kapıdan geçebilir — daha önce aynı bileşik
+            // [cycles] Cycles modunda KAPSAM daralır: iş yalnız SCC'ler VE onların transitif upstream'idir
+            // (gerekçe CycleRunScope'ta) — kapsam dışı her proje koşulsuz pre-skip edilir. Kapsam İÇİNDEKİLER
+            // sıradan incremental kurala tabidir; SCC'ler ayrıca iki kapıdan geçebilir — daha önce aynı bileşik
             // imzada yakınsamamış olmak, ya da grup olarak güncel olmak.
             bool cyclesRun = cmd.Mode == RunMode.Cycles;
+            var cycleScope = cyclesRun ? CycleRunScope.Of(runPlan.Plan) : null;
             if (cmd.Mode == RunMode.Build || cyclesRun)
             {
                 var seed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
@@ -816,20 +818,21 @@ public sealed class RunCoordinator(
                 foreach (var n in runPlan.Plan.Nodes)
                 {
                     if (seed.ContainsKey(n.Id)) continue;   // yakınsamama hafızası zaten karar verdi
-                    // KAPSAM kapısı: Cycles yalnız SCC üyelerini derler, Build yalnız SCC dışını. Kapsam dışı
-                    // kalanın akıbeti iki modda AYRIdır ve bilerek öyledir: Cycles modunda burada tohumlanıp
-                    // kendi gerekçesiyle raporlanır; Build modunda ise HİÇ tohumlanmaz, çünkü onu zaten
-                    // ReadySetScheduler kendi "in dependency cycle" gerekçesiyle pre-skip eder (tohumlamak o
-                    // gerekçeyi yutar ve iki farklı durum ekranda aynı görünürdü).
-                    if (n.InCycle != cyclesRun)
+                    // KAPSAM kapısı — iki modda AYRI ve bilerek öyle:
+                    // · Cycles: kapsam dışı kalan BURADA tohumlanır ve kendi gerekçesiyle raporlanır.
+                    // · Build:  SCC üyesi HİÇ tohumlanmaz, çünkü onu zaten ReadySetScheduler kendi
+                    //   "in dependency cycle" gerekçesiyle pre-skip eder — tohumlamak o gerekçeyi yutar ve
+                    //   iki farklı durum ekranda aynı görünürdü.
+                    if (cyclesRun && !cycleScope!.Contains(n.Id))
                     {
-                        if (!cyclesRun) continue;
                         seed[n.Id] = BuildResult.Skipped;
-                        upToDateSkips.Add((n.Id, "skipped — not in a dependency cycle", CycleUnconverged: false));
+                        upToDateSkips.Add((n.Id, "skipped — not needed by a dependency cycle", CycleUnconverged: false));
                         continue;
                     }
+                    if (!cyclesRun && n.InCycle) continue;
                     // Cycle üyesi buraya YALNIZ grup kapısından geçtiyse gelir: tekil WillBuild bir SCC üyesini
-                    // TEK BAŞINA temsil etmez (bileşik imza gruba aittir).
+                    // TEK BAŞINA temsil etmez (bileşik imza gruba aittir). Kapsamdaki upstream sıradan projedir
+                    // ve bu kapıya hiç uğramaz — kendi WillBuild'i onu temsil eder.
                     if (n.InCycle && !cycleUpToDate.Contains(n.Id)) continue;
                     if (n.WillBuild != false) continue;
                     seed[n.Id] = BuildResult.Skipped;
