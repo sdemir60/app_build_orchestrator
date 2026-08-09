@@ -153,6 +153,14 @@ public sealed class ReadySetScheduler
     /// <summary>
     /// Ready set'ten (bağımlılıkları çözülmüş, henüz dispatch/complete edilmemiş) build-order'da EN ÖNDE
     /// olanı verir; bloklu olanların üzerinden atlar (K2). Stop istendiyse veya ready hiçbir şey yoksa false.
+    ///
+    /// [cycle rounds] Bir grup (SCC) dispatch edildiğinde dönen id yalnızca grubun LİDERİDİR (build-order'daki
+    /// ilk dispatch edilebilir üye) — ama bu TEK çağrıda grubun TÜM üyeleri in-flight'a girer (aşağıda).
+    /// Çağıran bu yüzden ZORUNLUDUR: dispatch edilen id bir grup üyesiyse, <see cref="CycleGroups.MembersOf"/>
+    /// (id)'nin döndürdüğü üyelerden — çağrı ANINDA zaten <see cref="Completed"/>'te olanlar HARİÇ, çünkü
+    /// onlar bu çağrıda in-flight'a hiç girmedi — HER biri için <see cref="Complete"/>'i tam olarak BİR KEZ
+    /// çağırmalıdır; stop/cancellation yolları DAHİL. Aksi halde o üye(ler) sonsuza dek in-flight kalır ve
+    /// <see cref="IsDone"/> (InFlight == 0 şartı) hiçbir zaman true olmaz, run askıda kalır.
     /// </summary>
     public bool TryDispatch(out string projectId)
     {
@@ -173,14 +181,24 @@ public sealed class ReadySetScheduler
                         return true;
                     }
 
-                    // [cycle rounds] Grup: yalnız build-order'da İLK dispatch edilebilir üye verilir; TÜM
-                    // üyeler in-flight olur, böylece ikinci bir worker aynı gruba giremez. "Lider tamamlandı
-                    // ama üye kaldı" gibi bozuk bir durumda da kilitlenmez — kalan ilk üye devralır.
+                    // [cycle rounds] Grup: yalnız build-order'da İLK dispatch edilebilir üye (`head`) verilir;
+                    // TÜM üyeler tek seferde in-flight'a eklenir (aşağıda). `head` pratikte hiçbir zaman null
+                    // olamaz: `node` bu satıra kadar zaten yukarıdaki `:165` guard'ından geçmiştir (completed
+                    // değil, in-flight değil) ve `node.Id` kendi `members` listesinin bir üyesidir —
+                    // `FirstOrDefault` en azından `node`'u bulur. İkinci bir worker'ın AYNI gruba tekrar
+                    // girmesini engelleyen de bu satır DEĞİL, o `:165` guard'ıdır: grup bir kez dispatch
+                    // edildiğinde TÜM üyeleri in-flight'a girer, bu yüzden sonraki her TryDispatch çağrısında
+                    // grubun her üyesi outer loop'un başında `_inFlight.Contains(node.Id)` ile elenir ve bu
+                    // satıra hiç ulaşmaz.
                     string? head = members.FirstOrDefault(
                         m => !_completed.ContainsKey(m) && !_inFlight.Contains(m));
-                    if (head is null) continue;
+                    if (head is null) continue;   // savunmacı: yukarıdaki akıl yürütmeyle asla girilmez
                     foreach (string m in members)
-                        if (!_completed.ContainsKey(m)) _inFlight.Add(m);
+                        // _byId.ContainsKey: plan'da karşılığı olmayan bir üye (savunmacı — CycleGroups
+                        // böyle bir id'yi de listeye alabilir) in-flight'a hiç girmez; girerse asla
+                        // Complete edilemez (hiçbir node onu temsil etmez) ve run sonsuza dek askıda kalırdı —
+                        // IsResolvedLocked'ın (:255-258) aynı savunmacı deseni.
+                        if (!_completed.ContainsKey(m) && _byId.ContainsKey(m)) _inFlight.Add(m);
                     projectId = head;
                     return true;
                 }

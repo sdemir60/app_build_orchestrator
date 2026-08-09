@@ -246,6 +246,29 @@ public class ReadySetSchedulerTests
         Assert.False(scheduler.TryDispatch(out _));   // ikinci worker'a verilecek iş yok
     }
 
+    // Canlılık: grup dispatch edilir, TryDispatch'in hiç DÖNMEDİĞİ üyeler dahil TÜM üyeler Complete edilir
+    // (round döngüsünün — Task 6, bu class'ın kapsamı dışı — yapması gereken tam olarak budur) ⇒ run biter.
+    [Fact]
+    public void completing_every_group_member_including_ones_never_returned_finishes_the_run()
+    {
+        var plan = new BuildPlan(
+            [CycleNode("b", 0, "a"), CycleNode("a", 1, "b")], [new[] { "a", "b" }], "Debug");
+
+        var scheduler = new ReadySetScheduler(plan, CycleGroups.From(plan));
+        var groups = CycleGroups.From(plan);
+
+        Assert.True(scheduler.TryDispatch(out string head)); // yalnız "b" (lider) döner
+        Assert.Equal("b", head);
+        Assert.Equal(2, scheduler.InFlight);                 // ama "a" da in-flight'a girdi
+
+        foreach (string member in groups.MembersOf(head))     // "b" VE TryDispatch'in hiç vermediği "a"
+            scheduler.Complete(member, BuildResult.Succeeded);
+
+        Assert.Equal(0, scheduler.InFlight);
+        Assert.True(scheduler.IsDone);
+        Assert.Empty(scheduler.QueuedProjectIds);
+    }
+
     // Grup, DIŞ bağımlılığı terminal olmadan dispatch EDİLMEZ; grup-içi kenarlar hazırlığı bloklamaz.
     [Fact]
     public void group_waits_for_external_dependency_only()
