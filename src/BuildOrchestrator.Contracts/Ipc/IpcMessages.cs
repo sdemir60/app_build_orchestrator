@@ -60,9 +60,27 @@ public enum DependentMode { Safe, Fast }
 /// App tarafında aynı tablodan türetilir — Supervisor worker sayısını burada YENİDEN hesaplamaz.
 /// <c>null</c> (varsayılan) ⇒ perf modu bildirilmemiş: cap/priority'ye HİÇ dokunulmaz. Bu alan nullable +
 /// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
+/// <param name="BuildDependencyCycles">[Task 11] Kill switch: dairesel bağımlılık (SCC) oluşturan projeler
+/// derlensin mi. <c>true</c> ⇒ her SCC TEK iş kalemi olarak dispatch edilir ve üyeleri sıralı turlarla, iki
+/// ardışık temiz tura kadar derlenir; ayrıca will-build önizlemesi (<c>WillBuildEvaluator</c>) bu üyeleri
+/// sıradan projeler gibi değerlendirir. <c>false</c> ⇒ scheduler'a <c>CycleGroups</c> HİÇ verilmez ve üyeler
+/// bu özellik var olmadan önceki gibi <c>"in dependency cycle"</c> gerekçesiyle pre-skip edilir; önizleme de
+/// onları <c>WillBuild=false</c> gösterir. Kapalı hâl için yazılmış AYRI bir kod yolu YOKTUR — anahtar,
+/// zaten var olan yolu SEÇER.
+/// <para><b>Varsayılan neden <c>false</c> (ürün varsayılanı AÇIK olmasına rağmen):</b> bu iki değer aynı
+/// sorunun iki kopyası DEĞİL, iki ayrı karardır. Ürün varsayılanı — "kullanıcı hiç dokunmazsa ne olsun" —
+/// <c>UiState.BuildDependencyCycles</c>'tadır ve AÇIK'tır; App her koşuda bu alanı AÇIKÇA gönderir, dolayısıyla
+/// buradaki varsayılan kullanıcıya hiç görünmez. Buradaki varsayılan yalnız "alanı HİÇ göndermeyen bir
+/// gönderici ne alsın" sorusunu cevaplar (eski bir App, elle yazılmış bir komut, alanı bilmeyen bir test) ve
+/// bu record'un diğer tüm trailing-optional alanlarıyla (<paramref name="UseWorktree"/>,
+/// <paramref name="LayerPatterns"/>, <paramref name="PerfMode"/>) AYNI kurala uyar: <b>varsayılan, alan
+/// eklenmeden ÖNCEKİ davranışı korur.</b> Yanlış tahminin bedeli de simetrik değildir — unutulmuş bir alanın
+/// sessizce tur döngüsünü, tur olaylarını ve yakınsamama hafızası yazımını açması, sessizce bugünkü davranışta
+/// kalmasından çok daha geniş etkilidir. İkisini "tutarlılık" adına EŞİTLEMEYİN.</para></param>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
-    IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null) : IpcCommand;
+    IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
+    bool BuildDependencyCycles = false) : IpcCommand;
 
 /// <summary>
 /// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar
@@ -95,8 +113,17 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// <param name="Configuration">Will-build pass'inin imza terimine giren configuration (Debug/Release) — config
 /// değişimi TÜM projeleri dirty yapar (bkz. <c>BuildSignature.Compute</c> "cfg=" terimi), bu yüzden Sync'in
 /// önizlemesi ancak doğru configuration ile anlamlıdır.</param>
+/// <param name="BuildDependencyCycles">[Task 11] <see cref="StartRunCommand.BuildDependencyCycles"/> ile AYNI
+/// anlam ve AYNI varsayılan gerekçesi (orada yazılıdır, burada TEKRARLANMAZ).
+/// <para><b>Neden Sync de taşır:</b> will-build önizlemesinin İKİ yayıncısı vardır — koşu başındaki
+/// <see cref="BuildPreviewEvent"/> (startRun'ın planlamasından) ve Idle'daki will-dot'lar (BU komutun
+/// analizinden). Kullanıcı "derleyeyim mi" kararını çoğunlukla İKİNCİSİNE bakarak verir. Bayrak yalnız
+/// startRun'da taşınsaydı Idle'daki noktalar cycle üyeleri için "derlenmeyecek" demeye devam eder, koşu
+/// başlayınca aynı projeler derlenirdi — bu görevin kapatmak için var olduğu ayrışmanın, bir ekran öncesine
+/// taşınmış hâli.</para></param>
 public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
-    IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug") : IpcCommand;
+    IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug",
+    bool BuildDependencyCycles = false) : IpcCommand;
 
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;

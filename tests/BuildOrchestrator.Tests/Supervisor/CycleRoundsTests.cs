@@ -64,6 +64,131 @@ public class CycleRoundsTests
         store.Upsert(new BuildState(Id(name), signature, "c0", BuildResult.Succeeded,
             DateTimeOffset.UtcNow, "main", LastDurationMs: 42));
 
+    // ---------------------------------------------------------------- 0) kill switch [Task 11]
+
+    /// <summary>
+    /// [Task 11] Anahtar KAPALIYKEN davranış, bu özellik HİÇ VAR OLMAMIŞ gibidir: üyeler tek bir tur bile
+    /// koşmadan, ORİJİNAL <c>"in dependency cycle"</c> gerekçesiyle pre-skip edilir ve tur göstergesi hiç
+    /// yayılmaz. Kapalı hâl için yazılmış AYRI bir kod yolu YOKTUR — <c>RunCoordinator</c> scheduler'a
+    /// <c>CycleGroups</c> yerine <c>null</c> geçer ve <see cref="Core.Scheduling.ReadySetScheduler"/>'ın
+    /// bugüne dek var olan pre-skip dalı devreye girer.
+    /// </summary>
+    [Fact]
+    public async Task the_switch_off_pre_skips_every_member_with_the_original_reason_and_runs_no_rounds()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Build, buildCycles: false), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(rec.Calls);                                    // MSBuild HİÇ çağrılmadı — tur YOK
+        var events = h.Events;
+        Assert.Empty(events.OfType<CycleRoundStartedEvent>());       // tur göstergesi de YOK
+        Assert.Empty(events.OfType<ProjectSucceededEvent>());
+        Assert.Empty(events.OfType<ProjectFailedEvent>());
+
+        var skipped = events.OfType<ProjectSkippedEvent>().ToList();
+        Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
+        // Gerekçe METNİ özelliğin öncesiyle BİREBİR aynı olmalı — App'in rozeti/sayaçları bu metne göre
+        // ayrışmasın diye (ve "neredeyse aynı" bir kapalı hâl, kill switch olmanın anlamını yitirir).
+        Assert.All(skipped, e => Assert.Equal("in dependency cycle", e.Reason));
+        Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
+
+        var done = Assert.IsType<RunCompletedEvent>(events[^1]);
+        Assert.Equal(0, done.Succeeded);
+        Assert.Equal(2, done.Skipped);
+        Assert.Equal(0, done.Queued);
+    }
+
+    /// <summary>
+    /// [Task 11] KAPALI hâlin en ince kenarı: daha önce anahtar AÇIKKEN koşmuş bir run, bu SCC'yi
+    /// "yakınsamıyor" diye hatırlamış olabilir. O hafıza kapalıyken de okunsaydı üyeler
+    /// <c>"cycle did not converge at this signature"</c> gerekçesiyle seed'lenir, ve
+    /// <see cref="Core.Scheduling.ReadySetScheduler"/>'ın pre-skip dalı (<c>!_completed.ContainsKey</c> guard'ı)
+    /// orijinal gerekçeyi YUTARDI — kapalı hâl "neredeyse aynı" olurdu. Hafıza okuması bu yüzden anahtarın
+    /// KENDİSİYLE kapılıdır.
+    /// </summary>
+    [Fact]
+    public async Task the_switch_off_ignores_non_convergence_memory_left_behind_by_an_earlier_run()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
+
+            // Run 1: anahtar AÇIK → turlar koşar, yakınsamaz, hafıza "sig" ile YAZILIR.
+            using var h = new Harness(plan, invoker, stateStore: store);
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature); // sanity: hafıza gerçekten var
+
+            // Run 2: anahtar KAPALI, AYNI imza. Hafıza duruyor ama okunmamalı.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2", buildCycles: false), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var run2Skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
+            Assert.Equal([Id("A"), Id("B")], run2Skips.Select(e => e.ProjectId));
+            Assert.All(run2Skips, e => Assert.Equal("in dependency cycle", e.Reason));
+            Assert.All(run2Skips, e => Assert.False(e.CycleUnconverged));
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>[Task 11] Anahtar AÇIKKEN önizleme ile motor UYUŞUR: bileşik imzası TEMİZ (state'teki
+    /// <c>BuiltSignature</c> ile birebir) bir SCC — yani <c>WillBuild == false</c> gelen üyeler — artık
+    /// gerçekten pre-skip edilir ve sıradan bir "güncel" skip'iyle AYNI gerekçeyi taşır.
+    /// <para><b>Neden gerekli:</b> önizleme <c>buildCycles</c> ile hesaplanır hâle gelince, yakınsamış bir
+    /// gruptan sonraki İKİNCİ Build'de will-dot gri (<c>WillBuild=false</c>) olur. Motor bunu görmezden gelip
+    /// grubu her koşuda yeniden derleseydi, bu görevin kapatmaya çalıştığı ayrışmanın TERSİ ortaya çıkardı:
+    /// nokta "derlenmeyecek" der, proje derlenirdi.</para>
+    /// <para>Karar GRUP düzeyindedir (<c>All</c>): bileşik imza üyeler arasında ORTAK olduğu için ya hepsi
+    /// temizdir ya hiçbiri; kısmi bir durumda (ör. bir üyenin state'i hiç yok) grubun HİÇBİR üyesi pre-skip
+    /// edilmez — yarısı Skipped tohumlanmış bir grubu dispatch etmek bozuk olurdu.</para></summary>
+    [Fact]
+    public async Task the_switch_on_pre_skips_a_cycle_whose_composite_signature_is_clean()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        // Önizlemenin (IncrementalPlanner) ürettiği sonuç plan'a BAĞLIDIR — burada doğrudan enjekte edilir:
+        // bileşik imza temiz ⇒ her iki üye de WillBuild=false.
+        var plan = CyclePlanOf(["A", "B"],
+            Node("A", deps: ["B"], inCycle: true, willBuild: false),
+            Node("B", deps: ["A"], inCycle: true, willBuild: false));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Build), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(rec.Calls);   // temiz grup: tek tur bile koşmaz
+        var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
+        Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
+        // Sıradan "güncel" skip'iyle AYNI gerekçe — bu bir döngü ARIZASI değil, incremental'in normal işleyişi.
+        Assert.All(skipped, e => Assert.Equal("skipped — up to date", e.Reason));
+        Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
+    }
+
+    [Fact] // Kontrol grubu: üyelerden BİRİ bile temiz değilse grup pre-skip EDİLMEZ (yarım tohumlama YOK).
+    public async Task the_switch_on_still_builds_a_cycle_when_only_some_members_look_clean()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        var plan = CyclePlanOf(["A", "B"],
+            Node("A", deps: ["B"], inCycle: true, willBuild: false),
+            Node("B", deps: ["A"], inCycle: true, willBuild: true));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Build), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // grup TAMAMEN derlenir
+        Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
+    }
+
     // ---------------------------------------------------------------- 1) iki yeşil tur
 
     [Fact]

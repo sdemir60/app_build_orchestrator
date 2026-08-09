@@ -64,6 +64,46 @@ public class UiStateStoreTests
         Assert.True(reloaded.Autostart);
     }
 
+    /// <summary>[Task 11] Kill switch'in KALICI yüzeyi. Üç iddia:
+    /// (a) ÜRÜN varsayılanı AÇIK — hiç dokunulmamış bir <see cref="UiState"/> döngüleri derler;
+    /// (b) kapatma round-trip'ten sağ çıkar (aksi halde anahtar her açılışta kendiliğinden geri açılırdı);
+    /// (c) alanı hiç TAŞIMAYAN (bu sürümden önce yazılmış) bir ui-state.json AÇIK okunur — mevcut kullanıcılar
+    /// yükseltmede özelliği kapalı bulmaz. (c) sessizce bozulabilir: alan <c>= true</c> initializer'ı yerine
+    /// düz <c>bool</c> olarak yazılırsa (a) ve (b) yeşil kalır ama (c) kırmızıya döner.</summary>
+    [Fact]
+    public void Build_dependency_cycles_defaults_on_and_survives_a_store_round_trip()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+
+        Assert.True(new UiState().BuildDependencyCycles);        // (a) ürün varsayılanı: AÇIK
+
+        var store = new JsonUiStateStore(path);
+        var state = store.Load();
+        Assert.True(state.BuildDependencyCycles);                // dosya YOKken de açık
+        state.BuildDependencyCycles = false;
+        state.ColPct = 61;
+        store.Save(state);
+
+        var reloaded = new JsonUiStateStore(path).Load();        // (b) kapatma kalıcı
+        Assert.False(reloaded.BuildDependencyCycles);
+        Assert.Equal(61, reloaded.ColPct);                       // komşu alanlar bozulmadı
+    }
+
+    [Fact] // (c) Alanı hiç taşımayan ESKİ bir ui-state.json: eksik alan → ürün varsayılanı (AÇIK).
+    public void A_ui_state_written_before_the_switch_existed_loads_with_cycles_enabled()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path, """{ "ColPct": 61, "Branch": "feature/x", "UseWorktree": true }""");
+
+        var reloaded = new JsonUiStateStore(path).Load();
+
+        Assert.True(reloaded.BuildDependencyCycles);
+        Assert.Equal(61, reloaded.ColPct);       // non-vacuous: dosya GERÇEKTEN okundu (varsayılana düşmedi)
+        Assert.Equal("feature/x", reloaded.Branch);
+    }
+
     [Fact] // [D6 fold] PerfMode bool→string? göçü: diskteki eski bool token'ı TÜM Load'u devirmemeli (startup wipe YOK).
     public void A_legacy_boolean_perf_mode_on_disk_is_tolerated_and_the_rest_survives()
     {

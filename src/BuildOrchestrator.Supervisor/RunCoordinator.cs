@@ -758,41 +758,70 @@ public sealed class RunCoordinator(
                 depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
                 stoppedFailedIds = _stoppedFailedIds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase); // [Task-13] taze run → taze birikim
             }
-            // [Task 19] Yalnız Build modunda: planlayıcının hesapladığı WillBuild==false (ve cycle DIŞI) projeler
-            // "up to date" olarak pre-skip edilir — scheduler'a Skipped tohumlanır (dependent'ları için resolved),
-            // dispatch edilmezler. Rebuild HER ŞEYİ derler (tohum yok, mevcut davranış). Cycle üyeleri seed'e
-            // GİRMEZ: [cycle rounds] grup varsa turlarla derlenirler (WillBuild onları temsil etmez — bileşik
-            // imza Task 7'nin işidir), grup yoksa scheduler ctor'u onları "in dependency cycle" reason'ıyla
-            // ayrı pre-skip eder (reason karışmaz).
+            // [Task 19] Yalnız Build modunda: planlayıcının hesapladığı WillBuild==false projeler "up to date"
+            // olarak pre-skip edilir — scheduler'a Skipped tohumlanır (dependent'ları için resolved), dispatch
+            // edilmezler. Rebuild HER ŞEYİ derler (tohum yok, mevcut davranış).
+            // [Task 11] Cycle üyeleri için karar TEKİL değil GRUP düzeyindedir ve kill switch'e bağlıdır:
+            // anahtar kapalıysa hiç tohumlanmazlar (scheduler ctor'u onları "in dependency cycle" reason'ıyla
+            // ayrı pre-skip eder — reason karışmaz); açıksa ya TÜM grup güncel olduğu için "skipped — up to
+            // date" ile, ya da grup daha önce bu imzada yakınsamadığı için kendi reason'ıyla tohumlanır.
             if (cmd.Mode == RunMode.Build)
             {
                 var seed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
+                // [Task 11] Grup düzeyinde "güncel" bulunan SCC üyeleri — aşağıdaki tek pre-skip döngüsünün
+                // cycle üyelerine açtığı KAPIDIR. Anahtar kapalıyken boş kalır (kapı kapalı).
+                var cycleUpToDate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                // [Task 11] Anahtar KAPALIYKEN bu bloğun SCC'ye dokunan iki parçası da hiç çalışmaz: kapalı
+                // hâlde cycle üyelerini seed'lemek, ReadySetScheduler'ın pre-skip dalını (`!_completed
+                // .ContainsKey`) susturur ve orijinal "in dependency cycle" gerekçesini YUTARDI. Anahtar,
+                // kapalıyken bu özelliğin HİÇ VAR OLMADIĞI hâli seçmelidir — "neredeyse" değil.
+                if (cmd.BuildDependencyCycles)
+                {
+                    // [Task 7] Daha önce (bir önceki Build'de) yakınsAMAMIŞ bir SCC, bileşik imzası HÂLÂ o
+                    // yakınsamama anındakiyle eşleşiyorsa bir daha tur harcamaz: TÜM üyeleri, up-to-date
+                    // skip'iyle AYNI mekanizmayla (seed + aşağıdaki DecideSkipped döngüsü) pre-skip edilir —
+                    // grup CycleGroups'a hiç dispatch edilmeden. Kaynak değiştiyse (imza farklı) bu döngü
+                    // hiçbir şey eklemez, grup normal turlarla YENİDEN denenir. Yalnız TÜM üyeler eşzamanlı
+                    // hafızalıysa (All) pre-skip edilir — savunmacı: SCC üyeliği plan değişince
+                    // genişleyebilir/daralabilir.
+                    if (stateStore is not null && runPlan.Incremental is { } inc)
+                    {
+                        var cycleState = stateStore.Load();
+                        foreach (var cycle in runPlan.Plan.Cycles)
+                        {
+                            if (cycle.Count == 0 || !inc.SignatureById.TryGetValue(cycle[0], out var signature)) continue;
+                            if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
+                            foreach (string id in cycle)
+                            {
+                                seed[id] = BuildResult.Skipped;
+                                upToDateSkips.Add((id, "cycle did not converge at this signature", CycleUnconverged: true));
+                            }
+                        }
+                    }
+                    // [Task 11] SCC'ler de incremental olur. Anahtar açıkken planlayıcı üyelere GERÇEK bir
+                    // WillBuild verir (bileşik imza — tüm üyeler için ORTAK), dolayısıyla "hepsi false" ⇒ grup
+                    // gerçekten güncel demektir ve derlenmemelidir. Bu kapı olmasaydı önizleme ile motor,
+                    // yakınsamış bir gruptan SONRAKİ her Build'de ters yönde ayrışırdı: nokta gri
+                    // ("derlenmeyecek") görünür, grup yine baştan derlenirdi.
+                    // Karar GRUP düzeyindedir (All): kısmi bir durumda (ör. bir üyenin state'i hiç yok) hiçbir
+                    // üye tohumlanmaz — yarısı Skipped tohumlanmış bir grubu dispatch etmek bozuk olurdu.
+                    var willBuildById = runPlan.Plan.Nodes.ToDictionary(
+                        n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
+                    foreach (var cycle in runPlan.Plan.Cycles)
+                    {
+                        if (cycle.Count == 0) continue;
+                        if (!cycle.All(id => willBuildById.TryGetValue(id, out bool? wb) && wb == false)) continue;
+                        foreach (string id in cycle) cycleUpToDate.Add(id);
+                    }
+                }
+                // Cycle üyeleri bu döngüye YALNIZ yukarıdaki grup kapısından geçtiyse girer: tekil WillBuild
+                // bir SCC üyesini TEK BAŞINA temsil etmez (bileşik imza gruba aittir).
                 foreach (var n in runPlan.Plan.Nodes)
-                    if (n.WillBuild == false && !n.InCycle)
+                    if (n.WillBuild == false && (!n.InCycle || cycleUpToDate.Contains(n.Id)) && !seed.ContainsKey(n.Id))
                     {
                         seed[n.Id] = BuildResult.Skipped;
                         upToDateSkips.Add((n.Id, "skipped — up to date", CycleUnconverged: false));
                     }
-                // [Task 7] Daha önce (bir önceki Build'de) yakınsAMAMIŞ bir SCC, bileşik imzası HÂLÂ o
-                // yakınsamama anındakiyle eşleşiyorsa bir daha tur harcamaz: TÜM üyeleri, up-to-date skip'iyle
-                // AYNI mekanizmayla (seed + aşağıdaki DecideSkipped döngüsü) pre-skip edilir — grup CycleGroups'a
-                // hiç dispatch edilmeden. Kaynak değiştiyse (imza farklı) bu döngü hiçbir şey eklemez, grup
-                // normal turlarla YENİDEN denenir. Yalnız TÜM üyeler eşzamanlı hafızalıysa (All) pre-skip
-                // edilir — savunmacı: SCC üyeliği plan değişince genişleyebilir/daralabilir.
-                if (stateStore is not null && runPlan.Incremental is { } inc)
-                {
-                    var cycleState = stateStore.Load();
-                    foreach (var cycle in runPlan.Plan.Cycles)
-                    {
-                        if (cycle.Count == 0 || !inc.SignatureById.TryGetValue(cycle[0], out var signature)) continue;
-                        if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
-                        foreach (string id in cycle)
-                        {
-                            seed[id] = BuildResult.Skipped;
-                            upToDateSkips.Add((id, "cycle did not converge at this signature", CycleUnconverged: true));
-                        }
-                    }
-                }
                 if (seed.Count > 0) schedulerSeed = new RunSnapshot(seed, [], 0);
             }
             elapsedAtStart = 0;
@@ -803,8 +832,11 @@ public sealed class RunCoordinator(
         // context'ine (tur döngüsü) AYNI örnek verilir — ikisi ayrı From çağrısıyla kurulsaydı üye sırası
         // sessizce ayrışabilirdi. Plan'da hiç SCC yoksa null geçilir: scheduler o zaman bugünkü davranışını
         // (InCycle düğümleri pre-skip) birebir korur ve tur döngüsü hiç devreye girmez.
-        // [Task 11] Kill switch buraya bağlanacak: kapalıyken yine null geçilir, kapalı hâl için AYRI kod yok.
-        var groups = CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles ? withCycles : null;
+        // [Task 11] Kill switch BURADADIR: kapalıyken harita hiç KURULMAZ ve scheduler'a null gider — yani
+        // kapalı hâl için yazılmış ayrı bir kod yolu yoktur, anahtar "SCC yok" hâliyle BİREBİR aynı dalı seçer.
+        var groups = cmd.BuildDependencyCycles && CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles
+            ? withCycles
+            : null;
         var scheduler = schedulerSeed is null
             ? new ReadySetScheduler(runPlan.Plan, groups)
             : new ReadySetScheduler(runPlan.Plan, schedulerSeed, groups);

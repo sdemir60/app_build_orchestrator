@@ -430,6 +430,37 @@ public class RunViewModelStateTests
         Assert.Same(layers, sent.LayerPatterns);
     }
 
+    /// <summary>[Task 11] Kill switch HER İKİ komutta da gider — çünkü will-build önizlemesinin iki yayıncısı
+    /// vardır: koşu başındaki <c>buildPreview</c> (startRun'ın planlamasından) ve Idle'daki will-dot'lar
+    /// (syncWorkspace'in analizinden). Biri bayrağı taşımasaydı önizleme ile motor o yüzeyde ayrışırdı.
+    /// <para>Bayrak VM'de TEK yerde durur (<see cref="RunViewModel.BuildDependencyCycles"/>); iki komut da
+    /// oradan okur, ikinci bir "döngüleri derle" kavramı İCAT EDİLMEZ.</para></summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Both_the_build_and_the_sync_command_carry_the_build_dependency_cycles_switch(bool on)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1")
+            { RootPath = @"D:\repo", BuildDependencyCycles = on };
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.BuildCommand.ExecuteAsync(null);
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Equal(on, Assert.Single(sent.OfType<StartRunCommand>()).BuildDependencyCycles);
+        Assert.Equal(on, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).BuildDependencyCycles);
+    }
+
+    [Fact] // Varsayılan: VM hiç dokunulmamışken anahtar AÇIK (ürün kararı — UiState varsayılanıyla AYNI değer).
+    public async Task A_fresh_view_model_has_build_dependency_cycles_on()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1");
+        Assert.True(vm.BuildDependencyCycles);
+    }
+
     [Fact]
     public async Task Retry_failed_command_sends_RunMode_RetryFailed_and_is_enabled_only_when_a_failure_exists()
     {

@@ -33,7 +33,8 @@ public partial class SettingsDialog : UserControl
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
-        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath);
+        // [Task 11] Anahtarın CANLI değeri taslağa kopyalanır — diyalog kendi varsayılanını İCAT ETMEZ.
+        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles);
         DataContext = _draft;
         UpdateRepoLabel();
         Visibility = Visibility.Visible;

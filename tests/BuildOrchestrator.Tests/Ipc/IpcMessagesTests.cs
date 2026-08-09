@@ -198,6 +198,46 @@ public class IpcMessagesTests
         Assert.Equal(unconverged, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    // [Task 11] Kill switch'in KOMUT yüzeyi. İki ayrı komut taşır çünkü önizlemenin İKİ yayıncısı vardır:
+    // startRun (koşu başındaki BuildPreviewEvent) ve syncWorkspace (Idle'daki will-dot'lar). İkisi de aynı
+    // will-build hesabına iner, dolayısıyla ikisi de aynı bayrağı taşımazsa önizleme ile motor ayrışır.
+    //
+    // Sözleşme varsayılanı FALSE'tur ve bu, ÜRÜN varsayılanı (UiState.BuildDependencyCycles = true) ile
+    // BİLEREK farklıdır — ikisi farklı soruları cevaplar:
+    //   · UiState varsayılanı = "kullanıcı hiç dokunmazsa ne olsun" (ürün kararı: AÇIK).
+    //   · Sözleşme varsayılanı = "alanı HİÇ göndermeyen bir gönderici ne alsın" (eski App, elle yazılmış
+    //     komut, alanı bilmeyen bir test).
+    // İkincisinde bu record'un DİĞER tüm trailing-optional alanlarıyla aynı kural geçerlidir (UseWorktree
+    // false, LayerPatterns null, PerfMode null): varsayılan, alan EKLENMEDEN ÖNCEKİ davranışı korur. App her
+    // zaman açıkça gönderir, bu yüzden ürün varsayılanı bundan ETKİLENMEZ. İkisini "tutarlılık" adına
+    // eşitlemeyin — bunlar aynı değerin iki kopyası değil, iki ayrı karardır.
+    [Fact]
+    public void StartRunCommand_buildDependencyCycles_defaults_to_false_and_roundtrips_when_set()
+    {
+        const string legacyLine =
+            """{"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}""";
+        var legacy = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(legacyLine, IpcJson.Options));
+        Assert.False(legacy.BuildDependencyCycles);
+
+        IpcCommand on = new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 4, BuildDependencyCycles: true);
+        string json = JsonSerializer.Serialize(on, IpcJson.Options);
+        Assert.Contains("\"buildDependencyCycles\":true", json);
+        Assert.Equal(on, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
+    [Fact]
+    public void SyncWorkspaceCommand_buildDependencyCycles_defaults_to_false_and_roundtrips_when_set()
+    {
+        const string legacyLine = """{"type":"syncWorkspace","rootPath":"D:\\repo","branch":"main"}""";
+        var legacy = Assert.IsType<SyncWorkspaceCommand>(JsonSerializer.Deserialize<IpcCommand>(legacyLine, IpcJson.Options));
+        Assert.False(legacy.BuildDependencyCycles);
+
+        IpcCommand on = new SyncWorkspaceCommand(@"D:\repo", "main", BuildDependencyCycles: true);
+        string json = JsonSerializer.Serialize(on, IpcJson.Options);
+        Assert.Contains("\"buildDependencyCycles\":true", json);
+        Assert.Equal(on, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
     [Fact]
     public void RunCompletedEvent_depIssueCount_roundtrips()
     {

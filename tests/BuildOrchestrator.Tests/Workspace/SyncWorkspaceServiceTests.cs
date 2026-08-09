@@ -214,7 +214,7 @@ public class SyncWorkspaceServiceTests
             .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
 
         var (_, signatures) = IncrementalRunBinder.Bind(plan, evaluatedById, root, head, tracked, dirty,
-            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), inPlace: true, DependentMode.Safe);
+            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), inPlace: true, buildCycles: false, mode: DependentMode.Safe);
 
         var store = new BuildStateStore(cacheRoot);
         foreach (var (projectId, signature) in signatures)

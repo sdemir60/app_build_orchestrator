@@ -40,6 +40,10 @@ public static class IncrementalRunBinder
     /// csproj yolu) → <see cref="EvaluatedProject"/>; <paramref name="dirtyRepoRelativePaths"/> git'ten gelen
     /// (repo-relative, `/`) working-tree dirty yolları. Dönen imza haritası yalnız <b>non-null</b> imzaları içerir
     /// (hollow/never-committed projeler persist edilmez).
+    /// <para>[Task 11] <paramref name="buildCycles"/> kill switch'i buradan geçirilir — bkz.
+    /// <see cref="IncrementalPlanner.ComputeWillBuild"/>. Varsayılanı YOKTUR: bu metodun İKİ çağıranı vardır
+    /// (Supervisor'ın run planlayıcısı ve Sync'in analizi) ve ikisi de önizleme yayınlar; biri değeri sessizce
+    /// atlarsa o yüzeydeki will-dot'lar motorla ayrışır.</para>
     /// </summary>
     public static (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) Bind(
         BuildPlan plan,
@@ -50,6 +54,7 @@ public static class IncrementalRunBinder
         IReadOnlyList<string> dirtyRepoRelativePaths,
         IReadOnlyDictionary<string, BuildState> state,
         bool inPlace,
+        bool buildCycles,
         DependentMode mode)
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -80,7 +85,8 @@ public static class IncrementalRunBinder
         }
 
         var (boundPlan, signatures) = IncrementalPlanner.ComputeWillBuildWithSignatures(
-            plan, headCommit, DirtyFilesForNode, File.ReadAllText, CommittedFingerprintForNode, state, inPlace, mode);
+            plan, headCommit, DirtyFilesForNode, File.ReadAllText, CommittedFingerprintForNode, state, inPlace,
+            buildCycles, mode);
 
         var nonNull = signatures
             .Where(kv => kv.Value is not null)

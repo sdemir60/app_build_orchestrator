@@ -148,7 +148,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 
         var (dirtyPlan, _) = IncrementalRunBinder.Bind(
             plan, evaluatedById, OsysRoot, head, tracked, [dirtyRel],
-            stateAfterRun1, inPlace: true, DependentMode.Safe);
+            stateAfterRun1, inPlace: true, buildCycles: false, mode: DependentMode.Safe);
         var dirtyById = dirtyPlan.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
 
         var transitiveDependents = TransitiveDependents(targetNode.Id, dependentsOf);

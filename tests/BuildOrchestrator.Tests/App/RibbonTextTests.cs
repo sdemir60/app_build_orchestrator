@@ -227,9 +227,9 @@ public class RibbonTextTests
         Assert.Equal("succeeded", line.Glyph);
     }
 
-    // [cycle rounds/Task 8 review] A memorized non-convergent SCC previews as WillBuild=false (cycle members
-    // never enter the preview's willBuild pass — buildCycles:false at both IncrementalPlanner call sites,
-    // out of scope here), so AllClean can be true with a stuck cycle silently pre-skipped underneath it: this
+    // [cycle rounds/Task 8 review] The preview decides from the signature alone and cannot see that a group was
+    // memorized as non-convergent (see the KNOWN DIVERGENCE note on WillBuildEvaluator — deliberately left open
+    // in [Task 11]), so AllClean can be true with a stuck cycle silently pre-skipped underneath it: this
     // branch used to return a FIXED string that never read RunCounters at all, which is an even stronger false-
     // green than "Completed — … skipped …" (it implies the cycle doesn't exist). Both directions pinned exactly:
     // the unqualified string is untouched byte-for-byte when there is nothing stuck (this path is heavily

@@ -133,10 +133,10 @@ public static class RibbonText
                     "Brush.TextDim", null);
 
             case AppPhase.Done:
-                // [cycle rounds/Task 8 review] Bir SCC'nin preview'ı (WillBuild) döngü üyelerini HİÇ bilmez
-                // (IncrementalPlanner'ın buildCycles:false çağrıları — kill-switch görevine ayrı kayıtlı, burada
-                // DOKUNULMAZ), yani kalıcı kırık (yakınsamayan) bir grup pre-skip edilse bile AllClean true
-                // olabilir: bu dal RunCounters'ı HİÇ okumadan sabit metin döndürüyordu — "Completed — … skipped …"
+                // [cycle rounds/Task 8 review] Kalıcı kırık (yakınsamayan) bir grup pre-skip edilse bile AllClean
+                // true olabilir: önizleme (WillBuild) yalnız İMZAYA bakar, "bu grup daha önce yakınsamadı"
+                // bilgisini görmez — bkz. WillBuildEvaluator tip özetindeki BİLİNEN AYRIŞMA notu ([Task 11]'de
+                // bilerek açık bırakıldı). Bu dal RunCounters'ı HİÇ okumadan sabit metin döndürüyordu — "Completed — … skipped …"
                 // dalından bile daha güçlü bir false-green (döngünün VAR OLMADIĞINI ima eder). AYNI StuckCyclesSuffix
                 // (kopya YASAK) burada da eklenir; StuckCycles==0 iken ek boş kalır, metin BYTE-FOR-BYTE aynı kalır.
                 if (allClean)

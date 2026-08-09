@@ -57,8 +57,14 @@ public class RunCoordinatorTests
 
     internal static Dictionary<string, IReadOnlyList<SolutionRef>> EmptyRefs() => new(StringComparer.OrdinalIgnoreCase);
 
-    internal static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1") =>
-        new(runId, mode, PlanRoot, "Debug", parallelism);
+    /// <summary>Koordinatörün gördüğü komut. <paramref name="buildCycles"/> varsayılanı <c>true</c>'dur:
+    /// bu yardımcı GÜNCEL bir App'in gönderdiği komutu temsil eder ve ürün varsayılanı (Task 11 kill switch)
+    /// AÇIK'tır. Bu, <see cref="StartRunCommand.BuildDependencyCycles"/>'ın SÖZLEŞME varsayılanından (false =
+    /// "alanı hiç göndermeyen bir gönderici, alan eklenmeden önceki davranışı alır") bilerek ayrıdır —
+    /// gerekçesi alanın bildirildiği yerdedir, sözleşme varsayılanı ayrıca <c>IpcMessagesTests</c>'te pinlidir.</summary>
+    internal static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1",
+        bool buildCycles = true) =>
+        new(runId, mode, PlanRoot, "Debug", parallelism, BuildDependencyCycles: buildCycles);
 
     internal static MsBuildInvokeResult Ok() => new(ExitCode: 0, DurationMs: 7, TimedOut: false, Killed: false);
     internal static MsBuildInvokeResult Exit(int code) => new(code, DurationMs: 9, TimedOut: false, Killed: false);
@@ -897,7 +903,13 @@ public class RunCoordinatorTests
         var ipcReader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await ipcReader.ReadAsync<IpcEvent>().WaitAsync(Limit));
 
-        await ipcWriter.WriteAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 2));
+        // [Task 11] Bu dosyadaki TEK elle kurulmuş StartRunCommand budur (diğerleri Start yardımcısından geçer)
+        // ve bayrağı AÇIKÇA taşımak ZORUNDADIR: sözleşme varsayılanı false'tur (= alan eklenmeden önceki
+        // davranış), yani alansız gönderilseydi X↔Y grubu pre-skip edilir ve aşağıdaki tur iddiaları düşerdi.
+        // Testin konusu turların GERÇEK process üzerinden kablajıdır, dolayısıyla güncel bir App'in gönderdiği
+        // komut kurulur — anahtarın ürün varsayılanı AÇIK'tır.
+        await ipcWriter.WriteAsync(
+            new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 2, BuildDependencyCycles: true));
         var received = new List<IpcEvent>();
         while (true)
         {
