@@ -903,9 +903,10 @@ public class RunCoordinatorTests
         var ipcReader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await ipcReader.ReadAsync<IpcEvent>().WaitAsync(Limit));
 
-        // [Task 11] Bu dosyadaki TEK elle kurulmuş StartRunCommand budur (diğerleri Start yardımcısından geçer)
-        // ve bayrağı AÇIKÇA taşımak ZORUNDADIR: sözleşme varsayılanı false'tur (= alan eklenmeden önceki
-        // davranış), yani alansız gönderilseydi X↔Y grubu pre-skip edilir ve aşağıdaki tur iddiaları düşerdi.
+        // [Task 11] Bu dosyada elle kurulmuş başka StartRunCommand'lar da var, ama planı SCC TAŞIYAN tek çağrı
+        // budur — dolayısıyla bayrağın konumunu gerçekten gören de yalnız o. Bayrağı AÇIKÇA taşımak
+        // ZORUNDADIR: sözleşme varsayılanı false'tur (= alan eklenmeden önceki davranış), yani alansız
+        // gönderilseydi X↔Y grubu pre-skip edilir ve aşağıdaki tur iddiaları düşerdi.
         // Testin konusu turların GERÇEK process üzerinden kablajıdır, dolayısıyla güncel bir App'in gönderdiği
         // komut kurulur — anahtarın ürün varsayılanı AÇIK'tır.
         await ipcWriter.WriteAsync(

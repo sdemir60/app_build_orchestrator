@@ -58,11 +58,15 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// Kayıtlı katman YOKSA (null ya da boş) taslak <see cref="LayerDefaults"/> ile DOLU kurulur — araç
     /// paylaşıldığında kimse katmanları elle yazmasın. Bu YALNIZ taslaktır: Save'e basılmadıkça ne
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.</summary>
-    /// <param name="buildDependencyCycles">[Task 11] Canlı anahtarın o anki değeri. Varsayılanı <c>true</c>
-    /// DEĞİLDİR ve olmamalıdır: ürün varsayılanı <c>UiState.BuildDependencyCycles</c>'ta TEK yerde durur,
-    /// buraya bir kez daha yazmak onu ikinci bir doğruluk kaynağı yapardı. Çağıran canlı değeri geçer.</param>
-    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot = null,
-        bool buildDependencyCycles = false)
+    /// <param name="buildDependencyCycles">[Task 11] Canlı anahtarın o anki değeri — çağıran AÇIKÇA geçer.
+    /// <b>VARSAYILAN DEĞER YOK</b>, ve bu kural burada kardeş API'lerdekinden (<c>ComputeWillBuild</c>,
+    /// <c>Bind</c>) daha da katıdır: oradaki bir unutma yalnız önizlemeyi yanlış çizerdi, buradaki değer
+    /// <see cref="CommitAsync"/> üzerinden KALICI kullanıcı durumuna yazılır — yani atlanan bir argüman
+    /// kullanıcının ayarını sessizce kapatıp diske kaydederdi. Varsayılansız olduğu için böyle bir atlama
+    /// derleme hatasıdır. Ürün varsayılanının tek sahibi ayrıca
+    /// <see cref="Shell.UiState.BuildDependencyCyclesDefault"/>'tır; buraya ikinci bir kopya yazılmaz.</param>
+    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
+        bool buildDependencyCycles)
     {
         _repositoryRoot = repositoryRoot;
         _buildDependencyCycles = buildDependencyCycles;

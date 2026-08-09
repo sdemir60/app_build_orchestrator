@@ -34,7 +34,7 @@ public class SettingsDialogTests
     [Fact]
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
     {
-        var editor = new SettingsDraftViewModel(null);
+        var editor = new SettingsDraftViewModel(null, null, UiState.BuildDependencyCyclesDefault);
         // [değişti] Taze taslak ARTIK 4 varsayılan satırla gelir (LayerDefaults). Bu testin konusu
         // Save-validation'dır — tek satırlık bir zeminde ölçülür, o yüzden varsayılanlar önce boşaltılır.
         for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]);
@@ -89,7 +89,7 @@ public class SettingsDialogTests
         var store = NewStore();
         Assert.Null(run.LayerPatterns); // kayıtlı katman yok
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
 
         Assert.Equal(
             ["OSYS.Types", "OSYS.Business", "OSYS.Orchestration", "OSYS.UI"],
@@ -107,13 +107,13 @@ public class SettingsDialogTests
     {
         IReadOnlyList<LayerPattern> emptied = []; // "hepsini sil + Save" sonrası RunViewModel.LayerPatterns
 
-        var draft = new SettingsDraftViewModel(emptied);
+        var draft = new SettingsDraftViewModel(emptied, null, UiState.BuildDependencyCyclesDefault);
 
         // Varsayılanların BİREBİR metni A_fresh_draft_is_prefilled_with_the_default_layers'ta pinlidir; burada
         // pinlenen kural "boş liste null ile AYNI davranır" — ctor koşulu `initial is not null`'a kayarsa bu
         // taslak SIFIR satırla açılır ve karşılaştırma düşer.
         Assert.Equal(
-            new SettingsDraftViewModel(null).Layers.Select(r => (r.Name, r.Regex)),
+            new SettingsDraftViewModel(null, null, UiState.BuildDependencyCyclesDefault).Layers.Select(r => (r.Name, r.Regex)),
             draft.Layers.Select(r => (r.Name, r.Regex)));
         Assert.NotEmpty(draft.Layers); // non-vacuous: iki taraf da boş olsaydı karşılaştırma anlamsız kalırdı
     }
@@ -125,7 +125,7 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")];
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
 
         var row = Assert.Single(draft.Layers);
         Assert.Equal("Alpha", row.Name);
@@ -140,7 +140,7 @@ public class SettingsDialogTests
         var store = NewStore();
         IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
         run.LayerPatterns = live;
-        var draft = new SettingsDraftViewModel(run.LayerPatterns);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
 
         draft.RestoreDefaults();
 
@@ -162,7 +162,7 @@ public class SettingsDialogTests
 
         // Diyalog taslağı canlı pattern'lerin KOPYASI üzerinde çalışır.
         // [genişletildi] Cancel artık repo seçimini de atar: taslak kökü değişse bile canlı kök DOKUNULMAZ.
-        var editor = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath) { RepositoryRoot = @"D:\new\repo" };
+        var editor = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles) { RepositoryRoot = @"D:\new\repo" };
         editor.Layers[0].Name = "CHANGED";
         editor.Layers[0].Regex = "^B";
         editor.AddLayer();
@@ -201,7 +201,7 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
-        var editor = new SettingsDraftViewModel(null); // taze taslak = 4 varsayılan
+        var editor = new SettingsDraftViewModel(null, null, UiState.BuildDependencyCyclesDefault); // taze taslak = 4 varsayılan
         Assert.Equal(4, editor.Layers.Count);
 
         await editor.CommitAsync(run, store);
@@ -220,7 +220,7 @@ public class SettingsDialogTests
         Assert.Equal(run.LayerPatterns, store.State.LayerPatterns);
 
         // Emptied → farklı BİREBİR not + persist boşalır.
-        var empty = new SettingsDraftViewModel(run.LayerPatterns);
+        var empty = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
         for (int i = empty.Layers.Count - 1; i >= 0; i--) empty.RemoveLayer(empty.Layers[i]);
         await empty.CommitAsync(run, store);
         Assert.Contains("Layers removed — single project list", run.GetRunDocumentText());
@@ -428,7 +428,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles);
         draft.RepositoryRoot = @"D:\new\repo"; // "Change…" yalnız BUNU yapar
 
         Assert.Equal(@"D:\repo", run.RootPath);
@@ -446,7 +446,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath) { RepositoryRoot = @"D:\new\repo" };
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles) { RepositoryRoot = @"D:\new\repo" };
 
         await draft.CommitAsync(run, store);
 
@@ -578,11 +578,17 @@ public class SettingsDialogViewTests
     /// <summary>[Task 11] Kill switch'in GÖRSEL yüzeyi. Yeni bir kontrol/şablon YOKTUR — mevcut
     /// <c>Ds.Chip</c> <see cref="ToggleButton"/> stili (ActionBar'ın branch/perf chip'leriyle AYNI) yeniden
     /// kullanılır, bu yüzden ayrı bir realize testi de gerekmez: burada pinlenen, chip'in GERÇEKTEN realize
-    /// olduğu, o stille kurulduğu ve taslağa İKİ YÖNLÜ bağlı olduğudur.</summary>
-    [StaFact]
-    public void Settings_dialog_binds_the_cycle_chip_to_the_draft_in_both_directions()
+    /// olduğu, o stille kurulduğu ve taslağa İKİ YÖNLÜ bağlı olduğudur.
+    /// <para><b>Seed yönü İKİ konumda birden ölçülür (Theory).</b> Yalnız KAPALI konumu ölçmek YETMEZDİ:
+    /// <c>SettingsDialog.Open</c> canlı değeri taslağa taşımayı büsbütün bıraksaydı taslak yine kapalı
+    /// açılırdı (bool'un kendi varsayılanı) ve tek-konumlu bir test YEŞİL kalırdı — yani iddia kendi
+    /// bozulmasını göremezdi. AÇIK konum bu boşluğu kapatır.</para></summary>
+    [StaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Settings_dialog_binds_the_cycle_chip_to_the_draft_in_both_directions(bool live)
     {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(configure: run => run.BuildDependencyCycles = false);
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(configure: run => run.BuildDependencyCycles = live);
         using var _scope = scope;
 
         var chip = DsResources.RealizedObjects(dialog).OfType<ToggleButton>()
@@ -591,12 +597,12 @@ public class SettingsDialogViewTests
         Assert.Equal("Build dependency cycles", chip.Content);
 
         var draft = (SettingsDraftViewModel)dialog.DataContext;
-        Assert.False(draft.BuildDependencyCycles);
-        Assert.False(chip.IsChecked);            // canlı KAPALI değer chip'e indi
+        Assert.Equal(live, draft.BuildDependencyCycles); // canlı değer taslağa indi
+        Assert.Equal(live, chip.IsChecked);              // ve chip'e
 
-        chip.IsChecked = true;                   // kullanıcı tıklaması
+        chip.IsChecked = !live;                  // kullanıcı tıklaması
         dialog.UpdateLayout();
-        Assert.True(draft.BuildDependencyCycles); // ve taslağa geri çıktı (TwoWay)
+        Assert.Equal(!live, draft.BuildDependencyCycles); // ve taslağa geri çıktı (TwoWay)
     }
 
     /// <summary>[Task 11] Bölüm başlığı + açıklaması BİREBİR — anahtarın ne yaptığı diyaloğun kendi sesiyle

@@ -137,7 +137,12 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(overall.Token));
 
             var sw = Stopwatch.StartNew();
-            await w.WriteAsync(new StartRunCommand("acc-full", RunMode.Rebuild, OsysRoot, "Debug", Parallelism), overall.Token);
+            // [Task 11] Bayrak AÇIKÇA taşınır — gerekçe OsysIncrementalAcceptanceTests'teki kardeş çağrıda
+            // yazılıdır: atlanırsa sözleşme varsayılanı (false) devreye girer ve gerçek repo üzerindeki tek
+            // uçtan uca döngü kapsamı sessizce kaybolurdu.
+            await w.WriteAsync(
+                new StartRunCommand("acc-full", RunMode.Rebuild, OsysRoot, "Debug", Parallelism,
+                    BuildDependencyCycles: true), overall.Token);
 
             while (true)
             {
@@ -411,7 +416,10 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
             var w = new NdjsonWriter(proc.StandardInput.BaseStream);
             var r = new NdjsonReader(proc.StandardOutput.BaseStream);
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(ct));
-            await w.WriteAsync(new StartRunCommand("acc-det", RunMode.Rebuild, OsysRoot, "Debug", Parallelism), ct);
+            // [Task 11] Bayrak AÇIKÇA taşınır (aynı gerekçe, bkz. yukarıdaki "acc-full" çağrısı).
+            await w.WriteAsync(
+                new StartRunCommand("acc-det", RunMode.Rebuild, OsysRoot, "Debug", Parallelism,
+                    BuildDependencyCycles: true), ct);
 
             bool stopSent = false;
             while (true)

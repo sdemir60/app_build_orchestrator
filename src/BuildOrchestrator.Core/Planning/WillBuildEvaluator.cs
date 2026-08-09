@@ -24,6 +24,11 @@ using BuildOrchestrator.Contracts.Model;
 /// <c>BuildPreview</c>'in SCC'leri tek kalem olarak ele alması ve yakınsamama hafızasının önizleme
 /// katmanına bir okuma dikişi (seam) olarak verilmesi; ya da simetrik olarak, pre-skip kararının
 /// Supervisor'dan Core'a taşınması. İkisi de bu görevin kapsamı dışındadır.</item>
+/// <item><b>İKİNCİ (çok daha dar) ayrışma, aynı kökten:</b> bir SCC'nin üyeleri KISMEN temiz olduğunda —
+/// bileşik imza ortak olduğu için pratikte yalnız bir üyenin state kaydı hiç yokken — koordinatörün grup
+/// kapısı (<c>All</c>) düşer, grup bütün olarak dispatch edilir ve önizlemenin GRİ çizdiği temiz üyeler de
+/// derlenir. <c>Any</c>'ye gevşetmek bunu kapatmaz, DAHA KÖTÜSÜNÜ yapar: hiç derlenmemiş üyeleri de atlayıp
+/// grubu yarım bırakırdı — yani <c>All</c> doğru quantifier'dır ve bu artık onun bilinen bedelidir.</item>
 /// </list></para>
 /// </summary>
 public static class WillBuildEvaluator
