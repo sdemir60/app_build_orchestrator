@@ -118,28 +118,5 @@ public class StartupPathTests
         Assert.DoesNotContain(sent, c => c is SyncWorkspaceCommand or StartRunCommand);
         GC.KeepAlive(window);
     }
-
-    /// <summary>[Task 11] Kill switch açılışta kalıcı durumdan SEED edilir — diğer iş akışı tercihleriyle
-    /// (repo/config/branch/worktree/perf) AYNI blokta. Seed olmasaydı anahtar her açılışta kendiliğinden
-    /// ürün varsayılanına (AÇIK) döner, kullanıcının kapatma kararı sessizce kaybolurdu.
-    /// <para>Kontrol grubu ikinci iddiadadır: hiç yazılmamış bir kalıcı durumda VM AÇIK kalır — yani birinci
-    /// iddia "VM zaten hep false" gibi önemsiz bir sebeple geçmiyor.</para></summary>
-    [StaFact]
-    public void The_persisted_build_dependency_cycles_switch_is_seeded_at_startup()
-    {
-        using var off = new TempDir();
-        var store = new JsonUiStateStore(Path.Combine(off.Path, "ui-state.json"));
-        var saved = store.Load();
-        saved.BuildDependencyCycles = false;
-        store.Save(saved);
-
-        var (window, vm) = MainWindowHost.New(off);
-        Assert.False(vm.BuildDependencyCycles);
-        GC.KeepAlive(window);
-
-        using var fresh = new TempDir();   // hiç yazılmamış kalıcı durum → ürün varsayılanı AÇIK
-        var (window2, vm2) = MainWindowHost.New(fresh);
-        Assert.True(vm2.BuildDependencyCycles);
-        GC.KeepAlive(window2);
-    }
 }
+

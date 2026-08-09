@@ -49,27 +49,13 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
     [ObservableProperty] private string? _repositoryRoot;
 
-    /// <summary>[Task 11] Seçilmiş ama HENÜZ UYGULANMAMIŞ "build dependency cycles" anahtarı. Chip yalnız
-    /// burayı yazar; canlı VM ve kalıcı durum <see cref="CommitAsync"/>'e ertelenir — Cancel/Esc taslağı atar.
-    /// Diyalog açılırken canlı <see cref="RunViewModel.BuildDependencyCycles"/> ile başlar (kopya, alias DEĞİL).</summary>
-    [ObservableProperty] private bool _buildDependencyCycles;
-
     /// <summary>Taslak = kayıtlı pattern'lerin DERİN kopyası (Order'a göre; editör sırası = katman sırası).
     /// Kayıtlı katman YOKSA (null ya da boş) taslak <see cref="LayerDefaults"/> ile DOLU kurulur — araç
     /// paylaşıldığında kimse katmanları elle yazmasın. Bu YALNIZ taslaktır: Save'e basılmadıkça ne
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.</summary>
-    /// <param name="buildDependencyCycles">[Task 11] Canlı anahtarın o anki değeri — çağıran AÇIKÇA geçer.
-    /// <b>VARSAYILAN DEĞER YOK</b>, ve bu kural burada kardeş API'lerdekinden (<c>ComputeWillBuild</c>,
-    /// <c>Bind</c>) daha da katıdır: oradaki bir unutma yalnız önizlemeyi yanlış çizerdi, buradaki değer
-    /// <see cref="CommitAsync"/> üzerinden KALICI kullanıcı durumuna yazılır — yani atlanan bir argüman
-    /// kullanıcının ayarını sessizce kapatıp diske kaydederdi. Varsayılansız olduğu için böyle bir atlama
-    /// derleme hatasıdır. Ürün varsayılanının tek sahibi ayrıca
-    /// <see cref="Shell.UiState.BuildDependencyCyclesDefault"/>'tır; buraya ikinci bir kopya yazılmaz.</param>
-    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
-        bool buildDependencyCycles)
+    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot)
     {
         _repositoryRoot = repositoryRoot;
-        _buildDependencyCycles = buildDependencyCycles;
         Layers.CollectionChanged += OnLayersChanged;
         if (initial is { Count: > 0 })
             foreach (var p in initial.OrderBy(p => p.Order))
@@ -114,9 +100,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         var patterns = BuildPatterns();
         var state = store.Load();
         state.LayerPatterns = patterns.ToList();
-        state.BuildDependencyCycles = BuildDependencyCycles; // [Task 11] anahtarın KALICI hâli
         store.Save(state);
-        await run.ApplySettingsAsync(patterns, RepositoryRoot, BuildDependencyCycles);
+        await run.ApplySettingsAsync(patterns, RepositoryRoot);
     }
 
     private void AddRow(LayerRowViewModel row) => Layers.Add(row);

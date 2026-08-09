@@ -57,14 +57,11 @@ public class RunCoordinatorTests
 
     internal static Dictionary<string, IReadOnlyList<SolutionRef>> EmptyRefs() => new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Koordinatörün gördüğü komut. <paramref name="buildCycles"/> varsayılanı <c>true</c>'dur:
-    /// bu yardımcı GÜNCEL bir App'in gönderdiği komutu temsil eder ve ürün varsayılanı (Task 11 kill switch)
-    /// AÇIK'tır. Bu, <see cref="StartRunCommand.BuildDependencyCycles"/>'ın SÖZLEŞME varsayılanından (false =
-    /// "alanı hiç göndermeyen bir gönderici, alan eklenmeden önceki davranışı alır") bilerek ayrıdır —
-    /// gerekçesi alanın bildirildiği yerdedir, sözleşme varsayılanı ayrıca <c>IpcMessagesTests</c>'te pinlidir.</summary>
-    internal static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1",
-        bool buildCycles = true) =>
-        new(runId, mode, PlanRoot, "Debug", parallelism, BuildDependencyCycles: buildCycles);
+    /// <summary>Koordinatörün gördüğü komut. Döngüleri derleyen tek mod <see cref="RunMode.Cycles"/>'tır —
+    /// SCC turlarını sınayan testler onu AÇIKÇA geçer, geri kalanlar varsayılan <see cref="RunMode.Rebuild"/>
+    /// ile bugünkü davranışı sınar.</summary>
+    internal static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1") =>
+        new(runId, mode, PlanRoot, "Debug", parallelism);
 
     internal static MsBuildInvokeResult Ok() => new(ExitCode: 0, DurationMs: 7, TimedOut: false, Killed: false);
     internal static MsBuildInvokeResult Exit(int code) => new(code, DurationMs: 9, TimedOut: false, Killed: false);
@@ -917,14 +914,10 @@ public class RunCoordinatorTests
         var ipcReader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await ipcReader.ReadAsync<IpcEvent>().WaitAsync(Limit));
 
-        // [Task 11] Bu dosyada elle kurulmuş başka StartRunCommand'lar da var, ama planı SCC TAŞIYAN tek çağrı
-        // budur — dolayısıyla bayrağın konumunu gerçekten gören de yalnız o. Bayrağı AÇIKÇA taşımak
-        // ZORUNDADIR: sözleşme varsayılanı false'tur (= alan eklenmeden önceki davranış), yani alansız
-        // gönderilseydi X↔Y grubu pre-skip edilir ve aşağıdaki tur iddiaları düşerdi.
-        // Testin konusu turların GERÇEK process üzerinden kablajıdır, dolayısıyla güncel bir App'in gönderdiği
-        // komut kurulur — anahtarın ürün varsayılanı AÇIK'tır.
-        await ipcWriter.WriteAsync(
-            new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 2, BuildDependencyCycles: true));
+        // [cycles] Testin konusu turların GERÇEK process üzerinden kablajıdır, dolayısıyla mod AÇIKÇA
+        // Cycles'tır — X↔Y grubunu derleyen tek mod odur, Rebuild ile gönderilseydi grup pre-skip edilir ve
+        // aşağıdaki tur iddiaları düşerdi.
+        await ipcWriter.WriteAsync(new StartRunCommand("r1", RunMode.Cycles, root, "Debug", 2));
         var received = new List<IpcEvent>();
         while (true)
         {

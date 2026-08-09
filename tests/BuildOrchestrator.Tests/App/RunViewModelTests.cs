@@ -949,13 +949,15 @@ public class RunViewModelTests
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
         var done = Assert.IsType<RunCompletedEvent>(outcome);
-        // [DEĞİŞEN KURAL — cycle rounds] Eski iddia: X↔Y pre-skip edilirdi (Skipped=2, TÜM satırlar Skipped) ve
-        // hiç MSBuild child'ı doğmazdı. Artık SCC turlarla derlenir; fixture aynı kaldı ama satırlar gerçek
-        // derleme sonucuyla terminal olur. Testin ASIL iddiası (Rebuild gerçek motora kablolu, satırlar doluyor,
-        // IsRunning düşüyor) korunur — sonucun TÜRÜ kurulu MSBuild'e bağlı olduğu için pinlenmez.
-        Assert.Equal(0, done.Skipped);
+        // [DEĞİŞEN KURAL — iki kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
+        // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles, Sync'in
+        // yanındaki düğme) taşınınca yeniden pre-skip'e döndü. Sebep ölçümdür: katlanmış hâlde iki dakikalık
+        // bir Build on beş dakikaya çıkıyordu. Rebuild bir SCC'ye artık HİÇ dokunmaz.
+        // Testin ASIL iddiası (Rebuild gerçek motora kablolu, satırlar doluyor, IsRunning düşüyor) her üç
+        // sürümde de aynı kaldı.
+        Assert.Equal(2, done.Skipped);
         Assert.Equal(2, vm.Projects.Count);
-        Assert.All(vm.Projects, p => Assert.True(p.State is ProjectRowState.Succeeded or ProjectRowState.Failed));
+        Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Skipped, p.State));
         Assert.False(vm.IsRunning);
     }
 

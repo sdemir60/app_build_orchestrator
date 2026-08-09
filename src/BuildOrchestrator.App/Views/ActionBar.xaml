@@ -74,6 +74,12 @@
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
         <Button x:Name="PART_Sync" Style="{DynamicResource Ds.Button.Secondary.Sm}"
                 Command="{Binding SyncCommand}" VerticalAlignment="Center" />
+        <!-- [cycles] Sync'in KOMŞUSU, aynı stil ve aynı boyut: ikisi de derleme ÖNCESİ hazırlık adımlarıdır ve
+             birlikte okunur. Build'in yanına konmadı — orası birincil aksiyonun (accent) yeridir ve bu düğme
+             onun bir varyantı DEĞİL, ondan önce gelen ayrı bir iştir. Elde döngü yokken pasif kalır (VM
+             kapısı: BuildCyclesCommand.CanExecute → HasCycles). -->
+        <Button x:Name="PART_Cycles" Style="{DynamicResource Ds.Button.Secondary.Sm}" Margin="8,0,0,0"
+                Command="{Binding BuildCyclesCommand}" VerticalAlignment="Center" />
         <Border Width="1" Margin="2,10,2,10" Background="{DynamicResource Brush.BorderSubtle}" />
         <StackPanel x:Name="PART_CounterChips" Orientation="Horizontal" VerticalAlignment="Center" />
       </StackPanel>

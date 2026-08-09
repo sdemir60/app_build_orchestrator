@@ -290,13 +290,10 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             var w = new NdjsonWriter(proc.StandardInput.BaseStream);
             var r = new NdjsonReader(proc.StandardOutput.BaseStream);
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(ct));
-            // [Task 11] Bayrak AÇIKÇA taşınır: sözleşme varsayılanı false'tur (= özellik eklenmeden önceki
-            // davranış), yani atlanırsa GERÇEK repo üzerindeki bu koşu cycle üyelerini pre-skip eder ve süit
-            // ürünün HİÇ sevk etmediği bir konfigürasyonu ölçmeye başlardı — üstelik sessizce, çünkü
-            // buradaki iddialar (kova toplamları) her iki konumda da tutar. Ürün varsayılanı AÇIK'tır.
+            // [cycles] Build bir SCC'ye HİÇ dokunmaz — üyeler "in dependency cycle" ile atlanır. Bu koşu
+            // ürünün sevk ettiği Build'in ta kendisidir; turlar kendi modundadır (RunMode.Cycles).
             await w.WriteAsync(
-                new StartRunCommand(runId, RunMode.Build, OsysRoot, "Debug", Parallelism,
-                    BuildDependencyCycles: true), ct);
+                new StartRunCommand(runId, RunMode.Build, OsysRoot, "Debug", Parallelism), ct);
 
             while (true)
             {

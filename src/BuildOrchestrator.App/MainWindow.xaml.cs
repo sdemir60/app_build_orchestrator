@@ -142,10 +142,6 @@ public partial class MainWindow : Window
         // çökertirdi). Null-safe desen (kardeş guard'larla — saved.Configuration is { }/saved.PerfMode is { } —
         // hizalı).
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
-        // [Task 11] Kill switch KOŞULSUZ seed edilir (kardeş bool UseWorktree ile aynı desen): eksik alan
-        // zaten UiState'in kendi varsayılanına (AÇIK) düşer, dolayısıyla "is { }" tarzı bir guard'ın anlamı
-        // olmazdı ve kullanıcının kapatma kararı her açılışta sessizce geri alınırdı.
-        _vm.BuildDependencyCycles = saved.BuildDependencyCycles;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [A13/T2 · 2.1] design-v1 §2.1 title-bar bağlamı. AYRI bir abonelik (persist'le AYNI dört alanı dinler

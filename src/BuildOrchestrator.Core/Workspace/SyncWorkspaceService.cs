@@ -192,16 +192,16 @@ public sealed class SyncWorkspaceService(
                 .Where(x => x.Project is not null)
                 .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
 
-            // [Task 11] Idle'daki will-dot'ların kaynağı BURASIDIR — kill switch komuttan okunur, ikinci bir
-            // "döngüleri derle" kavramı türetilmez. Anahtar kapalıyken cycle üyeleri (öncesiyle birebir)
-            // WillBuild=false gelir; açıkken sıradan imza/state mantığına tabidirler ve motorun yapacağı şeyi
-            // gösterirler.
+            // Idle'daki will-dot'ların kaynağı BURASIDIR ve onlar BUILD'i tarif eder: Build bir SCC'yi asla
+            // derlemez, bu yüzden buradaki kapı SABİT KAPALIDIR (buildCycles: false) ve cycle üyeleri her zaman
+            // WillBuild=false gelir. Onları derleyen tek şey ayrı bir koştur (RunMode.Cycles) ve o koşu kendi
+            // önizlemesini kendi başlangıcında yayınlar — Sync burada onun adına söz VERMEZ.
             var (safePlan, _) = IncrementalRunBinder.Bind(
                 plan, evaluatedById, cmd.RootPath, headCommit, tracked, dirty, state,
-                inPlace: true, cmd.BuildDependencyCycles, DependentMode.Safe);
+                inPlace: true, buildCycles: false, DependentMode.Safe);
             var (fastPlan, _) = IncrementalRunBinder.Bind(
                 plan, evaluatedById, cmd.RootPath, headCommit, tracked, dirty, state,
-                inPlace: true, cmd.BuildDependencyCycles, DependentMode.Fast);
+                inPlace: true, buildCycles: false, DependentMode.Fast);
 
             return new WillBuildOutcome(
                 Plan: safePlan,

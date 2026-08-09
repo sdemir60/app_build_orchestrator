@@ -198,44 +198,25 @@ public class IpcMessagesTests
         Assert.Equal(unconverged, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
-    // [Task 11] Kill switch'in KOMUT yüzeyi. İki ayrı komut taşır çünkü önizlemenin İKİ yayıncısı vardır:
-    // startRun (koşu başındaki BuildPreviewEvent) ve syncWorkspace (Idle'daki will-dot'lar). İkisi de aynı
-    // will-build hesabına iner, dolayısıyla ikisi de aynı bayrağı taşımazsa önizleme ile motor ayrışır.
-    //
-    // Sözleşme varsayılanı FALSE'tur ve bu, ÜRÜN varsayılanı (UiState.BuildDependencyCycles = true) ile
-    // BİLEREK farklıdır — ikisi farklı soruları cevaplar:
-    //   · UiState varsayılanı = "kullanıcı hiç dokunmazsa ne olsun" (ürün kararı: AÇIK).
-    //   · Sözleşme varsayılanı = "alanı HİÇ göndermeyen bir gönderici ne alsın" (eski App, elle yazılmış
-    //     komut, alanı bilmeyen bir test).
-    // İkincisinde bu record'un DİĞER tüm trailing-optional alanlarıyla aynı kural geçerlidir (UseWorktree
-    // false, LayerPatterns null, PerfMode null): varsayılan, alan EKLENMEDEN ÖNCEKİ davranışı korur. App her
-    // zaman açıkça gönderir, bu yüzden ürün varsayılanı bundan ETKİLENMEZ. İkisini "tutarlılık" adına
-    // eşitlemeyin — bunlar aynı değerin iki kopyası değil, iki ayrı karardır.
+    /// <summary>[cycles] Döngü derlemesinin KOMUT yüzeyi artık bir bayrak değil, bir MOD'dur: <see
+    /// cref="RunMode.Cycles"/>. İki iddia:
+    /// (a) tel üzerinde camelCase METİN olarak gider (<c>"cycles"</c>) — sayı olarak DEĞİL, bu yüzden enum'a
+    ///     değer eklemek eski satırların anlamını kaydırmaz;
+    /// (b) round-trip eder.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Burada eskiden iki test vardı: <c>StartRunCommand</c> ve
+    /// <c>SyncWorkspaceCommand</c> üzerindeki <c>buildDependencyCycles</c> bayrağının sözleşme varsayılanının
+    /// <c>false</c> olduğunu ve set edildiğinde round-trip ettiğini pinliyorlardı. Bayrak KALDIRILDI: döngü
+    /// derlemesi Build'in bir seçeneği olmaktan çıkıp kendi koşusu oldu (Sync'in yanındaki düğme), dolayısıyla
+    /// "alanı hiç göndermeyen bir gönderici ne alsın" sorusunun öznesi de kalmadı. Sync artık bu kararı hiç
+    /// taşımaz — önizlemesi her zaman Build'i tarif eder.</para></summary>
     [Fact]
-    public void StartRunCommand_buildDependencyCycles_defaults_to_false_and_roundtrips_when_set()
+    public void StartRunCommand_carries_the_cycles_mode_as_text_and_roundtrips()
     {
-        const string legacyLine =
-            """{"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}""";
-        var legacy = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(legacyLine, IpcJson.Options));
-        Assert.False(legacy.BuildDependencyCycles);
+        IpcCommand cycles = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 4);
+        string json = JsonSerializer.Serialize(cycles, IpcJson.Options);
 
-        IpcCommand on = new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 4, BuildDependencyCycles: true);
-        string json = JsonSerializer.Serialize(on, IpcJson.Options);
-        Assert.Contains("\"buildDependencyCycles\":true", json);
-        Assert.Equal(on, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
-    }
-
-    [Fact]
-    public void SyncWorkspaceCommand_buildDependencyCycles_defaults_to_false_and_roundtrips_when_set()
-    {
-        const string legacyLine = """{"type":"syncWorkspace","rootPath":"D:\\repo","branch":"main"}""";
-        var legacy = Assert.IsType<SyncWorkspaceCommand>(JsonSerializer.Deserialize<IpcCommand>(legacyLine, IpcJson.Options));
-        Assert.False(legacy.BuildDependencyCycles);
-
-        IpcCommand on = new SyncWorkspaceCommand(@"D:\repo", "main", BuildDependencyCycles: true);
-        string json = JsonSerializer.Serialize(on, IpcJson.Options);
-        Assert.Contains("\"buildDependencyCycles\":true", json);
-        Assert.Equal(on, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        Assert.Contains("\"mode\":\"cycles\"", json);                     // (a)
+        Assert.Equal(cycles, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options)); // (b)
     }
 
     [Fact]

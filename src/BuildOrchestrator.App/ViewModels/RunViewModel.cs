@@ -316,6 +316,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/worktree/config kilidi bundan türetilir
     private bool _isRunning;
@@ -330,6 +331,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
     private bool _isStarting;
@@ -347,6 +349,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private string? _engineDiedMessage;
 
     /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
@@ -360,6 +363,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private bool _engineRestartable = true;
 
     /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
@@ -462,15 +466,6 @@ public sealed partial class RunViewModel : ObservableObject
     /// tarafından seed edilecek — C2 yalnız GÖNDERİR; ObservableProperty gerekmez (UI'dan iki-yönlü bağlanmaz).</summary>
     public IReadOnlyList<LayerPattern>? LayerPatterns { get; set; }
 
-    /// <summary>[Task 11] Dairesel bağımlılık (SCC) oluşturan projeler derlensin mi — kill switch'in CANLI
-    /// hâli. Açılışta <c>UiState.BuildDependencyCycles</c>'tan seed edilir, Settings→Save ile değişir ve
-    /// <b>hem</b> <see cref="StartRunCommand"/> <b>hem</b> <see cref="SyncWorkspaceCommand"/> bu TEK alandan
-    /// okur (önizlemenin iki yayıncısı da aynı kararı görmeli). Üretimde bu alan HER ZAMAN seed edilir; buradaki
-    /// başlatıcı yalnız kabuksuz kurulan VM'ler (testler) içindir ve ürün varsayılanını TEKRAR YAZMAZ — değeri
-    /// tek sahibinden (<see cref="UiState.BuildDependencyCyclesDefault"/>) okur.
-    /// LayerPatterns ile aynı gerekçe: UI'dan iki-yönlü bağlanmaz (Settings taslağı üzerinden değişir).</summary>
-    public bool BuildDependencyCycles { get; set; } = UiState.BuildDependencyCyclesDefault;
-
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
@@ -539,11 +534,8 @@ public sealed partial class RunViewModel : ObservableObject
         // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
         // değeri ≠ niyet; seed'i niyet diye göndermek worktree'yi zorunlu kılıyor ve detached HEAD'de run'ı
         // hiç başlatmıyordu).
-        // [Task 11] Kill switch de gider: motor hem scheduler kararını (grup dispatch'i vs pre-skip) hem
-        // will-build önizlemesini bu bayraktan sürer.
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
-            BuildDependencyCycles);
+            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
@@ -562,6 +554,7 @@ public sealed partial class RunViewModel : ObservableObject
         RunMode.Build => "build",
         RunMode.Continue => "continue",
         RunMode.RetryFailed => "retry",
+        RunMode.Cycles => "cycles",
         _ => "run",
     };
 
@@ -589,6 +582,30 @@ public sealed partial class RunViewModel : ObservableObject
         return BeginRunAsync(RunMode.Build, clearBuffers: true);
     }
 
+    /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
+    /// projeleri, sıralı turlarla derler. Build'in yerine geçmez, ONDAN ÖNCE gelir — Build bir SCC'yi asla
+    /// derlemez, bu koşu ise sadece onları derler.
+    ///
+    /// <para><b>Neden ayrı bir düğme:</b> bir SCC'yi turlarla derlemenin bedeli üye sayısı × tur sayısıdır ve
+    /// normal bir Build'in yanında ölçülemeyecek kadar büyüyebilir. Build'in içine katlandığında kullanıcı,
+    /// istemediği ve göremediği bir işin arkasında bekliyordu. Ayrı düğme kararı kullanıcıya verir: ne zaman,
+    /// ne kadar.</para>
+    ///
+    /// <para><see cref="RebuildCommand"/>/<see cref="RetryFailedCommand"/> ile AYNI guard'a tabidir
+    /// (<see cref="CanRebuildOrRetry"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
+    /// bozulmasını üretirdi.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanBuildCycles))]
+    private Task BuildCyclesAsync()
+    {
+        ClearSelectionAndFilter();
+        return BeginRunAsync(RunMode.Cycles, clearBuffers: true);
+    }
+
+    /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
+    /// workspace'te bu koşu her projeyi "not in a dependency cycle" ile atlar, yani hiçbir şey yapmaz — pasif
+    /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
+    private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
+
     [RelayCommand(CanExecute = nameof(CanRetryFailed))]
     private Task RetryFailedAsync()
     {
@@ -603,10 +620,8 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task SyncAsync()
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
-        // [Task 11] Idle'daki will-dot'lar bu analizden doğar — kill switch burada da gitmeli, yoksa önizleme
-        // ile motor tam da kullanıcının "derleyeyim mi" kararını verdiği ekranda ayrışır.
         await TrySendAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, BuildDependencyCycles), "sync");
+            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
         // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,

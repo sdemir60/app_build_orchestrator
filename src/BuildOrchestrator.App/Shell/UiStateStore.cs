@@ -54,19 +54,6 @@ public sealed class UiState
     public List<LayerPattern> LayerPatterns { get; set; } = [];
     public bool Autostart { get; set; }
 
-    /// <summary>[Task 11] Dairesel bağımlılık (SCC) oluşturan projeler derlensin mi — Settings'teki anahtarın
-    /// KALICI hâli ve bu tercihin TEK doğruluk kaynağı. <b>Ürün varsayılanı AÇIK</b>: hiç dokunulmamış bir
-    /// durumda (dosya yok, ya da bu alan eklenmeden ÖNCE yazılmış bir ui-state.json) döngüler derlenir —
-    /// yükseltme yapan bir kullanıcı özelliği kapalı bulmaz. Bunu düz bir <c>bool</c> yapmayın: <c>= true</c>
-    /// initializer'ı olmadan eksik alan <c>false</c>'a düşer ve varsayılan sessizce tersine döner.
-    /// <para>Bu değer, aynı adlı IPC alanlarının varsayılanıyla (<c>false</c>) BİLEREK farklıdır; ikisi ayrı
-    /// soruları cevaplar — gerekçe <c>StartRunCommand.BuildDependencyCycles</c>'ta yazılıdır.</para></summary>
-    public bool BuildDependencyCycles { get; set; } = BuildDependencyCyclesDefault;
-
-    /// <summary>[Task 11] Anahtarın ÜRÜN varsayılanı — TEK doğruluk kaynağı. Hem bu alanın initializer'ı hem
-    /// <see cref="ViewModels.RunViewModel.BuildDependencyCycles"/> (kabuk olmadan kurulan VM'ler için) buradan
-    /// okur; değer iki yere yazılsaydı biri değişip diğeri kalabilirdi.</summary>
-    public const bool BuildDependencyCyclesDefault = true;
 }
 
 /// <summary>

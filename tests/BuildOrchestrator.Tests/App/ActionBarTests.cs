@@ -141,20 +141,25 @@ public partial class ActionBarTests
     /// <summary>[A13/T3c · c5] design-v1 BuildApp.jsx:1546-1614 sırası: Sync · ayraç · 6 sayaç chip'i (Σ/building/
     /// succeeded/failed/skipped/dep) · … · branch · worktree · Debug|Release · perf · ayraç · Stop/Build. Hiçbir
     /// test bu SIRAYI assert etmiyordu — chip'ler kod-tarafı kurulduğu için ("BuildCounterChips") sıra sessizce
-    /// kayabilirdi.</summary>
+    /// kayabilirdi.
+    /// <para><b>[DEĞİŞEN KURAL — cycles]</b> Sol grup artık Sync'ten HEMEN SONRA <b>Cycles</b> düğmesini taşır
+    /// (ayraçtan ÖNCE). Yer seçimi anlamlıdır ve bu yüzden pinlenir: ikisi de derleme ÖNCESİ hazırlık
+    /// adımlarıdır ve birlikte okunurlar; ayracın öbür yanı sayaçlarındır. Düğme Build'in yanına KONMADI —
+    /// orası birincil aksiyonun yeridir ve Cycles onun bir varyantı değil, ondan önce gelen ayrı bir iştir.</para></summary>
     [StaFact]
-    public void The_left_group_orders_sync_then_a_separator_then_the_six_counter_chips_in_design_order()
+    public void The_left_group_orders_sync_then_cycles_then_a_separator_then_the_six_counter_chips_in_design_order()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var leftGroup = Assert.IsType<StackPanel>(bar.SyncButton.Parent);
         var leftChildren = leftGroup.Children.Cast<UIElement>().ToList();
-        Assert.Equal(3, leftChildren.Count);
+        Assert.Equal(4, leftChildren.Count);
         Assert.Same(bar.SyncButton, leftChildren[0]);
-        var leftSeparator = Assert.IsType<Border>(leftChildren[1]);
+        Assert.Same(bar.CyclesButton, leftChildren[1]);
+        var leftSeparator = Assert.IsType<Border>(leftChildren[2]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), leftSeparator.Background);
-        var counterStrip = Assert.IsType<StackPanel>(leftChildren[2]);
+        var counterStrip = Assert.IsType<StackPanel>(leftChildren[3]);
 
         var chipOrder = counterStrip.Children.Cast<UIElement>().ToList();
         Assert.Equal(

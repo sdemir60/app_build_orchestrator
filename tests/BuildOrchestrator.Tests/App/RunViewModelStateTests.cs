@@ -430,35 +430,31 @@ public class RunViewModelStateTests
         Assert.Same(layers, sent.LayerPatterns);
     }
 
-    /// <summary>[Task 11] Kill switch HER İKİ komutta da gider — çünkü will-build önizlemesinin iki yayıncısı
-    /// vardır: koşu başındaki <c>buildPreview</c> (startRun'ın planlamasından) ve Idle'daki will-dot'lar
-    /// (syncWorkspace'in analizinden). Biri bayrağı taşımasaydı önizleme ile motor o yüzeyde ayrışırdı.
-    /// <para>Bayrak VM'de TEK yerde durur (<see cref="RunViewModel.BuildDependencyCycles"/>); iki komut da
-    /// oradan okur, ikinci bir "döngüleri derle" kavramı İCAT EDİLMEZ.</para></summary>
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Both_the_build_and_the_sync_command_carry_the_build_dependency_cycles_switch(bool on)
+    /// <summary>[cycles] <b>Cycles</b> düğmesi KENDİ modunu gönderir ve YALNIZ elde döngü varken etkindir.
+    /// Üç iddia tek testte, çünkü üçü aynı kararın parçalarıdır:
+    /// (a) topoloji hiç döngü taşımıyorken komut PASİF — o koşu döngüsüz bir workspace'te her projeyi kapsam
+    ///     dışı sayıp atlar, yani hiçbir şey yapmaz; kullanıcı bunu tıklamadan ÖNCE görmelidir;
+    /// (b) döngü GELİNCE etkinleşir — kapı canlıdır, ilk topolojide donmuş kalmaz;
+    /// (c) gönderilen komut <see cref="RunMode.Cycles"/> taşır — Build'in modunu DEĞİL.
+    /// <para>(a) non-vacuous'tur: aynı VM'de <see cref="RunViewModel.BuildCommand"/> o anda ETKİNdir, yani
+    /// pasiflik ortak run kapısından (topoloji/motor/mid-run) değil, DÖNGÜ kapısından gelir.</para></summary>
+    [Fact]
+    public async Task The_cycles_command_needs_a_cycle_and_sends_RunMode_Cycles()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1")
-            { RootPath = @"D:\repo", BuildDependencyCycles = on };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1") { RootPath = @"D:\repo" };
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
 
-        await vm.BuildCommand.ExecuteAsync(null);
-        await vm.SyncCommand.ExecuteAsync(null);
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(D, "D", 0)], [], [], []));
+        Assert.True(vm.BuildCommand.CanExecute(null));         // ortak run kapısı AÇIK
+        Assert.False(vm.BuildCyclesCommand.CanExecute(null));  // (a) ama döngü YOK
 
-        Assert.Equal(on, Assert.Single(sent.OfType<StartRunCommand>()).BuildDependencyCycles);
-        Assert.Equal(on, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).BuildDependencyCycles);
-    }
+        vm.OnEvent(CycleTopology());
+        Assert.True(vm.BuildCyclesCommand.CanExecute(null));   // (b)
 
-    [Fact] // Varsayılan: VM hiç dokunulmamışken anahtar AÇIK (ürün kararı — UiState varsayılanıyla AYNI değer).
-    public async Task A_fresh_view_model_has_build_dependency_cycles_on()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1");
-        Assert.True(vm.BuildDependencyCycles);
+        await vm.BuildCyclesCommand.ExecuteAsync(null);
+        Assert.Equal(RunMode.Cycles, Assert.Single(sent.OfType<StartRunCommand>()).Mode); // (c)
     }
 
     [Fact]

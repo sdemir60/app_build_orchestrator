@@ -20,6 +20,9 @@ public static class AccessibilityNames
 
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";
+    /// <summary>[cycles] Sync'in yanındaki düğme. UIA adı düğmenin KISA etiketinden ("Cycles") daha açıktır:
+    /// ikisi ayrı hedefler için yazılır — etiket bara sığmalı, UIA adı işlevi anlatmalı.</summary>
+    public const string CyclesButton = "Build dependency cycles";
     public const string StopButton = "Stop build";
     public const string BranchChip = "Branch — choose build target";
     public const string WorktreeChip = "Worktree — build isolation";

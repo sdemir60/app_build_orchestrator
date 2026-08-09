@@ -34,7 +34,7 @@ public class SettingsDialogTests
     [Fact]
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
     {
-        var editor = new SettingsDraftViewModel(null, null, UiState.BuildDependencyCyclesDefault);
+        var editor = new SettingsDraftViewModel(null, null);
         // [değişti] Taze taslak ARTIK 4 varsayılan satırla gelir (LayerDefaults). Bu testin konusu
         // Save-validation'dır — tek satırlık bir zeminde ölçülür, o yüzden varsayılanlar önce boşaltılır.
         for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]);
@@ -89,7 +89,7 @@ public class SettingsDialogTests
         var store = NewStore();
         Assert.Null(run.LayerPatterns); // kayıtlı katman yok
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
         Assert.Equal(
             ["OSYS.Types", "OSYS.Business", "OSYS.Orchestration", "OSYS.UI"],
@@ -107,13 +107,13 @@ public class SettingsDialogTests
     {
         IReadOnlyList<LayerPattern> emptied = []; // "hepsini sil + Save" sonrası RunViewModel.LayerPatterns
 
-        var draft = new SettingsDraftViewModel(emptied, null, UiState.BuildDependencyCyclesDefault);
+        var draft = new SettingsDraftViewModel(emptied, null);
 
         // Varsayılanların BİREBİR metni A_fresh_draft_is_prefilled_with_the_default_layers'ta pinlidir; burada
         // pinlenen kural "boş liste null ile AYNI davranır" — ctor koşulu `initial is not null`'a kayarsa bu
         // taslak SIFIR satırla açılır ve karşılaştırma düşer.
         Assert.Equal(
-            new SettingsDraftViewModel(null, null, UiState.BuildDependencyCyclesDefault).Layers.Select(r => (r.Name, r.Regex)),
+            new SettingsDraftViewModel(null, null).Layers.Select(r => (r.Name, r.Regex)),
             draft.Layers.Select(r => (r.Name, r.Regex)));
         Assert.NotEmpty(draft.Layers); // non-vacuous: iki taraf da boş olsaydı karşılaştırma anlamsız kalırdı
     }
@@ -125,7 +125,7 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")];
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
         var row = Assert.Single(draft.Layers);
         Assert.Equal("Alpha", row.Name);
@@ -140,7 +140,7 @@ public class SettingsDialogTests
         var store = NewStore();
         IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
         run.LayerPatterns = live;
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
         draft.RestoreDefaults();
 
@@ -162,7 +162,7 @@ public class SettingsDialogTests
 
         // Diyalog taslağı canlı pattern'lerin KOPYASI üzerinde çalışır.
         // [genişletildi] Cancel artık repo seçimini de atar: taslak kökü değişse bile canlı kök DOKUNULMAZ.
-        var editor = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles) { RepositoryRoot = @"D:\new\repo" };
+        var editor = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath) { RepositoryRoot = @"D:\new\repo" };
         editor.Layers[0].Name = "CHANGED";
         editor.Layers[0].Regex = "^B";
         editor.AddLayer();
@@ -201,7 +201,7 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
-        var editor = new SettingsDraftViewModel(null, null, UiState.BuildDependencyCyclesDefault); // taze taslak = 4 varsayılan
+        var editor = new SettingsDraftViewModel(null, null); // taze taslak = 4 varsayılan
         Assert.Equal(4, editor.Layers.Count);
 
         await editor.CommitAsync(run, store);
@@ -220,7 +220,7 @@ public class SettingsDialogTests
         Assert.Equal(run.LayerPatterns, store.State.LayerPatterns);
 
         // Emptied → farklı BİREBİR not + persist boşalır.
-        var empty = new SettingsDraftViewModel(run.LayerPatterns, null, run.BuildDependencyCycles);
+        var empty = new SettingsDraftViewModel(run.LayerPatterns, null);
         for (int i = empty.Layers.Count - 1; i >= 0; i--) empty.RemoveLayer(empty.Layers[i]);
         await empty.CommitAsync(run, store);
         Assert.Contains("Layers removed — single project list", run.GetRunDocumentText());
@@ -282,7 +282,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, @"^OSYS\.Types\.", "OSYS.Types")];
-        await run.ApplySettingsAsync(patterns, @"D:\repo", run.BuildDependencyCycles); // kök DEĞİŞMEDİ — Sync yine gider
+        await run.ApplySettingsAsync(patterns, @"D:\repo"); // kök DEĞİŞMEDİ — Sync yine gider
 
         var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());
         Assert.Equal(@"D:\repo", sync.RootPath);
@@ -302,7 +302,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\new\repo", run.BuildDependencyCycles);
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\new\repo");
 
         Assert.Equal(@"D:\new\repo", run.RootPath);
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
@@ -318,7 +318,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, null, run.BuildDependencyCycles);
+        await run.ApplySettingsAsync(patterns, null);
 
         Assert.Same(patterns, run.LayerPatterns);
         Assert.Empty(sent);
@@ -342,7 +342,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\repo", run.BuildDependencyCycles);
+        await run.ApplySettingsAsync(patterns, @"D:\repo");
 
         Assert.Equal(@"D:\repo", run.RootPath);
         Assert.True(run.HasWorkspace);
@@ -369,7 +369,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\other\repo", run.BuildDependencyCycles);
+        await run.ApplySettingsAsync(patterns, @"D:\other\repo");
 
         Assert.Same(patterns, run.LayerPatterns);   // katmanlar YİNE uygulanır (sessizce kaybolmaz)
         Assert.Equal(@"D:\repo", run.RootPath);     // kök değişmedi
@@ -387,7 +387,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"d:\REPO", run.BuildDependencyCycles); // aynı kök, farklı harf durumu
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"d:\REPO"); // aynı kök, farklı harf durumu
 
         string text = run.GetRunDocumentText();
         Assert.Contains("Layer definitions updated — 1 layers", text); // non-vacuous: konsol boş değil
@@ -411,7 +411,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\new\repo", run.BuildDependencyCycles);
+        await run.ApplySettingsAsync(patterns, @"D:\new\repo");
 
         Assert.Same(patterns, run.LayerPatterns);       // katmanlar kaydedilir
         Assert.Equal(@"D:\new\repo", run.RootPath);     // kök de uygulanır (kalıcı duruma yazılır)
@@ -428,7 +428,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles);
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath);
         draft.RepositoryRoot = @"D:\new\repo"; // "Change…" yalnız BUNU yapar
 
         Assert.Equal(@"D:\repo", run.RootPath);
@@ -446,7 +446,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles) { RepositoryRoot = @"D:\new\repo" };
+        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath) { RepositoryRoot = @"D:\new\repo" };
 
         await draft.CommitAsync(run, store);
 
@@ -454,47 +454,6 @@ public class SettingsDialogTests
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
         Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
         Assert.Equal(4, store.State.LayerPatterns.Count); // varsayılan taslak da aynı Save'de persist edildi
-    }
-
-    // ---------------------------------------------------------------- [Task 11] build dependency cycles
-
-    [Fact] // Taslak CANLI değerle açılır (kopya, Save'e kadar canlıya dokunulmaz) — katmanlar/kök ile aynı sözleşme.
-    public async Task A_draft_opens_with_the_live_build_dependency_cycles_value()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { BuildDependencyCycles = false };
-
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles);
-
-        Assert.False(draft.BuildDependencyCycles);
-        draft.BuildDependencyCycles = true;      // taslağı değiştirmek CANLI durumu ETKİLEMEZ (Cancel = commit yok)
-        Assert.False(run.BuildDependencyCycles);
-    }
-
-    /// <summary>[Task 11] Save: anahtar hem KALICI duruma yazılır hem CANLI VM'e uygulanır — ve uygulama
-    /// Sync'ten ÖNCE olur, yani aynı Save'in gönderdiği <see cref="SyncWorkspaceCommand"/> YENİ değeri taşır
-    /// (katman pattern'lerindeki sıra kuralının aynısı; ters sırada komut ESKİ değerle giderdi ve Idle'daki
-    /// will-dot'lar bir Sync boyunca yalan söylerdi).</summary>
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Saving_persists_the_cycle_switch_and_applies_it_before_the_sync(bool on)
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
-            { RootPath = @"D:\repo", BuildDependencyCycles = !on };
-        var store = NewStore();
-        var sent = new List<IpcCommand>();
-        run.DebugOnCommandSent = sent.Add;
-
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.BuildDependencyCycles)
-            { BuildDependencyCycles = on };
-
-        await draft.CommitAsync(run, store);
-
-        Assert.Equal(on, run.BuildDependencyCycles);                 // canlı VM
-        Assert.Equal(on, store.State.BuildDependencyCycles);          // kalıcı durum
-        Assert.Equal(on, Assert.Single(sent.OfType<SyncWorkspaceCommand>()).BuildDependencyCycles); // SIRA kanıtı
     }
 
 }
@@ -573,53 +532,6 @@ public class SettingsDialogViewTests
         // "Add layer": Content bir StackPanel'dir (ikon + TextBlock) — etiket ayrı aranır.
         var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
         Assert.Contains("Add layer", texts);
-    }
-
-    /// <summary>[Task 11] Kill switch'in GÖRSEL yüzeyi. Yeni bir kontrol/şablon YOKTUR — mevcut
-    /// <c>Ds.Chip</c> <see cref="ToggleButton"/> stili (ActionBar'ın branch/perf chip'leriyle AYNI) yeniden
-    /// kullanılır, bu yüzden ayrı bir realize testi de gerekmez: burada pinlenen, chip'in GERÇEKTEN realize
-    /// olduğu, o stille kurulduğu ve taslağa İKİ YÖNLÜ bağlı olduğudur.
-    /// <para><b>Seed yönü İKİ konumda birden ölçülür (Theory).</b> Yalnız KAPALI konumu ölçmek YETMEZDİ:
-    /// <c>SettingsDialog.Open</c> canlı değeri taslağa taşımayı büsbütün bıraksaydı taslak yine kapalı
-    /// açılırdı (bool'un kendi varsayılanı) ve tek-konumlu bir test YEŞİL kalırdı — yani iddia kendi
-    /// bozulmasını göremezdi. AÇIK konum bu boşluğu kapatır.</para></summary>
-    [StaTheory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void Settings_dialog_binds_the_cycle_chip_to_the_draft_in_both_directions(bool live)
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(configure: run => run.BuildDependencyCycles = live);
-        using var _scope = scope;
-
-        var chip = DsResources.RealizedObjects(dialog).OfType<ToggleButton>()
-            .Single(t => t.Name == "PART_CyclesChip");
-        Assert.Same(dialog.TryFindResource("Ds.Chip"), chip.Style);   // yeni şablon YOK — mevcut DS stili
-        Assert.Equal("Build dependency cycles", chip.Content);
-
-        var draft = (SettingsDraftViewModel)dialog.DataContext;
-        Assert.Equal(live, draft.BuildDependencyCycles); // canlı değer taslağa indi
-        Assert.Equal(live, chip.IsChecked);              // ve chip'e
-
-        chip.IsChecked = !live;                  // kullanıcı tıklaması
-        dialog.UpdateLayout();
-        Assert.Equal(!live, draft.BuildDependencyCycles); // ve taslağa geri çıktı (TwoWay)
-    }
-
-    /// <summary>[Task 11] Bölüm başlığı + açıklaması BİREBİR — anahtarın ne yaptığı diyaloğun kendi sesiyle
-    /// yazılır (LAYERS/REPOSITORY bölümleriyle aynı caps-başlık + açıklama deseni).</summary>
-    [StaFact]
-    public void Settings_dialog_pins_the_dependency_cycles_caption_and_description_verbatim()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
-        using var _scope = scope;
-
-        var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
-        Assert.Contains("DEPENDENCY CYCLES", texts);
-        Assert.Contains(
-            "Projects that depend on each other form a cycle. When this is on they are built together, " +
-            "one after another, in repeated rounds until two rounds in a row come back clean. When it is " +
-            "off they are skipped, as they were before.",
-            texts);
     }
 
     /// <summary>Diyalogda "Change…": yalnız yol ETİKETİ güncellenir; canlı kök ve motor DOKUNULMAZ.</summary>

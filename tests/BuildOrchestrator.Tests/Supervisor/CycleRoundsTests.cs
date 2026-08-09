@@ -64,23 +64,28 @@ public class CycleRoundsTests
         store.Upsert(new BuildState(Id(name), signature, "c0", BuildResult.Succeeded,
             DateTimeOffset.UtcNow, "main", LastDurationMs: 42));
 
-    // ---------------------------------------------------------------- 0) kill switch [Task 11]
+    // ---------------------------------------------------------------- 0) kapsam: hangi mod SCC derler
 
     /// <summary>
-    /// [Task 11] Anahtar KAPALIYKEN davranış, bu özellik HİÇ VAR OLMAMIŞ gibidir: üyeler tek bir tur bile
-    /// koşmadan, ORİJİNAL <c>"in dependency cycle"</c> gerekçesiyle pre-skip edilir ve tur göstergesi hiç
-    /// yayılmaz. Kapalı hâl için yazılmış AYRI bir kod yolu YOKTUR — <c>RunCoordinator</c> scheduler'a
-    /// <c>CycleGroups</c> yerine <c>null</c> geçer ve <see cref="Core.Scheduling.ReadySetScheduler"/>'ın
-    /// bugüne dek var olan pre-skip dalı devreye girer.
+    /// <b>Build bir SCC'yi ASLA derlemez.</b> Üyeler tek bir tur bile koşmadan, bu özellikten ÖNCEKİ
+    /// <c>"in dependency cycle"</c> gerekçesiyle pre-skip edilir ve tur göstergesi hiç yayılmaz. Build için
+    /// yazılmış AYRI bir kod yolu YOKTUR — <c>RunCoordinator</c> scheduler'a <c>CycleGroups</c> yerine
+    /// <c>null</c> geçer ve <see cref="Core.Scheduling.ReadySetScheduler"/>'ın bugüne dek var olan pre-skip
+    /// dalı devreye girer.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bu test eskiden "kill switch KAPALIYKEN" diye yazılıydı: turlar Build'in
+    /// içine katlanmıştı ve Settings'teki bir anahtarla kapatılıyordu. Ölçülen sonuç: iki dakikalık bir Build
+    /// on beş dakikaya çıkıyor, kullanıcı istemediği ve göremediği bir işin arkasında bekliyordu. Turlar artık
+    /// kendi moduna (<see cref="RunMode.Cycles"/>, Sync'in yanındaki düğme) taşındı; anahtar kalktı. Pinlenen
+    /// gerekçe aynı kaldı — Build'in davranışı bu özellik hiç yokmuş gibidir.</para>
     /// </summary>
     [Fact]
-    public async Task the_switch_off_pre_skips_every_member_with_the_original_reason_and_runs_no_rounds()
+    public async Task a_build_run_pre_skips_every_member_with_the_original_reason_and_runs_no_rounds()
     {
         var rec = new RoundRecorder();
         var invoker = rec.Invoker((_, _) => Ok());
         using var h = new Harness(TwoMemberCycle(), invoker);
 
-        await h.Sut.StartAsync(Start(RunMode.Build, buildCycles: false), default);
+        await h.Sut.StartAsync(Start(RunMode.Build), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Empty(rec.Calls);                                    // MSBuild HİÇ çağrılmadı — tur YOK
@@ -91,8 +96,7 @@ public class CycleRoundsTests
 
         var skipped = events.OfType<ProjectSkippedEvent>().ToList();
         Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
-        // Gerekçe METNİ özelliğin öncesiyle BİREBİR aynı olmalı — App'in rozeti/sayaçları bu metne göre
-        // ayrışmasın diye (ve "neredeyse aynı" bir kapalı hâl, kill switch olmanın anlamını yitirir).
+        // Gerekçe METNİ özelliğin öncesiyle BİREBİR aynı olmalı — App'in rozeti/sayaçları bu metne göre ayrışmasın.
         Assert.All(skipped, e => Assert.Equal("in dependency cycle", e.Reason));
         Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
 
@@ -103,15 +107,15 @@ public class CycleRoundsTests
     }
 
     /// <summary>
-    /// [Task 11] KAPALI hâlin en ince kenarı: daha önce anahtar AÇIKKEN koşmuş bir run, bu SCC'yi
-    /// "yakınsamıyor" diye hatırlamış olabilir. O hafıza kapalıyken de okunsaydı üyeler
+    /// Build'in en ince kenarı: daha önce koşmuş bir <see cref="RunMode.Cycles"/> run'ı bu SCC'yi
+    /// "yakınsamıyor" diye hatırlamış olabilir. O hafıza Build'de de okunsaydı üyeler
     /// <c>"cycle did not converge at this signature"</c> gerekçesiyle seed'lenir, ve
     /// <see cref="Core.Scheduling.ReadySetScheduler"/>'ın pre-skip dalı (<c>!_completed.ContainsKey</c> guard'ı)
-    /// orijinal gerekçeyi YUTARDI — kapalı hâl "neredeyse aynı" olurdu. Hafıza okuması bu yüzden anahtarın
-    /// KENDİSİYLE kapılıdır.
+    /// orijinal gerekçeyi YUTARDI — Build "neredeyse aynı" olurdu. Hafıza okuması bu yüzden MODUN kendisiyle
+    /// kapılıdır.
     /// </summary>
     [Fact]
-    public async Task the_switch_off_ignores_non_convergence_memory_left_behind_by_an_earlier_run()
+    public async Task a_build_run_ignores_non_convergence_memory_left_behind_by_a_cycles_run()
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -121,14 +125,14 @@ public class CycleRoundsTests
             var rec = new RoundRecorder();
             var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
 
-            // Run 1: anahtar AÇIK → turlar koşar, yakınsamaz, hafıza "sig" ile YAZILIR.
+            // Run 1 (Cycles): turlar koşar, yakınsamaz, hafıza "sig" ile YAZILIR.
             using var h = new Harness(plan, invoker, stateStore: store);
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature); // sanity: hafıza gerçekten var
 
-            // Run 2: anahtar KAPALI, AYNI imza. Hafıza duruyor ama okunmamalı.
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2", buildCycles: false), default);
+            // Run 2 (Build, AYNI imza). Hafıza duruyor ama okunmamalı.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             var run2Skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
@@ -139,18 +143,49 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
-    /// <summary>[Task 11] Anahtar AÇIKKEN önizleme ile motor UYUŞUR: bileşik imzası TEMİZ (state'teki
-    /// <c>BuiltSignature</c> ile birebir) bir SCC — yani <c>WillBuild == false</c> gelen üyeler — artık
-    /// gerçekten pre-skip edilir ve sıradan bir "güncel" skip'iyle AYNI gerekçeyi taşır.
-    /// <para><b>Neden gerekli:</b> önizleme <c>buildCycles</c> ile hesaplanır hâle gelince, yakınsamış bir
-    /// gruptan sonraki İKİNCİ Build'de will-dot gri (<c>WillBuild=false</c>) olur. Motor bunu görmezden gelip
-    /// grubu her koşuda yeniden derleseydi, bu görevin kapatmaya çalıştığı ayrışmanın TERSİ ortaya çıkardı:
-    /// nokta "derlenmeyecek" der, proje derlenirdi.</para>
+    /// <summary>
+    /// <b>Cycles koşusunun kapsamı TERSİdir:</b> yalnız SCC üyeleri derlenir, döngü DIŞINDA kalan her proje
+    /// kendi gerekçesiyle pre-skip edilir. Ve koşu başındaki önizleme bununla UYUŞUR — kapsam dışı satır
+    /// "derlenecek" diye amber yanıp hemen ardından "skipped" olarak geçmez.
+    /// <para>Önizleme iddiası ayrı bir kaprisin değil, kullanıcının gördüğü ekranın konusudur: bu koşuda
+    /// yüzlerce proje kapsam dışıdır ve hepsinin amber yanması, düğmenin ne yaptığını okunamaz hâle getirirdi.</para>
+    /// </summary>
+    [Fact]
+    public async Task a_cycles_run_pre_skips_every_project_outside_a_cycle_and_the_preview_agrees()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        // X döngü DIŞINDA ve planlayıcı onu "derlenecek" (WillBuild=true) diye işaretlemiş — yani iddia
+        // önemsiz değil: kapsam kapısı olmasaydı X derlenir ve önizlemede amber kalırdı.
+        var plan = CyclePlanOf(["A", "B"],
+            Node("X", willBuild: true),
+            Node("A", deps: ["X", "B"], inCycle: true),
+            Node("B", deps: ["A"], inCycle: true));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // yalnız SCC derlendi — X'e hiç dokunulmadı
+        var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+        Assert.Equal(Id("X"), skipped.ProjectId);
+        Assert.Equal("skipped — not in a dependency cycle", skipped.Reason);
+        Assert.False(skipped.CycleUnconverged);
+
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+        Assert.False(Assert.Single(preview.Items, i => i.ProjectId == Id("X")).WillBuild);
+    }
+
+    /// <summary>Cycles koşusu da INCREMENTAL'dır: bileşik imzası TEMİZ (state'teki <c>BuiltSignature</c> ile
+    /// birebir) bir SCC — yani <c>WillBuild == false</c> gelen üyeler — pre-skip edilir ve sıradan bir "güncel"
+    /// skip'iyle AYNI gerekçeyi taşır.
+    /// <para><b>Neden gerekli:</b> yakınsamış bir gruptan sonra düğmeye ikinci kez basmak bedava olmalıdır;
+    /// aksi halde her basış aynı turları baştan harcardı.</para>
     /// <para>Karar GRUP düzeyindedir (<c>All</c>): bileşik imza üyeler arasında ORTAK olduğu için ya hepsi
     /// temizdir ya hiçbiri; kısmi bir durumda (ör. bir üyenin state'i hiç yok) grubun HİÇBİR üyesi pre-skip
     /// edilmez — yarısı Skipped tohumlanmış bir grubu dispatch etmek bozuk olurdu.</para></summary>
     [Fact]
-    public async Task the_switch_on_pre_skips_a_cycle_whose_composite_signature_is_clean()
+    public async Task a_cycles_run_pre_skips_a_cycle_whose_composite_signature_is_clean()
     {
         var rec = new RoundRecorder();
         var invoker = rec.Invoker((_, _) => Ok());
@@ -161,7 +196,7 @@ public class CycleRoundsTests
             Node("B", deps: ["A"], inCycle: true, willBuild: false));
         using var h = new Harness(plan, invoker);
 
-        await h.Sut.StartAsync(Start(RunMode.Build), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Empty(rec.Calls);   // temiz grup: tek tur bile koşmaz
@@ -173,7 +208,7 @@ public class CycleRoundsTests
     }
 
     [Fact] // Kontrol grubu: üyelerden BİRİ bile temiz değilse grup pre-skip EDİLMEZ (yarım tohumlama YOK).
-    public async Task the_switch_on_still_builds_a_cycle_when_only_some_members_look_clean()
+    public async Task a_cycles_run_still_builds_a_cycle_when_only_some_members_look_clean()
     {
         var rec = new RoundRecorder();
         var invoker = rec.Invoker((_, _) => Ok());
@@ -182,7 +217,7 @@ public class CycleRoundsTests
             Node("B", deps: ["A"], inCycle: true, willBuild: true));
         using var h = new Harness(plan, invoker);
 
-        await h.Sut.StartAsync(Start(RunMode.Build), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // grup TAMAMEN derlenir
@@ -198,7 +233,7 @@ public class CycleRoundsTests
         var invoker = rec.Invoker((_, _) => Ok());
         using var h = new Harness(TwoMemberCycle(), invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // TEK yeşil tur YETMEZ: tur 1 her üyenin public API'sini nihaileştirir, tur 2 herkesi NİHAİ API'lere
@@ -242,7 +277,7 @@ public class CycleRoundsTests
         var invoker = rec.Invoker((name, round) => name == "A" && round == 1 ? Exit(1) : Ok());
         using var h = new Harness(TwoMemberCycle(), invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // tur1 {A} kirli → tur2 temiz ama ÖNCEKİ tur kirli (henüz iki ardışık yeşil yok) → tur3 temiz+temiz
@@ -266,7 +301,7 @@ public class CycleRoundsTests
         var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // aynı küme iki turdur patlıyor
         using var h = new Harness(TwoMemberCycle(), invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // NoProgress: tur eklemek çözmez → ÜÇÜNCÜ tur YOK (tavan 3 olmasına rağmen).
@@ -295,7 +330,7 @@ public class CycleRoundsTests
             new MsBuildInvokeResult(ExitCode: 0, DurationMs: name == "A" ? round * 100 : 5, TimedOut: false, Killed: false));
         using var h = new Harness(TwoMemberCycle(), invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // Raporlanan süre GERÇEK maliyettir: son turunki değil, turların TOPLAMI.
@@ -318,7 +353,7 @@ public class CycleRoundsTests
         var invoker = rec.Invoker(async (_, _, _) => { await Task.Yield(); return Ok(); });
         using var h = new Harness(plan, invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 4), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 4), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // Sıra build-order'dır ve turlar iç içe GEÇMEZ; paralellik doğruluk sorunudur: A, B.dll'i okurken
@@ -344,7 +379,7 @@ public class CycleRoundsTests
             var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
@@ -381,7 +416,7 @@ public class CycleRoundsTests
             var invoker = rec.Invoker((_, _) => Ok());
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // iki ardışık yeşil ⇒ Converged
@@ -421,7 +456,7 @@ public class CycleRoundsTests
             });
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(parallelism: 1), cts.Token);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), cts.Token);
             // Complete her üye için (iptal yolunda da) çağrıldı ⇒ run ASILMAZ. Kaçırılsaydı bu satır timeout'a
             // düşerdi: IsDone, InFlight==0 şartını asla sağlamazdı.
             await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -455,7 +490,7 @@ public class CycleRoundsTests
             : Task.FromResult(Ok()));
         using var h = new Harness(TwoMemberCycle(), invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal(["A#1", "B#1"], rec.Calls);
@@ -498,7 +533,7 @@ public class CycleRoundsTests
             using var h = new Harness(plan, invoker, stateStore: store);
             sut = h.Sut;
 
-            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["A#1", "B#1"], rec.Calls);   // tur 1 tamamlanır, İKİNCİ tur AÇILMAZ
@@ -535,7 +570,7 @@ public class CycleRoundsTests
         using var h = new Harness(plan, invoker);
         sut = h.Sut;
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal(["A#1", "B#1", "C#1"], rec.Calls);   // tur 1 biter, İKİNCİ tur açılmaz
@@ -573,7 +608,7 @@ public class CycleRoundsTests
             });
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3"], rec.Calls); // tavan: 4. tur YOK
@@ -625,7 +660,7 @@ public class CycleRoundsTests
             using var h = new Harness(plan, invoker, stateStore: store);
 
             // Run 1: tur1 {A}, tur2 {B}, tur3 temiz ⇒ iki ardışık yeşil YOK, tavan ⇒ CapReached.
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3"], rec.Calls);
             // Tavan HATIRLANMAZ. Soru, pre-skip'in KENDİ okuyucusuyla sorulur: hiç kayıt açılmamış olması da
@@ -635,7 +670,7 @@ public class CycleRoundsTests
 
             // Run 2 (Build, imza HÂLÂ "sig"): pre-skip YOK — grup gerçekten yeniden derlenir ve bu kez
             // iki ardışık yeşil turla yakınsar.
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4", "A#5", "B#5"], rec.Calls);
             Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
@@ -662,13 +697,13 @@ public class CycleRoundsTests
             using var h = new Harness(plan, invoker, stateStore: store);
 
             // Run 1 (Build): hiç hafıza yok → turlar GERÇEKTEN koşar, NoProgress ile biter.
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
 
             // Run 2 (Build, AYNI imza "sig"): grup daha önce bu imzada yakınsamadı → bir daha tur harcanmaz,
             // MSBuild HİÇ çağrılmaz — hiçbir yeni invoke.
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // run 2 HİÇBİR ŞEY eklemedi
 
@@ -707,18 +742,18 @@ public class CycleRoundsTests
             using var h = new Harness(TwoMemberCycle(), invoker, planner: Planner, stateStore: store);
 
             // Run 1 ("sig"): hafıza yok → turlar koşar, NoProgress ⇒ hafıza "sig" ile yazılır.
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
 
             // Run 2 ("sig", DEĞİŞMEDİ): hafıza eşleşir → pre-skip, yeni invoke YOK (kontrol).
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
 
             // Run 3 ("sig2", KAYNAK DEĞİŞTİ): imza artık eşleşmiyor → grup YENİDEN turlarla denenir.
             sourceChanged = true;
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r3"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r3"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
         }
@@ -726,42 +761,51 @@ public class CycleRoundsTests
     }
 
     [Fact]
-    public async Task a_converged_group_clears_its_non_convergent_memory_so_a_later_Build_at_the_same_signature_still_invokes_it()
+    public async Task a_converged_group_clears_its_non_convergent_memory_so_a_later_run_at_the_same_signature_still_invokes_it()
     {
-        // [Task 7 review — I1] Yakınsayan grup hafızasını bırakmaz: bir sonraki Build onu pre-skip ETMEZ.
-        // [M3 — DEĞİŞEN GEREKÇE] Bu testin eski doc'u kuralı "PersistBuildStateOnSuccess'in TAZE bir BuildState
-        // (`new`, `with` DEĞİL) kurmasının YAN ETKİSİ; ayrı bir temizle kodu YOK" diye pinliyordu. O yan etki
-        // eksikti: dep-issue taşıyan bir success [A2] gereği HİÇ persist etmez, dolayısıyla o üyenin hafızası
-        // yakınsamaya rağmen ayakta kalıyordu (bkz. kardeş test
-        // convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue). Silme artık
-        // hafızanın kendi yazıcısında AÇIKÇA yapılıyor; bu test o SONUCU (yakınsama ⇒ hafıza yok) pinler.
+        // [Task 7 review — I1] Yakınsayan grup hafızasını bırakmaz: aynı imzada koşan bir sonraki Cycles run'ı
+        // onu pre-skip ETMEZ. Silme, hafızanın kendi yazıcısında AÇIKÇA yapılır (PersistBuildStateOnSuccess'in
+        // yan etkisine BIRAKILMAZ) — bu test o SONUCU pinler.
+        //
+        // [DEĞİŞEN KURAL] Eskiden orta adım Rebuild'di: "Rebuild pre-skip bilmez, hafızalı grubu yine dener"
+        // deniyordu. Turlar Build/Rebuild'in içinden çıkıp kendi moduna taşınınca (RunMode.Cycles) o kaçış
+        // yolu kapandı — Rebuild artık bir SCC'ye hiç dokunmaz. Yerine gerçek hayattaki çıkış yolu kullanılır:
+        // KAYNAK DEĞİŞİR (imza "sig" → "sig2"), grup yeniden denenir ve bu kez yakınsar. Sonra imza "sig"e
+        // geri döner; hafıza temizlenmiş olduğu için grup yine invoke edilir. İddia aynı, yolu gerçekçi.
         string cacheRoot = NewCacheRoot();
         try
         {
             var store = new BuildStateStore(cacheRoot);
-            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            string signature = "sig";
+            RunPlan Planner(StartRunCommand _, Action<string> __) => TwoMemberCycle() with
+            {
+                Incremental = new IncrementalPlan(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    { [Id("A")] = signature, [Id("B")] = signature }, "headsha", "main"),
+            };
             bool converges = false;
             var rec = new RoundRecorder();
             var invoker = rec.Invoker((name, _) => name == "B" && !converges ? Exit(1) : Ok());
-            using var h = new Harness(plan, invoker, stateStore: store);
+            using var h = new Harness(TwoMemberCycle(), invoker, planner: Planner, stateStore: store);
 
-            // Run 1 (Build, "sig"): NoProgress ⇒ hafıza "sig" ile yazılır.
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            // Run 1 ("sig"): NoProgress ⇒ hafıza "sig" ile yazılır.
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
             Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature);
 
-            // Run 2 (Rebuild, AYNI "sig"): grup GERÇEKTEN yakınsar — Rebuild pre-skip bilmez, her zaman dener.
+            // Run 2 ("sig2", kaynak değişti): hafıza eşleşmez → grup denenir ve GERÇEKTEN yakınsar.
+            signature = "sig2";
             converges = true;
-            await h.Sut.StartAsync(Start(RunMode.Rebuild, runId: "r2"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
             Assert.Null(store.Load()[Id("A")].NonConvergentSignature); // yakınsama hafızayı SİLDİ
             Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
 
-            // Run 3 (Build, HÂLÂ "sig"): hafıza temizlendiği için pre-skip EDİLMEZ — grup GERÇEKTEN invoke edilir.
+            // Run 3 ("sig"e geri dönüldü): hafıza temizlendiği için pre-skip EDİLMEZ — grup invoke edilir.
+            signature = "sig";
             int before = invoker.Requests.Count;
-            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r3"), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r3"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.True(invoker.Requests.Count > before); // MSBuild GERÇEKTEN çağrıldı, pre-skip edilmedi
             Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
@@ -770,45 +814,15 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
-    [Fact]
-    public async Task convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue()
-    {
-        // [M3] Yukarıdaki testin kaçırdığı delik. Hafızayı silmek, yakınsayan üyenin taze BuildState'inin bir
-        // YAN ETKİSİYDİ — ama [A2] gereği dep-issue TAŞIYAN bir success persist ETMEZ. O üyenin eski
-        // NonConvergentSignature'ı ayakta kalır; Build'in pre-skip'i TÜM üyeleri istediği için grup, GERÇEKTEN
-        // yakınsamış olmasına rağmen aynı imzada sonsuza dek pre-skip edilirdi (kaynak değişmeden çıkışı yok).
-        // Silme bu yüzden hafızanın kendi yazıcısında AÇIKÇA yapılır.
-        string cacheRoot = NewCacheRoot();
-        try
-        {
-            var store = new BuildStateStore(cacheRoot);
-            // "sig" imzasında yakınsamadığı HATIRLANIYOR (önceki bir Build'den).
-            foreach (string name in new[] { "A", "B" })
-                store.Upsert(new BuildState(Id(name), "old", "c0", BuildResult.Succeeded,
-                    DateTimeOffset.UtcNow, "main", 42, NonConvergentSignature: "sig"));
-
-            // X grup DIŞINDA ve bu run'da patlar → A'nın success'i depIssue TAŞIR (bayat X çıktısına link'li).
-            var plan = CyclePlanOf(["A", "B"],
-                Node("X"),
-                Node("A", deps: ["X", "B"], inCycle: true),
-                Node("B", deps: ["A"], inCycle: true)) with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
-            var rec = new RoundRecorder();
-            var invoker = rec.Invoker((name, _) => name == "X" ? Exit(1) : Ok());
-            using var h = new Harness(plan, invoker, stateStore: store);
-
-            // Rebuild: pre-skip yolu hiç devreye girmesin — sınanan şey hafızanın RUN SONUNDA silinmesidir.
-            await h.Sut.StartAsync(Start(RunMode.Rebuild, parallelism: 1), default);
-            await h.Sut.RunCompletion.WaitAsync(Limit);
-
-            Assert.Equal(["X#1", "A#1", "B#1", "A#2", "B#2"], rec.Calls); // iki ardışık yeşil tur ⇒ Converged
-            var a = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => e.ProjectId == Id("A"));
-            Assert.Equal(["X"], a.DepIssues);                       // kontrol: A gerçekten depIssue taşıyor
-            Assert.Equal("old", store.Load()[Id("A")].BuiltSignature); // ve bu yüzden persist ETMEDİ [A2]
-            Assert.Null(store.Load()[Id("A")].NonConvergentSignature); // ama hafıza YİNE DE temizlendi
-            Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
-        }
-        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
-    }
+    // [SİLİNEN TEST — convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue]
+    // Eski iddia: yakınsayan bir SCC üyesinin success'i depIssue TAŞIYORSA [A2] gereği persist etmez, bu
+    // yüzden hafıza silme işi persist'in yan etkisine bırakılamaz — açıkça yapılmalıdır.
+    // Neden silindi: senaryosu artık ÜRETİLEMEZ. Turlar kendi moduna (RunMode.Cycles) taşınınca o koşuda
+    // döngü DIŞINDAKİ her proje pre-skip edilir, yani hiçbir zaman FAILED olmaz; DepIssueTracker ise yalnız
+    // FAILED bağımlılıktan depIssue üretir (grup-içi kenarlar da hesaptan zaten çıkarılır). Dolayısıyla bir
+    // SCC üyesinin success'i bu modda depIssue TAŞIYAMAZ. Açık silme KODU KALDI — doğru yerde durur ve
+    // gerekçesi UpdateCycleNonConvergenceMemory'nin doc'undadır; ama artık davranışı gözlemleyebilecek bir
+    // senaryo olmadığı için ona sahte bir kurulum uyduran bir test tutulmadı.
 
     // ---------------------------------------------------------------- 10) karar decision.log'a düşer [M1]
 
@@ -827,7 +841,7 @@ public class CycleRoundsTests
             var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             // Grup, tur göstergesiyle AYNI adla (build-order'daki ilk üye) anılır.
@@ -846,7 +860,7 @@ public class CycleRoundsTests
         var invoker = rec.Invoker((_, _) => Ok());
         using var h = new Harness(TwoMemberCycle(), invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Contains("cycle A: converged (2 members)", h.DecisionLog, StringComparison.Ordinal);

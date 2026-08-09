@@ -214,15 +214,9 @@ public sealed partial class RunViewModel
     /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para></summary>
     /// <param name="patterns">Taslağın katman tanımları.</param>
     /// <param name="repositoryRoot">Bekleyen repo kökü (değişmediyse mevcut kökün aynısı).</param>
-    /// <param name="buildDependencyCycles">[Task 11] Kill switch'in yeni değeri. Katmanlarla AYNI sıra kuralına
-    /// tabidir: Sync'ten ÖNCE uygulanır, çünkü <see cref="SyncWorkspaceCommand"/> bu bayrağı TAŞIR — ters
-    /// sırada komut ESKİ değerle gider ve Idle'daki will-dot'lar bir Sync boyunca yanlış kalırdı. Varsayılanı
-    /// YOKTUR: ürün varsayılanının tek sahibi <c>UiState.BuildDependencyCycles</c>'tır.</param>
-    public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
-        bool buildDependencyCycles)
+    public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot)
     {
         ApplyLayerPatterns(patterns);
-        BuildDependencyCycles = buildDependencyCycles;
         if (IsMidRunLocked)
         {
             if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");

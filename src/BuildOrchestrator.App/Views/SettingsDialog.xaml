@@ -192,27 +192,6 @@
                          Foreground="{DynamicResource Brush.TextSecondary}" />
             </DockPanel>
 
-            <!-- ==================== DEPENDENCY CYCLES (Task 11 kill switch) ====================
-                 LAYERS/REPOSITORY ile AYNI desen: caps başlık + açıklama + kontrol. Anahtar mevcut
-                 Ds.Chip ToggleButton stilidir (ActionBar'ın branch/perf chip'leriyle aynı) — yeni bir
-                 kontrol ya da şablon YOK. Chip AÇIKKEN amber (Ds.Chip'in IsChecked trigger'ı), yani
-                 "derleniyor" hâli görsel olarak da etkin okunur. Etiketi string Content'tir → WPF'in
-                 buton peer'ı adı ondan türetir (ayrı AutomationProperties.Name gerekmez). -->
-            <TextBlock Text="DEPENDENCY CYCLES" Margin="0,20,0,6"
-                       FontFamily="{x:Static controls:AppFonts.Ui}"
-                       FontSize="{DynamicResource FontSize.2xs}"
-                       FontWeight="{DynamicResource FontWeight.Emphasis}"
-                       Foreground="{DynamicResource Brush.TextFaint}" />
-            <DockPanel LastChildFill="True">
-              <ToggleButton x:Name="PART_CyclesChip" DockPanel.Dock="Right" Margin="10,0,0,0"
-                            VerticalAlignment="Center" Style="{DynamicResource Ds.Chip}"
-                            Content="Build dependency cycles"
-                            IsChecked="{Binding BuildDependencyCycles, Mode=TwoWay}" />
-              <TextBlock TextWrapping="Wrap" VerticalAlignment="Center"
-                         FontSize="{DynamicResource FontSize.Xs}"
-                         Foreground="{DynamicResource Brush.TextDim}"
-                         Text="Projects that depend on each other form a cycle. When this is on they are built together, one after another, in repeated rounds until two rounds in a row come back clean. When it is off they are skipped, as they were before." />
-            </DockPanel>
           </StackPanel>
         </ScrollViewer>
 

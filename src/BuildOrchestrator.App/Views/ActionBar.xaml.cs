@@ -82,6 +82,7 @@ public partial class ActionBar : UserControl
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
     internal Button SyncButton => PART_Sync;
+    internal Button CyclesButton => PART_Cycles;
     internal Button StopButton => PART_Stop;
     internal SplitButton Split => PART_Split;
     internal BuildMenu BuildMenuControl => PART_BuildMenu;
@@ -406,9 +407,14 @@ public partial class ActionBar : UserControl
     private void BuildButtons()
     {
         PART_Sync.Content = ButtonContent("Icon.Sync", "Sync", "Brush.TextPrimary", 24);
+        // [cycles] İkon, satır ve graf'ta "bu proje bir döngüde" demek için KULLANILAN glyph'in aynısıdır
+        // (Icon.StatusCycle, viewBox 16) — düğme tam da o işaretli projeleri derler, bağ görsel olarak kurulur.
+        PART_Cycles.Content = ButtonContent("Icon.StatusCycle", "Cycles", "Brush.TextPrimary", 16);
+        PART_Cycles.ToolTip = AccessibilityNames.CyclesButton;
         // [Stopping] Stop'un İÇERİĞİ artık duruma bağlı (Stop / Stopping…) — tek yazıcısı RefreshBuildArea'dır.
         // UIA adı burada ve SABİT kalır: buton kimliği değişmiyor, yalnız durumu değişiyor.
         AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
+        AutomationProperties.SetName(PART_Cycles, AccessibilityNames.CyclesButton);
         AutomationProperties.SetName(PART_Stop, AccessibilityNames.StopButton);
     }
 
@@ -465,6 +471,9 @@ public partial class ActionBar : UserControl
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;
+        // [cycles] AYNI desen: repo kapısı burada, geri kalan her koşul (topoloji, döngü VAR MI, mid-run,
+        // motor sağlığı) komutun CanExecute'undadır — iki yerden yazılan bir enable hâli olmaz.
+        PART_Cycles.IsEnabled = hasWs;
         // Build split-button: repo + !syncing (BuildApp.jsx:1594); primary komut running'i ayrıca kısar.
         PART_Split.IsEnabled = hasWs && !syncing;
     }

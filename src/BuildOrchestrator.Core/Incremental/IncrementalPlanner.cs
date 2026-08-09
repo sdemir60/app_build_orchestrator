@@ -77,13 +77,11 @@ public static class IncrementalPlanner
     /// <param name="committedFingerprintForNode">[A6 refinement — Task 7b] Düğüm → bu projenin PER-PROJECT committed fingerprint'i (bkz. <see cref="ComputeCommittedFingerprint"/> — GitService.GetTrackedBlobHashesAsync haritası ∩ projenin build-etkileyen dosyaları üzerinden çağıran tarafından önceden hesaplanır). Repo-GLOBAL headCommit'in YERİNİ alır: bir commit, yalnız BU projenin committed dosyalarını gerçekten değiştirdiyse bu terim değişir. <c>null</c> tolere edilir (proje hiç commit'lenmemiş / no-commits repo).</param>
     /// <param name="state">projectId → <see cref="BuildState"/> (bkz. <see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>). Kayıt yoksa never-built.</param>
     /// <param name="inPlace">true → in-place mod (local-diff dahil); false → worktree/committed (local-diff atlanır).</param>
-    /// <param name="buildCycles">[Task 11] Kill switch (bkz. <c>StartRunCommand.BuildDependencyCycles</c>):
-    /// SCC üyeleri motor tarafından turlarla DERLENİYOR mu. <c>false</c> ⇒ üyeler <c>WillBuild=false</c>'a kısa
-    /// devre yapar (<see cref="WillBuildEvaluator"/>), <c>true</c> ⇒ sıradan imza/state mantığına tabidirler —
-    /// SCC'nin bileşik imzası (bkz. <c>ComputeComponent</c>) tüm üyeler için ORTAK olduğundan grup ya bütün
-    /// olarak "derlenecek" ya bütün olarak "güncel" görünür. <b>Varsayılanı YOKTUR:</b> bu değerin sessizce
-    /// sabitlenmesi tam da bu görevin düzelttiği kusurdu (iki çağrı yeri <c>false</c>'ı gömüyordu ve önizleme
-    /// motorla ayrışıyordu) — her çağıran kararı AÇIKÇA yazmak zorundadır.</param>
+    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>'ta <c>true</c>.
+    /// <c>false</c> ⇒ üyeler <c>WillBuild=false</c>'a kısa devre yapar (<see cref="WillBuildEvaluator"/>),
+    /// <c>true</c> ⇒ sıradan imza/state mantığına tabidirler — SCC'nin bileşik imzası (bkz.
+    /// <c>ComputeComponent</c>) tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün
+    /// olarak "güncel" görünür. <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını AÇIKÇA yazar.</param>
     /// <param name="mode">Safe (varsayılan, dirty+transitive) veya Fast (yalnız dirty, cascade yok).</param>
     /// <returns><paramref name="plan"/> ile aynı düğümler, her birinin <see cref="ProjectNode.WillBuild"/> alanı doldurulmuş.</returns>
     public static BuildPlan ComputeWillBuild(
