@@ -1379,13 +1379,23 @@ public sealed class RunCoordinator(
     /// <summary>
     /// [Task 7] Yakınsamama hafızasının TEK yazıcısı — <see cref="BuildState.NonConvergentSignature"/>.
     ///
-    /// <para><b>NoProgress/CapReached ⇒ YAZ.</b> TÜM üyelerin alanına o anki bileşik imza yazılır; bir sonraki
-    /// <c>Build</c> aynı imzayı görürse grup <see cref="BuildStateStore.IsCycleNonConvergent"/> ile pre-skip
-    /// edilir, kaynak DEĞİŞMEDEN turlar tekrar TÜKETİLMEZ. Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir
-    /// <see cref="BuildState"/> açılır — <see cref="InvalidateBuildStateOnFailure"/> yalnız MEVCUT kayıtları
-    /// günceller, yenisini AÇMAZ.</para>
+    /// <para><b>YALNIZ <see cref="CycleRoundDecision.NoProgress"/> ⇒ YAZ.</b> TÜM üyelerin alanına o anki
+    /// bileşik imza yazılır; bir sonraki <c>Build</c> aynı imzayı görürse grup <see
+    /// cref="BuildStateStore.IsCycleNonConvergent"/> ile pre-skip edilir, kaynak DEĞİŞMEDEN turlar tekrar
+    /// TÜKETİLMEZ. Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir <see cref="BuildState"/> açılır —
+    /// <see cref="InvalidateBuildStateOnFailure"/> yalnız MEVCUT kayıtları günceller, yenisini AÇMAZ.</para>
     ///
-    /// <para><b>Converged ⇒ SİL.</b> [M3] Yakınsama hafızayı geçersiz kılar. Bunun ÇOĞU üye için zaten bir yan
+    /// <para><b><see cref="CycleRoundDecision.CapReached"/> ⇒ YAZMA.</b> İki karar aynı şey DEĞİLDİR ve ayrım
+    /// KANITA dayanır. NoProgress "aynı küme iki tur üst üste patladı" demektir: tur eklemek çözmez, bu bir
+    /// SIKIŞMA kanıtıdır ve yeniden denemeyi reddetmeyi haklı çıkarır. CapReached ise "hâlâ hareket var ama
+    /// BÜTÇE bitti" demektir — kanıt değil, kesinti. Hatırlansaydı tavanın kendi gerekçesi geçersiz olurdu:
+    /// tavan "bilgi kaybettirmez, çünkü turlar diskteki duruma göre idempotenttir ve bir sonraki <c>Build</c>
+    /// kaldığı yerden devam eder" diyerek meşrudur, ama pre-skip edilen bir grupta o devam HİÇ gelmez. Tam
+    /// olarak yakınsamakta olan bir grup (tur1 {A,B}, tur2 {A}, tur3 temiz) bir tur kala donar ve tek çıkış
+    /// ilgisiz bir kaynak değişikliği olurdu. Bedel kabul edilmiştir: dört-altı tur isteyen bir döngü,
+    /// oturana dek sonraki birkaç Build'de de turlarını harcar.</para>
+    ///
+    /// <para><b>Converged (ve CapReached) ⇒ SİL.</b> [M3] Yakınsama hafızayı geçersiz kılar. Bunun ÇOĞU üye için zaten bir yan
     /// etkisi vardır (<see cref="PersistBuildStateOnSuccess"/> taze bir <see cref="BuildState"/> KURAR, alan
     /// doğal olarak null'a döner) ama o yol dep-issue TAŞIYAN bir üyede bilerek çalışmaz ([A2] kapısı): grup
     /// yakınsasa bile o üyenin eski imzası kayıtta kalır, ve <c>Build</c>'in pre-skip'i TÜM üyeleri
@@ -1406,12 +1416,17 @@ public sealed class RunCoordinator(
     /// worker'ı sessizce öldürür ve sonuncusuysa run ASILIR. Gerekçe kardeş yazıcı
     /// <see cref="InvalidateBuildStateOnFailure"/>'da uzun uzun yazılıdır.</para>
     /// </summary>
-    /// <returns>Hafızaya YAZILAN imza; yazılmadıysa (Converged, store/imza yok, I/O hatası) <c>null</c>.</returns>
+    /// <returns>Hafızaya YAZILAN imza; yazılmadıysa (Converged/CapReached, store/imza yok, I/O hatası)
+    /// <c>null</c>.</returns>
     private string? UpdateCycleNonConvergenceMemory(RunContext run, IReadOnlyList<string> allMembers,
                                                     IReadOnlyList<string> members, CycleRoundDecision decision)
     {
         if (run.StateStore is null) return null;
-        bool nonConvergent = decision is CycleRoundDecision.NoProgress or CycleRoundDecision.CapReached;
+        // Kapı TEK karar: yalnız NoProgress bir SIKIŞMA kanıtıdır. CapReached buradan geçmediği için aşağıdaki
+        // temizleme dalına düşer — yani eski bir NoProgress hafızası da SİLİNİR. Bu kasıtlıdır: Rebuild ile
+        // aynı imzada koşup tavana dayanan bir grup, bayat hafızası duruyorken bir sonraki Build'de yine
+        // pre-skip edilirdi ve tavanın "sonraki Build devam eder" güvencesi ikinci kez delinirdi.
+        bool nonConvergent = decision is CycleRoundDecision.NoProgress;
 
         string? signature = null;
         if (nonConvergent && (run.Incremental is not { } inc
@@ -1431,8 +1446,9 @@ public sealed class RunCoordinator(
                         : new BuildState(id, BuiltSignature: null, LastResult: BuildResult.Failed, LastRunAt: DateTimeOffset.UtcNow);
                     run.StateStore.Upsert(current with { NonConvergentSignature = signature });
                 }
-                // Converged: yalnız GERÇEKTEN hafızalı kayıtlara dokunulur — "kayıt yok" ile "alanı zaten boş
-                // kayıt" bu soru için AYNI anlama gelir, gereksiz yazım store'u şişirmekten başka iş yapmaz.
+                // Converged/CapReached: yalnız GERÇEKTEN hafızalı kayıtlara dokunulur — "kayıt yok" ile "alanı
+                // zaten boş kayıt" bu soru için AYNI anlama gelir, gereksiz yazım store'u şişirmekten başka
+                // iş yapmaz.
                 else if (existing.TryGetValue(id, out var found) && found.NonConvergentSignature is not null)
                     run.StateStore.Upsert(found with { NonConvergentSignature = null });
             }

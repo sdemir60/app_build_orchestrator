@@ -747,20 +747,29 @@ intermediate round's verdict out. Stop is deliberately asymmetric here: a single
 to finish and persist, but a group is cut at the end of the round it is in, because the unit of work is all of
 the rounds, and continuing them after a stop would mean dozens more invocations.
 
-**Non-convergence memory.** A group that ends in no-progress or at the ceiling records the composite signature
-it gave up at, per member, beside that member's build state (§7.5). The next `Build` that computes the same
-signature pre-skips the whole group with the reason `cycle did not converge at this signature` instead of
-spending rounds on a guaranteed red. A stop or an unexpected error never writes this — neither is evidence
-that a cycle cannot converge, and the next run must get a real attempt. This is the same principle as every
-other incremental decision, driven by the source signature; no DLL or `bin` timestamp is consulted. A member
-with no state row at all gets one created for the purpose, otherwise the very case this solves — a component
-that has never been built successfully — would never accumulate a memory. Failing to write it warns and
-nothing more: the cost is wasted rounds, not a wrong build.
+**Non-convergence memory.** A group that ends in **no progress** records the composite signature it gave up
+at, per member, beside that member's build state (§7.5). The next `Build` that computes the same signature
+pre-skips the whole group with the reason `cycle did not converge at this signature` instead of spending
+rounds on a guaranteed red. A stop or an unexpected error never writes this — neither is evidence that a cycle
+cannot converge, and the next run must get a real attempt. This is the same principle as every other
+incremental decision, driven by the source signature; no DLL or `bin` timestamp is consulted. A member with no
+state row at all gets one created for the purpose, otherwise the very case this solves — a component that has
+never been built successfully — would never accumulate a memory. Failing to write it warns and nothing more:
+the cost is wasted rounds, not a wrong build.
 
-Convergence clears the memory explicitly, at the same place that writes it. Most members would lose it anyway
-as a side effect of persisting a fresh build state, but a success carrying a dependency issue deliberately
-does not persist (§8.3) — and since the pre-skip requires *every* member to be remembered, one such member
-would keep a converged group pre-skipped forever with no way out short of a source change.
+Hitting the ceiling is **not** recorded, and the difference is one of evidence. No progress means the
+identical set failed twice, which is proof that more rounds cannot help. The ceiling means the group was still
+moving when the budget ran out — a group that fails `{A,B}`, then `{A}`, then nothing is one round from done.
+Remembering that case would void the ceiling's own justification, which is that no information is lost because
+the next `Build` continues where this one stopped; a pre-skipped group never gets that continuation, and the
+only way out would be an unrelated source change. The accepted cost is that a cycle needing four to six rounds
+spends its rounds again on the next build or two until it settles.
+
+Reaching any real verdict clears the memory, at the same place that writes it — convergence and the ceiling
+alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Most converged members
+would lose it anyway as a side effect of persisting a fresh build state, but a success carrying a dependency
+issue deliberately does not persist (§8.3) — and since the pre-skip requires *every* member to be remembered,
+one such member would keep a converged group pre-skipped forever.
 
 Which member's signature stands for the group is decided in one place for both the writing and the reading
 side, since the two hold the component in different orders. In the mode the App actually sends every member

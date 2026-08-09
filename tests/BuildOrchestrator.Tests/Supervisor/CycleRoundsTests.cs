@@ -587,10 +587,62 @@ public class CycleRoundsTests
             Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
             Assert.Equal("old", store.Load()[Id("A")].BuiltSignature);
             Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
-            // [Task 7 review — M1] CapReached, NoProgress ile AYNI kapıdan yakınsamama hafızasını tetikler —
-            // tavana dayanmak da "gerçek bir yakınsama kararı"dır (yalnız Continue/interrupted HARİÇ).
-            Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature);
-            Assert.Equal("sig", store.Load()[Id("B")].NonConvergentSignature);
+            // [DEĞİŞEN KURAL] Bu test eskiden `NonConvergentSignature == "sig"` bekliyordu (gerekçe: "tavana
+            // dayanmak da gerçek bir yakınsama kararıdır, NoProgress ile AYNI kapıdan geçer"). O kural
+            // tavanın KENDİ gerekçesini geçersiz kılıyordu: tavan "bilgi kaybettirmez, çünkü turlar diskteki
+            // duruma göre idempotenttir ve bir sonraki Build kaldığı yerden devam eder" diyerek meşrulaşır —
+            // ama hafıza yazıldığı an o "sonraki Build" pre-skip edilir ve devam HİÇ gelmez. Buradaki senaryo
+            // tam olarak odur: tur1 {A}, tur2 {B}, tur3 temiz — grup GERÇEKTEN yakınsıyor, yalnız bütçesi
+            // bitiyor. Artık ayrım kanıta göredir: NoProgress "aynı küme iki kez patladı" (daha fazla tur
+            // ÇÖZMEZ) demektir ve hatırlanır; CapReached "bütçe bitti ama hâlâ hareket var" demektir ve
+            // hatırlanmaz. Bedeli, dört-altı tur isteyen bir döngünün oturana dek birkaç Build daha tur
+            // harcaması; kazancı, bir tur kala donmuş bir grubun ASLA bitememesinin ortadan kalkması.
+            Assert.Null(store.Load()[Id("A")].NonConvergentSignature);
+            Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task a_capped_group_is_invoked_again_by_the_next_Build_at_the_same_signature()
+    {
+        // Yukarıdaki kural değişiminin DAVRANIŞ karşılığı — asıl kazanılan şey budur: tavanın "bir sonraki
+        // Build kaldığı yerden devam eder" güvencesi artık GERÇEKTEN geçerli. Grup üç turda yakınsayamadı ama
+        // ilerliyordu; kaynak DEĞİŞMEDEN koşulan ikinci Build ona dördüncü turu verir ve grup oturur.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            // Tur sayacı ÜYE BAŞINA ve run'lar arası birikimlidir: 1-3 arası turlar run 1'e, 4+ run 2'ye aittir.
+            var invoker = rec.Invoker((name, round) => (name, round) switch
+            {
+                ("A", 1) => Exit(1),
+                ("B", 2) => Exit(1),
+                _ => Ok(),
+            });
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            // Run 1: tur1 {A}, tur2 {B}, tur3 temiz ⇒ iki ardışık yeşil YOK, tavan ⇒ CapReached.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3"], rec.Calls);
+            // Tavan HATIRLANMAZ. Soru, pre-skip'in KENDİ okuyucusuyla sorulur: hiç kayıt açılmamış olması da
+            // ("hafıza yazan tek yol buydu") geçerli bir "hatırlanmıyor" hâlidir ve okuyucu ikisini ayırmaz.
+            Assert.False(BuildStateStore.IsCycleNonConvergent(store.Load(), Id("A"), "sig"));
+            Assert.False(BuildStateStore.IsCycleNonConvergent(store.Load(), Id("B"), "sig"));
+
+            // Run 2 (Build, imza HÂLÂ "sig"): pre-skip YOK — grup gerçekten yeniden derlenir ve bu kez
+            // iki ardışık yeşil turla yakınsar.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4", "A#5", "B#5"], rec.Calls);
+            Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
+                e => e.Reason == "cycle did not converge at this signature");
+            // Ve yakınsadığı için ARTIK taze imza persist edilir — üçüncü bir Build boşuna tur harcamaz.
+            Assert.Equal("sig", store.Load()[Id("A")].BuiltSignature);
+            Assert.Equal("sig", store.Load()[Id("B")].BuiltSignature);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
