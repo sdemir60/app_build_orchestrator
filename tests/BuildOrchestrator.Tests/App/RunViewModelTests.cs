@@ -1062,6 +1062,49 @@ public class RunViewModelTests
         Assert.False(row.CycleUnconverged);
     }
 
+    /// <summary>[cycle rounds/Task 9 review fix 1] Kök neden: <c>CycleUnconverged</c>'i yazan TEK yer
+    /// <see cref="RunViewModel"/>'in <c>OnProjectSkipped</c>'idir; satır nesneleri segmentler arası HAYATTA
+    /// KALIR (<c>Projects.Clear()</c> yalnız <see cref="RunMode.Rebuild"/>'de) — kaynak düzeltilip proje
+    /// GERÇEKTEN derlenirse bayat bayrak temizlenmezse "az önce düzelen proje" kalıcı-kırık gibi render edilir
+    /// (Task 9'un önlemeye çalıştığı yanlış bilginin TERSİ). <c>OnProjectDone</c> artık her terminal derleme
+    /// sonucunda (Succeeded/Failed — ikisi de proje GERÇEKTEN invoke edildi demektir) bayrağı temizler.</summary>
+    [Fact]
+    public async Task ProjectSucceeded_after_a_prior_CycleUnconverged_skip_clears_the_flag()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnconverged); // ön-koşul: bayrak gerçekten set edildi
+
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+
+        Assert.False(row.CycleUnconverged);
+    }
+
+    /// <summary>[cycle rounds/Task 9 review fix 1] Aynı temizlik <c>Failed</c> için de geçerli — proje bu run'da
+    /// GERÇEKTEN invoke edildiyse (başarılı ya da başarısız fark etmez) artık "hiç invoke edilmeden pre-skip"
+    /// hikayesi doğru DEĞİLDİR.</summary>
+    [Fact]
+    public async Task ProjectFailed_after_a_prior_CycleUnconverged_skip_clears_the_flag()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnconverged); // ön-koşul
+
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectFailedEvent("r1", projectId, 100, "boom"));
+
+        Assert.False(row.CycleUnconverged);
+    }
+
     [Fact]
     public async Task RunCompleted_sets_DepIssueCount_from_the_event()
     {

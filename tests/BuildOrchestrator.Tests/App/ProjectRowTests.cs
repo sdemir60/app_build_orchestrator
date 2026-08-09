@@ -617,6 +617,40 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[review fix 1 — render guard] <c>CycleUnconverged</c> yalnız <c>Skipped</c>'te ANLAMLIDIR
+    /// (<c>RunCounters.cs</c>'in <c>case ProjectRowState.Skipped:</c> deseniyle AYNI kapı). Kök neden artık
+    /// <c>RunViewModel.OnProjectDone</c>'da temizleniyor, ama bu SAVUNMA HATTIDIR: bayrak her nasılsa bayat
+    /// kalıp Succeeded/Failed bir satıra sızsa BİLE render katmanı rozeti/tooltip'i basmaz — "az önce düzelen
+    /// proje kalıcı-kırık gibi görünür" hatası burada da tekrar mümkün olmasın.</summary>
+    [StaFact]
+    public void Cycle_unconverged_render_guard_ignores_the_flag_once_the_row_is_no_longer_skipped()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { CycleUnconverged = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+        Assert.Null(row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[review fix Minor] Dep-slot'ta gösterilecek hiçbir sinyal kalmayınca <c>PART_DepTip.Content</c>
+    /// DEFANSİF olarak temizlenir — slot bugün sıfır yükseklikte çöktüğü için zararsız, ama slot'un layout'u
+    /// yarın değişirse hayalet bir tooltip metni kalmasın.</summary>
+    [StaFact]
+    public void Dep_tooltip_is_defensively_cleared_once_the_dep_signal_disappears()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed)
+        { DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+        Assert.NotNull(row.DepTooltip); // ön-koşul: tooltip gerçekten dolu
+
+        vm.DepIssues = null;
+        row.UpdateLayout();
+        Assert.Null(row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Glyph_tooltip_is_the_status_label_with_building_elapsed_and_dependency_issue_suffix()
     {
@@ -635,6 +669,44 @@ public class ProjectRowTests
         vm.DepIssues = new[] { "OSYS.Sales.Core" };
         row.UpdateLayout();
         Assert.Equal("Failed — dependency issue", row.GlyphTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[review fix 2] <c>PART_Glyph</c> satırın TEK her-zaman-görünür yüzeyidir (dep-slot boşken sıfır
+    /// yükseklikte çöker) — döngü durumları da orada duyurulmalı, yalnız dep-slot tooltip'inde değil. Metin
+    /// dep-slot'unkiyle BİREBİR (aynı sabit reuse edilir, kopya YASAK).</summary>
+    [StaFact]
+    public void Glyph_tooltip_gets_the_cycle_unsettled_suffix_when_no_dep_issue_is_present()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { CycleUnsettled = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal("Succeeded — Cycle did not fully settle — output may be one generation stale", row.GlyphTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[review fix 2] Aynı ek — <c>CycleUnconverged</c>, yalnız <c>Skipped</c>'te (render guard'la
+    /// aynı kapı).</summary>
+    [StaFact]
+    public void Glyph_tooltip_gets_the_cycle_unconverged_suffix_when_skipped()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal("Skipped — Cycle did not build — not retried until the source changes", row.GlyphTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[review fix 2 — precedence] Dep-slot'taki ÖNCELİK glyph tooltip'inde de AYNI: CycleUnconverged,
+    /// bayat bir dep-issue'yu (Continue segment kalıntısı) ezer — iki yüzey ASLA çelişen hikaye anlatmaz.</summary>
+    [StaFact]
+    public void Glyph_tooltip_cycle_unconverged_suffix_wins_over_a_stale_dep_issue_suffix()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
+        { CycleUnconverged = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal("Skipped — Cycle did not build — not retried until the source changes", row.GlyphTooltip);
         GC.KeepAlive(window);
     }
 
