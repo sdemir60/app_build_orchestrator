@@ -122,7 +122,19 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// sayaç AYNI soruyu aynı şekilde cevaplar (tek kural, iki tüketici).</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(IsCompiling))]
     private bool _cycleWaiting;
+
+    /// <summary>
+    /// Bu satır ŞU AN gerçekten derleniyor mu. <b>"Motor durumu <see cref="ProjectRowState.Started"/>" ile
+    /// AYNI ŞEY DEĞİLDİR</b>: bir SCC'nin üyeleri tek tek invoke edilir ve ara tur sonuçları yayılmadığı için
+    /// grup bitene kadar HEPSİ Started'ta kalır (bkz. <see cref="CycleWaiting"/>).
+    ///
+    /// <para>Predicate TEK yerdedir ve ÜÇ yüzey onu okur: <see cref="Status"/>'un Building dalı,
+    /// <see cref="RunCounters"/>'ın Building kovası ve sticky şeridin building chip'leri. Üçü ayrı yazıldığında
+    /// sessizce ayrıştılar ve ölçüldü: 15 üyeli bir grupta listede 15 spinner, şeritte 4 chip + "+11", sayaçta
+    /// "1 building" — aynı anda. Yeni bir tüketici de buradan okumalıdır.</para></summary>
+    public bool IsCompiling => State == ProjectRowState.Started && !CycleWaiting;
 
     /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
     /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
@@ -153,9 +165,8 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// gerçekten derleyen koşu (<c>RunMode.Cycles</c>) geldiğinde aynı satırlar sonuçlarını da gizlerdi.</para></summary>
     public Controls.GraphStatus Status => State switch
     {
-        // Grubu koşuyor ama SIRASI kendisinde değil: gerçekten derlenen tek üye vardır (bkz. CycleWaiting).
-        ProjectRowState.Started when CycleWaiting => Controls.GraphStatus.Queued,
-        ProjectRowState.Started => Controls.GraphStatus.Building,
+        // Grubu koşuyor ama SIRASI kendisinde değil: gerçekten derlenen tek üye vardır (bkz. IsCompiling).
+        ProjectRowState.Started => IsCompiling ? Controls.GraphStatus.Building : Controls.GraphStatus.Queued,
         ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
         ProjectRowState.Failed => Controls.GraphStatus.Failed,
         ProjectRowState.Skipped => Controls.GraphStatus.Skipped,

@@ -28,8 +28,8 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
             total++;
             switch (r.State)
             {
-                case ProjectRowState.Started when r.CycleWaiting: queued++; break; // grubu koşuyor, sırası değil
-                case ProjectRowState.Started: building++; break;
+                // "Started" ile "şu an derleniyor" AYNI ŞEY DEĞİL — tek predicate ProjectRowViewModel.IsCompiling.
+                case ProjectRowState.Started: if (r.IsCompiling) building++; else queued++; break;
                 case ProjectRowState.Pending: queued++; break;
                 case ProjectRowState.Succeeded:
                     succeeded++;

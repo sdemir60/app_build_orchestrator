@@ -1695,8 +1695,9 @@ A member waiting its turn inside a running group reads `Queued`, not `Building`.
 time and intermediate rounds are never published (§8.8), so the whole group sits in the engine's `Started`
 state for the group's whole life while exactly one member is really compiling. Painting them all as building
 made a 15-member group show fifteen spinners on the list and fifteen orbiting nodes on the graph while the
-counter chip said one — the screen claiming fifteen things were happening when one was. The row and the
-counter now answer that question the same way, from one rule.
+counter chip said one — the screen claiming fifteen things were happening when one was. Three surfaces ask
+that question (the row glyph, the counter chip and the ribbon's building chips) and all three now read one
+predicate; written separately, they had drifted into saying three different numbers at the same moment.
 
 Two channels are **orthogonal** to status and must not be conflated with it: the will-build dot (§7.4) and the
 dependency-issue triangle (§8.3).

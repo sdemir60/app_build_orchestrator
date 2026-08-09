@@ -355,7 +355,10 @@ public partial class StickyRibbon : UserControl
     {
         if (_vm is null) return;
 
-        var building = _vm.Projects.Where(p => p.State == ProjectRowState.Started).ToList();
+        // "Started" DEĞİL "şu an derleniyor" — koşan bir SCC'nin tüm üyeleri Started'ta durur ve şerit
+        // 15 üyeli bir grupta dört chip + "+11" gösterirdi (sayaç "1 building" derken). Tek predicate:
+        // ProjectRowViewModel.IsCompiling.
+        var building = _vm.Projects.Where(p => p.IsCompiling).ToList();
         var failed = _vm.Projects.Where(p => p.State == ProjectRowState.Failed).ToList();
         string bSig = string.Join("|", building.Select(p => p.Id));
         string fSig = string.Join("|", failed.Select(p => p.Id)) + "#" + _vm.Counters.DepAffected;
