@@ -978,16 +978,19 @@ public sealed class RunCoordinator(
         string name = run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
         var result = BuildResult.Failed;
 
-        // [T54] Dispatch anında TÜM bağımlılıklar zaten terminaldir (ReadySetScheduler'ın resolved-gate'i,
-        // IsReadyLocked) — bu yüzden depIssues burada, invoke'tan ÖNCE, güvenle hesaplanıp HEM warn satırlarına
-        // HEM olaya (event) HEM de birikime (bu projenin kendi dependent'ları miras alabilsin diye) yazılabilir.
+        // [T54] depIssues invoke'tan ÖNCE hesaplanır — gerekçe ComputeDepIssues'ın XML doc'undadır.
         var depIssues = ComputeDepIssues(run, projectId);
         IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
 
         try
         {
             run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, name));
-            var outcome = await InvokeOnceAsync(run, projectId, depIssues, ct);
+
+            InvokeOutcome outcome;
+            // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose
+            // sonrası AppendLine fırlatır — satır sessizce düşmez). Ömür BURADA, invoke'un içinde DEĞİL.
+            using (var log = run.Logs.OpenProjectLog(projectId))
+                outcome = await InvokeOnceAsync(run, projectId, depIssues, log, ct);
 
             if (outcome.Result == BuildResult.Succeeded)
             {
@@ -1045,15 +1048,16 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [cycle rounds] Tek bir MSBuild invoke'u — log açma, komut satırları, depIssue warn satırları dahil.
-    /// Event YAYMAZ, Complete ÇAĞIRMAZ, BuildState PERSIST ETMEZ: bunlar çağıranın kararıdır.
+    /// [cycle rounds] Tek bir MSBuild invoke'u — komut satırları, depIssue warn satırları dahil. Event YAYMAZ,
+    /// Complete ÇAĞIRMAZ, BuildState PERSIST ETMEZ: bunlar çağıranın kararıdır. <paramref name="log"/> zaten
+    /// açık gelir, ömrü çağıranındır — gerekçe gövdedeki [Kısıt 1] notunda.
     ///
     /// Neden ayrı: SCC tur döngüsü aynı projeyi birden çok kez invoke eder ama sonucu YALNIZ son turda
     /// raporlar. İki yol aynı invoke gövdesini paylaşmazsa komut satırı/log/retry davranışı sessizce
     /// ayrışırdı (kopya YASAK, CLAUDE.md).
     /// </summary>
     private async Task<InvokeOutcome> InvokeOnceAsync(
-        RunContext run, string projectId, DepIssueResult depIssues, CancellationToken ct)
+        RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct)
     {
         var request = new MsBuildInvokeRequest(
             ProjectId: projectId,
@@ -1066,20 +1070,17 @@ public sealed class RunCoordinator(
                 ? WorktreeObjPathResolver.Resolve(run.WorktreeObjRoot, projectId)
                 : null);
 
-        MsBuildInvokeResult invoke;
-        // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose sonrası
-        // AppendLine fırlatır — satır sessizce düşmez).
-        using (var log = run.Logs.OpenProjectLog(projectId))
-        {
-            // v7Δ-7: proje logunun İLK satırı, bu proje için çalıştırılacak GERÇEK MSBuild komut satırıdır —
-            // depIssue uyarıları bu invaryantı BOZMAZ, komut satır(lar)ından SONRA, gerçek derleme çıktısından
-            // ÖNCE (log başı) yazılır [T54].
-            foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
-                Emit(run, projectId, log, commandLine);
-            foreach (string warnLine in DepIssueWarnLines(depIssues))
-                Emit(run, projectId, log, warnLine);
-            invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
-        }
+        // [Kısıt 1] Proje logunu bu metot AÇMAZ ve KAPATMAZ — ömrü çağıranındır: OpenProjectLog
+        // FileMode.Create ile truncate ettiği için, log'u burada açmak tur döngüsünde önceki turların
+        // logunu siler ve satır numaralarını her turda 1'e döndürürdü.
+        // v7Δ-7: proje logunun İLK satırı, bu proje için çalıştırılacak GERÇEK MSBuild komut satırıdır —
+        // depIssue uyarıları bu invaryantı BOZMAZ, komut satır(lar)ından SONRA, gerçek derleme çıktısından
+        // ÖNCE (log başı) yazılır [T54].
+        foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
+            Emit(run, projectId, log, commandLine);
+        foreach (string warnLine in DepIssueWarnLines(depIssues))
+            Emit(run, projectId, log, warnLine);
+        var invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
 
         return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
             ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)
