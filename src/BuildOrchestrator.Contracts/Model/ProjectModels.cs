@@ -85,7 +85,14 @@ public sealed record BuildState(
     BuildResult? LastResult = null,
     DateTimeOffset? LastRunAt = null,
     string? LastBranch = null,
-    long? LastDurationMs = null);           // T70 (It-3) burada alan olarak hazır
+    long? LastDurationMs = null,             // T70 (It-3) burada alan olarak hazır
+    // [Task 7] Bir SCC'nin (bu proje üyesiyken) EN SON tur döngüsü sonunda yakınsAMADIĞI (NoProgress/CapReached)
+    // bileşik imza. BuiltSignature'dan KASITLI olarak AYRI: o alan yalnız SON BAŞARIYLA derlenen (Fast modun
+    // frozen-upstream tabanı olarak okuduğu) imzayı taşır — ikisi aynı alanda karışırsa Fast'teki dependent'lar
+    // hiç derlenmemiş bir imzayı "temiz" sanır. Bu alan currentSignature ile eşleştiğinde (bkz.
+    // BuildStateStore.IsCycleNonConvergent) grup bir daha turlarla DENENMEZ; yakınsayan bir grup persist
+    // ederken (PersistBuildStateOnSuccess) YENİ bir BuildState kurulduğu için bu alan doğal olarak null'a döner.
+    string? NonConvergentSignature = null);
 
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);

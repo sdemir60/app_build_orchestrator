@@ -90,7 +90,8 @@ public class BuildStateStoreTests : IDisposable
             LastResult: BuildResult.Succeeded,
             LastRunAt: new DateTimeOffset(2026, 7, 18, 10, 30, 45, 123, TimeSpan.FromHours(3)),
             LastBranch: "main",
-            LastDurationMs: 45_678L);
+            LastDurationMs: 45_678L,
+            NonConvergentSignature: "cyc-a-789"); // [Task 7]
         var b = new BuildState(
             ProjectId: @"C:\repo\B\B.csproj",
             BuiltSignature: "sig-b-456",
@@ -116,6 +117,7 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal(a.LastRunAt, la.LastRunAt);
         Assert.Equal(a.LastBranch, la.LastBranch);
         Assert.Equal(a.LastDurationMs, la.LastDurationMs);
+        Assert.Equal(a.NonConvergentSignature, la.NonConvergentSignature); // [Task 7]
 
         var lb = map[b.ProjectId];
         Assert.Equal(b.BuiltSignature, lb.BuiltSignature);
@@ -130,6 +132,7 @@ public class BuildStateStoreTests : IDisposable
         Assert.Null(lc.LastRunAt);
         Assert.Null(lc.LastBranch);
         Assert.Null(lc.LastDurationMs);
+        Assert.Null(lc.NonConvergentSignature); // [Task 7]
     }
 
     [Fact] // var olan projectId'nin Upsert'i o kaydı değiştirir, diğerleri dokunulmaz kalır

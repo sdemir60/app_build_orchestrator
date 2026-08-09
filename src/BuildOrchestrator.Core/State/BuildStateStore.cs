@@ -74,6 +74,20 @@ public sealed class BuildStateStore
         state is not null && state.TryGetValue(projectId, out var found) ? found.BuiltCommit : null;
 
     /// <summary>
+    /// [Task 7] Bir SCC üyesinin, PLANLANAN (şu anki) bileşik imzada DAHA ÖNCE turlarla yakınsAMADIĞI hafızası —
+    /// <see cref="BuildState.NonConvergentSignature"/>'ın TEK okuyucusu. Plan aşaması (RunCoordinator) ve
+    /// (ileride) Sync/önizleme yolu aynı aramayı iki kez YAZMAZ — <see cref="BuiltCommitOf"/> ile aynı desen.
+    /// <paramref name="currentSignature"/> <c>null</c>ise (hollow / imza hesaplanamadı) her zaman <c>false</c>:
+    /// karşılaştırılacak bir taban yoktur. <paramref name="state"/> <c>null</c> olsa BİLE fırlatmaz.
+    /// </summary>
+    public static bool IsCycleNonConvergent(IReadOnlyDictionary<string, BuildState>? state, string projectId, string? currentSignature) =>
+        currentSignature is not null
+        && state is not null
+        && state.TryGetValue(projectId, out var found)
+        && found.NonConvergentSignature is not null
+        && string.Equals(found.NonConvergentSignature, currentSignature, StringComparison.Ordinal);
+
+    /// <summary>
     /// Tek projenin state'ini merge edip TÜM map'i atomik olarak (temp dosyaya yaz → <see cref="File.Move"/>
     /// overwrite:true rename) diske yazar. Eşzamanlı çağrılar <see cref="_writeGate"/> ile serialize edilir —
     /// concurrent Upsert'ler ne birbirini kaybeder ne de dosyayı yarım bırakır.

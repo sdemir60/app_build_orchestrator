@@ -770,6 +770,26 @@ public sealed class RunCoordinator(
                         seed[n.Id] = BuildResult.Skipped;
                         upToDateSkips.Add((n.Id, "skipped — up to date"));
                     }
+                // [Task 7] Daha önce (bir önceki Build'de) yakınsAMAMIŞ bir SCC, bileşik imzası HÂLÂ o
+                // yakınsamama anındakiyle eşleşiyorsa bir daha tur harcamaz: TÜM üyeleri, up-to-date skip'iyle
+                // AYNI mekanizmayla (seed + aşağıdaki DecideSkipped döngüsü) pre-skip edilir — grup CycleGroups'a
+                // hiç dispatch edilmeden. Kaynak değiştiyse (imza farklı) bu döngü hiçbir şey eklemez, grup
+                // normal turlarla YENİDEN denenir. Yalnız TÜM üyeler eşzamanlı hafızalıysa (All) pre-skip
+                // edilir — savunmacı: SCC üyeliği plan değişince genişleyebilir/daralabilir.
+                if (stateStore is not null && runPlan.Incremental is { } inc)
+                {
+                    var cycleState = stateStore.Load();
+                    foreach (var cycle in runPlan.Plan.Cycles)
+                    {
+                        if (cycle.Count == 0 || !inc.SignatureById.TryGetValue(cycle[0], out var signature)) continue;
+                        if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
+                        foreach (string id in cycle)
+                        {
+                            seed[id] = BuildResult.Skipped;
+                            upToDateSkips.Add((id, "cycle did not converge at this signature"));
+                        }
+                    }
+                }
                 if (seed.Count > 0) schedulerSeed = new RunSnapshot(seed, [], 0);
             }
             elapsedAtStart = 0;
@@ -1251,8 +1271,54 @@ public sealed class RunCoordinator(
                 }
                 catch (Exception ex) { reportFailure ??= ex; }
             }
+            // [Task 7] Üye raporlamasından SONRA: yukarıdaki döngü zaten her üyeyi invalidate etmiştir
+            // (trustedResult=false ⇒ InvalidateBuildStateOnFailure), bu yalnız ÜZERİNE, hangi bileşik imzada
+            // pes edildiğini ayrıca kaydeder. reportFailure varsa bile denenir — bir üyenin raporlama hatası
+            // hafıza yazımını ENGELLEMEMELİDİR (aksi halde bir sonraki Build yine boşuna turlar tüketirdi).
+            RecordCycleNonConvergence(run, members, decision);
             if (reportFailure is not null) ExceptionDispatchInfo.Capture(reportFailure).Throw();
         }
+    }
+
+    /// <summary>
+    /// [Task 7] Bir SCC turlar sonunda GERÇEKTEN yakınsAMADIYSA (<see cref="CycleRoundDecision.NoProgress"/> ya
+    /// da <see cref="CycleRoundDecision.CapReached"/>) TÜM üyelerin <see cref="BuildState.NonConvergentSignature"/>
+    /// alanına o anki bileşik imza yazılır — bir sonraki <c>Build</c> aynı imzayı görürse grup <see
+    /// cref="BuildStateStore.IsCycleNonConvergent"/> ile pre-skip edilir, kaynak DEĞİŞMEDEN turlar tekrar
+    /// TÜKETİLMEZ.
+    ///
+    /// <para><b>decision hâlâ <see cref="CycleRoundDecision.Continue"/>'daysa (stop/iptal/beklenmeyen hata
+    /// yüzünden yarıda kesilmiş grup) hiçbir şey YAZILMAZ:</b> bir Stop ya da geçici bir hata "bu SCC asla
+    /// yakınsamaz" anlamına GELMEZ — bir sonraki run yine gerçek bir deneme hakkı almalıdır. Bu, aynı ayrımın
+    /// (yalnız GERÇEK bir tur kararına güvenilir) <see cref="ReportCycleMember"/>'daki <c>trustedResult</c>
+    /// kapısından FARKLI ve ONDAN DAHA DAR bir kapıdır: trustedResult yalnız Converged'e güvenir, bu ise
+    /// Converged DIŞINDAKİ üç değerden ikisine (NoProgress/CapReached) — Continue'a asla.</para>
+    ///
+    /// <para>Kayıt hiç yoksa (SCC hiç derlenmemiş — tam olarak bu görevin çözdüğü senaryo) BURADA taze bir
+    /// <see cref="BuildState"/> oluşturulur (yukarıdaki döngünün <see cref="InvalidateBuildStateOnFailure"/>'ı
+    /// yalnız MEVCUT kayıtları günceller, YENİ kayıt AÇMAZ) — aksi halde ilk hiç derlenmemiş yakınsamayan grup
+    /// için hafıza hiç oluşmaz ve sorun (her build'de boşuna tur tüketmek) TAM OLARAK sürer.</para>
+    /// </summary>
+    private void RecordCycleNonConvergence(RunContext run, IReadOnlyList<string> members, CycleRoundDecision decision)
+    {
+        if (decision is not (CycleRoundDecision.NoProgress or CycleRoundDecision.CapReached)) return;
+        if (run.StateStore is null || run.Incremental is not { } inc
+            || !inc.SignatureById.TryGetValue(members[0], out var signature)) // TÜM üyeler AYNI bileşik imzayı taşır
+            return;
+
+        try
+        {
+            var existing = run.StateStore.Load();
+            foreach (string id in members)
+            {
+                var current = existing.TryGetValue(id, out var found)
+                    ? found
+                    : new BuildState(id, BuiltSignature: null, LastResult: BuildResult.Failed, LastRunAt: DateTimeOffset.UtcNow);
+                run.StateStore.Upsert(current with { NonConvergentSignature = signature });
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { console("warning: cycle non-convergence memory could not be written: " + ex.Message); }
     }
 
     /// <summary>

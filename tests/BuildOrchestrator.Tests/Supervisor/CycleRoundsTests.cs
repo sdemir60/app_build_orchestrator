@@ -421,4 +421,79 @@ public class CycleRoundsTests
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
+
+    // ---------------------------------------------------------------- 9) yakınsamama hafızası [Task 7]
+
+    [Fact]
+    public async Task a_group_remembered_as_non_convergent_is_not_invoked_again_at_the_same_signature()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // aynı küme iki turdur patlıyor ⇒ NoProgress
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            // Run 1 (Build): hiç hafıza yok → turlar GERÇEKTEN koşar, NoProgress ile biter.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
+
+            // Run 2 (Build, AYNI imza "sig"): grup daha önce bu imzada yakınsamadı → bir daha tur harcanmaz,
+            // MSBuild HİÇ çağrılmaz — hiçbir yeni invoke.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // run 2 HİÇBİR ŞEY eklemedi
+
+            // Pre-skip, up-to-date pre-skip'iyle AYNI kanaldan (DecideSkipped) raporlanır.
+            var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
+            Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
+            Assert.All(skipped, e => Assert.Equal("cycle did not converge at this signature", e.Reason));
+
+            var run2Completed = h.Events.OfType<RunCompletedEvent>().Last();
+            Assert.Equal(0, run2Completed.Failed);
+            Assert.Equal(2, run2Completed.Skipped);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task a_remembered_non_convergent_group_is_invoked_again_once_its_signature_changes()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            bool sourceChanged = false;
+            RunPlan Planner(StartRunCommand _, Action<string> __) => TwoMemberCycle() with
+            {
+                Incremental = sourceChanged
+                    ? new IncrementalPlan(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        { [Id("A")] = "sig2", [Id("B")] = "sig2" }, "headsha", "main")
+                    : RunCoordinatorTests.Incremental("A", "B"),
+            };
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // hep NoProgress
+            using var h = new Harness(TwoMemberCycle(), invoker, planner: Planner, stateStore: store);
+
+            // Run 1 ("sig"): hafıza yok → turlar koşar, NoProgress ⇒ hafıza "sig" ile yazılır.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
+
+            // Run 2 ("sig", DEĞİŞMEDİ): hafıza eşleşir → pre-skip, yeni invoke YOK (kontrol).
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
+
+            // Run 3 ("sig2", KAYNAK DEĞİŞTİ): imza artık eşleşmiyor → grup YENİDEN turlarla denenir.
+            sourceChanged = true;
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r3"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
 }
