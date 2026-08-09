@@ -525,6 +525,98 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- [cycle rounds/Task 9] döngü görselleri
+
+    /// <summary>[Task 9 Part 1] <c>CycleUnsettled</c> mevcut dep-issue üçgenini TAŞIR (yeni ikon/slot/sütun YOK) —
+    /// yalnız tooltip metni dallanır (brief slot: "Cycle did not fully settle — output may be one generation stale").</summary>
+    [StaFact]
+    public void Cycle_unsettled_row_shows_the_existing_triangle_with_its_own_verbatim_tooltip()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { CycleUnsettled = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
+        Assert.Equal("Cycle did not fully settle — output may be one generation stale", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Task 9 Part 1] Gerçek bir dep-issue varken (birebir eski metin) <c>CycleUnsettled</c> AYNI satırda
+    /// true olsa bile eski tooltip metnini EZMEZ — dep-issue metni daha spesifik/actionable, öncelik onda kalır.</summary>
+    [StaFact]
+    public void Cycle_unsettled_does_not_override_the_existing_dep_issue_tooltip_when_both_are_present()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed)
+        { CycleUnsettled = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
+        Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Task 9 Part 2] Kalıcı yakınsamayan döngü — satır <c>Skipped</c> kalır ama aynı 14px dep-slotu
+    /// üçgen YERİNE turuncu döngü rozetini taşır (GraphStatus.Cycle/Icon.StatusCycle/Brush.StatusCycleText —
+    /// StatusGlyph'in ZATEN çizdiği aynı görsel, yeni geometri YOK) + kendi birebir tooltip'i.</summary>
+    [StaFact]
+    public void Cycle_unconverged_row_stays_skipped_but_carries_the_orange_cycle_badge_in_the_dep_slot()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(GraphStatus.Skipped, row.Glyph.Status); // ana glyph SKIPPED kalır — yeni sütun/statü YOK
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);
+        Assert.Equal(GraphStatus.Cycle, row.CycleBadge.Status); // rozet StatusGlyph'in KENDİ cycle çizimini reuse eder
+        Assert.Equal("Cycle did not build — not retried until the source changes", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Task 9 Part 2] Rozet 14px slotun İÇİNDE, üçgenle AYNI 12px ölçekte — hiza asla kaymaz
+    /// (<see cref="Dep_issue_slot_is_fourteen_pixels_even_when_empty_so_columns_never_shift"/> deseni).</summary>
+    [StaFact]
+    public void Cycle_badge_is_twelve_by_twelve_inside_the_still_fourteen_pixel_slot()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(14.0, row.DepSlot.Width);
+        Assert.Equal(12.0, row.CycleBadge.Size);
+        Assert.Equal(12.0, row.CycleBadge.ActualWidth);
+        Assert.Equal(12.0, row.CycleBadge.ActualHeight);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Task 9 Part 2] Ordinary "güncel" skip (cycle üyesi bile olmayan sıradan proje) hiçbir yeni
+    /// görsel taşımaz — üçgen de rozet de gizli, sıradan skip AYNEN eskisi gibi görünür.</summary>
+    [StaFact]
+    public void An_ordinary_up_to_date_skip_shows_neither_the_triangle_nor_the_cycle_badge()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped);
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Task 9 Part 2 — edge case] Bir satır teorik olarak (Continue segment'lerinde bayat veri) HEM
+    /// <c>CycleUnconverged</c> HEM eski bir <c>DepIssues</c> taşıyabilir — rozet KAZANIR: bu run'ın güncel/kesin
+    /// sinyali (hiç invoke edilmedi) bayat "failed dependency" metninden daha güvenilir.</summary>
+    [StaFact]
+    public void Cycle_unconverged_wins_over_a_stale_dep_issue_flag_on_the_same_row()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
+        { CycleUnconverged = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);
+        Assert.Equal("Cycle did not build — not retried until the source changes", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Glyph_tooltip_is_the_status_label_with_building_elapsed_and_dependency_issue_suffix()
     {
