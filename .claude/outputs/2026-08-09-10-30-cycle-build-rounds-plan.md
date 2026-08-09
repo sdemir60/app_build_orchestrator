@@ -874,7 +874,24 @@ git commit -m "refactor(supervisor): tek invoke yolu ayiklandi — tur dongusu i
 - Ara turlarda `ProjectSucceededEvent`/`ProjectFailedEvent` **yayılmaz**; yalnız son turun sonucu yayılır.
 - Her üye için `ProjectStartedEvent` **turun başında** yayılır (o an gerçekten derleniyor).
 - Raporlanan süre **turların toplamıdır**.
-- `Complete` her üye için tam bir kez, `finally` içinde.
+- `Complete`, **dispatch edilmiş** her üye için tam bir kez, `finally` içinde. Scheduler'ın
+  `Completed`'ında zaten bulunan bir üye için `Complete` ÇAĞRILMAZ (o üye in-flight değildir ve
+  `Complete` fırlatırdı).
+- **Yakınsamayan grup hiçbir şey persist etmez.** `PersistBuildStateOnSuccess` YALNIZ
+  `decision == CycleRoundDecision.Converged` ise çağrılır. `NoProgress` / `CapReached` / stop / iptal /
+  beklenmeyen hata hâlinde **her üye** için `InvalidateBuildStateOnFailure` çağrılır — başarılı görünenler
+  dahil.
+
+  Gerekçe: turlar bir bütündür. Tur 1'de yeşil olmuş bir üye, koşu durdurulduğunda taze imzasını
+  kaydederse bir sonraki `Build` onu "güncel" sayıp atlar ve grup **yarım kalmış hâlde temiz görünür** —
+  §4 gereği DLL/bin timestamp okunmadığı için bunu yakalayacak başka bir mekanizma yoktur. Bu, kod
+  tabanında zaten yürürlükte olan kuralın aynısıdır ([A2] `RunCoordinator.cs`: depIssue taşıyan bir
+  success de persist edilmez — "arkasında duramadığın başarıyı kaydetme").
+
+  Sonuç: Stop'tan sonra kullanıcı `Build`'e bastığında grup baştan, tüm üyeleriyle derlenir. Bu aynı
+  zamanda "yarıda kalmış grupla resume" sorununu tamamen ortadan kaldırır — yarım grup hiçbir zaman
+  sonraki koşuya taşınmaz. (`RunMode.Continue` sözleşmede kalır ama App onu göndermez: bkz.
+  `RunViewModel.cs` [B4] — "Continue KOMUTU YOK".)
 
 - [ ] **Step 1: Failing test'i yaz**
 
@@ -897,6 +914,14 @@ invoker'ını **yeniden kullan** (yeni fixture yazma; ortak host tek yerde, CLAU
 
 // 5) üyeler her turda build-order sırasıyla ve SIRALI invoke edilir (eşzamanlı invoke YOK)
 [Fact] public async Task members_are_invoked_sequentially_in_build_order()
+
+// 6) YAKINSAMAYAN GRUP PERSIST ETMEZ: NoProgress ile biten grupta, tur 1'de yesil olmus uye bile
+//    BuildState'e taze imza YAZMAZ — invalidate edilir. (Yarim grup bir sonraki Build'de "guncel"
+//    gorunmemeli.)
+[Fact] public async Task non_converged_group_persists_nothing_even_for_green_members()
+
+// 7) STOP ORTASINDA: koşu iptal edilirse tum uyeler invalidate edilir; sonraki Build grubu bastan derler.
+[Fact] public async Task stopped_group_invalidates_every_member()
 ```
 
 Her testte fake invoker çağrı sırasını/sayısını kaydeder; `Assert` bunlara bakar.

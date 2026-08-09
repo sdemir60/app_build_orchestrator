@@ -966,6 +966,9 @@ public sealed class RunCoordinator(
         }
     }
 
+    /// <summary>[cycle rounds] Tek bir invoke'un sonucu — <see cref="InvokeOnceAsync"/> ile çağıranı ayıran sözleşme.</summary>
+    private sealed record InvokeOutcome(BuildResult Result, long DurationMs, string? FailReason);
+
     /// <summary>Tek projenin tüm yaşam döngüsü. <see cref="ReadySetScheduler.Complete"/> her yoldan TAM BİR KEZ çağrılır.</summary>
     private async Task BuildProjectAsync(RunContext run, string projectId, CancellationToken ct)
     {
@@ -978,44 +981,15 @@ public sealed class RunCoordinator(
         // [T54] Dispatch anında TÜM bağımlılıklar zaten terminaldir (ReadySetScheduler'ın resolved-gate'i,
         // IsReadyLocked) — bu yüzden depIssues burada, invoke'tan ÖNCE, güvenle hesaplanıp HEM warn satırlarına
         // HEM olaya (event) HEM de birikime (bu projenin kendi dependent'ları miras alabilsin diye) yazılabilir.
-        var depIssues = DepIssueTracker.Compute(
-            node?.Dependencies ?? [],
-            run.Scheduler.Completed,
-            run.DepIssuesById,
-            id => run.NodeById.TryGetValue(id, out var n) ? n.Name : id);
-        run.DepIssuesById[projectId] = depIssues.All;
+        var depIssues = ComputeDepIssues(run, projectId);
         IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
 
         try
         {
             run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, name));
-            var request = new MsBuildInvokeRequest(
-                ProjectId: projectId,
-                Configuration: run.Configuration,
-                SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
-                NeedsRestore: HasPackagesConfig(projectId),
-                // [I2-K2/Task 10] worktree kökü verilmişse proje-Id başına izole obj; aksi halde in-place =
-                // projenin kendi (VS-parity) obj'i — bkz. RunCoordinator ctor'daki worktreeObjRootResolver doc'u.
-                BaseIntermediateOutputPath: run.WorktreeObjRoot is not null
-                    ? WorktreeObjPathResolver.Resolve(run.WorktreeObjRoot, projectId)
-                    : null);
+            var outcome = await InvokeOnceAsync(run, projectId, depIssues, ct);
 
-            MsBuildInvokeResult invoke;
-            // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose sonrası
-            // AppendLine fırlatır — satır sessizce düşmez).
-            using (var log = run.Logs.OpenProjectLog(projectId))
-            {
-                // v7Δ-7: proje logunun İLK satırı, bu proje için çalıştırılacak GERÇEK MSBuild komut satırıdır —
-                // depIssue uyarıları bu invaryantı BOZMAZ, komut satır(lar)ından SONRA, gerçek derleme çıktısından
-                // ÖNCE (log başı) yazılır [T54].
-                foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
-                    Emit(run, projectId, log, commandLine);
-                foreach (string warnLine in DepIssueWarnLines(depIssues))
-                    Emit(run, projectId, log, warnLine);
-                invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
-            }
-
-            if (invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed)
+            if (outcome.Result == BuildResult.Succeeded)
             {
                 result = BuildResult.Succeeded;
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
@@ -1029,18 +1003,18 @@ public sealed class RunCoordinator(
                 // [A2 fix-4] Aynı ayrımı ikinci kez TÜRETME: depIssuesForEvent (:594) zaten "depIssue var mı"
                 // sorusunun materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
                 if (depIssuesForEvent is null)
-                    PersistBuildStateOnSuccess(run, projectId, invoke.DurationMs); // [Task 19] sonraki Build incremental olsun
-                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, invoke.DurationMs, depIssuesForEvent));
+                    PersistBuildStateOnSuccess(run, projectId, outcome.DurationMs); // [Task 19] sonraki Build incremental olsun
+                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, outcome.DurationMs, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                    "{0}: succeeded ({1}ms)", name, invoke.DurationMs));
+                    "{0}: succeeded ({1}ms)", name, outcome.DurationMs));
             }
             else
             {
-                string reason = ReasonFor(invoke);
+                string reason = outcome.FailReason!;
                 MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
-                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, invoke.DurationMs, reason, depIssuesForEvent));
+                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, outcome.DurationMs, reason, depIssuesForEvent));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                    "{0}: failed — {1} ({2}ms)", name, reason, invoke.DurationMs));
+                    "{0}: failed — {1} ({2}ms)", name, reason, outcome.DurationMs));
             }
         }
         catch (OperationCanceledException)
@@ -1068,6 +1042,75 @@ public sealed class RunCoordinator(
             // şekilde fırlasa bile scheduler ASLA askıda kalmaz.
             if (result != BuildResult.Succeeded) InvalidateBuildStateOnFailure(run, projectId);
         }
+    }
+
+    /// <summary>
+    /// [cycle rounds] Tek bir MSBuild invoke'u — log açma, komut satırları, depIssue warn satırları dahil.
+    /// Event YAYMAZ, Complete ÇAĞIRMAZ, BuildState PERSIST ETMEZ: bunlar çağıranın kararıdır.
+    ///
+    /// Neden ayrı: SCC tur döngüsü aynı projeyi birden çok kez invoke eder ama sonucu YALNIZ son turda
+    /// raporlar. İki yol aynı invoke gövdesini paylaşmazsa komut satırı/log/retry davranışı sessizce
+    /// ayrışırdı (kopya YASAK, CLAUDE.md).
+    /// </summary>
+    private async Task<InvokeOutcome> InvokeOnceAsync(
+        RunContext run, string projectId, DepIssueResult depIssues, CancellationToken ct)
+    {
+        var request = new MsBuildInvokeRequest(
+            ProjectId: projectId,
+            Configuration: run.Configuration,
+            SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
+            NeedsRestore: HasPackagesConfig(projectId),
+            // [I2-K2/Task 10] worktree kökü verilmişse proje-Id başına izole obj; aksi halde in-place =
+            // projenin kendi (VS-parity) obj'i — bkz. RunCoordinator ctor'daki worktreeObjRootResolver doc'u.
+            BaseIntermediateOutputPath: run.WorktreeObjRoot is not null
+                ? WorktreeObjPathResolver.Resolve(run.WorktreeObjRoot, projectId)
+                : null);
+
+        MsBuildInvokeResult invoke;
+        // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose sonrası
+        // AppendLine fırlatır — satır sessizce düşmez).
+        using (var log = run.Logs.OpenProjectLog(projectId))
+        {
+            // v7Δ-7: proje logunun İLK satırı, bu proje için çalıştırılacak GERÇEK MSBuild komut satırıdır —
+            // depIssue uyarıları bu invaryantı BOZMAZ, komut satır(lar)ından SONRA, gerçek derleme çıktısından
+            // ÖNCE (log başı) yazılır [T54].
+            foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
+                Emit(run, projectId, log, commandLine);
+            foreach (string warnLine in DepIssueWarnLines(depIssues))
+                Emit(run, projectId, log, warnLine);
+            invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
+        }
+
+        return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
+            ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)
+            : new InvokeOutcome(BuildResult.Failed, invoke.DurationMs, ReasonFor(invoke));
+    }
+
+    /// <summary>
+    /// [T54] Dispatch anında TÜM bağımlılıklar terminaldir, bu yüzden depIssues invoke'tan ÖNCE güvenle
+    /// hesaplanır ve üç tüketiciye birden verilir (log warn satırları, event, bu projenin dependent'larının
+    /// miras alacağı birikim).
+    ///
+    /// [cycle rounds] <paramref name="excludedDeps"/> grup-içi kenarlar içindir: bir SCC dispatch edildiğinde
+    /// kardeş üyeler henüz Completed'ta DEĞİLDİR, dolayısıyla dep-issue hesabına girmemelidirler — aksi halde
+    /// her üye kardeşlerini "çözülmemiş" sayıp yanlış uyarı üretirdi. Tekil projede null geçilir.
+    /// </summary>
+    private DepIssueResult ComputeDepIssues(RunContext run, string projectId,
+                                            IReadOnlyList<string>? excludedDeps = null)
+    {
+        run.NodeById.TryGetValue(projectId, out var node);
+        var dependencies = node?.Dependencies ?? [];
+        if (excludedDeps is { Count: > 0 })
+            dependencies = [.. dependencies.Where(
+                d => !excludedDeps.Contains(d, StringComparer.OrdinalIgnoreCase))];
+
+        var depIssues = DepIssueTracker.Compute(
+            dependencies,
+            run.Scheduler.Completed,
+            run.DepIssuesById,
+            id => run.NodeById.TryGetValue(id, out var n) ? n.Name : id);
+        run.DepIssuesById[projectId] = depIssues.All;
+        return depIssues;
     }
 
     /// <summary>
