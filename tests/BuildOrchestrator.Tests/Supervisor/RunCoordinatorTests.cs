@@ -183,6 +183,20 @@ public class RunCoordinatorTests
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
         public void SetNow(long ms) => Volatile.Write(ref _now, ms);
 
+        /// <summary>EN SON run'ın <c>decision.log</c>'unun tam metni. Dosya HÂLÂ AÇIKTIR (writer'ı run bitince
+        /// kapanmaz), bu yüzden paylaşım kipi <see cref="FileShare.ReadWrite"/> olmak ZORUNDA: düz
+        /// <c>File.ReadAllText</c> yazıcının write handle'ıyla çakışıp IOException fırlatabilir.</summary>
+        public string DecisionLog
+        {
+            get
+            {
+                using var stream = new FileStream(Path.Combine(LogWriters[^1].RunDirectory, "decision.log"),
+                    FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+                return reader.ReadToEnd();
+            }
+        }
+
         /// <summary>Yazılmış NDJSON satırlarını olaylara çevirir; her satır geçerli bir IpcEvent olmalı [D4].</summary>
         public IReadOnlyList<IpcEvent> Events =>
             [.. Encoding.UTF8.GetString(_out.ToArray())
@@ -1230,8 +1244,7 @@ public class RunCoordinatorTests
             var warn = Assert.Single(warnLines);
             Assert.Contains("P", warn);
 
-            string decisionLog = File.ReadAllText(Path.Combine(h.LogWriters.Single().RunDirectory, "decision.log"));
-            Assert.Contains(StaleMarker, decisionLog); // aynı satır decision.log'a da yazılır (onRetry ile aynı ikili-yazım deseni)
+            Assert.Contains(StaleMarker, h.DecisionLog); // aynı satır decision.log'a da yazılır (onRetry ile aynı ikili-yazım deseni)
 
             Assert.Equal(before, File.ReadAllBytes(assets)); // [§4] dokunulmadı — byte-tam aynı
         }

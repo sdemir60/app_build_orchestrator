@@ -515,6 +515,41 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    [Fact]
+    public async Task a_stop_mid_group_publishes_no_success_even_for_the_members_that_finished_green()
+    {
+        // [I1] Yukarıdaki testin kaçırdığı delik: ORADA her iki üye de exit!=0 döndüğü için "yarıda kesilen
+        // grupta hiçbir üyenin sonucunun arkasında durulamaz" kuralı hiç sınanmıyordu. Burada A ve B turu
+        // YEŞİL bitirir ve stop C'nin üstüne düşer; kural yalnız iptal/beklenmeyen-hata yollarında değil,
+        // STOP (break) yolunda da geçerli olmalıdır — üçü de aynı gövdeden geçer.
+        var plan = CyclePlanOf(["A", "B", "C"],
+            Node("A", deps: ["C"], inCycle: true), Node("B", deps: ["A"], inCycle: true), Node("C", deps: ["B"], inCycle: true));
+        var rec = new RoundRecorder();
+        RunCoordinator? sut = null;
+        var invoker = rec.Invoker((name, round) =>
+        {
+            if (name != "C" || round != 1) return Ok();
+            Assert.True(sut!.TryRequestStop(StopKind.Hard)); // hard stop tam C derlenirken düşer
+            return Exit(1);
+        });
+        using var h = new Harness(plan, invoker);
+        sut = h.Sut;
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "C#1"], rec.Calls);   // tur 1 biter, İKİNCİ tur açılmaz
+        // A ve B tur 1'i YEŞİL bitirdi — ama grup yakınsamadı. Bir ara turun kararı NİHAİ sonuç olarak
+        // yayılamaz: tek bir projectSucceeded bile çıkmamalı.
+        Assert.Empty(h.Events.OfType<ProjectSucceededEvent>());
+        Assert.Equal([Id("A"), Id("B"), Id("C")], h.Events.OfType<ProjectFailedEvent>().Select(e => e.ProjectId));
+        Assert.All(h.Events.OfType<ProjectFailedEvent>(), e => Assert.Equal("stopped", e.Reason));
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(0, done.Succeeded);
+        Assert.Equal(3, done.Failed);
+        Assert.Equal(0, done.Queued);
+    }
+
     // ---------------------------------------------------------------- 8) tavan: oturmamış döngü bayrağı
 
     [Fact]
@@ -641,11 +676,13 @@ public class CycleRoundsTests
     [Fact]
     public async Task a_converged_group_clears_its_non_convergent_memory_so_a_later_Build_at_the_same_signature_still_invokes_it()
     {
-        // [Task 7 review — I1] Yakınsamanın hafızayı SİLDİĞİ, PersistBuildStateOnSuccess'in TAZE bir BuildState
-        // (`new`, `with` DEĞİL) kurmasının bir YAN ETKİSİDİR (RunCoordinator.cs) — ayrı bir "temizle" kodu YOK.
-        // Bu test tam olarak o yan etkiyi pinler: `new` sessizce `with`'e dönseydi (kardeş yazıcılarla "tutarlı"
-        // görünen, doğal bir refactor) eski NonConvergentSignature KORUNURDU ve yakınsamış bir grup bir sonraki
-        // Build'de SONSUZA DEK pre-skip edilirdi — süit bunu yakalamadan yeşil kalırdı.
+        // [Task 7 review — I1] Yakınsayan grup hafızasını bırakmaz: bir sonraki Build onu pre-skip ETMEZ.
+        // [M3 — DEĞİŞEN GEREKÇE] Bu testin eski doc'u kuralı "PersistBuildStateOnSuccess'in TAZE bir BuildState
+        // (`new`, `with` DEĞİL) kurmasının YAN ETKİSİ; ayrı bir temizle kodu YOK" diye pinliyordu. O yan etki
+        // eksikti: dep-issue taşıyan bir success [A2] gereği HİÇ persist etmez, dolayısıyla o üyenin hafızası
+        // yakınsamaya rağmen ayakta kalıyordu (bkz. kardeş test
+        // convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue). Silme artık
+        // hafızanın kendi yazıcısında AÇIKÇA yapılıyor; bu test o SONUCU (yakınsama ⇒ hafıza yok) pinler.
         string cacheRoot = NewCacheRoot();
         try
         {
@@ -679,5 +716,88 @@ public class CycleRoundsTests
                 e => e.Reason == "cycle did not converge at this signature");
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue()
+    {
+        // [M3] Yukarıdaki testin kaçırdığı delik. Hafızayı silmek, yakınsayan üyenin taze BuildState'inin bir
+        // YAN ETKİSİYDİ — ama [A2] gereği dep-issue TAŞIYAN bir success persist ETMEZ. O üyenin eski
+        // NonConvergentSignature'ı ayakta kalır; Build'in pre-skip'i TÜM üyeleri istediği için grup, GERÇEKTEN
+        // yakınsamış olmasına rağmen aynı imzada sonsuza dek pre-skip edilirdi (kaynak değişmeden çıkışı yok).
+        // Silme bu yüzden hafızanın kendi yazıcısında AÇIKÇA yapılır.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            // "sig" imzasında yakınsamadığı HATIRLANIYOR (önceki bir Build'den).
+            foreach (string name in new[] { "A", "B" })
+                store.Upsert(new BuildState(Id(name), "old", "c0", BuildResult.Succeeded,
+                    DateTimeOffset.UtcNow, "main", 42, NonConvergentSignature: "sig"));
+
+            // X grup DIŞINDA ve bu run'da patlar → A'nın success'i depIssue TAŞIR (bayat X çıktısına link'li).
+            var plan = CyclePlanOf(["A", "B"],
+                Node("X"),
+                Node("A", deps: ["X", "B"], inCycle: true),
+                Node("B", deps: ["A"], inCycle: true)) with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "X" ? Exit(1) : Ok());
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            // Rebuild: pre-skip yolu hiç devreye girmesin — sınanan şey hafızanın RUN SONUNDA silinmesidir.
+            await h.Sut.StartAsync(Start(RunMode.Rebuild, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["X#1", "A#1", "B#1", "A#2", "B#2"], rec.Calls); // iki ardışık yeşil tur ⇒ Converged
+            var a = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => e.ProjectId == Id("A"));
+            Assert.Equal(["X"], a.DepIssues);                       // kontrol: A gerçekten depIssue taşıyor
+            Assert.Equal("old", store.Load()[Id("A")].BuiltSignature); // ve bu yüzden persist ETMEDİ [A2]
+            Assert.Null(store.Load()[Id("A")].NonConvergentSignature); // ama hafıza YİNE DE temizlendi
+            Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- 10) karar decision.log'a düşer [M1]
+
+    [Fact]
+    public async Task the_final_round_decision_is_written_to_the_decision_log_with_the_remembered_signature()
+    {
+        // [M1] Log'da yalnız üye-başına "failed — exit 1" satırları olsaydı operatör grubun NEDEN durduğunu
+        // (tavan mı, ilerleme yokluğu mu, yakınsama mı) o koşunun logundan ASLA çıkaramazdı. Karar, KESİNLEŞTİĞİ
+        // yerde tek satırda yazılır; hafıza yazıldıysa imzası da aynı satırdadır.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            // Grup, tur göstergesiyle AYNI adla (build-order'daki ilk üye) anılır.
+            Assert.Contains("cycle A: no progress — the same members failed twice (2 members)", h.DecisionLog, StringComparison.Ordinal);
+            Assert.Contains("non-convergence remembered at sig", h.DecisionLog, StringComparison.Ordinal);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task a_converged_group_logs_its_verdict_without_a_signature()
+    {
+        // Kontrol grubu: yakınsayan grup da kararını YAZAR (aksi halde logda sessizce kaybolurdu), ama
+        // hafızaya hiçbir imza yazılmadığı için satırın imza eki YOKTUR.
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Contains("cycle A: converged (2 members)", h.DecisionLog, StringComparison.Ordinal);
+        Assert.DoesNotContain("remembered at", h.DecisionLog, StringComparison.Ordinal);
     }
 }

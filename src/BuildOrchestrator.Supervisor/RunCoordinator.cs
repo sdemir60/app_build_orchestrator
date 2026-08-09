@@ -789,7 +789,11 @@ public sealed class RunCoordinator(
                         var cycleState = stateStore.Load();
                         foreach (var cycle in runPlan.Plan.Cycles)
                         {
-                            if (cycle.Count == 0 || !inc.SignatureById.TryGetValue(cycle[0], out var signature)) continue;
+                            // [I4] Temsilci seçimi YAZAN tarafla (UpdateCycleNonConvergenceMemory) TEK yerdedir:
+                            // bu liste ordinal, oradaki build-order sıralıdır — kendi [0]'larını seçselerdi
+                            // üye-başına imzanın ayrıştığı modda (Fast) iki taraf farklı imzaya bakardı.
+                            if (CycleGroups.SignatureRepresentative(cycle) is not { } representative
+                                || !inc.SignatureById.TryGetValue(representative, out var signature)) continue;
                             if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
                             foreach (string id in cycle)
                             {
@@ -885,8 +889,10 @@ public sealed class RunCoordinator(
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
         // taşınır; burada AYRICA hesaplanmaz.
         // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
-        // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() SEGMENT BAŞINA TAM BİR KEZ: Continue/
-        // RetryFailed her segmentte preview'ı yeniden yayınlar, item başına okuma yapılmaz. Segment 2'nin okuduğu
+        // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() ITEM BAŞINA DEĞİL, TOPLU okunur —
+        // önizlemenin tamamı tek okumadan beslenir. (Bir Build segmenti store'u toplam İKİ kez okur: yukarıdaki
+        // [Task 7] yakınsamama hafızası taraması ve buradaki önizleme; ikisi ayrı sorulardır ve Build DIŞINDAKİ
+        // modlarda ilki hiç çalışmaz.) Segment 2'nin okuduğu
         // map segment 1'in persist'lerini İÇERİR — yani derlenmiş satırların sol yarısı taze commit'e döner.
         var builtCommits = stateStore?.Load();
         events.TryWrite(new BuildPreviewEvent(
@@ -1224,6 +1230,13 @@ public sealed class RunCoordinator(
         // yayılmaz" kuralının ihlali, üstelik tekil proje yolu iptalde daima Failed("stopped") raporlar.
         // Persist tarafında zaten yürürlükte olan ilkenin (yakınsamayan grup hiçbir şey persist etmez)
         // raporlama kanalındaki karşılığıdır.
+        //
+        // [I1] Kural, RAPORLAMANIN HEMEN ÖNÜNDE ve TEK yerde uygulanır — üç kesilme yolu (stop'un break'i,
+        // iptal, beklenmeyen hata) için ayrı ayrı çağrılmaz. "Yarıda kesildi"nin tanımı zaten tek bir
+        // ifadedir: döngü <see cref="CycleRoundDecision.Continue"/> ile bitmiştir (Converged/NoProgress/
+        // CapReached ile biten tur GERÇEK bir karardır). Çağrılar dağıtıldığında biri (stop'un break'i)
+        // unutulmuştu ve o yoldan yeşil üyeler Succeeded raporlanıyordu; kapı burada olduğu sürece yeni bir
+        // kesilme yolu eklemek kuralı sessizce ATLAYAMAZ.
         void FailEveryMember(string reason)
         {
             foreach (string id in members)
@@ -1234,6 +1247,9 @@ public sealed class RunCoordinator(
         }
 
         var decision = CycleRoundDecision.Continue;
+        // Kesilme gerekçesi: stop/iptal "stopped", beklenmeyen hata kendi metnini taşır — ikisi AYIRT EDİLİR
+        // kalır (tekil proje yolundaki failReason ayrımıyla aynı).
+        string interruptedReason = "stopped";
         try
         {
             // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
@@ -1276,14 +1292,18 @@ public sealed class RunCoordinator(
         }
         catch (OperationCanceledException)
         {
-            FailEveryMember("stopped");
+            // gerekçe zaten "stopped" — decision Continue'da kaldığı için aşağıdaki kapı uygular
         }
         catch (Exception ex)
         {
-            FailEveryMember("invoke error: " + ex.Message);
+            interruptedReason = "invoke error: " + ex.Message;
         }
         finally
         {
+            // [I1] Döngü GERÇEK bir kararla bitmediyse grup yarıda kesilmiştir: raporlamadan hemen önce
+            // HERKES Failed'a çevrilir (yukarıdaki gerekçe).
+            if (decision == CycleRoundDecision.Continue) FailEveryMember(interruptedReason);
+
             // Loglar sonuç raporlanmadan ÖNCE kapatılır (dispose sonrası AppendLine fırlatır — geç gelen
             // satır sessizce düşmez). Bir dispose fırlarsa diğerleri yine de kapanır ve raporlama çalışır.
             foreach (var member in state.Values)
@@ -1315,50 +1335,111 @@ public sealed class RunCoordinator(
             // (trustedResult=false ⇒ InvalidateBuildStateOnFailure), bu yalnız ÜZERİNE, hangi bileşik imzada
             // pes edildiğini ayrıca kaydeder. reportFailure varsa bile denenir — bir üyenin raporlama hatası
             // hafıza yazımını ENGELLEMEMELİDİR (aksi halde bir sonraki Build yine boşuna turlar tüketirdi).
-            RecordCycleNonConvergence(run, members, decision);
+            RecordCycleOutcome(run, allMembers, members, decision);
             if (reportFailure is not null) ExceptionDispatchInfo.Capture(reportFailure).Throw();
         }
     }
 
     /// <summary>
-    /// [Task 7] Bir SCC turlar sonunda GERÇEKTEN yakınsAMADIYSA (<see cref="CycleRoundDecision.NoProgress"/> ya
-    /// da <see cref="CycleRoundDecision.CapReached"/>) TÜM üyelerin <see cref="BuildState.NonConvergentSignature"/>
-    /// alanına o anki bileşik imza yazılır — bir sonraki <c>Build</c> aynı imzayı görürse grup <see
-    /// cref="BuildStateStore.IsCycleNonConvergent"/> ile pre-skip edilir, kaynak DEĞİŞMEDEN turlar tekrar
-    /// TÜKETİLMEZ.
+    /// [Task 7] Bir SCC'nin NİHAİ kararını kayda geçirir: <c>decision.log</c> satırı (grubun neden durduğu —
+    /// aksi halde logda yalnız üye-başına <c>failed — exit 1</c> satırları görünür ve operatör "tavan mı, ilerleme
+    /// yokluğu mu" ayrımını YAPAMAZ) + yakınsamama hafızası.
     ///
     /// <para><b>decision hâlâ <see cref="CycleRoundDecision.Continue"/>'daysa (stop/iptal/beklenmeyen hata
-    /// yüzünden yarıda kesilmiş grup) hiçbir şey YAZILMAZ:</b> bir Stop ya da geçici bir hata "bu SCC asla
-    /// yakınsamaz" anlamına GELMEZ — bir sonraki run yine gerçek bir deneme hakkı almalıdır. Bu, aynı ayrımın
-    /// (yalnız GERÇEK bir tur kararına güvenilir) <see cref="ReportCycleMember"/>'daki <c>trustedResult</c>
-    /// kapısından FARKLI ve ONDAN DAHA DAR bir kapıdır: trustedResult yalnız Converged'e güvenir, bu ise
-    /// Converged DIŞINDAKİ üç değerden ikisine (NoProgress/CapReached) — Continue'a asla.</para>
-    ///
-    /// <para>Kayıt hiç yoksa (SCC hiç derlenmemiş — tam olarak bu görevin çözdüğü senaryo) BURADA taze bir
-    /// <see cref="BuildState"/> oluşturulur (yukarıdaki döngünün <see cref="InvalidateBuildStateOnFailure"/>'ı
-    /// yalnız MEVCUT kayıtları günceller, YENİ kayıt AÇMAZ) — aksi halde ilk hiç derlenmemiş yakınsamayan grup
-    /// için hafıza hiç oluşmaz ve sorun (her build'de boşuna tur tüketmek) TAM OLARAK sürer.</para>
+    /// yüzünden yarıda kesilmiş grup) hiçbir şey yazılmaz:</b> bir Stop ya da geçici bir hata "bu SCC asla
+    /// yakınsamaz" anlamına GELMEZ — bir sonraki run yine gerçek bir deneme hakkı almalıdır (kesilme zaten
+    /// üyelerin kendi <c>failed — stopped</c> satırlarından okunur).</para>
     /// </summary>
-    private void RecordCycleNonConvergence(RunContext run, IReadOnlyList<string> members, CycleRoundDecision decision)
+    private void RecordCycleOutcome(RunContext run, IReadOnlyList<string> allMembers,
+                                    IReadOnlyList<string> members, CycleRoundDecision decision)
     {
-        if (decision is not (CycleRoundDecision.NoProgress or CycleRoundDecision.CapReached)) return;
-        if (run.StateStore is null || run.Incremental is not { } inc
-            || !inc.SignatureById.TryGetValue(members[0], out var signature)) // TÜM üyeler AYNI bileşik imzayı taşır
-            return;
+        if (decision == CycleRoundDecision.Continue) return;
+
+        // Logda grubu ANAN ad, CycleRoundStartedEvent'in lideriyle AYNI olmalıdır (build-order'daki ilk üye) —
+        // yoksa aynı grup iki kanalda iki farklı adla anılırdı. Bu, aşağıdaki İMZA temsilcisinden ayrı bir
+        // sorudur: o "hangi üyenin imzası okunacak", bu "kullanıcı grubu hangi adla görüyor".
+        string leader = NameOf(run, members[0]);
+        string? remembered = UpdateCycleNonConvergenceMemory(run, allMembers, members, decision);
+        Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "cycle {0}: {1} ({2} members){3}",
+            leader, CycleOutcomeText(decision), members.Count,
+            remembered is null ? "" : "; non-convergence remembered at " + remembered));
+    }
+
+    /// <summary>[Task 7] Tur kararının kullanıcıya dönük (İngilizce) karşılığı — tavan sayısı literal DEĞİL,
+    /// tek kaynak <see cref="CycleRoundPolicy"/>'dir.</summary>
+    private static string CycleOutcomeText(CycleRoundDecision decision) => decision switch
+    {
+        CycleRoundDecision.Converged => "converged",
+        CycleRoundDecision.NoProgress => "no progress — the same members failed twice",
+        CycleRoundDecision.CapReached => string.Format(CultureInfo.InvariantCulture,
+            "round cap reached ({0} rounds) — output may be one generation behind", CycleRoundPolicy.RoundCap),
+        _ => "interrupted",
+    };
+
+    /// <summary>
+    /// [Task 7] Yakınsamama hafızasının TEK yazıcısı — <see cref="BuildState.NonConvergentSignature"/>.
+    ///
+    /// <para><b>NoProgress/CapReached ⇒ YAZ.</b> TÜM üyelerin alanına o anki bileşik imza yazılır; bir sonraki
+    /// <c>Build</c> aynı imzayı görürse grup <see cref="BuildStateStore.IsCycleNonConvergent"/> ile pre-skip
+    /// edilir, kaynak DEĞİŞMEDEN turlar tekrar TÜKETİLMEZ. Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir
+    /// <see cref="BuildState"/> açılır — <see cref="InvalidateBuildStateOnFailure"/> yalnız MEVCUT kayıtları
+    /// günceller, yenisini AÇMAZ.</para>
+    ///
+    /// <para><b>Converged ⇒ SİL.</b> [M3] Yakınsama hafızayı geçersiz kılar. Bunun ÇOĞU üye için zaten bir yan
+    /// etkisi vardır (<see cref="PersistBuildStateOnSuccess"/> taze bir <see cref="BuildState"/> KURAR, alan
+    /// doğal olarak null'a döner) ama o yol dep-issue TAŞIYAN bir üyede bilerek çalışmaz ([A2] kapısı): grup
+    /// yakınsasa bile o üyenin eski imzası kayıtta kalır, ve <c>Build</c>'in pre-skip'i TÜM üyeleri
+    /// istediği için grup aynı imzada sonsuza dek pre-skip edilirdi — kaynak değişmeden çıkışı olmayan bir
+    /// tuzak. Bu yüzden silme AÇIKÇA burada, hafızanın kendi yazıcısında yapılır (yan etkiye bırakılmaz).</para>
+    ///
+    /// <para><b>İmza temsilcisi</b> <see cref="CycleGroups.SignatureRepresentative"/>'dendir ve OKUYAN taraf
+    /// (Build'in pre-skip taraması) AYNI yardımcıyı çağırır — iki taraf kendi <c>[0]</c>'ını seçseydi listeler
+    /// farklı sıralı olduğu için üye-başına imzanın ayrıştığı modda farklı imzalara bakarlardı. <b>Safe</b>
+    /// (App'in gönderdiği tek mod) modda zaten TÜM üyeler AYNI bileşik imzayı taşır, bu yüzden seçim orada
+    /// önemsizdir; <b>Fast</b> modda ise üyeler ortak imza taşımaz (<c>IncrementalPlanner</c> bileşen haritasını
+    /// yalnız Safe'te kurar) — orada bu hafıza pratikte İŞLEMEZ (okuyanın <c>All</c> koşulu tutmaz) ve bu
+    /// bilinçli olarak böyle bırakılmıştır.</para>
+    ///
+    /// <para>Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only) ve filtre KOŞULSUZDUR: bu metot
+    /// <see cref="BuildCycleGroupAsync"/>'in <c>finally</c>'sinden çağrılır ve üstünde umbrella bir <c>catch</c>
+    /// YOKTUR — buradan kaçan herhangi bir exception (yalnız I/O değil: bozuk JSON, serialization, güvenlik)
+    /// worker'ı sessizce öldürür ve sonuncusuysa run ASILIR. Gerekçe kardeş yazıcı
+    /// <see cref="InvalidateBuildStateOnFailure"/>'da uzun uzun yazılıdır.</para>
+    /// </summary>
+    /// <returns>Hafızaya YAZILAN imza; yazılmadıysa (Converged, store/imza yok, I/O hatası) <c>null</c>.</returns>
+    private string? UpdateCycleNonConvergenceMemory(RunContext run, IReadOnlyList<string> allMembers,
+                                                    IReadOnlyList<string> members, CycleRoundDecision decision)
+    {
+        if (run.StateStore is null) return null;
+        bool nonConvergent = decision is CycleRoundDecision.NoProgress or CycleRoundDecision.CapReached;
+
+        string? signature = null;
+        if (nonConvergent && (run.Incremental is not { } inc
+            || CycleGroups.SignatureRepresentative(allMembers) is not { } representative
+            || !inc.SignatureById.TryGetValue(representative, out signature)))
+            return null;
 
         try
         {
             var existing = run.StateStore.Load();
             foreach (string id in members)
             {
-                var current = existing.TryGetValue(id, out var found)
-                    ? found
-                    : new BuildState(id, BuiltSignature: null, LastResult: BuildResult.Failed, LastRunAt: DateTimeOffset.UtcNow);
-                run.StateStore.Upsert(current with { NonConvergentSignature = signature });
+                if (nonConvergent)
+                {
+                    var current = existing.TryGetValue(id, out var found)
+                        ? found
+                        : new BuildState(id, BuiltSignature: null, LastResult: BuildResult.Failed, LastRunAt: DateTimeOffset.UtcNow);
+                    run.StateStore.Upsert(current with { NonConvergentSignature = signature });
+                }
+                // Converged: yalnız GERÇEKTEN hafızalı kayıtlara dokunulur — "kayıt yok" ile "alanı zaten boş
+                // kayıt" bu soru için AYNI anlama gelir, gereksiz yazım store'u şişirmekten başka iş yapmaz.
+                else if (existing.TryGetValue(id, out var found) && found.NonConvergentSignature is not null)
+                    run.StateStore.Upsert(found with { NonConvergentSignature = null });
             }
+            return signature;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { console("warning: cycle non-convergence memory could not be written: " + ex.Message); }
+        catch (Exception ex)
+        { console("warning: cycle non-convergence memory could not be written: " + ex.Message); return null; }
     }
 
     /// <summary>
