@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Planning;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Incremental;
@@ -24,7 +25,7 @@ public class EtaCalculatorTests
         var queued = new long?[] { 10_000, 20_000 };
         var building = new[] { new EtaCalculator.BuildingProject(ElapsedMs: 5_000, LastDurationMs: 15_000) };
 
-        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 2);
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 2, cycleQueuedDurationEstimatesMs: Array.Empty<long?>());
 
         Assert.Equal(20_400, raw);
     }
@@ -36,7 +37,7 @@ public class EtaCalculatorTests
         var queued = new long?[] { 10_000 };
         var building = Array.Empty<EtaCalculator.BuildingProject>();
 
-        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1);
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1, cycleQueuedDurationEstimatesMs: Array.Empty<long?>());
 
         Assert.Equal(10_000, raw);
     }
@@ -48,7 +49,7 @@ public class EtaCalculatorTests
         var queued = Array.Empty<long?>();
         var building = new[] { new EtaCalculator.BuildingProject(ElapsedMs: 20_000, LastDurationMs: 5_000) };
 
-        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1);
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1, cycleQueuedDurationEstimatesMs: Array.Empty<long?>());
 
         // (0 + 0)/1 + 400 = 400
         Assert.Equal(400, raw);
@@ -123,7 +124,7 @@ public class EtaCalculatorTests
         var queued = new long?[] { null, null };
         var building = new[] { new EtaCalculator.BuildingProject(ElapsedMs: 2_000, LastDurationMs: null) };
 
-        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 3);
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 3, cycleQueuedDurationEstimatesMs: Array.Empty<long?>());
 
         Assert.Null(raw);
     }
@@ -145,7 +146,7 @@ public class EtaCalculatorTests
         var queued = new long?[] { 10_000, null };
         var building = Array.Empty<EtaCalculator.BuildingProject>();
 
-        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1);
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1, cycleQueuedDurationEstimatesMs: Array.Empty<long?>());
 
         Assert.Equal(20_000, raw);
     }
@@ -159,7 +160,7 @@ public class EtaCalculatorTests
         var queued = new long?[] { 10_000 };
         var building = new[] { new EtaCalculator.BuildingProject(ElapsedMs: 1_000, LastDurationMs: null) };
 
-        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1);
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1, cycleQueuedDurationEstimatesMs: Array.Empty<long?>());
 
         Assert.Equal(19_400, raw);
     }
@@ -172,7 +173,7 @@ public class EtaCalculatorTests
         var queued = new long?[] { 10_000 };
         var building = Array.Empty<EtaCalculator.BuildingProject>();
 
-        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 0);
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 0, cycleQueuedDurationEstimatesMs: Array.Empty<long?>());
 
         Assert.Equal(10_000, raw); // /1, /0 değil
     }
@@ -183,7 +184,84 @@ public class EtaCalculatorTests
     public void compute_raw_estimate_throws_on_null_arguments()
     {
         var building = Array.Empty<EtaCalculator.BuildingProject>();
-        Assert.Throws<ArgumentNullException>(() => EtaCalculator.ComputeRawEstimateMs(null!, building, 1));
-        Assert.Throws<ArgumentNullException>(() => EtaCalculator.ComputeRawEstimateMs(Array.Empty<long?>(), null!, 1));
+        var noCycle = Array.Empty<long?>();
+        Assert.Throws<ArgumentNullException>(() => EtaCalculator.ComputeRawEstimateMs(null!, building, 1, noCycle));
+        Assert.Throws<ArgumentNullException>(() => EtaCalculator.ComputeRawEstimateMs(Array.Empty<long?>(), null!, 1, noCycle));
+        Assert.Throws<ArgumentNullException>(() => EtaCalculator.ComputeRawEstimateMs(Array.Empty<long?>(), building, 1, null!));
+    }
+
+    // ---- [Task 10] Cycle (SCC) queued contribution: NOT divided by parallelism, multiplied by BaselineRounds ---
+
+    [Fact]
+    public void cycle_queued_contribution_is_multiplied_by_baseline_rounds_and_not_divided_by_parallelism()
+    {
+        // ordinary: queued=10000, building LastDurationMs=15000/elapsed=5000 -> remaining=10000
+        // (10000+10000)/2 = 10000; +400 (building var) = 10400
+        // cycle: 6000, paralelliğe BÖLÜNMEDEN CycleRoundPolicy.BaselineRounds ile çarpılır -> 6000*BaselineRounds
+        var queued = new long?[] { 10_000 };
+        var building = new[] { new EtaCalculator.BuildingProject(ElapsedMs: 5_000, LastDurationMs: 15_000) };
+        var cycleQueued = new long?[] { 6_000 };
+
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 2, cycleQueuedDurationEstimatesMs: cycleQueued);
+
+        long expected = 10_400 + 6_000 * CycleRoundPolicy.BaselineRounds;
+        Assert.Equal(expected, raw);
+    }
+
+    [Fact]
+    public void cycle_queued_contribution_with_high_parallelism_still_not_divided()
+    {
+        // Yüksek paralellik (5) olsa da cycle katkısı hiç bölünmez — parallelism sadece ordinary kısmı etkiler.
+        var queued = Array.Empty<long?>();
+        var building = Array.Empty<EtaCalculator.BuildingProject>();
+        var cycleQueued = new long?[] { 10_000, 20_000 };
+
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 5, cycleQueuedDurationEstimatesMs: cycleQueued);
+
+        long expected = (10_000 + 20_000) * CycleRoundPolicy.BaselineRounds;
+        Assert.Equal(expected, raw);
+    }
+
+    // ---- [Task 10] Unknown-duration fallback average spans BOTH the queued and cycle lists together ----------
+
+    [Fact]
+    public void unknown_duration_fallback_average_is_computed_from_queued_and_cycle_lists_together()
+    {
+        // Tek bilinen süre CYCLE listesinde (10000); queued'daki null bu ortalamayla temsil edilir.
+        // queued fallback: 10000; cycle: 10000
+        // (10000)/1 + 10000*BaselineRounds
+        var queued = new long?[] { null };
+        var building = Array.Empty<EtaCalculator.BuildingProject>();
+        var cycleQueued = new long?[] { 10_000 };
+
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1, cycleQueuedDurationEstimatesMs: cycleQueued);
+
+        long expected = 10_000 + 10_000 * CycleRoundPolicy.BaselineRounds;
+        Assert.Equal(expected, raw);
+    }
+
+    [Fact]
+    public void run_with_only_the_cycle_list_holding_a_known_duration_still_produces_an_estimate()
+    {
+        // Hiçbir queued/building süresi bilinmiyor; TEK bilinen süre cycle listesinde -> null DEĞİL, hesaplanır.
+        var queued = new long?[] { null, null };
+        var building = new[] { new EtaCalculator.BuildingProject(ElapsedMs: 1_000, LastDurationMs: null) };
+        var cycleQueued = new long?[] { 8_000 };
+
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1, cycleQueuedDurationEstimatesMs: cycleQueued);
+
+        Assert.NotNull(raw);
+    }
+
+    [Fact]
+    public void compute_raw_estimate_returns_null_when_no_duration_is_known_anywhere_including_cycle_list()
+    {
+        var queued = new long?[] { null };
+        var building = new[] { new EtaCalculator.BuildingProject(ElapsedMs: 1_000, LastDurationMs: null) };
+        var cycleQueued = new long?[] { null };
+
+        long? raw = EtaCalculator.ComputeRawEstimateMs(queued, building, parallelism: 1, cycleQueuedDurationEstimatesMs: cycleQueued);
+
+        Assert.Null(raw);
     }
 }

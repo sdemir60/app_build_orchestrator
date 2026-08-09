@@ -1041,13 +1041,22 @@ public sealed partial class RunViewModel : ObservableObject
         int remaining = Math.Max(0, total - completed);
         int queuedCount = Math.Max(0, remaining - buildingRows.Count);
 
+        // [cycle rounds/Task 10] queued cycle (SCC) üyeleri EtaCalculator'a AYRI listeyle beslenir — onlar
+        // paralel değil sıralı invoke edilir ve küme en az iki tur çalışır (EtaCalculator kendi içinde
+        // CycleRoundPolicy.BaselineRounds ile çarpar, paralelliğe bölmez). InCycle bayrağı satırda zaten var
+        // (topoloji uzlaştırmasından, bkz. ProjectRowViewModel.InCycle) — burada YENİDEN türetilmez.
+        int cycleQueuedCount = Projects.Count(p => p.State == ProjectRowState.Pending && p.InCycle);
+        cycleQueuedCount = Math.Min(cycleQueuedCount, queuedCount); // savunmacı — total henüz satırlaşmamış projeler içerebilir
+        int ordinaryQueuedCount = queuedCount - cycleQueuedCount;
+
         var knownDurations = Projects
             .Where(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed)
             .Select(p => p.DurationMs)
             .ToList();
         long? observedAverageMs = knownDurations.Count > 0 ? (long)knownDurations.Average() : null;
 
-        var queuedEstimatesMs = Enumerable.Repeat(observedAverageMs, queuedCount).ToList();
+        var queuedEstimatesMs = Enumerable.Repeat(observedAverageMs, ordinaryQueuedCount).ToList();
+        var cycleQueuedEstimatesMs = Enumerable.Repeat(observedAverageMs, cycleQueuedCount).ToList();
         long now = _nowMs();
         var building = buildingRows
             .Select(p => new EtaCalculator.BuildingProject(
@@ -1055,7 +1064,7 @@ public sealed partial class RunViewModel : ObservableObject
                 LastDurationMs: observedAverageMs))
             .ToList();
 
-        long? rawEstimateMs = EtaCalculator.ComputeRawEstimateMs(queuedEstimatesMs, building, _runParallelism ?? Parallelism);
+        long? rawEstimateMs = EtaCalculator.ComputeRawEstimateMs(queuedEstimatesMs, building, _runParallelism ?? Parallelism, cycleQueuedEstimatesMs);
         long? smoothedEtaMs = rawEstimateMs is { } raw ? EtaCalculator.Smooth(_previousEtaMs, raw) : null;
         _previousEtaMs = smoothedEtaMs;
         EtaMs = smoothedEtaMs; // [D2/T70] şeridin numeric ETA kaynağı (RibbonText.EtaSuffix)
