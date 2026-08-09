@@ -150,14 +150,23 @@ the running instance first — tray icon → Exit).
    *Continue*: press *Build* again and the run starts from the top, skipping everything that already
    succeeded.
 
-Projects that reference each other's output form a dependency cycle, and they are built as one unit: the
-members compile one after another, then the whole set compiles again, until two rounds in a row come back
-clean — three rounds at the most. The event stream announces each round. A cycle that never settles is not
-tried again on the next *Build* until its source changes, and the summary line says how many projects are
-stuck in one, so a run whose only casualty is a broken cycle never reads as an unqualified success. Rows in
-such a cycle carry an orange badge; rows that compiled but never saw two clean rounds carry the dependency
-triangle, whose tooltip says their output may be one generation stale. *Settings → DEPENDENCY CYCLES* turns
-the whole behaviour off, and those projects are then skipped instead.
+Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
+them with the reason `in dependency cycle`, and their will-build dot stays grey. **Cycles**, the button beside
+*Sync*, is what compiles them, and it is the only thing that does. It is enabled only when the workspace
+actually has a cycle, and it is meant to be pressed **before** a build, not instead of one: it compiles the
+cycles, then *Build* takes care of everything else, including whatever depends on them.
+
+Why it is a button and not something *Build* does for you: a cycle is built as one unit — the members compile
+one after another, then the whole set compiles again, until two rounds in a row come back clean, three rounds
+at the most. That is members × rounds of compiling, which next to an ordinary incremental build is a large and
+unpredictable bill. Behind a button you decide when to pay it.
+
+During such a run only the cycles compile; everything else is skipped as `not in a dependency cycle`, and the
+event stream announces each round. Pressing it again costs nothing when nothing changed — a cycle that has
+settled is skipped as up to date, and a cycle that never settles is not tried again until its source changes.
+The summary line says how many projects are stuck in one, so a run whose only casualty is a broken cycle never
+reads as an unqualified success. Rows in such a cycle carry an orange badge; rows that compiled but never saw
+two clean rounds carry the dependency triangle, whose tooltip says their output may be one generation stale.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.
@@ -194,7 +203,7 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
 The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
-(Settings has LAYERS, REPOSITORY and DEPENDENCY CYCLES). If it cannot be registered — another application
+(Settings has LAYERS and REPOSITORY). If it cannot be registered — another application
 already owns that combination — it is silently disabled; the tray icon still restores the window, and the
 About screen marks that row *unavailable* so the loss is visible rather than mysterious.
 
