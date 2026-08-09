@@ -215,6 +215,72 @@ public class ReadySetSchedulerTests
         Assert.True(sut.IsDone); // ama artık terminal: inFlight=0 ve kalan tek düğüm asla ready olamaz
     }
 
+    private static ProjectNode CycleNode(string id, int order, params string[] deps) =>
+        new(id, id, id, [], deps, order, null, null, true, null);
+
+    // Gruplar verilince pre-skip YAPILMAZ — üyeler gerçekten dispatch edilir.
+    [Fact]
+    public void group_members_are_not_pre_skipped_when_groups_supplied()
+    {
+        var plan = new BuildPlan(
+            [CycleNode("b", 0, "a"), CycleNode("a", 1, "b")], [new[] { "a", "b" }], "Debug");
+
+        var scheduler = new ReadySetScheduler(plan, CycleGroups.From(plan));
+
+        Assert.Empty(scheduler.PreSkipped);
+        Assert.True(scheduler.TryDispatch(out string id));
+        Assert.Equal("b", id);   // build-order lideri
+    }
+
+    // Grup TEK kalem: bir üye dispatch edilince diğerleri de in-flight olur, ikinci worker onları kapamaz.
+    [Fact]
+    public void dispatching_group_marks_all_members_in_flight()
+    {
+        var plan = new BuildPlan(
+            [CycleNode("b", 0, "a"), CycleNode("a", 1, "b")], [new[] { "a", "b" }], "Debug");
+
+        var scheduler = new ReadySetScheduler(plan, CycleGroups.From(plan));
+
+        Assert.True(scheduler.TryDispatch(out _));
+        Assert.Equal(2, scheduler.InFlight);
+        Assert.False(scheduler.TryDispatch(out _));   // ikinci worker'a verilecek iş yok
+    }
+
+    // Grup, DIŞ bağımlılığı terminal olmadan dispatch EDİLMEZ; grup-içi kenarlar hazırlığı bloklamaz.
+    [Fact]
+    public void group_waits_for_external_dependency_only()
+    {
+        var plan = new BuildPlan(
+            [
+                new ProjectNode("x", "x", "x", [], [], 0, null, null, false, null),
+                CycleNode("b", 1, "a", "x"),
+                CycleNode("a", 2, "b"),
+            ],
+            [new[] { "a", "b" }], "Debug");
+
+        var scheduler = new ReadySetScheduler(plan, CycleGroups.From(plan));
+
+        Assert.True(scheduler.TryDispatch(out string first));
+        Assert.Equal("x", first);
+        Assert.False(scheduler.TryDispatch(out _));      // grup henüz hazır değil
+        scheduler.Complete("x", BuildResult.Succeeded);
+        Assert.True(scheduler.TryDispatch(out string second));
+        Assert.Equal("b", second);
+    }
+
+    // Gruplar VERİLMEZSE (kill switch kapalı) bugünkü davranış birebir korunur.
+    [Fact]
+    public void without_groups_cycle_members_are_still_pre_skipped()
+    {
+        var plan = new BuildPlan(
+            [CycleNode("b", 0, "a"), CycleNode("a", 1, "b")], [new[] { "a", "b" }], "Debug");
+
+        var scheduler = new ReadySetScheduler(plan);
+
+        Assert.Equal(2, scheduler.PreSkipped.Count);
+        Assert.All(scheduler.PreSkipped, p => Assert.Equal("in dependency cycle", p.Reason));
+    }
+
     [Fact]
     public async Task concurrent_try_dispatch_from_many_workers_never_double_dispatches()
     {
