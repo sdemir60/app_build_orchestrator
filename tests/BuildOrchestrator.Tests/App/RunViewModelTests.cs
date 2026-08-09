@@ -1006,6 +1006,62 @@ public class RunViewModelTests
         Assert.Null(row.DepIssues);
     }
 
+    // ---------------------------------------------------------------- 8b) [cycle rounds/Task 8] round + unsettled/unconverged VM state
+
+    [Fact]
+    public async Task ProjectSucceeded_carries_CycleUnsettled_onto_the_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100, DepIssues: null, CycleUnsettled: true));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnsettled);
+    }
+
+    [Fact]
+    public async Task ProjectSucceeded_without_cycleUnsettled_leaves_the_row_flag_false()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100)); // CycleUnsettled default false
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.CycleUnsettled);
+    }
+
+    [Fact]
+    public async Task ProjectSkipped_carries_CycleUnconverged_onto_the_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\a.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.CycleUnconverged);
+    }
+
+    [Fact]
+    public async Task ProjectSkipped_without_cycleUnconverged_leaves_the_row_flag_false()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string projectId = @"C:\p\b.csproj";
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "skipped — up to date")); // CycleUnconverged default false
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.CycleUnconverged);
+    }
+
     [Fact]
     public async Task RunCompleted_sets_DepIssueCount_from_the_event()
     {

@@ -230,6 +230,27 @@ public class EventStreamTests
         Assert.Equal("Completed — 12 succeeded · 3 skipped · 45s", StreamText.Completed(0, 12, 3, 0, 45000));
         Assert.Equal("Completed — 2 failed · 10 succeeded · 1 skipped · 1m 12s · 3 dependency-affected",
             StreamText.Completed(2, 10, 1, 3, 72000));
+        // [cycle rounds/Task 8] Tur göstergesi — tek metin kaynağı (task-8-brief.md).
+        Assert.Equal("cycle round 2/3 — A (+3 more)", StreamText.CycleRound(2, 3, "A", 4));
+    }
+
+    // ============================================================ [cycle rounds/Task 8] — tur göstergesi
+
+    /// <summary>CycleRoundStartedEvent → stream tampon satırı, lider adı ResolveName ile (satırın kaynağı
+    /// Projects listesi) ÇÖZÜLEREK. Satır grubun LİDERİNE bağlıdır (ProjectId=lider) — diğer proje-özel
+    /// satırlar (built/failed/skipped) gibi tıklanabilir.</summary>
+    [Fact]
+    public void Cycle_round_started_pushes_the_round_indicator_line_with_the_leader_name_resolved()
+    {
+        var vm = NewVm();
+        const string leaderId = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", leaderId, "A")); // Projects listesine "A" adıyla satır ekler
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", leaderId, Round: 2, RoundCap: 3, MemberCount: 4));
+
+        var line = vm.StreamEvents.Last();
+        Assert.Equal("cycle round 2/3 — A (+3 more)", line.Text);
+        Assert.Equal(leaderId, line.ProjectId);
     }
 
     // ============================================================ §12 — tampon cap 260 doyumu

@@ -166,7 +166,13 @@ public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long 
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları; yoksa null (JSON'a yazılmaz). [It-3]</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
     IReadOnlyList<string>? DepIssues = null) : IpcEvent;
-public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason) : IpcEvent;
+/// <param name="CycleUnconverged">[cycle rounds/Task 8] Bu skip, bir SCC'nin ÖNCEKİ bir Build'de yakınsamayıp
+/// aynı bileşik imzada bir daha hiç tur harcanmadan pre-skip edildiğini işaretler (bkz. <c>RunCoordinator</c>'ın
+/// "cycle did not converge at this signature" seed'i). <b>Ayrı bir tipli alandır, Reason metninden ÇIKARILMAZ</b>
+/// — sıradan "güncel" (up-to-date) skip'iyle Reason dışında hiçbir farkı olmadığı için App'in metin eşleştirmesi
+/// yapması YASAKTIR (tek doğruluk kaynağı Reason string'i Supervisor'da kalır). Varsayılan <c>false</c>: bu
+/// alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
+public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
     int Queued, long DurationMs, int DepIssueCount = 0) : IpcEvent;

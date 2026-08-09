@@ -181,6 +181,23 @@ public class IpcMessagesTests
         Assert.Equal(unsettled, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    // [cycle rounds/Task 8] "Yakınsamadı" bayrağı — bir SCC ÖNCEKİ bir Build'de yakınsamadığı için bu run'da
+    // hiç invoke edilmeden pre-skip edildiğini işaretler (bkz. RunCoordinator "cycle did not converge at this
+    // signature" seed'i). Ayrım metinden (Reason) DEĞİL bu tipli alandan yapılır — string-matching YASAK.
+    // Varsayılanı false'tur; alanı hiç taşımayan eski bir projectSkipped satırı aynen çözülmeye devam eder.
+    [Fact]
+    public void ProjectSkippedEvent_cycleUnconverged_defaults_to_false_and_roundtrips_when_set()
+    {
+        const string legacyLine = """{"type":"projectSkipped","runId":"r1","projectId":"C:\\p\\c.csproj","reason":"in dependency cycle"}""";
+        var legacy = Assert.IsType<ProjectSkippedEvent>(JsonSerializer.Deserialize<IpcEvent>(legacyLine, IpcJson.Options));
+        Assert.False(legacy.CycleUnconverged);
+
+        IpcEvent unconverged = new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "cycle did not converge at this signature", CycleUnconverged: true);
+        string json = JsonSerializer.Serialize(unconverged, IpcJson.Options);
+        Assert.Contains("\"cycleUnconverged\":true", json);
+        Assert.Equal(unconverged, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
     [Fact]
     public void RunCompletedEvent_depIssueCount_roundtrips()
     {

@@ -104,6 +104,17 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
     public bool HasDepIssue => DepIssues is { Count: > 0 };
 
+    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti (iki
+    /// ardışık yeşil tur hiç olmadı) — <see cref="ProjectSucceededEvent.CycleUnsettled"/>'tan AYNEN taşınır.
+    /// Derleme başarılı ama çıktı bir kuşak geride OLABİLİR. RENDER Task 9'undur — burası yalnız veri taşır.</summary>
+    [ObservableProperty] private bool _cycleUnsettled;
+
+    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
+    /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
+    /// AYNEN taşınır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir alandır
+    /// (<see cref="Status"/> bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER Task 9'undur.</summary>
+    [ObservableProperty] private bool _cycleUnconverged;
+
     /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
     /// <see cref="InCycle"/> + <see cref="WillBuild"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
     /// (kart yalnız bunu okur; eşleme mantığı kontrolde kopyalanmaz). <c>cycle</c> ve <c>queued</c> ayrı IPC
@@ -876,7 +887,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectStartedEvent e: OnProjectStarted(e); break;
             case ProjectLogEvent e: OnProjectLog(e); break;
             case ProjectLogChunkEvent e: OnProjectLogChunk(e); break;
-            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues); break;
+            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled); break;
             case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues); break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;
@@ -968,19 +979,23 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnProjectSkipped(ProjectSkippedEvent e)
     {
-        EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped).State = ProjectRowState.Skipped;
+        var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
+        row.State = ProjectRowState.Skipped;
+        row.CycleUnconverged = e.CycleUnconverged; // [cycle rounds/Task 8] kalıcı kırık döngü — render Task 9'undur
         _projectStartedAtMs.Remove(e.ProjectId);
         UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
         RefreshRunSurface();
     }
 
-    private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues)
+    private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues,
+        bool cycleUnsettled = false)
     {
         var row = Projects.FirstOrDefault(p => p.Id == projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
         row.State = state;
         row.DurationMs = durationMs;
         row.DepIssues = depIssues; // [Task 17] ▲ sinyali — HasDepIssue bundan türetilir
+        row.CycleUnsettled = cycleUnsettled; // [cycle rounds/Task 8] ProjectFailedEvent bu alanı taşımaz → varsayılan false
         // [Task 17][v7Δ8] "succeeded→clean" CANLI geçiş: proje bu run içinde başarıyla derlendiği ANDA artık
         // güncel (clean) sayılır — preview'ın dirty=true'sunu (ya da hollow=null'ını) burada EZER.
         if (state == ProjectRowState.Succeeded) row.WillBuild = false;

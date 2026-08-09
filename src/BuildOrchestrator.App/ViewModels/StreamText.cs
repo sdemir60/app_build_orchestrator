@@ -62,4 +62,10 @@ public static class StreamText
         return string.Format(CultureInfo.InvariantCulture,
             "Completed — {0} succeeded · {1} skipped · {2}", succeeded, skipped, dur);
     }
+
+    /// <summary>[cycle rounds/Task 8] Tur göstergesi — <c>CycleRoundStartedEvent</c>'in TEK metin kaynağı:
+    /// <c>cycle round {round}/{cap} — {leaderName} (+{memberCount-1} more)</c>.</summary>
+    public static string CycleRound(int round, int cap, string leaderName, int memberCount) =>
+        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} (+{3} more)",
+            round, cap, leaderName, memberCount - 1);
 }

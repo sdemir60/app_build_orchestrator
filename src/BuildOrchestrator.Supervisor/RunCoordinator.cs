@@ -693,7 +693,10 @@ public sealed class RunCoordinator(
         // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
         // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
         // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild/Continue/RetryFailed'de boş kalır.
-        var upToDateSkips = new List<(string ProjectId, string Reason)>();
+        // [cycle rounds/Task 8] CycleUnconverged BURADA (tipli üçüncü alan) taşınır — bu listeye HEM sıradan
+        // güncel skip'ler HEM de yakınsamama hafızasından gelen SCC pre-skip'leri düşer; App'e giden ayırt
+        // edici bayrak Reason METNİNDEN çıkarılmaz (kopya YASAK), doğrudan bu tuple alanından DecideSkipped'e taşınır.
+        var upToDateSkips = new List<(string ProjectId, string Reason, bool CycleUnconverged)>();
 
         if (cmd.Mode is RunMode.Continue or RunMode.RetryFailed)
         {
@@ -768,7 +771,7 @@ public sealed class RunCoordinator(
                     if (n.WillBuild == false && !n.InCycle)
                     {
                         seed[n.Id] = BuildResult.Skipped;
-                        upToDateSkips.Add((n.Id, "skipped — up to date"));
+                        upToDateSkips.Add((n.Id, "skipped — up to date", CycleUnconverged: false));
                     }
                 // [Task 7] Daha önce (bir önceki Build'de) yakınsAMAMIŞ bir SCC, bileşik imzası HÂLÂ o
                 // yakınsamama anındakiyle eşleşiyorsa bir daha tur harcamaz: TÜM üyeleri, up-to-date skip'iyle
@@ -786,7 +789,7 @@ public sealed class RunCoordinator(
                         foreach (string id in cycle)
                         {
                             seed[id] = BuildResult.Skipped;
-                            upToDateSkips.Add((id, "cycle did not converge at this signature"));
+                            upToDateSkips.Add((id, "cycle did not converge at this signature", CycleUnconverged: true));
                         }
                     }
                 }
@@ -882,20 +885,25 @@ public sealed class RunCoordinator(
         {
             // [A13/B2] Skip satırının metni TEK yerde: iki döngü de aynı cümleyi kuruyordu, çeviri sonrası
             // birebir aynı literal iki kez yaşardı (kopya YASAK, CLAUDE.md).
-            void DecideSkipped(string projectId, string reason)
+            // [cycle rounds/Task 8] cycleUnconverged TİPLİ bir parametredir, Reason'dan ÇIKARILMAZ — çağıranın
+            // hangi listeden geldiğini (yakınsamama hafızası mı, sıradan güncel skip mi) zaten bildiği için
+            // burada yalnız ProjectSkippedEvent'e AYNEN taşınır.
+            void DecideSkipped(string projectId, string reason, bool cycleUnconverged = false)
             {
-                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason));
+                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason, cycleUnconverged));
                 Decide(logs, $"{nodeById[projectId].Name}: skipped — {reason}");
             }
 
             // Cycle üyeleri (construction anında Skipped) — resume edilmiş scheduler'ın PreSkipped'i BOŞTUR,
             // bu yüzden Continue'da tekrar yazılmazlar (yalnız snapshot onları taşımıyorsa savunmacı olarak yazılır).
+            // Bu liste yalnız "grup DIŞARIDA hiç dispatch edilmedi" pre-skip'ini taşır (kill switch/SCC yok) —
+            // yakınsamama hafızasıyla İLGİSİZDİR, cycleUnconverged varsayılan false kalır.
             foreach (var (projectId, reason) in scheduler.PreSkipped)
                 DecideSkipped(projectId, reason);
             // [Task 19] Build modunda incremental "up to date" skip'ler (cycle pre-skip ile AYNI konumda, ilk
             // dispatch'ten ÖNCE): dependent'ları için scheduler'da zaten Skipped/resolved tohumlandı.
-            foreach (var (projectId, reason) in upToDateSkips)
-                DecideSkipped(projectId, reason);
+            foreach (var (projectId, reason, cycleUnconverged) in upToDateSkips)
+                DecideSkipped(projectId, reason, cycleUnconverged);
 
             var run = new RunContext(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs, nodeById,

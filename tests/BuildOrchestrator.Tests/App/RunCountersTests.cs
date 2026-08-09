@@ -9,10 +9,11 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class RunCountersTests
 {
-    private static ProjectRowViewModel Row(string name, ProjectRowState state, bool dep = false)
+    private static ProjectRowViewModel Row(string name, ProjectRowState state, bool dep = false, bool stuck = false)
     {
         var r = new ProjectRowViewModel($@"C:\p\{name}.csproj", name, state);
         if (dep) r.DepIssues = ["X"];
+        if (stuck) r.CycleUnconverged = true;
         return r;
     }
 
@@ -56,5 +57,26 @@ public class RunCountersTests
         Assert.Equal(1, c.Failed);
         Assert.Equal(1, c.Skipped);
         Assert.Equal(0, c.DepAffected);
+        Assert.Equal(0, c.StuckCycles);
+    }
+
+    // [cycle rounds/Task 8] StuckCycles: kalıcı kırık bir döngünün pre-skip'i sıradan "güncel" skip'ten
+    // GÖRÜNMEZ AYNI görünürdü (ikisi de plain "skipped") — bu sayaç ayrımı satır durumundan TÜRETİR
+    // (ProjectRowViewModel.CycleUnconverged), yığmaz.
+    [Fact]
+    public void Stuck_counter_counts_only_skipped_rows_flagged_cycle_unconverged()
+    {
+        var rows = new[]
+        {
+            Row("A", ProjectRowState.Skipped, stuck: true),   // sayılır
+            Row("B", ProjectRowState.Skipped, stuck: false),  // güncel skip → sayılmaz
+            Row("C", ProjectRowState.Failed, stuck: true),    // stuck AMA skipped değil → sayılmaz (savunmacı)
+        };
+
+        var c = RunCounters.From(rows);
+
+        Assert.Equal(1, c.StuckCycles);
+        Assert.Equal(2, c.Skipped);
+        Assert.Equal(3, c.Total);
     }
 }

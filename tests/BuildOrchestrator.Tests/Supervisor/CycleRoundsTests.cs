@@ -464,6 +464,9 @@ public class CycleRoundsTests
             var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
             Assert.All(skipped, e => Assert.Equal("cycle did not converge at this signature", e.Reason));
+            // [Task 8] Bu kanaldan gelen skip TİPLİ bir yakınsamama bayrağı taşır (metinden ÇIKARILMAZ) —
+            // App'in sayacı/rozeti bunu okuyup kalıcı kırık bir döngüyü sıradan "güncel" skip'ten ayırt eder.
+            Assert.All(skipped, e => Assert.True(e.CycleUnconverged));
 
             var run2Completed = h.Events.OfType<RunCompletedEvent>().Last();
             Assert.Equal(0, run2Completed.Failed);

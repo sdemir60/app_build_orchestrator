@@ -101,6 +101,14 @@ public sealed partial class RunViewModel
                 PushStream(StreamKind.Skip, e.ProjectId, StreamText.Skipped(ResolveName(e.ProjectId)));
                 break;
 
+            // [cycle rounds/Task 8] Bir SCC'nin turu başladı — grubun tek ilerleme sinyali. ProjectId LİDERİN
+            // id'sidir (satır ona bağlı/tıklanabilir, ok/fail/skip satırlarıyla AYNI desen). Kind=Info: ne
+            // başarı ne hata, BuildStarted/Continue satırlarıyla AYNI amber ▸ anlatı tonu.
+            case CycleRoundStartedEvent e:
+                PushStream(StreamKind.Info, e.ProjectId,
+                    StreamText.CycleRound(e.Round, e.RoundCap, ResolveName(e.ProjectId), e.MemberCount));
+                break;
+
             case SyncCompletedEvent e:
                 PushStream(StreamKind.Sync, null, StreamText.Sync(e.ToBuildCount, e.UpToDateCount));
                 break;

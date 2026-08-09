@@ -1458,6 +1458,9 @@ public class RunCoordinatorTests
             var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
             Assert.Equal(Id("Clean"), skipped.ProjectId);
             Assert.Equal("skipped — up to date", skipped.Reason);
+            // [cycle rounds/Task 8] Sıradan "güncel" skip'i yakınsamama bayrağı TAŞIMAZ — ayırt edici tip
+            // alanı burada, tavana dayanmış bir SCC pre-skip'inde true'dur (CycleRoundsTests).
+            Assert.False(skipped.CycleUnconverged);
             Assert.DoesNotContain(invoker.Requests, r => r.ProjectId == Id("Clean")); // MSBuild ÇAĞRILMADI
             Assert.Equal([Id("Dirty")], invoker.Requests.Select(r => r.ProjectId));   // yalnız dirty derlendi
             Assert.Contains(store.Load().Values, s => s.ProjectId == Id("Dirty"));
