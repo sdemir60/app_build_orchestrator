@@ -298,4 +298,30 @@ public class StickyRibbonTests
         Assert.DoesNotContain("warnings", ribbon.PhaseText.Text, StringComparison.Ordinal);
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [cycles] Şeridin building chip'leri de "ŞU AN derleniyor" sorusunu sorar — "Started durumundadır"ı
+    /// DEĞİL. Bir SCC'nin üyeleri tek tek invoke edilir ve ara tur sonuçları yayılmadığı için grup bitene
+    /// kadar hepsi <c>Started</c>'ta kalır; şerit bunları çip yapsaydı 15 üyeli bir grupta dört çip + "+11"
+    /// gösterirdi — sayaç chip'i "1 building" derken. Üç yüzey (satır glyph'i, sayaç, şerit) TEK predicate'ten
+    /// (<c>ProjectRowViewModel.IsCompiling</c>) okur.
+    /// </summary>
+    [StaFact]
+    public void Building_chips_show_only_the_member_whose_turn_it_is_inside_a_running_cycle_group()
+    {
+        var vm = NewVm();
+        var nodes = new[] { ("a", "A"), ("b", "B"), ("c", "C") };
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [.. nodes.Select(p => new ProjectNode(p.Item1, p.Item2, p.Item1, [], [], 0, null, null, true, null))],
+            [["a", "b", "c"]], [], []));
+        StartRun(vm, nodes);
+        foreach (var (id, name) in nodes) vm.OnEvent(new ProjectStartedEvent("r1", id, name)); // sıra C'de
+
+        var (ribbon, window) = Realize(vm);
+
+        Assert.Equal(1, vm.Counters.Building);
+        Assert.Single(ribbon.BuildingChips);
+        Assert.Equal("C", ChipLabel(ribbon.BuildingChips[0]));
+        GC.KeepAlive(window);
+    }
 }

@@ -867,4 +867,88 @@ public class ProjectRowTests
         Assert.Equal(10.5, row.ShaText.FontSize);
         GC.KeepAlive(window);
     }
+
+    // ---------------------------------------------------------------- [cycles] döngü rozeti koşu-sonrası
+
+    /// <summary>
+    /// [cycles] <b>Döngü glyph'i bir KOŞU-ÖNCESİ ifadedir.</b> Motor bu satır hakkında konuştuğu anda statü
+    /// glyph'i motorun cevabını gösterir (✓/✗/—/spinner) ve döngü üyeliği dep-slotundaki turuncu rozete taşınır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden <c>InCycle</c>, <c>Skipped</c> alt-durumunu EZİYORDU: bir Build'den
+    /// sonra döngüdeki her satır, Sync'ten hemen sonraki hâliyle BİREBİR aynı görünüyordu — kullanıcı "bu koşu
+    /// onları atladı" ile "bunlar bir döngüde" arasını ayıramıyordu. Yeni kural iki bilgiyi iki ayrı slota
+    /// koyar: sonuç solda (standart ikon), yapısal olgu sağda (rozet).</para>
+    /// </summary>
+    [StaTheory]
+    [InlineData(ProjectRowState.Succeeded, GraphStatus.Succeeded)]
+    [InlineData(ProjectRowState.Failed, GraphStatus.Failed)]
+    [InlineData(ProjectRowState.Skipped, GraphStatus.Skipped)]
+    public void A_cycle_member_with_a_result_shows_that_result_and_moves_the_cycle_mark_to_the_dep_slot(
+        ProjectRowState state, GraphStatus expected)
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", state) { InCycle = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(expected, vm.Status);                              // sol: motorun cevabı
+        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);    // sağ: yapısal olgu
+        Assert.Equal("In a dependency cycle", row.DepTooltip);
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);     // üçgen DEĞİL
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[cycles] Kontrol grubu: satır hâlâ döngü glyph'ini gösterirken (Sync sonrası boşta) rozet
+    /// GEREKSİZDİR — aynı şeyi iki kez söylemek olurdu.</summary>
+    [StaFact]
+    public void An_idle_cycle_row_keeps_the_cycle_glyph_and_shows_no_badge()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { InCycle = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(GraphStatus.Cycle, vm.Status);
+        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[cycles] Önceliğin ucu: <c>CycleUnconverged</c> ile sıradan üyelik rozeti AYNI görseldir, ama
+    /// metinleri farklıdır ve daha KESİN olan kazanır — "bir daha denenmeyecek", "bir döngüde"den fazlasını
+    /// söyler.</summary>
+    [StaFact]
+    public void The_unconverged_tooltip_outranks_the_plain_membership_tooltip_on_the_same_badge()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
+        { InCycle = true, CycleUnconverged = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);
+        Assert.Equal("Cycle did not build — not retried until the source changes", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[cycles] Ve dep-issue/unsettled ÜÇGENİ de sıradan üyelik rozetini bastırır: ikisi de "bu sonuca
+    /// ne kadar güvenilir" der, üyelik ise yalnız yapıyı anlatır.</summary>
+    [StaFact]
+    public void A_dependency_issue_outranks_the_plain_cycle_membership_badge()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded)
+        { InCycle = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
+        Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[cycles] Glyph tooltip'i dep-slot ile AYNI dördüncü dalı taşır: slot boşken sıfır yükseklikte
+    /// çöktüğü için satırın tek her-zaman-görünür yüzeyi glyph'tir.</summary>
+    [StaFact]
+    public void The_glyph_tooltip_also_announces_plain_cycle_membership()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { InCycle = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal("Skipped — In a dependency cycle", row.GlyphTooltip);
+        GC.KeepAlive(window);
+    }
 }

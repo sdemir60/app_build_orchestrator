@@ -1,4 +1,5 @@
 ﻿using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -853,6 +854,59 @@ public class RunViewModelStateTests
         Assert.True(buildChanged);
         Assert.True(rebuildChanged);
         Assert.True(retryChanged);
+    }
+
+    // ---------------------------------------------------------------- [cycles] koşan SCC'nin SATIR görseli
+
+    /// <summary>
+    /// [cycles] <b>Sırasını bekleyen üye derleniyor GÖRÜNMEZ.</b> Bir SCC'nin üyeleri sıralı invoke edilir ve
+    /// ara tur sonuçları yayılmadığı için grup bitene kadar hepsi motor durumunda <c>Started</c> kalır — ama
+    /// o an gerçekten derlenen TEK üye vardır. Bekleyen üyeler kuyrukta gösterilir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> <c>CycleWaiting</c> eskiden bilerek yalnız sayacı etkiliyordu ("GÖRSEL
+    /// durumu DEĞİŞTİRMEZ"). Ölçülen sonuç: 15 üyeli bir grupta listede 15, grafta 15 dönen spinner —
+    /// sayaç chip'i "1 building" derken. Ekran, aracın aynı anda on beş iş yaptığını söylüyordu; bir iş
+    /// yapıyordu. Satır ile sayaç artık AYNI soruyu aynı şekilde cevaplar.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_member_waiting_its_turn_inside_a_running_group_renders_queued_not_building()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));   // sıra C'de
+
+        var a = vm.Projects.Single(p => p.Id == A);
+        var c = vm.Projects.Single(p => p.Id == C);
+
+        Assert.True(a.CycleWaiting);
+        Assert.Equal(GraphStatus.Queued, a.Status);     // bekleyen
+        Assert.Equal(GraphStatus.Building, c.Status);   // sırası ONDA
+        // Satır ile sayaç aynı şeyi söyler — bu testin ASIL iddiası; ikisi ayrışamaz.
+        Assert.Equal(1, vm.Counters.Building);
+        Assert.Equal(1, vm.Projects.Count(p => p.Status == GraphStatus.Building));
+    }
+
+    /// <summary>[cycles] Koşu uçuştayken PLANLANMIŞ bir döngü üyesi de kuyrukta görünür — sıradan bir proje
+    /// gibi. Döngü glyph'i "derlenmeyecek" çağrışımı taşır ve tam da derlenmek üzere olan bir satırda
+    /// yanıltıcıdır. Boştaki (Sync sonrası) hâli DEĞİŞMEZ: orada glyph hâlâ döngüdür.</summary>
+    [Fact]
+    public async Task A_planned_cycle_member_shows_queued_while_a_run_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(CycleTopology());
+
+        var a = vm.Projects.Single(p => p.Id == A);
+        Assert.Equal(GraphStatus.Cycle, a.Status);   // boşta: Sync sonrası döngü glyph'i
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true)]));
+
+        Assert.Equal(GraphStatus.Queued, a.Status);
     }
 
     // ---------------------------------------------------------------- [cycle rounds/I2] koşan SCC'nin sayaç + ETA yüzeyi

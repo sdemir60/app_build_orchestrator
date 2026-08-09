@@ -42,6 +42,10 @@ public partial class ProjectRow : UserControl
         "Cycle did not fully settle — output may be one generation stale";
     private const string CycleUnconvergedTooltip =
         "Cycle did not build — not retried until the source changes";
+    // [cycles] Sıradan üyelik: satır bu koşuda GERÇEK bir sonuç aldığı için statü glyph'i artık döngüyü değil
+    // sonucu gösterir; yapısal olgu bu rozete taşınır. Yukarıdaki iki metinden farkı, hiçbir şey İDDİA
+    // ETMEMESİDİR — ne çıktının bayat olduğunu ne bir daha denenmeyeceğini söyler, yalnız yeri tarif eder.
+    private const string CycleMembershipTooltip = "In a dependency cycle";
 
     // [E3/T42] design-v1 bo-reveal (BuildApp.jsx:15/:27): opacity 0→1 + translateY(-5px)→0, .3s, ease-out —
     // GraphView katman reveal'iyle AYNI animasyon ailesi (GraphView.RevealMs/RevealRisePx). Liste satırı gecikmesi
@@ -202,6 +206,10 @@ public partial class ProjectRow : UserControl
                 break;
             case nameof(ProjectRowViewModel.Status):
                 ApplyStatusVisuals(); // [Fix wave 1, Finding 1] cycle/queued dahil TEK eşleme yolundan gelir
+                ApplyDep();           // [cycles] üyelik rozetinin kapısı Status'tur — onunla birlikte tazelenir
+                break;
+            case nameof(ProjectRowViewModel.InCycle):
+                ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
                 PART_Dot.State = _vm?.WillBuild;
@@ -326,15 +334,22 @@ public partial class ProjectRow : UserControl
     /// <item><b>HasDepIssue</b> (üçgen, mevcut) — dep-issue metni CycleUnsettled'tan daha spesifik/actionable,
     /// ikisi de true ise üçgen KAZANIR ama metin eskisiyle birebir kalır.</item>
     /// <item><b>CycleUnsettled</b> (üçgen, Part 1) — yalnız yukarıdaki ikisi yokken kendi metnini basar.</item>
+    /// <item><b>[cycles] Sıradan döngü ÜYELİĞİ</b> (rozet) — en zayıf sinyal, en sona düşer. Yalnız statü
+    /// glyph'i döngüyü ARTIK göstermiyorken çizilir: satır <c>GraphStatus.Cycle</c> iken aynı şeyi iki kez
+    /// söylemek olurdu. Koşul <see cref="ProjectRowViewModel.Status"/>'tan OKUNUR, yeniden TÜRETİLMEZ — "bu
+    /// satır döngüyü nerede gösteriyor" sorusunun tek sahibi orasıdır.</item>
     /// </list></summary>
     private void ApplyDep()
     {
         bool cycleUnconverged = (_vm?.CycleUnconverged ?? false) && _vm?.State == ProjectRowState.Skipped;
         bool hasDepIssue = _vm?.HasDepIssue ?? false;
         bool cycleUnsettled = _vm?.CycleUnsettled ?? false;
+        // Statü glyph'i döngüyü zaten gösteriyorsa rozet gereksizdir (bkz. yukarıdaki 4. madde).
+        bool cycleMembership = (_vm?.InCycle ?? false) && _vm?.Status != GraphStatus.Cycle;
         bool showTriangle = !cycleUnconverged && (hasDepIssue || cycleUnsettled);
 
-        PART_CycleBadge.Visibility = cycleUnconverged ? Visibility.Visible : Visibility.Collapsed;
+        PART_CycleBadge.Visibility = cycleUnconverged || (cycleMembership && !showTriangle)
+            ? Visibility.Visible : Visibility.Collapsed;
         PART_DepIcon.Visibility = showTriangle ? Visibility.Visible : Visibility.Collapsed;
 
         if (cycleUnconverged)
@@ -352,6 +367,10 @@ public partial class ProjectRow : UserControl
         else if (cycleUnsettled)
         {
             PART_DepTip.Content = CycleUnsettledTooltip;
+        }
+        else if (cycleMembership)
+        {
+            PART_DepTip.Content = CycleMembershipTooltip;
         }
         else
         {
@@ -426,10 +445,10 @@ public partial class ProjectRow : UserControl
 
     /// <summary>[review fix 2] <c>PART_Glyph</c> satırın TEK her-zaman-görünür yüzeyidir — dep-slot boşken sıfır
     /// yükseklikte çöker (<c>DepSlot</c>), bu yüzden döngü durumları BURADA da duyurulmalı, yalnız dep-slot'un
-    /// kendi tooltip'inde değil. Sıra <see cref="ApplyDep"/>'in 3-yollu önceliğiyle AYNI (CycleUnconverged —
-    /// yalnız Skipped'te, RunCounters kapısıyla aynı — &gt; dep-issue &gt; CycleUnsettled); metinler TEKRAR
-    /// YAZILMAZ, dep-slot'un KENDİ sabitleri (<see cref="CycleUnconvergedTooltip"/>/<see cref="CycleUnsettledTooltip"/>)
-    /// reuse edilir.</summary>
+    /// kendi tooltip'inde değil. Sıra <see cref="ApplyDep"/>'in 4-yollu önceliğiyle AYNI (CycleUnconverged —
+    /// yalnız Skipped'te, RunCounters kapısıyla aynı — &gt; dep-issue &gt; CycleUnsettled &gt; sıradan döngü
+    /// üyeliği); metinler TEKRAR YAZILMAZ, dep-slot'un KENDİ sabitleri (<see cref="CycleUnconvergedTooltip"/>/
+    /// <see cref="CycleUnsettledTooltip"/>/<see cref="CycleMembershipTooltip"/>) reuse edilir.</summary>
     private void UpdateGlyphTooltip()
     {
         var state = _vm?.State ?? ProjectRowState.Pending;
@@ -445,6 +464,8 @@ public partial class ProjectRow : UserControl
             text += " — dependency issue";
         else if (_vm?.CycleUnsettled ?? false)
             text += " — " + CycleUnsettledTooltip;
+        else if ((_vm?.InCycle ?? false) && status != GraphStatus.Cycle)
+            text += " — " + CycleMembershipTooltip;
         PART_GlyphTip.Content = text;
     }
 
