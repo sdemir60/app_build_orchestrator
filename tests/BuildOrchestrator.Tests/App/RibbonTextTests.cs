@@ -227,6 +227,32 @@ public class RibbonTextTests
         Assert.Equal("succeeded", line.Glyph);
     }
 
+    // [cycle rounds/Task 8 review] A memorized non-convergent SCC previews as WillBuild=false (cycle members
+    // never enter the preview's willBuild pass — buildCycles:false at both IncrementalPlanner call sites,
+    // out of scope here), so AllClean can be true with a stuck cycle silently pre-skipped underneath it: this
+    // branch used to return a FIXED string that never read RunCounters at all, which is an even stronger false-
+    // green than "Completed — … skipped …" (it implies the cycle doesn't exist). Both directions pinned exactly:
+    // the unqualified string is untouched byte-for-byte when there is nothing stuck (this path is heavily
+    // pinned elsewhere and must not shift), and the same StuckCyclesSuffix used by the Completed branches
+    // qualifies it when there is.
+    [Fact]
+    public void Done_allClean_line_is_unqualified_when_there_are_no_stuck_cycles()
+    {
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: true, Counters(stuck: 0),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 4200, etaMs: null, checkDurMs: 4200, warnings: 0);
+        Assert.Equal("Everything up to date — 14 projects checked in 4.2s, nothing to build", line.Text);
+    }
+
+    [Fact]
+    public void Done_allClean_line_mentions_stuck_cycles_so_a_memorized_non_convergent_SCC_is_never_silent()
+    {
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: true, Counters(stuck: 1),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 4200, etaMs: null, checkDurMs: 4200, warnings: 0);
+        Assert.Equal("Everything up to date — 14 projects checked in 4.2s, nothing to build (1 stuck in a cycle)", line.Text);
+        Assert.Equal("Brush.StatusSuccessText", line.BrushKey); // renk/glyph değişmez — yalnız metin uyarır (Part 2 idiomu)
+        Assert.Equal("succeeded", line.Glyph);
+    }
+
     [Fact]
     public void Done_with_failures_line_lists_failed_succeeded_dep_skipped_warnings_and_elapsed()
     {
