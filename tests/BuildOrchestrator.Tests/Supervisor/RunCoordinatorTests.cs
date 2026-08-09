@@ -936,6 +936,7 @@ public class RunCoordinatorTests
             PlanProgressLines.ComputingIncremental(2),
         ], received.OfType<PlanProgressEvent>().Select(e => e.Line));
         var done = Assert.IsType<RunCompletedEvent>(received[^1]);
+        Assert.Equal(RunOutcome.Completed, done.Outcome);    // eski dizi iddiasının pinlediği alan — korunur
         Assert.Equal(0, done.Skipped);                      // [cycle rounds] üyeler artık atlanmıyor
         Assert.Equal(2, done.Succeeded + done.Failed);       // ikisi de sonuçlandı (Complete tam bir kez)
         Assert.Equal(0, done.Queued);

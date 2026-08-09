@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -1131,6 +1132,13 @@ public sealed class RunCoordinator(
     /// <para><see cref="ReadySetScheduler.Complete"/> dispatch edilmiş her üye için TAM BİR KEZ, <c>finally</c>
     /// içinden çağrılır (stop/iptal/beklenmeyen hata dahil) — biri atlanırsa <see cref="ReadySetScheduler.IsDone"/>
     /// asla true olmaz ve run askıda kalır.</para>
+    ///
+    /// <para><b>Stop'ta grup ile tekil proje SİMETRİK DEĞİLDİR</b> ve bu kasıtlıdır: graceful stop, in-flight
+    /// TEK bir projenin bitip persist etmesine izin verir, ama bir SCC'yi İÇİNDE BULUNDUĞU TURUN sonunda
+    /// keser — yakınsama iki ardışık yeşil tur gerektirir ve kesilen grup asla yakınsamış sayılmaz (hiçbir şey
+    /// persist edilmez, tüm üyeler invalidate olur). Gerekçe "SCC tek bir derleme birimidir": burada "in-flight
+    /// iş" tek bir invoke değil, TURLARIN TAMAMIDIR; kalan turları stop'a rağmen sürdürmek Stop'u anlamsız
+    /// kılardı (32 üyeli bir grupta 64 invoke daha).</para>
     /// </summary>
     private async Task BuildCycleGroupAsync(RunContext run, IReadOnlyList<string> allMembers, CancellationToken ct)
     {
@@ -1144,26 +1152,34 @@ public sealed class RunCoordinator(
             .ToList();
         if (members.Count == 0) return; // savunmacı: TryDispatch en az bir üyeyi in-flight etmeden grup vermez
 
-        var results = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
-        var durations = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        var reasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var depIssuesOf = new Dictionary<string, DepIssueResult>(StringComparer.OrdinalIgnoreCase);
+        // Üyenin turlar boyunca biriken durumu TEK kayıtta (bkz. CycleMemberState) — paralel sözlükler kilit
+        // adım kalmak zorundaydı ve ikisi seyrek dolduğu için "kayıt yok" ile "değer yok" karışırdı.
+        var state = new Dictionary<string, CycleMemberState>(StringComparer.OrdinalIgnoreCase);
         foreach (string id in members)
-        {
-            results[id] = BuildResult.Failed;
-            durations[id] = 0;
-            depIssuesOf[id] = ComputeDepIssues(run, id, excludedDeps: allMembers);   // grup-içi kenarlar hariç
-        }
+            state[id] = new CycleMemberState(ComputeDepIssues(run, id, excludedDeps: allMembers)); // grup-içi kenarlar hariç
 
-        // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
-        // (FileMode.Create) tur başına açmak önceki turların logunu silerdi ve satır numaraları her turda
-        // 1'e dönerdi. Bir SCC'nin üye sayısı kadar dosya tanıtıcısı açık kalır — 32 üye için kabul edilir.
-        var logs = new Dictionary<string, ProjectLogFile>(StringComparer.OrdinalIgnoreCase);
+        // [DEĞİŞEN KURAL] Yarıda kesilen grupta HİÇBİR üyenin sonucunun arkasında durulamaz: tur 1'de yeşile
+        // dönmüş bir üye de Failed raporlanır. Eskiden yalnız reason yazılır, sonuç KORUNURDU — o üye ÖNCEKİ
+        // (ara) turunun sonucuyla ProjectSucceededEvent alırdı; tam olarak "ara tur sonucu nihai sonuç diye
+        // yayılmaz" kuralının ihlali, üstelik tekil proje yolu iptalde daima Failed("stopped") raporlar.
+        // Persist tarafında zaten yürürlükte olan ilkenin (yakınsamayan grup hiçbir şey persist etmez)
+        // raporlama kanalındaki karşılığıdır.
+        void FailEveryMember(string reason)
+        {
+            foreach (string id in members)
+            {
+                state[id].Result = BuildResult.Failed;
+                state[id].FailReason = reason;
+            }
+        }
 
         var decision = CycleRoundDecision.Continue;
         try
         {
-            foreach (string id in members) logs[id] = run.Logs.OpenProjectLog(id);
+            // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
+            // (FileMode.Create) tur başına açmak önceki turların logunu silerdi ve satır numaraları her turda
+            // 1'e dönerdi. Bir SCC'nin üye sayısı kadar dosya tanıtıcısı açık kalır — 32 üye için kabul edilir.
+            foreach (string id in members) state[id].Log = run.Logs.OpenProjectLog(id);
 
             HashSet<string>? previousFailed = null;
             for (int round = 1; decision == CycleRoundDecision.Continue; round++)
@@ -1174,14 +1190,15 @@ public sealed class RunCoordinator(
                 var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (string id in members)                       // SIRALI — eşzamanlı invoke YOK
                 {
+                    var member = state[id];
                     run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
-                    var outcome = await InvokeOnceAsync(run, id, depIssuesOf[id], logs[id], ct);
-                    durations[id] += outcome.DurationMs;             // süre TURLARIN TOPLAMI
-                    results[id] = outcome.Result;
+                    var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct);
+                    member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
+                    member.Result = outcome.Result;
                     if (outcome.Result != BuildResult.Succeeded)
                     {
                         failed.Add(id);
-                        reasons[id] = outcome.FailReason!;
+                        member.FailReason = outcome.FailReason;
                     }
                 }
 
@@ -1199,26 +1216,67 @@ public sealed class RunCoordinator(
         }
         catch (OperationCanceledException)
         {
-            foreach (string id in members)
-                if (results[id] != BuildResult.Succeeded) reasons[id] = "stopped";
+            FailEveryMember("stopped");
         }
         catch (Exception ex)
         {
-            foreach (string id in members)
-                if (results[id] != BuildResult.Succeeded) reasons[id] = "invoke error: " + ex.Message;
+            FailEveryMember("invoke error: " + ex.Message);
         }
         finally
         {
             // Loglar sonuç raporlanmadan ÖNCE kapatılır (dispose sonrası AppendLine fırlatır — geç gelen
             // satır sessizce düşmez). Bir dispose fırlarsa diğerleri yine de kapanır ve raporlama çalışır.
-            foreach (var log in logs.Values)
-                try { log.Dispose(); } catch { /* log kapanışı raporlamayı engellemez */ }
+            foreach (var member in state.Values)
+                if (member.Log is { } log)
+                    try { log.Dispose(); } catch { /* log kapanışı raporlamayı engellemez */ }
 
             // Sonuçlar TEK yerde raporlanır — ara turlarda hiçbir şey yayılmadı.
+            //
+            // Her üye KENDİ try'ındadır: buradan kaçan bir exception (en ulaşılabilir tetikleyici, üye
+            // filtresi TryDispatch'in kuralından kayarsa Complete'in InvalidOperationException'ı; ikincil
+            // olarak Decide'ın yalnız IOException yakalaması) SONRAKİ üyeleri Complete EDİLMEDEN bırakırdı ve
+            // IsDone'ın "_inFlight.Count == 0" şartı hiç sağlanmayacağı için run FAIL etmez, ASILIRDI — yani
+            // gürültülü bir sözleşme ihlali sessiz bir kilitlenmeye dönerdi. Hiçbir şey YUTULMAZ: ilk
+            // exception saklanır ve döngüden sonra stack'i korunarak yeniden fırlatılır. Bunu bir finally
+            // içinde yapmak güvenlidir — yukarıdaki iki catch TÜM exception'ları tükettiği için bu noktada
+            // bekleyen (üzerine yazılabilecek) bir exception asla yoktur.
+            Exception? reportFailure = null;
             foreach (string id in members)
-                ReportCycleMember(run, id, results[id], durations[id],
-                    reasons.GetValueOrDefault(id), decision, depIssuesOf[id]);
+            {
+                var member = state[id];
+                try
+                {
+                    ReportCycleMember(run, id, member.Result, member.DurationMs, member.FailReason,
+                        decision, member.DepIssues);
+                }
+                catch (Exception ex) { reportFailure ??= ex; }
+            }
+            if (reportFailure is not null) ExceptionDispatchInfo.Capture(reportFailure).Throw();
         }
+    }
+
+    /// <summary>
+    /// [cycle rounds] Bir SCC üyesinin turlar boyunca biriken durumu. Tek kayıt: alanlar kilit adım ilerlemek
+    /// ZORUNDA (sonuç ile gerekçe, süre ile sonuç) ve iki tanesi seyrek dolar — beş paralel sözlükte "anahtar
+    /// yok" ile "değer yok" birbirine karışır, biri güncellenirken diğerinin unutulması işten değildi.
+    /// </summary>
+    /// <param name="depIssues">Grup-içi kenarlar hariç tutularak grup başında BİR KEZ hesaplanır: kardeş
+    /// üyeler tur boyunca Completed'a girmediği için yeniden hesaplamak aynı sonucu verirdi.</param>
+    private sealed class CycleMemberState(DepIssueResult depIssues)
+    {
+        /// <summary>SON turun sonucu. Hiç invoke edilemediyse (ör. log açılamadı) Failed kalır.</summary>
+        public BuildResult Result { get; set; } = BuildResult.Failed;
+
+        /// <summary>TÜM turların TOPLAM süresi — gerçek maliyet.</summary>
+        public long DurationMs { get; set; }
+
+        /// <summary><see cref="Result"/> Succeeded değilken raporlanacak gerekçe.</summary>
+        public string? FailReason { get; set; }
+
+        public DepIssueResult DepIssues { get; } = depIssues;
+
+        /// <summary>Grubun tüm turları boyunca açık kalan proje logu; açılamadıysa null.</summary>
+        public ProjectLogFile? Log { get; set; }
     }
 
     /// <summary>

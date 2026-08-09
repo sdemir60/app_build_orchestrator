@@ -943,7 +943,9 @@ public class RunViewModelTests
         };
 
         await vm.RebuildCommand.ExecuteAsync(null);
-        var outcome = await final.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        // [cycle rounds] Hang-guard; 15 sn idi. Fixture artık GERÇEKTEN derliyor (2 tur × 2 üye) — gerekçe ve
+        // ölçüm sabitin tek sahibinde: TestPaths.WideRunTimeout. İddiaların hiçbiri süreye bakmaz.
+        var outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout);
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
         var done = Assert.IsType<RunCompletedEvent>(outcome);

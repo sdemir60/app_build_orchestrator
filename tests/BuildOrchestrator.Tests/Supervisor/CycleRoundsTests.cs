@@ -2,6 +2,7 @@ using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Supervisor;
 using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
@@ -86,6 +87,17 @@ public class CycleRoundsTests
         Assert.Empty(events.OfType<ProjectSkippedEvent>());              // cycle pre-skip'i ARTIK YOK
         // projectStarted ise HER turda yayılır: o an gerçekten derleniyor.
         Assert.Equal(4, events.OfType<ProjectStartedEvent>().Count());
+
+        // Tur göstergesinin YAYINCISI pinlenir (round-trip testi yalnız elle kurulmuş bir örneği görür):
+        // tur başına bir olay, 1-tabanlı numara, lider = build-order'daki İLK üye, tavan ve üye sayısı.
+        var rounds = events.OfType<CycleRoundStartedEvent>().ToList();
+        Assert.Equal([1, 2], rounds.Select(r => r.Round));
+        Assert.All(rounds, r =>
+        {
+            Assert.Equal(Id("A"), r.ProjectId);
+            Assert.Equal(2, r.MemberCount);
+            Assert.Equal(CycleRoundPolicy.RoundCap, r.RoundCap); // literal 3 DEĞİL — tek kaynak policy'dir
+        });
 
         var done = Assert.IsType<RunCompletedEvent>(events[^1]);
         Assert.Equal(2, done.Succeeded);
@@ -224,6 +236,42 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    // ---------------------------------------------------------------- 6b) KONTROL GRUBU: yakınsayan persist EDER
+
+    [Fact]
+    public async Task a_converged_group_persists_a_fresh_signature_for_every_member()
+    {
+        // Kural 3'ün POZİTİF yarısı. Diğer testlerin hepsi "persist ETMEZ" tarafını görür; bu kontrol grubu
+        // olmadan `trustedResult`'ı sabit false yazmak — yani döngüleri KALICI olarak non-incremental yapmak,
+        // özelliğin en sessiz bozulma yönü — tüm süiti YEŞİL bırakırdı. (Kardeş kuralın testindeki "Solo
+        // kontrol grubudur … aksi halde test önemsizce geçerdi" deseninin aynısı.)
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");   // "old" imza: persist GERÇEKTEN yazdı mı, ayırt edilebilsin
+            SeedGreen(store, "B");
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((_, _) => Ok());
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // iki ardışık yeşil ⇒ Converged
+            var built = store.Load();
+            foreach (string name in new[] { "A", "B" })
+            {
+                Assert.Equal("sig", built[Id(name)].BuiltSignature);            // TAZE imza yazıldı ("old" ezildi)
+                Assert.Equal(BuildResult.Succeeded, built[Id(name)].LastResult); // bir sonraki Build atlayabilir
+            }
+            // Yakınsama tavana dayanmak DEĞİLDİR: "oturmamış döngü" bayrağı taşınmaz.
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.False(e.CycleUnsettled));
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     // ---------------------------------------------------------------- 7) stop ortasında
 
     [Fact]
@@ -258,8 +306,40 @@ public class CycleRoundsTests
             Assert.Equal(BuildResult.Failed, a.LastResult);   // yarım grup bir sonraki Build'de "güncel" görünmez
             Assert.Equal("old", a.BuiltSignature);
             Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
+            // NOT: bu testte YAYILAN olaylar sorgulanamaz — run'ın ct'si iptal edildiği an event pump'ı
+            // "broken" işaretler (RunCoordinator.PumpEventsAsync) ve sonraki satırlar stdout'a hiç yazılmaz.
+            // Raporlama kanalının kendisi bir sonraki testte pinlenir.
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task a_cancelled_round_publishes_failed_for_every_member_even_the_one_that_was_green()
+    {
+        // Yukarıdaki testin RAPORLAMA yarısı. İptal buradaki fake tarafından FIRLATILIR ama run'ın ct'si
+        // İPTAL EDİLMEZ: aksi halde event pump'ı ilk yazımda "broken" olur ve pinlemek istediğimiz olaylar
+        // hiç yazılmaz. Koordinatörün gördüğü uyarıcı aynıdır (catch (OperationCanceledException)).
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _, _) => name == "B"
+            ? Task.FromException<MsBuildInvokeResult>(new OperationCanceledException())
+            : Task.FromResult(Ok()));
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1"], rec.Calls);
+        // A tur 1'de YEŞİLDİ ama grup yarıda kesildi: yarım kalmış bir grupta hiçbir üyenin sonucunun
+        // arkasında durulamaz. A'nın tur-1 sonucunu "başarılı" diye yayınlamak, tam da Kural 2'nin yasakladığı
+        // şeydir (ara tur sonucu nihai sonuç olarak yayılıyor) ve tekil proje yolunun iptalde daima
+        // Failed("stopped") raporlamasıyla çelişirdi.
+        Assert.Empty(h.Events.OfType<ProjectSucceededEvent>());
+        Assert.Equal([Id("A"), Id("B")], h.Events.OfType<ProjectFailedEvent>().Select(e => e.ProjectId));
+        Assert.All(h.Events.OfType<ProjectFailedEvent>(), e => Assert.Equal("stopped", e.Reason));
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(0, done.Succeeded);   // yarıda kesilen üye "başarılı" sayılıp sayaca girmez
+        Assert.Equal(2, done.Failed);
+        Assert.Equal(0, done.Queued);
     }
 
     // ---------------------------------------------------------------- 7b) stop sonrası YENİ tur açılmaz
