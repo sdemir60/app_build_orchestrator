@@ -150,6 +150,15 @@ the running instance first — tray icon → Exit).
    *Continue*: press *Build* again and the run starts from the top, skipping everything that already
    succeeded.
 
+Projects that reference each other's output form a dependency cycle, and they are built as one unit: the
+members compile one after another, then the whole set compiles again, until two rounds in a row come back
+clean — three rounds at the most. The event stream announces each round. A cycle that never settles is not
+tried again on the next *Build* until its source changes, and the summary line says how many projects are
+stuck in one, so a run whose only casualty is a broken cycle never reads as an unqualified success. Rows in
+such a cycle carry an orange badge; rows that compiled but never saw two clean rounds carry the dependency
+triangle, whose tooltip says their output may be one generation stale. *Settings → DEPENDENCY CYCLES* turns
+the whole behaviour off, and those projects are then skipped instead.
+
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.
 
@@ -185,9 +194,9 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
 The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
-(Settings has LAYERS and REPOSITORY). If it cannot be registered — another application already owns that
-combination — it is silently disabled; the tray icon still restores the window, and the About screen marks
-that row *unavailable* so the loss is visible rather than mysterious.
+(Settings has LAYERS, REPOSITORY and DEPENDENCY CYCLES). If it cannot be registered — another application
+already owns that combination — it is silently disabled; the tray icon still restores the window, and the
+About screen marks that row *unavailable* so the loss is visible rather than mysterious.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 `F1` toggles About and works even while Settings is open: About opens on top, and Esc closes the topmost layer
