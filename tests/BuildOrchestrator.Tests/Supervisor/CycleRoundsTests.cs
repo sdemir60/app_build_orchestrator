@@ -306,6 +306,11 @@ public class CycleRoundsTests
             Assert.Equal(BuildResult.Failed, a.LastResult);   // yarım grup bir sonraki Build'de "güncel" görünmez
             Assert.Equal("old", a.BuiltSignature);
             Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
+            // [Task 7 review — I2] Yarıda kesilme (decision hâlâ Continue) "bu SCC asla yakınsamaz" DEMEK
+            // DEĞİLDİR: yakınsamama hafızası YAZILMAMALI, aksi halde iptal edilmiş/durdurulmuş bir koşu bir
+            // sonraki Build'i sonsuza dek pre-skip ederdi.
+            Assert.Null(a.NonConvergentSignature);
+            Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
             // NOT: bu testte YAYILAN olaylar sorgulanamaz — run'ın ct'si iptal edildiği an event pump'ı
             // "broken" işaretler (RunCoordinator.PumpEventsAsync) ve sonraki satırlar stdout'a hiç yazılmaz.
             // Raporlama kanalının kendisi bir sonraki testte pinlenir.
@@ -377,6 +382,10 @@ public class CycleRoundsTests
             Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
             Assert.Equal("old", store.Load()[Id("A")].BuiltSignature);
             Assert.Contains(h.Events, e => e is RunStoppedEvent);
+            // [Task 7 review — I2] Hard stop de aynı ilkeye tabidir: decision hâlâ Continue'da kaldığı için
+            // hafıza YAZILMAZ — bir sonraki Build yine gerçek bir deneme hakkı alır.
+            Assert.Null(store.Load()[Id("A")].NonConvergentSignature);
+            Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -418,6 +427,10 @@ public class CycleRoundsTests
             Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
             Assert.Equal("old", store.Load()[Id("A")].BuiltSignature);
             Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
+            // [Task 7 review — M1] CapReached, NoProgress ile AYNI kapıdan yakınsamama hafızasını tetikler —
+            // tavana dayanmak da "gerçek bir yakınsama kararı"dır (yalnız Continue/interrupted HARİÇ).
+            Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature);
+            Assert.Equal("sig", store.Load()[Id("B")].NonConvergentSignature);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -493,6 +506,49 @@ public class CycleRoundsTests
             await h.Sut.StartAsync(Start(RunMode.Build, runId: "r3"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact]
+    public async Task a_converged_group_clears_its_non_convergent_memory_so_a_later_Build_at_the_same_signature_still_invokes_it()
+    {
+        // [Task 7 review — I1] Yakınsamanın hafızayı SİLDİĞİ, PersistBuildStateOnSuccess'in TAZE bir BuildState
+        // (`new`, `with` DEĞİL) kurmasının bir YAN ETKİSİDİR (RunCoordinator.cs) — ayrı bir "temizle" kodu YOK.
+        // Bu test tam olarak o yan etkiyi pinler: `new` sessizce `with`'e dönseydi (kardeş yazıcılarla "tutarlı"
+        // görünen, doğal bir refactor) eski NonConvergentSignature KORUNURDU ve yakınsamış bir grup bir sonraki
+        // Build'de SONSUZA DEK pre-skip edilirdi — süit bunu yakalamadan yeşil kalırdı.
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            bool converges = false;
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "B" && !converges ? Exit(1) : Ok());
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            // Run 1 (Build, "sig"): NoProgress ⇒ hafıza "sig" ile yazılır.
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
+            Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature);
+
+            // Run 2 (Rebuild, AYNI "sig"): grup GERÇEKTEN yakınsar — Rebuild pre-skip bilmez, her zaman dener.
+            converges = true;
+            await h.Sut.StartAsync(Start(RunMode.Rebuild, runId: "r2"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
+            Assert.Null(store.Load()[Id("A")].NonConvergentSignature); // yakınsama hafızayı SİLDİ
+            Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
+
+            // Run 3 (Build, HÂLÂ "sig"): hafıza temizlendiği için pre-skip EDİLMEZ — grup GERÇEKTEN invoke edilir.
+            int before = invoker.Requests.Count;
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r3"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.True(invoker.Requests.Count > before); // MSBuild GERÇEKTEN çağrıldı, pre-skip edilmedi
+            Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
+                e => e.Reason == "cycle did not converge at this signature");
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
