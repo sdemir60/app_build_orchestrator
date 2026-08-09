@@ -9,9 +9,12 @@ using BuildOrchestrator.Contracts.Model;
 /// </summary>
 public static class WillBuildEvaluator
 {
-    public static bool? Evaluate(bool inCycle, string? currentSignature, BuildState? state)
+    /// <param name="buildCycles">Kill switch: cycle üyeleri turlarla derleniyor mu. Kapalıyken cycle üyesi
+    /// her zaman "derlenmeyecek" sayılır (eski davranış). VARSAYILAN DEĞER YOK — her çağıran açıkça geçer,
+    /// böylece yeni bir çağrı yeri sessizce eski davranışa düşemez.</param>
+    public static bool? Evaluate(bool inCycle, string? currentSignature, BuildState? state, bool buildCycles)
     {
-        if (inCycle) return false;                                     // cycle projesi derlenmez, rozet taşır [A6]
+        if (inCycle && !buildCycles) return false;                     // anahtar kapalı: cycle projesi derlenmez
         if (currentSignature is null) return null;                     // hollow: imza hesaplanamadı / Sync öncesi
         if (state?.BuiltSignature is null) return true;                // hiç başarıyla derlenmemiş
         if (state.LastResult != BuildResult.Succeeded) return true;    // son koşu başarısız/skip

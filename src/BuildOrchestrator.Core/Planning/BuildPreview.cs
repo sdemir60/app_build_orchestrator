@@ -9,11 +9,11 @@ using BuildOrchestrator.Contracts.Model;
 public static class BuildPreview
 {
     public static BuildPlan ComputeWillBuild(BuildPlan plan,
-        Func<ProjectNode, string?> currentSignature, Func<string, BuildState?> stateLookup)
+        Func<ProjectNode, string?> currentSignature, Func<string, BuildState?> stateLookup, bool buildCycles)
     {
         var nodes = plan.Nodes.Select(n => n with
         {
-            WillBuild = WillBuildEvaluator.Evaluate(n.InCycle, currentSignature(n), stateLookup(n.Id))
+            WillBuild = WillBuildEvaluator.Evaluate(n.InCycle, currentSignature(n), stateLookup(n.Id), buildCycles)
         }).ToList();
         return plan with { Nodes = nodes };
     }

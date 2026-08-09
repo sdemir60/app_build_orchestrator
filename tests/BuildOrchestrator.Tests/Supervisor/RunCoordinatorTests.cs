@@ -1469,7 +1469,7 @@ public class RunCoordinatorTests
             {
                 var state = store.Load();
                 return new RunPlan(
-                    BuildPreview.ComputeWillBuild(basePlan, n => inc.SignatureById[n.Id], state.GetValueOrDefault),
+                    BuildPreview.ComputeWillBuild(basePlan, n => inc.SignatureById[n.Id], state.GetValueOrDefault, buildCycles: false),
                     EmptyRefs(), Incremental: inc);
             }
 

@@ -122,7 +122,7 @@ public static class IncrementalPlanner
             // committedFingerprintForNode BURADA hiç çağrılmaz (kısa devre) — bkz. tip özeti "Hollow" notu.
             var hollowSignatures = plan.Nodes.ToDictionary(
                 n => n.Id, _ => (string?)null, StringComparer.OrdinalIgnoreCase);
-            return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup), hollowSignatures);
+            return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup, buildCycles: false), hollowSignatures);
         }
 
         var byId = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
@@ -228,7 +228,7 @@ public static class IncrementalPlanner
 
         foreach (var node in plan.Nodes) Compute(node);
 
-        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup), computedMemo);
+        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup, buildCycles: false), computedMemo);
     }
 
     /// <summary>
