@@ -599,15 +599,22 @@ cycle badge (§14.3). A row shows exactly one of the three, never two.
 ### 8.4 ETA
 
 `(sum of duration estimates for queued projects + remaining time of in-flight projects) / parallelism`, plus
-400 ms when anything is building, plus the queued cycle members' estimates multiplied by the baseline round
-count. The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
+400 ms when anything is building, plus the cycle members' estimates multiplied by the baseline round count.
+The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
 replaced by `· almost done` below 4 s. The per-project estimate comes from `BuildState.LastDurationMs`; with
 no history the ribbon shows progress and elapsed time without an estimate.
 
 Cycle members are the one term that is **not** divided by parallelism: their work is sequential by
 construction and the group runs at least twice (§8.8), so both assumptions the division encodes are false for
-them. Entering a third round shifts the estimate once more, which is accepted — the ceiling is low enough that
-the drift is bounded.
+them. A member counts in that term from the moment it is planned until its group is finished — while the group
+runs as well, not only while it is queued — because intermediate rounds are never published (§8.8) and a
+member's elapsed time within one round says nothing about how much of the group is left. Entering a third
+round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded.
+
+Every component lands in that single undivided term, even though independent components genuinely do run on
+different workers at the same time. The estimate is therefore pessimistic in exactly one direction whenever a
+run contains more than one cycle. That is deliberate: cycles are rare and small next to the rest of a run, and
+an ETA that runs long is a better failure than one that promises an early finish.
 
 ### 8.5 Run logs
 
@@ -728,7 +735,10 @@ is finished, and then exactly one, carrying the **sum** of its rounds as the dur
 last round's. Publishing per round would send progress backwards, a project going from succeeded back to
 building, and would give the same project two result lines in the event stream. `projectStarted` is still
 emitted every round, because the project really is compiling, and `cycleRoundStarted` announces the round
-itself (§5.3).
+itself (§5.3). Those starts accumulate — with no intermediate results, a member stays started for the whole
+life of the group — so the App reads only the most recent start *within a component* as actually compiling and
+counts the rest of the component as still queued. Without that, a 32-member component would report 32
+projects building on a four-worker run.
 
 **A group that did not converge persists nothing.** Only `Converged` is trusted: on no-progress, on the
 ceiling, on a stop, on cancellation and on an unexpected exception, every member is invalidated — including
@@ -746,6 +756,20 @@ other incremental decision, driven by the source signature; no DLL or `bin` time
 with no state row at all gets one created for the purpose, otherwise the very case this solves — a component
 that has never been built successfully — would never accumulate a memory. Failing to write it warns and
 nothing more: the cost is wasted rounds, not a wrong build.
+
+Convergence clears the memory explicitly, at the same place that writes it. Most members would lose it anyway
+as a side effect of persisting a fresh build state, but a success carrying a dependency issue deliberately
+does not persist (§8.3) — and since the pre-skip requires *every* member to be remembered, one such member
+would keep a converged group pre-skipped forever with no way out short of a source change.
+
+Which member's signature stands for the group is decided in one place for both the writing and the reading
+side, since the two hold the component in different orders. In the mode the App actually sends every member
+carries the same composite signature, so the choice is immaterial there; under frozen-upstream evaluation
+members share no composite at all and this memory is simply inert.
+
+Whichever verdict a group ends on, it is named in `decision.log` — the per-member failure lines alone cannot
+tell an operator whether a group hit the ceiling, stopped making progress or converged, and the line carries
+the remembered signature when one was written.
 
 Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
 rounds were never observed and their output may be one generation stale (§14.3).
