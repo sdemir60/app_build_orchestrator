@@ -131,6 +131,7 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
 [JsonDerivedType(typeof(WorktreeListEvent), "worktreeList")]
+[JsonDerivedType(typeof(CycleRoundStartedEvent), "cycleRoundStarted")]
 public abstract record IpcEvent;
 
 public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
@@ -155,8 +156,13 @@ public sealed record ProjectStartedEvent(string RunId, string ProjectId, string 
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
 /// yoksa null (JSON'a yazılmaz). [It-3]</param>
+/// <param name="CycleUnsettled">[cycle rounds] Bu proje bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti
+/// (iki ardışık yeşil tur hiç olmadı): derleme başarılı, ama çıktı bir kuşak geride OLABİLİR. <b>Ayrı bir
+/// alandır, <see cref="DepIssues"/>'a sahte bir isim enjekte EDİLMEZ</b> — o liste "hangi bağımlılık patladı"
+/// sorusunun cevabıdır ve ikinci bir anlam yüklenirse App'in <c>▲ N</c> sayacı ile filtre chip'i yanlış sayar.
+/// Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
 public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long DurationMs,
-    IReadOnlyList<string>? DepIssues = null) : IpcEvent;
+    IReadOnlyList<string>? DepIssues = null, bool CycleUnsettled = false) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları; yoksa null (JSON'a yazılmaz). [It-3]</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
     IReadOnlyList<string>? DepIssues = null) : IpcEvent;
@@ -211,6 +217,19 @@ public sealed record WorkspaceTopologyEvent(
 /// <summary>[A5/T69] Worktree havuzunun envanteri — <see cref="ListWorktreesCommand"/>/<see
 /// cref="DeleteWorktreeCommand"/> yanıtı.</summary>
 public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcEvent;
+
+/// <summary>
+/// [cycle rounds] Bir SCC'nin (dairesel bağımlılık grubunun) yeni bir turu başladı. Grup TEK bir derleme
+/// birimidir: üyeleri her turda build-order sırasıyla ve sıralı derlenir, ara tur sonuçları YAYILMAZ — bu
+/// yüzden kullanıcının gördüğü tek ilerleme sinyali budur (üyelerin kendi <see cref="ProjectStartedEvent"/>'i
+/// her turda tekrarlanır, ama hangi TURDA olunduğunu yalnız bu olay söyler).
+/// </summary>
+/// <param name="ProjectId">Grubun build-order'daki İLK üyesi (lider) — konsol satırı grubu bu adla anar.</param>
+/// <param name="Round">Başlayan turun 1-tabanlı numarası.</param>
+/// <param name="RoundCap">Bu run'da bir SCC için yürütülecek azami tur sayısı (<c>CycleRoundPolicy.RoundCap</c>).</param>
+/// <param name="MemberCount">Grubun bu turda derlenecek üye sayısı.</param>
+public sealed record CycleRoundStartedEvent(string RunId, string ProjectId, int Round, int RoundCap, int MemberCount)
+    : IpcEvent;
 
 /// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync

@@ -5,6 +5,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.Scheduling;
@@ -490,6 +491,15 @@ public sealed class RunCoordinator(
         Warn(warnings);
     }
 
+    /// <summary>[cycle rounds] Bu run için Stop (graceful ya da hard) istendi mi. SCC tur döngüsünün "yeni tur
+    /// açma" kapısı: <see cref="ReadySetScheduler.RequestStop"/> yalnız YENİ DİSPATCH'i keser, halihazırda
+    /// in-flight olan bir grubun turlarını kesmez — o karar buradan okunur (bkz. <see cref="ReasonFor"/>, aynı
+    /// alanı aynı kilit altında okur).</summary>
+    private bool StopRequested
+    {
+        get { lock (_gate) return _stopKind is not null; }
+    }
+
     /// <summary>[T20-b/P3] Cap-farkındalı backoff'un girdisi: run'da gerçekten bir cap yürürlükte mi. Açık bir
     /// pencerede de <c>true</c>'dur (taban da bir cap'tir), drain'den sonra <c>false</c>.</summary>
     private bool IsCapActiveNow
@@ -668,8 +678,11 @@ public sealed class RunCoordinator(
     {
         RunPlan runPlan;
         RunLogWriter logs;
-        ReadySetScheduler scheduler;
         RunClock clock;
+        // [cycle rounds] Scheduler'ın TOHUMU: resume'da devralınan snapshot, Build'de "up to date" pre-skip
+        // tohumu, aksi halde null (taze, tohumsuz). Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir
+        // yerde kurulur — üç ayrı kurulum, üçünde de aynı CycleGroups'u vermeyi unutmaya açıktı (kopya YASAK).
+        RunSnapshot? schedulerSeed = null;
         long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
         ConcurrentDictionary<string, byte> stoppedFailedIds;
@@ -704,7 +717,7 @@ public sealed class RunCoordinator(
             RunSnapshot effectiveSnapshot = cmd.Mode == RunMode.Continue
                 ? RetryPlanning.RequeueStoppedFailed(snapshot, new HashSet<string>(stoppedFailedIds.Keys, StringComparer.OrdinalIgnoreCase))
                 : RetryPlanning.RequeueFailedAndDependents(runPlan.Plan, snapshot);
-            scheduler = new ReadySetScheduler(runPlan.Plan, effectiveSnapshot);
+            schedulerSeed = effectiveSnapshot;
             elapsedAtStart = snapshot.ElapsedMs;
             clock = new RunClock(nowMs, snapshot.ElapsedMs);
         }
@@ -744,7 +757,9 @@ public sealed class RunCoordinator(
             // [Task 19] Yalnız Build modunda: planlayıcının hesapladığı WillBuild==false (ve cycle DIŞI) projeler
             // "up to date" olarak pre-skip edilir — scheduler'a Skipped tohumlanır (dependent'ları için resolved),
             // dispatch edilmezler. Rebuild HER ŞEYİ derler (tohum yok, mevcut davranış). Cycle üyeleri seed'e
-            // GİRMEZ → ctor onları "in dependency cycle" reason'ıyla ayrı pre-skip eder (reason karışmaz).
+            // GİRMEZ: [cycle rounds] grup varsa turlarla derlenirler (WillBuild onları temsil etmez — bileşik
+            // imza Task 7'nin işidir), grup yoksa scheduler ctor'u onları "in dependency cycle" reason'ıyla
+            // ayrı pre-skip eder (reason karışmaz).
             if (cmd.Mode == RunMode.Build)
             {
                 var seed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
@@ -754,17 +769,21 @@ public sealed class RunCoordinator(
                         seed[n.Id] = BuildResult.Skipped;
                         upToDateSkips.Add((n.Id, "skipped — up to date"));
                     }
-                scheduler = seed.Count > 0
-                    ? new ReadySetScheduler(runPlan.Plan, new RunSnapshot(seed, [], 0))
-                    : new ReadySetScheduler(runPlan.Plan);
-            }
-            else
-            {
-                scheduler = new ReadySetScheduler(runPlan.Plan);
+                if (seed.Count > 0) schedulerSeed = new RunSnapshot(seed, [], 0);
             }
             elapsedAtStart = 0;
             clock = new RunClock(nowMs);
         }
+
+        // [cycle rounds] SCC üyelik haritası TEK yerde kurulur ve HEM scheduler'a (grup dispatch'i) HEM run
+        // context'ine (tur döngüsü) AYNI örnek verilir — ikisi ayrı From çağrısıyla kurulsaydı üye sırası
+        // sessizce ayrışabilirdi. Plan'da hiç SCC yoksa null geçilir: scheduler o zaman bugünkü davranışını
+        // (InCycle düğümleri pre-skip) birebir korur ve tur döngüsü hiç devreye girmez.
+        // [Task 11] Kill switch buraya bağlanacak: kapalıyken yine null geçilir, kapalı hâl için AYRI kod yok.
+        var groups = CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles ? withCycles : null;
+        var scheduler = schedulerSeed is null
+            ? new ReadySetScheduler(runPlan.Plan, groups)
+            : new ReadySetScheduler(runPlan.Plan, schedulerSeed, groups);
 
         MsBuildToolset toolset;
         try { toolset = await msbuildFactory(ct); }
@@ -872,7 +891,8 @@ public sealed class RunCoordinator(
                 depIssuesById, // [T54]
                 stoppedFailedIds, // [Task-13]
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
-                runPlan.Incremental); // [Task 19] imza + HEAD + branch (persist için)
+                runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
+                groups); // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -961,7 +981,14 @@ public sealed class RunCoordinator(
                 catch (OperationCanceledException) { return; } // Supervisor kapanıyor
                 continue;
             }
-            try { await BuildProjectAsync(run, projectId, ct); }
+            // [cycle rounds] Dispatch edilen id bir SCC üyesiyse scheduler TÜM üyeleri in-flight işaretlemiştir
+            // (bkz. ReadySetScheduler.TryDispatch) — o zaman iş kalemi tek bir proje değil, grubun TAMAMIDIR.
+            var members = run.Groups?.MembersOf(projectId) ?? [];
+            try
+            {
+                if (members.Count == 0) await BuildProjectAsync(run, projectId, ct);
+                else await BuildCycleGroupAsync(run, members, ct);
+            }
             finally { run.Wake.WakeAll(); } // Complete edildi (ya da patladı) → parked worker'lar yeniden baksın
         }
     }
@@ -973,18 +1000,20 @@ public sealed class RunCoordinator(
     private async Task BuildProjectAsync(RunContext run, string projectId, CancellationToken ct)
     {
         // Dispatch ile Complete arasındaki HER ŞEY try/finally içinde: buradan fırlayan bir exception Complete'i
-        // atlarsa proje sonsuza dek in-flight kalır (IsDone asla true olmaz) ve run ASILIR. Bu yüzden ad araması
-        // da fırlatmayan biçimde yapılır (id her zaman plan'da vardır — scheduler aynı plan'dan sürülür).
-        string name = run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
+        // atlarsa proje sonsuza dek in-flight kalır (IsDone asla true olmaz) ve run ASILIR. Sonuç bu yüzden TEK
+        // bir yerden — finally'deki ReportProjectResult'tan — raporlanır; üç yol (normal / iptal / beklenmeyen
+        // hata) yalnız aşağıdaki yerel değişkenleri doldurur.
         var result = BuildResult.Failed;
+        long durationMs = 0;
+        string? failReason = null;
+        string? failLogTail = null;
 
         // [T54] depIssues invoke'tan ÖNCE hesaplanır — gerekçe ComputeDepIssues'ın XML doc'undadır.
         var depIssues = ComputeDepIssues(run, projectId);
-        IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
 
         try
         {
-            run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, name));
+            run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, NameOf(run, projectId)));
 
             InvokeOutcome outcome;
             // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose
@@ -992,9 +1021,59 @@ public sealed class RunCoordinator(
             using (var log = run.Logs.OpenProjectLog(projectId))
                 outcome = await InvokeOnceAsync(run, projectId, depIssues, log, ct);
 
-            if (outcome.Result == BuildResult.Succeeded)
+            result = outcome.Result;
+            durationMs = outcome.DurationMs;
+            failReason = outcome.FailReason;
+        }
+        catch (OperationCanceledException)
+        {
+            failReason = "stopped";
+            failLogTail = " (cancelled)"; // decision.log metni korunur: süre değil, iptal edildiği yazılır
+        }
+        catch (Exception ex)
+        {
+            // Invoke/log yolunda beklenmeyen hata: proje tek başına düşer, run devam eder ("hata derlemeyi
+            // öldürmez", A3) — ve aşağıdaki finally sayesinde scheduler ASLA askıda kalmaz.
+            failReason = "invoke error: " + ex.Message;
+            failLogTail = ""; // reason zaten hatayı taşır; satır sonuna ayrıca süre EKLENMEZ
+        }
+        finally
+        {
+            ReportProjectResult(run, projectId, result, durationMs, failReason, depIssues,
+                trustedResult: true, cycleUnsettled: false, failLogTail);
+        }
+    }
+
+    /// <summary>
+    /// Bir projenin SONUCUNU raporlayan TEK gövde: sonuç olayı + <c>decision.log</c> satırı + BuildState kararı
+    /// + <see cref="ReadySetScheduler.Complete"/>. Hem tekil proje yolu (<see cref="BuildProjectAsync"/>) hem SCC
+    /// tur döngüsü (<see cref="ReportCycleMember"/>) buradan geçer; iki yol kendi kopyasını taşısaydı
+    /// persist/invalidate kuralı ile Complete garantisi sessizce ayrışırdı (kopya YASAK, CLAUDE.md).
+    ///
+    /// <para><b>Complete <c>finally</c> içindedir ve TAM BİR KEZ çalışır</b>: olay yazımı, decision.log ya da
+    /// persist I/O'su beklenmedik biçimde fırlasa bile scheduler askıda kalmaz. Çağıranın tek yükümlülüğü bu
+    /// metodu dispatch edilmiş her proje için tam bir kez, KENDİ <c>finally</c>'sinden çağırmaktır.</para>
+    /// </summary>
+    /// <param name="trustedResult">Bu sonucun ARKASINDA DURULABİLİR mi. Tekil projede daima <c>true</c>. SCC'de
+    /// yalnız grup YAKINSADIYSA (<see cref="CycleRoundDecision.Converged"/>) <c>true</c>'dur: turlar bir
+    /// bütündür, yakınsamayan bir grubun tur 1'de yeşile dönmüş üyesi de taze imzasını KAYDETMEZ — aksi halde
+    /// bir sonraki Build onu "güncel" sayıp atlar ve grup yarım kalmış hâlde temiz görünürdü (§4 gereği DLL/bin
+    /// timestamp'i okunmadığı için bunu yakalayacak başka mekanizma yoktur). <c>false</c> ⇒ persist YOK ve
+    /// BAŞARILI üye dahil herkes invalidate edilir.</param>
+    /// <param name="cycleUnsettled">[cycle rounds] Tavana dayanmış bir SCC'nin başarılı üyesi ⇒ çıktı bir kuşak
+    /// geride olabilir (bkz. <see cref="ProjectSucceededEvent.CycleUnsettled"/>).</param>
+    /// <param name="failLogTail">Başarısızlık satırının <c>decision.log</c>'daki SONU; <c>null</c> ⇒ varsayılan
+    /// <c>" (Nms)"</c>. İptal yolu <c>" (cancelled)"</c>, invoke-error yolu ise <c>""</c> verir (reason zaten
+    /// hatanın kendisidir) — bu iki metin ortak gövdeye taşınırken DEĞİŞMEDEN korunur.</param>
+    private void ReportProjectResult(RunContext run, string projectId, BuildResult result, long durationMs,
+        string? failReason, DepIssueResult depIssues, bool trustedResult, bool cycleUnsettled, string? failLogTail)
+    {
+        string name = NameOf(run, projectId);
+        IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
+        try
+        {
+            if (result == BuildResult.Succeeded)
             {
-                result = BuildResult.Succeeded;
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
                 // [A2] depIssue TAŞIYAN bir success, bağımlılığının BAYAT (bu run'da derlenmemiş, önceki) çıktısına
                 // link'lidir — "başarılı" olması binary'nin güncel olduğu anlamına GELMEZ. Buna rağmen taze imza
@@ -1003,36 +1082,23 @@ public sealed class RunCoordinator(
                 // proje sonsuza dek bayat binary'e link'li kalır. §4 gereği DLL/bin timestamp'i OKUNMADIĞI için
                 // bunu yakalayabilecek başka bir mekanizma yoktur. Persist etmemenin bedeli "gereksiz bir kez daha
                 // derlemek", persist etmenin bedeli "sessizce yanlış çıktı" — güvenli taraf seçilir.
-                // [A2 fix-4] Aynı ayrımı ikinci kez TÜRETME: depIssuesForEvent (:594) zaten "depIssue var mı"
-                // sorusunun materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
-                if (depIssuesForEvent is null)
-                    PersistBuildStateOnSuccess(run, projectId, outcome.DurationMs); // [Task 19] sonraki Build incremental olsun
-                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, outcome.DurationMs, depIssuesForEvent));
+                // [A2 fix-4] Aynı ayrımı ikinci kez TÜRETME: depIssuesForEvent zaten "depIssue var mı" sorusunun
+                // materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
+                // [cycle rounds] trustedResult aynı kuralın ikinci kapısıdır: yakınsamayan grup persist ETMEZ.
+                if (trustedResult && depIssuesForEvent is null)
+                    PersistBuildStateOnSuccess(run, projectId, durationMs); // [Task 19] sonraki Build incremental olsun
+                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent, cycleUnsettled));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                    "{0}: succeeded ({1}ms)", name, outcome.DurationMs));
+                    "{0}: succeeded ({1}ms)", name, durationMs));
             }
             else
             {
-                string reason = outcome.FailReason!;
+                string reason = failReason!;
                 MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
-                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, outcome.DurationMs, reason, depIssuesForEvent));
-                Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                    "{0}: failed — {1} ({2}ms)", name, reason, outcome.DurationMs));
+                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, durationMs, reason, depIssuesForEvent));
+                Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "{0}: failed — {1}{2}", name, reason,
+                    failLogTail ?? string.Format(CultureInfo.InvariantCulture, " ({0}ms)", durationMs)));
             }
-        }
-        catch (OperationCanceledException)
-        {
-            MarkStoppedFailed(run, projectId, "stopped"); // [Task-13]
-            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "stopped", depIssuesForEvent));
-            Decide(run.Logs, $"{name}: failed — stopped (cancelled)");
-        }
-        catch (Exception ex)
-        {
-            // Invoke/log yolunda beklenmeyen hata: proje tek başına düşer, run devam eder ("hata derlemeyi
-            // öldürmez", A3) — ve aşağıdaki finally sayesinde scheduler ASLA askıda kalmaz.
-            run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] reason="invoke error: ..." — stopped DEĞİL
-            run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, 0, "invoke error: " + ex.Message, depIssuesForEvent));
-            Decide(run.Logs, $"{name}: failed — invoke error: {ex.Message}");
         }
         finally
         {
@@ -1043,9 +1109,134 @@ public sealed class RunCoordinator(
             // aynen durur ve bir sonraki Build onu "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk
             // bir proje "güncel" diye raporlanır. Complete'ten SONRA çağrılır: persist I/O'su beklenmedik bir
             // şekilde fırlasa bile scheduler ASLA askıda kalmaz.
-            if (result != BuildResult.Succeeded) InvalidateBuildStateOnFailure(run, projectId);
+            // [cycle rounds] Arkasında durulamayan bir BAŞARI da (yakınsamayan SCC'nin yeşil üyesi) buradan geçer.
+            if (result != BuildResult.Succeeded || !trustedResult) InvalidateBuildStateOnFailure(run, projectId);
         }
     }
+
+    /// <summary>Projenin görünen adı; id her zaman plan'dadır (scheduler aynı plan'dan sürülür) ama arama
+    /// FIRLATMAYAN biçimde yapılır: buradan gelecek bir exception Complete'i atlatabilirdi.</summary>
+    private static string NameOf(RunContext run, string projectId) =>
+        run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
+
+    /// <summary>
+    /// [cycle rounds] Bir SCC'nin tüm yaşam döngüsü. Üyeler her turda build-order sırasıyla ve SIRALI invoke
+    /// edilir — paralellik YOK: A, B.dll'i okurken B aynı dosyayı yazıyor olurdu.
+    ///
+    /// <para>ARA TUR SONUÇLARI YAYILMAZ. SCC tek bir derleme birimidir (§7.3, tek bileşik imza); yarı bitmiş bir
+    /// birimi "bitti" saymak progress'i geri götürür ve ETA'yı yanıltır. Yalnız son turun sonucu raporlanır,
+    /// süre ise turların TOPLAMIDIR (gerçek maliyet). <see cref="ProjectStartedEvent"/> ise HER turda yayılır:
+    /// o üye o an gerçekten derleniyordur.</para>
+    ///
+    /// <para><see cref="ReadySetScheduler.Complete"/> dispatch edilmiş her üye için TAM BİR KEZ, <c>finally</c>
+    /// içinden çağrılır (stop/iptal/beklenmeyen hata dahil) — biri atlanırsa <see cref="ReadySetScheduler.IsDone"/>
+    /// asla true olmaz ve run askıda kalır.</para>
+    /// </summary>
+    private async Task BuildCycleGroupAsync(RunContext run, IReadOnlyList<string> allMembers, CancellationToken ct)
+    {
+        // [TryDispatch sözleşmesi] Dispatch ANINDA zaten Completed'ta olan (ör. resume edilmiş bir run'dan
+        // devralınan) ya da plan'da karşılığı olmayan üye in-flight'a HİÇ girmedi; onun için Complete çağırmak
+        // fırlatırdı. Tur döngüsü bu yüzden yalnız GERÇEKTEN dispatch edilmiş üyeler üzerinde çalışır — ama
+        // grup-içi kenar hesabı TÜM üyelere bakar (dairesel kenar, üye terminal olsa da dairesel kalır).
+        var completedAtDispatch = run.Scheduler.Completed;
+        var members = allMembers
+            .Where(id => run.NodeById.ContainsKey(id) && !completedAtDispatch.ContainsKey(id))
+            .ToList();
+        if (members.Count == 0) return; // savunmacı: TryDispatch en az bir üyeyi in-flight etmeden grup vermez
+
+        var results = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
+        var durations = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var reasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var depIssuesOf = new Dictionary<string, DepIssueResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (string id in members)
+        {
+            results[id] = BuildResult.Failed;
+            durations[id] = 0;
+            depIssuesOf[id] = ComputeDepIssues(run, id, excludedDeps: allMembers);   // grup-içi kenarlar hariç
+        }
+
+        // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
+        // (FileMode.Create) tur başına açmak önceki turların logunu silerdi ve satır numaraları her turda
+        // 1'e dönerdi. Bir SCC'nin üye sayısı kadar dosya tanıtıcısı açık kalır — 32 üye için kabul edilir.
+        var logs = new Dictionary<string, ProjectLogFile>(StringComparer.OrdinalIgnoreCase);
+
+        var decision = CycleRoundDecision.Continue;
+        try
+        {
+            foreach (string id in members) logs[id] = run.Logs.OpenProjectLog(id);
+
+            HashSet<string>? previousFailed = null;
+            for (int round = 1; decision == CycleRoundDecision.Continue; round++)
+            {
+                run.Events.TryWrite(new CycleRoundStartedEvent(
+                    run.RunId, members[0], round, CycleRoundPolicy.RoundCap, members.Count));
+
+                var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string id in members)                       // SIRALI — eşzamanlı invoke YOK
+                {
+                    run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
+                    var outcome = await InvokeOnceAsync(run, id, depIssuesOf[id], logs[id], ct);
+                    durations[id] += outcome.DurationMs;             // süre TURLARIN TOPLAMI
+                    results[id] = outcome.Result;
+                    if (outcome.Result != BuildResult.Succeeded)
+                    {
+                        failed.Add(id);
+                        reasons[id] = outcome.FailReason!;
+                    }
+                }
+
+                decision = CycleRoundPolicy.Decide(round, failed, previousFailed);
+                previousFailed = failed;
+                // Stop istendiyse YENİ tur AÇILMAZ. Hard stop in-flight child'ları çoktan öldürmüştür (üyeler
+                // "stopped" raporlar) ama job yeni process kabul etmeye devam eder: guard olmasaydı bir sonraki
+                // tur öldürülmüş bir turun üstüne TAZE MSBuild child'ları doğururdu — üstelik o turlar yeşile
+                // dönebilir, grup "yakınsadı" sayılır ve DURDURULMUŞ bir koşu taze imza persist ederdi.
+                // Zaten Converged/NoProgress/CapReached ile biten tur bu daldan geçmez: yakınsama turların
+                // TAMAMLANMASINA dayanır, yarıda kesilen grup asla yakınsamış sayılmaz (decision Continue
+                // kalır ⇒ ReportCycleMember hiçbir şey persist etmez, her üyeyi invalidate eder).
+                if (decision == CycleRoundDecision.Continue && StopRequested) break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (string id in members)
+                if (results[id] != BuildResult.Succeeded) reasons[id] = "stopped";
+        }
+        catch (Exception ex)
+        {
+            foreach (string id in members)
+                if (results[id] != BuildResult.Succeeded) reasons[id] = "invoke error: " + ex.Message;
+        }
+        finally
+        {
+            // Loglar sonuç raporlanmadan ÖNCE kapatılır (dispose sonrası AppendLine fırlatır — geç gelen
+            // satır sessizce düşmez). Bir dispose fırlarsa diğerleri yine de kapanır ve raporlama çalışır.
+            foreach (var log in logs.Values)
+                try { log.Dispose(); } catch { /* log kapanışı raporlamayı engellemez */ }
+
+            // Sonuçlar TEK yerde raporlanır — ara turlarda hiçbir şey yayılmadı.
+            foreach (string id in members)
+                ReportCycleMember(run, id, results[id], durations[id],
+                    reasons.GetValueOrDefault(id), decision, depIssuesOf[id]);
+        }
+    }
+
+    /// <summary>
+    /// [cycle rounds] Bir SCC üyesinin NİHAİ sonucunu raporlar; tekil projeyle AYNI gövdeden
+    /// (<see cref="ReportProjectResult"/>) geçer — sonuç olayı + decision.log + persist kararı + Complete.
+    /// Turların hiçbirinde ara sonuç yayılmadığı için bu, o üye hakkında yayılan TEK sonuçtur ve
+    /// <paramref name="totalDurationMs"/> turların TOPLAMIDIR.
+    /// </summary>
+    private void ReportCycleMember(RunContext run, string projectId, BuildResult result, long totalDurationMs,
+                                   string? failReason, CycleRoundDecision decision, DepIssueResult depIssues) =>
+        ReportProjectResult(run, projectId, result, totalDurationMs, failReason, depIssues,
+            // YAKINSAMAYAN GRUP HİÇBİR ŞEY PERSIST ETMEZ: yalnız Converged'e güvenilir. NoProgress/CapReached/
+            // stop/iptal/beklenmeyen hata (decision hâlâ Continue) hâlinde yeşil görünen üye de invalidate edilir.
+            trustedResult: decision == CycleRoundDecision.Converged,
+            // Tavana dayanıldı ve üye yeşil: derleme başarılı ama çıktı bir kuşak geride OLABİLİR. Dep-issue
+            // listesine sahte isim enjekte EDİLMEZ — ayrı bir bayrak taşınır.
+            cycleUnsettled: decision == CycleRoundDecision.CapReached && result == BuildResult.Succeeded,
+            failLogTail: null);
 
     /// <summary>
     /// [cycle rounds] Tek bir MSBuild invoke'u — komut satırları, depIssue warn satırları dahil. Event YAYMAZ,
@@ -1279,7 +1470,10 @@ public sealed class RunCoordinator(
         // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.
         // [A2 fix-1] AYRICA projectFailed → mevcut kaydın LastResult'ı Failed'a çekilir (stale pre-skip'i keser).
         BuildStateStore? StateStore,
-        IncrementalPlan? Incremental);
+        IncrementalPlan? Incremental,
+        // [cycle rounds] SCC üyelik haritası — <see cref="ReadySetScheduler"/>'a verilenin AYNI örneği (null ⇒
+        // plan'da SCC yok ya da kill switch kapalı; o zaman worker yalnız tekil proje yolunu kullanır).
+        CycleGroups? Groups);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

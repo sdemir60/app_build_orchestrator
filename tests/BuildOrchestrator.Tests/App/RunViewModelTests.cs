@@ -918,8 +918,8 @@ public class RunViewModelTests
     public async Task Rebuild_wires_through_the_real_engine_and_populates_rows()
     {
         string root = Directory.CreateTempSubdirectory("bo-vm-rebuild-").FullName;
-        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): gerçek MSBuild child'ı DOĞMADAN
-        // deterministik pre-skip üretir.
+        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — [cycle rounds] artık
+        // pre-skip edilmez, turlarla derlenir.
         foreach (var (self, other) in new[] { ("X", "Y"), ("Y", "X") })
         {
             Directory.CreateDirectory(Path.Combine(root, self));
@@ -947,9 +947,13 @@ public class RunViewModelTests
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
         var done = Assert.IsType<RunCompletedEvent>(outcome);
-        Assert.Equal(2, done.Skipped);
+        // [DEĞİŞEN KURAL — cycle rounds] Eski iddia: X↔Y pre-skip edilirdi (Skipped=2, TÜM satırlar Skipped) ve
+        // hiç MSBuild child'ı doğmazdı. Artık SCC turlarla derlenir; fixture aynı kaldı ama satırlar gerçek
+        // derleme sonucuyla terminal olur. Testin ASIL iddiası (Rebuild gerçek motora kablolu, satırlar doluyor,
+        // IsRunning düşüyor) korunur — sonucun TÜRÜ kurulu MSBuild'e bağlı olduğu için pinlenmez.
+        Assert.Equal(0, done.Skipped);
         Assert.Equal(2, vm.Projects.Count);
-        Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Skipped, p.State));
+        Assert.All(vm.Projects, p => Assert.True(p.State is ProjectRowState.Succeeded or ProjectRowState.Failed));
         Assert.False(vm.IsRunning);
     }
 

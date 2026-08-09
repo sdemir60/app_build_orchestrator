@@ -21,7 +21,11 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// </summary>
 public class RunCoordinatorTests
 {
-    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(30); // hang'i sonsuz bekleme değil, test hatası yapar
+    // [cycle rounds] Aşağıdaki yardımcılar ve <see cref="Harness"/>/<see cref="FakeInvoker"/> `internal`'dır:
+    // koordinatörün ORTAK test host'u tek yerde durur ve CycleRoundsTests onu `using static` ile aynen kullanır
+    // (kopya YASAK, CLAUDE.md). Yalnız bu dosyaya özgü olanlar (RecordingGovernor, PumpGateStream, stale-obj
+    // yardımcıları) private kalır.
+    internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30); // hang'i sonsuz bekleme değil, test hatası yapar
     private const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
 
     // [T20-b/P3] Gerçek MSBuild'in post-build copy çakışma satırı (MSB3021) — RetryingMsBuildInvoker'ın retry
@@ -30,30 +34,37 @@ public class RunCoordinatorTests
         "A.csproj : error MSB3021: Unable to copy file \"obj\\A.dll\" to \"bin\\A.dll\". The process cannot access the file because it is being used by another process.";
     private static readonly string PlanRoot = Path.Combine(Path.GetTempPath(), "bo-coord-plan");
 
-    private static string Id(string name) => Path.Combine(PlanRoot, name, name + ".csproj");
-    private static string NameOf(string projectId) => Path.GetFileNameWithoutExtension(projectId);
+    internal static string Id(string name) => Path.Combine(PlanRoot, name, name + ".csproj");
+    internal static string NameOf(string projectId) => Path.GetFileNameWithoutExtension(projectId);
 
     // willBuild: varsayılan null = "imza yok / pre-Sync" (mevcut çağrıların tamamı); yalnız [Task 19] Build
     // pre-skip'ini kuran testler false/true verir.
-    private static ProjectNode Node(string name, string[]? deps = null, bool inCycle = false, bool? willBuild = null) =>
+    internal static ProjectNode Node(string name, string[]? deps = null, bool inCycle = false, bool? willBuild = null) =>
         new(Id(name), name, Id(name), SolutionNames: [], Dependencies: [.. (deps ?? []).Select(Id)],
             BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: inCycle, WillBuild: willBuild);
 
-    private static RunPlan PlanOf(params ProjectNode[] nodes) => PlanOf(EmptyRefs(), nodes);
+    internal static RunPlan PlanOf(params ProjectNode[] nodes) => PlanOf(EmptyRefs(), nodes);
 
-    private static RunPlan PlanOf(IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> refs, params ProjectNode[] nodes) =>
+    internal static RunPlan PlanOf(IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> refs, params ProjectNode[] nodes) =>
         new(new BuildPlan([.. nodes.Select((n, i) => n with { BuildOrder = i })], Cycles: [], Configuration: "Debug"), refs);
 
-    private static Dictionary<string, IReadOnlyList<SolutionRef>> EmptyRefs() => new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>[cycle rounds] SCC TAŞIYAN plan — üyeler proje ADIYLA verilir, <see cref="Id"/> ile çevrilir.
+    /// <see cref="PlanOf"/> ile aynı düğüm kurulumu; tek farkı <see cref="BuildPlan.Cycles"/>'ın dolu olması
+    /// (<c>CycleGroups.From</c> yalnız oradan okur). Plan kurulumu tek yerde kalsın diye burada durur.</summary>
+    internal static RunPlan CyclePlanOf(string[] cycle, params ProjectNode[] nodes) =>
+        new(new BuildPlan([.. nodes.Select((n, i) => n with { BuildOrder = i })],
+            Cycles: [[.. cycle.Select(Id)]], Configuration: "Debug"), EmptyRefs());
 
-    private static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1") =>
+    internal static Dictionary<string, IReadOnlyList<SolutionRef>> EmptyRefs() => new(StringComparer.OrdinalIgnoreCase);
+
+    internal static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1") =>
         new(runId, mode, PlanRoot, "Debug", parallelism);
 
-    private static MsBuildInvokeResult Ok() => new(ExitCode: 0, DurationMs: 7, TimedOut: false, Killed: false);
-    private static MsBuildInvokeResult Exit(int code) => new(code, DurationMs: 9, TimedOut: false, Killed: false);
-    private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal static MsBuildInvokeResult Ok() => new(ExitCode: 0, DurationMs: 7, TimedOut: false, Killed: false);
+    internal static MsBuildInvokeResult Exit(int code) => new(code, DurationMs: 9, TimedOut: false, Killed: false);
+    internal static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private static string Describe(IpcEvent e) => e switch
+    internal static string Describe(IpcEvent e) => e switch
     {
         RunStartedEvent => "runStarted",
         BuildPreviewEvent => "buildPreview",
@@ -63,6 +74,7 @@ public class RunCoordinatorTests
         ProjectSucceededEvent p => "projectSucceeded:" + NameOf(p.ProjectId),
         ProjectFailedEvent p => $"projectFailed:{NameOf(p.ProjectId)}:{p.Reason}",
         ProjectSkippedEvent p => "projectSkipped:" + NameOf(p.ProjectId),
+        CycleRoundStartedEvent c => $"cycleRound:{NameOf(c.ProjectId)}:{c.Round}",
         RunStoppedEvent s => "runStopped:" + (s.WasHard ? "hard" : "graceful"),
         RunCompletedEvent c => "runCompleted:" + c.Outcome,
         ErrorEvent er => "error:" + er.Code,
@@ -71,7 +83,7 @@ public class RunCoordinatorTests
 
     // ---------------------------------------------------------------- fake invoker
 
-    private sealed class FakeInvoker(Func<MsBuildInvokeRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>> handler)
+    internal sealed class FakeInvoker(Func<MsBuildInvokeRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>> handler)
         : IMsBuildInvoker
     {
         private readonly List<MsBuildInvokeRequest> _requests = [];
@@ -119,7 +131,7 @@ public class RunCoordinatorTests
         }
     }
 
-    private sealed class Harness : IDisposable
+    internal sealed class Harness : IDisposable
     {
         private readonly MemoryStream _out;
         private readonly List<RunLogWriter> _logWriters = [];
@@ -866,8 +878,8 @@ public class RunCoordinatorTests
     {
         string logsDir = Directory.CreateTempSubdirectory("bo-sup-logs-").FullName;
         string root = Directory.CreateTempSubdirectory("bo-sup-ws-").FullName;
-        // X ↔ Y: HintPath ile birbirine bağlı iki csproj → TopoSort ikisini de SCC üyesi işaretler → ikisi de
-        // pre-skip edilir. Böylece GERÇEK bir run akışı gözlenir ama hiçbir MSBuild child'ı doğmaz (Task 5/13'ün işi).
+        // X ↔ Y: HintPath ile birbirine bağlı iki csproj → TopoSort ikisini de SCC üyesi işaretler. [cycle rounds]
+        // Bu grup artık TEK iş kalemi olarak dispatch edilir ve turlarla derlenir (eskiden pre-skip ediliyordu).
         foreach (var (self, other) in new[] { ("X", "Y"), ("Y", "X") })
         {
             Directory.CreateDirectory(Path.Combine(root, self));
@@ -902,9 +914,16 @@ public class RunCoordinatorTests
         // gerçek bir workspace'te saniyeler sürer; o pencerede tek event bile üretilmediği için App konsolu
         // boş, şerit önceki metinde donuyordu. Sıra artık planlama satırlarıyla BAŞLAR. Bu test o kablajı
         // GERÇEK Supervisor process'i üzerinden görür — in-process harness'ta planner sahtedir.
+        // [DEĞİŞEN KURAL — cycle rounds] Eski iddia: dizi "…, buildPreview, projectSkipped:X, projectSkipped:Y,
+        // runCompleted" idi — X↔Y bir SCC olduğu için pre-skip ediliyor ve hiçbir MSBuild child'ı doğmuyordu.
+        // Artık SCC turlarla DERLENİR: grup tek iş kalemi olarak dispatch edilir, her turun başında
+        // cycleRoundStarted yayılır ve üyeler GERÇEKTEN invoke edilir. Bu yüzden TAM dizi yerine ŞEKİL pinlenir:
+        // projectLog satır sayısı gerçek MSBuild çıktısına, sonuç ise kurulu MSBuild sürümüne bağlıdır.
         Assert.Equal(["planProgress", "planProgress", "planProgress", "planProgress", "planProgress",
-                      "runStarted", "buildPreview", "projectSkipped:X", "projectSkipped:Y", "runCompleted:Completed"],
-            received.Select(Describe));
+                      "runStarted", "buildPreview", "cycleRound:X:1", "projectStarted:X"],
+            received.Take(9).Select(Describe));
+        Assert.Empty(received.OfType<ProjectSkippedEvent>()); // pre-skip YOK
+        Assert.Equal(["X", "Y"], received.OfType<ProjectStartedEvent>().Select(e => NameOf(e.ProjectId)).Distinct());
         // Satırlar PAYLAŞILAN kaynaktan (PlanProgressLines — Sync ile aynı) ve GERÇEK sayılarla gelir:
         // workspace'te 0 .sln, 2 .csproj var ve X↔Y tek bir SCC oluşturur. Worktree satırı YOK: komut
         // UseWorktree=false + Branch="" taşır, yani hazırlık in-place erken-dönüşüyle hiç koşmaz.
@@ -917,7 +936,8 @@ public class RunCoordinatorTests
             PlanProgressLines.ComputingIncremental(2),
         ], received.OfType<PlanProgressEvent>().Select(e => e.Line));
         var done = Assert.IsType<RunCompletedEvent>(received[^1]);
-        Assert.Equal(2, done.Skipped);
+        Assert.Equal(0, done.Skipped);                      // [cycle rounds] üyeler artık atlanmıyor
+        Assert.Equal(2, done.Succeeded + done.Failed);       // ikisi de sonuçlandı (Complete tam bir kez)
         Assert.Equal(0, done.Queued);
 
         await ipcWriter.WriteAsync(new ShutdownCommand());
@@ -1327,10 +1347,10 @@ public class RunCoordinatorTests
 
     // ---------------------------------------------------------------- 15) depIssue-persist penceresi (A2)
 
-    private static string NewCacheRoot() =>
+    internal static string NewCacheRoot() =>
         Path.Combine(Path.GetTempPath(), "bo-coord-state-" + Guid.NewGuid().ToString("N"));
 
-    private static IncrementalPlan Incremental(params string[] names) =>
+    internal static IncrementalPlan Incremental(params string[] names) =>
         new(names.ToDictionary(Id, _ => "sig", StringComparer.OrdinalIgnoreCase), "headsha", "main");
 
     [Fact]

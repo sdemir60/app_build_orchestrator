@@ -695,13 +695,21 @@ süittir.
   private sealed record InvokeOutcome(BuildResult Result, long DurationMs, string? FailReason);
 
   private async Task<InvokeOutcome> InvokeOnceAsync(
-      RunContext run, string projectId, DepIssueResult depIssues, CancellationToken ct);
+      RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct);
 
   private DepIssueResult ComputeDepIssues(RunContext run, string projectId,
                                           IReadOnlyList<string>? excludedDeps = null);
   ```
-  `InvokeOnceAsync` YALNIZ invoke eder ve log yazar. Event yaymaz, `Complete` çağırmaz, BuildState persist
-  ETMEZ — bunlar çağıranın işidir. `OperationCanceledException` yukarı fırlar.
+  `InvokeOnceAsync` YALNIZ invoke eder ve verilen log'a yazar. Event yaymaz, `Complete` çağırmaz, BuildState
+  persist ETMEZ, **log'u AÇMAZ ve KAPATMAZ** — bunların hepsi çağıranın işidir.
+  `OperationCanceledException` yukarı fırlar.
+
+  **Log ömrü neden çağıranda:** `RunLogWriter.OpenProjectLog` dosyayı `FileMode.Create` ile açar
+  (`RunLogWriter.cs:124`) — yani **truncate eder**, ve `Emit`'in yaydığı satır numarası taze dosyanın
+  1'den başlayan sayacıdır. Log'u invoke'un içinde açmak tekil projede doğrudur ama tur döngüsünde
+  yıkıcıdır: aynı proje N kez invoke edilince 1..N-1 turlarının logu diskten silinir ve satır numaraları
+  her turda 1'e döner — kullanıcının canlı izlediği log ile diskteki log birbirini tutmaz. Bu yüzden
+  `using` çağıranda durur: tekil projede tek invoke'u, grup turlarında tüm turları kapsar.
 
   `ComputeDepIssues`, `BuildProjectAsync`'in başındaki mevcut `DepIssueTracker.Compute` çağrısını sarar ve
   `run.DepIssuesById[projectId]`'yi yazar. `excludedDeps` **grup-içi kenarlar** içindir: SCC üyesi dispatch
@@ -730,7 +738,7 @@ Beklenen: PASS. Bu, refactor'ın tabanıdır.
     /// ayrışırdı (kopya YASAK, CLAUDE.md).
     /// </summary>
     private async Task<InvokeOutcome> InvokeOnceAsync(
-        RunContext run, string projectId, DepIssueResult depIssues, CancellationToken ct)
+        RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct)
     {
         var request = new MsBuildInvokeRequest(
             ProjectId: projectId,
@@ -741,16 +749,13 @@ Beklenen: PASS. Bu, refactor'ın tabanıdır.
                 ? WorktreeObjPathResolver.Resolve(run.WorktreeObjRoot, projectId)
                 : null);
 
-        MsBuildInvokeResult invoke;
-        // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir.
-        using (var log = run.Logs.OpenProjectLog(projectId))
-        {
-            foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
-                Emit(run, projectId, log, commandLine);
-            foreach (string warnLine in DepIssueWarnLines(depIssues))
-                Emit(run, projectId, log, warnLine);
-            invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
-        }
+        // [Kısıt 1] Proje logunu bu metot AÇMAZ ve KAPATMAZ — ömrü çağıranındır (bkz. Interfaces notu:
+        // FileMode.Create truncate ettiği için tur döngüsünde log'u burada açmak önceki turları silerdi).
+        foreach (string commandLine in CommandLines(request, run.MsBuildExePath))
+            Emit(run, projectId, log, commandLine);
+        foreach (string warnLine in DepIssueWarnLines(depIssues))
+            Emit(run, projectId, log, warnLine);
+        var invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
 
         return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
             ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)
@@ -800,7 +805,12 @@ Beklenen: PASS. Bu, refactor'ın tabanıdır.
 
 ```csharp
             run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, name));
-            var outcome = await InvokeOnceAsync(run, projectId, depIssues, ct);
+
+            InvokeOutcome outcome;
+            // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose
+            // sonrası AppendLine fırlatır — satır sessizce düşmez). Ömür BURADA, invoke'un içinde DEĞİL.
+            using (var log = run.Logs.OpenProjectLog(projectId))
+                outcome = await InvokeOnceAsync(run, projectId, depIssues, log, ct);
 
             if (outcome.Result == BuildResult.Succeeded)
             {
@@ -971,9 +981,16 @@ Yeni metot:
             depIssuesOf[id] = ComputeDepIssues(run, id, excludedDeps: members);   // grup-içi kenarlar hariç
         }
 
+        // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
+        // (FileMode.Create) tur başına açmak önceki turların logunu silerdi ve satır numaraları her turda
+        // 1'e dönerdi. Bir SCC'nin üye sayısı kadar dosya tanıtıcısı açık kalır — 32 üye için kabul edilir.
+        var logs = new Dictionary<string, ProjectLogFile>(StringComparer.OrdinalIgnoreCase);
+
         var decision = CycleRoundDecision.Continue;
         try
         {
+            foreach (string id in members) logs[id] = run.Logs.OpenProjectLog(id);
+
             HashSet<string>? previousFailed = null;
             for (int round = 1; decision == CycleRoundDecision.Continue; round++)
             {
@@ -985,7 +1002,7 @@ Yeni metot:
                 {
                     string name = run.NodeById.TryGetValue(id, out var n) ? n.Name : id;
                     run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, name));
-                    var outcome = await InvokeOnceAsync(run, id, depIssuesOf[id], ct);
+                    var outcome = await InvokeOnceAsync(run, id, depIssuesOf[id], logs[id], ct);
                     durations[id] += outcome.DurationMs;             // süre TURLARIN TOPLAMI
                     results[id] = outcome.Result;
                     if (outcome.Result != BuildResult.Succeeded)
@@ -1011,6 +1028,11 @@ Yeni metot:
         }
         finally
         {
+            // Loglar sonuç raporlanmadan ÖNCE kapatılır (dispose sonrası AppendLine fırlatır — geç gelen
+            // satır sessizce düşmez). Bir dispose fırlarsa diğerleri yine de kapanır ve raporlama çalışır.
+            foreach (var log in logs.Values)
+                try { log.Dispose(); } catch { /* log kapanışı raporlamayı engellemez */ }
+
             // Sonuçlar TEK yerde raporlanır — ara turlarda hiçbir şey yayılmadı.
             foreach (string id in members)
                 ReportCycleMember(run, id, results[id], durations[id],

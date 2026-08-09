@@ -154,6 +154,33 @@ public class IpcMessagesTests
         Assert.Equal(["dep C broken", "dep D broken"], backWithIssues.DepIssues);
     }
 
+    // [cycle rounds] Tur göstergesinin sözleşmesi: bir SCC'nin kaçıncı turunun başladığı. Task 8 bunu konsol
+    // satırına çevirir; burada yalnız NDJSON round-trip'i ve ayırt edicisi pinlenir.
+    [Fact]
+    public void CycleRoundStartedEvent_roundtrips_with_its_discriminator()
+    {
+        IpcEvent ev = new CycleRoundStartedEvent("r1", @"C:\p\a.csproj", Round: 2, RoundCap: 3, MemberCount: 4);
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"cycleRoundStarted\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
+    // [cycle rounds] "Oturmamış döngü" bayrağı: tavana dayanmış bir SCC'nin BAŞARILI üyeleri bunu taşır.
+    // Varsayılanı false'tur ve alanı hiç taşımayan (bu sürümden ÖNCE yazılmış) bir projectSucceeded satırı
+    // aynen çözülmeye devam eder — geriye dönük uyum.
+    [Fact]
+    public void ProjectSucceededEvent_cycleUnsettled_defaults_to_false_and_roundtrips_when_set()
+    {
+        const string legacyLine = """{"type":"projectSucceeded","runId":"r1","projectId":"C:\\p\\a.csproj","durationMs":2400}""";
+        var legacy = Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(legacyLine, IpcJson.Options));
+        Assert.False(legacy.CycleUnsettled);
+
+        IpcEvent unsettled = new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400, DepIssues: null, CycleUnsettled: true);
+        string json = JsonSerializer.Serialize(unsettled, IpcJson.Options);
+        Assert.Contains("\"cycleUnsettled\":true", json);
+        Assert.Equal(unsettled, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
     [Fact]
     public void RunCompletedEvent_depIssueCount_roundtrips()
     {
