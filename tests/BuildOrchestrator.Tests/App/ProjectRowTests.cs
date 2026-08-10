@@ -313,6 +313,64 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- [cycles] bekleyen SCC üyesi nefes/süre almaz
+
+    /// <summary>[cycles] Nefes katmanı ham <c>State==Started</c> okuyordu — sırasını bekleyen SCC üyesi (motor
+    /// durumu Started ama <c>CycleWaiting=true</c>) de amber nefesle yanıp sönüyordu. Tek doğruluk kaynağı
+    /// <see cref="ProjectRowViewModel.IsCompiling"/>'tir; bekleyen üyede o false'tur.</summary>
+    [StaFact]
+    public void A_waiting_cycle_member_does_not_breathe()
+    {
+        var vm = new ProjectRowViewModel("a.csproj", "A", ProjectRowState.Started) { CycleWaiting = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Collapsed, row.BreathLayer.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[cycles] Süre sütunu ham <c>State==Started</c> okuyordu — bekleyen üye de canlı sayıyordu (üstelik
+    /// her turda sıfırlanıp yeniden koşan bir sayaç, bilgi değil gürültüydü). <c>IsCompiling</c> false'ken satır
+    /// "—" göstermeli.</summary>
+    [StaFact]
+    public void A_waiting_cycle_member_shows_no_live_elapsed()
+    {
+        var vm = new ProjectRowViewModel("a.csproj", "A", ProjectRowState.Started) { CycleWaiting = true, DurationMs = 5000 };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal("—", row.DurationText.Text);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[cycles] Kontrol grubu: grubun sırası GERÇEKTEN kendisindeyken (<c>CycleWaiting=false</c>) satır
+    /// eskisi gibi nefes alır ve canlı sayar — fix yalnız bekleyen üyeyi susturur, derleneni DEĞİL.</summary>
+    [StaFact]
+    public void The_compiling_member_still_breathes_and_counts()
+    {
+        var vm = new ProjectRowViewModel("a.csproj", "A", ProjectRowState.Started) { DurationMs = 5000 };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.BreathLayer.Visibility);
+        Assert.NotEqual("—", row.DurationText.Text); // canlı elapsed
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[cycles] Sıra kardeşe geçtiği ANDA (motor durumu HÂLÂ Started, yalnız <c>CycleWaiting</c> flip'i)
+    /// nefes ve süre birlikte susmalı — <c>CycleWaiting</c> setter'ı <c>Status</c>'u tetikler, <c>OnVmPropertyChanged</c>'in
+    /// Status case'i bunu ApplyBreathing/ApplyDuration'a taşımalı.</summary>
+    [StaFact]
+    public void Breathing_stops_the_moment_the_turn_passes_to_a_sibling()
+    {
+        var vm = new ProjectRowViewModel("a.csproj", "A", ProjectRowState.Started);
+        var (row, window, _) = Realize(vm);
+
+        vm.CycleWaiting = true; // kardeş başladı — sıra artık onda
+        row.UpdateLayout();
+
+        Assert.Equal(Visibility.Collapsed, row.BreathLayer.Visibility);
+        Assert.Equal("—", row.DurationText.Text);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- [A13/T4 · m1] shake: 360ms · X ekseni · ±3px · bir kez
 
     /// <summary>[A13/T4 · m1] Otorite <c>BuildApp.jsx:18,30</c>: <c>.bo-shake { animation: bo-shake .36s
