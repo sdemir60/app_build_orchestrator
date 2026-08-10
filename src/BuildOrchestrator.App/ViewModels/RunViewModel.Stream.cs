@@ -31,6 +31,15 @@ public sealed partial class RunViewModel
     // YAZILMAZ) — PushStream'in başında tek Info satırına flush edilir (bkz. PushStream).
     private int _outOfScopeSkips;
 
+    // [Task 4] Cycle round ilerleme takibi — aktif satırdaki "member i/N · round r/cap" detayının kaynağı.
+    // _cycleRoundCap == 0 ⇒ bu run'da henüz bir CycleRoundStartedEvent gelmedi (round AKTİF DEĞİL) — upstream/
+    // prerequisite projeler bu run'ın ilk aşamasında builds eder ve detay almaz. RunStarted/RunCompleted'ta
+    // sıfırlanır (bir sonraki run/segment temiz başlasın).
+    private int _cycleRound;
+    private int _cycleRoundCap;
+    private int _cycleRoundMemberCount;
+    private int _cycleMemberIndex;
+
     /// <summary>[D8] Duvar-saati zaman damgası kaynağı (stream satırı "HH:mm:ss") — testte deterministik enjekte
     /// edilebilir; üretimde <see cref="DateTimeOffset.Now"/>. Fırtına/elapsed saati (<c>_nowMs</c>) AYRIDIR
     /// (monoton ms; duvar-saati DEĞİL).</summary>
@@ -69,6 +78,8 @@ public sealed partial class RunViewModel
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
                 _streamRunMode = e.Mode;
+                // [Task 4] Yeni run/segment: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
+                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
                 break;
 
             case BuildPreviewEvent:
@@ -82,9 +93,12 @@ public sealed partial class RunViewModel
                     PushStream(StreamKind.Info, null, mode switch
                     {
                         RunMode.Continue => StreamText.Continue(_willBuildIds.Count - FinishedOfWillBuild, parallelism),
-                        // [cycles] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin üyeleri
-                        // sıralı derlenir. Kullanıcıyı bekleten sayı tur tavanıdır, satır onu söyler.
-                        RunMode.Cycles => StreamText.CyclesStarted(_willBuildIds.Count),
+                        // [cycles/Task 4] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin
+                        // üyeleri sıralı derlenir. Kırılım will-build ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
+                        // upstream/prerequisite'tir; kullanıcı "neden bu kadar proje derleniyor"u burada okur.
+                        RunMode.Cycles => StreamText.CyclesStarted(
+                            members: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) == true),
+                            prerequisites: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) != true)),
                         _ => StreamText.BuildStarted(_willBuildIds.Count, parallelism),
                     });
                     _pendingRunStartMode = null;
@@ -92,7 +106,16 @@ public sealed partial class RunViewModel
                 break;
 
             case ProjectStartedEvent e:
-                _stream.StartBuilding(e.ProjectId, e.Name, _nowMs()); // building → yalnız aktif satırda görünür (tampon satırı YOK)
+                // [Task 4] Bu proje bir cycle round üyesiyse (round AKTİFKEN — upstream projeler round
+                // başlamadan ÖNCE build eder, bkz. _cycleRoundCap) sayaç ilerler ve aktif satır "member i/N ·
+                // round r/cap" detayını taşır; değilse (upstream/prerequisite) detay YOK — düz "{name} building…".
+                string? detail = null;
+                if (_cycleRoundCap > 0 && _cycleGroups?.IsMember(e.ProjectId) == true)
+                {
+                    _cycleMemberIndex++;
+                    detail = StreamText.CycleMemberDetail(_cycleMemberIndex, _cycleRoundMemberCount, _cycleRound, _cycleRoundCap);
+                }
+                _stream.StartBuilding(e.ProjectId, e.Name, _nowMs(), detail); // building → yalnız aktif satırda görünür (tampon satırı YOK)
                 SyncActiveLine();
                 break;
 
@@ -126,8 +149,10 @@ public sealed partial class RunViewModel
             // id'sidir (satır ona bağlı/tıklanabilir, ok/fail/skip satırlarıyla AYNI desen). Kind=Info: ne
             // başarı ne hata, BuildStarted/Continue satırlarıyla AYNI amber ▸ anlatı tonu.
             case CycleRoundStartedEvent e:
-                PushStream(StreamKind.Info, e.ProjectId,
-                    StreamText.CycleRound(e.Round, e.RoundCap, ResolveName(e.ProjectId), e.MemberCount));
+                // [Task 4] Yeni turun ilerleme takibi kurulur — sayaç 0'dan başlar, grubun İLK ProjectStartedEvent'i
+                // (round-order'daki ilk üye) onu 1'e taşır.
+                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (e.Round, e.RoundCap, e.MemberCount, 0);
+                PushStream(StreamKind.Info, e.ProjectId, StreamText.CycleRound(e.Round, e.RoundCap, e.MemberCount));
                 break;
 
             // [Task 3/cycles] Grubun NİHAİ kararı — decision.log'un ekrandaki karşılığı. ProjectId LİDERİN
@@ -154,6 +179,8 @@ public sealed partial class RunViewModel
                         StreamText.Completed(e.Failed, e.Succeeded, e.Skipped, e.DepIssueCount, e.DurationMs));
                 _stream.EndRun();
                 SyncActiveLine();
+                // [Task 4] Koşu bitti — round ilerleme takibi bir sonraki run için sıfırlanır.
+                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
                 break;
         }
     }

@@ -49,10 +49,15 @@ public static class StreamText
     /// <summary>[cycles] Bir <c>RunMode.Cycles</c> koşusunun açılış satırı. "Build started"ı yeniden
     /// kullanmaz: bu koşu bir build DEĞİLDİR ve kullanıcıyı bekleten şey de proje sayısı değil, TUR sayısıdır —
     /// satır tam olarak ne satın alındığını söyler. Tavan literal DEĞİL, tek kaynağı
-    /// <see cref="Core.Planning.CycleRoundPolicy.RoundCap"/>'tir.</summary>
-    public static string CyclesStarted(int projects) =>
-        string.Format(CultureInfo.InvariantCulture, "Cycles started — {0} projects, up to {1} rounds each",
-            projects, Core.Planning.CycleRoundPolicy.RoundCap);
+    /// <see cref="Core.Planning.CycleRoundPolicy.RoundCap"/>'tir.
+    /// <para><b>[DEĞİŞEN KURAL — Task 4]</b> Eski iddia: satır TEK toplam proje sayısı taşırdı (<c>CyclesStarted(int
+    /// projects)</c>). Gerekçe: toplamın çoğu upstream (bağımlılık ön koşulu) olabiliyordu ve kullanıcı "neden bu
+    /// kadar proje derleniyor" sorusunu ekrandan okuyamıyordu — satır artık gerçek döngü üyesi/prerequisite
+    /// kırılımını ayrı ayrı söyler (kırılım çağıranda — <c>RunViewModel.Stream</c> — will-build ∩ üyelik'ten
+    /// hesaplanır).</para></summary>
+    public static string CyclesStarted(int members, int prerequisites) =>
+        string.Format(CultureInfo.InvariantCulture, "Cycles started — {0} cycle members · {1} prerequisites · up to {2} rounds",
+            members, prerequisites, Core.Planning.CycleRoundPolicy.RoundCap);
 
     /// <summary>build-data.js:321 — <c>Stopped — {n} remaining projects queued</c>.</summary>
     public static string Stopped(int remaining) =>
@@ -81,10 +86,18 @@ public static class StreamText
     }
 
     /// <summary>[cycle rounds/Task 8] Tur göstergesi — <c>CycleRoundStartedEvent</c>'in TEK metin kaynağı:
-    /// <c>cycle round {round}/{cap} — {leaderName} (+{memberCount-1} more)</c>.</summary>
-    public static string CycleRound(int round, int cap, string leaderName, int memberCount) =>
-        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} (+{3} more)",
-            round, cap, leaderName, memberCount - 1);
+    /// <c>cycle round {round}/{cap} — {memberCount} members</c>.
+    /// <para><b>[DEĞİŞEN KURAL — Task 4]</b> Eski iddia: <c>{leaderName} (+{memberCount-1} more)</c> — tek lider
+    /// adı grubu temsil etmiyordu; koşunun maliyetini üye sayısı anlatır. <c>CycleRoundStartedEvent.ProjectId</c>
+    /// (lider) event'te durduğu için satır hâlâ lidere tıklatır — yalnız METİN lider adını bırakır.</para></summary>
+    public static string CycleRound(int round, int cap, int memberCount) =>
+        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} members", round, cap, memberCount);
+
+    /// <summary>[Task 4] Aktif satırın grup-ilerleme detayı — <c>StreamComposer.StartBuilding</c>'in <c>detail</c>
+    /// parametresinin TEK metin kaynağı: <c>member {index}/{count} · round {round}/{cap}</c>. Kopya YASAK
+    /// (CLAUDE.md) — <c>RunViewModel.Stream</c> bu metni inline BİLEŞTİRMEZ, yalnız çağırır.</summary>
+    public static string CycleMemberDetail(int index, int count, int round, int cap) =>
+        string.Format(CultureInfo.InvariantCulture, "member {0}/{1} · round {2}/{3}", index, count, round, cap);
 
     /// <summary>[Task 3/cycles] <c>CycleCompletedEvent</c>'in TEK metin kaynağı — grubun neden öyle bittiğini
     /// (yakınsadı / ilerleme yok / tavana dayandı) ekrana taşır. Kind eşlemesi (Converged→Ok, NoProgress→Fail,

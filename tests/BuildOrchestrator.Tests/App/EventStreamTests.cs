@@ -5,6 +5,7 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -60,6 +61,10 @@ public class EventStreamTests
 
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+    // [Task 4] WorkspaceTopologyEvent düğümü — _cycleGroups üyeliğini kurmak için Cycles listesiyle birlikte kullanılır.
+    private static ProjectNode Node(string id, string name, int buildOrder, bool inCycle = false) =>
+        new(id, name, id, SolutionNames: [], Dependencies: [], buildOrder, LayerIndex: null, LayerName: null, inCycle, WillBuild: null);
 
     private static (EventStreamView view, Window window, System.Windows.Controls.Border host) Realize(
         RunViewModel vm, bool forceAnimations = false)
@@ -230,37 +235,54 @@ public class EventStreamTests
         Assert.Equal("Completed — 12 succeeded · 3 skipped · 45s", StreamText.Completed(0, 12, 3, 0, 45000));
         Assert.Equal("Completed — 2 failed · 10 succeeded · 1 skipped · 1m 12s · 3 dependency-affected",
             StreamText.Completed(2, 10, 1, 3, 72000));
-        // [cycle rounds/Task 8] Tur göstergesi — tek metin kaynağı (task-8-brief.md).
-        Assert.Equal("cycle round 2/3 — A (+3 more)", StreamText.CycleRound(2, 3, "A", 4));
-        // [cycles] Cycles koşusunun açılış satırı: "Build started" DEĞİL, ve sayı paralellik değil TUR tavanıdır
-        // (tek kaynak CycleRoundPolicy.RoundCap — bu satır tavanı literal olarak yeniden yazMAZ).
+        // [DEĞİŞEN KURAL — Task 4] Eski iddia: tur satırı "{leaderName} (+{n-1} more)" taşırdı; tek lider adı
+        // grubu temsil etmiyordu. Koşunun maliyetini üye sayısı anlatır; ProjectId event'te durduğu için satır
+        // hâlâ lidere tıklatır (CycleRoundStartedEvent — RunViewModel.Stream).
+        Assert.Equal("cycle round 2/3 — 15 members", StreamText.CycleRound(2, 3, 15));
+        // [DEĞİŞEN KURAL — Task 4] Eski iddia: açılış satırı TEK toplam proje sayısı taşırdı; toplamın çoğu
+        // upstream (prerequisite) olabiliyordu ve kullanıcı ekrandan "neden bu kadar proje derleniyor"u
+        // okuyamıyordu — satır artık üye/prerequisite kırılımını ayrı ayrı söyler (tavan yine
+        // CycleRoundPolicy.RoundCap'ten, literal DEĞİL).
         Assert.Equal(
-            $"Cycles started — 8 projects, up to {BuildOrchestrator.Core.Planning.CycleRoundPolicy.RoundCap} rounds each",
-            StreamText.CyclesStarted(8));
+            $"Cycles started — 6 cycle members · 2 prerequisites · up to {BuildOrchestrator.Core.Planning.CycleRoundPolicy.RoundCap} rounds",
+            StreamText.CyclesStarted(6, 2));
     }
 
     /// <summary>[cycles] Ve koşu GERÇEKTEN o satırı yayar: mod, ertelenen açılış satırının hangi metni
-    /// seçeceğini belirler (satır <c>buildPreview</c>'a ertelenir — will-build sayısı orada hazırdır).</summary>
+    /// seçeceğini belirler (satır <c>buildPreview</c>'a ertelenir — will-build sayısı orada hazırdır).
+    /// [Task 4] Kırılım will-build ∩ üyelik'ten (<c>_cycleGroups.IsMember</c>) hesaplanır — will-build'daki
+    /// upstream/prerequisite projeler üye SAYILMAZ.</summary>
     [Fact]
     public async Task A_cycles_run_opens_the_stream_with_its_own_line_not_the_build_one()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string upstreamId = @"C:\p\u.csproj";
+        const string m1Id = @"C:\p\m1.csproj";
+        const string m2Id = @"C:\p\m2.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(upstreamId, "U", 0), Node(m1Id, "M1", 1, inCycle: true), Node(m2Id, "M2", 2, inCycle: true)],
+            [[m1Id, m2Id]], [], []));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 2, Parallelism: 4, "Debug", 0));
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(upstreamId, "U", true),
+            new BuildPreviewItem(m1Id, "M1", true),
+            new BuildPreviewItem(m2Id, "M2", true),
+        ]));
 
-        Assert.Contains(vm.StreamEvents, l => l.Text == StreamText.CyclesStarted(1));
+        Assert.Contains(vm.StreamEvents, l => l.Text == StreamText.CyclesStarted(2, 1)); // 2 üye (M1/M2) · 1 prerequisite (U)
         Assert.DoesNotContain(vm.StreamEvents, l => l.Text.StartsWith("Build started", StringComparison.Ordinal));
     }
 
     // ============================================================ [cycle rounds/Task 8] — tur göstergesi
 
-    /// <summary>CycleRoundStartedEvent → stream tampon satırı, lider adı ResolveName ile (satırın kaynağı
-    /// Projects listesi) ÇÖZÜLEREK. Satır grubun LİDERİNE bağlıdır (ProjectId=lider) — diğer proje-özel
-    /// satırlar (built/failed/skipped) gibi tıklanabilir.</summary>
+    /// <summary>CycleRoundStartedEvent → stream tampon satırı, üye SAYISIYLA. Satır grubun LİDERİNE bağlıdır
+    /// (ProjectId=lider) — diğer proje-özel satırlar (built/failed/skipped) gibi tıklanabilir.
+    /// [DEĞİŞEN KURAL — Task 4] bkz. <see cref="StreamText_templates_match_the_prototype_verbatim"/>'daki not:
+    /// eski satır lider adı taşırdı, artık üye sayısı taşır.</summary>
     [Fact]
-    public void Cycle_round_started_pushes_the_round_indicator_line_with_the_leader_name_resolved()
+    public void Cycle_round_started_pushes_the_round_indicator_line_with_the_member_count()
     {
         var vm = NewVm();
         const string leaderId = @"C:\p\a.csproj";
@@ -269,8 +291,78 @@ public class EventStreamTests
         vm.OnEvent(new CycleRoundStartedEvent("r1", leaderId, Round: 2, RoundCap: 3, MemberCount: 4));
 
         var line = vm.StreamEvents.Last();
-        Assert.Equal("cycle round 2/3 — A (+3 more)", line.Text);
-        Assert.Equal(leaderId, line.ProjectId);
+        Assert.Equal("cycle round 2/3 — 4 members", line.Text);
+        Assert.Equal(leaderId, line.ProjectId); // ProjectId event'te durur — satır hâlâ lidere tıklatır
+    }
+
+    // ============================================================ [Task 4] — aktif satırda üye/tur ilerlemesi
+
+    /// <summary>[Task 4] Aktif satır bir SCC üyesinin ProjectStarted'ında "member i/N · round r/cap" detayını
+    /// taşır — kullanıcı hangi üyenin/turun koştuğunu ekrandan okur. Üye OLMAYAN (upstream/prerequisite) bir
+    /// proje düz "{name} building…" kalır (detay YOK) — kırılım yalnız gerçek grup üyelerine (<c>_cycleGroups</c>)
+    /// aittir, ve round henüz başlamadan (upstream'ler önce build eder) da detay eklenmez.</summary>
+    [Fact]
+    public void Active_line_shows_member_index_and_round_for_a_cycle_member_but_not_for_upstream()
+    {
+        var vm = NewVm();
+        const string aId = @"C:\p\a.csproj";
+        const string bId = @"C:\p\b.csproj";
+        const string uId = @"C:\p\u.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(uId, "U", 0), Node(aId, "A", 1, inCycle: true), Node(bId, "B", 2, inCycle: true)],
+            [[aId, bId]], [], []));
+
+        // Upstream proje round başlamadan ÖNCE build eder — düz "building…" (detaysız).
+        vm.OnEvent(new ProjectStartedEvent("r1", uId, "U"));
+        Assert.Equal("U building…", vm.ActiveLineText);
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", aId, Round: 1, RoundCap: 3, MemberCount: 15));
+        vm.OnEvent(new ProjectStartedEvent("r1", aId, "A")); // üye 1
+        vm.OnEvent(new ProjectStartedEvent("r1", bId, "B")); // üye 2
+
+        Assert.Equal("B building… · member 2/15 · round 1/3", vm.ActiveLineText);
+    }
+
+    /// <summary>[Task 4] Yeni bir tur başladığında üye sayacı 1'e döner — önceki turun ilerlemesi bir sonraki
+    /// turu ETKİLEMEZ (her <c>CycleRoundStartedEvent</c> sayacı sıfırlar).</summary>
+    [Fact]
+    public void A_new_cycle_round_resets_the_member_index_to_one()
+    {
+        var vm = NewVm();
+        const string aId = @"C:\p\a.csproj";
+        const string bId = @"C:\p\b.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(aId, "A", 0, inCycle: true), Node(bId, "B", 1, inCycle: true)],
+            [[aId, bId]], [], []));
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", aId, Round: 1, RoundCap: 3, MemberCount: 2));
+        vm.OnEvent(new ProjectStartedEvent("r1", aId, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", bId, "B"));
+        Assert.Equal("B building… · member 2/2 · round 1/3", vm.ActiveLineText);
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", aId, Round: 2, RoundCap: 3, MemberCount: 2));
+        vm.OnEvent(new ProjectStartedEvent("r1", aId, "A"));
+        Assert.Equal("A building… · member 1/2 · round 2/3", vm.ActiveLineText); // sayaç 1'e döndü
+    }
+
+    /// <summary>[Task 4] <see cref="StreamComposer"/> çekirdeği: <c>StartBuilding</c>'in <c>detail</c> parametresi
+    /// aktif metne eklenir; AYNI proje üzerinde yalnız detay değişirse generation ARTMAZ (daktilo yeniden
+    /// koşmasın — id/ad DEĞİŞMEDİ). Farklı bir projeye geçişte (id/ad değişimi) generation her zamanki gibi artar.</summary>
+    [Fact]
+    public void StartBuilding_detail_updates_the_active_text_without_bumping_generation_on_detail_only_change()
+    {
+        var c = new StreamComposer();
+        c.StartBuilding("A", "A", 1000, "member 1/2 · round 1/3");
+        Assert.Equal("A building… · member 1/2 · round 1/3", c.ActiveText);
+        long gen1 = c.ActiveGeneration;
+
+        c.StartBuilding("A", "A", 1100, "member 1/2 · round 2/3"); // aynı proje, yalnız detay değişti
+        Assert.Equal("A building… · member 1/2 · round 2/3", c.ActiveText);
+        Assert.Equal(gen1, c.ActiveGeneration); // generation ARTMADI
+
+        c.StartBuilding("B", "B", 1200); // farklı proje, detay YOK
+        Assert.Equal("B building…", c.ActiveText);
+        Assert.True(c.ActiveGeneration > gen1); // generation ARTTI
     }
 
     // ============================================================ [Task 3/cycles] — grup kararı
