@@ -54,7 +54,9 @@ public sealed partial class RunViewModel
 
     /// <summary>Aktif satırın projesi (tıklama → <see cref="SelectProject"/>); hiç building yoksa null.</summary>
     [ObservableProperty] private string? _activeLineProjectId;
-    /// <summary>Aktif satır metni "<c>{name} building…</c>" ya da null (satır gizli).</summary>
+    /// <summary>Aktif satır metni "<c>{name} building…</c>" ya da null (satır gizli). [Task 4] Proje bir cycle
+    /// round üyesiyse (round aktifken) sona "<c>· member {i}/{N} · round {r}/{cap}</c>" eki eklenir — bkz.
+    /// <see cref="StreamText.CycleMemberDetail"/>; upstream/prerequisite projelerde ek YOKTUR.</summary>
     [ObservableProperty] private string? _activeLineText;
     /// <summary>Aktif proje her DEĞİŞTİĞİNDE artar — görünüm daktiloyu yeniden başlatır (prototip activeLine.id).</summary>
     [ObservableProperty] private long _activeLineGeneration;
