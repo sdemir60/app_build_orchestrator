@@ -85,6 +85,12 @@ public partial class GraphView : UserControl
     public const double IconFactor = 0.52;
     /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
     public const double IconStroke = 1.8;
+    /// <summary>[Task 5] Kalıcı döngü rozeti, düğüm kenarının bu kadarıdır. <see cref="IconFactor"/>'ın
+    /// (%52, ANA glyph) yarısından biraz fazlası: rozet İKİNCİL bir işarettir — ana statü karesiyle
+    /// yarışmamalı ama en küçük düğümde (§2.3 kelepçesi: 8px) bile köşede okunur kalmalı. %40'ta en küçük
+    /// düğümde ~3.2px, en büyükte (24px) ~9.6px — kullanıcının istediği "~8-9px" aralığıyla büyük düğümde
+    /// örtüşür, küçük düğümde köşeye sığar.</summary>
+    public const double CycleBadgeFactor = 0.4;
     /// <summary>Hover büyütmesi.
     ///
     /// <para><b>§2.3'ün sayısı 1.7'ydi; kullanıcı kararıyla 1.5.</b> Aritmetik neden: düğüm kenarı pitch'in
@@ -102,6 +108,10 @@ public partial class GraphView : UserControl
 
     /// <summary>Icons.xaml geometrilerinin viewBox kenarı (lucide: 24).</summary>
     private const double IconViewBox = 24.0;
+    /// <summary>[Task 5] Döngü rozetinin viewBox'ı: <c>Icon.StatusCycle</c> Icons.xaml'de <see cref="IconViewBox"/>'ın
+    /// (24, lucide ailesi) DEĞİL, statü glyph ailesinin 16'lık ızgarasında çizilidir (bkz. Icons.xaml "statü
+    /// glyph'leri (viewBox 0 0 16 16)" başlığı) — ayrı bir sabit gerekir, aksi halde rozet yanlış ölçeklenir.</summary>
+    private const double CycleBadgeViewBox = 16.0;
 
     /// <summary>[T64] Düğüm ikonu (lucide "package", 24'lük viewBox). Path data ARTIK BURADA DEĞİL: geometri
     /// uygulamanın TEK ikon sözlüğünden (<c>Resources/Icons.xaml</c>) çözülür. Bu sınıf yalnız ANAHTAR bilir —
@@ -137,6 +147,10 @@ public partial class GraphView : UserControl
     /// panel yeniden boyutlandığında tek bir nesneyi mutasyona uğratmak yeter (düğüm başına transform yok).
     /// Donmaz — donmuş bir transform güncellenemezdi.</summary>
     private readonly ScaleTransform _iconScale = new(1, 1);
+    /// <summary>[Task 5] TÜM döngü rozetlerinin PAYLAŞTIĞI ölçek — <see cref="_iconScale"/> ile AYNI gerekçe.
+    /// Rozet talep üzerine kurulsa da (çoğu düğüm hiç cycle üyesi olmaz) VAROLAN rozetlerin tümü aynı düğüm
+    /// boyutunu paylaşır, dolayısıyla tek nesne yeter.</summary>
+    private readonly ScaleTransform _cycleBadgeScale = new(1, 1);
 
     /// <summary>[quiet] TÜM beads yörüngelerinin PAYLAŞTIĞI tek saat. Düğüm boyutu graf genelinde tek
     /// olduğu için çevre de tektir ⇒ tek saat bütün noktaları faz-kilitli döndürür. N paralel derlemede N
@@ -535,6 +549,7 @@ public partial class GraphView : UserControl
         double ring = size + SelectionRingInset * 2;
         double cell = size + CellOverhang * 2;
         _iconScale.ScaleX = _iconScale.ScaleY = size * IconFactor / IconViewBox;
+        _cycleBadgeScale.ScaleX = _cycleBadgeScale.ScaleY = size * CycleBadgeFactor / CycleBadgeViewBox;
 
         // Düğüm boyutu değiştiyse yörüngenin ÇEVRESİ de değişir ⇒ desen ve paylaşımlı saat yeniden kurulur;
         // aksi halde noktalar yeni çevreye tam bölünmez ve ek yerinde bindirirdi.
@@ -683,7 +698,12 @@ public partial class GraphView : UserControl
             GraphStatus.Succeeded => ("Brush.StatusSuccess", "Brush.StatusSuccessSoft", "Brush.StatusSuccessText", false),
             GraphStatus.Failed => ("Brush.StatusFail", "Brush.StatusFailSoft", "Brush.StatusFailText", false),
             GraphStatus.Skipped => ("Brush.StatusSkippedBorder", "Brush.StatusSkippedSoft", "Brush.StatusSkippedText", false),
-            GraphStatus.Cycle => ("Brush.StatusCycle", "Brush.StatusCycleSoft", "Brush.StatusCycleText", false),
+            // [Task 5 · DEĞİŞEN KURAL] Eskiden Cycle kendi turuncu ailesine sahipti (Brush.StatusCycle/…Soft/
+            // …Text — DS STATUS_META'nın birebir karşılığı) ve komple turuncu boyanıyordu. Gerekçe: koşu
+            // başlar başlamaz satır Cycle'dan uzaklaşınca (Building/Succeeded/…) turuncu blok graftan
+            // KAYBOLUYORDU — üyelik koşu boyunca görünmez oluyordu; ayrıca turuncu blok düğümün o anki koşu
+            // statüsüyle YARIŞIYORDU. Yeni kural: düğüm HER statüde standart (discovered) ailesine düşer,
+            // üyelik statüden bağımsız kalıcı bir köşe rozetiyle anlatılır (aşağıda ApplyCycleBadge).
             _ => ("Brush.BorderStrong", "Brush.SurfaceRaised", "Brush.TextFaint", true),
         };
 
@@ -709,6 +729,55 @@ public partial class GraphView : UserControl
         visual.Square.StrokeDashArray = dashed ? DiscoveredDash : SolidDash;
 
         ApplyBeads(visual);
+        ApplyCycleBadge(visual);
+    }
+
+    /// <summary>[Task 5] Kalıcı köşe rozetinin kurulum/görünürlük kapısı. <see cref="ApplyBeads"/> ile AYNI
+    /// desen (talep üzerine kur, bir daha sökme) — TEK fark: bu görünürlük <see cref="GraphNode.Status"/>'a
+    /// değil <see cref="GraphNode.InCycle"/>'a bakar, dolayısıyla koşu boyunca statü değişse de rozet kalır.</summary>
+    private void ApplyCycleBadge(GraphNodeVisual visual)
+    {
+        if (visual.Model.InCycle)
+        {
+            EnsureCycleBadge(visual);
+            visual.CycleBadge!.Visibility = Visibility.Visible;
+        }
+        else if (visual.CycleBadge is not null)
+        {
+            visual.CycleBadge.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>Rozeti TALEP ÜZERİNE kurar (bir kez) — düğümlerin çoğu hiç cycle üyesi olmaz.
+    /// <c>Body</c>'nin ÇOCUĞUDUR (yörüngenin/halkanın aksine <c>Cell</c>'in değil): koşu-fazı opaklığı ve
+    /// hover büyütmesi zaten gövdenin transform'undan geçer, ikinci bir kablo gerekmez.</summary>
+    private void EnsureCycleBadge(GraphNodeVisual visual)
+    {
+        if (visual.CycleBadge is not null) return;
+
+        var badge = new Path { IsHitTestVisible = false };
+        var badgeBox = new Canvas
+        {
+            Width = CycleBadgeViewBox,
+            Height = CycleBadgeViewBox,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+            // [ölçüldü] Pivot KÖŞEDEDİR, MERKEZDE değil (iconBox'ın ortalanmış deseninden BİLEREK ayrışır):
+            // en küçük düğümde (8px) sabit 16px'lik kutu Body'nin slotundan büyüktür ve Right/Top hizalama
+            // taşmayı SOLA/AŞAĞIYA atar (Right hizalı taşma her zaman SOL kenardan, Top hizalı taşma her
+            // zaman ALT kenardan olur) — kutunun kendi sağ-üst köşesi ise taşmadan BAĞIMSIZ olarak HER
+            // zaman Body'nin gerçek sağ-üst köşesiyle çakışır. Pivotu (0.5,0.5) MERKEZE alsaydık küçülme bu
+            // çakışmayan merkeze doğru olurdu ve rozet köşeden kayardı; (1,0) köşeye alarak küçülme HER
+            // düğüm boyutunda gerçek köşeye doğru olur.
+            RenderTransformOrigin = new Point(1, 0),
+            RenderTransform = _cycleBadgeScale,
+            Children = { badge },
+        };
+        IconPaint.Apply(badge, this, "Icon.StatusCycle", "Brush.StatusCycleText");
+
+        visual.Body.Children.Add(badgeBox);
+        visual.CycleBadge = badge;
     }
 
     // ---------------------------------------------------------------- beads (§2.3 building animasyonu)

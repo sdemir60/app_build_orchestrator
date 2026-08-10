@@ -6,14 +6,18 @@ namespace BuildOrchestrator.App.Graph;
 // StatusGlyph'in graf-dışı ilk tüketicisi D1'dir. Buradaki kullanımlar için yukarıdaki using yeterlidir.
 
 /// <summary>
-/// [quiet] Graf düğümü — kimlik (tam proje adı), katman indeksi ve statü. Hepsi bu kadardır.
+/// [quiet] Graf düğümü — kimlik (tam proje adı), katman indeksi, statü ve döngü üyeliği. Hepsi bu kadardır.
 ///
 /// <para><b>Ne taşımadığı da bir karardır.</b> v1.3.0 §2.3'te düğümün üstünde ad etiketi yoktur (ad hover
 /// tooltip'i ve seçim etiketiyle verilir) ve graf içi dep-issue rozeti kaldırılmıştır (dep bilgisi liste
 /// kartlarında yaşar). Bu yüzden kısa-ad öneki ve <c>HasDepIssue</c> bayrağı bu kayıttan SÖKÜLDÜ — grafta
 /// hiçbir okuyucuları kalmamıştı.</para>
+///
+/// <para>[Task 5] <see cref="InCycle"/> <see cref="Status"/>'tan BAĞIMSIZDIR: statü koşu boyunca değişir
+/// (discovered → queued → building → sonuç) ama üyelik değişmez — <c>GraphView</c> bunu HER statüde kalıcı
+/// bir köşe rozetiyle çizer, artık statünün kendisiyle (eskiden turuncu boyama) anlatılmaz.</para>
 /// </summary>
-public sealed record GraphNode(string Name, int Layer, GraphStatus Status)
+public sealed record GraphNode(string Name, int Layer, GraphStatus Status, bool InCycle = false)
 {
     /// <summary>[D5] Ortak öneği atılmış kısa ad. Grafın kendisi ARTIK kullanmaz (§2.3: node üstü etiket
     /// yok) ama proje adını dar bir yerde gösteren diğer yüzeyler kullanır: liste kartının dep-tooltip'i

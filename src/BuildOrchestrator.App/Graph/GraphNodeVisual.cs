@@ -110,6 +110,12 @@ internal sealed class GraphNodeVisual
     /// <summary>Yörünge şu an GÖRÜNÜR mü — her <c>UpdateStatuses</c> tick'inde giriş/çıkış animasyonunun
     /// baştan başlatılmasını (takılmasını) önler.</summary>
     public bool BeadsVisible { get; set; }
+    /// <summary>[Task 5 · quiet] Döngü üyeliğinin kalıcı köşe rozeti — <see cref="Beads"/> ile AYNI desen:
+    /// TALEP ÜZERİNE, düğüm İLK kez <see cref="GraphNode.InCycle"/> olduğunda kurulur ve bir daha SÖKÜLMEZ
+    /// (üyelik geri düşerse bile yalnız görünürlüğü kapanır). Düğümlerin çoğu hiç cycle üyesi olmaz —
+    /// hepsine peşinen bir <see cref="Path"/> kurmak boşuna allocation olurdu. <c>Body</c>'nin İÇİNDE yaşar,
+    /// dolayısıyla koşu-fazı opaklığı ve hover büyütmesini gövdeyle BİRLİKTE, ikinci bir kablo olmadan alır.</summary>
+    public Path? CycleBadge { get; set; }
     /// <summary>[quiet] En son UYGULANAN opaklık hedefi. "Değişmediyse dokunma" kapısının girdisi: koşarken
     /// statü itişi saniyede birkaç kez gelir ve her seferinde 3.1 saniyelik bir hold-fade doğurmak sönmeyi
     /// sonsuza dek ertelerdi (kameradaki Zeno korumasının eşi). <c>NaN</c> = henüz hiç uygulanmadı.</summary>
