@@ -76,7 +76,7 @@ public class EventStreamTests
         var vm = NewVm();
         // 160 skipped olay → tampon 160 (≤260), render dilimi 150 ile sınırlı.
         for (int i = 0; i < 160; i++)
-            vm.OnEvent(new ProjectSkippedEvent("r1", $@"C:\p\proj{i}.csproj", "up to date"));
+            vm.OnEvent(new ProjectSkippedEvent("r1", $@"C:\p\proj{i}.csproj", SkipReasons.UpToDate));
 
         var (view, window, _) = Realize(vm);
 
@@ -96,7 +96,7 @@ public class EventStreamTests
     public void The_active_line_and_row_text_are_tabular()
     {
         var vm = NewVm();
-        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "up to date"));
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));
         var (view, window, _) = Realize(vm);
 
         Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(view.ActiveText));
@@ -222,7 +222,7 @@ public class EventStreamTests
         Assert.Equal("A built (1.2s)", StreamText.Built("A", 1200));
         Assert.Equal("B built — dependency issue (3.4s)", StreamText.BuiltDependencyIssue("B", 3400));
         Assert.Equal("C failed — exit 1 (0.8s)", StreamText.Failed("C", "exit 1", 800));
-        Assert.Equal("D skipped — up to date", StreamText.Skipped("D", SkipReasons.UpToDate));
+        Assert.Equal($"D skipped — {SkipReasons.UpToDate}", StreamText.Skipped("D", SkipReasons.UpToDate));
         Assert.Equal("Sync — 8 to build, 28 up to date", StreamText.Sync(8, 28));
         Assert.Equal("Build started — 8 projects, parallelism 4", StreamText.BuildStarted(8, 4));
         Assert.Equal("Stopped — 5 remaining projects queued", StreamText.Stopped(5));
@@ -285,7 +285,7 @@ public class EventStreamTests
 
         var line = Assert.Single(vm.StreamEvents);
         // ESKİ kod: her zaman "a skipped — up to date" basardı (RED). Fix sonrası: gerçek reason (GREEN).
-        Assert.Equal("a skipped — in dependency cycle", line.Text);
+        Assert.Equal($"a skipped — {SkipReasons.InDependencyCycle}", line.Text);
     }
 
     /// <summary>[Task 2] Cycles koşusunda kapsam-dışı (<see cref="SkipReasons.OutOfCycleScope"/>) skip'ler
@@ -305,9 +305,9 @@ public class EventStreamTests
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
 
         // ESKİ kod: 4 ayrı "skipped — up to date" satırı basardı (RED — kapsam-dışı satır YOK, tek toplu satır VAR).
-        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.Contains("not needed by a dependency cycle"));
+        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.Contains(SkipReasons.OutOfCycleScope));
         var outside = vm.StreamEvents.Single(l => l.Text == StreamText.OutsideCycleScope(3));
-        var upToDate = vm.StreamEvents.Single(l => l.Text == "y skipped — up to date");
+        var upToDate = vm.StreamEvents.Single(l => l.Text == StreamText.Skipped("y", SkipReasons.UpToDate));
         // Toplu satır, sıradaki stream olayından (buradaki up-to-date skip'in kendi PushStream'i) ÖNCE yayılır.
         Assert.True(vm.StreamEvents.IndexOf(outside) < vm.StreamEvents.IndexOf(upToDate));
     }
@@ -325,7 +325,8 @@ public class EventStreamTests
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\y.csproj", SkipReasons.UpToDate));
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\z.csproj", SkipReasons.UpToDate));
 
-        Assert.Equal(3, vm.StreamEvents.Count(l => l.Text.EndsWith("skipped — up to date", StringComparison.Ordinal)));
+        Assert.Equal(3, vm.StreamEvents.Count(
+            l => l.Text.EndsWith("skipped — " + SkipReasons.UpToDate, StringComparison.Ordinal)));
     }
 
     // ============================================================ §12 — tampon cap 260 doyumu

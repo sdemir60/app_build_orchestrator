@@ -118,7 +118,7 @@ public class EventStreamWiringTests
 
         // Olaylar realize'den SONRA akar → satırlar artımlı koldan doğar ve içerik CANLI büyür (üretimdeki gibi).
         for (int i = 0; i < 60; i++)
-            vm.OnEvent(new ProjectSkippedEvent("r1", $@"C:\p\proj{i}.csproj", "up to date"));
+            vm.OnEvent(new ProjectSkippedEvent("r1", $@"C:\p\proj{i}.csproj", SkipReasons.UpToDate));
 
         // İçerik viewport'u GERÇEKTEN aşmalı — aksi halde "dipten uzaklık" hep 0 kalır ve test vacuous olurdu.
         DispatcherPump.PumpUntil(

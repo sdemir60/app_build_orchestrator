@@ -60,7 +60,7 @@ public class IpcMessagesTests
             new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "  A.cs(3,5): error CS0103: ..."),
             new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400),
             new ProjectFailedEvent("r1", @"C:\p\b.csproj", 900, "exit 1"),
-            new ProjectSkippedEvent("r1", @"C:\p\c.csproj", "in dependency cycle"),
+            new ProjectSkippedEvent("r1", @"C:\p\c.csproj", SkipReasons.InDependencyCycle),
             new RunCompletedEvent("r1", RunOutcome.Stopped, 3, 1, 2, 171, 65000),
             new ProjectLogChunkEvent(@"C:\p\a.csproj", 0, "line\n", true, 42),
         ];
@@ -192,15 +192,17 @@ public class IpcMessagesTests
         var legacy = Assert.IsType<ProjectSkippedEvent>(JsonSerializer.Deserialize<IpcEvent>(legacyLine, IpcJson.Options));
         Assert.False(legacy.CycleUnconverged);
 
-        IpcEvent unconverged = new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "cycle did not converge at this signature", CycleUnconverged: true);
+        IpcEvent unconverged = new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.CycleNonConvergent, CycleUnconverged: true);
         string json = JsonSerializer.Serialize(unconverged, IpcJson.Options);
         Assert.Contains("\"cycleUnconverged\":true", json);
         Assert.Equal(unconverged, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
     /// <summary>[Task 2] <see cref="SkipReasons"/>'ın dört değeri NDJSON'a giden gerçek WIRE metnidir — tek
-    /// pin burada literal olarak sabitlenir; diğer testler (Supervisor/App) kopya YASAK gereği bu sabitlere
-    /// REFERANS verir, literal'i tekrar yazmaz.</summary>
+    /// pin burada literal olarak sabitlenir; diğer testler (Supervisor/Core/App) kopya YASAK gereği bu
+    /// sabitlere REFERANS verir, literal'i tekrar yazmaz (istisna: bu dosyadaki <c>legacyLine</c> ham JSON
+    /// metni — GEÇMİŞ bir NDJSON satırının disk üzerindeki BAYTLARINI simüle eder, bir sabite REFERANS
+    /// vermesi anlamsızdır).</summary>
     [Fact]
     public void SkipReasons_constants_are_pinned_as_the_literal_wire_text()
     {
