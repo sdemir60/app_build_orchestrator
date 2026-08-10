@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -25,9 +26,17 @@ public static class StreamText
     public static string Failed(string name, string reason, long durationMs) =>
         string.Format(CultureInfo.InvariantCulture, "{0} failed — {1} ({2})", name, reason, DurationFormat.Duration(durationMs));
 
-    /// <summary>build-data.js:417 — <c>{name} skipped — up to date</c>.</summary>
-    public static string Skipped(string name) =>
-        string.Format(CultureInfo.InvariantCulture, "{0} skipped — up to date", name);
+    /// <summary>build-data.js:417 — <c>{name} skipped — {reason}</c>. [Task 2] <paramref name="reason"/> artık
+    /// <see cref="ProjectSkippedEvent.Reason"/>'dan GELİR (yalın — tek kaynak <see cref="SkipReasons"/>);
+    /// "up to date" hardcode edilmiş SABİT değildi, önceki sürüm reason'ı yok sayardı.</summary>
+    public static string Skipped(string name, string reason) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} skipped — {1}", name, reason);
+
+    /// <summary>[Task 2/cycles] Cycles koşusunda <see cref="SkipReasons.OutOfCycleScope"/> gerekçeli skip'ler
+    /// proje başına satır YAZMAZ — 150+ kapsam-dışı proje ekranı fırtınaya boğardı. Toplanıp TEK Info satırında
+    /// raporlanır: <c>{n} outside cycle scope — skipped</c>.</summary>
+    public static string OutsideCycleScope(int count) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} outside cycle scope — skipped", count);
 
     /// <summary>build-data.js:284 — <c>Sync — {n} to build, {m} up to date</c>.</summary>
     public static string Sync(int toBuild, int upToDate) =>

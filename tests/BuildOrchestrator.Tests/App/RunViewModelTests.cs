@@ -110,7 +110,7 @@ public class RunViewModelTests
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status); // pending ama cycle üyesi
 
         // Motor konuştu: glyph artık ONUN cevabıdır; üyelik satırda (InCycle) DURUR ve rozete taşınır.
-        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "in dependency cycle"));
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.InDependencyCycle));
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Skipped, row.Status);
         Assert.True(row.InCycle);
     }
@@ -1054,7 +1054,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
 
-        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.CycleNonConvergent, CycleUnconverged: true));
 
         var row = Assert.Single(vm.Projects);
         Assert.True(row.CycleUnconverged);
@@ -1067,7 +1067,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\b.csproj";
 
-        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "skipped — up to date")); // CycleUnconverged default false
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.UpToDate)); // CycleUnconverged default false
 
         var row = Assert.Single(vm.Projects);
         Assert.False(row.CycleUnconverged);
@@ -1086,7 +1086,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
 
-        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.CycleNonConvergent, CycleUnconverged: true));
         var row = Assert.Single(vm.Projects);
         Assert.True(row.CycleUnconverged); // ön-koşul: bayrak gerçekten set edildi
 
@@ -1106,7 +1106,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\a.csproj";
 
-        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, "cycle did not converge at this signature", CycleUnconverged: true));
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.CycleNonConvergent, CycleUnconverged: true));
         var row = Assert.Single(vm.Projects);
         Assert.True(row.CycleUnconverged); // ön-koşul
 

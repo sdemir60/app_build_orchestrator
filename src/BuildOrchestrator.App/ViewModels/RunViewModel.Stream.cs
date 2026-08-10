@@ -22,6 +22,15 @@ public sealed partial class RunViewModel
     // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (Continue re-emit'te çift satır olmaz).
     private RunMode? _pendingRunStartMode;
 
+    // [Task 2/cycles] _pendingRunStartMode BuildPreview'da TEMİZLENİYOR (yukarıdaki alan) — kapsam-dışı
+    // toplayıcı ise RunCompleted'a kadar (koşunun SONUNA kadar) hangi modda olduğumuzu bilmek zorunda,
+    // bu yüzden AYRI bir alan: RunStartedEvent'te set edilir, EndRun'da sıfırlanmaz.
+    private RunMode? _streamRunMode;
+
+    // [Task 2/cycles] Cycles koşusunda SkipReasons.OutOfCycleScope gerekçeli skip'ler burada BİRİKİR (satır
+    // YAZILMAZ) — PushStream'in başında tek Info satırına flush edilir (bkz. PushStream).
+    private int _outOfScopeSkips;
+
     /// <summary>[D8] Duvar-saati zaman damgası kaynağı (stream satırı "HH:mm:ss") — testte deterministik enjekte
     /// edilebilir; üretimde <see cref="DateTimeOffset.Now"/>. Fırtına/elapsed saati (<c>_nowMs</c>) AYRIDIR
     /// (monoton ms; duvar-saati DEĞİL).</summary>
@@ -59,6 +68,7 @@ public sealed partial class RunViewModel
                 // hazır (BuildPreview deterministik olarak RunStarted'ı hemen izler, RunCoordinator.cs:456). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
+                _streamRunMode = e.Mode;
                 break;
 
             case BuildPreviewEvent:
@@ -102,7 +112,14 @@ public sealed partial class RunViewModel
                 break;
 
             case ProjectSkippedEvent e:
-                PushStream(StreamKind.Skip, e.ProjectId, StreamText.Skipped(ResolveName(e.ProjectId)));
+                // [Task 2/cycles] Kapsam-dışı skip proje başına satır YAZMAZ — sayaç birikir, sonraki
+                // PushStream'in başında tek toplu satıra flush edilir (ör. bir sonraki skip/built/completed).
+                if (_streamRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
+                {
+                    _outOfScopeSkips++;
+                    break;
+                }
+                PushStream(StreamKind.Skip, e.ProjectId, StreamText.Skipped(ResolveName(e.ProjectId), e.Reason));
                 break;
 
             // [cycle rounds/Task 8] Bir SCC'nin turu başladı — grubun tek ilerleme sinyali. ProjectId LİDERİN
@@ -131,6 +148,16 @@ public sealed partial class RunViewModel
 
     private void PushStream(StreamKind kind, string? projectId, string text)
     {
+        // [Task 2/cycles] Toplu kapsam-dışı satırı BURADA flush et — sayaç ÖNCE sıfırlanır (recursion guard'ı:
+        // aşağıdaki yinelenen PushStream çağrısı 0 görüp tekrar girmez). RunCompletedEvent her koşuda gelir,
+        // bu yüzden sayaç asla asılı kalmaz.
+        if (_outOfScopeSkips > 0)
+        {
+            int n = _outOfScopeSkips;
+            _outOfScopeSkips = 0;
+            PushStream(StreamKind.Info, null, StreamText.OutsideCycleScope(n));
+        }
+
         bool anyFailed = Counters.Failed > 0; // done glyph/renk yeşil↔kırmızı (prototip c.failed)
         var emission = _stream.Push(isFail: kind == StreamKind.Fail, _nowMs());
         string time = Console.WallClockFormat.Of(WallClock());

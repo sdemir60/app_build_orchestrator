@@ -797,7 +797,7 @@ public sealed class RunCoordinator(
                             foreach (string id in cycle)
                             {
                                 seed[id] = BuildResult.Skipped;
-                                upToDateSkips.Add((id, "cycle did not converge at this signature", CycleUnconverged: true));
+                                upToDateSkips.Add((id, SkipReasons.CycleNonConvergent, CycleUnconverged: true));
                             }
                         }
                     }
@@ -826,7 +826,7 @@ public sealed class RunCoordinator(
                     if (cyclesRun && !cycleScope!.Contains(n.Id))
                     {
                         seed[n.Id] = BuildResult.Skipped;
-                        upToDateSkips.Add((n.Id, "skipped — not needed by a dependency cycle", CycleUnconverged: false));
+                        upToDateSkips.Add((n.Id, SkipReasons.OutOfCycleScope, CycleUnconverged: false));
                         continue;
                     }
                     if (!cyclesRun && n.InCycle) continue;
@@ -836,7 +836,7 @@ public sealed class RunCoordinator(
                     if (n.InCycle && !cycleUpToDate.Contains(n.Id)) continue;
                     if (n.WillBuild != false) continue;
                     seed[n.Id] = BuildResult.Skipped;
-                    upToDateSkips.Add((n.Id, "skipped — up to date", CycleUnconverged: false));
+                    upToDateSkips.Add((n.Id, SkipReasons.UpToDate, CycleUnconverged: false));
                 }
                 if (seed.Count > 0) schedulerSeed = new RunSnapshot(seed, [], 0);
             }

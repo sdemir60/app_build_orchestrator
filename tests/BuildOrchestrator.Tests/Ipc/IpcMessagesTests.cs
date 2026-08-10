@@ -198,6 +198,18 @@ public class IpcMessagesTests
         Assert.Equal(unconverged, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    /// <summary>[Task 2] <see cref="SkipReasons"/>'ın dört değeri NDJSON'a giden gerçek WIRE metnidir — tek
+    /// pin burada literal olarak sabitlenir; diğer testler (Supervisor/App) kopya YASAK gereği bu sabitlere
+    /// REFERANS verir, literal'i tekrar yazmaz.</summary>
+    [Fact]
+    public void SkipReasons_constants_are_pinned_as_the_literal_wire_text()
+    {
+        Assert.Equal("up to date", SkipReasons.UpToDate);
+        Assert.Equal("not needed by a dependency cycle", SkipReasons.OutOfCycleScope);
+        Assert.Equal("in dependency cycle", SkipReasons.InDependencyCycle);
+        Assert.Equal("cycle did not converge at this signature", SkipReasons.CycleNonConvergent);
+    }
+
     /// <summary>[cycles] Döngü derlemesinin KOMUT yüzeyi artık bir bayrak değil, bir MOD'dur: <see
     /// cref="RunMode.Cycles"/>. İki iddia:
     /// (a) tel üzerinde camelCase METİN olarak gider (<c>"cycles"</c>) — sayı olarak DEĞİL, bu yüzden enum'a

@@ -97,7 +97,7 @@ public class CycleRoundsTests
         var skipped = events.OfType<ProjectSkippedEvent>().ToList();
         Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
         // Gerekçe METNİ özelliğin öncesiyle BİREBİR aynı olmalı — App'in rozeti/sayaçları bu metne göre ayrışmasın.
-        Assert.All(skipped, e => Assert.Equal("in dependency cycle", e.Reason));
+        Assert.All(skipped, e => Assert.Equal(SkipReasons.InDependencyCycle, e.Reason));
         Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
 
         var done = Assert.IsType<RunCompletedEvent>(events[^1]);
@@ -137,7 +137,7 @@ public class CycleRoundsTests
 
             var run2Skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], run2Skips.Select(e => e.ProjectId));
-            Assert.All(run2Skips, e => Assert.Equal("in dependency cycle", e.Reason));
+            Assert.All(run2Skips, e => Assert.Equal(SkipReasons.InDependencyCycle, e.Reason));
             Assert.All(run2Skips, e => Assert.False(e.CycleUnconverged));
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
@@ -183,7 +183,11 @@ public class CycleRoundsTests
 
         var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
         Assert.Equal(Id("Z"), skipped.ProjectId);
-        Assert.Equal("skipped — not needed by a dependency cycle", skipped.Reason);
+        // [DEĞİŞEN KURAL/Task 2] Eski iddia: reason "skipped — not needed by a dependency cycle" — öneki
+        // İÇİNDE taşırdı. Ölçülen sorun: decision.log formülü ("{name}: skipped — {reason}") bu önekli
+        // reason'la birleşince çift önek basıyordu, stream katmanı da kendi önekini eklerdi. Reason artık
+        // YALIN (tek kaynak SkipReasons.OutOfCycleScope) — "skipped — " önekini yalnız onu basan katman ekler.
+        Assert.Equal(SkipReasons.OutOfCycleScope, skipped.Reason);
         Assert.False(skipped.CycleUnconverged);
 
         // Önizleme koşunun GERÇEKTEN yapacağını gösterir: kapsam dışı Z gri, kapsamdaki X amber kalır.
@@ -209,7 +213,8 @@ public class CycleRoundsTests
         Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // X derlenmedi
         var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
         Assert.Equal(Id("X"), skipped.ProjectId);
-        Assert.Equal("skipped — up to date", skipped.Reason);    // kapsam dışı DEĞİL — sıradan incremental
+        // [DEĞİŞEN KURAL/Task 2] bkz. Task-2 notu — reason artık YALIN, tek kaynak SkipReasons.
+        Assert.Equal(SkipReasons.UpToDate, skipped.Reason);    // kapsam dışı DEĞİL — sıradan incremental
     }
 
     /// <summary>Cycles koşusu da INCREMENTAL'dır: bileşik imzası TEMİZ (state'teki <c>BuiltSignature</c> ile
@@ -239,7 +244,8 @@ public class CycleRoundsTests
         var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
         Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
         // Sıradan "güncel" skip'iyle AYNI gerekçe — bu bir döngü ARIZASI değil, incremental'in normal işleyişi.
-        Assert.All(skipped, e => Assert.Equal("skipped — up to date", e.Reason));
+        // [DEĞİŞEN KURAL/Task 2] bkz. Task-2 notu — reason artık YALIN, tek kaynak SkipReasons.
+        Assert.All(skipped, e => Assert.Equal(SkipReasons.UpToDate, e.Reason));
         Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
     }
 
@@ -710,7 +716,7 @@ public class CycleRoundsTests
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4", "A#5", "B#5"], rec.Calls);
             Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
-                e => e.Reason == "cycle did not converge at this signature");
+                e => e.Reason == SkipReasons.CycleNonConvergent);
             // Ve yakınsadığı için ARTIK taze imza persist edilir — üçüncü bir Build boşuna tur harcamaz.
             Assert.Equal("sig", store.Load()[Id("A")].BuiltSignature);
             Assert.Equal("sig", store.Load()[Id("B")].BuiltSignature);
@@ -746,7 +752,7 @@ public class CycleRoundsTests
             // Pre-skip, up-to-date pre-skip'iyle AYNI kanaldan (DecideSkipped) raporlanır.
             var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
-            Assert.All(skipped, e => Assert.Equal("cycle did not converge at this signature", e.Reason));
+            Assert.All(skipped, e => Assert.Equal(SkipReasons.CycleNonConvergent, e.Reason));
             // [Task 8] Bu kanaldan gelen skip TİPLİ bir yakınsamama bayrağı taşır (metinden ÇIKARILMAZ) —
             // App'in sayacı/rozeti bunu okuyup kalıcı kırık bir döngüyü sıradan "güncel" skip'ten ayırt eder.
             Assert.All(skipped, e => Assert.True(e.CycleUnconverged));
@@ -845,7 +851,7 @@ public class CycleRoundsTests
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.True(invoker.Requests.Count > before); // MSBuild GERÇEKTEN çağrıldı, pre-skip edilmedi
             Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
-                e => e.Reason == "cycle did not converge at this signature");
+                e => e.Reason == SkipReasons.CycleNonConvergent);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

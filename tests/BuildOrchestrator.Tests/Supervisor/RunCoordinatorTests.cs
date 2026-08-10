@@ -1476,7 +1476,11 @@ public class RunCoordinatorTests
 
             var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
             Assert.Equal(Id("Clean"), skipped.ProjectId);
-            Assert.Equal("skipped — up to date", skipped.Reason);
+            // [DEĞİŞEN KURAL/Task 2] Eski iddia: reason "skipped — " önekiyle taşınırdı ("skipped — up to
+            // date"). Ölçülen sorun: decision.log formülü ("{name}: skipped — {reason}") bu önekli reason'la
+            // birleşince çift önek basıyordu ("skipped — skipped — up to date") — stream katmanı da kendi
+            // önekini eklediği için aynı sorun oradaydı. Reason artık YALIN, tek kaynak SkipReasons.
+            Assert.Equal(SkipReasons.UpToDate, skipped.Reason);
             // [cycle rounds/Task 8] Sıradan "güncel" skip'i yakınsamama bayrağı TAŞIMAZ — ayırt edici tip
             // alanı burada, tavana dayanmış bir SCC pre-skip'inde true'dur (CycleRoundsTests).
             Assert.False(skipped.CycleUnconverged);
@@ -1548,7 +1552,8 @@ public class RunCoordinatorTests
             // Kontrol: pre-skip mekanizması bu run'da CANLI (yoksa Up'ın derlenmesi önemsiz olurdu).
             var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
             Assert.Equal(Id("Solo"), skipped.ProjectId);
-            Assert.Equal("skipped — up to date", skipped.Reason);
+            // [DEĞİŞEN KURAL/Task 2] bkz. yukarıdaki not — reason artık YALIN, tek kaynak SkipReasons.
+            Assert.Equal(SkipReasons.UpToDate, skipped.Reason);
             Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult); // yeşile dönünce kayıt düzelir
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }

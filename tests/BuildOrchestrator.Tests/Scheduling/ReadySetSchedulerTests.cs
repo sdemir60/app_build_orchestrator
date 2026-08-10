@@ -1,3 +1,4 @@
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Scheduling;
 
@@ -115,8 +116,8 @@ public class ReadySetSchedulerTests
         var sut = new ReadySetScheduler(plan);
 
         Assert.Equal(2, sut.PreSkipped.Count);
-        Assert.Contains(("X", "in dependency cycle"), sut.PreSkipped);
-        Assert.Contains(("Y", "in dependency cycle"), sut.PreSkipped);
+        Assert.Contains(("X", SkipReasons.InDependencyCycle), sut.PreSkipped);
+        Assert.Contains(("Y", SkipReasons.InDependencyCycle), sut.PreSkipped);
         Assert.Equal(BuildResult.Skipped, sut.Completed["X"]);
         Assert.Equal(BuildResult.Skipped, sut.Completed["Y"]);
 
@@ -301,7 +302,7 @@ public class ReadySetSchedulerTests
         var scheduler = new ReadySetScheduler(plan);
 
         Assert.Equal(2, scheduler.PreSkipped.Count);
-        Assert.All(scheduler.PreSkipped, p => Assert.Equal("in dependency cycle", p.Reason));
+        Assert.All(scheduler.PreSkipped, p => Assert.Equal(SkipReasons.InDependencyCycle, p.Reason));
     }
 
     [Fact]
