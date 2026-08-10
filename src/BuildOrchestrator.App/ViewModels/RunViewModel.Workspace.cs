@@ -49,6 +49,18 @@ public sealed partial class RunViewModel
     /// sormak iki tarafın sessizce ayrışabileceği ikinci bir cevap yaratırdı.</summary>
     public bool HasCycles => _cycleGroups is { Count: > 0 };
 
+    /// <summary>[Task 6] Son topolojideki SCC (döngü grubu) SAYISI — Cycles buton tooltip'inin ilk sayısı
+    /// (<see cref="Views.ActionBar.RefreshCyclesTooltip"/>'in okuduğu iki sayıdan biri). <c>_cycleGroups</c>'un
+    /// YALIN yansımasıdır, ikinci bir sayaç TUTULMAZ (kopya YASAK).</summary>
+    public int CycleGroupCount => _cycleGroups?.Count ?? 0;
+
+    /// <summary>[Task 6] Son topolojideki TÜM döngü üyelerinin TOPLAMI — tooltip'in ikinci sayısı.
+    /// <see cref="CycleGroups"/>'a üye API'si EKLENMEDİ (brief kısıtı, kopya YASAK): topoloji olayının ham
+    /// <c>Cycles</c> listesi zaten <see cref="OnWorkspaceTopology"/>'ye gelir, toplam ORADA sayılıp burada
+    /// saklanır.</summary>
+    public int CycleMemberCount => _cycleMemberCount;
+    private int _cycleMemberCount;
+
     /// <summary>Stop istendi: motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ile cevap vermelidir —
     /// sessizlik saati burada da kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe). Faz set eden
     /// HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
@@ -262,6 +274,11 @@ public sealed partial class RunViewModel
         // sürdüğü haritanın AYNI gövdesiyle (kopya YASAK). App'in tek sorusu üyeliktir: koşan bir grupta hangi
         // Started üye sırasını bekliyor (bkz. OnProjectStarted).
         _cycleGroups = CycleGroups.From(e.Nodes, e.Cycles);
+        // [Task 6] Cycles düğmesinin tooltip'i grup + üye toplamını okur (CycleGroupCount/CycleMemberCount).
+        // Değer AÇIKÇA duyurulur: HasCycles boole'u aynı kalsa da (ör. 2→3 döngü) sayılar değişmiş olabilir —
+        // türetilmiş özelliğin kendi bildirimi yok (OnBranchList'in ActiveBranchName deseniyle AYNI).
+        _cycleMemberCount = e.Cycles.Sum(scc => scc.Count);
+        OnPropertyChanged(nameof(HasCycles));
         // [D5] Kısa-ad öneki topoloji adlarından türetilir (tek otorite) — aşağıda her satıra itilir.
         _graphNamePrefix = GraphNode.CommonDotPrefix(e.Nodes.Select(n => n.Name).ToList());
 

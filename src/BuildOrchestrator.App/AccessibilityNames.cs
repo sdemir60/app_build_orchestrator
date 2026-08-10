@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace BuildOrchestrator.App;
 
 /// <summary>
@@ -23,6 +25,17 @@ public static class AccessibilityNames
     /// <summary>[cycles] Sync'in yanındaki düğme. UIA adı düğmenin KISA etiketinden ("Cycles") daha açıktır:
     /// ikisi ayrı hedefler için yazılır — etiket bara sığmalı, UIA adı işlevi anlatmalı.</summary>
     public const string CyclesButton = "Build dependency cycles";
+
+    /// <summary>[Task 6] Cycles düğmesinin ToolTip'i — topolojide döngü VARSA sayılarla zenginleşir
+    /// (<see cref="CyclesButton"/> ÖNEKİYLE, kopya YASAK: literal yalnız yukarıdaki sabitte durur); yokken
+    /// <see cref="CyclesButton"/>'ın AYNEN kendisidir. UIA adı (AutomationProperties.Name) bu metinden AYRIDIR
+    /// ve HER İKİ durumda <see cref="CyclesButton"/> SABİTİNDE kalır — ekran okuyucu kontrolün İŞLEVİNİ
+    /// duyurur, gövde sayıları DEĞİL (<c>ActionBar.BuildButtons</c>'taki <c>AutomationProperties.SetName</c>).</summary>
+    public static string CyclesButtonTooltip(int cycleCount, int memberCount) =>
+        cycleCount > 0
+            ? string.Format(CultureInfo.InvariantCulture, "{0} — {1} cycles · {2} projects", CyclesButton, cycleCount, memberCount)
+            : CyclesButton;
+
     public const string StopButton = "Stop build";
     public const string BranchChip = "Branch — choose build target";
     public const string WorktreeChip = "Worktree — build isolation";

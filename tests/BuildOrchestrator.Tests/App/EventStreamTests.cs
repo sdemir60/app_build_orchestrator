@@ -443,6 +443,103 @@ public class EventStreamTests
             l => l.Text.EndsWith("skipped — " + SkipReasons.UpToDate, StringComparison.Ordinal)));
     }
 
+    // ============================================================ [Task 6] — build sonu cycles ipucu
+
+    /// <summary>[Task 6] Bir Build koşusu, üyeleri hâlâ dirty (WillBuild==true) döngü üyeleri bırakarak biterse
+    /// Completed satırından HEMEN SONRA "N cycle projects have pending changes — run Cycles" Info satırı gelir.
+    /// Normal Build cycle üyelerine hiç dokunmaz (<c>SkipReasons.InDependencyCycle</c> pre-skip'i) — bu yüzden
+    /// üyeler build-preview'ın dirty=true'sunu (WillBuild) hiç KAYBETMEZ.</summary>
+    [Fact]
+    public void A_completed_build_pushes_a_cycles_hint_after_completed_when_dirty_cycle_members_remain()
+    {
+        const string m1 = @"C:\p\m1.csproj";
+        const string m2 = @"C:\p\m2.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
+            [[m1, m2]], [], []));
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(m1, "M1", WillBuild: true),
+            new BuildPreviewItem(m2, "M2", WillBuild: true),
+        ]));
+        vm.OnEvent(new ProjectSkippedEvent("r1", m1, SkipReasons.InDependencyCycle));
+        vm.OnEvent(new ProjectSkippedEvent("r1", m2, SkipReasons.InDependencyCycle));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 0, Failed: 0, Skipped: 2, Queued: 0, DurationMs: 500));
+
+        var lines = vm.StreamEvents.ToList();
+        int completedIndex = lines.FindIndex(l => l.Text.StartsWith("Completed", StringComparison.Ordinal));
+        int hintIndex = lines.FindIndex(l => l.Text == StreamText.CyclesHint(2));
+        Assert.True(completedIndex >= 0, "Completed satırı bulunamadı");
+        Assert.True(hintIndex > completedIndex, "ipucu satırı Completed'tan SONRA gelmeli");
+        Assert.Equal(StreamKind.Info, lines[hintIndex].Kind);
+        Assert.Null(lines[hintIndex].ProjectId);
+    }
+
+    /// <summary>[Task 6] Bir Cycles koşusunun kendisi ipucu YAYMAZ — zaten o modda kullanıcı doğru düğmeyi
+    /// kullanıyordur; aynı öneriyi tekrarlamak gürültüdür.</summary>
+    [Fact]
+    public void A_cycles_run_completion_does_not_push_the_hint_even_with_dirty_members_remaining()
+    {
+        const string m1 = @"C:\p\m1.csproj";
+        const string m2 = @"C:\p\m2.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
+            [[m1, m2]], [], []));
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(m1, "M1", WillBuild: true),
+            new BuildPreviewItem(m2, "M2", WillBuild: true),
+        ]));
+        // [tavan] Tur tavanına dayanıp yakınsamadan bitebilir — üyeler yine de WillBuild=true kalabilir.
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 0, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
+
+        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
+    }
+
+    /// <summary>[Task 6] n==0 (döngü üyesi yok ya da hepsi zaten temiz) iken satır YOK — boş bir ipucu gürültü
+    /// olurdu.</summary>
+    [Fact]
+    public void A_completed_build_pushes_no_hint_when_no_cycle_member_is_dirty()
+    {
+        const string a = @"C:\p\a.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(a, "A", 0)], [], [], []));
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(a, "A", WillBuild: true)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
+
+        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
+    }
+
+    /// <summary>[Task 6] Outcome=Stopped dalı Completed satırını hiç basmaz — ipucu da yayınlanmaz (kod yolu
+    /// baştan ayrı dal).</summary>
+    [Fact]
+    public void A_stopped_run_pushes_no_hint_even_with_dirty_cycle_members_remaining()
+    {
+        const string m1 = @"C:\p\m1.csproj";
+        const string m2 = @"C:\p\m2.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
+            [[m1, m2]], [], []));
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(m1, "M1", WillBuild: true),
+            new BuildPreviewItem(m2, "M2", WillBuild: true),
+        ]));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 0, Failed: 0, Skipped: 0, Queued: 2, DurationMs: 500));
+
+        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
+    }
+
     // ============================================================ §12 — tampon cap 260 doyumu
 
     [Fact]

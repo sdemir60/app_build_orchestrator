@@ -85,6 +85,14 @@ public static class StreamText
             "Completed — {0} succeeded · {1} skipped · {2}", succeeded, skipped, dur);
     }
 
+    /// <summary>[Task 6] Bir Build/Continue/Rebuild koşusu bitince, döngü üyesi projelerde HÂLÂ bekleyen
+    /// (WillBuild==true) değişiklik varsa kullanıcıya bunu Cycles'ın derleyeceğini hatırlatır — normal Build
+    /// döngü üyelerine dokunmaz, kullanıcı "hata aldım, baktım döngüdeki projeye bağlı" çıkarımını burada
+    /// yapmadan önce ekrandan okur. <c>RunCompletedEvent</c>'in Completed satırından SONRA yayılır
+    /// (<c>RunViewModel.Stream</c>).</summary>
+    public static string CyclesHint(int count) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} cycle projects have pending changes — run Cycles", count);
+
     /// <summary>[cycle rounds/Task 8] Tur göstergesi — <c>CycleRoundStartedEvent</c>'in TEK metin kaynağı:
     /// <c>cycle round {round}/{cap} — {memberCount} members</c>.
     /// <para><b>[DEĞİŞEN KURAL — Task 4]</b> Eski iddia: <c>{leaderName} (+{memberCount-1} more)</c> — tek lider

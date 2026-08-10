@@ -177,8 +177,20 @@ public sealed partial class RunViewModel
                 if (e.Outcome == RunOutcome.Stopped)
                     PushStream(StreamKind.Info, null, StreamText.Stopped(e.Queued)); // stopped → info (parıltı YOK)
                 else
+                {
                     PushStream(StreamKind.Done, null,
                         StreamText.Completed(e.Failed, e.Succeeded, e.Skipped, e.DepIssueCount, e.DurationMs));
+                    // [Task 6] Bu dal yalnız e.Outcome != Stopped iken koşar (yukarıdaki if'in AKSİ) — Cycles
+                    // koşusunun KENDİSİ bu satırı yaymaz (zaten o modda, ipucu anlamsız). Sayaç Projects'ten
+                    // OKUNUR: WillBuild bir Cycles koşusuyla temizlenmediği sürece (döngü üyesi normal Build'de
+                    // pre-skip edilir, üye asla invoke edilmez) InCycle&&WillBuild==true satırlar "hâlâ kirli
+                    // döngü üyesi" demektir.
+                    if (_streamRunMode != RunMode.Cycles)
+                    {
+                        int n = Projects.Count(p => p.InCycle && p.WillBuild == true);
+                        if (n > 0) PushStream(StreamKind.Info, null, StreamText.CyclesHint(n));
+                    }
+                }
                 _stream.EndRun();
                 SyncActiveLine();
                 // [Task 4] Koşu bitti — round ilerleme takibi bir sonraki run için sıfırlanır.
