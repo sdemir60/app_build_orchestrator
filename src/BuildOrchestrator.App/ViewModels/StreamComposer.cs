@@ -36,9 +36,12 @@ public sealed class StreamComposer
     private int _count;
 
     // Aktif satır: building projeler BAŞLAMA sırasında; en son eleman = en son başlayan.
-    private readonly List<(string Id, string Name)> _building = [];
+    // [Task 4] Detail HER elemanla birlikte taşınır: FinishBuilding aktif satırı en son başlayan hâlâ building
+    // projeye ATLADIĞINDA o projenin KENDİ detayı (StartBuilding'de verilmiş olan) geri gelsin — null'a düşmesin.
+    private readonly List<(string Id, string Name, string? Detail)> _building = [];
     private string? _activeId;
     private string? _activeName;
+    private string? _activeDetail;
     private long _activeGeneration;
 
     /// <summary>Tam tampon uzunluğu (≤260) — "{n} events" sayacı.</summary>
@@ -46,8 +49,12 @@ public sealed class StreamComposer
 
     public string? ActiveProjectId => _activeId;
     public string? ActiveName => _activeName;
-    /// <summary>Aktif satır metni "<c>{name} building…</c>" ya da hiç building yoksa <c>null</c>.</summary>
-    public string? ActiveText => _activeName is null ? null : _activeName + " building…";
+    /// <summary>Aktif satır metni: detay yoksa <c>"{name} building…"</c>, varsa <c>"{name} building… · {detail}"</c>
+    /// (ör. <c>"B building… · member 2/15 · round 1/3"</c> — bkz. <see cref="StreamText.CycleMemberDetail"/>).
+    /// Hiç building yoksa <c>null</c>.</summary>
+    public string? ActiveText => _activeName is null
+        ? null
+        : _activeDetail is null ? _activeName + " building…" : _activeName + " building… · " + _activeDetail;
     /// <summary>Aktif proje her DEĞİŞTİĞİNDE artar — görünüm bunu izleyip daktiloyu yeniden başlatır
     /// (prototip <c>activeLine.id</c> anahtarı).</summary>
     public long ActiveGeneration => _activeGeneration;
@@ -66,11 +73,15 @@ public sealed class StreamComposer
         return new Emission(_nextId++, burst || isFail);
     }
 
-    /// <summary>Bir proje build'e başladı — aktif satır O projeye kurulur (BuildApp/build-data.js:448-449).</summary>
-    public void StartBuilding(string id, string name, long nowMs)
+    /// <summary>Bir proje build'e başladı — aktif satır O projeye kurulur (BuildApp/build-data.js:448-449).
+    /// [Task 4] <paramref name="detail"/> — cycle round üye/tur ilerlemesi (<see
+    /// cref="StreamText.CycleMemberDetail"/>) gibi ek bağlam; üye olmayan projeler için <c>null</c>.</summary>
+    public void StartBuilding(string id, string name, long nowMs, string? detail = null)
     {
-        if (!_building.Any(b => IdEq(b.Id, id))) _building.Add((id, name));
-        SetActive(id, name, nowMs);
+        int idx = _building.FindIndex(b => IdEq(b.Id, id));
+        if (idx < 0) _building.Add((id, name, detail));
+        else _building[idx] = (id, name, detail); // aynı proje yeniden Started olursa (ör. yeni tur) detay tazelenir
+        SetActive(id, name, nowMs, detail);
     }
 
     /// <summary>Bir projenin build'i bitti (succeeded/failed). Aktif proje BUYSA en son başlayan hâlâ building
@@ -80,7 +91,7 @@ public sealed class StreamComposer
         _building.RemoveAll(b => IdEq(b.Id, id));
         if (_activeId is not null && IdEq(_activeId, id))
         {
-            if (_building.Count > 0) { var nw = _building[^1]; SetActive(nw.Id, nw.Name, nowMs); }
+            if (_building.Count > 0) { var nw = _building[^1]; SetActive(nw.Id, nw.Name, nowMs, nw.Detail); }
             else ClearActive();
         }
     }
@@ -95,13 +106,21 @@ public sealed class StreamComposer
 
     // [D3 §1] nowMs artık kullanılmıyor (fırtına aktif satırı GATE ETMEZ — yalnız tampon satırları, bkz. Push);
     // parametre StartBuilding/FinishBuilding'in zaman API sözleşmesiyle uyum için korunur.
-    private void SetActive(string id, string name, long nowMs)
+    private void SetActive(string id, string name, long nowMs, string? detail)
     {
         _ = nowMs;
         // Aktif proje DEĞİŞMİYORSA (aynı id+ad) generation artırma — daktilo boş yere yeniden koşmasın.
-        if (_activeId is not null && IdEq(_activeId, id) && _activeName == name) return;
+        // [Task 4] detail FARKLIYSA metin yine de tazelenir (görünüm ActiveText'i yeniden okur) ama generation
+        // ARTMAZ — daktilo bir üyeden diğerine geçişte zaten yeni id ile baştan koşar, salt detay güncellemesi
+        // (ör. aynı proje için tur bilgisi tazelenmesi) daktiloyu yeniden BAŞLATMAMALI.
+        if (_activeId is not null && IdEq(_activeId, id) && _activeName == name)
+        {
+            _activeDetail = detail;
+            return;
+        }
         _activeId = id;
         _activeName = name;
+        _activeDetail = detail;
         _activeGeneration++;
     }
 
@@ -110,6 +129,7 @@ public sealed class StreamComposer
         if (_activeId is null) return;
         _activeId = null;
         _activeName = null;
+        _activeDetail = null;
         _activeGeneration++;
     }
 

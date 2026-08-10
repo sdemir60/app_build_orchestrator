@@ -1,5 +1,6 @@
 namespace BuildOrchestrator.Core.Scheduling;
 
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
 /// <summary>
@@ -94,7 +95,7 @@ public sealed class ReadySetScheduler
             if (_groups is null && node.InCycle && !_completed.ContainsKey(node.Id))
             {
                 _completed[node.Id] = BuildResult.Skipped;
-                _preSkipped.Add((node.Id, "in dependency cycle"));
+                _preSkipped.Add((node.Id, SkipReasons.InDependencyCycle));
             }
         }
     }

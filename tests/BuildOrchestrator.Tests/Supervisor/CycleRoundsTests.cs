@@ -97,7 +97,7 @@ public class CycleRoundsTests
         var skipped = events.OfType<ProjectSkippedEvent>().ToList();
         Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
         // Gerekçe METNİ özelliğin öncesiyle BİREBİR aynı olmalı — App'in rozeti/sayaçları bu metne göre ayrışmasın.
-        Assert.All(skipped, e => Assert.Equal("in dependency cycle", e.Reason));
+        Assert.All(skipped, e => Assert.Equal(SkipReasons.InDependencyCycle, e.Reason));
         Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
 
         var done = Assert.IsType<RunCompletedEvent>(events[^1]);
@@ -137,7 +137,7 @@ public class CycleRoundsTests
 
             var run2Skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], run2Skips.Select(e => e.ProjectId));
-            Assert.All(run2Skips, e => Assert.Equal("in dependency cycle", e.Reason));
+            Assert.All(run2Skips, e => Assert.Equal(SkipReasons.InDependencyCycle, e.Reason));
             Assert.All(run2Skips, e => Assert.False(e.CycleUnconverged));
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
@@ -183,7 +183,11 @@ public class CycleRoundsTests
 
         var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
         Assert.Equal(Id("Z"), skipped.ProjectId);
-        Assert.Equal("skipped — not needed by a dependency cycle", skipped.Reason);
+        // [DEĞİŞEN KURAL/Task 2] Eski iddia: reason "skipped — not needed by a dependency cycle" — öneki
+        // İÇİNDE taşırdı. Ölçülen sorun: decision.log formülü ("{name}: skipped — {reason}") bu önekli
+        // reason'la birleşince çift önek basıyordu, stream katmanı da kendi önekini eklerdi. Reason artık
+        // YALIN (tek kaynak SkipReasons.OutOfCycleScope) — "skipped — " önekini yalnız onu basan katman ekler.
+        Assert.Equal(SkipReasons.OutOfCycleScope, skipped.Reason);
         Assert.False(skipped.CycleUnconverged);
 
         // Önizleme koşunun GERÇEKTEN yapacağını gösterir: kapsam dışı Z gri, kapsamdaki X amber kalır.
@@ -209,7 +213,8 @@ public class CycleRoundsTests
         Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // X derlenmedi
         var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
         Assert.Equal(Id("X"), skipped.ProjectId);
-        Assert.Equal("skipped — up to date", skipped.Reason);    // kapsam dışı DEĞİL — sıradan incremental
+        // [DEĞİŞEN KURAL/Task 2] bkz. Task-2 notu — reason artık YALIN, tek kaynak SkipReasons.
+        Assert.Equal(SkipReasons.UpToDate, skipped.Reason);    // kapsam dışı DEĞİL — sıradan incremental
     }
 
     /// <summary>Cycles koşusu da INCREMENTAL'dır: bileşik imzası TEMİZ (state'teki <c>BuiltSignature</c> ile
@@ -239,7 +244,8 @@ public class CycleRoundsTests
         var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
         Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
         // Sıradan "güncel" skip'iyle AYNI gerekçe — bu bir döngü ARIZASI değil, incremental'in normal işleyişi.
-        Assert.All(skipped, e => Assert.Equal("skipped — up to date", e.Reason));
+        // [DEĞİŞEN KURAL/Task 2] bkz. Task-2 notu — reason artık YALIN, tek kaynak SkipReasons.
+        Assert.All(skipped, e => Assert.Equal(SkipReasons.UpToDate, e.Reason));
         Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
     }
 
@@ -710,7 +716,7 @@ public class CycleRoundsTests
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4", "A#5", "B#5"], rec.Calls);
             Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
-                e => e.Reason == "cycle did not converge at this signature");
+                e => e.Reason == SkipReasons.CycleNonConvergent);
             // Ve yakınsadığı için ARTIK taze imza persist edilir — üçüncü bir Build boşuna tur harcamaz.
             Assert.Equal("sig", store.Load()[Id("A")].BuiltSignature);
             Assert.Equal("sig", store.Load()[Id("B")].BuiltSignature);
@@ -746,7 +752,7 @@ public class CycleRoundsTests
             // Pre-skip, up-to-date pre-skip'iyle AYNI kanaldan (DecideSkipped) raporlanır.
             var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
-            Assert.All(skipped, e => Assert.Equal("cycle did not converge at this signature", e.Reason));
+            Assert.All(skipped, e => Assert.Equal(SkipReasons.CycleNonConvergent, e.Reason));
             // [Task 8] Bu kanaldan gelen skip TİPLİ bir yakınsamama bayrağı taşır (metinden ÇIKARILMAZ) —
             // App'in sayacı/rozeti bunu okuyup kalıcı kırık bir döngüyü sıradan "güncel" skip'ten ayırt eder.
             Assert.All(skipped, e => Assert.True(e.CycleUnconverged));
@@ -845,7 +851,7 @@ public class CycleRoundsTests
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.True(invoker.Requests.Count > before); // MSBuild GERÇEKTEN çağrıldı, pre-skip edilmedi
             Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
-                e => e.Reason == "cycle did not converge at this signature");
+                e => e.Reason == SkipReasons.CycleNonConvergent);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -901,5 +907,65 @@ public class CycleRoundsTests
 
         Assert.Contains("cycle A: converged (2 members)", h.DecisionLog, StringComparison.Ordinal);
         Assert.DoesNotContain("remembered at", h.DecisionLog, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- 11) CycleCompletedEvent [Task 3]
+
+    /// <summary>[Task 3] decision.log'a yazılan karar, ekrana da TİPLİ bir event olarak düşer — kullanıcı bugüne
+    /// dek koşunun NEDEN öyle bittiğini yalnız log dosyasından okuyabiliyordu. Yakınsayan grup: iki tur, sıfır
+    /// son-tur başarısızlığı.</summary>
+    [Fact]
+    public async Task a_converged_group_emits_a_cycle_completed_event()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var e = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(Id("A"), e.ProjectId);          // lider — CycleRoundStartedEvent'in lideriyle AYNI
+        Assert.Equal(CycleOutcome.Converged, e.Outcome);
+        Assert.Equal(2, e.MemberCount);
+        Assert.Equal(2, e.Rounds);
+        Assert.Equal(0, e.FailedCount);               // son tur (2) hiçbir üye başarısız değildi
+    }
+
+    /// <summary>[Task 3] NoProgress: aynı küme iki tur üst üste patlıyor — son turun başarısız üye sayısı
+    /// (burada yalnız B) sabit bir kanıttır, sonraki turların YOKLUĞU değil.</summary>
+    [Fact]
+    public async Task a_no_progress_group_emits_a_cycle_completed_event_with_its_failed_count()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // aynı küme iki turdur patlıyor
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var e = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(Id("A"), e.ProjectId);
+        Assert.Equal(CycleOutcome.NoProgress, e.Outcome);
+        Assert.Equal(2, e.MemberCount);
+        Assert.Equal(2, e.Rounds);
+        Assert.Equal(1, e.FailedCount);               // yalnız B son turda da başarısız
+    }
+
+    /// <summary>[Task 3] Yarıda kesilen grupta HİÇBİR karar YOKTUR (decision hâlâ Continue) — decision.log'a
+    /// hiçbir satır yazılmadığı gibi event de HİÇ yayılmaz.</summary>
+    [Fact]
+    public async Task an_interrupted_group_never_emits_a_cycle_completed_event()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _, _) => name == "B"
+            ? Task.FromException<MsBuildInvokeResult>(new OperationCanceledException())
+            : Task.FromResult(Ok()));
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(h.Events.OfType<CycleCompletedEvent>());
     }
 }

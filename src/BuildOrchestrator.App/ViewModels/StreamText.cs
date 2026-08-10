@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -25,9 +26,17 @@ public static class StreamText
     public static string Failed(string name, string reason, long durationMs) =>
         string.Format(CultureInfo.InvariantCulture, "{0} failed — {1} ({2})", name, reason, DurationFormat.Duration(durationMs));
 
-    /// <summary>build-data.js:417 — <c>{name} skipped — up to date</c>.</summary>
-    public static string Skipped(string name) =>
-        string.Format(CultureInfo.InvariantCulture, "{0} skipped — up to date", name);
+    /// <summary>build-data.js:417 — <c>{name} skipped — {reason}</c>. [Task 2] <paramref name="reason"/> artık
+    /// <see cref="ProjectSkippedEvent.Reason"/>'dan GELİR (yalın — tek kaynak <see cref="SkipReasons"/>);
+    /// "up to date" hardcode edilmiş SABİT değildi, önceki sürüm reason'ı yok sayardı.</summary>
+    public static string Skipped(string name, string reason) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} skipped — {1}", name, reason);
+
+    /// <summary>[Task 2/cycles] Cycles koşusunda <see cref="SkipReasons.OutOfCycleScope"/> gerekçeli skip'ler
+    /// proje başına satır YAZMAZ — 150+ kapsam-dışı proje ekranı fırtınaya boğardı. Toplanıp TEK Info satırında
+    /// raporlanır: <c>{n} outside cycle scope — skipped</c>.</summary>
+    public static string OutsideCycleScope(int count) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} outside cycle scope — skipped", count);
 
     /// <summary>build-data.js:284 — <c>Sync — {n} to build, {m} up to date</c>.</summary>
     public static string Sync(int toBuild, int upToDate) =>
@@ -40,10 +49,15 @@ public static class StreamText
     /// <summary>[cycles] Bir <c>RunMode.Cycles</c> koşusunun açılış satırı. "Build started"ı yeniden
     /// kullanmaz: bu koşu bir build DEĞİLDİR ve kullanıcıyı bekleten şey de proje sayısı değil, TUR sayısıdır —
     /// satır tam olarak ne satın alındığını söyler. Tavan literal DEĞİL, tek kaynağı
-    /// <see cref="Core.Planning.CycleRoundPolicy.RoundCap"/>'tir.</summary>
-    public static string CyclesStarted(int projects) =>
-        string.Format(CultureInfo.InvariantCulture, "Cycles started — {0} projects, up to {1} rounds each",
-            projects, Core.Planning.CycleRoundPolicy.RoundCap);
+    /// <see cref="Core.Planning.CycleRoundPolicy.RoundCap"/>'tir.
+    /// <para><b>[DEĞİŞEN KURAL — Task 4]</b> Eski iddia: satır TEK toplam proje sayısı taşırdı (<c>CyclesStarted(int
+    /// projects)</c>). Gerekçe: toplamın çoğu upstream (bağımlılık ön koşulu) olabiliyordu ve kullanıcı "neden bu
+    /// kadar proje derleniyor" sorusunu ekrandan okuyamıyordu — satır artık gerçek döngü üyesi/prerequisite
+    /// kırılımını ayrı ayrı söyler (kırılım çağıranda — <c>RunViewModel.Stream</c> — will-build ∩ üyelik'ten
+    /// hesaplanır).</para></summary>
+    public static string CyclesStarted(int members, int prerequisites) =>
+        string.Format(CultureInfo.InvariantCulture, "Cycles started — {0} cycle members · {1} prerequisites · up to {2} rounds",
+            members, prerequisites, Core.Planning.CycleRoundPolicy.RoundCap);
 
     /// <summary>build-data.js:321 — <c>Stopped — {n} remaining projects queued</c>.</summary>
     public static string Stopped(int remaining) =>
@@ -71,9 +85,40 @@ public static class StreamText
             "Completed — {0} succeeded · {1} skipped · {2}", succeeded, skipped, dur);
     }
 
+    /// <summary>[Task 6] Bir Build/Continue/Rebuild koşusu bitince, döngü üyesi projelerde HÂLÂ bekleyen
+    /// (WillBuild==true) değişiklik varsa kullanıcıya bunu Cycles'ın derleyeceğini hatırlatır — normal Build
+    /// döngü üyelerine dokunmaz, kullanıcı "hata aldım, baktım döngüdeki projeye bağlı" çıkarımını burada
+    /// yapmadan önce ekrandan okur. <c>RunCompletedEvent</c>'in Completed satırından SONRA yayılır
+    /// (<c>RunViewModel.Stream</c>).</summary>
+    public static string CyclesHint(int count) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} cycle projects have pending changes — run Cycles", count);
+
     /// <summary>[cycle rounds/Task 8] Tur göstergesi — <c>CycleRoundStartedEvent</c>'in TEK metin kaynağı:
-    /// <c>cycle round {round}/{cap} — {leaderName} (+{memberCount-1} more)</c>.</summary>
-    public static string CycleRound(int round, int cap, string leaderName, int memberCount) =>
-        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} (+{3} more)",
-            round, cap, leaderName, memberCount - 1);
+    /// <c>cycle round {round}/{cap} — {memberCount} members</c>.
+    /// <para><b>[DEĞİŞEN KURAL — Task 4]</b> Eski iddia: <c>{leaderName} (+{memberCount-1} more)</c> — tek lider
+    /// adı grubu temsil etmiyordu; koşunun maliyetini üye sayısı anlatır. <c>CycleRoundStartedEvent.ProjectId</c>
+    /// (lider) event'te durduğu için satır hâlâ lidere tıklatır — yalnız METİN lider adını bırakır.</para></summary>
+    public static string CycleRound(int round, int cap, int memberCount) =>
+        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} members", round, cap, memberCount);
+
+    /// <summary>[Task 4] Aktif satırın grup-ilerleme detayı — <c>StreamComposer.StartBuilding</c>'in <c>detail</c>
+    /// parametresinin TEK metin kaynağı: <c>member {index}/{count} · round {round}/{cap}</c>. Kopya YASAK
+    /// (CLAUDE.md) — <c>RunViewModel.Stream</c> bu metni inline BİLEŞTİRMEZ, yalnız çağırır.</summary>
+    public static string CycleMemberDetail(int index, int count, int round, int cap) =>
+        string.Format(CultureInfo.InvariantCulture, "member {0}/{1} · round {2}/{3}", index, count, round, cap);
+
+    /// <summary>[Task 3/cycles] <c>CycleCompletedEvent</c>'in TEK metin kaynağı — grubun neden öyle bittiğini
+    /// (yakınsadı / ilerleme yok / tavana dayandı) ekrana taşır. Kind eşlemesi (Converged→Ok, NoProgress→Fail,
+    /// CapReached→Info) çağıranda (<c>RunViewModel.Stream</c>) yapılır — burada yalnız METİN.</summary>
+    public static string CycleCompleted(CycleOutcome outcome, int members, int rounds, int failed, long durationMs) =>
+        outcome switch
+        {
+            CycleOutcome.Converged => string.Format(CultureInfo.InvariantCulture,
+                "cycle converged — {0} members · {1} rounds · {2}", members, rounds, DurationFormat.Duration(durationMs)),
+            CycleOutcome.NoProgress => string.Format(CultureInfo.InvariantCulture,
+                "cycle failed — same {0} members failing twice · {1} rounds", failed, rounds),
+            CycleOutcome.CapReached => string.Format(CultureInfo.InvariantCulture,
+                "cycle round cap reached — output may be one generation behind · {0} rounds", rounds),
+            _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "unknown cycle outcome"),
+        };
 }

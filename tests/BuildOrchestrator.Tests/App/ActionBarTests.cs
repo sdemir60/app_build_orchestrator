@@ -1,8 +1,10 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -643,6 +645,38 @@ public partial class ActionBarTests
         Assert.False(bar.WorktreeChip.IsEnabled);
         Assert.False(bar.Segment.IsEnabled);
         Assert.True(bar.PerfChip.IsEnabled);       // perf CANLI kalır
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [Task 6] Cycles buton tooltip sayıları
+
+    /// <summary>[Task 6] Cycles düğmesinin ToolTip'i topolojide döngü VARSA sayılarla zenginleşir
+    /// (<c>"Build dependency cycles — {c} cycles · {m} projects"</c>); döngü yokken SABİT kalır. UIA adı
+    /// (AutomationProperties.Name) HER İKİ durumda SABİTTİR — ekran okuyucu kontrolün İŞLEVİNİ duyurur, gövde
+    /// sayıları DEĞİL (<see cref="AccessibilityNames.CyclesButton"/> kuralı).</summary>
+    [StaFact]
+    public void Cycles_button_tooltip_gains_counts_when_the_topology_has_cycles_but_the_uia_name_stays_constant()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Equal(AccessibilityNames.CyclesButton, bar.CyclesButton.ToolTip);
+        Assert.Equal(AccessibilityNames.CyclesButton, AutomationProperties.GetName(bar.CyclesButton));
+
+        // 2 SCC: [m1, m2] (2 üye) + 15 üyeli ikinci grup → toplam 17 üye.
+        var nodes = new List<ProjectNode> { Node(@"C:\p\m1.csproj", "M1", 0), Node(@"C:\p\m2.csproj", "M2", 1) };
+        var scc1 = new List<string> { @"C:\p\m1.csproj", @"C:\p\m2.csproj" };
+        var scc2 = new List<string>();
+        for (int i = 0; i < 15; i++)
+        {
+            string id = $@"C:\p\g{i}.csproj";
+            nodes.Add(Node(id, $"G{i}", i + 2));
+            scc2.Add(id);
+        }
+        vm.OnEvent(new WorkspaceTopologyEvent(nodes, [scc1, scc2], [], []));
+
+        Assert.Equal("Build dependency cycles — 2 cycles · 17 projects", bar.CyclesButton.ToolTip);
+        Assert.Equal(AccessibilityNames.CyclesButton, AutomationProperties.GetName(bar.CyclesButton)); // UIA SABİT kalır
         GC.KeepAlive(window);
     }
 

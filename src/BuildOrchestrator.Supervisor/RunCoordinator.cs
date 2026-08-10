@@ -797,7 +797,7 @@ public sealed class RunCoordinator(
                             foreach (string id in cycle)
                             {
                                 seed[id] = BuildResult.Skipped;
-                                upToDateSkips.Add((id, "cycle did not converge at this signature", CycleUnconverged: true));
+                                upToDateSkips.Add((id, SkipReasons.CycleNonConvergent, CycleUnconverged: true));
                             }
                         }
                     }
@@ -826,7 +826,7 @@ public sealed class RunCoordinator(
                     if (cyclesRun && !cycleScope!.Contains(n.Id))
                     {
                         seed[n.Id] = BuildResult.Skipped;
-                        upToDateSkips.Add((n.Id, "skipped — not needed by a dependency cycle", CycleUnconverged: false));
+                        upToDateSkips.Add((n.Id, SkipReasons.OutOfCycleScope, CycleUnconverged: false));
                         continue;
                     }
                     if (!cyclesRun && n.InCycle) continue;
@@ -836,7 +836,7 @@ public sealed class RunCoordinator(
                     if (n.InCycle && !cycleUpToDate.Contains(n.Id)) continue;
                     if (n.WillBuild != false) continue;
                     seed[n.Id] = BuildResult.Skipped;
-                    upToDateSkips.Add((n.Id, "skipped — up to date", CycleUnconverged: false));
+                    upToDateSkips.Add((n.Id, SkipReasons.UpToDate, CycleUnconverged: false));
                 }
                 if (seed.Count > 0) schedulerSeed = new RunSnapshot(seed, [], 0);
             }
@@ -1270,6 +1270,10 @@ public sealed class RunCoordinator(
         // Kesilme gerekçesi: stop/iptal "stopped", beklenmeyen hata kendi metnini taşır — ikisi AYIRT EDİLİR
         // kalır (tekil proje yolundaki failReason ayrımıyla aynı).
         string interruptedReason = "stopped";
+        // [Task 3] finally'deki RecordCycleOutcome çağrısına geçecek — try içinde tanımlanırsa scope dışına
+        // taşmazlardı, decision'la AYNI kapsamda dururlar.
+        int roundsRun = 0;
+        int lastFailedCount = 0;
         try
         {
             // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
@@ -1298,6 +1302,8 @@ public sealed class RunCoordinator(
                     }
                 }
 
+                roundsRun = round;
+                lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed);
                 previousFailed = failed;
                 // Stop istendiyse YENİ tur AÇILMAZ. Hard stop in-flight child'ları çoktan öldürmüştür (üyeler
@@ -1355,7 +1361,8 @@ public sealed class RunCoordinator(
             // (trustedResult=false ⇒ InvalidateBuildStateOnFailure), bu yalnız ÜZERİNE, hangi bileşik imzada
             // pes edildiğini ayrıca kaydeder. reportFailure varsa bile denenir — bir üyenin raporlama hatası
             // hafıza yazımını ENGELLEMEMELİDİR (aksi halde bir sonraki Build yine boşuna turlar tüketirdi).
-            RecordCycleOutcome(run, allMembers, members, decision);
+            long totalDurationMs = members.Sum(id => state[id].DurationMs); // [Task 3] üye sürelerinin TOPLAMI
+            RecordCycleOutcome(run, allMembers, members, decision, roundsRun, lastFailedCount, totalDurationMs);
             if (reportFailure is not null) ExceptionDispatchInfo.Capture(reportFailure).Throw();
         }
     }
@@ -1369,9 +1376,17 @@ public sealed class RunCoordinator(
     /// yüzünden yarıda kesilmiş grup) hiçbir şey yazılmaz:</b> bir Stop ya da geçici bir hata "bu SCC asla
     /// yakınsamaz" anlamına GELMEZ — bir sonraki run yine gerçek bir deneme hakkı almalıdır (kesilme zaten
     /// üyelerin kendi <c>failed — stopped</c> satırlarından okunur).</para>
+    ///
+    /// <para>[Task 3] decision.log satırıyla AYNI kapıdan (yarıda kesilen grupta hiçbir şey yazılmaz/yayılmaz)
+    /// bir de <see cref="CycleCompletedEvent"/> yayınlar — decision.log'daki karar bugüne dek yalnız disk
+    /// dosyasında kalıyordu, App'in görebileceği bir kanalı yoktu.</para>
     /// </summary>
+    /// <param name="roundsRun">Koşulan tur sayısı — <see cref="BuildCycleGroupAsync"/>'in döngü sayacı.</param>
+    /// <param name="lastFailedCount">SON turun başarısız üye sayısı.</param>
+    /// <param name="totalDurationMs">Üye sürelerinin TOPLAMI (turlar dahil) — <see cref="CycleMemberState.DurationMs"/>.</param>
     private void RecordCycleOutcome(RunContext run, IReadOnlyList<string> allMembers,
-                                    IReadOnlyList<string> members, CycleRoundDecision decision)
+                                    IReadOnlyList<string> members, CycleRoundDecision decision,
+                                    int roundsRun, int lastFailedCount, long totalDurationMs)
     {
         if (decision == CycleRoundDecision.Continue) return;
 
@@ -1383,7 +1398,23 @@ public sealed class RunCoordinator(
         Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "cycle {0}: {1} ({2} members){3}",
             leader, CycleOutcomeText(decision), members.Count,
             remembered is null ? "" : "; non-convergence remembered at " + remembered));
+
+        // ProjectId = members[0] (İD, ad DEĞİL) — CycleRoundStartedEvent'in lideriyle AYNI temsilci, satır
+        // tıklanabilir kalsın diye.
+        run.Events.TryWrite(new CycleCompletedEvent(run.RunId, members[0], MapOutcome(decision),
+            members.Count, roundsRun, lastFailedCount, totalDurationMs));
     }
+
+    /// <summary>[Task 3] <see cref="CycleRoundDecision"/> → tel'e giden <see cref="CycleOutcome"/> — TEK switch.
+    /// <see cref="CycleRoundDecision.Continue"/> buraya zaten gelmez (<see cref="RecordCycleOutcome"/> ilk
+    /// satırda döner).</summary>
+    private static CycleOutcome MapOutcome(CycleRoundDecision decision) => decision switch
+    {
+        CycleRoundDecision.Converged => CycleOutcome.Converged,
+        CycleRoundDecision.NoProgress => CycleOutcome.NoProgress,
+        CycleRoundDecision.CapReached => CycleOutcome.CapReached,
+        _ => throw new ArgumentOutOfRangeException(nameof(decision), decision, "cycle decision cannot be Continue here"),
+    };
 
     /// <summary>[Task 7] Tur kararının kullanıcıya dönük (İngilizce) karşılığı — tavan sayısı literal DEĞİL,
     /// tek kaynak <see cref="CycleRoundPolicy"/>'dir.</summary>

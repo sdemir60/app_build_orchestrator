@@ -22,6 +22,30 @@ public sealed partial class RunViewModel
     // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (Continue re-emit'te çift satır olmaz).
     private RunMode? _pendingRunStartMode;
 
+    // [Task 2/cycles] _pendingRunStartMode BuildPreview'da TEMİZLENİYOR (yukarıdaki alan) — kapsam-dışı
+    // toplayıcı ise RunCompleted'a kadar (koşunun SONUNA kadar) hangi modda olduğumuzu bilmek zorunda,
+    // bu yüzden AYRI bir alan: RunStartedEvent'te set edilir, EndRun'da sıfırlanmaz.
+    private RunMode? _streamRunMode;
+
+    // [Task 2/cycles] Cycles koşusunda SkipReasons.OutOfCycleScope gerekçeli skip'ler burada BİRİKİR (satır
+    // YAZILMAZ) — PushStream'in başında tek Info satırına flush edilir (bkz. PushStream).
+    private int _outOfScopeSkips;
+
+    // [Task 4] Cycle round ilerleme takibi — aktif satırdaki "member i/N · round r/cap" detayının kaynağı.
+    // _cycleRoundCap == 0 ⇒ bu run'da henüz bir CycleRoundStartedEvent gelmedi (round AKTİF DEĞİL) — upstream/
+    // prerequisite projeler bu run'ın ilk aşamasında builds eder ve detay almaz. RunStarted/RunCompleted'ta
+    // sıfırlanır (bir sonraki run/segment temiz başlasın).
+    // [Review fix — Finding 1] Motor (RunCoordinator) eşzamanlı SCC'leri SERİLEŞTİRMEZ ve Cycles modunda
+    // paralellik kelepçelemez — ≥2 grup aynı anda koşabilir, bu yüzden "tek aktif grup" varsayımı YANLIŞTIR.
+    // _cycleRoundLeaderId turu başlatan LİDERİ tutar; ProjectStartedEvent bu sayaçları yalnız O LİDERİN grubuna
+    // (CycleGroups.MembersOf(leaderId)) ait üyeler için ilerletir — eşzamanlı ikinci grubun üyeleri bu turun
+    // sayaç/kapak alanlarını TÜKETMEZ (yanlış "member 3/2" gibi bir karışma önlenir).
+    private int _cycleRound;
+    private int _cycleRoundCap;
+    private int _cycleRoundMemberCount;
+    private int _cycleMemberIndex;
+    private string? _cycleRoundLeaderId;
+
     /// <summary>[D8] Duvar-saati zaman damgası kaynağı (stream satırı "HH:mm:ss") — testte deterministik enjekte
     /// edilebilir; üretimde <see cref="DateTimeOffset.Now"/>. Fırtına/elapsed saati (<c>_nowMs</c>) AYRIDIR
     /// (monoton ms; duvar-saati DEĞİL).</summary>
@@ -36,7 +60,9 @@ public sealed partial class RunViewModel
 
     /// <summary>Aktif satırın projesi (tıklama → <see cref="SelectProject"/>); hiç building yoksa null.</summary>
     [ObservableProperty] private string? _activeLineProjectId;
-    /// <summary>Aktif satır metni "<c>{name} building…</c>" ya da null (satır gizli).</summary>
+    /// <summary>Aktif satır metni "<c>{name} building…</c>" ya da null (satır gizli). [Task 4] Proje bir cycle
+    /// round üyesiyse (round aktifken) sona "<c>· member {i}/{N} · round {r}/{cap}</c>" eki eklenir — bkz.
+    /// <see cref="StreamText.CycleMemberDetail"/>; upstream/prerequisite projelerde ek YOKTUR.</summary>
     [ObservableProperty] private string? _activeLineText;
     /// <summary>Aktif proje her DEĞİŞTİĞİNDE artar — görünüm daktiloyu yeniden başlatır (prototip activeLine.id).</summary>
     [ObservableProperty] private long _activeLineGeneration;
@@ -59,6 +85,15 @@ public sealed partial class RunViewModel
                 // hazır (BuildPreview deterministik olarak RunStarted'ı hemen izler, RunCoordinator.cs:456). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
+                _streamRunMode = e.Mode;
+                // [Task 4] Yeni run/segment: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
+                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
+                _cycleRoundLeaderId = null;
+                // [Review fix — Finding 2] _outOfScopeSkips YALNIZ RunCompletedEvent'te sıfırlanıyordu; motor bir
+                // Cycles koşusu ORTASINDA ölürse (RunCompletedEvent hiç gelmez) sayaç asılı kalır ve BİR SONRAKİ
+                // run'ın ilk PushStream'ine eski bir "N outside cycle scope — skipped" satırı sızdırırdı. Her yeni
+                // run/segment temiz başlasın diye burada da sıfırlanır.
+                _outOfScopeSkips = 0;
                 break;
 
             case BuildPreviewEvent:
@@ -72,9 +107,12 @@ public sealed partial class RunViewModel
                     PushStream(StreamKind.Info, null, mode switch
                     {
                         RunMode.Continue => StreamText.Continue(_willBuildIds.Count - FinishedOfWillBuild, parallelism),
-                        // [cycles] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin üyeleri
-                        // sıralı derlenir. Kullanıcıyı bekleten sayı tur tavanıdır, satır onu söyler.
-                        RunMode.Cycles => StreamText.CyclesStarted(_willBuildIds.Count),
+                        // [cycles/Task 4] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin
+                        // üyeleri sıralı derlenir. Kırılım will-build ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
+                        // upstream/prerequisite'tir; kullanıcı "neden bu kadar proje derleniyor"u burada okur.
+                        RunMode.Cycles => StreamText.CyclesStarted(
+                            members: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) == true),
+                            prerequisites: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) != true)),
                         _ => StreamText.BuildStarted(_willBuildIds.Count, parallelism),
                     });
                     _pendingRunStartMode = null;
@@ -82,7 +120,23 @@ public sealed partial class RunViewModel
                 break;
 
             case ProjectStartedEvent e:
-                _stream.StartBuilding(e.ProjectId, e.Name, _nowMs()); // building → yalnız aktif satırda görünür (tampon satırı YOK)
+                // [Task 4] Bu proje bir cycle round üyesiyse (round AKTİFKEN — upstream projeler round
+                // başlamadan ÖNCE build eder, bkz. _cycleRoundCap) sayaç ilerler ve aktif satır "member i/N ·
+                // round r/cap" detayını taşır; değilse (upstream/prerequisite) detay YOK — düz "{name} building…".
+                // [Review fix — Finding 1] Kapı GLOBAL _cycleGroups.IsMember DEĞİL — turu başlatan LİDERİN
+                // GRUBUNA (MembersOf(_cycleRoundLeaderId)) üyelik. Motor eşzamanlı ikinci bir SCC'yi paralel
+                // dispatch edebilir; o grubun üyesi bu turun sayaç/kapak alanlarını TÜKETMEMELİ — global kapı
+                // "tek aktif grup" varsayardı ve B grubunun üyesine A grubunun (o an ekranda yazan) turunu
+                // yanlışlıkla mal ederdi (ör. "member 3/2"). MembersOf build-order LİSTESİ döner; id karşılaştırması
+                // kod tabanının kimlik kuralıyla (OrdinalIgnoreCase) tutarlı olsun diye açıkça belirtilir.
+                string? detail = null;
+                if (_cycleRoundCap > 0 && _cycleRoundLeaderId is { } leaderId &&
+                    (_cycleGroups?.MembersOf(leaderId).Contains(e.ProjectId, StringComparer.OrdinalIgnoreCase) ?? false))
+                {
+                    _cycleMemberIndex++;
+                    detail = StreamText.CycleMemberDetail(_cycleMemberIndex, _cycleRoundMemberCount, _cycleRound, _cycleRoundCap);
+                }
+                _stream.StartBuilding(e.ProjectId, e.Name, _nowMs(), detail); // building → yalnız aktif satırda görünür (tampon satırı YOK)
                 SyncActiveLine();
                 break;
 
@@ -102,15 +156,39 @@ public sealed partial class RunViewModel
                 break;
 
             case ProjectSkippedEvent e:
-                PushStream(StreamKind.Skip, e.ProjectId, StreamText.Skipped(ResolveName(e.ProjectId)));
+                // [Task 2/cycles] Kapsam-dışı skip proje başına satır YAZMAZ — sayaç birikir, sonraki
+                // PushStream'in başında tek toplu satıra flush edilir (ör. bir sonraki skip/built/completed).
+                if (_streamRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
+                {
+                    _outOfScopeSkips++;
+                    break;
+                }
+                PushStream(StreamKind.Skip, e.ProjectId, StreamText.Skipped(ResolveName(e.ProjectId), e.Reason));
                 break;
 
             // [cycle rounds/Task 8] Bir SCC'nin turu başladı — grubun tek ilerleme sinyali. ProjectId LİDERİN
             // id'sidir (satır ona bağlı/tıklanabilir, ok/fail/skip satırlarıyla AYNI desen). Kind=Info: ne
             // başarı ne hata, BuildStarted/Continue satırlarıyla AYNI amber ▸ anlatı tonu.
             case CycleRoundStartedEvent e:
-                PushStream(StreamKind.Info, e.ProjectId,
-                    StreamText.CycleRound(e.Round, e.RoundCap, ResolveName(e.ProjectId), e.MemberCount));
+                // [Task 4] Yeni turun ilerleme takibi kurulur — sayaç 0'dan başlar, grubun İLK ProjectStartedEvent'i
+                // (round-order'daki ilk üye) onu 1'e taşır. [Review fix — Finding 1] Lider id'si de yakalanır —
+                // ProjectStartedEvent bunun grubuna üyeliği sorar (bkz. yukarıdaki kapı), eşzamanlı BAŞKA bir
+                // grubun üyesi bu turu YANLIŞLIKLA tüketmesin diye.
+                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (e.Round, e.RoundCap, e.MemberCount, 0);
+                _cycleRoundLeaderId = e.ProjectId;
+                PushStream(StreamKind.Info, e.ProjectId, StreamText.CycleRound(e.Round, e.RoundCap, e.MemberCount));
+                break;
+
+            // [Task 3/cycles] Grubun NİHAİ kararı — decision.log'un ekrandaki karşılığı. ProjectId LİDERİN
+            // id'sidir (CycleRoundStartedEvent ile AYNI desen) — satır tıklanabilir kalır. Kind outcome'a göre
+            // değişir: Converged yeşil, NoProgress kırmızı, CapReached amber/info (bilgi, hata DEĞİL).
+            case CycleCompletedEvent e:
+                PushStream(e.Outcome switch
+                {
+                    CycleOutcome.Converged => StreamKind.Ok,
+                    CycleOutcome.NoProgress => StreamKind.Fail,
+                    _ => StreamKind.Info, // CapReached
+                }, e.ProjectId, StreamText.CycleCompleted(e.Outcome, e.MemberCount, e.Rounds, e.FailedCount, e.DurationMs));
                 break;
 
             case SyncCompletedEvent e:
@@ -121,16 +199,41 @@ public sealed partial class RunViewModel
                 if (e.Outcome == RunOutcome.Stopped)
                     PushStream(StreamKind.Info, null, StreamText.Stopped(e.Queued)); // stopped → info (parıltı YOK)
                 else
+                {
                     PushStream(StreamKind.Done, null,
                         StreamText.Completed(e.Failed, e.Succeeded, e.Skipped, e.DepIssueCount, e.DurationMs));
+                    // [Task 6] Bu dal yalnız e.Outcome != Stopped iken koşar (yukarıdaki if'in AKSİ) — Cycles
+                    // koşusunun KENDİSİ bu satırı yaymaz (zaten o modda, ipucu anlamsız). Sayaç Projects'ten
+                    // OKUNUR: WillBuild bir Cycles koşusuyla temizlenmediği sürece (döngü üyesi normal Build'de
+                    // pre-skip edilir, üye asla invoke edilmez) InCycle&&WillBuild==true satırlar "hâlâ kirli
+                    // döngü üyesi" demektir.
+                    if (_streamRunMode != RunMode.Cycles)
+                    {
+                        int n = Projects.Count(p => p.InCycle && p.WillBuild == true);
+                        if (n > 0) PushStream(StreamKind.Info, null, StreamText.CyclesHint(n));
+                    }
+                }
                 _stream.EndRun();
                 SyncActiveLine();
+                // [Task 4] Koşu bitti — round ilerleme takibi bir sonraki run için sıfırlanır.
+                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
+                _cycleRoundLeaderId = null;
                 break;
         }
     }
 
     private void PushStream(StreamKind kind, string? projectId, string text)
     {
+        // [Task 2/cycles] Toplu kapsam-dışı satırı BURADA flush et — sayaç ÖNCE sıfırlanır (recursion guard'ı:
+        // aşağıdaki yinelenen PushStream çağrısı 0 görüp tekrar girmez). RunCompletedEvent her koşuda gelir,
+        // bu yüzden sayaç asla asılı kalmaz.
+        if (_outOfScopeSkips > 0)
+        {
+            int n = _outOfScopeSkips;
+            _outOfScopeSkips = 0;
+            PushStream(StreamKind.Info, null, StreamText.OutsideCycleScope(n));
+        }
+
         bool anyFailed = Counters.Failed > 0; // done glyph/renk yeşil↔kırmızı (prototip c.failed)
         var emission = _stream.Push(isFail: kind == StreamKind.Fail, _nowMs());
         string time = Console.WallClockFormat.Of(WallClock());

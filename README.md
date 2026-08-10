@@ -153,8 +153,9 @@ the running instance first — tray icon → Exit).
 Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
 them with the reason `in dependency cycle`, and their will-build dot stays grey. **Cycles**, the button beside
 *Sync*, is what compiles them, and it is the only thing that does. It is enabled only when the workspace
-actually has a cycle, and it is meant to be pressed **before** a build, not instead of one: it compiles the
-cycles, then *Build* takes care of everything else, including whatever depends on them.
+actually has a cycle, and its tooltip says how many — `Build dependency cycles — N cycles · M projects` — once
+a Sync has found any. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
+then *Build* takes care of everything else, including whatever depends on them.
 
 Why it is a button and not something *Build* does for you: a cycle is built as one unit — the members compile
 one after another, then the whole set compiles again, until two rounds in a row come back clean, three rounds
@@ -163,18 +164,26 @@ unpredictable bill. Behind a button you decide when to pay it.
 
 Such a run compiles the cycles **and whatever they depend on that is out of date** — otherwise a member would
 be compiled against a stale DLL, come back green, and then be recorded as up to date so that no later build
-ever fixed it. Everything past that is skipped as `not needed by a dependency cycle`, including the projects
-that depend *on* the cycle: those are Build's job, and Build is what you press next.
+ever fixed it. The event stream opens with `Cycles started — N cycle members · P prerequisites · up to K
+rounds`, so the split between the cycle itself and what it needs first is visible before anything compiles.
+Everything past that scope collapses into a single line, `N outside cycle scope — skipped`, rather than one
+line per project — those are Build's job, and Build is what you press next.
 
-The run reads like any other: skipped rows, built rows, and a summary that says how many were skipped, how
-many succeeded and how many failed. Cycle rows show the normal build icons — green, red, the spinner — and
-carry a small orange cycle badge on the right to say where they sit. The event stream announces each round.
-Pressing the button again costs nothing when nothing changed: a cycle that has settled is skipped as up to
-date, and a cycle that never settles is not tried again until its source changes. The summary line says how
-many projects are stuck in one, so a run whose only casualty is a broken cycle never reads as an unqualified
-success — those rows keep the orange badge with a tooltip saying they will not be retried, and rows that
-compiled but never saw two clean rounds carry the dependency triangle, whose tooltip says their output may be
-one generation stale.
+The run reads like any other beyond that: each round prints its own line, `cycle round R/K — N members`, and
+while a member is actually compiling the active line names it and its place in the group,
+`member I/N · round R/K`. A member waiting its turn shows the clock glyph, no breathing highlight, and a
+duration column that stays at `—` — only the member actually compiling is doing anything, and the group's own
+round line is what moves. When the group has a verdict the event stream says which one it got — converged,
+failed the same way twice, or hit the round cap — with how many rounds it took. Cycle rows show the normal
+build icons — green, red, the spinner — and carry a small orange cycle badge to say where they sit: in the list
+row's dependency slot, and as a permanent corner mark on the graph node, which otherwise now paints exactly
+like any other node at that status. Pressing the button again costs nothing when nothing changed: a cycle that
+has settled is skipped as up to date, and a cycle that never settles is not tried again until its source
+changes. The summary line says how many projects are stuck in one, so a run whose only casualty is a broken
+cycle never reads as an unqualified success — those rows keep the orange badge with a tooltip saying they will
+not be retried, and rows that compiled but never saw two clean rounds carry the dependency triangle, whose
+tooltip says their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
+still dirty, the event stream adds a closing line pointing at *Cycles* as the next step.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.

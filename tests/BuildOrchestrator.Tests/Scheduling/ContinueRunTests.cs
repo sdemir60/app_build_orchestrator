@@ -1,3 +1,4 @@
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Scheduling;
 
@@ -160,8 +161,8 @@ public class ContinueRunTests
         var resumed = new ReadySetScheduler(plan, bareSnapshot);
 
         Assert.Equal(2, resumed.PreSkipped.Count);
-        Assert.Contains(("X", "in dependency cycle"), resumed.PreSkipped);
-        Assert.Contains(("Y", "in dependency cycle"), resumed.PreSkipped);
+        Assert.Contains(("X", SkipReasons.InDependencyCycle), resumed.PreSkipped);
+        Assert.Contains(("Y", SkipReasons.InDependencyCycle), resumed.PreSkipped);
         Assert.Equal(BuildResult.Skipped, resumed.Completed["X"]);
         Assert.True(resumed.TryDispatch(out var z));
         Assert.Equal("Z", z);

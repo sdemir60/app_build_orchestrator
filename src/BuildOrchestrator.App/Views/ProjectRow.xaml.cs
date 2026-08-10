@@ -207,6 +207,11 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.Status):
                 ApplyStatusVisuals(); // [Fix wave 1, Finding 1] cycle/queued dahil TEK eşleme yolundan gelir
                 ApplyDep();           // [cycles] üyelik rozetinin kapısı Status'tur — onunla birlikte tazelenir
+                // [cycles] CycleWaiting setter'ı Status'u da tetikler (RunViewModel.cs) — sıra kardeşe geçtiği ANDA
+                // nefes/süre burada da tazelenmeli. State case'i zaten çağırıyor; çift çağrı zararsız, iki metod
+                // da idempotent.
+                ApplyBreathing();
+                ApplyDuration();
                 break;
             case nameof(ProjectRowViewModel.InCycle):
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
@@ -312,10 +317,14 @@ public partial class ProjectRow : UserControl
     {
         var state = _vm?.State ?? ProjectRowState.Pending;
         long ms = _vm?.DurationMs ?? 0;
-        // building → canlı Elapsed; bitmiş → Duration; yoksa "—" (Duration(null)).
-        PART_Duration.Text = state == ProjectRowState.Started
+        // Canlı elapsed yalnız GERÇEKTEN derlenen satırda; grubunun sırasını bekleyen üye (Started ama
+        // IsCompiling değil) "—" gösterir — sayacı her turda sıfırlanıp yeniden koşan bir bekleme süresi
+        // bilgi değil gürültüydü. Terminal satır kesin süresini (turların toplamı) gösterir.
+        PART_Duration.Text = _vm?.IsCompiling ?? false
             ? DurationFormat.Elapsed(ms)
-            : DurationFormat.Duration(ms == 0 ? null : ms);
+            : state == ProjectRowState.Started
+                ? DurationFormat.Duration(null)
+                : DurationFormat.Duration(ms == 0 ? null : ms);
         PART_Duration.SetResourceReference(TextBlock.ForegroundProperty,
             state == ProjectRowState.Failed ? "Brush.StatusFailText" : "Brush.TextDim");
     }
@@ -472,7 +481,7 @@ public partial class ProjectRow : UserControl
     // ---------------------------------------------------------------- nefes / shake
     private void ApplyBreathing()
     {
-        bool building = (_vm?.State ?? ProjectRowState.Pending) == ProjectRowState.Started;
+        bool building = _vm?.IsCompiling ?? false;
         // Katman "yalnız building'de var": görünürlük motion'dan BAĞIMSIZ (reduced-motion'da da building satırda
         // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken döner.
         PART_Breath.Visibility = building ? Visibility.Visible : Visibility.Collapsed;

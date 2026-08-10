@@ -142,6 +142,33 @@ public class GraphBinderTests
     // HasDepIssue taşımıyor ve binder'ın onu üretecek bir sebebi yok. Bayrağın kendisi
     // ProjectRowViewModel.HasDepIssue olarak duruyor ve ProjectRowTests'te pinli.
 
+    /// <summary>[Task 5] <c>GraphNode.InCycle</c> — kalıcı köşe rozetinin veri kaynağı. Statünün AKSİNE (satır
+    /// yoksa <c>inCycle</c> topoloji bayrağına düşer, StatusOf'un savunmacı dalıyla AYNI desen) burada da satır
+    /// varsa <c>row.InCycle</c> otorite, yoksa topolojinin kendi bayrağı.</summary>
+    [Fact]
+    public void Nodes_pass_the_rows_cycle_membership_through_to_the_graph_node()
+    {
+        var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]) };
+        var rows = RowsFor(topology);
+
+        var nodes = GraphBinder.Nodes(topology, rows);
+
+        Assert.True(nodes.Single(n => n.Name == "X").InCycle);
+        Assert.False(nodes.Single(n => n.Name == "Y").InCycle);
+    }
+
+    /// <summary>Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı) üyelik topolojinin KENDİ
+    /// bayrağından gelir — <see cref="StatusOf"/>'un row-null dalıyla AYNI desen.</summary>
+    [Fact]
+    public void Nodes_fall_back_to_the_topology_cycle_flag_when_the_row_is_missing()
+    {
+        var topology = new[] { Node("X", [], inCycle: true) };
+
+        var nodes = GraphBinder.Nodes(topology, new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase));
+
+        Assert.True(nodes.Single().InCycle);
+    }
+
     [Fact]
     public void Node_order_within_a_layer_follows_build_order()
     {

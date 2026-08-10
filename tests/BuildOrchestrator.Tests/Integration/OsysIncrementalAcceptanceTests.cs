@@ -107,8 +107,9 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         var run2 = await RunBuildAsync(logsDir, "it3-build-2", overall.Token);
         Assert.NotNull(run2.Completed);
 
+        // [DEĞİŞEN KURAL/Task 2] reason artık YALIN ("skipped — " öneki İÇİNDE taşınmaz) — tek kaynak SkipReasons.
         var run2UpToDate = new HashSet<string>(
-            run2.Skipped.Where(s => s.Reason == "skipped — up to date").Select(s => s.ProjectId),
+            run2.Skipped.Where(s => s.Reason == SkipReasons.UpToDate).Select(s => s.ProjectId),
             StringComparer.OrdinalIgnoreCase);
         var run1Succeeded = new HashSet<string>(run1.Succeeded, StringComparer.OrdinalIgnoreCase);
 

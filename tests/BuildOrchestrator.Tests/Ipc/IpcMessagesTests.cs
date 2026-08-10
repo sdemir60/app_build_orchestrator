@@ -60,7 +60,7 @@ public class IpcMessagesTests
             new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "  A.cs(3,5): error CS0103: ..."),
             new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400),
             new ProjectFailedEvent("r1", @"C:\p\b.csproj", 900, "exit 1"),
-            new ProjectSkippedEvent("r1", @"C:\p\c.csproj", "in dependency cycle"),
+            new ProjectSkippedEvent("r1", @"C:\p\c.csproj", SkipReasons.InDependencyCycle),
             new RunCompletedEvent("r1", RunOutcome.Stopped, 3, 1, 2, 171, 65000),
             new ProjectLogChunkEvent(@"C:\p\a.csproj", 0, "line\n", true, 42),
         ];
@@ -165,6 +165,19 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    // [Task 3/cycles] Grubun nihai kararı — decision.log'un tel karşılığı. Outcome camelCase METİN olarak
+    // gitmeli (JsonStringEnumConverter): "noProgress" pinlenir ki tel formatı sessizce sayıya kaymasın.
+    [Fact]
+    public void CycleCompletedEvent_roundtrips_with_camelCase_outcome()
+    {
+        IpcEvent ev = new CycleCompletedEvent("r1", @"C:\p\a.csproj", CycleOutcome.NoProgress,
+            MemberCount: 2, Rounds: 2, FailedCount: 1, DurationMs: 4200);
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"cycleCompleted\"", json);
+        Assert.Contains("\"outcome\":\"noProgress\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
     // [cycle rounds] "Oturmamış döngü" bayrağı: tavana dayanmış bir SCC'nin BAŞARILI üyeleri bunu taşır.
     // Varsayılanı false'tur ve alanı hiç taşımayan (bu sürümden ÖNCE yazılmış) bir projectSucceeded satırı
     // aynen çözülmeye devam eder — geriye dönük uyum.
@@ -192,10 +205,24 @@ public class IpcMessagesTests
         var legacy = Assert.IsType<ProjectSkippedEvent>(JsonSerializer.Deserialize<IpcEvent>(legacyLine, IpcJson.Options));
         Assert.False(legacy.CycleUnconverged);
 
-        IpcEvent unconverged = new ProjectSkippedEvent("r1", @"C:\p\a.csproj", "cycle did not converge at this signature", CycleUnconverged: true);
+        IpcEvent unconverged = new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.CycleNonConvergent, CycleUnconverged: true);
         string json = JsonSerializer.Serialize(unconverged, IpcJson.Options);
         Assert.Contains("\"cycleUnconverged\":true", json);
         Assert.Equal(unconverged, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
+    /// <summary>[Task 2] <see cref="SkipReasons"/>'ın dört değeri NDJSON'a giden gerçek WIRE metnidir — tek
+    /// pin burada literal olarak sabitlenir; diğer testler (Supervisor/Core/App) kopya YASAK gereği bu
+    /// sabitlere REFERANS verir, literal'i tekrar yazmaz (istisna: bu dosyadaki <c>legacyLine</c> ham JSON
+    /// metni — GEÇMİŞ bir NDJSON satırının disk üzerindeki BAYTLARINI simüle eder, bir sabite REFERANS
+    /// vermesi anlamsızdır).</summary>
+    [Fact]
+    public void SkipReasons_constants_are_pinned_as_the_literal_wire_text()
+    {
+        Assert.Equal("up to date", SkipReasons.UpToDate);
+        Assert.Equal("not needed by a dependency cycle", SkipReasons.OutOfCycleScope);
+        Assert.Equal("in dependency cycle", SkipReasons.InDependencyCycle);
+        Assert.Equal("cycle did not converge at this signature", SkipReasons.CycleNonConvergent);
     }
 
     /// <summary>[cycles] Döngü derlemesinin KOMUT yüzeyi artık bir bayrak değil, bir MOD'dur: <see

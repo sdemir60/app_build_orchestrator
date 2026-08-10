@@ -224,6 +224,85 @@ public class QuietGraphNodeTests
         }
     }
 
+    // ---------------------------------------------------------------- [Task 5] döngü üyeliği — kalıcı köşe rozeti
+
+    private static IReadOnlyList<GraphNode> CycleNodes(GraphStatus memberStatus) =>
+    [
+        new("OSYS.Member", 0, memberStatus, InCycle: true),
+        new("OSYS.Other", 1, GraphStatus.Discovered),
+    ];
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL] <b>Eski davranış</b> (<c>GraphView.ApplyNodeStatus</c>'ın statü switch'i):
+    /// <c>GraphStatus.Cycle</c> düğümü komple turuncu aileye boyanıyordu (<c>Brush.StatusCycle</c>/
+    /// <c>…Soft</c>/<c>…Text</c> — DS <c>STATUS_META</c>'nın birebir karşılığı). <b>Değişme gerekçesi:</b> koşu
+    /// başlar başlamaz satır Cycle'dan Building/Succeeded'e geçtiği an turuncu blok da graftan KAYBOLUYORDU —
+    /// üyelik bilgisi koşu boyunca görünmez oluyordu. Ayrıca turuncu blok, düğümün o anki koşu statüsüyle (ör.
+    /// building amber'ı) görsel olarak YARIŞIYORDU. <b>Yeni kural:</b> düğüm HER statüde standart (discovered)
+    /// ailesinde durur; üyelik artık statüden BAĞIMSIZ, kalıcı bir köşe rozetiyle anlatılır (aşağıdaki test).
+    /// </summary>
+    [StaFact]
+    public void A_cycle_member_node_keeps_the_standard_square_and_wears_a_corner_badge()
+    {
+        var view = GraphTestView.Realized(new Size(640, 400));
+        view.SetGraph(CycleNodes(GraphStatus.Cycle), []);
+        var visual = view.NodeVisuals["OSYS.Member"];
+
+        // Standart (discovered) ailesi — turuncu DEĞİL: kesikli Brush.BorderStrong çerçeve.
+        Assert.Same(view.FindResource("Brush.BorderStrong"), visual.Square.Stroke);
+        Assert.Same(view.FindResource("Brush.SurfaceRaised"), visual.Square.Fill);
+        Assert.NotEmpty(visual.Square.StrokeDashArray);
+
+        // Üyelik kalıcı köşe rozetinde.
+        Assert.NotNull(visual.CycleBadge);
+        Assert.Equal(Visibility.Visible, visual.CycleBadge!.Visibility);
+
+        // Cycle olmayan düğüm hiç rozet kurmaz.
+        Assert.Null(view.NodeVisuals["OSYS.Other"].CycleBadge);
+    }
+
+    /// <summary>Rozet TALEP ÜZERİNE (bir kez) kurulur ve bir daha SÖKÜLMEZ — <see cref="GraphNodeVisual.Beads"/>
+    /// ile AYNI desen. Statü koşu boyunca Cycle'dan uzaklaşsa bile (Building/Succeeded/Failed) üyelik değişmez,
+    /// dolayısıyla rozet hep görünür kalır; cycle-dışı düğümde ise hiçbir zaman doğmaz.</summary>
+    [StaFact]
+    public void The_cycle_badge_survives_every_status_change_and_never_builds_for_non_members()
+    {
+        var view = GraphTestView.Realized(new Size(640, 400));
+        view.SetGraph(CycleNodes(GraphStatus.Cycle), []);
+        var badge = view.NodeVisuals["OSYS.Member"].CycleBadge;
+        Assert.NotNull(badge);
+
+        foreach (var status in new[] { GraphStatus.Building, GraphStatus.Succeeded, GraphStatus.Failed })
+        {
+            view.UpdateStatuses(CycleNodes(status));
+
+            // Aynı nesne — yeniden kurulmuyor (talep-üzerine-bir-kez sözleşmesi).
+            Assert.Same(badge, view.NodeVisuals["OSYS.Member"].CycleBadge);
+            Assert.Equal(Visibility.Visible, view.NodeVisuals["OSYS.Member"].CycleBadge!.Visibility);
+        }
+
+        Assert.Null(view.NodeVisuals["OSYS.Other"].CycleBadge);
+    }
+
+    /// <summary>Realize testi (IconGeometryTests deseni): rozetin geometrisi Icons.xaml'deki
+    /// <c>Icon.StatusCycle</c>'dan (16'lık viewBox, statü glyph ailesi) çözülür — kodda ikinci bir kopya path
+    /// YOK. Ölçek, ana glyph'in <see cref="GraphView.IconFactor"/>'ından AYRI bir paylaşımlı transform'dur.</summary>
+    [StaFact]
+    public void The_cycle_badge_resolves_its_geometry_from_the_icon_dictionary()
+    {
+        var view = GraphTestView.Realized(new Size(640, 400));
+        view.SetGraph(CycleNodes(GraphStatus.Cycle), []);
+        var badge = view.NodeVisuals["OSYS.Member"].CycleBadge!;
+        var expected = (Geometry)view.FindResource("Icon.StatusCycle");
+
+        Assert.Same(expected, badge.Data);
+        Assert.Same(view.FindResource("Brush.StatusCycleText"), badge.Stroke);
+
+        var box = (FrameworkElement)VisualTreeHelper.GetParent(badge);
+        var scale = Assert.IsType<ScaleTransform>(box.RenderTransform);
+        Assert.Equal(view.NodeSize * GraphView.CycleBadgeFactor / 16.0, scale.ScaleX, 6);
+    }
+
     /// <summary>
     /// Graf artık HER düğümü kurar — tembel materyalizasyon (cull) yok.
     ///

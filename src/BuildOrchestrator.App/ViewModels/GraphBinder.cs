@@ -41,7 +41,10 @@ public static class GraphBinder
             rows.TryGetValue(node.Id, out var row);
             // Elde topoloji varsa Sync yapılmıştır (bu metot yalnız o zaman çağrılır) → synced: true.
             var status = StatusOf(row, node.InCycle, synced: true);
-            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status));
+            // [Task 5] Üyelik de StatusOf'un savunmacı dalıyla AYNI desen: satır varsa TEK otorite (row.InCycle),
+            // yoksa (topoloji düğümünün henüz satırı yok) topolojinin kendi bayrağı.
+            bool inCycle = row?.InCycle ?? node.InCycle;
+            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, inCycle));
         }
         return result;
     }

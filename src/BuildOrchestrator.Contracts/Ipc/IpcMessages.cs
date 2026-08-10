@@ -49,9 +49,9 @@ public enum DependentMode { Safe, Fast }
 /// <para><b>Cycles</b> = dairesel bağımlılık (SCC) oluşturan projeler, sıralı turlarla — ve onların
 /// TRANSİTİF UPSTREAM'i (gerekçe <c>Core/Planning/CycleRunScope.cs</c>'te: kirli bir upstream'in eski DLL'ine
 /// karşı derlenen üye yeşil döner, bayat çıktı verir ve imzası persist edildiği için bir daha ASLA
-/// derlenmez). Kapsam dışı kalan her proje <c>"skipped — not needed by a dependency cycle"</c> ile pre-skip
-/// edilir. Bu, diğer modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez
-/// (üyeleri <c>"in dependency cycle"</c> ile atlanır). İkisi ardışık kullanılır — önce Cycles, sonra
+/// derlenmez). Kapsam dışı kalan her proje <see cref="SkipReasons.OutOfCycleScope"/> ile pre-skip edilir. Bu,
+/// diğer modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez (üyeleri
+/// <see cref="SkipReasons.InDependencyCycle"/> ile atlanır). İkisi ardışık kullanılır — önce Cycles, sonra
 /// Build.</para></param>
 /// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
 /// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
@@ -141,6 +141,7 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
 [JsonDerivedType(typeof(WorktreeListEvent), "worktreeList")]
 [JsonDerivedType(typeof(CycleRoundStartedEvent), "cycleRoundStarted")]
+[JsonDerivedType(typeof(CycleCompletedEvent), "cycleCompleted")]
 public abstract record IpcEvent;
 
 public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
@@ -177,10 +178,10 @@ public sealed record ProjectFailedEvent(string RunId, string ProjectId, long Dur
     IReadOnlyList<string>? DepIssues = null) : IpcEvent;
 /// <param name="CycleUnconverged">[cycle rounds/Task 8] Bu skip, bir SCC'nin ÖNCEKİ bir Build'de yakınsamayıp
 /// aynı bileşik imzada bir daha hiç tur harcanmadan pre-skip edildiğini işaretler (bkz. <c>RunCoordinator</c>'ın
-/// "cycle did not converge at this signature" seed'i). <b>Ayrı bir tipli alandır, Reason metninden ÇIKARILMAZ</b>
-/// — sıradan "güncel" (up-to-date) skip'iyle Reason dışında hiçbir farkı olmadığı için App'in metin eşleştirmesi
-/// yapması YASAKTIR (tek doğruluk kaynağı Reason string'i Supervisor'da kalır). Varsayılan <c>false</c>: bu
-/// alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
+/// <see cref="SkipReasons.CycleNonConvergent"/> seed'i). <b>Ayrı bir tipli alandır, Reason metninden
+/// ÇIKARILMAZ</b> — sıradan "güncel" (up-to-date) skip'iyle Reason dışında hiçbir farkı olmadığı için App'in
+/// metin eşleştirmesi yapması YASAKTIR (tek doğruluk kaynağı <see cref="SkipReasons"/>). Varsayılan
+/// <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
 public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
@@ -245,6 +246,16 @@ public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcE
 /// <param name="MemberCount">Grubun bu turda derlenecek üye sayısı.</param>
 public sealed record CycleRoundStartedEvent(string RunId, string ProjectId, int Round, int RoundCap, int MemberCount)
     : IpcEvent;
+
+/// <summary>[cycles] Bir SCC koşusunun nihai kararı — CycleRoundDecision'ın (Core) wire karşılığı; Continue
+/// (yarıda kesilme) bir karar DEĞİLDİR ve bu event hiç yayılmaz. camelCase METİN olarak yazılır.</summary>
+public enum CycleOutcome { Converged, NoProgress, CapReached }
+
+/// <summary>[cycles] Bir SCC'nin koşusu bitti. ProjectId = build-order'daki İLK üye (CycleRoundStartedEvent'in
+/// lideriyle AYNI — satır tıklanabilir kalır). DurationMs üye sürelerinin toplamıdır; Rounds koşulan tur sayısı;
+/// FailedCount SON turun başarısız üye sayısı.</summary>
+public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOutcome Outcome,
+    int MemberCount, int Rounds, int FailedCount, long DurationMs) : IpcEvent;
 
 /// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync
