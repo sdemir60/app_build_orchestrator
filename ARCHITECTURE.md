@@ -293,7 +293,7 @@ compiles a cycle.
 Lifecycle: `engineReady` · `pong` · `error`.
 Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
-`projectSkipped` · `cycleRoundStarted` · `runStopped` · `runCompleted`.
+`projectSkipped` · `cycleRoundStarted` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `worktreeList` · `projectLogChunk`.
 
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
@@ -304,6 +304,13 @@ transcript, and a run's planning window is not a Sync.
 and the member count. A strongly-connected component is one build unit whose per-round results are never
 published (§8.8), so the round number is the only progress the group itself emits; its members still emit
 their own `projectStarted` on every round, because on every round they really are compiling.
+
+`cycleCompleted` follows once a group has an actual verdict — converged, no progress (the same members failed
+twice in a row) or the round cap reached — carrying that outcome as camelCase text, the leader's id (the same
+representative `cycleRoundStarted` used, so the line stays clickable), the member count, the rounds run, the
+last round's failure count and the summed duration of every member across every round. It is never published
+for a group cut short by a stop or an unexpected error: neither is evidence that the group cannot converge, and
+a later run deserves a real attempt rather than one that starts from a false verdict.
 
 Two per-project results carry a cycle flag of their own, as typed fields rather than as text the App would
 have to match: `projectSucceeded.cycleUnsettled` marks a member of a group that ran out of rounds, and
@@ -544,6 +551,11 @@ defaults.
 `Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
 a cycle, `Cycles` compiles the cycles. It has its own button beside Sync (§13.2) and is meant to be run before
 a build, not instead of one.
+
+The projects that fall out of scope this way are not announced one at a time in the event stream — a
+workspace with hundreds of unrelated projects would turn a `Cycles` run into scope-only noise — they collapse
+into a single line, `N outside cycle scope — skipped`. `decision.log` still records each one under its own
+name; only the live stream collapses them.
 
 **Why the scope reaches upstream.** A member compiled against a *dirty* dependency's previous-generation DLL
 comes back green while its output is stale — and the run then persists that member's signature. Because the
@@ -803,7 +815,8 @@ members share no composite at all and this memory is simply inert.
 
 Whichever verdict a group ends on, it is named in `decision.log` — the per-member failure lines alone cannot
 tell an operator whether a group hit the ceiling, stopped making progress or converged, and the line carries
-the remembered signature when one was written.
+the remembered signature when one was written. The same verdict also reaches the App, as `cycleCompleted`
+(§5.3), so it shows up in the event stream instead of only on disk.
 
 Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
 rounds were never observed and their output may be one generation stale (§14.3).
@@ -1211,7 +1224,10 @@ you do *before* a build, and the separator on their right belongs to the counter
 as a variant of the primary action, which it is not — it is a run of its own (§8.1) with the same icon the
 rows and the graph use for "this project is in a cycle". It is disabled unless the workspace actually has one,
 because in a workspace without cycles that run would skip every project and do nothing; a disabled button says
-so before the click rather than after.
+so before the click rather than after. Its tooltip carries the same fact in numbers once there is one to
+report — `Build dependency cycles — N cycles · M projects` — and falls back to the plain label when the
+workspace has none. The accessible name is unaffected either way: it stays the plain label, since a screen
+reader announces what the control does, not a count that moves under it on every Sync.
 
 **No run without a topology.** *Build*, *Rebuild*, *Cycles* and *Retry failed* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
@@ -1399,6 +1415,19 @@ of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and
 its edge; discovered nodes get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot be dashed.
 Under the status square sits an opaque base in the panel's own colour: the status fill is only 12 % alpha, so
 without it a selection edge passing behind a node would show straight through it.
+
+**Cycle membership does not get its own status colour here.** A node whose project sits in a
+strongly-connected component paints its status square exactly like any other node at that status —
+discovered, queued, building or a result — and carries a small persistent corner badge instead
+(`Icon.StatusCycle`, `Brush.StatusCycleText`, 40 % of the node edge, top-right, living inside `Body` so it
+inherits the run-phase opacity and the hover scale with no wiring of its own). The badge is built once, on
+demand, the first time a node is seen in a cycle, and after that it is only ever hidden, never torn down — the
+same lazy-build, never-teardown pattern the bead orbit already uses. It shows through every status a run
+carries a member across, which is the point: painting the whole square in the cycle's own orange family
+(`Brush.StatusCycle`/…Soft/…Border, §14.1) only while the node's status itself was `Cycle` made membership
+disappear the instant a run gave the node any other status — visible before a run and invisible during and
+after the one a viewer most wants to see it in. The list row keeps its own separate cycle glyph and
+dependency-slot badge (§8.3, §14.3); this corner mark is graph-only.
 
 The node's cell is deliberately **larger than the node** — by whichever overhangs further, the selection ring
 or the bead orbit. WPF clips a child to its arrange slot, and everything that reaches outside the square lives
@@ -1691,13 +1720,18 @@ after a Sync — "this run skipped them" and "these are in a cycle" were indisti
 would have hidden its own results the same way. Now the left slot answers *what happened in this run* and the
 right slot answers *where this project sits*, and neither hides the other.
 
-A member waiting its turn inside a running group reads `Queued`, not `Building`. Members are invoked one at a
-time and intermediate rounds are never published (§8.8), so the whole group sits in the engine's `Started`
-state for the group's whole life while exactly one member is really compiling. Painting them all as building
-made a 15-member group show fifteen spinners on the list and fifteen orbiting nodes on the graph while the
-counter chip said one — the screen claiming fifteen things were happening when one was. Three surfaces ask
-that question (the row glyph, the counter chip and the ribbon's building chips) and all three now read one
-predicate; written separately, they had drifted into saying three different numbers at the same moment.
+A member waiting its turn inside a running group reads `Queued` (clock glyph), not `Building`. Members are
+invoked one at a time and intermediate rounds are never published (§8.8), so the whole group sits in the
+engine's `Started` state for the group's whole life while exactly one member is really compiling. Painting them
+all as building made a 15-member group show fifteen spinners on the list and fifteen orbiting nodes on the
+graph while the counter chip said one — the screen claiming fifteen things were happening when one was. Five
+surfaces ask that same question — the row glyph, the counter chip, the ribbon's building chips, the row's own
+breath layer and its live duration column — and all five now read one predicate (`IsCompiling`: `Started` and
+not waiting its turn); written separately, they had drifted into disagreeing, sometimes on the number, sometimes
+on whether anything was happening at all. A waiting member's row does not breathe, and its duration column
+reads `—` instead of a running clock: it is not compiling, so a live count that reset every round it waited
+through would have reported noise, not progress. The terminal line, once the group has a result, carries the
+sum of every round instead (§8.8).
 
 Two channels are **orthogonal** to status and must not be conflated with it: the will-build dot (§7.4) and the
 dependency-issue triangle (§8.3).
@@ -2170,6 +2204,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Command/event records, JSON options | `Contracts/Ipc/IpcMessages.cs` |
+| Skip reason literals — single source read by Core, Supervisor and App | `Contracts/Ipc/SkipReasons.cs` |
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
 | Spawning the engine, generation guard, engine-died signal | `App/Services/EngineHost.cs` |
@@ -2307,6 +2342,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Node visuals, status tick, opening wave, hover, hidden-panel gate | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
+| Persistent cycle-membership corner badge (built once, hidden not torn down) | `App/Graph/GraphView.xaml.cs` (`ApplyCycleBadge`/`EnsureCycleBadge`), `GraphNodeVisual.cs` (`CycleBadge`) |
 | Automatic pitch, layer bands, node size | `App/Graph/QuietGraphLayout.cs` |
 | Run lifecycle opacity and its hold/fade timings | `App/Graph/GraphNodeOpacity.cs` |
 | Bead orbit geometry and timings | `App/Graph/GraphBeads.cs` |
