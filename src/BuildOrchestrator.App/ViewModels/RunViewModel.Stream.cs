@@ -35,10 +35,16 @@ public sealed partial class RunViewModel
     // _cycleRoundCap == 0 ⇒ bu run'da henüz bir CycleRoundStartedEvent gelmedi (round AKTİF DEĞİL) — upstream/
     // prerequisite projeler bu run'ın ilk aşamasında builds eder ve detay almaz. RunStarted/RunCompleted'ta
     // sıfırlanır (bir sonraki run/segment temiz başlasın).
+    // [Review fix — Finding 1] Motor (RunCoordinator) eşzamanlı SCC'leri SERİLEŞTİRMEZ ve Cycles modunda
+    // paralellik kelepçelemez — ≥2 grup aynı anda koşabilir, bu yüzden "tek aktif grup" varsayımı YANLIŞTIR.
+    // _cycleRoundLeaderId turu başlatan LİDERİ tutar; ProjectStartedEvent bu sayaçları yalnız O LİDERİN grubuna
+    // (CycleGroups.MembersOf(leaderId)) ait üyeler için ilerletir — eşzamanlı ikinci grubun üyeleri bu turun
+    // sayaç/kapak alanlarını TÜKETMEZ (yanlış "member 3/2" gibi bir karışma önlenir).
     private int _cycleRound;
     private int _cycleRoundCap;
     private int _cycleRoundMemberCount;
     private int _cycleMemberIndex;
+    private string? _cycleRoundLeaderId;
 
     /// <summary>[D8] Duvar-saati zaman damgası kaynağı (stream satırı "HH:mm:ss") — testte deterministik enjekte
     /// edilebilir; üretimde <see cref="DateTimeOffset.Now"/>. Fırtına/elapsed saati (<c>_nowMs</c>) AYRIDIR
@@ -82,6 +88,12 @@ public sealed partial class RunViewModel
                 _streamRunMode = e.Mode;
                 // [Task 4] Yeni run/segment: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
                 (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
+                _cycleRoundLeaderId = null;
+                // [Review fix — Finding 2] _outOfScopeSkips YALNIZ RunCompletedEvent'te sıfırlanıyordu; motor bir
+                // Cycles koşusu ORTASINDA ölürse (RunCompletedEvent hiç gelmez) sayaç asılı kalır ve BİR SONRAKİ
+                // run'ın ilk PushStream'ine eski bir "N outside cycle scope — skipped" satırı sızdırırdı. Her yeni
+                // run/segment temiz başlasın diye burada da sıfırlanır.
+                _outOfScopeSkips = 0;
                 break;
 
             case BuildPreviewEvent:
@@ -111,8 +123,15 @@ public sealed partial class RunViewModel
                 // [Task 4] Bu proje bir cycle round üyesiyse (round AKTİFKEN — upstream projeler round
                 // başlamadan ÖNCE build eder, bkz. _cycleRoundCap) sayaç ilerler ve aktif satır "member i/N ·
                 // round r/cap" detayını taşır; değilse (upstream/prerequisite) detay YOK — düz "{name} building…".
+                // [Review fix — Finding 1] Kapı GLOBAL _cycleGroups.IsMember DEĞİL — turu başlatan LİDERİN
+                // GRUBUNA (MembersOf(_cycleRoundLeaderId)) üyelik. Motor eşzamanlı ikinci bir SCC'yi paralel
+                // dispatch edebilir; o grubun üyesi bu turun sayaç/kapak alanlarını TÜKETMEMELİ — global kapı
+                // "tek aktif grup" varsayardı ve B grubunun üyesine A grubunun (o an ekranda yazan) turunu
+                // yanlışlıkla mal ederdi (ör. "member 3/2"). MembersOf build-order LİSTESİ döner; id karşılaştırması
+                // kod tabanının kimlik kuralıyla (OrdinalIgnoreCase) tutarlı olsun diye açıkça belirtilir.
                 string? detail = null;
-                if (_cycleRoundCap > 0 && _cycleGroups?.IsMember(e.ProjectId) == true)
+                if (_cycleRoundCap > 0 && _cycleRoundLeaderId is { } leaderId &&
+                    (_cycleGroups?.MembersOf(leaderId).Contains(e.ProjectId, StringComparer.OrdinalIgnoreCase) ?? false))
                 {
                     _cycleMemberIndex++;
                     detail = StreamText.CycleMemberDetail(_cycleMemberIndex, _cycleRoundMemberCount, _cycleRound, _cycleRoundCap);
@@ -152,8 +171,11 @@ public sealed partial class RunViewModel
             // başarı ne hata, BuildStarted/Continue satırlarıyla AYNI amber ▸ anlatı tonu.
             case CycleRoundStartedEvent e:
                 // [Task 4] Yeni turun ilerleme takibi kurulur — sayaç 0'dan başlar, grubun İLK ProjectStartedEvent'i
-                // (round-order'daki ilk üye) onu 1'e taşır.
+                // (round-order'daki ilk üye) onu 1'e taşır. [Review fix — Finding 1] Lider id'si de yakalanır —
+                // ProjectStartedEvent bunun grubuna üyeliği sorar (bkz. yukarıdaki kapı), eşzamanlı BAŞKA bir
+                // grubun üyesi bu turu YANLIŞLIKLA tüketmesin diye.
                 (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (e.Round, e.RoundCap, e.MemberCount, 0);
+                _cycleRoundLeaderId = e.ProjectId;
                 PushStream(StreamKind.Info, e.ProjectId, StreamText.CycleRound(e.Round, e.RoundCap, e.MemberCount));
                 break;
 
@@ -195,6 +217,7 @@ public sealed partial class RunViewModel
                 SyncActiveLine();
                 // [Task 4] Koşu bitti — round ilerleme takibi bir sonraki run için sıfırlanır.
                 (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
+                _cycleRoundLeaderId = null;
                 break;
         }
     }

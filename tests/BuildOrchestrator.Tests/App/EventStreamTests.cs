@@ -365,6 +365,43 @@ public class EventStreamTests
         Assert.True(c.ActiveGeneration > gen1); // generation ARTTI
     }
 
+    // ============================================================ [Review fix — Finding 1] grup-scoped üye takibi
+
+    /// <summary>[Review fix — Finding 1] Motor (RunCoordinator) eşzamanlı SCC'ler arasında SERİLEŞTİRME yapmaz
+    /// ve Cycles modunda paralellik kelepçelenmez (RunCoordinator.cs:1062-1077/:873/:984 — motor DEĞİŞMEZ) — ≥2
+    /// grup ve parallelism ≥2 iken iki grubun <c>CycleRoundStartedEvent</c>'i ve <c>ProjectStartedEvent</c>'leri
+    /// İÇ İÇE gelebilir. Global <c>_cycleGroups.IsMember</c> kapısı hangi GRUBUN üyesi olduğunu AYIRT ETMEZ — B
+    /// grubunun üyesi A grubunun tek sayaç/tur alanlarını (o an ekranda yazan) tüketirdi (yanlış "member 3/2"
+    /// gibi). Fix: turu başlatan LİDERİN kimliği ayrıca yakalanır; detay yalnız O LİDERİN grubuna
+    /// (<c>MembersOf(leaderId)</c>) ait üyelere verilir — "tek aktif grup" varsayımı düşer. Eşzamanlı ikinci
+    /// grubun üyeleri düz "{name} building…" görür (detaysız ama DOĞRU — yanlış sayıdan iyi bir gerileme).</summary>
+    [Fact]
+    public void Active_line_detail_is_scoped_to_the_round_leaders_own_group_under_concurrent_cycles()
+    {
+        var vm = NewVm();
+        const string a1 = @"C:\p\a1.csproj";
+        const string a2 = @"C:\p\a2.csproj";
+        const string b1 = @"C:\p\b1.csproj";
+        const string b2 = @"C:\p\b2.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(a1, "A1", 0, inCycle: true), Node(a2, "A2", 1, inCycle: true),
+             Node(b1, "B1", 2, inCycle: true), Node(b2, "B2", 3, inCycle: true)],
+            [[a1, a2], [b1, b2]], [], []));
+
+        // A grubunun turu başladı (lider a1) — motor B grubunu da PARALEL dispatch edebilir; B kendi
+        // CycleRoundStartedEvent'ini HENÜZ yollamadı.
+        vm.OnEvent(new CycleRoundStartedEvent("r1", a1, Round: 1, RoundCap: 3, MemberCount: 2));
+
+        // B1, B grubunun üyesi — A'nın (lider a1) turuna AİT DEĞİL. Eski kod (global IsMember) burada "member
+        // 1/2 · round 1/3" basardı (RED); doğrusu: B'nin kendi tur bilgisi yok, detay YOK.
+        vm.OnEvent(new ProjectStartedEvent("r1", b1, "B1"));
+        Assert.Equal("B1 building…", vm.ActiveLineText);
+
+        // A2, lider a1'in GERÇEK grup üyesi — sayaç B1'den ETKİLENMEMİŞ olmalı: bu turun İLK üyesi (1/2).
+        vm.OnEvent(new ProjectStartedEvent("r1", a2, "A2"));
+        Assert.Equal("A2 building… · member 1/2 · round 1/3", vm.ActiveLineText);
+    }
+
     // ============================================================ [Task 3/cycles] — grup kararı
 
     /// <summary>[Task 3] CycleCompletedEvent → stream satırı, üç metin varyantından biri + kind eşlemesi
@@ -424,6 +461,32 @@ public class EventStreamTests
         var upToDate = vm.StreamEvents.Single(l => l.Text == StreamText.Skipped("y", SkipReasons.UpToDate));
         // Toplu satır, sıradaki stream olayından (buradaki up-to-date skip'in kendi PushStream'i) ÖNCE yayılır.
         Assert.True(vm.StreamEvents.IndexOf(outside) < vm.StreamEvents.IndexOf(upToDate));
+    }
+
+    /// <summary>[Review fix — Finding 2] <c>_outOfScopeSkips</c> yalnız <see cref="RunCompletedEvent"/>'te
+    /// sıfırlanıyordu — motor bir Cycles koşusu ORTASINDA ölürse (RunCompletedEvent hiç gelmez) sayaç asılı
+    /// kalır ve BİR SONRAKİ run'ın ilk <c>PushStream</c>'i (burada "Build started") önüne eski bir "N outside
+    /// cycle scope — skipped" satırı sızdırır. Fix: <c>RunStartedEvent</c> de sayacı sıfırlar — her yeni
+    /// run/segment temiz başlar.</summary>
+    [Fact]
+    public void A_new_run_does_not_leak_a_stale_out_of_scope_count_from_an_unfinished_cycles_run()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\s1.csproj", SkipReasons.OutOfCycleScope));
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\s2.csproj", SkipReasons.OutOfCycleScope));
+        // Motor burada ÖLDÜ — RunCompletedEvent hiç gelmedi (eski kodda sayaç HİÇ sıfırlanmıyor).
+        int before = vm.StreamEvents.Count;
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\x.csproj", "X", true)]));
+
+        // Yeni run'ın açılış satırı, reset'ten sonra PUSH edilen İLK (ve TEK) satır olmalı — önünde/arkasında
+        // sızmış bir "outside cycle scope" satırı OLMAMALI.
+        var newLines = vm.StreamEvents.Skip(before).ToList();
+        var line = Assert.Single(newLines);
+        Assert.Equal("Build started — 1 projects, parallelism 4", line.Text);
     }
 
     /// <summary>[Task 2 regresyon pini] Toplayıcı yalnız <see cref="RunMode.Cycles"/>'a özgüdür — Build
