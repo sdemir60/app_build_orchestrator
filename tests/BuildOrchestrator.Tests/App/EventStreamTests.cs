@@ -273,6 +273,28 @@ public class EventStreamTests
         Assert.Equal(leaderId, line.ProjectId);
     }
 
+    // ============================================================ [Task 3/cycles] — grup kararı
+
+    /// <summary>[Task 3] CycleCompletedEvent → stream satırı, üç metin varyantından biri + kind eşlemesi
+    /// (Converged→Ok, NoProgress→Fail, CapReached→Info). ProjectId lidere bağlanır — tıklanabilir kalır.</summary>
+    [Theory]
+    [InlineData(CycleOutcome.Converged, StreamKind.Ok)]
+    [InlineData(CycleOutcome.NoProgress, StreamKind.Fail)]
+    [InlineData(CycleOutcome.CapReached, StreamKind.Info)]
+    public void Cycle_completed_pushes_the_verdict_line_with_the_outcome_kind_mapped(
+        CycleOutcome outcome, StreamKind expectedKind)
+    {
+        var vm = NewVm();
+        const string leaderId = @"C:\p\a.csproj";
+
+        vm.OnEvent(new CycleCompletedEvent("r1", leaderId, outcome, MemberCount: 2, Rounds: 2, FailedCount: 1, DurationMs: 4200));
+
+        var line = vm.StreamEvents.Last();
+        Assert.Equal(StreamText.CycleCompleted(outcome, 2, 2, 1, 4200), line.Text);
+        Assert.Equal(expectedKind, line.Kind);
+        Assert.Equal(leaderId, line.ProjectId);
+    }
+
     // ============================================================ §13 — skip gerekçesi görünür + kapsam-dışı fırtınası tek satır
 
     /// <summary>[Task 2] <c>ProjectSkippedEvent.Reason</c> artık stream satırına AYNEN taşınır — eskiden

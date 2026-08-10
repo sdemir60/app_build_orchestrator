@@ -908,4 +908,64 @@ public class CycleRoundsTests
         Assert.Contains("cycle A: converged (2 members)", h.DecisionLog, StringComparison.Ordinal);
         Assert.DoesNotContain("remembered at", h.DecisionLog, StringComparison.Ordinal);
     }
+
+    // ---------------------------------------------------------------- 11) CycleCompletedEvent [Task 3]
+
+    /// <summary>[Task 3] decision.log'a yazılan karar, ekrana da TİPLİ bir event olarak düşer — kullanıcı bugüne
+    /// dek koşunun NEDEN öyle bittiğini yalnız log dosyasından okuyabiliyordu. Yakınsayan grup: iki tur, sıfır
+    /// son-tur başarısızlığı.</summary>
+    [Fact]
+    public async Task a_converged_group_emits_a_cycle_completed_event()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var e = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(Id("A"), e.ProjectId);          // lider — CycleRoundStartedEvent'in lideriyle AYNI
+        Assert.Equal(CycleOutcome.Converged, e.Outcome);
+        Assert.Equal(2, e.MemberCount);
+        Assert.Equal(2, e.Rounds);
+        Assert.Equal(0, e.FailedCount);               // son tur (2) hiçbir üye başarısız değildi
+    }
+
+    /// <summary>[Task 3] NoProgress: aynı küme iki tur üst üste patlıyor — son turun başarısız üye sayısı
+    /// (burada yalnız B) sabit bir kanıttır, sonraki turların YOKLUĞU değil.</summary>
+    [Fact]
+    public async Task a_no_progress_group_emits_a_cycle_completed_event_with_its_failed_count()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // aynı küme iki turdur patlıyor
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var e = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(Id("A"), e.ProjectId);
+        Assert.Equal(CycleOutcome.NoProgress, e.Outcome);
+        Assert.Equal(2, e.MemberCount);
+        Assert.Equal(2, e.Rounds);
+        Assert.Equal(1, e.FailedCount);               // yalnız B son turda da başarısız
+    }
+
+    /// <summary>[Task 3] Yarıda kesilen grupta HİÇBİR karar YOKTUR (decision hâlâ Continue) — decision.log'a
+    /// hiçbir satır yazılmadığı gibi event de HİÇ yayılmaz.</summary>
+    [Fact]
+    public async Task an_interrupted_group_never_emits_a_cycle_completed_event()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _, _) => name == "B"
+            ? Task.FromException<MsBuildInvokeResult>(new OperationCanceledException())
+            : Task.FromResult(Ok()));
+        using var h = new Harness(TwoMemberCycle(), invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(h.Events.OfType<CycleCompletedEvent>());
+    }
 }

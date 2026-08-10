@@ -165,6 +165,19 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    // [Task 3/cycles] Grubun nihai kararı — decision.log'un tel karşılığı. Outcome camelCase METİN olarak
+    // gitmeli (JsonStringEnumConverter): "noProgress" pinlenir ki tel formatı sessizce sayıya kaymasın.
+    [Fact]
+    public void CycleCompletedEvent_roundtrips_with_camelCase_outcome()
+    {
+        IpcEvent ev = new CycleCompletedEvent("r1", @"C:\p\a.csproj", CycleOutcome.NoProgress,
+            MemberCount: 2, Rounds: 2, FailedCount: 1, DurationMs: 4200);
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"cycleCompleted\"", json);
+        Assert.Contains("\"outcome\":\"noProgress\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
     // [cycle rounds] "Oturmamış döngü" bayrağı: tavana dayanmış bir SCC'nin BAŞARILI üyeleri bunu taşır.
     // Varsayılanı false'tur ve alanı hiç taşımayan (bu sürümden ÖNCE yazılmış) bir projectSucceeded satırı
     // aynen çözülmeye devam eder — geriye dönük uyum.

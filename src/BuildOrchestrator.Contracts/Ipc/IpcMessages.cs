@@ -141,6 +141,7 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
 [JsonDerivedType(typeof(WorktreeListEvent), "worktreeList")]
 [JsonDerivedType(typeof(CycleRoundStartedEvent), "cycleRoundStarted")]
+[JsonDerivedType(typeof(CycleCompletedEvent), "cycleCompleted")]
 public abstract record IpcEvent;
 
 public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
@@ -245,6 +246,16 @@ public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcE
 /// <param name="MemberCount">Grubun bu turda derlenecek üye sayısı.</param>
 public sealed record CycleRoundStartedEvent(string RunId, string ProjectId, int Round, int RoundCap, int MemberCount)
     : IpcEvent;
+
+/// <summary>[cycles] Bir SCC koşusunun nihai kararı — CycleRoundDecision'ın (Core) wire karşılığı; Continue
+/// (yarıda kesilme) bir karar DEĞİLDİR ve bu event hiç yayılmaz. camelCase METİN olarak yazılır.</summary>
+public enum CycleOutcome { Converged, NoProgress, CapReached }
+
+/// <summary>[cycles] Bir SCC'nin koşusu bitti. ProjectId = build-order'daki İLK üye (CycleRoundStartedEvent'in
+/// lideriyle AYNI — satır tıklanabilir kalır). DurationMs üye sürelerinin toplamıdır; Rounds koşulan tur sayısı;
+/// FailedCount SON turun başarısız üye sayısı.</summary>
+public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOutcome Outcome,
+    int MemberCount, int Rounds, int FailedCount, long DurationMs) : IpcEvent;
 
 /// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync

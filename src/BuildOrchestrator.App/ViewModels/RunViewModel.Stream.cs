@@ -130,6 +130,18 @@ public sealed partial class RunViewModel
                     StreamText.CycleRound(e.Round, e.RoundCap, ResolveName(e.ProjectId), e.MemberCount));
                 break;
 
+            // [Task 3/cycles] Grubun NİHAİ kararı — decision.log'un ekrandaki karşılığı. ProjectId LİDERİN
+            // id'sidir (CycleRoundStartedEvent ile AYNI desen) — satır tıklanabilir kalır. Kind outcome'a göre
+            // değişir: Converged yeşil, NoProgress kırmızı, CapReached amber/info (bilgi, hata DEĞİL).
+            case CycleCompletedEvent e:
+                PushStream(e.Outcome switch
+                {
+                    CycleOutcome.Converged => StreamKind.Ok,
+                    CycleOutcome.NoProgress => StreamKind.Fail,
+                    _ => StreamKind.Info, // CapReached
+                }, e.ProjectId, StreamText.CycleCompleted(e.Outcome, e.MemberCount, e.Rounds, e.FailedCount, e.DurationMs));
+                break;
+
             case SyncCompletedEvent e:
                 PushStream(StreamKind.Sync, null, StreamText.Sync(e.ToBuildCount, e.UpToDateCount));
                 break;

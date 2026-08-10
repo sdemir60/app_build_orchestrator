@@ -85,4 +85,19 @@ public static class StreamText
     public static string CycleRound(int round, int cap, string leaderName, int memberCount) =>
         string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} (+{3} more)",
             round, cap, leaderName, memberCount - 1);
+
+    /// <summary>[Task 3/cycles] <c>CycleCompletedEvent</c>'in TEK metin kaynağı — grubun neden öyle bittiğini
+    /// (yakınsadı / ilerleme yok / tavana dayandı) ekrana taşır. Kind eşlemesi (Converged→Ok, NoProgress→Fail,
+    /// CapReached→Info) çağıranda (<c>RunViewModel.Stream</c>) yapılır — burada yalnız METİN.</summary>
+    public static string CycleCompleted(CycleOutcome outcome, int members, int rounds, int failed, long durationMs) =>
+        outcome switch
+        {
+            CycleOutcome.Converged => string.Format(CultureInfo.InvariantCulture,
+                "cycle converged — {0} members · {1} rounds · {2}", members, rounds, DurationFormat.Duration(durationMs)),
+            CycleOutcome.NoProgress => string.Format(CultureInfo.InvariantCulture,
+                "cycle failed — same {0} members failing twice · {1} rounds", failed, rounds),
+            CycleOutcome.CapReached => string.Format(CultureInfo.InvariantCulture,
+                "cycle round cap reached — output may be one generation behind · {0} rounds", rounds),
+            _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "unknown cycle outcome"),
+        };
 }
