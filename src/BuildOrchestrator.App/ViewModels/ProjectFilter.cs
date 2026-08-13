@@ -8,7 +8,7 @@ namespace BuildOrchestrator.App.ViewModels;
 public static class ProjectFilter
 {
     public const string Building = "building", Succeeded = "succeeded", Failed = "failed",
-                        Skipped = "skipped", Dep = "dep";
+                        Skipped = "skipped", Dep = "dep", Cycle = "cycle";
 
     /// <summary>Bir satır, sorgu + filtre altında görünür mü? Sorgu boşsa ad kontrolü atlanır; filtre boşsa
     /// statü kontrolü atlanır (ikisi de boş → her satır görünür).</summary>
@@ -21,6 +21,7 @@ public static class ProjectFilter
 
         if (string.IsNullOrEmpty(filter)) return true;
         if (filter == Dep) return row.HasDepIssue;                                    // statüden bağımsız
+        if (filter == Cycle) return row.InCycle;                                      // yapısal, kalıcı
         if (filter == Building) return row.State is ProjectRowState.Started or ProjectRowState.Pending; // queued dahil
         return string.Equals(StatusKey(row.State), filter, StringComparison.Ordinal); // succeeded/failed/skipped
     }
@@ -33,6 +34,7 @@ public static class ProjectFilter
         Failed => "Failed",
         Skipped => "Skipped",
         Dep => "Dependency issues",
+        Cycle => "In a dependency cycle",
         _ => filter,
     };
 

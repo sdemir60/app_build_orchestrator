@@ -59,6 +59,7 @@ public partial class StickyRibbon : UserControl
     private double _lastFraction; // determinate hedef (0..1) — resize'da yeniden uygulanır
     private string? _lastBuildingSig;
     private string? _lastFailedSig;
+    private int _lastCycleCount = -1;
     private AppPhase? _lastAnnouncedPhase; // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil)
     /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
     /// (<see cref="Controls.MotionGate"/>) — latch'siz kip (ProjectRow ile aynı).</summary>
@@ -103,6 +104,9 @@ public partial class StickyRibbon : UserControl
     internal TextBlock? BuildingOverflow { get; private set; }
     internal IReadOnlyList<ToggleButton> FailureChips { get; private set; } = [];
     internal ToggleButton? FailureMoreChip { get; private set; }
+    /// <summary>[design v1.7.0 §2.2] Şeritteki döngü chip'i — yalnız topolojide SCC varken kurulur.</summary>
+    internal ToggleButton? CycleChip { get; private set; }
+    internal StackPanel CycleCluster => PART_CycleCluster;
     internal StackPanel FailureCluster => PART_FailureCluster; // [6b fold] testler "N failed"/"dependency-affected" metnini buradan pinler
     internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
@@ -136,6 +140,7 @@ public partial class StickyRibbon : UserControl
         if (_vm is not null) UnsubscribeVm(_vm);
         _vm = e.NewValue as RunViewModel;
         _lastBuildingSig = _lastFailedSig = null; // yeni VM → chip imzalarını sıfırla (ilk kurulumda yeniden kur)
+        _lastCycleCount = -1;
         if (_vm is not null) SubscribeVm(_vm);
         RefreshAll();
     }
@@ -200,6 +205,7 @@ public partial class StickyRibbon : UserControl
         RefreshText();
         RefreshProgress();
         _lastBuildingSig = _lastFailedSig = null;
+        _lastCycleCount = -1;
         RebuildChipsIfChanged();
     }
 
@@ -365,6 +371,42 @@ public partial class StickyRibbon : UserControl
 
         if (bSig != _lastBuildingSig) { _lastBuildingSig = bSig; BuildBuildingChips(building); }
         if (fSig != _lastFailedSig) { _lastFailedSig = fSig; BuildFailureCluster(failed); }
+
+        int cycleCount = _vm.Counters.Cycle;
+        if (cycleCount != _lastCycleCount) { _lastCycleCount = cycleCount; BuildCycleCluster(cycleCount); }
+    }
+
+    /// <summary>
+    /// [design v1.7.0 §2.2] Döngü kümesi: turuncu üçgen glyph + <c>{n} in a dependency cycle</c> chip'i.
+    /// Tıklama listede <c>cycle</c> filtresini kurar. Hata kümesinin aksine bu küme bir KOŞU SONUCU değildir:
+    /// Sync bir SCC bulur bulmaz belirir ve koşu boyunca da durur — döngü bir yapılandırma hatasıdır ve
+    /// kullanıcının "N to build" ile listedeki proje sayısının neden tutmadığını hover etmeden görmesi
+    /// gerekir.
+    /// </summary>
+    private void BuildCycleCluster(int count)
+    {
+        PART_CycleCluster.Children.Clear();
+        CycleChip = null;
+        if (count == 0) { PART_CycleCluster.Visibility = Visibility.Collapsed; return; }
+        PART_CycleCluster.Visibility = Visibility.Visible;
+
+        PART_CycleCluster.Children.Add(new StatusGlyph
+        {
+            Status = GraphStatus.Cycle,
+            Size = FailureGlyphSize,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var text = new TextBlock
+        {
+            Text = count.ToString(System.Globalization.CultureInfo.InvariantCulture) + " in a dependency cycle",
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var chip = MakeChip(text, brushKey: "Brush.StatusCycleText");
+        chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0);
+        chip.Click += (_, _) => { if (_vm is not null) _vm.ActiveFilter = ProjectFilter.Cycle; ResetChip(chip); };
+        PART_CycleCluster.Children.Add(chip);
+        CycleChip = chip;
     }
 
     private void BuildBuildingChips(IReadOnlyList<ProjectRowViewModel> building)
