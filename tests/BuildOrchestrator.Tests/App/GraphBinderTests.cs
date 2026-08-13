@@ -112,29 +112,28 @@ public class GraphBinderTests
     }
 
     [Fact]
-    public void Cycle_members_are_reported_as_cycle_status()
+    public void Cycle_membership_is_not_a_status_and_never_overrides_the_real_one()
     {
         // StatusOf: row null + inCycle → Cycle; sync öncesi her şey Discovered (cycle olsa bile).
-        Assert.Equal(GraphStatus.Cycle, GraphBinder.StatusOf(null, inCycle: true, synced: true));
-        Assert.Equal(GraphStatus.Discovered, GraphBinder.StatusOf(null, inCycle: true, synced: false));
+        // [DEĞİŞEN KURAL — design v1.7.0 §5] Döngü üyeliği statü DEĞİLDİR: satırı olmayan bir düğüm,
+        // üye olsa da Discovered'dır; üyelik düğümün kendi InCycle alanında taşınır.
+        Assert.Equal(GraphStatus.Discovered, GraphBinder.StatusOf(null, synced: true));
+        Assert.Equal(GraphStatus.Discovered, GraphBinder.StatusOf(null, synced: false));
 
-        // Row VARSA statü TEK otoriteden (row.Status) gelir — cycle üyesi satır (InCycle + Pending) Cycle döner
-        // (StatusOf cycle'ı YENİDEN eşlemez; row.Status'a delege eder — çift otorite YASAK).
+        // Row VARSA statü TEK otoriteden (row.Status) gelir; üyelik onu ezmez — Pending bir üye Discovered'dır.
         var cycleRow = new ProjectRowViewModel(Id("X"), "X", ProjectRowState.Pending) { InCycle = true };
-        Assert.Equal(GraphStatus.Cycle, GraphBinder.StatusOf(cycleRow, inCycle: true, synced: true));
+        Assert.Equal(GraphStatus.Discovered, GraphBinder.StatusOf(cycleRow, synced: true));
 
-        // [D5 fix wave/Fix 3] Guard — delegasyon kanıtı: satır varsa `inCycle` argümanı YOK SAYILMALI (ikinci bir
-        // "if (inCycle) return Cycle" kısayolu YASAK). State=Started olan (row.Status==Building) bir satır,
-        // inCycle:true ile çağrılsa BİLE Cycle DEĞİL Building dönmeli — aksi halde StatusOf ikinci bir otorite
-        // taşıyor demektir.
+        // Guard — delegasyon kanıtı: üye bir satır derlenirken Building'dir, üyelik bunu gizlemez.
         var startedInCycleRow = new ProjectRowViewModel(Id("Z"), "Z", ProjectRowState.Started) { InCycle = true };
-        Assert.Equal(GraphStatus.Building, GraphBinder.StatusOf(startedInCycleRow, inCycle: true, synced: true));
+        Assert.Equal(GraphStatus.Building, GraphBinder.StatusOf(startedInCycleRow, synced: true));
 
-        // Uçtan uca: cycle düğümü grafta Cycle; cycle-dışı düğüm değil.
+        // Uçtan uca: üyelik grafta STATÜDE değil, düğümün kendi InCycle alanındadır (çekirdeği o boyar).
         var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]) };
         var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
-        Assert.Equal(GraphStatus.Cycle, nodes.Single(n => n.Name == "X").Status);
-        Assert.NotEqual(GraphStatus.Cycle, nodes.Single(n => n.Name == "Y").Status);
+        Assert.True(nodes.Single(n => n.Name == "X").InCycle);
+        Assert.False(nodes.Single(n => n.Name == "Y").InCycle);
+        Assert.Equal(GraphStatus.Discovered, nodes.Single(n => n.Name == "X").Status);
     }
 
     // [quiet · SİLİNDİ] `Nodes_source_the_dep_badge_from_row_HasDepIssue` — v1.3.0 §2.3 "Kaldırılanlar" graf

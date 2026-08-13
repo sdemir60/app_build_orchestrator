@@ -95,7 +95,7 @@ public class RunViewModelTests
     /// (<c>RunMode.Cycles</c>) geldiğinde aynı kural sonucu da gizlerdi. Rozetin kendisi
     /// <c>ProjectRowTests</c>'te pinlidir.</para></summary>
     [Fact]
-    public async Task A_cycle_member_node_maps_the_row_to_cycle_status_until_the_engine_speaks()
+    public async Task A_cycle_member_row_keeps_its_real_status_and_carries_membership_separately()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
@@ -107,9 +107,11 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         Assert.True(row.InCycle);
-        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Cycle, row.Status); // pending ama cycle üyesi
+        // [DEĞİŞEN KURAL — design v1.7.0 §5] Üyelik STATÜ DEĞİLDİR: Sync sonrası satır hâlâ Discovered'dır,
+        // üyelik kendi kanalında (nokta + uyarı üçgeni + graf çekirdeği) yaşar ve statüyü asla gizlemez.
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status);
 
-        // Motor konuştu: glyph artık ONUN cevabıdır; üyelik satırda (InCycle) DURUR ve rozete taşınır.
+        // Motor konuştu: glyph ONUN cevabıdır; üyelik satırda (InCycle) DURUR.
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.InDependencyCycle));
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Skipped, row.Status);
         Assert.True(row.InCycle);

@@ -129,7 +129,7 @@ public class ProjectRowTests
     }
 
     [StaFact]
-    public void Sha_pair_is_shown_only_for_dirty_rows_and_is_replaced_by_the_two_hover_icons()
+    public void Sha_is_shown_on_every_row_and_is_replaced_by_the_two_hover_icons()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
         var (row, window, _) = Realize(vm);
@@ -148,10 +148,12 @@ public class ProjectRowTests
         Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
         Assert.Equal(Visibility.Collapsed, row.HoverIcons!.Visibility);
 
-        // clean/unknown satır → sha ASLA gösterilmez (yalnız WillBuild==true).
+        // [DEĞİŞEN KURAL — design v1.7.0 §2.4] Eski iddia: "clean/unknown satırda sha ASLA gösterilmez".
+        // SHA artık HER satırda görünür (clean satırda tek sha, faint) — "yalnız derleneceklerde göster"
+        // hover'dan çıkışta satırlar arası layout sıçraması yaratıyordu.
         vm.WillBuild = false;
         row.UpdateLayout();
-        Assert.Equal(Visibility.Collapsed, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
         GC.KeepAlive(window);
     }
 
@@ -531,15 +533,16 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
-    // [Fix wave 1, Finding 1 + lens-3 Minor] Şerit rengi TÜM statüler için pinlenir (cycle + queued dahil) —
-    // satır gerçekten kurulur, Stripe.Fill'in çözdüğü fırça statü başına doğru token'dır. Discovered → transparent
-    // (token DEĞİL) ayrı test edilir.
+    // [DEĞİŞEN KURAL — design v1.7.0 §2.4] Sol şerit YALNIZ sonuç kanalıdır ve HER satırda vardır. İki iddia
+    // değişti: (a) döngü üyeliği şeridi ARTIK EZMEZ — yapısal kanal noktaya ve uyarı üçgenine taşındı;
+    // (b) discovered ile skipped AYNI gridir (`Brush.StatusSkippedBorder`) — iki ayrı gri, aralarında bir
+    // anlam varmış izlenimi veriyordu.
     [StaTheory]
     [InlineData(ProjectRowState.Started, false, false, "Brush.Amber")]
     [InlineData(ProjectRowState.Succeeded, false, false, "Brush.StatusSuccess")]
     [InlineData(ProjectRowState.Failed, false, false, "Brush.StatusFail")]
-    [InlineData(ProjectRowState.Skipped, false, false, "Brush.StatusSkipped")]
-    [InlineData(ProjectRowState.Pending, true, false, "Brush.StatusCycle")]   // InCycle → cycle (skipped/pending'i ezer)
+    [InlineData(ProjectRowState.Skipped, false, false, "Brush.StatusSkippedBorder")]
+    [InlineData(ProjectRowState.Pending, true, false, "Brush.StatusSkippedBorder")] // üyelik şeridi ezmez
     [InlineData(ProjectRowState.Pending, false, true, "Brush.StatusQueued")]  // willBuild + run uçuşta → queued
     public void Status_stripe_uses_the_right_token_brush_per_status(
         ProjectRowState state, bool inCycle, bool queued, string expectedKey)
@@ -552,13 +555,16 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[DEĞİŞEN KURAL — design v1.7.0 §2.4] Eski iddia: "discovered satırın şeridi ŞEFFAFTIR".
+    /// Şerit artık hiç kaybolmaz: workspace açıldığı andan itibaren gri durur (Sync şeridi getirmez, zaten
+    /// oradadır — Sync yalnız plan kanalını tazeler) ve skipped ile AYNI gridir.</summary>
     [StaFact]
-    public void Discovered_stripe_is_transparent_not_a_token_brush()
+    public void Discovered_stripe_is_the_same_grey_as_skipped()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending); // pending, no run, no cycle
-        var (row, window, _) = Realize(vm);
+        var (row, window, host) = Realize(vm);
 
-        Assert.Equal(Colors.Transparent, DsResources.ColorOf(row.Stripe.Fill));
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
         GC.KeepAlive(window);
     }
 
@@ -574,123 +580,30 @@ public class ProjectRowTests
         // Tek dep: ortak önek atılır.
         vm.DepIssues = new[] { "OSYS.Sales.Core" };
         row.UpdateLayout();
-        Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);
+        Assert.Equal("Dependency issue: Sales.Core — last successful output referenced", row.DepTooltip);
 
         // İki dep: ", " ile birleşir (brief slot 6 birebir).
         vm.DepIssues = new[] { "OSYS.Sales.Core", "OSYS.Billing.Core" };
         row.UpdateLayout();
-        Assert.Equal("Failed dependency: Sales.Core, Billing.Core — last successful output referenced", row.DepTooltip);
+        Assert.Equal("Dependency issue: Sales.Core, Billing.Core — last successful output referenced", row.DepTooltip);
         GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- [cycle rounds/Task 9] döngü görselleri
 
-    /// <summary>[Task 9 Part 1] <c>CycleUnsettled</c> mevcut dep-issue üçgenini TAŞIR (yeni ikon/slot/sütun YOK) —
-    /// yalnız tooltip metni dallanır (brief slot: "Cycle did not fully settle — output may be one generation stale").</summary>
-    [StaFact]
-    public void Cycle_unsettled_row_shows_the_existing_triangle_with_its_own_verbatim_tooltip()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { CycleUnsettled = true };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
-        Assert.Equal("Cycle did not fully settle — output may be one generation stale", row.DepTooltip);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[Task 9 Part 1] Gerçek bir dep-issue varken (birebir eski metin) <c>CycleUnsettled</c> AYNI satırda
-    /// true olsa bile eski tooltip metnini EZMEZ — dep-issue metni daha spesifik/actionable, öncelik onda kalır.</summary>
-    [StaFact]
-    public void Cycle_unsettled_does_not_override_the_existing_dep_issue_tooltip_when_both_are_present()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed)
-        { CycleUnsettled = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
-        Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[Task 9 Part 2] Kalıcı yakınsamayan döngü — satır <c>Skipped</c> kalır ama aynı 14px dep-slotu
-    /// üçgen YERİNE turuncu döngü rozetini taşır (GraphStatus.Cycle/Icon.StatusCycle/Brush.StatusCycleText —
-    /// StatusGlyph'in ZATEN çizdiği aynı görsel, yeni geometri YOK) + kendi birebir tooltip'i.</summary>
-    [StaFact]
-    public void Cycle_unconverged_row_stays_skipped_but_carries_the_orange_cycle_badge_in_the_dep_slot()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(GraphStatus.Skipped, row.Glyph.Status); // ana glyph SKIPPED kalır — yeni sütun/statü YOK
-        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
-        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);
-        Assert.Equal(GraphStatus.Cycle, row.CycleBadge.Status); // rozet StatusGlyph'in KENDİ cycle çizimini reuse eder
-        Assert.Equal("Cycle did not build — not retried until the source changes", row.DepTooltip);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[Task 9 Part 2] Rozet 14px slotun İÇİNDE, üçgenle AYNI 12px ölçekte — hiza asla kaymaz
-    /// (<see cref="Dep_issue_slot_is_fourteen_pixels_even_when_empty_so_columns_never_shift"/> deseni).</summary>
-    [StaFact]
-    public void Cycle_badge_is_twelve_by_twelve_inside_the_still_fourteen_pixel_slot()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(14.0, row.DepSlot.Width);
-        Assert.Equal(12.0, row.CycleBadge.Size);
-        Assert.Equal(12.0, row.CycleBadge.ActualWidth);
-        Assert.Equal(12.0, row.CycleBadge.ActualHeight);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[Task 9 Part 2] Ordinary "güncel" skip (cycle üyesi bile olmayan sıradan proje) hiçbir yeni
-    /// görsel taşımaz — üçgen de rozet de gizli, sıradan skip AYNEN eskisi gibi görünür.</summary>
-    [StaFact]
-    public void An_ordinary_up_to_date_skip_shows_neither_the_triangle_nor_the_cycle_badge()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped);
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[Task 9 Part 2 — edge case] Bir satır teorik olarak (Continue segment'lerinde bayat veri) HEM
-    /// <c>CycleUnconverged</c> HEM eski bir <c>DepIssues</c> taşıyabilir — rozet KAZANIR: bu run'ın güncel/kesin
-    /// sinyali (hiç invoke edilmedi) bayat "failed dependency" metninden daha güvenilir.</summary>
-    [StaFact]
-    public void Cycle_unconverged_wins_over_a_stale_dep_issue_flag_on_the_same_row()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
-        { CycleUnconverged = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
-        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);
-        Assert.Equal("Cycle did not build — not retried until the source changes", row.DepTooltip);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[review fix 1 — render guard] <c>CycleUnconverged</c> yalnız <c>Skipped</c>'te ANLAMLIDIR
-    /// (<c>RunCounters.cs</c>'in <c>case ProjectRowState.Skipped:</c> deseniyle AYNI kapı). Kök neden artık
-    /// <c>RunViewModel.OnProjectDone</c>'da temizleniyor, ama bu SAVUNMA HATTIDIR: bayrak her nasılsa bayat
-    /// kalıp Succeeded/Failed bir satıra sızsa BİLE render katmanı rozeti/tooltip'i basmaz — "az önce düzelen
-    /// proje kalıcı-kırık gibi görünür" hatası burada da tekrar mümkün olmasın.</summary>
-    [StaFact]
-    public void Cycle_unconverged_render_guard_ignores_the_flag_once_the_row_is_no_longer_skipped()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { CycleUnconverged = true };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
-        Assert.Null(row.DepTooltip);
-        GC.KeepAlive(window);
-    }
 
     /// <summary>[review fix Minor] Dep-slot'ta gösterilecek hiçbir sinyal kalmayınca <c>PART_DepTip.Content</c>
     /// DEFANSİF olarak temizlenir — slot bugün sıfır yükseklikte çöktüğü için zararsız, ama slot'un layout'u
@@ -928,75 +841,16 @@ public class ProjectRowTests
 
     // ---------------------------------------------------------------- [cycles] döngü rozeti koşu-sonrası
 
-    /// <summary>
-    /// [cycles] <b>Döngü glyph'i bir KOŞU-ÖNCESİ ifadedir.</b> Motor bu satır hakkında konuştuğu anda statü
-    /// glyph'i motorun cevabını gösterir (✓/✗/—/spinner) ve döngü üyeliği dep-slotundaki turuncu rozete taşınır.
-    ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden <c>InCycle</c>, <c>Skipped</c> alt-durumunu EZİYORDU: bir Build'den
-    /// sonra döngüdeki her satır, Sync'ten hemen sonraki hâliyle BİREBİR aynı görünüyordu — kullanıcı "bu koşu
-    /// onları atladı" ile "bunlar bir döngüde" arasını ayıramıyordu. Yeni kural iki bilgiyi iki ayrı slota
-    /// koyar: sonuç solda (standart ikon), yapısal olgu sağda (rozet).</para>
-    /// </summary>
-    [StaTheory]
-    [InlineData(ProjectRowState.Succeeded, GraphStatus.Succeeded)]
-    [InlineData(ProjectRowState.Failed, GraphStatus.Failed)]
-    [InlineData(ProjectRowState.Skipped, GraphStatus.Skipped)]
-    public void A_cycle_member_with_a_result_shows_that_result_and_moves_the_cycle_mark_to_the_dep_slot(
-        ProjectRowState state, GraphStatus expected)
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", state) { InCycle = true };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(expected, vm.Status);                              // sol: motorun cevabı
-        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);    // sağ: yapısal olgu
-        Assert.Equal("In a dependency cycle", row.DepTooltip);
-        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);     // üçgen DEĞİL
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[cycles] Kontrol grubu: satır hâlâ döngü glyph'ini gösterirken (Sync sonrası boşta) rozet
-    /// GEREKSİZDİR — aynı şeyi iki kez söylemek olurdu.</summary>
-    [StaFact]
-    public void An_idle_cycle_row_keeps_the_cycle_glyph_and_shows_no_badge()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { InCycle = true };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(GraphStatus.Cycle, vm.Status);
-        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[cycles] Önceliğin ucu: <c>CycleUnconverged</c> ile sıradan üyelik rozeti AYNI görseldir, ama
-    /// metinleri farklıdır ve daha KESİN olan kazanır — "bir daha denenmeyecek", "bir döngüde"den fazlasını
-    /// söyler.</summary>
-    [StaFact]
-    public void The_unconverged_tooltip_outranks_the_plain_membership_tooltip_on_the_same_badge()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
-        { InCycle = true, CycleUnconverged = true };
-        var (row, window, _) = Realize(vm);
 
-        Assert.Equal(Visibility.Visible, row.CycleBadge.Visibility);
-        Assert.Equal("Cycle did not build — not retried until the source changes", row.DepTooltip);
-        GC.KeepAlive(window);
-    }
 
-    /// <summary>[cycles] Ve dep-issue/unsettled ÜÇGENİ de sıradan üyelik rozetini bastırır: ikisi de "bu sonuca
-    /// ne kadar güvenilir" der, üyelik ise yalnız yapıyı anlatır.</summary>
-    [StaFact]
-    public void A_dependency_issue_outranks_the_plain_cycle_membership_badge()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded)
-        { InCycle = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
-        var (row, window, _) = Realize(vm);
-
-        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.CycleBadge.Visibility);
-        Assert.Equal("Failed dependency: Sales.Core — last successful output referenced", row.DepTooltip);
-        GC.KeepAlive(window);
-    }
+    // [KALDIRILDI — design v1.7.0 §2.4] Uyarı slotu TEK üçgene indi: ayrı bir "cycle rozeti" ve onunla
+    // üçgen arasındaki öncelik dansı kalktı. Yeni kural — slotta tek üçgen vardır, rengi en ağır nedeni
+    // söyler (döngü üyesi turuncu, yalnız dep-issue amber), tooltip nedenleri alt alta listeler ve satır
+    // building iken slot gizlidir.
 
     /// <summary>[cycles] Glyph tooltip'i dep-slot ile AYNI dördüncü dalı taşır: slot boşken sıfır yükseklikte
     /// çöktüğü için satırın tek her-zaman-görünür yüzeyi glyph'tir.</summary>

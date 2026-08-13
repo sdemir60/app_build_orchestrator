@@ -849,7 +849,8 @@ public class RunViewModelStateTests
         vm.OnEvent(CycleTopology());
 
         var a = vm.Projects.Single(p => p.Id == A);
-        Assert.Equal(GraphStatus.Cycle, a.Status);   // boşta: Sync sonrası döngü glyph'i
+        // [DEĞİŞEN KURAL — design v1.7.0 §5] Üyelik statü değildir: boşta satır Discovered'dır.
+        Assert.Equal(GraphStatus.Discovered, a.Status);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 4, Parallelism: 4, "Debug", 0));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true)]));
