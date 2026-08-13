@@ -49,6 +49,11 @@ public sealed partial class RunViewModel
     /// sormak iki tarafın sessizce ayrışabileceği ikinci bir cevap yaratırdı.</summary>
     public bool HasCycles => _cycleGroups is { Count: > 0 };
 
+    /// <summary>[design v1.7.0 §2.2] Her döngünün yolu (<c>A → B → C → A</c>), topolojideki sırayla. Şeridin
+    /// döngü kümesi tooltip'ini bundan kurar; satırlar kendi yollarını <see cref="ProjectRowViewModel.CyclePath"/>
+    /// üzerinden alır (ikisi de <see cref="CycleText.Path"/>'ten gelir).</summary>
+    public IReadOnlyList<string> CyclePaths { get; private set; } = [];
+
     /// <summary>[Task 6] Son topolojideki SCC (döngü grubu) SAYISI — Cycles buton tooltip'inin ilk sayısı
     /// (<see cref="Views.ActionBar.RefreshCyclesTooltip"/>'in okuduğu iki sayıdan biri). <c>_cycleGroups</c>'un
     /// YALIN yansımasıdır, ikinci bir sayaç TUTULMAZ (kopya YASAK).</summary>
@@ -316,6 +321,18 @@ public sealed partial class RunViewModel
 
         // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;
+
+        // [design v1.7.0 §2.4] Döngü YOLU (A → B → C → A) satırlara itilir: nokta ve uyarı üçgeni onu
+        // buradan okur. Yol topolojinin kendi sırasıyla kurulur (motorun grup sırası) ve TEK yerde
+        // biçimlenir (CycleText.Path). Ad çözümü topolojidendir — satır adı henüz kurulmamış olabilir.
+        var nameById = e.Nodes.ToDictionary(n => n.Id, n => n.Name, StringComparer.OrdinalIgnoreCase);
+        CyclePaths = [.. e.Cycles.Select(scc =>
+            CycleText.Path([.. scc.Select(id => nameById.TryGetValue(id, out var n) ? n : id)]))];
+        var pathByMember = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (int c = 0; c < e.Cycles.Count; c++)
+            foreach (string id in e.Cycles[c]) pathByMember[id] = CyclePaths[c];
+        foreach (var row in Projects)
+            row.CyclePath = pathByMember.TryGetValue(row.Id, out var path) ? path : "";
 
         // [E2/§5-b] TopologyChanged (→ D5 SetGraph = tam inşa + reveal stagger + kamera re-home) YALNIZ graf YAPISI
         // (düğüm Id/Ad/katman + kenar seti) değiştiğinde ateşlenir. Aynı yapının yeniden yayınlanması (ör. mid-run

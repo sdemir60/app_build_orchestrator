@@ -139,6 +139,11 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// tüketici de buradan okumalıdır.</para></summary>
     public bool IsCompiling => State == ProjectRowState.Started && !CycleWaiting;
 
+    /// <summary>[design v1.7.0 §2.4] Bu satırın döngüsünün YOLU (<c>A → B → C → A</c>) — üye değilse boş.
+    /// Metin <see cref="CycleText.Path"/>'ten gelir ve satıra topolojiyle birlikte itilir; nokta ile uyarı
+    /// üçgeni onu buradan okur (iki yüzey kendi yolunu KURMAZ).</summary>
+    [ObservableProperty] private string _cyclePath = "";
+
     /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
     /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
     /// AYNEN taşınır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir alandır

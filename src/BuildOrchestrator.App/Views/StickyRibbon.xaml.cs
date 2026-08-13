@@ -416,6 +416,9 @@ public partial class StickyRibbon : UserControl
         };
         var chip = MakeChip(text, brushKey: "Brush.StatusCycleText");
         chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0);
+        // [design v1.7.0 §2.2] Hover iki şey söyler: kümenin ne anlattığı + döngünün YOLU (birden çok döngü
+        // varsa her biri kendi satırında). Metin CycleText'ten gelir; şerit onu kendi içinde KURMAZ.
+        chip.ToolTip = CycleText.Lines([CycleText.ClusterHeadline, .. _vm?.CyclePaths ?? []]);
         chip.Click += (_, _) => { if (_vm is not null) _vm.ActiveFilter = ProjectFilter.Cycle; ResetChip(chip); };
         PART_CycleCluster.Children.Add(chip);
         CycleChip = chip;
