@@ -193,6 +193,7 @@ public partial class MainWindow : Window
             // [A13/T2 · 2.4] Görünür küme boşaldıysa panel NEDENİNİ söyler ("No projects match this filter.")
             // — "hiç proje yok"tan AYRI durum; karar SAF ListInvite.Resolve'de.
             RefreshListInvite();
+            RefreshGraphFilter();
         };
 
         // [A13/T2 · 2.3] PROJECTS başlığındaki kaldırılabilir filtre chip'i (design-v1 §2.4). Görünürlük/etiket
@@ -209,6 +210,7 @@ public partial class MainWindow : Window
         };
         RefreshFilterChip();
         _scrollArbiter.SetFilter(_vm.ActiveFilter is not null); // kalıcı durumdan gelen bir filtreyle açılış
+        RefreshGraphFilter();
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
         // sinyalleri → grafı besle (UpdateStatuses/RunPhase/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
@@ -727,6 +729,19 @@ public partial class MainWindow : Window
     /// eşleme uydurulmaz. Filtre yoksa chip gizlenir.</summary>
     private void RefreshFilterChip() =>
         Shell.SetFilterChip(_vm.ActiveFilter is { } f ? ProjectFilter.Label(f) : null);
+
+    /// <summary>
+    /// [design v1.7.0 — Filtreleme] Listede etkin bir filtre (ya da arama) varken graf da aynı kümeye iner:
+    /// eşleşmeyen düğümler söner. Küme LİSTENİN görünür satırlarından türetilir — eşleşme kuralı
+    /// (<see cref="ProjectFilter.Matches"/>) tek yerdedir ve graf onu YENİDEN yazmaz.
+    /// </summary>
+    private void RefreshGraphFilter()
+    {
+        bool filtering = _vm.ActiveFilter is not null || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
+        Shell.GraphHost.FilterMatches = filtering
+            ? _vm.VisibleProjects.Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
+            : null;
+    }
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite() =>

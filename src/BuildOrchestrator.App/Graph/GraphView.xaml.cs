@@ -158,6 +158,8 @@ public partial class GraphView : UserControl
     private string? _selectedNode;
     private HashSet<string> _focusSet = new(StringComparer.Ordinal);
     private GraphRunPhase _runPhase = GraphRunPhase.Idle;
+    /// <summary>[design v1.7.0 — Filtreleme] Listenin görünür kümesinin proje ADLARI; null = filtre yok.</summary>
+    private IReadOnlySet<string>? _filterMatches;
     /// <summary>İmlecin altındaki düğüm — opaklık kararının son (ve her şeyi ezen) girdisi.</summary>
     private string? _hoveredNode;
 
@@ -321,6 +323,23 @@ public partial class GraphView : UserControl
             ApplySelection();
             ApplyCamera(animate: true);
             SelectionChanged?.Invoke(this, value);
+        }
+    }
+
+    /// <summary>
+    /// [design v1.7.0 — Filtreleme] Listede etkin filtrenin (ve aramanın) eşleştirdiği proje ADLARI;
+    /// <c>null</c> = filtre yok. Eşleşmeyen düğümler <see cref="GraphNodeOpacity.Unfocused"/>'a söner.
+    /// Küme DIŞARIDAN verilir: eşleşme kuralı <c>ProjectFilter.Matches</c>'tir ve listeyle graf onu
+    /// PAYLAŞIR — graf ikinci bir eşleme yazmaz (kopya YASAK).
+    /// </summary>
+    public IReadOnlySet<string>? FilterMatches
+    {
+        get => _filterMatches;
+        set
+        {
+            if (ReferenceEquals(_filterMatches, value)) return;
+            _filterMatches = value;
+            ApplyAllOpacities();
         }
     }
 
@@ -1113,7 +1132,9 @@ public partial class GraphView : UserControl
             _runPhase,
             _selectedNode is not null,
             _focusSet.Contains(visual.Model.Name),
-            string.Equals(_hoveredNode, visual.Model.Name, StringComparison.Ordinal));
+            string.Equals(_hoveredNode, visual.Model.Name, StringComparison.Ordinal),
+            _filterMatches is not null,
+            _filterMatches?.Contains(visual.Model.Name) ?? true);
 
         if (target.Equals(visual.OpacityTarget)) return;
         visual.OpacityTarget = target;
