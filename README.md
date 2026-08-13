@@ -158,8 +158,9 @@ Projects that reference each other's output form a dependency cycle. *Build* nev
 them with the reason `in dependency cycle`, and their will-build dot stays grey. **Resolve cycles** — the
 third icon (unlink) of the maintenance box next to *Sync* — is what compiles them, and it is the only thing
 that does. It is enabled only when the workspace actually has a cycle, and its tooltip says what it will do
-once a Sync has found one: `Resolve cycles — build the N cycle projects in repeated passes: stale references
-first, then rebuild until they converge`. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
+once a Sync has found one: `Resolve cycles — build the N cycle projects in repeated rounds: stale references
+first, then rebuild until they converge`. While it runs the ribbon reports the engine's own count —
+`Resolving cycles · round 2/3 · 5/7 · 12s` — rather than promising a fixed number of passes. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
 then *Build* takes care of everything else, including whatever depends on them.
 
 Two more icons share that box — *Clean* and *Optimize*. They are part of the design but have no engine behind

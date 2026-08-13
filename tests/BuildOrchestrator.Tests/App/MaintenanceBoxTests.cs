@@ -122,7 +122,7 @@ public class MaintenanceBoxTests
             [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1), Node(@"C:\p\c.csproj", "C", 2)],
             [[@"C:\p\a.csproj", @"C:\p\b.csproj", @"C:\p\c.csproj"]], [], []));
 
-        Assert.Equal("Resolve cycles — build the 3 cycle projects in repeated passes: stale references first, "
+        Assert.Equal("Resolve cycles — build the 3 cycle projects in repeated rounds: stale references first, "
                      + "then rebuild until they converge", box.ResolveButton.ToolTip);
 
         // [Task 6 · korunan kural] UIA adı HER İKİ durumda SABİTTİR — ekran okuyucu kontrolün İŞLEVİNİ
@@ -147,7 +147,7 @@ public class MaintenanceBoxTests
             [[@"C:\p\a.csproj", @"C:\p\b.csproj"], [@"C:\p\c.csproj", @"C:\p\d.csproj"]],
             [], []));
 
-        Assert.Equal("Resolve cycles — build the 4 cycle projects in repeated passes: stale references first, "
+        Assert.Equal("Resolve cycles — build the 4 cycle projects in repeated rounds: stale references first, "
                      + "then rebuild until they converge (2 separate cycles)", box.ResolveButton.ToolTip);
         GC.KeepAlive(window);
     }

@@ -47,7 +47,8 @@ public static class AccessibilityNames
     ///
     /// <para><b>Tasarımdan bilinçli SAPMA (karar 2026-08-13):</b> prototip metni "in two passes" der; sabit
     /// bir tur sayısı VAAT EDİLMEZ, çünkü tur sayısını motor belirler (<c>CycleRoundPolicy</c>: yakınsama
-    /// ölçütü iki ardışık yeşil tur, tavan üç). Cümlenin geri kalanı tasarımdaki hâliyle korunur.</para>
+    /// ölçütü iki ardışık yeşil tur, tavan üç). Sözcük de motorunkidir ("round"): şerit, konsol ve event
+    /// stream aynı kelimeyi kullanır, arayüz tek dil konuşur. Cümlenin geri kalanı tasarımdakiyle aynıdır.</para>
     ///
     /// <para><b>Korunan geliştirme:</b> grup sayısı yalnız BİRDEN ÇOK ayrı döngü varken eklenir — tasarımın
     /// tek-sayılı cümlesi o durumda eksik kalıyor, "5 proje" beş projelik TEK bir döngü sanılabiliyordu.
@@ -57,7 +58,7 @@ public static class AccessibilityNames
         if (memberCount <= 0) return ResolveCyclesButton + " — no dependency cycles detected";
 
         string text = string.Format(CultureInfo.InvariantCulture,
-            "{0} — build the {1} cycle projects in repeated passes: stale references first, then rebuild until they converge",
+            "{0} — build the {1} cycle projects in repeated rounds: stale references first, then rebuild until they converge",
             ResolveCyclesButton, memberCount);
         return groupCount > 1
             ? string.Format(CultureInfo.InvariantCulture, "{0} ({1} separate cycles)", text, groupCount)

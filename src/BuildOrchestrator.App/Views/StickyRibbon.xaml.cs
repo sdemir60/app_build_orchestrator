@@ -218,7 +218,8 @@ public partial class StickyRibbon : UserControl
             _vm.WillBuildCount, _vm.FinishedOfWillBuild, c.Total,
             _vm.ElapsedMs, _vm.EtaMs, checkDurMs: _vm.ElapsedMs, warnings: 0,
             engineDiedMessage: _vm.EngineDiedMessage, syncError: _vm.SyncErrorMessage,
-            runError: _vm.RunErrorMessage, engineOverdue: _vm.EngineOverdueMessage);
+            runError: _vm.RunErrorMessage, engineOverdue: _vm.EngineOverdueMessage,
+            resolvingCycles: _vm.IsResolvingCycles, cycleRound: _vm.CycleRound, cycleRoundCap: _vm.CycleRoundCap);
         // NOT (wire gap): warnings=0 — App derleyici-warning sayısını izlemiyor (RunCompletedEvent'te yok). Bkz. report.
 
         // [E2/T37] "Restart engine" kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
@@ -251,6 +252,9 @@ public partial class StickyRibbon : UserControl
     {
         "succeeded" => GraphStatus.Succeeded,
         "failed" => GraphStatus.Failed,
+        // [design v1.7.0 §3.7] Resolve cycles koşusunun amber spinner'ı — StatusGlyph'in KENDİ building
+        // çizimidir (dönen kesikli halka, §5), ayrı bir spinner nesnesi kurulmaz.
+        "building" => GraphStatus.Building,
         _ => null,
     };
 

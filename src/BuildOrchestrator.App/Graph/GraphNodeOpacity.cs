@@ -15,9 +15,15 @@ public enum GraphRunPhase
 /// [quiet] design v1.3.0 §2.3 "Koşu yaşam döngüsü — soluk/parlak sistemi" — prototype/app/BuildApp.jsx
 /// satır 421-429'un SAF portu.
 ///
-/// <para><b>Sıra bağlayıcıdır:</b> seçim &gt; koşu &gt; hover. Seçim varken koşu kararı hiç sorulmaz (odak
-/// kümesi tam opak, geri kalan 0.1); hover ise en sonda gelir ve her şeyi ezer — soluk moddayken bile
-/// imlecin altındaki düğüm okunur.</para>
+/// <para><b>Sıra bağlayıcıdır:</b> seçim &gt; filtre &gt; koşu &gt; hover. Seçim varken koşu kararı hiç
+/// sorulmaz (odak kümesi tam opak, geri kalan 0.1); hover ise en sonda gelir ve her şeyi ezer — soluk
+/// moddayken bile imlecin altındaki düğüm okunur.</para>
+///
+/// <para>[design v1.7.0 — Filtreleme] Filtre, seçimle AYNI dili konuşur: eşleşmeyen düğümler
+/// <see cref="Unfocused"/>'a söner, eşleşenler tam opak kalır. Liste ve graf aynı kuralı paylaşır
+/// (<c>ProjectFilter.Matches</c>) — eşleşen ad kümesi görünür satırlardan gelir, graf ikinci bir eşleme
+/// yapmaz. Pratikte seçimle birlikte hiç görünmez (filtreye basmak seçimi düşürür), ama sıra yine de
+/// tanımlıdır: bir gün ikisi birlikte olursa seçim kazanır.</para>
 ///
 /// <para><b>Hold-fade burada DEĞİL:</b> "biten proje 2400ms parlak kalır, sonra 700ms'de söner" bir
 /// ZAMANLAMA kuralıdır, bir değer kuralı değil. Bu sınıf yalnız NİHAİ değeri verir
@@ -77,13 +83,20 @@ public static class GraphNodeOpacity
     /// <param name="hasSelection">Grafta herhangi bir seçim var mı.</param>
     /// <param name="inFocus">Bu düğüm odak kümesinde mi (seçili + doğrudan komşuları).</param>
     /// <param name="hovered">İmleç bu düğümün üstünde mi.</param>
+    /// <param name="hasFilter">Listede etkin bir filtre (ya da arama) var mı.</param>
+    /// <param name="inFilter">Bu düğüm filtreyle eşleşiyor mu.</param>
     public static double Resolve(
-        GraphStatus status, GraphRunPhase phase, bool hasSelection, bool inFocus, bool hovered)
+        GraphStatus status, GraphRunPhase phase, bool hasSelection, bool inFocus, bool hovered,
+        bool hasFilter = false, bool inFilter = true)
     {
         double opacity = Full;
         if (hasSelection)
         {
             opacity = inFocus ? Full : Unfocused;
+        }
+        else if (hasFilter)
+        {
+            opacity = inFilter ? Full : Unfocused;
         }
         else if (phase == GraphRunPhase.Running)
         {

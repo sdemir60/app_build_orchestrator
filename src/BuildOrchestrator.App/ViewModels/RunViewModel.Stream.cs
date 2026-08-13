@@ -42,6 +42,15 @@ public sealed partial class RunViewModel
     // sayaç/kapak alanlarını TÜKETMEZ (yanlış "member 3/2" gibi bir karışma önlenir).
     private int _cycleRound;
     private int _cycleRoundCap;
+
+    /// <summary>[design v1.7.0 §3.7] Şu an bir <b>Resolve cycles</b> koşusu mu sürüyor — şerit koşu satırını
+    /// buna göre yazar (sıradan bir Build değil, döngü çözen ardışık turlar).</summary>
+    public bool IsResolvingCycles => _streamRunMode == RunMode.Cycles && RunActive;
+
+    /// <summary>[design v1.7.0 §3.7] Şu anki tur ve tavan — motorun kararı (<c>CycleRoundStartedEvent</c>);
+    /// tur henüz başlamadıysa (upstream/prerequisite aşaması) <c>0</c>.</summary>
+    public int CycleRound => _cycleRound;
+    public int CycleRoundCap => _cycleRoundCap;
     private int _cycleRoundMemberCount;
     private int _cycleMemberIndex;
     private string? _cycleRoundLeaderId;

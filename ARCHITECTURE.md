@@ -747,7 +747,11 @@ cannot be silently dropped. The first line written is the real MSBuild command l
 is persisted with the signature computed during planning; on failure the stored state is invalidated so the
 next run does not consider the project up to date.
 
-**Cycle rounds.** These run in one mode only — `Cycles` (§8.1), the button beside Sync. A worker that is
+**Cycle rounds.** These run in one mode only — `Cycles` (§8.1), the third icon of the maintenance box. While
+such a run is in flight the ribbon reads `▸ Resolving cycles · round R/K · n/m · elapsed` with the amber
+building glyph, and before the first round starts (while the cycle's stale upstream compiles) it says
+`preparing dependencies` instead. The numbers are the engine's: the round policy decides how many rounds a
+group needs, and the interface reports that rather than promising a fixed count. A worker that is
 handed a strongly-connected component runs the whole group. Every member is
 invoked in build order and **one at a time** — never concurrently, because one member reads the DLL another is
 in the middle of writing — and then the whole set is invoked again. Each member's log file is opened once and
@@ -1217,7 +1221,10 @@ through the list or the graph.
 there (`Σ`, building, `✓`, `✗`, `—`); two more appear **only when the list actually holds one** — `⚠` for cycle
 membership and `▲` for dependency-affected. Both describe exceptional situations, and carrying them permanently
 as empty grey chips weakened the signal. Pressing a filter also drops the selection: a selection locks the
-graph camera onto one node, a filter says "look at this set", and the two fought each other.
+graph camera onto one node, a filter says "look at this set", and the two fought each other. A filter reaches
+the **graph** too — nodes outside the visible set fade to the same 0.1 the unfocused set uses. The matching
+rule lives in one place (`ProjectFilter.Matches`): the graph is handed the list's visible names and never
+writes a second matcher, so the chip, the list and the graph can never disagree.
 The remaining bar carries;
 the branch
 chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf chip; and the Build

@@ -42,7 +42,8 @@ public static class RibbonText
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
                                      long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
                                      string? engineDiedMessage = null, string? syncError = null,
-                                     string? runError = null, string? engineOverdue = null)
+                                     string? runError = null, string? engineOverdue = null,
+                                     bool resolvingCycles = false, int cycleRound = 0, int cycleRoundCap = 0)
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
@@ -106,6 +107,24 @@ public static class RibbonText
             case AppPhase.Running:
                 if (allClean)
                     return new RibbonLine("▸ Checking — scanning for changes…", "Brush.TextSecondary", null);
+                // [design v1.7.0 §3.7] Resolve cycles sıradan bir Build DEĞİLDİR: döngü üyeleri ardışık
+                // turlarla derlenir ve kullanıcının bilmek istediği ilk şey kaçıncı turda olduğudur.
+                // <para>Tasarımın metni "pass 1/2" der ve SABİT iki geçiş vaat eder; tur sayısını MOTOR
+                // belirler (CycleRoundPolicy: yakınsama iki ardışık yeşil tur, tavan üç) ve uygulama bu
+                // sayıyı olduğu gibi yazar. Sözcük de motorunkidir ("round") — konsol ve event stream aynı
+                // kelimeyi kullanır, arayüz tek dil konuşur.</para>
+                if (resolvingCycles)
+                    return new RibbonLine(
+                        cycleRound > 0
+                            ? string.Format(CultureInfo.InvariantCulture,
+                                "▸ Resolving cycles · round {0}/{1} · {2}/{3} · {4}",
+                                cycleRound, cycleRoundCap, finishedOfWillBuild, willBuild,
+                                DurationFormat.Elapsed(elapsedMs))
+                            // Turlar henüz başlamadı: koşu önce döngünün bayat upstream'ini derler (§8.1 kapsam).
+                            : string.Format(CultureInfo.InvariantCulture,
+                                "▸ Resolving cycles · preparing dependencies · {0}/{1} · {2}",
+                                finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs)),
+                        "Brush.TextSecondary", "building");
                 return new RibbonLine(
                     string.Format(CultureInfo.InvariantCulture, "▸ Building {0}/{1} · {2}{3}",
                         finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs), EtaSuffix(etaMs, c) ?? ""),
