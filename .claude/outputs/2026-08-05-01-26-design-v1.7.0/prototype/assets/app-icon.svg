@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 286 286">
+  <defs>
+    
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#141417"></stop>
+      <stop offset="0.56" stop-color="#0E0E10"></stop>
+      <stop offset="1" stop-color="#0A0A0C"></stop>
+    </linearGradient>
+    <radialGradient id="bgGlow" cx="62%" cy="43%" r="72%">
+      <stop offset="0" stop-color="#202024" stop-opacity="0.14"></stop>
+      <stop offset="0.72" stop-color="#141417" stop-opacity="0.02"></stop>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"></stop>
+    </radialGradient>
+
+    
+    <linearGradient id="stripTopDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#54545C"></stop>
+      <stop offset="0.20" stop-color="#494950"></stop>
+      <stop offset="0.50" stop-color="#414147"></stop>
+      <stop offset="0.80" stop-color="#3A3A42"></stop>
+      <stop offset="1" stop-color="#44444B"></stop>
+    </linearGradient>
+    <linearGradient id="stripTopBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFB52E"></stop>
+      <stop offset="0.20" stop-color="#F7AE25"></stop>
+      <stop offset="0.50" stop-color="#F1AB2E"></stop>
+      <stop offset="0.80" stop-color="#EDA10F"></stop>
+      <stop offset="1" stop-color="#D9910D"></stop>
+    </linearGradient>
+    <linearGradient id="stripMiddleDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A3A42"></stop>
+      <stop offset="0.20" stop-color="#313136"></stop>
+      <stop offset="0.50" stop-color="#2A2A30"></stop>
+      <stop offset="1" stop-color="#202024"></stop>
+    </linearGradient>
+    <linearGradient id="stripWhite" x1="0" y1="0" x2="0.12" y2="1">
+      <stop offset="0" stop-color="#EDEDEE"></stop>
+      <stop offset="0.18" stop-color="#DADADD"></stop>
+      <stop offset="0.50" stop-color="#C8C8CD"></stop>
+      <stop offset="0.80" stop-color="#B9B9BF"></stop>
+      <stop offset="1" stop-color="#A9A9B0"></stop>
+    </linearGradient>
+    <linearGradient id="stripSilver" x1="0" y1="0" x2="0.12" y2="1">
+      <stop offset="0" stop-color="#A9A9B0"></stop>
+      <stop offset="0.20" stop-color="#929299"></stop>
+      <stop offset="0.50" stop-color="#85858D"></stop>
+      <stop offset="0.80" stop-color="#76767E"></stop>
+      <stop offset="1" stop-color="#83838B"></stop>
+    </linearGradient>
+
+    
+    <linearGradient id="arrow" gradientUnits="userSpaceOnUse" x1="156" y1="82" x2="177" y2="204">
+      <stop offset="0" stop-color="#FFB52E"></stop>
+      <stop offset="0.13" stop-color="#F9AE25"></stop>
+      <stop offset="0.26" stop-color="#F4A91D"></stop>
+      <stop offset="0.38" stop-color="#EDA10F"></stop>
+      <stop offset="0.51" stop-color="#DE940D"></stop>
+      <stop offset="0.64" stop-color="#CF880C"></stop>
+      <stop offset="0.76" stop-color="#B87A0B"></stop>
+      <stop offset="0.89" stop-color="#A66D09"></stop>
+      <stop offset="1" stop-color="#8B5907"></stop>
+    </linearGradient>
+
+    <filter id="tileShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#000000" flood-opacity="0.58"></feDropShadow>
+    </filter>
+    <filter id="stripShadow" x="-30%" y="-40%" width="170%" height="190%">
+      <feDropShadow dx="0" dy="2" stdDeviation="1.55" flood-color="#000000" flood-opacity="0.92"></feDropShadow>
+    </filter>
+    <filter id="arrowShadow" x="-30%" y="-30%" width="170%" height="175%">
+      <feDropShadow dx="0" dy="2.2" stdDeviation="1.8" flood-color="#000000" flood-opacity="0.94"></feDropShadow>
+    </filter>
+  </defs>
+
+  
+  <g filter="url(#tileShadow)">
+    <rect x="1" y="1" width="284" height="284" rx="31" fill="url(#bg)"></rect>
+    <rect x="1.5" y="1.5" width="283" height="283" rx="30.5" fill="none" stroke="#2A2A30" stroke-width="1"></rect>
+  </g>
+  <rect x="1" y="1" width="284" height="284" rx="31" fill="url(#bgGlow)"></rect>
+
+  
+  <g transform="translate(5.5 0)" filter="url(#stripShadow)">
+    <rect x="68" y="83" width="35" height="21" rx="10.5" fill="url(#stripTopDark)"></rect>
+    <rect x="114" y="83" width="51" height="21" rx="10.5" fill="url(#stripTopBlue)"></rect>
+
+    <rect x="46" y="131" width="39" height="21" rx="10.5" fill="url(#stripMiddleDark)"></rect>
+    <rect x="97" y="131" width="60" height="22" rx="11" fill="url(#stripWhite)"></rect>
+
+    <rect x="60" y="178" width="57" height="21" rx="10.5" fill="url(#stripSilver)"></rect>
+  </g>
+
+  
+  <g transform="translate(5.5 0)" filter="url(#arrowShadow)">
+    <path d="M151 83&#xA;         L171.5 83&#xA;         C176.1 83 179.2 85.1 182.3 88.5&#xA;         L219.8 131.5&#xA;         C222.7 134.9 224 138.3 224 142.4&#xA;         C224 146.5 222.7 149.8 219.8 153.2&#xA;         L179.1 198.3&#xA;         C176.0 201.6 172.3 203 168.0 203&#xA;         L151.0 203&#xA;         C145.8 203 142.1 200.4 140.5 196.4&#xA;         C138.8 192.1 140.2 187.8 143.5 184.2&#xA;         L177.8 146.2&#xA;         C180.6 143.2 180.8 140.8 178.2 137.8&#xA;         L144.7 103.7&#xA;         C141.8 100.7 140.4 96.9 140.4 93.0&#xA;         C140.4 87.5 145.1 83 151 83&#xA;         Z" fill="url(#arrow)"></path>
+  </g>
+</svg>
