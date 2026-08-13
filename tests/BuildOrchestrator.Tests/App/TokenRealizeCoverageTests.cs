@@ -107,7 +107,10 @@ public class TokenRealizeCoverageTests
         var root = (Grid)view.Content;
         Assert.Equal(DsResources.TokenColor(host, "Brush.ConsoleBg"), DsResources.ColorOf(root.Background));
         Assert.Equal((double)host.FindResource("FontSize.Xs"), view.EditorControl.FontSize);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.TextPrimary"), DsResources.ColorOf(view.ActiveCursor.Fill));
+        // [DEĞİŞEN KURAL] Prompt imleci eskiden Brush.TextPrimary'di. Artık amber: event stream'in aktif satır
+        // imleciyle AYNI ton — iki panel aynı dili konuşur (kullanıcı kararı; tasarımın "dim" prompt'undan
+        // bilinçli sapma, gerekçesi ConsoleView.xaml'de). "build in progress" imleci zaten amberdi.
+        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberText"), DsResources.ColorOf(view.ActiveCursor.Fill));
         Assert.Equal(DsResources.TokenColor(host, "Brush.AmberText"), DsResources.ColorOf(view.BuildProgressCursor.Fill));
         GC.KeepAlive(window);
     }

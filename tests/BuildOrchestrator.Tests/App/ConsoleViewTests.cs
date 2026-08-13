@@ -314,20 +314,54 @@ public class ConsoleViewTests
         Assert.Contains("Sync complete — 7 changed projects", view.Document.Text);
     }
 
+    /// <summary>
+    /// design v1.7.0 §2.5: boşta/boot prompt satırı imleç + <c>ready</c> (dim) taşır; içerik gelince YALNIZ
+    /// METİN boşalır.
+    ///
+    /// <para>[DEĞİŞEN KURAL] Eski iddia "içerik gelince prompt <b>Collapsed</b> olur"du — ilk çıktıdan sonra
+    /// konsolda hiç imleç kalmıyordu. Otorite bunun tersini söylüyor: prototipte prompt satırı KOŞULSUZ render
+    /// edilir (<c>BuildApp.jsx:766-771</c>), yalnız faz idle/boot değilken metni boşalır; imleç durur ve yeni
+    /// satırlar onun ÜSTÜNE birikir. Kullanıcı da bunu istedi ("sadece kursor vardı, hep alt satıra iner,
+    /// arkasından konsol yazısı basılıyor").</para>
+    /// </summary>
     [StaFact]
-    public void ShowReady_displays_the_idle_prompt_until_narrative_content_arrives()
+    public void The_prompt_cursor_stays_after_content_arrives_and_only_the_ready_text_clears()
     {
-        // design v1.7.0 §2.5: boşta/boot tek prompt satırı — imleç + "ready" (dim), doküman satırı DEĞİL
-        // (overlay). İçerik gelince temizlenir. Duvar saati YOK.
         var view = new ConsoleView();
 
         view.ShowReady();
         Assert.Equal("ready", view.ActiveLineText.Text);
         Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
 
-        view.AppendNarrativeBatch("12:00:03 Sync complete — 0 changed projects\n");
-        Assert.Equal(Visibility.Collapsed, view.ActiveLineOverlay.Visibility); // "ready" temizlendi
+        view.AppendNarrativeBatch("Sync complete — 0 changed projects\n");
+
+        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility); // imleç DURUR
+        Assert.Equal("", view.ActiveLineText.Text);                          // yalnız "ready" düştü
         Assert.Contains("Sync complete", view.Document.Text);
+    }
+
+    /// <summary>
+    /// Prompt satırı metnin ÜSTÜNE binmez: editörün altında tam bir satır boyu yer ayrılır, imleç oraya oturur.
+    ///
+    /// <para>Eski overlay panelin dibine mutlak konumluydu ve belge akışında yer kaplamıyordu; konsol dibe
+    /// yapışık olduğu için son metin satırı da dipteydi — imleç onun üstüne basıyordu. Ayrılan şerit
+    /// <c>TextView.DefaultLineHeight</c>'ten gelir (tek gerçek kaynak; konsolun satır aralığı CompositeFont'un
+    /// <c>LineSpacing</c>'inden türer, burada YENİDEN yazılmaz).</para>
+    /// </summary>
+    [StaFact]
+    public void The_editor_reserves_a_full_line_at_the_bottom_for_the_prompt()
+    {
+        var view = new ConsoleView();
+        var window = DsResources.Realize(DsResources.NewHost(), view);
+        view.AppendNarrativeBatch("first\nsecond\n");
+        window.UpdateLayout();
+
+        double lineHeight = view.EditorControl.TextArea.TextView.DefaultLineHeight;
+        Assert.True(lineHeight > 0, "ön-koşul: editör ölçülmedi");
+
+        // Alt dolgu, üst dolgunun bir tam satır fazlası olmalı — prompt tam o şeride oturur.
+        Assert.Equal(view.EditorControl.Padding.Top + lineHeight, view.EditorControl.Padding.Bottom, precision: 1);
+        GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- [A13/T3a · a7 + fix-1 · P3] ready satırı
@@ -393,7 +427,13 @@ public class ConsoleViewTests
         view.Arrange(new Rect(0, 0, 800, 600));
         view.UpdateLayout();
 
-        Assert.Equal(new Thickness(12, 8, 12, 8), view.Editor.Padding);
+        // [DEĞİŞEN KURAL] Bütçe eskiden dört kenarda da 12/8'di. ALT kenar artık prompt satırı için bir tam
+        // satır boyu daha ayırır (§2.5: imleç metnin ALTINDA kendi satırında durur, üstüne binmez) — ölçü
+        // TextView.DefaultLineHeight'ten gelir, burada sabit YAZILMAZ. Sol/üst/sağ bütçe DEĞİŞMEDİ ve asıl
+        // iddia olan gerçek yerleşim kontrolü aşağıda aynen durur.
+        var padding = view.Editor.Padding;
+        Assert.Equal(new Thickness(12, 8, 12, padding.Bottom), padding);
+        Assert.Equal(8 + view.Editor.TextArea.TextView.DefaultLineHeight, padding.Bottom, precision: 1);
 
         // GERÇEK yerleşim: TextView'in sol/üst kenarı editörün kenarından padding kadar içeride.
         var textView = view.Editor.TextArea.TextView;

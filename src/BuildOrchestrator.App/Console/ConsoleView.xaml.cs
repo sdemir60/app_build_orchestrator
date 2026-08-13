@@ -94,8 +94,11 @@ public partial class ConsoleView : UserControl
         EditorControl.SetResourceReference(FontWeightProperty, "FontWeight.Console");
         ActiveLineText.SetResourceReference(FontWeightProperty, "FontWeight.Console");
         BuildProgressText.SetResourceReference(FontWeightProperty, "FontWeight.Console");
-        Loaded += (_, _) => EnsureColorizer();
+        Loaded += (_, _) => { EnsureColorizer(); ReservePromptRow(); };
         EditorControl.TextArea.TextView.ScrollOffsetChanged += (_, _) => OnScrollOffsetChanged();
+        // Satır yüksekliği ancak editör ölçüldükten sonra bilinir (ve punto değişirse yeniden hesaplanır) —
+        // ayrılan prompt şeridi bu yüzden görsel-satırlarla birlikte tazelenir. ReservePromptRow yakınsar.
+        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => ReservePromptRow();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
         ScrollAnimator.EnableUserCancellation(EditorControl);
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
@@ -147,6 +150,7 @@ public partial class ConsoleView : UserControl
     private void OnBottomAnchorChanged(object? sender, EventArgs e)
     {
         Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+        RefreshPrompt(); // dipten uzaklaşınca prompt da gider (gerekçe: RefreshPrompt doc'u)
         if (Arbiter is null) return;
         if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Console);
         else Arbiter.NotifyUserScroll(ScrollPanel.Console);
@@ -293,7 +297,7 @@ public partial class ConsoleView : UserControl
     public void AppendNarrativeBatch(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
-        HideReadyIfShown();
+        ClearReadyText();
         EnsureColorizer();
 
         // Son tam satırı ayır: newest = son satır (soneksiz); prefix = ondan önceki her şey ('\n' sonekli).
@@ -316,22 +320,54 @@ public partial class ConsoleView : UserControl
     {
         EnsureColorizer();
         _idleReady = true;
-        Brush dim = _palette?.Dim ?? EditorControl.Foreground;
-        ActiveLineText.Foreground = dim;
+        ActiveLineText.Foreground = _palette?.Dim ?? EditorControl.Foreground;
         ActiveLineText.Text = ConsoleEmptyState.Idle; // "ready"
-        ActiveCursor.Fill = dim;
-        ActiveCursor.Opacity = 1.0;
-        ActiveLineOverlay.Visibility = Visibility.Visible;
-        if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
+        RefreshPrompt();
     }
 
-    private void HideReadyIfShown()
+    /// <summary>İçerik geldi: prompt satırının yalnız METNİ boşalır — imleç durur (§2.5, prototip
+    /// <c>BuildApp.jsx:766-771</c>: satır koşulsuz render edilir, idle/boot değilken içi boşalır).</summary>
+    private void ClearReadyText()
     {
         if (!_idleReady) return;
         _idleReady = false;
-        StopBlink();
-        ActiveLineOverlay.Visibility = Visibility.Collapsed;
         ActiveLineText.Text = "";
+        RefreshPrompt();
+    }
+
+    /// <summary>
+    /// Prompt satırının TEK görünürlük yazıcısı. İki koşul: <b>anlatı modunda</b> olmak (proje-log modunun
+    /// kendi sonu vardır — amber "build in progress ▮") ve <b>dipte</b> olmak.
+    ///
+    /// <para>Dip koşulu şundandır: prompt panelin altına yaslıdır, belgeyle birlikte kaymaz. Kullanıcı yukarı
+    /// kaydırıp geçmişe baktığında dipte asılı kalan bir imleç oradaki metnin üstüne binerdi. Dipten
+    /// uzaklaşınca zaten <c>⌄ latest</c> pill'i çıkar; prompt onunla birlikte gider ve dibe dönünce geri gelir.</para>
+    /// </summary>
+    private void RefreshPrompt()
+    {
+        bool show = !_projectMode && _bottomAnchor.IsStuck;
+        ActiveLineOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) { StopBlink(); return; }
+        ActiveCursor.Opacity = 1.0;
+        if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
+    }
+
+    /// <summary>
+    /// Prompt satırının metnin ÜSTÜNE binmemesi için editörün altında bir tam satır boyu yer ayırır.
+    ///
+    /// <para>Ölçü <see cref="ICSharpCode.AvalonEdit.Rendering.TextView.DefaultLineHeight"/>'ten okunur — tek
+    /// gerçek kaynak: konsolun satır aralığı CompositeFont'un <c>LineSpacing</c>'inden gelir ve burada yeniden
+    /// YAZILMAZ (kopya YASAK). Editör henüz ölçülmediyse (yükseklik 0) dokunulmaz; bu metot her görsel-satır
+    /// değişiminde yeniden çağrılır ve değer oturunca bir kez uygulanır.</para>
+    /// </summary>
+    private void ReservePromptRow()
+    {
+        double lineHeight = EditorControl.TextArea.TextView.DefaultLineHeight;
+        if (lineHeight <= 0) return;
+        var p = EditorControl.Padding;
+        double wanted = p.Top + lineHeight;
+        if (Math.Abs(p.Bottom - wanted) < 0.01) return; // yakınsadı — sonsuz layout döngüsü yok
+        EditorControl.Padding = new Thickness(p.Left, p.Top, p.Right, wanted);
     }
 
     // [3b M-4 · D3 §3] Aktif-satır imleci ile "build in progress" imlecinin ORTAK blink animasyonu — artık
@@ -362,6 +398,7 @@ public partial class ConsoleView : UserControl
         _loadedFrom = 0;
         EditorControl.Document = new TextDocument(ConsoleRenderSlice.LastLines(fullRunText ?? "", RenderSliceLines));
         if (StickToBottom) EditorControl.ScrollToEnd();
+        RefreshPrompt(); // anlatıya dönüldü → prompt satırı geri gelir
         PlayTiltIn();
     }
 
@@ -378,10 +415,11 @@ public partial class ConsoleView : UserControl
         HideBuildInProgress();
         // [T59] design §2.5: "konsol↔proje-log geçişinde dibe sabitlenir" — bkz. ShowRunDocument'taki aynı gerekçe.
         _bottomAnchor.ForceStuck(true);
-        HideReadyIfShown();              // boşta "ready" gösteriliyorsa temizle (proje-loguna geçiş)
-
         allLines ??= [];
         _projectMode = true;
+        RefreshPrompt();                 // proje-log modunun kendi sonu var (amber "build in progress ▮")
+        _idleReady = false;
+        ActiveLineText.Text = "";
         _armedForChunk = false;            // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _trimTail = false;                 // proje modunda tail-trim yok — chunk loader eski satırları yönetir
         _projectAllLines = allLines;
