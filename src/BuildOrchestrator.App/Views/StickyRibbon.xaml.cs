@@ -192,9 +192,17 @@ public partial class StickyRibbon : UserControl
                 break;
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.DepIssueCount):
-                // Counters = kompozisyon proxy'si: statü değişiminde (tick'te DEĞİL) tetiklenir → chip'ler + metin + progress.
+                // Counters = kompozisyon proxy'si: statü değişiminde (tick'te DEĞİL) tetiklenir → metin + progress.
                 RefreshText();
                 RefreshProgress();
+                RebuildChipsIfChanged();
+                break;
+            // [cycles] Chip'ler sayaçlara DEĞİL satır kimliklerine bakar ve <c>Counters</c> onları taşımaz:
+            // RunCounters bir record struct'tır, bir döngü grubunda sıra üyeden üyeye geçince demet
+            // byte-byte aynı kalır (yalnız KİMLİK değişir) ve setter PropertyChanged yaymaz — chip ilk üyede
+            // donardı. VisibleProjects, Counters'ın yayınlandığı TEK yerde (RunViewModel.RefreshRunSurface)
+            // hemen ardından KOŞULSUZ yayınlanır, yani kimlik değişimlerini de kapsayan üst kümedir.
+            case nameof(RunViewModel.VisibleProjects):
                 RebuildChipsIfChanged();
                 break;
         }
