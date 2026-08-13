@@ -2,6 +2,10 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using System.Windows.Media;
+using System.Windows.Shapes;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 
@@ -29,6 +33,9 @@ public partial class MaintenanceBox : UserControl
     private RunViewModel? _vm;
     private bool _built;
 
+    // Resolve'un ikon Path'i — rengi döngü varlığına göre değişen TEK öğe.
+    private Path _resolveIcon = null!;
+
     public MaintenanceBox()
     {
         InitializeComponent();
@@ -40,6 +47,8 @@ public partial class MaintenanceBox : UserControl
     internal Button CleanButton => PART_Clean;
     internal Button OptimizeButton => PART_Optimize;
     internal Button ResolveButton => PART_Resolve;
+    /// <summary>[test yüzeyi] Resolve ikonunun o anki fırçası (döngü varken cycle turuncusu).</summary>
+    internal Brush ResolveIconBrush => _resolveIcon.Stroke;
 
     // ---------------------------------------------------------------- lifecycle
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -61,9 +70,13 @@ public partial class MaintenanceBox : UserControl
     {
         if (_built) return;
         _built = true;
-        Shape(PART_Clean, "Icon.Eraser", AccessibilityNames.CleanButton);
-        Shape(PART_Optimize, "Icon.Gauge", AccessibilityNames.OptimizeButton);
-        Shape(PART_Resolve, "Icon.Unlink", AccessibilityNames.ResolveCyclesButton);
+        Compose(PART_Clean, "Icon.Eraser", AccessibilityNames.CleanButton);
+        Compose(PART_Optimize, "Icon.Gauge", AccessibilityNames.OptimizeButton);
+        _resolveIcon = Compose(PART_Resolve, "Icon.Unlink", AccessibilityNames.ResolveCyclesButton);
+
+        // Resolve'un işi MEVCUT döngü koşusudur (yüzey yer değiştirdi, iş değişmedi). Komut binding ile
+        // bağlanır: DataContext sonradan gelse de düğme doğru komuta bakar.
+        PART_Resolve.SetBinding(ButtonBase.CommandProperty, new Binding(nameof(RunViewModel.BuildCyclesCommand)));
 
         // Arka uç yok → kalıcı disabled. Tooltip'leri SABİT olduğu için bir kez yazılır; Refresh yalnız
         // Resolve'unkini (sayılara bağlı) tazeler. Pasif kontrolde WPF tooltip'i varsayılan olarak
@@ -77,22 +90,29 @@ public partial class MaintenanceBox : UserControl
         PART_Optimize.ToolTip = AccessibilityNames.OptimizeTooltip;
     }
 
-    private void Shape(Button button, string iconKey, string uiaName)
+    /// <summary>Düğmeyi biçimlendirir ve ikon <see cref="Path"/>'ini döndürür (rengi sonradan değişebilsin diye).</summary>
+    private Path Compose(Button button, string iconKey, string uiaName)
     {
         if (TryFindResource("Ds.IconButton") is Style s) button.Style = s;
         button.Width = ButtonWidth;
         button.Height = ButtonHeight;
         // Kutu tek parça okunur: düğmenin kendi kenarı yoktur, çerçeveyi kök Border taşır.
         button.BorderThickness = new Thickness(0);
-        button.Content = IconVisual.Make(this, iconKey, "Brush.TextSecondary", IconSize);
+        var icon = IconVisual.Make(this, iconKey, "Brush.TextSecondary", IconSize);
+        button.Content = icon;
         AutomationProperties.SetName(button, uiaName);
+        return (Path)((Canvas)icon.Child).Children[0];
     }
 
-    /// <summary>Resolve tooltip'inin TEK yazıcısı.</summary>
+    /// <summary>Resolve'un tooltip'inin ve ikon renginin TEK yazıcısı.</summary>
     private void Refresh()
     {
         if (!_built) return;
-        PART_Resolve.ToolTip = AccessibilityNames.ResolveCyclesTooltip(
-            _vm?.CycleGroupCount ?? 0, _vm?.CycleMemberCount ?? 0);
+        int groups = _vm?.CycleGroupCount ?? 0;
+        int members = _vm?.CycleMemberCount ?? 0;
+        PART_Resolve.ToolTip = AccessibilityNames.ResolveCyclesTooltip(groups, members);
+        // Turuncu yalnız gerçekten döngü varken: renk, listedeki ve graftaki yapısal işaretin aynısıdır.
+        _resolveIcon.SetResourceReference(Shape.StrokeProperty,
+            members > 0 ? "Brush.StatusCycleText" : "Brush.TextSecondary");
     }
 }

@@ -145,4 +145,36 @@ public class MaintenanceBoxTests
                      + "then rebuild until they converge (2 separate cycles)", box.ResolveButton.ToolTip);
         GC.KeepAlive(window);
     }
+
+    /// <summary>[design v1.7.0 §2.7-2 · §3.7] Resolve düğmesi MEVCUT döngü koşusunu tetikler — yüzey yer
+    /// değiştirdi, iş değişmedi. Repo kapısı düğmede, geri kalan her koşul (topoloji, döngü var mı, mid-run,
+    /// motor sağlığı) komutun CanExecute'undadır: iki yerden yazılan bir enable hâli olmaz (ActionBar deseni).</summary>
+    [StaFact]
+    public void Resolve_is_wired_to_the_existing_cycle_run_command()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
+        Assert.Same(vm.BuildCyclesCommand, box.ResolveButton.Command);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.7.0 §2.7-2] Döngü VARKEN Resolve'un ikonu cycle turuncusuna döner: düğme tam da
+    /// listede ve grafta turuncuyla işaretlenmiş projeleri derler, bağ görsel olarak kurulur. Döngü yokken
+    /// nötr kalır — turuncu, var olmayan bir yapısal sorunu ima etmemeli.</summary>
+    [StaFact]
+    public void The_resolve_icon_turns_cycle_orange_only_while_a_cycle_exists()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
+        Assert.Same(box.FindResource("Brush.TextSecondary"), box.ResolveIconBrush);
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1)],
+            [[@"C:\p\a.csproj", @"C:\p\b.csproj"]], [], []));
+
+        Assert.Same(box.FindResource("Brush.StatusCycleText"), box.ResolveIconBrush);
+        GC.KeepAlive(window);
+    }
 }
