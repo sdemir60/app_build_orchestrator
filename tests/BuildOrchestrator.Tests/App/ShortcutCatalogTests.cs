@@ -75,7 +75,7 @@ public class ShortcutCatalogTests
     [Fact]
     public void The_build_menu_reads_its_key_badges_from_the_catalog()
     {
-        var items = BuildMenu.ComposeItems(stopped: false, total: 3, failed: 0);
+        var items = BuildMenu.ComposeItems(total: 3);
         Assert.Equal(ShortcutCatalog.Get(ShortcutId.Build).Gestures[0], items.Single(i => i.Kind == "build").Kbd);
         Assert.Equal(ShortcutCatalog.Get(ShortcutId.Rebuild).Gestures[0], items.Single(i => i.Kind == "rebuild").Kbd);
     }
