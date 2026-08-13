@@ -11,7 +11,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [T12/T43/C2] <see cref="RunViewModel"/>'in C2 omurgası: faz yürüyüşü, seçim/deselect, Sync vs Build/Retry
-/// seçim-filtre asimetrisi, Build/RetryFailed'ın workspace argümanlı gönderimi, koşarken kilit (branch/worktree/
+/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/worktree/
 /// configuration) + canlı perf, T43 configuration uyarısı, ve A5-review fold'u (engine ölümü Sync fazını bırakır).
 /// Kardeş sınıf <see cref="RunViewModelTests"/> ile aynı harness (başlatılmamış EngineHost — <c>OnEvent</c> engine'e
 /// dokunmaz; komut gönderimi engine hazır değilken SENKRON fırlar ve VM içinde yutulur). D8: sleep/poll yok.
@@ -99,7 +99,7 @@ public class RunViewModelStateTests
     // metinde ("▸ Stopped — …" / "▸ Ready — …") donuyor, konsol bomboş kalıyordu. Kullanıcının bildirdiği
     // "tekrar build dedim, ui'da bir şey olmadı" cümlesinin yarısı buydu (diğer yarısı motorun donmasıydı).
     //
-    // Faz adı Planning DEĞİL Starting: RetryFailed planner'ı hiç çağırmaz (aynı plandan devam eder) ama o
+    // Faz adı Planning DEĞİL Starting: pencerenin işi tıklamanın kaydedildiğini göstermektir, planlamayı
     // pencerede de tıklamanın kaydedildiği görünmelidir — "starting" her modda DOĞRU, "planning" değil.
 
     [Fact]
@@ -190,7 +190,7 @@ public class RunViewModelStateTests
 
     /// <summary>Motorun planlama adımları konsola AKAR — pencere artık tek satırlık bir "requested" notundan
     /// ibaret değil, ilerlemeyi gösterir. Kanal <c>syncProgress</c>'ten AYRIdır ve Sync yüzeyine dokunmaz:
-    /// <c>SyncInFlight</c> bu satırlarla açılmamalıdır (açılsaydı Rebuild/RetryFailed sessizce kilitlenirdi).</summary>
+    /// <c>SyncInFlight</c> bu satırlarla açılmamalıdır (açılsaydı Rebuild sessizce kilitlenirdi).</summary>
     [Fact]
     public async Task Plan_progress_lines_reach_the_console_without_touching_the_sync_surface()
     {
@@ -288,8 +288,8 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- [runFailed] koşarken düşen run görünür olur
     //
     // runFailed, run'ın TAMAMINI saran dış catch'ten gelir (RunCoordinator.ExecuteRunAsync) — yani runStarted'dan
-    // SONRA da gelebilir ve o yolda runCompleted ASLA yazılmaz. Kümedeki diğer üç kod (planFailed/msbuildNotFound
-    // planlama penceresinde, noResumableRun bir Continue reddinde) faz Running iken gelemez.
+    // SONRA da gelebilir ve o yolda runCompleted ASLA yazılmaz. Kümedeki diğer iki kod (planFailed/
+    // msbuildNotFound) planlama penceresinde üretilir, faz Running iken gelemez.
 
     [Fact]
     public async Task A_run_that_fails_mid_flight_surfaces_the_reason_and_leaves_the_running_phase()
@@ -307,22 +307,9 @@ public class RunViewModelStateTests
         Assert.False(vm.IsRunning);
     }
 
-    // noResumableRun bir REDdir, bir başarısızlık değil (RunCoordinator onu `rejection` diye adlandırır):
-    // Continue'ya basıldığında sürdürülecek run yoktur. Kırmızı kalıcı bir "Run failed" satırı burada hem
-    // yanlış olurdu hem de "▸ Stopped — 3/10 · rest queued" gibi HÂLÂ doğru olan faz-metnini kalıcı ezerdi.
-    [Fact]
-    public async Task A_rejected_continue_does_not_paint_the_ribbon_red()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10)); // → Stopped
+    // [KALDIRILDI — design v1.7.0 §3.1] Eski test: "reddedilen bir Continue şeridi kırmızıya boyamaz".
+    // Continue modu ve onun reddi (noResumableRun) kaldırıldı — böyle bir olay artık hiç üretilmiyor.
 
-        vm.OnEvent(new ErrorEvent("noResumableRun", "No resumable run for 'D:\\repo'."));
-
-        Assert.Null(vm.RunErrorMessage);
-        Assert.Equal(AppPhase.Stopped, vm.Phase); // faz-metni korunur
-    }
 
     // Kalıcılık kuralı SyncErrorMessage'ın ikizi: metin, kullanıcı YENİ bir şey başlatana kadar durur.
     [Fact]
@@ -387,7 +374,7 @@ public class RunViewModelStateTests
 
         vm.SelectProject(@"C:\p\b.csproj");
         vm.ActiveFilter = ProjectFilter.Failed;
-        await vm.RetryFailedCommand.ExecuteAsync(null);
+        await vm.RebuildCommand.ExecuteAsync(null);
         Assert.Null(vm.SelectedProjectId);
         Assert.Null(vm.ActiveFilter);
     }
@@ -458,30 +445,9 @@ public class RunViewModelStateTests
         Assert.Equal(RunMode.Cycles, Assert.Single(sent.OfType<StartRunCommand>()).Mode); // (c)
     }
 
-    [Fact]
-    public async Task Retry_failed_command_sends_RunMode_RetryFailed_and_is_enabled_only_when_a_failure_exists()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "run-1") { RootPath = @"D:\repo" };
-        // [topoloji kapısı] Konu "failure var mı" koşulu — kapının kendisi DEĞİL; ön-koşul satır event'lerinden
-        // ÖNCE kurulur (topoloji, kendinde olmayan satırları budar).
-        VmTopology.Seed(vm, @"C:\p\a.csproj", @"C:\p\b.csproj");
-
-        // Henüz failure yok → devre dışı
-        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
-        vm.OnEvent(new ProjectSucceededEvent("r0", @"C:\p\a.csproj", 100));
-        Assert.False(vm.RetryFailedCommand.CanExecute(null));
-
-        // Bir failure ortaya çıkınca etkin
-        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\b.csproj", "B"));
-        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\b.csproj", 200, "exit 1"));
-        Assert.True(vm.RetryFailedCommand.CanExecute(null));
-
-        StartRunCommand? sent = null;
-        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
-        await vm.RetryFailedCommand.ExecuteAsync(null);
-        Assert.Equal(RunMode.RetryFailed, sent!.Mode);
-    }
+    // [KALDIRILDI — design v1.7.0 §2.7-11] Eski test: "Retry failed komutu RunMode.RetryFailed gönderir ve
+    // yalnız bir failure varken etkindir". Komut kaldırıldı; hata sonrası kümenin hâlâ derlendiği
+    // Incremental/BuildAfterFailureTests'te pinlenir.
 
     // ---------------------------------------------------------------- T12 kilit / T43 configuration
 
@@ -701,20 +667,16 @@ public class RunViewModelStateTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        // Failed satır: RetryFailed'ın "failure var" koşulu Sync'ten BAĞIMSIZ sağlansın, yalnız sync guard'ı test edilsin.
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
-        Assert.True(vm.RetryFailedCommand.CanExecute(null)); // sync öncesi: etkin
-
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
 
         Assert.False(vm.RebuildCommand.CanExecute(null));
-        Assert.False(vm.RetryFailedCommand.CanExecute(null));
         Assert.True(vm.BuildCommand.CanExecute(null)); // [design doBuild — kasıtlı asimetri] Build sync sırasında da etkin
     }
 
     [Fact]
-    public async Task Sync_completing_reenables_rebuild_and_retry_and_raises_CanExecuteChanged()
+    public async Task Sync_completing_reenables_rebuild_and_raises_CanExecuteChanged()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -723,26 +685,21 @@ public class RunViewModelStateTests
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
-        Assert.False(vm.RetryFailedCommand.CanExecute(null));
 
-        bool rebuildChanged = false, retryChanged = false;
+        bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
-        vm.RetryFailedCommand.CanExecuteChanged += (_, _) => retryChanged = true;
 
         // [Not] Bu Sync'in İÇİNDE ayrıca bir WorkspaceTopologyEvent GÖNDERİLMEZ: IsRunning false iken satır
-        // durumlarını Pending'e resetler (Sync = yeni taban) — bu testin konusu DEĞİL, Failed satırı burada
-        // KORUNMALI ki RetryFailedCommand'ın yalnız _syncInFlight guard'ı test edilsin. Baştaki VmTopology.Seed
-        // satır event'lerinden ÖNCE koştuğu için bu kısıtı bozmaz.
+        // durumlarını Pending'e resetler (Sync = yeni taban) — bu testin konusu DEĞİL. Baştaki
+        // VmTopology.Seed satır event'lerinden ÖNCE koştuğu için bu kısıtı bozmaz.
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
 
         Assert.True(vm.RebuildCommand.CanExecute(null));
-        Assert.True(vm.RetryFailedCommand.CanExecute(null));
         Assert.True(rebuildChanged);
-        Assert.True(retryChanged);
     }
 
     [Fact]
-    public async Task Engine_death_mid_sync_reenables_rebuild_and_retry_via_release_sync_phase()
+    public async Task Engine_death_mid_sync_reenables_rebuild_via_release_sync_phase()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -751,16 +708,14 @@ public class RunViewModelStateTests
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
-        Assert.False(vm.RetryFailedCommand.CanExecute(null));
 
         vm.OnEngineExited(1); // engine Sync ortasında öldü → ReleaseSyncPhase
 
         Assert.True(vm.RebuildCommand.CanExecute(null));
-        Assert.True(vm.RetryFailedCommand.CanExecute(null));
     }
 
     [Fact] // [re-review C2, Finding 4] Sync'e atfedilen planFailed (normal başarısız-sync yolu) da CanExecuteChanged tetiklemeli
-    public async Task Sync_attributed_planFailed_reenables_rebuild_and_retry_and_raises_CanExecuteChanged()
+    public async Task Sync_attributed_planFailed_reenables_rebuild_and_raises_CanExecuteChanged()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -769,20 +724,16 @@ public class RunViewModelStateTests
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
-        Assert.False(vm.RetryFailedCommand.CanExecute(null));
 
-        bool rebuildChanged = false, retryChanged = false;
+        bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
-        vm.RetryFailedCommand.CanExecuteChanged += (_, _) => retryChanged = true;
 
         // IsStarting false (hiç run başlamadı) → TryConsumeSyncFailure normal yola girer: _syncInFlight=false
         // olur ama Fix wave 1'in kaçırdığı 4. geçiş burasıdır — notify BURADA da ateşlenmeli.
         vm.OnEvent(new ErrorEvent("planFailed", "git fetch origin failed"));
 
         Assert.True(rebuildChanged);
-        Assert.True(retryChanged);
         Assert.True(vm.RebuildCommand.CanExecute(null));
-        Assert.True(vm.RetryFailedCommand.CanExecute(null));
     }
 
     // ---------------------------------------------------------------- [topoloji kapısı] Sync yapılmadan run başlatılamaz
@@ -823,7 +774,7 @@ public class RunViewModelStateTests
         Assert.False(vm.BuildCommand.CanExecute(null));
     }
 
-    // Kapı, "önceki koşuda failure var" koşulunu geçen RetryFailed'ı da kapsar: satırlar bir şekilde dolmuş olsa
+    // Kapı her run komutunu kapsar: satırlar bir şekilde dolmuş olsa
     // bile (ör. eski bir koşunun event'leri) topoloji YOKSA yeni bir run başlatılamaz.
     [Fact]
     public async Task Retry_failed_is_disabled_without_a_topology_even_with_a_failed_row()
@@ -833,7 +784,6 @@ public class RunViewModelStateTests
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
 
-        Assert.False(vm.RetryFailedCommand.CanExecute(null));
     }
 
     // Kapı bir CanExecute değişimidir: topoloji GELDİĞİNDE butonların yeniden sorgulanması gerekir — CommunityToolkit
@@ -847,13 +797,11 @@ public class RunViewModelStateTests
         bool buildChanged = false, rebuildChanged = false, retryChanged = false;
         vm.BuildCommand.CanExecuteChanged += (_, _) => buildChanged = true;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
-        vm.RetryFailedCommand.CanExecuteChanged += (_, _) => retryChanged = true;
 
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
 
         Assert.True(buildChanged);
         Assert.True(rebuildChanged);
-        Assert.True(retryChanged);
     }
 
     // ---------------------------------------------------------------- [cycles] koşan SCC'nin SATIR görseli

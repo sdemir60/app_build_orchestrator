@@ -98,15 +98,13 @@ public sealed partial class RunViewModel
 
             case BuildPreviewEvent:
                 // [D3 §2] Ertelenen run-start satırını burada yay — OnBuildPreview (OnEvent'te BUNDAN ÖNCE) hem
-                // _willBuildIds'i doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Build → will-build
-                // sayısı; Continue → kalan (prototip build-data.js:327 `remain = willBuild.size - finishedWB`). Pending'i
-                // TEMİZLE ki Continue segmentlerinde re-emit edilen BuildPreview çift satır yaymasın.
+                // _willBuildIds'i doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Pending'i
+                // TEMİZLE ki re-emit edilen bir BuildPreview çift satır yaymasın.
                 if (_pendingRunStartMode is { } mode)
                 {
                     int parallelism = _runParallelism ?? Parallelism;
                     PushStream(StreamKind.Info, null, mode switch
                     {
-                        RunMode.Continue => StreamText.Continue(_willBuildIds.Count - FinishedOfWillBuild, parallelism),
                         // [cycles/Task 4] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin
                         // üyeleri sıralı derlenir. Kırılım will-build ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
                         // upstream/prerequisite'tir; kullanıcı "neden bu kadar proje derleniyor"u burada okur.

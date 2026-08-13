@@ -218,19 +218,16 @@ public enum ConsoleSelection { ShowRun, LoadProjectLog }
 public sealed partial class RunViewModel : ObservableObject
 {
     // Bu kodlarda çalışan run'ın slotu serbest kalır ama runCompleted ASLA gelmez — App sonsuza dek
-    // beklememeli [Kısıt 3]: planFailed/msbuildNotFound/noResumableRun/runFailed.
+    // beklememeli [Kısıt 3]: planFailed/msbuildNotFound/runFailed.
     // [Fix wave 3] runFailed: RunCoordinator.ExecuteRunAsync'in dış catch'i planlama SIRASINDA (runStarted'dan
     // ÖNCE) beklenmedik bir istisnada da bu kodu yayınlar — eklenmezse IsStarting kalıcı true kalır (aynı
     // wedge sınıfı, farklı tetikleyici). Küme BİLEREK genişletilmedi (ör. "tanınmayan her kod run-ending"
     // yapılmadı): badCommand/unknownCommand gibi run'ı bitirmeyen per-command hatalar da vardır.
-    // [runFailed] Kümenin tek REDdi (bkz. OnError'ın RunErrorMessage kapısı) — iki yerde geçtiği için sabit.
-    private const string NoResumableRunCode = "noResumableRun";
-
     // [B1] Run-bitiren kod DEĞİL (koşan run'ı yıkmaz) ama reddedilen isteğin "starting" bayrağını bırakır.
     private const string RunInProgressCode = "runInProgress";
 
     private static readonly HashSet<string> RunEndingErrorCodes =
-        new(StringComparer.Ordinal) { "planFailed", "msbuildNotFound", NoResumableRunCode, "runFailed" };
+        new(StringComparer.Ordinal) { "planFailed", "msbuildNotFound", "runFailed" };
 
     private readonly EngineHost _engine;
     private readonly ConsoleBatcher _console;
@@ -342,7 +339,6 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
-    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/worktree/config kilidi bundan türetilir
@@ -357,7 +353,6 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
-    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
@@ -375,7 +370,6 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
-    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private string? _engineDiedMessage;
 
@@ -389,7 +383,6 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
-    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private bool _engineRestartable = true;
 
@@ -523,7 +516,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     // ---------------------------------------------------------------- komutlar
 
-    /// <summary>[C2] Ortak run başlatma yolu (Rebuild/Build/Continue/RetryFailed) — tek yerde toplanır:
+    /// <summary>[C2] Ortak run başlatma yolu (Rebuild/Build/Cycles) — tek yerde toplanır:
     /// runId üret, konsolu run dokümanına al, <see cref="IsStarting"/>'i aç ve <see cref="StartRunCommand"/>'ı
     /// workspace hedefiyle (branch/worktree/layer patterns — Supervisor tarafı A1-A4'te bağlı) gönder.
     /// <para>[Fix wave 1(It-3), Finding 1] <paramref name="clearBuffers"/>=true iken önceki run'ın
@@ -579,8 +572,6 @@ public sealed partial class RunViewModel : ObservableObject
     {
         RunMode.Rebuild => "rebuild",
         RunMode.Build => "build",
-        RunMode.Continue => "continue",
-        RunMode.RetryFailed => "retry",
         RunMode.Cycles => "cycles",
         _ => "run",
     };
@@ -595,7 +586,7 @@ public sealed partial class RunViewModel : ObservableObject
     // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
     private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
 
-    // [Fix wave 1, C2 review Finding 1] Rebuild/RetryFailed, Sync uçuştayken (_syncInFlight) EK OLARAK
+    // [Fix wave 1, C2 review Finding 1] Rebuild/Cycles, Sync uçuştayken (_syncInFlight) EK OLARAK
     // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,
     // ama SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
     // Build BİLEREK bu guard'a dahil DEĞİL (prototip doBuild'in kasıtlı asimetrisi, BuildApp.jsx:1194 —
@@ -618,7 +609,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// istemediği ve göremediği bir işin arkasında bekliyordu. Ayrı düğme kararı kullanıcıya verir: ne zaman,
     /// ne kadar.</para>
     ///
-    /// <para><see cref="RebuildCommand"/>/<see cref="RetryFailedCommand"/> ile AYNI guard'a tabidir
+    /// <para><see cref="RebuildCommand"/> ile AYNI guard'a tabidir
     /// (<see cref="CanRebuildOrRetry"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
     /// bozulmasını üretirdi.</para></summary>
     [RelayCommand(CanExecute = nameof(CanBuildCycles))]
@@ -632,16 +623,6 @@ public sealed partial class RunViewModel : ObservableObject
     /// workspace'te bu koşunun kapsamı BOŞTUR (bkz. <c>CycleRunScope</c>) ve her projeyi atlar — pasif
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
     private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
-
-    [RelayCommand(CanExecute = nameof(CanRetryFailed))]
-    private Task RetryFailedAsync()
-    {
-        ClearSelectionAndFilter(); // BuildApp.jsx:1221-1222
-        return BeginRunAsync(RunMode.RetryFailed, clearBuffers: true);
-    }
-    // [C2] Yalnız önceki koşuda bir failure varsa etkin — CanExecute her çağrıda taze değerlendirilir; ayrıca
-    // OnProjectDone/OnRunCompleted NotifyCanExecuteChanged tetikler (canlı UI için).
-    private bool CanRetryFailed() => CanRebuildOrRetry() && Projects.Any(p => p.State == ProjectRowState.Failed);
 
     [RelayCommand(CanExecute = nameof(CanSync))]
     private async Task SyncAsync()
@@ -706,11 +687,11 @@ public sealed partial class RunViewModel : ObservableObject
     // stopRun ÜRETMEZ — motor tarafında zararsız olurdu ama buton "sanki hiçbir şey olmuyor" hissini sürdürürdü.
     private bool CanStop() => (IsRunning || IsStarting) && Phase != AppPhase.Stopping;
 
-    // [B4] Continue KOMUTU YOK. Yarıda kalan bir run'ı sürdürme yüzeyi kaldırıldı: Stop'tan sonra kullanıcı
-    // Build'e basar ve run baştan koşar — öldürülen projelerin stored BuildState'i geçersizleştiği için onlar
-    // da yeniden derlenir, Stop'tan önce başarıyla bitenler "up to date" diye atlanır. Motor tarafındaki
-    // RunMode.Continue/HasResumableRun kontratta KALIR (StopKind.Graceful ile aynı durum: yetenek durur,
-    // yüzey kapanır) — App onu hiçbir yoldan göndermez.
+    // [design v1.7.0 §3.1] Sürdürme ve yeniden deneme AYRI birer komut DEĞİLDİR: Stop'tan sonra da hata
+    // sonrasında da kullanıcı Build'e basar. Öldürülen ve başarısız projelerin stored BuildState'i
+    // geçersizleştiği için yeniden derlenirler; yeşil bitenler "up to date" atlanır; hata etkilenmiş
+    // bağımlılar imzalarını hiç persist etmedikleri için kümeye kendiliğinden girer. Motor tarafında da
+    // karşılıkları yoktur (RunMode üç değerlidir).
 
     /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
     /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
@@ -851,14 +832,13 @@ public sealed partial class RunViewModel : ObservableObject
         await TrySendAsync(new SetPerfModeCommand(PerfMode), "setPerfMode");
     }
 
-    /// <summary>[C2] Satır durumu değişimlerinde türev yüzeyi tazeler: sayaçlar, görünür liste, RetryFailed
+    /// <summary>[C2] Satır durumu değişimlerinde türev yüzeyi tazeler: sayaçlar, görünür liste, run
     /// etkinliği.</summary>
     private void RefreshRunSurface()
     {
         Counters = RunCounters.From(Projects);
         RecomputeWillBuildSurface(); // [D2] wb/fin/allClean — sayaçlarla aynı tetikleyicide tazelenir
         OnPropertyChanged(nameof(VisibleProjects));
-        RetryFailedCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>[D2/T38] Şeridin SABİT willBuild yüzeyini (wb/fin/allClean) <see cref="_willBuildIds"/>'ten türetir —
@@ -971,7 +951,7 @@ public sealed partial class RunViewModel : ObservableObject
             case SyncProgressEvent e: AppendRunLine(e.Line); break;
             // [planlama görünürlüğü] Motorun planlama adımları. AppendRunLine DIŞINDA hiçbir şeye dokunmaz:
             // faz zaten Starting'tir (BeginRunAsync yazdı) ve bu satırlar Sync yüzeyine (_syncInFlight) AİT
-            // DEĞİLDİR — oraya bağlanırsa Rebuild/RetryFailed planlama boyunca sessizce kilitlenirdi.
+            // DEĞİLDİR — oraya bağlanırsa Rebuild/Cycles planlama boyunca sessizce kilitlenirdi.
             case PlanProgressEvent e: AppendRunLine(e.Line); break;
             case SyncCompletedEvent e: OnSyncCompleted(e); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
@@ -1016,7 +996,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
     /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
-    /// [Review fix, Task 17] Satır zaten varsa bu ARTIK normal Continue/RetryFailed şeklidir (savunmacı bir
+    /// [Review fix, Task 17] Satır zaten varsa bu savunmacı bir
     /// edge case DEĞİL): <see cref="RunCoordinator"/> her segmentin başında AYNI (dondurulmuş, segment-1
     /// zamanlı) plan'dan türetilmiş <see cref="BuildPreviewEvent"/>'i YENİDEN yayınlar, ve <see cref="Projects"/>
     /// Continue'da temizlenmez (bkz. <see cref="OnRunStarted"/>). Satır bu VM instance'ında zaten TERMİNAL
@@ -1216,7 +1196,7 @@ public sealed partial class RunViewModel : ObservableObject
         // salt-okurdur ve koşan bir run sırasında da tetiklenebilir. Gerekçe: RunViewModel.Workspace.cs.
         if (TryConsumeSyncFailure(e.Code, e.Message)) return;
         IsRunning = false;
-        IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound/noResumableRun — Rebuild'i geri aç
+        IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound — Rebuild'i geri aç
         // Run-bitiren bir hata geldiğinde runCompleted ASLA gelmez — fazı bırakan başka kapı yoktur.
         // [Stopping] Stop penceresinde gelirse buton sonsuza dek pasif, şerit sonsuza dek "Stopping" kalırdı.
         // [runFailed] Running'de gelirse (yalnız runFailed bunu yapabilir — kümedeki diğer üç kod runStarted'dan
@@ -1226,10 +1206,8 @@ public sealed partial class RunViewModel : ObservableObject
         // pencerede üretilir ve runStarted asla gelmez — faz bırakılmazsa şerit sonsuza dek "▸ Starting" der.
         if (Phase is AppPhase.Running or AppPhase.Stopping or AppPhase.Starting) Phase = RestingPhase;
         // [runFailed] Gerekçe şeride taşınır — konsol satırı tek başına yeterli değil (kullanıcı konsola
-        // bakmıyor olabilir ve şerit o ana kadar aksini söylüyordu). noResumableRun DIŞARIDA: o bir REDdir
-        // (RunCoordinator onu `rejection` diye adlandırır), bir başarısızlık değil — kalıcı kırmızı bir satır
-        // hem yanlış olurdu hem de hâlâ doğru olan "▸ Stopped — 3/10 · rest queued" faz-metnini ezerdi.
-        if (e.Code != NoResumableRunCode) RunErrorMessage = e.Message;
+        // bakmıyor olabilir ve şerit o ana kadar aksini söylüyordu).
+        RunErrorMessage = e.Message;
     }
 
     /// <summary>[Task 16 — It-2 devir §8, kama düzeltmesi] <see cref="EngineHost.EngineExited"/> eskiden VM'e

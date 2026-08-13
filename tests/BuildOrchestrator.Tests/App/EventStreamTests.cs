@@ -197,27 +197,9 @@ public class EventStreamTests
         Assert.Equal("Build started — 8 projects, parallelism 4", line.Text);
     }
 
-    [Fact]
-    public void Continue_line_uses_remaining_will_build_count()
-    {
-        const string x = @"C:\p\x.csproj";
-        const string y = @"C:\p\y.csproj";
-        var vm = NewVm();
-        BuildPreviewItem[] plan = [new(x, "X", true), new(y, "Y", true)];
-
-        // Segment 1: iki proje will-build; X biter (1 tamamlandı).
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
-        vm.OnEvent(new BuildPreviewEvent(plan));
-        vm.OnEvent(new ProjectStartedEvent("r1", x, "X"));
-        vm.OnEvent(new ProjectSucceededEvent("r1", x, 900));
-
-        // Segment 2 (Continue): aynı dondurulmuş plan yeniden yayınlanır — kalan = 2 - 1 = 1.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Continue, 2, 4, "Debug", 0));
-        vm.OnEvent(new BuildPreviewEvent(plan));
-
-        var line = vm.StreamEvents.Last(s => s.Text.StartsWith("Continue"));
-        Assert.Equal("Continue — 1 remaining, parallelism 4", line.Text);
-    }
+    // [KALDIRILDI — design v1.7.0 §3.1] Eski test: "Continue satırı kalan will-build sayısını yazar".
+    // Continue modu kaldırıldı; sürdürme ayrı bir segment değil, YENİ bir Build koşusudur ve onun satırı
+    // yukarıdaki Build_started_line_uses_the_will_build_count tarafından zaten pinlenir.
 
     // ============================================================ §11 — StreamText 9 şablonu (birebir fidelity)
 
@@ -231,7 +213,6 @@ public class EventStreamTests
         Assert.Equal("Sync — 8 to build, 28 up to date", StreamText.Sync(8, 28));
         Assert.Equal("Build started — 8 projects, parallelism 4", StreamText.BuildStarted(8, 4));
         Assert.Equal("Stopped — 5 remaining projects queued", StreamText.Stopped(5));
-        Assert.Equal("Continue — 3 remaining, parallelism 4", StreamText.Continue(3, 4));
         Assert.Equal("Completed — 12 succeeded · 3 skipped · 45s", StreamText.Completed(0, 12, 3, 0, 45000));
         Assert.Equal("Completed — 2 failed · 10 succeeded · 1 skipped · 1m 12s · 3 dependency-affected",
             StreamText.Completed(2, 10, 1, 3, 72000));
