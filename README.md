@@ -186,16 +186,25 @@ round line is what moves. When the group has a verdict the event stream says whi
 failed the same way twice, or hit the round cap — with how many rounds it took. Cycle rows show the normal
 build icons — green, red, the spinner — and carry a small orange cycle badge to say where they sit: in the list
 row's dependency slot, and as a permanent corner mark on the graph node, which otherwise now paints exactly
-like any other node at that status. Pressing the button again costs nothing when nothing changed: a cycle that
-has settled is skipped as up to date, and a cycle that never settles is not tried again until its source
-changes. The summary line says how many projects are stuck in one, so a run whose only casualty is a broken
-cycle never reads as an unqualified success — those rows keep the orange badge with a tooltip saying they will
-not be retried, and rows that compiled but never saw two clean rounds carry the dependency triangle, whose
-tooltip says their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
+like any other node at that status. Hovering that badge — or the row's will-build dot, or the ribbon's cycle
+chip — names the loop itself: `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`.
+
+Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
+press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the
+run log says why it is worth the rounds (`retrying — did not converge at this signature`). The engine
+remembers a failed convergence, but only to report it — refusing to retry would mean the button silently doing
+nothing, and the signature covers sources alone, so a package restore or anything outside the cycle may well
+have changed since. The summary line says how many projects are stuck in one, so a run whose only casualty is
+a cycle that would not converge never reads as an unqualified success — those rows keep the orange badge with
+a tooltip saying their projects are still out of date, and rows that compiled but never saw two clean rounds
+carry the dependency triangle, whose tooltip says their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
 still dirty, the event stream adds a closing line pointing at *Resolve cycles* as the next step.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
-down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.
+down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar. At the
+bottom sits a blinking amber block caret on a line of its own; output piles up above it and it stays put, with
+`ready` beside it while nothing is running. Scroll away from the bottom and it steps aside with the
+`⌄ latest` pill until you come back.
 
 The dependency graph fits the panel at every size: nodes are unnamed mini squares laid out in build order,
 and the spacing shrinks until they do fit — so there is never a scrollbar and never a part of the graph you
@@ -206,9 +215,11 @@ background, to let go.
 
 While a build runs the graph quietens rather than moving: untouched projects fade back, the ones compiling
 stay bright and carry a ring of circling amber dots, and each project that reaches a result holds its colour
-bright for a moment before settling. Projects that are skipped because they are already up to date settle
-quietly with no moment of their own — the graph is there to show what changed, and they did not. The camera
-does not follow the run — it stays where you left it.
+bright for a moment before settling. Projects that are skipped settle quietly with no moment of their own —
+they stay exactly as dim as the queue and never move at all, because the graph is there to show what changed
+and they did not. The camera does not follow the run — it stays where you left it. Filtering the list dims the
+graph to match: the projects still in the list stay bright, everything else fades back, and the fade is slower
+than the ones a run makes so it can be followed by eye.
 Drag the empty background to pan (the cursor turns into a hand) and the mouse wheel zooms at the pointer;
 clicking empty background with nothing selected returns the view to its default.
 
