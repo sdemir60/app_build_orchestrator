@@ -130,9 +130,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// AYNI ŞEY DEĞİLDİR</b>: bir SCC'nin üyeleri tek tek invoke edilir ve ara tur sonuçları yayılmadığı için
     /// grup bitene kadar HEPSİ Started'ta kalır (bkz. <see cref="CycleWaiting"/>).
     ///
-    /// <para>Predicate TEK yerdedir ve BEŞ yüzey onu okur: <see cref="Status"/>'un Building dalı,
-    /// <see cref="RunCounters"/>'ın Building kovası, sticky şeridin building chip'leri, kartın nefes katmanı ve
-    /// canlı süre sütunu (<c>ProjectRow.ApplyBreathing</c>/<c>ApplyDuration</c>). Yüzeyler ayrı yazıldığında
+    /// <para>Predicate TEK yerdedir ve ALTI yüzey onu okur: <see cref="Status"/>'un Building dalı,
+    /// <see cref="RunCounters"/>'ın Building kovası, sticky şeridin building chip'leri, kartın nefes katmanı,
+    /// canlı süre sütunu (<c>ProjectRow.ApplyBreathing</c>/<c>ApplyDuration</c>) ve listenin frontier takibi
+    /// (<c>MainWindow.FollowFrontier</c>). Yüzeyler ayrı yazıldığında
     /// sessizce ayrıştılar ve ölçüldü: 15 üyeli bir grupta listede 15 spinner, şeritte 4 chip + "+11", sayaçta
     /// "1 building" — aynı anda; sonra da bekleyen üye saat gösterirken nefes alıp süre sayıyordu. Yeni bir
     /// tüketici de buradan okumalıdır.</para></summary>

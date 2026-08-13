@@ -522,7 +522,11 @@ public partial class MainWindow : Window
         // [E4 fix] Arbiter'ın CANLI frontier gate'i: seçim YOK **ve** frontier bölgesel wheel-suppress YOK. Böylece
         // arbiter'ın _suppressed[Frontier] bit'i yalnız yazılan değil OKUNAN olur — liste wheel'i onu kurar
         // (NotifyUserScroll), near-bottom'a dönüş temizler (StickyLayerList.ResumeFrontierIfNearBottom → Resume).
-        int row = FrontierRowIndex(p => p.State == ProjectRowState.Started);
+        // Soru "Started mı" DEĞİL "ŞU AN derleniyor mu"dur: bir SCC'nin üyeleri tek tek invoke edilir ama ara
+        // tur sonuçları yayılmadığı için grup bitene kadar hepsi Started'ta durur — ham durum okunduğunda
+        // frontier listedeki İLK üyeye çakılır ve dead-band yüzünden bir daha hiç kaymaz (Resolve koşusunda
+        // liste derlenen projeyi takip etmiyordu). Predicate: ProjectRowViewModel.IsCompiling.
+        int row = FrontierRowIndex(p => p.IsCompiling);
         if (row < 0) return;
         // [frontier resume] Kapıdan ÖNCE: tekerlekle duraklatılmış takip, kullanıcı yeniden "izliyor"
         // sayılabildiğinde geri açılır — frontier'e döndüğünde ya da listeye bir süre hiç dokunmadığında.
