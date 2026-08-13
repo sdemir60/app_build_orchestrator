@@ -1888,6 +1888,16 @@ timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based
 `DispatcherTimer` resolution. Resetting an observable collection is prohibited — it destroys running
 animations.
 
+**An infinite animation must stop being visible before it stops running.** WPF's timing engine keeps the whole
+render loop awake while *any* clock is active, so one forgotten `Forever` costs far more than itself: an idle
+application was measured burning 133 % of a core, with a single thread at 92 %. Being collapsed is not being
+unloaded — a hidden control stays in the tree and its own property never changes again — so every infinite
+animation is gated on `IsVisible` as well as on its own state, and re-evaluated from `IsVisibleChanged`. The
+same discipline applies to periodic work: a one-shot `DispatcherTimer` stops itself in its own tick (the
+dispatcher roots it, so an unstopped one ticks forever and can never be collected), and anything called from
+the 200 ms tick writes only when the value actually changed, since assigning the same string still invalidates
+measure and draw five times a second.
+
 ### 14.6 Copy and tone
 
 All interface text, project names and logs are **English**; code comments and the decision records are Turkish.
