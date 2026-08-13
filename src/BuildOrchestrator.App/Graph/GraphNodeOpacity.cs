@@ -103,7 +103,14 @@ public static class GraphNodeOpacity
             opacity = status switch
             {
                 GraphStatus.Building => Full,
-                GraphStatus.Queued or GraphStatus.Discovered => RunDim,
+                // [DEĞİŞEN KURAL] Skipped burada, Finished'ta DEĞİL. §2.3 atlananı da "biten" sayıp 0.2'ye
+                // koyuyordu; ama koşarken bir düğüm kuyrukta 0.13'tedir ve 0.2'ye gitmek İNMEK değil %54
+                // PARLAMAKTIR. Resolve koşusu başlarken kapsam dışı kalan onlarca proje önce 1.0'dan 0.13'e
+                // sönüp hemen ardından pre-skip ile 0.2'ye geri parlıyordu — ekranda titreme olarak okunan
+                // çift hamle buydu. Atlanmak bir İŞ SONUCU değildir (aynı gerekçe IsSettled'da parlak
+                // beklemeyi de kaldırmıştı): atlanan düğüm koşuya katılmayanla aynı yerde durur, tek hamle
+                // yapar ve koşu bitince herkesle birlikte tam opağa döner.
+                GraphStatus.Queued or GraphStatus.Discovered or GraphStatus.Skipped => RunDim,
                 _ => Finished,
             };
         }

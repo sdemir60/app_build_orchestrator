@@ -37,18 +37,33 @@ public class GraphSkippedProjectTests
         return view;
     }
 
-    /// <summary>AYIRT EDİCİ — atlanan düğüm parlak beklemez: düz 280ms geçişle sonuç opaklığına iner.</summary>
+    /// <summary>
+    /// AYIRT EDİCİ — atlanan düğüm KIPIRDAMAZ: koşarken kuyruktakiyle aynı soluklukta kalır, yani
+    /// <c>queued → skipped</c> geçişi hiçbir opaklık animasyonu doğurmaz.
+    ///
+    /// <para>[DEĞİŞEN KURAL] Eski iddia: atlanan düğüm 280 ms'lik düz bir geçişle <c>Finished</c> (0.2)
+    /// değerine "iner". Ama 0.13'ten 0.2'ye gitmek inmek değil, %54 PARLAMAKTIR. Sahada görülen şey buydu:
+    /// Resolve koşusu başlayınca kapsam dışı kalan onlarca proje önce 1.0'dan 0.13'e sönüyor, hemen ardından
+    /// pre-skip gelince 0.13'ten 0.2'ye geri parlıyordu — kullanıcının "bi yanıyor sönüyor gri oluyor" diye
+    /// tarif ettiği kıpırtı. İki hamle art arda gelince göz bunu titreme olarak okur.</para>
+    ///
+    /// <para>Bu, dosyanın en başındaki kararın tamamlanmasıdır: atlanmak bir İŞ SONUCU değildir, dolayısıyla
+    /// ne parlak bekleme alır (o zaten kaldırılmıştı) ne de "bitmiş" opaklığı. Atlanan düğüm koşuya
+    /// katılmayan düğümle aynı yerde durur ve koşu bitince (Idle) zaten herkesle birlikte tam opağa döner.</para>
+    /// </summary>
     [StaFact]
-    public void A_skipped_project_glides_straight_to_its_result_with_no_bright_hold()
+    public void A_skipped_project_does_not_move_at_all()
     {
         var view = Running();
+        // Koşu başlarken düğüm zaten 1.0'dan 0.13'e sönmüştür; ölçülen şey BUNDAN SONRA yeni bir hamle
+        // olup olmadığıdır (kardeş desen: GraphRunLifecycleTests'in "değişmeyen tick hold-fade'i yeniden
+        // başlatmaz" testi).
+        var beforeSkip = view.OpacityAnimationOf("OSYS.Data");
 
         view.UpdateStatuses(Nodes(GraphStatus.Skipped));
 
-        var animation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf("OSYS.Data"));
-        var only = Assert.Single(animation.KeyFrames.Cast<DoubleKeyFrame>());
-        Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs), only.KeyTime.TimeSpan);
-        Assert.Equal(GraphNodeOpacity.Finished, only.Value, 6);
+        Assert.Same(beforeSkip, view.OpacityAnimationOf("OSYS.Data"));                      // YENİ hamle yok
+        Assert.Equal(GraphNodeOpacity.RunDim, view.NodeVisuals["OSYS.Data"].OpacityTarget, 6);
     }
 
     /// <summary>AYIRT EDİCİ — atlanan düğümde yörünge HİÇ kurulmaz. Yörünge yalnız DERLENEN düğümün

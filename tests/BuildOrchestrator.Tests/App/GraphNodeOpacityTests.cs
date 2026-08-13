@@ -39,10 +39,22 @@ public class GraphNodeOpacityTests
     [Theory]
     [InlineData(GraphStatus.Succeeded)]
     [InlineData(GraphStatus.Failed)]
-    [InlineData(GraphStatus.Skipped)]
     [InlineData(GraphStatus.Cycle)]
     public void A_finished_node_settles_at_twenty_percent_while_the_run_continues(GraphStatus status)
         => Assert.Equal(0.2, Op(status, GraphRunPhase.Running), 6);
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Atlanan düğüm "biten" değildir: koşarken kuyruktakiyle AYNI soluklukta (0.13) kalır.
+    ///
+    /// <para>Eski kural onu 0.2'ye koyuyordu (§2.3 atlananı da sonuç sayar). Ama düğüm kuyrukta zaten
+    /// 0.13'tedir ve 0.2'ye gitmek inmek değil %54 parlamaktır: Resolve koşusu başlarken kapsam dışı kalan
+    /// projeler önce 1.0'dan 0.13'e sönüp hemen ardından pre-skip ile 0.2'ye geri parlıyor, ekranda titreme
+    /// üretiyordu. Aynı gerekçe daha önce atlanandan parlak beklemeyi de kaldırmıştı
+    /// (<c>GraphNodeOpacity.IsSettled</c>) — bu, o kararın tamamlanmasıdır.</para>
+    /// </summary>
+    [Fact]
+    public void A_skipped_node_stays_as_dim_as_the_queue_while_the_run_continues()
+        => Assert.Equal(0.13, Op(GraphStatus.Skipped, GraphRunPhase.Running), 6);
 
     /// <summary>AYIRT EDİCİ: seçim koşu kararını EZER — odak kümesi tam opak, geri kalan HER ŞEY 0.1 (§2.3).
     /// Sıra ters olsaydı koşarken seçilen bir queued düğüm 0.13'te kalırdı.</summary>
