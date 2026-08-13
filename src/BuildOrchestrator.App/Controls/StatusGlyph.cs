@@ -73,6 +73,12 @@ public class StatusGlyph : Control
         _motion.Changed += (_, _) => ApplyPulse();
         Loaded += (_, _) => ApplyStatus();
         Unloaded += (_, _) => StopPulse();
+        // [BuildingSpinner.Refresh deseni] Görünürlük DEĞİŞİMİ nabzı yeniden değerlendirir. Gizlenmek
+        // Unloaded DEĞİLDİR: gizlenen kontrol ağaçta kalır, Status'u değişmez ve ApplyPulse bir daha hiç
+        // çağrılmazdı — sonsuz nabız görünmeyen bir kontrolün üzerinde dönmeye devam ederdi. WPF'in
+        // zamanlayıcısı etkin tek bir saat kaldığı sürece boş kareye inmediği için bunun bedeli yalnız o
+        // kontrol değil, TÜM render döngüsüdür.
+        IsVisibleChanged += (_, _) => ApplyPulse();
     }
 
     /// <summary>[W2] Motion sinyalinin TAZE okunduğu kapı (D8) — testler enjekte eder; varsayılan <c>App.Motion</c>.</summary>
@@ -181,7 +187,9 @@ public class StatusGlyph : Control
     /// aksi halde her statü güncellemesinde nabız baştan alır ve "takılı" görünür.</summary>
     private void ApplyPulse()
     {
-        bool shouldPulse = Status == GraphStatus.Building && _motion.Enabled;
+        // Görünürlük terimi kardeş kontrolle (BuildingSpinner.Refresh) AYNI: görünmeyen bir yüzey animasyon
+        // saati tutmaz.
+        bool shouldPulse = Status == GraphStatus.Building && IsVisible && _motion.Enabled;
         if (shouldPulse == _isPulsing) return;
         _isPulsing = shouldPulse;
 
