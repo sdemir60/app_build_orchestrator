@@ -1163,12 +1163,18 @@ a failure — and it clears itself the moment the engine speaks or the wait ends
 failure and does not take this path — declining a request with nothing to resume leaves the `stopped` line
 standing, because that line is still true.
 
-**Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected), the 8 px will-build dot,
+**Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected) running the row's full
+height, the 8 px will-build dot,
 the project name with the solution name beside it, then a right-aligned block — on hover, *Reveal in Explorer*
 and *Open in Visual Studio* icons; without hover, `curSha → targetSha` for dirty projects — then the status
 glyph, the fixed dependency-issue slot, and a 46 px duration column. The building row carries a motionless
 amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s); a sweep or a shine was tried and
 rejected. A failing row shakes once, ±3 px over 360 ms.
+
+The stripe has **no vertical inset**, which is a deliberate departure from §2.4. The design insets it by 1 px
+so that adjacent rows cannot fuse into one unbroken rail; looked at on screen, the break made the same 2 px
+read lighter and the row read thin. Separation is left to the horizontal divider instead — every row already
+carries a `border-subtle` line along its bottom, and that line crosses the stripe and breaks it on its own.
 
 Layer headers are 24 px and stick **cumulatively**: the *i*-th visible header pins at `i × 24 px` and stays
 there as the ones below it pile up underneath.
