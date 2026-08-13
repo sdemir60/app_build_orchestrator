@@ -72,7 +72,7 @@ public sealed class SyncWorkspaceService(
         }
 
         // --- 1) ref-only fetch (K1). §3.1 satır 1.
-        emit(Cmd($"▸ git fetch origin {cmd.Branch}"));
+        emit(Cmd($"git fetch origin {cmd.Branch}"));
         var fetch = await git.FetchRefOnlyAsync(cmd.Branch, ct);
         if (fetch.Degraded)
         {

@@ -1363,25 +1363,18 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void AppendRunLine(string text)
     {
-        // [D4/T56-UI] Anlatı satırı design-v1 §2.5 diliyle bileşilir: "HH:MM:SS" (sahte duvar saati, text-faint) +
-        // metin (cmd satırındaki amber ▸, satırın kendisinde zaten var — SyncProgressEvent). Renkler
-        // ConsoleColorizer'ın zaman-damgasını + ▸'yi çözmesiyle gelir (kopyalanan metin de anlamlı; markup YOK).
-        // Saat kaynağı WallClock (stream ile ORTAK; testte deterministik). Ham MSBuild (OnProjectLog) BU yoldan
-        // GEÇMEZ → zaman damgası ALMAZ → daktilo edilmez (T34: ham asla harf-harf).
-        string composed = ComposeNarrativeLine(text);
+        // [design v1.7.0 §2.5] Anlatı satırı YALNIZ METİNDİR. Duvar saati kaldırıldı: gerçek bir koşuda
+        // saniyede yüzlerce satır akar ve her satırın başındaki damga bilgi taşımıyordu — zaman tek yerde
+        // durur (event stream + şeritteki geçen süre). Satır türünü yalnız RENK ayırır; ham MSBuild
+        // (OnProjectLog) zaten bu yoldan geçmez.
         // [Fix wave 1, Finding 3] OnProjectLog ile aynı gerekçeyle Post kilit İÇİNE alındı.
         lock (_gate)
         {
-            _runText.Append(composed).Append('\n');
+            _runText.Append(text).Append('\n');
             _runLineCount++;
-            if (ActiveProjectId is null) _console.Post(composed);
+            if (ActiveProjectId is null) _console.Post(text);
         }
     }
-
-    /// <summary>[D4/T56-UI] Bir anlatı satırının önüne "HH:MM:SS " (InvariantCulture — Global Constraint) ekler.
-    /// design-v1 §2.5 / plan §222: satırlar düz metin <c>HH:MM:SS ▸ metin</c>. Saat WallClock'tan (stream'le ORTAK).</summary>
-    private string ComposeNarrativeLine(string text) =>
-        $"{Console.WallClockFormat.Of(WallClock())} {text}";
 
     /// <summary>[T56/3a] Konsol başlığındaki "N lines" için AKTİF tampon (run ya da seçili proje) satır sayısı —
     /// TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). UI thread'inde çağrılır; sayaçlar arka plandan

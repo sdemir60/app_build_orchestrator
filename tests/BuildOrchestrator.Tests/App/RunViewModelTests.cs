@@ -1663,7 +1663,7 @@ public class RunViewModelTests
             WallClock = () => new DateTimeOffset(2026, 7, 23, 12, 4, 7, TimeSpan.Zero),
         };
 
-        vm.OnEvent(new SyncProgressEvent("▸ git fetch origin main", "cmd"));
+        vm.OnEvent(new SyncProgressEvent("git fetch origin main", "cmd"));
         vm.OnEvent(new SyncProgressEvent("Sync complete — 7 changed projects, 14 to build", "info"));
 
         var flushes = new List<string>();
@@ -1671,9 +1671,9 @@ public class RunViewModelTests
 
         // Batcher'a düşen satırlar artık "HH:MM:SS " önekli (ham ▸ satırı ONUN İÇİNDE — colorizer damga+▸'yi çözer).
         Assert.Equal(
-            ["12:04:07 ▸ git fetch origin main\n12:04:07 Sync complete — 7 changed projects, 14 to build\n"],
+            ["git fetch origin main\nSync complete — 7 changed projects, 14 to build\n"],
             flushes);
         // Konsol dokümanına da düşer (run dokümanı aktifken)
-        Assert.Contains("12:04:07 ▸ git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Contains("git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 }

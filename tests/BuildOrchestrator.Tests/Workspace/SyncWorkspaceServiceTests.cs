@@ -84,8 +84,8 @@ public class SyncWorkspaceServiceTests
         Assert.Equal(branch, started.Branch);
 
         // §3.1 satır 1 — cmd tonunda, branch GERÇEK repodan
-        var fetchLine = LineStartingWith(events, "▸ git fetch origin ");
-        Assert.Equal($"▸ git fetch origin {branch}", fetchLine.Line);
+        var fetchLine = LineStartingWith(events, "git fetch origin ");
+        Assert.Equal($"git fetch origin {branch}", fetchLine.Line);
         Assert.Equal("cmd", fetchLine.Level);
 
         var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
@@ -150,7 +150,7 @@ public class SyncWorkspaceServiceTests
 
         // [v7 A5/N1] granular adım satırları fetch satırından SONRA basılır; sayılar gerçek taramadan gelir
         var lines = Progress(events).Select(e => e.Line).ToList();
-        int fetchAt = lines.FindIndex(l => l.StartsWith("▸ git fetch origin ", StringComparison.Ordinal));
+        int fetchAt = lines.FindIndex(l => l.StartsWith("git fetch origin ", StringComparison.Ordinal));
         int scanAt = lines.IndexOf("Scanning solutions (1)");
         int readAt = lines.IndexOf("Reading HintPath/Compile items (2 projects)");
         int graphAt = lines.IndexOf("Dependency graph — 0 cycles");

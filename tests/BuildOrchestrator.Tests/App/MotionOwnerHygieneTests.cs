@@ -40,32 +40,9 @@ public class MotionOwnerHygieneTests
         Assert.Equal(30, Timeline.GetDesiredFrameRate(spin)); // dekoratif sonsuz → 30fps tavanı (feasibility §3.4)
     }
 
-    /// <summary>
-    /// [A13/B3 · k3] <b>Daktilo imleç HOLD'unun TEK tanımı vardır.</b> 420 önce üç sahipte ayrı ayrı yazılıydı
-    /// (<c>ConsoleView</c> · <c>EventStreamView</c> · <c>EventStreamRow</c>) ve yalnız BİRİ pinliydi
-    /// (<c>ConsoleMotionPathTests</c>) — kalan iki kopya sessizce sürüklenebilirdi.
-    ///
-    /// <para>İki iddia: (1) <b>değer</b> otorite literaline eşit (<c>BuildApp.jsx:91</c>
-    /// <c>setTimeout(onDone, 420)</c>; beklenen değer ÜRETİMDEN OKUNMAZ — A13/T4'ün <c>PopIn.DurationMs</c>
-    /// deseni), (2) <b>tanım</b> kaynak ağacında TEK — sahipler yalnız derleme-zamanı alias tutar. (2) olmadan
-    /// biri sabiti sahibine geri INLINE edebilir ve (1) yine yeşil kalırdı.</para>
-    /// </summary>
-    [Fact]
-    public void The_typewriter_cursor_hold_has_exactly_one_definition_that_every_owner_aliases()
-    {
-        Assert.Equal(420.0, TypewriterScheduler.CursorHoldMs); // otorite literali (üretimden OKUNMAZ)
-
-        // Üç sahibin üçü de AYNI kaynağı gösterir.
-        Assert.Equal(TypewriterScheduler.CursorHoldMs, ConsoleView.CursorHoldMs);
-        Assert.Equal(TypewriterScheduler.CursorHoldMs, EventStreamView.CursorHoldMs);
-        Assert.Equal(TypewriterScheduler.CursorHoldMs, EventStreamRow.CursorHoldMs);
-
-        // ...ve değeri YAZAN tek yer TypewriterScheduler'dır (geri-inline'a kapalı).
-        var definitions = SourceGuard.ScanApp("*.cs",
-            new Regex(@"CursorHoldMs\s*=\s*[0-9]", RegexOptions.Compiled), skipCommentLines: true);
-        Assert.Single(definitions);
-        Assert.StartsWith(Path.Combine("Console", "TypewriterScheduler.cs"), definitions[0], StringComparison.Ordinal);
-    }
+    // [KALDIRILDI — design v1.7.0 §2.5] Konsolun daktilosu, saat sütunu ve satır-bazlı kaskadı kaldırıldı;
+    // bu iddiaların konusu artık yok. Yerlerine gelen davranış: satırlar anında basılır, prompt satırı yalnız
+    // imleç + "ready" taşır, panel geçişi tek parça tilt-in'dir.
 
     /// <summary>
     /// [A13/final · lensB Ö1] Hold'un <b>DEĞERİ</b> yukarıda pinliydi ama <b>ÜRETİMDE TÜKETİLDİĞİ</b> hiçbir
@@ -91,13 +68,13 @@ public class MotionOwnerHygieneTests
             skipCommentLines: true);
 
         // Vakum kapısı: tarama boş bir dosya kümesi görseydi aşağıdaki sayım anlamsız olurdu.
-        Assert.Contains(Path.Combine("Console", "ConsoleView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
         Assert.Contains(Path.Combine("Views", "EventStreamView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
 
-        Assert.Equal(3, usages.Count);
-        Assert.Single(usages, u => u.StartsWith(Path.Combine("Console", "ConsoleView.xaml.cs"), StringComparison.Ordinal));
-        Assert.Equal(2, usages.Count(u =>
-            u.StartsWith(Path.Combine("Views", "EventStreamView.xaml.cs"), StringComparison.Ordinal)));
+        // [DEĞİŞEN KURAL — design v1.7.0 §2.5] Konsolun daktilosu kaldırıldı; geriye TEK daktilo sahibi kaldı
+        // (event stream). Eski iddia üç kullanım sayıyordu, biri ConsoleView'ındı.
+        Assert.Equal(2, usages.Count);
+        Assert.All(usages, u =>
+            Assert.StartsWith(Path.Combine("Views", "EventStreamView.xaml.cs"), u, StringComparison.Ordinal));
     }
 
     [StaFact]

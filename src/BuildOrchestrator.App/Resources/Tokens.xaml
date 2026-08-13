@@ -141,6 +141,10 @@
     <FontWeight x:Key="FontWeight.Body">Normal</FontWeight>
     <FontWeight x:Key="FontWeight.Emphasis">Medium</FontWeight>
     <FontWeight x:Key="FontWeight.Heading">SemiBold</FontWeight>
+    <!-- [design v1.7.0 §1.2] Konsol gövdesi (anlatı + proje logu) Geist Mono 300: tek seferde yüzlerce satır
+         bastığı için ince ağırlıkta daha rahat taranır. Diğer mono alanlar (event stream, sayaç, süre, SHA)
+         FontWeight.Body'de (400) kalır. -->
+    <FontWeight x:Key="FontWeight.Console">Light</FontWeight>
 
     <!-- CSS leading-* ORANDIR; WPF LineHeight mutlak DIP ister → oran × punto (kullanılan punto ada gömülü):
          snug 1.35×13 · normal 1.5×13 · mono 1.55×12. -->

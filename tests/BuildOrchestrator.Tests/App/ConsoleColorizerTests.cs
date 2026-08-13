@@ -25,35 +25,6 @@ public class ConsoleColorizerTests
 
     private static ConsolePalette Palette(ResourceDictionary tokens) => DsResources.ConsolePaletteFrom(tokens);
 
-    [StaFact]
-    public void Command_line_with_clock_and_arrow_produces_faint_clock_amber_arrow_and_primary_body()
-    {
-        var tokens = LoadTokens();
-        var palette = Palette(tokens);
-        var colorizer = new ConsoleColorizer(palette);
-        string line = $"12:04:07 {Arrow} git fetch origin main";
-
-        var spans = colorizer.ComputeSpans(line);
-
-        // saat [0,8) = text-faint
-        var clock = spans[0];
-        Assert.Equal(0, clock.Offset);
-        Assert.Equal(8, clock.Length);
-        Assert.Same(tokens["Brush.TextFaint"], clock.Brush);
-
-        // ▸ (index 9) = amber-text, tam 1 karakter
-        var arrow = spans.Single(s => s.Length == 1 && s.Offset == line.IndexOf(Arrow));
-        Assert.Same(tokens["Brush.AmberText"], arrow.Brush);
-
-        // gövde (son span) = cmd = text-primary; hiçbir span text-secondary/success DEĞİL
-        Assert.Same(tokens["Brush.TextPrimary"], spans[^1].Brush);
-        Assert.All(spans, s => Assert.True(s.Length > 0));
-        // aralıklar ardışık ve satırı tam kaplar
-        Assert.Equal(0, spans[0].Offset);
-        Assert.Equal(line.Length, spans[^1].Offset + spans[^1].Length);
-        for (int i = 1; i < spans.Count; i++)
-            Assert.Equal(spans[i - 1].Offset + spans[i - 1].Length, spans[i].Offset);
-    }
 
     [StaFact]
     public void Plain_info_line_without_clock_or_arrow_is_a_single_secondary_span()
@@ -87,8 +58,10 @@ public class ConsoleColorizerTests
     [Fact]
     public void Classifier_maps_reliable_signals_and_defaults_to_info()
     {
-        Assert.Equal(ConsoleLineType.Cmd, ConsoleLineClassifier.Classify($"{Arrow} msbuild Osys.sln /m:4"));
-        Assert.Equal(ConsoleLineType.Cmd, ConsoleLineClassifier.Classify($"12:04:07 {Arrow} git fetch"));
+        // [DEĞİŞEN KURAL — design v1.7.0 §2.5] Komut satırının işareti artık ▸ öneki DEĞİL, satırın kendisidir:
+        // ▸ kolonu ve saat damgası kaldırıldı, geriye uygulamanın çağırdığı aracın adı kaldı.
+        Assert.Equal(ConsoleLineType.Cmd, ConsoleLineClassifier.Classify("msbuild Osys.sln /m:4"));
+        Assert.Equal(ConsoleLineType.Cmd, ConsoleLineClassifier.Classify("git fetch origin main"));
         Assert.Equal(ConsoleLineType.Error, ConsoleLineClassifier.Classify("[hata] stop gönderilemedi: x"));
         Assert.Equal(ConsoleLineType.Error, ConsoleLineClassifier.Classify("Program.cs(9,5): error CS0103: name"));
         Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify("csc : warning CS1591: missing doc"));
@@ -97,33 +70,20 @@ public class ConsoleColorizerTests
         Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify(""));
     }
 
-    [Fact]
-    public void Parser_detects_clock_and_arrow_offsets_and_leaves_plain_lines_bare()
-    {
-        var cmd = ConsoleLineParser.Layout($"12:04:07 {Arrow} git");
-        Assert.Equal(ConsoleLineType.Cmd, cmd.Type);
-        Assert.Equal(new ConsoleSpan(0, 8), cmd.Clock);
-        Assert.Equal(new ConsoleSpan(9, 1), cmd.Icon);
-
-        var plain = ConsoleLineParser.Layout("no clock here");
-        Assert.Null(plain.Clock);
-        Assert.Null(plain.Icon);
-
-        // 8-haneli olmayan / geçersiz saat prefix'i saat sayılmaz
-        Assert.Null(ConsoleLineParser.Layout("1:2:3 short").Clock);
-        Assert.Null(ConsoleLineParser.Layout("abcdefgh not a clock").Clock);
-    }
+    // [KALDIRILDI — design v1.7.0 §2.5] Konsolun daktilosu, saat sütunu ve satır-bazlı kaskadı kaldırıldı;
+    // bu iddiaların konusu artık yok. Yerlerine gelen davranış: satırlar anında basılır, prompt satırı yalnız
+    // imleç + "ready" taşır, panel geçişi tek parça tilt-in'dir.
 
     [StaFact]
     public void ComputeSpans_never_mutates_the_input_text_color_is_view_only()
     {
         var tokens = LoadTokens();
         var colorizer = new ConsoleColorizer(Palette(tokens));
-        string line = $"12:04:07 {Arrow} git fetch";
+        string line = "git fetch origin main";
 
         _ = colorizer.ComputeSpans(line);
 
-        Assert.Equal($"12:04:07 {Arrow} git fetch", line); // string immutable, ama niyeti kanıtla
+        Assert.Equal("git fetch origin main", line); // string immutable, ama niyeti kanıtla
         Assert.Empty(colorizer.ComputeSpans(""));           // boş satır → boş aralık listesi
     }
 

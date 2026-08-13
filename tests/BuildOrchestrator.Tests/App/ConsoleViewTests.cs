@@ -308,7 +308,7 @@ public class ConsoleViewTests
         // batch'in TÜM satırları (en yeni dahil) dokümana girer — hiçbir satır overlay'de asılı kalmaz/kaybolmaz.
         var view = new ConsoleView();
 
-        view.AppendNarrativeBatch("12:00:01 ▸ git fetch origin main\n12:00:02 Sync complete — 7 changed projects\n");
+        view.AppendNarrativeBatch("git fetch origin main\nSync complete — 7 changed projects\n");
 
         Assert.Contains("git fetch origin main", view.Document.Text);
         Assert.Contains("Sync complete — 7 changed projects", view.Document.Text);
@@ -317,11 +317,10 @@ public class ConsoleViewTests
     [StaFact]
     public void ShowReady_displays_the_idle_prompt_until_narrative_content_arrives()
     {
-        // design-v1 §2.5: boşta/boot tek satır "ready" (dim) + imleç — doküman satırı DEĞİL (overlay). İçerik
-        // gelince temizlenir.
+        // design v1.7.0 §2.5: boşta/boot tek prompt satırı — imleç + "ready" (dim), doküman satırı DEĞİL
+        // (overlay). İçerik gelince temizlenir. Duvar saati YOK.
         var view = new ConsoleView();
 
-        view.WallClock = () => IdleInstant;
         view.ShowReady();
         Assert.Equal("ready", view.ActiveLineText.Text);
         Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
@@ -341,96 +340,11 @@ public class ConsoleViewTests
     /// <c>RunViewModelStateTests</c>'in <c>WallClock</c> tohumuyla aynı an.</summary>
     private static readonly DateTimeOffset IdleInstant = new(2026, 7, 23, 12, 4, 7, TimeSpan.Zero);
 
-    /// <summary>[A13/T3a · a7] design-v1 §2.5: idle "ready" satırı UÇTAN UCA <c>dim</c> (Brush.TextFaint) —
-    /// damga, metin ve imleç. Önceki test yalnız gövde metnini ("ready") pinliyordu; renk testsizdi.</summary>
-    [StaFact]
-    public void ShowReady_paints_the_timestamp_the_text_and_the_cursor_with_the_dim_token()
-    {
-        var tokens = LoadTokens();
-        var view = new ConsoleView();
-        view.EnableColorizer(DsResources.ConsolePaletteFrom(tokens));
 
-        view.WallClock = () => IdleInstant;
-        view.ShowReady();
 
-        Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineTime.Foreground);
-        Assert.Same(tokens["Brush.TextFaint"], view.ActiveLineText.Foreground);
-        Assert.Same(tokens["Brush.TextFaint"], view.ActiveCursor.Fill);
-    }
-
-    /// <summary>
-    /// [A13/T3 fix-1 · P3] design-v1 README §2.5 BİREBİR: <i>"Boşta (idle/boot) tek satır: <c>12:04:07 ▮ ready</c>
-    /// (dim)"</i>. Otoritede satır <c>BuildApp.jsx:607</c>'de
-    /// <c>&lt;NarrLine type="dim" time={eng.wall()} cursor&gt;…'ready'…&lt;/NarrLine&gt;</c>'dur — damga AÇIKÇA
-    /// taşınır — ve <c>NarrLine</c> (<c>:158-160</c>) onu <c>{time}</c> → 10px imleç kolonu → <c>{children}</c>
-    /// sırasıyla basar. Üretim yalnız <c>"ready"</c> yazıyordu: damga HİÇ YOKTU ve imleç metnin ARDINDAYDI.
-    ///
-    /// <para><b>Üç ayrı iddia:</b> (a) damganın kendisi (deterministik — üretimin
-    /// <see cref="BuildOrchestrator.App.ViewModels.RunViewModel.WallClock"/> seam'i enjekte edilir, duvar saatine
-    /// assert edilmez), (b) <c>▮</c> imlecinin gerçek 7×13 <see cref="Rectangle"/> olarak görünür olması,
-    /// (c) <b>SIRA</b> — gerçek yerleşimden okunan X koordinatlarıyla (kolon indeksi gibi bir uygulama
-    /// ayrıntısıyla değil).</para>
-    /// </summary>
-    [StaFact]
-    public void ShowReady_composes_the_authoritys_timestamp_then_cursor_then_ready_text_in_that_order()
-    {
-        var view = new ConsoleView();
-        view.EnableColorizer(DsResources.ConsolePaletteFrom(LoadTokens()));
-
-        view.WallClock = () => IdleInstant;
-        view.ShowReady();
-        view.Measure(new Size(800, 600));
-        view.Arrange(new Rect(0, 0, 800, 600));
-        view.UpdateLayout();
-
-        Assert.Equal("12:04:07", view.ActiveLineTime.Text);
-        Assert.Equal("ready", view.ActiveLineText.Text);
-
-        // ▮ = 7×13 blok imleç (font glyph'i DEĞİL, design-v1 §2.5) ve GERÇEKTEN görünür.
-        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
-        Assert.Equal(7.0, view.ActiveCursor.ActualWidth);
-        Assert.Equal(13.0, view.ActiveCursor.ActualHeight);
-
-        // Ön-koşul: satır gerçekten yerleşti (aksi hâlde tüm X'ler 0 olur ve sıra iddiası önemsizce geçerdi).
-        Assert.True(view.ActiveLineOverlay.ActualWidth > 0, "aktif satır overlay'i hiç yerleşmedi");
-
-        double timeX = LeftEdge(view, view.ActiveLineTime);
-        double cursorX = LeftEdge(view, view.ActiveCursor);
-        double textX = LeftEdge(view, view.ActiveLineText);
-        Assert.True(timeX < cursorX, $"damga imlecin SOLUNDA olmalı (damga {timeX}px, imleç {cursorX}px)");
-        Assert.True(cursorX < textX, $"imleç metnin SOLUNDA olmalı (imleç {cursorX}px, metin {textX}px)");
-    }
-
-    /// <summary>Karşı yön (ayırt edicilik): daktilo satırı idle satırı DEĞİLDİR — orada damga GİZLİDİR ve imleç
-    /// yazılan metnin ARDINDA kalır. Aynı overlay iki düzeni de sürebilmeli.
-    ///
-    /// <para><b>[fix-2 · 2] Bu bir KARAKTERİZASYON testidir, bir fidelity pini DEĞİL.</b> Daktilo satırındaki
-    /// imleç konumu otoriteden sapar (<c>NarrLine</c>, <c>BuildApp.jsx:158-160</c>, imleci daktilo satırında da
-    /// metinden ÖNCEKİ sabit 10px kolonda tutar) ve bu sapmanın <b>kaydı YOKTUR</b> — plan v7 A13.2
-    /// (<c>:315-329</c>) imleç konumundan hiç söz etmez. Önceki doc'ta "A13.2 hibrit aktif satır" diye
-    /// etiketlenmesi yanlıştı: kayıtsız bir borç, kayıtlıymış gibi gösteriliyordu. Test bugünkü davranışı
-    /// pinler; borç kapatılırsa <b>bu test kırmızıya döner ve güncellenmeyi zorlar</b> (amaç budur).</para></summary>
-    [StaFact]
-    public void The_typewriter_line_hides_the_idle_stamp_and_keeps_its_cursor_after_the_text()
-    {
-        // Daktilo kolu GERÇEKTEN koşsun: motion açık + canlı bir pencere (ConsoleMotionPathTests deseni).
-        var view = new ConsoleView { AnimationsEnabledProvider = () => true };
-        var host = DsResources.NewHost();
-        var window = DsResources.Realize(host, view);
-
-        view.WallClock = () => IdleInstant;
-        view.ShowReady();
-        Assert.Equal(Visibility.Visible, view.ActiveLineTime.Visibility); // ön-koşul: idle düzeni kuruldu
-
-        view.AppendNarrativeBatch("12:00:01 ▸ git fetch origin main\n"); // ÜRETİM yolu (brief kural 3)
-        view.UpdateLayout();
-
-        Assert.False(view.ActiveLineInstant, "ön-koşul: daktilo kurulmadı — düzen iddiası önemsiz olurdu");
-        Assert.Equal(Visibility.Collapsed, view.ActiveLineTime.Visibility); // damga daktilo satırına ait DEĞİL
-        Assert.True(LeftEdge(view, view.ActiveLineText) < LeftEdge(view, view.ActiveCursor),
-            "daktilo satırında imleç metnin ARDINDA kalmalı");
-        GC.KeepAlive(window);
-    }
+    // [KALDIRILDI — design v1.7.0 §2.5] Konsolun daktilosu, saat sütunu ve satır-bazlı kaskadı kaldırıldı;
+    // bu iddiaların konusu artık yok. Yerlerine gelen davranış: satırlar anında basılır, prompt satırı yalnız
+    // imleç + "ready" taşır, panel geçişi tek parça tilt-in'dir.
 
     private static double LeftEdge(ConsoleView view, FrameworkElement element) =>
         element.TranslatePoint(new Point(0, 0), view).X;

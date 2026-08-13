@@ -6,6 +6,9 @@
     <sys:String x:Key="en-us">Geist Mono Console</sys:String>
   </FontFamily.FamilyNames>
   <FontFamily.FamilyTypefaces>
+    <!-- [design v1.7.0 §1.2] Konsol gövdesi Light (300) çizilir; Normal de bildirilir çünkü aynı aile
+         (Geist Mono Console) konsol dışındaki mono yüzeylerde 400'de kullanılır. -->
+    <FamilyTypeface Weight="Light" Style="Normal" Stretch="Normal" />
     <FamilyTypeface Weight="Normal" Style="Normal" Stretch="Normal" />
   </FontFamily.FamilyTypefaces>
   <FontFamily.FamilyMaps>

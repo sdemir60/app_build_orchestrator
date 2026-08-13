@@ -245,11 +245,8 @@ public class ReducedMotionCoverageTests
         Assert.True(typewriter.Instant);
         Assert.Equal(TimeSpan.Zero, typewriter.Duration);
 
-        // ConsoleView proje-log kaskatı bu SAF zamanlayıcıyla gate'lenir.
-        var cascade = new CascadeScheduler(totalLines: 200, animationsEnabled: false);
-        Assert.True(cascade.Instant);
-        Assert.Equal(TimeSpan.Zero, cascade.Duration);
-        Assert.Equal(200, cascade.RevealedAt(TimeSpan.Zero)); // her satır t=0'da tam açık
+        // [design v1.7.0 §2.5] Satır-bazlı kaskat kaldırıldı; panel geçişi tek parça tilt-in'dir ve
+        // reduced-motion iken hiç oynatılmaz (ConsoleView.PlayTiltIn'in motion kapısı).
     }
 
     // ================================================================ 9) Paylaşılan geçiş kapıları (HoverBackground/LatestPill/DS chip + PopIn + scroll)
