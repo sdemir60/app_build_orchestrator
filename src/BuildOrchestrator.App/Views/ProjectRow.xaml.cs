@@ -40,8 +40,10 @@ public partial class ProjectRow : UserControl
     // "Failed dependency: …" metni ApplyDep içinde kalır (adlar interpolasyonlu, tek kullanım yeri zaten oradaydı).
     private const string CycleUnsettledTooltip =
         "Cycle did not fully settle — output may be one generation stale";
+    // "Bir daha denenmez" DEMEZ: açık bir Resolve basışı grubu her zaman yeniden dener (motor yakınsamama
+    // hafızasını bir kapı olarak değil, bir not olarak kullanır). Söylediği şey bu koşunun KANITIDIR.
     private const string CycleUnconvergedTooltip =
-        "Cycle did not build — not retried until the source changes";
+        "Cycle did not converge — its projects are still out of date";
     // [cycles] Sıradan üyelik: satır bu koşuda GERÇEK bir sonuç aldığı için statü glyph'i artık döngüyü değil
     // sonucu gösterir; yapısal olgu bu rozete taşınır. Yukarıdaki iki metinden farkı, hiçbir şey İDDİA
     // ETMEMESİDİR — ne çıktının bayat olduğunu ne bir daha denenmeyeceğini söyler, yalnız yeri tarif eder.

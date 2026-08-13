@@ -65,23 +65,28 @@ public class RunCountersTests
         Assert.Equal(0, c.StuckCycles);
     }
 
-    // [cycle rounds/Task 8] StuckCycles: kalıcı kırık bir döngünün pre-skip'i sıradan "güncel" skip'ten
-    // GÖRÜNMEZ AYNI görünürdü (ikisi de plain "skipped") — bu sayaç ayrımı satır durumundan TÜRETİR
-    // (ProjectRowViewModel.CycleUnconverged), yığmaz.
+    // [cycle rounds/Task 8] StuckCycles: yakınsamayan bir SCC'nin üyeleri — koşu turlarını harcadı ama grup
+    // güncel hâle GELMEDİ. Sayaç ayrımı satır durumundan TÜRETİR (ProjectRowViewModel.CycleUnconverged), yığmaz.
+    //
+    // [DEĞİŞEN KURAL] Eski iddia: "yalnız SKIPPED + bayraklı satırlar sayılır; Failed+bayraklı satır savunmacı
+    // olarak SAYILMAZ". O kapı, bayrağın tek kaynağının motorun pre-skip'i olduğu düzene aitti (grup hiç
+    // denenmeden atlanırdı, üyeler Skipped'tı). Pre-skip kalktı — açık Resolve basışı artık her zaman taze bir
+    // deneme yapar — ve bayrak koşunun KENDİ yakınsamama kararından geliyor: o üyeler Failed ya da Succeeded
+    // olarak biter. Statü kapısı korunsaydı sayaç tam da anlamlı olduğu durumda sessizce sıfır okurdu.
     [Fact]
-    public void Stuck_counter_counts_only_skipped_rows_flagged_cycle_unconverged()
+    public void Stuck_counter_counts_unconverged_rows_whatever_their_status()
     {
         var rows = new[]
         {
-            Row("A", ProjectRowState.Skipped, stuck: true),   // sayılır
-            Row("B", ProjectRowState.Skipped, stuck: false),  // güncel skip → sayılmaz
-            Row("C", ProjectRowState.Failed, stuck: true),    // stuck AMA skipped değil → sayılmaz (savunmacı)
+            Row("A", ProjectRowState.Failed, stuck: true),      // yakınsamayan grubun patlayan üyesi
+            Row("B", ProjectRowState.Succeeded, stuck: true),   // aynı grubun yeşil üyesi — çıktısı yine bayat
+            Row("C", ProjectRowState.Skipped, stuck: false),    // sıradan "güncel" skip → sayılmaz
         };
 
         var c = RunCounters.From(rows);
 
-        Assert.Equal(1, c.StuckCycles);
-        Assert.Equal(2, c.Skipped);
+        Assert.Equal(2, c.StuckCycles);
+        Assert.Equal(1, c.Skipped);
         Assert.Equal(3, c.Total);
     }
 

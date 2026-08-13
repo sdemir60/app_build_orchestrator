@@ -664,7 +664,7 @@ public class ProjectRowTests
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal("Skipped — Cycle did not build — not retried until the source changes", row.GlyphTooltip);
+        Assert.Equal("Skipped — Cycle did not converge — its projects are still out of date", row.GlyphTooltip);
         GC.KeepAlive(window);
     }
 
@@ -677,7 +677,7 @@ public class ProjectRowTests
         { CycleUnconverged = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal("Skipped — Cycle did not build — not retried until the source changes", row.GlyphTooltip);
+        Assert.Equal("Skipped — Cycle did not converge — its projects are still out of date", row.GlyphTooltip);
         GC.KeepAlive(window);
     }
 

@@ -947,6 +947,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled); break;
             case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues); break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
+            case CycleCompletedEvent e: OnCycleCompleted(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;
             case RunStoppedEvent: OnRunStopped(); break;
             case ErrorEvent e: OnError(e); break;
@@ -1052,6 +1053,28 @@ public sealed partial class RunViewModel : ObservableObject
         row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         _projectStartedAtMs.Remove(e.ProjectId);
         UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
+        RefreshRunSurface();
+    }
+
+    /// <summary>
+    /// [cycles] Bir SCC turlarını bitirdi. Grup YAKINSAMADIYSA üyeleri "kalıcı kırık döngü" olarak işaretlenir:
+    /// bu koşu kanıtladı ki turlar bu kaynaklarla grubu güncel hâle getiremiyor.
+    ///
+    /// <para>Bayrağın kaynağı DEĞİŞTİ. Eskiden motor, önceki bir koşuda yakınsamamış grubu hiç denemeden
+    /// pre-skip eder ve bayrağı o skip'e iliştirirdi; o pre-skip kalktığı için (açık Resolve basışı artık her
+    /// zaman taze bir deneme yapar) bayrağın tek üreticisi de kalkmıştı. Yeni kaynak daha dürüst: hatırlanan
+    /// bir geçmiş değil, ŞU koşunun kanıtı — ve kullanıcı bunu düğmeye ikinci kez basmadan, tam da denemenin
+    /// bittiği koşuda görür.</para>
+    ///
+    /// <para>Sıra güvenlidir: motor önce üye sonuçlarını, sonra bu olayı yayınlar — yani
+    /// <see cref="OnProjectDone"/>'ın bayrağı temizleyen satırı bundan ÖNCE koşar.</para>
+    /// </summary>
+    private void OnCycleCompleted(CycleCompletedEvent e)
+    {
+        if (e.Outcome != CycleOutcome.NoProgress) return;
+        foreach (string member in _cycleGroups?.MembersOf(e.ProjectId) ?? [e.ProjectId])
+            if (Projects.FirstOrDefault(p => string.Equals(p.Id, member, StringComparison.OrdinalIgnoreCase)) is { } row)
+                row.CycleUnconverged = true;
         RefreshRunSurface();
     }
 
