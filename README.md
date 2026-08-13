@@ -127,17 +127,21 @@ the running instance first — tray icon → Exit).
    immediately: project states reset and a Sync starts. Repository *Change…* inside Settings only stages the
    folder in the dialog; *Save* is what applies it, resetting project states and starting a Sync.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. Until it
-   has run, *Build*, *Rebuild* and *Retry failed* are disabled: a run before the first Sync would compile for
+   has run, *Build*, *Rebuild* and *Resolve cycles* are disabled: a run before the first Sync would compile for
    real while the list and the graph stayed empty.
 3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
    in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
-4. **Build / Rebuild / Retry failed** — from the split button and its menu:
-   - *Build* — only changed projects.
+4. **Build / Rebuild** — from the split button and its menu:
+   - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on a
+     failure.
    - *Rebuild* — all projects, cached state ignored.
-   - *Retry failed* — appears when there are failures; rebuilds them and their dependents.
+
+   There is no *Continue* and no *Retry failed*. *Build* already covers both: a project that was killed or that
+   failed had its recorded state invalidated, so it is stale again, while everything that finished green is
+   skipped as up to date.
 
    Nothing compiles the moment you click. The engine first works out what to build — preparing the worktree if
    one is in use, scanning, building the graph, then computing what changed — which on a large repository takes
@@ -146,18 +150,22 @@ the running instance first — tray icon → Exit).
    project is compiled at all.
 5. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
    post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
-   reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. There is no
-   *Continue*: press *Build* again and the run starts from the top, skipping everything that already
-   succeeded.
+   reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. To carry on, press
+   *Build* again: everything that already succeeded is skipped as up to date, so only the remaining work runs.
+   The elapsed clock starts from zero — it is a new run.
 
 Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
-them with the reason `in dependency cycle`, and their will-build dot stays grey. **Cycles**, the button beside
-*Sync*, is what compiles them, and it is the only thing that does. It is enabled only when the workspace
-actually has a cycle, and its tooltip says how many — `Build dependency cycles — N cycles · M projects` — once
-a Sync has found any. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
+them with the reason `in dependency cycle`, and their will-build dot stays grey. **Resolve cycles** — the
+third icon (unlink) of the maintenance box next to *Sync* — is what compiles them, and it is the only thing
+that does. It is enabled only when the workspace actually has a cycle, and its tooltip says what it will do
+once a Sync has found one: `Resolve cycles — build the N cycle projects in repeated passes: stale references
+first, then rebuild until they converge`. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
 then *Build* takes care of everything else, including whatever depends on them.
 
-Why it is a button and not something *Build* does for you: a cycle is built as one unit — the members compile
+Two more icons share that box — *Clean* and *Optimize*. They are part of the design but have no engine behind
+them yet, so they stay disabled and say so in their tooltips.
+
+Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members compile
 one after another, then the whole set compiles again, until two rounds in a row come back clean, three rounds
 at the most. That is members × rounds of compiling, which next to an ordinary incremental build is a large and
 unpredictable bill. Behind a button you decide when to pay it.
@@ -183,7 +191,7 @@ changes. The summary line says how many projects are stuck in one, so a run whos
 cycle never reads as an unqualified success — those rows keep the orange badge with a tooltip saying they will
 not be retried, and rows that compiled but never saw two clean rounds carry the dependency triangle, whose
 tooltip says their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
-still dirty, the event stream adds a closing line pointing at *Cycles* as the next step.
+still dirty, the event stream adds a closing line pointing at *Resolve cycles* as the next step.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar.
