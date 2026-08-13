@@ -22,19 +22,56 @@ public static class AccessibilityNames
 
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";
-    /// <summary>[cycles] Sync'in yanındaki düğme. UIA adı düğmenin KISA etiketinden ("Cycles") daha açıktır:
-    /// ikisi ayrı hedefler için yazılır — etiket bara sığmalı, UIA adı işlevi anlatmalı.</summary>
+
+    /// <summary>[cycles] Sync'in yanındaki etiketli düğme. <b>GEÇİCİ:</b> bu yüzey design v1.7.0 §2.7-2'nin
+    /// bakım kutusuna taşınıyor; düğme kaldırıldığında bu iki üye de silinir (yerlerini
+    /// <see cref="ResolveCyclesButton"/> ve <see cref="ResolveCyclesTooltip"/> aldı).</summary>
     public const string CyclesButton = "Build dependency cycles";
 
-    /// <summary>[Task 6] Cycles düğmesinin ToolTip'i — topolojide döngü VARSA sayılarla zenginleşir
-    /// (<see cref="CyclesButton"/> ÖNEKİYLE, kopya YASAK: literal yalnız yukarıdaki sabitte durur); yokken
-    /// <see cref="CyclesButton"/>'ın AYNEN kendisidir. UIA adı (AutomationProperties.Name) bu metinden AYRIDIR
-    /// ve HER İKİ durumda <see cref="CyclesButton"/> SABİTİNDE kalır — ekran okuyucu kontrolün İŞLEVİNİ
-    /// duyurur, gövde sayıları DEĞİL (<c>ActionBar.BuildButtons</c>'taki <c>AutomationProperties.SetName</c>).</summary>
     public static string CyclesButtonTooltip(int cycleCount, int memberCount) =>
         cycleCount > 0
             ? string.Format(CultureInfo.InvariantCulture, "{0} — {1} cycles · {2} projects", CyclesButton, cycleCount, memberCount)
             : CyclesButton;
+
+    // ---- Action bar: bakım kutusu (design v1.7.0 §2.7-2) ----
+    /// <summary>Üç bakım düğmesinin UIA adı. Düğmeler ikon-yalnızdır (etiket bara sığmıyor), bu yüzden
+    /// ekran okuyucunun duyacağı TEK metin budur. Ad DURUMDAN BAĞIMSIZ sabittir — tooltip değişir, ad
+    /// değişmez: ekran okuyucu kontrolün İŞLEVİNİ duyar, sayılarını değil.</summary>
+    public const string CleanButton = "Clean";
+    public const string OptimizeButton = "Optimize";
+    public const string ResolveCyclesButton = "Resolve cycles";
+
+    /// <summary>[karar 2026-08-13] Clean/Optimize'ın arka ucu henüz yazılmadı; düğmeler tasarımdaki yerlerinde
+    /// ama pasif durur ve tooltip nedenini söyler. Ek metin TEK yerde durur, iki tooltip de ondan türer.</summary>
+    private const string NotAvailableSuffix = " — not available yet";
+
+    public const string CleanTooltip =
+        CleanButton + " — /t:Clean on every solution, then remove bin/, obj/, artifacts/" + NotAvailableSuffix;
+
+    public const string OptimizeTooltip =
+        OptimizeButton + " — restore packages, prune the cache, rebuild the dependency index" + NotAvailableSuffix;
+
+    /// <summary>Resolve cycles düğmesinin ToolTip'i: döngü varsa ne yapacağını üye sayısıyla anlatır, yoksa
+    /// neden pasif olduğunu söyler.
+    ///
+    /// <para><b>Tasarımdan bilinçli SAPMA (karar 2026-08-13):</b> prototip metni "in two passes" der; sabit
+    /// bir tur sayısı VAAT EDİLMEZ, çünkü tur sayısını motor belirler (<c>CycleRoundPolicy</c>: yakınsama
+    /// ölçütü iki ardışık yeşil tur, tavan üç). Cümlenin geri kalanı tasarımdaki hâliyle korunur.</para>
+    ///
+    /// <para><b>Korunan geliştirme:</b> grup sayısı yalnız BİRDEN ÇOK ayrı döngü varken eklenir — tasarımın
+    /// tek-sayılı cümlesi o durumda eksik kalıyor, "5 proje" beş projelik TEK bir döngü sanılabiliyordu.
+    /// Tek gruplu yaygın durumda cümle tasarımdakiyle birebir aynıdır.</para></summary>
+    public static string ResolveCyclesTooltip(int groupCount, int memberCount)
+    {
+        if (memberCount <= 0) return ResolveCyclesButton + " — no dependency cycles detected";
+
+        string text = string.Format(CultureInfo.InvariantCulture,
+            "{0} — build the {1} cycle projects in repeated passes: stale references first, then rebuild until they converge",
+            ResolveCyclesButton, memberCount);
+        return groupCount > 1
+            ? string.Format(CultureInfo.InvariantCulture, "{0} ({1} separate cycles)", text, groupCount)
+            : text;
+    }
 
     public const string StopButton = "Stop build";
     public const string BranchChip = "Branch — choose build target";
