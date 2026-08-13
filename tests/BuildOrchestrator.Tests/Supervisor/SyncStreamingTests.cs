@@ -149,6 +149,6 @@ public class SyncStreamingTests
         Assert.IsType<SyncStartedEvent>(all[1]);
         Assert.IsType<SyncCompletedEvent>(all[^1]);
         Assert.Contains(all, e => e is WorkspaceTopologyEvent);
-        Assert.Contains(all, e => e is SyncProgressEvent p && p.Line == $"▸ git fetch origin {branch}");
+        Assert.Contains(all, e => e is SyncProgressEvent p && p.Line == $"git fetch origin {branch}");
     }
 }

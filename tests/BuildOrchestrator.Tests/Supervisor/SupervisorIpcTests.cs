@@ -368,7 +368,7 @@ public class SupervisorIpcTests
         Assert.True(topologyAt > 0 && topologyAt < events.Count - 1);
         Assert.IsType<SyncCompletedEvent>(events[^1]);
         Assert.Contains(events, e => e is BuildPreviewEvent);
-        Assert.Contains(events, e => e is SyncProgressEvent sp && sp.Line == $"▸ git fetch origin {branch}");
+        Assert.Contains(events, e => e is SyncProgressEvent sp && sp.Line == $"git fetch origin {branch}");
 
         var topology = (WorkspaceTopologyEvent)events[topologyAt];
         var node = Assert.Single(topology.Nodes);

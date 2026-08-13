@@ -263,10 +263,6 @@ public partial class MainWindow : Window
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
-        // [A13/T3 fix-2 · 5] Konsolun idle "ready" damgası VM'in duvar saatinden beslenir — anlatı satırları
-        // (RunViewModel.ComposeNarrativeLine) ve event stream ile ORTAK kaynak. Lambda ZORUNLU: değer kopyası
-        // alınırsa VM'in saati sonradan değiştiğinde idle satırı eski saatte donar (pin: MainWindowRealizeTests).
-        Shell.ConsoleViewControl.WallClock = () => _vm.WallClock();
 
         Loaded += async (_, _) =>
         {

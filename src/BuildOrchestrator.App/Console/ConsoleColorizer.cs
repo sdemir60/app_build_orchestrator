@@ -8,13 +8,13 @@ namespace BuildOrchestrator.App.Console;
 public readonly record struct ConsoleColorSpan(int Offset, int Length, Brush Brush);
 
 /// <summary>
-/// [T56/3a] design-v1 §3.6 mimarisi: read-only AvalonEdit + <see cref="DocumentColorizingTransformer"/> ile
+/// [T56/3a] design §3.6 mimarisi: read-only AvalonEdit + <see cref="DocumentColorizingTransformer"/> ile
 /// satır-offset bazlı renklendirme. Belge DÜZ metin tutar — renk yalnız GÖRSEL bir katmandır (kopyalanan metin
-/// anlamlı kalsın diye asla markup gömülmez). Saat=faint, ▸=amber, gerisi satır tipine göre boyanır.
+/// anlamlı kalsın diye asla markup gömülmez).
 ///
-/// <para><see cref="ComputeSpans"/> SAF'tır (metin → offset+brush aralıkları) ve <see cref="ColorizeLine"/> ile
-/// aynı hesabı kullanır — böylece render'sız (headless) test edilebilir. ColorizeLine yalnız <c>ChangeLinePart</c>
-/// çağırır (görsel), belgeyi ASLA mutasyona uğratmaz.</para>
+/// <para><b>[design v1.7.0 §2.5]</b> Satır TEK parçadır: saat ve <c>▸</c> kolonları kaldırıldığı için artık
+/// satır içinde ayrı renkli aralık yoktur, tüm satır tip rengiyle boyanır. <see cref="ComputeSpans"/> yine de
+/// aralık listesi döndürür (çağıran sözleşmesi ve render'sız test edilebilirlik korunur).</para>
 /// </summary>
 public sealed class ConsoleColorizer : DocumentColorizingTransformer
 {
@@ -22,31 +22,13 @@ public sealed class ConsoleColorizer : DocumentColorizingTransformer
 
     public ConsoleColorizer(ConsolePalette palette) => _palette = palette;
 
-    /// <summary>Verilen satır metni için offset-bazlı renk aralıkları (satır-yerel, ardışık, çakışmasız).
-    /// clock=faint, ▸=amber, gerisi tip rengi. Boş metin → boş liste.</summary>
+    /// <summary>Verilen satır metni için offset-bazlı renk aralıkları. Boş metin → boş liste; aksi halde
+    /// satırın TAMAMINI kaplayan tek aralık (tip rengi).</summary>
     public IReadOnlyList<ConsoleColorSpan> ComputeSpans(string? lineText)
     {
         lineText ??= "";
         if (lineText.Length == 0) return [];
-
-        var layout = ConsoleLineParser.Layout(lineText);
-        Brush body = _palette.ForType(layout.Type);
-        var spans = new List<ConsoleColorSpan>(3);
-        int pos = 0;
-
-        if (layout.Clock is { } clock)
-        {
-            spans.Add(new ConsoleColorSpan(clock.Offset, clock.Length, _palette.Clock));
-            pos = clock.Offset + clock.Length;
-        }
-        if (layout.Icon is { } icon)
-        {
-            if (icon.Offset > pos) spans.Add(new ConsoleColorSpan(pos, icon.Offset - pos, body));
-            spans.Add(new ConsoleColorSpan(icon.Offset, icon.Length, _palette.Icon));
-            pos = icon.Offset + icon.Length;
-        }
-        if (pos < lineText.Length) spans.Add(new ConsoleColorSpan(pos, lineText.Length - pos, body));
-        return spans;
+        return [new ConsoleColorSpan(0, lineText.Length, _palette.ForType(ConsoleLineClassifier.Classify(lineText)))];
     }
 
     protected override void ColorizeLine(DocumentLine line)

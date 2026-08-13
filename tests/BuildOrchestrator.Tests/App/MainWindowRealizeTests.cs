@@ -229,44 +229,8 @@ public class MainWindowRealizeTests
         return steps;
     }
 
-    /// <summary>
-    /// [A13/T3 fix-2 · 5] P3'ün damgası <c>ConsoleViewTests</c>'te pinli, ama <b>damgayı üretime taşıyan
-    /// KABLO</b> pinli değildi: <c>MainWindow</c> <c>ShowReady</c>'ye VM'in saat seam'ini
-    /// (<see cref="RunViewModel.WallClock"/>) geçirmeyi bırakırsa (ör. <c>DateTimeOffset.Now</c>'a dönerse ya
-    /// da çağrı hiç yapılmazsa) damga sessizce boşalır/kayar ve süit bunu görmez.
-    ///
-    /// <para><b>Neden kablo ctor'a taşındı (ölçüldü):</b> önceki hâlde damga her çağrı yerinde
-    /// <c>ShowReady(_vm.WallClock())</c> olarak geçiliyordu ve <b>hiçbir çağrı yeri headless olarak
-    /// sürülemiyordu</b>. <c>Loaded</c> dalı testte hiç tetiklenmez (MainWindowHost pencereyi bilerek
-    /// göstermez — tepsi ikonu/hotkey/Snap hook yan etkisi olamaz); <c>ShowRunConsole</c> dalı ise yalnız run
-    /// anlatısı BOŞken koşar, oysa <c>← Back</c>'e ulaşmak için önce bir proje seçilmesi gerekir ve motor hiç
-    /// başlamadığı için <c>LoadProjectLogAsync</c> senkron fırlayıp run belgesine
-    /// <c>"12:04:07 [error] could not load project log: Engine is not running."</c> satırını düşürür (bizzat
-    /// ölçüldü) → <c>GetActiveLineCount() == 0</c> kapısı kapanır. Seam ctor'a alınınca kablo doğrudan ve
-    /// deterministik biçimde pinlenebilir.</para>
-    ///
-    /// <para><b>İki ayrı iddia:</b> (a) kablo <b>indirection</b>'dır — VM'in saati SONRADAN değişse bile konsol
-    /// onu izler (değer kopyası alınsaydı bu assert kırmızı olurdu), (b) kablo gerçekten <b>damgaya dönüşür</b>
-    /// (bağ kopsa <c>ShowReady</c> duvar saatine düşer ve metin tutmaz).</para></summary>
-    [StaFact]
-    public void The_main_window_wires_the_consoles_idle_clock_to_the_view_models_wall_clock_seam()
-    {
-        using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.New(temp);
-        Realize(window);
-        var console = window.Shell.ConsoleViewControl;
-
-        // (a) Kablo CANLI: VM'in saati ctor'dan SONRA değişiyor ve konsol yeni değeri okuyor.
-        var instant = new DateTimeOffset(2026, 7, 23, 12, 4, 7, TimeSpan.Zero);
-        vm.WallClock = () => instant;
-        Assert.Equal(instant, console.WallClock());
-
-        // (b) Kablo damgaya dönüşüyor (design-v1 §2.5 "12:04:07 ▮ ready").
-        console.ShowReady();
-        Assert.Equal("12:04:07", console.ActiveLineTime.Text);
-        Assert.Equal("ready", console.ActiveLineText.Text);
-        GC.KeepAlive(window);
-    }
+    // [KALDIRILDI — design v1.7.0 §2.5] Konsolda duvar saati yok; idle prompt satırı yalnız imleç +
+    // "ready" taşıdığı için bağlanacak bir saat kablosu da kalmadı.
 
     [StaFact]
     public void The_title_bar_height_cast_really_runs_and_feeds_both_the_row_and_the_window_chrome()

@@ -511,12 +511,12 @@ public class RunViewModelStateTests
 
     /// <summary>
     /// [A13/T3a · a10/a11] Yukarıdaki test yalnız Light/Full varyantlarını pinliyordu (<c>PerfNoteText.cs:35</c>
-    /// — Balanced testsizdi). Aynı satırın <c>HH:mm:ss</c> önekini (<see cref="RunViewModel.WallClock"/> ile
-    /// deterministik) de BİRLİKTE pinler — <c>ComposeNarrativeLine</c>'ın gerçekten K11 notuna da uygulandığının
-    /// kanıtı (damga başka bir satırda ayrıca doğrulanıyordu, bu notta değil).
+    /// — Balanced testsizdi).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.5]</b> Eski iddia satırın <c>HH:mm:ss</c> önekini de
+    /// pinliyordu; konsolda duvar saati kaldırıldı, satır yalnız metindir.</para>
     /// </summary>
     [Fact]
-    public async Task Perf_change_while_running_writes_the_balanced_variant_with_its_hh_mm_ss_stamp()
+    public async Task Perf_change_while_running_writes_the_balanced_variant()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
@@ -532,7 +532,7 @@ public class RunViewModelStateTests
         await vm.CyclePerfAsync(); // Full → Balanced (tam döngü)
 
         Assert.Equal("Balanced", vm.PerfMode);
-        Assert.Contains("12:04:07 parallelism: 4 · cpu cap 70%", vm.GetRunDocumentText());
+        Assert.Contains("parallelism: 4 · cpu cap 70%", vm.GetRunDocumentText());
     }
 
     // [Fix round 1 — KÖK 1] Planlama penceresi: Build'e basıldı, startRun gönderildi, ama runStarted HENÜZ
