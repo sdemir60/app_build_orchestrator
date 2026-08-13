@@ -1,5 +1,7 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -122,6 +124,10 @@ public class MaintenanceBoxTests
 
         Assert.Equal("Resolve cycles — build the 3 cycle projects in repeated passes: stale references first, "
                      + "then rebuild until they converge", box.ResolveButton.ToolTip);
+
+        // [Task 6 · korunan kural] UIA adı HER İKİ durumda SABİTTİR — ekran okuyucu kontrolün İŞLEVİNİ
+        // duyurur, gövde sayılarını değil.
+        Assert.Equal(AccessibilityNames.ResolveCyclesButton, AutomationProperties.GetName(box.ResolveButton));
         GC.KeepAlive(window);
     }
 

@@ -23,16 +23,6 @@ public static class AccessibilityNames
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";
 
-    /// <summary>[cycles] Sync'in yanındaki etiketli düğme. <b>GEÇİCİ:</b> bu yüzey design v1.7.0 §2.7-2'nin
-    /// bakım kutusuna taşınıyor; düğme kaldırıldığında bu iki üye de silinir (yerlerini
-    /// <see cref="ResolveCyclesButton"/> ve <see cref="ResolveCyclesTooltip"/> aldı).</summary>
-    public const string CyclesButton = "Build dependency cycles";
-
-    public static string CyclesButtonTooltip(int cycleCount, int memberCount) =>
-        cycleCount > 0
-            ? string.Format(CultureInfo.InvariantCulture, "{0} — {1} cycles · {2} projects", CyclesButton, cycleCount, memberCount)
-            : CyclesButton;
-
     // ---- Action bar: bakım kutusu (design v1.7.0 §2.7-2) ----
     /// <summary>Üç bakım düğmesinin UIA adı. Düğmeler ikon-yalnızdır (etiket bara sığmıyor), bu yüzden
     /// ekran okuyucunun duyacağı TEK metin budur. Ad DURUMDAN BAĞIMSIZ sabittir — tooltip değişir, ad

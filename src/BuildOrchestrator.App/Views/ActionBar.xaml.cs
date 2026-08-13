@@ -82,7 +82,7 @@ public partial class ActionBar : UserControl
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
     internal Button SyncButton => PART_Sync;
-    internal Button CyclesButton => PART_Cycles;
+    internal MaintenanceBox MaintenanceBoxControl => PART_Maintenance;
     internal Button StopButton => PART_Stop;
     internal SplitButton Split => PART_Split;
     internal BuildMenu BuildMenuControl => PART_BuildMenu;
@@ -190,9 +190,6 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.PerfMode):
                 RefreshPerf();
                 break;
-            case nameof(RunViewModel.HasCycles):
-                RefreshCyclesTooltip();
-                break;
         }
     }
 
@@ -205,20 +202,6 @@ public partial class ActionBar : UserControl
         RefreshConfig();
         RefreshBuildArea();
         RefreshEnabled();
-        RefreshCyclesTooltip();
-    }
-
-    // ---------------------------------------------------------------- [Task 6] Cycles tooltip sayıları
-    /// <summary>[Task 6] <c>PART_Cycles.ToolTip</c>'in TEK yazıcısı — topolojide döngü VARSA sayılarla
-    /// zenginleşir (<see cref="AccessibilityNames.CyclesButtonTooltip"/>), yokken sabit metne döner. VM'in
-    /// <see cref="RunViewModel.HasCycles"/> bildirimiyle tetiklenir (<see cref="OnVmPropertyChanged"/>) — o
-    /// bildirim her <c>workspaceTopology</c>'de AÇIKÇA yayılır (boole aynı kalsa da sayılar değişmiş olabilir,
-    /// bkz. <c>RunViewModel.Workspace.OnWorkspaceTopology</c>). UIA adı BURADAN etkilenmez — o sabit kalır
-    /// (<see cref="BuildButtons"/>).</summary>
-    private void RefreshCyclesTooltip()
-    {
-        if (!_built) return;
-        PART_Cycles.ToolTip = AccessibilityNames.CyclesButtonTooltip(_vm?.CycleGroupCount ?? 0, _vm?.CycleMemberCount ?? 0);
     }
 
     // ---------------------------------------------------------------- sayaç chip'leri
@@ -424,15 +407,9 @@ public partial class ActionBar : UserControl
     private void BuildButtons()
     {
         PART_Sync.Content = ButtonContent("Icon.Sync", "Sync", "Brush.TextPrimary", 24);
-        // [cycles] İkon, satır ve graf'ta "bu proje bir döngüde" demek için KULLANILAN glyph'in aynısıdır
-        // (Icon.StatusCycle, viewBox 16) — düğme tam da o işaretli projeleri derler, bağ görsel olarak kurulur.
-        PART_Cycles.Content = ButtonContent("Icon.StatusCycle", "Cycles", "Brush.TextPrimary", 16);
-        // [Task 6] ToolTip'in başlangıç değeri de RefreshCyclesTooltip'ten gelir (RefreshAll, OnLoaded'ın
-        // sonunda çağrılır) — burada AYRICA yazılmaz (kopya YASAK, tek yazıcı).
         // [Stopping] Stop'un İÇERİĞİ artık duruma bağlı (Stop / Stopping…) — tek yazıcısı RefreshBuildArea'dır.
         // UIA adı burada ve SABİT kalır: buton kimliği değişmiyor, yalnız durumu değişiyor.
         AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
-        AutomationProperties.SetName(PART_Cycles, AccessibilityNames.CyclesButton);
         AutomationProperties.SetName(PART_Stop, AccessibilityNames.StopButton);
     }
 
@@ -489,9 +466,6 @@ public partial class ActionBar : UserControl
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;
-        // [cycles] AYNI desen: repo kapısı burada, geri kalan her koşul (topoloji, döngü VAR MI, mid-run,
-        // motor sağlığı) komutun CanExecute'undadır — iki yerden yazılan bir enable hâli olmaz.
-        PART_Cycles.IsEnabled = hasWs;
         // Build split-button: repo + !syncing (BuildApp.jsx:1594); primary komut running'i ayrıca kısar.
         PART_Split.IsEnabled = hasWs && !syncing;
     }

@@ -144,12 +144,14 @@ public partial class ActionBarTests
     /// succeeded/failed/skipped/dep) · … · branch · worktree · Debug|Release · perf · ayraç · Stop/Build. Hiçbir
     /// test bu SIRAYI assert etmiyordu — chip'ler kod-tarafı kurulduğu için ("BuildCounterChips") sıra sessizce
     /// kayabilirdi.
-    /// <para><b>[DEĞİŞEN KURAL — cycles]</b> Sol grup artık Sync'ten HEMEN SONRA <b>Cycles</b> düğmesini taşır
-    /// (ayraçtan ÖNCE). Yer seçimi anlamlıdır ve bu yüzden pinlenir: ikisi de derleme ÖNCESİ hazırlık
-    /// adımlarıdır ve birlikte okunurlar; ayracın öbür yanı sayaçlarındır. Düğme Build'in yanına KONMADI —
-    /// orası birincil aksiyonun yeridir ve Cycles onun bir varyantı değil, ondan önce gelen ayrı bir iştir.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.7-2]</b> Sol grup Sync'ten HEMEN SONRA <b>bakım kutusunu</b>
+    /// taşır (ayraçtan ÖNCE). Eski iddia "Sync'ten sonra etiketli <c>Cycles</c> düğmesi gelir" idi; o düğme
+    /// kaldırıldı ve işi kutunun üçüncü ikonu (unlink) devraldı. Gerekçe: Clean/Optimize/Resolve üçü de
+    /// derleme ÖNCESİ hazırlık işleridir ve tasarım bunları tek kutuda toplar; üç etiketli düğme ayrıca barı
+    /// 1240px minimumda taşırıyordu. Yer seçimi hâlâ anlamlıdır: ayracın öbür yanı sayaçlarındır ve kutu
+    /// Build'in yanına KONMADI — orası birincil aksiyonun yeridir.</para></summary>
     [StaFact]
-    public void The_left_group_orders_sync_then_cycles_then_a_separator_then_the_six_counter_chips_in_design_order()
+    public void The_left_group_orders_sync_then_the_maintenance_box_then_a_separator_then_the_six_counter_chips()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
@@ -158,7 +160,7 @@ public partial class ActionBarTests
         var leftChildren = leftGroup.Children.Cast<UIElement>().ToList();
         Assert.Equal(4, leftChildren.Count);
         Assert.Same(bar.SyncButton, leftChildren[0]);
-        Assert.Same(bar.CyclesButton, leftChildren[1]);
+        Assert.Same(bar.MaintenanceBoxControl, leftChildren[1]);
         var leftSeparator = Assert.IsType<Border>(leftChildren[2]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), leftSeparator.Background);
         var counterStrip = Assert.IsType<StackPanel>(leftChildren[3]);
@@ -648,37 +650,8 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [Task 6] Cycles buton tooltip sayıları
-
-    /// <summary>[Task 6] Cycles düğmesinin ToolTip'i topolojide döngü VARSA sayılarla zenginleşir
-    /// (<c>"Build dependency cycles — {c} cycles · {m} projects"</c>); döngü yokken SABİT kalır. UIA adı
-    /// (AutomationProperties.Name) HER İKİ durumda SABİTTİR — ekran okuyucu kontrolün İŞLEVİNİ duyurur, gövde
-    /// sayıları DEĞİL (<see cref="AccessibilityNames.CyclesButton"/> kuralı).</summary>
-    [StaFact]
-    public void Cycles_button_tooltip_gains_counts_when_the_topology_has_cycles_but_the_uia_name_stays_constant()
-    {
-        var vm = NewVm();
-        var (bar, window) = Realize(vm);
-
-        Assert.Equal(AccessibilityNames.CyclesButton, bar.CyclesButton.ToolTip);
-        Assert.Equal(AccessibilityNames.CyclesButton, AutomationProperties.GetName(bar.CyclesButton));
-
-        // 2 SCC: [m1, m2] (2 üye) + 15 üyeli ikinci grup → toplam 17 üye.
-        var nodes = new List<ProjectNode> { Node(@"C:\p\m1.csproj", "M1", 0), Node(@"C:\p\m2.csproj", "M2", 1) };
-        var scc1 = new List<string> { @"C:\p\m1.csproj", @"C:\p\m2.csproj" };
-        var scc2 = new List<string>();
-        for (int i = 0; i < 15; i++)
-        {
-            string id = $@"C:\p\g{i}.csproj";
-            nodes.Add(Node(id, $"G{i}", i + 2));
-            scc2.Add(id);
-        }
-        vm.OnEvent(new WorkspaceTopologyEvent(nodes, [scc1, scc2], [], []));
-
-        Assert.Equal("Build dependency cycles — 2 cycles · 17 projects", bar.CyclesButton.ToolTip);
-        Assert.Equal(AccessibilityNames.CyclesButton, AutomationProperties.GetName(bar.CyclesButton)); // UIA SABİT kalır
-        GC.KeepAlive(window);
-    }
+    // [Task 6 · TAŞINDI] Döngü sayılarının tooltip'e yansıması artık bakım kutusunun işidir; iddia
+    // MaintenanceBoxTests'te YENİ metinle yaşıyor (etiketli Cycles düğmesi kaldırıldı, design v1.7.0 §2.7-2).
 
     // [Fix round 1 — KÖK 5] K11'in TEK kullanıcı giriş noktası: perf chip'i. Kablaj bu iterasyonda değişti
     // (`_vm?.CyclePerf()` → `_ = _vm?.CyclePerfAsync()`, fire-and-forget) ve görsel pas en sona ertelendiği
