@@ -28,9 +28,9 @@ public enum AppPhase
     /// planlama koşar (worktree hazırlığı → tarama → graf → topo → incremental) ve 177 projelik bir
     /// workspace'te saniyeler sürer. Tıklamanın kaydedildiğini gösteren TEK yüzey budur — pencere eskiden
     /// fazsızdı: konsol <c>BeginRunAsync</c> tarafından temizleniyor, şerit önceki metinde donuyordu.
-    /// <para>Adı "Planning" DEĞİL: <c>RetryFailed</c> planner'ı hiç çağırmaz (aynı plandan devam eder) ama o
-    /// pencerede de tıklama görünmelidir. İlerlemenin ayrıntısı konsola akan <c>planProgress</c>
-    /// satırlarındadır; faz yalnız "başlıyor" der.</para></summary>
+    /// <para>Adı "Planning" DEĞİL: pencerenin işi tıklamanın kaydedildiğini göstermektir, planlamanın
+    /// kendisini anlatmak değil. İlerlemenin ayrıntısı konsola akan <c>planProgress</c> satırlarındadır;
+    /// faz yalnız "başlıyor" der.</para></summary>
     Starting,
 
     Running,

@@ -63,10 +63,6 @@ public static class StreamText
     public static string Stopped(int remaining) =>
         string.Format(CultureInfo.InvariantCulture, "Stopped — {0} remaining projects queued", remaining);
 
-    /// <summary>build-data.js:330 — <c>Continue — {n} remaining, parallelism {p}</c>.</summary>
-    public static string Continue(int remaining, int parallelism) =>
-        string.Format(CultureInfo.InvariantCulture, "Continue — {0} remaining, parallelism {1}", remaining, parallelism);
-
     /// <summary>build-data.js:496/499 — <c>Completed — …</c>. Hatalı: <c>{f} failed · {s} succeeded · {k} skipped ·
     /// {dur}[ · {di} dependency-affected]</c>; temiz: <c>{s} succeeded · {k} skipped · {dur}</c>. <b>Wire-gap:</b>
     /// prototipin <c>· {w} warnings</c> eki yok — App derleyici-warning sayısını izlemez (RunCompletedEvent'te yok).</summary>
@@ -85,7 +81,7 @@ public static class StreamText
             "Completed — {0} succeeded · {1} skipped · {2}", succeeded, skipped, dur);
     }
 
-    /// <summary>[Task 6] Bir Build/Continue/Rebuild koşusu bitince, döngü üyesi projelerde HÂLÂ bekleyen
+    /// <summary>[Task 6] Bir Build/Rebuild koşusu bitince, döngü üyesi projelerde HÂLÂ bekleyen
     /// (WillBuild==true) değişiklik varsa kullanıcıya bunu Cycles'ın derleyeceğini hatırlatır — normal Build
     /// döngü üyelerine dokunmaz, kullanıcı "hata aldım, baktım döngüdeki projeye bağlı" çıkarımını burada
     /// yapmadan önce ekrandan okur. <c>RunCompletedEvent</c>'in Completed satırından SONRA yayılır

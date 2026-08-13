@@ -64,6 +64,24 @@
     <!-- BuildApp.jsx:69 redo -->
     <PathGeometry x:Key="Icon.Redo" Figures="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5" />
 
+    <!--
+      [design v1.7.0 §2.7-2] Action bar'ın BAKIM KUTUSU: Clean · Optimize · Resolve cycles. Kutu ETİKETSİZDİR
+      (bar 1240px minimumda ancak böyle sığıyor) — anlamı taşıyan tek görsel bu üç çizimdir.
+      KAYNAK: design-v1.7.0 prototype/app/BuildApp.jsx:59-61 (lucide eraser/gauge/unlink, strokeWidth 1.8).
+      DİKKAT: satır numaraları v1.7.0 prototipine aittir; bu dosyanın geri kalanı design-v1'in BuildApp.jsx'ini
+      işaret eder ve aynı numaralar orada BAŞKA ikonlardır.
+    -->
+    <!-- Birleştirme notu: SVG'de her <path> KENDİ başlangıç noktasından başlar; tek Figures'a alınırken
+         İLK figürden sonraki her `m` (göreli moveto) mutlak `M`'e çevrilir — aksi halde önceki figürün bitiş
+         noktasına göre kayar. Nokta değerleri değişmez, yalnız referans noktası mutlaklanır. -->
+    <PathGeometry x:Key="Icon.Eraser"
+                  Figures="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21 M22 21H7 M5 11l9 9" />
+
+    <PathGeometry x:Key="Icon.Gauge" Figures="m12 14 4-4 M3.34 19a10 10 0 1 1 17.32 0" />
+
+    <PathGeometry x:Key="Icon.Unlink"
+                  Figures="m18.84 12.25 1.72-1.71a4.5 4.5 0 0 0-6.36-6.37l-1.72 1.72 M5.17 11.75l-1.71 1.71a4.5 4.5 0 0 0 6.36 6.37l1.72-1.72 M8 2v3 M2 8h3 M16 19v3 M19 16h3" />
+
     <!-- BuildApp.jsx:51 folder -->
     <PathGeometry x:Key="Icon.Folder"
                   Figures="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
@@ -278,6 +296,10 @@
     <sys:Double x:Key="Icon.Trash.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Sigma.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Copy.StrokeThickness">1.8</sys:Double>
+    <!-- design-v1.7.0 BuildApp.jsx:59-61 — bakım kutusunun üçü de strokeWidth="1.8" -->
+    <sys:Double x:Key="Icon.Eraser.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Gauge.StrokeThickness">1.8</sys:Double>
+    <sys:Double x:Key="Icon.Unlink.StrokeThickness">1.8</sys:Double>
 
     <!-- strokeWidth="1.7" (BuildApp.jsx:59, :60 · Icon.Info TÜRETİLMİŞ: title bar'da Gear'ın KOMŞUSU olduğu
          için AYNI kalınlıkta çizilir — optik ağırlıkları eşleşmeli) -->

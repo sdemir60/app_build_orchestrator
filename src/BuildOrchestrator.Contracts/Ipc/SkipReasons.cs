@@ -18,7 +18,7 @@ public static class SkipReasons
     /// <summary>[cycles] Proje, Cycles koşusunun kapsamı (SCC'ler + transitif upstream'leri) DIŞINDA kaldı.</summary>
     public const string OutOfCycleScope = "not needed by a dependency cycle";
 
-    /// <summary>Build/Rebuild/Continue/RetryFailed modunda bir SCC üyesi — turlar yalnız Cycles modunda koşar.</summary>
+    /// <summary>Build/Rebuild modunda bir SCC üyesi — turlar yalnız Cycles modunda koşar.</summary>
     public const string InDependencyCycle = "in dependency cycle";
 
     /// <summary>[cycle rounds/Task 8] SCC daha önce aynı bileşik imzada yakınsamadı, bir daha tur harcamadan pre-skip edildi.</summary>

@@ -71,7 +71,7 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <see cref="PlanProgressEvent"/> olarak, <c>runStarted</c>'tan ÖNCE App'e gider. Bu pencere 177 projelik bir
 /// workspace'te saniyeler sürer ve eskiden TEK event bile üretmiyordu — App konsolu temizleyip
 /// <c>IsStarting</c>'e giriyor, şerit önceki metinde donuyordu. Kanal SENKRON çağrılabilir (kanal yazımı
-/// bloklamaz) ve yalnız TAZE segmentte kullanılır: Continue/RetryFailed planner'ı hiç çağırmaz.</para></param>
+/// bloklamaz).</para></param>
 /// <param name="msbuildFactory">MSBuild takımını (ham invoker + exe yolu) LAZY çözer: vswhere/VS yoksa Supervisor
 /// yine ayağa kalkar, hata ancak <c>startRun</c>'da <c>error(msbuildNotFound)</c> olarak bildirilir.</param>
 /// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; Continue AYNI writer'ı (aynı run
@@ -85,7 +85,7 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// (null dönerse in-place gibi davranılır — obj izole EDİLMEZ). [A4] Worktree'nin GERÇEKTEN hazırlanması
 /// (<c>WorktreeManager.PrepareWorktreeAsync</c>) Program.cs'te <c>planner</c>'ın İÇİNDE yapılır; bu resolver
 /// yalnız orada çözülmüş kökü okur ve bu yüzden <b>planner'dan SONRA</b> çağrılır. YALNIZ taze (Rebuild/Build)
-/// segmentte çağrılır: Continue/RetryFailed orijinal run'ın kökünü miras alır (bkz. <c>_worktreeObjRoot</c>).
+/// run başında bir kez çağrılır (bkz. <c>_worktreeObjRoot</c>).
 /// Parametre isteğe bağlıdır; verilmezse (varsayılan <c>null</c>) her zaman in-place obj kullanılır.
 /// Verildiğinde, dönen kök
 /// <see cref="Core.MsBuild.WorktreeObjPathResolver.Resolve"/> ile proje-Id başına izole bir
@@ -152,19 +152,14 @@ public sealed class RunCoordinator(
     // sonradan geri konan bir cap ya da Idle'a düşürülen bir priority ile pazarlık edilemez.
     private bool _capDrained;
 
-    // --- Continue için devredilen state (run'lar ARASINDA yaşar) ---
+    // --- Koşan run'ın state'i (koşu bitince temizlenir; proje logu okuması run boyunca buradan gider) ---
     private RunPlan? _plan;
     private string? _root;
     private RunLogWriter? _logs;
-    // [A4] Bu run için ÇÖZÜLMÜŞ worktree obj kökü (null ⇒ in-place). Taze (Rebuild/Build) segmentte BİR KEZ
-    // resolver'dan hesaplanır; Continue/RetryFailed segmentleri komuttan YENİDEN hesaplamaz, buradan MİRAS
-    // ALIR — App Continue'yu UseWorktree=false ile yolladığı için (RunViewModel) aksi halde aynı run'ın
-    // yarısı worktree'nin izole obj'sine, yarısı projenin default obj'sine derlenirdi.
+    // [A4] Bu run için ÇÖZÜLMÜŞ worktree obj kökü (null ⇒ in-place); run başında BİR KEZ resolver'dan
+    // hesaplanır.
     private string? _worktreeObjRoot;
-    private RunSnapshot? _snapshot;
-    // [T54] projectId → o projenin (dependency zincirinden) taşıdığı kök depIssue adları. Succeeded/Failed
-    // tallies gibi run SEGMENTLERİ ARASINDA KÜMÜLATİF: Continue AYNI birikimi devralır (aksi halde 1. segmentte
-    // tamamlanmış bir projenin depIssue zinciri, 2. segmentteki dependent'ları için kaybolurdu).
+    // [T54] projectId → o projenin (dependency zincirinden) taşıdığı kök depIssue adları.
     private ConcurrentDictionary<string, IReadOnlyList<string>>? _depIssuesById;
     // [Task-13] projectId → Failed'a düştüğü AN ki reason "stopped" mıydı (torn-DLL guard). RunSnapshot/BuildResult
     // reason TAŞIMAZ — bu yüzden reason bilgisi ayrı, run segmentleri arası kümülatif bu sözlükte izlenir (aynı
@@ -182,23 +177,6 @@ public sealed class RunCoordinator(
 
     /// <summary>Aktif (ya da en son) run'ın task'ı: run'ın TÜM event'leri yazıldıktan sonra tamamlanır.</summary>
     public Task RunCompletion { get { lock (_gate) return _runTask; } }
-
-    /// <summary>Stop'la yarıda kalmış, Continue ile sürdürülebilir bir run var mı (kuyrukta iş kaldı mı).</summary>
-    public bool HasResumableRun { get { lock (_gate) return HasResumableRunLocked; } }
-
-    private bool HasResumableRunLocked =>
-        _snapshot is not null && _plan is not null && _logs is not null && _snapshot.Queued.Count > 0;
-
-    /// <summary>
-    /// [Task-13] RetryFailed'a açık bir run var mı: en az bir Failed proje taşıyan bir snapshot/plan/logs
-    /// devredilmiş olmalı. <see cref="HasResumableRunLocked"/>'dan FARKLI: Continue "Queued backlog var mı"
-    /// sorar (yalnız Stopped+Queued&gt;0), bu ise "Failed proje var mı" sorar — bir run TAMAMEN bitmiş
-    /// (Completed, Queued=0) olsa bile içinde Failed projeler varsa RetryFailed'a açıktır (bkz.
-    /// RunSegmentAsync'in finally'sindeki <c>resumable</c> hesaplaması — plan/logs bu durumda da devredilir).
-    /// </summary>
-    private bool HasRetryableRunLocked =>
-        _snapshot is not null && _plan is not null && _logs is not null
-        && _snapshot.Completed.Values.Any(v => v == BuildResult.Failed);
 
     /// <summary>
     /// [T28] <c>getProjectLog</c>'un tek kaynağı. Aktif/resumable run varsa canlı writer'dan (in-memory sayaçla
@@ -237,7 +215,7 @@ public sealed class RunCoordinator(
 
     /// <summary>
     /// [A6] Run'ı başlatır ve HEMEN döner — run arka planda koşar, aksi halde IPC dispatch loop'u bloklanır
-    /// ve <c>stopRun</c> asla ulaşamazdı. Reddedilen istekler (<c>runInProgress</c>/<c>noResumableRun</c>)
+    /// ve <c>stopRun</c> asla ulaşamazdı. Reddedilen istekler (<c>runInProgress</c>)
     /// dönmeden önce <c>error</c> olayı yazılır.
     /// </summary>
     public async Task StartAsync(StartRunCommand cmd, CancellationToken ct = default)
@@ -252,10 +230,6 @@ public sealed class RunCoordinator(
                 rejection = new ErrorEvent("runInProgress", "Supervisor is shutting down — new runs are not accepted.");
             else if (_runActive)
                 rejection = new ErrorEvent("runInProgress", $"A run is already in progress — '{cmd.RunId}' was rejected.");
-            else if (cmd.Mode == RunMode.Continue && !IsResumableForLocked(cmd.RootPath))
-                rejection = new ErrorEvent("noResumableRun", $"No resumable run for '{cmd.RootPath}'.");
-            else if (cmd.Mode == RunMode.RetryFailed && !IsRetryableForLocked(cmd.RootPath))
-                rejection = new ErrorEvent("noResumableRun", $"No failed projects to retry for '{cmd.RootPath}'.");
             else
             {
                 // Slot, arka plan task'ı başlamadan ÖNCE burada tutulur: ikinci bir startRun (planlama sürerken
@@ -269,14 +243,6 @@ public sealed class RunCoordinator(
         }
         if (rejection is not null) await writer.WriteAsync(rejection, ct);
     }
-
-    // Continue yalnız AYNI kök için geçerlidir: plan yeniden kurulmaz (T55), bu yüzden başka bir kök için
-    // Continue sessizce ESKİ kökün projelerini derlerdi.
-    private bool IsResumableForLocked(string rootPath) => HasResumableRunLocked && SameRootLocked(rootPath);
-
-    // [Task-13] RetryFailed de AYNI nedenle (plan yeniden kurulmaz, mevcut plan/logs üstünden devam eder) yalnız
-    // AYNI kök için geçerlidir.
-    private bool IsRetryableForLocked(string rootPath) => HasRetryableRunLocked && SameRootLocked(rootPath);
 
     private bool SameRootLocked(string rootPath) =>
         Canonical(rootPath) is string root && string.Equals(root, _root, StringComparison.OrdinalIgnoreCase);
@@ -692,40 +658,12 @@ public sealed class RunCoordinator(
         string? worktreeObjRoot;
         // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
         // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
-        // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild/Continue/RetryFailed'de boş kalır.
+        // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild'de boş kalır.
         // [cycle rounds/Task 8] CycleUnconverged BURADA (tipli üçüncü alan) taşınır — bu listeye HEM sıradan
         // güncel skip'ler HEM de yakınsamama hafızasından gelen SCC pre-skip'leri düşer; App'e giden ayırt
         // edici bayrak Reason METNİNDEN çıkarılmaz (kopya YASAK), doğrudan bu tuple alanından DecideSkipped'e taşınır.
         var upToDateSkips = new List<(string ProjectId, string Reason, bool CycleUnconverged)>();
 
-        if (cmd.Mode is RunMode.Continue or RunMode.RetryFailed)
-        {
-            RunSnapshot snapshot;
-            // [T54] 1. segmentin depIssue birikimi AYNEN devralınır — yoksa (savunmacı) taze başlar. [Task-13]
-            // stoppedFailedIds birikimi de AYNI şekilde devralınır (Continue'un reason=stopped tespiti için).
-            lock (_gate)
-            {
-                runPlan = _plan!; logs = _logs!; snapshot = _snapshot!;
-                depIssuesById = _depIssuesById ??= new(StringComparer.OrdinalIgnoreCase);
-                stoppedFailedIds = _stoppedFailedIds ??= new(StringComparer.OrdinalIgnoreCase);
-                worktreeObjRoot = _worktreeObjRoot; // [A4] resume: cmd'nin bayrakları DEĞİL, orijinal run'ın kökü
-            }
-            // [T55] AYNI plan'dan devam: yeniden tarama/planlama YOK. Snapshot.Queued INERT'tir — resume ctor'u
-            // kuyruğu Completed'tan türetir; RetryPlanning ise Completed'ı dispatch edilecek yeni bir kümeyle
-            // (bkz. iki mod ayrımı aşağıda) buluşturarak resume ctor'a besler.
-            //
-            // [Task-13] Continue: yalnız reason="stopped" ile Failed'a düşenler (torn-DLL guard) Queued'a döner —
-            // diğer reason'larla Failed olanlar (ör. "exit 1") Failed kalır, yeniden derlenmez.
-            // RetryFailed: Failed olan HER proje + transitive dependent'ları Queued'a döner; succeeded/skipped
-            // dokunulmaz. İkisinde de elapsed/console/log writer SIFIRLANMAZ — aynı segment üstünden devam.
-            RunSnapshot effectiveSnapshot = cmd.Mode == RunMode.Continue
-                ? RetryPlanning.RequeueStoppedFailed(snapshot, new HashSet<string>(stoppedFailedIds.Keys, StringComparer.OrdinalIgnoreCase))
-                : RetryPlanning.RequeueFailedAndDependents(runPlan.Plan, snapshot);
-            schedulerSeed = effectiveSnapshot;
-            elapsedAtStart = snapshot.ElapsedMs;
-            clock = new RunClock(nowMs, snapshot.ElapsedMs);
-        }
-        else
         {
             // [Fix wave 1 — Finding 3] WorktreePreparationException: planner (Program.BuildRunPlan) seçili
             // branch AKTİF branch'ten farklıyken worktree'yi hazırlayamadı. Worktree o durumda zorunludur
@@ -749,10 +687,9 @@ public sealed class RunCoordinator(
             lock (_gate)
             {
                 _logs?.Dispose(); // terk edilmiş (artık sürdürülmeyecek) önceki run'ın writer'ı
-                _snapshot = null;
                 _plan = runPlan;
                 _root = Canonical(cmd.RootPath);
-                _worktreeObjRoot = worktreeObjRoot; // [A4] Continue/RetryFailed segmentleri bunu miras alacak
+                _worktreeObjRoot = worktreeObjRoot;
                 logs = _logs = logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
                 depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
@@ -863,16 +800,16 @@ public sealed class RunCoordinator(
         { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
 
         // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi YALNIZ taze (Rebuild/Build)
-        // segmentte VE in-place (worktreeObjRoot null — izole obj YOK) projeler için tetiklenir: Continue/RetryFailed
-        // AYNI obj üstünde devam eder (yeniden teşhis gerekmez), worktree run'ları zaten PAYLAŞILMAYAN izole obj
+        // koşuda VE in-place (worktreeObjRoot null — izole obj YOK) projeler için tetiklenir:
+        // worktree run'ları zaten PAYLAŞILMAYAN izole obj
         // kullanır (bayat-obj zehri worktree'de oluşamaz). onRetry ile AYNI ikili-yazım deseni: hem decision.log
         // hem konsol. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
-        if (cmd.Mode is not (RunMode.Continue or RunMode.RetryFailed) && worktreeObjRoot is null)
+        if (worktreeObjRoot is null)
             StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
 
         int parallelism = Math.Max(1, cmd.Parallelism);
         // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ (o, komutun kendi alanıdır — App aynı tablodan
-        // türetir ve Continue/RetryFailed segmentleri de onu taşır). Buradan yalnız CPU cap + priority alınır.
+        // türetir). Buradan yalnız CPU cap + priority alınır.
         // PerfMode yoksa ya da çözülemiyorsa profil null'dır ve job'a HİÇ dokunulmaz (geriye dönük uyum).
         PerfProfile? perf = cmd.PerfMode is { } perfModeText ? PerfProfile.TryParse(perfModeText) : null;
         int? appliedCap = null;                 // GERÇEKTEN yürürlükte olan cap (runStarted + konsol bunu yazar)
@@ -1023,19 +960,15 @@ public sealed class RunCoordinator(
                 "run {0} finished: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms depIssues={7}",
                 cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
 
-            // [Task-13] Continue backlog'u (Stopped + Queued>0) VEYA en az bir Failed proje varsa (RetryFailed'a
-            // açık — bkz. HasRetryableRunLocked) plan/logs/birikimler devredilir; ikisi de yoksa (run tamamen
-            // temiz bitti) her şey temizlenir — aksi halde RetryFailed'ın "yeniden derlenecek" bir kümesi olmaz.
-            bool resumable = (outcome == RunOutcome.Stopped && snapshotAtEnd.Queued.Count > 0) || failed > 0;
-            lock (_gate) _snapshot = resumable ? snapshotAtEnd : null;
-            if (!resumable)
-            {
-                // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
-                // [A4] _worktreeObjRoot da temizlenir: devredilecek bir run kalmadığında bu kökün yaşaması
-                // için sebep yoktur (taze run onu zaten her defasında yeniden yazar — sızma değil, hijyen).
-                lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; _worktreeObjRoot = null; } // [T54/Task-13/A4]
-                logs.Dispose();
-            }
+            // [design v1.7.0 §3.1] Koşu bittiğinde HER ŞEY temizlenir — devredilecek bir segment yoktur.
+            // Eskiden Stop/hata sonrası plan/logs/birikimler saklanırdı, çünkü Continue ve RetryFailed AYNI
+            // plan üstünden ikinci bir segment koşuyordu. O iki mod kaldırıldı: sonraki Build taze planlar ve
+            // ne derleyeceğini persist edilmiş BuildState'ten bulur (öldürülen/başarısız projeler geçersiz,
+            // yeşil bitenler güncel).
+            // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
+            // [A4] _worktreeObjRoot da temizlenir: taze run onu her defasında yeniden yazar (hijyen).
+            lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; _worktreeObjRoot = null; }
+            logs.Dispose();
         }
     }
 

@@ -37,15 +37,17 @@ public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcC
 
 /// <summary>Bir koşunun KAPSAMINI seçer; NDJSON'a camelCase METİN olarak yazılır (<c>"cycles"</c>), sayı olarak
 /// DEĞİL — bu yüzden yeni bir değer sona eklemek mevcut satırların anlamını kaydırmaz.</summary>
-public enum RunMode { Rebuild, Build, Continue, RetryFailed, Cycles }
+public enum RunMode { Rebuild, Build, Cycles }
 /// <summary>Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c> Safe/Fast, Task 7):
 /// Build modunda WillBuild hesabını besler — Safe = dirty + tüm transitive dependent'lar yeniden derlenir;
-/// Fast = yalnız dirty (cascade yok). RetryFailed her zaman failed + tüm transitive dependent'ları derler
-/// (DependentMode'dan BAĞIMSIZ). [It-3]</summary>
+/// Fast = yalnız dirty (cascade yok). [It-3]</summary>
 public enum DependentMode { Safe, Fast }
-/// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty); Continue = önceki run'ın
-/// queued'larından sürer (elapsed korunur); RetryFailed = önceki run'da failed olanlar + tüm transitive
-/// dependent'ları (DependentMode'dan bağımsız — her zaman full cascade). [v7Δ-4] [It-3]
+/// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty). [v7Δ-4] [It-3]
+/// <para><b>Sürdürme/yeniden deneme AYRI bir mod DEĞİLDİR</b> (design v1.7.0 §3.1): Stop'tan sonra da hata
+/// sonrasında da <b>Build</b> koşulur. Tamamlanıp yeşil bitmiş projeler imzalarını persist ettikleri için
+/// <c>up to date</c> atlanır; öldürülenler ve başarısız olanlar <c>LastResult</c> invalidasyonuyla kirli
+/// kalır, hata etkilenmiş bağımlılar ise imzalarını hiç persist etmedikleri için yeniden derlenir. Tek fark
+/// elapsed'in sıfırdan başlamasıdır — bu yeni bir koşudur.</para>
 /// <para><b>Cycles</b> = dairesel bağımlılık (SCC) oluşturan projeler, sıralı turlarla — ve onların
 /// TRANSİTİF UPSTREAM'i (gerekçe <c>Core/Planning/CycleRunScope.cs</c>'te: kirli bir upstream'in eski DLL'ine
 /// karşı derlenen üye yeşil döner, bayat çıktı verir ve imzası persist edildiği için bir daha ASLA
@@ -58,8 +60,7 @@ public enum DependentMode { Safe, Fast }
 /// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>
 /// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
-/// yalnız dirty, cascade yok). RetryFailed modunda ETKİSİZDİR — o mod DependentMode'dan bağımsız, her zaman
-/// failed + tüm transitive dependent'ları derler. Varsayılan Safe. [It-3]</param>
+/// yalnız dirty, cascade yok). Varsayılan Safe. [It-3]</param>
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri (bkz. <see cref="LayerPattern"/>); Core'daki
 /// <c>LayerEngine</c> yalnız bu liste DOLU geldiğinde çalışır — null/boş ise katmanlama KAPALIDIR (varsayılan,
 /// mevcut davranış). Sıra anlamlıdır: <c>Order</c> hem eşleşme önceliği hem atanan LayerIndex'tir.</param>

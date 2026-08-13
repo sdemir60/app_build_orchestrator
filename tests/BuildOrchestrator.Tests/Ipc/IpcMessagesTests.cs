@@ -55,7 +55,7 @@ public class IpcMessagesTests
     {
         IpcEvent[] events =
         [
-            new RunStartedEvent("r1", RunMode.Continue, 177, 6, "Debug", 4200),
+            new RunStartedEvent("r1", RunMode.Build, 177, 6, "Debug", 4200),
             new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"),
             new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "  A.cs(3,5): error CS0103: ..."),
             new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400),
@@ -73,7 +73,7 @@ public class IpcMessagesTests
 
     [Theory]
     [InlineData(RunMode.Build, "\"mode\":\"build\"")]
-    [InlineData(RunMode.RetryFailed, "\"mode\":\"retryFailed\"")]
+    [InlineData(RunMode.Cycles, "\"mode\":\"cycles\"")]
     public void RunMode_new_values_roundtrip_camelCase(RunMode mode, string expectedFragment)
     {
         var cmd = new StartRunCommand("r1", mode, @"D:\repo", "Debug", 6);
@@ -86,7 +86,7 @@ public class IpcMessagesTests
     [Fact]
     public void StartRunCommand_new_fields_roundtrip()
     {
-        var cmd = new StartRunCommand("r1", RunMode.RetryFailed, @"D:\repo", "Debug", 6,
+        var cmd = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 6,
             Branch: "feature/x", UseWorktree: true, WorktreeName: "wt-1", DependentMode: DependentMode.Fast);
         string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
         Assert.Contains("\"branch\":\"feature/x\"", json);

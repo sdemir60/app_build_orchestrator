@@ -204,7 +204,7 @@ project is reported `failed("stopped")`, which invalidates its stored state, so 
 again from scratch — up to `parallelism` half-finished compiles discarded, and a row the user's own Stop
 turned red. Draining costs the remaining time of the slowest in-flight project and banks the work; terminating
 returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
-pressing *Build* — there is no *Continue* — banking the work is the cheaper trade.
+pressing *Build* — there is no separate resume — banking the work is the cheaper trade.
 
 `runStopped` and `runCompleted` each fire exactly once, and the elapsed clock is preserved.
 
@@ -544,13 +544,19 @@ defaults.
 |---|---|
 | `Build` | the will-build set (incremental) |
 | `Rebuild` | all projects; cached state ignored |
-| `Continue` | the remaining queued projects of the stopped run, from the existing plan, with the elapsed clock preserved — engine capability only; the App has no surface that sends it |
-| `RetryFailed` | the failed projects plus **all** their transitive dependents — independent of the Safe/Fast setting; console and event stream are not reset |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
 
 `Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
-a cycle, `Cycles` compiles the cycles. It has its own button beside Sync (§13.2) and is meant to be run before
-a build, not instead of one.
+a cycle, `Cycles` compiles the cycles. It is the third icon of the maintenance box in the action bar (§13.2)
+and is meant to be run before a build, not instead of one.
+
+**Resuming and retrying are not modes.** A stopped run is not resumed and a failed run is not retried by a
+separate command: in both cases the user presses *Build* again, and the incremental decision produces exactly
+the set the old modes produced. Projects that finished green persisted their signature and are skipped as up
+to date; projects that were killed or failed had their stored state invalidated (§7.5) and stay dirty; the
+dependents of a failure succeeded carrying a dependency issue, so their signature was never persisted (§7.6)
+and they come along too. The one deliberate difference is the elapsed clock: the new run counts from zero,
+because it is a new run.
 
 The projects that fall out of scope this way are not announced one at a time in the event stream — a
 workspace with hundreds of unrelated projects would turn a `Cycles` run into scope-only noise — they collapse
@@ -680,15 +686,11 @@ Two details that are easy to get wrong and are pinned:
 - **Planning runs on the run's background task**, not on the IPC dispatch loop. Planning a large repository
   takes seconds; blocking the loop would freeze command handling for that whole window.
 
-`Continue` and `RetryFailed` never call the planner: they resume from the plan, the log writer and the clock of
-the original run.
-
 **Planning reports itself.** The planner takes a progress channel and emits a line per step; the coordinator
 turns each into a `planProgress` event on the same FIFO channel as everything else, so they all reach the App
 before `runStarted`. Lines that mark work about to begin — worktree preparation, the incremental pass — are
 written *before* it, because those are the long steps and they produce no count of their own; lines that report
-a count are written after the step that produced it. The window a resumed segment skips has no lines, because
-it does no planning.
+a count are written after the step that produced it. Every run plans, so every run has these lines.
 
 This repeats the work Sync already did, and that is correct: the working tree may have changed since, and
 worktree preparation and MSBuild resolution only exist on this path. What was wrong was doing it *silently* —
@@ -828,10 +830,9 @@ pending intent, copy-floor depth, drain flag) are reset in one critical section,
 another thread and `setPerfMode` has no run-state precondition: an intent arriving in that window would
 otherwise leak into the next run.
 
-**Continue and RetryFailed** transform the snapshot rather than replanning: *Continue* requeues only the
-projects that failed with a stop reason (the torn-DLL guard) — genuine failures stay failed — while
-*RetryFailed* requeues every failed project plus its transitive dependents. Neither resets the elapsed clock,
-the console or the log writer.
+Nothing survives the run: the plan, the log writer, the resolved worktree obj root and the dependency-issue
+tally are all cleared when it ends. There is no second segment to hand them to — every run plans for itself
+and reads what it needs from the persisted build state.
 
 ---
 
@@ -1131,7 +1132,7 @@ Text that the design specifies literally is produced by **pure, testable static 
 │ ═══════ horizontal splitter ═══│═══════ horizontal splitter ═════════│
 │ PROJECTS                       │ EVENT STREAM                        │
 ├────────────────────────────────┴─────────────────────────────────────┤
-│ ACTION BAR 42px — Sync · Cycles · counters · branch · worktree ·      │
+│ ACTION BAR 42px — Sync · maintenance box · counters · branch ·        │
 │                   cfg · perf ·                            Build ▴     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -1212,14 +1213,23 @@ participate in the shared selection. A run that finishes with zero failures glow
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
 
-**Action bar.** Sync; *Cycles*; the counter chips (`Σ`, building, `✓`, `✗`, `—`, `▲`), each a filter toggle;
+**Action bar.** Sync; the maintenance box; the counter chips (`Σ`, building, `✓`, `✗`, `—`, `▲`), each a filter toggle;
 the branch
 chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf chip; and the Build
-split-button, whose menu carries *Build*, *Rebuild*, and — when something failed — *Retry failed — N failed +
-dependents*. There is no *Continue*: a stopped run is not resumed, it is started again. While a run is in flight the primary button becomes *Stop*, and the
+split-button, whose menu carries exactly two items in every phase: *Build — Only stale projects* and
+*Rebuild — All N projects — cache ignored*. There is no *Continue* and no *Retry failed*: a stopped run is
+started again and a failed one is built again, and *Build* already covers both sets (§8.1). While a run is in flight the primary button becomes *Stop*, and the
 branch, worktree and configuration controls lock; the perf chip stays live.
 
-*Cycles* sits next to Sync rather than next to Build, and the placement carries the meaning: both are things
+**The maintenance box.** Three icon buttons in one chip-weight box — *Clean* (eraser), *Optimize* (gauge) and
+*Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
+1px×14 divider between the buttons. The buttons carry no label: three labelled buttons overflow the bar at its
+1240px minimum and crush the Build split-button, so the meaning lives in the tooltip. *Clean* and *Optimize*
+have no engine behind them yet; they stay visibly disabled and their tooltips say so rather than doing nothing
+when pressed. *Resolve cycles* is the cycle run, disabled while the topology has no cycle and drawn in the
+cycle orange when it has one — the same orange the list and the graph use for the structural channel.
+
+The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
 you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
 as a variant of the primary action, which it is not — it is a run of its own (§8.1) with the same icon the
 rows and the graph use for "this project is in a cycle". It is disabled unless the workspace actually has one,
@@ -1229,7 +1239,7 @@ report — `Build dependency cycles — N cycles · M projects` — and falls ba
 workspace has none. The accessible name is unaffected either way: it stays the plain label, since a screen
 reader announces what the control does, not a count that moves under it on every Sync.
 
-**No run without a topology.** *Build*, *Rebuild*, *Cycles* and *Retry failed* stay disabled until a Sync has published a
+**No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
 runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started before
 the first Sync would compile for real while the list, the graph and the counters stayed empty — the user would
@@ -1297,7 +1307,7 @@ If no repository has ever been selected, there is nothing to Sync — that gate 
 applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
 there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers
 and the root are applied but nothing is sent: each send would fail and print an error line contradicting the
-permanent ribbon message, the same reason Sync, Build, Rebuild and Retry failed are disabled in
+permanent ribbon message, the same reason Sync, Build and Rebuild are disabled in
 that state. The root is still applied because it is local state that persists, and the first Sync after the
 engine returns carries it.
 
@@ -1707,7 +1717,7 @@ meets 4.5:1.
 | Skipped | — in a ring | Skipped |
 | Cycle | warning triangle, no ring | Cycle |
 
-`Cycle` says the project is *in* a dependency cycle. A `Build` will not compile it; the Cycles button will
+`Cycle` says the project is *in* a dependency cycle. A `Build` will not compile it; *Resolve cycles* will
 (§8.1). It is there to keep a structural problem visible rather than to normalise it, since the real repair is
 to break the back edge in the source.
 
@@ -2248,7 +2258,6 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Cycle round stopping rule (converged / no progress / cap) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Dependency-issue propagation | `Core/Scheduling/DepIssueTracker.cs` |
-| Continue / RetryFailed set transformation | `Core/Scheduling/RetryPlanning.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory | `Supervisor/RunCoordinator.cs` |
@@ -2313,7 +2322,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
-| Build menu (Build / Rebuild / Retry failed) | `App/Views/BuildMenu.xaml(.cs)` |
+| Build menu (Build / Rebuild) | `App/Views/BuildMenu.xaml(.cs)` |
+| Maintenance box (Clean / Optimize / Resolve cycles) | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |

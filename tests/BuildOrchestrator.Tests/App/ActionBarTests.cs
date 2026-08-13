@@ -144,12 +144,14 @@ public partial class ActionBarTests
     /// succeeded/failed/skipped/dep) · … · branch · worktree · Debug|Release · perf · ayraç · Stop/Build. Hiçbir
     /// test bu SIRAYI assert etmiyordu — chip'ler kod-tarafı kurulduğu için ("BuildCounterChips") sıra sessizce
     /// kayabilirdi.
-    /// <para><b>[DEĞİŞEN KURAL — cycles]</b> Sol grup artık Sync'ten HEMEN SONRA <b>Cycles</b> düğmesini taşır
-    /// (ayraçtan ÖNCE). Yer seçimi anlamlıdır ve bu yüzden pinlenir: ikisi de derleme ÖNCESİ hazırlık
-    /// adımlarıdır ve birlikte okunurlar; ayracın öbür yanı sayaçlarındır. Düğme Build'in yanına KONMADI —
-    /// orası birincil aksiyonun yeridir ve Cycles onun bir varyantı değil, ondan önce gelen ayrı bir iştir.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.7-2]</b> Sol grup Sync'ten HEMEN SONRA <b>bakım kutusunu</b>
+    /// taşır (ayraçtan ÖNCE). Eski iddia "Sync'ten sonra etiketli <c>Cycles</c> düğmesi gelir" idi; o düğme
+    /// kaldırıldı ve işi kutunun üçüncü ikonu (unlink) devraldı. Gerekçe: Clean/Optimize/Resolve üçü de
+    /// derleme ÖNCESİ hazırlık işleridir ve tasarım bunları tek kutuda toplar; üç etiketli düğme ayrıca barı
+    /// 1240px minimumda taşırıyordu. Yer seçimi hâlâ anlamlıdır: ayracın öbür yanı sayaçlarındır ve kutu
+    /// Build'in yanına KONMADI — orası birincil aksiyonun yeridir.</para></summary>
     [StaFact]
-    public void The_left_group_orders_sync_then_cycles_then_a_separator_then_the_six_counter_chips_in_design_order()
+    public void The_left_group_orders_sync_then_the_maintenance_box_then_a_separator_then_the_six_counter_chips()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
@@ -158,7 +160,7 @@ public partial class ActionBarTests
         var leftChildren = leftGroup.Children.Cast<UIElement>().ToList();
         Assert.Equal(4, leftChildren.Count);
         Assert.Same(bar.SyncButton, leftChildren[0]);
-        Assert.Same(bar.CyclesButton, leftChildren[1]);
+        Assert.Same(bar.MaintenanceBoxControl, leftChildren[1]);
         var leftSeparator = Assert.IsType<Border>(leftChildren[2]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), leftSeparator.Background);
         var counterStrip = Assert.IsType<StackPanel>(leftChildren[3]);
@@ -516,40 +518,42 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Eski iddia: "stopped fazında menüde <c>continue</c> maddesi BELİRİR". Continue yüzeyi
-    /// kaldırıldı — Stop'tan sonra kullanıcı Build'e basar ve run baştan koşar (öldürülen projelerin kaydı
-    /// geçersizleştiği için onlar da yeniden derlenir). Bu test artık <c>continue</c>'nun HİÇBİR fazda
-    /// üretilmediğini pinler; Retry'ın koşullu davranışı aynen korunur.</summary>
+    /// <summary>Menü maddeleri.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.7-11]</b> Eski iddia: "menü hiçbir fazda <c>continue</c>
+    /// sunmaz, <c>retry</c>'ı yalnız hata varken sunar". <c>retry</c> de kaldırıldı: Build zaten stale
+    /// set'i derler — hatalı proje imzasını persist etmediği için bir sonraki Build'de hâlâ kirlidir ve
+    /// bağımlıları cascade ile gelir; ayrı bir yüzey aynı işi ikinci kez sunuyordu. Menü artık HER fazda
+    /// tam olarak iki maddedir.</para></summary>
     [StaFact]
-    public void Build_menu_never_offers_continue_and_shows_retry_only_when_something_failed()
+    public void Build_menu_offers_exactly_build_and_rebuild_in_every_phase()
     {
         var vm = NewVm();
         var (menu, window) = RealizeMenu(vm);
 
-        // Idle, hiç failure yok: Retry YOK; Build + Rebuild VAR.
-        Assert.DoesNotContain(menu.Items, i => i.Kind == "continue");
-        Assert.DoesNotContain(menu.Items, i => i.Kind == "retry");
-        Assert.Contains(menu.Items, i => i.Kind == "build");
-        Assert.Contains(menu.Items, i => i.Kind == "rebuild");
+        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
 
-        // Bir failure → Retry görünür.
+        // Bir failure sonrası da aynı iki madde (Retry yüzeyi yok).
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 100, "exit 1"));
-        Assert.Contains(menu.Items, i => i.Kind == "retry");
+        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
 
-        // Stop → yine Continue YOK.
+        // Stop sonrası da aynı iki madde (Continue yüzeyi yok).
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
-        Assert.DoesNotContain(menu.Items, i => i.Kind == "continue");
+        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
         GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- [A13/T3a · a5] kopya metinleri (BİREBİR)
 
-    /// <summary>[A13/T3a · a5] BuildMenu.xaml.cs:82,84 açıklamaları — Kind+Kbd zaten pinliydi (bkz. yukarıdaki
-    /// testler), kopya metni testsizdi: <c>Only changed projects</c> / stopped varyantı <c>Start over — only
-    /// changed projects</c> / <c>All {n} projects — cache ignored</c> (design-v1 §2.7).</summary>
+    /// <summary>[A13/T3a · a5] Menü açıklamaları BİREBİR tasarım metnidir.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.7-11]</b> Eski iddia: Build'in açıklaması <c>Only changed
+    /// projects</c>, stopped fazında <c>Start over — only changed projects</c> idi. İki şey birden değişti:
+    /// (a) tasarım metni <c>Only stale projects</c>'tir — "changed" eksik kalıyordu, kümede değişenlerin
+    /// yanında hatalılar ve hiç derlenmemişler de var; (b) stopped varyantı kaldırıldı, çünkü Build ARTIK
+    /// baştan başlamıyor: aynı stale set'ten devam ediyor, dolayısıyla "Start over" YANLIŞ bilgi veriyordu.
+    /// Açıklama her fazda aynıdır.</para></summary>
     [StaFact]
     public void Build_menu_desc_texts_are_verbatim_for_build_and_rebuild()
     {
@@ -560,14 +564,14 @@ public partial class ActionBarTests
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0)); // → Idle
         var (menu, window) = RealizeMenu(vm);
 
-        Assert.Equal("Only changed projects", menu.Items.Single(i => i.Kind == "build").Desc);
+        Assert.Equal("Only stale projects", menu.Items.Single(i => i.Kind == "build").Desc);
         Assert.Equal("All 3 projects — cache ignored", menu.Items.Single(i => i.Kind == "rebuild").Desc);
 
-        // stopped → Build'in açıklaması "Start over" önekini alır (BuildMenu.ComposeItems).
+        // stopped → açıklama DEĞİŞMEZ (Build kaldığı yerden sürdürür, baştan başlamaz).
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 3, "Debug", 0));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
-        Assert.Equal("Start over — only changed projects", menu.Items.Single(i => i.Kind == "build").Desc);
+        Assert.Equal("Only stale projects", menu.Items.Single(i => i.Kind == "build").Desc);
 
         GC.KeepAlive(window);
     }
@@ -648,37 +652,8 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [Task 6] Cycles buton tooltip sayıları
-
-    /// <summary>[Task 6] Cycles düğmesinin ToolTip'i topolojide döngü VARSA sayılarla zenginleşir
-    /// (<c>"Build dependency cycles — {c} cycles · {m} projects"</c>); döngü yokken SABİT kalır. UIA adı
-    /// (AutomationProperties.Name) HER İKİ durumda SABİTTİR — ekran okuyucu kontrolün İŞLEVİNİ duyurur, gövde
-    /// sayıları DEĞİL (<see cref="AccessibilityNames.CyclesButton"/> kuralı).</summary>
-    [StaFact]
-    public void Cycles_button_tooltip_gains_counts_when_the_topology_has_cycles_but_the_uia_name_stays_constant()
-    {
-        var vm = NewVm();
-        var (bar, window) = Realize(vm);
-
-        Assert.Equal(AccessibilityNames.CyclesButton, bar.CyclesButton.ToolTip);
-        Assert.Equal(AccessibilityNames.CyclesButton, AutomationProperties.GetName(bar.CyclesButton));
-
-        // 2 SCC: [m1, m2] (2 üye) + 15 üyeli ikinci grup → toplam 17 üye.
-        var nodes = new List<ProjectNode> { Node(@"C:\p\m1.csproj", "M1", 0), Node(@"C:\p\m2.csproj", "M2", 1) };
-        var scc1 = new List<string> { @"C:\p\m1.csproj", @"C:\p\m2.csproj" };
-        var scc2 = new List<string>();
-        for (int i = 0; i < 15; i++)
-        {
-            string id = $@"C:\p\g{i}.csproj";
-            nodes.Add(Node(id, $"G{i}", i + 2));
-            scc2.Add(id);
-        }
-        vm.OnEvent(new WorkspaceTopologyEvent(nodes, [scc1, scc2], [], []));
-
-        Assert.Equal("Build dependency cycles — 2 cycles · 17 projects", bar.CyclesButton.ToolTip);
-        Assert.Equal(AccessibilityNames.CyclesButton, AutomationProperties.GetName(bar.CyclesButton)); // UIA SABİT kalır
-        GC.KeepAlive(window);
-    }
+    // [Task 6 · TAŞINDI] Döngü sayılarının tooltip'e yansıması artık bakım kutusunun işidir; iddia
+    // MaintenanceBoxTests'te YENİ metinle yaşıyor (etiketli Cycles düğmesi kaldırıldı, design v1.7.0 §2.7-2).
 
     // [Fix round 1 — KÖK 5] K11'in TEK kullanıcı giriş noktası: perf chip'i. Kablaj bu iterasyonda değişti
     // (`_vm?.CyclePerf()` → `_ = _vm?.CyclePerfAsync()`, fire-and-forget) ve görsel pas en sona ertelendiği

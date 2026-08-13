@@ -372,10 +372,12 @@ public class RunCoordinatorTests
             "planlama satırları runStarted'dan ÖNCE bekleniyor; gelen sıra: " + string.Join(" | ", events.Select(Describe)));
     }
 
-    /// <summary>Sürdürülen segment (Continue/RetryFailed) planner'ı HİÇ çağırmaz — aynı plan üstünden devam
-    /// eder. Orada planlama satırı basmak, koşmayan bir işi anlatmak olurdu.</summary>
+    /// <summary>[DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "sürdürülen segment (Continue/RetryFailed)
+    /// planner'ı hiç çağırmaz, planlama satırı basmaz". Sürdürme modları kaldırıldı: ARTIK HER koşu tazedir,
+    /// kendi planını kurar ve kendi planlama satırlarını basar. İkinci koşunun neyi derleyeceğini plan değil,
+    /// persist edilmiş BuildState belirler.</summary>
     [Fact]
-    public async Task a_resumed_segment_prints_no_planning_progress()
+    public async Task every_run_plans_freshly_and_prints_its_own_planning_progress()
     {
         var plan = PlanOf(Node("A"), Node("B"));
         int planned = 0;
@@ -394,11 +396,11 @@ public class RunCoordinatorTests
         int afterFirst = h.Events.OfType<PlanProgressEvent>().Count();
         Assert.Equal(1, afterFirst); // taze segment satırını bastı (vakum değil)
 
-        await h.Sut.StartAsync(Start(RunMode.RetryFailed, parallelism: 1), default);
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(1, Volatile.Read(ref planned));                            // planner yalnız taze segmentte
-        Assert.Equal(afterFirst, h.Events.OfType<PlanProgressEvent>().Count()); // 2. segment satır EKLEMEDİ
+        Assert.Equal(2, Volatile.Read(ref planned));                                // her koşu kendi planını kurar
+        Assert.Equal(afterFirst * 2, h.Events.OfType<PlanProgressEvent>().Count()); // ve kendi satırını basar
     }
 
     // ---------------------------------------------------------------- 3) graceful stop
@@ -426,7 +428,6 @@ public class RunCoordinatorTests
         Assert.Equal(RunOutcome.Stopped, done.Outcome);
         Assert.Equal(1, done.Succeeded);
         Assert.Equal(3, done.Queued);                          // B, C, D — kısıt 4: snapshot in-flight tükendikten sonra
-        Assert.True(h.Sut.HasResumableRun);
     }
 
     // [Task 18] TryGetProjectLogSnapshot artık gerçek disk okumasını (canlı writer'ın FileStream'i ya da
@@ -506,61 +507,9 @@ public class RunCoordinatorTests
         Assert.Equal(RunOutcome.Stopped, done.Outcome);
         Assert.Equal(1, done.Failed);
         Assert.Equal(3, done.Queued);
-        Assert.True(h.Sut.HasResumableRun); // terminate edilmiş job yeni assign kabul eder → Continue çalışır
     }
 
-    // ---------------------------------------------------------------- 5) continue
-
-    [Fact]
-    public async Task continue_dispatches_only_queued_projects_into_the_same_run_and_preserves_elapsed()
-    {
-        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
-        var inFlight = Signal();
-        var release = Signal();
-        Action<long>? setNow = null;
-        var invoker = new FakeInvoker(async (req, _, _) =>
-        {
-            // Saat elle ilerletilir (gerçek zaman beklenmez [D8]): 1. segmentte 500ms, 2. segmentte +300ms geçer.
-            if (NameOf(req.ProjectId) == "B") setNow!(800);
-            if (NameOf(req.ProjectId) != "A") return Ok();   // yalnız 1. segmentin projesi kapıda bekler
-            setNow!(500);
-            inFlight.TrySetResult();
-            await release.Task;
-            return Ok();
-        });
-        using var h = new Harness(plan, invoker);
-        setNow = h.SetNow;
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
-        await inFlight.Task.WaitAsync(Limit);
-        h.Sut.TryRequestStop(StopKind.Graceful);
-        release.SetResult();
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        int eventsAfterFirstSegment = h.Events.Count;
-        Assert.True(h.Sut.HasResumableRun);
-
-        await h.Sut.StartAsync(Start(RunMode.Continue, parallelism: 1, runId: "r1"), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        // Yalnız queued'lar derlendi: A bir kez (1. segment), B/C/D birer kez (2. segment) — A ASLA yeniden.
-        Assert.Equal(["A", "B", "C", "D"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
-
-        var second = h.Events.Skip(eventsAfterFirstSegment).ToList();
-        var started = Assert.IsType<RunStartedEvent>(second[0]);
-        Assert.Equal(RunMode.Continue, started.Mode);
-        Assert.Equal(500, started.ElapsedMsAtStart); // T55: süre sayacı sıfırlanmaz, 1. segmentten devralınır
-        Assert.Equal(4, started.TotalProjects);
-
-        var done = Assert.IsType<RunCompletedEvent>(second[^1]);
-        Assert.Equal(RunOutcome.Completed, done.Outcome);
-        Assert.Equal(4, done.Succeeded); // kümülatif: A (1. segment) + B, C, D
-        Assert.Equal(0, done.Queued);
-        Assert.Equal(800, done.DurationMs); // 500 (devralınan) + 300 (2. segment) — segmentler TOPLANIR
-
-        Assert.Single(h.LogWriters);       // run başına TEK RunLogWriter → Continue aynı run dizinine yazar
-        Assert.False(h.Sut.HasResumableRun);
-    }
+    // ---------------------------------------------------------------- 5) planlama penceresinde stop
 
     [Fact]
     public async Task stop_during_planning_still_acks_run_stopped_even_though_run_never_started()
@@ -614,181 +563,9 @@ public class RunCoordinatorTests
         Assert.Equal(message, err.Message);   // kullanıcı hangi branch'in ve NEDEN derlenmediğini görür
         Assert.Empty(h.Events.OfType<RunStartedEvent>());   // run hiç başlamadı → yanlış branch DERLENMEDİ
         Assert.Empty(h.Events.OfType<RunCompletedEvent>());
-        Assert.False(h.Sut.HasResumableRun);
     }
 
-    [Fact]
-    public async Task continue_without_a_resumable_run_errors()
-    {
-        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())));
 
-        await h.Sut.StartAsync(Start(RunMode.Continue), default);
-
-        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
-        Assert.Equal("noResumableRun", err.Code);
-        Assert.Empty(h.Events.OfType<RunStartedEvent>());
-        Assert.Empty(h.LogWriters);
-    }
-
-    // ---------------------------------------------------------------- 5b) RetryFailed + Continue re-queue stopped (Task-13)
-
-    [Fact]
-    public async Task continue_requeues_reason_stopped_failed_projects_but_leaves_other_failure_reasons_failed()
-    {
-        // A: normal build hatası (exit 1) — torn DLL değil, Continue'da DOKUNULMAMALI.
-        // B: hard Stop'ta mid-build yarıda kalır (reason=stopped) — torn-DLL guard: Continue'da YENİDEN derlenmeli.
-        // C: hiç dispatch edilmeden Queued kalır (sıradan Continue davranışı, değişmez).
-        var plan = PlanOf(Node("A"), Node("B"), Node("C"));
-        var inFlight = Signal();
-        var release = Signal();
-        int bCalls = 0;
-        var invoker = new FakeInvoker(async (req, _, _) =>
-        {
-            string n = NameOf(req.ProjectId);
-            if (n == "A") return Exit(1);
-            if (n == "B" && Interlocked.Increment(ref bCalls) == 1)
-            {
-                inFlight.TrySetResult();
-                await release.Task; // hard Stop burada yakalar — invoke exit=1 döner ama ReasonFor "stopped" yazar
-                return Exit(1);
-            }
-            return Ok(); // B'nin 2. çağrısı (Continue'da retry) ve C
-        });
-        using var h = new Harness(plan, invoker);
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
-        await inFlight.Task.WaitAsync(Limit);
-        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
-        release.SetResult();
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var seg1 = h.Events;
-        var failed1 = seg1.OfType<ProjectFailedEvent>().ToList();
-        Assert.Equal(2, failed1.Count);
-        Assert.Equal("exit 1", failed1.Single(e => NameOf(e.ProjectId) == "A").Reason);
-        Assert.Equal("stopped", failed1.Single(e => NameOf(e.ProjectId) == "B").Reason);
-        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
-        Assert.Equal(RunOutcome.Stopped, done1.Outcome);
-        Assert.Equal(2, done1.Failed);
-        Assert.Equal(1, done1.Queued); // C hiç dispatch edilmedi
-
-        await h.Sut.StartAsync(Start(RunMode.Continue, parallelism: 1, runId: "r1"), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        // A ASLA yeniden dispatch edilmez (farklı reason — Failed kalır); B torn-DLL guard ile YENİDEN derlenir;
-        // C sıradan Continue davranışıyla dispatch edilir.
-        Assert.Equal(["A", "B", "B", "C"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
-
-        var seg2 = h.Events.Skip(seg1.Count).ToList();
-        var done2 = Assert.IsType<RunCompletedEvent>(seg2[^1]);
-        Assert.Equal(RunOutcome.Completed, done2.Outcome);
-        Assert.Equal(2, done2.Succeeded); // B (retried) + C
-        Assert.Equal(1, done2.Failed);    // A hâlâ failed
-        Assert.Equal(0, done2.Queued);
-
-        Assert.Single(h.LogWriters); // console/stream SIFIRLANMAZ — Continue AYNI run dizinine/writer'a yazar
-    }
-
-    [Fact]
-    public async Task retry_failed_rebuilds_failed_projects_and_their_transitive_dependents_only()
-    {
-        // F1 ← D1 ← D2 zinciri (D1 F1'e, D2 D1'e bağımlı — transitive dependent); S bağımsız.
-        var plan = PlanOf(Node("F1"), Node("D1", deps: ["F1"]), Node("D2", deps: ["D1"]), Node("S"));
-        int f1Calls = 0;
-        var invoker = new FakeInvoker((req, _, _) =>
-        {
-            if (NameOf(req.ProjectId) == "F1")
-                return Task.FromResult(Interlocked.Increment(ref f1Calls) == 1 ? Exit(1) : Ok());
-            return Task.FromResult(Ok());
-        });
-        using var h = new Harness(plan, invoker);
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var seg1 = h.Events;
-        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
-        Assert.Equal(RunOutcome.Completed, done1.Outcome);
-        Assert.Equal(1, done1.Failed);    // F1
-        Assert.Equal(3, done1.Succeeded); // D1, D2, S ("hata derlemeyi öldürmez" — A3 — bloklanmadan build edildiler)
-
-        await h.Sut.StartAsync(Start(RunMode.RetryFailed, parallelism: 1, runId: "r1"), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        // Retry kümesi = F1 + transitive dependent'ları (D1, D2) — S ASLA yeniden dispatch edilmez.
-        Assert.Equal(["F1", "D1", "D2", "S", "F1", "D1", "D2"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
-
-        var seg2 = h.Events.Skip(seg1.Count).ToList();
-        var started2 = Assert.IsType<RunStartedEvent>(seg2[0]);
-        Assert.Equal(RunMode.RetryFailed, started2.Mode);
-        var done2 = Assert.IsType<RunCompletedEvent>(seg2[^1]);
-        Assert.Equal(RunOutcome.Completed, done2.Outcome);
-        Assert.Equal(4, done2.Succeeded); // F1 (retried, artık succeeded) + D1 + D2 + S (kümülatif)
-        Assert.Equal(0, done2.Failed);
-        Assert.Equal(0, done2.Queued);
-
-        Assert.Single(h.LogWriters); // console/stream SIFIRLANMAZ — RetryFailed AYNI run dizinine/writer'a yazar
-    }
-
-    [Fact]
-    public async Task retry_failed_without_a_retryable_run_errors()
-    {
-        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())));
-
-        await h.Sut.StartAsync(Start(RunMode.RetryFailed), default);
-
-        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
-        Assert.Equal("noResumableRun", err.Code);
-        Assert.Empty(h.Events.OfType<RunStartedEvent>());
-        Assert.Empty(h.LogWriters);
-    }
-
-    [Fact]
-    public async Task dep_issues_accumulated_in_the_first_segment_are_inherited_by_a_dependent_dispatched_after_continue()
-    {
-        // [T54 carry] R (kök) 1. segmentte failed olur; M (R'ye DOĞRUDAN bağımlı) aynı segmentte succeeded olur
-        // ve depIssues=[R] taşıdığı _depIssuesById birikimine yazılır; run M'den SONRA (Dep dispatch edilmeden
-        // önce) Stop edilir. Continue'da Dep (M'ye bağımlı, R'ye DEĞİL) dispatch edilince R artık Completed'ta
-        // FAILED değildir aramaz (M zaten Succeeded) — depIssues'unu YALNIZ 1. segmentten devralınan
-        // _depIssuesById["M"]=[R] üzerinden (DOLAYLI/inherited) alabilir. Bu, birikimin segment sınırını
-        // AŞARAK aynı örnekle devretmesini kanıtlar.
-        var plan = PlanOf(Node("R"), Node("M", deps: ["R"]), Node("Dep", deps: ["M"]));
-        var inFlight = Signal();
-        var release = Signal();
-        var invoker = new FakeInvoker(async (req, _, _) =>
-        {
-            string n = NameOf(req.ProjectId);
-            if (n == "R") return Exit(1);
-            if (n == "M")
-            {
-                inFlight.TrySetResult();
-                await release.Task;
-                return Ok();
-            }
-            return Ok(); // Dep
-        });
-        using var h = new Harness(plan, invoker);
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
-        await inFlight.Task.WaitAsync(Limit);
-        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
-        release.SetResult();
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var seg1 = h.Events;
-        var succeededM = Assert.Single(seg1.OfType<ProjectSucceededEvent>());
-        Assert.Equal(["R"], succeededM.DepIssues); // sanity: M, R'ye DOĞRUDAN bağımlı
-        var done1 = Assert.IsType<RunCompletedEvent>(seg1[^1]);
-        Assert.Equal(RunOutcome.Stopped, done1.Outcome);
-        Assert.Equal(1, done1.Queued); // Dep hiç dispatch edilmedi
-
-        await h.Sut.StartAsync(Start(RunMode.Continue, parallelism: 1, runId: "r1"), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var seg2 = h.Events.Skip(seg1.Count).ToList();
-        var depEvent = Assert.Single(seg2.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "Dep");
-        Assert.Equal(["R"], depEvent.DepIssues); // 1. segmentten MİRAS — _depIssuesById segment sınırını aştı
-    }
 
     // ---------------------------------------------------------------- 6) tek seferde tek run
 
@@ -849,7 +626,7 @@ public class RunCoordinatorTests
     // ---------------------------------------------------------------- 8) cycle pre-skip
 
     [Fact]
-    public async Task cycle_members_are_skipped_once_and_not_re_emitted_on_continue()
+    public async Task cycle_members_are_pre_skipped_again_by_every_fresh_run()
     {
         var plan = PlanOf(Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("A"), Node("B"));
         var inFlight = Signal();
@@ -874,14 +651,16 @@ public class RunCoordinatorTests
             firstSegment.OfType<ProjectSkippedEvent>().Select(Describe));
         Assert.Equal(["A"], invoker.Requests.Select(r => NameOf(r.ProjectId))); // cycle üyeleri asla dispatch edilmez
 
-        await h.Sut.StartAsync(Start(RunMode.Continue), default);
+        await h.Sut.StartAsync(Start(), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        // Kısıt 7: resume edilmiş scheduler'ın PreSkipped'i boştur — X/Y için TEKRAR projectSkipped yazılmaz.
+        // [DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "resume edilmiş scheduler'ın PreSkipped'i boştur,
+        // X/Y için TEKRAR projectSkipped yazılmaz". Sürdürme segmenti diye bir şey kalmadı: ikinci koşu TAZEDİR
+        // ve döngü üyelerini kendi planında yeniden pre-skip eder — her koşu ne atladığını kendi başına söyler.
         var second = h.Events.Skip(firstSegment.Count).ToList();
-        Assert.Empty(second.OfType<ProjectSkippedEvent>());
+        Assert.Equal(["projectSkipped:X", "projectSkipped:Y"], second.OfType<ProjectSkippedEvent>().Select(Describe));
         var done = Assert.IsType<RunCompletedEvent>(second[^1]);
-        Assert.Equal(2, done.Skipped);   // X, Y (kümülatif)
+        Assert.Equal(2, done.Skipped);   // X, Y
         Assert.Equal(2, done.Succeeded); // A, B
         Assert.Equal(0, done.Queued);
     }
@@ -1064,12 +843,13 @@ public class RunCoordinatorTests
     }
 
     [Fact]
-    public async Task Continue_inherits_the_original_runs_worktree_obj_root()
+    public async Task Every_run_resolves_its_own_worktree_obj_root_from_its_own_command()
     {
-        // [A4] Worktree, run'ın ÇÖZÜLMÜŞ workspace'idir — segment başına yeniden hesaplanan bir istek bayrağı
-        // DEĞİL. App, Continue'yu bugün UseWorktree=false ile yollar (RunViewModel.cs:241); segment-2 kökü
-        // cmd'den yeniden hesaplasaydı AYNI run'ın yarısı worktree'nin izole obj'sine, yarısı projenin default
-        // obj'sine derlenirdi (yarısı bayat-obj zehrine açık, üstelik sessizce).
+        // [A4 · DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "resolver YALNIZ taze run'da çağrılır,
+        // Continue segmenti 1. segmentin kökünü MİRAS ALIR" — miras, App'in Continue'yu UseWorktree=false ile
+        // yollamasından doğan bir yarım-run riskini kapatıyordu. Continue kaldırıldı: her koşu tazedir ve
+        // kendi komutundaki bayraktan kendi kökünü çözer, dolayısıyla bir koşunun yarısı asla farklı bir obj
+        // köküne düşemez. Bu test artık bunu pinler.
         string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-continue-" + Guid.NewGuid().ToString("N"));
         var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
         var resolverCalls = new List<StartRunCommand>();
@@ -1094,16 +874,14 @@ public class RunCoordinatorTests
         release.SetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        // Continue: UseWorktree BAYRAĞI YOK (App'in bugünkü davranışı) — yine de 1. segmentin kökü kullanılmalı.
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Continue, PlanRoot, "Debug", 1), default);
+        // İkinci koşu da worktree ister → kendi kökünü kendi çözer.
+        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(["A", "B", "C", "D"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
         Assert.All(invoker.Requests,
             r => Assert.StartsWith(worktreeRoot, r.BaseIntermediateOutputPath!, StringComparison.Ordinal));
-        var call = Assert.Single(resolverCalls); // resolver YALNIZ taze run'da çağrılır — Continue MİRAS ALIR
-        Assert.True(call.UseWorktree);
-        Assert.Equal(RunMode.Rebuild, call.Mode);
+        Assert.Equal(2, resolverCalls.Count);                   // her koşu resolver'a kendi komutuyla gider
+        Assert.All(resolverCalls, c => Assert.True(c.UseWorktree));
     }
 
     // ---------------------------------------------------------------- 12) depIssue propagation (T54)
@@ -1302,7 +1080,7 @@ public class RunCoordinatorTests
     }
 
     [Fact]
-    public async Task continue_segment_does_not_re_emit_the_stale_obj_warning_from_the_fresh_segment()
+    public async Task every_fresh_in_place_run_re_diagnoses_and_warns_about_stale_obj_again()
     {
         string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
         try
@@ -1310,7 +1088,8 @@ public class RunCoordinatorTests
             string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
             var pNode = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
             // Q/R gerçek diskte YOK (nonexistent fake path) — StaleObjRunStartWarner bunları ASLA fırlatmadan
-            // sessizce atlamalı (never-throw); yalnız Q'yu in-flight'ta durdurup 2. segment (Continue) tetiklenir.
+            // sessizce atlamalı (never-throw); Q in-flight'ta durdurulup koşu Stop'la kesilir, sonra ikinci
+            // (taze) koşu başlatılır.
             var qNode = Node("Q");
             var rNode = Node("R");
             var plan = PlanOf(pNode, qNode, rNode);
@@ -1329,16 +1108,19 @@ public class RunCoordinatorTests
             h.Sut.TryRequestStop(StopKind.Graceful);
             releaseQ.SetResult();
             await h.Sut.RunCompletion.WaitAsync(Limit);
-            Assert.True(h.Sut.HasResumableRun); // R hiç dispatch edilmedi → Continue'ya açık
 
             int warnsAfterSegment1 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
             Assert.Equal(1, warnsAfterSegment1); // 1. (fresh) segment TEK BİR KEZ warn eder
 
-            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Continue, root, "Debug", 1), default);
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
+            // [DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "Continue AYNI obj üstünde devam eder, yeniden
+            // teşhis/warn YOK". Sürdürme segmenti kalmadı: her koşu tazedir, obj'yi yeniden teşhis eder ve
+            // bayatlık HÂLÂ duruyorsa yeniden uyarır — susmak, kullanıcının ikinci koşuda sorunu görmemesi
+            // demek olurdu.
             int warnsAfterSegment2 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
-            Assert.Equal(1, warnsAfterSegment2); // Continue AYNI obj üstünde devam eder — yeniden teşhis/warn YOK
+            Assert.Equal(2, warnsAfterSegment2);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

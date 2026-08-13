@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="186" height="128" viewBox="46.5 78 186 128" role="img" aria-label="Build Orchestrator">
+  <g fill="#EDEDEE">
+    <g transform="translate(5.5 0)">
+      <rect x="68" y="83" width="35" height="21" rx="10.5" opacity="0.32"></rect>
+      <rect x="114" y="83" width="51" height="21" rx="10.5" opacity="0.6"></rect>
+      <rect x="46" y="131" width="39" height="21" rx="10.5" opacity="0.32"></rect>
+      <rect x="97" y="131" width="60" height="22" rx="11"></rect>
+      <rect x="60" y="178" width="57" height="21" rx="10.5" opacity="0.5"></rect>
+    </g>
+    <g transform="translate(5.5 0)">
+      <path d="M151 83&#xA;         L171.5 83&#xA;         C176.1 83 179.2 85.1 182.3 88.5&#xA;         L219.8 131.5&#xA;         C222.7 134.9 224 138.3 224 142.4&#xA;         C224 146.5 222.7 149.8 219.8 153.2&#xA;         L179.1 198.3&#xA;         C176.0 201.6 172.3 203 168.0 203&#xA;         L151.0 203&#xA;         C145.8 203 142.1 200.4 140.5 196.4&#xA;         C138.8 192.1 140.2 187.8 143.5 184.2&#xA;         L177.8 146.2&#xA;         C180.6 143.2 180.8 140.8 178.2 137.8&#xA;         L144.7 103.7&#xA;         C141.8 100.7 140.4 96.9 140.4 93.0&#xA;         C140.4 87.5 145.1 83 151 83&#xA;         Z"></path>
+    </g>
+  </g>
+</svg>

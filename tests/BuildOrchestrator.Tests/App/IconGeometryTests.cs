@@ -32,6 +32,10 @@ public class IconGeometryTests
         "Icon.StatusCycle", "Icon.Spinner", "Icon.Chevron",
         // [A13/T2 · 2.3] Chip'in `onRemove` göstergesi (_ds_bundle.js:206-220) — ham `✕` karakteri yerine çizim.
         "Icon.ChipRemove",
+        // [design v1.7.0 §2.7-2] Action bar'ın bakım kutusunun üç ikonu (design-v1.7.0 prototype/app/
+        // BuildApp.jsx:59-61 — lucide eraser/gauge/unlink). Kutu etiketsizdir, anlamı TAŞIYAN tek şey bu üç
+        // çizimdir; anahtar eksik olsaydı düğme runtime'da boş Data ile çizilirdi, derlemede patlamazdı.
+        "Icon.Eraser", "Icon.Gauge", "Icon.Unlink",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —

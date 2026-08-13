@@ -149,7 +149,7 @@ public sealed partial class RunViewModel
     private string? _lastTopologySignature;
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
-    /// <para>[Fix wave 1, C2 review Finding 1] <see cref="RunViewModel.RebuildCommand"/>/<see cref="RunViewModel.RetryFailedCommand"/>
+    /// <para>[Fix wave 1, C2 review Finding 1] <see cref="RunViewModel.RebuildCommand"/>
     /// artık <c>_syncInFlight</c>'a da bakıyor (<see cref="RunViewModel.CanRebuildOrRetry"/>) — bu geçişte CanExecuteChanged
     /// elle tetiklenmezse [NotifyCanExecuteChangedFor] zinciri (yalnız IsRunning/IsStarting'e bağlı) bu iki
     /// butonun gerçek pencerede Sync başlar başlamaz disabled görünmesini SAĞLAMAZ.</para>
@@ -169,7 +169,6 @@ public sealed partial class RunViewModel
         Phase = AppPhase.Syncing;
         _willBuildIds.Clear(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
         RebuildCommand.NotifyCanExecuteChanged();
-        RetryFailedCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
     }
 
@@ -194,9 +193,8 @@ public sealed partial class RunViewModel
         _syncInFlight = false;
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         // [Fix wave 1, C2 review Finding 1] OnSyncStarted'ın simetriği: hem normal syncCompleted hem
-        // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Rebuild/RetryFailed'ı tek yerden geri açar.
+        // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Rebuild/Cycles'ı tek yerden geri açar.
         RebuildCommand.NotifyCanExecuteChanged();
-        RetryFailedCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
     }
 
@@ -241,7 +239,6 @@ public sealed partial class RunViewModel
         // çeken 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
         // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
         RebuildCommand.NotifyCanExecuteChanged();
-        RetryFailedCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
         return true;
     }
@@ -345,7 +342,6 @@ public sealed partial class RunViewModel
         // bildirim elle tetiklenmezse Build gerçek pencerede Sync bittikten sonra da PASİF görünürdü.
         BuildCommand.NotifyCanExecuteChanged();
         RebuildCommand.NotifyCanExecuteChanged();
-        RetryFailedCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin

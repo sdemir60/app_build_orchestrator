@@ -205,7 +205,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Continue, 177, 6, "Debug", ElapsedMsAtStart: 4200));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 177, 6, "Debug", ElapsedMsAtStart: 4200));
 
         Assert.Equal(4200, vm.ElapsedMs);
         Assert.True(vm.IsRunning);
@@ -435,9 +435,9 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Continue, 1, 1, "Debug", 0)); // Continue akışı: IsRunning=true oldu
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0)); // koşu başladı: IsRunning=true
 
-        vm.OnEvent(new ErrorEvent("noResumableRun", "sürdürülebilir run yok"));
+        vm.OnEvent(new ErrorEvent("runFailed", "koşu beklenmedik bir istisnayla düştü"));
 
         Assert.False(vm.IsRunning);
         Assert.True(vm.RebuildCommand.CanExecute(null));
@@ -1293,8 +1293,8 @@ public class RunViewModelTests
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
         Assert.False(Assert.Single(vm.Projects).WillBuild); // clean
 
-        // segment 2 (Continue): RunCoordinator aynı (bayat) planı yeniden preview eder — WillBuild=true (dirty)
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Continue, 1, 1, "Debug", ElapsedMsAtStart: 0));
+        // Sonraki koşu aynı (bayat) planı yeniden preview eder — WillBuild=true (dirty)
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", ElapsedMsAtStart: 0));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true)]));
 
         Assert.False(Assert.Single(vm.Projects).WillBuild); // succeeded→clean geçişi HÂLÂ ayakta — ezilmedi
