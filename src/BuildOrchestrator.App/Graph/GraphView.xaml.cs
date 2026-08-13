@@ -339,7 +339,7 @@ public partial class GraphView : UserControl
         {
             if (ReferenceEquals(_filterMatches, value)) return;
             _filterMatches = value;
-            ApplyAllOpacities();
+            ApplyAllOpacities(GraphNodeOpacity.FilterFadeMs); // kullanıcı hareketi — koşu tikinden uzun
         }
     }
 
@@ -1104,10 +1104,10 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- koşu yaşam döngüsü (opaklık)
 
-    private void ApplyAllOpacities()
+    private void ApplyAllOpacities(double? glideMs = null)
     {
         foreach (var slot in _slotOrder)
-            ApplyNodeOpacity(slot.Visual, holdMs: 0);
+            ApplyNodeOpacity(slot.Visual, holdMs: 0, glideMs);
     }
 
     /// <summary>
@@ -1125,7 +1125,9 @@ public partial class GraphView : UserControl
     /// ÇIKARMASI gerekir, yoksa hiç parlamadan söner.</para>
     /// </summary>
     /// <param name="holdMs">Sonuç renginde PARLAK bekleme; 0 = bekleme yok (düz 280ms geçiş).</param>
-    private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs)
+    /// <param name="glideMs">Beklemesiz geçişin süresi; <c>null</c> = <see cref="GraphNodeOpacity.GlideMs"/>.
+    /// Yalnız filtre bunu ezer (<see cref="GraphNodeOpacity.FilterFadeMs"/>) — gerekçe orada.</param>
+    private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs, double? glideMs = null)
     {
         double target = GraphNodeOpacity.Resolve(
             visual.Model.Status,
@@ -1162,7 +1164,7 @@ public partial class GraphView : UserControl
         else
         {
             animation = MotionTokens.SplineTo(
-                target, TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs), EaseStandard);
+                target, TimeSpan.FromMilliseconds(glideMs ?? GraphNodeOpacity.GlideMs), EaseStandard);
         }
 
         visual.OpacityAnimation = animation;
