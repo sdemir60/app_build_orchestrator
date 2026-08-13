@@ -20,18 +20,21 @@ public class RunCountersTests
     }
 
     [Fact]
-    public void Dep_counter_counts_only_succeeded_rows_that_carry_a_dep_issue()
+    public void Dep_counter_counts_every_row_that_carries_a_dep_issue_whatever_its_status()
     {
         var rows = new[]
         {
             Row("A", ProjectRowState.Succeeded, dep: true),  // sayılır
-            Row("B", ProjectRowState.Failed, dep: true),     // dep var AMA succeeded değil → sayılmaz
-            Row("C", ProjectRowState.Succeeded, dep: false), // succeeded AMA dep yok → sayılmaz
+            // [DEĞİŞEN KURAL — design v1.5.1] Eskiden yalnız succeeded satırlar sayılıyordu ve chip listeyle
+            // AYRIŞIYORDU: kendi derlemesi de patlamış bir satırın dep uyarısı listede üçgen olarak duruyor,
+            // `dep` filtresi onu getiriyor ama chip 0 kalıyordu. Artık statüden bağımsız sayılır.
+            Row("B", ProjectRowState.Failed, dep: true),     // sayılır
+            Row("C", ProjectRowState.Succeeded, dep: false), // dep yok → sayılmaz
         };
 
         var c = RunCounters.From(rows);
 
-        Assert.Equal(1, c.DepAffected);
+        Assert.Equal(2, c.DepAffected);
         Assert.Equal(2, c.Succeeded);
         Assert.Equal(1, c.Failed);
         Assert.Equal(3, c.Total);

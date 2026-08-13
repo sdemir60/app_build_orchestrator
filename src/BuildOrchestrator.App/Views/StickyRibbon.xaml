@@ -21,6 +21,7 @@
           <ColumnDefinition Width="Auto" />  <!-- faz metni -->
           <ColumnDefinition Width="Auto" />  <!-- building chip'leri -->
           <ColumnDefinition Width="*" />     <!-- esnek boşluk -->
+          <ColumnDefinition Width="Auto" />  <!-- döngü kümesi (hata kümesinin SOLUNDA) -->
           <ColumnDefinition Width="Auto" />  <!-- hata kümesi (sağa yaslı) -->
         </Grid.ColumnDefinitions>
 
@@ -47,7 +48,13 @@
                 Style="{DynamicResource Ds.Button.Secondary.Sm}"
                 Command="{Binding RestartEngineCommand}" />
 
-        <StackPanel x:Name="PART_FailureCluster" Grid.Column="4" Orientation="Horizontal"
+        <!-- [design v1.7.0 §2.2] Döngü kümesi: yalnız Sync bir SCC bulduysa görünür ve hata kümesinin
+             SOLUNDA durur. Küme Sync'ten koşu sonuna kadar KALICIDIR — döngü bir koşu sonucu değil, bir
+             yapılandırma hatasıdır. -->
+        <StackPanel x:Name="PART_CycleCluster" Grid.Column="4" Orientation="Horizontal"
+                    VerticalAlignment="Center" Visibility="Collapsed" />
+
+        <StackPanel x:Name="PART_FailureCluster" Grid.Column="5" Orientation="Horizontal"
                     VerticalAlignment="Center" />
       </Grid>
 

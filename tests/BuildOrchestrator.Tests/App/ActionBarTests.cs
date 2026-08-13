@@ -151,7 +151,7 @@ public partial class ActionBarTests
     /// 1240px minimumda taşırıyordu. Yer seçimi hâlâ anlamlıdır: ayracın öbür yanı sayaçlarındır ve kutu
     /// Build'in yanına KONMADI — orası birincil aksiyonun yeridir.</para></summary>
     [StaFact]
-    public void The_left_group_orders_sync_then_the_maintenance_box_then_a_separator_then_the_six_counter_chips()
+    public void The_left_group_orders_sync_then_the_maintenance_box_then_a_separator_then_the_counter_chips()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
@@ -167,7 +167,9 @@ public partial class ActionBarTests
 
         var chipOrder = counterStrip.Children.Cast<UIElement>().ToList();
         Assert.Equal(
-            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.SucceededChip, bar.FailedChip, bar.SkippedChip, bar.DepChip },
+            // [design v1.7.0 §2.7-4] Temel beşli her zaman durur; son ikisi (cycle ⚠ + dep ▲) yalnız listede
+            // karşılığı varken GÖRÜNÜR — sırada yerleri sabittir, görünürlükleri koşulludur.
+            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.SucceededChip, bar.FailedChip, bar.SkippedChip, bar.CycleChip, bar.DepChip },
             chipOrder);
         GC.KeepAlive(window);
     }
@@ -353,7 +355,7 @@ public partial class ActionBarTests
     /// succeeded + depIssue taşıyarak <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN artırarak) tetiklenir —
     /// alanı doğrudan set etmek/metodu çağırmak brief kural 6'yı ihlal ederdi.</summary>
     [StaFact]
-    public void The_dep_triangle_turns_red_only_once_a_project_succeeds_with_a_real_dep_issue()
+    public void The_dep_chip_appears_only_once_some_project_carries_a_dep_issue()
     {
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
@@ -363,17 +365,18 @@ public partial class ActionBarTests
         var depCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.DepChip)).Child);
         var depPath = Assert.IsType<System.Windows.Shapes.Path>(depCanvas.Children[0]);
 
-        // ön-koşul: henüz kimse succeeded değil → DepAffected == 0 → faint.
+        // [DEĞİŞEN KURAL — design v1.5.2] Eski iddia: "chip hep durur, sayı 0 iken soluk". Chip artık YALNIZ
+        // listede karşılığı varken görünür — istisnai bir durumu anlatan bir chip'i sürekli boş taşımak
+        // sinyali zayıflatıyordu. Göründüğünde daima dolu ve kırmızıdır.
         Assert.Equal(0, vm.Counters.DepAffected);
-        Assert.Same(bar.FindResource("Brush.TextFaint"), depPath.Stroke);
+        Assert.Equal(Visibility.Collapsed, bar.DepChip.Visibility);
 
-        // ÜRETİM YOLU: RunStarted → ProjectStarted → ProjectSucceeded(DepIssues: [...]) — RunCounters.From
-        // yalnız succeeded+HasDepIssue satırları sayar (RunCounters.cs).
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100, ["dependent B henüz derlenmedi"]));
 
         Assert.Equal(1, vm.Counters.DepAffected); // ön-koşul: sayaç GERÇEKTEN arttı
+        Assert.Equal(Visibility.Visible, bar.DepChip.Visibility);
         Assert.Same(bar.FindResource("Brush.StatusFailText"), depPath.Stroke);
         GC.KeepAlive(window);
     }

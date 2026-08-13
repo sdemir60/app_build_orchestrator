@@ -19,6 +19,7 @@ public static class AccessibilityNames
     public const string FilterFailed = "Failed — filter";
     public const string FilterSkipped = "Skipped — filter";
     public const string FilterDep = "Dependency-affected — filter";
+    public const string FilterCycle = "In a dependency cycle — filter";
 
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";

@@ -18,23 +18,23 @@ namespace BuildOrchestrator.App.ViewModels;
 /// flight" derdi.</para>
 /// </summary>
 public readonly record struct RunCounters(int Total, int Building, int Queued, int Succeeded,
-                                          int Failed, int Skipped, int DepAffected, int StuckCycles)
+                                          int Failed, int Skipped, int DepAffected, int StuckCycles,
+                                          int Cycle = 0)
 {
     public static RunCounters From(IEnumerable<ProjectRowViewModel> rows)
     {
-        int total = 0, building = 0, queued = 0, succeeded = 0, failed = 0, skipped = 0, dep = 0, stuck = 0;
+        int total = 0, building = 0, queued = 0, succeeded = 0, failed = 0, skipped = 0, dep = 0, stuck = 0, cycle = 0;
         foreach (var r in rows)
         {
             total++;
+            if (r.HasDepIssue) dep++;  // [v1.5.1] statüden BAĞIMSIZ
+            if (r.InCycle) cycle++;    // [v1.7.0 §5] kalıcı üyelik
             switch (r.State)
             {
                 // "Started" ile "şu an derleniyor" AYNI ŞEY DEĞİL — tek predicate ProjectRowViewModel.IsCompiling.
                 case ProjectRowState.Started: if (r.IsCompiling) building++; else queued++; break;
                 case ProjectRowState.Pending: queued++; break;
-                case ProjectRowState.Succeeded:
-                    succeeded++;
-                    if (r.HasDepIssue) dep++; // yalnız succeeded + dep-issue
-                    break;
+                case ProjectRowState.Succeeded: succeeded++; break;
                 case ProjectRowState.Failed: failed++; break;
                 case ProjectRowState.Skipped:
                     skipped++;
@@ -42,6 +42,6 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
                     break;
             }
         }
-        return new RunCounters(total, building, queued, succeeded, failed, skipped, dep, stuck);
+        return new RunCounters(total, building, queued, succeeded, failed, skipped, dep, stuck, cycle);
     }
 }
