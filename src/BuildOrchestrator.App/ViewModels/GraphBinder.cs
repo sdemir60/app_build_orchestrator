@@ -40,11 +40,11 @@ public static class GraphBinder
         {
             rows.TryGetValue(node.Id, out var row);
             // Elde topoloji varsa Sync yapılmıştır (bu metot yalnız o zaman çağrılır) → synced: true.
-            var status = StatusOf(row, node.InCycle, synced: true);
+            var status = StatusOf(row, synced: true);
             // [Task 5] Üyelik de StatusOf'un savunmacı dalıyla AYNI desen: satır varsa TEK otorite (row.InCycle),
             // yoksa (topoloji düğümünün henüz satırı yok) topolojinin kendi bayrağı.
             bool inCycle = row?.InCycle ?? node.InCycle;
-            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, inCycle));
+            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, inCycle, row?.WillBuild));
         }
         return result;
     }
@@ -115,15 +115,14 @@ public static class GraphBinder
     /// <summary>Graf statüsü — eşleme TEK otoriteden (<see cref="ProjectRowViewModel.Status"/>) gelir:
     /// <list type="bullet">
     /// <item>Sync yapılmamışsa (<paramref name="synced"/> false) her şey <see cref="GraphStatus.Discovered"/>.</item>
-    /// <item>Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı): <paramref name="inCycle"/> ise
-    /// <see cref="GraphStatus.Cycle"/>, değilse <see cref="GraphStatus.Discovered"/>.</item>
-    /// <item>Satır varsa doğrudan <see cref="ProjectRowViewModel.Status"/> (State+InCycle+WillBuild+IsRunActive'in
-    /// tek eşleme yeri — cycle/queued dahil). Burada eşleme KOPYALANMAZ.</item>
+    /// <item>Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı) <see cref="GraphStatus.Discovered"/>.</item>
+    /// <item>Satır varsa doğrudan <see cref="ProjectRowViewModel.Status"/> (State+WillBuild+IsRunActive'in tek
+    /// eşleme yeri). Burada eşleme KOPYALANMAZ. Döngü üyeliği bu kanalda DEĞİLDİR (design v1.7.0 §5): düğümün
+    /// kendi <c>InCycle</c> alanında taşınır ve çekirdek rengini belirler.</item>
     /// </list></summary>
-    public static GraphStatus StatusOf(ProjectRowViewModel? row, bool inCycle, bool synced)
+    public static GraphStatus StatusOf(ProjectRowViewModel? row, bool synced)
     {
         if (!synced) return GraphStatus.Discovered;
-        if (row is null) return inCycle ? GraphStatus.Cycle : GraphStatus.Discovered;
-        return row.Status;
+        return row?.Status ?? GraphStatus.Discovered;
     }
 }

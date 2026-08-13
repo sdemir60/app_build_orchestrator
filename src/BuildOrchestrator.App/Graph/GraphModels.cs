@@ -13,11 +13,13 @@ namespace BuildOrchestrator.App.Graph;
 /// kartlarında yaşar). Bu yüzden kısa-ad öneki ve <c>HasDepIssue</c> bayrağı bu kayıttan SÖKÜLDÜ — grafta
 /// hiçbir okuyucuları kalmamıştı.</para>
 ///
-/// <para>[Task 5] <see cref="InCycle"/> <see cref="Status"/>'tan BAĞIMSIZDIR: statü koşu boyunca değişir
-/// (discovered → queued → building → sonuç) ama üyelik değişmez — <c>GraphView</c> bunu HER statüde kalıcı
-/// bir köşe rozetiyle çizer, artık statünün kendisiyle (eskiden turuncu boyama) anlatılmaz.</para>
+/// <para>[design v1.7.0 §2.3/§5] Düğüm ÜÇ kanal taşır ve hiçbiri diğerinin yerine geçmez:
+/// <see cref="Status"/> "bu koşuda ne oldu" (kenar), <see cref="WillBuild"/> "sıradaki Build buna dokunacak mı"
+/// ve <see cref="InCycle"/> "kodda döngü var mı" (ikisi birlikte ÇEKİRDEĞİ boyar). Üyelik statüden
+/// BAĞIMSIZDIR: statü koşu boyunca değişir (discovered → queued → building → sonuç) ama üyelik değişmez.</para>
 /// </summary>
-public sealed record GraphNode(string Name, int Layer, GraphStatus Status, bool InCycle = false)
+/// <param name="WillBuild">Plan kanalı: <c>true</c> derlenecek · <c>false</c> güncel · <c>null</c> bilinmiyor.</param>
+public sealed record GraphNode(string Name, int Layer, GraphStatus Status, bool InCycle = false, bool? WillBuild = null)
 {
     /// <summary>[D5] Ortak öneği atılmış kısa ad. Grafın kendisi ARTIK kullanmaz (§2.3: node üstü etiket
     /// yok) ama proje adını dar bir yerde gösteren diğer yüzeyler kullanır: liste kartının dep-tooltip'i

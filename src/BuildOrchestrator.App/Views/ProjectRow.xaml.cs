@@ -131,9 +131,9 @@ public partial class ProjectRow : UserControl
     internal int ApplyAllCount { get; private set; }
     internal FrameworkElement DepSlot => PART_DepSlot;
     internal FrameworkElement DepIcon => PART_DepIcon;
-    /// <summary>[cycle rounds/Task 9 Part 2] Kalıcı yakınsamayan döngü rozeti — AYNI 14px dep-slotunda, üçgenle
-    /// karşılıklı dışlayıcı (bkz. ApplyDep). StatusGlyph'in KENDİ cycle çizimini reuse eder (yeni geometri YOK).</summary>
-    internal StatusGlyph CycleBadge => PART_CycleBadge;
+    /// <summary>[design v1.7.0 §2.4] Uyarı slotundaki TEK üçgen — rengi nedeni söyler (turuncu = yapısal
+    /// döngü, amber = geçici dep-issue).</summary>
+    internal Path DepTriangle => PART_DepTriangle;
     internal FrameworkElement BreathLayer => PART_Breath;
     internal void SimulateHover(bool hover) => SetHover(hover);
     internal TranslateTransform InnerTranslate => PART_InnerTranslate;
@@ -218,6 +218,8 @@ public partial class ProjectRow : UserControl
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
                 PART_Dot.State = _vm?.WillBuild;
+        PART_Dot.InCycle = _vm?.InCycle ?? false;
+                PART_Dot.InCycle = _vm?.InCycle ?? false;
                 ApplyRightBlock();
                 // Not: WillBuild, Status'u (queued) da tetikler → şerit/glyph Status case'inde tazelenir.
                 break;
@@ -257,6 +259,7 @@ public partial class ProjectRow : UserControl
         System.Windows.Automation.AutomationProperties.SetName(this, _vm?.Name ?? "");
         PART_Sln.Text = _vm?.SolutionName;
         PART_Dot.State = _vm?.WillBuild;
+        PART_Dot.InCycle = _vm?.InCycle ?? false;
         ApplyStatusVisuals(); // glyph/ad-rengi/şerit/tooltip (Status'tan)
         ApplyBreathing();     // building nabzı (State'ten) — ilk kurulumda shake YOK (_prevState taze)
         ApplyDep();
@@ -275,9 +278,14 @@ public partial class ProjectRow : UserControl
 
         PART_Glyph.Status = status;
 
-        // Ad rengi: skipped | pending(discovered/queued/cycle) → dim (BuildApp.jsx:348) — alt-durum (State) okunur.
-        bool dim = state is ProjectRowState.Skipped or ProjectRowState.Pending;
-        PART_Name.SetResourceReference(TextBlock.ForegroundProperty, dim ? "Brush.TextDim" : "Brush.TextPrimary");
+        // [design v1.7.0 §2.4] Ad TEK kurala bağlıdır: bu koşuda İŞİ OLAN satır (dirty · queued · building ·
+        // failed) primary beyaz, güncel/atlanacak satır secondary gri. Eski kural alt-duruma bakıyordu ve
+        // "derlenecek ama henüz sırası gelmemiş" bir satırı da soluk gösteriyordu — oysa onun işi var.
+        // Kalınlık HER ZAMAN 500'dür (XAML); bold satır ritmini bozuyordu.
+        bool hasWork = state is ProjectRowState.Started or ProjectRowState.Failed
+                       || (state == ProjectRowState.Pending && _vm?.WillBuild == true);
+        PART_Name.SetResourceReference(TextBlock.ForegroundProperty,
+            hasWork ? "Brush.TextPrimary" : "Brush.TextSecondary");
 
         SetStripeFill();
         UpdateGlyphTooltip();
@@ -294,23 +302,27 @@ public partial class ProjectRow : UserControl
         ApplyBreathing();
     }
 
+    /// <summary>
+    /// [design v1.7.0 §2.4 — A kanalı] Sol şerit "bu koşuda ne oldu" der ve HER SATIRDA vardır: workspace
+    /// açıldığı andan itibaren gri, koşuda amber, bitişte sonuç rengi.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> <c>discovered</c> eskiden ŞERİTSİZDİ (transparent) ve <c>skipped</c>'ten
+    /// farklı bir griye sahipti. İkisi de düzeltildi: şerit hiç kaybolmaz (Sync şeridi getirmez, zaten
+    /// oradadır — Sync yalnız plan kanalını tazeler) ve iki gri TEK griye indi; "bazıları koyu bazıları açık"
+    /// iki ayrı gri, aralarında bir anlam varmış izlenimi veriyordu. Zincir: gri → açık gri (queued) → amber
+    /// (building) → yeşil/kırmızı.</para>
+    /// </summary>
     private void SetStripeFill()
     {
-        string? key = (_vm?.Status ?? GraphStatus.Discovered) switch
+        string key = (_vm?.Status ?? GraphStatus.Discovered) switch
         {
             GraphStatus.Queued => "Brush.StatusQueued",
             GraphStatus.Building => "Brush.Amber",
             GraphStatus.Succeeded => "Brush.StatusSuccess",
             GraphStatus.Failed => "Brush.StatusFail",
-            GraphStatus.Skipped => "Brush.StatusSkipped",
-            GraphStatus.Cycle => "Brush.StatusCycle",
-            _ => null, // discovered → transparent
+            _ => "Brush.StatusSkippedBorder", // discovered ve skipped AYNI gri
         };
-        // Seçili + discovered → amber (BuildApp.jsx:374).
-        if (key is null && (_vm?.IsSelected ?? false)) key = "Brush.Amber";
-
-        if (key is null) PART_Stripe.Fill = Brushes.Transparent;
-        else PART_Stripe.SetResourceReference(Shape.FillProperty, key);
+        PART_Stripe.SetResourceReference(Shape.FillProperty, key);
     }
 
     private void ApplyDuration()
@@ -329,65 +341,49 @@ public partial class ProjectRow : UserControl
             state == ProjectRowState.Failed ? "Brush.StatusFailText" : "Brush.TextDim");
     }
 
-    /// <summary>[cycle rounds/Task 9] AYNI 14px slotu ÜÇ sinyal paylaşır, birbirini KARŞILIKLI DIŞLAR:
+    /// <summary>
+    /// [design v1.7.0 §2.4] Uyarı slotu: TEK üçgen, rengi EN AĞIR nedeni söyler ve tooltip nedenleri alt alta
+    /// listeler.
     /// <list type="bullet">
-    /// <item><b>CycleUnconverged</b> (rozet, Part 2) — HER ZAMAN kazanır. Satır bu run'da hiç invoke edilmedi;
-    /// hem üçgeni (yanlış "last successful output referenced" iması — bir çıktı üretilmedi Kİ) hem de bayat bir
-    /// <see cref="ProjectRowViewModel.DepIssues"/> kalıntısını (Continue segment'lerinde satır nesnesi ARTIK
-    /// temizlenmez — <see cref="ProjectRowViewModel.CycleUnconverged"/> XML dokümanı) EZER: en güncel/kesin
-    /// sinyal budur. <b>[review fix 1] Yalnız <c>Skipped</c>'te ANLAMLI</b> — <c>RunCounters.cs</c>'in
-    /// <c>case ProjectRowState.Skipped:</c> kapısıyla AYNI kural. Kök neden <see cref="RunViewModel.OnProjectDone"/>'da
-    /// temizlenir (proje GERÇEKTEN invoke edilince bayrak düşer); buradaki <c>State == Skipped</c> kapısı
-    /// SAVUNMA HATTIDIR — bayrak her nasılsa bayat kalıp Succeeded/Failed'e sızsa bile render katmanı yine de
-    /// rozet/tooltip basmaz ("az önce düzelen proje kalıcı-kırık gibi görünür" hatası ikinci kez mümkün olmasın).</item>
-    /// <item><b>HasDepIssue</b> (üçgen, mevcut) — dep-issue metni CycleUnsettled'tan daha spesifik/actionable,
-    /// ikisi de true ise üçgen KAZANIR ama metin eskisiyle birebir kalır.</item>
-    /// <item><b>CycleUnsettled</b> (üçgen, Part 1) — yalnız yukarıdaki ikisi yokken kendi metnini basar.</item>
-    /// <item><b>[cycles] Sıradan döngü ÜYELİĞİ</b> (rozet) — en zayıf sinyal, en sona düşer. Yalnız statü
-    /// glyph'i döngüyü ARTIK göstermiyorken çizilir: satır <c>GraphStatus.Cycle</c> iken aynı şeyi iki kez
-    /// söylemek olurdu. Koşul <see cref="ProjectRowViewModel.Status"/>'tan OKUNUR, yeniden TÜRETİLMEZ — "bu
-    /// satır döngüyü nerede gösteriyor" sorusunun tek sahibi orasıdır.</item>
-    /// </list></summary>
+    /// <item><b>Döngü üyeliği → turuncu</b> (<c>Brush.StatusCycle</c>). Yapısal ve KALICIDIR: satırın dep-issue'su
+    /// da olsa turuncu kazanır, çünkü geçici olan diğeridir.</item>
+    /// <item><b>Yalnız dep-issue → amber</b> (<c>Brush.AmberText</c>). Geçicidir: bağımlılık düzelince bir
+    /// sonraki koşu temizler. Kırmızı KULLANILMAZ — kırmızı sonuç kanalınındır ("derlendi ve patladı"),
+    /// oysa bu satır kendi işini yapmış olabilir.</item>
+    /// <item><b>Satır building iken slot GİZLİDİR</b> — dönen spinner'la yarışmaz.</item>
+    /// </list>
+    /// Statü glyph'i bundan ETKİLENMEZ: o daima gerçek statüyü gösterir, uyarı onun yerine asla geçmez.
+    /// </summary>
     private void ApplyDep()
     {
-        bool cycleUnconverged = (_vm?.CycleUnconverged ?? false) && _vm?.State == ProjectRowState.Skipped;
+        bool building = _vm?.IsCompiling ?? false;
+        bool inCycle = _vm?.InCycle ?? false;
         bool hasDepIssue = _vm?.HasDepIssue ?? false;
         bool cycleUnsettled = _vm?.CycleUnsettled ?? false;
-        // Statü glyph'i döngüyü zaten gösteriyorsa rozet gereksizdir (bkz. yukarıdaki 4. madde).
-        bool cycleMembership = (_vm?.InCycle ?? false) && _vm?.Status != GraphStatus.Cycle;
-        bool showTriangle = !cycleUnconverged && (hasDepIssue || cycleUnsettled);
+        bool cycleUnconverged = _vm?.CycleUnconverged ?? false;
+        bool show = !building && (inCycle || hasDepIssue || cycleUnsettled || cycleUnconverged);
 
-        PART_CycleBadge.Visibility = cycleUnconverged || (cycleMembership && !showTriangle)
-            ? Visibility.Visible : Visibility.Collapsed;
-        PART_DepIcon.Visibility = showTriangle ? Visibility.Visible : Visibility.Collapsed;
+        PART_DepIcon.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) { PART_DepTip.Content = null; UpdateGlyphTooltip(); return; }
 
-        if (cycleUnconverged)
+        bool structural = inCycle || cycleUnsettled || cycleUnconverged;
+        PART_DepTriangle.SetResourceReference(Shape.StrokeProperty,
+            structural ? "Brush.StatusCycle" : "Brush.AmberText");
+
+        // Nedenler alt alta: en ağırdan (yapısal, kalıcı) en hafife (geçici dep-issue).
+        var reasons = new List<string>(3);
+        if (cycleUnconverged) reasons.Add(CycleUnconvergedTooltip);
+        else if (cycleUnsettled) reasons.Add(CycleUnsettledTooltip);
+        else if (inCycle) reasons.Add(CycleMembershipTooltip);
+        if (hasDepIssue && _vm?.DepIssues is { } issues)
         {
-            PART_DepTip.Content = CycleUnconvergedTooltip;
-        }
-        else if (hasDepIssue && _vm?.DepIssues is { } issues)
-        {
-            // Kısa adlar (veri-türevli ortak önek atılmış — D5, artık hardcode "OSYS." değil), virgülle;
-            // önek satıra RunViewModel'den itilir (NamePrefix). Tooltip BİREBİR (brief slot 6).
+            // Kısa adlar (veri-türevli ortak önek atılmış — D5); önek satıra RunViewModel'den itilir.
             string prefix = _vm?.NamePrefix ?? "";
             string names = string.Join(", ", issues.Select(n => GraphNode.ShortLabel(n, prefix)));
-            PART_DepTip.Content = $"Failed dependency: {names} — last successful output referenced";
+            reasons.Add($"Dependency issue: {names} — last successful output referenced");
         }
-        else if (cycleUnsettled)
-        {
-            PART_DepTip.Content = CycleUnsettledTooltip;
-        }
-        else if (cycleMembership)
-        {
-            PART_DepTip.Content = CycleMembershipTooltip;
-        }
-        else
-        {
-            // [review fix Minor] Slot boşken hayalet tooltip kalmasın — bugün zararsız (slot sıfır yükseklikte
-            // çöker) ama savunmacı: layout yarın değişirse eski metin asılı kalmaz.
-            PART_DepTip.Content = null;
-        }
-        UpdateGlyphTooltip(); // [review fix 2] ARTIK yalnız dep-issue değil — CycleUnsettled/CycleUnconverged da glyph tooltip'ini değiştirir
+        PART_DepTip.Content = string.Join(Environment.NewLine, reasons);
+        UpdateGlyphTooltip();
     }
 
     private void ApplySha()
@@ -402,9 +398,15 @@ public partial class ProjectRow : UserControl
         //
         // HİÇ DERLENMEMİŞ proje (BuiltCommit yok) ⇒ sol yarı boştur: çift yerine YALNIZ hedef basılır — yalın-ok
         // pürüzü (" → b7e91d4") üretilmez. Görünürlük ApplyRightBlock'ta.
+        // [design v1.7.0 §2.4] SHA HER satırda görünür ve iki biçimi vardır: derlenecek satırda çift
+        // ("cur → target", secondary), güncel satırda TEK sha (faint). Eskiden yalnız dirty satırlarda
+        // gösteriliyordu ve hover'dan çıkıldığında satırlar arasında layout sıçraması oluyordu.
         string cur = Short7(_vm?.CurrentSha);
         string target = Short7(_vm?.TargetSha);
-        PART_Sha.Text = cur.Length == 0 ? target : $"{cur} → {target}";
+        bool dirty = _vm?.WillBuild == true;
+        PART_Sha.Text = !dirty || cur.Length == 0 || cur == target ? target : $"{cur} → {target}";
+        PART_Sha.SetResourceReference(TextBlock.ForegroundProperty,
+            dirty ? "Brush.TextSecondary" : "Brush.TextFaint");
     }
 
     private static string Short7(string? sha) => sha is null ? "" : ViewModels.RunViewModel.Short7(sha);
@@ -414,7 +416,7 @@ public partial class ProjectRow : UserControl
     private void ApplyRightBlock()
     {
         bool showIcons = _hover;
-        bool showSha = !_hover && _vm?.WillBuild == true;
+        bool showSha = !_hover; // [design v1.7.0 §2.4] SHA her satırda — yalnız hover ikonları onu örter
         if (showIcons) EnsureActions().HoverIcons.Visibility = Visibility.Visible;
         else if (_actions is { } actions) actions.HoverIcons.Visibility = Visibility.Collapsed;
         PART_Sha.Visibility = showSha ? Visibility.Visible : Visibility.Collapsed;

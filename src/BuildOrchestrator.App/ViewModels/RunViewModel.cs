@@ -175,7 +175,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
         // Buradan aşağısı YALNIZ Pending'dir: koşu bu satırı planladıysa kuyruk, planlamadıysa (ya da koşu
         // yoksa) döngü üyeliği — o da yoksa ölü envanter.
         _ when IsRunActive && WillBuild == true => Controls.GraphStatus.Queued,
-        _ when InCycle => Controls.GraphStatus.Cycle,
+        // [design v1.7.0 §5] Döngü ÜYELİĞİ bir statü DEĞİLDİR: kalıcı bir yapısal özelliktir ve kendi
+        // kanalında (nokta + uyarı üçgeni + graf çekirdeği) yaşar. Statü kanalı yalnız "bu koşuda ne oldu"yu
+        // söyler; üyelik onu asla ezmez — eskiden Pending bir üye Cycle statüsüne düşüyor ve satır
+        // "derlenmedi mi, atlandı mı, hiç görülmedi mi" sorusuna cevap veremiyordu.
         _ => Controls.GraphStatus.Discovered,
     };
 

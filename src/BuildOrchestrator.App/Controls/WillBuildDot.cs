@@ -41,6 +41,21 @@ public class WillBuildDot : Control
         set => SetValue(StateProperty, value);
     }
 
+    /// <summary>
+    /// [design v1.7.0 §5 — C kanalı] Proje bir dairesel bağımlılıkta mı. <b>Plan kanalını EZER:</b> üyenin
+    /// noktası, derlenip yeşil bitse bile turuncu kalır — kod hâlâ döngülüdür ve bu, koşunun sonucundan
+    /// bağımsız KALICI bir yapısal olgudur. Turuncu ancak kaynak düzelip Sync bunu görmediğinde kalkar.
+    /// </summary>
+    public static readonly DependencyProperty InCycleProperty = DependencyProperty.Register(
+        nameof(InCycle), typeof(bool), typeof(WillBuildDot),
+        new PropertyMetadata(false, (d, _) => ((WillBuildDot)d).ApplyState()));
+
+    public bool InCycle
+    {
+        get => (bool)GetValue(InCycleProperty);
+        set => SetValue(InCycleProperty, value);
+    }
+
     private Ellipse? _dot;
 
     public override void OnApplyTemplate()
@@ -59,21 +74,27 @@ public class WillBuildDot : Control
         _ => "Unknown — waiting for Sync",
     };
 
+    /// <summary>[design v1.7.0 §5] Döngü üyesinin metni plan durumunu DEĞİL yapısal olguyu söyler — nokta da
+    /// onu gösterdiği için ikisi aynı şeyi anlatır.</summary>
+    internal const string CycleDescription =
+        "In a dependency cycle — standard builds skip it; Resolve cycles builds it in two passes";
+
     private void ApplyState()
     {
-        string description = DescriptionFor(State);
+        string description = InCycle ? CycleDescription : DescriptionFor(State);
         SetValue(AutomationProperties.NameProperty, description);
         ToolTip = description;
 
         if (_dot is null) return;
-        _dot.SetResourceReference(Shape.FillProperty, State switch
+        // C kanalı B'yi EZER: döngü üyesi her zaman turuncudur (design v1.7.0 §5).
+        _dot.SetResourceReference(Shape.FillProperty, InCycle ? "Brush.StatusCycle" : State switch
         {
             true => "Brush.DotDirty",
             false => "Brush.DotClean",
             _ => "Brush.DotUnknown",
         });
         // Halka YALNIZ unknown'da çizilir (dolu iki durumda kontur yoktur, _ds_bundle.js:1859-1868).
-        if (State is null) _dot.SetResourceReference(Shape.StrokeProperty, "Brush.DotOutline");
+        if (State is null && !InCycle) _dot.SetResourceReference(Shape.StrokeProperty, "Brush.DotOutline");
         else _dot.Stroke = null;
     }
 }

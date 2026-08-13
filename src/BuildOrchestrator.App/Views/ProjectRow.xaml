@@ -32,8 +32,10 @@
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
-        <!-- 1) Statü şeridi (Width 2/3, dikey stretch, kenara yapışık; renk statüden). -->
-        <Rectangle x:Name="PART_Stripe" Grid.Column="0" Width="2" HorizontalAlignment="Left" />
+        <!-- 1) Statü şeridi (A kanalı): Width 2/3, kenara yapışık, renk statüden. [design v1.7.0 §2.4]
+             1px dikey iç boşluk — boşluk satır ayracı kadardır: bitişik satırlarda tek kesintisiz çizgiye
+             kaynamaz, ama araları da açılmaz. -->
+        <Rectangle x:Name="PART_Stripe" Grid.Column="0" Width="2" HorizontalAlignment="Left" Margin="0,1" />
 
         <!-- 2+3) İç sarmalayıcı: WillBuildDot + (ad + sln). Seçiliyken TranslateX 4. -->
         <Grid x:Name="PART_Inner" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
@@ -84,12 +86,11 @@
           </controls:StatusGlyph.ToolTip>
         </controls:StatusGlyph>
 
-        <!-- 6) depIssue slotu — SABİT 14px (boşken bile var → hiza asla bozulmaz). [cycle rounds/Task 9 Part 2]
-             Aynı slot İKİNCİ bir görseli de taşır: kalıcı yakınsamayan döngü (CycleUnconverged) satırı Skipped
-             kalır ama üçgen YERİNE StatusGlyph'in KENDİ cycle çizimini (Icon.StatusCycle/Brush.StatusCycleText,
-             yeni geometri YOK) turuncu rozet olarak gösterir — ikisi ASLA aynı anda görünmez (ApplyDep kod-tarafı
-             seçer). Tooltip TEK yerden (PART_DepTip, slot Grid'ine taşındı) — hangi ikon görünürse görünsün aynı
-             kaynak. -->
+        <!-- 6) Uyarı slotu — SABİT 14px (boşken bile var → hiza asla bozulmaz). [design v1.7.0 §2.4]
+             Slotta TEK üçgen vardır: renk EN AĞIR nedeni söyler (döngü üyesi → turuncu, yalnız dep-issue →
+             amber) ve tooltip nedenleri alt alta listeler. Öncesinde iki ayrı görsel (kırmızı dep üçgeni +
+             turuncu cycle rozeti) dönüşümlü çiziliyordu; kırmızı SONUÇ kanalına aittir ve burada yanlış
+             alarm veriyordu. Rengi kod-tarafı yazar (ApplyDep). -->
         <Grid x:Name="PART_DepSlot" Grid.Column="4" Width="14" Margin="8,0,0,0"
               VerticalAlignment="Center" HorizontalAlignment="Center">
           <Grid.ToolTip>
@@ -98,14 +99,12 @@
           <Viewbox x:Name="PART_DepIcon" Width="12" Height="12" Visibility="Collapsed"
                    HorizontalAlignment="Center" VerticalAlignment="Center">
             <Canvas Width="24" Height="24">
-              <Path Data="{DynamicResource Icon.AlertTri}"
+              <Path x:Name="PART_DepTriangle" Data="{DynamicResource Icon.AlertTri}"
                     StrokeThickness="{DynamicResource Icon.AlertTri.StrokeThickness}"
-                    Stroke="{DynamicResource Brush.StatusFailText}"
+                    Stroke="{DynamicResource Brush.AmberText}"
                     StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
             </Canvas>
           </Viewbox>
-          <controls:StatusGlyph x:Name="PART_CycleBadge" Status="Cycle" Size="12" Visibility="Collapsed"
-                                HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
 
         <!-- 7) Süre: mono Xs, tabular, sağa yaslı, MinWidth 46. -->
