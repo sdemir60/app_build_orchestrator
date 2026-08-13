@@ -1206,14 +1206,19 @@ the frontier sits in the middle of the list, so a single wheel notch parked foll
 **Event stream.** A capped list of chronological one-line events. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
-cost more than it saves here — each row owns animation state (the newest line is typed out, a done line glows
+cost more than it saves here — each row owns animation state (a done line glows
 once), and recycling containers would swap the model underneath a running animation. Events arriving less than
 340 ms apart and all error events print instantly. Rows for projects are clickable and
 participate in the shared selection. A run that finishes with zero failures glows its done line once
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
 
-**Action bar.** Sync; the maintenance box; the counter chips (`Σ`, building, `✓`, `✗`, `—`, `▲`), each a filter toggle;
+**Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
+there (`Σ`, building, `✓`, `✗`, `—`); two more appear **only when the list actually holds one** — `⚠` for cycle
+membership and `▲` for dependency-affected. Both describe exceptional situations, and carrying them permanently
+as empty grey chips weakened the signal. Pressing a filter also drops the selection: a selection locks the
+graph camera onto one node, a filter says "look at this set", and the two fought each other.
+The remaining bar carries;
 the branch
 chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf chip; and the Build
 split-button, whose menu carries exactly two items in every phase: *Build — Only stale projects* and
@@ -1397,14 +1402,18 @@ lines.
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`.
 - The live document is capped at a render slice of 200 lines; the full log is on disk and is paged in on
   demand (§5.5).
-- **Hybrid active line:** the newest line is typed in a `TextBlock` overlaid beneath the document and committed
-  when finished. The cost is that the active line is not selectable for roughly 250 ms; that is the cleanest
-  available trade. The caret is a 7 × 13 px rectangle blinking at 1.1 s, not a font glyph, and fades out
-  ~420 ms after typing stops.
-- Selecting a project switches the panel header to `← Back` + project name + status, and the log opens as a
-  cascade: three lines every 26 ms, each fading in over 140 ms.
-- Typing degrades under load: a burst suspends typing and prints instantly, errors always skip typing, and raw
-  MSBuild output is never typed character by character.
+- **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
+  edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
+  second and a stamp on each of them carried no information; time lives in one place, the event stream and the
+  ribbon's elapsed counter.
+- **Nothing is typed.** Live lines print immediately. The only live thing in the console is the prompt line at
+  the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), with `ready` beside it while idle.
+- **Panel transitions are one piece.** Opening a project log and coming back with `← Back` both settle the
+  content down from its bottom edge over 340 ms — a hinge, not a per-line cascade — so a three-line log and a
+  two-hundred-line narrative open at the same rhythm. `perspective`/`rotateX` do not exist in WPF; the nearest
+  native equivalent (a bottom-anchored Y scale plus a translate) carries the same gesture.
+- The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
+  other mono surface stays at 400.
 
 ### 13.6 Graph renderer
 
@@ -1715,11 +1724,15 @@ meets 4.5:1.
 | Succeeded | ✓ in a ring | Succeeded |
 | Failed | ✗ in a ring | Failed |
 | Skipped | — in a ring | Skipped |
-| Cycle | warning triangle, no ring | Cycle |
 
-`Cycle` says the project is *in* a dependency cycle. A `Build` will not compile it; *Resolve cycles* will
-(§8.1). It is there to keep a structural problem visible rather than to normalise it, since the real repair is
-to break the back edge in the source.
+**Cycle membership is not a status.** Being in a dependency cycle is a permanent structural fact, not something
+that happened during a run, so it has its own channel and never occupies the status one: the row's dot and the
+graph node's core stay orange whatever the run did — even after the member builds green, because the source is
+still circular — and the row's fixed 14 px warning slot carries a single triangle whose colour names the
+heaviest reason (orange for the cycle, amber for a dependency issue on its own; red is never used here, since
+red means "built and blew up"). The status glyph always shows the real status; the warning never replaces it,
+and while the row is building the slot is empty so nothing competes with the spinner. A `Build` will not
+compile a cycle; *Resolve cycles* will (§8.1).
 
 **`Cycle` is a pre-run statement.** It holds while nothing has been said about the row in this run — after a
 Sync, or in a run that has not planned it. The moment the engine speaks about the row (started, finished,
@@ -1842,7 +1855,7 @@ Four contract rules, each enforced by a test:
    `ContainerVisual.Opacity` cannot be animated at all, which is why graph layer hosts are `UIElement`s.
 
 Decorative infinite animations run at `DesiredFrameRate=30`; all counters tick from one `DispatcherTimer`;
-timing-sensitive sequences (typewriter, cascade) are `Stopwatch`-based rather than trusting the ~15.6 ms
+timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
 `DispatcherTimer` resolution. Resetting an observable collection is prohibited — it destroys running
 animations.
 
@@ -2033,8 +2046,8 @@ do, and how the interface works around each — useful to know before attempting
 3. **No compositor.** Animations tick on the UI thread, so "the interface keeps animating while it is busy"
    cannot be guaranteed. The countermeasures are the process split (§4.1) and a hard rule against synchronous
    work on the UI thread.
-4. **No per-line transform inside AvalonEdit.** The console cascade keeps its exact tempo but fades lines in
-   rather than translating and scaling them.
+4. **No per-line transform and no CSS perspective inside AvalonEdit.** The console's panel transition is played
+   on the editor as a whole (bottom-anchored Y scale + translate + fade) rather than as a 3-D hinge.
 5. **Frozen resources cannot be animated.** Shared brushes and effects must be copied per instance before being
    driven (§13.8, §14.5).
 6. **No native smooth scrolling.** It is built from an attached property, an animator and an arbiter (§13.4).

@@ -16,10 +16,13 @@ public sealed partial class RunViewModel
 {
     // ---------------------------------------------------------------- [T40] statü chip'i filtre toggle'ı
 
-    /// <summary>[T40] Sayaç chip'i toggle'ı: aynı filtreye ikinci tık temizler; <c>null</c> (Σ) HER ZAMAN temizler
-    /// (BuildApp.jsx:1550 <c>onClick={() =&gt; setFilter(null)}</c> vs :1554 <c>toggleFilter('building')</c>).</summary>
+    /// <summary>[T40] Sayaç chip'i toggle'ı: aynı filtreye ikinci tık temizler; <c>null</c> (Σ) HER ZAMAN temizler.
+    /// <para>[design v1.7.0 — Filtreleme] Filtreye basmak SEÇİMİ DE DÜŞÜRÜR: seçim graf kamerasını bir düğüme
+    /// kilitler ve konsolu o projenin loguna alır; filtre ise "bu kümeye bak" der. İkisi aynı anda açıkken
+    /// kullanıcı filtrelenmiş listeye bakarken graf ilgisiz bir düğüme odaklı kalıyordu.</para></summary>
     public void ToggleFilter(string? filter)
     {
+        SelectedProjectId = null;
         if (filter is null) { ActiveFilter = null; return; }
         ActiveFilter = string.Equals(ActiveFilter, filter, StringComparison.Ordinal) ? null : filter;
     }
