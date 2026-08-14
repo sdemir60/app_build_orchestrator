@@ -24,8 +24,10 @@ public class ConsoleTiltInTests
     {
         var view = new ConsoleView { AnimationsEnabledProvider = () => true };
         DsResources.Realize(DsResources.NewHost(), view);
-        view.Measure(new Size(800, 400));
-        view.Arrange(new Rect(0, 0, 800, 400));
+        // Küçük bir panel yeter: geçiş dokusu gerçek bir bitmap render'ıdır ve süit paralel koşarken
+        // gereksiz piksel işi, zamanlamaya duyarlı komşu testleri bütçelerinin üstüne itiyor.
+        view.Measure(new Size(200, 100));
+        view.Arrange(new Rect(0, 0, 200, 100));
         view.UpdateLayout();
         return view;
     }
@@ -112,8 +114,10 @@ public class ConsoleTiltInTests
     {
         var view = new ConsoleView { AnimationsEnabledProvider = () => false };
         DsResources.Realize(DsResources.NewHost(), view);
-        view.Measure(new Size(800, 400));
-        view.Arrange(new Rect(0, 0, 800, 400));
+        // Küçük bir panel yeter: geçiş dokusu gerçek bir bitmap render'ıdır ve süit paralel koşarken
+        // gereksiz piksel işi, zamanlamaya duyarlı komşu testleri bütçelerinin üstüne itiyor.
+        view.Measure(new Size(200, 100));
+        view.Arrange(new Rect(0, 0, 200, 100));
         view.UpdateLayout();
 
         view.PlayCascade(["first line"], buildInProgress: false);
