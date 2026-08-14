@@ -27,9 +27,11 @@
          kalır ve yeni satırlar onun ÜSTÜNE birikir. Metnin üstüne binmemesi için editörün altında bir tam
          satır boyu yer ayrılır (ConsoleView.ReservePromptRow). Renk event stream'in aktif satırıyla AYNI
          amber — iki panel aynı dili konuşur. -->
+    <!-- Konum ConsoleView.PositionPrompt'tan gelir: belgenin SON satırı. Panele yaslanmaz — kısa bir belgede
+         metin tepede kalır ve dibe yaslı imleç metinden kopup tek başına yanardı. -->
     <StackPanel x:Name="ActiveLineOverlay" Orientation="Horizontal" Visibility="Collapsed"
-                HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"
-                Margin="12,0,0,8">
+                HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False"
+                Margin="12,8,0,0">
       <Rectangle x:Name="ActiveCursor" Width="7" Height="13" Margin="0,0,8,0"
                  Fill="{DynamicResource Brush.AmberText}" VerticalAlignment="Center" />
       <TextBlock x:Name="ActiveLineText" FontSize="{DynamicResource FontSize.Xs}" VerticalAlignment="Center"

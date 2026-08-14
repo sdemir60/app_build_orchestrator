@@ -62,6 +62,7 @@ public partial class ConsoleView : UserControl
 
     // [D4/T56-UI] Boşta (idle/boot) "ready" (dim) satırı overlay'de gösteriliyor mu — doküman satırı DEĞİL.
     private bool _idleReady;
+    private bool _blinking; // imleç blink saati dönüyor mu (yeniden başlatma guard'ı)
 
 
     // Kaskat durumu (yalnız UI thread'inde).
@@ -94,11 +95,11 @@ public partial class ConsoleView : UserControl
         EditorControl.SetResourceReference(FontWeightProperty, "FontWeight.Console");
         ActiveLineText.SetResourceReference(FontWeightProperty, "FontWeight.Console");
         BuildProgressText.SetResourceReference(FontWeightProperty, "FontWeight.Console");
-        Loaded += (_, _) => { EnsureColorizer(); ReservePromptRow(); };
+        Loaded += (_, _) => { EnsureColorizer(); PositionPrompt(); };
         EditorControl.TextArea.TextView.ScrollOffsetChanged += (_, _) => OnScrollOffsetChanged();
-        // Satır yüksekliği ancak editör ölçüldükten sonra bilinir (ve punto değişirse yeniden hesaplanır) —
-        // ayrılan prompt şeridi bu yüzden görsel-satırlarla birlikte tazelenir. ReservePromptRow yakınsar.
-        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => ReservePromptRow();
+        // Belgenin son satırının yeri ancak görsel satırlar kurulduktan sonra bilinir; her değişimde
+        // (yeni satır, punto, yeniden boyutlanma) prompt yeniden konumlanır.
+        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => RefreshPrompt();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
         ScrollAnimator.EnableUserCancellation(EditorControl);
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
@@ -349,33 +350,66 @@ public partial class ConsoleView : UserControl
         ActiveLineOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         if (!show) { StopBlink(); return; }
         ActiveCursor.Opacity = 1.0;
+        PositionPrompt();
         if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
     }
 
     /// <summary>
-    /// Prompt satırının metnin ÜSTÜNE binmemesi için editörün altında bir tam satır boyu yer ayırır.
+    /// Prompt satırını BELGENİN SONUNA yerleştirir: imleç her zaman son metin satırının hemen ALTINDAKİ
+    /// satırdadır ve yeni satırlar onun üstüne birikir.
     ///
-    /// <para>Ölçü <see cref="ICSharpCode.AvalonEdit.Rendering.TextView.DefaultLineHeight"/>'ten okunur — tek
-    /// gerçek kaynak: konsolun satır aralığı CompositeFont'un <c>LineSpacing</c>'inden gelir ve burada yeniden
-    /// YAZILMAZ (kopya YASAK). Editör henüz ölçülmediyse (yükseklik 0) dokunulmaz; bu metot her görsel-satır
-    /// değişiminde yeniden çağrılır ve değer oturunca bir kez uygulanır.</para>
+    /// <para><b>Neden panelin dibine yaslanmıyor:</b> AvalonEdit içeriği yukarıdan aşağı dizer. Konsolda üç
+    /// satır varken metin tepede kalır; panele yaslı bir imleç o metinden kopup dipte tek başına yanardı.
+    /// Doğru yer belgenin kendi son satırıdır.</para>
+    ///
+    /// <para>Satır sözleşmesi gereği canlı metin '\n' ile biter (<c>ConsoleBatcher</c>), yani belgenin SON
+    /// satırı zaten boş prompt satırıdır — imleç oraya oturur. Sonda yeni satır yoksa (savunmacı) imleç bir
+    /// satır aşağı iner. Konum, görsel satırın kendi koordinatından alınıp bu kontrole taşınır; böylece
+    /// editörün dolgusu, kaydırma ve satır yüksekliği ayrı ayrı hesaplanmaz.</para>
     /// </summary>
-    private void ReservePromptRow()
+    private void PositionPrompt()
     {
-        double lineHeight = EditorControl.TextArea.TextView.DefaultLineHeight;
-        if (lineHeight <= 0) return;
-        var p = EditorControl.Padding;
-        double wanted = p.Top + lineHeight;
-        if (Math.Abs(p.Bottom - wanted) < 0.01) return; // yakınsadı — sonsuz layout döngüsü yok
-        EditorControl.Padding = new Thickness(p.Left, p.Top, p.Right, wanted);
+        if (ActiveLineOverlay.Visibility != Visibility.Visible) return;
+
+        var view = EditorControl.TextArea.TextView;
+        var document = EditorControl.Document;
+        if (document is null || !view.VisualLinesValid || view.VisualLines.Count == 0) return;
+
+        var lastLine = document.GetLineByNumber(document.LineCount);
+        var visual = view.GetVisualLine(lastLine.LineNumber);
+        if (visual is null) return; // son satır görünür pencerede değil — konum bir sonraki kaydırmada tazelenir
+
+        // Düzen daha oturmadıysa satırın yeri HENÜZ YOKTUR (VisualTop NaN, ScrollOffset sonsuz gelir) —
+        // o an konumlandırmak Margin'e NaN yazmak olurdu. Atlanır; düzen oturunca VisualLinesChanged bu
+        // metodu yeniden çağırır.
+        if (!double.IsFinite(visual.VisualTop) || !double.IsFinite(view.ScrollOffset.Y)) return;
+
+        // Boş son satır zaten prompt satırıdır; dolu ise imleç onun ALTINA geçer.
+        double top = visual.VisualTop + (lastLine.Length == 0 ? 0 : visual.Height);
+        var point = view.TransformToAncestor(this)
+                        .Transform(new Point(0, top - view.ScrollOffset.Y));
+        if (!double.IsFinite(point.X) || !double.IsFinite(point.Y)) return;
+
+        // İmleç metin satırıyla aynı taban çizgisinde dursun: satır yüksekliği içinde dikey ortalanır.
+        double centred = point.Y + Math.Max(0, (visual.Height - ActiveCursor.Height) / 2);
+        var margin = new Thickness(point.X, centred, 0, 0);
+        if (ActiveLineOverlay.Margin != margin) ActiveLineOverlay.Margin = margin;
     }
 
     // [3b M-4 · D3 §3] Aktif-satır imleci ile "build in progress" imlecinin ORTAK blink animasyonu — artık
     // EventStreamView'ın imleci de dahil ÜÇ başlatıcı MotionTokens.CreateBlinkAnimation'ı paylaşır (kopya YASAK).
-    private void StartBlink() => ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
+    /// <summary>[StatusGlyph/BuildingSpinner deseni] Zaten dönen saat YENİDEN BAŞLATILMAZ: RefreshPrompt her
+    /// görsel-satır değişiminde koşar ve her seferinde yeni bir blink kurmak imleci "takılı" gösterirdi.</summary>
+    private void StartBlink()
+    {
+        if (_blinking) return;
+        _blinking = true;
+        ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
+    }
 
     private void StopBlink()
     {
+        _blinking = false;
         ActiveCursor.BeginAnimation(OpacityProperty, null);
         ActiveCursor.Opacity = 1.0;
     }

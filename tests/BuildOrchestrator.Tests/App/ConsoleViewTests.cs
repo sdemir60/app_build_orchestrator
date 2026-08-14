@@ -341,26 +341,37 @@ public class ConsoleViewTests
     }
 
     /// <summary>
-    /// Prompt satırı metnin ÜSTÜNE binmez: editörün altında tam bir satır boyu yer ayrılır, imleç oraya oturur.
+    /// Prompt satırı BELGENİN SONUNDADIR: her yeni satır imleci bir satır aşağı iter, yazı hep onun üstüne
+    /// birikir.
     ///
-    /// <para>Eski overlay panelin dibine mutlak konumluydu ve belge akışında yer kaplamıyordu; konsol dibe
-    /// yapışık olduğu için son metin satırı da dipteydi — imleç onun üstüne basıyordu. Ayrılan şerit
-    /// <c>TextView.DefaultLineHeight</c>'ten gelir (tek gerçek kaynak; konsolun satır aralığı CompositeFont'un
-    /// <c>LineSpacing</c>'inden türer, burada YENİDEN yazılmaz).</para>
+    /// <para>[DEĞİŞEN KURAL] İlk çözüm imleci panelin DİBİNE yaslıyor ve editörün altında bir satır boyu yer
+    /// ayırıyordu. Yanlıştı: AvalonEdit içeriği yukarıdan aşağı dizer, yani üç satırlık bir konsolda metin
+    /// tepede kalır ve dibe yaslı imleç metinden kopup sol altta tek başına yanardı. İmlecin yeri belgenin
+    /// kendi son satırıdır.</para>
     /// </summary>
     [StaFact]
-    public void The_editor_reserves_a_full_line_at_the_bottom_for_the_prompt()
+    public void The_prompt_sits_on_the_documents_last_line_and_moves_down_as_lines_arrive()
     {
         var view = new ConsoleView();
         var window = DsResources.Realize(DsResources.NewHost(), view);
-        view.AppendNarrativeBatch("first\nsecond\n");
+        view.ShowReady();
         window.UpdateLayout();
-
         double lineHeight = view.EditorControl.TextArea.TextView.DefaultLineHeight;
         Assert.True(lineHeight > 0, "ön-koşul: editör ölçülmedi");
 
-        // Alt dolgu, üst dolgunun bir tam satır fazlası olmalı — prompt tam o şeride oturur.
-        Assert.Equal(view.EditorControl.Padding.Top + lineHeight, view.EditorControl.Padding.Bottom, precision: 1);
+        double empty = view.ActiveLineOverlay.Margin.Top; // boş belgede: ilk satır
+
+        view.AppendNarrativeBatch("first\n");
+        window.UpdateLayout();
+        double afterOne = view.ActiveLineOverlay.Margin.Top;
+
+        view.AppendNarrativeBatch("second\n");
+        window.UpdateLayout();
+        double afterTwo = view.ActiveLineOverlay.Margin.Top;
+
+        // Her satır imleci TAM bir satır boyu aşağı iter.
+        Assert.Equal(lineHeight, afterOne - empty, precision: 1);
+        Assert.Equal(lineHeight, afterTwo - afterOne, precision: 1);
         GC.KeepAlive(window);
     }
 
@@ -427,13 +438,7 @@ public class ConsoleViewTests
         view.Arrange(new Rect(0, 0, 800, 600));
         view.UpdateLayout();
 
-        // [DEĞİŞEN KURAL] Bütçe eskiden dört kenarda da 12/8'di. ALT kenar artık prompt satırı için bir tam
-        // satır boyu daha ayırır (§2.5: imleç metnin ALTINDA kendi satırında durur, üstüne binmez) — ölçü
-        // TextView.DefaultLineHeight'ten gelir, burada sabit YAZILMAZ. Sol/üst/sağ bütçe DEĞİŞMEDİ ve asıl
-        // iddia olan gerçek yerleşim kontrolü aşağıda aynen durur.
-        var padding = view.Editor.Padding;
-        Assert.Equal(new Thickness(12, 8, 12, padding.Bottom), padding);
-        Assert.Equal(8 + view.Editor.TextArea.TextView.DefaultLineHeight, padding.Bottom, precision: 1);
+        Assert.Equal(new Thickness(12, 8, 12, 8), view.Editor.Padding);
 
         // GERÇEK yerleşim: TextView'in sol/üst kenarı editörün kenarından padding kadar içeride.
         var textView = view.Editor.TextArea.TextView;
