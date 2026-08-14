@@ -29,6 +29,16 @@ public static class BottomAnchorDecision
     /// <summary>Ek A-15: pill'in "560ms jumping penceresi" — aynı pencere BottomAnchor'ın geçiş guard'ı.</summary>
     public const double JumpingWindowMs = 560.0;
 
+    /// <summary>
+    /// Kullanıcı kaydırdıktan sonra "artık o sürmüyor" sayılana kadar geçen süre. Bu süre boyunca hiç
+    /// dokunulmazsa panel dibe geri döner ve akışı yeniden izlemeye başlar.
+    ///
+    /// <para>Kural üç panelde de AYNIDIR ve TEK yerde durur: liste frontier takibini
+    /// (<c>StickyLayerList.FrontierIdleResumeMs</c>) bu sabitten alır, konsol ve event stream de dibe
+    /// dönüşü. Ayrı sayılar olsaydı üç panel farklı zamanlarda canlanır, ekran huzursuz olurdu.</para>
+    /// </summary>
+    public const long IdleResumeMs = 3000;
+
     /// <summary>Bir ScrollChanged olayının (ya da AvalonEdit için elle izlenen extent farkının) sonucu.</summary>
     public static BottomAnchorState OnScrollChanged(BottomAnchorState state, double extentHeightChange,
         double distanceFromBottom, double thresholdPx = DefaultThresholdPx)

@@ -110,7 +110,10 @@ public partial class ConsoleView : UserControl
             getExtent: () => EditorControl.ExtentHeight,
             getViewport: () => EditorControl.ViewportHeight,
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
-            scrollSmooth: AnimateToBottom);
+            scrollSmooth: AnimateToBottom,
+            // Anlatı modunda kullanıcı elini çekince akış yeniden izlenir. PROJE-LOG modunda dönülmez:
+            // orada izlenecek canlı bir akış (ve prompt imleci) yoktur, kullanıcı bir logu okuyordur.
+            autoResumeAllowed: () => !_projectMode);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         Pill.AccessibleName = AccessibilityNames.LatestConsole;
@@ -555,6 +558,11 @@ public partial class ConsoleView : UserControl
         _bottomAnchor.OnScrollChanged(extentChange);
 
         EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
+
+        // Prompt AYNI olayda taşınır. Konumu belgenin son satırından gelir; kaydırma o satırı yukarı iterken
+        // imleç eski yerinde kalsaydı — bir tık tekerlek çevirmek yetiyordu — bir kare boyunca metnin ÜSTÜNE
+        // biner, ancak bir sonraki görsel-satır olayında düzelirdi. Sahada görülen anlık bindirme buydu.
+        RefreshPrompt();
     }
 
     // [T59] Pill tıklaması → yumuşak (reduced-motion'da anında) dibe.

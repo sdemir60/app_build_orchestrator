@@ -31,4 +31,16 @@ internal static class DispatcherPump
         Dispatcher.PushFrame(frame);
         timer.Stop();
     }
+
+    /// <summary>
+    /// Belirli bir süre boyunca pompalar. Beklenecek bir KOŞUL olmadığında kullanılır — tipik olarak
+    /// üretimdeki bir gecikme penceresinin (ör. grafın koşu başındaki "önce sön, sonra boya" beklemesi)
+    /// geçmesini sağlamak için. Koşul verilebiliyorsa <see cref="PumpUntil"/> tercih edilir; o daha erken
+    /// çıkar ve neyi beklediğini söyler.
+    /// </summary>
+    public static void PumpFor(TimeSpan duration)
+    {
+        var deadline = DateTime.UtcNow + duration;
+        PumpUntil(() => DateTime.UtcNow >= deadline, duration + TimeSpan.FromMilliseconds(250));
+    }
 }

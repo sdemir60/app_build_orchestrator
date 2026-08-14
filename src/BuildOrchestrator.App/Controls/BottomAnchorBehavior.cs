@@ -20,9 +20,11 @@ public sealed class BottomAnchorBehavior
     private readonly Func<double, bool> _scrollSmooth; // (target) -> animasyon BAŞLADI mı (false = anında atlandı)
     private readonly Action<TimeSpan, Action> _scheduleOnce;
     private readonly double _thresholdPx;
+    private readonly Func<bool>? _autoResumeAllowed;
 
     private BottomAnchorState _state = BottomAnchorState.Initial;
     private int _jumpGeneration;
+    private int _idleGeneration;
 
     /// <summary>IsStuck/IsJumping/ShowPill değiştiğinde ateşlenir — host (ConsoleView) buna göre pill Visibility'sini
     /// / StickToBottom'ı günceller.</summary>
@@ -37,11 +39,18 @@ public sealed class BottomAnchorBehavior
     /// animasyon BAŞLATILDIYSA true döner (host tipik olarak <see cref="ScrollAnimator.AnimateTo"/>'ya sarar).</param>
     /// <param name="scheduleOnce">560ms "jumping" penceresini zamanlar — testte enjekte edilebilir (D8); üretim
     /// varsayılanı bir <see cref="DispatcherTimer"/>.</param>
+    /// <param name="autoResumeAllowed">Dibe KENDİLİĞİNDEN dönmek serbest mi (<c>null</c> = hiç dönme).
+    /// Kullanıcı kaydırdıktan sonra <see cref="BottomAnchorDecision.IdleResumeMs"/> boyunca panele hiç
+    /// dokunulmazsa dibe dönülür — panel akışı yeniden izlemeye başlar, tıpkı listenin frontier takibinin
+    /// aynı süre sonunda geri açılması gibi. Host bunu kapatabilir: konsol proje-log modunda dönmez, orada
+    /// izlenecek bir akış (ve imleç) yoktur.</param>
     public BottomAnchorBehavior(
         Func<double> getOffset, Func<double> getExtent, Func<double> getViewport,
         Action<double> scrollInstant, Func<double, bool> scrollSmooth,
-        Action<TimeSpan, Action>? scheduleOnce = null, double thresholdPx = BottomAnchorDecision.DefaultThresholdPx)
+        Action<TimeSpan, Action>? scheduleOnce = null, double thresholdPx = BottomAnchorDecision.DefaultThresholdPx,
+        Func<bool>? autoResumeAllowed = null)
     {
+        _autoResumeAllowed = autoResumeAllowed;
         _getOffset = getOffset;
         _getExtent = getExtent;
         _getViewport = getViewport;
@@ -73,6 +82,28 @@ public sealed class BottomAnchorBehavior
         if (_state.IsStuck && extentHeightChange > 0 && !_state.IsJumping)
             _scrollInstant(_getExtent()); // içerik büyümesi yakalaması — ANINDA, AppendBatch/ScrollToEnd ile aynı desen
         if (_state != prev) Changed?.Invoke(this, EventArgs.Empty);
+        ArmIdleResume();
+    }
+
+    /// <summary>
+    /// Dipten uzaktaysak "boşta kalma" saatini BAŞTAN kurar: her scroll onu ileri iter, yani sayaç ancak
+    /// kullanıcı elini çektiğinde dolar. Dolduğunda dibe dönülür.
+    ///
+    /// <para>Zaten dipteyken ya da host izin vermiyorken saat kurulmaz. Kuşak sayacı, arka arkaya gelen
+    /// scroll olaylarının biriktirdiği eski saatlerin dolduğunda iş yapmasını engeller.</para>
+    /// </summary>
+    private void ArmIdleResume()
+    {
+        if (_autoResumeAllowed is null || _state.IsStuck || _state.IsJumping) return;
+        if (!_autoResumeAllowed()) return;
+
+        int generation = ++_idleGeneration;
+        _scheduleOnce(TimeSpan.FromMilliseconds(BottomAnchorDecision.IdleResumeMs), () =>
+        {
+            if (generation != _idleGeneration) return;   // araya yeni bir scroll girdi
+            if (_state.IsStuck || _autoResumeAllowed is null || !_autoResumeAllowed()) return;
+            JumpToBottom();
+        });
     }
 
     /// <summary>`⌄ latest` pill tıklaması (ya da başka bir "şimdi dibe git" tetikleyicisi).</summary>

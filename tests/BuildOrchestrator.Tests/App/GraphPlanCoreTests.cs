@@ -83,4 +83,33 @@ public class GraphPlanCoreTests
 
         Assert.Equal(Token(view, "Brush.StatusCycle"), CoreColour(view, "n"));
     }
+
+    /// <summary>
+    /// Koşuya girerken graf ÖNCE söner, görünüm SONRA değişir.
+    ///
+    /// <para>Basış anında iki şey birden oluyordu: sönme başlıyor (280 ms sürer) ve aynı karede kesikli
+    /// çerçeveler düze dönüyordu (çerçeve/renk değişimleri anında uygulanır). Değişim tam parlaklıkta
+    /// görülüp sönme sonra geldiği için ekran "önce derlenecekler belirdi, sonra hepsi söndü" diyordu.
+    /// İstenen sıra: topluca sön → görünüm değişsin → derleme başlasın.</para>
+    /// </summary>
+    [StaFact]
+    public void Entering_a_run_dims_before_it_repaints()
+    {
+        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, false, true));
+        var dashedAtRest = view.NodeVisuals["n"].Square.StrokeDashArray;
+
+        view.RunPhase = GraphRunPhase.Running;                                 // basış
+        view.UpdateStatuses([new("n", 0, GraphStatus.Queued, false, true)]);   // plan hemen ardından geldi
+
+        // Sönme oynarken çerçeve HÂLÂ kesikli: görünüm değişimi beklemede.
+        Assert.Equal(dashedAtRest, view.NodeVisuals["n"].Square.StrokeDashArray);
+        Assert.Equal(GraphNodeOpacity.RunDim, view.NodeVisuals["n"].OpacityTarget, 6);
+
+        DispatcherPump.PumpUntil(
+            () => !Equals(view.NodeVisuals["n"].Square.StrokeDashArray, dashedAtRest),
+            TimeSpan.FromSeconds(3));
+
+        // Sönme bitince görünüm uygulanır — çerçeve düze döner.
+        Assert.NotEqual(dashedAtRest, view.NodeVisuals["n"].Square.StrokeDashArray);
+    }
 }

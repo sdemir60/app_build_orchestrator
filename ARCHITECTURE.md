@@ -1428,6 +1428,10 @@ lines.
   measured from the text view's own line height, so the caret sits below the last line instead of on top of
   it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
   pinned to the panel rather than to the document.
+- **A panel that was scrolled away comes back on its own.** Three seconds after the last scroll — the same
+  idle window the list's frontier following uses, and the same constant — the console and the event stream
+  return to the bottom and resume following. The console does not do this in project-log mode: there is no
+  live stream to follow there and the reader is looking at a log.
 - **Panel transitions are one piece.** Opening a project log and coming back with `← Back` both settle the
   content down from its bottom edge over 340 ms — a hinge, not a per-line cascade — so a three-line log and a
   two-hundred-line narrative open at the same rhythm. `perspective`/`rotateX` do not exist in WPF; the nearest
@@ -1483,6 +1487,11 @@ rectangle, so the rectangle is a full pen wider than the offset alone would sugg
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
 
+The event stream keeps a prompt of its own. When there is nothing left to write the active line does not
+disappear: it stays as a wall-clock stamp and a blinking dim caret — the console prompt's twin, and the
+stream's way of saying it is still here. It is the same row, recoloured, rather than a second one; an empty
+stream shows the empty-state text instead.
+
 **The node's core is the plan channel.** The glyph inside the square answers "what will happen to this
 project" while the border answers "what happened in this run": amber when it will be built, grey when it is up
 to date, and permanently orange for a member of a cycle. Being **queued is not a result** and does not take the
@@ -1490,6 +1499,13 @@ core over — it used to, and the cost showed at the moment of pressing Build: t
 planned turned grey at once (colour changes are instant here) while the graph dimmed, so the only coloured
 thing on screen vanished in the same frame and read as a flash. Only a real outcome — building, succeeded,
 failed, skipped — takes the core.
+
+**Entering a run dims before it repaints.** Colour and border changes are instant here (measured deviation,
+below), so pressing Build used to land the dashed-to-solid switch of every planned node in the same frame the
+graph began to fade — the change was seen at full brightness and the fade arrived after it, which read as
+"the ones about to build appeared, then everything went out". Status pushes are therefore held for the length
+of the fade and applied once it finishes; only the last one is kept, since the intermediate states were never
+visible anyway. Planning takes seconds, so nothing real is delayed by it.
 
 **The run is told with opacity, not with edges.** Idle, everything is fully opaque. Once a run starts the
 graph quietens: queued and discovered nodes drop to 0.13 and only the projects actually building stay
@@ -1649,6 +1665,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states |
+| Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. Being implicit it crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements |
 | Status glyph · building spinner · will-build dot | Custom controls drawing rings, arcs and dots |

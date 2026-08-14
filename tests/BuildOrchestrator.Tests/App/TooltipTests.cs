@@ -17,13 +17,13 @@ public class TooltipTests
 {
     // ---- Step 1 (brief, verbatim — adapte edilen tek şey pseudo-helper'ın DsResources.Load karşılığı) ----
 
-    [StaFact]
-    public void Tooltip_opens_with_zero_delay_and_stays_open()
-    {
-        var style = (Style)DsResources.Load("Controls.xaml")[typeof(ToolTip)];
-        Assert.Contains(style.Setters.OfType<Setter>(),
-            s => s.Property == ToolTipService.InitialShowDelayProperty && (int)s.Value! == 0);
-    }
+    // [SİLİNEN TEST — Tooltip_opens_with_zero_delay_and_stays_open]
+    // Eski iddia: ToolTip stili InitialShowDelay=0 setter'ı TAŞIR.
+    // Neden silindi: iddia doğruydu ama YANLIŞ ŞEYİ pinliyordu. ToolTipService'in bu attached property'sini
+    // WPF tooltip'ten değil, tooltip'e SAHİP olan öğeden okur — stildeki setter'ın hiçbir etkisi yoktu ve
+    // her tooltip varsayılan ~1sn gecikmeyle açılıyordu; sahada "tooltip hiç çıkmıyor" olarak görüldü. Test
+    // yeşil kaldığı için de kusuru gizledi. Kural artık sahibin tipinde metadata ile ezilir ve
+    // TooltipDelayTests onu SAHİP öğe üzerinden ölçer (etkisi olan tek yer).
 
     [Theory]
     [InlineData(100.0, 40.0, 22.0, -28.0)]   // popup 100 genis, hedef 40 genis → x = (40-100)/2 = -30 ... y = -(22+6)
@@ -37,13 +37,9 @@ public class TooltipTests
     // ---- Self-review ek kapsam: "ShowDuration sonsuz" ve "Placement=Custom" ayrı ayrı kanıtlanır — tek bir
     // InitialShowDelay testi bunları göremez (gecikme varsayılana dönse bile bu iki setter hâlâ dursaydı). ----
 
-    [StaFact]
-    public void Tooltip_show_duration_is_effectively_infinite()
-    {
-        var style = (Style)DsResources.Load("Controls.xaml")[typeof(ToolTip)];
-        Assert.Contains(style.Setters.OfType<Setter>(),
-            s => s.Property == ToolTipService.ShowDurationProperty && (int)s.Value! == int.MaxValue);
-    }
+    // [SİLİNEN TEST — Tooltip_show_duration_is_effectively_infinite]
+    // Kardeşiyle (yukarıda) AYNI gerekçe: ShowDuration da sahibin özelliğidir, stile yazıldığında ölüdür.
+    // Yeni yeri TooltipDelayTests.
 
     [StaFact]
     public void Tooltip_uses_custom_placement_mode()

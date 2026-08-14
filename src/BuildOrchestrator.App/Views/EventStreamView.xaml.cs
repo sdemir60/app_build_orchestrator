@@ -86,7 +86,9 @@ public partial class EventStreamView : UserControl
             getExtent: () => PART_Scroll.ExtentHeight,
             getViewport: () => PART_Scroll.ViewportHeight,
             scrollInstant: v => PART_Scroll.ScrollToVerticalOffset(v),
-            scrollSmooth: AnimateToBottom);
+            scrollSmooth: AnimateToBottom,
+            // Kullanıcı kaydırıp elini çekerse akış yeniden izlenmeye başlar (gerekçe: BottomAnchorDecision.IdleResumeMs).
+            autoResumeAllowed: () => true);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
         ScrollAnimator.EnableUserCancellation(PART_Scroll);
@@ -206,6 +208,31 @@ public partial class EventStreamView : UserControl
 
     /// <summary>Aktif proje DEĞİŞTİĞİNDE (<see cref="RunViewModel.ActiveLineGeneration"/>) çağrılır: metin null ise
     /// satır gizlenir; aksi halde saat + imleç yazılır ve metin (fırtına/reduced-motion değilse) daktiloyla açılır.</summary>
+    /// <summary>
+    /// [prototip BuildApp.jsx:900-909] Yazacak bir şey kalmayınca satır KAYBOLMAZ: geriye saat + yanıp sönen
+    /// imleçten oluşan soluk bir bekleme satırı kalır — akışın "burada duruyorum" işareti, konsolun prompt
+    /// satırının ikizi.
+    ///
+    /// <para>Aktif satırdan tek farkı rengidir (amber yerine <c>text-faint</c>) ve metninin boş olmasıdır;
+    /// aynı satır yeniden kullanılır — ikinci bir satır kurmak aynı şeyi iki yerde çizmek olurdu. Akışta hiç
+    /// olay yokken gösterilmez: orada boş-durum metni ("No events yet.") konuşur.</para>
+    /// </summary>
+    private void ShowIdlePrompt()
+    {
+        PART_ActiveText.Text = "";
+        if ((_vm?.StreamEvents.Count ?? 0) == 0)
+        {
+            PART_ActiveLine.Visibility = Visibility.Collapsed;
+            StopCursorBlink();
+            return;
+        }
+
+        PART_ActiveLine.Visibility = Visibility.Visible;
+        PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm!.WallClock());
+        PART_ActiveCursor.SetResourceReference(Shape.FillProperty, "Brush.TextFaint");
+        StartCursorBlink();
+    }
+
     private void UpdateActiveLine()
     {
         if (_vm is null) return;
@@ -217,8 +244,7 @@ public partial class EventStreamView : UserControl
         string? text = _vm.ActiveLineText;
         if (text is null)
         {
-            PART_ActiveLine.Visibility = Visibility.Collapsed;
-            StopCursorBlink();
+            ShowIdlePrompt();
             RefreshEmptyState(); // [D3 §8] aktif satır gizlendi — tampon da boşsa "No events yet." belirir
             return;
         }
@@ -226,6 +252,7 @@ public partial class EventStreamView : UserControl
         PART_ActiveLine.Visibility = Visibility.Visible;
         RefreshEmptyState(); // [D3 §8] canlı aktif satır var → boş-durum gizli
         PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm.WallClock());
+        PART_ActiveCursor.SetResourceReference(Shape.FillProperty, "Brush.AmberText");
         StartCursorBlink();
 
         // [D3 §1] Aktif satır KOŞULSUZ daktilo eder (prototip BuildApp.jsx:723 `<TypingLine instant={false} />`).

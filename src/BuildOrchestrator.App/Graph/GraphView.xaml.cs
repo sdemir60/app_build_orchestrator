@@ -355,6 +355,8 @@ public partial class GraphView : UserControl
             if (_runPhase == value) return;
             _runPhase = value;
             ApplyAllOpacities();
+            // Koşuya GİRİŞ: önce sönme oynasın, görünüm değişimi arkasına alınsın (HoldStatusesUntilDimmed).
+            if (value == GraphRunPhase.Running) HoldStatusesUntilDimmed();
         }
     }
 
@@ -403,7 +405,51 @@ public partial class GraphView : UserControl
         ArgumentNullException.ThrowIfNull(nodes);
 
         if (!IsPanelVisible) { _pendingStatuses = nodes; return; }
+        // Koşuya girerken graf ÖNCE söner, görünüm SONRA değişir (aşağıdaki alanın doc'u).
+        if (_dimFirst is not null) { _pendingStatuses = nodes; return; }
         ApplyStatuses(nodes);
+    }
+
+    /// <summary>
+    /// Koşu başlarken görünüm değişimini SÖNMENİN ARKASINA alan tek atımlık zamanlayıcı; boştayken
+    /// <c>null</c>.
+    ///
+    /// <para><b>Neden:</b> Build'e basıldığı an iki şey birden oluyordu — graf soluklaşmaya başlıyor
+    /// (280 ms) ve aynı karede derlenecek düğümlerin kesikli çerçevesi düz çerçeveye dönüyordu (renk/çerçeve
+    /// değişimleri ANINDA uygulanır, ölçülmüş sapma). Değişim tam parlaklıkta görüldüğü, sönme ise sonra
+    /// geldiği için ekran "önce derlenecekler belirdi, sonra hepsi söndü" diyordu. Kullanıcının istediği
+    /// sıra: önce topluca sön, sonra görünüm değişsin, sonra derleme başlasın.</para>
+    ///
+    /// <para>Bekleme boyunca gelen statüler <see cref="_pendingStatuses"/>'a düşer (panel gizliyken kullanılan
+    /// AYNI kanal) ve yalnız SONUNCUSU uygulanır — ara durumlar zaten görülmezdi. Planlama saniyeler sürdüğü
+    /// için pratikte bekleme bittiğinde henüz hiçbir proje derlenmeye başlamamış olur.</para>
+    /// </summary>
+    private DispatcherTimer? _dimFirst;
+
+    /// <summary>Sönme süresi kadar bekleyip biriken statüyü uygular. Koşudan çıkışta beklenmez: bitişte
+    /// zaten her şey tam opağa döner ve saklanacak bir şey yoktur.</summary>
+    private void HoldStatusesUntilDimmed()
+    {
+        _dimFirst?.Stop();
+        if (!AnimationsEnabledProvider()) { _dimFirst = null; return; } // reduced-motion: sönme anlık, bekleme anlamsız
+
+        var timer = new DispatcherTimer(DispatcherPriority.Normal)
+        {
+            Interval = TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs),
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();                       // tek atımlık — dispatcher onu köklüyor
+            if (!ReferenceEquals(_dimFirst, timer)) return; // eskimiş kuşak
+            _dimFirst = null;
+            if (_pendingStatuses is { } queued && IsPanelVisible)
+            {
+                _pendingStatuses = null;
+                ApplyStatuses(queued);
+            }
+        };
+        _dimFirst = timer;
+        timer.Start();
     }
 
     /// <summary>Görünürlük DEĞİŞİMİNİ yakalamanın headless'ta da çalışan TEK yolu. <c>IsVisible</c> ve
