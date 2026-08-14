@@ -144,15 +144,6 @@ public partial class EventStreamView : UserControl
         RebuildRows();
         RefreshCounter();
         UpdateActiveLine();
-        RefreshEmptyState();
-    }
-
-    /// <summary>[D3 §8] "No events yet." boş-durumu — hiç tampon satırı YOK ve canlı aktif satır (building) YOK
-    /// iken görünür (prototip BuildApp.jsx:705-707). Satır sayısı veya aktif satır görünürlüğü değişince tazelenir.</summary>
-    private void RefreshEmptyState()
-    {
-        bool empty = (_vm?.StreamEvents.Count ?? 0) == 0 && PART_ActiveLine.Visibility != Visibility.Visible;
-        PART_Empty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -202,11 +193,7 @@ public partial class EventStreamView : UserControl
         // Takip açıksa yeni satır dibe çeker (BottomAnchorBehavior içerik-büyümesi yakalaması). Yetki TEK
         // yerdedir: kullanıcı kaydırdıysa ShouldFollow kapalıdır ve satır onu yerinden oynatmaz.
         if (_bottomAnchor.ShouldFollow) _bottomAnchor.OnScrollChanged(1);
-        // Akışta içerik olur olmaz bekleme satırı (saat + imleç) belirir. Aksi hâlde imleç yalnız aktif
-        // satır DEĞİŞİNCE kurulurdu: Sync'ten sonra tek bir satır varken konsolda imleç yanıyor, event
-        // stream'de hiç çıkmıyordu.
         UpdateActiveLine();
-        RefreshEmptyState();
     }
 
     private void RebuildRows()
@@ -222,8 +209,9 @@ public partial class EventStreamView : UserControl
     /// <summary>Metni ALT SATIRDA yazılmakta olan, bu yüzden tamponda henüz gizli duran satır.</summary>
     private EventStreamRow? _pendingRow;
 
-    /// <summary>Derlenen projeyi anlatan alt satırın tonu; olay yazılmadığı sürece imleç de bu rengi taşır.</summary>
-    private const string BuildingToneKey = "Brush.AmberText";
+    /// <summary>Alt satırın BEKLEME tonu — hem derlenen projeyi anlatırken hem bomboşken. İmleç de bu rengi
+    /// taşır (kendi rengi yoktur, satırınkini izler).</summary>
+    private const string WaitingToneKey = "Brush.AmberText";
 
     private void RefreshCounter()
     {
@@ -235,34 +223,6 @@ public partial class EventStreamView : UserControl
     private void OnActiveLineClicked(object sender, MouseButtonEventArgs e)
     {
         if (_vm?.ActiveLineProjectId is { } id) _vm.SelectProject(id);
-    }
-
-    /// <summary>Aktif proje DEĞİŞTİĞİNDE (<see cref="RunViewModel.ActiveLineGeneration"/>) çağrılır: metin null ise
-    /// satır gizlenir; aksi halde saat + imleç yazılır ve metin (fırtına/reduced-motion değilse) daktiloyla açılır.</summary>
-    /// <summary>
-    /// [prototip BuildApp.jsx:900-909] Yazacak bir şey kalmayınca satır KAYBOLMAZ: geriye saat + yanıp sönen
-    /// imleçten oluşan soluk bir bekleme satırı kalır — akışın "burada duruyorum" işareti, konsolun prompt
-    /// satırının ikizi.
-    ///
-    /// <para>Aktif satırdan tek farkı rengidir (amber yerine <c>text-faint</c>) ve metninin boş olmasıdır;
-    /// aynı satır yeniden kullanılır — ikinci bir satır kurmak aynı şeyi iki yerde çizmek olurdu. Akışta hiç
-    /// olay yokken gösterilmez: orada boş-durum metni ("No events yet.") konuşur.</para>
-    /// </summary>
-    private void ShowIdlePrompt()
-    {
-        PART_ActiveText.Text = "";
-        if ((_vm?.StreamEvents.Count ?? 0) == 0)
-        {
-            PART_ActiveLine.Visibility = Visibility.Collapsed;
-            StopCursorBlink();
-            return;
-        }
-
-        PART_ActiveLine.Visibility = Visibility.Visible;
-        PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm!.WallClock());
-        // Yazılan olayın rengi ÜZERİMİZDE KALMAZ: beklerken imleç amber'dır (konsolun prompt imleciyle aynı).
-        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, BuildingToneKey);
-        StartCursorBlink();
     }
 
     /// <summary>
@@ -284,7 +244,6 @@ public partial class EventStreamView : UserControl
 
         StopActiveTypewriter();
         PART_ActiveLine.Visibility = Visibility.Visible;
-        RefreshEmptyState();
         PART_ActiveTime.Text = item.Time;
         PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, item.TextBrushKey); // imleç bunu izler
         StartCursorBlink();
@@ -300,42 +259,50 @@ public partial class EventStreamView : UserControl
         _pendingRow = null;
     }
 
-    /// <summary>Yazım bitti: satır yukarı bırakılır, alt satır bir sonraki hâline (derleniyor / boşta) döner.
-    /// İmleç o anda amber'a geri gelir, çünkü artık olayın rengini taşımıyor.</summary>
+    /// <summary>Yazım bitti: satır yukarı bırakılır ve alt satır bekleme hâline döner — imleç o anda amber'a
+    /// geri gelir, çünkü artık olayın rengini taşımıyor.</summary>
     private void OnWriteFinished()
     {
         ReleasePendingRow();
-        _activeGenShown = -1;  // "building…" hâli yeniden kurulsun (kuşak değişmemiş olabilir)
         UpdateActiveLine();
     }
 
+    /// <summary>
+    /// Alt satırın DURUM MAKİNESİ. Yalnız iki bekleme hâli vardır ve ikisi de amberdir: <b>derlenen proje</b>
+    /// ("X building…") ya da <b>bomboş</b> (yalnız saat + imleç). Üçüncü hâl olan "bir olay yazılıyor"
+    /// <see cref="BeginWriting"/>'e aittir ve o sürerken buraya hiç girilmez.
+    ///
+    /// <para><b>Daktilo yalnız YENİ bilgiye çalışır:</b> aktif proje gerçekten değiştiyse. Bir olay yazıldıktan
+    /// sonra "X building…" satırı ANINDA geri konur, harf harf YENİDEN yazılmaz. Eskiden yazım biter bitmez
+    /// kuşak guard'ı sıfırlanıyor ve aynı cümle her olaydan sonra baştan yazılıyordu; hızlı bir koşuda alt
+    /// satır sürekli yarım amber metinle yarım renkli metin arasında gidip geliyordu — sahada "renkler garip,
+    /// ne olduğu belli değil" diye görülen buydu.</para>
+    ///
+    /// <para>Satır KOŞULSUZ durur: akış boşken de (yalnız imleç). Kuşak guard'ı yalnız daktiloyu kapatır,
+    /// satırın kendisini değil — eskiden guard en başta dönüyordu ve hiçbir proje başlatmayan bir Sync'ten
+    /// sonra satır hiç kurulmuyordu.</para>
+    /// </summary>
     private void UpdateActiveLine()
     {
         if (_vm is null) return;
         if (_pendingRow is not null) return; // bir olay yazılıyor — alt satır ONA ait, bitince tazelenir
+
         long gen = _vm.ActiveLineGeneration;
-        if (gen == _activeGenShown) return; // aynı aktif proje — yeniden başlatma
+        bool activeProjectChanged = gen != _activeGenShown;
         _activeGenShown = gen;
 
         StopActiveTypewriter();
-        string? text = _vm.ActiveLineText;
-        if (text is null)
-        {
-            ShowIdlePrompt();
-            RefreshEmptyState(); // [D3 §8] aktif satır gizlendi — tampon da boşsa "No events yet." belirir
-            return;
-        }
-
         PART_ActiveLine.Visibility = Visibility.Visible;
-        RefreshEmptyState(); // [D3 §8] canlı aktif satır var → boş-durum gizli
         PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm.WallClock());
-        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, BuildingToneKey); // imleç bunu izler
+        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, WaitingToneKey); // imleç bunu izler
         StartCursorBlink();
 
-        // [D3 §1] Aktif satır KOŞULSUZ daktilo eder (prototip BuildApp.jsx:723 `<TypingLine instant={false} />`).
-        // Yalnız reduced-motion instant yapar (TypewriterScheduler animationsEnabled ctor arg'ı üzerinden). Fırtına
-        // (burst) YALNIZ tampon satırlarına aittir (Emission.Instant) — aktif satırı ASLA gate etmez.
-        TypeOnBottomLine(text);
+        string? text = _vm.ActiveLineText;
+        if (text is null) { PART_ActiveText.Text = ""; return; }
+
+        // [D3 §1] Yeni bir proje derlenmeye başladıysa satır daktilo eder (prototip BuildApp.jsx:723
+        // `<TypingLine instant={false} />`); yalnız reduced-motion instant yapar (TypewriterScheduler).
+        if (activeProjectChanged) TypeOnBottomLine(text); else PART_ActiveText.Text = text;
     }
 
     /// <summary>Alt satıra harf harf yazar (reduced-motion'da tek hamlede). Yazının NE olduğu ve hangi renkte

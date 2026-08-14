@@ -16,11 +16,9 @@
       <ScrollViewer x:Name="PART_Scroll" VerticalScrollBarVisibility="Auto"
                     HorizontalScrollBarVisibility="Disabled" Padding="0,4">
         <StackPanel>
-          <!-- Boş-durum: hiç tampon satırı ve canlı aktif satır yokken "No events yet." (BuildApp.jsx:705-707).
-               Görünürlük kod-tarafı yönetilir (RefreshEmptyState). Idle-cursor prompt (proto 726-735) BU DALGADA YOK. -->
-          <TextBlock x:Name="PART_Empty" Text="{x:Static vm:InteractionText.StreamEmpty}" Margin="10,6" Visibility="Collapsed"
-                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
-                     Foreground="{DynamicResource Brush.TextFaint}" />
+          <!-- [SAPMA — kullanıcı kararı] Boş-durum metni ("No events yet.", BuildApp.jsx:870) YOK: panel boşken
+               de alttaki bekleme satırı (saat + amber imleç) durur. Konsol ilk açılışta zaten yanıp sönen bir
+               imleç gösteriyor; iki panelin aynı dili konuşması istendi. -->
 
           <!-- Tampon satırları (EventStreamRow'lar kod-tarafı eklenir/silinir — StreamEvents ile birebir). -->
           <StackPanel x:Name="PART_Rows" />

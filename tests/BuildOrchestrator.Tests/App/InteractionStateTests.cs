@@ -25,7 +25,8 @@ public class InteractionStateTests
     {
         Assert.Equal("No projects found under this folder.", InteractionText.NoProjectsFound);
         Assert.Equal("Graph appears after Sync", InteractionText.GraphEmpty);
-        Assert.Equal("No events yet.", InteractionText.StreamEmpty);
+        // Event stream'in boş-durum metni KALDIRILDI (kullanıcı kararı) — panel boşken bekleme satırı konuşur;
+        // pinleyen test: EventStreamIdlePromptTests.The_prompt_line_is_there_from_the_first_frame_...
         // [A13/T2 · 2.4] design-v1 §2.4 — "veri yok" DEĞİL, "veri süzüldü".
         Assert.Equal("No projects match this filter.", InteractionText.NoProjectsMatchFilter);
         Assert.NotEqual(InteractionText.NoProjectsFound, InteractionText.NoProjectsMatchFilter);

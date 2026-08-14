@@ -110,14 +110,80 @@ public class EventStreamIdlePromptTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Akışta hiç olay yokken bekleme satırı gösterilmez — orada boş-durum metni konuşur.</summary>
+    /// <summary>
+    /// AYIRT EDİCİ — bir olay yazıldıktan sonra "X building…" satırı ANINDA geri gelir, harf harf YENİDEN
+    /// yazılmaz.
+    ///
+    /// <para>Sahada görülen kusur: "renkler garip, bazen satır rengi bazen sarı, ne olduğu belli değil".
+    /// Yazım biter bitmez kuşak guard'ı sıfırlanıyor ve aynı amber cümle her olaydan sonra baştan
+    /// yazılıyordu; hızlı bir koşuda alt satır sürekli yarım amber metinle yarım renkli metin arasında gidip
+    /// geliyordu. Daktilo yalnız YENİ bilgiye çalışır — kesilmiş bir cümleyi geri koymak yeni bilgi
+    /// değildir.</para>
+    /// </summary>
     [StaFact]
-    public void An_empty_stream_shows_no_prompt_line()
+    public void After_an_event_is_written_the_building_line_returns_without_retyping_itself()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", 0, null));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        DispatcherPump.PumpUntil(() => view.ActiveText.Text == "A building…", TimeSpan.FromSeconds(5));
+
+        // İlk tampon satırı yazılmaz (prototip: prevNewest==null); ikincisi alt satırda yazılır.
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\b.csproj", SkipReasons.UpToDate));
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\c.csproj", SkipReasons.UpToDate));
+
+        // Yazım bitince satır yukarı bırakılır — TAM O ANDA alt satır bekleme hâline dönmüş olmalı.
+        DispatcherPump.PumpUntil(
+            () => view.Rows.Count == 2 && view.Rows[^1].Visibility == Visibility.Visible, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("A building…", view.ActiveText.Text);                       // yarım değil, TAM
+        Assert.True(view.ActiveLineInstant, "building satırı için daktilo KURULMAMALI");
+        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Bekleme satırı İLK ANDAN itibaren durur — akış boşken de.
+    ///
+    /// <para>Eski iddia: akışta hiç olay yokken satır gizlenir ve orada "No events yet." boş-durum metni
+    /// konuşur (prototip BuildApp.jsx:870). Değişme gerekçesi (kullanıcı kararı): konsol ilk açılışta zaten
+    /// yanıp sönen bir imleç gösteriyor; event stream'in bunun yerine bir cümle yazması iki paneli
+    /// asimetrik yapıyordu. İmleç uygulamanın "canlıyım" işareti; ilk karede orada olmalı, boş-durum
+    /// cümlesine gerek yok.</para>
+    /// </summary>
+    [StaFact]
+    public void The_prompt_line_is_there_from_the_first_frame_even_before_any_event()
     {
         var vm = NewVm();
         var (view, window) = Realize(vm);
 
-        Assert.Equal(Visibility.Collapsed, view.ActiveLine.Visibility);
+        Assert.Equal(Visibility.Visible, view.ActiveLine.Visibility);
+        Assert.Equal("", view.ActiveText.Text);
+        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));
+        Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties, "bekleme imleci yanıp sönmeli");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// AYIRT EDİCİ — TEK bir olay bile bekleme satırını yerinde bırakır.
+    ///
+    /// <para>Sahada görülen kusur: "sync diyorum, event stream'de imleç çıkmıyor; ikinci kez sync deyince
+    /// çıkıyor". Satır yalnız AKTİF PROJE değiştiğinde kuruluyordu (<c>ActiveLineGeneration</c> guard'ı) ve
+    /// bir Sync hiçbir proje başlatmadığı için kuşak hiç değişmiyordu. İkinci Sync'te çıkmasının nedeni,
+    /// birinci Sync'in yazımı bitince guard'ın yan etkiyle sıfırlanmasıydı — yani düzelme tesadüftü.</para>
+    /// </summary>
+    [StaFact]
+    public void A_single_sync_event_leaves_the_prompt_line_standing()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm);
+
+        vm.OnEvent(new SyncCompletedEvent("main", null, false, ProjectCount: 3, CycleCount: 0,
+            ChangedCount: 1, ToBuildCount: 1, UpToDateCount: 2));
+
+        Assert.Equal(Visibility.Visible, view.ActiveLine.Visibility);
+        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));
         GC.KeepAlive(window);
     }
 }
