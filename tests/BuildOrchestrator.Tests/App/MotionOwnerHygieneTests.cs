@@ -70,11 +70,12 @@ public class MotionOwnerHygieneTests
         // Vakum kapısı: tarama boş bir dosya kümesi görseydi aşağıdaki sayım anlamsız olurdu.
         Assert.Contains(Path.Combine("Views", "EventStreamView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
 
-        // [DEĞİŞEN KURAL — design v1.7.0 §2.5] Konsolun daktilosu kaldırıldı; geriye TEK daktilo sahibi kaldı
-        // (event stream). Eski iddia üç kullanım sayıyordu, biri ConsoleView'ındı.
-        Assert.Equal(2, usages.Count);
-        Assert.All(usages, u =>
-            Assert.StartsWith(Path.Combine("Views", "EventStreamView.xaml.cs"), u, StringComparison.Ordinal));
+        // [DEĞİŞEN KURAL] Sayı üçten ikiye, ikiden BİRE indi. Önce konsolun daktilosu kaldırıldı (design
+        // v1.7.0 §2.5), sonra event stream'in tampon satırı: yazım yüzeyi ALT SATIRA taşındı, olay orada
+        // kendi renginde yazılıp tamamlanmış hâliyle yukarı bırakılıyor. Geriye tek daktilo sahibi kaldı —
+        // alt satırın kendisi.
+        string only = Assert.Single(usages);
+        Assert.StartsWith(Path.Combine("Views", "EventStreamView.xaml.cs"), only, StringComparison.Ordinal);
     }
 
     [StaFact]

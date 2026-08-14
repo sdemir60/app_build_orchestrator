@@ -1490,10 +1490,15 @@ rectangle, so the rectangle is a full pen wider than the offset alone would sugg
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
 
-Only one line types at a time. The event stream writes its newest line character by character, and when a
-newer one arrives the previous snaps to its full text and the animation moves on — a single pending line, as
-in the prototype. Each row used to run its own timer, so a fast run had two or three lines opening leftward at
-once and the panel looked unsettled.
+**The bottom line is where the stream writes.** A new event is typed there, beside the caret and in its own
+colour; when the text is finished the line is released upward into the buffer, complete and motionless, and
+the caret returns to amber. A row stays hidden until its text has been written, otherwise the same sentence
+would appear twice — finished above and typing below. An event arriving mid-write releases the pending row at
+once and takes the surface over, so exactly one thing is ever in motion.
+
+Buffer rows do not animate at all. Each of them used to run its own typewriter, which put two or three lines
+opening leftward at the same time in a fast run; moving the writing to one surface removed that, and it is
+also what makes the caret meaningful — it is where the text is coming from.
 
 The event stream keeps a prompt of its own. When there is nothing left to write the active line does not
 disappear: it stays as a wall-clock stamp and a blinking caret — the console prompt's twin, and the stream's
