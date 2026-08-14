@@ -249,14 +249,17 @@ public class ConsoleViewTests
         //
         // [Önemli — dürüstlük notu] Deneysel olarak doğrulandı: AvalonEdit'in ExtentHeight/VerticalOffset'i BU
         // headless/offscreen host'ta document.Insert/ScrollToVerticalOffset'ten SONRA, araya GERÇEK bir layout
-        // pass girmeden senkron YANSIMAZ — bu yüzden I-1'in tarif ettiği "aynı senkron çağrı içinde post-prepend
-        // extent'in stale-true IsStuck'a sızması" tam olarak BU testte yeniden üretilemiyor (eski SIRA ile de bu
-        // assertion'lar geçiyor — denenip doğrulandı, geri alınıp tekrar denendi). Gerçek mekanizma yalnız
-        // AvalonEdit'in KENDİ iç senkron re-entrant event'i (ScrollToVerticalOffset'in kendi layout flush'ı)
+        // pass girmeden senkron YANSIMAZ (bu yüzden aşağıda kaydırmanın ardından UpdateLayout çağrılır) — I-1'in
+        // tarif ettiği "aynı senkron çağrı içinde post-prepend extent'in stale-true IsStuck'a sızması" tam olarak
+        // BU testte yeniden üretilemiyor. Gerçek mekanizma yalnız AvalonEdit'in KENDİ iç re-entrant event'i
         // üzerinden tetiklenebilir, ki bu headless bir StaFact'te DETERMİNİSTİK olarak zorlanamıyor. Bu yüzden bu
-        // test — GERÇEK yolu şu ana dek TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick)
-        // doğrular; I-1'in SIRA-bağımlı korumasının kendisi ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic
-        // testiyle kanıtlanır (task-5-report.md "Fix wave" bölümünde gerekçelendirilmiştir).
+        // test — GERÇEK yolu TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick) doğrular;
+        // I-1'in SIRA-bağımlı koruması ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic testiyle kanıtlanır.
+        //
+        // [DEĞİŞEN ÖN-KOŞUL] Test eskiden panelin geçişten sonra TESADÜFEN tepede (offset≈19) kalmasına
+        // dayanıyordu — ölçüldü. O bir kusurdu: design §2.5 mod geçişinde dibe pinlenmeyi ister ve pin artık
+        // deterministik (ConsoleView.PinToBottomAfterModeSwitch). Senaryo bu yüzden tepeye zıplamayı GERÇEKTEN
+        // yapar: kullanıcının ham jesti + gerçek kaydırma.
         var view = new ConsoleView();
         view.Measure(new Size(800, 600));
         view.Arrange(new Rect(0, 0, 800, 600));
@@ -267,20 +270,17 @@ public class ConsoleViewTests
         view.PlayCascade(all, buildInProgress: true); // _projectMode, StickToBottom=true (varsayılan/forced)
         view.UpdateLayout();
 
-        // _lastExtentHeight'i taze bir gerçek olayla ilk kez tohumla (üretimde bu ilk gerçek scroll olayında
-        // zaten olurdu) — bunu ATLAMAK "ilk gözlem = dev büyüme" yapay bir ayrı davranışı test eder, I-1 DEĞİL.
+        // Kaskat kullanıcıyı dibe pinler (design §2.5) — chunk latch'i de üretimdeki gibi orada kurulur.
+        Assert.Equal(view.Editor.ExtentHeight - view.Editor.ViewportHeight, view.Editor.VerticalOffset, 1);
         view.OnScrollOffsetChanged();
+        Assert.True(view.StickToBottom, "senaryo ön-koşulu: kullanıcı dipteyken IsStuck=true");
 
-        // Kullanıcı dipteyken normal aktivite offset'i hep 48px eşiğinin ÜSTÜNDE tutar → _armedForChunk latch'i
-        // GERÇEK üretimde böyle true olurdu (bkz. EvaluateChunkScroll: offset>48 → armed=true). Offset argümanı
-        // burada AYNI mekanizma — gerçek VerticalOffset'e dokunmadan (EditorControl.ScrollToVerticalOffset'in bu
-        // host'ta senkron yansımadığı yukarıda belgelendi) latch'i üretimin kendi metoduyla kurar.
-        view.EvaluateChunkScroll(500.0);
-
-        Assert.True(view.StickToBottom, "senaryo ön-koşulu: kullanıcı dipteyken IsStuck=true (henüz taze değil)");
-
-        // TEK hamlede Ctrl+Home/Home: gerçek editör offset'i zaten (bu host'ta) tepeye yakın dinleniyor — GERÇEK
-        // handler'ı SENKRON tetikle (canlı bir event beklemeden, EvaluateChunkScroll ile AYNI test deseni).
+        // TEK hamlede tepeye (Ctrl+Home): kullanıcının HAM jesti — üretimin dinlediği kanal — VE gerçek
+        // kaydırma; ardından üretimin scroll handler'ı senkron tetiklenir. Jest olmadan takip BIRAKILMAZ:
+        // takibi yalnız kullanıcı bırakır (bkz. BottomAnchorDecision.OnScrollChanged `userDriven`).
+        UserScrollGesture.Raise(view);
+        view.Editor.ScrollToVerticalOffset(0);
+        view.UpdateLayout(); // bu host'ta kaydırma ancak bir yerleşim geçişinden SONRA offset'e yansır (ölçüldü)
         view.OnScrollOffsetChanged();
 
         // (a) Delik yok: prepend gerçekleşti, backlog (orig0..orig99) render dilimine (orig100..orig299) bitişik

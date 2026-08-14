@@ -26,6 +26,7 @@ public sealed class BottomAnchorBehavior
     private int _jumpGeneration;
     private int _idleGeneration;
     private bool _steering; // kullanıcı kaydırdı ve bekleme henüz dolmadı — o sürece panel ondadır
+    private bool _lastShowPill; // son bildirilen pill görünürlüğü (bkz. Notify)
 
     /// <summary>IsStuck/IsJumping/ShowPill değiştiğinde ateşlenir — host (ConsoleView) buna göre pill Visibility'sini
     /// / StickToBottom'ı günceller.</summary>
@@ -63,6 +64,17 @@ public sealed class BottomAnchorBehavior
 
     public bool IsStuck => _state.IsStuck;
     public bool IsJumping => _state.IsJumping;
+
+    /// <summary>
+    /// <b>Şu anda dibe yapışmak serbest mi</b> — "yeni içerik geldi, görünümü dibe çekeyim mi" sorusunun TEK
+    /// yetkili cevabı. Üç koşul birden: takip açık, uçuşta bir atlama yok ve direksiyon kullanıcıda değil.
+    ///
+    /// <para>Host'lar bunu okur (konsolun <c>AppendBatch</c>'i dahil) — kendi <see cref="IsStuck"/>
+    /// yorumlarını yapmazlar. Konsol tam da bunu yapıyordu: <c>AppendBatch</c> salt <c>IsStuck</c>'a bakıp
+    /// her batch'te dibe kaydırıyor, kullanıcının kaydırmasını görmüyordu — derleme sürerken konsol
+    /// kaydırılamaz hâle geliyordu.</para>
+    /// </summary>
+    public bool ShouldFollow => _state.IsStuck && !_state.IsJumping && !_steering;
     public double DistanceFromBottom => Math.Max(0, _getExtent() - _getOffset() - _getViewport());
     public bool ShowPill => BottomAnchorDecision.ShouldShowPill(_state, DistanceFromBottom, _thresholdPx);
 
@@ -72,6 +84,7 @@ public sealed class BottomAnchorBehavior
     {
         if (stuck) _steering = false; // mod değişimi gibi açık bir "dibe sabitlen" isteği direksiyonu geri alır
         _state = new BottomAnchorState(stuck, IsJumping: false);
+        _lastShowPill = ShowPill;
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -80,12 +93,28 @@ public sealed class BottomAnchorBehavior
     public void OnScrollChanged(double extentHeightChange)
     {
         var prev = _state;
-        _state = BottomAnchorDecision.OnScrollChanged(_state, extentHeightChange, DistanceFromBottom, _thresholdPx);
+        _state = BottomAnchorDecision.OnScrollChanged(
+            _state, extentHeightChange, DistanceFromBottom, userDriven: _steering, _thresholdPx);
 
-        if (_state.IsStuck && extentHeightChange > 0 && !_state.IsJumping && !_steering)
+        if (extentHeightChange > 0 && ShouldFollow)
             _scrollInstant(_getExtent()); // içerik büyümesi yakalaması — ANINDA, AppendBatch/ScrollToEnd ile aynı desen
-        if (_state != prev) Changed?.Invoke(this, EventArgs.Empty);
-        ArmIdleResume();
+        Notify(prev);
+        // Bekleme sayacı BURADA kurulmaz: bu olayı akan içerik de doğurabilir ve o zaman sayaç hiç dolmazdı
+        // (gerekçe: ArmIdleResume doc'u). Yalnız ham girdi onu ileri iter.
+    }
+
+    /// <summary>
+    /// Host'u uyarır. Durum değişmese bile <see cref="ShowPill"/> değiştiyse haber verilir: pill görünürlüğü
+    /// durumdan değil ANLIK UZAKLIKTAN türer (design-v1 §2.5 — "dipten &gt;48px ise görünür"), ve takip
+    /// kararı artık kullanıcıya bağlı olduğundan uzaklık, durum sabitken de değişebilir. Yalnız durum
+    /// geçişlerinde haber verilseydi pill o hâllerde hiç güncellenmezdi.
+    /// </summary>
+    private void Notify(BottomAnchorState prev)
+    {
+        bool pill = ShowPill;
+        if (_state == prev && pill == _lastShowPill) return;
+        _lastShowPill = pill;
+        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -104,15 +133,19 @@ public sealed class BottomAnchorBehavior
     }
 
     /// <summary>
-    /// Dipten uzaktaysak "boşta kalma" saatini BAŞTAN kurar: her scroll onu ileri iter, yani sayaç ancak
-    /// kullanıcı elini çektiğinde dolar. Dolduğunda dibe dönülür.
+    /// "Kullanıcı elini çekti" saatini BAŞTAN kurar. Dolduğunda dibe dönülür ve akış yeniden izlenir.
     ///
-    /// <para>Zaten dipteyken ya da host izin vermiyorken saat kurulmaz. Kuşak sayacı, arka arkaya gelen
-    /// scroll olaylarının biriktirdiği eski saatlerin dolduğunda iş yapmasını engeller.</para>
+    /// <para><b>Yalnız <see cref="NotifyUserScroll"/> çağırır.</b> Bir ara sürümde her scroll OLAYINDA
+    /// kuruluyordu; derleme sürerken o olayları üreten kullanıcı değil akan içerikti, yani sayaç her satırla
+    /// sıfırlanıyor ve beş saniye HİÇ dolmuyordu — sahada "kaydırdım, bekliyorum, dibe dönmüyor" diye
+    /// görülen buydu. Sayaç scroll olaylarını değil, kullanıcının elini ölçer.</para>
+    ///
+    /// <para>Host izin vermiyorken (konsolun proje-log modu) saat kurulmaz. Kuşak sayacı, arka arkaya gelen
+    /// girdilerin biriktirdiği eski saatlerin dolduğunda iş yapmasını engeller.</para>
     /// </summary>
     private void ArmIdleResume()
     {
-        if (_autoResumeAllowed is null || !_steering || _state.IsJumping) return;
+        if (_autoResumeAllowed is null || !_steering) return;
         if (!_autoResumeAllowed()) return;
 
         int generation = ++_idleGeneration;
@@ -135,12 +168,14 @@ public sealed class BottomAnchorBehavior
         if (!animated) { ForceStuck(true); return; } // reduced-motion/instant — jumping penceresine gerek yok
 
         _state = BottomAnchorDecision.BeginJump(_state);
+        _lastShowPill = ShowPill;
         Changed?.Invoke(this, EventArgs.Empty);
         int generation = ++_jumpGeneration;
         _scheduleOnce(TimeSpan.FromMilliseconds(BottomAnchorDecision.JumpingWindowMs), () =>
         {
             if (generation != _jumpGeneration) return; // yeni bir JumpToBottom bunu geçersiz kıldı
             _state = BottomAnchorDecision.EndJump(_state);
+            _lastShowPill = ShowPill;
             Changed?.Invoke(this, EventArgs.Empty);
         });
     }

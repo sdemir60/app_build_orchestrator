@@ -133,6 +133,28 @@ public class BottomAnchorIdleResumeTests
         Assert.Equal(f.Extent, f.Offset); // içerik büyümesi yakalaması yeniden devrede
     }
 
+    /// <summary>
+    /// AYIRT EDİCİ — AKAN İÇERİK kullanıcının bekleme sayacını SIFIRLAMAZ.
+    ///
+    /// <para>Sahada görülen kusur buydu: "kaydırdım, bekliyorum, dibe hiç dönmüyor". Sayaç her scroll
+    /// OLAYINDA baştan kuruluyordu, ama derleme sürerken scroll olaylarını üreten kullanıcı değil AKAN
+    /// İÇERİKTİ — beş saniye hiç dolmuyordu. Sayaç "hiç scroll olayı gelmedi"yi değil "kullanıcı elini
+    /// çekti"yi ölçer; bu yüzden yalnız HAM GİRDİ (<see cref="BottomAnchorBehavior.NotifyUserScroll"/>)
+    /// onu ileri iter.</para>
+    /// </summary>
+    [Fact]
+    public void Content_that_keeps_flowing_does_not_reset_the_users_wait()
+    {
+        var f = new Fake();
+        var behavior = f.ScrolledAway();
+        var wait = f.PendingSchedule!; // kullanıcının kendi beklemesi
+
+        for (int i = 0; i < 5; i++) { f.Extent += 40; behavior.OnScrollChanged(40); } // derleme akıyor
+
+        wait();
+        Assert.Equal(f.Extent - f.Viewport, f.SmoothTarget); // bekleme doldu ve dibe dönüldü
+    }
+
     /// <summary>Dipte otururken ve HİÇ kaydırılmamışken bekleme kurulmaz — dönülecek bir yer yok.</summary>
     [Fact]
     public void Content_growth_alone_arms_nothing()

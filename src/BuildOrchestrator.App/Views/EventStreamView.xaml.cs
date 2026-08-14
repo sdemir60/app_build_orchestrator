@@ -91,8 +91,9 @@ public partial class EventStreamView : UserControl
             autoResumeAllowed: () => true);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
-        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir (gerekçe: BottomAnchorBehavior.NotifyUserScroll).
-        PART_Scroll.PreviewMouseWheel += (_, _) => _bottomAnchor.NotifyUserScroll();
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
+        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
+        UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
         ScrollAnimator.EnableUserCancellation(PART_Scroll);
         PART_Pill.Click += (_, _) => _bottomAnchor.JumpToBottom();
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
@@ -122,6 +123,9 @@ public partial class EventStreamView : UserControl
     internal UIElement ActiveCursorGlyph => PART_ActiveCursor;
     internal LatestPill Pill => PART_Pill;
     internal ScrollViewer Scroll => PART_Scroll;
+    /// <summary>[Test · ConsoleView.FollowsBottom ikizi] Dibe çekme yetkisi
+    /// (<see cref="BottomAnchorBehavior.ShouldFollow"/>).</summary>
+    internal bool FollowsBottom => _bottomAnchor.ShouldFollow;
 
     // ---------------------------------------------------------------- lifecycle
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -195,8 +199,9 @@ public partial class EventStreamView : UserControl
                 RebuildRows();
                 break;
         }
-        // Alta yapışıksa yeni satır dibe çeker (BottomAnchorBehavior içerik-büyümesi yakalaması).
-        if (_bottomAnchor.IsStuck) _bottomAnchor.OnScrollChanged(1);
+        // Takip açıksa yeni satır dibe çeker (BottomAnchorBehavior içerik-büyümesi yakalaması). Yetki TEK
+        // yerdedir: kullanıcı kaydırdıysa ShouldFollow kapalıdır ve satır onu yerinden oynatmaz.
+        if (_bottomAnchor.ShouldFollow) _bottomAnchor.OnScrollChanged(1);
         // Akışta içerik olur olmaz bekleme satırı (saat + imleç) belirir. Aksi hâlde imleç yalnız aktif
         // satır DEĞİŞİNCE kurulurdu: Sync'ten sonra tek bir satır varken konsolda imleç yanıyor, event
         // stream'de hiç çıkmıyordu.

@@ -58,7 +58,6 @@ public partial class ConsoleView : UserControl
 
     // [T59] Alta-yapışık + `⌄ latest` pill — StickToBottom'ın TEK gerçek kaynağı (bkz. StickToBottom get/set altta).
     private readonly BottomAnchorBehavior _bottomAnchor;
-    private double _lastExtentHeight; // AvalonEdit ScrollChanged extent-delta VERMEZ — burada elle izlenir (T59)
 
     // [D4/T56-UI] Boşta (idle/boot) "ready" (dim) satırı overlay'de gösteriliyor mu — doküman satırı DEĞİL.
     private bool _idleReady;
@@ -102,8 +101,6 @@ public partial class ConsoleView : UserControl
         EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => RefreshPrompt();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
         ScrollAnimator.EnableUserCancellation(EditorControl);
-        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir (gerekçe: BottomAnchorBehavior.NotifyUserScroll).
-        EditorControl.PreviewMouseWheel += (_, _) => _bottomAnchor.NotifyUserScroll();
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
         // kancasından geçer. Konsol bunu Enable eden TEK panel: yatay taşması olan tek yüzey odur (WordWrap=False).
         HorizontalWheelScroll.Enable(this);
@@ -117,6 +114,9 @@ public partial class ConsoleView : UserControl
             // orada izlenecek canlı bir akış (ve prompt imleci) yoktur, kullanıcı bir logu okuyordur.
             autoResumeAllowed: () => !_projectMode);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
+        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
+        UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         Pill.AccessibleName = AccessibilityNames.LatestConsole;
         // [A13/T1 fix-1 · I-D] EventStreamView.ctor:97 deseni: unload'da SONSUZ blink saatleri bırakılır (aksi
@@ -245,8 +245,29 @@ public partial class ConsoleView : UserControl
         {
             document.EndUpdate();
         }
-        if (StickToBottom)
+        // Dibe çekme yetkisi TEK yerdedir (BottomAnchorBehavior.ShouldFollow): takip açık, uçuşta atlama yok
+        // ve direksiyon kullanıcıda değil. Burası eskiden salt StickToBottom'a bakıyordu — kullanıcının
+        // kaydırmasını görmeyen ikinci bir auto-scroll yoluydu ve derleme sürerken konsolu kaydırılamaz
+        // hâle getiriyordu.
+        if (_bottomAnchor.ShouldFollow)
             EditorControl.ScrollToEnd();
+    }
+
+    /// <summary>
+    /// [design v1.7.0 §2.5] Mod geçişinin ikinci adımı: <b>(1) içeriği değiştir → (2) DİBE PİNLE → (3)
+    /// animasyonu başlat</b>. Yeni içerik her zaman dipten okunur.
+    ///
+    /// <para><b>Neden önce <c>UpdateLayout</c>:</b> belge az önce değiştirildi ve editörün kaydırma
+    /// geometrisi (extent/viewport) henüz yeniden ölçülmemiştir. O anda <c>ScrollToEnd</c> çağırmak,
+    /// hesabı ESKİ geometriye yaptırır ve panel dipte değil TEPEDE kalır (ölçüldü: 3739px'lik bir belgede
+    /// offset 3161 yerine 19'da kalıyordu). Ölçüm zorlandığında pin deterministik olur — geçişte bir kez
+    /// çalışır ve belge zaten render dilimiyle (200 satır) sınırlıdır.</para>
+    /// </summary>
+    private void PinToBottomAfterModeSwitch()
+    {
+        if (!_bottomAnchor.ShouldFollow) return;
+        EditorControl.UpdateLayout();
+        EditorControl.ScrollToEnd();
     }
 
     // Belgeyi son RenderSliceLines satıra kırpar (baştaki fazla satırları TEK Remove ile siler).
@@ -439,7 +460,7 @@ public partial class ConsoleView : UserControl
         _projectAllLines = [];
         _loadedFrom = 0;
         EditorControl.Document = new TextDocument(ConsoleRenderSlice.LastLines(fullRunText ?? "", RenderSliceLines));
-        if (StickToBottom) EditorControl.ScrollToEnd();
+        PinToBottomAfterModeSwitch();
         RefreshPrompt(); // anlatıya dönüldü → prompt satırı geri gelir
         PlayTiltIn();
     }
@@ -470,7 +491,7 @@ public partial class ConsoleView : UserControl
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.
         _loadedFrom = Math.Max(0, allLines.Count - RenderSliceLines);
         EditorControl.Document = new TextDocument(Join(allLines, _loadedFrom, allLines.Count));
-        if (StickToBottom) EditorControl.ScrollToEnd();
+        PinToBottomAfterModeSwitch();
 
         PlayTiltIn();
         if (buildInProgress) ShowBuildInProgress(_motion.Enabled); // [A13/T1] motion sinyalinin TEK kapısı
@@ -551,20 +572,17 @@ public partial class ConsoleView : UserControl
     /// metodun ta kendisini doğrudan tetikleyebilsin (paralel bir kopya yol DEĞİL).</summary>
     internal void OnScrollOffsetChanged()
     {
-        // [I-1 fix] Bottom-anchor'ın IsStuck YENİDEN-HESABI, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır.
-        // Neden sıra kritik: bir prepend (aşağıda) belgeyi TEPEDE büyütür ve VerticalOffset'i ChunkStitch.
-        // CompensatedOffset'e telafi eder — ExtentHeight bu satırdan SONRA okunsaydı, prepend'in kendi
-        // büyümesini "dipte içerik büyüdü" sanıp (extentChange>0, stale IsStuck=true) kullanıcıyı dibe
-        // YANKLARDI (CompensatedOffset'i ezerdi). Burada ÖNCE çalıştırmak, henüz-prepend-edilmemiş offset/extent
-        // ile IsStuck'ı taze tutar (tepeye scroll → IsStuck=false); prepend'in extent artışı SONRAKİ olaya
-        // sarkarsa bile o an IsStuck zaten false olduğundan içerik-büyümesi yakalaması tetiklenmez.
+        // [I-1 fix] Bottom-anchor'ın yeniden-hesabı, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır: bir
+        // prepend (aşağıda) belgeyi TEPEDE büyütür ve VerticalOffset'i ChunkStitch.CompensatedOffset'e telafi
+        // eder; önce çalışmak, henüz-prepend-edilmemiş geometriyle takip kararını taze tutar.
         //
-        // [T59] AvalonEdit'in ScrollOffsetChanged'i WPF ScrollViewer.ScrollChanged.ExtentHeightChange gibi bir delta
-        // VERMEZ — burada elle izlenir (BottomAnchorDecision içerik-büyümesi/kullanıcı-scroll ayrımı için bunu ister).
-        double extent = EditorControl.ExtentHeight;
-        double extentChange = extent - _lastExtentHeight;
-        _lastExtentHeight = extent;
-        _bottomAnchor.OnScrollChanged(extentChange);
+        // Bu bir OFFSET olayıdır, extent olayı değil — AvalonEdit'in ScrollOffsetChanged'i yalnız kaydırma
+        // konumu değişince ateşlenir. Bir ara sürüm burada extent farkını elle izliyordu ve gerçek kusur oydu:
+        // kullanıcı yukarıdayken eklenen içerik offset'i oynatmadığından hiç olay doğmuyor, izlenen extent
+        // bayatlıyordu; kullanıcı nihayet tekerleği çevirdiğinde olay "içerik büyüdü" (extentChange>0) gibi
+        // görünüp takip kararını ATLATIYORDU. Panel dibe yapışık kalıyor ve her batch kullanıcıyı geri
+        // fırlatıyordu. İçerik büyümesini artık büyümeyi YAPAN yer bildirir (AppendBatch → ShouldFollow).
+        _bottomAnchor.OnScrollChanged(extentHeightChange: 0);
 
         EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
 
@@ -608,8 +626,12 @@ public partial class ConsoleView : UserControl
     /// (<c>HasAnimatedProperties==false</c>) reduced-motion'da doğrulamak için.</summary>
     internal System.Windows.UIElement ActiveCursorGlyph => ActiveCursor;
 
-    /// <summary>[Test] Panel geçişinin (tilt in) uygulandığı kap — metin ve prompt imleci birlikte içindedir.</summary>
+    /// <summary>[Test] Panel geçişinin (tilt in) uygulandığı log bloğu — prompt satırı bunun DIŞINDADIR.</summary>
     internal FrameworkElement TiltHost => PART_TiltHost;
+
+    /// <summary>[Test] Dibe çekme yetkisi (<see cref="BottomAnchorBehavior.ShouldFollow"/>) — kullanıcı
+    /// kaydırdığında kapanır, bekleme dolunca geri açılır.</summary>
+    internal bool FollowsBottom => _bottomAnchor.ShouldFollow;
 
     /// <summary>[A13/T1 fix-1 · I-C · <see cref="Views.EventStreamView.ActiveLineInstant"/> ikizi] En yeni satır
     /// için SON kurulan daktilo zamanlayıcısı instant mı — yani üretim append yolu satırı harf harf mi yazıyor,
