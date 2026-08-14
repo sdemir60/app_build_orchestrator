@@ -1496,9 +1496,15 @@ in the prototype. Each row used to run its own timer, so a fast run had two or t
 once and the panel looked unsettled.
 
 The event stream keeps a prompt of its own. When there is nothing left to write the active line does not
-disappear: it stays as a wall-clock stamp and a blinking dim caret — the console prompt's twin, and the
-stream's way of saying it is still here. It is the same row, recoloured, rather than a second one; an empty
-stream shows the empty-state text instead.
+disappear: it stays as a wall-clock stamp and a blinking caret — the console prompt's twin, and the stream's
+way of saying it is still here. It is the same row rather than a second one; an empty stream shows the
+empty-state text instead.
+
+Both carets are **amber, always** — writing or waiting, console or stream. §2.5 tints the idle prompt dim and
+the prototype dims the stream's waiting row with it; the caret was pulled to one colour instead, because it is
+the application's "I am alive" mark and the two panels should say that the same way. The caret takes its
+colour from the line rather than carrying its own, so the tone is set in one place; the wall-clock stamp stays
+dim, which keeps the waiting row quiet.
 
 **The node's core is the plan channel.** The glyph inside the square answers "what will happen to this
 project" while the border answers "what happened in this run": amber when it will be built, grey when it is up

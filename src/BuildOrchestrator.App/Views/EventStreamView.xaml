@@ -34,8 +34,11 @@
                          Foreground="{DynamicResource Brush.TextFaint}" />
               <Border Width="12" Margin="0,0,8,0" VerticalAlignment="Center">
                 <!-- [prototip: Cursor'un background'u currentColor] İmleç SATIRIN rengini alır — kendi rengi
-                     YOKTUR. Böylece tonu tek yerden (PART_ActiveText.Foreground) sürülür: canlı satır amber,
-                     bekleme satırı text-faint. İki ayrı yere yazılsaydı sessizce ayrışabilirlerdi. -->
+                     YOKTUR; tonu tek yerden (PART_ActiveText.Foreground) gelir.
+                     [SAPMA — kullanıcı kararı] Prototipte bekleme satırı text-faint'tir, imleci de öyle.
+                     Burada imleç HER ZAMAN amberdir: konsolun prompt imleci de amber ve iki panelin aynı
+                     dili konuşması istendi — imleç uygulamanın "canlıyım" işaretidir, beklerken de öyle.
+                     Saat damgası soluk kalır (kendi rengi vardır), yani satır yine sakin okunur. -->
                 <Rectangle x:Name="PART_ActiveCursor" Width="7" Height="13" HorizontalAlignment="Center"
                            Fill="{Binding Foreground, ElementName=PART_ActiveText}" />
               </Border>

@@ -37,7 +37,7 @@ public class EventStreamIdlePromptTests
         ((SolidColorBrush)((Rectangle)view.ActiveCursorGlyph).Fill).Color;
 
     [StaFact]
-    public void After_the_writing_stops_a_dim_prompt_line_stays_at_the_bottom()
+    public void After_the_writing_stops_a_prompt_line_stays_at_the_bottom()
     {
         var vm = NewVm();
         var (view, window) = Realize(vm);
@@ -51,9 +51,9 @@ public class EventStreamIdlePromptTests
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
 
-        // Satır DURUR: saat + soluk imleç, metin boş.
+        // Satır DURUR: saat + yanıp sönen imleç, metin boş.
         Assert.Equal(Visibility.Visible, view.ActiveLine.Visibility);
-        Assert.Equal(Token(view, "Brush.TextFaint"), CursorColour(view));
+        Assert.Equal("", view.ActiveText.Text);
         Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties, "bekleme imleci yanıp sönmeli");
         GC.KeepAlive(window);
     }
@@ -76,9 +76,32 @@ public class EventStreamIdlePromptTests
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
 
-        // Bekleme satırında da: ton değişti, imleç yine onu izliyor.
+        // Bekleme satırında da imleç satırın rengini taşır — ve o renk amberdir (aşağıdaki teste bak).
         Assert.Same(view.ActiveText.Foreground, ((Rectangle)view.ActiveCursorGlyph).Fill);
-        Assert.Equal(Token(view, "Brush.TextFaint"), CursorColour(view));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [SAPMA — kullanıcı kararı] İmleç HER ZAMAN amberdir: yazarken de, beklerken de.
+    ///
+    /// <para>Prototipte bekleme satırı (ve imleci) <c>text-faint</c>'tir. Konsolun prompt imleci daha önce
+    /// kullanıcı kararıyla amber yapılmıştı; iki panelin aynı dili konuşması istendi — imleç uygulamanın
+    /// "canlıyım" işaretidir ve beklerken de öyle kalır. Saat damgası soluk kaldığı için satır yine sakin
+    /// okunur.</para>
+    /// </summary>
+    [StaFact]
+    public void The_cursor_is_amber_while_waiting_too_just_like_the_consoles()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // yazarken
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
+
+        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // beklerken de
         GC.KeepAlive(window);
     }
 
