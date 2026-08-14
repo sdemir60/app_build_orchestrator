@@ -1434,6 +1434,11 @@ lines.
   native equivalent (a bottom-anchored Y scale plus a translate) carries the same gesture.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
+- The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
+  glyph advance to a whole pixel; Geist Mono advances 7.2 px at 12 px, so it rounds to 7 and the line comes out
+  2.8 % narrow with the rounding error spread unevenly between characters. On a monospace grid the cost is not
+  only width but alignment. The bottom padding is wider than the top so the caret, which sits on the document's
+  last line, is not flush against the horizontal scrollbar when one appears.
 
 ### 13.6 Graph renderer
 
@@ -1477,6 +1482,14 @@ the CSS `outline: 2px solid; outline-offset: 2` translated honestly: WPF draws a
 rectangle, so the rectangle is a full pen wider than the offset alone would suggest. Because the layout depends on the panel, `SizeChanged` recomputes it and
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
+
+**The node's core is the plan channel.** The glyph inside the square answers "what will happen to this
+project" while the border answers "what happened in this run": amber when it will be built, grey when it is up
+to date, and permanently orange for a member of a cycle. Being **queued is not a result** and does not take the
+core over — it used to, and the cost showed at the moment of pressing Build: the amber cores of everything
+planned turned grey at once (colour changes are instant here) while the graph dimmed, so the only coloured
+thing on screen vanished in the same frame and read as a flash. Only a real outcome — building, succeeded,
+failed, skipped — takes the core.
 
 **The run is told with opacity, not with edges.** Idle, everything is fully opaque. Once a run starts the
 graph quietens: queued and discovered nodes drop to 0.13 and only the projects actually building stay

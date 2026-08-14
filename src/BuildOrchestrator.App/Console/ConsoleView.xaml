@@ -11,6 +11,12 @@
     <!-- [3b Minor 1] Base foreground token (Brush.TextPrimary) — colorizer her satırı zaten ezer; off-palette hex YOK. -->
     <!-- [SCROLLBAR] BuildApp.jsx:616: konsol kutusu overflow AUTO — AvalonEdit default'u Visible olduğundan
          açıkça çevrilir. Bar'ın kendi görünümü Controls.xaml'in implicit ScrollBar stilinden gelir. -->
+    <!-- [ÖLÇÜLMÜŞ SAPMA] Pencere kökü TextFormattingMode="Display" kullanır (T65: küçük UI puntolarında keskinlik).
+         Konsol bunu EZER. Display her glif ilerlemesini tam piksele yuvarlar; Geist Mono 12px'te ilerleme
+         7.2px'tir ve 7'ye yuvarlanır — ölçüldü: satır %2.8 DARALIYOR (6.841 px/karakter, Ideal'de 7.036) ve
+         yuvarlama hatası karakter aralarına eşitsiz dağılıyor. Monospace bir ızgarada bunun bedeli yalnız
+         genişlik değil hizadır. Alt dolgu üsttekinden fazladır: prompt imleci son satırda durur ve yatay
+         kaydırma çubuğu çıktığında ona bitişik kalmasın diye altında pay bırakılır. -->
     <avalonEdit:TextEditor x:Name="EditorControl"
                             IsReadOnly="True"
                             WordWrap="False"
@@ -18,7 +24,8 @@
                             VerticalScrollBarVisibility="Auto"
                             HorizontalScrollBarVisibility="Auto"
                             FontSize="{DynamicResource FontSize.Xs}"
-                            Padding="12,8"
+                            TextOptions.TextFormattingMode="Ideal"
+                            Padding="12,8,12,14"
                             Background="Transparent" Foreground="{DynamicResource Brush.TextPrimary}" />
     <!-- [design v1.7.0 §2.5] Prompt satırı: yanıp sönen blok imleç + boştayken "ready" (dim). Konsolun tek
          canlı öğesi budur — daktilo YOK, duvar-saati damgası YOK. İmleç bir 7×13px Rectangle'dır (font

@@ -710,11 +710,17 @@ public partial class GraphView : UserControl
         //   aksi hâlde   → plan (amber = derlenecek · gri = güncel)
         // Kart noktasıyla ayrışması bilinçlidir: dolgu iş bitene kadar planı söyler; bitince grafta SONUCA
         // döner, kartta griye düşer.
+        // [DEĞİŞEN KURAL] Kuyruktaki düğüm ARTIK plan rengini korur. Eskiden Queued da statü rengini (gri)
+        // alıyordu ve bunun bedeli basış anında görülüyordu: Sync'ten sonra derlenecek düğümlerin küpü amber
+        // durur, Build'e basılınca statü Queued'a geçip küp ANINDA griye döner (renk geçişi yoktur) —
+        // ekrandaki tek renkli şey aynı anda kaybolduğu için "derlenecekler bir yanıp söndü" gibi okunuyordu.
+        // Kuyrukta olmak bir SONUÇ değildir; çekirdek hâlâ "bu proje derlenecek" der ve amber kalır, düğümün
+        // tamamı da herkesle birlikte tek seferde söner.
         iconColor = visual.Model.InCycle ? "Brush.StatusCycle"
             : visual.Model.Status switch
             {
                 GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Skipped => iconColor,
-                GraphStatus.Building or GraphStatus.Queued => iconColor,
+                GraphStatus.Building => iconColor,
                 _ => visual.Model.WillBuild switch
                 {
                     true => "Brush.DotDirty",

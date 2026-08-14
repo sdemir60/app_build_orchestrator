@@ -438,7 +438,10 @@ public class ConsoleViewTests
         view.Arrange(new Rect(0, 0, 800, 600));
         view.UpdateLayout();
 
-        Assert.Equal(new Thickness(12, 8, 12, 8), view.Editor.Padding);
+        // [DEĞİŞEN KURAL] Sol/üst/sağ bütçe 12/8'dir ve DEĞİŞMEDİ. ALT kenar daha geniştir: prompt imleci
+        // belgenin son satırında durur ve yatay kaydırma çubuğu çıktığında ona bitişik kalıyordu — imlecin
+        // altında pay bırakılır.
+        Assert.Equal(new Thickness(12, 8, 12, 14), view.Editor.Padding);
 
         // GERÇEK yerleşim: TextView'in sol/üst kenarı editörün kenarından padding kadar içeride.
         var textView = view.Editor.TextArea.TextView;
