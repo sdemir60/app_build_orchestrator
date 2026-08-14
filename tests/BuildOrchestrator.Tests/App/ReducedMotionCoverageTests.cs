@@ -181,9 +181,9 @@ public class ReducedMotionCoverageTests
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B")); // aktif satır "B building…"
 
-        Assert.True(view.ActiveLineInstant); // daktilo INSTANT (harf-harf YOK)
-        // [fix] ActiveLineInstant yalnız daktilo zamanlayıcısını gözler (scheduler yoksa vacuously true). İmlecin
-        // blink saatinin GERÇEKTEN kurulmadığını ayrı kanıtla (ConsoleView.ActiveCursorGlyph deseni).
+        // Prompt satırı hiçbir koşulda daktilo etmez (bkz. EventStreamView.UpdateActiveLine) — metin TAMDIR.
+        Assert.Equal("B building…", view.ActiveText.Text);
+        // Reduced-motion'da imlecin blink saati de GERÇEKTEN kurulmaz (ConsoleView.ActiveCursorGlyph deseni).
         Assert.False(view.ActiveCursorGlyph.HasAnimatedProperties); // imleç blink saati YOK
         GC.KeepAlive(window);
     }

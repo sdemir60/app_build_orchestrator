@@ -34,6 +34,13 @@
                             Padding="12,8,12,14"
                             Background="Transparent" Foreground="{DynamicResource Brush.TextPrimary}" />
     </Grid>
+    <!-- [animasyon spec §2.4, "birebir gerekiyorsa"] Geçiş boyunca log bloğunun yerini alan 3B katman.
+         Prototipin `perspective(900px) rotateX(7deg)`i GERÇEK bir perspektif projeksiyonudur: üst kenar
+         geriye gider ve DARALIR, alt kenar öne gelir ve GENİŞLER — trapez. WPF'in 2D dönüşümleri afindir,
+         yani bir trapez üretemez; ölçek+kaydırma yaklaşımı hareketi salt dikey bırakıyor ve jest "kâğıdın
+         masaya oturması" değil "aşağıdan kayma" gibi okunuyordu. Katman yalnız geçişin 340ms'si boyunca
+         görünür; sonrasında gerçek editör geri gelir (metin yeniden keskindir). -->
+    <Viewport3D x:Name="PART_Tilt3D" Visibility="Collapsed" IsHitTestVisible="False" ClipToBounds="False" />
     <!-- [design v1.7.0 §2.5] Prompt satırı: yanıp sönen blok imleç + boştayken "ready" (dim). Konsolun tek
          canlı öğesi budur — daktilo YOK, duvar-saati damgası YOK. İmleç bir 7×13px Rectangle'dır (font
          glyph'i DEĞİL) ve satırın SOLUNDA durur; konsolun bütün satırları onunla aynı sol hizada başlar.

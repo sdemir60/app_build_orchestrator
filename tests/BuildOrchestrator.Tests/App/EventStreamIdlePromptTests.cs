@@ -111,34 +111,27 @@ public class EventStreamIdlePromptTests
     }
 
     /// <summary>
-    /// AYIRT EDİCİ — bir olay yazıldıktan sonra "X building…" satırı ANINDA geri gelir, harf harf YENİDEN
-    /// yazılmaz.
+    /// AYIRT EDİCİ — akan olaylar prompt satırını YERİNDEN OYNATMAZ: metni de rengi de hep aynı kalır.
     ///
     /// <para>Sahada görülen kusur: "renkler garip, bazen satır rengi bazen sarı, ne olduğu belli değil".
-    /// Yazım biter bitmez kuşak guard'ı sıfırlanıyor ve aynı amber cümle her olaydan sonra baştan
-    /// yazılıyordu; hızlı bir koşuda alt satır sürekli yarım amber metinle yarım renkli metin arasında gidip
-    /// geliyordu. Daktilo yalnız YENİ bilgiye çalışır — kesilmiş bir cümleyi geri koymak yeni bilgi
-    /// değildir.</para>
+    /// Prompt satırı bir dönem yazı yüzeyi olarak kullanılıyordu ve her olayda önce olayın rengine geçip
+    /// sonra amber'a dönüyordu; üstelik satır tampona bırakıldığında imleç sütunu statü glyph'ine
+    /// dönüştüğü için göz bunu "renk değişti" diye okuyordu. Prompt artık yalnız bir göstergedir.</para>
     /// </summary>
     [StaFact]
-    public void After_an_event_is_written_the_building_line_returns_without_retyping_itself()
+    public void Arriving_events_never_disturb_the_prompt_line()
     {
         var vm = NewVm();
         var (view, window) = Realize(vm);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", 0, null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
-        DispatcherPump.PumpUntil(() => view.ActiveText.Text == "A building…", TimeSpan.FromSeconds(5));
+        Assert.Equal("A building…", view.ActiveText.Text); // ön-koşul
 
-        // İlk tampon satırı yazılmaz (prototip: prevNewest==null); ikincisi alt satırda yazılır.
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\b.csproj", SkipReasons.UpToDate));
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\c.csproj", SkipReasons.UpToDate));
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(120)); // satırlar yazarken bile
 
-        // Yazım bitince satır yukarı bırakılır — TAM O ANDA alt satır bekleme hâline dönmüş olmalı.
-        DispatcherPump.PumpUntil(
-            () => view.Rows.Count == 2 && view.Rows[^1].Visibility == Visibility.Visible, TimeSpan.FromSeconds(5));
-
-        Assert.Equal("A building…", view.ActiveText.Text);                       // yarım değil, TAM
-        Assert.True(view.ActiveLineInstant, "building satırı için daktilo KURULMAMALI");
+        Assert.Equal("A building…", view.ActiveText.Text);
         Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));
         GC.KeepAlive(window);
     }

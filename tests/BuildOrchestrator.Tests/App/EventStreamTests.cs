@@ -155,10 +155,19 @@ public class EventStreamTests
         GC.KeepAlive(window);
     }
 
-    // ============================================================ §9 — aktif satır jump'ta daktilo eder (gerçek yol)
+    // ============================================================ §9 — prompt satırı jump'ta ANINDA tazelenir
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Aktif proje değişince prompt satırı yeni metni ANINDA gösterir — daktilo ETMEZ.
+    ///
+    /// <para>Eski iddia: satır atladığında harf harf yazılır (ve bir dönem fırtına kapısı bunu yanlışlıkla
+    /// instant'a çeviriyordu — bu testin ilk hâli o kusuru yakalıyordu). Değişme gerekçesi: yazım prototipin
+    /// §6 modeline döndü, yani daktilo EN YENİ TAMPON SATIRINA aittir; prompt satırı bir göstergedir ve
+    /// hiçbir şey yazmaz. İki yerde birden hareket olması sahada "ne olduğu belli değil" diye okunuyordu.
+    /// Atlamanın kendisi (aktif satırın gerçekten değişmesi) hâlâ pinlenir.</para>
+    /// </summary>
     [StaFact]
-    public void Active_line_types_when_it_jumps_on_a_real_completion_path()
+    public void Active_line_refreshes_instantly_when_it_jumps_on_a_real_completion_path()
     {
         const string a = @"C:\p\a.csproj";
         const string b = @"C:\p\b.csproj";
@@ -168,13 +177,12 @@ public class EventStreamTests
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));    // aktif satır → "B building…"
-        // Gerçek yol: ProjectSucceeded ÖNCE PushStream (fırtına penceresi açılır) SONRA FinishBuilding çağırır.
-        // Aktif proje (B) bittiği için aktif satır "A building…"e ATLAR — bu SetActive Push'tan µs sonra olduğundan
-        // ESKİ kod burst=true hesaplar ve satırı instant basar (bug). Fix sonrası burst kapısı yok → daktilo koşar.
+        // Gerçek yol: ProjectSucceeded ÖNCE PushStream SONRA FinishBuilding çağırır. Aktif proje (B) bittiği
+        // için aktif satır "A building…"e ATLAR.
         vm.OnEvent(new ProjectSucceededEvent("r1", b, 1200));
 
         Assert.Equal("A building…", vm.ActiveLineText);        // aktif satır gerçekten atladı
-        Assert.False(view.ActiveLineInstant);                  // ESKİ kod: instant (RED) — fix sonrası: daktilo (GREEN)
+        Assert.Equal("A building…", view.ActiveText.Text);     // ve prompt satırı onu ANINDA, tam gösterir
         GC.KeepAlive(window);
     }
 

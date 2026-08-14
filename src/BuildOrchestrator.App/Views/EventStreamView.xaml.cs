@@ -35,12 +35,6 @@ public partial class EventStreamView : UserControl
     private readonly BottomAnchorBehavior _bottomAnchor;
     private readonly TextBlock _counter = new();
 
-    // Aktif satır daktilosu
-    private DispatcherTimer? _activeTimer;
-    private Stopwatch? _activeClock;
-    private TypewriterScheduler? _activeScheduler;
-    private string _activeFull = "";
-    private long _activeGenShown = -1;
 
     /// <summary>[W2 · fix-1] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
     /// (<see cref="Controls.MotionGate"/>) — latch'siz kip. Fold'dan önce bu görünüm diğer sahiplerden ASİMETRİKTİ:
@@ -104,7 +98,7 @@ public partial class EventStreamView : UserControl
         DataContextChanged += OnDataContextChanged;
         // [D3 §5] Unload'da daktilo saatiyle BİRLİKTE imlecin RepeatBehavior.Forever blink clock'unu da durdur
         // (aksi halde sonsuz clock unload'da terk edilirdi — StopActiveTypewriter yalnız type-timer'ı söküyordu).
-        Unloaded += (_, _) => { StopActiveTypewriter(); StopCursorBlink(); };
+        Unloaded += (_, _) => StopCursorBlink();
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -113,10 +107,8 @@ public partial class EventStreamView : UserControl
     internal IReadOnlyList<EventStreamRow> Rows => [.. PART_Rows.Children.OfType<EventStreamRow>()];
     internal FrameworkElement ActiveLine => PART_ActiveLine;
     internal TextBlock ActiveText => PART_ActiveText;
-    /// <summary>[Test · D3 §9] Aktif satır için SON kurulan daktilo zamanlayıcısı instant mı — §1 regresyon
-    /// guard'ı (eski kod burst yüzünden instant kurardı; fix sonrası gerçek Push→FinishBuilding jump'ında
-    /// daktilo koşar). Hiç kurulmadıysa true varsayılır (satır gizli).</summary>
-    internal bool ActiveLineInstant => _activeScheduler?.Instant ?? true;
+    /// <summary>[Test] Şu an daktilo eden satır (varsa) — "aynı anda tek satır yazar" kuralının yüzeyi.</summary>
+    internal EventStreamRow? TypingRow => _typingRow;
     /// <summary>[E3/T36 reduced-motion kapsama] Aktif satır imleci — blink'in DURDUĞUNU
     /// (<c>HasAnimatedProperties==false</c>) reduced-motion'da doğrulamak için (ConsoleView.ActiveCursorGlyph deseni).
     /// <see cref="ActiveLineInstant"/> yalnız DAKTİLO zamanlayıcısını gözler; imleç blink saatini ayrı bu yüzey kanıtlar.</summary>
@@ -168,23 +160,27 @@ public partial class EventStreamView : UserControl
                 for (int i = 0; i < e.NewItems.Count; i++)
                 {
                     var item = (StreamEventViewModel)e.NewItems[i]!;
+                    // AYNI ANDA YALNIZ EN YENİ SATIR YAZAR (prototip §6): yeni bir satır gelince öncekinin
+                    // yazımı ANINDA tamamlanır. Kural buradadır çünkü "en yeni" bilgisi yalnız burada var;
+                    // satırın kendisi kardeşlerini bilmez. Bu kural olmadan hızlı bir koşuda alt alta birkaç
+                    // satır aynı anda soldan açılıyordu.
+                    _typingRow?.FinishTyping();
                     var row = CreateRow(item);
                     PART_Rows.Children.Insert(e.NewStartingIndex + i, row);
-                    // HER olay alt satırda yazılır — fırtına kapısı (Instant) BURADA UYGULANMAZ.
-                    //
-                    // Gerekçe: o kapı, her satırın KENDİ daktilosu varken maliyeti sınırlamak içindi. Yazım tek
-                    // yüzeye taşındıktan sonra maliyet zaten sınırlı: aynı anda tek yazım koşar ve yeni olay
-                    // öncekini keser. Kapı korunsaydı hızlı bir koşuda olayların çoğu hiç yazılmaz, alt satırda
-                    // amber "X building…" görünür ve satırlar üstte kendi renkleriyle belirirdi — sahada
-                    // "çoğu zaman sarı yazıyor, üste atınca kırmızı/yeşil oluyor" diye görülen tam olarak buydu.
-                    //
-                    // İlk satır yazılmaz (tampon ilk kez dolarken hepsi birden akmasın diye); ondan sonrası yazılır.
-                    if (PART_Rows.Children.Count > 1 && AnimationsEnabledProvider()) BeginWriting(row, item);
+                    // Yazım BURADA başlar, satırın Loaded'ında değil: WPF Loaded'ı ertelenmiş olarak yayar ve
+                    // satır bir kare boyunca tam metniyle görünüp SONRA boşalırdı (görünür bir kırpışma).
+                    row.StartTypingIfPending();
+                    _typingRow = row;
                 }
                 break;
             case NotifyCollectionChangedAction.Remove when e.OldItems is not null:
+                double removedHeight = 0;
                 for (int i = 0; i < e.OldItems.Count; i++)
+                {
+                    if (PART_Rows.Children[e.OldStartingIndex] is FrameworkElement row) removedHeight += row.ActualHeight;
                     PART_Rows.Children.RemoveAt(e.OldStartingIndex); // front-trim: hep aynı indeksten çekilir
+                }
+                CompensateForTrim(removedHeight);
                 break;
             default:
                 RebuildRows();
@@ -194,6 +190,21 @@ public partial class EventStreamView : UserControl
         // yerdedir: kullanıcı kaydırdıysa ShouldFollow kapalıdır ve satır onu yerinden oynatmaz.
         if (_bottomAnchor.ShouldFollow) _bottomAnchor.OnScrollChanged(1);
         UpdateActiveLine();
+    }
+
+    /// <summary>
+    /// Tampon TEPEDEN kırpıldığında (render dilimi 150) okuyucunun konumunu korur.
+    ///
+    /// <para>Kaydırma konumu mutlak bir pikseldir: tepeden satır silmek, offset sabit kalsa bile okunan metni
+    /// yukarı kaydırır. Sahada "scroll duruyor ama yazılar akmaya devam ediyor" diye görülen buydu — panel
+    /// kullanıcıya bırakılmıştı ama içerik ayağının altından çekiliyordu. Silinen yükseklik kadar geri
+    /// alınır (chunk prepend'in telafisinin aynadaki hâli). Takip açıkken gerek yoktur: orada zaten dibe
+    /// yapışıyoruz.</para>
+    /// </summary>
+    private void CompensateForTrim(double removedHeight)
+    {
+        if (removedHeight <= 0 || _bottomAnchor.ShouldFollow) return;
+        PART_Scroll.ScrollToVerticalOffset(Math.Max(0, PART_Scroll.VerticalOffset - removedHeight));
     }
 
     private void RebuildRows()
@@ -206,10 +217,10 @@ public partial class EventStreamView : UserControl
     private EventStreamRow CreateRow(StreamEventViewModel item) =>
         new() { DataContext = item, AnimationsEnabledProvider = AnimationsEnabledProvider };
 
-    /// <summary>Metni ALT SATIRDA yazılmakta olan, bu yüzden tamponda henüz gizli duran satır.</summary>
-    private EventStreamRow? _pendingRow;
+    /// <summary>Şu an daktilo eden (en yeni) satır — yeni bir satır gelince yazımı anında tamamlanır.</summary>
+    private EventStreamRow? _typingRow;
 
-    /// <summary>Alt satırın BEKLEME tonu — hem derlenen projeyi anlatırken hem bomboşken. İmleç de bu rengi
+    /// <summary>Prompt satırının tonu — hem derlenen projeyi anlatırken hem bomboşken. İmleç de bu rengi
     /// taşır (kendi rengi yoktur, satırınkini izler).</summary>
     private const string WaitingToneKey = "Brush.AmberText";
 
@@ -226,131 +237,26 @@ public partial class EventStreamView : UserControl
     }
 
     /// <summary>
-    /// Alt satır YAZI YÜZEYİDİR: yeni bir olay geldiğinde metni burada, KENDİ renginde daktiloyla yazılır;
-    /// yazım bitince satır yukarıya (tampona) bırakılır ve imleç amber'a döner.
+    /// [DEĞİŞEN KURAL · prototip §6] Prompt satırı bir GÖSTERGEDİR, yazı yüzeyi DEĞİL. İki hâli vardır ve
+    /// ikisi de amberdir: derlenen proje (<c>X building…</c>) ya da bomboş (yalnız saat + imleç). Hiç daktilo
+    /// etmez ve hiçbir olayın rengini almaz.
     ///
-    /// <para>Öncelik: yazılacak olay &gt; derlenen proje ("X building…") &gt; boşta. Yazım sürerken aktif
-    /// projenin değişmesi beklemeye alınır — yazımın ortasında metni değiştirmek yarım cümle bırakırdı.</para>
+    /// <para>Eski iddia: her olay burada, kendi renginde yazılır ve sonra tampona bırakılır. Değişme gerekçesi
+    /// (sahada görüldü): bırakılma anında satırın 12px'lik imleç sütunu statü glyph'ine dönüşüyordu — metin
+    /// hiç değişmese de göz bunu "renk değişti" diye okuyor ve akış kararsız görünüyordu. Prototipin kendi
+    /// modelinde bu kopukluk YOKTUR: satır kendi yerinde, kendi glyph'i ve kendi rengiyle yazılır; prompt
+    /// satırı hiç karışmaz. Ekranda aynı anda tek bir hareket kalır ve o da en yeni satırın daktilosudur.</para>
     ///
-    /// <para>Satır, metni yazılana kadar tamponda GİZLİDİR: aksi hâlde aynı metin hem üstte tamamlanmış hem
-    /// altta yazılırken iki kez görünürdü. Yeni bir olay yazım sürerken gelirse bekleyen satır ANINDA
-    /// bırakılır (yukarıda tamamlanmış görünür) ve yeni metin yazılmaya başlar.</para>
-    /// </summary>
-    private void BeginWriting(EventStreamRow row, StreamEventViewModel item)
-    {
-        ReleasePendingRow();
-        _pendingRow = row;
-        row.Visibility = Visibility.Collapsed;
-
-        StopActiveTypewriter();
-        PART_ActiveLine.Visibility = Visibility.Visible;
-        PART_ActiveTime.Text = item.Time;
-        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, item.TextBrushKey); // imleç bunu izler
-        StartCursorBlink();
-        TypeOnBottomLine(item.Text);
-    }
-
-    /// <summary>Bekleyen satırı tampona bırakır (görünür yapar) — yazımı bittiğinde ya da yeni bir yazım onu
-    /// devraldığında.</summary>
-    private void ReleasePendingRow()
-    {
-        if (_pendingRow is null) return;
-        _pendingRow.Visibility = Visibility.Visible;
-        _pendingRow = null;
-    }
-
-    /// <summary>Yazım bitti: satır yukarı bırakılır ve alt satır bekleme hâline döner — imleç o anda amber'a
-    /// geri gelir, çünkü artık olayın rengini taşımıyor.</summary>
-    private void OnWriteFinished()
-    {
-        ReleasePendingRow();
-        UpdateActiveLine();
-    }
-
-    /// <summary>
-    /// Alt satırın DURUM MAKİNESİ. Yalnız iki bekleme hâli vardır ve ikisi de amberdir: <b>derlenen proje</b>
-    /// ("X building…") ya da <b>bomboş</b> (yalnız saat + imleç). Üçüncü hâl olan "bir olay yazılıyor"
-    /// <see cref="BeginWriting"/>'e aittir ve o sürerken buraya hiç girilmez.
-    ///
-    /// <para><b>Daktilo yalnız YENİ bilgiye çalışır:</b> aktif proje gerçekten değiştiyse. Bir olay yazıldıktan
-    /// sonra "X building…" satırı ANINDA geri konur, harf harf YENİDEN yazılmaz. Eskiden yazım biter bitmez
-    /// kuşak guard'ı sıfırlanıyor ve aynı cümle her olaydan sonra baştan yazılıyordu; hızlı bir koşuda alt
-    /// satır sürekli yarım amber metinle yarım renkli metin arasında gidip geliyordu — sahada "renkler garip,
-    /// ne olduğu belli değil" diye görülen buydu.</para>
-    ///
-    /// <para>Satır KOŞULSUZ durur: akış boşken de (yalnız imleç). Kuşak guard'ı yalnız daktiloyu kapatır,
-    /// satırın kendisini değil — eskiden guard en başta dönüyordu ve hiçbir proje başlatmayan bir Sync'ten
-    /// sonra satır hiç kurulmuyordu.</para>
+    /// <para>Satır KOŞULSUZ durur — akış boşken de (kullanıcı kararı: imleç ilk kareden itibaren oradadır).</para>
     /// </summary>
     private void UpdateActiveLine()
     {
         if (_vm is null) return;
-        if (_pendingRow is not null) return; // bir olay yazılıyor — alt satır ONA ait, bitince tazelenir
-
-        long gen = _vm.ActiveLineGeneration;
-        bool activeProjectChanged = gen != _activeGenShown;
-        _activeGenShown = gen;
-
-        StopActiveTypewriter();
         PART_ActiveLine.Visibility = Visibility.Visible;
         PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm.WallClock());
         PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, WaitingToneKey); // imleç bunu izler
+        PART_ActiveText.Text = _vm.ActiveLineText ?? "";
         StartCursorBlink();
-
-        string? text = _vm.ActiveLineText;
-        if (text is null) { PART_ActiveText.Text = ""; return; }
-
-        // [D3 §1] Yeni bir proje derlenmeye başladıysa satır daktilo eder (prototip BuildApp.jsx:723
-        // `<TypingLine instant={false} />`); yalnız reduced-motion instant yapar (TypewriterScheduler).
-        if (activeProjectChanged) TypeOnBottomLine(text); else PART_ActiveText.Text = text;
-    }
-
-    /// <summary>Alt satıra harf harf yazar (reduced-motion'da tek hamlede). Yazının NE olduğu ve hangi renkte
-    /// olduğu çağırana aittir — bu metot yalnız zamanlamayı sürer.</summary>
-    private void TypeOnBottomLine(string text)
-    {
-        _activeScheduler = new TypewriterScheduler(text.Length, animationsEnabled: AnimationsEnabledProvider());
-        if (_activeScheduler.Instant)
-        {
-            PART_ActiveText.Text = text;
-            if (_pendingRow is not null) OnWriteFinished(); // instant yazım da satırı yukarı bırakır
-            return;
-        }
-
-        _activeFull = text;
-        PART_ActiveText.Text = "";
-        _activeClock = Stopwatch.StartNew();
-        _activeTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(15) };
-        _activeTimer.Tick += OnActiveTypeTick;
-        _activeTimer.Start();
-        OnActiveTypeTick(this, EventArgs.Empty); // ilk kare
-    }
-
-    private void OnActiveTypeTick(object? sender, EventArgs e)
-    {
-        if (_activeScheduler is null || _activeClock is null) return;
-        TimeSpan elapsed = _activeClock.Elapsed;
-        int revealed = _activeScheduler.RevealedAt(elapsed);
-        PART_ActiveText.Text = _activeFull[..Math.Min(revealed, _activeFull.Length)];
-        if (elapsed >= _activeScheduler.Duration + TimeSpan.FromMilliseconds(CursorHoldMs))
-        {
-            // Daktilo bitti — timer durur ama aktif satır (canlı "building…") KALIR; imleç steady blink'te sürer.
-            _activeTimer?.Stop();
-            if (_activeTimer is not null) _activeTimer.Tick -= OnActiveTypeTick;
-            _activeTimer = null;
-            _activeClock?.Stop();
-            _activeClock = null;
-            PART_ActiveText.Text = _activeFull;
-            if (_pendingRow is not null) OnWriteFinished(); // olay yazıldı → satır yukarı, imleç amber'a
-        }
-    }
-
-    private void StopActiveTypewriter()
-    {
-        if (_activeTimer is not null) { _activeTimer.Stop(); _activeTimer.Tick -= OnActiveTypeTick; _activeTimer = null; }
-        _activeClock?.Stop();
-        _activeClock = null;
-        _activeScheduler = null;
     }
 
     /// <summary>[W2 fix-1] Motion sinyali koşu SIRASINDA değişince görünüm uyar. Tek SONSUZ animasyon aktif
@@ -504,8 +410,8 @@ public sealed class EventStreamRow : Border
         MouseLeave += (_, _) => SetHover(false);
         MouseLeftButtonUp += OnClicked;
         Loaded += OnLoaded;
-        // Unloaded'da sökülecek saat YOK: satırın daktilosu kalktı (yazım alt satıra taşındı) ve parıltı tek
-        // atımlıktır. Sonsuz saat tutan tek yüzey alt satırın imlecidir, onu EventStreamView söker.
+        // Ağaçtan çıkan bir satır daktilosunu terk etmez (parıltı tek atımlıktır, sökülecek sonsuz saati yok).
+        Unloaded += (_, _) => FinishTyping();
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -619,19 +525,64 @@ public sealed class EventStreamRow : Border
         ApplyTypewriter();
     }
 
+    // ---------------------------------------------------------------- daktilo (yalnız EN YENİ satır)
+
+    private DispatcherTimer? _typeTimer;
+    private Stopwatch? _typeClock;
+    private TypewriterScheduler? _typeScheduler;
+
+    /// <summary>[Test] Daktilo şu an koşuyor mu.</summary>
+    internal bool IsTyping => _typeTimer is not null;
+
+    /// <summary>Yazımı BAŞLATIR (henüz oynamadıysa). Sahibi <see cref="EventStreamView"/> satırı ağaca
+    /// eklerken çağırır — Loaded'ı beklemek bir karelik kırpışma bırakırdı.</summary>
+    internal void StartTypingIfPending() => ApplyTypewriter();
+
     /// <summary>
-    /// [DEĞİŞEN KURAL] Tampon satırı ARTIK DAKTİLO ETMEZ — metnini tam hâliyle gösterir.
+    /// [prototip §6] Satır KENDİ YERİNDE, kendi rengi ve kendi glyph'iyle harf harf yazılır. Fırtına/hata
+    /// satırları (<see cref="StreamEventViewModel.ShouldType"/>) ve reduced-motion anında basılır; her satır
+    /// yalnız BİR KEZ yazar (<c>TypePlayed</c> — container recycle tekrar oynatmaz).
     ///
-    /// <para>Eskiden en yeni satır kendi yerinde harf harf yazılırdı. Yazım yüzeyi alt satıra taşındı
-    /// (<c>EventStreamView.BeginWriting</c>): olay önce imlecin yanında, kendi renginde yazılır, bitince
-    /// tamamlanmış hâliyle buraya bırakılır. Satırın da ayrıca yazması aynı metni iki kez canlandırmak
-    /// olurdu; üstelik eski hâlde her satırın kendi zamanlayıcısı vardı ve hızlı bir koşuda alt alta birkaç
-    /// satır aynı anda açılıyordu.</para>
+    /// <para>"Aynı anda yalnız en yeni satır yazar" kuralı BURADA DEĞİL <see cref="EventStreamView"/>'dadır:
+    /// satır kardeşlerini bilmez, yeni bir satır gelince önceki <see cref="FinishTyping"/> ile kapatılır.</para>
     /// </summary>
     private void ApplyTypewriter()
     {
         if (_vm is null) return;
-        _text.Text = _vm.Text;
+        if (!_vm.ShouldType || _vm.TypePlayed || !AnimationsEnabledProvider()) { _text.Text = _vm.Text; return; }
+
+        _vm.TypePlayed = true;
+        var scheduler = new TypewriterScheduler(_vm.Text.Length, animationsEnabled: true);
+        if (scheduler.Instant) { _text.Text = _vm.Text; return; }
+
+        _typeScheduler = scheduler;
+        _text.Text = "";
+        _typeClock = Stopwatch.StartNew();
+        _typeTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(15) };
+        _typeTimer.Tick += OnTypeTick;
+        _typeTimer.Start();
+        OnTypeTick(this, EventArgs.Empty); // ilk kare
+    }
+
+    private void OnTypeTick(object? sender, EventArgs e)
+    {
+        if (_vm is null || _typeScheduler is null || _typeClock is null) return;
+        TimeSpan elapsed = _typeClock.Elapsed;
+        int revealed = _typeScheduler.RevealedAt(elapsed);
+        _text.Text = _vm.Text[..Math.Min(revealed, _vm.Text.Length)];
+        // [spec §6] Metin dolduktan SONRA satır ~420ms daha "yazıyor" sayılır (prototip: tamamlanmadan 420ms
+        // sonra bitti kabul edilir) — tek-yazar kuralı bu pencere boyunca da bu satırdadır.
+        if (elapsed >= _typeScheduler.Duration + TimeSpan.FromMilliseconds(CursorHoldMs)) FinishTyping();
+    }
+
+    /// <summary>Yazımı ANINDA tamamlar — yeni bir satır geldiğinde ya da satır ağaçtan çıkarken.</summary>
+    internal void FinishTyping()
+    {
+        if (_typeTimer is not null) { _typeTimer.Stop(); _typeTimer.Tick -= OnTypeTick; _typeTimer = null; }
+        _typeClock?.Stop();
+        _typeClock = null;
+        _typeScheduler = null;
+        if (_vm is not null) _text.Text = _vm.Text;
     }
 
     // ---------------------------------------------------------------- yardımcılar

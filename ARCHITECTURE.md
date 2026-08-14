@@ -1460,18 +1460,35 @@ lines.
   console does not do this in project-log mode: there is no live stream to follow there and the reader is
   looking at a log. This is a deliberate departure from §2.5, which says a reader's position is never touched
   once they scroll away; without the return the panel simply stopped following and never came back.
-- **Panel transitions are one piece.** Opening a project log and coming back with `← Back` both settle the
-  content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge, not a per-line cascade —
-  so a three-line log and a two-hundred-line narrative open at the same rhythm. `perspective(900px)
-  rotateX(7deg)` does not exist in WPF; §2.4's own native mapping is used instead — a bottom-anchored Y scale
-  from 0.965 plus a 14 px translate and a fade, on the same 340 ms ease-out curve. Only the log block moves.
-  The prompt line and the amber `build in progress` marker stay out of it by design (§1.3, §4): what settles
-  is the content, and the caret is the panel's fixed point. The `⌄ latest` pill stays out too, being an
-  affordance rather than content. The caret still never drifts mid-flight — its position is measured in the
-  transformed container's own untransformed coordinate space. The order matters and is fixed: change the
-  content, pin to the bottom, then animate. Pinning forces a measure first, because the editor's scroll
-  geometry is stale immediately after the document is swapped and a pin computed against it leaves the panel
-  at the top.
+- **While the panel is yours, nothing is deleted from the top of it either.** The render slice trims the
+  document from the beginning, and a trim moves the text out from under a reader whose scroll offset is an
+  absolute pixel — the position holds still while the content races upward past it. Trimming therefore waits
+  for following to resume, and then catches up in one step while the panel is already pinned to the bottom,
+  where it is invisible. The event stream has the same hazard with its 150-row buffer and solves it the other
+  way: the rows do leave, and the offset is reduced by exactly the height that left, so the reader's content
+  does not move. Both are the mirror of the chunk loader's prepend compensation.
+- **Panel transitions are one piece, and the hinge is real.** Opening a project log and coming back with
+  `← Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
+  not a per-line cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The
+  prototype's `perspective(900px) rotateX(7deg)` is a genuine perspective projection: the receding top edge
+  narrows, the advancing bottom edge widens. WPF's 2-D transforms are affine and cannot produce that
+  trapezoid, so §2.4's second option is taken — the block is a textured plane in a `Viewport3D` with a
+  `PerspectiveCamera` 900 px away, rotated 7° → 0 about an axis through its bottom edge. A scale-and-translate
+  approximation was tried first and read as a slide rather than a hinge; the missing cue is the horizontal
+  one. The plane's texture is a still of the block taken as the transition starts — a live visual brush
+  cannot work, since hiding the real block would hide it in the brush too. The camera's field of view is
+  derived so that the plane at zero rotation covers the viewport exactly, which is what makes the hand-off
+  back to the real editor invisible. Only the log block moves: the prompt line and the amber
+  `build in progress` marker stay out of it by design (§1.3, §4) — what settles is the content, and the caret
+  is the panel's fixed point. The `⌄ latest` pill stays out too, being an affordance rather than content.
+- **Each mode is pinned to the end you read it from.** The order is fixed — change the content, pin, then
+  animate — and pinning forces a measure first, because the editor's scroll geometry is stale immediately
+  after a document swap and a pin computed against it lands on the wrong end. The run narrative pins to the
+  **bottom**: the interesting thing is the latest line and the panel goes on following the stream. A project
+  log pins to the **top** and opens **not following**: what you are looking for in a build log is the first
+  error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
+  hands following back, by the same rule as any other user scroll. This is a deliberate departure from §5.1,
+  which pins both directions to the bottom.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -1523,36 +1540,31 @@ rectangle, so the rectangle is a full pen wider than the offset alone would sugg
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
 
-**The bottom line is where the stream writes.** A new event is typed there, beside the caret and in its own
-colour; when the text is finished the line is released upward into the buffer, complete and motionless, and
-the caret returns to amber. A row stays hidden until its text has been written, otherwise the same sentence
-would appear twice — finished above and typing below. An event arriving mid-write releases the pending row at
-once and takes the surface over, so exactly one thing is ever in motion.
+**The newest row types where it will live.** A row is drawn from its first frame in its final colour and with
+its final glyph; only its text opens, left to right. Nothing about it changes when the typing ends, which is
+the whole point.
 
-Buffer rows do not animate at all. This is the one place the stream departs from §6, which types the newest
-row in place and hides the prompt until it finishes. Each row used to run its own typewriter, which put two or
-three lines opening leftward at the same time in a fast run; moving the writing to one surface removed that, and it is
-also what makes the caret meaningful — it is where the text is coming from. Every event is written, including
-the ones a burst would once have printed instantly: that gate existed to bound the cost of one timer per row,
-and with a single surface the cost is bounded already, since a new event cuts the previous write short. Left
-in place it also lied about colour — most events skipped the surface, so the caret sat on the amber
-*building…* line while rows appeared above it in green and red.
+For a while the writing happened on the bottom line instead — the event was typed beside the caret in its own
+colour and then released upward into the buffer. It was abandoned because of what the release looked like: the
+12 px caret column became a status glyph at that instant, and although the text never changed the eye read it
+as a colour change, so the stream looked unsettled. The prototype's own model has no such seam.
 
-**The bottom line has exactly two resting states, and both are amber:** the project being compiled
-(`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. Writing an event is the third
-state and it owns the surface only while it lasts. Keeping the count at two is what makes the panel readable —
-with three writers competing the tone changed several times a second and the surface looked random.
+Only the newest row types at a time; a new row completes the previous one instantly. That rule lives in the
+panel rather than in the row, since a row does not know its siblings. Without it — one timer per row — a fast
+run had two or three lines opening leftward at once, which is the defect that started this whole detour. Burst
+and failure events skip the typewriter entirely, as does reduced motion, and each row types exactly once, so a
+recycled container does not replay it. A row counts as "typing" for 420 ms after its text completes, matching
+§6, which is also how long it keeps the single-writer slot.
 
-The typewriter runs on **new information only**. A project that starts compiling is new and is typed; putting
-back a sentence that an event interrupted is not, so `X building…` is restored instantly. Restoring it by
-replaying the typewriter meant the same amber sentence reopened after every single event, and in a fast run
-the line never held still.
+**The prompt line is an indicator, not a surface.** It has two states and both are amber: the project being
+compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. It never types and never
+takes an event's colour, so it is the one thing on the panel that is always the same.
 
 The prompt is there from the first frame, before any event, and the stream has no empty-state text — the
-console shows a blinking caret the moment it opens and the two panels should say the same thing. The line's
-presence is unconditional; only the typewriter is gated on the active project changing. Gating the line itself
-on that was a real defect: a Sync starts no project, so the generation never moved and the caret never
-appeared until a second Sync happened to reset the gate as a side effect.
+console shows a blinking caret the moment it opens and the two panels should say the same thing. Its presence
+is unconditional. Gating it on the active project changing was a real defect: a Sync starts no project, so the
+generation never moved and the caret never appeared until a second Sync happened to reset the gate as a side
+effect.
 
 Both carets are **amber, always** — writing or waiting, console or stream. §2.5 tints the idle prompt dim and
 the prototype dims the stream's waiting row with it; the caret was pulled to one colour instead, because it is
@@ -2189,8 +2201,10 @@ do, and how the interface works around each — useful to know before attempting
 3. **No compositor.** Animations tick on the UI thread, so "the interface keeps animating while it is busy"
    cannot be guaranteed. The countermeasures are the process split (§4.1) and a hard rule against synchronous
    work on the UI thread.
-4. **No per-line transform and no CSS perspective inside AvalonEdit.** The console's panel transition is played
-   on the editor as a whole (bottom-anchored Y scale + translate + fade) rather than as a 3-D hinge.
+4. **2-D transforms are affine, so a perspective trapezoid is impossible.** The console's panel transition
+   needs one — the prototype's `perspective(900px) rotateX(7deg)` narrows the receding top edge and widens
+   the advancing bottom one. It is played through a real `Viewport3D` instead (§13.5); a scale-and-translate
+   approximation reads as a slide, not as a hinge.
 5. **Frozen resources cannot be animated.** Shared brushes and effects must be copied per instance before being
    driven (§13.8, §14.5).
 6. **No native smooth scrolling.** It is built from an attached property, an animator and an arbiter (§13.4).

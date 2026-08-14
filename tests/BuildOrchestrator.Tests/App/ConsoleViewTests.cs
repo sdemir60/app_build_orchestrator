@@ -155,8 +155,11 @@ public class ConsoleViewTests
     public void Project_mode_following_document_stays_capped_at_the_render_slice()
     {
         // Alta-yapışık (follow) proje logu chatty bir build'de akarken belge render dilimini AŞMAZ.
+        // [DEĞİŞEN ÖN-KOŞUL] Proje logu artık BAŞTAN açılır ve takip KAPALI başlar (kullanıcı kararı: bir
+        // derleme logunda aranan ilk hatadır). Follow'u kullanıcı dibe inerek açar — senaryo onu kurar.
         var view = new ConsoleView();
-        view.PlayCascade(new[] { "seed" }, buildInProgress: true); // _projectMode=true, StickToBottom=true (varsayılan)
+        view.PlayCascade(new[] { "seed" }, buildInProgress: true);
+        view.StickToBottom = true; // kullanıcı dibe indi → takip geri geldi
 
         for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
 
@@ -198,7 +201,8 @@ public class ConsoleViewTests
 
         // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
-        view.PlayCascade(all, buildInProgress: true); // instant (headless), _projectMode, StickToBottom=true (varsayılan)
+        view.PlayCascade(all, buildInProgress: true); // instant (headless), _projectMode
+        view.StickToBottom = true;                    // [DEĞİŞEN ÖN-KOŞUL] kullanıcı dibe indi → follow açık
         Assert.StartsWith("orig100\n", view.Document.Text);
         Assert.DoesNotContain("orig99\n", view.Document.Text); // ilk 100 chunk loader backlog'unda
 
@@ -270,17 +274,20 @@ public class ConsoleViewTests
         view.PlayCascade(all, buildInProgress: true); // _projectMode, StickToBottom=true (varsayılan/forced)
         view.UpdateLayout();
 
-        // Kaskat kullanıcıyı dibe pinler (design §2.5) — chunk latch'i de üretimdeki gibi orada kurulur.
-        Assert.Equal(view.Editor.ExtentHeight - view.Editor.ViewportHeight, view.Editor.VerticalOffset, 1);
-        view.OnScrollOffsetChanged();
-        Assert.True(view.StickToBottom, "senaryo ön-koşulu: kullanıcı dipteyken IsStuck=true");
+        // [DEĞİŞEN ÖN-KOŞUL] Proje logu BAŞTAN açılır (kullanıcı kararı) — chunk latch'i ancak kullanıcı
+        // tepeden uzaklaşınca kurulur. Senaryo bu yüzden önce aşağı iner, sonra tepeye döner.
+        Assert.Equal(0.0, view.Editor.VerticalOffset);
+        UserScrollGesture.Raise(view);
+        view.Editor.ScrollToVerticalOffset(view.Editor.ExtentHeight);
+        view.UpdateLayout(); // bu host'ta kaydırma ancak bir yerleşim geçişinden SONRA offset'e yansır (ölçüldü)
+        view.OnScrollOffsetChanged(); // arm (tepeden uzaklaşıldı)
 
         // TEK hamlede tepeye (Ctrl+Home): kullanıcının HAM jesti — üretimin dinlediği kanal — VE gerçek
         // kaydırma; ardından üretimin scroll handler'ı senkron tetiklenir. Jest olmadan takip BIRAKILMAZ:
         // takibi yalnız kullanıcı bırakır (bkz. BottomAnchorDecision.OnScrollChanged `userDriven`).
         UserScrollGesture.Raise(view);
         view.Editor.ScrollToVerticalOffset(0);
-        view.UpdateLayout(); // bu host'ta kaydırma ancak bir yerleşim geçişinden SONRA offset'e yansır (ölçüldü)
+        view.UpdateLayout();
         view.OnScrollOffsetChanged();
 
         // (a) Delik yok: prepend gerçekleşti, backlog (orig0..orig99) render dilimine (orig100..orig299) bitişik

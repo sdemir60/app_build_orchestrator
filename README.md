@@ -206,9 +206,13 @@ bottom sits a blinking amber block caret on a line of its own; output piles up a
 `ready` beside it while nothing is running. Scroll away from the bottom and it steps aside with the
 `⌄ latest` pill. Touch the panel — wheel, scrollbar or the navigation keys — and it is yours: arriving lines
 will not pull it down, and about five seconds after you stop, it returns to the bottom and picks the stream
-back up. The event stream does the same, and keeps a caret of its own on a timestamped line from the moment
-you open the app, whether or not anything has happened yet. Opening a project's log turns the return off:
-there is nothing live to follow there.
+back up. Nothing is deleted from the top while you are reading, either, so the text you are looking at holds
+still. The event stream behaves the same way and keeps a caret of its own on a timestamped line from the
+moment you open the app, whether or not anything has happened yet.
+
+A project's log opens **at the beginning** and stays there — what you are looking for in a build log is the
+first error, not the last line — so it does not follow the output and does not return on its own. Scroll to
+the bottom yourself and it starts following again. `← Back` returns you to the run narrative at its end.
 
 The dependency graph fits the panel at every size: nodes are unnamed mini squares laid out in build order,
 and the spacing shrinks until they do fit — so there is never a scrollbar and never a part of the graph you
