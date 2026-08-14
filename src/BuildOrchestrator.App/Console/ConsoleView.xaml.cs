@@ -68,7 +68,9 @@ public partial class ConsoleView : UserControl
     // [design v1.7.0 §2.5] Panel geçişinin tek parça "tilt in" ölçüleri (prototip: 14px + 340ms + rotateX 7°).
     private const double TiltInMs = 340.0;
     private const double TiltInOffsetPx = 14.0;
-    private const double TiltInScaleFrom = 0.94; // rotateX 7°'nin alt-kenar menteşeli Y-ölçek karşılığı
+    // Prototipin WPF eşlemesi (animasyon spec §2.4): perspective(900px) rotateX(7°) → alt kenara sabitlenmiş
+    // ScaleY 0.965. Değer spec'ten alınmıştır, "iyileştirilmez".
+    private const double TiltInScaleFrom = 0.965;
     private bool _buildInProgressPending; // kaskat bitince amber "build in progress ▮" gösterilecek mi
 
     // Render dilimi / chunk loader durumu.
@@ -498,17 +500,22 @@ public partial class ConsoleView : UserControl
     }
 
     /// <summary>
-    /// [design v1.7.0 §2.5] Panel geçişinin TEK hareketi: içerik alt kenarından menteşeli gibi <b>aşağı
-    /// serilerek</b> açılır — 14px yukarıdan, hafif kısaltılmış ve saydam başlar, 340ms ease-out ile yerine
-    /// oturur. Prototipteki <c>perspective(900px) rotateX(7deg)</c> WPF'te doğrudan yoktur (PlaneProjection
-    /// WPF'e ait değildir); en yakın native karşılık, alt kenara sabitlenmiş bir Y-ölçek + kaydırmadır ve aynı
-    /// jesti verir (fidelity notu: çevrilemeyen web ayrıntısı en yakın native karşılıkla çözülür).
+    /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu, <b>alt kenarı sabit
+    /// kalacak şekilde</b> izleyiciye doğru düzleşir: 14px aşağıdan, hafif kısaltılmış ve saydam başlar,
+    /// 340ms ease-out ile tam düz ve tam opak olur. Kâğıdın masaya oturması gibi — alt kenar hiç oynamaz.
+    ///
+    /// <para>Prototipteki <c>perspective(900px) rotateX(7deg)</c> WPF'te doğrudan yoktur (PlaneProjection
+    /// WPF'e ait değildir); spec §2.4'ün önerdiği native eşleme uygulanır: <c>RenderTransformOrigin 0.5,1</c>
+    /// + <c>ScaleY 0.965 → 1</c> + <c>TranslateY 14 → 0</c> + <c>Opacity 0 → 1</c>, 340ms,
+    /// <c>KeySpline 0.22,1 0.36,1</c>. Trapez kaybolur ama alt-menteşe + düzleşme okuması korunur.</para>
     ///
     /// <para>Hareket TEK PARÇADIR: satır sayısından bağımsız olarak her zaman aynı sürede biter — 3 satırlık
-    /// bir log ile 200 satırlık anlatı aynı ritimde açılır. Eskiden satır-bazlı bir kaskat vardı (26ms'de 3
-    /// satır) ve uzun içerikte geçiş belirgin biçimde uzuyordu.</para>
+    /// bir log ile 200 satırlık anlatı aynı ritimde açılır. Yalnız transform + opacity animasyonu vardır;
+    /// layout/yükseklik animasyonu YASAKTIR (spec §2.4) ve panelin yüksekliği geçiş boyunca değişmez.</para>
     ///
-    /// <para>Reduced-motion iken hiç oynatılmaz (motion sözleşmesi).</para>
+    /// <para>Yalnız log bloğu REMOUNT edildiğinde oynar (proje logu açma / <c>← Back</c> / proje değişimi /
+    /// boş-durum) — canlı satır eklenirken, kaydırırken ya da yeniden boyutlanırken ASLA (spec §2.1/§3).
+    /// Reduced-motion iken hiç oynatılmaz (motion sözleşmesi).</para>
     /// </summary>
     private void PlayTiltIn()
     {

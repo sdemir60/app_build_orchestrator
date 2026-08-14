@@ -8,10 +8,11 @@
   <!-- [T49] Konsol mono puntosu artık YEREL kopya değil, doğrudan token: design-v1 §2.5 "mono 12px" = text-xs
        (Resources/Tokens.xaml, FontSize.Xs). Editör ile aktif-satır overlay AYNI anahtarı okur → drift edemez. -->
   <Grid Background="{DynamicResource Brush.ConsoleBg}">
-    <!-- [design v1.7.0 §2.5] Panel geçişinin "tilt in"i BU KABA uygulanır: metin ve prompt imleci TEK PARÇA
-         hareket etsin diye ikisi de içindedir. Yalnız editöre uygulandığında imleç yerinde kalıyor, içerik
-         onun altından kayıyordu — geçiş dağılmış görünüyordu. `⌄ latest` pill DIŞARIDADIR: o içeriğin parçası
-         değil, panelin afordansıdır. -->
+    <!-- [design v1.7.0 §2.5 · animasyon spec §1] Panel geçişinin "tilt in"i YALNIZ LOG BLOĞUNA uygulanır ve
+         log bloğu = editörün ta kendisidir. Prompt satırı ile "build in progress" satırı bilinçli olarak
+         DIŞARIDADIR (spec §1.3 ve §4: "log bloğunun altındaki kardeş eleman… tilt animasyonuna KATILMAZ") —
+         oturan şey içeriktir, imleç yerinde durur ve içerik ona doğru yerine gelir. `⌄ latest` pill de
+         dışarıdadır: o içeriğin parçası değil, panelin afordansıdır. -->
     <Grid x:Name="PART_TiltHost">
     <!-- [3b Minor 1] Base foreground token (Brush.TextPrimary) — colorizer her satırı zaten ezer; off-palette hex YOK. -->
     <!-- [SCROLLBAR] BuildApp.jsx:616: konsol kutusu overflow AUTO — AvalonEdit default'u Visible olduğundan
@@ -32,6 +33,7 @@
                             TextOptions.TextFormattingMode="Ideal"
                             Padding="12,8,12,14"
                             Background="Transparent" Foreground="{DynamicResource Brush.TextPrimary}" />
+    </Grid>
     <!-- [design v1.7.0 §2.5] Prompt satırı: yanıp sönen blok imleç + boştayken "ready" (dim). Konsolun tek
          canlı öğesi budur — daktilo YOK, duvar-saati damgası YOK. İmleç bir 7×13px Rectangle'dır (font
          glyph'i DEĞİL) ve satırın SOLUNDA durur; konsolun bütün satırları onunla aynı sol hizada başlar.
@@ -59,7 +61,6 @@
       <Rectangle x:Name="BuildProgressCursor" Width="7" Height="13" Margin="6,0,0,0"
                  Fill="{DynamicResource Brush.AmberText}" VerticalAlignment="Center" />
     </StackPanel>
-    </Grid>
     <!-- [T59] Alta yapışık scroll + `⌄ latest` pill (design-v1 §2.5, konsol+stream ORTAK kural). Görünürlük
          BottomAnchorBehavior.ShowPill'den (48px eşik + 560ms jumping penceresi); tıkla → yumuşak dibe. -->
     <controls:LatestPill x:Name="Pill" Click="OnPillClick" />
