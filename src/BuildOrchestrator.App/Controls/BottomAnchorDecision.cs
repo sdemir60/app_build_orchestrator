@@ -36,8 +36,12 @@ public static class BottomAnchorDecision
     /// <para>Kural üç panelde de AYNIDIR ve TEK yerde durur: liste frontier takibini
     /// (<c>StickyLayerList.FrontierIdleResumeMs</c>) bu sabitten alır, konsol ve event stream de dibe
     /// dönüşü. Ayrı sayılar olsaydı üç panel farklı zamanlarda canlanır, ekran huzursuz olurdu.</para>
+    ///
+    /// <para><b>3 sn değil 5 sn (kullanıcı kararı):</b> derleme sürerken satırlar akmaya devam ettiği için
+    /// üç saniye okumaya yetmiyordu — kullanıcı bir şeye bakmak için kaydırdığında panel elinden alınıyordu.
+    /// Beş saniye "bıraktım" ile "hâlâ bakıyorum" arasını ayırmaya yetiyor.</para>
     /// </summary>
-    public const long IdleResumeMs = 3000;
+    public const long IdleResumeMs = 5000;
 
     /// <summary>Bir ScrollChanged olayının (ya da AvalonEdit için elle izlenen extent farkının) sonucu.</summary>
     public static BottomAnchorState OnScrollChanged(BottomAnchorState state, double extentHeightChange,

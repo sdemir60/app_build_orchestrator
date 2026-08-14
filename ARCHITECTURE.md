@@ -1428,10 +1428,13 @@ lines.
   measured from the text view's own line height, so the caret sits below the last line instead of on top of
   it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
   pinned to the panel rather than to the document.
-- **A panel that was scrolled away comes back on its own.** Three seconds after the last scroll — the same
-  idle window the list's frontier following uses, and the same constant — the console and the event stream
-  return to the bottom and resume following. The console does not do this in project-log mode: there is no
-  live stream to follow there and the reader is looking at a log.
+- **While you are scrolling, the panel is yours.** A user scroll takes the wheel for five seconds — the same
+  idle window the list's frontier following uses, and the same constant — and during it arriving content
+  never pulls the view down. The 48 px threshold alone was not enough: a small scroll stayed inside it, so
+  the next line to arrive threw the reader back to the bottom, which during a build happens continuously.
+  When the five seconds pass with no scrolling, the panel returns to the bottom and resumes following. The
+  console does not do this in project-log mode: there is no live stream to follow there and the reader is
+  looking at a log.
 - **Panel transitions are one piece.** Opening a project log and coming back with `← Back` both settle the
   content down from its bottom edge over 340 ms — a hinge, not a per-line cascade — so a three-line log and a
   two-hundred-line narrative open at the same rhythm. `perspective`/`rotateX` do not exist in WPF; the nearest
@@ -1486,6 +1489,11 @@ the CSS `outline: 2px solid; outline-offset: 2` translated honestly: WPF draws a
 rectangle, so the rectangle is a full pen wider than the offset alone would suggest. Because the layout depends on the panel, `SizeChanged` recomputes it and
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
+
+Only one line types at a time. The event stream writes its newest line character by character, and when a
+newer one arrives the previous snaps to its full text and the animation moves on — a single pending line, as
+in the prototype. Each row used to run its own timer, so a fast run had two or three lines opening leftward at
+once and the panel looked unsettled.
 
 The event stream keeps a prompt of its own. When there is nothing left to write the active line does not
 disappear: it stays as a wall-clock stamp and a blinking dim caret — the console prompt's twin, and the

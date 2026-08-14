@@ -87,18 +87,55 @@ public class BottomAnchorIdleResumeTests
         Assert.Null(f.SmoothTarget); // eskimiş kuşak iş yapmadı
     }
 
-    /// <summary>Dipteyken bekleme kurulmaz — dönülecek bir yer yok.</summary>
+    /// <summary>
+    /// AYIRT EDİCİ — kullanıcı kaydırdıktan sonra AKAN İÇERİK onu dibe çekmez.
+    ///
+    /// <para>Sahada görülen kusur buydu: derleme sürerken küçük bir kaydırma (48px eşiğinin İÇİNDE kalan)
+    /// yapıldığında bir sonraki satır gelir gelmez içerik-büyümesi yakalaması kullanıcıyı dibe fırlatıyordu.
+    /// Eşik tek başına yetmiyor; kullanıcı kaydırdıysa bekleme dolana kadar direksiyon ondadır.</para>
+    /// </summary>
     [Fact]
-    public void Sitting_at_the_bottom_arms_nothing()
+    public void Content_arriving_after_a_small_scroll_does_not_yank_the_reader_down()
+    {
+        var f = new Fake();
+        var behavior = f.New();
+        f.Offset = f.Extent - f.Viewport - 10; // dipten 10px — EŞİĞİN İÇİNDE, hâlâ "stuck"
+        behavior.OnScrollChanged(0);           // kullanıcı kaydırdı
+        Assert.True(behavior.IsStuck);         // ön-koşul: eşik hâlâ yapışık diyor
+        double afterScroll = f.Offset;
+
+        f.Extent += 40;              // yeni satır geldi
+        behavior.OnScrollChanged(40);
+
+        Assert.Equal(afterScroll, f.Offset); // okuyucu yerinde kaldı
+    }
+
+    /// <summary>Bekleme dolunca takip geri alınır — dipteyken de akış yeniden izlenmeye başlar.</summary>
+    [Fact]
+    public void When_the_wait_expires_following_resumes_even_from_inside_the_threshold()
+    {
+        var f = new Fake();
+        var behavior = f.New();
+        f.Offset = f.Extent - f.Viewport - 10;
+        behavior.OnScrollChanged(0);
+
+        f.PendingSchedule!(); // kullanıcı elini çekti
+
+        f.Extent += 40;
+        behavior.OnScrollChanged(40);
+        Assert.Equal(f.Extent, f.Offset); // içerik büyümesi yakalaması yeniden devrede
+    }
+
+    /// <summary>Dipte otururken ve HİÇ kaydırılmamışken bekleme kurulmaz — dönülecek bir yer yok.</summary>
+    [Fact]
+    public void Content_growth_alone_arms_nothing()
     {
         var f = new Fake();
         var behavior = f.New();
 
-        behavior.OnScrollChanged(0); // dipte (Offset 0 ama extent-viewport... aşağıda dibe alınır)
-        f.Offset = f.Extent - f.Viewport;
-        behavior.OnScrollChanged(0);
+        f.Extent += 40;
+        behavior.OnScrollChanged(40); // yalnız içerik büyüdü, kullanıcı dokunmadı
 
-        Assert.True(behavior.IsStuck);
-        Assert.Null(f.SmoothTarget);
+        Assert.Null(f.PendingSchedule);
     }
 }

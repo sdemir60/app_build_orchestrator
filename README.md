@@ -204,8 +204,8 @@ The console keeps long MSBuild lines on one line rather than wrapping them, so i
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar. At the
 bottom sits a blinking amber block caret on a line of its own; output piles up above it and it stays put, with
 `ready` beside it while nothing is running. Scroll away from the bottom and it steps aside with the
-`⌄ latest` pill — and if you stop scrolling, the console returns to the bottom by itself a few seconds later
-and picks the stream back up. The event stream does the same, and keeps a caret of its own on a timestamped
+`⌄ latest` pill. While you keep scrolling the panel stays where you put it — arriving lines will not pull it
+down — and about five seconds after you stop, it returns to the bottom and picks the stream back up. The event stream does the same, and keeps a caret of its own on a timestamped
 line once it has nothing left to write. Opening a project's log turns both off: there is nothing live to
 follow there.
 

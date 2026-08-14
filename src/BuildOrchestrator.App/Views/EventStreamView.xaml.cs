@@ -192,7 +192,28 @@ public partial class EventStreamView : UserControl
     }
 
     private EventStreamRow CreateRow(StreamEventViewModel item) =>
-        new() { DataContext = item, AnimationsEnabledProvider = AnimationsEnabledProvider };
+        new()
+        {
+            DataContext = item,
+            AnimationsEnabledProvider = AnimationsEnabledProvider,
+            TypewriterStarting = TakeOverTypewriter,
+        };
+
+    /// <summary>
+    /// [prototip <c>pendingId</c>] Aynı anda YALNIZ BİR satır yazar. Yeni bir satır yazmaya başladığında
+    /// önceki ANINDA tamamlanır — "önceki yazı pat diye üstte tamamlanır, imleç yeni yazıya geçer".
+    ///
+    /// <para>Eskiden her satır kendi zamanlayıcısıyla bağımsız yazıyordu: hızlı akan bir koşuda alt alta iki
+    /// üç satır aynı anda soldan sağa açılıyor, ekran huzursuz oluyordu. Prototipte bu tekil bir
+    /// <c>pendingId</c>'dir; yenisi geldiğinde eski satır <c>typing</c> olmaktan çıkar ve tam metnine oturur.</para>
+    /// </summary>
+    private void TakeOverTypewriter(EventStreamRow next)
+    {
+        if (_typingRow is { } previous && !ReferenceEquals(previous, next)) previous.FinishTypewriterNow();
+        _typingRow = next;
+    }
+
+    private EventStreamRow? _typingRow;
 
     private void RefreshCounter()
     {
@@ -572,6 +593,21 @@ public sealed class EventStreamRow : Border
         ApplyTypewriter();
     }
 
+    /// <summary>
+    /// [prototip <c>pendingId</c>] Daktilo BAŞLARKEN host'a haber verilir; host aynı anda YALNIZ BİR satırın
+    /// yazmasına izin verir ve öncekini anında tamamlar. Tekil <c>pendingId</c>'nin karşılığıdır.
+    /// </summary>
+    internal Action<EventStreamRow>? TypewriterStarting { get; set; }
+
+    /// <summary>Uçuştaki daktiloyu ANINDA bitirir: metin tam hâline oturur. Yeni bir satır yazmaya
+    /// başladığında host bunu çağırır — "önceki yazı pat diye üstte tamamlanır".</summary>
+    internal void FinishTypewriterNow()
+    {
+        if (_typeTimer is null) return;
+        StopTypewriter();
+        _text.Text = _typeFull;
+    }
+
     // ---------------------------------------------------------------- en yeni satır daktilosu (bir kez)
     private void ApplyTypewriter()
     {
@@ -579,6 +615,7 @@ public sealed class EventStreamRow : Border
         if (!_vm.ShouldType || _vm.TypePlayed || _vm.Instant) { _text.Text = _vm.Text; return; }
         if (!AnimationsEnabledProvider()) { _text.Text = _vm.Text; _vm.TypePlayed = true; return; }
 
+        TypewriterStarting?.Invoke(this);
         _vm.TypePlayed = true;
         _scheduler = new TypewriterScheduler(_vm.Text.Length, animationsEnabled: true);
         _typeFull = _vm.Text;

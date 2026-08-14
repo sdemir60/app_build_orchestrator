@@ -25,6 +25,7 @@ public sealed class BottomAnchorBehavior
     private BottomAnchorState _state = BottomAnchorState.Initial;
     private int _jumpGeneration;
     private int _idleGeneration;
+    private bool _steering; // kullanıcı kaydırdı ve bekleme henüz dolmadı — o sürece panel ondadır
 
     /// <summary>IsStuck/IsJumping/ShowPill değiştiğinde ateşlenir — host (ConsoleView) buna göre pill Visibility'sini
     /// / StickToBottom'ı günceller.</summary>
@@ -69,6 +70,7 @@ public sealed class BottomAnchorBehavior
     /// YENİDEN HESAPLAMADAN doğrudan durumu değiştirir.</summary>
     public void ForceStuck(bool stuck)
     {
+        if (stuck) _steering = false; // mod değişimi gibi açık bir "dibe sabitlen" isteği direksiyonu geri alır
         _state = new BottomAnchorState(stuck, IsJumping: false);
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -79,7 +81,14 @@ public sealed class BottomAnchorBehavior
     {
         var prev = _state;
         _state = BottomAnchorDecision.OnScrollChanged(_state, extentHeightChange, DistanceFromBottom, _thresholdPx);
-        if (_state.IsStuck && extentHeightChange > 0 && !_state.IsJumping)
+
+        // Kullanıcı KENDİ kaydırdıysa (içerik büyümesi değil) direksiyon ondadır: bekleme dolana kadar
+        // içerik-büyümesi yakalaması onu dibe ÇEKMEZ. Eşik tek başına yetmiyordu — eşiğin içinde kalan küçük
+        // bir kaydırmada bir sonraki satır gelir gelmez kullanıcı dibe geri fırlatılıyordu; derleme sürerken
+        // satırlar akmaya devam ettiği için panel elden alınmış gibi oluyordu.
+        if (extentHeightChange == 0) _steering = true;
+
+        if (_state.IsStuck && extentHeightChange > 0 && !_state.IsJumping && !_steering)
             _scrollInstant(_getExtent()); // içerik büyümesi yakalaması — ANINDA, AppendBatch/ScrollToEnd ile aynı desen
         if (_state != prev) Changed?.Invoke(this, EventArgs.Empty);
         ArmIdleResume();
@@ -94,14 +103,16 @@ public sealed class BottomAnchorBehavior
     /// </summary>
     private void ArmIdleResume()
     {
-        if (_autoResumeAllowed is null || _state.IsStuck || _state.IsJumping) return;
+        if (_autoResumeAllowed is null || !_steering || _state.IsJumping) return;
         if (!_autoResumeAllowed()) return;
 
         int generation = ++_idleGeneration;
         _scheduleOnce(TimeSpan.FromMilliseconds(BottomAnchorDecision.IdleResumeMs), () =>
         {
             if (generation != _idleGeneration) return;   // araya yeni bir scroll girdi
-            if (_state.IsStuck || _autoResumeAllowed is null || !_autoResumeAllowed()) return;
+            _steering = false;                            // kullanıcı elini çekti — direksiyon geri alınır
+            if (_autoResumeAllowed is null || !_autoResumeAllowed()) return;
+            if (_state.IsStuck) { _scrollInstant(_getExtent()); return; } // zaten dipteydi: takibi sürdür
             JumpToBottom();
         });
     }
@@ -109,6 +120,7 @@ public sealed class BottomAnchorBehavior
     /// <summary>`⌄ latest` pill tıklaması (ya da başka bir "şimdi dibe git" tetikleyicisi).</summary>
     public void JumpToBottom()
     {
+        _steering = false; // açık "şimdi dibe git" (pill ya da bekleme sonu) — takip yeniden devralır
         double target = Math.Max(0, _getExtent() - _getViewport());
         bool animated = _scrollSmooth(target);
         if (!animated) { ForceStuck(true); return; } // reduced-motion/instant — jumping penceresine gerek yok
