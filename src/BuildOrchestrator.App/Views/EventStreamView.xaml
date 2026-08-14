@@ -33,8 +33,11 @@
                          FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
                          Foreground="{DynamicResource Brush.TextFaint}" />
               <Border Width="12" Margin="0,0,8,0" VerticalAlignment="Center">
+                <!-- [prototip: Cursor'un background'u currentColor] İmleç SATIRIN rengini alır — kendi rengi
+                     YOKTUR. Böylece tonu tek yerden (PART_ActiveText.Foreground) sürülür: canlı satır amber,
+                     bekleme satırı text-faint. İki ayrı yere yazılsaydı sessizce ayrışabilirlerdi. -->
                 <Rectangle x:Name="PART_ActiveCursor" Width="7" Height="13" HorizontalAlignment="Center"
-                           Fill="{DynamicResource Brush.AmberText}" />
+                           Fill="{Binding Foreground, ElementName=PART_ActiveText}" />
               </Border>
               <TextBlock x:Name="PART_ActiveText" VerticalAlignment="Center" TextWrapping="NoWrap"
                          FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"

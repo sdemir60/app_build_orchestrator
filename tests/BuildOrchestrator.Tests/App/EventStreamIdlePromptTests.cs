@@ -58,6 +58,30 @@ public class EventStreamIdlePromptTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// İmlecin KENDİ rengi yoktur: satırın rengini alır (prototipte <c>currentColor</c>). Ton tek yerden
+    /// sürülür, imleç onu izler — iki ayrı yere yazılsaydı sessizce ayrışabilirlerdi.
+    /// </summary>
+    [StaFact]
+    public void The_cursor_wears_the_lines_own_colour()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        // Canlı satırda: imleç ile metin AYNI fırçayı taşır.
+        Assert.Same(view.ActiveText.Foreground, ((Rectangle)view.ActiveCursorGlyph).Fill);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
+
+        // Bekleme satırında da: ton değişti, imleç yine onu izliyor.
+        Assert.Same(view.ActiveText.Foreground, ((Rectangle)view.ActiveCursorGlyph).Fill);
+        Assert.Equal(Token(view, "Brush.TextFaint"), CursorColour(view));
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Akışta hiç olay yokken bekleme satırı gösterilmez — orada boş-durum metni konuşur.</summary>
     [StaFact]
     public void An_empty_stream_shows_no_prompt_line()

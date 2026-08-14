@@ -250,7 +250,7 @@ public partial class EventStreamView : UserControl
 
         PART_ActiveLine.Visibility = Visibility.Visible;
         PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm!.WallClock());
-        PART_ActiveCursor.SetResourceReference(Shape.FillProperty, "Brush.TextFaint");
+        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint"); // imleç bunu izler
         StartCursorBlink();
     }
 
@@ -273,7 +273,7 @@ public partial class EventStreamView : UserControl
         PART_ActiveLine.Visibility = Visibility.Visible;
         RefreshEmptyState(); // [D3 §8] canlı aktif satır var → boş-durum gizli
         PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm.WallClock());
-        PART_ActiveCursor.SetResourceReference(Shape.FillProperty, "Brush.AmberText");
+        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.AmberText"); // imleç bunu izler
         StartCursorBlink();
 
         // [D3 §1] Aktif satır KOŞULSUZ daktilo eder (prototip BuildApp.jsx:723 `<TypingLine instant={false} />`).
