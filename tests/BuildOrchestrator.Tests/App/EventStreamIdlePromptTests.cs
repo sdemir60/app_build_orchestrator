@@ -101,6 +101,11 @@ public class EventStreamIdlePromptTests
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
 
+        // Yazım SÜRERKEN imleç o satırın rengini taşır (yeşil "Completed…"); amber'a ancak yazacak bir şey
+        // kalmayınca döner. Bekleme satırının rengi ölçülüyor, yazım anınınki değil.
+        DispatcherPump.PumpUntil(
+            () => CursorColour(view) == Token(view, "Brush.AmberText"), TimeSpan.FromSeconds(5));
+
         Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // beklerken de
         GC.KeepAlive(window);
     }

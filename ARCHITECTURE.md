@@ -1436,9 +1436,11 @@ lines.
   console does not do this in project-log mode: there is no live stream to follow there and the reader is
   looking at a log.
 - **Panel transitions are one piece.** Opening a project log and coming back with `← Back` both settle the
-  content down from its bottom edge over 340 ms — a hinge, not a per-line cascade — so a three-line log and a
-  two-hundred-line narrative open at the same rhythm. `perspective`/`rotateX` do not exist in WPF; the nearest
-  native equivalent (a bottom-anchored Y scale plus a translate) carries the same gesture.
+  content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge, not a per-line cascade —
+  so a three-line log and a two-hundred-line narrative open at the same rhythm. `perspective`/`rotateX` do not
+  exist in WPF; the nearest native equivalent (a bottom-anchored Y scale plus a translate) carries the same
+  gesture. The transform is applied to a container holding the editor *and* the prompt line, so the caret
+  travels with the text; the `⌄ latest` pill stays out of it, being an affordance rather than content.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -1498,7 +1500,11 @@ once and takes the surface over, so exactly one thing is ever in motion.
 
 Buffer rows do not animate at all. Each of them used to run its own typewriter, which put two or three lines
 opening leftward at the same time in a fast run; moving the writing to one surface removed that, and it is
-also what makes the caret meaningful — it is where the text is coming from.
+also what makes the caret meaningful — it is where the text is coming from. Every event is written, including
+the ones a burst would once have printed instantly: that gate existed to bound the cost of one timer per row,
+and with a single surface the cost is bounded already, since a new event cuts the previous write short. Left
+in place it also lied about colour — most events skipped the surface, so the caret sat on the amber
+*building…* line while rows appeared above it in green and red.
 
 The event stream keeps a prompt of its own. When there is nothing left to write the active line does not
 disappear: it stays as a wall-clock stamp and a blinking caret — the console prompt's twin, and the stream's

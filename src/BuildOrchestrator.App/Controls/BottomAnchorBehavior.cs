@@ -82,15 +82,24 @@ public sealed class BottomAnchorBehavior
         var prev = _state;
         _state = BottomAnchorDecision.OnScrollChanged(_state, extentHeightChange, DistanceFromBottom, _thresholdPx);
 
-        // Kullanıcı KENDİ kaydırdıysa (içerik büyümesi değil) direksiyon ondadır: bekleme dolana kadar
-        // içerik-büyümesi yakalaması onu dibe ÇEKMEZ. Eşik tek başına yetmiyordu — eşiğin içinde kalan küçük
-        // bir kaydırmada bir sonraki satır gelir gelmez kullanıcı dibe geri fırlatılıyordu; derleme sürerken
-        // satırlar akmaya devam ettiği için panel elden alınmış gibi oluyordu.
-        if (extentHeightChange == 0) _steering = true;
-
         if (_state.IsStuck && extentHeightChange > 0 && !_state.IsJumping && !_steering)
             _scrollInstant(_getExtent()); // içerik büyümesi yakalaması — ANINDA, AppendBatch/ScrollToEnd ile aynı desen
         if (_state != prev) Changed?.Invoke(this, EventArgs.Empty);
+        ArmIdleResume();
+    }
+
+    /// <summary>
+    /// <b>Kullanıcı GERÇEKTEN kaydırdı</b> — host bunu ham girdiden (tekerlek) bildirir. O andan itibaren
+    /// bekleme dolana kadar direksiyon kullanıcıdadır: akan içerik görünümü dibe çekmez.
+    ///
+    /// <para>Sinyal neden hesaplanmıyor: bir ara sürüm "extent değişmeden gelen scroll olayı = kullanıcı"
+    /// diye çıkarım yapıyordu. Yanlıştı — <c>ScrollChanged</c> yeniden yerleşimde, viewport değişiminde ve
+    /// programatik kaydırmada da extent farkı olmadan ateşlenir; panel kendini kullanıcı kaydırmış sanıp
+    /// takibi bırakıyor, kimse dokunmadan <c>⌄ latest</c> pill'i çıkıyordu.</para>
+    /// </summary>
+    public void NotifyUserScroll()
+    {
+        _steering = true;
         ArmIdleResume();
     }
 

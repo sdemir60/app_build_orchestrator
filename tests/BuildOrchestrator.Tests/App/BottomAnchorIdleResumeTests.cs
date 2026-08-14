@@ -33,10 +33,14 @@ public class BottomAnchorIdleResumeTests
             scheduleOnce: (delay, cb) => { PendingDelay = delay; PendingSchedule = cb; },
             autoResumeAllowed: () => AutoResumeAllowed);
 
-        /// <summary>Kullanıcı yukarı kaydırdı (dipten uzaklaştı) ve host olayı iletti.</summary>
+        /// <summary>
+        /// Kullanıcı yukarı kaydırdı: host HAM GİRDİYİ bildirir (tekerlek) ve ardından scroll olayı gelir.
+        /// Üretimdeki sıra budur — "kullanıcı kaydırdı" sinyali hesaplanmaz, girdiden gelir.
+        /// </summary>
         public BottomAnchorBehavior ScrolledAway()
         {
             var behavior = New();
+            behavior.NotifyUserScroll();
             Offset = 100; // dipten 700px uzakta
             behavior.OnScrollChanged(0);
             Assert.False(behavior.IsStuck); // ön-koşul
@@ -64,6 +68,7 @@ public class BottomAnchorIdleResumeTests
         var behavior = f.New();
         f.Offset = 100;
 
+        behavior.NotifyUserScroll();
         behavior.OnScrollChanged(0);
 
         Assert.Null(f.PendingSchedule);
@@ -81,7 +86,7 @@ public class BottomAnchorIdleResumeTests
         var behavior = f.ScrolledAway();
         var stale = f.PendingSchedule!;
 
-        behavior.OnScrollChanged(0); // kullanıcı kaydırmayı sürdürdü → yeni bekleme
+        behavior.NotifyUserScroll(); // kullanıcı kaydırmayı sürdürdü → yeni bekleme
         stale();                     // eski bekleme şimdi doldu
 
         Assert.Null(f.SmoothTarget); // eskimiş kuşak iş yapmadı
@@ -100,7 +105,8 @@ public class BottomAnchorIdleResumeTests
         var f = new Fake();
         var behavior = f.New();
         f.Offset = f.Extent - f.Viewport - 10; // dipten 10px — EŞİĞİN İÇİNDE, hâlâ "stuck"
-        behavior.OnScrollChanged(0);           // kullanıcı kaydırdı
+        behavior.NotifyUserScroll();           // kullanıcı kaydırdı (ham girdi)
+        behavior.OnScrollChanged(0);
         Assert.True(behavior.IsStuck);         // ön-koşul: eşik hâlâ yapışık diyor
         double afterScroll = f.Offset;
 
@@ -117,6 +123,7 @@ public class BottomAnchorIdleResumeTests
         var f = new Fake();
         var behavior = f.New();
         f.Offset = f.Extent - f.Viewport - 10;
+        behavior.NotifyUserScroll();
         behavior.OnScrollChanged(0);
 
         f.PendingSchedule!(); // kullanıcı elini çekti

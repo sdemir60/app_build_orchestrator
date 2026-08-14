@@ -91,6 +91,8 @@ public partial class EventStreamView : UserControl
             autoResumeAllowed: () => true);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
         PART_Scroll.ScrollChanged += (_, e) => _bottomAnchor.OnScrollChanged(e.ExtentHeightChange);
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir (gerekçe: BottomAnchorBehavior.NotifyUserScroll).
+        PART_Scroll.PreviewMouseWheel += (_, _) => _bottomAnchor.NotifyUserScroll();
         ScrollAnimator.EnableUserCancellation(PART_Scroll);
         PART_Pill.Click += (_, _) => _bottomAnchor.JumpToBottom();
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
@@ -173,9 +175,16 @@ public partial class EventStreamView : UserControl
                     var item = (StreamEventViewModel)e.NewItems[i]!;
                     var row = CreateRow(item);
                     PART_Rows.Children.Insert(e.NewStartingIndex + i, row);
-                    // Yazılmayı hak eden olay (fırtına/hata değil, reduced-motion değil) ALT SATIRDA yazılır;
-                    // satırın kendisi yazım bitene kadar gizli durur. Gerekçe: BeginWriting.
-                    if (item.ShouldType && !item.Instant && AnimationsEnabledProvider()) BeginWriting(row, item);
+                    // HER olay alt satırda yazılır — fırtına kapısı (Instant) BURADA UYGULANMAZ.
+                    //
+                    // Gerekçe: o kapı, her satırın KENDİ daktilosu varken maliyeti sınırlamak içindi. Yazım tek
+                    // yüzeye taşındıktan sonra maliyet zaten sınırlı: aynı anda tek yazım koşar ve yeni olay
+                    // öncekini keser. Kapı korunsaydı hızlı bir koşuda olayların çoğu hiç yazılmaz, alt satırda
+                    // amber "X building…" görünür ve satırlar üstte kendi renkleriyle belirirdi — sahada
+                    // "çoğu zaman sarı yazıyor, üste atınca kırmızı/yeşil oluyor" diye görülen tam olarak buydu.
+                    //
+                    // İlk satır yazılmaz (tampon ilk kez dolarken hepsi birden akmasın diye); ondan sonrası yazılır.
+                    if (PART_Rows.Children.Count > 1 && AnimationsEnabledProvider()) BeginWriting(row, item);
                 }
                 break;
             case NotifyCollectionChangedAction.Remove when e.OldItems is not null:
@@ -188,6 +197,10 @@ public partial class EventStreamView : UserControl
         }
         // Alta yapışıksa yeni satır dibe çeker (BottomAnchorBehavior içerik-büyümesi yakalaması).
         if (_bottomAnchor.IsStuck) _bottomAnchor.OnScrollChanged(1);
+        // Akışta içerik olur olmaz bekleme satırı (saat + imleç) belirir. Aksi hâlde imleç yalnız aktif
+        // satır DEĞİŞİNCE kurulurdu: Sync'ten sonra tek bir satır varken konsolda imleç yanıyor, event
+        // stream'de hiç çıkmıyordu.
+        UpdateActiveLine();
         RefreshEmptyState();
     }
 

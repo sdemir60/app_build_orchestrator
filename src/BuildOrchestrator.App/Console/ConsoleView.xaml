@@ -8,6 +8,11 @@
   <!-- [T49] Konsol mono puntosu artık YEREL kopya değil, doğrudan token: design-v1 §2.5 "mono 12px" = text-xs
        (Resources/Tokens.xaml, FontSize.Xs). Editör ile aktif-satır overlay AYNI anahtarı okur → drift edemez. -->
   <Grid Background="{DynamicResource Brush.ConsoleBg}">
+    <!-- [design v1.7.0 §2.5] Panel geçişinin "tilt in"i BU KABA uygulanır: metin ve prompt imleci TEK PARÇA
+         hareket etsin diye ikisi de içindedir. Yalnız editöre uygulandığında imleç yerinde kalıyor, içerik
+         onun altından kayıyordu — geçiş dağılmış görünüyordu. `⌄ latest` pill DIŞARIDADIR: o içeriğin parçası
+         değil, panelin afordansıdır. -->
+    <Grid x:Name="PART_TiltHost">
     <!-- [3b Minor 1] Base foreground token (Brush.TextPrimary) — colorizer her satırı zaten ezer; off-palette hex YOK. -->
     <!-- [SCROLLBAR] BuildApp.jsx:616: konsol kutusu overflow AUTO — AvalonEdit default'u Visible olduğundan
          açıkça çevrilir. Bar'ın kendi görünümü Controls.xaml'in implicit ScrollBar stilinden gelir. -->
@@ -54,6 +59,7 @@
       <Rectangle x:Name="BuildProgressCursor" Width="7" Height="13" Margin="6,0,0,0"
                  Fill="{DynamicResource Brush.AmberText}" VerticalAlignment="Center" />
     </StackPanel>
+    </Grid>
     <!-- [T59] Alta yapışık scroll + `⌄ latest` pill (design-v1 §2.5, konsol+stream ORTAK kural). Görünürlük
          BottomAnchorBehavior.ShowPill'den (48px eşik + 560ms jumping penceresi); tıkla → yumuşak dibe. -->
     <controls:LatestPill x:Name="Pill" Click="OnPillClick" />

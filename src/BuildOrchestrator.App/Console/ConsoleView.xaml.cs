@@ -102,6 +102,8 @@ public partial class ConsoleView : UserControl
         EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => RefreshPrompt();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
         ScrollAnimator.EnableUserCancellation(EditorControl);
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir (gerekçe: BottomAnchorBehavior.NotifyUserScroll).
+        EditorControl.PreviewMouseWheel += (_, _) => _bottomAnchor.NotifyUserScroll();
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
         // kancasından geçer. Konsol bunu Enable eden TEK panel: yatay taşması olan tek yüzey odur (WordWrap=False).
         HorizontalWheelScroll.Enable(this);
@@ -389,7 +391,10 @@ public partial class ConsoleView : UserControl
 
         // Boş son satır zaten prompt satırıdır; dolu ise imleç onun ALTINA geçer.
         double top = visual.VisualTop + (lastLine.Length == 0 ? 0 : visual.Height);
-        var point = view.TransformToAncestor(this)
+        // Referans TİLT KABIDIR, ConsoleView değil: geçiş animasyonu kabı ölçekleyip kaydırır ve kök baz
+        // alınsaydı imlecin konumu animasyonun ortasındaki ara değerlerle hesaplanırdı. Editör ile prompt
+        // aynı kabın içinde olduğundan aralarındaki mesafe dönüşümden ETKİLENMEZ.
+        var point = view.TransformToAncestor(PART_TiltHost)
                         .Transform(new Point(0, top - view.ScrollOffset.Y));
         if (!double.IsFinite(point.X) || !double.IsFinite(point.Y)) return;
 
@@ -488,12 +493,12 @@ public partial class ConsoleView : UserControl
     {
         var scale = new ScaleTransform(1, 1);
         var translate = new TranslateTransform(0, 0);
-        EditorControl.RenderTransformOrigin = new Point(0.5, 1.0); // menteşe ALT kenardadır
-        EditorControl.RenderTransform = new TransformGroup { Children = { scale, translate } };
+        PART_TiltHost.RenderTransformOrigin = new Point(0.5, 1.0); // menteşe ALT kenardadır
+        PART_TiltHost.RenderTransform = new TransformGroup { Children = { scale, translate } };
 
         if (!_motion.Enabled) // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
         {
-            EditorControl.Opacity = 1.0;
+            PART_TiltHost.Opacity = 1.0;
             return;
         }
 
@@ -502,12 +507,16 @@ public partial class ConsoleView : UserControl
         var duration = TimeSpan.FromMilliseconds(TiltInMs);
         var ease = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
 
+        // YÖN: içerik AŞAĞIDAN yukarı oturur. Prototip `from { translateY(14px) } to { translateY(0) }` der
+        // (BuildApp.jsx:37) — yani başlangıç son yerinin 14px ALTINDADIR. Bir ara sürümde işaret ters yazılmıştı
+        // ve içerik yukarıdan aşağı iniyordu; menteşe alt kenarda olduğu için bu, oturmak yerine "düşmek" gibi
+        // okunuyordu.
         scale.ScaleY = TiltInScaleFrom;
-        translate.Y = -TiltInOffsetPx;
-        EditorControl.Opacity = 0.0;
+        translate.Y = TiltInOffsetPx;
+        PART_TiltHost.Opacity = 0.0;
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, MotionTokens.SplineTo(1.0, duration, ease));
         translate.BeginAnimation(TranslateTransform.YProperty, MotionTokens.SplineTo(0.0, duration, ease));
-        EditorControl.BeginAnimation(OpacityProperty, MotionTokens.SplineTo(1.0, duration, ease));
+        PART_TiltHost.BeginAnimation(OpacityProperty, MotionTokens.SplineTo(1.0, duration, ease));
     }
 
     // ---------------------------------------------------------------- build in progress (amber ▮)
@@ -598,6 +607,9 @@ public partial class ConsoleView : UserControl
     /// <summary>[E3/T36 reduced-motion kapsama] İdle "ready" / aktif-satır imleci — blink'in DURDUĞUNU
     /// (<c>HasAnimatedProperties==false</c>) reduced-motion'da doğrulamak için.</summary>
     internal System.Windows.UIElement ActiveCursorGlyph => ActiveCursor;
+
+    /// <summary>[Test] Panel geçişinin (tilt in) uygulandığı kap — metin ve prompt imleci birlikte içindedir.</summary>
+    internal FrameworkElement TiltHost => PART_TiltHost;
 
     /// <summary>[A13/T1 fix-1 · I-C · <see cref="Views.EventStreamView.ActiveLineInstant"/> ikizi] En yeni satır
     /// için SON kurulan daktilo zamanlayıcısı instant mı — yani üretim append yolu satırı harf harf mi yazıyor,
