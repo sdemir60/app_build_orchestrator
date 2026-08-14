@@ -204,10 +204,11 @@ The console keeps long MSBuild lines on one line rather than wrapping them, so i
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar. At the
 bottom sits a blinking amber block caret on a line of its own; output piles up above it and it stays put, with
 `ready` beside it while nothing is running. Scroll away from the bottom and it steps aside with the
-`⌄ latest` pill. While you keep scrolling the panel stays where you put it — arriving lines will not pull it
-down — and about five seconds after you stop, it returns to the bottom and picks the stream back up. The event stream does the same, and keeps a caret of its own on a timestamped
-line once it has nothing left to write. Opening a project's log turns both off: there is nothing live to
-follow there.
+`⌄ latest` pill. Touch the panel — wheel, scrollbar or the navigation keys — and it is yours: arriving lines
+will not pull it down, and about five seconds after you stop, it returns to the bottom and picks the stream
+back up. The event stream does the same, and keeps a caret of its own on a timestamped line from the moment
+you open the app, whether or not anything has happened yet. Opening a project's log turns the return off:
+there is nothing live to follow there.
 
 The dependency graph fits the panel at every size: nodes are unnamed mini squares laid out in build order,
 and the spacing shrinks until they do fit — so there is never a scrollbar and never a part of the graph you

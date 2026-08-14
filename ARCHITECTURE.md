@@ -1376,9 +1376,33 @@ WPF provides neither smooth scrolling nor horizontal wheel input, so the scrolli
 |---|---|
 | `ScrollAnimator` | attached DP animating `VerticalOffset`; a wheel event cancels the animation |
 | `BottomAnchorBehavior` | bottom-stick with a 48 px release threshold and a jumping window; drives the `⌄ latest` pill |
+| `UserScrollSignal` | the raw "the user scrolled" input: wheel, scrollbar, navigation keys |
 | `FollowScrollController` | frontier following (550 ms cadence, 54 px dead-band) |
 | `ScrollArbiter` | the referee |
 | `HorizontalWheelScroll` | horizontal wheel / touchpad input, which WPF never delivers |
+
+**Only the user stops the follow, and the signal comes from input, not from geometry.** A scroll event says
+nothing about who caused it: relayout, a viewport change and our own programmatic scrolls all raise one, and
+the offset they report can still be the pre-scroll value, so a distance measured then can cross the threshold
+on its own. Reading "the user scrolled" out of that geometry made the stream drop its follow with nobody
+touching it. `UserScrollSignal` supplies the real thing from three input channels — the scrollbar is its own
+channel because dragging the thumb produces no wheel event at all, and WPF's `ScrollBar.Scroll` fires for user
+interaction only, never for a programmatic offset change.
+
+Whether to pin right now is then answered in exactly one place, `ShouldFollow`: following is on, no jump is in
+flight, and the user does not have the wheel. Every panel reads that instead of interpreting the stuck flag
+itself. The console had been doing the latter — its append path pinned on the raw flag and therefore ignored
+the reader, which during a build made the panel impossible to scroll at all. That flag could also go stale
+there for a second reason: AvalonEdit raises an *offset* event, so content added while the reader is scrolled
+up moves nothing and raises nothing, and a hand-tracked extent delta computed at the next real event looked
+like content growth and skipped the decision entirely. The console reports offset events as such and lets the
+code that grows the document do the pinning.
+
+The five-second idle return is armed by the input signal too, never by scroll events. Arming it on events
+meant flowing content reset it continuously, so during a build the wait never once elapsed and a reader who
+scrolled up stayed there forever. The pill, by contrast, follows live distance rather than state transitions:
+it is a geometric affordance, and with the follow no longer changing on its own there would otherwise be
+nothing to refresh it.
 
 `ScrollArbiter` is a pure decision core. Rules: a user scroll suppresses **only** that panel; a panel receives
 at most one grant per frame and each grant bumps that panel's epoch so an in-flight animation from an earlier
@@ -1428,19 +1452,26 @@ lines.
   measured from the text view's own line height, so the caret sits below the last line instead of on top of
   it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
   pinned to the panel rather than to the document.
-- **While you are scrolling, the panel is yours.** A user scroll takes the wheel for five seconds — the same
+- **While you are scrolling, the panel is yours.** A user gesture takes the wheel for five seconds — the same
   idle window the list's frontier following uses, and the same constant — and during it arriving content
   never pulls the view down. The 48 px threshold alone was not enough: a small scroll stayed inside it, so
   the next line to arrive threw the reader back to the bottom, which during a build happens continuously.
-  When the five seconds pass with no scrolling, the panel returns to the bottom and resumes following. The
+  When the five seconds pass with no gesture, the panel returns to the bottom and resumes following. The
   console does not do this in project-log mode: there is no live stream to follow there and the reader is
-  looking at a log.
+  looking at a log. This is a deliberate departure from §2.5, which says a reader's position is never touched
+  once they scroll away; without the return the panel simply stopped following and never came back.
 - **Panel transitions are one piece.** Opening a project log and coming back with `← Back` both settle the
   content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge, not a per-line cascade —
-  so a three-line log and a two-hundred-line narrative open at the same rhythm. `perspective`/`rotateX` do not
-  exist in WPF; the nearest native equivalent (a bottom-anchored Y scale plus a translate) carries the same
-  gesture. The transform is applied to a container holding the editor *and* the prompt line, so the caret
-  travels with the text; the `⌄ latest` pill stays out of it, being an affordance rather than content.
+  so a three-line log and a two-hundred-line narrative open at the same rhythm. `perspective(900px)
+  rotateX(7deg)` does not exist in WPF; §2.4's own native mapping is used instead — a bottom-anchored Y scale
+  from 0.965 plus a 14 px translate and a fade, on the same 340 ms ease-out curve. Only the log block moves.
+  The prompt line and the amber `build in progress` marker stay out of it by design (§1.3, §4): what settles
+  is the content, and the caret is the panel's fixed point. The `⌄ latest` pill stays out too, being an
+  affordance rather than content. The caret still never drifts mid-flight — its position is measured in the
+  transformed container's own untransformed coordinate space. The order matters and is fixed: change the
+  content, pin to the bottom, then animate. Pinning forces a measure first, because the editor's scroll
+  geometry is stale immediately after the document is swapped and a pin computed against it leaves the panel
+  at the top.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -1498,18 +1529,30 @@ the caret returns to amber. A row stays hidden until its text has been written, 
 would appear twice — finished above and typing below. An event arriving mid-write releases the pending row at
 once and takes the surface over, so exactly one thing is ever in motion.
 
-Buffer rows do not animate at all. Each of them used to run its own typewriter, which put two or three lines
-opening leftward at the same time in a fast run; moving the writing to one surface removed that, and it is
+Buffer rows do not animate at all. This is the one place the stream departs from §6, which types the newest
+row in place and hides the prompt until it finishes. Each row used to run its own typewriter, which put two or
+three lines opening leftward at the same time in a fast run; moving the writing to one surface removed that, and it is
 also what makes the caret meaningful — it is where the text is coming from. Every event is written, including
 the ones a burst would once have printed instantly: that gate existed to bound the cost of one timer per row,
 and with a single surface the cost is bounded already, since a new event cuts the previous write short. Left
 in place it also lied about colour — most events skipped the surface, so the caret sat on the amber
 *building…* line while rows appeared above it in green and red.
 
-The event stream keeps a prompt of its own. When there is nothing left to write the active line does not
-disappear: it stays as a wall-clock stamp and a blinking caret — the console prompt's twin, and the stream's
-way of saying it is still here. It is the same row rather than a second one; an empty stream shows the
-empty-state text instead.
+**The bottom line has exactly two resting states, and both are amber:** the project being compiled
+(`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. Writing an event is the third
+state and it owns the surface only while it lasts. Keeping the count at two is what makes the panel readable —
+with three writers competing the tone changed several times a second and the surface looked random.
+
+The typewriter runs on **new information only**. A project that starts compiling is new and is typed; putting
+back a sentence that an event interrupted is not, so `X building…` is restored instantly. Restoring it by
+replaying the typewriter meant the same amber sentence reopened after every single event, and in a fast run
+the line never held still.
+
+The prompt is there from the first frame, before any event, and the stream has no empty-state text — the
+console shows a blinking caret the moment it opens and the two panels should say the same thing. The line's
+presence is unconditional; only the typewriter is gated on the active project changing. Gating the line itself
+on that was a real defect: a Sync starts no project, so the generation never moved and the caret never
+appeared until a second Sync happened to reset the gate as a side effect.
 
 Both carets are **amber, always** — writing or waiting, console or stream. §2.5 tints the idle prompt dim and
 the prototype dims the stream's waiting row with it; the caret was pulled to one colour instead, because it is
@@ -2480,7 +2523,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Cumulative layout arithmetic (rows, headers, scroll targets) | `App/Controls/LayoutMetrics.cs` |
-| Smooth scrolling, bottom anchor, follow mode | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
+| Smooth scrolling, bottom anchor, follow mode | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `UserScrollSignal.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
 | Horizontal wheel / touchpad routing and step | `App/Controls/HorizontalWheelScroll.cs`, `App/Shell/Win32.cs` |
 | Cross-panel scroll arbitration | `App/Services/ScrollArbiter.cs` |
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
