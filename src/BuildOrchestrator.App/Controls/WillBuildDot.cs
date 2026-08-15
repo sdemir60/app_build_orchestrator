@@ -70,6 +70,29 @@ public class WillBuildDot : Control
     }
 
     private Ellipse? _dot;
+    private int _suspend; // >0 iken tek tek gelen DP değişimleri boyamayı tetiklemez (bkz. Apply)
+
+    /// <summary>
+    /// Dört girdiyi TEK hamlede uygular ve yalnız BİR kez boyar.
+    ///
+    /// <para>Her DP kendi değişiminde <see cref="ApplyState"/> tetikler; sahip onları arka arkaya yazınca
+    /// aynı satır dört kez (tooltip metnini kurup iki kaynak başvurusunu yeniden bağlayarak) boyanıyordu.
+    /// 177 satırlık bir listede bu ölçülebilir: kanal sayısı üçten dörde çıkınca topoloji yerleşimi bütçesini
+    /// aştı. Toplu yol hem onu geri aldı hem eski hâlin altına indi.</para>
+    /// </summary>
+    internal void Apply(bool? state, WillBuildReason? reason, bool inCycle, string cyclePath)
+    {
+        _suspend++;
+        try
+        {
+            State = state;
+            Reason = reason;
+            InCycle = inCycle;
+            CyclePath = cyclePath;
+        }
+        finally { _suspend--; }
+        ApplyState();
+    }
 
     public override void OnApplyTemplate()
     {
@@ -117,6 +140,7 @@ public class WillBuildDot : Control
 
     private void ApplyState()
     {
+        if (_suspend > 0) return; // toplu yazım sürüyor — sonunda bir kez boyanacak
         // C kanalı (döngü üyeliği + yolu) plan kanalını EZER; plan dalı ise artık gerekçeyi de söyler.
         string description = InCycle
             ? ViewModels.CycleText.Lines(ViewModels.CycleText.Membership, CyclePath)

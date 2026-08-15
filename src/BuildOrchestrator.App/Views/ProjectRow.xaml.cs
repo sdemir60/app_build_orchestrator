@@ -358,13 +358,8 @@ public partial class ProjectRow : UserControl
     /// </summary>
     /// <summary>Noktanın (B/C kanalı) TEK yazıcısı: plan durumu, plan gerekçesi, döngü üyeliği ve döngü yolu
     /// birlikte sürülür — ayrı yerlerden yazıldıklarında biri güncellenmeden kalabiliyordu.</summary>
-    private void ApplyDot()
-    {
-        PART_Dot.State = _vm?.WillBuild;
-        PART_Dot.Reason = _vm?.WillBuildReason;
-        PART_Dot.InCycle = _vm?.InCycle ?? false;
-        PART_Dot.CyclePath = _vm?.CyclePath ?? "";
-    }
+    private void ApplyDot() =>
+        PART_Dot.Apply(_vm?.WillBuild, _vm?.WillBuildReason, _vm?.InCycle ?? false, _vm?.CyclePath ?? "");
 
     private void ApplyDep()
     {
