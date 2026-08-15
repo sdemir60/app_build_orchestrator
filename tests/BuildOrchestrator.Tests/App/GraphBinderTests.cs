@@ -15,9 +15,10 @@ public class GraphBinderTests
 {
     private static string Id(string name) => $@"C:\repo\{name}.csproj";
 
-    private static ProjectNode Node(string name, string[] deps, int? layerIndex = null, bool inCycle = false, int buildOrder = 0) =>
+    private static ProjectNode Node(string name, string[] deps, int? layerIndex = null, bool inCycle = false,
+        int buildOrder = 0, bool? willBuild = null) =>
         new(Id(name), name, Id(name), SolutionNames: [], Dependencies: [.. deps.Select(Id)],
-            BuildOrder: buildOrder, LayerIndex: layerIndex, LayerName: null, InCycle: inCycle, WillBuild: null);
+            BuildOrder: buildOrder, LayerIndex: layerIndex, LayerName: null, InCycle: inCycle, WillBuild: willBuild);
 
     private static IReadOnlyDictionary<string, ProjectRowViewModel> RowsFor(IReadOnlyList<ProjectNode> topology)
     {
@@ -166,6 +167,38 @@ public class GraphBinderTests
         var nodes = GraphBinder.Nodes(topology, new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase));
 
         Assert.True(nodes.Single().InCycle);
+    }
+
+    /// <summary>
+    /// AYIRT EDİCİ — plan kanalı (<c>WillBuild</c>) da üyelik gibi topolojiye DÜŞER: satır henüz plan
+    /// bilgisini almamışsa (<c>null</c>) topolojinin kendi değeri kullanılır.
+    ///
+    /// <para>Sahada görülen kusur bu boşluktandı: Sync'te topoloji önizlemeden ÖNCE gelir ve graf o anda
+    /// kurulur; satırların <c>WillBuild</c>'i henüz null olduğu için küpler nötr çiziliyordu. Oysa topoloji
+    /// düğümü değeri ZATEN taşıyor (<c>ProjectNode.WillBuild</c>) — üyelikte (<c>InCycle</c>) yıllardır olan
+    /// fallback burada eksikti.</para>
+    /// </summary>
+    [Fact]
+    public void Nodes_fall_back_to_the_topology_plan_flag_when_the_row_has_none()
+    {
+        var topology = new[] { Node("X", [], willBuild: true), Node("Y", [], willBuild: false) };
+        var rows = RowsFor(topology); // satırlar Pending, WillBuild = null
+
+        var nodes = GraphBinder.Nodes(topology, rows);
+
+        Assert.True(nodes.Single(n => n.Name == "X").WillBuild);
+        Assert.False(nodes.Single(n => n.Name == "Y").WillBuild);
+    }
+
+    /// <summary>Satır bir değer taşıyorsa OTORİTE odur — canlı koşuda satır topolojiden tazedir.</summary>
+    [Fact]
+    public void A_row_that_knows_its_plan_wins_over_the_topology()
+    {
+        var topology = new[] { Node("X", [], willBuild: true) };
+        var rows = RowsFor(topology);
+        rows[Id("X")].WillBuild = false; // koşu bitti, satır temize döndü
+
+        Assert.False(GraphBinder.Nodes(topology, rows).Single().WillBuild);
     }
 
     [Fact]
