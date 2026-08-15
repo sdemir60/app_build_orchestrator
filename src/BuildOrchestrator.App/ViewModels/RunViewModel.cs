@@ -96,6 +96,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(Status))]
     private bool? _willBuild;
 
+    /// <summary><see cref="WillBuild"/>'in GEREKÇESİ — will-build noktasının tooltip'i bunu söyler.
+    /// <see cref="BuildPreviewEvent"/> ile gelir; bilinmiyorsa null (yüzey jenerik metne düşer).</summary>
+    [ObservableProperty] private WillBuildReason? _willBuildReason;
+
     /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
     /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
     /// doğrudan taşınır.</summary>
@@ -1040,6 +1044,7 @@ public sealed partial class RunViewModel : ObservableObject
             row.CurrentSha = item.BuiltCommit;
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
+            row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
         }
         RefreshRunSurface();
         BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // graf plan kanalını buradan öğrenir

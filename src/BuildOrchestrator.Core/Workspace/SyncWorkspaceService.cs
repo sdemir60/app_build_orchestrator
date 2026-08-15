@@ -117,7 +117,8 @@ public sealed class SyncWorkspaceService(
             LayerWarnings: outcome.Plan.LayerWarnings ?? []));
         emit(new BuildPreviewEvent(
             outcome.Plan.Nodes
-                .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild, BuildStateStore.BuiltCommitOf(state, n.Id)))
+                .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
+                    BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.

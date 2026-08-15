@@ -24,7 +24,10 @@ public sealed record ProjectNode(
     int? LayerIndex,
     string? LayerName,
     bool InCycle,
-    bool? WillBuild)                        // T53: dirty=true, güncel=false, imza-yok/pre-Sync=null
+    bool? WillBuild,                        // T53: dirty=true, güncel=false, imza-yok/pre-Sync=null
+    // WillBuild'in GEREKÇESİ (kullanıcıya gösterilir). Alan SONA ve default'lu: eski NDJSON/plan üreticileri
+    // onu yazmaz ve null olarak çözülür — o hâlde yüzey jenerik metne düşer.
+    WillBuildReason? WillBuildReason = null)
 {
     // Derleyicinin ürettiği record eşitliği, IReadOnlyList<string> alanlarında EqualityComparer<T>.Default
     // kullanır; List<string> Equals'ı override etmediği için bu referans eşitliğine düşer (JSON round-trip
@@ -40,7 +43,8 @@ public sealed record ProjectNode(
         && LayerIndex == other.LayerIndex
         && LayerName == other.LayerName
         && InCycle == other.InCycle
-        && WillBuild == other.WillBuild;
+        && WillBuild == other.WillBuild
+        && WillBuildReason == other.WillBuildReason;
 
     public override int GetHashCode()
     {
@@ -77,6 +81,28 @@ public sealed record BuildPlan(
 /// katmanın LayerIndex'i (bu pattern = "Order numaralı katmana şu regex'e uyanlar girer"). Regex,
 /// ProjectNode.Name'e (AssemblyName türevi kısa ad) karşı denenir — Id (tam csproj yolu) değil.</summary>
 public sealed record LayerPattern(int Order, string Regex, string Name);
+
+/// <summary>
+/// Bir projenin NEDEN derleneceği (ya da derlenmeyeceği). Karar <c>WillBuildEvaluator</c>'da tek gövdede
+/// verilir; bu tip onu kullanıcıya taşır.
+///
+/// <para>Var olma sebebi: nokta (plan) ile kartın sha çifti (commit) AYRI kanallardır ve yan yana
+/// durduklarında "commit aynı ama neden derlenecek?" diye okunuyorlardı. Cevabı motor biliyordu ama IPC
+/// sınırında düşüyordu — <c>bool?</c> gerekçe taşımaz.</para>
+/// </summary>
+public enum WillBuildReason
+{
+    /// <summary>Derlenmeyecek: imza kayıtlı imzayla aynı ve son koşu temiz başarıydı.</summary>
+    UpToDate,
+    /// <summary>Bu araç bu projeyi hiç başarıyla derlemedi (kayıt yok).</summary>
+    NeverBuilt,
+    /// <summary>Son koşusu başarısız/yarıda kaldı — çıktısı "bilinen iyi" değil.</summary>
+    LastFailed,
+    /// <summary>Son başarısı BAŞARISIZ bir bağımlılığın çıktısına link'liydi (bkz. <c>BuildState.DepIssue</c>).</summary>
+    DepIssue,
+    /// <summary>Kaynak imzası değişti (kendi dosyaları ya da bir upstream'in imzası).</summary>
+    SignatureChanged,
+}
 
 public sealed record BuildState(
     string ProjectId,

@@ -221,6 +221,7 @@ public partial class ProjectRow : UserControl
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
+            case nameof(ProjectRowViewModel.WillBuildReason):
                 ApplyDot();
                 ApplyRightBlock();
                 // Not: WillBuild, Status'u (queued) da tetikler → şerit/glyph Status case'inde tazelenir.
@@ -355,11 +356,12 @@ public partial class ProjectRow : UserControl
     /// </list>
     /// Statü glyph'i bundan ETKİLENMEZ: o daima gerçek statüyü gösterir, uyarı onun yerine asla geçmez.
     /// </summary>
-    /// <summary>Noktanın (B/C kanalı) TEK yazıcısı: plan durumu, döngü üyeliği ve döngü yolu birlikte
-    /// sürülür — üçü ayrı yerlerden yazıldığında biri güncellenmeden kalabiliyordu.</summary>
+    /// <summary>Noktanın (B/C kanalı) TEK yazıcısı: plan durumu, plan gerekçesi, döngü üyeliği ve döngü yolu
+    /// birlikte sürülür — ayrı yerlerden yazıldıklarında biri güncellenmeden kalabiliyordu.</summary>
     private void ApplyDot()
     {
         PART_Dot.State = _vm?.WillBuild;
+        PART_Dot.Reason = _vm?.WillBuildReason;
         PART_Dot.InCycle = _vm?.InCycle ?? false;
         PART_Dot.CyclePath = _vm?.CyclePath ?? "";
     }

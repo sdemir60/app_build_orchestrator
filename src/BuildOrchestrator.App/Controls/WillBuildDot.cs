@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Shapes;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.App.Controls;
 
@@ -56,6 +57,18 @@ public class WillBuildDot : Control
         set => SetValue(InCycleProperty, value);
     }
 
+    /// <summary><see cref="State"/>'in gerekçesi — yalnız METNİ (tooltip/UIA adı) etkiler, RENGİ değil.
+    /// Renk plan kanalının kendisidir; gerekçe onun açıklamasıdır.</summary>
+    public static readonly DependencyProperty ReasonProperty = DependencyProperty.Register(
+        nameof(Reason), typeof(WillBuildReason?), typeof(WillBuildDot),
+        new PropertyMetadata(null, (d, _) => ((WillBuildDot)d).ApplyState()));
+
+    public WillBuildReason? Reason
+    {
+        get => (WillBuildReason?)GetValue(ReasonProperty);
+        set => SetValue(ReasonProperty, value);
+    }
+
     private Ellipse? _dot;
 
     public override void OnApplyTemplate()
@@ -65,13 +78,28 @@ public class WillBuildDot : Control
         ApplyState();
     }
 
-    /// <summary>_ds_bundle.js:1848-1856 — ekran okuyucu adı ve tooltip. Metin İNGİLİZCE'dir (uygulamanın
-    /// tüm kullanıcı-görünür metni İngilizcedir; kaynaktaki Türkçe etiketler çevrilir).</summary>
-    internal static string DescriptionFor(bool? state) => state switch
+    /// <summary>
+    /// _ds_bundle.js:1848-1856 — ekran okuyucu adı ve tooltip. Metin İNGİLİZCE'dir (uygulamanın tüm
+    /// kullanıcı-görünür metni İngilizcedir; kaynaktaki Türkçe etiketler çevrilir).
+    ///
+    /// <para><paramref name="reason"/> verildiğinde metin GEREKÇEYİ söyler. Var olma sebebi: nokta (plan) ile
+    /// kartın sha çifti (commit) AYRI kanallardır ve yan yana durduklarında "commit aynı ama neden
+    /// derlenecek?" diye okunuyorlardı — cevap motorda vardı ama hiçbir yüzeyde görünmüyordu. Gerekçe
+    /// bilinmiyorsa (eski bir önizleme, ya da koşu-zamanlama kaynaklı bir pre-skip) jenerik metne düşülür.</para>
+    /// </summary>
+    internal static string DescriptionFor(bool? state, WillBuildReason? reason = null) => reason switch
     {
-        true => "Changed — will build",
-        false => "Up to date — will skip",
-        _ => "Unknown — waiting for Sync",
+        WillBuildReason.NeverBuilt => "Never built — will build",
+        WillBuildReason.LastFailed => "Last build failed — will build",
+        WillBuildReason.DepIssue => "Built against a failed dependency — will rebuild",
+        WillBuildReason.SignatureChanged => "Changed — will build",
+        WillBuildReason.UpToDate => "Up to date — will skip",
+        _ => state switch
+        {
+            true => "Changed — will build",
+            false => "Up to date — will skip",
+            _ => "Unknown — waiting for Sync",
+        },
     };
 
     /// <summary>[design v1.7.0 §2.4-2] Bu düğümün döngü YOLU (<c>A → B → C → A</c>) — tooltip'in ikinci
@@ -89,9 +117,10 @@ public class WillBuildDot : Control
 
     private void ApplyState()
     {
+        // C kanalı (döngü üyeliği + yolu) plan kanalını EZER; plan dalı ise artık gerekçeyi de söyler.
         string description = InCycle
             ? ViewModels.CycleText.Lines(ViewModels.CycleText.Membership, CyclePath)
-            : DescriptionFor(State);
+            : DescriptionFor(State, Reason);
         SetValue(AutomationProperties.NameProperty, description);
         ToolTip = description;
 

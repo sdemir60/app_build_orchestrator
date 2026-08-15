@@ -860,9 +860,12 @@ public sealed class RunCoordinator(
         // Cycles modunun kapsam dışı bıraktığı projeler.
         var preSkipped = upToDateSkips.Select(s => s.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new BuildPreviewEvent(
-            [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name,
-                preSkipped.Contains(n.Id) ? false : n.WillBuild,
-                BuildStateStore.BuiltCommitOf(builtCommits, n.Id)))]));
+            // Pre-skip edilenlerde gerekçe de DÜŞER (null): o "false" imzadan değil koşu-zamanlama kuralından
+            // gelir (yakınsamama hafızası / Cycles kapsamı) ve düğümün imza gerekçesini göstermek yalan olurdu.
+            [.. plan.Nodes.Select(n => preSkipped.Contains(n.Id)
+                ? new BuildPreviewItem(n.Id, n.Name, false, BuildStateStore.BuiltCommitOf(builtCommits, n.Id))
+                : new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
+                    BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi

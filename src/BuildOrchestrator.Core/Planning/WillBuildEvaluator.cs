@@ -39,12 +39,29 @@ public static class WillBuildEvaluator
     /// iken cycle üyesi her zaman "derlenmeyecek" sayılır. VARSAYILAN DEĞER YOK — her çağıran kararı açıkça
     /// yazar, böylece yeni bir çağrı yeri sessizce yanlış kapsama düşemez.</param>
     public static bool? Evaluate(bool inCycle, string? currentSignature, BuildState? state, bool buildCycles)
+        => EvaluateWithReason(inCycle, currentSignature, state, buildCycles).WillBuild;
+
+    /// <summary>
+    /// <see cref="Evaluate"/> ile AYNI karar, ek olarak GEREKÇESİ. Karar buradadır ve <see cref="Evaluate"/>
+    /// buna delege eder — iki yüzey sessizce ayrışamaz (kopya YASAK).
+    ///
+    /// <para>Gerekçe kullanıcıya gösterilir (will-build noktasının tooltip'i): kart üstünde nokta (plan) ile
+    /// sha çifti (commit) yan yana durduğu için "commit aynı ama neden derlenecek?" sorusu doğuyordu; cevabı
+    /// motor biliyor ama eskiden IPC sınırında düşüyordu.</para>
+    ///
+    /// <para>İki hâlde gerekçe YOKTUR: hollow (bilinmiyor) ve kapsam-dışı cycle üyeliği — ikincisinde üyelik
+    /// kanalı (döngü rozeti) zaten konuşur ve bir plan gerekçesi orada yanıltıcı olurdu.</para>
+    /// </summary>
+    public static (bool? WillBuild, WillBuildReason? Reason) EvaluateWithReason(
+        bool inCycle, string? currentSignature, BuildState? state, bool buildCycles)
     {
-        if (inCycle && !buildCycles) return false;                     // kapsam dışı: cycle projesi derlenmez
-        if (currentSignature is null) return null;                     // hollow: imza hesaplanamadı / Sync öncesi
-        if (state?.BuiltSignature is null) return true;                // hiç başarıyla derlenmemiş
-        if (state.LastResult != BuildResult.Succeeded) return true;    // son koşu başarısız/skip
-        if (state.DepIssue) return true;                               // bayat bir bağımlılığa link'li (aşağıdaki nota bak)
-        return !string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal); // dirty=true, güncel=false
+        if (inCycle && !buildCycles) return (false, null);                 // kapsam dışı: cycle projesi derlenmez
+        if (currentSignature is null) return (null, null);                 // hollow: imza yok / Sync öncesi
+        if (state?.BuiltSignature is null) return (true, WillBuildReason.NeverBuilt);
+        if (state.LastResult != BuildResult.Succeeded) return (true, WillBuildReason.LastFailed);
+        if (state.DepIssue) return (true, WillBuildReason.DepIssue);       // bayat bağımlılığa link'li (yukarıdaki nota bak)
+        return string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
+            ? (false, WillBuildReason.UpToDate)
+            : (true, WillBuildReason.SignatureChanged);
     }
 }

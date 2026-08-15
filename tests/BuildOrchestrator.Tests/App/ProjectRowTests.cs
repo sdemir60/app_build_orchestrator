@@ -10,6 +10,7 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.Tests.App;
@@ -123,6 +124,36 @@ public class ProjectRowTests
         row.UpdateLayout();
         Assert.Equal(14.0, row.DepSlot.Width);
         Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Nokta NEDEN derleneceğini söyler. Sahada kart üstünde nokta (plan) ile sha çifti (commit) yan yana
+    /// duruyor ve "commit aynı ama neden derlenecek?" diye okunuyordu — ikisi ayrı kanal, ve gerekçe
+    /// hiçbir yüzeyde yoktu. Renk gerekçeden ETKİLENMEZ: gerekçe yalnız metni özelleştirir.
+    /// </summary>
+    [StaFact]
+    public void The_will_build_dot_says_why_the_project_will_build()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        {
+            WillBuild = true,
+            WillBuildReason = WillBuildReason.DepIssue,
+        };
+        var (row, window, host) = Realize(vm);
+        var dot = DsResources.Descendants(row.Dot).OfType<Ellipse>().Single();
+
+        Assert.Equal("Built against a failed dependency — will rebuild", row.Dot.ToolTip);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.DotDirty"), DsResources.ColorOf(dot.Fill)); // renk plan kanalının
+
+        vm.WillBuildReason = WillBuildReason.NeverBuilt;
+        row.UpdateLayout();
+        Assert.Equal("Never built — will build", row.Dot.ToolTip);
+
+        // Gerekçe bilinmiyorsa (eski önizleme / koşu-zamanlama kaynaklı pre-skip) jenerik metne düşülür.
+        vm.WillBuildReason = null;
+        row.UpdateLayout();
+        Assert.Equal("Changed — will build", row.Dot.ToolTip);
         GC.KeepAlive(window);
     }
 

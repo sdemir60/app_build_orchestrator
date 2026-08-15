@@ -93,6 +93,55 @@ public class WillBuildTests
         => Assert.True(WillBuildEvaluator.Evaluate(false,
             "sig1", new BuildState("A", BuiltSignature: "sig1", LastResult: null), buildCycles: false));
 
+    // ---- Gerekçe (WillBuildReason) --------------------------------------------------------
+    // Karar TEK gövdededir (EvaluateWithReason); Evaluate ona delege eder. Gerekçe kullanıcıya
+    // gösterilir: "amber nokta ama commit aynı" görüntüsünün açıklaması buradan gelir.
+
+    private static WillBuildReason? ReasonOf(string? signature, BuildState? state, bool inCycle = false) =>
+        WillBuildEvaluator.EvaluateWithReason(inCycle, signature, state, buildCycles: false).Reason;
+
+    [Fact]
+    public void reason_is_never_built_when_there_is_no_record()
+        => Assert.Equal(WillBuildReason.NeverBuilt, ReasonOf("sig1", null));
+
+    [Fact]
+    public void reason_is_last_failed_when_the_previous_run_did_not_succeed()
+        => Assert.Equal(WillBuildReason.LastFailed,
+            ReasonOf("sig1", new BuildState("A", "sig1", LastResult: BuildResult.Failed)));
+
+    [Fact]
+    public void reason_is_dep_issue_when_the_last_success_was_built_against_a_failed_dependency()
+        => Assert.Equal(WillBuildReason.DepIssue,
+            ReasonOf("sig1", new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true)));
+
+    [Fact]
+    public void reason_is_signature_changed_when_the_source_moved()
+        => Assert.Equal(WillBuildReason.SignatureChanged,
+            ReasonOf("sig2", new BuildState("A", "sig1", LastResult: BuildResult.Succeeded)));
+
+    [Fact]
+    public void reason_is_up_to_date_when_nothing_moved()
+        => Assert.Equal(WillBuildReason.UpToDate,
+            ReasonOf("sig1", new BuildState("A", "sig1", LastResult: BuildResult.Succeeded)));
+
+    /// <summary>Hollow ve kapsam-dışı hâllerde gerekçe YOKTUR: ilkinde bilinmiyor, ikincisinde üyelik
+    /// kanalı (döngü rozeti) zaten konuşuyor — plan gerekçesi orada yanıltıcı olurdu.</summary>
+    [Fact]
+    public void hollow_and_out_of_cycle_scope_carry_no_reason()
+    {
+        Assert.Null(ReasonOf(null, null));
+        Assert.Null(ReasonOf("sig1", null, inCycle: true));
+    }
+
+    /// <summary>Evaluate, EvaluateWithReason'a delege eder — iki yüzey ayrışamaz (kopya yok).</summary>
+    [Fact]
+    public void the_two_surfaces_always_agree()
+    {
+        var state = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true);
+        Assert.Equal(WillBuildEvaluator.Evaluate(false, "sig1", state, buildCycles: false),
+                     WillBuildEvaluator.EvaluateWithReason(false, "sig1", state, buildCycles: false).WillBuild);
+    }
+
     [Fact]
     public void ComputeWillBuild_populates_node_field()
     {

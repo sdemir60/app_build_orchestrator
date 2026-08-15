@@ -269,7 +269,12 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// <c>null</c> — JSON'a hiç yazılmaz, dolayısıyla W1 ÖNCESİ yazılmış NDJSON satırları da alansız çözülmeye
 /// devam eder (geriye dönük uyum). <b>Not:</b> bu değer ile <c>TargetSha</c> FARKLI ref ailelerinden gelir
 /// (bu: derleme anındaki yerel/worktree HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
-public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null);
+/// <param name="Reason">[gerekçe] <see cref="WillBuild"/> kararının NEDENİ — kart, will-build noktasının
+/// tooltip'inde bunu söyler ("commit aynı ama neden derlenecek?" sorusunun cevabı). Düğümden AYNEN taşınır;
+/// koordinatörün koşu-zamanlama kuralıyla (pre-skip) <c>false</c>'a çevirdiği projelerde <c>null</c>'dır —
+/// o karar imzadan gelmez, önizleme yalan söylemez. Alan default'lu: eski NDJSON satırları alansız çözülür.</param>
+public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
+    WillBuildReason? Reason = null);
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
 /// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>
