@@ -94,7 +94,13 @@ public sealed record BuildState(
     // hiç derlenmemiş bir imzayı "temiz" sanır. Bu alan currentSignature ile eşleştiğinde (bkz.
     // BuildStateStore.IsCycleNonConvergent) grup bir daha turlarla DENENMEZ; gerçek bir tur kararına ulaşan
     // (Converged/CapReached) her koşu ise alanı temizler.
-    string? NonConvergentSignature = null);
+    string? NonConvergentSignature = null,
+    // Bu başarı BAŞARISIZ bir bağımlılığın çıktısına link'liydi. Kayıt yine de yazılır (aksi hâlde defter
+    // hiç ilerlemez — bir koşuda 74 başarının 0'ı yazıldığı ölçüldü) ama not projeyi derleme listesinde
+    // tutar: WillBuildEvaluator bunu görünce bağımlılık düzelene kadar "derlenecek" der. LastResult
+    // Succeeded KALIR — derleme gerçekten başarılıydı; bu ortogonal bir uyarıdır, sonucun kendisi değil.
+    // Alan SONA ve default'lu eklendi: eski build-state.json kayıtları alansızdır ve false olarak çözülür.
+    bool DepIssue = false);
 
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);

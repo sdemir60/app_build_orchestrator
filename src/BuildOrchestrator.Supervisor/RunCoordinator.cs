@@ -1103,18 +1103,18 @@ public sealed class RunCoordinator(
             if (result == BuildResult.Succeeded)
             {
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
-                // [A2] depIssue TAŞIYAN bir success, bağımlılığının BAYAT (bu run'da derlenmemiş, önceki) çıktısına
-                // link'lidir — "başarılı" olması binary'nin güncel olduğu anlamına GELMEZ. Buna rağmen taze imza
-                // persist edilirse, failed upstream KAYNAK DEĞİŞMEDEN düzeldiğinde (ör. zehirli obj temizliği) bu
-                // projenin imzası da değişmez ve bir sonraki incremental Build onu "güncel" sayıp pre-skip eder;
-                // proje sonsuza dek bayat binary'e link'li kalır. §4 gereği DLL/bin timestamp'i OKUNMADIĞI için
-                // bunu yakalayabilecek başka bir mekanizma yoktur. Persist etmemenin bedeli "gereksiz bir kez daha
-                // derlemek", persist etmenin bedeli "sessizce yanlış çıktı" — güvenli taraf seçilir.
-                // [A2 fix-4] Aynı ayrımı ikinci kez TÜRETME: depIssuesForEvent zaten "depIssue var mı" sorusunun
+                // [DEĞİŞEN KURAL — A2] depIssue TAŞIYAN bir success bağımlılığının BAYAT çıktısına link'lidir ve
+                // yine derlenmelidir. Eskiden bu, "deftere HİÇ yazma" ile sağlanıyordu; ölçüldü ki o kural
+                // defterin ilerlemesini tamamen durduruyor (bir koşuda 24 hata depIssue'yu 96 projeye yaydı ve
+                // 74 başarının SIFIRI yazıldı → incremental fiilen devre dışı, her Sync "hepsi derlenecek").
+                // Kayıt artık NOTLA yazılır; "yine derlenecek" kararını WillBuildEvaluator o nottan verir.
+                // Kazanç: sha çifti ve kart artık gerçeği gösterir. Yeniden derlenecek küme AYNI kalır.
+                // [A2 fix-4] Ayrımı ikinci kez TÜRETME: depIssuesForEvent zaten "depIssue var mı" sorusunun
                 // materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
-                // [cycle rounds] trustedResult aynı kuralın ikinci kapısıdır: yakınsamayan grup persist ETMEZ.
-                if (trustedResult && depIssuesForEvent is null)
-                    PersistBuildStateOnSuccess(run, projectId, durationMs); // [Task 19] sonraki Build incremental olsun
+                // [cycle rounds] trustedResult AYRI bir kapıdır ve KORUNUR: yakınsamayan grubun ara-tur sonucu
+                // bir "başarı" değildir, imzası da anlamlı değildir — o hiç persist edilmez.
+                if (trustedResult)
+                    PersistBuildStateOnSuccess(run, projectId, durationMs, depIssue: depIssuesForEvent is not null);
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent, cycleUnsettled));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: succeeded ({1}ms)", name, durationMs));
@@ -1610,14 +1610,17 @@ public sealed class RunCoordinator(
     /// AYRICA "depIssue taşımayan success" koşulunu uygular (bkz. BuildProjectAsync'teki gerekçe). §4: yalnız
     /// build-state.json'a yazılır, DLL/bin/obj'ye dokunulmaz. Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// </summary>
-    private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs)
+    /// <param name="depIssue">Bu başarı BAŞARISIZ bir bağımlılığın çıktısına link'li miydi. Kayda not olarak
+    /// yazılır; <see cref="Core.Planning.WillBuildEvaluator"/> onu görünce projeyi derleme listesinde tutar
+    /// (gerekçe: çağıran taraftaki [DEĞİŞEN KURAL] notu).</param>
+    private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs, bool depIssue)
     {
         if (run.StateStore is null || run.Incremental is not { } inc
             || !inc.SignatureById.TryGetValue(projectId, out var signature))
             return;
 
         var state = new BuildState(projectId, signature, inc.HeadCommit, BuildResult.Succeeded,
-            DateTimeOffset.UtcNow, inc.Branch, durationMs);
+            DateTimeOffset.UtcNow, inc.Branch, durationMs, DepIssue: depIssue);
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }

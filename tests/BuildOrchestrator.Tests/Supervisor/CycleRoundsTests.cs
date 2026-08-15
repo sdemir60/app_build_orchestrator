@@ -878,7 +878,9 @@ public class CycleRoundsTests
 
     // [SİLİNEN TEST — convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue]
     // Eski iddia: yakınsayan bir SCC üyesinin success'i depIssue TAŞIYORSA [A2] gereği persist etmez, bu
-    // yüzden hafıza silme işi persist'in yan etkisine bırakılamaz — açıkça yapılmalıdır.
+    // yüzden hafıza silme işi persist'in yan etkisine bırakılamaz — açıkça yapılmalıdır. (A2'nin o kuralı
+    // bugün geçerli DEĞİL: depIssue taşıyan başarı artık NOTLA persist edilir — bkz. WillBuildEvaluator.
+    // Silme gerekçesi bundan bağımsız ve hâlâ geçerlidir.)
     // Neden silindi: senaryosu artık ÜRETİLEMEZ. Turlar kendi moduna (RunMode.Cycles) taşınınca o koşuda
     // döngü DIŞINDAKİ her proje pre-skip edilir, yani hiçbir zaman FAILED olmaz; DepIssueTracker ise yalnız
     // FAILED bağımlılıktan depIssue üretir (grup-içi kenarlar da hesaptan zaten çıkarılır). Dolayısıyla bir

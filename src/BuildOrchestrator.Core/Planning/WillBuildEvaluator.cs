@@ -14,6 +14,19 @@ using BuildOrchestrator.Contracts.Model;
 /// SCC'nin bileşik imzası tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün olarak
 /// "güncel" görünür.</para>
 ///
+/// <para><b>Bağımlılığı başarısız olan başarı (<see cref="BuildState.DepIssue"/>).</b> Böyle bir proje
+/// derlendi ama bağımlılığının BAYAT çıktısına link'lidir; "başarılı" olması binary'nin güncel olduğu
+/// anlamına gelmez. Bağımlılık kaynak DEĞİŞMEDEN düzelirse (ör. zehirli obj temizliği) bu projenin imzası
+/// da değişmez — not olmasaydı bir sonraki Build onu "güncel" sayıp atlar ve proje sonsuza dek bayat
+/// binary'e link'li kalırdı. §4 gereği DLL/bin timestamp'i OKUNMADIĞI için bunu yakalayacak başka bir
+/// mekanizma yoktur.</para>
+///
+/// <para>Bu güvenlik eskiden koordinatörde, "böyle bir başarıyı deftere HİÇ yazma" biçiminde duruyordu.
+/// Ölçüldü ki o kural defterin ilerlemesini tamamen durduruyor: depIssue zincir boyunca miras alındığı
+/// için birkaç gerçek hata tüm grafı zehirliyor (bir koşuda 24 hata → 96 proje → 74 başarının 0'ı
+/// yazıldı) ve incremental derleme fiilen devre dışı kalıyordu. Kayıt artık yazılıyor, karar BURADA
+/// veriliyor — yeniden derlenecek küme aynı, ama defter ve kartın sha çifti gerçeği söylüyor.</para>
+///
 /// <para><b>Bilinen dar ayrışma (Cycles koşusu içinde):</b> bir SCC'nin üyeleri KISMEN temiz olduğunda —
 /// bileşik imza ortak olduğu için pratikte yalnız bir üyenin state kaydı hiç yokken — koordinatörün grup
 /// kapısı (<c>All</c>) düşer, grup bütün olarak dispatch edilir ve önizlemenin GRİ çizdiği temiz üyeler de
@@ -31,6 +44,7 @@ public static class WillBuildEvaluator
         if (currentSignature is null) return null;                     // hollow: imza hesaplanamadı / Sync öncesi
         if (state?.BuiltSignature is null) return true;                // hiç başarıyla derlenmemiş
         if (state.LastResult != BuildResult.Succeeded) return true;    // son koşu başarısız/skip
+        if (state.DepIssue) return true;                               // bayat bir bağımlılığa link'li (aşağıdaki nota bak)
         return !string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal); // dirty=true, güncel=false
     }
 }

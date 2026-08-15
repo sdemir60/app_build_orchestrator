@@ -66,6 +66,28 @@ public class WillBuildTests
     public void false_when_in_cycle_even_if_signature_null()
         => Assert.False(WillBuildEvaluator.Evaluate(true, null, null, buildCycles: false));
 
+    /// <summary>
+    /// Bağımlılığı BAŞARISIZ olmuş bir başarı, bayat bir çıktıya link'lidir: kendi kaynağı değişmese bile
+    /// bağımlılık düzelene kadar YENİDEN DERLENİR.
+    ///
+    /// <para>Bu kural eskiden koordinatörde, "böyle bir başarıyı deftere hiç yazma" biçiminde duruyordu —
+    /// ama o, defterin ilerlemesini tamamen durduruyordu (ölçüldü: 24 hatalı projenin depIssue'su 96 projeye
+    /// yayıldığı bir koşuda 74 başarının 0'ı yazıldı). Kayıt artık yazılıyor, güvenlik ise BURAYA taşındı:
+    /// kaydın <see cref="BuildState.DepIssue"/> notu varsa proje derleme listesinde kalır.</para>
+    /// </summary>
+    [Fact]
+    public void true_when_the_last_success_was_built_against_a_failed_dependency()
+        => Assert.True(WillBuildEvaluator.Evaluate(false, "sig1",
+            new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Succeeded, DepIssue: true),
+            buildCycles: false));
+
+    /// <summary>Not TEMİZ bir kayıtta yoktur — aynı imza güncel demektir (kontrol grubu).</summary>
+    [Fact]
+    public void false_when_the_last_success_carried_no_dependency_issue()
+        => Assert.False(WillBuildEvaluator.Evaluate(false, "sig1",
+            new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Succeeded, DepIssue: false),
+            buildCycles: false));
+
     [Fact]
     public void true_when_signature_matches_but_last_result_null()
         => Assert.True(WillBuildEvaluator.Evaluate(false,
