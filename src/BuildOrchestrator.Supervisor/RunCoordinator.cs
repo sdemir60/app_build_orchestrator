@@ -19,8 +19,13 @@ namespace BuildOrchestrator.Supervisor;
 /// (<c>SolutionDirResolver</c> için gereklidir; <see cref="ProjectNode.SolutionNames"/> yalnız AD taşır, YOL taşımaz).
 /// Planlama TAMAMEN Core'da yapılır [D3]; koordinatör yalnız çalıştırır — bu tip iki Core çıktısını bir arada taşır.
 /// </summary>
+/// <param name="BuildPathById">[worktree] Proje KİMLİĞİ → MSBuild'e verilecek GERÇEK csproj yolu. Worktree
+/// koşusunda kimlikler ana repo köküne taşınır (<c>ProjectIdentityRebase</c>) — imza, state, event'ler ve App
+/// hep ana kökü görür; yalnız derlemenin kendisi worktree'deki dosyayı açar. In-place koşuda boş: kimlik
+/// zaten fiziksel yoldur.</param>
 public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs,
-    IncrementalPlan? Incremental = null);
+    IncrementalPlan? Incremental = null,
+    IReadOnlyDictionary<string, string>? BuildPathById = null);
 
 /// <summary>
 /// [Task 19 wiring] Bir fresh (Rebuild/Build) run için incremental karar verileri: her projenin planlama
@@ -912,7 +917,9 @@ public sealed class RunCoordinator(
                 DecideSkipped(projectId, reason, cycleUnconverged);
 
             var run = new RunContext(
-                cmd.RunId, plan.Configuration, runPlan.SolutionRefs, nodeById,
+                cmd.RunId, plan.Configuration, runPlan.SolutionRefs,
+                runPlan.BuildPathById ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                nodeById,
                 scheduler, wake, logs, events,
                 // Retry politikası Core'un [T8]; burada yalnız run'a bağlanır: onRetry hem decision.log'a hem konsola.
                 // [T20-b/P3] cpuFloor: contention penceresinde cap'i tabana yükseltir — cap'in TEK yazıcısı
@@ -1506,11 +1513,15 @@ public sealed class RunCoordinator(
     private async Task<InvokeOutcome> InvokeOnceAsync(
         RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct)
     {
+        // [worktree] KİMLİKTEN FİZİKSEL YOLA geçilen TEK nokta burasıdır: worktree koşusunda kimlikler ana
+        // repo köküne taşınmıştır (ProjectIdentityRebase) ve derlenecek dosya başka bir dizindedir. Diğer her
+        // şey — scheduler, event'ler, önizleme, persist, decision.log, log adlandırma — kimlikle akar.
+        string buildPath = run.BuildPathById.GetValueOrDefault(projectId, projectId);
         var request = new MsBuildInvokeRequest(
-            ProjectId: projectId,
+            ProjectId: buildPath,
             Configuration: run.Configuration,
-            SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
-            NeedsRestore: HasPackagesConfig(projectId),
+            SolutionDir: SolutionDirResolver.Resolve(buildPath, run.SolutionRefs.GetValueOrDefault(projectId, [])),
+            NeedsRestore: HasPackagesConfig(buildPath),
             // [I2-K2/Task 10] worktree kökü verilmişse proje-Id başına izole obj; aksi halde in-place =
             // projenin kendi (VS-parity) obj'i — bkz. RunCoordinator ctor'daki worktreeObjRootResolver doc'u.
             BaseIntermediateOutputPath: run.WorktreeObjRoot is not null
@@ -1710,6 +1721,8 @@ public sealed class RunCoordinator(
         string RunId,
         string Configuration,
         IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs,
+        // [worktree] Kimlik → derlenecek GERÇEK csproj yolu (bkz. RunPlan.BuildPathById). Boş ⇒ kimlik = yol.
+        IReadOnlyDictionary<string, string> BuildPathById,
         IReadOnlyDictionary<string, ProjectNode> NodeById,
         ReadySetScheduler Scheduler,
         WakeSignal Wake,

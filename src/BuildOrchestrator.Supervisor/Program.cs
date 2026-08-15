@@ -138,11 +138,18 @@ public static class Program
             progress(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count));
             var solutionRefs = SolutionMapper.MapRefs(scan.SlnPaths, scan.CsprojPaths);
 
+            // [worktree kimliği] Plan worktree'de kuruldu; kimlikleri ANA REPO KÖKÜNE taşı — ve bunu imza
+            // hesabından ÖNCE yap. Sonra yapılsaydı imzalar worktree yollarıyla hesaplanmış olurdu (imzanın
+            // upstream terimi bağımlılık id'lerini hash'ler) ve worktree'li bir Build'den sonra in-place Sync
+            // hiçbir kaydı tanımazdı. In-place koşuda no-op'tur.
+            var identity = ProjectIdentityRebase.To(
+                cmd.RootPath, workspace.ScanRoot, plan, solutionRefs, EvaluateAll(scan, evaluator, cache));
+
             // Satır işin ÖNCESİNDE: incremental pass (git diff + proje başına imza) planlamanın EN UZUN adımıdır
             // ve kendi sayısını üretmez — sonrasına bırakılsa akış tam da en uzun beklemede sessizleşirdi.
             progress(PlanProgressLines.ComputingIncremental(plan.Nodes.Count));
-            var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, plan, scan, evaluator, cache, stateStore);
-            return new RunPlan(boundPlan, solutionRefs, incremental);
+            var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, identity.Plan, identity.EvaluatedById, stateStore);
+            return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById);
         }
     }
 
@@ -335,9 +342,33 @@ public static class Program
     /// HEAD = seçilen commit, dirty boş — <see cref="PreparedWorkspace.InPlace"/>=false ile tutarlı.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// projectId (tam csproj yolu) → <see cref="EvaluatedProject"/>. Cache SICAK (plan zaten değerlendirdi) —
+    /// bu re-call mtime+size hızlı yolundan bellekten döner, XML yeniden okunmaz. <c>GetOrEvaluate</c> canlı
+    /// build ↔ scan yarışında kaybolan bir dosya için null dönebilir [Task 0/It-4a]; o yollar elenir.
+    /// <para>Değerlendirme çökerse boş harita döner: committed fingerprint boşa düşer, yani over-build —
+    /// güvenli taraf. Kimlik rebase'i bu haritadan BAĞIMSIZ çalışmaya devam eder.</para>
+    /// </summary>
+    private static IReadOnlyDictionary<string, EvaluatedProject> EvaluateAll(
+        ScanResult scan, CsprojEvaluator evaluator, EvaluationCache cache)
+    {
+        try
+        {
+            return scan.CsprojPaths
+                .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
+                .Where(x => x.Project is not null)
+                .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("project evaluation skipped (committed fingerprints will be empty): " + ex);
+            return new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
     private static (BuildPlan Plan, IncrementalPlan? Info) ComputeIncremental(
-        StartRunCommand cmd, PreparedWorkspace workspace, BuildPlan plan, ScanResult scan,
-        CsprojEvaluator evaluator, EvaluationCache cache, BuildStateStore stateStore)
+        StartRunCommand cmd, PreparedWorkspace workspace, BuildPlan plan,
+        IReadOnlyDictionary<string, EvaluatedProject> evaluatedById, BuildStateStore stateStore)
     {
         try
         {
@@ -352,18 +383,14 @@ public static class Program
             IReadOnlyDictionary<string, string> tracked = trackedResult.Success
                 ? trackedResult.Value! : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            // projectId (tam csproj yolu) → EvaluatedProject: cache SICAK (Build zaten değerlendirdi) — bu re-call
-            // mtime+size hızlı yolundan bellekten döner, XML yeniden okunmaz. GetOrEvaluate canlı build ↔ scan
-            // yarışında kaybolan bir dosya için null dönebilir [Task 0/It-4a] — o yollar burada sessizce elenir.
-            var evaluatedById = scan.CsprojPaths
-                .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
-                .Where(x => x.Project is not null)
-                .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
-
             // [A4] TAHMİN (`!cmd.UseWorktree`) DEĞİL, ÇÖZÜLMÜŞ workspace: worktree istenip de hazırlanamadıysa
-            // burası true kalır ve imza local-diff terimini DAHİL eder — derlemenin gerçekte üzerinde koştuğu ağaç.
+            // InPlace true kalır ve imza local-diff terimini DAHİL eder — derlemenin gerçekte üzerinde koştuğu ağaç.
+            // [worktree kimliği] Repo kökü ANA repodur: plan ve değerlendirme haritası buraya rebase edilmiş
+            // durumda geldi, dolayısıyla repo-göreli yollar iki kökte de AYNI çıkar ve imza kök-bağımsız olur.
+            // git olguları (head/dirty/tracked) yine ScanRoot'tan okunur — derlenen ağaç odur ve hepsi
+            // repo-göreli formattadır.
             var (bound, signatures) = IncrementalRunBinder.Bind(
-                plan, evaluatedById, workspace.ScanRoot, head, tracked, dirty,
+                plan, evaluatedById, cmd.RootPath, head, tracked, dirty,
                 stateStore.Load(), workspace.InPlace, cmd.Mode == RunMode.Cycles, cmd.DependentMode);
             return (bound, new IncrementalPlan(signatures, head, branch));
         }

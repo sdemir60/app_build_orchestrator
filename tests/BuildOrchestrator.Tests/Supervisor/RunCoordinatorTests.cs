@@ -1209,6 +1209,40 @@ public class RunCoordinatorTests
     }
 
 
+    /// <summary>
+    /// AYIRT EDİCİ — worktree koşusunda <b>App'e giden her şey ANA KÖK kimliğini taşır; yalnız MSBuild
+    /// worktree'deki dosyayı açar.</b>
+    ///
+    /// <para>Kimlik bu kod tabanında tam csproj yoludur, dolayısıyla farklı bir branch'e build alındığında
+    /// tarama worktree'de yapılır ve aynı proje bambaşka bir kimlik kazanırdı. Sonuç: önizleme worktree
+    /// id'leriyle yayılıp App'te KOPYA satırlar üretiyor, build-state kayıtları worktree yoluyla yazılıp bir
+    /// sonraki in-place Sync tarafından bulunamıyordu. Kimlik artık planlamada ana köke taşınır
+    /// (<see cref="ProjectIdentityRebase"/>) ve fiziksel yol ayrı bir haritada durur.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_worktree_run_reports_main_root_identities_and_builds_the_worktree_file()
+    {
+        string mainId = Path.Combine(Path.GetTempPath(), "bo-main", "A", "A.csproj");
+        string treeId = Path.Combine(Path.GetTempPath(), "bo-tree", "A", "A.csproj");
+        var plan = new RunPlan(
+            new BuildPlan([Node("A") with { Id = mainId, ProjectPath = mainId }], Cycles: [], Configuration: "Debug"),
+            EmptyRefs(),
+            BuildPathById: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [mainId] = treeId });
+
+        string? invokedPath = null;
+        var invoker = new FakeInvoker((req, _, _) => { invokedPath = req.ProjectId; return Task.FromResult(Ok()); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(treeId, invokedPath);                                   // derlenen dosya worktree'de
+        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectStartedEvent>()).ProjectId);
+        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
+        Assert.All(h.Events.OfType<BuildPreviewEvent>().SelectMany(e => e.Items),
+            item => Assert.Equal(mainId, item.ProjectId));                   // App worktree yolunu HİÇ görmez
+    }
+
     [Fact]
     public async Task The_run_start_preview_carries_each_projects_last_built_commit_from_the_state_store()
     {
