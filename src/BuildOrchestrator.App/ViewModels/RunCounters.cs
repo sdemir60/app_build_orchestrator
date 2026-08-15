@@ -5,10 +5,14 @@ namespace BuildOrchestrator.App.ViewModels;
 /// başlamamış (<see cref="ProjectRowState.Pending"/>) satırlar. <c>DepAffected</c> yalnız <b>succeeded</b> +
 /// dep-issue taşıyan satırları sayar (build-data.js:524-528) — filtre chip'i "dep" (statüden bağımsız,
 /// bkz. <see cref="ProjectFilter"/>) ile bilerek FARKLIDIR: özet "kaç proje başarıyla derlendi ama yine de
-/// bir bağımlılık uyarısı taşıyor" sorusunu yanıtlar. <c>StuckCycles</c> [cycle rounds/Task 8] yalnız
-/// <b>skipped</b> + <see cref="ProjectRowViewModel.CycleUnconverged"/> taşıyan satırları sayar — kalıcı kırık
-/// bir SCC'nin pre-skip'i, sıradan "güncel" skip'iyle GÖRÜNÜRDE aynıdır (ikisi de plain <c>Skipped</c>); bu
-/// sayaç ikisini ayırt eden TEK yerdir.
+/// bir bağımlılık uyarısı taşıyor" sorusunu yanıtlar. <c>StuckCycles</c> [cycle rounds/Task 8] yakınsamayan
+/// bir SCC'nin üyelerini sayar — koşu turlarını harcadı ama grup güncel hâle GELMEDİ.
+///
+/// <para>[DEĞİŞEN KURAL] Sayaç eskiden <b>skipped</b> + bayrak arardı, çünkü bayrağın tek kaynağı motorun
+/// "önceki koşuda yakınsamamıştı" pre-skip'iydi. O pre-skip kalktı (açık Resolve basışı artık her zaman taze
+/// bir deneme yapar) ve bayrak artık koşunun KENDİ yakınsamama kararından geliyor — o üyeler <c>Failed</c> ya
+/// da <c>Succeeded</c> olarak biter, <c>Skipped</c> olarak değil. Statü kapısı kalsaydı sayaç sessizce sıfır
+/// okurdu; bu yüzden bayrak artık <see cref="ProjectRowViewModel.HasDepIssue"/> gibi statüden bağımsızdır.</para>
 ///
 /// <para>[cycle rounds/I2] <c>Building</c> "ŞU AN derlenen" demektir, "Started durumundaki satır" değil: bir
 /// SCC'nin üyeleri sıralı invoke edilir ve ara tur sonuçları yayılmadığı için grup bitene kadar HEPSİ
@@ -27,8 +31,9 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
         foreach (var r in rows)
         {
             total++;
-            if (r.HasDepIssue) dep++;  // [v1.5.1] statüden BAĞIMSIZ
-            if (r.InCycle) cycle++;    // [v1.7.0 §5] kalıcı üyelik
+            if (r.HasDepIssue) dep++;        // [v1.5.1] statüden BAĞIMSIZ
+            if (r.InCycle) cycle++;          // [v1.7.0 §5] kalıcı üyelik
+            if (r.CycleUnconverged) stuck++; // statüden BAĞIMSIZ — gerekçe aşağıda
             switch (r.State)
             {
                 // "Started" ile "şu an derleniyor" AYNI ŞEY DEĞİL — tek predicate ProjectRowViewModel.IsCompiling.
@@ -36,10 +41,7 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
                 case ProjectRowState.Pending: queued++; break;
                 case ProjectRowState.Succeeded: succeeded++; break;
                 case ProjectRowState.Failed: failed++; break;
-                case ProjectRowState.Skipped:
-                    skipped++;
-                    if (r.CycleUnconverged) stuck++; // [cycle rounds/Task 8] yalnız skipped + yakınsamama bayrağı
-                    break;
+                case ProjectRowState.Skipped: skipped++; break;
             }
         }
         return new RunCounters(total, building, queued, succeeded, failed, skipped, dep, stuck, cycle);

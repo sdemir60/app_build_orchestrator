@@ -324,4 +324,40 @@ public class StickyRibbonTests
         Assert.Equal("C", ChipLabel(ribbon.BuildingChips[0]));
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [cycles] Sıra bir üyeden diğerine geçtiğinde chip DE geçer. Yukarıdaki test şeridi olaylardan SONRA
+    /// kurduğu için ilk çizimi ölçüyordu; sahada görülen kusur canlı şeritteydi: chip ilk üyede donuyor ve
+    /// grup boyunca hep onu gösteriyordu (kullanıcı raporu: "UI.DMS sürekli dönüyor, başka proje derlense de
+    /// değişmiyor").
+    ///
+    /// <para>Neden: <see cref="RunCounters"/> bir <c>readonly record struct</c>'tır ve grup içinde sıra el
+    /// değiştirdiğinde sayaç demeti BYTE-BYTE aynı kalır (building yine 1, kuyruk yine aynı sayıda, toplam
+    /// sabit) — yalnız KİMLİKLER yer değiştirir. Toolkit'in <c>[ObservableProperty]</c> setter'ı yapısal
+    /// eşitlik görüp <c>PropertyChanged</c> yaymaz, şerit de chip'lerini yalnız <c>Counters</c> bildirimiyle
+    /// tazelediği için hiç haber almazdı. Satır kartları doğru güncelleniyordu (onlar satırın kendi
+    /// <c>PropertyChanged</c>'ine bağlı) — kullanıcının gördüğü asimetri buydu.</para>
+    /// </summary>
+    [StaFact]
+    public void Building_chip_follows_the_turn_as_it_moves_between_cycle_members()
+    {
+        var vm = NewVm();
+        var nodes = new[] { ("a", "A"), ("b", "B"), ("c", "C") };
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [.. nodes.Select(p => new ProjectNode(p.Item1, p.Item2, p.Item1, [], [], 0, null, null, true, null))],
+            [["a", "b", "c"]], [], []));
+        StartRun(vm, nodes);
+        foreach (var (id, name) in nodes) vm.OnEvent(new ProjectStartedEvent("r1", id, name)); // sıra C'de
+
+        var (ribbon, window) = Realize(vm); // şerit CANLI: bundan sonrasını bildirimle öğrenmek zorunda
+        Assert.Equal("C", ChipLabel(ribbon.BuildingChips[0]));
+
+        var before = vm.Counters;
+        vm.OnEvent(new ProjectStartedEvent("r1", "a", "A")); // sıra A'ya geçti
+
+        Assert.Equal(before, vm.Counters);                   // sayaç demeti değişmedi — kusurun kaynağı
+        Assert.Single(ribbon.BuildingChips);
+        Assert.Equal("A", ChipLabel(ribbon.BuildingChips[0]));
+        GC.KeepAlive(window);
+    }
 }

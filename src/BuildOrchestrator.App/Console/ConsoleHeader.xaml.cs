@@ -99,7 +99,12 @@ public partial class ConsoleHeader : UserControl
     {
         // [M-4] Global Constraint: kullanıcıya gösterilen sayı biçimlemesi InvariantCulture (locale'e göre
         // basamak gruplama/rakam değişmesin).
-        LinesText.Text = string.Format(CultureInfo.InvariantCulture, "{0} lines", lineCount);
+        //
+        // DEĞİŞMEDİYSE YAZILMAZ: bu metot 200ms'lik tick'ten KOŞULSUZ çağrılır, yani boşta da saniyede beş kez.
+        // Aynı metni yeniden atamak taze bir string ayırır ve TextBlock'u ölçüm/çizim için geçersiz kılar —
+        // uygulama hiç iş yokken bile boş kareye inemezdi.
+        string text = string.Format(CultureInfo.InvariantCulture, "{0} lines", lineCount);
+        if (!string.Equals(LinesText.Text, text, StringComparison.Ordinal)) LinesText.Text = text;
         if (Mode == HeaderMode.ProjectLog)
             CopyLogButton.Visibility = lineCount > 0 ? Visibility.Visible : Visibility.Collapsed;
     }

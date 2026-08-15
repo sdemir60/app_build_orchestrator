@@ -74,14 +74,24 @@ public class WillBuildDot : Control
         _ => "Unknown — waiting for Sync",
     };
 
-    /// <summary>[design v1.7.0 §5] Döngü üyesinin metni plan durumunu DEĞİL yapısal olguyu söyler — nokta da
-    /// onu gösterdiği için ikisi aynı şeyi anlatır.</summary>
-    internal const string CycleDescription =
-        "In a dependency cycle — standard builds skip it; Resolve cycles builds it in two passes";
+    /// <summary>[design v1.7.0 §2.4-2] Bu düğümün döngü YOLU (<c>A → B → C → A</c>) — tooltip'in ikinci
+    /// satırı. Boşsa tek satır kalır. Metin <see cref="ViewModels.CycleText.Path"/>'ten gelir; bu kontrol onu
+    /// KURMAZ, yalnız gösterir.</summary>
+    public static readonly DependencyProperty CyclePathProperty = DependencyProperty.Register(
+        nameof(CyclePath), typeof(string), typeof(WillBuildDot),
+        new PropertyMetadata("", (d, _) => ((WillBuildDot)d).ApplyState()));
+
+    public string CyclePath
+    {
+        get => (string)GetValue(CyclePathProperty);
+        set => SetValue(CyclePathProperty, value);
+    }
 
     private void ApplyState()
     {
-        string description = InCycle ? CycleDescription : DescriptionFor(State);
+        string description = InCycle
+            ? ViewModels.CycleText.Lines(ViewModels.CycleText.Membership, CyclePath)
+            : DescriptionFor(State);
         SetValue(AutomationProperties.NameProperty, description);
         ToolTip = description;
 

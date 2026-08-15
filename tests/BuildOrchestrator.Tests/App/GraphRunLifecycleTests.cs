@@ -29,6 +29,10 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
         var view = GraphTestView.Realized(new Size(640, 400), () => animations);
         view.SetGraph(Nodes(GraphStatus.Building, GraphStatus.Queued), [new("OSYS.Base", "OSYS.Data")]);
         view.RunPhase = GraphRunPhase.Running;
+        // Koşuya girişte graf ÖNCE söner, görünüm SONRA değişir (GraphView.HoldStatusesUntilDimmed) —
+        // bu yardımcı o pencereyi geçer ki testler statü değişimini DOĞRUDAN ölçebilsin. Pencerenin kendisi
+        // GraphPlanCoreTests.Entering_a_run_dims_before_it_repaints'te pinlidir.
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs * 2));
         return view;
     }
 

@@ -314,7 +314,7 @@ a later run deserves a real attempt rather than one that starts from a false ver
 
 Two per-project results carry a cycle flag of their own, as typed fields rather than as text the App would
 have to match: `projectSucceeded.cycleUnsettled` marks a member of a group that ran out of rounds, and
-`projectSkipped.cycleUnconverged` marks a group held back by non-convergence memory. The `depIssues` list is
+`projectSkipped.cycleUnconverged` is the wire form of the same idea for a skip. The `depIssues` list is
 not reused for either — it answers "which dependency failed", and a second meaning would make the `▲ N`
 counter and its filter chip count the wrong rows.
 
@@ -631,10 +631,13 @@ hidden:
   `N dependency-affected`.
 
 That slot has three other tenants, all about cycles: a member of a group that ran out of rounds borrows the
-same triangle with its own tooltip, a group held back by non-convergence memory replaces it with an orange
+same triangle with its own tooltip, a member of a group this run could not converge replaces it with an orange
 cycle badge, and plain membership of a cycle takes that same badge once the row's status glyph has stopped
 carrying it (§14.3). A row shows exactly one of the four, never two; membership is the weakest of them and
-loses to all three.
+loses to all three. Membership also names the loop itself: the tooltip's second line is the cycle path,
+`Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`, closed back on its first member so it reads as a
+cycle rather than a chain. The dot carries the same two lines, and the ribbon's cycle cluster carries one line
+per cycle; all of them compose from a single place, so no surface can drift into its own wording.
 
 ### 8.4 ETA
 
@@ -789,28 +792,27 @@ to finish and persist, but a group is cut at the end of the round it is in, beca
 the rounds, and continuing them after a stop would mean dozens more invocations.
 
 **Non-convergence memory.** A group that ends in **no progress** records the composite signature it gave up
-at, per member, beside that member's build state (§7.5). The next `Cycles` run that computes the same signature
-pre-skips the whole group with the reason `cycle did not converge at this signature` instead of spending
-rounds on a guaranteed red. A stop or an unexpected error never writes this — neither is evidence that a cycle
-cannot converge, and the next run must get a real attempt. This is the same principle as every other
-incremental decision, driven by the source signature; no DLL or `bin` timestamp is consulted. A member with no
-state row at all gets one created for the purpose, otherwise the very case this solves — a component that has
-never been built successfully — would never accumulate a memory. Failing to write it warns and nothing more:
-the cost is wasted rounds, not a wrong build.
+at, per member, beside that member's build state (§7.5). A stop or an unexpected error never writes this —
+neither is evidence that a cycle cannot converge. This is the same principle as every other incremental
+decision, driven by the source signature; no DLL or `bin` timestamp is consulted. A member with no state row
+at all gets one created for the purpose, otherwise the very case this solves — a component that has never been
+built successfully — would never accumulate a memory. Failing to write it warns and nothing more.
 
-Hitting the ceiling is **not** recorded, and the difference is one of evidence. No progress means the
-identical set failed twice, which is proof that more rounds cannot help. The ceiling means the group was still
-moving when the budget ran out — a group that fails `{A,B}`, then `{A}`, then nothing is one round from done.
-Remembering that case would void the ceiling's own justification, which is that no information is lost because
-the next run continues where this one stopped; a pre-skipped group never gets that continuation, and the
-only way out would be an unrelated source change. The accepted cost is that a cycle needing four to six rounds
-spends its rounds again on the next press or two until it settles.
+**The memory reports; it does not block.** A later `Cycles` run that computes the same signature writes
+`cycle {leader}: retrying — did not converge at this signature` to the decision log and then gives the group a
+full attempt from round one. It once pre-skipped the whole group instead, to avoid spending rounds on a
+guaranteed red, and that was wrong for a single reason: the only way into a `Cycles` run is the user pressing
+**Resolve cycles**, so the saving could only ever be taken by swallowing an explicit command, and the button
+appeared to do nothing. The signature also covers sources alone — a package restore, an output from outside
+the cycle or the environment may well have changed — so refusing a retry on an unchanged source signature
+claims more than the evidence supports. Hitting the ceiling is not recorded at all, by the same standard of
+evidence: no progress means the identical set failed twice, which is proof that more rounds cannot help, while
+the ceiling means the group was still moving when the budget ran out.
 
 Reaching any real verdict clears the memory, at the same place that writes it — convergence and the ceiling
 alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
 lose it anyway as a side effect of persisting a fresh build state; the explicit clear is what keeps that from
-being load-bearing, since the pre-skip requires *every* member to be remembered and a single member that
-failed to persist would keep a converged group pre-skipped forever. Within a `Cycles` run no member can reach
+being load-bearing. Within a `Cycles` run no member can reach
 that state — a dependency issue needs a *failed* dependency (§8.3) and nothing outside the group is built —
 but the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
 
@@ -1161,12 +1163,18 @@ a failure — and it clears itself the moment the engine speaks or the wait ends
 failure and does not take this path — declining a request with nothing to resume leaves the `stopped` line
 standing, because that line is still true.
 
-**Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected), the 8 px will-build dot,
+**Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected) running the row's full
+height, the 8 px will-build dot,
 the project name with the solution name beside it, then a right-aligned block — on hover, *Reveal in Explorer*
 and *Open in Visual Studio* icons; without hover, `curSha → targetSha` for dirty projects — then the status
 glyph, the fixed dependency-issue slot, and a 46 px duration column. The building row carries a motionless
 amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s); a sweep or a shine was tried and
 rejected. A failing row shakes once, ±3 px over 360 ms.
+
+The stripe has **no vertical inset**, which is a deliberate departure from §2.4. The design insets it by 1 px
+so that adjacent rows cannot fuse into one unbroken rail; looked at on screen, the break made the same 2 px
+read lighter and the row read thin. Separation is left to the horizontal divider instead — every row already
+carries a `border-subtle` line along its bottom, and that line crosses the stripe and breaks it on its own.
 
 Layer headers are 24 px and stick **cumulatively**: the *i*-th visible header pins at `i × 24 px` and stays
 there as the ones below it pile up underneath.
@@ -1368,9 +1376,33 @@ WPF provides neither smooth scrolling nor horizontal wheel input, so the scrolli
 |---|---|
 | `ScrollAnimator` | attached DP animating `VerticalOffset`; a wheel event cancels the animation |
 | `BottomAnchorBehavior` | bottom-stick with a 48 px release threshold and a jumping window; drives the `⌄ latest` pill |
+| `UserScrollSignal` | the raw "the user scrolled" input: wheel, scrollbar, navigation keys |
 | `FollowScrollController` | frontier following (550 ms cadence, 54 px dead-band) |
 | `ScrollArbiter` | the referee |
 | `HorizontalWheelScroll` | horizontal wheel / touchpad input, which WPF never delivers |
+
+**Only the user stops the follow, and the signal comes from input, not from geometry.** A scroll event says
+nothing about who caused it: relayout, a viewport change and our own programmatic scrolls all raise one, and
+the offset they report can still be the pre-scroll value, so a distance measured then can cross the threshold
+on its own. Reading "the user scrolled" out of that geometry made the stream drop its follow with nobody
+touching it. `UserScrollSignal` supplies the real thing from three input channels — the scrollbar is its own
+channel because dragging the thumb produces no wheel event at all, and WPF's `ScrollBar.Scroll` fires for user
+interaction only, never for a programmatic offset change.
+
+Whether to pin right now is then answered in exactly one place, `ShouldFollow`: following is on, no jump is in
+flight, and the user does not have the wheel. Every panel reads that instead of interpreting the stuck flag
+itself. The console had been doing the latter — its append path pinned on the raw flag and therefore ignored
+the reader, which during a build made the panel impossible to scroll at all. That flag could also go stale
+there for a second reason: AvalonEdit raises an *offset* event, so content added while the reader is scrolled
+up moves nothing and raises nothing, and a hand-tracked extent delta computed at the next real event looked
+like content growth and skipped the decision entirely. The console reports offset events as such and lets the
+code that grows the document do the pinning.
+
+The five-second idle return is armed by the input signal too, never by scroll events. Arming it on events
+meant flowing content reset it continuously, so during a build the wait never once elapsed and a reader who
+scrolled up stayed there forever. The pill, by contrast, follows live distance rather than state transitions:
+it is a geometric affordance, and with the follow no longer changing on its own there would otherwise be
+nothing to refresh it.
 
 `ScrollArbiter` is a pure decision core. Rules: a user scroll suppresses **only** that panel; a panel receives
 at most one grant per frame and each grant bumps that panel's epoch so an in-flight animation from an earlier
@@ -1414,13 +1446,56 @@ lines.
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
   ribbon's elapsed counter.
 - **Nothing is typed.** Live lines print immediately. The only live thing in the console is the prompt line at
-  the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), with `ready` beside it while idle.
-- **Panel transitions are one piece.** Opening a project log and coming back with `← Back` both settle the
-  content down from its bottom edge over 340 ms — a hinge, not a per-line cascade — so a three-line log and a
-  two-hundred-line narrative open at the same rhythm. `perspective`/`rotateX` do not exist in WPF; the nearest
-  native equivalent (a bottom-anchored Y scale plus a translate) carries the same gesture.
+  the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), amber like the event stream's active
+  line, with `ready` beside it while idle. The line is unconditional — output empties its text, not the line —
+  so the caret stays put and new lines pile up above it. The editor reserves one full line of bottom padding,
+  measured from the text view's own line height, so the caret sits below the last line instead of on top of
+  it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
+  pinned to the panel rather than to the document.
+- **While you are scrolling, the panel is yours.** A user gesture takes the wheel for five seconds — the same
+  idle window the list's frontier following uses, and the same constant — and during it arriving content
+  never pulls the view down. The 48 px threshold alone was not enough: a small scroll stayed inside it, so
+  the next line to arrive threw the reader back to the bottom, which during a build happens continuously.
+  When the five seconds pass with no gesture, the panel returns to the bottom and resumes following. The
+  console does not do this in project-log mode: there is no live stream to follow there and the reader is
+  looking at a log. This is a deliberate departure from §2.5, which says a reader's position is never touched
+  once they scroll away; without the return the panel simply stopped following and never came back.
+- **While the panel is yours, nothing is deleted from the top of it either.** The render slice trims the
+  document from the beginning, and a trim moves the text out from under a reader whose scroll offset is an
+  absolute pixel — the position holds still while the content races upward past it. Trimming therefore waits
+  for following to resume, and then catches up in one step while the panel is already pinned to the bottom,
+  where it is invisible. The event stream has the same hazard with its 150-row buffer and solves it the other
+  way: the rows do leave, and the offset is reduced by exactly the height that left, so the reader's content
+  does not move. Both are the mirror of the chunk loader's prepend compensation.
+- **Panel transitions are one piece, and the hinge is real.** Opening a project log and coming back with
+  `← Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
+  not a per-line cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The
+  prototype's `perspective(900px) rotateX(7deg)` is a genuine perspective projection: the receding top edge
+  narrows, the advancing bottom edge widens. WPF's 2-D transforms are affine and cannot produce that
+  trapezoid, so §2.4's second option is taken — the block is a textured plane in a `Viewport3D` with a
+  `PerspectiveCamera` 900 px away, rotated 7° → 0 about an axis through its bottom edge. A scale-and-translate
+  approximation was tried first and read as a slide rather than a hinge; the missing cue is the horizontal
+  one. The plane's texture is a still of the block taken as the transition starts — a live visual brush
+  cannot work, since hiding the real block would hide it in the brush too. The camera's field of view is
+  derived so that the plane at zero rotation covers the viewport exactly, which is what makes the hand-off
+  back to the real editor invisible. Only the log block moves: the prompt line and the amber
+  `build in progress` marker stay out of it by design (§1.3, §4) — what settles is the content, and the caret
+  is the panel's fixed point. The `⌄ latest` pill stays out too, being an affordance rather than content.
+- **Each mode is pinned to the end you read it from.** The order is fixed — change the content, pin, then
+  animate — and pinning forces a measure first, because the editor's scroll geometry is stale immediately
+  after a document swap and a pin computed against it lands on the wrong end. The run narrative pins to the
+  **bottom**: the interesting thing is the latest line and the panel goes on following the stream. A project
+  log pins to the **top** and opens **not following**: what you are looking for in a build log is the first
+  error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
+  hands following back, by the same rule as any other user scroll. This is a deliberate departure from §5.1,
+  which pins both directions to the bottom.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
+- The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
+  glyph advance to a whole pixel; Geist Mono advances 7.2 px at 12 px, so it rounds to 7 and the line comes out
+  2.8 % narrow with the rounding error spread unevenly between characters. On a monospace grid the cost is not
+  only width but alignment. The bottom padding is wider than the top so the caret, which sits on the document's
+  last line, is not flush against the horizontal scrollbar when one appears.
 
 ### 13.6 Graph renderer
 
@@ -1465,6 +1540,53 @@ rectangle, so the rectangle is a full pen wider than the offset alone would sugg
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
 
+**The newest row types where it will live.** A row is drawn from its first frame in its final colour and with
+its final glyph; only its text opens, left to right. Nothing about it changes when the typing ends, which is
+the whole point.
+
+For a while the writing happened on the bottom line instead — the event was typed beside the caret in its own
+colour and then released upward into the buffer. It was abandoned because of what the release looked like: the
+12 px caret column became a status glyph at that instant, and although the text never changed the eye read it
+as a colour change, so the stream looked unsettled. The prototype's own model has no such seam.
+
+Only the newest row types at a time; a new row completes the previous one instantly. That rule lives in the
+panel rather than in the row, since a row does not know its siblings. Without it — one timer per row — a fast
+run had two or three lines opening leftward at once, which is the defect that started this whole detour. Burst
+and failure events skip the typewriter entirely, as does reduced motion, and each row types exactly once, so a
+recycled container does not replay it. A row counts as "typing" for 420 ms after its text completes, matching
+§6, which is also how long it keeps the single-writer slot.
+
+**The prompt line is an indicator, not a surface.** It has two states and both are amber: the project being
+compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. It never types and never
+takes an event's colour, so it is the one thing on the panel that is always the same.
+
+The prompt is there from the first frame, before any event, and the stream has no empty-state text — the
+console shows a blinking caret the moment it opens and the two panels should say the same thing. Its presence
+is unconditional. Gating it on the active project changing was a real defect: a Sync starts no project, so the
+generation never moved and the caret never appeared until a second Sync happened to reset the gate as a side
+effect.
+
+Both carets are **amber, always** — writing or waiting, console or stream. §2.5 tints the idle prompt dim and
+the prototype dims the stream's waiting row with it; the caret was pulled to one colour instead, because it is
+the application's "I am alive" mark and the two panels should say that the same way. The caret takes its
+colour from the line rather than carrying its own, so the tone is set in one place; the wall-clock stamp stays
+dim, which keeps the waiting row quiet.
+
+**The node's core is the plan channel.** The glyph inside the square answers "what will happen to this
+project" while the border answers "what happened in this run": amber when it will be built, grey when it is up
+to date, and permanently orange for a member of a cycle. Being **queued is not a result** and does not take the
+core over — it used to, and the cost showed at the moment of pressing Build: the amber cores of everything
+planned turned grey at once (colour changes are instant here) while the graph dimmed, so the only coloured
+thing on screen vanished in the same frame and read as a flash. Only a real outcome — building, succeeded,
+failed, skipped — takes the core.
+
+**Entering a run dims before it repaints.** Colour and border changes are instant here (measured deviation,
+below), so pressing Build used to land the dashed-to-solid switch of every planned node in the same frame the
+graph began to fade — the change was seen at full brightness and the fade arrived after it, which read as
+"the ones about to build appeared, then everything went out". Status pushes are therefore held for the length
+of the fade and applied once it finishes; only the last one is kept, since the intermediate states were never
+visible anyway. Planning takes seconds, so nothing real is delayed by it.
+
 **The run is told with opacity, not with edges.** Idle, everything is fully opaque. Once a run starts the
 graph quietens: queued and discovered nodes drop to 0.13 and only the projects actually building stay
 bright. A project that reaches a result returns to its result colour, holds bright for 1400 ms, then fades to
@@ -1473,11 +1595,21 @@ three key frames — bright, still bright, then the result value — so there is
 pass. The hold is written out rather than left to the node's previous value, because a node can arrive *dim*:
 status pushes land every 200 ms, so a fast project can appear as `queued → succeeded` inside one tick and
 something has to lift it to bright. That is also why the hold starts on the edge *into* a **work result**
-rather than on the edge out of `Building`. Being skipped is not a work result and takes the plain glide
-instead. Later ticks find the value already settled and start nothing, which matters because status pushes
+rather than on the edge out of `Building`. Being skipped is not a work result: a skipped node stays at the
+same 0.13 as the queue and so makes no move at all. It used to land on the finished value of 0.2, which reads
+as a 54 % *brighten* from where a queued node sits — starting a `Cycles` run, the projects outside the cycle's
+scope dimmed to 0.13 and then flared back to 0.2 as their pre-skips arrived, and dozens of nodes doing that in
+sequence read as a flicker. Later ticks find the value already settled and start nothing, which matters because status pushes
 arrive several times a second. When the run ends every node comes back to full opacity in its result
 colour. The decision itself is pure (`GraphNodeOpacity.Resolve`) and its precedence is fixed: selection beats
-the run, and hover beats both.
+a filter, a filter beats the run, and hover beats all three.
+
+A filter (or a search) in the list dims the graph the same way a selection does — the names that survive the
+list's own `ProjectFilter.Matches` stay opaque and everything else drops to 0.1, with the matching set handed
+to the graph rather than recomputed there, so the two surfaces can never disagree about what matches. That
+fade runs at 420 ms rather than the 280 ms a run tick uses, in both directions. The difference is deliberate:
+a run transition reports a state change and happens several times a second, while a filter is the user's own
+one-off gesture that dims half the graph at once and wants to be followed by eye.
 
 *One rule of the design is deliberately not implemented:* colour changes are instant rather than a 380 ms
 transition. A brush property cannot be interpolated in WPF, so the transition needs a local
@@ -1495,17 +1627,15 @@ perimeter is too, and N parallel builds would otherwise mean N infinite animatio
 fade *while still turning* rather than freezing in place. Resizing the panel changes the perimeter, so the
 pattern and the clock are rebuilt.
 
-The same orbit plays **once** around a project that gets skipped, briefly: it fades in, turns while the node
-holds bright, and fades out as the node dims. Skipping is a decision, not an absence — the incremental check
-ran and found the project current — and without the orbit the graph said nothing about it. The hold is much
-shorter than a real build's, because being skipped should be seen and passed over rather than announced.
-Skipped projects never enter the build queue, so a run where nothing changed marks all of them in one tick;
-they are therefore **staggered in build order**, one every 45 ms up to a 900 ms cap, so the graph shows a wave
-moving through the workspace instead of one flash. It is one keyframe animation per node on an element that
-already exists, not a timer per node. The shared clock's release is pushed out to cover the longest tail,
-since cutting it short would freeze those dots instead of fading them. What is *not* done is repainting the square
-amber for a moment: that would state a status the project never had, and the colour transition has a measured
-price of its own (above).
+**A skipped project is silent.** No orbit, no bright hold, no wave — it settles into its result colour and
+stays exactly as dim as the queue around it. An earlier version gave skipping the full announcement (a brief
+orbit, a short hold, and a 45 ms-per-node wave in build order) on the argument that the incremental check did
+run and found the project current. Looking at it settled the question the other way: a grey node with an amber
+orbit around it says *working* and *skipped* at once, and the most common run in this tool is the one where
+nothing changed, so the whole graph stirred for seconds on every press. A quiet graph reports what *changed*,
+and being skipped is precisely nothing changing; the fact is already in the row's will-build dot, the ribbon
+counter and the console. Repainting the square amber for a moment would be worse still — it would state a
+status the project never had, and the colour transition has a measured price of its own (above).
 
 **Names live in an overlay, not on the nodes.** There are no labels under the squares. Hovering a node scales
 it 1.5× over 120 ms, thickens its border, pulls it to full opacity even in the quiet run state, pulls it to
@@ -1615,6 +1745,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states |
+| Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. Being implicit it crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements |
 | Status glyph · building spinner · will-build dot | Custom controls drawing rings, arcs and dots |
@@ -1713,10 +1844,12 @@ WPF, so 0.07 em tracking is implemented by `TrackedTextBlock`, which lays out a 
 advance widths; inserting hair spaces is prohibited.
 
 `LineHeight` in WPF is absolute, not a ratio, so the CSS ratios are pre-multiplied into named tokens
-(`LineHeight.Snug13` = 1.35 × 13, and so on). The console's 1.55 line height was attempted through a
-`CompositeFont` `LineSpacing` wrapper; it was measured not to hold (15.96 DIP at 13 px against a 20.15 target,
-~21 % off), so the console keeps the default line height. That measurement is recorded, and the skipped test
-that carries it is a legitimate record rather than a gap.
+(`LineHeight.Snug13` = 1.35 × 13, and so on). The console's 1.55 line height comes from a `CompositeFont`
+`LineSpacing` wrapper and does hold: 20.15 DIP at 13 px, measured in a realized window. A `CompositeFont` is
+parsed only under its own XML namespace; written under the presentation namespace the file is rejected whole
+at its root element and the family silently falls back to a proportional system face, which is what the
+console rendered for a long time. Nothing about the family name or the weight is checked at load, so the guard
+measures glyphs instead of identity — `i` and `M` must come out the same width.
 
 ### 14.3 Status vocabulary
 
@@ -1754,11 +1887,13 @@ A member waiting its turn inside a running group reads `Queued` (clock glyph), n
 invoked one at a time and intermediate rounds are never published (§8.8), so the whole group sits in the
 engine's `Started` state for the group's whole life while exactly one member is really compiling. Painting them
 all as building made a 15-member group show fifteen spinners on the list and fifteen orbiting nodes on the
-graph while the counter chip said one — the screen claiming fifteen things were happening when one was. Five
+graph while the counter chip said one — the screen claiming fifteen things were happening when one was. Six
 surfaces ask that same question — the row glyph, the counter chip, the ribbon's building chips, the row's own
-breath layer and its live duration column — and all five now read one predicate (`IsCompiling`: `Started` and
-not waiting its turn); written separately, they had drifted into disagreeing, sometimes on the number, sometimes
-on whether anything was happening at all. A waiting member's row does not breathe, and its duration column
+breath layer, its live duration column and the list's frontier following — and all six now read one predicate
+(`IsCompiling`: `Started` and not waiting its turn); written separately, they had drifted into disagreeing,
+sometimes on the number, sometimes on whether anything was happening at all. Following was the last to join:
+reading the raw engine state, it pinned the frontier to the first member of a group and, with the dead-band,
+never moved again — during a `Cycles` run the list simply stopped following the build. A waiting member's row does not breathe, and its duration column
 reads `—` instead of a running clock: it is not compiling, so a live count that reset every round it waited
 through would have reported noise, not progress. The terminal line, once the group has a result, carries the
 sum of every round instead (§8.8).
@@ -1773,14 +1908,17 @@ has just handed over:
 | Outcome | Slot | Tooltip |
 |---|---|---|
 | The group ran out of rounds and this member is green | the dependency triangle | `Cycle did not fully settle — output may be one generation stale` |
-| The group is held back by non-convergence memory | the orange cycle badge, same slot and same 12 px | `Cycle did not build — not retried until the source changes` |
+| This run's rounds could not converge the group | the orange cycle badge, same slot and same 12 px | `Cycle did not converge — its projects are still out of date` |
 | The row is in a cycle and its glyph now shows a result | the same orange badge | `In a dependency cycle` |
 
 The first shares the triangle deliberately: it says the same sentence the dependency-issue triangle says —
 *this compiled, but something upstream is unresolved, do not fully trust the output* — and only the wording
-differs. The second may not: the row was never invoked at all, so "last successful output referenced" would be
-a claim about an output that does not exist. It therefore takes the badge and outranks anything stale left on
-the row, and it is drawn only while the row is skipped, the same gate the counter uses. The third is the
+differs. The second may not: what it reports is the group's verdict, not this row's, so "last successful
+output referenced" would be a claim about the wrong thing. It therefore takes the badge and outranks anything
+stale left on the row. Its source is the run's own `cycleCompleted` verdict rather than a remembered one from
+an earlier run, so it appears in the very run that proved it and regardless of how the individual member
+ended — a member that went green inside a group that never converged is still holding a stale output. The
+counter reads it the same way, without a status gate. The third is the
 weakest of them and loses to all three: it asserts nothing about the output, only about the graph, and it is
 drawn only when the status glyph has stopped carrying `Cycle` itself — the alternative would be saying the
 same thing twice on one row. All of them also extend the
@@ -1788,9 +1926,9 @@ status glyph's own tooltip, since the slot collapses to nothing when it is empty
 one always-visible surface.
 
 The run summary carries the same news at run level: `(N stuck in a cycle)` beside the skipped count, on the
-completion line and on the *everything up to date* line alike. Without it a run whose only casualty is a
-permanently broken cycle reads as an unqualified success — those rows are plain skips, and the up-to-date line
-would go further still and imply the cycle is not there.
+completion line and on the *everything up to date* line alike. Without it a run whose only casualty is a cycle
+that would not converge reads as an unqualified success, and the up-to-date line would go further still and
+imply the cycle is not there.
 
 ### 14.4 Iconography
 
@@ -1865,6 +2003,16 @@ Decorative infinite animations run at `DesiredFrameRate=30`; all counters tick f
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
 `DispatcherTimer` resolution. Resetting an observable collection is prohibited — it destroys running
 animations.
+
+**An infinite animation must stop being visible before it stops running.** WPF's timing engine keeps the whole
+render loop awake while *any* clock is active, so one forgotten `Forever` costs far more than itself: an idle
+application was measured burning 133 % of a core, with a single thread at 92 %. Being collapsed is not being
+unloaded — a hidden control stays in the tree and its own property never changes again — so every infinite
+animation is gated on `IsVisible` as well as on its own state, and re-evaluated from `IsVisibleChanged`. The
+same discipline applies to periodic work: a one-shot `DispatcherTimer` stops itself in its own tick (the
+dispatcher roots it, so an unstopped one ticks forever and can never be collected), and anything called from
+the 200 ms tick writes only when the value actually changed, since assigning the same string still invalidates
+measure and draw five times a second.
 
 ### 14.6 Copy and tone
 
@@ -2053,8 +2201,10 @@ do, and how the interface works around each — useful to know before attempting
 3. **No compositor.** Animations tick on the UI thread, so "the interface keeps animating while it is busy"
    cannot be guaranteed. The countermeasures are the process split (§4.1) and a hard rule against synchronous
    work on the UI thread.
-4. **No per-line transform and no CSS perspective inside AvalonEdit.** The console's panel transition is played
-   on the editor as a whole (bottom-anchored Y scale + translate + fade) rather than as a 3-D hinge.
+4. **2-D transforms are affine, so a perspective trapezoid is impossible.** The console's panel transition
+   needs one — the prototype's `perspective(900px) rotateX(7deg)` narrows the receding top edge and widens
+   the advancing bottom one. It is played through a real `Viewport3D` instead (§13.5); a scale-and-translate
+   approximation reads as a slide, not as a hinge.
 5. **Frozen resources cannot be animated.** Shared brushes and effects must be copied per instance before being
    driven (§13.8, §14.5).
 6. **No native smooth scrolling.** It is built from an attached property, an animator and an arbiter (§13.4).
@@ -2387,7 +2537,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Cumulative layout arithmetic (rows, headers, scroll targets) | `App/Controls/LayoutMetrics.cs` |
-| Smooth scrolling, bottom anchor, follow mode | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
+| Smooth scrolling, bottom anchor, follow mode | `App/Controls/ScrollAnimator.cs`, `BottomAnchorBehavior.cs`, `BottomAnchorDecision.cs`, `UserScrollSignal.cs`, `FollowScrollController.cs`, `FollowScrollDecision.cs` |
 | Horizontal wheel / touchpad routing and step | `App/Controls/HorizontalWheelScroll.cs`, `App/Shell/Win32.cs` |
 | Cross-panel scroll arbitration | `App/Services/ScrollArbiter.cs` |
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |

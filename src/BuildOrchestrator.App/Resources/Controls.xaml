@@ -735,9 +735,9 @@
     <Setter Property="Padding" Value="8,4" />
     <Setter Property="Effect" Value="{DynamicResource Effect.PopoverShadow}" />
     <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
-    <Setter Property="ToolTipService.InitialShowDelay" Value="0" />
-    <!-- int.MaxValue — "sonsuz" (fare ayrılana kadar açık kalır). -->
-    <Setter Property="ToolTipService.ShowDuration" Value="2147483647" />
+    <!-- ToolTipService.InitialShowDelay/ShowDuration BURADA DEĞİL: WPF onları tooltip'ten değil, tooltip'e
+         SAHİP olan öğeden okur — bu stile yazıldıklarında hiçbir etkileri yoktu ve her tooltip varsayılan
+         ~1sn gecikmeyle açılıyordu. Uygulama geneli varsayılan Controls/AppTooltipDefaults.cs'tedir. -->
     <Setter Property="Placement" Value="Custom" />
     <Setter Property="CustomPopupPlacementCallback" Value="{x:Static controls:AppTooltip.PlacementTop}" />
     <Setter Property="SnapsToDevicePixels" Value="True" />

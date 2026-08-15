@@ -16,31 +16,50 @@ public class BottomAnchorTests
 
         // İçerik büyüdü (ExtentHeightChange>0) — dipten UZAKLIK ne olursa olsun yapışıklık DEĞİŞMEZ (çağıran,
         // zaten yapışıksa ANINDA tamamlar; serbestse serbest kalmaya devam eder).
-        var afterStuck = BottomAnchorDecision.OnScrollChanged(stuck, extentHeightChange: 40, distanceFromBottom: 500);
-        var afterFree = BottomAnchorDecision.OnScrollChanged(free, extentHeightChange: 40, distanceFromBottom: 500);
+        var afterStuck = BottomAnchorDecision.OnScrollChanged(stuck, extentHeightChange: 40, distanceFromBottom: 500, userDriven: true);
+        var afterFree = BottomAnchorDecision.OnScrollChanged(free, extentHeightChange: 40, distanceFromBottom: 500, userDriven: true);
 
         Assert.True(afterStuck.IsStuck);
         Assert.False(afterFree.IsStuck);
     }
 
     [Fact]
-    public void User_scroll_extentHeightChange_zero_sticks_within_48px_of_bottom()
+    public void User_scroll_sticks_within_48px_of_bottom()
     {
         var state = new BottomAnchorState(IsStuck: false, IsJumping: false);
 
-        var result = BottomAnchorDecision.OnScrollChanged(state, extentHeightChange: 0, distanceFromBottom: 48);
+        var result = BottomAnchorDecision.OnScrollChanged(state, extentHeightChange: 0, distanceFromBottom: 48, userDriven: true);
 
         Assert.True(result.IsStuck); // ≤48px eşik dahil (design-v1 §2.5)
     }
 
     [Fact]
-    public void User_scroll_extentHeightChange_zero_releases_beyond_48px_of_bottom()
+    public void User_scroll_releases_beyond_48px_of_bottom()
     {
         var state = BottomAnchorState.Initial; // IsStuck=true
 
-        var result = BottomAnchorDecision.OnScrollChanged(state, extentHeightChange: 0, distanceFromBottom: 48.01);
+        var result = BottomAnchorDecision.OnScrollChanged(state, extentHeightChange: 0, distanceFromBottom: 48.01, userDriven: true);
 
         Assert.False(result.IsStuck);
+    }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Kullanıcının SEBEP OLMADIĞI bir offset değişimi takibi bırakmaz.
+    ///
+    /// <para>Eski iddia: <c>extentHeightChange == 0</c> olan her olay "kullanıcı kaydırdı" sayılır ve dipten
+    /// uzaklık yeniden hesaplanırdı. Değişme gerekçesi (sahada ölçüldü): offset'i yerleşim, viewport değişimi
+    /// ve bizim kendi programatik kaydırmamız da oynatır; o an offset henüz güncellenmemişken ölçülen uzaklık
+    /// eşiği aşınca panel kimse dokunmadan takibi bırakıyor, <c>⌄ latest</c> pill'i çıkıyordu. Takip artık
+    /// yalnız ham girdiyle değişir.</para>
+    /// </summary>
+    [Fact]
+    public void A_scroll_the_user_did_not_cause_leaves_the_follow_alone()
+    {
+        var stuck = BottomAnchorState.Initial;
+
+        var result = BottomAnchorDecision.OnScrollChanged(stuck, extentHeightChange: 0, distanceFromBottom: 900, userDriven: false);
+
+        Assert.True(result.IsStuck);
     }
 
     [Fact]
@@ -50,7 +69,7 @@ public class BottomAnchorTests
 
         // Uçuştaki bir "dibe git" animasyonu SÜRERKEN gelen scroll event'leri (kendi ara-kareleri dahil) yok
         // sayılır — Ek A-15: animasyon kendi event'leriyle YARIŞMASIN.
-        var result = BottomAnchorDecision.OnScrollChanged(jumping, extentHeightChange: 0, distanceFromBottom: 900);
+        var result = BottomAnchorDecision.OnScrollChanged(jumping, extentHeightChange: 0, distanceFromBottom: 900, userDriven: true);
 
         Assert.Equal(jumping, result);
     }

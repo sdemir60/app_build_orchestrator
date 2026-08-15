@@ -83,10 +83,52 @@ public class BottomAnchorBehaviorTests
         int changedCount = 0;
         behavior.Changed += (_, _) => changedCount++;
 
+        behavior.NotifyUserScroll(); // takip yalnız KULLANICI hareketiyle bırakılır (ham girdi önce gelir)
         behavior.OnScrollChanged(extentHeightChange: 0);
 
         Assert.False(behavior.IsStuck);
         Assert.Equal(1, changedCount);
+    }
+
+    /// <summary>
+    /// AYIRT EDİCİ — KULLANICININ SEBEP OLMADIĞI bir scroll olayı takibi bırakmaz.
+    ///
+    /// <para>Sahada görülen kusur: "event stream bazen kendiliğinden focus olmayı bırakıyor". Takip kararı
+    /// salt geometriden (dipten uzaklık) veriliyordu; oysa offset'i kullanıcıdan başka şeyler de oynatır —
+    /// yeniden yerleşim, viewport değişimi, bizim kendi programatik kaydırmamız. O anda offset henüz
+    /// güncellenmemişken ölçülen uzaklık eşiği aşınca panel kimse dokunmadan takibi bırakıyor,
+    /// <c>⌄ latest</c> pill'i çıkıyordu. Takip artık YALNIZ ham kullanıcı girdisiyle değişir.</para>
+    /// </summary>
+    [Fact]
+    public void A_scroll_event_the_user_did_not_cause_never_stops_the_follow()
+    {
+        var f = new Fake { Extent = 1000, Offset = 900, Viewport = 200 }; // dipte
+        var behavior = f.New();
+        Assert.True(behavior.IsStuck); // ön-koşul
+
+        f.Offset = 0; // offset oynadı ama KULLANICI dokunmadı (yerleşim/viewport/programatik)
+        behavior.OnScrollChanged(extentHeightChange: 0);
+
+        Assert.True(behavior.IsStuck);
+    }
+
+    /// <summary>
+    /// "Dipte miyim" ile "beni takip et" AYRI sorulardır: kullanıcı direksiyonu aldığında — dipten yalnız
+    /// birkaç piksel uzaklaşmış, yani eşiğin İÇİNDE kalmış olsa bile — akan içerik onu dibe çekmez.
+    /// <see cref="BottomAnchorBehavior.ShouldFollow"/> bu ayrımın tek yetkili cevabıdır; host'lar
+    /// <see cref="BottomAnchorBehavior.IsStuck"/>'ı kendileri yorumlamaz.
+    /// </summary>
+    [Fact]
+    public void While_the_user_is_steering_the_panel_never_pins_itself_to_the_bottom()
+    {
+        var f = new Fake { Extent = 1000, Offset = 790, Viewport = 200 }; // dipten 10px — EŞİĞİN İÇİNDE
+        var behavior = f.New();
+
+        behavior.NotifyUserScroll();
+        behavior.OnScrollChanged(extentHeightChange: 0);
+
+        Assert.True(behavior.IsStuck);        // eşik hâlâ "dipte" diyor
+        Assert.False(behavior.ShouldFollow);  // ama direksiyon kullanıcıda
     }
 
     [Fact]
@@ -95,6 +137,7 @@ public class BottomAnchorBehaviorTests
         var f = new Fake { Extent = 1000, Offset = 0, Viewport = 200 };
         var behavior = f.New();
 
+        behavior.NotifyUserScroll();
         behavior.OnScrollChanged(extentHeightChange: 0); // → free, distance=800
 
         Assert.True(behavior.ShowPill);
@@ -105,6 +148,7 @@ public class BottomAnchorBehaviorTests
     {
         var f = new Fake { Extent = 1000, Offset = 0, Viewport = 200 };
         var behavior = f.New();
+        behavior.NotifyUserScroll();
         behavior.OnScrollChanged(extentHeightChange: 0); // free + pill visible
         Assert.True(behavior.ShowPill);
 
@@ -181,6 +225,7 @@ public class BottomAnchorBehaviorTests
         // Aynı "olay": önce kullanıcı-scroll payı (extentHeightChange==0) tepeye zıplamayı yansıtır → IsStuck taze
         // false olur (ConsoleView'ın chunk-scroll'dan ÖNCE çalışan recompute'unun karşılığı).
         f.Offset = 0; // tepeye zıpladı
+        behavior.NotifyUserScroll(); // ham girdi (Ctrl+Home / tekerlek) — takibi bırakan sinyal budur
         behavior.OnScrollChanged(extentHeightChange: 0);
         Assert.False(behavior.IsStuck, "tepeye zıplama sonrası IsStuck taze false OLMALI (prepend'den ÖNCE)");
 

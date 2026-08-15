@@ -33,9 +33,12 @@
         </Grid.ColumnDefinitions>
 
         <!-- 1) Statü şeridi (A kanalı): Width 2/3, kenara yapışık, renk statüden. [design v1.7.0 §2.4]
-             1px dikey iç boşluk — boşluk satır ayracı kadardır: bitişik satırlarda tek kesintisiz çizgiye
-             kaynamaz, ama araları da açılmaz. -->
-        <Rectangle x:Name="PART_Stripe" Grid.Column="0" Width="2" HorizontalAlignment="Left" Margin="0,1" />
+             DİKEY İÇ BOŞLUK YOK (§2.4'ten bilinçli sapma, kullanıcı kararı): şerit satırın tam yüksekliğince
+             uzanır. Spec 1px boşluk istiyordu ki bitişik satırlar tek çizgiye kaynamasın; gözle bakıldığında
+             kesilen şerit aynı 2px'i daha hafif gösterdi ve satır "ince" okundu. Ayrımı YATAY ayraç yapar —
+             satırın alt çizgisi (PART_Root'un BorderThickness 0,0,0,1) zaten her satırın altındadır ve şeridi
+             geçerken onu kendisi böler. -->
+        <Rectangle x:Name="PART_Stripe" Grid.Column="0" Width="2" HorizontalAlignment="Left" />
 
         <!-- 2+3) İç sarmalayıcı: WillBuildDot + (ad + sln). Seçiliyken TranslateX 4. -->
         <Grid x:Name="PART_Inner" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">

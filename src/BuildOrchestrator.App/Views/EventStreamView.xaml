@@ -16,11 +16,9 @@
       <ScrollViewer x:Name="PART_Scroll" VerticalScrollBarVisibility="Auto"
                     HorizontalScrollBarVisibility="Disabled" Padding="0,4">
         <StackPanel>
-          <!-- Boş-durum: hiç tampon satırı ve canlı aktif satır yokken "No events yet." (BuildApp.jsx:705-707).
-               Görünürlük kod-tarafı yönetilir (RefreshEmptyState). Idle-cursor prompt (proto 726-735) BU DALGADA YOK. -->
-          <TextBlock x:Name="PART_Empty" Text="{x:Static vm:InteractionText.StreamEmpty}" Margin="10,6" Visibility="Collapsed"
-                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
-                     Foreground="{DynamicResource Brush.TextFaint}" />
+          <!-- [SAPMA — kullanıcı kararı] Boş-durum metni ("No events yet.", BuildApp.jsx:870) YOK: panel boşken
+               de alttaki bekleme satırı (saat + amber imleç) durur. Konsol ilk açılışta zaten yanıp sönen bir
+               imleç gösteriyor; iki panelin aynı dili konuşması istendi. -->
 
           <!-- Tampon satırları (EventStreamRow'lar kod-tarafı eklenir/silinir — StreamEvents ile birebir). -->
           <StackPanel x:Name="PART_Rows" />
@@ -33,8 +31,14 @@
                          FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
                          Foreground="{DynamicResource Brush.TextFaint}" />
               <Border Width="12" Margin="0,0,8,0" VerticalAlignment="Center">
+                <!-- [prototip: Cursor'un background'u currentColor] İmleç SATIRIN rengini alır — kendi rengi
+                     YOKTUR; tonu tek yerden (PART_ActiveText.Foreground) gelir.
+                     [SAPMA — kullanıcı kararı] Prototipte bekleme satırı text-faint'tir, imleci de öyle.
+                     Burada imleç HER ZAMAN amberdir: konsolun prompt imleci de amber ve iki panelin aynı
+                     dili konuşması istendi — imleç uygulamanın "canlıyım" işaretidir, beklerken de öyle.
+                     Saat damgası soluk kalır (kendi rengi vardır), yani satır yine sakin okunur. -->
                 <Rectangle x:Name="PART_ActiveCursor" Width="7" Height="13" HorizontalAlignment="Center"
-                           Fill="{DynamicResource Brush.AmberText}" />
+                           Fill="{Binding Foreground, ElementName=PART_ActiveText}" />
               </Border>
               <TextBlock x:Name="PART_ActiveText" VerticalAlignment="Center" TextWrapping="NoWrap"
                          FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"

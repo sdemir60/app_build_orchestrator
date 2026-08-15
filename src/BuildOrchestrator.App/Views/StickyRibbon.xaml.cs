@@ -192,9 +192,17 @@ public partial class StickyRibbon : UserControl
                 break;
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.DepIssueCount):
-                // Counters = kompozisyon proxy'si: statü değişiminde (tick'te DEĞİL) tetiklenir → chip'ler + metin + progress.
+                // Counters = kompozisyon proxy'si: statü değişiminde (tick'te DEĞİL) tetiklenir → metin + progress.
                 RefreshText();
                 RefreshProgress();
+                RebuildChipsIfChanged();
+                break;
+            // [cycles] Chip'ler sayaçlara DEĞİL satır kimliklerine bakar ve <c>Counters</c> onları taşımaz:
+            // RunCounters bir record struct'tır, bir döngü grubunda sıra üyeden üyeye geçince demet
+            // byte-byte aynı kalır (yalnız KİMLİK değişir) ve setter PropertyChanged yaymaz — chip ilk üyede
+            // donardı. VisibleProjects, Counters'ın yayınlandığı TEK yerde (RunViewModel.RefreshRunSurface)
+            // hemen ardından KOŞULSUZ yayınlanır, yani kimlik değişimlerini de kapsayan üst kümedir.
+            case nameof(RunViewModel.VisibleProjects):
                 RebuildChipsIfChanged();
                 break;
         }
@@ -408,6 +416,9 @@ public partial class StickyRibbon : UserControl
         };
         var chip = MakeChip(text, brushKey: "Brush.StatusCycleText");
         chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0);
+        // [design v1.7.0 §2.2] Hover iki şey söyler: kümenin ne anlattığı + döngünün YOLU (birden çok döngü
+        // varsa her biri kendi satırında). Metin CycleText'ten gelir; şerit onu kendi içinde KURMAZ.
+        chip.ToolTip = CycleText.Lines([CycleText.ClusterHeadline, .. _vm?.CyclePaths ?? []]);
         chip.Click += (_, _) => { if (_vm is not null) _vm.ActiveFilter = ProjectFilter.Cycle; ResetChip(chip); };
         PART_CycleCluster.Children.Add(chip);
         CycleChip = chip;

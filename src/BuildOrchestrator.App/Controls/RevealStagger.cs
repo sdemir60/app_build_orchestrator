@@ -77,9 +77,15 @@ internal sealed class RevealStagger
         if (maxDelayMs < 0) { Release(); return; }       // hero alındı ama öğe yok (savunmacı) — bekletme
 
         var releaseAfter = TimeSpan.FromMilliseconds(maxDelayMs + revealMs);
-        _releaseTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = releaseAfter };
-        _releaseTimer.Tick += (_, _) => ReleaseIfCurrent(generation);
-        _releaseTimer.Start();
+        _releaseTimer?.Stop(); // önceki tetik YETİM KALMAZ: dispatcher onu kökler, durdurulmazsa sonsuza dek tik atar
+        var timer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = releaseAfter };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop(); // tek atımlık: stale kuşakta da durur (aksi halde ReleaseIfCurrent erken dönüp bırakırdı)
+            ReleaseIfCurrent(generation);
+        };
+        _releaseTimer = timer;
+        timer.Start();
     }
 
     /// <summary>Reveal tamamlandığında hero'yu bırakan generation-guarded karar: YALNIZ tetikleyen reveal hâlâ

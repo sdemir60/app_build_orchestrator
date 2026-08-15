@@ -52,6 +52,16 @@ public static class GraphNodeOpacity
 
     /// <summary>Normal opaklık geçişi (§2.3: "opaklık geçişi 280ms — hold-fade hariç").</summary>
     public const double GlideMs = 280.0;
+
+    /// <summary>
+    /// Filtre kaynaklı sönme/geri gelme süresi — <b>kullanıcı isteğiyle §2.3'ün 280ms'inden uzun.</b>
+    ///
+    /// <para>Fark bilinçli: koşu sırasındaki geçişler bir DURUM değişimini bildirir ve kısa olmalıdır (koşarken
+    /// saniyede birkaç kez olur), filtre ise kullanıcının KENDİ hareketidir ve tek seferliktir — grafın yarısı
+    /// aynı anda sönerken gözün hareketi takip edebilmesi için biraz daha uzun sürer. Aynı süre geri gelirken
+    /// de kullanılır (filtre kalkınca), böylece hareket iki yönde simetriktir.</para>
+    /// </summary>
+    public const double FilterFadeMs = 420.0;
     // [quiet · ÖLÇÜLMÜŞ SAPMA] §2.3'ün "renk geçişi 380ms ease-standard" kuralı UYGULANMADI ve bu yüzden
     // burada bir TintMs sabiti de yok. Gerekçe GraphView.ApplyNodeStatus'ta ölçümüyle birlikte yazılıdır:
     // WPF'te fırça geçişi düğüm başına üç yerel SolidColorBrush + üç ColorAnimation demek ve 177 projenin
@@ -103,7 +113,14 @@ public static class GraphNodeOpacity
             opacity = status switch
             {
                 GraphStatus.Building => Full,
-                GraphStatus.Queued or GraphStatus.Discovered => RunDim,
+                // [DEĞİŞEN KURAL] Skipped burada, Finished'ta DEĞİL. §2.3 atlananı da "biten" sayıp 0.2'ye
+                // koyuyordu; ama koşarken bir düğüm kuyrukta 0.13'tedir ve 0.2'ye gitmek İNMEK değil %54
+                // PARLAMAKTIR. Resolve koşusu başlarken kapsam dışı kalan onlarca proje önce 1.0'dan 0.13'e
+                // sönüp hemen ardından pre-skip ile 0.2'ye geri parlıyordu — ekranda titreme olarak okunan
+                // çift hamle buydu. Atlanmak bir İŞ SONUCU değildir (aynı gerekçe IsSettled'da parlak
+                // beklemeyi de kaldırmıştı): atlanan düğüm koşuya katılmayanla aynı yerde durur, tek hamle
+                // yapar ve koşu bitince herkesle birlikte tam opağa döner.
+                GraphStatus.Queued or GraphStatus.Discovered or GraphStatus.Skipped => RunDim,
                 _ => Finished,
             };
         }

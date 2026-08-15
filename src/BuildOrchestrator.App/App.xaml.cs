@@ -44,6 +44,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Tooltip davranışının uygulama geneli varsayılanları (gecikmesiz, kalıcı, devre dışıda da görünür) —
+        // gerekçe ve neden stil yerine metadata olduğu AppTooltipDefaults'ta.
+        Controls.AppTooltipDefaults.Apply();
+
         // [It-4a Foundation / Global Constraints — reduced-motion] Tüm yollarda (font-ab/normal) TEK
         // instance: Resources (Application.Resources, App.xaml'de merge edilen Motion.xaml) içindeki Duration.*
         // kaynaklarını OS "animasyonları göster" sinyaline göre canlı 0'a çevirir / geri yükler.

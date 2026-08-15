@@ -36,6 +36,30 @@ public class ProjectRowTests
         return (row, window, host);
     }
 
+    /// <summary>
+    /// Şerit satırın TAM yüksekliğince uzanır — dikey iç boşluğu yoktur. Kartları birbirinden ayıran şey
+    /// yalnız YATAY ayraçtır (satırın alt çizgisi, <c>border-subtle</c>).
+    ///
+    /// <para>[DEĞİŞEN KURAL — kullanıcı kararı] design v1.7.0 §2.4 şeride <b>1px dikey iç boşluk</b> veriyordu
+    /// ("bitişik satırlarda tek kesintisiz çizgiye kaynamasın"). Sahada bakıldığında istenmedi: kesilen şerit
+    /// aynı 2px'i daha hafif gösteriyor ve satır "ince" okunuyordu. Karar: dikey kesinti kalkar, ayrımı
+    /// yataydaki ayraç yapar — o zaten her satırın altında var ve şeridi geçerken kendisi böler.</para>
+    /// </summary>
+    [StaFact]
+    public void The_status_stripe_runs_the_full_row_height_with_no_vertical_inset()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded);
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(new Thickness(0), row.Stripe.Margin);
+
+        // Ayrım yataydadır: satırın kendi alt çizgisi. Şerit onun ÜSTÜNDEKİ tüm alanı kaplar.
+        var root = (Border)row.Content;
+        Assert.Equal(new Thickness(0, 0, 0, 1), root.BorderThickness);
+        Assert.Equal(LayoutMetrics.DefaultRowHeight - root.BorderThickness.Bottom, row.Stripe.ActualHeight);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Row_is_thirtysix_pixels_with_a_two_pixel_status_stripe_that_becomes_three_when_selected()
     {
@@ -664,7 +688,7 @@ public class ProjectRowTests
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal("Skipped — Cycle did not build — not retried until the source changes", row.GlyphTooltip);
+        Assert.Equal("Skipped — Cycle did not converge — its projects are still out of date", row.GlyphTooltip);
         GC.KeepAlive(window);
     }
 
@@ -677,7 +701,7 @@ public class ProjectRowTests
         { CycleUnconverged = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal("Skipped — Cycle did not build — not retried until the source changes", row.GlyphTooltip);
+        Assert.Equal("Skipped — Cycle did not converge — its projects are still out of date", row.GlyphTooltip);
         GC.KeepAlive(window);
     }
 

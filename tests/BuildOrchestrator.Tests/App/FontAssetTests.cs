@@ -15,8 +15,9 @@ public class FontAssetTests
 
     [StaTheory]
     [InlineData("Geist-Regular.otf", 400)] [InlineData("Geist-Medium.otf", 500)] [InlineData("Geist-SemiBold.otf", 600)]
+    [InlineData("GeistMono-Light.otf", 300)] // design v1.7.0 §2.5: konsol gövdesi Light
     [InlineData("GeistMono-Regular.otf", 400)] [InlineData("GeistMono-Medium.otf", 500)] [InlineData("GeistMono-SemiBold.otf", 600)]
-    public void Weights_400_500_600_are_distinct_files(string file, int weight) // It-0 kabul: "400/500/600 ayrışıyor"
+    public void Weights_are_distinct_files(string file, int weight) // It-0 kabul: "400/500/600 ayrışıyor" (+300)
         => Assert.Equal(weight, Load(file).Weight.ToOpenTypeWeight());
 
     [StaFact]

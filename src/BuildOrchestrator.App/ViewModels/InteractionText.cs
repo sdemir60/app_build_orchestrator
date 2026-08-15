@@ -32,9 +32,8 @@ public static class InteractionText
     /// <summary>Graf paneli Sync öncesi boş-durum etiketi (GraphView).</summary>
     public const string GraphEmpty = "Graph appears after Sync";
 
-
-    /// <summary>Event stream paneli boş-durum etiketi (EventStreamView, BuildApp.jsx:705-707).</summary>
-    public const string StreamEmpty = "No events yet.";
+    // Event stream'in boş-durum etiketi YOKTUR (kullanıcı kararı): panel boşken de alttaki bekleme satırı
+    // (saat + amber imleç) konuşur — bkz. EventStreamView.xaml.
 }
 
 /// <summary>[E2/T10] Proje listesi boş-durum overlay'inin hangi davetin gösterileceği kararı — SAF, test edilebilir.

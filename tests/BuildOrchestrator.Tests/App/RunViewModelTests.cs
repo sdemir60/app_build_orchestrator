@@ -1062,6 +1062,55 @@ public class RunViewModelTests
         Assert.True(row.CycleUnconverged);
     }
 
+    /// <summary>
+    /// [cycles] "Kalıcı kırık döngü" bayrağının ASIL kaynağı: koşunun kendi yakınsamama kararı.
+    ///
+    /// <para>Bayrak eskiden yalnız motorun pre-skip'inden gelirdi ("önceki koşuda yakınsamamıştı, hiç
+    /// denemiyorum"). O pre-skip kalktı — açık bir Resolve basışı artık her zaman taze bir deneme yapar — ve
+    /// bayrağın tek üreticisi de onunla birlikte kalkmıştı. Yeni kaynak hem daha dürüst hem daha erken:
+    /// hatırlanan bir geçmiş değil ŞU koşunun kanıtı, ve kullanıcı bunu ikinci bir basışı beklemeden, tam da
+    /// denemenin bittiği koşuda görür.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_cycle_that_ends_without_progress_marks_all_its_members_as_unconverged()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string a = @"C:\p\a.csproj", b = @"C:\p\b.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [new ProjectNode(a, "A", a, [], [], 0, null, null, true, null),
+             new ProjectNode(b, "B", b, [], [], 0, null, null, true, null)],
+            [[a, b]], [], []));
+
+        // Grup turlarını harcadı: A yeşil bitti, B patladı — ve grup YAKINSAMADI.
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100));
+        vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));
+        vm.OnEvent(new ProjectFailedEvent("r1", b, 100, "boom"));
+        vm.OnEvent(new CycleCompletedEvent("r1", a, CycleOutcome.NoProgress, 2, 2, 1, 400));
+
+        // İkisi de işaretli: sıkışan GRUPTUR, tek tek üyeler değil — yeşil biten üyenin çıktısı da bayat.
+        Assert.All(vm.Projects, p => Assert.True(p.CycleUnconverged));
+        // Sayaç statüden bağımsız okur: üyeler Failed/Succeeded, Skipped DEĞİL.
+        Assert.Equal(2, vm.Counters.StuckCycles);
+    }
+
+    /// <summary>Yakınsayan grup hiçbir üyesini işaretlemez — kontrol grubu.</summary>
+    [Fact]
+    public async Task A_cycle_that_converges_marks_nothing()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string a = @"C:\p\a.csproj";
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100));
+
+        vm.OnEvent(new CycleCompletedEvent("r1", a, CycleOutcome.Converged, 1, 2, 0, 400));
+
+        Assert.False(Assert.Single(vm.Projects).CycleUnconverged);
+        Assert.Equal(0, vm.Counters.StuckCycles);
+    }
+
     [Fact]
     public async Task ProjectSkipped_without_cycleUnconverged_leaves_the_row_flag_false()
     {

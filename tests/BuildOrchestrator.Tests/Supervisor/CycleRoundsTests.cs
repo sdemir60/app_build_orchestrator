@@ -726,8 +726,22 @@ public class CycleRoundsTests
 
     // ---------------------------------------------------------------- 9) yakınsamama hafızası [Task 7]
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Eski iddia: "daha önce bu imzada yakınsamamış bir grup BİR DAHA tur harcamaz" — run 2
+    /// tüm üyeleri <c>CycleNonConvergent</c> ile pre-skip eder, MSBuild hiç çağrılmazdı.
+    ///
+    /// <para>Neden değişti: o kapıya giden tek yol kullanıcının <b>Resolve cycles</b> düğmesine basmasıdır —
+    /// turları kendiliğinden harcayan otomatik bir akış yok. Kapı tasarrufu yalnız AÇIK bir komutu sessizce
+    /// yutarak sağlıyordu; kullanıcı düğmeye basıyor ve hiçbir şey olmuyordu. Aynı gerekçe kod tabanında
+    /// zaten yazılıydı: <c>CapReached</c> bilerek hatırlanmaz, çünkü "pre-skip edilen bir grupta devam HİÇ
+    /// gelmez". Ayrıca imza yalnız kaynakları kapsar — paket restore'u, döngü dışı bir bağımlılığın çıktısı
+    /// ya da ortam değişmiş olabilir. Açık basış artık bir komuttur: grup tur 1'den taze denenir.</para>
+    ///
+    /// <para>Hafıza YAZILMAYA devam eder ve okunur; yalnız bloklamak yerine decision.log'a bir "retrying"
+    /// satırı düşürür (aşağıdaki assert).</para>
+    /// </summary>
     [Fact]
-    public async Task a_group_remembered_as_non_convergent_is_not_invoked_again_at_the_same_signature()
+    public async Task an_explicit_resolve_run_retries_a_group_remembered_as_non_convergent()
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -738,34 +752,37 @@ public class CycleRoundsTests
             var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // aynı küme iki turdur patlıyor ⇒ NoProgress
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            // Run 1 (Build): hiç hafıza yok → turlar GERÇEKTEN koşar, NoProgress ile biter.
+            // Run 1: hiç hafıza yok → turlar koşar, NoProgress ile biter ve hafıza "sig" ile yazılır.
             await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
+            Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature); // ön-koşul: hafıza GERÇEKTEN var
 
-            // Run 2 (Build, AYNI imza "sig"): grup daha önce bu imzada yakınsamadı → bir daha tur harcanmaz,
-            // MSBuild HİÇ çağrılmaz — hiçbir yeni invoke.
+            // Run 2 (AYNI imza): kullanıcı düğmeye yeniden bastı → grup tur 1'den taze denenir.
             await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
-            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);   // run 2 HİÇBİR ŞEY eklemedi
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
 
-            // Pre-skip, up-to-date pre-skip'iyle AYNI kanaldan (DecideSkipped) raporlanır.
-            var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
-            Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
-            Assert.All(skipped, e => Assert.Equal(SkipReasons.CycleNonConvergent, e.Reason));
-            // [Task 8] Bu kanaldan gelen skip TİPLİ bir yakınsamama bayrağı taşır (metinden ÇIKARILMAZ) —
-            // App'in sayacı/rozeti bunu okuyup kalıcı kırık bir döngüyü sıradan "güncel" skip'ten ayırt eder.
-            Assert.All(skipped, e => Assert.True(e.CycleUnconverged));
+            // Hafıza artık pre-skip üretmez.
+            Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
+                e => e.Reason == SkipReasons.CycleNonConvergent);
 
-            var run2Completed = h.Events.OfType<RunCompletedEvent>().Last();
-            Assert.Equal(0, run2Completed.Failed);
-            Assert.Equal(2, run2Completed.Skipped);
+            // Ama sessiz de değildir: operatör grubun neden yine tur harcadığını decision.log'dan görür.
+            Assert.Contains("cycle A: retrying — did not converge at this signature (sig)", h.DecisionLog,
+                StringComparison.Ordinal);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Bu test eskiden "hafıza AYNI imzada pre-skip eder, imza DEĞİŞİNCE grup yeniden
+    /// denenir" ayrımını pinliyordu. Hafıza artık bloklamadığı için ayrımın bloklama tarafı kalmadı; testin
+    /// koruduğu şey hafızanın <b>imzaya bağlı</b> olmayı sürdürmesidir: aynı imzada "retrying" satırı düşer,
+    /// kaynak değişince o satır DÜŞMEZ (hafıza artık bu imza için geçerli değildir). Her iki durumda da grup
+    /// turlarını koşar — o yüzden invoke sayısı ikisinde de artar.
+    /// </summary>
     [Fact]
-    public async Task a_remembered_non_convergent_group_is_invoked_again_once_its_signature_changes()
+    public async Task the_non_convergence_memory_stops_reporting_once_the_signature_changes()
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -788,16 +805,19 @@ public class CycleRoundsTests
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
 
-            // Run 2 ("sig", DEĞİŞMEDİ): hafıza eşleşir → pre-skip, yeni invoke YOK (kontrol).
+            // Run 2 ("sig", DEĞİŞMEDİ): hafıza eşleşir → grup yine koşar, ama log "retrying" der.
             await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
-            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
+            Assert.Contains("retrying — did not converge at this signature (sig)", h.DecisionLog, StringComparison.Ordinal);
 
-            // Run 3 ("sig2", KAYNAK DEĞİŞTİ): imza artık eşleşmiyor → grup YENİDEN turlarla denenir.
+            // Run 3 ("sig2", KAYNAK DEĞİŞTİ): hafıza bu imza için geçerli değil → "retrying" satırı da düşmez.
+            // (decision.log run başına yeniden açılır, yani aşağıdaki log YALNIZ run 3'ündür.)
             sourceChanged = true;
             await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r3"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
-            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4"], rec.Calls);
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2", "A#3", "B#3", "A#4", "B#4", "A#5", "B#5", "A#6", "B#6"], rec.Calls);
+            Assert.DoesNotContain("retrying", h.DecisionLog, StringComparison.Ordinal);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

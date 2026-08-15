@@ -155,8 +155,11 @@ public class ConsoleViewTests
     public void Project_mode_following_document_stays_capped_at_the_render_slice()
     {
         // Alta-yapışık (follow) proje logu chatty bir build'de akarken belge render dilimini AŞMAZ.
+        // [DEĞİŞEN ÖN-KOŞUL] Proje logu artık BAŞTAN açılır ve takip KAPALI başlar (kullanıcı kararı: bir
+        // derleme logunda aranan ilk hatadır). Follow'u kullanıcı dibe inerek açar — senaryo onu kurar.
         var view = new ConsoleView();
-        view.PlayCascade(new[] { "seed" }, buildInProgress: true); // _projectMode=true, StickToBottom=true (varsayılan)
+        view.PlayCascade(new[] { "seed" }, buildInProgress: true);
+        view.StickToBottom = true; // kullanıcı dibe indi → takip geri geldi
 
         for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
 
@@ -198,7 +201,8 @@ public class ConsoleViewTests
 
         // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
-        view.PlayCascade(all, buildInProgress: true); // instant (headless), _projectMode, StickToBottom=true (varsayılan)
+        view.PlayCascade(all, buildInProgress: true); // instant (headless), _projectMode
+        view.StickToBottom = true;                    // [DEĞİŞEN ÖN-KOŞUL] kullanıcı dibe indi → follow açık
         Assert.StartsWith("orig100\n", view.Document.Text);
         Assert.DoesNotContain("orig99\n", view.Document.Text); // ilk 100 chunk loader backlog'unda
 
@@ -249,14 +253,17 @@ public class ConsoleViewTests
         //
         // [Önemli — dürüstlük notu] Deneysel olarak doğrulandı: AvalonEdit'in ExtentHeight/VerticalOffset'i BU
         // headless/offscreen host'ta document.Insert/ScrollToVerticalOffset'ten SONRA, araya GERÇEK bir layout
-        // pass girmeden senkron YANSIMAZ — bu yüzden I-1'in tarif ettiği "aynı senkron çağrı içinde post-prepend
-        // extent'in stale-true IsStuck'a sızması" tam olarak BU testte yeniden üretilemiyor (eski SIRA ile de bu
-        // assertion'lar geçiyor — denenip doğrulandı, geri alınıp tekrar denendi). Gerçek mekanizma yalnız
-        // AvalonEdit'in KENDİ iç senkron re-entrant event'i (ScrollToVerticalOffset'in kendi layout flush'ı)
+        // pass girmeden senkron YANSIMAZ (bu yüzden aşağıda kaydırmanın ardından UpdateLayout çağrılır) — I-1'in
+        // tarif ettiği "aynı senkron çağrı içinde post-prepend extent'in stale-true IsStuck'a sızması" tam olarak
+        // BU testte yeniden üretilemiyor. Gerçek mekanizma yalnız AvalonEdit'in KENDİ iç re-entrant event'i
         // üzerinden tetiklenebilir, ki bu headless bir StaFact'te DETERMİNİSTİK olarak zorlanamıyor. Bu yüzden bu
-        // test — GERÇEK yolu şu ana dek TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick)
-        // doğrular; I-1'in SIRA-bağımlı korumasının kendisi ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic
-        // testiyle kanıtlanır (task-5-report.md "Fix wave" bölümünde gerekçelendirilmiştir).
+        // test — GERÇEK yolu TAMAMEN test DIŞI bırakmamak için — sözleşmeyi (delik yok + doğru un-stick) doğrular;
+        // I-1'in SIRA-bağımlı koruması ayrıca BottomAnchorBehaviorTests'teki odaklı guard-logic testiyle kanıtlanır.
+        //
+        // [DEĞİŞEN ÖN-KOŞUL] Test eskiden panelin geçişten sonra TESADÜFEN tepede (offset≈19) kalmasına
+        // dayanıyordu — ölçüldü. O bir kusurdu: design §2.5 mod geçişinde dibe pinlenmeyi ister ve pin artık
+        // deterministik (ConsoleView.PinToBottomAfterModeSwitch). Senaryo bu yüzden tepeye zıplamayı GERÇEKTEN
+        // yapar: kullanıcının ham jesti + gerçek kaydırma.
         var view = new ConsoleView();
         view.Measure(new Size(800, 600));
         view.Arrange(new Rect(0, 0, 800, 600));
@@ -267,20 +274,20 @@ public class ConsoleViewTests
         view.PlayCascade(all, buildInProgress: true); // _projectMode, StickToBottom=true (varsayılan/forced)
         view.UpdateLayout();
 
-        // _lastExtentHeight'i taze bir gerçek olayla ilk kez tohumla (üretimde bu ilk gerçek scroll olayında
-        // zaten olurdu) — bunu ATLAMAK "ilk gözlem = dev büyüme" yapay bir ayrı davranışı test eder, I-1 DEĞİL.
-        view.OnScrollOffsetChanged();
+        // [DEĞİŞEN ÖN-KOŞUL] Proje logu BAŞTAN açılır (kullanıcı kararı) — chunk latch'i ancak kullanıcı
+        // tepeden uzaklaşınca kurulur. Senaryo bu yüzden önce aşağı iner, sonra tepeye döner.
+        Assert.Equal(0.0, view.Editor.VerticalOffset);
+        UserScrollGesture.Raise(view);
+        view.Editor.ScrollToVerticalOffset(view.Editor.ExtentHeight);
+        view.UpdateLayout(); // bu host'ta kaydırma ancak bir yerleşim geçişinden SONRA offset'e yansır (ölçüldü)
+        view.OnScrollOffsetChanged(); // arm (tepeden uzaklaşıldı)
 
-        // Kullanıcı dipteyken normal aktivite offset'i hep 48px eşiğinin ÜSTÜNDE tutar → _armedForChunk latch'i
-        // GERÇEK üretimde böyle true olurdu (bkz. EvaluateChunkScroll: offset>48 → armed=true). Offset argümanı
-        // burada AYNI mekanizma — gerçek VerticalOffset'e dokunmadan (EditorControl.ScrollToVerticalOffset'in bu
-        // host'ta senkron yansımadığı yukarıda belgelendi) latch'i üretimin kendi metoduyla kurar.
-        view.EvaluateChunkScroll(500.0);
-
-        Assert.True(view.StickToBottom, "senaryo ön-koşulu: kullanıcı dipteyken IsStuck=true (henüz taze değil)");
-
-        // TEK hamlede Ctrl+Home/Home: gerçek editör offset'i zaten (bu host'ta) tepeye yakın dinleniyor — GERÇEK
-        // handler'ı SENKRON tetikle (canlı bir event beklemeden, EvaluateChunkScroll ile AYNI test deseni).
+        // TEK hamlede tepeye (Ctrl+Home): kullanıcının HAM jesti — üretimin dinlediği kanal — VE gerçek
+        // kaydırma; ardından üretimin scroll handler'ı senkron tetiklenir. Jest olmadan takip BIRAKILMAZ:
+        // takibi yalnız kullanıcı bırakır (bkz. BottomAnchorDecision.OnScrollChanged `userDriven`).
+        UserScrollGesture.Raise(view);
+        view.Editor.ScrollToVerticalOffset(0);
+        view.UpdateLayout();
         view.OnScrollOffsetChanged();
 
         // (a) Delik yok: prepend gerçekleşti, backlog (orig0..orig99) render dilimine (orig100..orig299) bitişik
@@ -314,20 +321,65 @@ public class ConsoleViewTests
         Assert.Contains("Sync complete — 7 changed projects", view.Document.Text);
     }
 
+    /// <summary>
+    /// design v1.7.0 §2.5: boşta/boot prompt satırı imleç + <c>ready</c> (dim) taşır; içerik gelince YALNIZ
+    /// METİN boşalır.
+    ///
+    /// <para>[DEĞİŞEN KURAL] Eski iddia "içerik gelince prompt <b>Collapsed</b> olur"du — ilk çıktıdan sonra
+    /// konsolda hiç imleç kalmıyordu. Otorite bunun tersini söylüyor: prototipte prompt satırı KOŞULSUZ render
+    /// edilir (<c>BuildApp.jsx:766-771</c>), yalnız faz idle/boot değilken metni boşalır; imleç durur ve yeni
+    /// satırlar onun ÜSTÜNE birikir. Kullanıcı da bunu istedi ("sadece kursor vardı, hep alt satıra iner,
+    /// arkasından konsol yazısı basılıyor").</para>
+    /// </summary>
     [StaFact]
-    public void ShowReady_displays_the_idle_prompt_until_narrative_content_arrives()
+    public void The_prompt_cursor_stays_after_content_arrives_and_only_the_ready_text_clears()
     {
-        // design v1.7.0 §2.5: boşta/boot tek prompt satırı — imleç + "ready" (dim), doküman satırı DEĞİL
-        // (overlay). İçerik gelince temizlenir. Duvar saati YOK.
         var view = new ConsoleView();
 
         view.ShowReady();
         Assert.Equal("ready", view.ActiveLineText.Text);
         Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
 
-        view.AppendNarrativeBatch("12:00:03 Sync complete — 0 changed projects\n");
-        Assert.Equal(Visibility.Collapsed, view.ActiveLineOverlay.Visibility); // "ready" temizlendi
+        view.AppendNarrativeBatch("Sync complete — 0 changed projects\n");
+
+        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility); // imleç DURUR
+        Assert.Equal("", view.ActiveLineText.Text);                          // yalnız "ready" düştü
         Assert.Contains("Sync complete", view.Document.Text);
+    }
+
+    /// <summary>
+    /// Prompt satırı BELGENİN SONUNDADIR: her yeni satır imleci bir satır aşağı iter, yazı hep onun üstüne
+    /// birikir.
+    ///
+    /// <para>[DEĞİŞEN KURAL] İlk çözüm imleci panelin DİBİNE yaslıyor ve editörün altında bir satır boyu yer
+    /// ayırıyordu. Yanlıştı: AvalonEdit içeriği yukarıdan aşağı dizer, yani üç satırlık bir konsolda metin
+    /// tepede kalır ve dibe yaslı imleç metinden kopup sol altta tek başına yanardı. İmlecin yeri belgenin
+    /// kendi son satırıdır.</para>
+    /// </summary>
+    [StaFact]
+    public void The_prompt_sits_on_the_documents_last_line_and_moves_down_as_lines_arrive()
+    {
+        var view = new ConsoleView();
+        var window = DsResources.Realize(DsResources.NewHost(), view);
+        view.ShowReady();
+        window.UpdateLayout();
+        double lineHeight = view.EditorControl.TextArea.TextView.DefaultLineHeight;
+        Assert.True(lineHeight > 0, "ön-koşul: editör ölçülmedi");
+
+        double empty = view.ActiveLineOverlay.Margin.Top; // boş belgede: ilk satır
+
+        view.AppendNarrativeBatch("first\n");
+        window.UpdateLayout();
+        double afterOne = view.ActiveLineOverlay.Margin.Top;
+
+        view.AppendNarrativeBatch("second\n");
+        window.UpdateLayout();
+        double afterTwo = view.ActiveLineOverlay.Margin.Top;
+
+        // Her satır imleci TAM bir satır boyu aşağı iter.
+        Assert.Equal(lineHeight, afterOne - empty, precision: 1);
+        Assert.Equal(lineHeight, afterTwo - afterOne, precision: 1);
+        GC.KeepAlive(window);
     }
 
     // ---------------------------------------------------------------- [A13/T3a · a7 + fix-1 · P3] ready satırı
@@ -393,7 +445,10 @@ public class ConsoleViewTests
         view.Arrange(new Rect(0, 0, 800, 600));
         view.UpdateLayout();
 
-        Assert.Equal(new Thickness(12, 8, 12, 8), view.Editor.Padding);
+        // [DEĞİŞEN KURAL] Sol/üst/sağ bütçe 12/8'dir ve DEĞİŞMEDİ. ALT kenar daha geniştir: prompt imleci
+        // belgenin son satırında durur ve yatay kaydırma çubuğu çıktığında ona bitişik kalıyordu — imlecin
+        // altında pay bırakılır.
+        Assert.Equal(new Thickness(12, 8, 12, 14), view.Editor.Padding);
 
         // GERÇEK yerleşim: TextView'in sol/üst kenarı editörün kenarından padding kadar içeride.
         var textView = view.Editor.TextArea.TextView;

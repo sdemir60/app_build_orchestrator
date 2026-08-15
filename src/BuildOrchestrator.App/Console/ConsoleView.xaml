@@ -8,9 +8,21 @@
   <!-- [T49] Konsol mono puntosu artık YEREL kopya değil, doğrudan token: design-v1 §2.5 "mono 12px" = text-xs
        (Resources/Tokens.xaml, FontSize.Xs). Editör ile aktif-satır overlay AYNI anahtarı okur → drift edemez. -->
   <Grid Background="{DynamicResource Brush.ConsoleBg}">
+    <!-- [design v1.7.0 §2.5 · animasyon spec §1] Panel geçişinin "tilt in"i YALNIZ LOG BLOĞUNA uygulanır ve
+         log bloğu = editörün ta kendisidir. Prompt satırı ile "build in progress" satırı bilinçli olarak
+         DIŞARIDADIR (spec §1.3 ve §4: "log bloğunun altındaki kardeş eleman… tilt animasyonuna KATILMAZ") —
+         oturan şey içeriktir, imleç yerinde durur ve içerik ona doğru yerine gelir. `⌄ latest` pill de
+         dışarıdadır: o içeriğin parçası değil, panelin afordansıdır. -->
+    <Grid x:Name="PART_TiltHost">
     <!-- [3b Minor 1] Base foreground token (Brush.TextPrimary) — colorizer her satırı zaten ezer; off-palette hex YOK. -->
     <!-- [SCROLLBAR] BuildApp.jsx:616: konsol kutusu overflow AUTO — AvalonEdit default'u Visible olduğundan
          açıkça çevrilir. Bar'ın kendi görünümü Controls.xaml'in implicit ScrollBar stilinden gelir. -->
+    <!-- [ÖLÇÜLMÜŞ SAPMA] Pencere kökü TextFormattingMode="Display" kullanır (T65: küçük UI puntolarında keskinlik).
+         Konsol bunu EZER. Display her glif ilerlemesini tam piksele yuvarlar; Geist Mono 12px'te ilerleme
+         7.2px'tir ve 7'ye yuvarlanır — ölçüldü: satır %2.8 DARALIYOR (6.841 px/karakter, Ideal'de 7.036) ve
+         yuvarlama hatası karakter aralarına eşitsiz dağılıyor. Monospace bir ızgarada bunun bedeli yalnız
+         genişlik değil hizadır. Alt dolgu üsttekinden fazladır: prompt imleci son satırda durur ve yatay
+         kaydırma çubuğu çıktığında ona bitişik kalmasın diye altında pay bırakılır. -->
     <avalonEdit:TextEditor x:Name="EditorControl"
                             IsReadOnly="True"
                             WordWrap="False"
@@ -18,16 +30,31 @@
                             VerticalScrollBarVisibility="Auto"
                             HorizontalScrollBarVisibility="Auto"
                             FontSize="{DynamicResource FontSize.Xs}"
-                            Padding="12,8"
+                            TextOptions.TextFormattingMode="Ideal"
+                            Padding="12,8,12,14"
                             Background="Transparent" Foreground="{DynamicResource Brush.TextPrimary}" />
+    </Grid>
+    <!-- [animasyon spec §2.4, "birebir gerekiyorsa"] Geçiş boyunca log bloğunun yerini alan 3B katman.
+         Prototipin `perspective(900px) rotateX(7deg)`i GERÇEK bir perspektif projeksiyonudur: üst kenar
+         geriye gider ve DARALIR, alt kenar öne gelir ve GENİŞLER — trapez. WPF'in 2D dönüşümleri afindir,
+         yani bir trapez üretemez; ölçek+kaydırma yaklaşımı hareketi salt dikey bırakıyor ve jest "kâğıdın
+         masaya oturması" değil "aşağıdan kayma" gibi okunuyordu. Katman yalnız geçişin 340ms'si boyunca
+         görünür; sonrasında gerçek editör geri gelir (metin yeniden keskindir). -->
+    <Viewport3D x:Name="PART_Tilt3D" Visibility="Collapsed" IsHitTestVisible="False" ClipToBounds="False" />
     <!-- [design v1.7.0 §2.5] Prompt satırı: yanıp sönen blok imleç + boştayken "ready" (dim). Konsolun tek
          canlı öğesi budur — daktilo YOK, duvar-saati damgası YOK. İmleç bir 7×13px Rectangle'dır (font
-         glyph'i DEĞİL) ve satırın SOLUNDA durur; konsolun bütün satırları onunla aynı sol hizada başlar. -->
+         glyph'i DEĞİL) ve satırın SOLUNDA durur; konsolun bütün satırları onunla aynı sol hizada başlar.
+         Satır KOŞULSUZ durur (prototip BuildApp.jsx:766-771): içerik gelince yalnız METNİ boşalır, imleç
+         kalır ve yeni satırlar onun ÜSTÜNE birikir. Metnin üstüne binmemesi için editörün altında bir tam
+         satır boyu yer ayrılır (ConsoleView.ReservePromptRow). Renk event stream'in aktif satırıyla AYNI
+         amber — iki panel aynı dili konuşur. -->
+    <!-- Konum ConsoleView.PositionPrompt'tan gelir: belgenin SON satırı. Panele yaslanmaz — kısa bir belgede
+         metin tepede kalır ve dibe yaslı imleç metinden kopup tek başına yanardı. -->
     <StackPanel x:Name="ActiveLineOverlay" Orientation="Horizontal" Visibility="Collapsed"
-                HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False"
-                Margin="12,0,0,8">
-      <Rectangle x:Name="ActiveCursor" Width="7" Height="13" Margin="0,0,3,0"
-                 Fill="{DynamicResource Brush.TextPrimary}" VerticalAlignment="Center" />
+                HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False"
+                Margin="12,8,0,0">
+      <Rectangle x:Name="ActiveCursor" Width="7" Height="13" Margin="0,0,8,0"
+                 Fill="{DynamicResource Brush.AmberText}" VerticalAlignment="Center" />
       <TextBlock x:Name="ActiveLineText" FontSize="{DynamicResource FontSize.Xs}" VerticalAlignment="Center"
                  TextWrapping="NoWrap" Foreground="{DynamicResource Brush.TextPrimary}" />
     </StackPanel>

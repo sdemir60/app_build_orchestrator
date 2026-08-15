@@ -224,7 +224,7 @@ public partial class StickyLayerList : UserControl
     /// kendiliğinden sürer. Follow throttle'ının (550 ms) birkaç katı — okumakta olan bir kullanıcıyı listenin
     /// altından çekecek kadar kısa DEĞİL, etkileşimi bırakmış bir kullanıcıyı takibi elle geri açmaya
     /// zorlayacak kadar uzun da değil.</summary>
-    internal const long FrontierIdleResumeMs = 3000;
+    internal const long FrontierIdleResumeMs = BottomAnchorDecision.IdleResumeMs; // tek kaynak orada
 
     /// <summary>[D8] Boşta penceresinin saat kaynağı — testler deterministik sürer.</summary>
     internal Func<long> NowMs { get; set; } = () => Environment.TickCount64;

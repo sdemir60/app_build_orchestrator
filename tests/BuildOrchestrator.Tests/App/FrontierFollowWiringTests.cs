@@ -96,4 +96,52 @@ public class FrontierFollowWiringTests(ITestOutputHelper output)
             $"frontier 20'den 50'ye ilerledi ama liste takip etmedi ({atTwenty:N1} → {atFifty:N1}).");
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [cycles] Takip, bir döngü grubunun İÇİNDE sıra üyeden üyeye geçerken de sürer.
+    ///
+    /// <para>Sahada görülen kusur: "Resolve cycles" koşusunda liste ilk üyede kalıyor, derlenen proje
+    /// ekranda görünmüyordu (normal Build'de takip çalışıyordu). Nedeni frontier'in HAM motor durumunu
+    /// (<c>State == Started</c>) okumasıydı: bir SCC'nin üyeleri tek tek invoke edilir ama ara tur sonuçları
+    /// yayılmadığı için grup bitene kadar HEPSİ <c>Started</c>'ta kalır — <c>FrontierRowIndex</c> hep listedeki
+    /// İLK üyeyi bulur, dead-band da devreye girince liste bir daha hiç kaymaz.</para>
+    ///
+    /// <para>Doğru soru <c>ProjectRowViewModel.IsCompiling</c>'dir (Started <b>ve</b> sırası bekleyen değil) —
+    /// aynı predicate'i satır glyph'i, sayaçlar, şerit chip'leri, kart nefesi ve süre sütunu da okur. Frontier
+    /// o listenin kaçırılmış tüketicisiydi.</para>
+    /// </summary>
+    [StaFact]
+    public void The_list_follows_the_turn_inside_a_running_cycle_group()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = MainWindowHost.New(temp);
+        var content = MainWindowHost.Realize(window);
+        vm.RootPath = @"C:\src\OSYS";
+
+        // 20 ve 50 AYNI döngünün üyeleri — listede birbirinden uzaktalar ki takip ölçülebilsin.
+        var nodes = Topology();
+        int[] members = [20, 50];
+        foreach (int i in members)
+            nodes[i] = nodes[i] with { InCycle = true };
+        vm.OnEvent(new WorkspaceTopologyEvent(nodes, [[.. members.Select(i => nodes[i].Id)]], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha12345", false, nodes.Count, 0));
+        content.UpdateLayout();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, nodes.Count, 4, "Debug", 0, null));
+
+        var list = window.Shell.ProjectsList;
+        vm.OnEvent(new ProjectStartedEvent("r1", nodes[20].Id, nodes[20].Name)); // sıra ilk üyede
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset > 1, TimeSpan.FromSeconds(3));
+        double atFirst = list.Scroll.VerticalOffset;
+
+        // Sıra ikinci üyeye geçer. Grup bitmediği için BİRİNCİ üye hâlâ Started'tır — kusur tam burada çıkar.
+        vm.OnEvent(new ProjectStartedEvent("r1", nodes[50].Id, nodes[50].Name));
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset > atFirst + 1, TimeSpan.FromSeconds(3));
+        double atSecond = list.Scroll.VerticalOffset;
+
+        Assert.Equal(ProjectRowState.Started, vm.Projects.First(p => p.Id == nodes[20].Id).State); // ön-koşul
+        output.WriteLine($"[follow] üye 20 → offset {atFirst:N1} · üye 50 → offset {atSecond:N1}");
+        Assert.True(atSecond > atFirst,
+            $"döngü grubunda sıra 20'den 50'ye geçti ama liste takip etmedi ({atFirst:N1} → {atSecond:N1}).");
+        GC.KeepAlive(window);
+    }
 }

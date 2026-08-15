@@ -714,12 +714,23 @@ public sealed class RunCoordinator(
                 var cycleUpToDate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (cyclesRun)
                 {
-                    // [Task 7] Daha önce yakınsAMAMIŞ bir SCC, bileşik imzası HÂLÂ o yakınsamama anındakiyle
-                    // eşleşiyorsa bir daha tur harcamaz: TÜM üyeleri, up-to-date skip'iyle AYNI mekanizmayla
-                    // (seed + aşağıdaki DecideSkipped döngüsü) pre-skip edilir — grup hiç dispatch edilmeden.
-                    // Kaynak değiştiyse (imza farklı) bu döngü hiçbir şey eklemez, grup YENİDEN denenir. Yalnız
-                    // TÜM üyeler eşzamanlı hafızalıysa (All) pre-skip edilir — savunmacı: SCC üyeliği plan
-                    // değişince genişleyebilir/daralabilir.
+                    // [Task 7 · DEĞİŞEN KURAL] Yakınsamama hafızası artık BLOKLAMAZ, yalnız RAPORLAR.
+                    //
+                    // Eskiden: daha önce yakınsamamış bir SCC, bileşik imzası hâlâ o andakiyle eşleşiyorsa TÜM
+                    // üyeleriyle pre-skip edilirdi (CycleNonConvergent) — grup hiç dispatch edilmeden. Amaç,
+                    // kaynak değişmeden aynı sonucu üretecek 2-3 turu boşa harcamamaktı.
+                    //
+                    // Neden kalktı: bu kapıya giden TEK yol kullanıcının "Resolve cycles" düğmesine BASMASIDIR —
+                    // turları kendiliğinden harcayan otomatik bir akış yok. Yani kapı, tasarrufu yalnız AÇIK bir
+                    // komutu sessizce yutarak sağlıyordu: düğme hiçbir şey yapmıyor gibi görünüyordu. Aynı
+                    // gerekçe kod tabanında zaten yazılı — CapReached bilerek HATIRLANMAZ, çünkü "pre-skip
+                    // edilen bir grupta devam HİÇ gelmez" (bkz. UpdateCycleNonConvergenceMemory). Ayrıca imza
+                    // yalnız KAYNAKLARI kapsar: paket restore'u, döngü dışı bir bağımlılığın çıktısı ya da
+                    // ortam değişmiş olabilir — değişmemiş bir kaynak imzasına bakıp yeniden denemeyi reddetmek
+                    // fazla iddialıdır. Açık basış bir komuttur: grup taze bir çözüme, tur 1'den girer.
+                    //
+                    // Hafıza YAZILMAYA devam eder (kanıt) ve burada OKUNUR: operatör grubun neden yine turlar
+                    // harcadığını decision.log'un ilk satırlarından görür.
                     if (stateStore is not null && runPlan.Incremental is { } inc)
                     {
                         var cycleState = stateStore.Load();
@@ -731,11 +742,8 @@ public sealed class RunCoordinator(
                             if (CycleGroups.SignatureRepresentative(cycle) is not { } representative
                                 || !inc.SignatureById.TryGetValue(representative, out var signature)) continue;
                             if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
-                            foreach (string id in cycle)
-                            {
-                                seed[id] = BuildResult.Skipped;
-                                upToDateSkips.Add((id, SkipReasons.CycleNonConvergent, CycleUnconverged: true));
-                            }
+                            Decide(logs, $"cycle {Path.GetFileNameWithoutExtension(representative)}: retrying — "
+                                       + $"did not converge at this signature ({signature}) on an earlier run");
                         }
                     }
                     // SCC'ler de incremental olur: Cycles modunda planlayıcı üyelere GERÇEK bir WillBuild verir

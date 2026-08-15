@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Media.Media3D;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -58,17 +60,21 @@ public partial class ConsoleView : UserControl
 
     // [T59] Alta-yapışık + `⌄ latest` pill — StickToBottom'ın TEK gerçek kaynağı (bkz. StickToBottom get/set altta).
     private readonly BottomAnchorBehavior _bottomAnchor;
-    private double _lastExtentHeight; // AvalonEdit ScrollChanged extent-delta VERMEZ — burada elle izlenir (T59)
 
     // [D4/T56-UI] Boşta (idle/boot) "ready" (dim) satırı overlay'de gösteriliyor mu — doküman satırı DEĞİL.
     private bool _idleReady;
+    private bool _blinking; // imleç blink saati dönüyor mu (yeniden başlatma guard'ı)
 
 
     // Kaskat durumu (yalnız UI thread'inde).
     // [design v1.7.0 §2.5] Panel geçişinin tek parça "tilt in" ölçüleri (prototip: 14px + 340ms + rotateX 7°).
     private const double TiltInMs = 340.0;
     private const double TiltInOffsetPx = 14.0;
-    private const double TiltInScaleFrom = 0.94; // rotateX 7°'nin alt-kenar menteşeli Y-ölçek karşılığı
+    // Prototip birebir (animasyon spec §2.2): perspective(900px) + rotateX(7deg). Değerler spec'tendir,
+    // "iyileştirilmez".
+    private const double TiltInAngleDeg = 7.0;
+    private const double TiltInPerspectivePx = 900.0;
+    private int _tiltGeneration; // uçuştaki bir geçişi yeni bir geçiş geçersiz kılar
     private bool _buildInProgressPending; // kaskat bitince amber "build in progress ▮" gösterilecek mi
 
     // Render dilimi / chunk loader durumu.
@@ -94,8 +100,11 @@ public partial class ConsoleView : UserControl
         EditorControl.SetResourceReference(FontWeightProperty, "FontWeight.Console");
         ActiveLineText.SetResourceReference(FontWeightProperty, "FontWeight.Console");
         BuildProgressText.SetResourceReference(FontWeightProperty, "FontWeight.Console");
-        Loaded += (_, _) => EnsureColorizer();
+        Loaded += (_, _) => { EnsureColorizer(); PositionPrompt(); };
         EditorControl.TextArea.TextView.ScrollOffsetChanged += (_, _) => OnScrollOffsetChanged();
+        // Belgenin son satırının yeri ancak görsel satırlar kurulduktan sonra bilinir; her değişimde
+        // (yeni satır, punto, yeniden boyutlanma) prompt yeniden konumlanır.
+        EditorControl.TextArea.TextView.VisualLinesChanged += (_, _) => RefreshPrompt();
         // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki pill-jump animasyonu iptal olur + suppress bayrağı kalkar.
         ScrollAnimator.EnableUserCancellation(EditorControl);
         // Yatay tekerlek/touchpad: WPF WM_MOUSEHWHEEL'i HİÇ dağıtmaz, bu yüzden yatay kaydırma uygulamanın kendi
@@ -106,8 +115,14 @@ public partial class ConsoleView : UserControl
             getExtent: () => EditorControl.ExtentHeight,
             getViewport: () => EditorControl.ViewportHeight,
             scrollInstant: v => EditorControl.ScrollToVerticalOffset(v),
-            scrollSmooth: AnimateToBottom);
+            scrollSmooth: AnimateToBottom,
+            // Anlatı modunda kullanıcı elini çekince akış yeniden izlenir. PROJE-LOG modunda dönülmez:
+            // orada izlenecek canlı bir akış (ve prompt imleci) yoktur, kullanıcı bir logu okuyordur.
+            autoResumeAllowed: () => !_projectMode);
         _bottomAnchor.Changed += OnBottomAnchorChanged;
+        // "Kullanıcı kaydırdı" HAM GİRDİDEN bildirilir — tekerlek, kaydırma çubuğu ve gezinme tuşları
+        // (gerekçe: UserScrollSignal / BottomAnchorBehavior.NotifyUserScroll).
+        UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         Pill.AccessibleName = AccessibilityNames.LatestConsole;
         // [A13/T1 fix-1 · I-D] EventStreamView.ctor:97 deseni: unload'da SONSUZ blink saatleri bırakılır (aksi
@@ -147,6 +162,7 @@ public partial class ConsoleView : UserControl
     private void OnBottomAnchorChanged(object? sender, EventArgs e)
     {
         Pill.Visibility = _bottomAnchor.ShowPill ? Visibility.Visible : Visibility.Collapsed;
+        RefreshPrompt(); // dipten uzaklaşınca prompt da gider (gerekçe: RefreshPrompt doc'u)
         if (Arbiter is null) return;
         if (_bottomAnchor.IsStuck) Arbiter.Resume(ScrollPanel.Console);
         else Arbiter.NotifyUserScroll(ScrollPanel.Console);
@@ -203,12 +219,11 @@ public partial class ConsoleView : UserControl
 
     /// <summary>
     /// UI thread'inde çağrılır. TEK batch ekler — asla satır satır bölmez, asla <c>Dispatcher.Invoke</c>
-    /// çağırmaz (çağıranın/Task 12'nin sorumluluğu). [A13.2 ZORUNLU sıra]. [3b] Run modunda belge daima son
-    /// <see cref="RenderSliceLines"/> satırla sınırlanır (baştan kırpma). Proje modunda YALNIZ alta-yapışıkken
-    /// (follow) aynı tail-trim uygulanır (chatty build belgeyi sınırsız büyütmesin, §3.6); kırpılan her satır için
-    /// <see cref="_loadedFrom"/> ilerletilir ki chunk loader index'i belgenin gerçek ilk satırıyla TUTARLI kalsın
-    /// [C-1]. Kırpılan satırlar <see cref="_projectAllLines"/>'ta durur → tepeye kaydırınca prepend onları DELİKSİZ
-    /// geri yükler. Kullanıcı yukarı kaydırıp chunk gezerken (follow kapalı) trim YOK — prepend'le çakışmaz.
+    /// çağırmaz (çağıranın/Task 12'nin sorumluluğu). [A13.2 ZORUNLU sıra]. [3b] Belge son
+    /// <see cref="RenderSliceLines"/> satırla sınırlanır (baştan kırpma) — ama YALNIZ takip açıkken; gerekçe
+    /// gövdededir. Kırpılan her satır için proje modunda <see cref="_loadedFrom"/> ilerletilir ki chunk loader
+    /// index'i belgenin gerçek ilk satırıyla TUTARLI kalsın [C-1]; kırpılan satırlar
+    /// <see cref="_projectAllLines"/>'ta durur → tepeye kaydırınca prepend onları DELİKSİZ geri yükler.
     /// </summary>
     public void AppendBatch(string text)
     {
@@ -217,10 +232,15 @@ public partial class ConsoleView : UserControl
         try
         {
             document.Insert(document.TextLength, text);
-            // Run modunda daima; proje modunda YALNIZ alta-yapışıkken (follow) tail-trim: chatty bir build
-            // (MSBuild hacmi) belgeyi sınırsız büyütmesin — render dilimi kadar tutulur (§3.6). [3b M-2]
-            // Kullanıcı yukarı kaydırıp chunk gezerken (StickToBottom=false) trim YOK — prepend'le çakışmaz.
-            if (_trimTail || (_projectMode && StickToBottom))
+            // Tail-trim: chatty bir build (MSBuild hacmi) belgeyi sınırsız büyütmesin — render dilimi kadar
+            // tutulur (§3.6). [3b M-2]
+            //
+            // AMA YALNIZ TAKİP AÇIKKEN. Kırpma belgenin BAŞINDAN satır siler; kullanıcı yukarıda okurken bu,
+            // kaydırma konumu sabit kalsa bile metni onun altından yukarı kaydırır. Sahada görülen "scroll
+            // duruyor ama yazılar akmaya devam ediyor" tam olarak buydu: panel kullanıcıya bırakılmıştı ama
+            // okuduğu satırlar ayağının altından siliniyordu. Kullanıcı elini çekince (bekleme dolar, takip
+            // geri gelir) kırpma tek hamlede yetişir ve o an panel zaten dipte olduğu için görünmez.
+            if (_bottomAnchor.ShouldFollow)
             {
                 int trimmed = TrimToRenderSlice(document);
                 // [C-1] Tepeden K satır kırpıldıysa belgenin ilk satırı _projectAllLines[_loadedFrom + K] olur.
@@ -235,8 +255,29 @@ public partial class ConsoleView : UserControl
         {
             document.EndUpdate();
         }
-        if (StickToBottom)
+        // Dibe çekme yetkisi TEK yerdedir (BottomAnchorBehavior.ShouldFollow): takip açık, uçuşta atlama yok
+        // ve direksiyon kullanıcıda değil. Burası eskiden salt StickToBottom'a bakıyordu — kullanıcının
+        // kaydırmasını görmeyen ikinci bir auto-scroll yoluydu ve derleme sürerken konsolu kaydırılamaz
+        // hâle getiriyordu.
+        if (_bottomAnchor.ShouldFollow)
             EditorControl.ScrollToEnd();
+    }
+
+    /// <summary>
+    /// [design v1.7.0 §2.5] Mod geçişinin ikinci adımı: <b>(1) içeriği değiştir → (2) PİNLE → (3) animasyonu
+    /// başlat</b>. Hangi uca pinleneceği moda göredir: anlatı SONDAN, proje logu BAŞTAN okunur (gerekçeler
+    /// <see cref="ShowRunDocument"/> ve <see cref="PlayCascade"/> doc'larındadır).
+    ///
+    /// <para><b>Neden önce <c>UpdateLayout</c>:</b> belge az önce değiştirildi ve editörün kaydırma
+    /// geometrisi (extent/viewport) henüz yeniden ölçülmemiştir. O anda kaydırmak hesabı ESKİ geometriye
+    /// yaptırır ve panel istenen uçta durmaz (ölçüldü: 3739px'lik bir belgede dip 3161 yerine 19'da
+    /// kalıyordu). Ölçüm zorlandığında pin deterministik olur — geçişte bir kez çalışır ve belge zaten
+    /// render dilimiyle (200 satır) sınırlıdır.</para>
+    /// </summary>
+    private void PinAfterModeSwitch(bool toBottom)
+    {
+        EditorControl.UpdateLayout();
+        if (toBottom) EditorControl.ScrollToEnd(); else EditorControl.ScrollToVerticalOffset(0);
     }
 
     // Belgeyi son RenderSliceLines satıra kırpar (baştaki fazla satırları TEK Remove ile siler).
@@ -293,7 +334,7 @@ public partial class ConsoleView : UserControl
     public void AppendNarrativeBatch(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
-        HideReadyIfShown();
+        ClearReadyText();
         EnsureColorizer();
 
         // Son tam satırı ayır: newest = son satır (soneksiz); prefix = ondan önceki her şey ('\n' sonekli).
@@ -316,52 +357,123 @@ public partial class ConsoleView : UserControl
     {
         EnsureColorizer();
         _idleReady = true;
-        Brush dim = _palette?.Dim ?? EditorControl.Foreground;
-        ActiveLineText.Foreground = dim;
+        ActiveLineText.Foreground = _palette?.Dim ?? EditorControl.Foreground;
         ActiveLineText.Text = ConsoleEmptyState.Idle; // "ready"
-        ActiveCursor.Fill = dim;
-        ActiveCursor.Opacity = 1.0;
-        ActiveLineOverlay.Visibility = Visibility.Visible;
-        if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
+        RefreshPrompt();
     }
 
-    private void HideReadyIfShown()
+    /// <summary>İçerik geldi: prompt satırının yalnız METNİ boşalır — imleç durur (§2.5, prototip
+    /// <c>BuildApp.jsx:766-771</c>: satır koşulsuz render edilir, idle/boot değilken içi boşalır).</summary>
+    private void ClearReadyText()
     {
         if (!_idleReady) return;
         _idleReady = false;
-        StopBlink();
-        ActiveLineOverlay.Visibility = Visibility.Collapsed;
         ActiveLineText.Text = "";
+        RefreshPrompt();
+    }
+
+    /// <summary>
+    /// Prompt satırının TEK görünürlük yazıcısı. İki koşul: <b>anlatı modunda</b> olmak (proje-log modunun
+    /// kendi sonu vardır — amber "build in progress ▮") ve <b>dipte</b> olmak.
+    ///
+    /// <para>Dip koşulu şundandır: prompt panelin altına yaslıdır, belgeyle birlikte kaymaz. Kullanıcı yukarı
+    /// kaydırıp geçmişe baktığında dipte asılı kalan bir imleç oradaki metnin üstüne binerdi. Dipten
+    /// uzaklaşınca zaten <c>⌄ latest</c> pill'i çıkar; prompt onunla birlikte gider ve dibe dönünce geri gelir.</para>
+    /// </summary>
+    private void RefreshPrompt()
+    {
+        bool show = !_projectMode && _bottomAnchor.IsStuck;
+        ActiveLineOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) { StopBlink(); return; }
+        ActiveCursor.Opacity = 1.0;
+        PositionPrompt();
+        if (_motion.Enabled) StartBlink(); else StopBlink(); // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
+    }
+
+    /// <summary>
+    /// Prompt satırını BELGENİN SONUNA yerleştirir: imleç her zaman son metin satırının hemen ALTINDAKİ
+    /// satırdadır ve yeni satırlar onun üstüne birikir.
+    ///
+    /// <para><b>Neden panelin dibine yaslanmıyor:</b> AvalonEdit içeriği yukarıdan aşağı dizer. Konsolda üç
+    /// satır varken metin tepede kalır; panele yaslı bir imleç o metinden kopup dipte tek başına yanardı.
+    /// Doğru yer belgenin kendi son satırıdır.</para>
+    ///
+    /// <para>Satır sözleşmesi gereği canlı metin '\n' ile biter (<c>ConsoleBatcher</c>), yani belgenin SON
+    /// satırı zaten boş prompt satırıdır — imleç oraya oturur. Sonda yeni satır yoksa (savunmacı) imleç bir
+    /// satır aşağı iner. Konum, görsel satırın kendi koordinatından alınıp bu kontrole taşınır; böylece
+    /// editörün dolgusu, kaydırma ve satır yüksekliği ayrı ayrı hesaplanmaz.</para>
+    /// </summary>
+    private void PositionPrompt()
+    {
+        if (ActiveLineOverlay.Visibility != Visibility.Visible) return;
+
+        var view = EditorControl.TextArea.TextView;
+        var document = EditorControl.Document;
+        if (document is null || !view.VisualLinesValid || view.VisualLines.Count == 0) return;
+
+        var lastLine = document.GetLineByNumber(document.LineCount);
+        var visual = view.GetVisualLine(lastLine.LineNumber);
+        if (visual is null) return; // son satır görünür pencerede değil — konum bir sonraki kaydırmada tazelenir
+
+        // Düzen daha oturmadıysa satırın yeri HENÜZ YOKTUR (VisualTop NaN, ScrollOffset sonsuz gelir) —
+        // o an konumlandırmak Margin'e NaN yazmak olurdu. Atlanır; düzen oturunca VisualLinesChanged bu
+        // metodu yeniden çağırır.
+        if (!double.IsFinite(visual.VisualTop) || !double.IsFinite(view.ScrollOffset.Y)) return;
+
+        // Boş son satır zaten prompt satırıdır; dolu ise imleç onun ALTINA geçer.
+        double top = visual.VisualTop + (lastLine.Length == 0 ? 0 : visual.Height);
+        // Referans TİLT KABIDIR, ConsoleView değil: geçiş animasyonu kabı ölçekleyip kaydırır ve kök baz
+        // alınsaydı imlecin konumu animasyonun ortasındaki ara değerlerle hesaplanırdı. Editör ile prompt
+        // aynı kabın içinde olduğundan aralarındaki mesafe dönüşümden ETKİLENMEZ.
+        var point = view.TransformToAncestor(PART_TiltHost)
+                        .Transform(new Point(0, top - view.ScrollOffset.Y));
+        if (!double.IsFinite(point.X) || !double.IsFinite(point.Y)) return;
+
+        // İmleç metin satırıyla aynı taban çizgisinde dursun: satır yüksekliği içinde dikey ortalanır.
+        double centred = point.Y + Math.Max(0, (visual.Height - ActiveCursor.Height) / 2);
+        var margin = new Thickness(point.X, centred, 0, 0);
+        if (ActiveLineOverlay.Margin != margin) ActiveLineOverlay.Margin = margin;
     }
 
     // [3b M-4 · D3 §3] Aktif-satır imleci ile "build in progress" imlecinin ORTAK blink animasyonu — artık
     // EventStreamView'ın imleci de dahil ÜÇ başlatıcı MotionTokens.CreateBlinkAnimation'ı paylaşır (kopya YASAK).
-    private void StartBlink() => ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
+    /// <summary>[StatusGlyph/BuildingSpinner deseni] Zaten dönen saat YENİDEN BAŞLATILMAZ: RefreshPrompt her
+    /// görsel-satır değişiminde koşar ve her seferinde yeni bir blink kurmak imleci "takılı" gösterirdi.</summary>
+    private void StartBlink()
+    {
+        if (_blinking) return;
+        _blinking = true;
+        ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
+    }
 
     private void StopBlink()
     {
+        _blinking = false;
         ActiveCursor.BeginAnimation(OpacityProperty, null);
         ActiveCursor.Opacity = 1.0;
     }
 
     // ---------------------------------------------------------------- narrative (run) modu
 
-    /// <summary>[3b] Run/anlatı dokümanını kurar (Back akışı): build-in-progress iptal, render dilimi
+    /// <summary>[3b] Run/anlatı dokümanını kurar (<c>← Back</c> akışı): build-in-progress iptal, render dilimi
     /// (son <see cref="RenderSliceLines"/>) uygulanır, canlı append'te tail-trim AÇIK. Chunk loader kapalı.
-    /// <para>[design v1.7.0 §2.5] Geçiş İKİ YÖNDE de aynıdır: içerik tek parça <see cref="PlayTiltIn"/> ile
-    /// serilir.</para></summary>
+    ///
+    /// <para><b>Anlatıya dönüş SONDAN okunur</b> (kullanıcı kararı): koşu anlatısında ilgi çeken şey en son
+    /// olandır ve panel canlı akışı izlemeye devam eder. Proje logu tersidir — bkz.
+    /// <see cref="PlayCascade"/>.</para>
+    /// <para>[design v1.7.0 §2.5] Geçiş animasyonu İKİ YÖNDE de aynıdır (<see cref="PlayTiltIn"/>).</para></summary>
     public void ShowRunDocument(string fullRunText)
     {
         HideBuildInProgress();
-        // [T59] design-v1 §2.5: "konsol↔proje-log geçişinde dibe sabitlenir" — kullanıcı önceki modda serbest
-        // kaydırmış olsa bile mod değişimi HER ZAMAN yeniden yapıştırır (aşağıdaki `if (StickToBottom)` artık true okur).
+        // Kullanıcı önceki modda serbest kaydırmış olsa bile mod değişimi takibi yeniden devralır.
         _bottomAnchor.ForceStuck(true);
         _projectMode = false;
         _trimTail = true;
         _projectAllLines = [];
         _loadedFrom = 0;
         EditorControl.Document = new TextDocument(ConsoleRenderSlice.LastLines(fullRunText ?? "", RenderSliceLines));
-        if (StickToBottom) EditorControl.ScrollToEnd();
+        PinAfterModeSwitch(toBottom: true);
+        RefreshPrompt(); // anlatıya dönüldü → prompt satırı geri gelir
         PlayTiltIn();
     }
 
@@ -371,17 +483,22 @@ public partial class ConsoleView : UserControl
     /// [design v1.7.0 §2.5] Proje-log moduna geçiş. İçerik <see cref="PlayTiltIn"/> ile TEK PARÇA serilir ve
     /// chunk loader kurulur. <paramref name="buildInProgress"/> iken sonda amber "build in progress ▮" belirir.
     /// Motion TAZE okunur.
+    ///
+    /// <para><b>Proje logu BAŞTAN okunur</b> (kullanıcı kararı, §5.1'den bilinçli sapma): bir derleme logunda
+    /// aranan şey ilk hatadır, son satır değil. Takip de bu yüzden KAPALI açılır — açık olsaydı gelen ilk
+    /// canlı satır okuyucuyu hemen dibe fırlatırdı. Kullanıcı kendi eliyle dibe inerse takip geri gelir
+    /// (bu, herhangi bir kullanıcı kaydırmasıyla aynı kuraldır).</para>
     /// </summary>
     public void PlayCascade(IReadOnlyList<string> allLines, bool buildInProgress)
     {
         EnsureColorizer();
         HideBuildInProgress();
-        // [T59] design §2.5: "konsol↔proje-log geçişinde dibe sabitlenir" — bkz. ShowRunDocument'taki aynı gerekçe.
-        _bottomAnchor.ForceStuck(true);
-        HideReadyIfShown();              // boşta "ready" gösteriliyorsa temizle (proje-loguna geçiş)
-
+        _bottomAnchor.ForceStuck(false); // proje logu baştan okunur — dibe çekilmez
         allLines ??= [];
         _projectMode = true;
+        RefreshPrompt();                 // proje-log modunun kendi sonu var (amber "build in progress ▮")
+        _idleReady = false;
+        ActiveLineText.Text = "";
         _armedForChunk = false;            // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _trimTail = false;                 // proje modunda tail-trim yok — chunk loader eski satırları yönetir
         _projectAllLines = allLines;
@@ -390,50 +507,123 @@ public partial class ConsoleView : UserControl
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.
         _loadedFrom = Math.Max(0, allLines.Count - RenderSliceLines);
         EditorControl.Document = new TextDocument(Join(allLines, _loadedFrom, allLines.Count));
-        if (StickToBottom) EditorControl.ScrollToEnd();
+        PinAfterModeSwitch(toBottom: false);
 
         PlayTiltIn();
         if (buildInProgress) ShowBuildInProgress(_motion.Enabled); // [A13/T1] motion sinyalinin TEK kapısı
     }
 
     /// <summary>
-    /// [design v1.7.0 §2.5] Panel geçişinin TEK hareketi: içerik alt kenarından menteşeli gibi <b>aşağı
-    /// serilerek</b> açılır — 14px yukarıdan, hafif kısaltılmış ve saydam başlar, 340ms ease-out ile yerine
-    /// oturur. Prototipteki <c>perspective(900px) rotateX(7deg)</c> WPF'te doğrudan yoktur (PlaneProjection
-    /// WPF'e ait değildir); en yakın native karşılık, alt kenara sabitlenmiş bir Y-ölçek + kaydırmadır ve aynı
-    /// jesti verir (fidelity notu: çevrilemeyen web ayrıntısı en yakın native karşılıkla çözülür).
+    /// [design v1.7.0 §2.5 · animasyon spec §2] Panel geçişinin TEK hareketi. Log bloğu, <b>alt kenarı sabit
+    /// kalacak şekilde</b> izleyiciye doğru düzleşir: 14px aşağıdan, hafif kısaltılmış ve saydam başlar,
+    /// 340ms ease-out ile tam düz ve tam opak olur. Kâğıdın masaya oturması gibi — alt kenar hiç oynamaz.
     ///
-    /// <para>Hareket TEK PARÇADIR: satır sayısından bağımsız olarak her zaman aynı sürede biter — 3 satırlık
-    /// bir log ile 200 satırlık anlatı aynı ritimde açılır. Eskiden satır-bazlı bir kaskat vardı (26ms'de 3
-    /// satır) ve uzun içerikte geçiş belirgin biçimde uzuyordu.</para>
+    /// <para><b>Gerçek perspektif</b> (animasyon spec §2.4'ün "birebir gerekiyorsa" yolu): blok bir 3B
+    /// düzlemdir, <c>PerspectiveCamera</c> 900px uzaklıktadır ve X ekseni etrafında 7° → 0 döner. Böylece üst
+    /// kenar geriye giderken DARALIR, alt kenar öne gelirken GENİŞLER — trapez. Bir ara sürüm bunu 2B
+    /// ölçek+kaydırma ile yaklaşıklıyordu; WPF'in 2D dönüşümleri afin olduğundan trapez üretilemiyor ve jest
+    /// "kâğıdın masaya oturması" değil salt "aşağıdan kayma" gibi okunuyordu.</para>
     ///
-    /// <para>Reduced-motion iken hiç oynatılmaz (motion sözleşmesi).</para>
+    /// <para>Düzlemin dokusu, geçişin başında log bloğundan alınan bir görüntüdür. Canlı bir görsel fırçası
+    /// (VisualBrush) kullanılamaz: fırça kaynağını olduğu gibi çizer, yani gerçek bloğu gizlemek onu fırçada
+    /// da gizlerdi. Doku 340ms sürer; sonrasında gerçek editör geri gelir ve metin yeniden keskindir.</para>
+    ///
+    /// <para>Hareket TEK PARÇADIR: satır sayısından bağımsız olarak her zaman aynı sürede biter. Panelin
+    /// yüksekliği/yerleşimi geçiş boyunca DEĞİŞMEZ (spec §2.4) — 3B katman yerleşimden bağımsız çizilir.</para>
+    ///
+    /// <para>Yalnız log bloğu REMOUNT edildiğinde oynar (proje logu açma / <c>← Back</c> / proje değişimi /
+    /// boş-durum) — canlı satır eklenirken, kaydırırken ya da yeniden boyutlanırken ASLA (spec §2.1/§3).
+    /// Reduced-motion iken hiç oynatılmaz (motion sözleşmesi).</para>
     /// </summary>
     private void PlayTiltIn()
     {
-        var scale = new ScaleTransform(1, 1);
-        var translate = new TranslateTransform(0, 0);
-        EditorControl.RenderTransformOrigin = new Point(0.5, 1.0); // menteşe ALT kenardadır
-        EditorControl.RenderTransform = new TransformGroup { Children = { scale, translate } };
-
-        if (!_motion.Enabled) // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i)
+        int generation = ++_tiltGeneration;
+        void Land()
         {
-            EditorControl.Opacity = 1.0;
-            return;
+            if (generation != _tiltGeneration) return; // yeni bir geçiş devraldı
+            PART_Tilt3D.Visibility = Visibility.Collapsed;
+            PART_Tilt3D.Children.Clear(); // dokuyu ve sahneyi bırak (geçiş başına bir görüntü tutulmaz)
+            PART_TiltHost.Opacity = 1.0;
         }
 
-        // Süre bir tasarım token'ı DEĞİL, bu geçişin kendi ölçüsüdür (prototip 340ms; motion skalası
-        // 80/120/180/280'de durur) — bileşenin kendi sabiti olarak yukarıda durur.
+        // [A13/T1] motion sinyalinin TEK kapısı (MotionGate seam'i). Doku alınamıyorsa (panel henüz
+        // ölçülmemiş) animasyon da yoktur — içerik doğrudan son hâlinde görünür, asla boş kalmaz.
+        if (!_motion.Enabled || BuildTiltScene() is not { } scene) { Land(); return; }
+
         var duration = TimeSpan.FromMilliseconds(TiltInMs);
         var ease = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
 
-        scale.ScaleY = TiltInScaleFrom;
-        translate.Y = -TiltInOffsetPx;
-        EditorControl.Opacity = 0.0;
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, MotionTokens.SplineTo(1.0, duration, ease));
-        translate.BeginAnimation(TranslateTransform.YProperty, MotionTokens.SplineTo(0.0, duration, ease));
-        EditorControl.BeginAnimation(OpacityProperty, MotionTokens.SplineTo(1.0, duration, ease));
+        PART_TiltHost.Opacity = 0.0;              // gerçek blok geçiş boyunca 3B katmanın yerini bırakır
+        PART_Tilt3D.Opacity = 0.0;
+        PART_Tilt3D.Visibility = Visibility.Visible;
+
+        // Üst kenar GERİYE gider: WPF'te +X ekseni etrafında pozitif dönüş üstü izleyiciye DOĞRU getirir,
+        // bu yüzden işaret negatiftir (prototip: rotateX(7deg) üstü geriye yatırır).
+        scene.Rotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, MotionTokens.SplineTo(0.0, duration, ease));
+        // CSS'te +Y aşağıdır, WPF'te yukarı: translateY(14px) = -14 birim.
+        scene.Translate.BeginAnimation(TranslateTransform3D.OffsetYProperty, MotionTokens.SplineTo(0.0, duration, ease));
+
+        var fade = MotionTokens.SplineTo(1.0, duration, ease);
+        fade.Completed += (_, _) => Land();
+        PART_Tilt3D.BeginAnimation(OpacityProperty, fade);
     }
+
+    /// <summary>
+    /// Log bloğunun görüntüsünü 900px perspektifli bir kameranın önündeki düzleme yerleştirir ve sahneyi
+    /// <see cref="PART_Tilt3D"/>'ye kurar; menteşe düzlemin ALT kenarındadır.
+    ///
+    /// <para>Kamera düzlemden <see cref="TiltInPerspectivePx"/> uzaktadır ve görüş açısı, dönüş sıfırken
+    /// düzlemin viewport'u TAM olarak doldurmasına göre seçilir — CSS <c>perspective</c>'in tanımı budur ve
+    /// geçişin sonunda 2B içerikle birebir örtüşmeyi (pop olmamasını) o sağlar.</para>
+    ///
+    /// <para>Panel ölçülmemişse (genişlik/yükseklik 0 — headless ya da ilk kare) <c>null</c> döner.</para>
+    /// </summary>
+    private TiltScene? BuildTiltScene()
+    {
+        double w = PART_TiltHost.ActualWidth, h = PART_TiltHost.ActualHeight;
+        if (w <= 0 || h <= 0) return null;
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var texture = new RenderTargetBitmap(
+            (int)Math.Ceiling(w * dpi.DpiScaleX), (int)Math.Ceiling(h * dpi.DpiScaleY),
+            96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
+        texture.Render(PART_TiltHost);
+        texture.Freeze();
+
+        double halfW = w / 2, halfH = h / 2;
+        var mesh = new MeshGeometry3D
+        {
+            Positions = [new(-halfW, halfH, 0), new(halfW, halfH, 0), new(halfW, -halfH, 0), new(-halfW, -halfH, 0)],
+            TextureCoordinates = [new(0, 0), new(1, 0), new(1, 1), new(0, 1)],
+            TriangleIndices = [0, 3, 2, 0, 2, 1],
+        };
+
+        var rotation = new AxisAngleRotation3D(new Vector3D(1, 0, 0), -TiltInAngleDeg);
+        var translate = new TranslateTransform3D(0, -TiltInOffsetPx, 0);
+        var model = new GeometryModel3D(mesh, new DiffuseMaterial(new ImageBrush(texture)))
+        {
+            // Sıra CSS'in okunuşuyla aynı: önce translateY, sonra rotateX (menteşe alt kenarda).
+            Transform = new Transform3DGroup { Children = { translate, new RotateTransform3D(rotation, 0, -halfH, 0) } },
+        };
+
+        var scene = new Model3DGroup();
+        // Varsayılan ambient ışık beyazdır: doku tam parlaklıkta ve gölgelenmesiz çizilir. Emissive bir
+        // materyal ışık gerektirmezdi ama toplamalı çizerdi — log bloğunun zemini saydam olduğu için
+        // (zemin dış Grid'e aittir, geçişe katılmaz) renkler panelin üstünde yanlış çıkardı.
+        scene.Children.Add(new AmbientLight());
+        scene.Children.Add(model);
+
+        PART_Tilt3D.Children.Clear();
+        PART_Tilt3D.Children.Add(new ModelVisual3D { Content = scene });
+        PART_Tilt3D.Camera = new PerspectiveCamera(
+            new Point3D(0, 0, TiltInPerspectivePx), new Vector3D(0, 0, -1), new Vector3D(0, 1, 0),
+            fieldOfView: 2 * Math.Atan(halfW / TiltInPerspectivePx) * 180 / Math.PI);
+
+        return new TiltScene(rotation, translate);
+    }
+
+    /// <summary>Geçişin sürülen iki 3B parçası — açı (menteşe) ve dikey kayma.</summary>
+    private readonly record struct TiltScene(AxisAngleRotation3D Rotation, TranslateTransform3D Translate);
 
     // ---------------------------------------------------------------- build in progress (amber ▮)
 
@@ -467,22 +657,24 @@ public partial class ConsoleView : UserControl
     /// metodun ta kendisini doğrudan tetikleyebilsin (paralel bir kopya yol DEĞİL).</summary>
     internal void OnScrollOffsetChanged()
     {
-        // [I-1 fix] Bottom-anchor'ın IsStuck YENİDEN-HESABI, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır.
-        // Neden sıra kritik: bir prepend (aşağıda) belgeyi TEPEDE büyütür ve VerticalOffset'i ChunkStitch.
-        // CompensatedOffset'e telafi eder — ExtentHeight bu satırdan SONRA okunsaydı, prepend'in kendi
-        // büyümesini "dipte içerik büyüdü" sanıp (extentChange>0, stale IsStuck=true) kullanıcıyı dibe
-        // YANKLARDI (CompensatedOffset'i ezerdi). Burada ÖNCE çalıştırmak, henüz-prepend-edilmemiş offset/extent
-        // ile IsStuck'ı taze tutar (tepeye scroll → IsStuck=false); prepend'in extent artışı SONRAKİ olaya
-        // sarkarsa bile o an IsStuck zaten false olduğundan içerik-büyümesi yakalaması tetiklenmez.
+        // [I-1 fix] Bottom-anchor'ın yeniden-hesabı, chunk loader'dan (EvaluateChunkScroll) ÖNCE çalışır: bir
+        // prepend (aşağıda) belgeyi TEPEDE büyütür ve VerticalOffset'i ChunkStitch.CompensatedOffset'e telafi
+        // eder; önce çalışmak, henüz-prepend-edilmemiş geometriyle takip kararını taze tutar.
         //
-        // [T59] AvalonEdit'in ScrollOffsetChanged'i WPF ScrollViewer.ScrollChanged.ExtentHeightChange gibi bir delta
-        // VERMEZ — burada elle izlenir (BottomAnchorDecision içerik-büyümesi/kullanıcı-scroll ayrımı için bunu ister).
-        double extent = EditorControl.ExtentHeight;
-        double extentChange = extent - _lastExtentHeight;
-        _lastExtentHeight = extent;
-        _bottomAnchor.OnScrollChanged(extentChange);
+        // Bu bir OFFSET olayıdır, extent olayı değil — AvalonEdit'in ScrollOffsetChanged'i yalnız kaydırma
+        // konumu değişince ateşlenir. Bir ara sürüm burada extent farkını elle izliyordu ve gerçek kusur oydu:
+        // kullanıcı yukarıdayken eklenen içerik offset'i oynatmadığından hiç olay doğmuyor, izlenen extent
+        // bayatlıyordu; kullanıcı nihayet tekerleği çevirdiğinde olay "içerik büyüdü" (extentChange>0) gibi
+        // görünüp takip kararını ATLATIYORDU. Panel dibe yapışık kalıyor ve her batch kullanıcıyı geri
+        // fırlatıyordu. İçerik büyümesini artık büyümeyi YAPAN yer bildirir (AppendBatch → ShouldFollow).
+        _bottomAnchor.OnScrollChanged(extentHeightChange: 0);
 
         EvaluateChunkScroll(EditorControl.VerticalOffset); // [3b, DEĞİŞMEDİ] chunk loader — üstteki eşik ayrı kavram
+
+        // Prompt AYNI olayda taşınır. Konumu belgenin son satırından gelir; kaydırma o satırı yukarı iterken
+        // imleç eski yerinde kalsaydı — bir tık tekerlek çevirmek yetiyordu — bir kare boyunca metnin ÜSTÜNE
+        // biner, ancak bir sonraki görsel-satır olayında düzelirdi. Sahada görülen anlık bindirme buydu.
+        RefreshPrompt();
     }
 
     // [T59] Pill tıklaması → yumuşak (reduced-motion'da anında) dibe.
@@ -518,6 +710,16 @@ public partial class ConsoleView : UserControl
     /// <summary>[E3/T36 reduced-motion kapsama] İdle "ready" / aktif-satır imleci — blink'in DURDUĞUNU
     /// (<c>HasAnimatedProperties==false</c>) reduced-motion'da doğrulamak için.</summary>
     internal System.Windows.UIElement ActiveCursorGlyph => ActiveCursor;
+
+    /// <summary>[Test] Panel geçişinin (tilt in) uygulandığı log bloğu — prompt satırı bunun DIŞINDADIR.</summary>
+    internal FrameworkElement TiltHost => PART_TiltHost;
+
+    /// <summary>[Test] Geçiş boyunca log bloğunun yerini alan 3B katman.</summary>
+    internal Viewport3D Tilt3D => PART_Tilt3D;
+
+    /// <summary>[Test] Dibe çekme yetkisi (<see cref="BottomAnchorBehavior.ShouldFollow"/>) — kullanıcı
+    /// kaydırdığında kapanır, bekleme dolunca geri açılır.</summary>
+    internal bool FollowsBottom => _bottomAnchor.ShouldFollow;
 
     /// <summary>[A13/T1 fix-1 · I-C · <see cref="Views.EventStreamView.ActiveLineInstant"/> ikizi] En yeni satır
     /// için SON kurulan daktilo zamanlayıcısı instant mı — yani üretim append yolu satırı harf harf mi yazıyor,

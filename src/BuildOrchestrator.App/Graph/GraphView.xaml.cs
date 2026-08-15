@@ -339,7 +339,7 @@ public partial class GraphView : UserControl
         {
             if (ReferenceEquals(_filterMatches, value)) return;
             _filterMatches = value;
-            ApplyAllOpacities();
+            ApplyAllOpacities(GraphNodeOpacity.FilterFadeMs); // kullanıcı hareketi — koşu tikinden uzun
         }
     }
 
@@ -355,6 +355,8 @@ public partial class GraphView : UserControl
             if (_runPhase == value) return;
             _runPhase = value;
             ApplyAllOpacities();
+            // Koşuya GİRİŞ: önce sönme oynasın, görünüm değişimi arkasına alınsın (HoldStatusesUntilDimmed).
+            if (value == GraphRunPhase.Running) HoldStatusesUntilDimmed();
         }
     }
 
@@ -403,7 +405,51 @@ public partial class GraphView : UserControl
         ArgumentNullException.ThrowIfNull(nodes);
 
         if (!IsPanelVisible) { _pendingStatuses = nodes; return; }
+        // Koşuya girerken graf ÖNCE söner, görünüm SONRA değişir (aşağıdaki alanın doc'u).
+        if (_dimFirst is not null) { _pendingStatuses = nodes; return; }
         ApplyStatuses(nodes);
+    }
+
+    /// <summary>
+    /// Koşu başlarken görünüm değişimini SÖNMENİN ARKASINA alan tek atımlık zamanlayıcı; boştayken
+    /// <c>null</c>.
+    ///
+    /// <para><b>Neden:</b> Build'e basıldığı an iki şey birden oluyordu — graf soluklaşmaya başlıyor
+    /// (280 ms) ve aynı karede derlenecek düğümlerin kesikli çerçevesi düz çerçeveye dönüyordu (renk/çerçeve
+    /// değişimleri ANINDA uygulanır, ölçülmüş sapma). Değişim tam parlaklıkta görüldüğü, sönme ise sonra
+    /// geldiği için ekran "önce derlenecekler belirdi, sonra hepsi söndü" diyordu. Kullanıcının istediği
+    /// sıra: önce topluca sön, sonra görünüm değişsin, sonra derleme başlasın.</para>
+    ///
+    /// <para>Bekleme boyunca gelen statüler <see cref="_pendingStatuses"/>'a düşer (panel gizliyken kullanılan
+    /// AYNI kanal) ve yalnız SONUNCUSU uygulanır — ara durumlar zaten görülmezdi. Planlama saniyeler sürdüğü
+    /// için pratikte bekleme bittiğinde henüz hiçbir proje derlenmeye başlamamış olur.</para>
+    /// </summary>
+    private DispatcherTimer? _dimFirst;
+
+    /// <summary>Sönme süresi kadar bekleyip biriken statüyü uygular. Koşudan çıkışta beklenmez: bitişte
+    /// zaten her şey tam opağa döner ve saklanacak bir şey yoktur.</summary>
+    private void HoldStatusesUntilDimmed()
+    {
+        _dimFirst?.Stop();
+        if (!AnimationsEnabledProvider()) { _dimFirst = null; return; } // reduced-motion: sönme anlık, bekleme anlamsız
+
+        var timer = new DispatcherTimer(DispatcherPriority.Normal)
+        {
+            Interval = TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs),
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();                       // tek atımlık — dispatcher onu köklüyor
+            if (!ReferenceEquals(_dimFirst, timer)) return; // eskimiş kuşak
+            _dimFirst = null;
+            if (_pendingStatuses is { } queued && IsPanelVisible)
+            {
+                _pendingStatuses = null;
+                ApplyStatuses(queued);
+            }
+        };
+        _dimFirst = timer;
+        timer.Start();
     }
 
     /// <summary>Görünürlük DEĞİŞİMİNİ yakalamanın headless'ta da çalışan TEK yolu. <c>IsVisible</c> ve
@@ -710,11 +756,17 @@ public partial class GraphView : UserControl
         //   aksi hâlde   → plan (amber = derlenecek · gri = güncel)
         // Kart noktasıyla ayrışması bilinçlidir: dolgu iş bitene kadar planı söyler; bitince grafta SONUCA
         // döner, kartta griye düşer.
+        // [DEĞİŞEN KURAL] Kuyruktaki düğüm ARTIK plan rengini korur. Eskiden Queued da statü rengini (gri)
+        // alıyordu ve bunun bedeli basış anında görülüyordu: Sync'ten sonra derlenecek düğümlerin küpü amber
+        // durur, Build'e basılınca statü Queued'a geçip küp ANINDA griye döner (renk geçişi yoktur) —
+        // ekrandaki tek renkli şey aynı anda kaybolduğu için "derlenecekler bir yanıp söndü" gibi okunuyordu.
+        // Kuyrukta olmak bir SONUÇ değildir; çekirdek hâlâ "bu proje derlenecek" der ve amber kalır, düğümün
+        // tamamı da herkesle birlikte tek seferde söner.
         iconColor = visual.Model.InCycle ? "Brush.StatusCycle"
             : visual.Model.Status switch
             {
                 GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Skipped => iconColor,
-                GraphStatus.Building or GraphStatus.Queued => iconColor,
+                GraphStatus.Building => iconColor,
                 _ => visual.Model.WillBuild switch
                 {
                     true => "Brush.DotDirty",
@@ -1104,10 +1156,10 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- koşu yaşam döngüsü (opaklık)
 
-    private void ApplyAllOpacities()
+    private void ApplyAllOpacities(double? glideMs = null)
     {
         foreach (var slot in _slotOrder)
-            ApplyNodeOpacity(slot.Visual, holdMs: 0);
+            ApplyNodeOpacity(slot.Visual, holdMs: 0, glideMs);
     }
 
     /// <summary>
@@ -1125,7 +1177,9 @@ public partial class GraphView : UserControl
     /// ÇIKARMASI gerekir, yoksa hiç parlamadan söner.</para>
     /// </summary>
     /// <param name="holdMs">Sonuç renginde PARLAK bekleme; 0 = bekleme yok (düz 280ms geçiş).</param>
-    private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs)
+    /// <param name="glideMs">Beklemesiz geçişin süresi; <c>null</c> = <see cref="GraphNodeOpacity.GlideMs"/>.
+    /// Yalnız filtre bunu ezer (<see cref="GraphNodeOpacity.FilterFadeMs"/>) — gerekçe orada.</param>
+    private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs, double? glideMs = null)
     {
         double target = GraphNodeOpacity.Resolve(
             visual.Model.Status,
@@ -1162,7 +1216,7 @@ public partial class GraphView : UserControl
         else
         {
             animation = MotionTokens.SplineTo(
-                target, TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs), EaseStandard);
+                target, TimeSpan.FromMilliseconds(glideMs ?? GraphNodeOpacity.GlideMs), EaseStandard);
         }
 
         visual.OpacityAnimation = animation;

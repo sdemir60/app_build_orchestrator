@@ -130,13 +130,19 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// AYNI ŞEY DEĞİLDİR</b>: bir SCC'nin üyeleri tek tek invoke edilir ve ara tur sonuçları yayılmadığı için
     /// grup bitene kadar HEPSİ Started'ta kalır (bkz. <see cref="CycleWaiting"/>).
     ///
-    /// <para>Predicate TEK yerdedir ve BEŞ yüzey onu okur: <see cref="Status"/>'un Building dalı,
-    /// <see cref="RunCounters"/>'ın Building kovası, sticky şeridin building chip'leri, kartın nefes katmanı ve
-    /// canlı süre sütunu (<c>ProjectRow.ApplyBreathing</c>/<c>ApplyDuration</c>). Yüzeyler ayrı yazıldığında
+    /// <para>Predicate TEK yerdedir ve ALTI yüzey onu okur: <see cref="Status"/>'un Building dalı,
+    /// <see cref="RunCounters"/>'ın Building kovası, sticky şeridin building chip'leri, kartın nefes katmanı,
+    /// canlı süre sütunu (<c>ProjectRow.ApplyBreathing</c>/<c>ApplyDuration</c>) ve listenin frontier takibi
+    /// (<c>MainWindow.FollowFrontier</c>). Yüzeyler ayrı yazıldığında
     /// sessizce ayrıştılar ve ölçüldü: 15 üyeli bir grupta listede 15 spinner, şeritte 4 chip + "+11", sayaçta
     /// "1 building" — aynı anda; sonra da bekleyen üye saat gösterirken nefes alıp süre sayıyordu. Yeni bir
     /// tüketici de buradan okumalıdır.</para></summary>
     public bool IsCompiling => State == ProjectRowState.Started && !CycleWaiting;
+
+    /// <summary>[design v1.7.0 §2.4] Bu satırın döngüsünün YOLU (<c>A → B → C → A</c>) — üye değilse boş.
+    /// Metin <see cref="CycleText.Path"/>'ten gelir ve satıra topolojiyle birlikte itilir; nokta ile uyarı
+    /// üçgeni onu buradan okur (iki yüzey kendi yolunu KURMAZ).</summary>
+    [ObservableProperty] private string _cyclePath = "";
 
     /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
     /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
@@ -946,6 +952,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled); break;
             case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues); break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
+            case CycleCompletedEvent e: OnCycleCompleted(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;
             case RunStoppedEvent: OnRunStopped(); break;
             case ErrorEvent e: OnError(e); break;
@@ -1051,6 +1058,28 @@ public sealed partial class RunViewModel : ObservableObject
         row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         _projectStartedAtMs.Remove(e.ProjectId);
         UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
+        RefreshRunSurface();
+    }
+
+    /// <summary>
+    /// [cycles] Bir SCC turlarını bitirdi. Grup YAKINSAMADIYSA üyeleri "kalıcı kırık döngü" olarak işaretlenir:
+    /// bu koşu kanıtladı ki turlar bu kaynaklarla grubu güncel hâle getiremiyor.
+    ///
+    /// <para>Bayrağın kaynağı DEĞİŞTİ. Eskiden motor, önceki bir koşuda yakınsamamış grubu hiç denemeden
+    /// pre-skip eder ve bayrağı o skip'e iliştirirdi; o pre-skip kalktığı için (açık Resolve basışı artık her
+    /// zaman taze bir deneme yapar) bayrağın tek üreticisi de kalkmıştı. Yeni kaynak daha dürüst: hatırlanan
+    /// bir geçmiş değil, ŞU koşunun kanıtı — ve kullanıcı bunu düğmeye ikinci kez basmadan, tam da denemenin
+    /// bittiği koşuda görür.</para>
+    ///
+    /// <para>Sıra güvenlidir: motor önce üye sonuçlarını, sonra bu olayı yayınlar — yani
+    /// <see cref="OnProjectDone"/>'ın bayrağı temizleyen satırı bundan ÖNCE koşar.</para>
+    /// </summary>
+    private void OnCycleCompleted(CycleCompletedEvent e)
+    {
+        if (e.Outcome != CycleOutcome.NoProgress) return;
+        foreach (string member in _cycleGroups?.MembersOf(e.ProjectId) ?? [e.ProjectId])
+            if (Projects.FirstOrDefault(p => string.Equals(p.Id, member, StringComparison.OrdinalIgnoreCase)) is { } row)
+                row.CycleUnconverged = true;
         RefreshRunSurface();
     }
 

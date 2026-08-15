@@ -40,8 +40,10 @@ public partial class ProjectRow : UserControl
     // "Failed dependency: …" metni ApplyDep içinde kalır (adlar interpolasyonlu, tek kullanım yeri zaten oradaydı).
     private const string CycleUnsettledTooltip =
         "Cycle did not fully settle — output may be one generation stale";
+    // "Bir daha denenmez" DEMEZ: açık bir Resolve basışı grubu her zaman yeniden dener (motor yakınsamama
+    // hafızasını bir kapı olarak değil, bir not olarak kullanır). Söylediği şey bu koşunun KANITIDIR.
     private const string CycleUnconvergedTooltip =
-        "Cycle did not build — not retried until the source changes";
+        "Cycle did not converge — its projects are still out of date";
     // [cycles] Sıradan üyelik: satır bu koşuda GERÇEK bir sonuç aldığı için statü glyph'i artık döngüyü değil
     // sonucu gösterir; yapısal olgu bu rozete taşınır. Yukarıdaki iki metinden farkı, hiçbir şey İDDİA
     // ETMEMESİDİR — ne çıktının bayat olduğunu ne bir daha denenmeyeceğini söyler, yalnız yeri tarif eder.
@@ -214,12 +216,12 @@ public partial class ProjectRow : UserControl
                 ApplyDuration();
                 break;
             case nameof(ProjectRowViewModel.InCycle):
+            case nameof(ProjectRowViewModel.CyclePath): // [cycles] yol tooltip'in ikinci satırıdır
+                ApplyDot();
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
-                PART_Dot.State = _vm?.WillBuild;
-        PART_Dot.InCycle = _vm?.InCycle ?? false;
-                PART_Dot.InCycle = _vm?.InCycle ?? false;
+                ApplyDot();
                 ApplyRightBlock();
                 // Not: WillBuild, Status'u (queued) da tetikler → şerit/glyph Status case'inde tazelenir.
                 break;
@@ -258,8 +260,7 @@ public partial class ProjectRow : UserControl
         // bir şey söylemez). Ad, satır VM'inden gelir (İngilizce proje adı).
         System.Windows.Automation.AutomationProperties.SetName(this, _vm?.Name ?? "");
         PART_Sln.Text = _vm?.SolutionName;
-        PART_Dot.State = _vm?.WillBuild;
-        PART_Dot.InCycle = _vm?.InCycle ?? false;
+        ApplyDot();
         ApplyStatusVisuals(); // glyph/ad-rengi/şerit/tooltip (Status'tan)
         ApplyBreathing();     // building nabzı (State'ten) — ilk kurulumda shake YOK (_prevState taze)
         ApplyDep();
@@ -354,6 +355,15 @@ public partial class ProjectRow : UserControl
     /// </list>
     /// Statü glyph'i bundan ETKİLENMEZ: o daima gerçek statüyü gösterir, uyarı onun yerine asla geçmez.
     /// </summary>
+    /// <summary>Noktanın (B/C kanalı) TEK yazıcısı: plan durumu, döngü üyeliği ve döngü yolu birlikte
+    /// sürülür — üçü ayrı yerlerden yazıldığında biri güncellenmeden kalabiliyordu.</summary>
+    private void ApplyDot()
+    {
+        PART_Dot.State = _vm?.WillBuild;
+        PART_Dot.InCycle = _vm?.InCycle ?? false;
+        PART_Dot.CyclePath = _vm?.CyclePath ?? "";
+    }
+
     private void ApplyDep()
     {
         bool building = _vm?.IsCompiling ?? false;
@@ -375,6 +385,9 @@ public partial class ProjectRow : UserControl
         if (cycleUnconverged) reasons.Add(CycleUnconvergedTooltip);
         else if (cycleUnsettled) reasons.Add(CycleUnsettledTooltip);
         else if (inCycle) reasons.Add(CycleMembershipTooltip);
+        // [design v1.7.0 §2.4-6/§5] Nedenin ARDINDAN döngünün yolu: üçgen tek başına "bir şey ters" diyor,
+        // yol hangi projelerin birbirini beklediğini söylüyor. Yolu bu satır KURMAZ (CycleText.Path).
+        if (inCycle && _vm?.CyclePath is { Length: > 0 } path) reasons.Add(path);
         if (hasDepIssue && _vm?.DepIssues is { } issues)
         {
             // Kısa adlar (veri-türevli ortak önek atılmış — D5); önek satıra RunViewModel'den itilir.

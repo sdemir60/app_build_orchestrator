@@ -1,4 +1,8 @@
-<FontFamily xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<!-- Kök namespace CompositeFont'a ÖZELDİR (presentation DEĞİL): WPF composite dosyasını yalnız bu ad
+     alanıyla parse eder, presentation ile yazılırsa kök elemanda FileFormatException verip dosyayı TAMAMEN
+     reddeder — aile hiç çözülmez ve konsol sessizce orantılı bir sistem fontuna düşer. Referans:
+     C:\Windows\Fonts\GlobalMonospace.CompositeFont. Guard: CompositeFontTests. -->
+<FontFamily xmlns="http://schemas.microsoft.com/winfx/2006/xaml/composite-font"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             xmlns:sys="clr-namespace:System;assembly=mscorlib"
             Baseline="1.005" LineSpacing="1.55">
