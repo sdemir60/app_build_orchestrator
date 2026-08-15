@@ -129,6 +129,12 @@ the running instance first — tray icon → Exit).
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. Until it
    has run, *Build*, *Rebuild* and *Resolve cycles* are disabled: a run before the first Sync would compile for
    real while the list and the graph stayed empty.
+
+   Every project marked amber in the list is amber in the graph too — the dot and the node's cube read the
+   same plan. Hover the dot and it tells you *why* it will build: never built, the last build failed, it was
+   built against a failed dependency, or its source changed. That last distinction is worth knowing, because
+   the commit pair beside it answers a different question: the dot is about the source signature, the pair is
+   about commits, and a project can be dirty while its commit has not moved at all.
 3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
    in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
