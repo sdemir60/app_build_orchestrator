@@ -522,10 +522,29 @@ Sync, therefore always describe a `Build`.
 
 During a run the dot is live: the moment a project succeeds, its dot turns grey.
 
+**The dot also says why.** The evaluator decides in one place and returns its reason alongside the verdict —
+never built, last build failed, built against a failed dependency, or the signature changed — and that reason
+rides the preview to the row's tooltip. It exists because the card puts the dot next to the commit pair, and
+the two answer different questions: the dot is about the signature, the pair is about commits. Side by side
+they read as one channel, so "the commit is the same, why will it build?" had no answer on any surface. Two
+states carry no reason and fall back to the generic text: hollow, and a cycle member outside the run's scope —
+there the membership channel is already speaking. The coordinator's own pre-skips drop the reason too, since
+that verdict comes from a run-scheduling rule rather than from the signature, and a preview must not lie.
+
+**Both the dot and the graph node read the same plan.** The graph is fed from three signals, not two: a
+topology change rebuilds it, a status tick repaints it, and a preview — the plan channel — repaints it as
+well. The third one used to be missing, and it mattered because the engine emits the topology *before* the
+preview: at the moment the graph was built the rows did not know the plan yet, so the cubes stayed neutral
+while the list already showed amber. The counters tuple cannot carry that signal, because it never reads
+`WillBuild` and its value is unchanged by a preview. For the same reason the binder falls back to the
+topology's own `WillBuild` when a row has none — the mirror of what membership has always done.
+
 ### 7.5 Build state
 
-`build-state.json` is **global**, keyed by project id (the full csproj path), holding the built signature, the
-built commit, the last result, the last run timestamp, the last branch, the last duration and the signature at
+`build-state.json` is **global**, keyed by project id (the full csproj path — the *logical* identity, so a
+worktree build writes the same keys an in-place one does, §8.6), holding the built signature, the built
+commit, the last result, the last run timestamp, the last branch, the last duration, a flag marking that this
+success was linked against a failed dependency (§8.3) and the signature at
 which this project's cycle last failed to converge (§8.8). That last field is deliberately *not* folded into
 the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a
 frozen upstream baseline — a signature that was never built would be taken for a clean one. It is written by
@@ -554,8 +573,8 @@ and is meant to be run before a build, not instead of one.
 separate command: in both cases the user presses *Build* again, and the incremental decision produces exactly
 the set the old modes produced. Projects that finished green persisted their signature and are skipped as up
 to date; projects that were killed or failed had their stored state invalidated (§7.5) and stay dirty; the
-dependents of a failure succeeded carrying a dependency issue, so their signature was never persisted (§7.6)
-and they come along too. The one deliberate difference is the elapsed clock: the new run counts from zero,
+dependents of a failure succeeded carrying a dependency issue, so their record is flagged (§8.3) and they come
+along too. The one deliberate difference is the elapsed clock: the new run counts from zero,
 because it is a new run.
 
 The projects that fall out of scope this way are not announced one at a time in the event stream — a
@@ -639,6 +658,17 @@ loses to all three. Membership also names the loop itself: the tooltip's second 
 cycle rather than a chain. The dot carries the same two lines, and the ribbon's cycle cluster carries one line
 per cycle; all of them compose from a single place, so no surface can drift into its own wording.
 
+**Such a success is recorded, with a note.** It is written to the build state like any other success, but
+flagged, and the evaluator turns that flag into "will build" until the dependency is fixed (§7.4). The set of
+projects that rebuild is exactly what it always was; what changed is that the ledger now moves. The rule used
+to be *don't record it at all*, on the reasoning that a fresh signature would let the project be skipped
+forever if the failed dependency recovered without a source change. The reasoning was right and it is still
+enforced — just one layer later. What was wrong was the cost: `depIssues` are inherited down the whole chain,
+so a handful of real failures poisons the graph and nothing gets recorded. Measured on a real run:
+74 succeeded, 24 failed, 96 carrying a dependency issue — and not one of the 74 was written. Incremental
+building was effectively off, every Sync said "everything will build", and the cards' commit pairs stayed
+frozen at whatever they were the last time the repository was fully green.
+
 ### 8.4 ETA
 
 `(sum of duration estimates for queued projects + remaining time of in-flight projects) / parallelism`, plus
@@ -677,9 +707,27 @@ Planning is entirely Core's work; the Supervisor's composition root only wires i
 prepare workspace (in-place or worktree)          ← must be first: the scan and the signature
   → scan (once) → evaluate (cached) → producer map    must see the same resolved root
   → edges → solution map → topological order → BuildPlan
+  → rebase identities onto the main root          ← before the signature, not after
   → (Build only) incremental pass: per-project signature + willBuild
-  → RunPlan { plan, solutionRefs, incremental }
+  → RunPlan { plan, solutionRefs, incremental, buildPathById }
 ```
+
+**Identity is logical; the path is physical.** A project's id in this codebase is its full csproj path, so a
+build of another branch — which scans a pool worktree — would give the same project a completely different
+identity. Three things broke on that: the signature's upstream term hashes dependency ids, so every project
+with a dependency drifted; build state was written under worktree keys and the next in-place Sync could not
+find any of it, so a single worktree build made everything look dirty again; and the run's preview carried
+worktree ids, which produced duplicate rows in the App's list. So the plan's identities — node ids, project
+paths, dependencies, cycle members, the solution map's *keys* and the evaluation map — are rebased onto the
+main repository root as soon as the plan exists, and a `buildPathById` map remembers where each project
+really lives. Solution *values* stay in the worktree: the resolver has to find the real `.sln` on disk.
+
+The ordering is the point. Rebasing after the incremental pass would have left the signatures computed from
+worktree paths, so the fix had to happen before it — and because it does, the signature format never had to
+change: the same tree produces the same signature from either root, and stored signatures stay valid. From
+there on, everything flows by identity — the scheduler, events, the preview, persistence, `decision.log`, log
+file naming. The single place that converts an identity back into a physical path is the MSBuild invocation.
+In-place runs are a no-op: identity already *is* the path.
 
 Two details that are easy to get wrong and are pinned:
 
@@ -2415,7 +2463,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Signature computation | `Core/Incremental/BuildSignature.cs` |
 | Propagation, Safe/Fast, SCC composite hash, committed fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
 | Path normalization glue for the fingerprint | `Core/Incremental/IncrementalRunBinder.cs` |
-| Will-build tri-state decision | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
+| Will-build tri-state decision and its reason | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
+| Worktree → main-root identity rebase | `Core/Planning/ProjectIdentityRebase.cs` |
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
 | Build state store, duration persistence, non-convergence lookup | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
 

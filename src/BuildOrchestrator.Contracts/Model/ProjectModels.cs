@@ -24,7 +24,10 @@ public sealed record ProjectNode(
     int? LayerIndex,
     string? LayerName,
     bool InCycle,
-    bool? WillBuild)                        // T53: dirty=true, güncel=false, imza-yok/pre-Sync=null
+    bool? WillBuild,                        // T53: dirty=true, güncel=false, imza-yok/pre-Sync=null
+    // WillBuild'in GEREKÇESİ (kullanıcıya gösterilir). Alan SONA ve default'lu: eski NDJSON/plan üreticileri
+    // onu yazmaz ve null olarak çözülür — o hâlde yüzey jenerik metne düşer.
+    WillBuildReason? WillBuildReason = null)
 {
     // Derleyicinin ürettiği record eşitliği, IReadOnlyList<string> alanlarında EqualityComparer<T>.Default
     // kullanır; List<string> Equals'ı override etmediği için bu referans eşitliğine düşer (JSON round-trip
@@ -40,7 +43,8 @@ public sealed record ProjectNode(
         && LayerIndex == other.LayerIndex
         && LayerName == other.LayerName
         && InCycle == other.InCycle
-        && WillBuild == other.WillBuild;
+        && WillBuild == other.WillBuild
+        && WillBuildReason == other.WillBuildReason;
 
     public override int GetHashCode()
     {
@@ -78,6 +82,28 @@ public sealed record BuildPlan(
 /// ProjectNode.Name'e (AssemblyName türevi kısa ad) karşı denenir — Id (tam csproj yolu) değil.</summary>
 public sealed record LayerPattern(int Order, string Regex, string Name);
 
+/// <summary>
+/// Bir projenin NEDEN derleneceği (ya da derlenmeyeceği). Karar <c>WillBuildEvaluator</c>'da tek gövdede
+/// verilir; bu tip onu kullanıcıya taşır.
+///
+/// <para>Var olma sebebi: nokta (plan) ile kartın sha çifti (commit) AYRI kanallardır ve yan yana
+/// durduklarında "commit aynı ama neden derlenecek?" diye okunuyorlardı. Cevabı motor biliyordu ama IPC
+/// sınırında düşüyordu — <c>bool?</c> gerekçe taşımaz.</para>
+/// </summary>
+public enum WillBuildReason
+{
+    /// <summary>Derlenmeyecek: imza kayıtlı imzayla aynı ve son koşu temiz başarıydı.</summary>
+    UpToDate,
+    /// <summary>Bu araç bu projeyi hiç başarıyla derlemedi (kayıt yok).</summary>
+    NeverBuilt,
+    /// <summary>Son koşusu başarısız/yarıda kaldı — çıktısı "bilinen iyi" değil.</summary>
+    LastFailed,
+    /// <summary>Son başarısı BAŞARISIZ bir bağımlılığın çıktısına link'liydi (bkz. <c>BuildState.DepIssue</c>).</summary>
+    DepIssue,
+    /// <summary>Kaynak imzası değişti (kendi dosyaları ya da bir upstream'in imzası).</summary>
+    SignatureChanged,
+}
+
 public sealed record BuildState(
     string ProjectId,
     string? BuiltSignature,
@@ -94,7 +120,13 @@ public sealed record BuildState(
     // hiç derlenmemiş bir imzayı "temiz" sanır. Bu alan currentSignature ile eşleştiğinde (bkz.
     // BuildStateStore.IsCycleNonConvergent) grup bir daha turlarla DENENMEZ; gerçek bir tur kararına ulaşan
     // (Converged/CapReached) her koşu ise alanı temizler.
-    string? NonConvergentSignature = null);
+    string? NonConvergentSignature = null,
+    // Bu başarı BAŞARISIZ bir bağımlılığın çıktısına link'liydi. Kayıt yine de yazılır (aksi hâlde defter
+    // hiç ilerlemez — bir koşuda 74 başarının 0'ı yazıldığı ölçüldü) ama not projeyi derleme listesinde
+    // tutar: WillBuildEvaluator bunu görünce bağımlılık düzelene kadar "derlenecek" der. LastResult
+    // Succeeded KALIR — derleme gerçekten başarılıydı; bu ortogonal bir uyarıdır, sonucun kendisi değil.
+    // Alan SONA ve default'lu eklendi: eski build-state.json kayıtları alansızdır ve false olarak çözülür.
+    bool DepIssue = false);
 
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);

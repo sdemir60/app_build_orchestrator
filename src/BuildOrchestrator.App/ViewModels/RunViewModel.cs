@@ -96,6 +96,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(Status))]
     private bool? _willBuild;
 
+    /// <summary><see cref="WillBuild"/>'in GEREKÇESİ — will-build noktasının tooltip'i bunu söyler.
+    /// <see cref="BuildPreviewEvent"/> ile gelir; bilinmiyorsa null (yüzey jenerik metne düşer).</summary>
+    [ObservableProperty] private WillBuildReason? _willBuildReason;
+
     /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
     /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
     /// doğrudan taşınır.</summary>
@@ -284,9 +288,23 @@ public sealed partial class RunViewModel : ObservableObject
     // [D2/T38] Sticky şeridin "wb/fin/allClean"i için SABİT willBuild kümesi: prototipte (BuildApp.jsx) willBuild
     // koşu boyunca değişmez (eng.willBuild). VM'de satırların WillBuild bayrağı succeeded olunca false'a döndüğü
     // için CANLI sayılamaz — bu yüzden run başında BuildPreviewEvent'ten (WillBuild==true olanlar) DONDURULUR.
-    // NOT (wire gap): BuildPreviewEvent yalnız RUN başında gelir (RunCoordinator), Sync sonrası Idle'da GELMEZ —
-    // bu yüzden pre-build Idle'da bu küme boştur (allClean=true varsayılır). Bkz. task-D2-report.md.
+    // Küme her Sync başında temizlenir ve hemen ardından gelen BuildPreviewEvent'ten yeniden dolar: A5
+    // amendment'ından beri Sync DE önizleme yayınlar (SyncWorkspaceService), yalnız run başı değil. (Eski bir
+    // yorum burada "Sync sonrası GELMEZ" diyordu — bayattı ve grafın besleme boşluğunu araştırırken yanıltıcı
+    // oldu.)
     private readonly HashSet<string> _willBuildIds = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Bir <c>BuildPreviewEvent</c> uygulandı — plan kanalı (<see cref="ProjectRowViewModel.WillBuild"/>)
+    /// tazelendi.
+    ///
+    /// <para>Grafın buna ihtiyacı var ve <see cref="Counters"/> onu TAŞIYAMAZ: sayaç demeti bir
+    /// <c>readonly record struct</c>'tır, <see cref="RunCounters.From"/> <c>WillBuild</c>'i hiç okumaz ve
+    /// önizleme sonrası değeri birebir aynı kaldığı için <c>PropertyChanged</c> yutulur — graf hiç
+    /// uyarılmazdı. Sayaç kanalını "plan da değişti" diye genişletmek de yanlış olurdu: iki proje ters yönde
+    /// takas ettiğinde (biri temizlendi, biri kirlendi) sayı yine aynı kalır. Bu yüzden AÇIK bir sinyal.</para>
+    /// </summary>
+    public event EventHandler? BuildPreviewApplied;
 
     /// <summary>[Fix wave 1, Finding 2 regression testi] YALNIZ testler için: <see cref="OnProjectLogChunk"/>
     /// dikiş kilidinden çıkar çıkmaz (kilit ne zaman kapansa, kapandığı ANDA) senkron tetiklenir. Üretimde
@@ -1026,8 +1044,10 @@ public sealed partial class RunViewModel : ObservableObject
             row.CurrentSha = item.BuiltCommit;
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
+            row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
         }
         RefreshRunSurface();
+        BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // graf plan kanalını buradan öğrenir
     }
 
     /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —

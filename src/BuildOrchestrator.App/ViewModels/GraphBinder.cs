@@ -44,7 +44,11 @@ public static class GraphBinder
             // [Task 5] Üyelik de StatusOf'un savunmacı dalıyla AYNI desen: satır varsa TEK otorite (row.InCycle),
             // yoksa (topoloji düğümünün henüz satırı yok) topolojinin kendi bayrağı.
             bool inCycle = row?.InCycle ?? node.InCycle;
-            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, inCycle, row?.WillBuild));
+            // Plan kanalı da AYNI desenle topolojiye düşer. Sync'te topoloji önizlemeden ÖNCE gelir ve graf o
+            // anda kurulur; satırlar planı henüz almadığı için burası eskiden null geçiyor ve küpler nötr
+            // çiziliyordu — oysa topoloji düğümü değeri zaten taşır.
+            bool? willBuild = row?.WillBuild ?? node.WillBuild;
+            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, inCycle, willBuild));
         }
         return result;
     }

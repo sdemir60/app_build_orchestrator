@@ -1155,14 +1155,27 @@ public class RunCoordinatorTests
     internal static IncrementalPlan Incremental(params string[] names) =>
         new(names.ToDictionary(Id, _ => "sig", StringComparer.OrdinalIgnoreCase), "headsha", "main");
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Bağımlılığı başarısız olan bir başarı deftere <b>DepIssue notuyla YAZILIR</b>.
+    ///
+    /// <para><b>Eski iddia (A2):</b> böyle bir başarı deftere HİÇ yazılmazdı. Gerekçe doğruydu — Down, Up'ın
+    /// bayat çıktısına link'lidir ve taze imza yazılırsa Up kaynak değişmeden düzeldiğinde (zehirli obj
+    /// temizliği sınıfı) Down sonsuza dek bayat binary'e link'li kalır.</para>
+    ///
+    /// <para><b>Değişme gerekçesi (sahada ölçüldü):</b> kural, defterin ilerlemesini TAMAMEN durduruyordu.
+    /// Gerçek bir OSYS koşusunda <c>succeeded=74 failed=24 depIssues=96</c> ölçüldü ve 74 başarının
+    /// <b>sıfırı</b> yazıldı — depIssue zincir boyunca miras alındığı için birkaç hata tüm grafı zehirliyor,
+    /// incremental derleme fiilen devre dışı kalıyor ve her Sync "hepsi derlenecek" diyordu.</para>
+    ///
+    /// <para>Güvenlik kaybolmadı, YER DEĞİŞTİRDİ: kayıt <c>DepIssue=true</c> notu taşır ve
+    /// <see cref="WillBuildEvaluator"/> bu notu görünce projeyi yine derleme listesinde tutar
+    /// (bkz. <c>WillBuildTests.true_when_the_last_success_was_built_against_a_failed_dependency</c>).
+    /// Yeniden derlenecek KÜME bugünküyle birebir aynıdır; değişen tek şey defterin ve kartın gerçeği
+    /// söylemesi (sha çifti artık ilerler).</para>
+    /// </summary>
     [Fact]
-    public async Task A_success_carrying_a_dep_issue_does_not_persist_build_state()
+    public async Task A_success_carrying_a_dep_issue_is_persisted_with_the_dep_issue_flag()
     {
-        // [A2] Up fail eder, Down (Up'a bağımlı) BAŞARILI olur → Down depIssue taşır, yani Up'ın BAYAT (önceki)
-        // çıktısına link'lidir. Böyle bir success için taze imza persist edilirse, Up kaynak DEĞİŞMEDEN
-        // düzeldiğinde (zehirli obj temizliği sınıfı) Down'ın imzası da değişmez → sonraki Build onu "güncel"
-        // sayıp pre-skip eder ve Down sonsuza dek bayat binary'e link'li kalır. Solo kontrol grubudur:
-        // depIssue TAŞIMAYAN bir success persist edilmeye devam etmeli (aksi halde test önemsizce geçerdi).
         string cacheRoot = NewCacheRoot();
         try
         {
@@ -1183,10 +1196,51 @@ public class RunCoordinatorTests
             var down = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "Down");
             Assert.Equal(["Up"], down.DepIssues); // sanity: Down gerçekten depIssue taşıyan bir success
 
-            Assert.DoesNotContain(store.Load().Values, s => s.ProjectId == Id("Down"));
-            Assert.Contains(store.Load().Values, s => s.ProjectId == Id("Solo")); // temiz success persist EDİLİR
+            var state = store.Load();
+            var downState = Assert.Contains(Id("Down"), state);
+            Assert.True(downState.DepIssue, "depIssue taşıyan başarı NOTLA yazılmalı");
+            Assert.Equal("sig", downState.BuiltSignature);  // taze imza yazıldı
+            Assert.Equal("headsha", downState.BuiltCommit); // sha çifti artık ilerler
+
+            var soloState = Assert.Contains(Id("Solo"), state); // temiz success — kontrol grubu
+            Assert.False(soloState.DepIssue);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+
+    /// <summary>
+    /// AYIRT EDİCİ — worktree koşusunda <b>App'e giden her şey ANA KÖK kimliğini taşır; yalnız MSBuild
+    /// worktree'deki dosyayı açar.</b>
+    ///
+    /// <para>Kimlik bu kod tabanında tam csproj yoludur, dolayısıyla farklı bir branch'e build alındığında
+    /// tarama worktree'de yapılır ve aynı proje bambaşka bir kimlik kazanırdı. Sonuç: önizleme worktree
+    /// id'leriyle yayılıp App'te KOPYA satırlar üretiyor, build-state kayıtları worktree yoluyla yazılıp bir
+    /// sonraki in-place Sync tarafından bulunamıyordu. Kimlik artık planlamada ana köke taşınır
+    /// (<see cref="ProjectIdentityRebase"/>) ve fiziksel yol ayrı bir haritada durur.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_worktree_run_reports_main_root_identities_and_builds_the_worktree_file()
+    {
+        string mainId = Path.Combine(Path.GetTempPath(), "bo-main", "A", "A.csproj");
+        string treeId = Path.Combine(Path.GetTempPath(), "bo-tree", "A", "A.csproj");
+        var plan = new RunPlan(
+            new BuildPlan([Node("A") with { Id = mainId, ProjectPath = mainId }], Cycles: [], Configuration: "Debug"),
+            EmptyRefs(),
+            BuildPathById: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [mainId] = treeId });
+
+        string? invokedPath = null;
+        var invoker = new FakeInvoker((req, _, _) => { invokedPath = req.ProjectId; return Task.FromResult(Ok()); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(treeId, invokedPath);                                   // derlenen dosya worktree'de
+        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectStartedEvent>()).ProjectId);
+        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
+        Assert.All(h.Events.OfType<BuildPreviewEvent>().SelectMany(e => e.Items),
+            item => Assert.Equal(mainId, item.ProjectId));                   // App worktree yolunu HİÇ görmez
     }
 
     [Fact]

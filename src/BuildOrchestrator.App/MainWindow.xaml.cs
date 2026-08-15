@@ -163,6 +163,10 @@ public partial class MainWindow : Window
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
         // [D5] Aynı topoloji sinyalinde grafı da yeniden kur (SetGraph = tam yeniden inşa + reveal stagger).
         _vm.TopologyChanged += (_, _) => { RefreshProjectGroups(); RebuildGraph(); };
+        // [plan kanalı] Önizleme grafın ÜÇÜNCÜ besleme sinyalidir. Topoloji önizlemeden ÖNCE geldiği için
+        // SetGraph anında satırlar planı henüz bilmez; statü kanalı (Counters) ise WillBuild'i taşımaz ve
+        // record-struct eşitliğiyle bildirimi yutar. Bu abonelik olmadan Sync'ten sonra küpler nötr kalır.
+        _vm.BuildPreviewApplied += (_, _) => PushGraphStatuses();
         RefreshProjectGroups();
         RebuildGraph();
 

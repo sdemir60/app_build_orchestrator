@@ -308,6 +308,29 @@ public class IpcMessagesTests
         Assert.Equal("A", item.Name);
         Assert.True(item.WillBuild);
         Assert.Null(item.BuiltCommit);
+        Assert.Null(item.Reason); // gerekçe alanı da sonradan geldi — alansız satır jenerik metne düşer
+    }
+
+    /// <summary>Will-build GEREKÇESİ IPC sınırını geçer — kararın nedenini bilen tek yer motordur, gösteren
+    /// yer App'tir. Enum camelCase yazılır (IpcJson sözleşmesi) ve alansız eski satır hâlâ çözülür.</summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_will_build_reason_across_the_wire()
+    {
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true, null, WillBuildReason.DepIssue),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", false, null, WillBuildReason.UpToDate),
+            new BuildPreviewItem(@"C:\p\c.csproj", "C", false), // koşu-zamanlama pre-skip'i → gerekçe YOK
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Contains("\"reason\":\"depIssue\"", json, StringComparison.Ordinal);
+        Assert.Equal(2, json.Split("\"reason\"").Length - 1); // C için alan hiç yazılmadı
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.Equal(WillBuildReason.DepIssue, back.Items[0].Reason);
+        Assert.Null(back.Items[2].Reason);
     }
 
     [Fact]
