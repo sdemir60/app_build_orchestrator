@@ -66,12 +66,13 @@ public sealed partial class RunViewModel
     public int CycleMemberCount => _cycleMemberCount;
     private int _cycleMemberCount;
 
-    /// <summary>Stop istendi: motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ile cevap vermelidir —
-    /// sessizlik saati burada da kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe). Faz set eden
-    /// HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
+    /// <summary>Stop istendi (<see cref="AppPhase.Stopping"/>) ya da Sync başladı (<see cref="AppPhase.Syncing"/>):
+    /// motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ya da <c>syncCompleted</c> ile cevap
+    /// vermelidir — sessizlik saati burada kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe).
+    /// Faz set eden HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
     partial void OnPhaseChanged(AppPhase value)
     {
-        if (value == AppPhase.Stopping) ArmEngineWatchdog();
+        if (value is AppPhase.Stopping or AppPhase.Syncing) ArmEngineWatchdog();
     }
 
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
@@ -95,6 +96,26 @@ public sealed partial class RunViewModel
     /// <see cref="TryConsumeSyncFailure"/>. Faz (<see cref="Phase"/>) bu iş için yeterli DEĞİLDİR: sonraki UI
     /// task'ları koşan bir run'da fazı <c>Running</c>'e çekecek ve Syncing damgası kaybolacaktır.</summary>
     private bool _syncInFlight;
+
+    /// <summary>[Sync guard] Sync İSTENDİ ama motor henüz <c>syncStarted</c> ile cevap vermedi.
+    /// <see cref="RunViewModel.SyncAsync"/> bunu GÖNDERİMDEN ÖNCE kurar — <see cref="BeginRunAsync"/>'in
+    /// <see cref="IsStarting"/> deseninin birebir simetriği.
+    ///
+    /// <para><b>Neden <see cref="_syncInFlight"/> yetmiyor:</b> o bayrak yalnız <c>syncStarted</c> ile
+    /// kurulur, oysa tıklamanın gönderimi milisaniyeler içinde biter ve motor o sırada HENÜZ Sync'e
+    /// başlamamıştır (komut kuyrukta bekler). Aradaki pencerede düğme yeniden etkin görünüyordu: ikinci bir
+    /// basış motora ikinci bir TAM analiz (tarama + graf + topo + iki incremental geçiş) kuyruklatıyor,
+    /// konsolda aynı transkript iki kez akıyor ve şerit Syncing → Idle → Syncing yapıyordu.</para></summary>
+    private bool _syncRequested;
+
+    /// <summary>[Sync guard] Sync yüzeyi MEŞGUL mü: istek uçuşta (<see cref="_syncRequested"/>) YA DA
+    /// <c>syncStarted</c> görüldü (<see cref="_syncInFlight"/>). Sync/Rebuild/Build/Cycles kapılarının
+    /// TEK predicate'idir — soru dört yerde ayrı ayrı yazılmaz (kopya YASAK).</summary>
+    private bool SyncBusy => _syncRequested || _syncInFlight;
+
+    /// <summary>[Sync guard testi] YALNIZ testler için — <see cref="SyncInFlight"/> seam'inin ikizi: istek
+    /// penceresinin gözlemlenebilir hali (gönderimden önce kurulur, gönderim senkron düşerse geri açılır).</summary>
+    internal bool SyncRequested => _syncRequested;
 
     /// <summary>Branch envanteri. <see cref="SnapshotCollection{T}"/>: yayın başına EN ÇOK bir bildirim, içerik
     /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
@@ -173,8 +194,33 @@ public sealed partial class RunViewModel
         RunErrorMessage = null;
         Phase = AppPhase.Syncing;
         _willBuildIds.Clear(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
+        // [Sync guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. İkisi birden açık
+        // bırakılsaydı kapıyı kapatan iki ayrı bayrak olurdu ve biri sızdığında ötekinin temizlenmesi
+        // yetmezdi (SyncBusy tek predicate, ama bayrakların ömrü ayrık olmalı).
+        _syncRequested = false;
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[Sync guard] <see cref="SyncBusy"/>'nin değiştiği HER geçişte ona bağlı komutları TEK yerden
+    /// yeniden sorgulatır: CommunityToolkit'in <c>RelayCommand</c>'ı <c>CommandManager.RequerySuggested</c>'a
+    /// ABONE OLMAZ, yani bildirim elle gelmezse düğmeler gerçek pencerede stale (kalıcı pasif/aktif) kalır.
+    /// Çağrı yerleri: istek kurulumu/bırakılışı (<see cref="RunViewModel.SyncAsync"/>/
+    /// <see cref="ReleaseSyncRequest"/>), <see cref="OnSyncStarted"/>, <see cref="ReleaseSyncPhase"/> ve
+    /// <see cref="TryConsumeSyncFailure"/>. Liste burada tek yerde durur — her geçişte tek tek sayılmaz.</summary>
+    private void NotifySyncGatedCommands()
+    {
+        SyncCommand.NotifyCanExecuteChanged();
+        BuildCommand.NotifyCanExecuteChanged(); // [DEĞİŞEN KURAL] Build de Sync penceresinde bekler
         RebuildCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>[Sync guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde (motor hazır değil/ölü)
+    /// çağrılır — o yolda hiçbir <c>syncStarted</c> gelmeyeceği için kapı başka hiçbir yerde açılmazdı.</summary>
+    private void ReleaseSyncRequest()
+    {
+        _syncRequested = false;
+        NotifySyncGatedCommands();
     }
 
     /// <summary>[A5/T69] Sync bitti: hedef commit + degrade bayrağı kaydedilir, faz <c>Idle</c>'a geçer
@@ -196,11 +242,13 @@ public sealed partial class RunViewModel
     private void ReleaseSyncPhase()
     {
         _syncInFlight = false;
+        // [Sync guard] İstek bayrağı da bırakılır: motor Sync'e HİÇ başlayamadan ölmüş olabilir (istek
+        // penceresinde), o hâlde uçuş bayrağı hiç kurulmamıştır ve yalnız onu temizlemek kapıyı açmazdı.
+        _syncRequested = false;
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         // [Fix wave 1, C2 review Finding 1] OnSyncStarted'ın simetriği: hem normal syncCompleted hem
-        // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Rebuild/Cycles'ı tek yerden geri açar.
-        RebuildCommand.NotifyCanExecuteChanged();
-        BuildCyclesCommand.NotifyCanExecuteChanged();
+        // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Sync/Rebuild/Cycles'ı tek yerden geri açar.
+        NotifySyncGatedCommands();
     }
 
     /// <summary>
@@ -219,7 +267,9 @@ public sealed partial class RunViewModel
     /// (1) kod Sync'in üretebildiği bir kod (<see cref="SyncErrorCodes"/>; Sync'in TEK hata kanalı
     /// <c>planFailed</c>'dır — hem servisin girdi kapıları hem <c>SupervisorHost</c>'un catch-all'u onu yayınlar,
     /// bu yüzden ör. mid-run gelebilen <c>runFailed</c> ASLA Sync'e atfedilmez),
-    /// (2) uçuşta bir Sync var (<see cref="_syncInFlight"/>),
+    /// (2) uçuşta bir Sync var (<see cref="SyncBusy"/> — istek penceresi DAHİL: bir Sync <c>syncStarted</c>
+    /// yayınlamadan da düşebilir, ve o hâlde hata Sync'e atfedilmezse istek bayrağı sonsuza dek asılı
+    /// kalır, yani Sync düğmesi kalıcı pasifleşirdi),
     /// (3) run PLANLAMA penceresinde değil (<see cref="IsStarting"/> false). Run tarafında <c>planFailed</c>
     /// YALNIZCA o pencerede — <c>runStarted</c>'dan ÖNCE — üretilir (bkz. <c>RunCoordinator.ExecuteRunAsync</c>:
     /// planner çağrısı runStarted'dan öncedir), dolayısıyla pencere dışında gelen bir <c>planFailed</c>'ın
@@ -233,18 +283,18 @@ public sealed partial class RunViewModel
     /// </summary>
     private bool TryConsumeSyncFailure(string code, string message)
     {
-        if (!SyncErrorCodes.Contains(code) || !_syncInFlight) return false;
+        if (!SyncErrorCodes.Contains(code) || !SyncBusy) return false;
         // Faz her iki dalda da bırakılır: hata Sync'e aitse syncCompleted GELMEYECEK (asılı kalırdı); run'a
         // aitse uçuştaki Sync zaten kendi syncCompleted'ıyla fazı tazeleyecek.
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
+        _syncRequested = false;       // [Sync guard] istek penceresinde düşen Sync de kapıyı geri açar
         SyncErrorMessage = message;   // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)
-        // [re-review C2, Finding 4] OnSyncStarted'ın simetriği burada da gerekir: bu, _syncInFlight'ı false'a
-        // çeken 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
+        // [re-review C2, Finding 4] OnSyncStarted'ın simetriği burada da gerekir: bu, Sync yüzeyini serbest
+        // bırakan 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
         // kaçırmıştı, butonlar bir sonraki ilgisiz bildirime kadar stale-disabled kalıyordu.
-        RebuildCommand.NotifyCanExecuteChanged();
-        BuildCyclesCommand.NotifyCanExecuteChanged();
+        NotifySyncGatedCommands();
         return true;
     }
 

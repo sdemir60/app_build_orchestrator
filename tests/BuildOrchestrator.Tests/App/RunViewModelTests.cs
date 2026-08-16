@@ -45,6 +45,42 @@ public class RunViewModelTests
         Assert.Equal(ProjectRowState.Started, row.State);
     }
 
+    // ---------------------------------------------------------------- satır araması: proje Id'leri DOSYA YOLUDUR
+    //
+    // Windows'ta yol karşılaştırması harf-duyarsızdır ve bu dosyadaki her arama/sözlük zaten
+    // OrdinalIgnoreCase'dir — ama iki yer (OnProjectDone, EnsureRow) düz `==` ile kalmıştı. Bugün üretimde
+    // ayrışma gözlenmedi (worktree rebase'i kök önekini cmd.RootPath'ten, kuyruğu diskten aldığı için Sync
+    // ile Build aynı yazımı üretir), fakat ayrışırsa bedeli SESSİZDİR: tamamlanma satırı bulunamaz (savunmacı
+    // return) → satır sonsuza dek "building" kalır; EnsureRow ise aynı projeye ikinci bir satır açar. Kural
+    // artık tek helper'dadır (FindRow) — bu iki test onu iki uçtan pinler.
+
+    [Fact]
+    public async Task Project_completion_matches_the_row_case_insensitively()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\P\A.CSPROJ", 1200));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Succeeded, row.State); // "building"de asılı KALMAZ
+        Assert.Equal(1200, row.DurationMs);
+    }
+
+    [Fact]
+    public async Task A_differently_cased_id_does_not_create_a_duplicate_row()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\P\A.CSPROJ", SkipReasons.UpToDate));
+
+        var row = Assert.Single(vm.Projects); // kopya satır YOK
+        Assert.Equal(ProjectRowState.Skipped, row.State);
+    }
+
     [Fact]
     public async Task Selecting_a_project_flows_IsSelected_to_the_matching_row_and_toggles_off_on_repeat()
     {

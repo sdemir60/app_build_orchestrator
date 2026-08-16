@@ -619,14 +619,21 @@ public sealed partial class RunViewModel : ObservableObject
     // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
     private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
 
-    // [Fix wave 1, C2 review Finding 1] Rebuild/Cycles, Sync uçuştayken (_syncInFlight) EK OLARAK
-    // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,
-    // ama SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
-    // Build BİLEREK bu guard'a dahil DEĞİL (prototip doBuild'in kasıtlı asimetrisi, BuildApp.jsx:1194 —
-    // doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur).
-    private bool CanRebuildOrRetry() => CanStartRun() && !_syncInFlight;
+    // [Fix wave 1, C2 review Finding 1] Sync uçuştayken (bkz. SyncBusy) hiçbir run başlatılamaz: mid-Sync
+    // BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler, ama SyncProgressEvent
+    // hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
+    //
+    // [DEĞİŞEN KURAL] Build eskiden bu guard'ın DIŞINDAYDI — prototip doBuild'in kasıtlı asimetrisi
+    // (BuildApp.jsx:1194: doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur). Ölçülen bedel:
+    // Supervisor Sync boyunca komut döngüsünü BLOKLAR (SupervisorHost.SyncWorkspaceAsync), yani mid-Sync
+    // basılan Build kuyruğa girmekle kalmıyor, başkasının transkriptinin ORTASINA düşüyordu — konsol anında
+    // temizlenip "build requested" yazılıyor, ardından Sync'in kalan satırları AYNI dokümana akıyordu.
+    // Üç run komutu artık aynı kapıdan geçer; kapı Sync bitince tek yerden (NotifySyncGatedCommands) açılır.
+    private bool CanRebuildOrRetry() => CanStartRun() && !SyncBusy;
 
-    [RelayCommand(CanExecute = nameof(CanStartRun))]
+    // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
+    // (gerekçe CanRebuildOrRetry'ın yorumundadır).
+    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
     private Task BuildAsync()
     {
         ClearSelectionAndFilter(); // BuildApp.jsx:1199-1200
@@ -661,8 +668,21 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task SyncAsync()
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
-        await TrySendAsync(
+        // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
+        // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
+        // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
+        _syncRequested = true;
+        SyncCommand.NotifyCanExecuteChanged();
+        // Bekleyiş TAM BURADA başlar: sessizlik saati kurulmazsa, uzun süre boşta duran bir uygulamada
+        // basılan ilk Sync anında "cevap vermiyor" derdi (saat son motor event'inden beri bayattır).
+        // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
+        ArmEngineWatchdog();
+        bool sent = await TrySendAsync(
             new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+        // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
+        // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
+        // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
+        if (!sent) ReleaseSyncRequest();
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
         // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,
@@ -678,7 +698,11 @@ public sealed partial class RunViewModel : ObservableObject
         // worktree ile ÇAKIŞAN bir ad öneriyordu. Hatası ayrı kodla döner ("worktreeListFailed").
         await TrySendAsync(new ListWorktreesCommand(RootPath), "listWorktrees");
     }
-    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
+    // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
+    // [Sync guard] Uçuşta bir Sync varken (istek penceresi dahil — bkz. SyncBusy) ikinci bir Sync
+    // ANLAMSIZDIR: motor aynı analizi baştan koşar, konsolda aynı transkript iki kez akar ve şerit
+    // Syncing → Idle → Syncing yapar. Rebuild/Cycles zaten AYNI predicate'e tabidir.
+    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy;
 
     /// <summary>Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları post-build
     /// copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz — ARCHITECTURE
@@ -932,10 +956,20 @@ public sealed partial class RunViewModel : ObservableObject
     // ---------------------------------------------------------------- motor sessizlik watchdog'u
 
     /// <summary>Bir GEÇİŞ bekleniyor mu: run istendi ama <c>runStarted</c> gelmedi (<see cref="IsStarting"/>),
-    /// ya da stop istendi ama <c>runStopped</c> gelmedi (faz <see cref="AppPhase.Stopping"/>). Watchdog YALNIZ
-    /// bu iki pencerede kuruludur — koşan bir run'da tek bir projenin sessizce dakikalarca derlenmesi meşrudur
-    /// ve orada uyarmak kullanıcıyı sağlıklı bir build'i öldürmeye davet ederdi.</summary>
-    private bool WaitingOnEngine => IsStarting || Phase == AppPhase.Stopping;
+    /// stop istendi ama <c>runStopped</c> gelmedi (faz <see cref="AppPhase.Stopping"/>), ya da Sync istendi/
+    /// koşuyor ama <c>syncCompleted</c> gelmedi (<see cref="SyncBusy"/> — istek penceresi ve
+    /// <see cref="AppPhase.Syncing"/> fazının ikisi de). Watchdog YALNIZ bu bekleyiş pencerelerinde
+    /// kuruludur — koşan bir run'da tek bir projenin sessizce dakikalarca derlenmesi meşrudur ve orada
+    /// uyarmak kullanıcıyı sağlıklı bir build'i öldürmeye davet ederdi.
+    ///
+    /// <para><b>Sync neden dahil:</b> o da tam olarak bir bekleyiştir ve motor orada donduğunda şerit
+    /// sonsuza dek "▸ Sync — git fetch origin…" gösteriyor, "Restart engine" kapısı HİÇ görünmüyordu — tek
+    /// çıkış uygulamayı kapatmaktı. Üstelik Sync düğmesi artık uçuşta bir Sync varken kilitli olduğundan
+    /// (<see cref="CanSync"/>) donmuş bir Sync'ten çıkışın TEK yolu bu kapıdır. Yanlış alarm riski yok:
+    /// Sync'in git çağrıları 30 sn'de zaman aşımına uğrar (<c>GitService.CommandTimeout</c>), yani
+    /// <see cref="EngineSilenceThresholdMs"/>'e takılan motor "yavaş" değil GERÇEKTEN susmuştur — ve motorun
+    /// HERHANGİ bir event'i (<c>syncProgress</c> dahil) saati sıfırlar.</para></summary>
+    private bool WaitingOnEngine => IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || SyncBusy;
 
     /// <summary>Sessizlik saatini şimdiye alır: bekleyiş TAM BURADA başlar. Kurulmasaydı, uzun süre boşta
     /// duran bir uygulamada basılan ilk Build anında "cevap vermiyor" derdi.</summary>
@@ -1071,8 +1105,7 @@ public sealed partial class RunViewModel : ObservableObject
         // kardeşler Started'ta KALIR — bayrak, "Started" ile "şu an derleniyor"u ayıran tek şeydir.
         foreach (string sibling in _cycleGroups?.MembersOf(e.ProjectId) ?? [])
             if (!string.Equals(sibling, e.ProjectId, StringComparison.OrdinalIgnoreCase)
-                && Projects.FirstOrDefault(p => string.Equals(p.Id, sibling, StringComparison.OrdinalIgnoreCase))
-                    is { State: ProjectRowState.Started } waiting)
+                && FindRow(sibling) is { State: ProjectRowState.Started } waiting)
                 waiting.CycleWaiting = true;
         RefreshRunSurface();
     }
@@ -1106,7 +1139,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (e.Outcome != CycleOutcome.NoProgress) return;
         foreach (string member in _cycleGroups?.MembersOf(e.ProjectId) ?? [e.ProjectId])
-            if (Projects.FirstOrDefault(p => string.Equals(p.Id, member, StringComparison.OrdinalIgnoreCase)) is { } row)
+            if (FindRow(member) is { } row)
                 row.CycleUnconverged = true;
         RefreshRunSurface();
     }
@@ -1114,7 +1147,7 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues,
         bool cycleUnsettled = false)
     {
-        var row = Projects.FirstOrDefault(p => p.Id == projectId);
+        var row = FindRow(projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
         row.State = state;
         row.DurationMs = durationMs;
@@ -1135,9 +1168,21 @@ public sealed partial class RunViewModel : ObservableObject
         RefreshRunSurface();
     }
 
+    /// <summary>Satır aramasının TEK kuralı. Proje Id'leri Windows DOSYA YOLLARIDIR, dolayısıyla
+    /// karşılaştırma <see cref="StringComparison.OrdinalIgnoreCase"/>'dir — bu dosyadaki sözlükler
+    /// (<c>_projectStartedAtMs</c>, <c>_willBuildIds</c>, <c>_liveLines</c>…) zaten aynı karşılaştırıcıyla
+    /// kurulur.
+    ///
+    /// <para><b>Neden tek yerde:</b> aynı arama beş yerde inline kopyalanmıştı ve ikisi (satır tamamlanması
+    /// ile satır yaratımı) düz <c>==</c> ile, yani HARF-DUYARLI kalmıştı. Ayrışmanın bedeli sessizdir:
+    /// tamamlanma satırı bulamaz (savunmacı no-op) ve satır sonsuza dek "building" görünür; satır yaratımı
+    /// ise aynı projeye ikinci bir satır açar. Yeni bir çağıran da buradan geçmelidir.</para></summary>
+    private ProjectRowViewModel? FindRow(string id) =>
+        Projects.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+
     private ProjectRowViewModel EnsureRow(string id, string name, ProjectRowState initialState)
     {
-        var existing = Projects.FirstOrDefault(p => p.Id == id);
+        var existing = FindRow(id);
         if (existing is not null) return existing;
         // [W1] TargetSha da IsRunActive/NamePrefix ile AYNI itme deseninden gelir: run ortasında doğan bir satır
         // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
@@ -1585,7 +1630,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>Projenin kısa adı (kart <c>Name</c>'i): önce açık satır, sonra topoloji düğümü, yoksa dosya adı.</summary>
     private string ShortNameFor(string projectId)
     {
-        var row = Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        var row = FindRow(projectId);
         if (row is not null) return row.Name;
         var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
         return node?.Name ?? Path.GetFileNameWithoutExtension(projectId);

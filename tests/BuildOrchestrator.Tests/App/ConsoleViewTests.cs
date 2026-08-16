@@ -86,6 +86,28 @@ public class ConsoleViewTests
         Assert.DoesNotContain("line0\n", view.Document.Text); // en eski kırpıldı
     }
 
+    /// <summary>[tail-trim tek kural] Kırpma yetkisi TEK yerdedir: <c>BottomAnchorBehavior.ShouldFollow</c>.
+    /// Proje-log modu takip KAPALI açılır (log baştan okunur), dolayısıyla canlı append o modda BELGEYİ
+    /// KIRPMAZ — eski <c>_trimTail</c> alanının taşıdığı "run modunda daima kırp, proje modunda yalnız
+    /// dipteyken kırp" ayrımı bu tek predicate'in içinde zaten yaşıyor. Alan silinirken davranışın
+    /// kaybolmadığını bu test kanıtlar.
+    ///
+    /// <para>Kırpmanın takibe bağlı olmasının kendi gerekçesi ayrıdır ve önemlidir: kırpma belgenin BAŞINDAN
+    /// satır siler, yani kullanıcı yukarıda okurken metni ayağının altından yukarı kaydırırdı.</para></summary>
+    [StaFact]
+    public void Project_mode_does_not_trim_appended_lines_while_follow_is_off()
+    {
+        var view = new ConsoleView();
+        view.PlayCascade(["seed"]);   // proje-log modu: ForceStuck(false) → takip KAPALI
+        Assert.False(view.FollowsBottom); // ön-koşul
+
+        for (int i = 0; i < ConsoleView.RenderSliceLines + 50; i++) view.AppendBatch($"live{i}\n");
+
+        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines + 1,
+            $"takip kapalıyken kırpma OLMAMALI (satır sayısı {view.Document.LineCount})");
+        Assert.Contains("live0\n", view.Document.Text); // en eski canlı satır DURUYOR
+    }
+
     // ---------------------------------------------------------------- [3b] kaskat (reduced-motion instant yolu)
 
     [StaFact]
@@ -177,6 +199,80 @@ public class ConsoleViewTests
         Assert.Equal(expected, view.Document.Text);
     }
 
+    // ---------------------------------------------------------------- run anlatısının geçmişi de geri gelir
+    //
+    // Ölçülen kusur (kullanıcı, sahada): "konsola bir sürü şey basılıyor ama en sonda bakıyorum azıcık şey
+    // kalmış". Veri kaybolmuyordu — her projenin tam logu ayrı tutulur ve run anlatısının tamamı VM'in
+    // tamponundadır — kaybolan GÖRÜNÜRLÜKTÜ: canlı belge son 200 satırla sınırlıdır (render dilimi) ve chunk
+    // loader YALNIZ proje modunda çalışıyordu, yani run anlatısında 200 satırdan öncesine hiçbir jestle
+    // erişilemiyordu. Paralel bir build saniyede yüzlerce satır aktığı için o pencere anında doluyor.
+    //
+    // Backlog artık moddan bağımsızdır: anlatı da baştan tohumlanır ve KIRPILAN CANLI satırlar backlog'a
+    // taşınır — böylece hem run modunda geçmişe dönülebilir, hem de proje modunda canlı kırpılan satırların
+    // eskiden düştüğü delik (eski kodun "index'i yok" diyen clamp'i) kapanır.
+
+    [StaFact]
+    public void Run_narrative_scroll_to_top_prepends_older_history()
+    {
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        var all = Enumerable.Range(0, 250).Select(i => $"narrative{i}").ToArray();
+        var expected = string.Concat(all.Select(l => l + "\n"));
+
+        view.ShowRunDocument(expected); // ← Back akışı: son 200 belgeye, öncesi backlog'a
+        Assert.StartsWith("narrative50\n", view.Document.Text);
+        Assert.DoesNotContain("narrative49\n", view.Document.Text); // ön-koşul: ilk 50 belgede DEĞİL
+
+        view.EvaluateChunkScroll(100.0); // arm: kullanıcı tepeden uzaklaştı
+        view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki dilim geri gelir
+
+        Assert.Equal(expected, view.Document.Text); // bitişik ve TAM — tekrar YOK, kayıp YOK
+    }
+
+    [StaFact]
+    public void Lines_trimmed_from_the_live_run_document_stay_reachable_by_scrolling_up()
+    {
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+        view.ShowRunDocument(""); // anlatı modu, takip AÇIK (canlı build gibi)
+
+        for (int i = 0; i < 260; i++) view.AppendBatch($"live{i}\n");
+        Assert.DoesNotContain("live0\n", view.Document.Text); // ön-koşul: kırpıldı (belge 200 ile sınırlı)
+
+        view.EvaluateChunkScroll(100.0);
+        view.EvaluateChunkScroll(0.0);
+
+        Assert.Contains("live0\n", view.Document.Text);      // backlog'dan DELİKSİZ geri geldi
+        Assert.Contains("live59\nlive60\n", view.Document.Text); // dikiş yerinde boşluk yok
+    }
+
+    [StaFact]
+    public void Live_lines_trimmed_in_project_mode_are_reachable_again_too()
+    {
+        // Eski kodda backlog yalnız diskten gelen log satırlarıydı: canlı gelen satırlar kırpılınca
+        // _loadedFrom clamp'e takılıyor ("index'i yok") ve o satırlara bir daha ULAŞILAMIYORDU.
+        var view = new ConsoleView();
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+        view.UpdateLayout();
+
+        view.PlayCascade([.. Enumerable.Range(0, 250).Select(i => $"line{i}")]);
+        view.StickToBottom = true; // kullanıcı dibe indi → takip geri geldi (canlı satırlar kırpılır)
+        for (int i = 0; i < 250; i++) view.AppendBatch($"live{i}\n");
+        Assert.DoesNotContain("live0\n", view.Document.Text); // ön-koşul: canlı satır kırpıldı
+
+        view.EvaluateChunkScroll(100.0);
+        view.EvaluateChunkScroll(0.0);
+
+        Assert.Contains("live0\n", view.Document.Text);          // artık geri gelir (eskiden KAYIPTI)
+        Assert.Contains("live49\nlive50\n", view.Document.Text); // dikiş bitişik
+    }
+
     // ---------------------------------------------------------------- [3b M-2] proje modu follow tail-trim
 
     [StaFact]
@@ -214,14 +310,25 @@ public class ConsoleViewTests
 
     // ---------------------------------------------------------------- [3b C-1] follow-trim + scroll-to-top: delik yok
 
+    /// <summary>
+    /// [C-1 regression] Follow-trim belge tepesinden satır siler; bu, chunk loader'ın <c>_loadedFrom</c>
+    /// index'ini de ilerletmeli. Aksi halde sonraki scroll-to-top prepend'i STALE index'e karşı YANLIŞ dilimi
+    /// yükler → kırpılan satırlar KALICI kaybolur (delik). Repro: <c>_loadedFrom&gt;0</c> olan bir kaskat +
+    /// çok sayıda canlı append (follow aktif) + tepeye kaydırma.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL] Delik kavramı GENİŞLEDİ.</b> Eski test ilk prepend'in <c>orig100..orig299</c>'u
+    /// getirmesini bekliyordu; o beklenti, canlı kırpılan satırların (<c>live0..live50</c>) KALICI KAYBINI
+    /// normal sayıyordu — backlog yalnız kaskattan gelen disk satırlarıydı ve <c>_loadedFrom</c> onun uzunluğuna
+    /// clamp'leniyordu ("index'i yok"). Yani kapatılan delik, açık bırakılan bir başkasının üstüne kuruluydu:
+    /// belgeden düşen canlı satırlar ne belgede ne backlog'da kalıyordu.</para>
+    ///
+    /// <para>Backlog artık canlı büyüdüğü için kural sadeleşti: <b>belgeden düşen HİÇBİR satır kaybolmaz</b>.
+    /// Bu yüzden iddia da sadeleşti — ara dilimin sınırını (hangi <c>orig</c>'den başladığı) pinlemek yerine
+    /// asıl sözleşme pinlenir: geçmiş, kronolojik sırada ve EKSİKSİZ geri gelir.</para>
+    /// </summary>
     [StaFact]
     public void Project_mode_follow_trim_then_scroll_to_top_recovers_backlog_without_a_hole()
     {
-        // [C-1 regression] Follow-trim, proje modunda belge tepesinden satır siler; bu, chunk loader'ın
-        // _loadedFrom index'ini de ilerletmeli. Aksi halde sonraki scroll-to-top prepend'i STALE index'e karşı
-        // YANLIŞ dilimi yükler → kırpılan satırlar KALICI kaybolur (delik) ve _loadedFrom onları "yüklü" sandığı
-        // için geri getirilemez. Reviewer repro şekli: _loadedFrom>0 olan bir kaskat + çok sayıda canlı append
-        // (follow aktif) + tepeye kaydırma. Layout: offset telafisi ölçülebilsin diye.
         var view = new ConsoleView();
         view.Measure(new Size(800, 600));
         view.Arrange(new Rect(0, 0, 800, 600));
@@ -244,11 +351,13 @@ public class ConsoleViewTests
         view.EvaluateChunkScroll(100.0); // arm (tepeden uzaklaş)
         view.EvaluateChunkScroll(0.0);   // scroll-to-top → önceki chunk
 
-        // (a) DELİK YOK: prepend, mevcut live kuyruğun ÖNÜNE TAM olarak orig100..orig299'u (kırpılan backlog'un
-        // sonu) dikmeli — kuyruk aynen korunur, araya kayıp/tekrar girmez. STALE index bug'ında _loadedFrom=100
-        // kalır → from=100-200→0 hesaplanır, orig0..orig99 yüklenir ve orig100..orig299 KALICI kaybolur (delik).
-        string expectedAfterFirst = string.Concat(Enumerable.Range(100, 200).Select(i => $"orig{i}\n")) + liveTail;
-        Assert.Equal(expectedAfterFirst, view.Document.Text); // bug'da orig0.. yüklenir → eşitlik tutmaz (RED)
+        // (a) DELİK YOK: prepend, mevcut live kuyruğun ÖNÜNE kırpılan backlog'un SONUNU dikmeli — kuyruk
+        // aynen korunur, araya kayıp/tekrar girmez. STALE index bug'ında _loadedFrom ilerlemez, eski dilim
+        // (orig0..) yüklenir ve aradaki satırlar KALICI kaybolur.
+        string afterFirst = view.Document.Text;
+        Assert.EndsWith(liveTail, afterFirst);              // canlı kuyruk olduğu gibi durur
+        Assert.Contains("orig299\nlive0\n", afterFirst);    // GERÇEK kronolojik dikiş: son orig'i ilk live izler
+        Assert.DoesNotContain("orig0\n", afterFirst);       // en eski dilim henüz backlog'da (tek hamlede gelmez)
 
         // (b) VerticalOffset prepend edilen dilimin piksel yüksekliği kadar telafi edildi (viewport zıplamaz).
         Assert.NotNull(view.LastPrepend);
@@ -256,12 +365,14 @@ public class ConsoleViewTests
         Assert.True(delta > 0, $"prepend edilen dilimin piksel yüksekliği > 0 olmalı (delta={delta})");
         Assert.Equal(before + delta, applied, 3); // ChunkStitch.CompensatedOffset wiring
 
-        // Tekrar tepeye kaydır: kalan backlog (orig0..orig99) da geri gelir → HİÇBİR satır kalıcı kayıp değil,
-        // belge orig0..orig299 + live kuyruğu olarak TAM ve bitişik (contiguous).
+        // Tekrar tepeye kaydır: kalan en eski dilim de geri gelir → HİÇBİR satır kalıcı kayıp değildir.
+        // Belge artık koşunun TAMAMIdır: orig0..orig299 ve ardından live0..live249, bitişik (contiguous).
+        // Canlı kırpılan live0..live50 de buradadır — eski kuralda onlar kalıcı olarak kaybolmuştu.
         view.EvaluateChunkScroll(100.0);
         view.EvaluateChunkScroll(0.0);
-        string expectedAfterSecond = string.Concat(Enumerable.Range(0, 300).Select(i => $"orig{i}\n")) + liveTail;
-        Assert.Equal(expectedAfterSecond, view.Document.Text);
+        string everything = string.Concat(Enumerable.Range(0, 300).Select(i => $"orig{i}\n"))
+                          + string.Concat(Enumerable.Range(0, 250).Select(i => $"live{i}\n"));
+        Assert.Equal(everything, view.Document.Text);
     }
 
     // ---------------------------------------------------------------- [I-1] gerçek OnScrollOffsetChanged yolu
