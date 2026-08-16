@@ -624,7 +624,7 @@ public sealed partial class RunViewModel : ObservableObject
     // ama SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
     // Build BİLEREK bu guard'a dahil DEĞİL (prototip doBuild'in kasıtlı asimetrisi, BuildApp.jsx:1194 —
     // doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur).
-    private bool CanRebuildOrRetry() => CanStartRun() && !_syncInFlight;
+    private bool CanRebuildOrRetry() => CanStartRun() && !SyncBusy;
 
     [RelayCommand(CanExecute = nameof(CanStartRun))]
     private Task BuildAsync()
@@ -661,8 +661,17 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task SyncAsync()
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
-        await TrySendAsync(
+        // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
+        // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
+        // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
+        _syncRequested = true;
+        SyncCommand.NotifyCanExecuteChanged();
+        bool sent = await TrySendAsync(
             new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+        // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
+        // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
+        // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
+        if (!sent) ReleaseSyncRequest();
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
         // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,
@@ -678,7 +687,11 @@ public sealed partial class RunViewModel : ObservableObject
         // worktree ile ÇAKIŞAN bir ad öneriyordu. Hatası ayrı kodla döner ("worktreeListFailed").
         await TrySendAsync(new ListWorktreesCommand(RootPath), "listWorktrees");
     }
-    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable; // [D1 review · A3]
+    // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
+    // [Sync guard] Uçuşta bir Sync varken (istek penceresi dahil — bkz. SyncBusy) ikinci bir Sync
+    // ANLAMSIZDIR: motor aynı analizi baştan koşar, konsolda aynı transkript iki kez akar ve şerit
+    // Syncing → Idle → Syncing yapar. Rebuild/Cycles zaten AYNI predicate'e tabidir.
+    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy;
 
     /// <summary>Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları post-build
     /// copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz — ARCHITECTURE
