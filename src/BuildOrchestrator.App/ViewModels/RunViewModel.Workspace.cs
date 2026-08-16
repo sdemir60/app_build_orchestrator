@@ -66,12 +66,13 @@ public sealed partial class RunViewModel
     public int CycleMemberCount => _cycleMemberCount;
     private int _cycleMemberCount;
 
-    /// <summary>Stop istendi: motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ile cevap vermelidir —
-    /// sessizlik saati burada da kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe). Faz set eden
-    /// HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
+    /// <summary>Stop istendi (<see cref="AppPhase.Stopping"/>) ya da Sync başladı (<see cref="AppPhase.Syncing"/>):
+    /// motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ya da <c>syncCompleted</c> ile cevap
+    /// vermelidir — sessizlik saati burada kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe).
+    /// Faz set eden HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
     partial void OnPhaseChanged(AppPhase value)
     {
-        if (value == AppPhase.Stopping) ArmEngineWatchdog();
+        if (value is AppPhase.Stopping or AppPhase.Syncing) ArmEngineWatchdog();
     }
 
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
@@ -209,6 +210,7 @@ public sealed partial class RunViewModel
     private void NotifySyncGatedCommands()
     {
         SyncCommand.NotifyCanExecuteChanged();
+        BuildCommand.NotifyCanExecuteChanged(); // [DEĞİŞEN KURAL] Build de Sync penceresinde bekler
         RebuildCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
     }

@@ -234,10 +234,17 @@ cannot produce a second one.
 
 A process that dies announces itself. A process that *hangs* does not, and the App would otherwise wait for an
 event that is never coming — the failure mode §4.3 describes, where a wedged planner leaves the phase on
-`starting` and then on `stopping` forever. So the App also watches for silence, but only inside the two windows
-where an answer is owed: a run has been requested and `runStarted` has not arrived, or a stop has been
-requested and `runStopped` has not. Any event from the engine resets the clock; crossing the threshold with no
-event at all raises an amber ribbon line and reveals the same *Restart engine* action.
+`starting` and then on `stopping` forever. So the App also watches for silence, but only inside the windows
+where an answer is owed: a run has been requested and `runStarted` has not arrived, a stop has been requested
+and `runStopped` has not, or a Sync has been requested and `syncCompleted` has not. Any event from the engine
+resets the clock; crossing the threshold with no event at all raises an amber ribbon line and reveals the same
+*Restart engine* action.
+
+Sync earns its place in that list twice over. It is a wait like the others — an engine wedged mid-Sync leaves
+the ribbon on `▸ Sync — git fetch origin…` with no way out — and it is now the only way out, because the Sync
+button is itself disabled while a Sync is in flight (§13.2). Nor does the window produce false alarms: every
+read-only git call is capped at 30 seconds, so an engine that crosses the silence threshold is not slow, it
+has stopped answering.
 
 A liveness ping would not have caught the measured case. The coordinator runs a run on a background task and
 `startRun` returns immediately, so the command loop stayed responsive while the run task was frozen — a ping
@@ -1311,7 +1318,21 @@ reader announces what the control does, not a count that moves under it on every
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
 runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started before
 the first Sync would compile for real while the list, the graph and the counters stayed empty — the user would
-be watching a run without being able to see what it is doing. Sync itself is never gated; it is the way out.
+be watching a run without being able to see what it is doing.
+
+**Nothing starts while a Sync is in flight** — not a run, and not a second Sync. The engine's command loop
+blocks for the duration of a Sync (§5.2), so anything pressed in that window is not merely queued, it lands in
+the middle of someone else's transcript: a run clears the console buffers and writes its own request line while
+the Sync's remaining progress lines are still arriving, and the reader is left with two interleaved stories.
+A second Sync is worse value still — it re-runs the whole analysis, scan through incremental, and every press
+sends three commands, so the ribbon walks `Syncing → Idle → Syncing` while the console prints the same
+transcript twice.
+
+The gate opens at the **click**, not at `syncStarted`, for the same reason the run lock does: sending takes
+milliseconds and the engine may not reach the command for seconds, and a button that re-enables in between
+invites exactly the second press it is there to prevent. It closes again on every exit — the answer arrives,
+the send fails synchronously, the Sync fails, or the engine dies — so no path leaves a button permanently
+dark. Sync remains the way out of an empty topology; what it no longer is, is a way to interrupt itself.
 
 The lock — and the *Stop* button with it — begins at the **click**, not at `runStarted`. The phase moves to
 `starting` and a line goes into the run document before the command is even written, mirroring what a stop

@@ -734,20 +734,56 @@ public class RunViewModelStateTests
         Assert.True(vm.SyncCommand.CanExecute(null));
     }
 
-    // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 1] Sync sırasında Rebuild/RetryFailed engellenir, Build DEĞİL
+    // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 1] Sync sırasında hiçbir run başlatılamaz
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden bu test "Build sync sırasında da ETKİN" diye pinliyordu: prototipin
+    /// (<c>BuildApp.jsx:1194</c> <c>doBuild</c>) kasıtlı asimetrisi taşınmıştı — <c>doRebuild</c>/<c>doRetry</c>
+    /// erken döner, <c>doBuild</c> dönmezdi.
+    ///
+    /// <para><b>Neden ayrıldık (ölçüldü):</b> Supervisor Sync boyunca komut döngüsünü BLOKLAR
+    /// (<c>SupervisorHost.SyncWorkspaceAsync</c>). Mid-Sync basılan Build o yüzden yalnız kuyruğa girmiyor,
+    /// başkasının transkriptinin ORTASINA düşüyordu: <c>BeginRunAsync</c> konsol tamponlarını ANINDA temizleyip
+    /// "build requested" yazıyor, ama motor hâlâ Sync'in içinde olduğu için kalan <c>syncProgress</c> satırları
+    /// aynı run dokümanına akıyor ve okuyucuda iki hikâye iç içe geçiyordu. Rebuild'in bu yüzden bloklandığı
+    /// zaten yazılıydı; Build'in serbest kalması aynı bedeli ödüyordu.</para>
+    ///
+    /// <para>Kapı artık TEK predicate'tir (<c>CanRebuildOrRetry</c> → <c>SyncBusy</c>) ve üç run komutunun
+    /// üçünü de kapsar. Sync saniyeler sürdüğü için pratikte görünmez: Sync biter bitmez üçü de geri açılır
+    /// (aşağıdaki <c>Sync_completing_reenables…</c> testi).</para>
+    /// </summary>
     [Fact]
-    public async Task Rebuild_and_retry_are_blocked_during_sync_but_build_stays_enabled()
+    public async Task No_run_can_start_while_a_sync_is_in_flight()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
+        Assert.True(vm.BuildCommand.CanExecute(null)); // ön-koşul: Sync'ten ÖNCE açık
+
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
 
         Assert.False(vm.RebuildCommand.CanExecute(null));
-        Assert.True(vm.BuildCommand.CanExecute(null)); // [design doBuild — kasıtlı asimetri] Build sync sırasında da etkin
+        Assert.False(vm.BuildCommand.CanExecute(null)); // [DEĞİŞEN KURAL] Build de bekler — gerekçe doc'ta
+    }
+
+    [Fact] // Kapı Sync bitince TEK yerden açılır — Build'in bildirimi de o yoldan gelir (RelayCommand requery etmez).
+    public async Task Sync_completing_reenables_build_as_well_as_rebuild()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.BuildCommand.CanExecute(null));
+
+        bool buildChanged = false;
+        vm.BuildCommand.CanExecuteChanged += (_, _) => buildChanged = true;
+
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+
+        Assert.True(vm.BuildCommand.CanExecute(null));
+        Assert.True(buildChanged);
     }
 
     [Fact]

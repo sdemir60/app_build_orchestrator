@@ -619,14 +619,21 @@ public sealed partial class RunViewModel : ObservableObject
     // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
     private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
 
-    // [Fix wave 1, C2 review Finding 1] Rebuild/Cycles, Sync uçuştayken (_syncInFlight) EK OLARAK
-    // engellenir — mid-Sync BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler,
-    // ama SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
-    // Build BİLEREK bu guard'a dahil DEĞİL (prototip doBuild'in kasıtlı asimetrisi, BuildApp.jsx:1194 —
-    // doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur).
+    // [Fix wave 1, C2 review Finding 1] Sync uçuştayken (bkz. SyncBusy) hiçbir run başlatılamaz: mid-Sync
+    // BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler, ama SyncProgressEvent
+    // hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
+    //
+    // [DEĞİŞEN KURAL] Build eskiden bu guard'ın DIŞINDAYDI — prototip doBuild'in kasıtlı asimetrisi
+    // (BuildApp.jsx:1194: doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur). Ölçülen bedel:
+    // Supervisor Sync boyunca komut döngüsünü BLOKLAR (SupervisorHost.SyncWorkspaceAsync), yani mid-Sync
+    // basılan Build kuyruğa girmekle kalmıyor, başkasının transkriptinin ORTASINA düşüyordu — konsol anında
+    // temizlenip "build requested" yazılıyor, ardından Sync'in kalan satırları AYNI dokümana akıyordu.
+    // Üç run komutu artık aynı kapıdan geçer; kapı Sync bitince tek yerden (NotifySyncGatedCommands) açılır.
     private bool CanRebuildOrRetry() => CanStartRun() && !SyncBusy;
 
-    [RelayCommand(CanExecute = nameof(CanStartRun))]
+    // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
+    // (gerekçe CanRebuildOrRetry'ın yorumundadır).
+    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
     private Task BuildAsync()
     {
         ClearSelectionAndFilter(); // BuildApp.jsx:1199-1200
@@ -666,6 +673,10 @@ public sealed partial class RunViewModel : ObservableObject
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
         _syncRequested = true;
         SyncCommand.NotifyCanExecuteChanged();
+        // Bekleyiş TAM BURADA başlar: sessizlik saati kurulmazsa, uzun süre boşta duran bir uygulamada
+        // basılan ilk Sync anında "cevap vermiyor" derdi (saat son motor event'inden beri bayattır).
+        // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
+        ArmEngineWatchdog();
         bool sent = await TrySendAsync(
             new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
@@ -945,10 +956,20 @@ public sealed partial class RunViewModel : ObservableObject
     // ---------------------------------------------------------------- motor sessizlik watchdog'u
 
     /// <summary>Bir GEÇİŞ bekleniyor mu: run istendi ama <c>runStarted</c> gelmedi (<see cref="IsStarting"/>),
-    /// ya da stop istendi ama <c>runStopped</c> gelmedi (faz <see cref="AppPhase.Stopping"/>). Watchdog YALNIZ
-    /// bu iki pencerede kuruludur — koşan bir run'da tek bir projenin sessizce dakikalarca derlenmesi meşrudur
-    /// ve orada uyarmak kullanıcıyı sağlıklı bir build'i öldürmeye davet ederdi.</summary>
-    private bool WaitingOnEngine => IsStarting || Phase == AppPhase.Stopping;
+    /// stop istendi ama <c>runStopped</c> gelmedi (faz <see cref="AppPhase.Stopping"/>), ya da Sync istendi/
+    /// koşuyor ama <c>syncCompleted</c> gelmedi (<see cref="SyncBusy"/> — istek penceresi ve
+    /// <see cref="AppPhase.Syncing"/> fazının ikisi de). Watchdog YALNIZ bu bekleyiş pencerelerinde
+    /// kuruludur — koşan bir run'da tek bir projenin sessizce dakikalarca derlenmesi meşrudur ve orada
+    /// uyarmak kullanıcıyı sağlıklı bir build'i öldürmeye davet ederdi.
+    ///
+    /// <para><b>Sync neden dahil:</b> o da tam olarak bir bekleyiştir ve motor orada donduğunda şerit
+    /// sonsuza dek "▸ Sync — git fetch origin…" gösteriyor, "Restart engine" kapısı HİÇ görünmüyordu — tek
+    /// çıkış uygulamayı kapatmaktı. Üstelik Sync düğmesi artık uçuşta bir Sync varken kilitli olduğundan
+    /// (<see cref="CanSync"/>) donmuş bir Sync'ten çıkışın TEK yolu bu kapıdır. Yanlış alarm riski yok:
+    /// Sync'in git çağrıları 30 sn'de zaman aşımına uğrar (<c>GitService.CommandTimeout</c>), yani
+    /// <see cref="EngineSilenceThresholdMs"/>'e takılan motor "yavaş" değil GERÇEKTEN susmuştur — ve motorun
+    /// HERHANGİ bir event'i (<c>syncProgress</c> dahil) saati sıfırlar.</para></summary>
+    private bool WaitingOnEngine => IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || SyncBusy;
 
     /// <summary>Sessizlik saatini şimdiye alır: bekleyiş TAM BURADA başlar. Kurulmasaydı, uzun süre boşta
     /// duran bir uygulamada basılan ilk Build anında "cevap vermiyor" derdi.</summary>
