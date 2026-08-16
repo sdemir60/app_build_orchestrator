@@ -639,9 +639,10 @@ public sealed class EventStreamRow : Border
 
         Color from = ResolveColor("Brush.StatusSuccessSoft");
         var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
-        var anim = new ColorAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
-        anim.KeyFrames.Add(new DiscreteColorKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        anim.KeyFrames.Add(new SplineColorKeyFrame(Colors.Transparent, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(GlowMs)), spline));
+        // Zaman çizelgesini ortak kurucu üretir (kopya YASAK): saydam uç orada yeşilin RGB'sine çekilir, yoksa
+        // parıltı sönerken beyaza kayardı.
+        var anim = MotionTokens.SplineColorTo(from, Colors.Transparent, TimeSpan.FromMilliseconds(GlowMs), spline);
+        anim.FillBehavior = FillBehavior.Stop;
         _bgBrush.Color = Colors.Transparent; // taban: Stop sonrası buraya döner (yeşile geri sıçrama YOK)
         _bgBrush.BeginAnimation(SolidColorBrush.ColorProperty, anim);
 

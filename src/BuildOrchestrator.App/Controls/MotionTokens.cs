@@ -60,6 +60,44 @@ internal static class MotionTokens
     }
 
     /// <summary>
+    /// <see cref="SplineTo"/>'nun RENK karşılığı — bir geçişin İKİ ucunu da AÇIKÇA taşıyan tek zaman çizelgesi
+    /// kurucusu. Başlangıç t=0'daki bir <see cref="DiscreteColorKeyFrame"/> ile ilan edilir; aradaki tek
+    /// <see cref="SplineColorKeyFrame"/> o değerden hedefe eğriyle akar.
+    ///
+    /// <para><b>Neden başlangıç AÇIK yazılır:</b> WPF from'suz bir keyframe'i property'nin taban değerinden
+    /// başlatır ve taban <c>Colors.Transparent</c> ise o değer <c>#00FFFFFF</c>'tir — yani BEYAZ. WPF renk
+    /// kanallarını premultiply ETMEDEN interpole ettiğinden alfa 0'dan çıkarken RGB de beyazdan hedefe iner:
+    /// koyu bir zemine giden her hover geçişi ortasında parlak gri bir ÇAKMA üretir. Uçlar burada elde
+    /// olduğu için sıfır-alfalı uç, diğer ucun RGB'siyle eşitlenebilir (bkz. <see cref="AlphaSafeEndpoints"/>) —
+    /// CSS'in premultiplied <c>transparent</c> davranışının paritesi. Kanıt: <c>ColorTransitionFlashTests</c>.</para>
+    /// </summary>
+    public static ColorAnimationUsingKeyFrames SplineColorTo(Color from, Color to, TimeSpan duration, KeySpline keySpline)
+    {
+        (from, to) = AlphaSafeEndpoints(from, to);
+        var animation = new ColorAnimationUsingKeyFrames();
+        animation.KeyFrames.Add(new DiscreteColorKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(duration), keySpline));
+        return animation;
+    }
+
+    /// <summary>
+    /// Bir geçişin GÖRÜNMEZ ucunu, görünür ucun rengiyle eşitler: alfası sıfır olan uç ekranda hiçbir renk
+    /// göstermez, ama WPF onun RGB'sini de interpole eder. <c>Colors.Transparent</c>'ın RGB'si BEYAZ olduğundan
+    /// koyu bir yüzeye giden/gelen her geçiş ortasında açık gri bir çakma üretirdi (kullanıcı: "satırdan satıra
+    /// geçerken gelip giden parlama"). Sıfır alfalı ucu diğer ucun RGB'sine çekmek yalnız ALFA'yı süren bir
+    /// geçiş bırakır — tarayıcıların premultiplied <c>transparent</c> davranışının aynısı.
+    ///
+    /// <para>Görünen renk DEĞİŞMEZ: alfası sıfır olan bir rengin RGB'si ekranda hiçbir şeye katkı vermez.
+    /// İki uç da saydamsa yapacak bir şey yoktur.</para>
+    /// </summary>
+    private static (Color From, Color To) AlphaSafeEndpoints(Color from, Color to)
+    {
+        if (from.A == 0 && to.A != 0) from = Color.FromArgb(0, to.R, to.G, to.B);
+        else if (to.A == 0 && from.A != 0) to = Color.FromArgb(0, from.R, from.G, from.B);
+        return (from, to);
+    }
+
+    /// <summary>
     /// [T60] CSS <c>transition: &lt;renk&gt; var(--duration-fast) var(--ease-standard)</c> paritesi — DS'in
     /// TÜM 120ms renk geçişlerinin TEK yolu (Button/Chip/IconButton/Segment/Switch/Input ve
     /// <see cref="LatestPill"/> aynı metodu çağırır; kopya YASAK, CLAUDE.md).
@@ -91,8 +129,8 @@ internal static class MotionTokens
             return;
         }
 
-        var animation = new ColorAnimationUsingKeyFrames();
-        animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(duration.TimeSpan), spline));
+        // brush.Color uçuştaki animasyonun O ANKİ değerini verir — geçiş bulunduğu yerden devam eder (retarget).
+        var animation = SplineColorTo(brush.Color, to, duration.TimeSpan, spline);
         brush.BeginAnimation(SolidColorBrush.ColorProperty, animation, HandoffBehavior.SnapshotAndReplace);
     }
 

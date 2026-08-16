@@ -317,14 +317,27 @@ public class SuccessFlourishTests
     /// <c>RepeatBehavior</c>) burada YAKALANMAZ. Çalışma-zamanı testi de yakalamaz (yukarıdaki nota bakın).
     /// Bu kalan boşluk kabul edilmiştir: dolaylı tekrar ancak yeni bir yardımcı EKLEMEKLE mümkündür ve o ekleme
     /// kutlama sözlüğü guard'ına (<see cref="Celebration_vocabulary_lives_only_in_the_event_stream_owner"/>)
-    /// ya da success-tint guard'ına takılmadan yapılmak zorundadır.</para></summary>
+    /// ya da success-tint guard'ına takılmadan yapılmak zorundadır.</para>
+    ///
+    /// <para><b>[DEĞİŞEN ŞEKİL] Eski iddia:</b> sahip dosyada <c>ColorAnimationUsingKeyFrames</c> literali TAM BİR
+    /// KEZ geçer. Parıltının zaman çizelgesi artık ORTAK kurucudan (<c>MotionTokens.SplineColorTo</c>) gelir —
+    /// çünkü saydam uçtaki premultiply düzeltmesi (renk geçişleri koyu zeminde ortasında parlamaz) yalnız orada
+    /// yaşar ve kendi keyframe'ini kuran bir tüketici onu ATLARDI (<c>ColorTransitionFlashTests</c>). Kural
+    /// DEĞİŞMEDİ — "tek zaman çizelgesi" hâlâ pinlenir; yalnız beyanın biçimi ikiye çıktı, guard ikisini de
+    /// sayar.</para></summary>
+    /// <summary>Bir renk zaman çizelgesinin beyan edilebileceği İKİ biçim: yerinde kurulan keyframe seti ya da
+    /// ortak kurucuya yapılan çağrı. Guard ikisinin TOPLAMINI sayar — beyan biçimini değiştirmek kilidi
+    /// düşürmemeli.</summary>
+    private static readonly Regex GlowTimelineDeclaration = new(
+        @"ColorAnimationUsingKeyFrames|MotionTokens\.SplineColorTo", RegexOptions.Compiled);
+
     [Fact]
     public void The_flourish_animation_declares_no_repeat_and_stops_filling()
     {
         string owner = File.ReadAllText(IoPath.Combine(RepoPaths.AppSrcRoot, FlourishOwners[0]));
 
         Assert.Contains("FillBehavior.Stop", owner, StringComparison.Ordinal);      // dolgu bırakılır → yeşilde asılı kalmaz
-        Assert.Single(Regex.Matches(owner, "ColorAnimationUsingKeyFrames"));        // TEK keyframe seti — ikinci bir parıltı yok
+        Assert.Single(GlowTimelineDeclaration.Matches(owner));                      // TEK zaman çizelgesi — ikinci bir parıltı yok
 
         // Sonsuz/tekrarlı parıltı YASAK — hem RepeatBehavior hem AutoReverse (ikincisi de "geri sar, yeniden oyna"
         // demektir ve round 1'de kaçaktı). Yorum satırları elenir (dosyanın §5 notu imlecin RepeatBehavior.Forever
