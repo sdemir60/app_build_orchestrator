@@ -76,7 +76,9 @@ public partial class ConsoleView : UserControl
     private int _tiltGeneration; // uçuştaki bir geçişi yeni bir geçiş geçersiz kılar
 
     // Render dilimi / chunk loader durumu.
-    private bool _trimTail = true;                        // canlı append son RenderSliceLines'e kırpılır (run modu)
+    // [tail-trim tek kural] Ayrı bir "kırp/kırpma" bayrağı YOKTUR: yetki BottomAnchorBehavior.ShouldFollow'dadır
+    // (takip açıkken kırpılır). Eski _trimTail alanının taşıdığı ayrım o predicate'in içinde zaten yaşıyordu —
+    // proje modu takip KAPALI açıldığı için orada kırpma olmaz.
     private bool _projectMode;                            // proje-log modu (chunk prepend etkin)
     private bool _prepending;                             // re-entrancy guard (prepend VerticalOffset'i değiştirir)
     private bool _armedForChunk;                          // kullanıcı tepeden UZAKLAŞTI mı — ilk layout spurious prepend'ini önler
@@ -238,7 +240,7 @@ public partial class ConsoleView : UserControl
                 // [C-1] Tepeden K satır kırpıldıysa belgenin ilk satırı _projectAllLines[_loadedFrom + K] olur.
                 // Chunk loader index'ini K kadar ilerlet (aksi halde stale _loadedFrom → sonraki scroll-to-top
                 // prepend'i YANLIŞ dilimi yükler, kırpılan satırlar KALICI kaybolur = delik). Yalnız proje modunda:
-                // run modunun (_trimTail) chunk bookkeeping'i yoktur (_projectAllLines boş, _loadedFrom=0). Üst sınır
+                // run modunun chunk bookkeeping'i yoktur (_projectAllLines boş, _loadedFrom=0). Üst sınır
                 // _projectAllLines.Count: tüm backlog kırpılınca belgenin ilk satırı live bir satırdır (index'i yok).
                 if (_projectMode) _loadedFrom = Math.Min(_loadedFrom + trimmed, _projectAllLines.Count);
             }
@@ -505,7 +507,6 @@ public partial class ConsoleView : UserControl
     public void ShowRunDocument(string fullRunText)
     {
         _projectMode = false;
-        _trimTail = true;
         _projectAllLines = [];
         _loadedFrom = 0;
         EditorControl.Document = new TextDocument(ConsoleRenderSlice.LastLines(fullRunText ?? "", RenderSliceLines));
@@ -549,7 +550,6 @@ public partial class ConsoleView : UserControl
         _idleReady = false;
         ActiveLineText.Text = "";
         _armedForChunk = false;            // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
-        _trimTail = false;                 // proje modunda tail-trim yok — chunk loader eski satırları yönetir
         _projectAllLines = allLines;
 
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.

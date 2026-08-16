@@ -86,6 +86,28 @@ public class ConsoleViewTests
         Assert.DoesNotContain("line0\n", view.Document.Text); // en eski kırpıldı
     }
 
+    /// <summary>[tail-trim tek kural] Kırpma yetkisi TEK yerdedir: <c>BottomAnchorBehavior.ShouldFollow</c>.
+    /// Proje-log modu takip KAPALI açılır (log baştan okunur), dolayısıyla canlı append o modda BELGEYİ
+    /// KIRPMAZ — eski <c>_trimTail</c> alanının taşıdığı "run modunda daima kırp, proje modunda yalnız
+    /// dipteyken kırp" ayrımı bu tek predicate'in içinde zaten yaşıyor. Alan silinirken davranışın
+    /// kaybolmadığını bu test kanıtlar.
+    ///
+    /// <para>Kırpmanın takibe bağlı olmasının kendi gerekçesi ayrıdır ve önemlidir: kırpma belgenin BAŞINDAN
+    /// satır siler, yani kullanıcı yukarıda okurken metni ayağının altından yukarı kaydırırdı.</para></summary>
+    [StaFact]
+    public void Project_mode_does_not_trim_appended_lines_while_follow_is_off()
+    {
+        var view = new ConsoleView();
+        view.PlayCascade(["seed"]);   // proje-log modu: ForceStuck(false) → takip KAPALI
+        Assert.False(view.FollowsBottom); // ön-koşul
+
+        for (int i = 0; i < ConsoleView.RenderSliceLines + 50; i++) view.AppendBatch($"live{i}\n");
+
+        Assert.True(view.Document.LineCount > ConsoleView.RenderSliceLines + 1,
+            $"takip kapalıyken kırpma OLMAMALI (satır sayısı {view.Document.LineCount})");
+        Assert.Contains("live0\n", view.Document.Text); // en eski canlı satır DURUYOR
+    }
+
     // ---------------------------------------------------------------- [3b] kaskat (reduced-motion instant yolu)
 
     [StaFact]
