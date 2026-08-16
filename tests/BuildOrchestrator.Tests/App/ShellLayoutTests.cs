@@ -147,15 +147,19 @@ public class ShellLayoutTests
     }
 
     /// <summary>
-    /// PROJECTS başlığındaki filtre kutusu şeridi KAPLAMAZ — altında ve üstünde boşluk bırakır.
+    /// PROJECTS başlığındaki filtre kutusu şeridi KAPLAMAZ — altında ve üstünde EŞİT boşluk bırakır.
     ///
     /// <para>Kutu md ölçüsündeyken (28) şerit yüksekliğinin (<c>Size.PanelHeaderHeight</c>, 28) tamamını
     /// yiyordu: kendi kenarları şeridin kenarlarıyla üst üste biniyor, odak halkası (<c>Size.FocusRingWidth</c>,
     /// öğenin DIŞINA çizilir) şeridin dışına taşıyordu. Pay, halkanın sığacağı kadardır — sayı testte sabit
     /// değil, token'dan okunur.</para>
+    ///
+    /// <para><b>Alt pay şeridin 1px kural çizgisinden ÖNCE ölçülür</b> — göz de öyle görür. Ve pay TAM SAYI
+    /// olmalıdır: şeridin iç yüksekliği tek (27) olduğundan çift yükseklikli bir kutu ortalanınca pay yarım
+    /// piksele düşüyor, render yarım pikseli bir yana yuvarlıyor ve kutu görünürde aşağı kayıyordu.</para>
     /// </summary>
     [StaFact]
-    public void The_projects_filter_box_leaves_room_above_and_below_inside_the_panel_header()
+    public void The_projects_filter_box_sits_centred_between_the_panel_header_edges()
     {
         var host = DsResources.NewHost();
         var shell = new ShellRoot();
@@ -164,13 +168,18 @@ public class ShellLayoutTests
         var box = shell.ProjectFilterBox;
         var header = DsResources.Ancestors(box).OfType<PanelHeader>().Single();
         double clearance = (double)host.FindResource("Size.FocusRingWidth");
+        // Şeridin alt kural çizgisi. İLK Border DEĞİL: UserControl'ün kendi şablon Border'ı (kalınlık 0)
+        // önce gelir — aranan, alt kenarı gerçekten çizen olandır.
+        double rule = DsResources.Descendants(header).OfType<Border>().Max(b => b.BorderThickness.Bottom);
 
         double top = box.TransformToAncestor(header).Transform(new Point(0, 0)).Y;
-        double bottom = header.ActualHeight - top - box.ActualHeight;
+        double bottom = header.ActualHeight - rule - top - box.ActualHeight;
+        string measured = $"{header.ActualHeight}px şeritte {box.ActualHeight}px kutu — üst pay {top}, alt pay {bottom}";
 
         Assert.True(top >= clearance && bottom >= clearance,
-            $"Filtre kutusu {header.ActualHeight}px şeritte {box.ActualHeight}px — üst pay {top}, alt pay {bottom}; " +
-            $"her ikisi de en az {clearance} olmalı (odak halkası bu payın içine çizilir).");
+            $"{measured}; her ikisi de en az {clearance} olmalı (odak halkası bu payın içine çizilir).");
+        Assert.Equal(top, bottom);
+        Assert.Equal(Math.Floor(top), top);   // yarım piksel yok: render onu bir yana yuvarlar
 
         GC.KeepAlive(window);
     }

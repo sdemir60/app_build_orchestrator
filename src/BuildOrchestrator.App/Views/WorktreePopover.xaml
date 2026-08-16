@@ -6,8 +6,11 @@
              xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
   <!-- [D6/T40] Worktree popover (BuildApp.jsx:872-901). İçerik Ds.Popover (300px) İÇİNE oturur; gövde:
        caps · "Build in worktree" switch (zorunluysa disabled) · durum açıklaması · hedef worktree listesi ·
-       source satırı. Üç açıklama + source metinleri BİREBİR (kod-tarafı, WorktreePopover.xaml.cs). -->
-  <StackPanel Width="284">
+       source satırı. Üç açıklama + source metinleri BİREBİR (kod-tarafı, WorktreePopover.xaml.cs).
+       GENİŞLİK BURADA YAZILMAZ: onu kabuk verir (ActionBar'daki Ds.Popover Border'ı) ve gövde onun iç
+       alanına yayılır. Yeniden yazıldığında kenar payı unutuluyor ve gövde kabuğu 2px taşırıyordu —
+       WPF taşan gövdeyi kırpar, sağdaki kenarlar/sha'lar kesilirdi. -->
+  <StackPanel>
     <TextBlock Text="WORKTREE" Margin="4,2,4,8"
                FontFamily="{x:Static controls:AppFonts.Ui}"
                FontSize="{DynamicResource FontSize.2xs}"

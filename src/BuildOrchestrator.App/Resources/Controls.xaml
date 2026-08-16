@@ -596,11 +596,13 @@
 
     Yükseklik buton ailesinin sm'i (24) DEĞİLDİR ve bu bilinçlidir — ÖLÇÜLDÜ: şeridin altında 1px kural
     çizgisi vardır, yani iç yükseklik 27'dir; 24'lük kutu ortalandığında üstte yalnız 1.5px kalır ve 2px'lik
-    halka (Size.FocusRingWidth) yine dışarı taşar. 22 ile pay iki yanda da halkayı içine alır.
+    halka (Size.FocusRingWidth) yine dışarı taşar. Yükseklik ayrıca TEK olmalıdır: 27 tek olduğundan çift
+    yükseklikli bir kutunun payı yarım piksele düşer, render yarım pikseli bir yana yuvarlar ve kutu
+    görünürde aşağı kayar. 21 ile pay iki yanda da tam 3px'tir — halka içine sığar, göz de eşit görür.
     Yatay ritim md ile AYNIDIR (prefix büyüteci aynı geometride); yazı ölçüsü buton sm'iyle aynı adıma iner.
   -->
   <Style x:Key="Ds.Input.Sm" TargetType="TextBox" BasedOn="{StaticResource Ds.Input}">
-    <Setter Property="Height" Value="22" />
+    <Setter Property="Height" Value="21" />
     <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
   </Style>
 

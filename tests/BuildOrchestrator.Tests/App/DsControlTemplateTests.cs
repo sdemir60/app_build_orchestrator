@@ -270,6 +270,32 @@ public class DsControlTemplateTests
     /// <summary><c>TextBoxView</c>'un kendi caret payı (WPF sabiti, şablondan gelmez).</summary>
     private const double CaretGutter = 3;
 
+    /// <summary>
+    /// Input'un odak halkası kutunun DIŞINA itilir ve kutunun yuvarlak köşesini İZLER.
+    ///
+    /// <para><b>ÖLÇÜLDÜ:</b> halka <c>Margin=0</c> ve <c>RadiusX=0</c> ile duruyordu — yani ne dışarı itiliyor
+    /// ne yuvarlanıyordu; kutunun köşeleri oval olmasına rağmen sarı halka KÖŞELİ çıkıyordu. Sebep şablonun
+    /// halkaya <c>FocusRingOffset="0"</c> vermesi: değer property'nin VARSAYILANINA eşit olduğunda WPF
+    /// değişiklik geri çağrısını hiç çalıştırmaz, dolayısıyla itme/yuvarlama hesabı da hiç koşmazdı.
+    /// (<c>Ds.FocusVisual</c> offset olarak 1 verdiği için oradaki halka doğruydu — kusur yalnız input'taydı.)</para>
+    /// </summary>
+    [StaFact]
+    public void The_input_focus_ring_is_pushed_outside_and_follows_the_rounded_corner()
+    {
+        var host = DsResources.NewHost();
+        var input = new TextBox { Width = 160, Style = (Style)host.FindResource("Ds.Input") };
+        var window = DsResources.Realize(host, input);
+
+        var ring = (Rectangle)input.Template.FindName("FocusRing", input);
+        double outset = (double)host.FindResource("Size.FocusRingWidth") / 2;   // input'un offset'i 0
+        double radius = ((CornerRadius)host.FindResource("Radius.Sm")).TopLeft;
+
+        Assert.Equal(new Thickness(-outset), ring.Margin);
+        Assert.Equal(radius + outset, ring.RadiusX);
+        Assert.Equal(radius + outset, ring.RadiusY);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Focus_visual_is_a_two_pixel_amber_ring_with_one_pixel_offset()
     {

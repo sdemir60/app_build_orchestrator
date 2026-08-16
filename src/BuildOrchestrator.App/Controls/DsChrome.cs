@@ -54,10 +54,16 @@ public static class DsChrome
     /// ORTALANIR). XAML aritmetik yapamaz, token'ı literal olarak yeniden yazmak ise YASAK — bu yüzden
     /// hesap tek yerde, burada. Kalınlık öğenin kendi <see cref="Shape.StrokeThickness"/>'ından okunur
     /// (o da <c>{DynamicResource Size.FocusRingWidth}</c>'tir), offset bu property ile verilir.
+    ///
+    /// <para><b>Varsayılan 0 OLAMAZ</b> (ölçüldü): <c>Ds.Input</c> halkasını <c>FocusRingOffset="0"</c> ile
+    /// kurar — kenarın hemen dışında, boşluksuz. Bir DP'ye VARSAYILANINA eşit bir değer verildiğinde WPF
+    /// değişiklik geri çağrısını hiç çalıştırmaz; hesap koşmadığı için halka ne dışarı itiliyor ne köşesi
+    /// yuvarlanıyordu (kutunun köşeleri oval, halkası köşeliydi). <see cref="double.NaN"/> "verilmedi"
+    /// demektir; 0 dahil her gerçek offset artık bir değişikliktir.</para>
     /// </summary>
     public static readonly DependencyProperty FocusRingOffsetProperty = DependencyProperty.RegisterAttached(
         "FocusRingOffset", typeof(double), typeof(DsChrome),
-        new PropertyMetadata(0.0, OnFocusRingOffsetChanged));
+        new PropertyMetadata(double.NaN, OnFocusRingOffsetChanged));
 
     public static void SetFocusRingOffset(DependencyObject d, double value) => d.SetValue(FocusRingOffsetProperty, value);
     public static double GetFocusRingOffset(DependencyObject d) => (double)d.GetValue(FocusRingOffsetProperty);
@@ -76,7 +82,9 @@ public static class DsChrome
 
     private static void ApplyFocusRingOutset(Rectangle ring)
     {
-        double outset = GetFocusRingOffset(ring) + ring.StrokeThickness / 2;
+        double offset = GetFocusRingOffset(ring);
+        if (double.IsNaN(offset)) return;   // offset verilmemiş: bu Rectangle bir focus halkası değil
+        double outset = offset + ring.StrokeThickness / 2;
         ring.Margin = new Thickness(-outset);
         // Halka, sardığı kabuğun köşesini İZLEMELİDİR ve dışarı çıktığı kadar da yuvarlanır. WPF'te
         // Rectangle.RadiusX bir DOUBLE'dır; `Radius.Sm` ise bir CornerRadius token'ıdır — köşe değeri

@@ -1924,7 +1924,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. Being implicit it crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
-| Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements |
+| Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
 | Status glyph · building spinner · will-build dot | Custom controls drawing rings, arcs and dots |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
 
@@ -1941,7 +1941,10 @@ Three pieces of shared machinery keep the copies from multiplying:
 
 Both popovers derive from a common base that owns the open state, the refresh-then-animate-then-focus sequence,
 the Esc handling (a popover is a separate HWND, so the window-level Esc chain does not reach it) and outside
-click; only the branch search filter and the worktree three-state text remain per-popover.
+click; only the branch search filter and the worktree three-state text remain per-popover. The width belongs to
+the shell `Border` alone — each body stretches into whatever the shell's padding leaves rather than restating a
+number, since a restated width silently drops the shell's border thickness and WPF then clips the overflowing
+edge of the body.
 
 Filtering is a free-text query (case-insensitive substring on the project *name* only — never the path) ANDed
 with one status chip (`building` — which includes queued — `succeeded`, `failed`, `skipped`, `dep`). The active
