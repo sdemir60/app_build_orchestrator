@@ -128,7 +128,9 @@ the running instance first — tray icon → Exit).
    folder in the dialog; *Save* is what applies it, resetting project states and starting a Sync.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. Until it
    has run, *Build*, *Rebuild* and *Resolve cycles* are disabled: a run before the first Sync would compile for
-   real while the list and the graph stayed empty.
+   real while the list and the graph stayed empty. While a Sync is *running*, those three and *Sync* itself are
+   disabled too — the engine handles one at a time, and anything started in that window would land in the
+   middle of the Sync's console output. It takes seconds; they re-enable the moment it finishes.
 
    Every project marked amber in the list is amber in the graph too — the dot and the node's cube read the
    same plan. Hover the dot and it tells you *why* it will build: never built, the last build failed, it was
