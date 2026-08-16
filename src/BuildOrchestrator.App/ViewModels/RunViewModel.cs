@@ -1105,8 +1105,7 @@ public sealed partial class RunViewModel : ObservableObject
         // kardeşler Started'ta KALIR — bayrak, "Started" ile "şu an derleniyor"u ayıran tek şeydir.
         foreach (string sibling in _cycleGroups?.MembersOf(e.ProjectId) ?? [])
             if (!string.Equals(sibling, e.ProjectId, StringComparison.OrdinalIgnoreCase)
-                && Projects.FirstOrDefault(p => string.Equals(p.Id, sibling, StringComparison.OrdinalIgnoreCase))
-                    is { State: ProjectRowState.Started } waiting)
+                && FindRow(sibling) is { State: ProjectRowState.Started } waiting)
                 waiting.CycleWaiting = true;
         RefreshRunSurface();
     }
@@ -1140,7 +1139,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (e.Outcome != CycleOutcome.NoProgress) return;
         foreach (string member in _cycleGroups?.MembersOf(e.ProjectId) ?? [e.ProjectId])
-            if (Projects.FirstOrDefault(p => string.Equals(p.Id, member, StringComparison.OrdinalIgnoreCase)) is { } row)
+            if (FindRow(member) is { } row)
                 row.CycleUnconverged = true;
         RefreshRunSurface();
     }
@@ -1148,7 +1147,7 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues,
         bool cycleUnsettled = false)
     {
-        var row = Projects.FirstOrDefault(p => p.Id == projectId);
+        var row = FindRow(projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
         row.State = state;
         row.DurationMs = durationMs;
@@ -1169,9 +1168,21 @@ public sealed partial class RunViewModel : ObservableObject
         RefreshRunSurface();
     }
 
+    /// <summary>Satır aramasının TEK kuralı. Proje Id'leri Windows DOSYA YOLLARIDIR, dolayısıyla
+    /// karşılaştırma <see cref="StringComparison.OrdinalIgnoreCase"/>'dir — bu dosyadaki sözlükler
+    /// (<c>_projectStartedAtMs</c>, <c>_willBuildIds</c>, <c>_liveLines</c>…) zaten aynı karşılaştırıcıyla
+    /// kurulur.
+    ///
+    /// <para><b>Neden tek yerde:</b> aynı arama beş yerde inline kopyalanmıştı ve ikisi (satır tamamlanması
+    /// ile satır yaratımı) düz <c>==</c> ile, yani HARF-DUYARLI kalmıştı. Ayrışmanın bedeli sessizdir:
+    /// tamamlanma satırı bulamaz (savunmacı no-op) ve satır sonsuza dek "building" görünür; satır yaratımı
+    /// ise aynı projeye ikinci bir satır açar. Yeni bir çağıran da buradan geçmelidir.</para></summary>
+    private ProjectRowViewModel? FindRow(string id) =>
+        Projects.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+
     private ProjectRowViewModel EnsureRow(string id, string name, ProjectRowState initialState)
     {
-        var existing = Projects.FirstOrDefault(p => p.Id == id);
+        var existing = FindRow(id);
         if (existing is not null) return existing;
         // [W1] TargetSha da IsRunActive/NamePrefix ile AYNI itme deseninden gelir: run ortasında doğan bir satır
         // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
@@ -1619,7 +1630,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>Projenin kısa adı (kart <c>Name</c>'i): önce açık satır, sonra topoloji düğümü, yoksa dosya adı.</summary>
     private string ShortNameFor(string projectId)
     {
-        var row = Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        var row = FindRow(projectId);
         if (row is not null) return row.Name;
         var node = Topology.FirstOrDefault(n => string.Equals(n.Id, projectId, StringComparison.OrdinalIgnoreCase));
         return node?.Name ?? Path.GetFileNameWithoutExtension(projectId);
