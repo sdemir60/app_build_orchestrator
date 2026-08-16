@@ -553,7 +553,12 @@
                            VerticalAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed"
                            Foreground="{DynamicResource Brush.TextFaint}"
                            Text="{Binding Path=(controls:DsChrome.Watermark), RelativeSource={RelativeSource TemplatedParent}}" />
-                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                <!-- Dolgu BURAYA VERİLMEZ. WPF, `Padding`i content host'un İÇİNDEKİ sunucuya KENDİSİ
+                     uygular; bir de `Margin="{TemplateBinding Padding}"` verilirse dolgu İKİ KEZ işlenir ve
+                     caret/metin bir dolgu daha içeriden başlar (ölçüldü: 160px'lik filtre kutusunda x=27
+                     yerine x=55 — kutunun ortasına yakın). Watermark ise ŞABLONUN kendi öğesidir; WPF ona
+                     dokunmaz, hizası bu yüzden hâlâ elle verilir. -->
+                <ScrollViewer x:Name="PART_ContentHost"
                               VerticalAlignment="Center" Focusable="False"
                               HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
               </Grid>
@@ -582,6 +587,21 @@
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+  </Style>
+
+  <!--
+    Panel başlığı şeridine oturan küçük input. GEREKÇE: md (28), 28px'lik şeridi (Size.PanelHeaderHeight)
+    TAM kaplar — kutunun kenarları şeridin kenarlarıyla çakışır ve odak halkası (öğenin DIŞINA çizilir)
+    şeritten taşar.
+
+    Yükseklik buton ailesinin sm'i (24) DEĞİLDİR ve bu bilinçlidir — ÖLÇÜLDÜ: şeridin altında 1px kural
+    çizgisi vardır, yani iç yükseklik 27'dir; 24'lük kutu ortalandığında üstte yalnız 1.5px kalır ve 2px'lik
+    halka (Size.FocusRingWidth) yine dışarı taşar. 22 ile pay iki yanda da halkayı içine alır.
+    Yatay ritim md ile AYNIDIR (prefix büyüteci aynı geometride); yazı ölçüsü buton sm'iyle aynı adıma iner.
+  -->
+  <Style x:Key="Ds.Input.Sm" TargetType="TextBox" BasedOn="{StaticResource Ds.Input}">
+    <Setter Property="Height" Value="22" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
   </Style>
 
   <!-- ========================================= KBD ========================================= -->

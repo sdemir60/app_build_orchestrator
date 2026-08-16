@@ -145,6 +145,35 @@ public class ShellLayoutTests
         Assert.Equal(Visibility.Visible, shell.GraphHost.Visibility);
         Assert.Equal(Visibility.Visible, shell.LeftSplitter.Visibility);
     }
+
+    /// <summary>
+    /// PROJECTS başlığındaki filtre kutusu şeridi KAPLAMAZ — altında ve üstünde boşluk bırakır.
+    ///
+    /// <para>Kutu md ölçüsündeyken (28) şerit yüksekliğinin (<c>Size.PanelHeaderHeight</c>, 28) tamamını
+    /// yiyordu: kendi kenarları şeridin kenarlarıyla üst üste biniyor, odak halkası (<c>Size.FocusRingWidth</c>,
+    /// öğenin DIŞINA çizilir) şeridin dışına taşıyordu. Pay, halkanın sığacağı kadardır — sayı testte sabit
+    /// değil, token'dan okunur.</para>
+    /// </summary>
+    [StaFact]
+    public void The_projects_filter_box_leaves_room_above_and_below_inside_the_panel_header()
+    {
+        var host = DsResources.NewHost();
+        var shell = new ShellRoot();
+        var window = DsResources.Realize(host, shell, 900, 600);
+
+        var box = shell.ProjectFilterBox;
+        var header = DsResources.Ancestors(box).OfType<PanelHeader>().Single();
+        double clearance = (double)host.FindResource("Size.FocusRingWidth");
+
+        double top = box.TransformToAncestor(header).Transform(new Point(0, 0)).Y;
+        double bottom = header.ActualHeight - top - box.ActualHeight;
+
+        Assert.True(top >= clearance && bottom >= clearance,
+            $"Filtre kutusu {header.ActualHeight}px şeritte {box.ActualHeight}px — üst pay {top}, alt pay {bottom}; " +
+            $"her ikisi de en az {clearance} olmalı (odak halkası bu payın içine çizilir).");
+
+        GC.KeepAlive(window);
+    }
 }
 
 /// <summary>
