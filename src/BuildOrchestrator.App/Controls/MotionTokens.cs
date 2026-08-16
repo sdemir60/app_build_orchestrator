@@ -80,11 +80,8 @@ internal static class MotionTokens
     /// </summary>
     public static void TransitionColor(FrameworkElement host, SolidColorBrush brush, Color to)
     {
-        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2] statik sinyalin TEK okuma ifadesi
-        var duration = ResolveDuration(host, "Duration.Fast", 120.0);          // prototip: --duration-fast
-        var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1)); // --ease-standard
-
-        if (!animationsEnabled || duration.TimeSpan <= TimeSpan.Zero)
+        var fast = ResolveFast(host);
+        if (!fast.Animate)
         {
             brush.BeginAnimation(SolidColorBrush.ColorProperty, null);
             brush.Color = to;
@@ -92,7 +89,7 @@ internal static class MotionTokens
         }
 
         var animation = new ColorAnimationUsingKeyFrames();
-        animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(duration.TimeSpan), spline));
+        animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(fast.Duration), fast.Spline));
         brush.BeginAnimation(SolidColorBrush.ColorProperty, animation, HandoffBehavior.SnapshotAndReplace);
     }
 
@@ -100,19 +97,51 @@ internal static class MotionTokens
     /// <c>translateX</c> geçişi (_ds_bundle.js:900-903) gibi konum/opaklık geçişleri için.</summary>
     public static void TransitionDouble(FrameworkElement host, Animatable target, DependencyProperty property, double to)
     {
-        bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2] statik sinyalin TEK okuma ifadesi
-        var duration = ResolveDuration(host, "Duration.Fast", 120.0);
-        var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
-
-        if (!animationsEnabled || duration.TimeSpan <= TimeSpan.Zero)
+        var fast = ResolveFast(host);
+        if (!fast.Animate)
         {
             target.BeginAnimation(property, null);
             target.SetValue(property, to);
             return;
         }
 
-        target.BeginAnimation(property, SplineTo(to, duration.TimeSpan, spline), HandoffBehavior.SnapshotAndReplace);
+        target.BeginAnimation(property, SplineTo(to, fast.Duration, fast.Spline), HandoffBehavior.SnapshotAndReplace);
     }
+
+    /// <summary>[SCROLLBAR-HOVER] <see cref="TransitionColor"/>'ın Thickness karşılığı — scrollbar hap'ının
+    /// hover'da 3px kenardan 1px kenara açılması gibi İÇERLEK geçişleri için. Hedef öğenin KENDİSİDİR
+    /// (<c>Padding</c> gibi bir <see cref="FrameworkElement"/> özelliği); <see cref="TransitionDouble"/>'ın
+    /// <see cref="Animatable"/> hedefinden farkı budur, gate/süre/eğri aynıdır.</summary>
+    public static void TransitionThickness(FrameworkElement target, DependencyProperty property, Thickness to)
+    {
+        var fast = ResolveFast(target);
+        if (!fast.Animate)
+        {
+            target.BeginAnimation(property, null);
+            target.SetValue(property, to);
+            return;
+        }
+
+        // WPF'in düz ThicknessAnimation'ı KeySpline alamaz — SplineTo ile aynı gerekçeyle keyframe biçimi.
+        var animation = new ThicknessAnimationUsingKeyFrames();
+        animation.KeyFrames.Add(new SplineThicknessKeyFrame(to, KeyTime.FromTimeSpan(fast.Duration), fast.Spline));
+        target.BeginAnimation(property, animation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    /// <summary>DS'in "durum değişimi" geçişinin ORTAK kapısı: <c>--duration-fast</c> + <c>--ease-standard</c> +
+    /// motion sinyali. Üç <c>TransitionX</c> metodu da (renk / double / thickness) BİREBİR aynı üç satırı
+    /// yazıyordu — tek yer (kopya YASAK, CLAUDE.md). Süre ve sinyal ÇAĞRI ANINDA taze okunur (motion
+    /// sözleşmesi); süre 0'a düşmüşse (reduced-motion) <c>Animate</c> false'tur ve çağıran hedefe anında yazar.</summary>
+    private static FastTransition ResolveFast(FrameworkElement host)
+    {
+        var duration = ResolveDuration(host, "Duration.Fast", 120.0);          // prototip: --duration-fast
+        var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1)); // --ease-standard
+        // [W2] statik sinyalin TEK okuma ifadesi
+        bool animate = MotionGate.StaticAnimationsEnabled && duration.TimeSpan > TimeSpan.Zero;
+        return new FastTransition(animate, duration.TimeSpan, spline);
+    }
+
+    private readonly record struct FastTransition(bool Animate, TimeSpan Duration, KeySpline Spline);
 
     /// <summary>[M-1] <see cref="Console.ConsoleView.AnimateToBottom"/> ve
     /// <see cref="StickyLayerList.AnimateScrollTo"/>'nun BİREBİR aynı desenini (taze <c>AnimationsEnabled</c> +

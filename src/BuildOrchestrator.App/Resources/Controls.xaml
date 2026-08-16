@@ -800,16 +800,18 @@
   <!--
     BuildApp.jsx:35-38 `.bo-scroll` — tasarımın scrollbar sözleşmesi: 10px ray, track TRANSPARENT, thumb
     neutral-700 + 3px şeffaf kenar (background-clip: padding-box) + dış radius 5. WPF eşlemesi: ray 10px →
-    ScrollBar Width/Height=10; thumb'ın GÖRÜNEN hap'ı = Border Margin=3 (3px kenar) + CornerRadius=2
-    (dış 5 − kenar 3 = padding-box yarıçapı) + Brush.Neutral700 zemin → 4px'lik hap.
+    ScrollBar Width/Height=10; thumb'ın GÖRÜNEN hap'ı = Border Margin=3 (3px kenar, dingin) + Brush.Neutral700
+    zemin → 4px'lik hap. Yarıçap "dış 5 − kenar"dır ve kenar artık değişken olduğu için sabit 4 verilip
+    Border'ın kendi kırpmasına bırakılır (bkz. Ds.ScrollBar.Thumb).
     Tüketiciler (prototip): proje listesi :476 · console :615 · event stream :704 · branch popover :839 —
     yani UYGULAMA GENELİ implicit stil doğru kapsamdır; README:14 scrollbar'ı "en yakın native karşılık"
     istisnasına açıkça devreder.
     Ok butonları YOK: webkit scrollbar'ında buton çizilmez (:36-38 yalnız track+thumb tanımlar) — ray'ın
-    boş alanı sayfa-atlama davranışını korur (şeffaf RepeatButton'lar). Hover/drag: prototip tek renklidir;
-    native etkileşim geri bildirimi README:14 gereği korunur — rampada BİR adım açık (Brush.Neutral600),
-    Brush.SurfaceHover'ın "bir üst adım" desenine paralel; geçiş A13.2 gereği DsTransition ile. Amber DEĞİL:
-    renk yalnız STATÜ taşır.
+    boş alanı sayfa-atlama davranışını korur (şeffaf RepeatButton'lar). Etkileşim: prototip tek renkli ve tek
+    kalınlıktadır; native geri bildirim README:14 gereği korunur ve 4px'lik hapı tutulabilir kılmak için
+    genişletilir — fare ray'a girince hap 8px + rampada bir adım açık (Brush.Neutral600), sürüklerken bir adım
+    daha (Brush.Neutral500); Brush.SurfaceHover'ın "bir üst adım" desenine paralel, geçişler A13.2 gereği
+    DsTransition ile. Amber DEĞİL: renk yalnız STATÜ taşır.
   -->
 
   <!-- ScrollViewer default şablonunun köşe karesi (Corner): SystemColors.ControlBrushKey'i DynamicResource
@@ -833,27 +835,54 @@
     </Setter>
   </Style>
 
-  <!-- Thumb: hover/drag geçişi A13.2 kuralıyla (DsTransition.AnimatedBackground → şablon TemplateBinding
-       ile okur; ListBoxItem'daki desenin aynısı). -->
+  <!--
+    Thumb: hem renk hem KALINLIK geçişi A13.2 kuralıyla (DsTransition.AnimatedBackground /
+    .AnimatedPadding → şablon TemplateBinding ile okur; ListBoxItem'daki desenin aynısı).
+
+    [SCROLLBAR-HOVER] Hap dingin hâlde 4px'tir — tutup çekmek için ince. Fare RAY'a girdiği an kenar 3'ten
+    1'e akar (hap 8px olur) ve renk rampada bir adım açılır; sürüklerken bir adım daha. Tetik thumb'ın kendi
+    IsMouseOver'ı DEĞİL, ata ScrollBar'ınkidir: kavrama hedefi 10px'lik ray'dır, 4px'lik hapı avlamak zorunda
+    kalmadan yaklaşınca yakalanabilir hâle gelmesi gerekir. Genişleyen yalnız HAP'tır, ray değil — ray'ın
+    10px'i sabit kaldığı için ScrollViewer içeriği hover'da yeniden yerleşmez.
+
+    Yarıçap KENARI TAKİP EDER (controls:PillRadius): BuildApp.jsx:38'in "dış 5 − kenar" formülü kenar 3'te 2,
+    kenar 1'de 4 verir. Sabit bir yarıçap yeterli DEĞİLDİR — WPF taşan yarıçapı yatayda kırpar, dikeyde
+    kırpmaz, yani 4px'lik hapta yarıçap 4 yarım daire değil elips üretirdi. Binding, Padding animasyonunun her
+    karesinde yeniden değerlendiği için yarıçap da kesintisiz akar (gerekçenin tamamı PillRadius'ta).
+  -->
+  <controls:PillRadius x:Key="Ds.ScrollBar.PillRadius" />
+
   <Style x:Key="Ds.ScrollBar.Thumb" TargetType="Thumb">
     <Setter Property="OverridesDefaultStyle" Value="True" />
     <Setter Property="IsTabStop" Value="False" />
     <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral700}" />
+    <!-- BuildApp.jsx:38 — 3px şeffaf kenar (background-clip: padding-box). -->
+    <Setter Property="controls:DsTransition.AnimatedPadding" Value="3" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Thumb">
-          <!-- BuildApp.jsx:38 — Margin 3 = 3px şeffaf kenar; CornerRadius 2 = dış 5 − kenar 3. -->
-          <Border Background="{TemplateBinding Background}" Margin="3" CornerRadius="2"
-                  SnapsToDevicePixels="True" />
+          <Border Background="{TemplateBinding Background}" Margin="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True"
+                  CornerRadius="{Binding Padding, RelativeSource={RelativeSource TemplatedParent},
+                                         Converter={StaticResource Ds.ScrollBar.PillRadius}}" />
         </ControlTemplate>
       </Setter.Value>
     </Setter>
     <Style.Triggers>
-      <Trigger Property="IsMouseOver" Value="True">
+      <!-- Ray hover'ı: şablondaki Grid Background=Transparent sayesinde 10px'in tamamı hit-test alır.
+           Kaynak TemplatedParent'tır, AncestorType DEĞİL (ÖLÇÜLDÜ: FindAncestor MANTIKSAL ağacı yürür ve
+           thumb'ın ebeveyni Track olduğu için zincir orada kopar — bağ hiç çözülmez, hover sessizce ölürdü).
+           Thumb ScrollBar'ın kendi şablonunda doğduğundan TemplatedParent doğrudan ScrollBar'dır. -->
+      <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}"
+                   Value="True">
         <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral600}" />
-      </Trigger>
+        <Setter Property="controls:DsTransition.AnimatedPadding" Value="1" />
+      </DataTrigger>
+      <!-- Drag SONRA gelir (kazanır) ve kalınlığı da AÇIKÇA yazar: fare capture altında ray'ın dışına
+           çıkabilir, hap o anda incelmemelidir. -->
       <Trigger Property="IsDragging" Value="True">
-        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral600}" />
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral500}" />
+        <Setter Property="controls:DsTransition.AnimatedPadding" Value="1" />
       </Trigger>
     </Style.Triggers>
   </Style>
