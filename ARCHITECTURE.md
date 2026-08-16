@@ -1923,17 +1923,23 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
-| Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. Being implicit it crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
-| Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements |
+| Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
+| Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
 | Status glyph · building spinner · will-build dot | Custom controls drawing rings, arcs and dots |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
 
 Three pieces of shared machinery keep the copies from multiplying:
 
-- **`DsTransition`** implements the design's 120 ms colour transitions. A template's state trigger points an
+- **`DsTransition`** implements the design's 120 ms state transitions. A template's state trigger points an
   attached property at a *token brush*; the class then installs a template-local, unfrozen brush on the real
   property and animates that copy. This is the standing answer to the frozen-brush rule of §14.5 — a shared
-  resource brush cannot be animated, and animating one would drive every consumer at once.
+  resource brush cannot be animated, and animating one would drive every consumer at once. Colour is not the
+  only axis: the same class flows a translation (the switch thumb) and an inset (the scrollbar pill) through
+  one shared gate, so every 120 ms transition reads the same duration, the same curve and the same
+  reduced-motion signal. What WPF cannot animate is worked around rather than dropped — the scrollbar pill's
+  corner radius has no animation type at all, so it is *bound* to the animating inset and follows it frame by
+  frame, which also keeps the pill a true capsule at both widths (a fixed radius would be clipped
+  horizontally but not vertically, turning the ends into ellipses).
 - **`PopIn`** is the single 140 ms entrance animation, shared by both popovers and the Build menu. There is no
   exit animation; overlays hide immediately.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
@@ -1941,7 +1947,10 @@ Three pieces of shared machinery keep the copies from multiplying:
 
 Both popovers derive from a common base that owns the open state, the refresh-then-animate-then-focus sequence,
 the Esc handling (a popover is a separate HWND, so the window-level Esc chain does not reach it) and outside
-click; only the branch search filter and the worktree three-state text remain per-popover.
+click; only the branch search filter and the worktree three-state text remain per-popover. The width belongs to
+the shell `Border` alone — each body stretches into whatever the shell's padding leaves rather than restating a
+number, since a restated width silently drops the shell's border thickness and WPF then clips the overflowing
+edge of the body.
 
 Filtering is a free-text query (case-insensitive substring on the project *name* only — never the path) ANDed
 with one status chip (`building` — which includes queued — `succeeded`, `failed`, `skipped`, `dep`). The active
@@ -2729,7 +2738,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Cross-panel scroll arbitration | `App/Services/ScrollArbiter.cs` |
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
 | One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |
-| Shared entrance/reveal animations, 120 ms transitions | `App/Controls/PopIn.cs`, `RevealStagger.cs`, `DsTransition.cs`, `MotionTokens.cs` |
+| Shared entrance/reveal animations, 120 ms transitions | `App/Controls/PopIn.cs`, `RevealStagger.cs`, `DsTransition.cs`, `MotionTokens.cs`, `PillRadius.cs` |
 | Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
 | OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
 | Accessibility names | `App/AccessibilityNames.cs` |

@@ -57,6 +57,17 @@ public static class DsTransition
         "AnimatedTranslateX", typeof(double), typeof(DsTransition),
         new PropertyMetadata(double.NaN, OnAnimatedTranslateXChanged));
 
+    /// <summary>[SCROLLBAR-HOVER] Öğenin <c>Padding</c>'inin 120ms'lik geçişi — scrollbar hap'ının fare ray'a
+    /// girince 3px kenardan 1px kenara AÇILMASI (4px hap → 8px hap) bunun üzerinden akar. Şablon içerlek'i
+    /// <c>{TemplateBinding Padding}</c> ile okur, böylece hap'ın kendisi genişlerken ray'ın 10px'i (ve onunla
+    /// birlikte yerleşim ve kavrama hedefi) sabit kalır.</summary>
+    /// <remarks>Varsayılan NaN'dır, <c>default(Thickness)</c> DEĞİL — gerekçe
+    /// <see cref="AnimatedTranslateXProperty"/> ile aynıdır: ilk atamanın (kuruluş) sonrakilerden
+    /// (geçiş) ayrılabilmesi gerekir, yoksa açılış animasyonu 0'dan oynardı.</remarks>
+    public static readonly DependencyProperty AnimatedPaddingProperty = DependencyProperty.RegisterAttached(
+        "AnimatedPadding", typeof(Thickness), typeof(DsTransition),
+        new PropertyMetadata(new Thickness(double.NaN), OnAnimatedPaddingChanged));
+
     public static void SetAnimatedBackground(DependencyObject d, Brush? value) => d.SetValue(AnimatedBackgroundProperty, value);
     public static Brush? GetAnimatedBackground(DependencyObject d) => (Brush?)d.GetValue(AnimatedBackgroundProperty);
 
@@ -68,6 +79,9 @@ public static class DsTransition
 
     public static void SetAnimatedTranslateX(DependencyObject d, double value) => d.SetValue(AnimatedTranslateXProperty, value);
     public static double GetAnimatedTranslateX(DependencyObject d) => (double)d.GetValue(AnimatedTranslateXProperty);
+
+    public static void SetAnimatedPadding(DependencyObject d, Thickness value) => d.SetValue(AnimatedPaddingProperty, value);
+    public static Thickness GetAnimatedPadding(DependencyObject d) => (Thickness)d.GetValue(AnimatedPaddingProperty);
 
     /// <summary>Zemin fırçasının öğe tipine göre gerçek hedefi. <see cref="Border"/> ve <see cref="Panel"/>
     /// birer <see cref="Control"/> DEĞİLDİR — sıra bu yüzden önemlidir.</summary>
@@ -87,6 +101,15 @@ public static class DsTransition
         Shape => Shape.StrokeProperty,  // konturlu ikonda "ön plan" = kontur
         // Border/Panel: metin rengi kalıtımla iner (ContentPresenter'ın Foreground'u yoktur).
         _ => TextElement.ForegroundProperty,
+    };
+
+    /// <summary>İçerlek'in öğe tipine göre gerçek hedefi. <see cref="Border"/> bir <see cref="Control"/>
+    /// DEĞİLDİR ama kendi <c>Padding</c>'i vardır — sıra bu yüzden önemlidir (bkz. <see cref="BackgroundTarget"/>).</summary>
+    private static DependencyProperty? PaddingTarget(DependencyObject d) => d switch
+    {
+        Border => Border.PaddingProperty,
+        Control => Control.PaddingProperty,
+        _ => null,
     };
 
     private static DependencyProperty? BorderBrushTarget(DependencyObject d) => d switch
@@ -123,6 +146,17 @@ public static class DsTransition
         // Şablon yeniden uygulanmışsa (ör. Style değişimi) öğe bizim kopyamızı kaybetmiş olabilir — geri koy.
         if (!ReferenceEquals(d.GetValue(target), local)) d.SetValue(target, local);
         MotionTokens.TransitionColor(host, local, solid.Color);
+    }
+
+    private static void OnAnimatedPaddingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not FrameworkElement host || PaddingTarget(d) is not { } target) return;
+        var to = (Thickness)e.NewValue;
+        if (double.IsNaN(to.Left)) return;
+
+        // İlk atama: kuruluştur, animate EDİLMEZ (geçişler bundan SONRA akar).
+        if (double.IsNaN(((Thickness)e.OldValue).Left)) { host.SetValue(target, to); return; }
+        MotionTokens.TransitionThickness(host, target, to);
     }
 
     private static void OnAnimatedTranslateXChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)

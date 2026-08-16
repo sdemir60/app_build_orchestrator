@@ -23,6 +23,42 @@ public class PopoverTests
 {
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
+    /// <summary>
+    /// Popover gövdesi kabuğunun İÇ ALANINA sığar — genişliği iki yerde birden tanımlanmaz.
+    ///
+    /// <para><b>ÖLÇÜLDÜ:</b> kabuk (<c>Ds.Popover</c>) 272px, 1px kenar + 8px dolgu ile iç alanı 254'tür; gövde
+    /// ise kendi <c>Width</c>'ini 256 diye yeniden yazıyordu (kenar payı unutulmuş — worktree'de 300'e karşı
+    /// 284 ile aynı hata). WPF taşan gövdeye bir yerleşim kırpması uygular: arama kutusunun SAĞ kenarı ve
+    /// satırların sağdaki sha'ları kesiliyordu.</para>
+    ///
+    /// <para>Doğru kaynak kabuktur: gövde genişliğini kabuktan ALIR (kopya YASAK, CLAUDE.md).</para>
+    /// </summary>
+    [StaFact]
+    public void Both_popover_bodies_fit_the_width_their_shell_gives_them()
+    {
+        var host = DsResources.NewHost();
+        var bar = new ActionBar();
+        var window = DsResources.Realize(host, bar, 1200, 200);
+
+        foreach (string name in new[] { "PART_BranchPopup", "PART_WorktreePopup" })
+        {
+            var popup = (System.Windows.Controls.Primitives.Popup)bar.FindName(name)!;
+            popup.IsOpen = true;
+            var shell = (Border)popup.Child;
+            shell.UpdateLayout();
+
+            double inner = shell.ActualWidth - shell.Padding.Left - shell.Padding.Right
+                           - shell.BorderThickness.Left - shell.BorderThickness.Right;
+            var body = DsResources.Descendants(shell).OfType<StackPanel>().First();
+
+            Assert.True(body.ActualWidth <= inner,
+                $"{name}: kabuk {shell.ActualWidth}px, iç alanı {inner}px — gövde {body.ActualWidth}px ile taşıyor.");
+            popup.IsOpen = false;
+        }
+
+        GC.KeepAlive(window);
+    }
+
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 

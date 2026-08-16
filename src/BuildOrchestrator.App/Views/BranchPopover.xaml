@@ -6,8 +6,11 @@
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
   <!-- [D6/T40] Branch popover (BuildApp.jsx:830-852). İçerik Ds.Popover (272px) İÇİNE oturur; bu kontrol yalnız
-       gövdeyi üretir: caps başlık · arama · 28px satırlar (kod-tarafı) · alt not. Ölçü/renk token'dan. -->
-  <StackPanel Width="256">
+       gövdeyi üretir: caps başlık · arama · 28px satırlar (kod-tarafı) · alt not. Ölçü/renk token'dan.
+       GENİŞLİK BURADA YAZILMAZ: onu kabuk verir (ActionBar'daki Ds.Popover Border'ı) ve gövde onun iç
+       alanına yayılır. Yeniden yazıldığında kenar payı unutuluyor ve gövde kabuğu 2px taşırıyordu —
+       WPF taşan gövdeyi kırpar, arama kutusunun sağ kenarı ve satırların sha'ları kesilirdi. -->
+  <StackPanel>
     <!-- caps SWITCH BRANCH — text-2xs, weight 500, text-faint, padding '2px 4px 8px' (BuildApp.jsx:837) -->
     <TextBlock Text="SWITCH BRANCH" Margin="4,2,4,8"
                FontFamily="{x:Static controls:AppFonts.Ui}"
