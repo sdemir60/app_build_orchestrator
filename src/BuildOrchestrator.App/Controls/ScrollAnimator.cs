@@ -53,9 +53,20 @@ public static class ScrollAnimator
 
     /// <summary>Uçuştaki animasyonu (varsa) <c>BeginAnimation(prop, null)</c> ile iptal eder + suppress bayrağını
     /// kaldırır. <see cref="EnableUserCancellation"/>'ın wheel kancası bunu çağırır; testler de doğrudan çağırabilir.
-    /// <c>BeginAnimation</c> <see cref="UIElement"/> üzerinde tanımlıdır (ScrollViewer/TextEditor ikisi de UIElement).</summary>
+    /// <c>BeginAnimation</c> <see cref="UIElement"/> üzerinde tanımlıdır (ScrollViewer/TextEditor ikisi de UIElement).
+    ///
+    /// <para><b>İptal bir BIRAKMA'dır, geri alma DEĞİL — bu yüzden animasyonu bırakmadan ÖNCE panelin O ANKİ
+    /// konumu DP'nin tabanına yazılır.</b> <see cref="AnimateTo"/> tabanı hareketin BAŞLANGIÇ noktasına tohumlar
+    /// ve <c>SplineTo</c> <c>From</c>'suz + <c>HoldEnd</c> olduğu için efektif değeri hedefte TUTAR. Taban
+    /// eşitlenmeden <c>BeginAnimation(prop, null)</c> çağrılırsa o tutma kalkar, efektif değer tabana — yani
+    /// hareketin başladığı ESKİ konuma — düşer, <see cref="OnVerticalOffsetChanged"/> ateşlenir ve panel oraya
+    /// kaydırılır. Sahada ölçülen kusur buydu: konsolda tekerlekle yukarı çıkılıp <c>⌄ latest</c> ile dibe
+    /// inildikten sonra tekerleğe dokunmak paneli dipten değil, pill'e basmadan önceki yerden sürdürüyordu.
+    /// Taban ile efektif değer eşitlendiğinde bırakma hiçbir değişim üretmez; panel kullanıcının dokunduğu anda
+    /// nerede duruyorsa orada kalır.</para></summary>
     public static void CancelForUser(UIElement target)
     {
+        SetVerticalOffset(target, GetVerticalOffset(target)); // taban = animasyonun tuttuğu GERÇEK konum
         target.BeginAnimation(VerticalOffsetProperty, null);
         SetIsUserSuppressed(target, true);
     }

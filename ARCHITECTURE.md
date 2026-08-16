@@ -1458,6 +1458,14 @@ nothing. The previous animation is therefore released before the base value is s
 retargeting mid-flight: an animation in flight is already driving the panel every frame, so the caller's reading
 of the current offset *is* the visible position.
 
+**Cancelling a move releases it; it never rewinds it.** The same hold that keeps a finished move owning the
+property also means that dropping the animation hands the property back to a base value seeded at the point the
+move *started*. Released without care, a wheel touch after a completed jump would therefore scroll the panel
+back to wherever it was before the jump — on the console, riding the wheel up after `⌄ latest` resumed from the
+pre-jump position instead of from the bottom. So the cancel writes the panel's current position into the base
+value first: base and effective agree, releasing the animation changes nothing, and the wheel carries on from
+where the panel actually is.
+
 **Only the user stops the follow, and the signal comes from input, not from geometry.** A scroll event says
 nothing about who caused it: relayout, a viewport change and our own programmatic scrolls all raise one, and
 the offset they report can still be the pre-scroll value, so a distance measured then can cross the threshold
