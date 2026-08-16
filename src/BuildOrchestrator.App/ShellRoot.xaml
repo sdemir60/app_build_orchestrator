@@ -59,13 +59,13 @@
               </StackPanel>
             </controls:PanelHeader.LeftContent>
             <controls:PanelHeader.RightContent>
-              <!-- Ds.Input (implicit TextBox) + büyüteç prefix (paddingLeft 26) + watermark.
+              <!-- Ds.Input.Sm (28px şeride sığması için sm ölçü) + büyüteç prefix (paddingLeft 26) + watermark.
                    [E5/T46] Ctrl+F bunu odaklar (MainWindow → Shell.FocusProjectFilter); içindeki Esc yalnız
                    sorguyu temizler + blur eder (OnFilterKeyDown, handled) — global Esc zincirine SIZMAZ. Text
                    iki-yönlü ProjectQuery'ye bağlı (filtre kaynağı — VisibleProjects bunu okur). PanelHeader.
                    RightContent bir alt-namescope olduğundan buraya x:Name/handler XAML'de YAZILAMAZ (MC3093) →
                    referans + PreviewKeyDown kod-tarafı bağlanır (ShellRoot ctor), erişim RightContent üzerinden. -->
-              <TextBox Width="160" controls:DsChrome.Watermark="Filter…"
+              <TextBox Width="160" Style="{DynamicResource Ds.Input.Sm}" controls:DsChrome.Watermark="Filter…"
                        Text="{Binding ProjectQuery, UpdateSourceTrigger=PropertyChanged}"
                        AutomationProperties.Name="Filter projects">
                 <controls:DsChrome.Prefix>

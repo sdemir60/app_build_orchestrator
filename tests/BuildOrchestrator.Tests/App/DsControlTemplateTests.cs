@@ -28,7 +28,7 @@ public class DsControlTemplateTests
         "Ds.Button.Ghost.Sm", "Ds.Button.Ghost.Md", "Ds.Button.Ghost.Lg",
         "Ds.Button.Danger.Sm", "Ds.Button.Danger.Md", "Ds.Button.Danger.Lg",
         "Ds.SplitButton", "Ds.Chip", "Ds.Chip.Counter", "Ds.IconButton", "Ds.IconButton.Toggle",
-        "Ds.Switch", "Ds.Segment", "Ds.Segment.Item", "Ds.Input", "Ds.Kbd", "Ds.ProgressBar",
+        "Ds.Switch", "Ds.Segment", "Ds.Segment.Item", "Ds.Input", "Ds.Input.Sm", "Ds.Kbd", "Ds.ProgressBar",
         "Ds.Popover", "Ds.Dialog", "Ds.FocusVisual",
     ];
 
@@ -227,6 +227,48 @@ public class DsControlTemplateTests
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusFailBorder"), DsResources.ColorOf(input.BorderBrush));
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// Metin dolgunun HEMEN İÇİNDEN başlar — dolgu KADAR daha içeriden değil.
+    ///
+    /// <para><b>ÖLÇÜLDÜ:</b> WPF, <c>TextBox.Padding</c>'i <c>PART_ContentHost</c>'a KENDİSİ uygular
+    /// (<c>TextBoxBase</c> şablonu bağlarken content host'un iç sunucusunu dolguyla kaydırır). Şablon aynı
+    /// dolguyu bir de <c>Margin="{TemplateBinding Padding}"</c> ile verirse dolgu İKİ KEZ işlenir: 160px'lik
+    /// proje filtresinde caret 27 yerine <b>55</b>'te (kutunun ortasına yakın) doğuyor, yazı oradan başlıyordu.
+    /// Aynı stili kullandığı için branch popover'ının arama kutusu da aynı şekilde kayıyordu.</para>
+    ///
+    /// <para>Caret, içerik başlangıcının 2px kadar sağında durur: bu <c>TextBoxView</c>'un KENDİ caret payıdır
+    /// (WPF'in her TextBox'ında vardır, şablondan gelmez) — bu yüzden eşitlik değil dar bir aralık pinlenir.</para>
+    /// </summary>
+    [StaFact]
+    public void Input_text_starts_one_padding_in_not_two()
+    {
+        var host = DsResources.NewHost();
+        var input = new TextBox { Width = 160, Style = (Style)host.FindResource("Ds.Input") };
+        BuildOrchestrator.App.Controls.DsChrome.SetPrefix(input, new TextBlock { Text = "Q" });
+        var window = DsResources.Realize(host, input);
+
+        double contentStart = input.BorderThickness.Left + input.Padding.Left;   // 1 + 26
+        Assert.InRange(input.GetRectFromCharacterIndex(0).X, contentStart, contentStart + CaretGutter);
+
+        // Ve yazmaya başlayınca da: ilk karakter aynı yerden başlar (kayma "boşken" bir görüntü değildi).
+        input.Text = "ab";
+        input.UpdateLayout();
+        Assert.InRange(input.GetRectFromCharacterIndex(0).X, contentStart, contentStart + CaretGutter);
+
+        // Yapısal kanıt: metni taşıyan sunucu, kenar+dolgu kadar içeriden başlar ve kalan genişliğin
+        // TAMAMINI alır — dolgu bir KEZ işlenmiştir (iki kez işlenirse sol kenar da genişlik de kayar).
+        var contentHost = (ScrollViewer)input.Template.FindName("PART_ContentHost", input);
+        var presenter = DsResources.Descendants(contentHost).OfType<ScrollContentPresenter>().Single();
+        Assert.Equal(contentStart, presenter.TransformToAncestor(input).Transform(new Point(0, 0)).X, 1);
+        Assert.Equal(input.ActualWidth - contentStart - input.BorderThickness.Right - input.Padding.Right,
+                     presenter.ActualWidth, 1);
+
+        GC.KeepAlive(window);
+    }
+
+    /// <summary><c>TextBoxView</c>'un kendi caret payı (WPF sabiti, şablondan gelmez).</summary>
+    private const double CaretGutter = 3;
 
     [StaFact]
     public void Focus_visual_is_a_two_pixel_amber_ring_with_one_pixel_offset()
