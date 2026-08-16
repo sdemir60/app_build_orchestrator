@@ -428,8 +428,10 @@ public partial class MainWindow : Window
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
             Shell.ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
+            // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
+            // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
             _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(
-                SplitLogLines(text), buildInProgress: row.State == ProjectRowState.Started));
+                text.Length == 0 ? ConsoleEmptyState.ForEmptyLog(row) : SplitLogLines(text)));
         }
         catch (Exception ex)
         {

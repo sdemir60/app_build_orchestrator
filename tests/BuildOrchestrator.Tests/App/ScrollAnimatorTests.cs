@@ -88,6 +88,42 @@ public class ScrollAnimatorTests
         Assert.True(DependencyPropertyHelper.GetValueSource(sv, ScrollAnimator.VerticalOffsetProperty).IsAnimated);
     }
 
+    /// <summary>
+    /// <b>Aynı hedefe İKİNCİ bir hareket, panel arada BAŞKA bir yoldan taşınmışsa da gerçekten kaydırır.</b>
+    ///
+    /// <para>Kusur burada yaşıyordu ve konsolun <c>← Back</c> jestinde ölçüldü: <see cref="MotionTokens.SplineTo"/>
+    /// <c>From</c>'suzdur ve <c>FillBehavior</c> varsayılanı <c>HoldEnd</c>'dir — biten bir animasyon DP'yi son
+    /// hedefinde TUTMAYA devam eder. Panel sonra başka bir yoldan (doküman takası, <c>ScrollToVerticalOffset</c>)
+    /// taşınırsa DP hâlâ eski hedefi tutar; <see cref="ScrollAnimator.AnimateTo"/>'nun taban tohumlaması o tutulan
+    /// değerin ALTINDA kalır ve aynı hedefe açılan yeni animasyon efektif değeri hiç değiştirmez —
+    /// <c>OnVerticalOffsetChanged</c> ateşlenmez, <c>ScrollToVerticalOffset</c> hiç çağrılmaz, panel yerinde
+    /// kalır. Sahada bu, "geri dedim, hiçbir şey olmadı, metnin başında kaldı" olarak görülüyordu.</para>
+    ///
+    /// <para>Kural: <c>AnimateTo</c> her zaman ÇAĞIRANIN bildirdiği gerçek konumdan başlar. Hedefin bir öncekiyle
+    /// aynı olması hareketi iptal etmez.</para>
+    /// </summary>
+    [StaFact]
+    public void A_second_move_to_the_same_target_still_scrolls_when_the_panel_moved_by_another_path()
+    {
+        var sv = NewLiveScrollViewer();
+        var spline = new KeySpline(0.65, 0, 0.35, 1);
+        var duration = TimeSpan.FromMilliseconds(30);
+
+        ScrollAnimator.AnimateTo(sv, 0, 500, animationsEnabled: true, duration, spline);
+        DispatcherPump.PumpUntil(() => sv.VerticalOffset >= 499.5, TimeSpan.FromSeconds(3));
+        Assert.InRange(sv.VerticalOffset, 499.5, 500.5); // ön-koşul: ilk hareket gerçekten oldu
+
+        // Panel ScrollAnimator'ın DP'sinden GEÇMEYEN bir yolla başa döndü (konsolda: doküman takası + pin).
+        sv.ScrollToVerticalOffset(0);
+        sv.UpdateLayout();
+        Assert.Equal(0, sv.VerticalOffset);
+
+        ScrollAnimator.AnimateTo(sv, sv.VerticalOffset, 500, animationsEnabled: true, duration, spline);
+        DispatcherPump.PumpUntil(() => sv.VerticalOffset >= 499.5, TimeSpan.FromSeconds(3));
+
+        Assert.InRange(sv.VerticalOffset, 499.5, 500.5);
+    }
+
     [StaFact]
     public void CancelForUser_removes_the_active_animation_and_sets_the_suppressed_flag()
     {

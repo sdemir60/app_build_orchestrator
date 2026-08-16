@@ -110,6 +110,12 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
     public bool HasDepIssue => DepIssues is { Count: > 0 };
 
+    /// <summary>Motor bu projeyi bu koşunda ATLADIYSA gerekçesi (<see cref="SkipReasons"/> — tek doğruluk
+    /// kaynağı); atlanmadıysa null. <b>Neden satırda tutuluyor:</b> proje sayfası logu olmayan bir projede "neden
+    /// boş" sorusunu cevaplamak zorundadır ve atlanmış bir projenin log dosyası HiÇ yoktur — gerekçe yalnız
+    /// event'te geçip atılıyordu (bkz. <see cref="Console.ConsoleEmptyState.ForEmptyLog"/>).</summary>
+    [ObservableProperty] private string? _skipReason;
+
     /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti (iki
     /// ardışık yeşil tur hiç olmadı) — <see cref="ProjectSucceededEvent.CycleUnsettled"/>'tan AYNEN taşınır.
     /// Derleme başarılı ama çıktı bir kuşak geride OLABİLİR. RENDER Task 9'undur — burası yalnız veri taşır.</summary>
@@ -1057,6 +1063,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var row = EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started);
         row.State = ProjectRowState.Started;
+        row.SkipReason = null;    // bu koşuda GERÇEKTEN derleniyor — önceki segmentin atlama gerekçesi geçersiz
         row.CycleWaiting = false; // sıra ONDA: bu event'in anlamı tam olarak budur
         _projectStartedAtMs[e.ProjectId] = _nowMs();
         // [cycle rounds/I2] Bir SCC üyesi başladıysa, KARDEŞLERİ artık beklemededir: grup içinde eşzamanlı
@@ -1074,6 +1081,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
         row.State = ProjectRowState.Skipped;
+        row.SkipReason = e.Reason; // proje sayfası "neden boş" sorusunu bundan cevaplar
         row.CycleUnconverged = e.CycleUnconverged; // [cycle rounds/Task 8] kalıcı kırık döngü — render Task 9'undur
         row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         _projectStartedAtMs.Remove(e.ProjectId);
@@ -1111,6 +1119,7 @@ public sealed partial class RunViewModel : ObservableObject
         row.State = state;
         row.DurationMs = durationMs;
         row.DepIssues = depIssues; // [Task 17] ▲ sinyali — HasDepIssue bundan türetilir
+        row.SkipReason = null;     // atlanmadı, derlendi
         row.CycleUnsettled = cycleUnsettled; // [cycle rounds/Task 8] ProjectFailedEvent bu alanı taşımaz → varsayılan false
         // [cycle rounds/Task 9 review fix 1] Proje bu run'da GERÇEKTEN invoke edildi (Succeeded ya da Failed
         // fark etmez) — önceki bir segmentten kalma "hiç invoke edilmeden pre-skip edildi" bayrağı artık
@@ -1233,6 +1242,10 @@ public sealed partial class RunViewModel : ObservableObject
         if (e.Code == "logNotFound" && _pendingLoad is { } pending)
         {
             _pendingLoad = null;
+            // [her projenin sayfası var] Log YOKSA da proje moduna geçilir: sayfa boş kalmaz, o projenin O ANKi
+            // durumunu anlatan metni gösterir (Console.ConsoleEmptyState.ForEmptyLog). Eskiden mod hiç kurulmuyor,
+            // kullanıcı run anlatısına bakıyordu — tıklama "hiçbir şey yapmıyor" gibi görünüyordu.
+            EnterProjectMode(pending.ProjectId);
             pending.Completion.TrySetResult();
         }
         // [B1] REDDEDİLEN bir başlatma isteği (runInProgress) kendi "starting" bayrağını BIRAKMALIDIR. Motor run
@@ -1606,6 +1619,12 @@ public sealed partial class RunViewModel : ObservableObject
         catch (Exception ex)
         {
             AppendRunLine($"[error] could not load project log: {ex.Message}");
+            // [her projenin sayfası var] Proje moduna BURADA GEÇİLMEZ — <c>logNotFound</c> dalının aksine.
+            // Fark cevabın kendisindedir: <c>logNotFound</c> motorun KESİN cevabıdır ("log yok"), gönderim
+            // hatası ise hiç cevap DEĞİLDİR — istek yola bile çıkmadı ve `_pendingLoad` bilerek yaşatılıyor,
+            // çünkü gecikmiş bir chunk hâlâ dikişi tamamlayabilir. Burada modu kurmak, kullanıcı arada kartı
+            // bıraksa bile ActiveProjectId'yi o projede TAKILI bırakır ve run konsolu sessizce donar (ölçüldü:
+            // RunViewModelTests.Deselecting_before_the_project_log_chunk_arrives_does_not_freeze_the_run_console).
             // [Fix wave 2, Finding 2] SendAsync engine ölüyken/hiç başlamamışken SENKRON fırlar (writer null) —
             // bu catch `await` HİÇBİR suspension olmadan senkron çalışır. Önceden Completion burada asla
             // tamamlanmıyordu: hiçbir yanıt/event gelmeyeceğinden aşağıdaki `await pending.Completion.Task`
@@ -1652,12 +1671,31 @@ public sealed partial class RunViewModel : ObservableObject
             // OnProjectLogChunk da (marshal'lı) UI thread'inde → _gate altında okumak tutarlı (concurrency yok). Set
             // HÂLÂ aynı _gate + _projectText snapshot'ıyla birlikte → T3b üçüncü-aralık atomikliği KORUNUR (OnProjectLog
             // ya bu bloktan ÖNCE [satır snapshot'ta] ya da SONRA [ActiveProjectId güncel] koşar — üçüncü aralık yok).
-            if (string.Equals(SelectedProjectId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
-                ActiveProjectId = e.ProjectId;
+            EnterProjectMode(e.ProjectId);
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
         _pendingLoad = null;
         pending.Completion.TrySetResult();
+    }
+
+    /// <summary>
+    /// Konsolu proje moduna alan TEK kapı. Üç çağıranı vardır ve üçü de aynı soruyu sorar: dikiş tamamlandı,
+    /// motor "log yok" dedi, ya da gönderim hiç gitmedi — <b>her üçünde de o projenin sayfası açılır</b>.
+    ///
+    /// <para><b>Kapı:</b> yükleme HÂLÂ isteniyorsa, yani kart hâlâ seçiliyse. Hızlı select→deselect'te gecikmiş
+    /// bir cevap <see cref="ActiveProjectId"/>'yi kurup TAKILI bırakıyordu ve <see cref="AppendRunLine"/>
+    /// (ActiveProjectId null kapısı) sonrasında hiçbir anlatı satırını post edemiyordu — run konsolu sessizce
+    /// donardı.</para>
+    ///
+    /// <para><b>Neden kilit altında:</b> <see cref="OnProjectLog"/> arka plan thread'inden AYNI kilitle
+    /// <c>_projectText</c>'e yazar. Atama kilit dışında kalsaydı, kilidin kapanmasıyla atama arasındaki dar
+    /// aralıkta gelen bir satır ne tampona ne ekrana düşerdi (bkz. <see cref="OnProjectLogChunk"/>'ın dikiş
+    /// gerekçesi). Monitor reentrant'tır — dikiş yolu bu metodu zaten kilidin İÇİNDEN çağırır.</para></summary>
+    private void EnterProjectMode(string projectId)
+    {
+        lock (_gate)
+            if (string.Equals(SelectedProjectId, projectId, StringComparison.OrdinalIgnoreCase))
+                ActiveProjectId = projectId;
     }
 
     private sealed class PendingLoad(string projectId)

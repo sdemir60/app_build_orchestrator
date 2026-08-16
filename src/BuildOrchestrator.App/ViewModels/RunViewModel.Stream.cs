@@ -244,7 +244,11 @@ public sealed partial class RunViewModel
         bool anyFailed = Counters.Failed > 0; // done glyph/renk yeşil↔kırmızı (prototip c.failed)
         var emission = _stream.Push(isFail: kind == StreamKind.Fail, _nowMs());
         string time = Console.WallClockFormat.Of(WallClock());
-        bool shouldType = _streamHadNewest && !emission.Instant; // ilk-satır type etmez (prevNewest==null)
+        // [karakter kilitlenmesi] İlk satır açılmaz (prototip <c>prevNewest==null</c>) ve fırtına/hata zaten
+        // StreamComposer tarafında instant'tır. <c>done</c> de açılmaz: koşunun kapanış satırı bir ÖZETTİR ve
+        // beklemeden okunmalıdır — üstelik o an ekrandaki tek hareket olduğu için açılışı gereğinden fazla
+        // dikkat çekiyordu.
+        bool shouldType = _streamHadNewest && !emission.Instant && kind != StreamKind.Done;
         _streamHadNewest = true;
         bool isSelected = projectId is not null &&
             string.Equals(projectId, SelectedProjectId, StringComparison.OrdinalIgnoreCase);

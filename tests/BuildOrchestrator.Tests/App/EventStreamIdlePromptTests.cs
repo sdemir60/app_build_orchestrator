@@ -59,67 +59,72 @@ public class EventStreamIdlePromptTests
     }
 
     /// <summary>
-    /// İmlecin KENDİ rengi yoktur: satırın rengini alır (prototipte <c>currentColor</c>). Ton tek yerden
-    /// sürülür, imleç onu izler — iki ayrı yere yazılsaydı sessizce ayrışabilirlerdi.
+    /// <b>[DEĞİŞEN KURAL] İmlecin KENDİ ton kaynağı vardır; prompt metnini İZLEMEZ.</b>
+    ///
+    /// <para><b>Eski iddia:</b> imlecin kendi rengi yoktur, satırın rengini alır (prototipte
+    /// <c>currentColor</c>) — <c>Fill</c>, <c>PART_ActiveText.Foreground</c>'a bind'liydi.</para>
+    ///
+    /// <para><b>Değişme gerekçesi (kullanıcı):</b> imleç en son olayın rengini söylemeli. Metne bağlıyken bunu
+    /// yapması imkânsızdı: metin sabit amberdir ve öyle kalmalıdır (prompt bir göstergedir, yazı yüzeyi
+    /// değil). İki kanal ayrıldı — metin amber, imleç son satırın ikon rengi.</para>
     /// </summary>
     [StaFact]
-    public void The_cursor_wears_the_lines_own_colour()
+    public void The_cursor_has_its_own_tone_and_no_longer_follows_the_prompt_text()
     {
         var vm = NewVm();
         var (view, window) = Realize(vm);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
-
-        // Canlı satırda: imleç ile metin AYNI fırçayı taşır.
-        Assert.Same(view.ActiveText.Foreground, ((Rectangle)view.ActiveCursorGlyph).Fill);
-
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
 
-        // Bekleme satırında da imleç satırın rengini taşır — ve o renk amberdir (aşağıdaki teste bak).
-        Assert.Same(view.ActiveText.Foreground, ((Rectangle)view.ActiveCursorGlyph).Fill);
+        // Son satır başarılı → imleç yeşil, metin hâlâ amber: aynı fırça DEĞİL.
+        Assert.Equal(Token(view, "Brush.StatusSuccessText"), CursorColour(view));
+        Assert.Equal(Token(view, "Brush.AmberText"), ((SolidColorBrush)view.ActiveText.Foreground).Color);
+        Assert.NotSame(view.ActiveText.Foreground, ((Rectangle)view.ActiveCursorGlyph).Fill);
         GC.KeepAlive(window);
     }
 
     /// <summary>
-    /// [SAPMA — kullanıcı kararı] İmleç HER ZAMAN amberdir: yazarken de, beklerken de.
-    ///
-    /// <para>Prototipte bekleme satırı (ve imleci) <c>text-faint</c>'tir. Konsolun prompt imleci daha önce
-    /// kullanıcı kararıyla amber yapılmıştı; iki panelin aynı dili konuşması istendi — imleç uygulamanın
-    /// "canlıyım" işaretidir ve beklerken de öyle kalır. Saat damgası soluk kaldığı için satır yine sakin
-    /// okunur.</para>
+    /// <b>Bekleme modunda imleç AMBERDİR.</b> Koşu bitmiş, ekranda iş yok — imleç son olayın renginde asılı
+    /// kalmaz. Bu, sahada ölçülen kusurun ta kendisidir (kullanıcı: "şu an bekleme modu ama imleç kırmızı").
+    /// <para>Olay TAZE iken rengi taşıması ayrı bir testin konusudur
+    /// (<see cref="EventStreamTypingTests.The_cursor_wears_a_fresh_events_colour_then_rests_at_amber"/>);
+    /// burada ölçülen, pencerenin gerçekten KAPANDIĞIDIR.</para>
     /// </summary>
     [StaFact]
-    public void The_cursor_is_amber_while_waiting_too_just_like_the_consoles()
+    public void The_cursor_rests_at_amber_once_the_run_is_over()
     {
         var vm = NewVm();
         var (view, window) = Realize(vm);
+        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // hiç olay yok
+
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
-        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // yazarken
-
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
+        Assert.NotEqual(Token(view, "Brush.AmberText"), CursorColour(view)); // ön-koşul: taze olay rengi taşındı
 
-        // Yazım SÜRERKEN imleç o satırın rengini taşır (yeşil "Completed…"); amber'a ancak yazacak bir şey
-        // kalmayınca döner. Bekleme satırının rengi ölçülüyor, yazım anınınki değil.
         DispatcherPump.PumpUntil(
             () => CursorColour(view) == Token(view, "Brush.AmberText"), TimeSpan.FromSeconds(5));
 
-        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // beklerken de
+        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));
         GC.KeepAlive(window);
     }
 
     /// <summary>
-    /// AYIRT EDİCİ — akan olaylar prompt satırını YERİNDEN OYNATMAZ: metni de rengi de hep aynı kalır.
+    /// <b>ANINDA basılan olaylar prompt satırına dokunmaz.</b> Fırtına (ve hata) satırları yazılmaz, doğrudan
+    /// tampona düşer — yazı yüzeyi olan prompt satırı onlar için hiç kullanılmaz, gösterge metni yerinde kalır.
     ///
-    /// <para>Sahada görülen kusur: "renkler garip, bazen satır rengi bazen sarı, ne olduğu belli değil".
-    /// Prompt satırı bir dönem yazı yüzeyi olarak kullanılıyordu ve her olayda önce olayın rengine geçip
-    /// sonra amber'a dönüyordu; üstelik satır tampona bırakıldığında imleç sütunu statü glyph'ine
-    /// dönüştüğü için göz bunu "renk değişti" diye okuyordu. Prompt artık yalnız bir göstergedir.</para>
+    /// <para>[DEĞİŞEN KURAL — kapsam] Bu testin adı bir zamanlar "arriving events never disturb" idi ve o
+    /// dönem prompt HİÇBİR olayı yazmıyordu. Artık yazıyor (bkz.
+    /// <see cref="EventStreamTypingTests.The_event_is_written_at_the_prompt_line_then_released_into_the_buffer"/>);
+    /// dokunulmadığı hâl, olayın ANINDA basıldığı hâldir ve test tam olarak onu ayırt eder.</para>
+    ///
+    /// <para>İmleç yine de o olayların rengini kısa bir tazelik penceresi boyunca taşır — yoksa hata satırları
+    /// hiç yazılmadığı için kırmızı hiçbir yerde görünmezdi.</para>
     /// </summary>
     [StaFact]
-    public void Arriving_events_never_disturb_the_prompt_line()
+    public void Instantly_printed_events_never_disturb_the_prompt_line()
     {
         var vm = NewVm();
         var (view, window) = Realize(vm);
@@ -131,8 +136,12 @@ public class EventStreamIdlePromptTests
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\c.csproj", SkipReasons.UpToDate));
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(120)); // satırlar yazarken bile
 
+        // METİN yerinden oynamaz — testin asıl iddiası budur ve DEĞİŞMEDİ.
         Assert.Equal("A building…", view.ActiveText.Text);
-        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));
+        Assert.Equal(Token(view, "Brush.AmberText"), ((SolidColorBrush)view.ActiveText.Foreground).Color);
+        // [DEĞİŞEN KURAL] İmleç ise artık son satırın ikon rengini taşır (burada: atlanmış → gri). Eski hâli
+        // burada amber bekliyordu; o kural "ikide bir sarı" olduğu için kaldırıldı.
+        Assert.Equal(Token(view, "Brush.StatusSkippedText"), CursorColour(view));
         GC.KeepAlive(window);
     }
 

@@ -47,6 +47,10 @@ public sealed partial class StreamEventViewModel : ObservableObject
     /// <summary>Metin rengi token anahtarı (BuildApp.jsx:635-638).</summary>
     public string TextBrushKey { get; }
 
+    /// <summary>Bu satır YAZILIRKEN imlecin alacağı ton — satırın kendi glyph rengi. Glyph'i olmayan
+    /// (sync/info) satırlarda <c>null</c>; imleç o zaman görünümün dinlenme tonunda (amber) kalır.</summary>
+    public string? IconBrushKey { get; }
+
     public StreamEventViewModel(StreamComposer.Emission emission, string time, StreamKind kind, string? projectId,
         string text, bool anyFailed, bool shouldType, bool isSelected)
     {
@@ -60,6 +64,10 @@ public sealed partial class StreamEventViewModel : ObservableObject
         _isSelected = isSelected;
         GlyphStatus = GlyphFor(kind, anyFailed);
         TextBrushKey = BrushKeyFor(kind, anyFailed);
+        IconBrushKey = GlyphStatus is { } g ? Controls.StatusGlyph.BrushKeyFor(g) : null;
+        // [imleç tonu] Satır YAZILIRKEN event stream'in imleci bu rengi alır (yazım bitince amber'a döner).
+        // Kaynak satırın GLYPH'iyle AYNIdir (StatusGlyph.BrushKeyFor) — ikinci bir renk tablosu YAZILMAZ.
+        // Glyph'i olmayan (sync/info → amber ▸) satırlarda null: görünüm kendi dinlenme tonuna düşer.
         GlowEligible = kind == StreamKind.Done && !anyFailed;
     }
 
@@ -74,12 +82,17 @@ public sealed partial class StreamEventViewModel : ObservableObject
         _ => null, // sync | info → ▸
     };
 
-    /// <summary>BuildApp.jsx:635-638 — fail→status-fail-text, skip→text-faint, done→(failed?fail:success)-text,
-    /// sync|info→text-dim, ok→text-secondary.</summary>
+    /// <summary>
+    /// BuildApp.jsx:635-638 — fail→status-fail-text, done→(failed?fail:success)-text, sync|info→text-dim,
+    /// ok→text-secondary.
+    /// <para><b>[DEĞİŞEN KURAL]</b> <c>skip</c> prototipte <c>text-faint</c> (#54545c) idi; artık
+    /// <c>text-dim</c> (#76767e). Gerekçe (kullanıcı): atlananlar geri planda kalmalı ama OKUNABİLMELİ — "bu proje
+    /// neden derlenmedi" en sık sorulan sorudur. Hiyerarşi korunur: skip hâlâ <c>ok</c>'un (text-secondary)
+    /// altındadır.</para></summary>
     private static string BrushKeyFor(StreamKind kind, bool anyFailed) => kind switch
     {
         StreamKind.Fail => "Brush.StatusFailText",
-        StreamKind.Skip => "Brush.TextFaint",
+        StreamKind.Skip => "Brush.TextDim",
         StreamKind.Done => anyFailed ? "Brush.StatusFailText" : "Brush.StatusSuccessText",
         StreamKind.Sync or StreamKind.Info => "Brush.TextDim",
         _ => "Brush.TextSecondary", // ok

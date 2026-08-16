@@ -4,8 +4,8 @@ namespace BuildOrchestrator.App.Console;
 
 /// <summary>
 /// [T56/3a] Konsol renk paleti — design-v1 §2.5 satır renkleri, TOKEN brush'larından (Tokens.xaml, hardcode YASAK):
-/// saat=text-faint, ▸=amber-text, cmd=text-primary, info=text-secondary, dim=text-faint,
-/// success=status-success-text, warn=status-cycle-text, error=status-fail-text.
+/// cmd=text-primary, info=text-secondary, dim=text-faint, warn=status-cycle-text, error=status-fail-text.
+/// <para><c>Success</c> KALDIRILDI: onu döndüren tek yol metin tahminiydi (bkz. ConsoleLineClassifier).</para>
 ///
 /// <para>Brush'lar bir <c>Func&lt;string,object?&gt;</c> lookup ile çözülür — üretimde
 /// <c>ConsoleView.TryFindResource</c>, testte dosyadan yüklenen Tokens.xaml sözlüğü (headless host, D8). Böylece
@@ -18,7 +18,6 @@ public sealed class ConsolePalette
     public required Brush Cmd { get; init; }
     public required Brush Info { get; init; }
     public required Brush Dim { get; init; }
-    public required Brush Success { get; init; }
     public required Brush Warn { get; init; }
     public required Brush Error { get; init; }
 
@@ -26,7 +25,6 @@ public sealed class ConsolePalette
     {
         ConsoleLineType.Cmd => Cmd,
         ConsoleLineType.Dim => Dim,
-        ConsoleLineType.Success => Success,
         ConsoleLineType.Warn => Warn,
         ConsoleLineType.Error => Error,
         _ => Info,
@@ -41,7 +39,6 @@ public sealed class ConsolePalette
         Cmd = Resolve(find, "Brush.TextPrimary"),
         Info = Resolve(find, "Brush.TextSecondary"),
         Dim = Resolve(find, "Brush.TextFaint"),
-        Success = Resolve(find, "Brush.StatusSuccessText"),
         Warn = Resolve(find, "Brush.StatusCycleText"),
         Error = Resolve(find, "Brush.StatusFailText"),
     };

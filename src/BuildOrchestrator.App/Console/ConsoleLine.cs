@@ -5,7 +5,7 @@ namespace BuildOrchestrator.App.Console;
 /// cmd=text-primary, info=text-secondary, dim=text-faint, success/warn/error=ilgili <c>-text</c> tonu.
 /// Renk eşlemesi <see cref="ConsolePalette"/>'tedir (token brush'ları; hardcode YASAK).
 /// </summary>
-public enum ConsoleLineType { Cmd, Info, Dim, Success, Warn, Error }
+public enum ConsoleLineType { Cmd, Info, Dim, Warn, Error }
 
 /// <summary>
 /// [T56/3a] Bir konsol satırının DÜZ METNİNDEN görsel tipini türeten SAF sınıflandırıcı.
@@ -31,6 +31,22 @@ public static class ConsoleLineClassifier
     /// </summary>
     private static readonly string[] CommandHeads = ["git ", "msbuild ", "nuget ", "dotnet "];
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL] Yalnız KAYNAĞI belli satırlar renklenir; metin tahmini kaldırıldı.</b>
+    ///
+    /// <para><b>Eski iddia:</b> satır içinde <c>failed</c>/<c>succeeded</c>/<c>✓</c>/<c>✗</c> geçiyorsa kırmızı
+    /// ya da yeşil boyanır ve <c>warning</c> kelimesi nerede geçerse geçsin turuncu yapar.</para>
+    ///
+    /// <para><b>Değişme gerekçesi (kullanıcı):</b> "kesin bir ayrım yoksa tek renk olabilir, tahmine göre
+    /// yapıyorsak". Haklıydı: o taramalar bir PROJE ADININ içindeki kelimeye de takılırdı ve renk o noktada
+    /// bilgi değil gürültüdür. Geriye yalnız formatı BELLİ olan iki kaynak kalır — MSBuild'in kendi tanı
+    /// satırları (<c>… : error CS0103: …</c>, <c>… : warning MSB3277: …</c>) ve uygulamanın KENDİ bastığı
+    /// önekler (<c>[error]</c>, <c>warning:</c>, komut satırları). Bunlar tahmin değildir.</para>
+    ///
+    /// <para><c>Success</c> tipi bu kararla tamamen kalktı: onu döndüren tek yol metin taramasıydı. Bir
+    /// koşunun başarısı zaten şeritte, listede ve event stream'de üç ayrı yerde söyleniyor — konsolun ham
+    /// çıktısında ayrıca renklenmesi gerekmiyor.</para>
+    /// </summary>
     public static ConsoleLineType Classify(string? text)
     {
         if (string.IsNullOrEmpty(text)) return ConsoleLineType.Info;
@@ -40,24 +56,24 @@ public static class ConsoleLineClassifier
             if (content.StartsWith(head, StringComparison.OrdinalIgnoreCase))
                 return ConsoleLineType.Cmd;
 
+        // Uygulamanın KENDİ önekleri — kaynağı biziz, tahmin yok.
         if (content.StartsWith("[hata]", StringComparison.Ordinal) ||
             content.StartsWith("[error]", StringComparison.OrdinalIgnoreCase))
             return ConsoleLineType.Error;
-
-        // "warning" ÖNCE gelir: design'ın "warning: OSYS.Sales.Core failed in this run …" bağımlılık uyarısı
-        // hem "warning" hem "failed" içerir ve warn (turuncu) olmalı — error (kırmızı) değil.
-        if (content.Contains("warning", StringComparison.OrdinalIgnoreCase))
+        if (content.StartsWith("warning:", StringComparison.OrdinalIgnoreCase))
             return ConsoleLineType.Warn;
 
-        if (content.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains(": error", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains("error CS", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains('✗')) // ✗
-            return ConsoleLineType.Error;
-
-        if (content.Contains("succeeded", StringComparison.OrdinalIgnoreCase) || content.Contains('✓')) // ✓
-            return ConsoleLineType.Success;
+        // MSBuild'in tanı satırı formatı: "<köken>: error <KOD>: <metin>" (kökensiz hâlde satır başında).
+        // "warning" ÖNCE bakılır: bağımlılık uyarısı ("warning: … failed in this run") ikisini de içerir ve
+        // turuncu olmalıdır.
+        if (HasDiagnostic(content, "warning")) return ConsoleLineType.Warn;
+        if (HasDiagnostic(content, "error")) return ConsoleLineType.Error;
 
         return ConsoleLineType.Info;
     }
+
+    /// <summary>MSBuild tanı satırı mı — <c>": error "</c> biçiminde ya da satırın en başında.</summary>
+    private static bool HasDiagnostic(string content, string kind) =>
+        content.Contains(": " + kind + " ", StringComparison.OrdinalIgnoreCase)
+        || content.StartsWith(kind + " ", StringComparison.OrdinalIgnoreCase);
 }

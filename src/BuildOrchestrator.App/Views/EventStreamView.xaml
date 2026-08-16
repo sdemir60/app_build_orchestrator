@@ -31,14 +31,14 @@
                          FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
                          Foreground="{DynamicResource Brush.TextFaint}" />
               <Border Width="12" Margin="0,0,8,0" VerticalAlignment="Center">
-                <!-- [prototip: Cursor'un background'u currentColor] İmleç SATIRIN rengini alır — kendi rengi
-                     YOKTUR; tonu tek yerden (PART_ActiveText.Foreground) gelir.
-                     [SAPMA — kullanıcı kararı] Prototipte bekleme satırı text-faint'tir, imleci de öyle.
-                     Burada imleç HER ZAMAN amberdir: konsolun prompt imleci de amber ve iki panelin aynı
-                     dili konuşması istendi — imleç uygulamanın "canlıyım" işaretidir, beklerken de öyle.
-                     Saat damgası soluk kalır (kendi rengi vardır), yani satır yine sakin okunur. -->
+                <!-- [DEĞİŞEN KURAL] İmlecin KENDİ ton kaynağı vardır; metne BAĞLI DEĞİLDİR.
+                     Eskiden Fill, PART_ActiveText.Foreground'a bind'liydi ve o metin sabit amber olduğu için
+                     imleç de hep amberdi. Yeni kural (kullanıcı): bir satır YAZILIRKEN imleç o satırın İKON
+                     rengini alır (yeşil/kırmızı/gri), yazım bitince ve beklerken amber'a döner — orada
+                     anlatacak bir olay yoktur. Tonu görünüm sürer (RefreshCursorTone); başlangıç dinlenme
+                     tonudur. METIN değişmedi: prompt metni her zaman amberdir. -->
                 <Rectangle x:Name="PART_ActiveCursor" Width="7" Height="13" HorizontalAlignment="Center"
-                           Fill="{Binding Foreground, ElementName=PART_ActiveText}" />
+                           Fill="{DynamicResource Brush.AmberText}" />
               </Border>
               <TextBlock x:Name="PART_ActiveText" VerticalAlignment="Center" TextWrapping="NoWrap"
                          FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"

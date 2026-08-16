@@ -80,6 +80,19 @@ public static class ScrollAnimator
     ///
     /// <para>Döner: bir animasyon BAŞLATILDIYSA true, anında atlandıysa false (BottomAnchorBehavior'ın 560ms
     /// "jumping" penceresini yalnız GERÇEKTEN animasyon varken açması için).</para>
+    ///
+    /// <para><b>Hareket HER ZAMAN <paramref name="currentOffset"/>'ten başlar</b> — çağıranın bildirdiği GERÇEK
+    /// konumdan. Bunu sağlamak için önceki animasyon, taban tohumlanmadan ÖNCE bırakılır ve sıra zorunludur:
+    /// <see cref="MotionTokens.SplineTo"/> <c>From</c>'suzdur ve <c>FillBehavior</c> varsayılanı
+    /// <c>HoldEnd</c>'dir, yani BİTMİŞ bir animasyon DP'yi son hedefinde tutmaya devam eder ve tabanı maskeler.
+    /// Panel bu arada başka bir yoldan taşınmışsa (bir doküman takası, düz bir <c>ScrollToVerticalOffset</c>)
+    /// tohumlama etkisiz kalır; aynı hedefe açılan yeni animasyon efektif değeri hiç değiştirmez,
+    /// <see cref="OnVerticalOffsetChanged"/> ateşlenmez ve panel YERİNDE kalır. Konsolun <c>← Back</c> jestinde
+    /// ölçülen kusur buydu: ikinci ve sonraki dönüşler hiç kaydırmıyordu.</para>
+    ///
+    /// <para>Bırakma retarget'ı BOZMAZ: uçuştaki bir animasyon zaten her karede paneli sürdüğü için çağıranın
+    /// okuduğu <paramref name="currentOffset"/> o anki görsel konumun ta kendisidir — tohum oraya düşer, sıçrama
+    /// olmaz.</para>
     /// </summary>
     public static bool AnimateTo(UIElement target, double currentOffset, double targetOffset,
         bool animationsEnabled, TimeSpan effectiveDuration, KeySpline keySpline)
@@ -88,6 +101,7 @@ public static class ScrollAnimator
         ArgumentNullException.ThrowIfNull(keySpline);
 
         SetIsUserSuppressed(target, false); // yeni programatik hareket — önceki kullanıcı iptali artık geçersiz
+        target.BeginAnimation(VerticalOffsetProperty, null); // HoldEnd'de asılı kalmış önceki hareketi bırak
         SetVerticalOffset(target, currentOffset); // DP'nin taban değerini GERÇEK konuma tohumla — klips/zıplama yok
 
         if (!animationsEnabled || effectiveDuration <= TimeSpan.Zero)

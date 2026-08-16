@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -98,7 +99,7 @@ public partial class EventStreamView : UserControl
         DataContextChanged += OnDataContextChanged;
         // [D3 §5] Unload'da daktilo saatiyle BİRLİKTE imlecin RepeatBehavior.Forever blink clock'unu da durdur
         // (aksi halde sonsuz clock unload'da terk edilirdi — StopActiveTypewriter yalnız type-timer'ı söküyordu).
-        Unloaded += (_, _) => StopCursorBlink();
+        Unloaded += (_, _) => { StopCursorBlink(); StopCursorRest(); };
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -171,6 +172,8 @@ public partial class EventStreamView : UserControl
                     // satır bir kare boyunca tam metniyle görünüp SONRA boşalırdı (görünür bir kırpışma).
                     row.StartTypingIfPending();
                     _typingRow = row;
+                    HoldCursorTone(row);        // [imleç tonu] olay TAZE → rengi
+                    if (row.IsTyping) BeginWritingAtPrompt(row);
                 }
                 break;
             case NotifyCollectionChangedAction.Remove when e.OldItems is not null:
@@ -214,14 +217,19 @@ public partial class EventStreamView : UserControl
         foreach (var item in _vm.StreamEvents) PART_Rows.Children.Add(CreateRow(item));
     }
 
-    private EventStreamRow CreateRow(StreamEventViewModel item) =>
-        new() { DataContext = item, AnimationsEnabledProvider = AnimationsEnabledProvider };
+    private EventStreamRow CreateRow(StreamEventViewModel item)
+    {
+        var row = new EventStreamRow { DataContext = item, AnimationsEnabledProvider = AnimationsEnabledProvider };
+        row.TypingTextChanged += (_, _) => MirrorWritingToPrompt();
+        row.TypingEnded += (_, _) => ReleaseToBuffer(row);
+        return row;
+    }
 
     /// <summary>Şu an daktilo eden (en yeni) satır — yeni bir satır gelince yazımı anında tamamlanır.</summary>
     private EventStreamRow? _typingRow;
 
-    /// <summary>Prompt satırının tonu — hem derlenen projeyi anlatırken hem bomboşken. İmleç de bu rengi
-    /// taşır (kendi rengi yoktur, satırınkini izler).</summary>
+    /// <summary>Prompt satırının tonu — hem derlenen projeyi anlatırken hem bomboşken. Aynı zamanda imlecin
+    /// DİNLENME tonudur: yazılan bir satır yokken imleç buraya döner (bkz. <see cref="RefreshCursorTone"/>).</summary>
     private const string WaitingToneKey = "Brush.AmberText";
 
     private void RefreshCounter()
@@ -252,11 +260,124 @@ public partial class EventStreamView : UserControl
     private void UpdateActiveLine()
     {
         if (_vm is null) return;
+        // Yazı yüzeyi ŞU AN kullanılıyorsa gösterge metni onu EZMEZ — satır bırakılınca burası yeniden koşar.
+        if (_writingRow is not null) { StartCursorBlink(); return; }
         PART_ActiveLine.Visibility = Visibility.Visible;
         PART_ActiveTime.Text = Console.WallClockFormat.Of(_vm.WallClock());
-        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, WaitingToneKey); // imleç bunu izler
+        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, WaitingToneKey); // metin DAİMA amber
         PART_ActiveText.Text = _vm.ActiveLineText ?? "";
         StartCursorBlink();
+    }
+
+    /// <summary>
+    /// İmlecin TON kaynağı — tek yer. İmleç, olay TAZE olduğu sürece o satırın İKON rengini taşır
+    /// (<see cref="StreamEventViewModel.IconBrushKey"/>, yani satırın glyph'iyle AYNI kaynak — ikinci bir renk
+    /// tablosu YAZILMAZ); tazelik penceresi kapanınca DİNLENME tonuna, amber'a döner. Beklerken imleç her
+    /// zaman amberdir.
+    ///
+    /// <para><b>Tazelik penceresi neden var:</b> iki uç da sahada denendi ve ikisi de yanlıştı. Rengi yalnız
+    /// YAZIM boyunca vermek "ikide bir sarı" üretiyordu — üstelik hata satırları hiç yazılmadığı için
+    /// (<see cref="StreamComposer"/> hataları anında basar) kırmızı görünemiyordu bile. Rengi süresiz KORUMAK
+    /// ise beklerken imleci son olayın renginde bırakıyordu: koşu bitmiş, ekranda iş yok, imleç hâlâ kırmızı.
+    /// Pencere ikisini de çözer: olay olurken rengi, olay geçince amber.</para>
+    ///
+    /// <para>METNİN tonu buradan SÜRÜLMEZ: prompt metni her zaman amberdir (bkz. <see cref="UpdateActiveLine"/>).
+    /// İkisi eskiden bind'liydi ve bu yüzden ayrışamazdı; artık ayrı kanallardır.</para></summary>
+    private void RefreshCursorTone()
+    {
+        string key = _cursorToneKey ?? WaitingToneKey;
+        PART_ActiveCursor.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, key);
+    }
+
+    /// <summary>Tazelik penceresi AÇIK ise o olayın ikon tonu; kapalıysa null (dinlenme).</summary>
+    private string? _cursorToneKey;
+    private DispatcherTimer? _cursorRest;
+
+    /// <summary>ŞU AN prompt satırında yazılan olayın satırı — yazım boyunca tamponda GİZLİDİR.</summary>
+    private EventStreamRow? _writingRow;
+
+    /// <summary>
+    /// <b>Yazı yüzeyi alttaki imleç satırıdır.</b> Yeni bir olay geldiğinde satırı tampona koymak yerine önce
+    /// prompt satırında, imlecin yanında sağa doğru yazarız; bitince satır tampona BIRAKILIR (yukarı geçer) ve
+    /// prompt göstergeye döner. Tampondaki hiçbir satır animasyon oynatmaz.
+    ///
+    /// <para><b>Satır yazım boyunca GİZLİDİR:</b> aynı olay hem altta yazılıp hem yukarıda dururken iki kez
+    /// görünürdü, üstelik tampon daha yazım başlamadan bir satır büyüyüp üstteki her şeyi yukarı iterdi.
+    /// Gizli tutmak yer açmayı BIRAKMA anına erteler — hareket bir yerde olur, orada da biter.</para>
+    ///
+    /// <para><b>Zamanlama satırın kendisinindir:</b> yazımı yine <c>EventStreamRow</c> sürer (aynı cadence,
+    /// aynı tek-yazar kuralı, aynı "fırtına/hata anında basılır" kararı); görünüm yalnız o metni prompt
+    /// satırına AYNALAR. İkinci bir zamanlayıcı KURULMAZ.</para></summary>
+    private void BeginWritingAtPrompt(EventStreamRow row)
+    {
+        _writingRow = row;
+        row.Visibility = Visibility.Collapsed;
+        MirrorWritingToPrompt();
+    }
+
+    /// <summary>Yazılan metni prompt satırına yansıtır. METİN AMBERDİR — kendi rengini ancak tampona
+    /// bırakıldığında alır; o an imleç zaten o rengi taşıdığı için devir teslim renk-tutarlıdır.</summary>
+    private void MirrorWritingToPrompt()
+    {
+        if (_writingRow is null) return;
+        var (locked, scramble, tail) = _writingRow.WritingParts;
+        PART_ActiveText.SetResourceReference(TextBlock.ForegroundProperty, WaitingToneKey);
+        // ÜÇ Run: kilitlenmiş gerçek metin · titreyen pencere · ŞEFFAF kuyruk. Kuyruk BASILIR (boş
+        // bırakılmaz) — satırın genişliği ilk kareden itibaren sabit kalsın, metin hiç akmasın diye.
+        PART_ActiveText.Inlines.Clear();
+        PART_ActiveText.Inlines.Add(new Run(locked));
+        if (scramble.Length > 0) PART_ActiveText.Inlines.Add(new Run(scramble));
+        if (tail.Length > 0) PART_ActiveText.Inlines.Add(new Run(tail) { Foreground = Brushes.Transparent });
+    }
+
+    /// <summary>Yazım bitti: satır tampona bırakılır (görünür olur), prompt göstergeye ve imleç dinlenmeye
+    /// döner. Yeni bir olay araya girdiyse (o satırın yazımı <c>FinishTyping</c> ile kapatılmıştır) bu çağrı
+    /// ESKİ satır için gelir ve yalnız onu bırakır — yeni yazım kendi çağrısını bekler.</summary>
+    private void ReleaseToBuffer(EventStreamRow row)
+    {
+        row.Visibility = Visibility.Visible;
+        if (!ReferenceEquals(_writingRow, row)) return;
+        _writingRow = null;
+        RestCursorTone();
+        UpdateActiveLine();
+    }
+
+    /// <summary>
+    /// Yeni bir olay geldi: imleç onun tonunu alır ve tazelik penceresi BAŞTAN kurulur.
+    ///
+    /// <para>Pencere, satırın yazımı bittikten sonra da kısa bir süre açık kalır
+    /// (<see cref="EventStreamRow.CursorHoldMs"/> — prototipin "tamamlanmadan 420ms sonra bitti sayılır"
+    /// süresi, yeni bir sabit İCAT EDİLMEZ). Anında basılan satırlarda (hata, fırtına) pencerenin tamamı bu
+    /// süredir; kırmızının görünebildiği tek yer orasıdır.</para>
+    ///
+    /// <para>Yazan satır varsa pencere onun yazımıyla birlikte uzar: <see cref="EventStreamRow.IsTyping"/>
+    /// hâlâ true iken saat yeniden kurulur, yani uzun bir satır rengini yazımı boyunca korur.</para></summary>
+    private void HoldCursorTone(EventStreamRow row)
+    {
+        _cursorToneKey = row.ViewModel?.IconBrushKey;
+        RefreshCursorTone();
+        StopCursorRestTimer();
+        // Yazılan satırda pencerenin sonunu YAZIM belirler (bkz. ReleaseToBuffer) — saat kurulmaz.
+        if (row.IsTyping) return;
+        // Anında basılan satır (hata, fırtına, reduced-motion) hiç yazılmaz: rengin görünebildiği TEK yer bu
+        // kısa penceredir. Süre yeni bir sabit DEĞİL — prototipin "tamamlanmadan 420ms sonra bitti sayılır"ı.
+        _cursorRest = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(EventStreamRow.CursorHoldMs) };
+        _cursorRest.Tick += (_, _) => RestCursorTone();
+        _cursorRest.Start();
+    }
+
+    /// <summary>İmleci dinlenme tonuna (amber) alır — yazım bitti ya da tazelik penceresi doldu.</summary>
+    private void RestCursorTone()
+    {
+        StopCursorRestTimer();
+        _cursorToneKey = null;
+        RefreshCursorTone();
+    }
+
+    private void StopCursorRestTimer()
+    {
+        _cursorRest?.Stop();
+        _cursorRest = null;
     }
 
     /// <summary>[W2 fix-1] Motion sinyali koşu SIRASINDA değişince görünüm uyar. Tek SONSUZ animasyon aktif
@@ -278,6 +399,10 @@ public partial class EventStreamView : UserControl
         if (!AnimationsEnabledProvider()) { PART_ActiveCursor.BeginAnimation(OpacityProperty, null); PART_ActiveCursor.Opacity = 1.0; return; }
         PART_ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
     }
+
+    /// <summary>Görünüm ağaçtan çıkarken tazelik saatini bırakır: tek atımlık bir <c>DispatcherTimer</c>'ı
+    /// dispatcher köklendirir, durdurulmazsa görünüm gitse de tick atmaya devam eder.</summary>
+    private void StopCursorRest() => RestCursorTone();
 
     private void StopCursorBlink()
     {
@@ -489,11 +614,19 @@ public sealed class EventStreamRow : Border
         if (_vm?.ProjectId is { } id) FindRunViewModel()?.SelectProject(id);
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        ApplyGlow();
-        ApplyTypewriter();
-    }
+    /// <summary>
+    /// [DEĞİŞEN KURAL] <c>Loaded</c> yazımı UYGULAMAZ — yalnız parıltıyı.
+    ///
+    /// <para>Eski iddia: yazım hem sahibi satırı eklerken (<see cref="StartTypingIfPending"/>) hem burada
+    /// uygulanır; <c>TypePlayed</c> guard'ı ikincisini zararsız kılar. Zararsız DEĞİLDİ: guard'ın erken
+    /// dönüşü <c>_text.Text = _vm.Text</c> ile metni TAM hâline sıçratıyor, 15 ms sonraki tick onu tekrar
+    /// kırpıyordu. WPF <c>Loaded</c>'ı ERTELENMİŞ yaydığı için bu tam da yazımın ortasına düşüyor ve satır bir
+    /// kare tam açılıp baştan yazılıyordu (kullanıcı: "pat pat diye değişiyor").</para>
+    ///
+    /// <para>Yazımın TEK başlatıcısı artık sahibidir: yalnız EN YENİ satır yazar ve o karar zaten sahibindedir
+    /// (<see cref="EventStreamView"/>). Geçmiş satırlar (Reset sonrası yeniden kurulanlar dahil) hiç yazmaz —
+    /// metinlerini <see cref="ApplyAll"/> zaten tam olarak koyar.</para></summary>
+    private void OnLoaded(object sender, RoutedEventArgs e) => ApplyGlow();
 
     // ---------------------------------------------------------------- parıltı (bir kez)
     /// <summary>[A13.2] Yalnız <c>done</c>+hatasız satır: per-instance zemin <c>StatusSuccessSoft</c>→şeffaf, 1.1s
@@ -529,7 +662,7 @@ public sealed class EventStreamRow : Border
 
     private DispatcherTimer? _typeTimer;
     private Stopwatch? _typeClock;
-    private TypewriterScheduler? _typeScheduler;
+    private bool[]? _scrambleMask;
 
     /// <summary>[Test] Daktilo şu an koşuyor mu.</summary>
     internal bool IsTyping => _typeTimer is not null;
@@ -539,9 +672,12 @@ public sealed class EventStreamRow : Border
     internal void StartTypingIfPending() => ApplyTypewriter();
 
     /// <summary>
-    /// [prototip §6] Satır KENDİ YERİNDE, kendi rengi ve kendi glyph'iyle harf harf yazılır. Fırtına/hata
-    /// satırları (<see cref="StreamEventViewModel.ShouldType"/>) ve reduced-motion anında basılır; her satır
-    /// yalnız BİR KEZ yazar (<c>TypePlayed</c> — container recycle tekrar oynatmaz).
+    /// [karakter kilitlenmesi] Satırın metni prompt satırında açılır; bu metot o açılışın SAATİDİR. Satırın
+    /// kendi <c>TextBlock</c>'u her zaman TAM metni taşır — satır zaten tamponun bir parçasıdır ve yazım
+    /// boyunca gizlidir (bkz. <c>EventStreamView.BeginWritingAtPrompt</c>).
+    ///
+    /// <para>Fırtına/hata/done satırları (<see cref="StreamEventViewModel.ShouldType"/>) ve reduced-motion
+    /// anında basılır; her satır yalnız BİR KEZ açılır (<c>TypePlayed</c>).</para>
     ///
     /// <para>"Aynı anda yalnız en yeni satır yazar" kuralı BURADA DEĞİL <see cref="EventStreamView"/>'dadır:
     /// satır kardeşlerini bilmez, yeni bir satır gelince önceki <see cref="FinishTyping"/> ile kapatılır.</para>
@@ -549,16 +685,20 @@ public sealed class EventStreamRow : Border
     private void ApplyTypewriter()
     {
         if (_vm is null) return;
-        if (!_vm.ShouldType || _vm.TypePlayed || !AnimationsEnabledProvider()) { _text.Text = _vm.Text; return; }
+        // "Anında basıldı" da bir OYNANMIŞLIKTIR: bayrak burada da yazılır. Yazılmadığında, motion kapalıyken
+        // geçen satırlar "hiç yazmadım" olarak kalıyor ve sinyal sonradan açılıp panel yeniden kurulduğunda
+        // (koleksiyon Reset'i) alt alta birkaç ESKİ satır aynı anda soldan açılıyordu — motion sözleşmesinin
+        // "geriye dönük animasyon başlatma" yasağının ta kendisi.
+        if (!_vm.ShouldType || _vm.TypePlayed || !AnimationsEnabledProvider())
+        { _vm.TypePlayed = true; _text.Text = _vm.Text; return; }
 
         _vm.TypePlayed = true;
-        var scheduler = new TypewriterScheduler(_vm.Text.Length, animationsEnabled: true);
-        if (scheduler.Instant) { _text.Text = _vm.Text; return; }
+        if (_vm.Text.Length == 0) return;
 
-        _typeScheduler = scheduler;
-        _text.Text = "";
+        _scrambleMask = CharacterLockIn.ScrambleMask(_vm.Text);
         _typeClock = Stopwatch.StartNew();
-        _typeTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(15) };
+        _typeTimer = new DispatcherTimer(DispatcherPriority.Render)
+        { Interval = TimeSpan.FromMilliseconds(CharacterLockIn.TickMs) };
         _typeTimer.Tick += OnTypeTick;
         _typeTimer.Start();
         OnTypeTick(this, EventArgs.Empty); // ilk kare
@@ -566,23 +706,49 @@ public sealed class EventStreamRow : Border
 
     private void OnTypeTick(object? sender, EventArgs e)
     {
-        if (_vm is null || _typeScheduler is null || _typeClock is null) return;
+        if (_vm is null || _scrambleMask is null || _typeClock is null) return;
         TimeSpan elapsed = _typeClock.Elapsed;
-        int revealed = _typeScheduler.RevealedAt(elapsed);
-        _text.Text = _vm.Text[..Math.Min(revealed, _vm.Text.Length)];
-        // [spec §6] Metin dolduktan SONRA satır ~420ms daha "yazıyor" sayılır (prototip: tamamlanmadan 420ms
-        // sonra bitti kabul edilir) — tek-yazar kuralı bu pencere boyunca da bu satırdadır.
-        if (elapsed >= _typeScheduler.Duration + TimeSpan.FromMilliseconds(CursorHoldMs)) FinishTyping();
+        string text = _vm.Text;
+        var (locked, windowEnd) = CharacterLockIn.SliceAt(text.Length, elapsed);
+        WritingParts = (
+            text[..locked],
+            CharacterLockIn.Scramble(text, _scrambleMask, locked, windowEnd, PickGlyph),
+            text[windowEnd..]);
+        TypingTextChanged?.Invoke(this, EventArgs.Empty); // sahibi prompt satırına aynalar
+        // [DEĞİŞEN KURAL] Kilitlenme biter bitmez satır BIRAKILIR. Daktilo döneminde metin dolduktan sonra
+        // satır ~420 ms daha "yazıyor" sayılırdı (prototipin imleç bekleme penceresi) ve yazı yüzeyi prompt
+        // satırına taşındıktan sonra bunun bedeli görünür oldu: tamamlanmış metin yarım saniye daha altta
+        // asılı duruyor, sonra yukarı sıçrıyordu. Jest artık tek parça — yaz, bırak, sıradaki.
+        if (elapsed >= CharacterLockIn.Duration) FinishTyping();
     }
+
+    /// <summary>Titreme glyph'i seçici — üretimde <see cref="Random.Shared"/>. Rastgelelik SATIRDA durur,
+    /// <see cref="CharacterLockIn"/> saf kalır.</summary>
+    private static int PickGlyph() => Random.Shared.Next();
+
+    /// <summary>Açılışın O ANKİ üç dilimi: kilitlenmiş gerçek metin · titreyen pencere · ŞEFFAF kuyruk.
+    /// Sahibi bunu prompt satırına üç <c>Run</c> olarak basar; kuyruk şeffaf olduğu için satırın genişliği
+    /// ilk kareden itibaren sabittir.</summary>
+    internal (string Locked, string Scramble, string Tail) WritingParts { get; private set; } = ("", "", "");
+
+    /// <summary>Yazım bir harf ilerledi. Sahibi (<see cref="EventStreamView"/>) bunu prompt satırına
+    /// AYNALAR: yazı yüzeyi alttaki imleç satırıdır, satırın kendisi o sırada gizlidir.</summary>
+    internal event EventHandler? TypingTextChanged;
+
+    /// <summary>Yazım BİTTİ — kendiliğinden, yeni bir satır geldiği için ya da satır ağaçtan çıktığı için.
+    /// Sahibi bununla satırı tampona BIRAKIR (görünür yapar) ve prompt satırını göstergeye döndürür.</summary>
+    internal event EventHandler? TypingEnded;
 
     /// <summary>Yazımı ANINDA tamamlar — yeni bir satır geldiğinde ya da satır ağaçtan çıkarken.</summary>
     internal void FinishTyping()
     {
+        bool wasTyping = _typeTimer is not null;
         if (_typeTimer is not null) { _typeTimer.Stop(); _typeTimer.Tick -= OnTypeTick; _typeTimer = null; }
         _typeClock?.Stop();
         _typeClock = null;
-        _typeScheduler = null;
-        if (_vm is not null) _text.Text = _vm.Text;
+        _scrambleMask = null;
+        if (_vm is not null) { _text.Text = _vm.Text; WritingParts = (_vm.Text, "", ""); }
+        if (wasTyping) TypingEnded?.Invoke(this, EventArgs.Empty);
     }
 
     // ---------------------------------------------------------------- yardımcılar

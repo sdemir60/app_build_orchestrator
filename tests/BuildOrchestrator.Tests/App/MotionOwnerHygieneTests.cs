@@ -45,37 +45,33 @@ public class MotionOwnerHygieneTests
     // imleç + "ready" taşır, panel geçişi tek parça tilt-in'dir.
 
     /// <summary>
-    /// [A13/final · lensB Ö1] Hold'un <b>DEĞERİ</b> yukarıda pinliydi ama <b>ÜRETİMDE TÜKETİLDİĞİ</b> hiçbir
-    /// testle pinli değildi: lens B üç tüketim noktasının ÜÇÜNÜ BİRDEN sildi ve 1649 testlik süit tamamen yeşil
-    /// kaldı (M5 + M5b). Bu test o boşluğun KAYNAK yarısını kapatır — üç sahibin üçü de hold'u zamanlayıcısının
-    /// süresine EKLEMEK zorundadır; biri silinirse sayı düşer ve buradan kırmızı gelir.
+    /// <b>[DEĞİŞEN KURAL] Hiçbir açılış sahibi imleç bekleme penceresini kendi süresine EKLEMEZ.</b>
     ///
-    /// <para><b>Neden davranışsal değil (ÖLÇÜLDÜ):</b> davranışsal ayrım yalnız <c>ConsoleView</c> için
-    /// yazılabilir — orada hold, imleç fade'inin BAŞLAMA anını geciktirir, yani gözlenebilir bir etkisi vardır
-    /// (<see cref="ConsoleMotionPathTests.The_active_line_cursor_holds_steady_for_420ms_before_it_starts_to_fade"/>).
-    /// <c>EventStreamView</c>'ın iki tüketimi ise <b>render yüzeyinden AYIRT EDİLEMEZ</b> (bu, "etkisi yok"tan
-    /// daha dar bir iddiadır — A13/final lens B düzeltmesi): <c>TypewriterScheduler.RevealedAt</c> zaten
-    /// <c>Duration</c>'da tam uzunluğa doyar, dolayısıyla metin, imleç ve satır durumu iki hâlde de BİREBİR
-    /// aynıdır. Terim yine de ölü DEĞİLDİR — hold, <c>StopTypewriter()</c>'ın <c>_scheduler = null</c> atamasını
-    /// geciktirir ve bunu gerçek bir üretim dalı okur — ama kullanıcıya giden sonuç değişmediği için o iki
-    /// noktanın tek mümkün pini kaynak düzeyindedir; sınırı gizlemek yerine burada AÇIKÇA yazılır.</para>
+    /// <para><b>Eski iddia</b> (A13/final · lensB Ö1): daktilo sahiplerinin her biri
+    /// <c>scheduler.Duration + CursorHoldMs</c> beklemek ZORUNDADIR; hold'un üretimde tüketildiği yalnız
+    /// kaynak düzeyinde pinlenebiliyordu ve sayı üçten ikiye, ikiden bire inmişti.</para>
+    ///
+    /// <para><b>Değişme gerekçesi (kullanıcı, sahada):</b> yazı yüzeyi prompt satırına taşınınca hold'un bedeli
+    /// GÖRÜNÜR oldu — tamamlanmış metin yarım saniye daha altta asılı duruyor, sonra yukarı sıçrıyordu.
+    /// Daktilo döneminde satır kendi yerinde yazdığı için bu pencere render'dan ayırt edilemiyordu; artık
+    /// ediliyor. Kilitlenme biter bitmez satır bırakılır — jest tek parça: yaz, bırak, sıradaki.</para>
+    ///
+    /// <para>Hold'un kendisi ÖLÜ DEĞİLDİR: konsolun imleç fade'i onu hâlâ okur
+    /// (<see cref="ConsoleMotionPathTests.The_active_line_cursor_holds_steady_for_420ms_before_it_starts_to_fade"/>)
+    /// ve event stream'de ANINDA basılan satırların imleç tonu o kadar sürer. Değişen, açılışın SÜRESİNE
+    /// eklenmemesidir — bu test o eklemenin geri gelmediğini pinler.</para>
     /// </summary>
     [Fact]
-    public void Every_typewriter_owner_adds_the_cursor_hold_to_its_scheduler_duration()
+    public void No_lock_in_owner_pads_its_duration_with_the_cursor_hold()
     {
         var usages = SourceGuard.ScanApp("*.cs",
             new Regex(@"\.Duration\s*\+\s*TimeSpan\.FromMilliseconds\(CursorHoldMs\)", RegexOptions.Compiled),
             skipCommentLines: true);
 
-        // Vakum kapısı: tarama boş bir dosya kümesi görseydi aşağıdaki sayım anlamsız olurdu.
+        // Vakum kapısı: tarama boş bir dosya kümesi görseydi aşağıdaki iddia anlamsız olurdu.
         Assert.Contains(Path.Combine("Views", "EventStreamView.xaml.cs"), SourceGuard.ScannedAppFiles("*.cs"));
 
-        // [DEĞİŞEN KURAL] Sayı üçten ikiye, ikiden BİRE indi. Önce konsolun daktilosu kaldırıldı (design
-        // v1.7.0 §2.5), sonra event stream'in tampon satırı: yazım yüzeyi ALT SATIRA taşındı, olay orada
-        // kendi renginde yazılıp tamamlanmış hâliyle yukarı bırakılıyor. Geriye tek daktilo sahibi kaldı —
-        // alt satırın kendisi.
-        string only = Assert.Single(usages);
-        Assert.StartsWith(Path.Combine("Views", "EventStreamView.xaml.cs"), only, StringComparison.Ordinal);
+        Assert.Empty(usages);
     }
 
     [StaFact]

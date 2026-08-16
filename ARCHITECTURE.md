@@ -1429,6 +1429,14 @@ WPF provides neither smooth scrolling nor horizontal wheel input, so the scrolli
 | `ScrollArbiter` | the referee |
 | `HorizontalWheelScroll` | horizontal wheel / touchpad input, which WPF never delivers |
 
+**An animated scroll always starts from where the panel really is.** The animation carries no `From` and holds
+its end value, so a finished move keeps owning the property; if the panel is then moved by some other route — a
+document swap, a plain `ScrollToVerticalOffset` — the seeding of the base value disappears underneath that hold,
+and a fresh move to the *same* target changes no effective value at all, raises no callback, and scrolls
+nothing. The previous animation is therefore released before the base value is seeded. It costs nothing for
+retargeting mid-flight: an animation in flight is already driving the panel every frame, so the caller's reading
+of the current offset *is* the visible position.
+
 **Only the user stops the follow, and the signal comes from input, not from geometry.** A scroll event says
 nothing about who caused it: relayout, a viewport change and our own programmatic scrolls all raise one, and
 the offset they report can still be the pre-scroll value, so a distance measured then can cross the threshold
@@ -1484,8 +1492,12 @@ individually coloured, and MSBuild-verbose volume must not stall the UI. `TextBl
 `FlowDocument`/`RichTextBox` collapses under the volume; an `ItemsControl` of lines loses selection across
 lines.
 
-- The document stays **plain text** (`HH:MM:SS ▸ message`), so what the user copies is meaningful. Colour comes
-  from an offset-based `DocumentColorizingTransformer`.
+- The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
+  `DocumentColorizingTransformer`, and only lines whose *format is known* get one: MSBuild's own diagnostic
+  shape (`… : error CS0103: …`, `… : warning MSB3277: …`) and the prefixes the application itself prints
+  (`[error]`, `warning:`, a command line). Everything else is one tone. Scanning free text for `failed` or
+  `succeeded` was tried and dropped: it caught the word inside a project name just as readily, and a colour
+  that is sometimes wrong is worth less than no colour at all.
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`.
 - The live document is capped at a render slice of 200 lines; the full log is on disk and is paged in on
   demand (§5.5).
@@ -1523,15 +1535,57 @@ lines.
   trapezoid, so §2.4's second option is taken — the block is a textured plane in a `Viewport3D` with a
   `PerspectiveCamera` 900 px away, rotated 7° → 0 about an axis through its bottom edge. A scale-and-translate
   approximation was tried first and read as a slide rather than a hinge; the missing cue is the horizontal
-  one. The plane's texture is a still of the block taken as the transition starts — a live visual brush
+  one. **The return is the mirror of the opening**: opening rises from 14 px below hinged at its bottom edge,
+  going back settles from 14 px above hinged at its top edge — same duration, same curve, same angle, only the
+  direction and the hinged edge change, so the two read as one gesture and its reverse rather than as the same
+  thing twice. The plane's texture is a still of the block taken as the transition starts — a live visual brush
   cannot work, since hiding the real block would hide it in the brush too. The camera's field of view is
   derived so that the plane at zero rotation covers the viewport exactly, which is what makes the hand-off
-  back to the real editor invisible. Only the log block moves: the prompt line and the amber
-  `build in progress` marker stay out of it by design (§1.3, §4) — what settles is the content, and the caret
-  is the panel's fixed point. The `⌄ latest` pill stays out too, being an affordance rather than content.
+  back to the real editor invisible. Only the log block moves: the prompt line stays out of it by design
+  (§1.3, §4) — what settles is the content, and the caret is the panel's fixed point. The `⌄ latest` pill stays
+  out too, being an affordance rather than content.
+- **Every project has a page, and a page with no log still says something.** Clicking a card always switches
+  the console to that project, including when the engine answers that there is no log — which is not the
+  exceptional case but the common one, since a skipped project never writes a log file at all and its reason
+  goes only to `decision.log`. Leaving the console on the run narrative made the click look like it had done
+  nothing. What the body then shows is composed from the row: a first line saying **why** the project is in
+  that state, and a second saying **what we have** — the commit it was last successfully built at, or that it
+  has never been built. The status word is not repeated, because the header is already showing it. A project
+  that is compiling right now gets one line instead of two: there is no evidence yet, and its output is about
+  to arrive. The reason comes from the engine's own vocabulary where there is one — the skip reasons are a
+  single shared source, so the page, the event stream and `decision.log` cannot drift apart — and from the
+  will-build verdict and its reason (§7.4) where the project has not been spoken about in this run yet. Cycle
+  membership is checked before that verdict, since Sync gives every cycle member `false` and reading that as
+  "up to date" would be a lie.
+- **There is no `build in progress` marker at the end of a project log.** There used to be an amber, blinking
+  one. It was set when the page opened and never updated, so a project that finished while its log was on
+  screen kept claiming to be building. Two surfaces already answer that question and stay in sync — the
+  header's status glyph and the row itself — and a third, unsynchronised channel is worth less than the times
+  it is wrong. It was removed rather than wired up.
 - **Each mode is pinned to the end you read it from.** The order is fixed — change the content, pin, then
-  animate — and pinning forces a measure first, because the editor's scroll geometry is stale immediately
-  after a document swap and a pin computed against it lands on the wrong end. The run narrative pins to the
+  animate — and the pin forces a measure on **both** sides of the scroll. Before, because the editor's scroll
+  geometry is stale immediately after a document swap and a pin computed against it lands on the wrong end.
+  After, because scrolling is a *request*: the viewer forwards it to the text view only on the next measure
+  pass, so without a second one the offset is still the old value when the method returns and the request
+  instead lands in the middle of the transition. That was visible in two ways at once, since the transition's
+  texture is taken from the frame right after the pin: the beginning of the narrative showed for the whole
+  340 ms and the panel then jumped to the end in a single frame, and the caret — which is skipped whenever the
+  document's last line is not on screen — stayed at its previous position, sitting over the text as if the
+  panel were already at the end.
+
+  One extra measure is not quite enough either, because a measure can *grow* the extent: the text view builds
+  its visual lines only at the offset it is scrolled to, and their real heights can differ from the first
+  estimate. The pin therefore repeats until the extent stops moving, and the transition re-settles the bottom
+  once more when it lands — the later layout passes that position the caret and finish the visual lines arrive
+  during those 340 ms. Left alone they parked the panel one line short of the end: a small gap underneath and,
+  because that is more than the 48 px threshold, an occasional `⌄ latest`.
+
+  **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the
+  other half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck
+  to the bottom again" while the editor still holds the *previous* document — at its top — measured a huge
+  distance and showed the pill for exactly as long as the pin took to run. It appeared and vanished on every
+  `← Back`. Ordered after the pin, the geometry is already right and the distance is zero. The run narrative
+  pins to the
   **bottom**: the interesting thing is the latest line and the panel goes on following the stream. A project
   log pins to the **top** and opens **not following**: what you are looking for in a build log is the first
   error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
@@ -1588,25 +1642,60 @@ rectangle, so the rectangle is a full pen wider than the offset alone would sugg
 updates the visuals **in place** — a splitter drag delivers dozens of size events per second, and rebuilding
 hundreds of nodes on each one would freeze the panel it is resizing.
 
-**The newest row types where it will live.** A row is drawn from its first frame in its final colour and with
-its final glyph; only its text opens, left to right. Nothing about it changes when the typing ends, which is
-the whole point.
+**An event is written at the prompt line, then released into the buffer.** A new event does not appear in the
+buffer and open there; it is written beside the caret on the bottom line, left to right, and when the writing
+ends the row is released upward with its own colour and its own glyph. The buffer itself never animates —
+whatever is above the prompt line is settled.
 
-For a while the writing happened on the bottom line instead — the event was typed beside the caret in its own
-colour and then released upward into the buffer. It was abandoned because of what the release looked like: the
-12 px caret column became a status glyph at that instant, and although the text never changed the eye read it
-as a colour change, so the stream looked unsettled. The prototype's own model has no such seam.
+**The text does not type; it locks in.** A read head crosses the line from left to right: everything behind it
+is the real text, a five-character window ahead of it jitters through a small set of mono glyphs, and the tail
+beyond that window is printed **transparent**. Printing the tail rather than leaving it out is the point — the
+line has its final width from the first frame, so nothing ever reflows, which is what made the old letter-by-
+letter reveal restless on a monospace grid. The head crosses any line in the same fifteen ticks, so a long line
+and a short one both settle in about 360 ms and the stream keeps an even rhythm; a fixed step would have made
+the duration a function of length. Only letters jitter: a token containing a digit — `1.4s`, `a3f81c2`,
+`14/38`, `09:41:02` — is exempt as a whole, and punctuation never jitters, because those figures are tabular
+and a random glyph would both bounce them on the grid and make a sha read like corrupted data. Failures,
+bursts, the closing `done` line and reduced motion all print at once, as before.
 
-Only the newest row types at a time; a new row completes the previous one instantly. That rule lives in the
-panel rather than in the row, since a row does not know its siblings. Without it — one timer per row — a fast
+The row is released the instant the lock-in ends. It used to be held for a further 420 ms, the caret-hold
+window the old typewriter carried, and while the writing happened inside the buffer that window was
+indistinguishable from anything else. Once the writing moved to the prompt line it became plain: a finished
+line sat at the bottom for half a second and only then jumped up. The gesture is one piece now — write,
+release, next.
+
+The row exists from the first moment but stays hidden until it is released. Showing it while the same event is
+being written below would put the event on screen twice, and it would also grow the buffer — pushing
+everything above it up — before the writing had even started. Hiding it defers that step to the release, so
+the movement happens in one place and ends there. The timing is still the row's own: the same cadence, the
+same single-writer rule, the same "a burst or a failure prints at once" decision; the panel only mirrors the
+row's text onto the prompt line, and no second clock exists.
+
+This model was tried, abandoned and brought back, and the reason it failed the first time is worth keeping:
+at the moment of release the 12 px caret column turned into a status glyph, and although the text never
+changed the eye read it as a colour change. What removes that seam is the caret itself — it now wears the
+event's own icon colour while the event is being written, so the glyph that replaces it is already the colour
+the reader was looking at.
+
+The row tones follow the prototype with one deliberate exception: a **skipped** line is `text-dim` rather
+than `text-faint`, so that it stays the quietest thing in the stream while remaining readable.
+
+Only the newest row types at a time, and the panel is its only starter. A row's own `Loaded` used to start it
+too, on the assumption that the play-once flag made the second attempt harmless; it was not, because that
+flag's early exit also assigns the full text — and WPF raises `Loaded` deferred, so it landed in the middle of
+the typing and made the line flash complete for a frame before opening again. Being printed instantly now
+counts as having played, as well: a row that passed while motion was off used to keep the flag clear, so
+turning the signal back on and rebuilding the panel had several old rows opening leftward at once, which is
+precisely the retroactive animation the motion contract forbids. A new row completes the previous one
+instantly. That rule lives in the panel rather than in the row, since a row does not know its siblings. Without it — one timer per row — a fast
 run had two or three lines opening leftward at once, which is the defect that started this whole detour. Burst
 and failure events skip the typewriter entirely, as does reduced motion, and each row types exactly once, so a
 recycled container does not replay it. A row counts as "typing" for 420 ms after its text completes, matching
 §6, which is also how long it keeps the single-writer slot.
 
 **The prompt line is an indicator, not a surface.** It has two states and both are amber: the project being
-compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. It never types and never
-takes an event's colour, so it is the one thing on the panel that is always the same.
+compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. Its *text* never types and
+never takes an event's colour, so the line itself is the one thing on the panel that always reads the same.
 
 The prompt is there from the first frame, before any event, and the stream has no empty-state text — the
 console shows a blinking caret the moment it opens and the two panels should say the same thing. Its presence
@@ -1614,11 +1703,24 @@ is unconditional. Gating it on the active project changing was a real defect: a 
 generation never moved and the caret never appeared until a second Sync happened to reset the gate as a side
 effect.
 
-Both carets are **amber, always** — writing or waiting, console or stream. §2.5 tints the idle prompt dim and
-the prototype dims the stream's waiting row with it; the caret was pulled to one colour instead, because it is
-the application's "I am alive" mark and the two panels should say that the same way. The caret takes its
-colour from the line rather than carrying its own, so the tone is set in one place; the wall-clock stamp stays
-dim, which keeps the waiting row quiet.
+The caret rests at **amber** in both panels — console and stream, waiting or idle. §2.5 tints the idle prompt
+dim and the prototype dims the stream's waiting row with it; the caret was pulled to one colour instead,
+because it is the application's "I am alive" mark and the two panels should say that the same way. The
+wall-clock stamp stays dim, which keeps the waiting row quiet.
+
+**The stream's caret wears the colour of the event in hand.** While an event is being written the caret
+carries that event's *icon* colour — green for a success, red for a failure, grey for a skip — and it returns
+to amber when the writing is over. Amber is the resting tone, not a transition: it means there is nothing in
+hand. An event that prints instantly is never written, so it holds the caret for a short window instead —
+420 ms, the same figure the prompt's own caret hold uses — because without that window a failure could never
+tint the caret at all, since failures skip the writing by design.
+
+Both extremes were tried and measured. Colouring only for the exact duration of the typing left the caret
+amber most of the time and green was almost never seen; holding the colour indefinitely left it stale — a run
+finished, nothing happening, and a red caret still sitting there. The prompt *text* is not part of this: while
+an event is being written the text is the event, in amber, and it takes its own colour only once it is
+released into the buffer. The caret used to be bound to that text, which is exactly why it could never say
+anything of its own; the two are separate channels now.
 
 **The node's core is the plan channel.** The glyph inside the square answers "what will happen to this
 project" while the border answers "what happened in this run": amber when it will be built, grey when it is up
@@ -2551,6 +2653,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, will-build dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `WillBuildDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
+| App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
+| Cycle wording: membership line, cycle path, cluster headline | `App/ViewModels/CycleText.cs` |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
 | Icon geometries | `App/Resources/Icons.xaml`, `App/Controls/IconVisual.cs`, `IconPaint.cs` |
 

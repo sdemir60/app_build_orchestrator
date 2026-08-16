@@ -220,6 +220,11 @@ A project's log opens **at the beginning** and stays there — what you are look
 first error, not the last line — so it does not follow the output and does not return on its own. Scroll to
 the bottom yourself and it starts following again. `← Back` returns you to the run narrative at its end.
 
+**Every project has a page, log or not.** A skipped project never writes a log file at all — the reason goes
+to the run's decision log — so clicking its card used to look like it did nothing. The page now opens either
+way and answers in two lines: why the project is in the state it is in, and what the tool has on it — the
+commit it was last successfully built at, or that it has never been built.
+
 The dependency graph fits the panel at every size: nodes are unnamed mini squares laid out in build order,
 and the spacing shrinks until they do fit — so there is never a scrollbar and never a part of the graph you
 have to go looking for. Hover a node to see its full project name. Click one — or a list row, or a stream

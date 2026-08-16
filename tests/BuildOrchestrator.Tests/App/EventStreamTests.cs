@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Documents;
+using System.Windows.Media;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -107,6 +108,18 @@ public class EventStreamTests
         Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(view.ActiveText));
         Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(view.Rows[0].Text));
         GC.KeepAlive(window);
+    }
+
+    /// <summary>[DEĞİŞEN KURAL] Atlanan satır <c>text-faint</c> (#54545c) değil <c>text-dim</c> (#76767e) —
+    /// geri planda kalsın ama okunabilsin (kullanıcı kararı; prototip BuildApp.jsx:635-638'den bilinçli sapma).
+    /// <c>ok</c> satırı değişmedi, yani skip hâlâ onun altındadır.</summary>
+    [Fact]
+    public void A_skipped_line_is_dim_not_faint()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\skipped.csproj", SkipReasons.UpToDate));
+
+        Assert.Equal("Brush.TextDim", vm.StreamEvents[^1].TextBrushKey);
     }
 
     [StaFact]

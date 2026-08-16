@@ -107,8 +107,21 @@ public class ConsoleForwardWiringTests
         Assert.False(vm.ShouldShowLoadedProject(a));
     }
 
-    [Fact] // guard1: yükleme log BULAMAZSA (logNotFound) mod kurulmaz → ShouldShowLoadedProject false (run modunda kal)
-    public async Task ShouldShowLoadedProject_is_false_when_the_load_found_no_log()
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL] Log BULUNAMASA da (logNotFound) proje modu KURULUR.</b>
+    ///
+    /// <para><b>Eski iddia:</b> guard1 — yükleme log bulamazsa mod kurulmaz, konsol run anlatısında kalır.</para>
+    ///
+    /// <para><b>Değişme gerekçesi (kullanıcı):</b> her projeye tıklandığında sayfası açılmalıdır. Atlanmış bir
+    /// projenin log dosyası HİÇ yazılmaz (gerekçe yalnız <c>decision.log</c>'a gider), yani <c>logNotFound</c>
+    /// istisnai değil EN SIK durumdu — ve o durumda tıklama görünürde hiçbir şey yapmıyordu. Sayfa artık
+    /// açılıyor ve gövde, projenin o anki durumunu anlatıyor (<c>ConsoleEmptyState.ForEmptyLog</c>).</para>
+    ///
+    /// <para>guard2 DEĞİŞMEDİ: mod yalnız seçim HÂLÂ o projedeyken kurulur — hızlı select→deselect'te gecikmiş
+    /// bir cevap ActiveProjectId'yi takılı bırakamaz (bkz. aşağıdaki test).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_load_that_found_no_log_still_opens_the_project_page()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
@@ -119,8 +132,27 @@ public class ConsoleForwardWiringTests
         vm.OnEvent(new ErrorEvent("logNotFound", a));
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.Null(vm.ActiveProjectId);              // mod kurulmadı
-        Assert.Equal(a, vm.SelectedProjectId);        // ama seçim hâlâ a (guard2 geçer, guard1 keser)
+        Assert.Equal(a, vm.ActiveProjectId);          // mod KURULDU
+        Assert.Equal(a, vm.SelectedProjectId);
+        Assert.True(vm.ShouldShowLoadedProject(a));
+    }
+
+    /// <summary>guard2 (DEĞİŞMEDİ): seçim arada kalktıysa "log yok" cevabı da modu kurmaz — aksi halde
+    /// ActiveProjectId takılı kalır ve run konsolu (AppendRunLine'ın null kapısı) sessizce donar.</summary>
+    [Fact]
+    public async Task A_load_that_found_no_log_does_not_open_the_page_if_the_card_was_released()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string a = @"C:\p\skipped.csproj";
+        vm.OnEvent(new ProjectSkippedEvent("r1", a, "cycle"));
+        vm.SelectProject(a);
+        var load = vm.LoadProjectLogAsync(a);
+        vm.SelectProject(null);                       // IPC dönmeden kullanıcı kartı bıraktı
+        vm.OnEvent(new ErrorEvent("logNotFound", a));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Null(vm.ActiveProjectId);
         Assert.False(vm.ShouldShowLoadedProject(a));
     }
 }

@@ -3,6 +3,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -125,7 +126,7 @@ public class ConsoleModesTests
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
         header.ShowProjectLog("A", ProjectRowState.Started, hasDepIssue: false, vm.GetActiveLineCount());
         vm.SeedProjectDocument(projectId, text =>
-            view.PlayCascade(text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n'), buildInProgress: true));
+            view.PlayCascade(text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n')));
 
         Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
         Assert.DoesNotContain(previousRunText, view.Document.Text, StringComparison.Ordinal);
@@ -133,18 +134,100 @@ public class ConsoleModesTests
 
     // ---------------------------------------------------------------- boş-durum metinleri (verbatim §2.5)
 
+    /// <summary>
+    /// <b>Logu olmayan bir projenin sayfası GERÇEK durumunu anlatır: gerekçe + kanıt.</b>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia, design-v1'in ÖRNEK metinlerini birebir pinliyordu
+    /// (<c>Skipped(sha)</c>, <c>Queued(deps)</c>) — içlerinde uydurma veri vardı ("yesterday 18:42") ve ikisi de
+    /// üretimde HİÇ ÇAĞRILMIYORDU: yüzey kurulmuş, hiçbir yere bağlanmamıştı. Yani pinlenen tek şey
+    /// kullanılmayan bir literaldi. Değişme gerekçesi (kullanıcı): her projeye tıklandığında sayfası açılmalı ve
+    /// o sayfa, log yoksa bile projenin o anki durumunu söylemeli.</para>
+    ///
+    /// <para>Metin statüyü TEKRAR ETMEZ (başlık onu zaten gösterir): ilk satır NEDEN, ikinci satır elde ne
+    /// olduğu. Kanıt gerekçeyi tekrarlıyorsa ("hiç derlenmedi") yazılmaz.</para>
+    /// </summary>
     [Fact]
-    public void Empty_state_texts_are_verbatim_design_v1()
+    public void An_empty_project_page_states_the_reason_and_the_evidence()
     {
+        // Atlanmış — motorun söylediği gerekçeyle (SkipReasons, tek doğruluk kaynağı).
         Assert.Equal(
-            "Skipped — up to date; not built in this run. Last successful build: yesterday 18:42 (a3f81c2)",
-            ConsoleEmptyState.Skipped("a3f81c2"));
+            ["Up to date — nothing to compile in this run.", "Last built a3f81c2"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
+                skipReason: SkipReasons.UpToDate, currentSha: "a3f81c29ff01")));
+
+        // Koşu uçuşta, sıra bu satırda değil — plan gerekçesi will-build'den gelir.
         Assert.Equal(
-            "Queued — waiting for dependencies: Sales.Core, Security",
-            ConsoleEmptyState.Queued(["Sales.Core", "Security"]));
+            ["Queued — the signature changed since the last successful build.", "Last built a3f81c2"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: "a3f81c29ff01", runActive: true)));
+
+        // Koşu YOK: aynı plan "Will build" diye okunur — kuyruk, ancak bir koşu varken vardır.
         Assert.Equal(
-            "No log yet — output streams here once the build starts.",
-            ConsoleEmptyState.NoLog);
+            ["Will build — its last build failed.", "Last built a3f81c2"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.LastFailed, currentSha: "a3f81c29ff01")));
+
+        // Hiç derlenmemiş: kanıt satırı gerekçeyi tekrarlayacağı için YAZILMAZ.
+        Assert.Equal(
+            ["Will build — this tool has never built it."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.NeverBuilt)));
+
+        // Döngü üyeliği plandan ÖNCE gelir: Sync bir SCC üyesine her zaman false verir (ARCHITECTURE §7.4),
+        // o "false"u "güncel" diye okumak yalan olurdu.
+        Assert.Equal(
+            ["In a dependency cycle — Build never compiles one; use Resolve cycles.", "Never built by this tool"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false, inCycle: true)));
+
+        // Sync hiç koşmadı: hollow. "Güncel" demek yalan olurdu.
+        Assert.Equal(
+            ["Not analysed yet — run Sync to see what this project will do.", "Never built by this tool"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending)));
+
+        // Derleniyor: kanıt henüz oluşmadı, akış birazdan gelir — TEK satır.
+        Assert.Equal(
+            ["No log yet — output streams here once the build starts."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Started)));
+    }
+
+    private static ProjectRowViewModel Row(
+        ProjectRowState state, string? skipReason = null, bool? willBuild = null,
+        WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
+        bool runActive = false) =>
+        new(@"C:\p\a.csproj", "A", state)
+        {
+            SkipReason = skipReason,
+            WillBuild = willBuild,
+            WillBuildReason = willBuildReason,
+            InCycle = inCycle,
+            CurrentSha = currentSha,
+            IsRunActive = runActive,
+        };
+
+    /// <summary>
+    /// <b>Logu olmayan bir projeye tıklamak da o projenin sayfasını AÇAR.</b> Eskiden motor
+    /// <c>logNotFound</c> dediğinde proje modu hiç kurulmuyor, konsol run anlatısında kalıyordu — atlanmış bir
+    /// projenin log dosyası HİÇ yazılmadığı için (gerekçe yalnız <c>decision.log</c>'a gider) bu, en sık
+    /// tıklanan durumdu ve tıklama "hiçbir şey yapmıyor" gibi görünüyordu.
+    /// </summary>
+    [Fact]
+    public async Task Clicking_a_project_without_a_log_still_opens_its_page()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı
+        var vm = new RunViewModel(engine, new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1");
+        const string projectId = @"C:\p\skipped.csproj";
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.UpToDate));
+
+        vm.SelectProject(projectId);
+        var load = vm.LoadProjectLogAsync(projectId);
+        vm.OnEvent(new ErrorEvent("logNotFound", projectId));
+        await load.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(projectId, vm.ActiveProjectId);
+        Assert.True(vm.ShouldShowLoadedProject(projectId));
+        // Ve gerekçe satırda tutuluyor — sayfa metni onu okuyacak.
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(SkipReasons.UpToDate, row.SkipReason);
     }
 
     // ---------------------------------------------------------------- N lines = TAM tampon (Ek A #23)

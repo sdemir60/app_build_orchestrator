@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Markup;
+using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using BuildOrchestrator.App.Console;
 
@@ -92,24 +94,50 @@ public class ConsoleViewTests
         // Headless testte App.Motion null → animationsEnabled=false → kaskat INSTANT (tüm satırlar, fade yok).
         var view = new ConsoleView();
 
-        view.PlayCascade(new[] { "a", "b", "c" }, buildInProgress: false);
+        view.PlayCascade(new[] { "a", "b", "c" });
 
         Assert.Equal("a\nb\nc\n", view.Document.Text);
     }
 
-    // ---------------------------------------------------------------- [A13/T3a · a6] "build in progress ▮" (BİREBİR)
+    // ---------------------------------------------------------------- proje-log sayfasının sonu
 
-    /// <summary>[A13/T3a · a6] design-v1 §2.5: building bir projenin logunda kaskat sonunda amber
-    /// <c>build in progress ▮</c> belirir (ConsoleView.xaml:34 <c>BuildProgressText</c>). Metin testsizdi.</summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL] Proje-log sayfasının sonunda "build in progress ▮" işareti YOKTUR.</b>
+    ///
+    /// <para><b>Eski iddia</b> (design-v1 §2.5, a6 kalemi): derlenen bir projenin logu açıldığında sona amber
+    /// bir <c>build in progress</c> metni + yanıp sönen 7×13 blok imleç konur.</para>
+    ///
+    /// <para><b>Değişme gerekçesi (kullanıcı, sahada):</b> işaret açılış ANINDA kurulup bir daha
+    /// güncellenmiyordu — proje, kullanıcı loguna bakarken bitince ekranda "build in progress" KALIYORDU.
+    /// Söylediği şeyi zaten iki senkron yüzey söylüyor: başlıktaki statü glyph'i/adı ve listedeki satır.
+    /// Üçüncü ve senkronu olmayan bir kanal, doğru olmadığı anlarda ekranı yalancı yapıyordu; senkronlamak
+    /// yerine kaldırıldı.</para>
+    ///
+    /// <para>Test yüzeyin YOKLUĞUNU görsel ağaçtan doğrular, alanın yokluğundan değil: derleyici zaten alanı
+    /// koruyamaz, ama biri metni başka bir öğeye geri koyarsa bu test kırılır.</para>
+    /// </summary>
     [StaFact]
-    public void PlayCascade_with_building_project_shows_the_verbatim_build_in_progress_overlay()
+    public void The_project_log_page_has_no_build_in_progress_marker()
     {
         var view = new ConsoleView();
+        var window = DsResources.Realize(DsResources.NewHost(), view);
 
-        view.PlayCascade(new[] { "log line" }, buildInProgress: true);
+        view.PlayCascade(new[] { "log line" });
+        view.UpdateLayout();
 
-        Assert.Equal(Visibility.Visible, view.BuildProgressOverlay.Visibility);
-        Assert.Equal("build in progress", view.BuildProgressText.Text);
+        Assert.DoesNotContain(Descendants(view).OfType<TextBlock>(),
+            t => t.Text.Contains("build in progress", StringComparison.OrdinalIgnoreCase));
+        GC.KeepAlive(window);
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var d in Descendants(child)) yield return d;
+        }
     }
 
     // ---------------------------------------------------------------- [3b I-2] chunk loader GERÇEK yolu
@@ -126,7 +154,7 @@ public class ConsoleViewTests
         view.UpdateLayout();
 
         var all = Enumerable.Range(0, 250).Select(i => $"line{i}").ToArray();
-        view.PlayCascade(all, buildInProgress: false); // instant → son 200 (line50..line249)
+        view.PlayCascade(all); // instant → son 200 (line50..line249)
         Assert.StartsWith("line50\n", view.Document.Text);
         Assert.DoesNotContain("line49\n", view.Document.Text); // ilk 50 henüz chunk loader'da
 
@@ -158,7 +186,7 @@ public class ConsoleViewTests
         // [DEĞİŞEN ÖN-KOŞUL] Proje logu artık BAŞTAN açılır ve takip KAPALI başlar (kullanıcı kararı: bir
         // derleme logunda aranan ilk hatadır). Follow'u kullanıcı dibe inerek açar — senaryo onu kurar.
         var view = new ConsoleView();
-        view.PlayCascade(new[] { "seed" }, buildInProgress: true);
+        view.PlayCascade(new[] { "seed" });
         view.StickToBottom = true; // kullanıcı dibe indi → takip geri geldi
 
         for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
@@ -174,7 +202,7 @@ public class ConsoleViewTests
     {
         // Kullanıcı yukarı kaydırıp chunk gezerken (StickToBottom=false) tail-trim YOK — prepend'le çakışmaz.
         var view = new ConsoleView();
-        view.PlayCascade(new[] { "seed" }, buildInProgress: true);
+        view.PlayCascade(new[] { "seed" });
         view.StickToBottom = false;
 
         for (int i = 0; i < 400; i++) view.AppendBatch($"live{i}\n");
@@ -201,7 +229,7 @@ public class ConsoleViewTests
 
         // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
-        view.PlayCascade(all, buildInProgress: true); // instant (headless), _projectMode
+        view.PlayCascade(all); // instant (headless), _projectMode
         view.StickToBottom = true;                    // [DEĞİŞEN ÖN-KOŞUL] kullanıcı dibe indi → follow açık
         Assert.StartsWith("orig100\n", view.Document.Text);
         Assert.DoesNotContain("orig99\n", view.Document.Text); // ilk 100 chunk loader backlog'unda
@@ -271,7 +299,7 @@ public class ConsoleViewTests
 
         // 300 satır kaskat → render dilimi son 200 (orig100..orig299), _loadedFrom=100 (backlog: orig0..orig99).
         var all = Enumerable.Range(0, 300).Select(i => $"orig{i}").ToArray();
-        view.PlayCascade(all, buildInProgress: true); // _projectMode, StickToBottom=true (varsayılan/forced)
+        view.PlayCascade(all); // _projectMode, StickToBottom=true (varsayılan/forced)
         view.UpdateLayout();
 
         // [DEĞİŞEN ÖN-KOŞUL] Proje logu BAŞTAN açılır (kullanıcı kararı) — chunk latch'i ancak kullanıcı
@@ -401,28 +429,9 @@ public class ConsoleViewTests
     private static double LeftEdge(ConsoleView view, FrameworkElement element) =>
         element.TranslatePoint(new Point(0, 0), view).X;
 
-    // ---------------------------------------------------------------- [A13/T3a · a6] "build in progress ▮" imleci
-
-    /// <summary>[A13/T3 fix-1 · C2] a6 kaleminin metni <c>build in progress ▮</c> idi; pinlenen yalnız gövde
-    /// metniydi. <c>▮</c> ayrı bir <see cref="Rectangle"/>'dır (<c>ConsoleView.xaml BuildProgressCursor</c>, 7×13,
-    /// amber) — silinse ya da başka bir fırçaya bağlansa süit yeşil kalırdı. Ton
-    /// (<c>Brush.AmberText</c>) a7'nin <c>ActiveCursor.Fill</c> deseninin birebir kardeşidir.</summary>
-    [StaFact]
-    public void The_build_in_progress_overlay_ends_with_the_amber_block_cursor()
-    {
-        var host = DsResources.NewHost();
-        var view = new ConsoleView();
-        var window = DsResources.Realize(host, view);
-
-        view.PlayCascade(new[] { "log line" }, buildInProgress: true);
-        view.UpdateLayout();
-
-        Assert.Equal(Visibility.Visible, view.BuildProgressOverlay.Visibility);
-        Assert.Same(view.FindResource("Brush.AmberText"), view.BuildProgressCursor.Fill);
-        Assert.Equal(7.0, view.BuildProgressCursor.ActualWidth);
-        Assert.Equal(13.0, view.BuildProgressCursor.ActualHeight);
-        GC.KeepAlive(window);
-    }
+    // [A13/T3a · a6] "build in progress ▮" imlecinin ölçü/ton testi KALDIRILDI: işaretin kendisi kaldırıldı
+    // (gerekçe: The_project_log_page_has_no_build_in_progress_marker). Kalan tek blok imleç prompt satırınınkidir
+    // ve o kendi testleriyle (a7 deseni) pinlidir.
 
     // ---------------------------------------------------------------- [A13/T3b · b9] ölçü/geometri
 

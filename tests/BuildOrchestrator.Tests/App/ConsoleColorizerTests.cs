@@ -41,31 +41,62 @@ public class ConsoleColorizerTests
         Assert.Same(tokens["Brush.TextSecondary"], span.Brush); // info
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL] Renk yalnız FORMATI BİLİNEN satırlara verilir.</b> Eski iddia serbest metinde
+    /// <c>failed</c>/<c>succeeded</c> arıyordu; artık aranmıyor (gerekçe:
+    /// <see cref="Classifier_colours_only_sources_whose_format_is_known"/>). Bu test, kalan iki kaynağın
+    /// GERÇEK token fırçalarına bağlandığını doğrular — anahtar adı değil, çözülen fırça.
+    /// </summary>
     [StaFact]
-    public void Error_and_warning_and_success_bodies_map_to_their_status_text_brushes()
+    public void Diagnostic_lines_map_to_their_status_text_brushes()
     {
         var tokens = LoadTokens();
         var colorizer = new ConsoleColorizer(Palette(tokens));
 
         Assert.Same(tokens["Brush.StatusFailText"],
-            colorizer.ComputeSpans("OSYS.Sales.Core failed — 2 errors").Single().Brush);
+            colorizer.ComputeSpans("Program.cs(9,5): error CS0103: name").Single().Brush);
         Assert.Same(tokens["Brush.StatusCycleText"],
             colorizer.ComputeSpans("warning NU1701: package restored").Single().Brush);
-        Assert.Same(tokens["Brush.StatusSuccessText"],
+
+        // Serbest metindeki "failed"/"succeeded" ARTIK renk vermez — sıradan çıktı satırıdır.
+        Assert.Same(tokens["Brush.TextSecondary"],
+            colorizer.ComputeSpans("OSYS.Sales.Core failed — 2 errors").Single().Brush);
+        Assert.Same(tokens["Brush.TextSecondary"],
             colorizer.ComputeSpans($"Build {Check} succeeded").Single().Brush);
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL] Yalnız FORMATI BİLİNEN kaynaklar renklenir; metin tahmini kaldırıldı.</b>
+    ///
+    /// <para><b>Eski iddia:</b> satırda <c>failed</c>/<c>succeeded</c>/<c>✓</c>/<c>✗</c> geçiyorsa kırmızı ya
+    /// da yeşil; <c>warning</c> kelimesi nerede geçerse geçsin turuncu.</para>
+    ///
+    /// <para><b>Değişme gerekçesi (kullanıcı):</b> "kesin bir ayrım yoksa tek renk olabilir, tahmine göre
+    /// yapıyorsak". O taramalar bir PROJE ADININ içindeki kelimeye de takılırdı; renk orada bilgi değil
+    /// gürültüdür. Geriye iki kaynak kalır ve ikisi de tahmin değildir: MSBuild'in tanı satırı formatı ve
+    /// uygulamanın kendi önekleri.</para>
+    /// </summary>
     [Fact]
-    public void Classifier_maps_reliable_signals_and_defaults_to_info()
+    public void Classifier_colours_only_sources_whose_format_is_known()
     {
-        // [DEĞİŞEN KURAL — design v1.7.0 §2.5] Komut satırının işareti artık ▸ öneki DEĞİL, satırın kendisidir:
-        // ▸ kolonu ve saat damgası kaldırıldı, geriye uygulamanın çağırdığı aracın adı kaldı.
+        // Uygulamanın KENDİ bastığı satırlar — kaynağı biziz.
         Assert.Equal(ConsoleLineType.Cmd, ConsoleLineClassifier.Classify("msbuild Osys.sln /m:4"));
         Assert.Equal(ConsoleLineType.Cmd, ConsoleLineClassifier.Classify("git fetch origin main"));
         Assert.Equal(ConsoleLineType.Error, ConsoleLineClassifier.Classify("[hata] stop gönderilemedi: x"));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify("warning: git fetch failed"));
+
+        // MSBuild'in tanı satırı formatı — kökenli ve kökensiz biçim.
         Assert.Equal(ConsoleLineType.Error, ConsoleLineClassifier.Classify("Program.cs(9,5): error CS0103: name"));
         Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify("csc : warning CS1591: missing doc"));
-        Assert.Equal(ConsoleLineType.Success, ConsoleLineClassifier.Classify("Build succeeded in 2.9s"));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify("warning NU1701: package restored"));
+
+        // Bağımlılık uyarısı hem "warning" hem "failed" içerir: TURUNCU kalmalı, kırmızı değil.
+        Assert.Equal(ConsoleLineType.Warn,
+            ConsoleLineClassifier.Classify("warning: OSYS.Sales.Core failed in this run"));
+
+        // ARTIK TAHMİN YOK: bu satırlar sıradan çıktıdır.
+        Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify("Build succeeded in 2.9s"));
+        Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify("Osys.Failed.Tests -> bin/x.dll"));
         Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify("Determining projects to restore..."));
         Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify(""));
     }
