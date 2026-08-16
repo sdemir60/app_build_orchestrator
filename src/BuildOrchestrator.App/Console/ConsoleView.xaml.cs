@@ -79,11 +79,29 @@ public partial class ConsoleView : UserControl
     // [tail-trim tek kural] Ayrı bir "kırp/kırpma" bayrağı YOKTUR: yetki BottomAnchorBehavior.ShouldFollow'dadır
     // (takip açıkken kırpılır). Eski _trimTail alanının taşıdığı ayrım o predicate'in içinde zaten yaşıyordu —
     // proje modu takip KAPALI açıldığı için orada kırpma olmaz.
-    private bool _projectMode;                            // proje-log modu (chunk prepend etkin)
+    private bool _projectMode;                            // proje-log modu (kaynak: disk logu; anlatıda kaynak VM tamponudur)
     private bool _prepending;                             // re-entrancy guard (prepend VerticalOffset'i değiştirir)
     private bool _armedForChunk;                          // kullanıcı tepeden UZAKLAŞTI mı — ilk layout spurious prepend'ini önler
-    private IReadOnlyList<string> _projectAllLines = [];  // proje logunun TAM satırları (chunk kaynağı)
-    private int _loadedFrom;                              // belgede yüklü ilk satırın _projectAllLines'taki index'i
+
+    /// <summary>Belgenin ARKASINDAKİ satırlar — render diliminin (200) dışında kalan geçmiş. Chunk loader
+    /// tepeye kaydırıldığında buradan geri yükler.
+    ///
+    /// <para><b>Moddan bağımsızdır.</b> Eskiden yalnız proje logunun disk satırlarıydı ve anlatı modunda BOŞ
+    /// kalıyordu; sonucu şuydu: run konsolunda 200 satırdan öncesine hiçbir jestle erişilemiyordu. Paralel bir
+    /// build saniyede yüzlerce satır aktığı için o pencere anında dolar ve ekran "bir sürü şey aktı, azıcık
+    /// kaldı" hâline gelirdi. Veri hiç kaybolmuyordu (anlatının tamamı VM'in tamponunda, her projenin logu
+    /// kendi tamponunda) — kaybolan yalnız görünürlüktü.</para>
+    ///
+    /// <para><b>Canlı büyür.</b> Kırpma belgenin başından satır siler; bu satırlar backlog'un ucunu aşıyorsa
+    /// (yani daha önce hiç kaydedilmemiş CANLI satırlarsa) buraya EKLENİR. Eski kod bunu yapmadığı için
+    /// proje modunda da bir delik vardı: canlı gelen satırlar kırpılınca <see cref="_loadedFrom"/> bir
+    /// clamp'e takılıyor ("index'i yok") ve o satırlara bir daha ulaşılamıyordu.</para></summary>
+    private List<string> _backlogLines = [];
+
+    /// <summary>Belgenin ilk satırının <see cref="_backlogLines"/>'daki index'i — yani "backlog'un kaçıncı
+    /// satırına kadarı belgeye yüklendi". <c>_backlogLines[0.._loadedFrom)</c> belgede DEĞİLDİR (geçmiş);
+    /// bu index backlog'un sonuna eşitse belgedeki her satır backlog'un ötesindeki canlı satırlardır.</summary>
+    private int _loadedFrom;
 
     public ConsoleView()
     {
@@ -236,13 +254,22 @@ public partial class ConsoleView : UserControl
             // geri gelir) kırpma tek hamlede yetişir ve o an panel zaten dipte olduğu için görünmez.
             if (_bottomAnchor.ShouldFollow)
             {
-                int trimmed = TrimToRenderSlice(document);
-                // [C-1] Tepeden K satır kırpıldıysa belgenin ilk satırı _projectAllLines[_loadedFrom + K] olur.
-                // Chunk loader index'ini K kadar ilerlet (aksi halde stale _loadedFrom → sonraki scroll-to-top
-                // prepend'i YANLIŞ dilimi yükler, kırpılan satırlar KALICI kaybolur = delik). Yalnız proje modunda:
-                // run modunun chunk bookkeeping'i yoktur (_projectAllLines boş, _loadedFrom=0). Üst sınır
-                // _projectAllLines.Count: tüm backlog kırpılınca belgenin ilk satırı live bir satırdır (index'i yok).
-                if (_projectMode) _loadedFrom = Math.Min(_loadedFrom + trimmed, _projectAllLines.Count);
+                var (trimmed, removed) = TrimToRenderSlice(document);
+                // [C-1] Tepeden K satır kırpıldıysa belgenin ilk satırı bir K kadar ileri kayar; chunk loader
+                // index'i onunla birlikte ilerlemelidir (aksi halde stale _loadedFrom → sonraki scroll-to-top
+                // prepend'i YANLIŞ dilimi yükler = tekrar/kayıp).
+                //
+                // Kırpılan satırların bir kısmı backlog'da ZATEN vardır (belgeye oradan yüklenmişlerdi);
+                // geri kalanı hiç kaydedilmemiş CANLI satırlardır ve backlog'un SONUNA eklenir. Eski kod bu
+                // ikinciyi yapmıyor, index'i backlog'un uzunluğuna clamp'liyordu — o clamp tam da deliğin
+                // kendisiydi: canlı kırpılan satır ne belgede ne backlog'da kalıyordu.
+                if (trimmed > 0)
+                {
+                    int alreadyInBacklog = _backlogLines.Count - _loadedFrom;
+                    if (trimmed > alreadyInBacklog)
+                        _backlogLines.AddRange(LastLines(removed, trimmed - alreadyInBacklog));
+                    _loadedFrom += trimmed;
+                }
             }
         }
         finally
@@ -324,14 +351,17 @@ public partial class ConsoleView : UserControl
     private const int MaxPinPasses = 3;
 
     // Belgeyi son RenderSliceLines satıra kırpar (baştaki fazla satırları TEK Remove ile siler).
-    // Tepeden silinen satır sayısını döndürür ([C-1] proje modunda _loadedFrom'u ilerletmek için).
-    private static int TrimToRenderSlice(TextDocument document)
+    // Silinen satır SAYISINI ve METNİNİ döndürür: sayı [C-1] _loadedFrom'u ilerletmek, metin ise hiç
+    // kaydedilmemiş canlı satırları backlog'a taşımak içindir (bkz. AppendBatch).
+    private static (int Lines, string Removed) TrimToRenderSlice(TextDocument document)
     {
         int excess = document.LineCount - RenderSliceLines;
-        if (excess <= 0) return 0;
+        if (excess <= 0) return (0, "");
         var lastToRemove = document.GetLineByNumber(excess); // 1..excess satırlarını (ayraçlarıyla) sil
-        document.Remove(0, lastToRemove.Offset + lastToRemove.TotalLength);
-        return excess;
+        int length = lastToRemove.Offset + lastToRemove.TotalLength;
+        string removed = document.GetText(0, length);
+        document.Remove(0, length);
+        return (excess, removed);
     }
 
     // ---------------------------------------------------------------- colorizer
@@ -497,19 +527,28 @@ public partial class ConsoleView : UserControl
 
     // ---------------------------------------------------------------- narrative (run) modu
 
-    /// <summary>[3b] Run/anlatı dokümanını kurar (<c>← Back</c> akışı): build-in-progress iptal, render dilimi
-    /// (son <see cref="RenderSliceLines"/>) uygulanır, canlı append'te tail-trim AÇIK. Chunk loader kapalı.
+    /// <summary>[3b] Run/anlatı dokümanını kurar (<c>← Back</c> akışı): render dilimi (son
+    /// <see cref="RenderSliceLines"/>) belgeye yüklenir, ÖNCESİ backlog'a bırakılır ve canlı append'te
+    /// tail-trim açıktır.
     ///
     /// <para><b>Anlatıya dönüş SONDAN okunur</b> (kullanıcı kararı): koşu anlatısında ilgi çeken şey en son
     /// olandır ve panel canlı akışı izlemeye devam eder. Proje logu tersidir — bkz.
     /// <see cref="PlayCascade"/>.</para>
+    ///
+    /// <para><b>Geçmiş erişilebilirdir</b> (bkz. <see cref="_backlogLines"/>): render dilimi bir SINIR değil
+    /// bir PENCEREdir — tepeye kaydırınca önceki dilim geri gelir, tıpkı proje logunda olduğu gibi. Kaynak
+    /// farkı önemsizdir: proje logu diskten sayfalanır, anlatı ise VM'in tam tamponundan gelir ve bu metot
+    /// onu zaten tam metin olarak alır.</para>
     /// <para>[design v1.7.0 §2.5] Geçiş animasyonu İKİ YÖNDE de aynıdır (<see cref="PlayTiltIn"/>).</para></summary>
     public void ShowRunDocument(string fullRunText)
     {
         _projectMode = false;
-        _projectAllLines = [];
-        _loadedFrom = 0;
-        EditorControl.Document = new TextDocument(ConsoleRenderSlice.LastLines(fullRunText ?? "", RenderSliceLines));
+        _armedForChunk = false; // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
+        _backlogLines = SplitLines(fullRunText ?? "");
+        // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır (PlayCascade ile
+        // AYNI hesap — iki mod tek kuralı paylaşır).
+        _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
+        EditorControl.Document = new TextDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
         PinAfterModeSwitch(toBottom: true);
         // [SIRA ÖNEMLİ] Takibi devralmak pin'den SONRA gelir. Kullanıcı önceki modda serbest kaydırmış olsa
         // bile mod değişimi takibi yeniden alır — ama ForceStuck bir bildirim yayınlar ve pill'in görünürlüğü
@@ -550,11 +589,11 @@ public partial class ConsoleView : UserControl
         _idleReady = false;
         ActiveLineText.Text = "";
         _armedForChunk = false;            // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
-        _projectAllLines = allLines;
+        _backlogLines = [.. allLines];     // kopya: backlog canlı satırlarla BÜYÜR, çağıranın listesi değişmez
 
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.
-        _loadedFrom = Math.Max(0, allLines.Count - RenderSliceLines);
-        EditorControl.Document = new TextDocument(Join(allLines, _loadedFrom, allLines.Count));
+        _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
+        EditorControl.Document = new TextDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
         PinAfterModeSwitch(toBottom: false);
 
         PlayTiltIn(fromAbove: false);
@@ -719,10 +758,13 @@ public partial class ConsoleView : UserControl
     /// <c>EditorControl.VerticalOffset</c> ile çağırır; böylece GERÇEK yol (arm → tepeye-scroll → prepend → re-arm)
     /// canlı bir scroll event'i olmadan test edilebilir (paralel bir kopya yol DEĞİL — üretimin çağırdığı metodun
     /// ta kendisi). Kullanıcı tepeden uzaklaşınca "arm" (ilk layout'ta offset=0 iken spurious prepend olmaz);
-    /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.</summary>
+    /// yalnız gerçek bir tepeye-scroll önceki chunk'ı yükler.
+    /// <para><b>Mod ayrımı YOKTUR:</b> jest anlatıda da proje logunda da aynıdır ve karar tek bir soruya
+    /// bakar — backlog'da daha eski satır kaldı mı (<see cref="_loadedFrom"/> &gt; 0). Kapı eskiden proje
+    /// moduna bağlıydı ve run anlatısında geçmişe dönmenin hiçbir yolu yoktu.</para></summary>
     internal void EvaluateChunkScroll(double verticalOffset)
     {
-        if (!_projectMode || _prepending) return;
+        if (_prepending) return;
         if (verticalOffset > ChunkTopThresholdPx) { _armedForChunk = true; return; }
         if (_armedForChunk && _loadedFrom > 0)
         {
@@ -760,7 +802,7 @@ public partial class ConsoleView : UserControl
     internal void PrependPreviousChunk()
     {
         int from = Math.Max(0, _loadedFrom - RenderSliceLines);
-        string chunk = Join(_projectAllLines, from, _loadedFrom);
+        string chunk = Join(_backlogLines, from, _loadedFrom);
         if (chunk.Length == 0) { _loadedFrom = from; return; }
 
         _prepending = true;
@@ -785,6 +827,27 @@ public partial class ConsoleView : UserControl
     }
 
     // ---------------------------------------------------------------- yardımcılar
+
+    // Metni satırlara böler (ayraçlar ATILIR — Join onları geri koyar). Sondaki '\n'in doğurduğu boş kuyruk
+    // parçası satır SAYILMAZ: append sözleşmesi gereği canlı metin '\n' ile biter, yani o parça bir satır
+    // değil bir sonektir. Boş metin → boş liste.
+    private static List<string> SplitLines(string text)
+    {
+        var lines = new List<string>();
+        if (text.Length == 0) return lines;
+        int start = 0;
+        for (int i = 0; i < text.Length; i++)
+            if (text[i] == '\n') { lines.Add(text[start..i]); start = i + 1; }
+        if (start < text.Length) lines.Add(text[start..]); // '\n' ile bitmeyen son parça (savunmacı)
+        return lines;
+    }
+
+    // Metnin SON `count` satırı — kırpılan bloğun yalnız backlog'a girmemiş kuyruğunu almak için.
+    private static List<string> LastLines(string text, int count)
+    {
+        var lines = SplitLines(text);
+        return count >= lines.Count ? lines : lines.GetRange(lines.Count - count, count);
+    }
 
     // allLines[from..to) satırlarını '\n' SONEKLİ birleştirir (append/dikiş sözleşmesiyle uyumlu — tam satır biter).
     private static string Join(IReadOnlyList<string> lines, int from, int to)

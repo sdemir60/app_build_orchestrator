@@ -1520,8 +1520,14 @@ lines.
   `succeeded` was tried and dropped: it caught the word inside a project name just as readily, and a colour
   that is sometimes wrong is worth less than no colour at all.
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`.
-- The live document is capped at a render slice of 200 lines; the full log is on disk and is paged in on
-  demand (§5.5).
+- The live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**: scrolling
+  to the top pages the previous slice back in, in either mode. The backlog behind the window is mode-independent
+  and grows as the window slides — lines trimmed off the top while the panel is following are moved into it, so
+  nothing that scrolled past is unreachable. Only the *source* differs: a project page is seeded from the log on
+  disk (§5.5), the narrative from the view-model's full run buffer, which is what `← Back` hands over anyway.
+  Leaving the narrative without a backlog was measured as the console "losing" its history — a parallel build
+  streams hundreds of lines a second, so the 200-line window turned over in seconds and everything older became
+  unreachable even though the text was still buffered.
 - **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
   edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
