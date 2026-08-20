@@ -10,7 +10,7 @@ Tepsi modunda derleme göstergesini yapacağız. Detaylı uygulama planı şurad
 ## Önemli: plan başka makinede, koddan bağımsız bir oturumda hazırlandı
 
 - Plandaki **satır numaraları YAKLAŞIKTIR** ve kod bu arada değişmiş olabilir. Dosya adları, kalıplar ve
-  kararlar (K-1…K-13) bağlayıcıdır; her task'a başlamadan önce ilgili dosyaları güncel haliyle oku ve
+  kararlar (K-1…K-14) bağlayıcıdır; her task'a başlamadan önce ilgili dosyaları güncel haliyle oku ve
   konumları tazele.
 - Plan ile güncel kod arasında gerçek bir çelişki bulursan (anılan üye/kalıp yok, davranış değişmiş,
   guard'ın adı/kapsamı farklı) sessizce kendi kararını verme: durumu söyle ve bana sor. Küçük konum/isim
@@ -29,7 +29,10 @@ arka plansız, odak çalmayan** bir logo animasyonu döner — **logoya tıklama
 pencereye geçirir (layered pencerenin per-pixel hit-test'i; `WS_EX_TRANSPARENT` bileREK yok); beyaz şeritteki sayaç
 (`139/248`) ribbon'un kullandığı AYNI `fin/wb` değerleriyle canlı ilerler. Derleme bitince animasyon
 **mevcut döngünün çıkış evresini tamamlar** (parçalar sağa süzülür, son şeridin yok olduğu 3.000 s
-karesinde overlay kapanır) ve **tam o anda** OS balloon bildirimi sonucu söyler. Balloon metni yeniden
+karesinde overlay kapanır), **çok kısa bir nefesin ardından** OS balloon bildirimi sonucu söyler —
+kaybolma ile bildirim üst üste binmez (nefes süresi `Duration.Slow` token'ından, literal yazılmaz; K-14).
+Sayaç rakam değişimi de serttir sanma: değer değişmeden yazılmaz, değişince `Duration.Fast` token'ıyla
+yumuşak opacity geçişi yapılır, layout oynamaz (K-14). Balloon metni yeniden
 compose EDİLMEZ: VM'in o anki terminal ribbon satırı aynen taşınır
 (`Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s` / `Stopped — …` / `Run failed — …` /
 engine-died metni); healthy→Info, değilse→Error ikonu.
@@ -83,8 +86,10 @@ engine-died metni); healthy→Info, değilse→Error ikonu.
 
 ## Sapma noktaları (bana sormadan değiştirme)
 
-- Bitiş koreografisi: overlay YARIM döngüde kesilmez — çıkış evresi tamamlanır, kaybolma anında balloon
-  (tek-iterasyon + `Completed` mekanizması; seek/hız değiştirme yolu SEÇİLMEZ).
+- Bitiş koreografisi: overlay YARIM döngüde kesilmez — çıkış evresi tamamlanır, kaybolmadan sonra kısa
+  nefes, sonra balloon (tek-iterasyon + `Completed` mekanizması; seek/hız değiştirme yolu SEÇİLMEZ).
+  Nefes ve sayaç geçiş süreleri TOKEN'dan (`Duration.Slow`/`Duration.Fast`, `IMotionSettings.Effective`
+  ile taze okunur) — kod tarafına ms literal'i yazılmaz, reduced-motion'da kendiliğinden sıfırlanırlar.
 - Balloon metninin ribbon satırından aynen taşınması (yeni özet formatlayıcı YAZILMAZ) ve balloon'un
   yalnız tepsideyken yakalanan terminalde gösterilmesi.
 - Tıklama modeli: logo pikselleri tıkla-aç (`RestoreRequested` → `ShowFromTray`, tray ikonuyla AYNI

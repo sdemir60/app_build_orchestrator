@@ -1,7 +1,7 @@
 # Tray Build Animasyonu — Uygulama Planı
 
 > Bu plan başka bir makinede (Fable) hazırlandı; uygulamayı Opus güncel koda göre yapacak.
-> **Tüm satır numaraları YAKLAŞIKTIR** — kod değişmiş olabilir. Dosya adları, kalıplar ve kararlar (K-1…K-13)
+> **Tüm satır numaraları YAKLAŞIKTIR** — kod değişmiş olabilir. Dosya adları, kalıplar ve kararlar (K-1…K-14)
 > bağlayıcıdır; satır numaraları yalnız arama ipucudur, uygulamadan önce tazelenir.
 
 Hedef: uygulama tepsideyken (ana pencere gizli) bir derleme koşuyorsa, ekranın **sağ alt köşesinde penceresiz /
@@ -38,7 +38,7 @@ README'den bağlayıcı entegrasyon kuralları:
    overlay animasyonsuz anında gizlenir. `Syncing` KAPSAM DIŞI (yalnız derleme koşuları).
 2. **Bitiş koreografisi:** faz bu kümeden her çıkışta (Done / Stopped / runFailed→resting / engine died)
    overlay yeni döngü BAŞLATMAZ; içindeki döngü doğal bitişine (çıkış evresi, 3.000 s karesi) koşar, pencere
-   kapanır, **sonra** OS balloon gösterilir. Balloon metni = ribbon'un o anki terminal satırı (tek kaynak,
+   kapanır, **çok kısa bir nefesin ardından** (K-14) OS balloon gösterilir. Balloon metni = ribbon'un o anki terminal satırı (tek kaynak,
    K-5): `Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s` / `Stopped — …` / `Run failed — …` /
    engine-died metni.
 3. **Balloon yalnız tepsideyken:** pencere görünürken biten koşu balloon üretmez — ribbon zaten oradadır
@@ -55,7 +55,7 @@ README'den bağlayıcı entegrasyon kuralları:
 **Dokunulmayanlar:** tray menüsü (Stop/Exit), `X`→tepsi davranışı, ilk-kapanış balloon'u, ribbon metin
 mantığı, ana pencere kabuğu, engine/IPC yüzeyi (Supervisor tarafında SIFIR değişiklik — bu iş tamamen App).
 
-## 0. Bağlayıcı kararlar (K-1…K-13)
+## 0. Bağlayıcı kararlar (K-1…K-14)
 
 **K-1. Overlay ayrı bir top-level `Window`'dur; ana pencereye `Popup`/`Adorner` DEĞİL.**
 Ana pencere `Hide()` edilmişken görünür kalması gereken tek yüzey olduğundan kendi HWND'i şarttır.
@@ -198,6 +198,26 @@ pencere hiç görünmediği için `IsVisibleChanged` hiç "visible" demez — il
 (STA collection; `Window.Content` üzerinde Measure/Arrange — HWND'siz içeriğe inilmez) ikisi de realize
 edilir; `BrandGeometry.xaml`'e geçen `AppMark` realize'ı zaten `AppMarkTests`'te var, yeşil kalmalı.
 
+**K-14. Geçiş estetiği: kaybolma→bildirim arası NEFES + yumuşak sayaç — süreler TOKEN'dan.**
+İki geçiş "anında" DEĞİLDİR:
+
+- **Kaybolma → balloon nefesi:** overlay son karede yok olduktan sonra balloon HEMEN patlamaz; araya kısa
+  bir boşluk girer. Süre literal YAZILMAZ: `Duration.Slow` (280 ms) token'ı
+  `IMotionSettings.Effective` ile nefes ANINDA taze okunur — reduced-motion'da token sıfırlandığı için
+  nefes kendiliğinden 0 olur (doğru davranış: animasyon istemeyen kullanıcı bekletilmez). Controller saf
+  kalır: bekleme enjekte edilebilir bir dikiştir (`internal Func<Task>? ExitBreath` — D8 kalıbı,
+  Optimize planındaki `HeartbeatDelay` ikizi; testte gerçek bekleme YOK, senkron sahte). Sıra kesin:
+  `BeginExit` tamam → `HideNow` → nefes → `ShowRunFinished`.
+- **Sayaç geçişi:** `CountText` sert metin takası yapmaz. Değer DEĞİŞMEDEN asla yazılmaz (§14.5: aynı
+  string'i atamak bile measure/draw'ı boşa kirletir); değişince kod-tarafı yumuşak geçiş — metin
+  opacity'si `Duration.Fast` (120 ms) token'ıyla kısılıp yeni değerle geri açılır (yalnız opacity;
+  layout oynamaz — `139/248` → `140/248` genişlik değiştirmez, haneler eş genişlikte kalır, gerekirse
+  hane bölgesine sabit `MinWidth`). Süre animasyon BAŞLANGICINDA `Effective` ile taze okunur;
+  reduced-motion'da doğrudan set. Bu geçiş de yalnız overlay görünürken koşar (K-4'ün son maddesi).
+- **Overlay'in ilk belirişi için EK fade YAZILMAZ:** döngü 0'dan başlar ve giriş evresi (şevron soldan
+  süzülür, şeritleri serer) zaten açılış animasyonudur — üstüne pencere fade'i bindirmek çift giriş olur.
+  Reduced-motion statik karesi ise animasyonsuz görünüp animasyonsuz kaybolur (bilinçli).
+
 ---
 
 ## Task 0 — İş branch'i aç
@@ -221,6 +241,9 @@ temizliği; oturum main'de biter.
 - `Syncing_and_idle_phases_never_show_the_overlay`.
 - `Terminal_while_hidden_plays_the_exit_then_notifies` — Running→Done (visible=false) → `BeginExit`;
   callback koşunca `HideNow` + `ShowRunFinished(text, healthy)` sırayla.
+- `The_notification_waits_for_the_exit_breath` — enjekte `ExitBreath` dikişi (K-14) `HideNow`'dan SONRA,
+  `ShowRunFinished`'tan ÖNCE tam bir kez await edilir (sahte dikiş senkron sinyal verir; gerçek bekleme
+  YOK — D8). Reduced-motion dalında da sıra aynıdır (nefes süresi 0'a düşer, dikiş yine çağrılır).
 - `Terminal_while_visible_shows_no_balloon` — Running→Done (visible=true) → balloon YOK.
 - `Window_restore_during_exit_still_notifies_exactly_once` — `BeginExit` bekliyor, visible=true →
   `HideNow`; callback yine koşunca balloon TEK.
@@ -234,8 +257,10 @@ temizliği; oturum main'de biter.
   (K-4'ün son maddesi).
 - `Healthy_flag_reaches_the_notifier` — healthy=false → `ShowRunFinished(..., false)`.
 
-**Implementasyon:** K-4 kural seti; durum = üç bool + faz + tek `_exitPending`/`_notified` bayrağı.
-Balloon metni controller'da SAKLANMAZ; terminal anında `SetTerminalText` ile gelen değer kullanılır.
+**Implementasyon:** K-4 kural seti; durum = üç bool + faz + tek `_exitPending`/`_notified` bayrağı +
+`ExitBreath` dikişi (K-14; varsayılan implementasyon `Duration.Slow`'u `IMotionSettings.Effective` ile
+taze okuyup bekler — süre literal'i YOK). Balloon metni controller'da SAKLANMAZ; terminal anında
+`SetTerminalText` ile gelen değer kullanılır.
 
 **Kabul:** yeni süit yeşil; hiçbir WPF tipi referans edilmez (derleme App projesinde ama `using System.Windows` yok).
 
@@ -281,6 +306,12 @@ değerleri birebir).
   guard sabiti neredeyse oradan okunur — literal İKİNCİ kez yazılmaz).
 - `Counter_text_renders_done_over_total` — `SetCounter(139, 248)` → `CountText.Text == "139/248"`
   (InvariantCulture).
+- `Counter_ignores_a_write_with_the_same_value` — aynı çift ikinci kez set → metin ATANMAZ, geçiş
+  animasyonu başlatılmaz (K-14 / §14.5: değişmeyen değer yazılmaz).
+- `Counter_change_runs_the_soft_swap_with_the_token_duration` — yeni değer → opacity geçişi
+  `Duration.Fast` token süresiyle, `IMotionSettings.Effective` animasyon başlangıcında TAZE okunarak;
+  reduced-motion'da animasyonsuz doğrudan set (mevcut kod-tarafı animasyon test kalıbı hangisiyse o
+  izlenir — `ScrollAnimator`/`MotionTokens` testlerindeki yaklaşım).
 - `Hiding_the_control_stops_the_clock` — `IsVisibleChanged` görünmez → storyboard clock'u durur (K-10 kapısı).
 
 **Implementasyon:** asset XAML'i taşınır; dolgular token'a, geometriler `BrandGeometry`'ye bağlanır (sweep
@@ -354,8 +385,10 @@ pinler (Running'de engine ölür → balloon engine-died metnini taşır, health
      şeffaf alana tıklama alttaki pencereye geçiyor, tray ikonu tıklanabilir kalıyor.
    - Logonun kendisine (şerit/şevron) tıkla → ana pencere geri geliyor, overlay anında kayboluyor; imleç
      logo üzerinde el (Hand) oluyor.
-   - Koşu biterken izle: döngü çıkış evresini tamamlıyor, son karede kaybolup balloon geliyor; metin
-     ribbon'la aynı.
+   - Koşu biterken izle: döngü çıkış evresini tamamlıyor, son karede kayboluyor, ÇOK KISA bir boşluğun
+     ardından balloon geliyor (kaybolma ile bildirim üst üste binmiyor); metin ribbon'la aynı.
+   - Sayaç ilerlerken rakam değişimi yumuşak (sert takas yok), rakam değişince şerit genişliği/konumu
+     OYNAMIYOR.
    - Balloon'lu bitişten sonra pencereyi aç: ribbon aynı terminal metnini gösteriyor.
    - Hatalı proje ile koş → balloon Error ikonlu, "N failed" metinli.
    - Tepsi menüsü → Stop → drain sonrası `Stopped — …` balloon'u.
@@ -374,7 +407,8 @@ pinler (Running'de engine ölür → balloon engine-died metnini taşır, health
 - **ARCHITECTURE §14.4:** marka bölümü — geometri artık `BrandGeometry.xaml`'de tek kaynak, tüketiciler
   AppMark + TrayBuildIndicator; sayaç ara tonu eklendiyse token gerekçesi.
 - **ARCHITECTURE §14.5:** bespoke marka zaman çizelgesi istisnası (verbatim-artwork ilkesinin motion
-  karşılığı) + tek-iterasyon/Completed kalıbı + DesiredFrameRate.
+  karşılığı) + tek-iterasyon/Completed kalıbı + DesiredFrameRate + kaybolma→bildirim nefesi ve yumuşak
+  sayacın token'lardan beslendiği (K-14).
 - **ARCHITECTURE §22:** kod haritasına yeni dosyalar (controller, kontrol, overlay window, BrandGeometry).
 - **README:** kullanım bölümüne iki cümle: tepsideyken koşan derleme sağ altta göstergeyle izlenir; bitince
   OS bildirimi gelir.
