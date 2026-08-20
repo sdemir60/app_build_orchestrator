@@ -24,7 +24,9 @@ Tepsi modunda derleme göstergesini yapacağız. Detaylı uygulama planı şurad
 ## İşin özü
 
 Uygulama tepsideyken (ana pencere gizli) bir derleme koşuyorsa, ekranın sağ alt köşesinde **penceresiz,
-arka plansız, tıklama-geçirgen, odak çalmayan** bir logo animasyonu döner; beyaz şeritteki sayaç
+arka plansız, odak çalmayan** bir logo animasyonu döner — **logoya tıklamak ana pencereyi geri getirir**
+(tray ikonu sol-tıkıyla aynı `ShowFromTray` yolu), logonun etrafındaki şeffaf alan ise tıklamayı alttaki
+pencereye geçirir (layered pencerenin per-pixel hit-test'i; `WS_EX_TRANSPARENT` bileREK yok); beyaz şeritteki sayaç
 (`139/248`) ribbon'un kullandığı AYNI `fin/wb` değerleriyle canlı ilerler. Derleme bitince animasyon
 **mevcut döngünün çıkış evresini tamamlar** (parçalar sağa süzülür, son şeridin yok olduğu 3.000 s
 karesinde overlay kapanır) ve **tam o anda** OS balloon bildirimi sonucu söyler. Balloon metni yeniden
@@ -85,8 +87,10 @@ engine-died metni); healthy→Info, değilse→Error ikonu.
   (tek-iterasyon + `Completed` mekanizması; seek/hız değiştirme yolu SEÇİLMEZ).
 - Balloon metninin ribbon satırından aynen taşınması (yeni özet formatlayıcı YAZILMAZ) ve balloon'un
   yalnız tepsideyken yakalanan terminalde gösterilmesi.
-- Click-through + `ShowActivated=false` + `WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_TRANSPARENT` — overlay
-  hiçbir tıklamayı yutmaz, odak çalmaz, Alt-Tab'da görünmez.
+- Tıklama modeli: logo pikselleri tıkla-aç (`RestoreRequested` → `ShowFromTray`, tray ikonuyla AYNI
+  handler), şeffaf pikseller per-pixel geçirgen; `WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE` var,
+  `WS_EX_TRANSPARENT` YOK (eklenirse logo tıklanamaz olur); tam-dikdörtgen görünmez hit alanı
+  (`#01000000` zemin hack'i) YAZILMAZ. `ShowActivated=false` — overlay odak çalmaz, Alt-Tab'da görünmez.
 - Geometri tek-kaynak yaklaşımı (`BrandGeometry.xaml`). Uygulanamaz çıkarsa (ör. WPF kaynak/freeze
   engeli) alternatife kendin geçme — bana sor.
 - SVG gradyanlarının port edilmemesi; dolguların AppMark token kümesi olması. Sayaç metni için ramp'te

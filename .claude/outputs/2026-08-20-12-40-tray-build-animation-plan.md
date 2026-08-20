@@ -43,9 +43,12 @@ README'den bağlayıcı entegrasyon kuralları:
    engine-died metni.
 3. **Balloon yalnız tepsideyken:** pencere görünürken biten koşu balloon üretmez — ribbon zaten oradadır
    (mevcut davranış değişmez).
-4. **Reduced motion:** OS sinyali kapalıysa (animasyonlar kısıtlı) döngü hiç başlatılmaz — statik işaret +
+4. **Tıkla-aç:** çizili logo piksellerine (şeritler/şevron/sayaç) sol tık ana pencereyi geri getirir —
+   tray ikonuna tıklamakla aynı davranış. Logonun ETRAFINDAKİ şeffaf alan tıklamayı altındaki pencereye
+   geçirmeye devam eder (K-2). Pencere geri gelince overlay zaten görünürlük kuralıyla anında gizlenir.
+5. **Reduced motion:** OS sinyali kapalıysa (animasyonlar kısıtlı) döngü hiç başlatılmaz — statik işaret +
    canlı sayaç gösterilir; bitişte animasyonsuz gizlenir; balloon aynen gelir.
-5. **Gelecek (bu işte YAPILMAZ, mimari hazır olur):** tepsideyken global kısayolla arka planda build
+6. **Gelecek (bu işte YAPILMAZ, mimari hazır olur):** tepsideyken global kısayolla arka planda build
    başlatmak. Overlay faz-güdümlü olduğu için o gün SIFIR ek işle çalışacak — plana yalnız bu cümle doc
    notu olarak girer, kısayol işi yapılmaz.
 
@@ -60,11 +63,17 @@ Ana pencere `Hide()` edilmişken görünür kalması gereken tek yüzey olduğun
 `ShowInTaskbar=False`, `Topmost=True`, `ShowActivated=False`, `Focusable=False`, `ResizeMode=NoResize`,
 `SizeToContent=Manual`. İçerik = `Controls/TrayBuildIndicator` (K-7).
 
-**K-2. Click-through + odak çalmaz + Alt-Tab'da görünmez.**
-`OnSourceInitialized`'da HWND'e `WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` eklenir
-(`GetWindowLong/SetWindowLong GWL_EXSTYLE` — `Shell/Win32.cs`'e yoksa eklenir; P/Invoke mevcut kalıpla).
-Overlay tepsi köşesinin ÜSTÜNDE durur; oradaki tıklamaları yutması kabul edilemez — tamamen geçirgendir,
-tray ikonuna tıklama davranışı (restore) değişmeden çalışır.
+**K-2. Logo pikselleri tıklanabilir (tıkla-aç), şeffaf alan geçirgen; odak çalmaz + Alt-Tab'da görünmez.**
+`OnSourceInitialized`'da HWND'e `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` eklenir (`GetWindowLong/
+SetWindowLong GWL_EXSTYLE` — `Shell/Win32.cs`'e yoksa eklenir; P/Invoke mevcut kalıpla).
+`WS_EX_TRANSPARENT` BİLEREK EKLENMEZ: `AllowsTransparency` pencereyi layered yapar ve OS per-pixel
+hit-test uygular — **alpha=0 pikseller tıklamayı alttaki pencereye kendiliğinden geçirir**, yalnız çizili
+logo pikselleri tıklama alır. Yani ek bir hit-alanı hack'i (`#01000000` zemin vb.) YAZILMAZ. Kontrol
+köküne `Cursor=Hand`; sol tık (`MouseLeftButtonUp`) overlay penceresinde `RestoreRequested` event'ini
+tetikler — davranış tray ikonunun sol tıkıyla AYNI (kablolama K-12/T5). `WS_EX_NOACTIVATE` mouse
+event'lerini engellemez, yalnız overlay'in kendisinin aktive olmasını önler; asıl aktivasyonu
+`ShowFromTray` yapar. Overlay çalışma alanının İÇİNDE, taskbar'ın üstünde durur — tray ikonunun kendisiyle
+çakışmaz, tıklama davranışı (restore) değişmeden çalışır.
 
 **K-3. Konum ve boyut: birincil ekran çalışma alanının sağ alt köşesi.**
 `SystemParameters.WorkArea` (DIP, birincil ekran; taskbar hariç) → `Left = Right - W - 12`,
@@ -178,6 +187,8 @@ sayaç okunur).
 Controller orada kurulur: `IsVisibleChanged` → `SetMainWindowVisible`; `_vm.PropertyChanged`
 (`Phase`, sayaç property'leri) → `SetPhase`/`SetCounter`; terminal geçişte VM'den o anki ribbon satırı
 çekilir → `SetTerminalText`. View implementasyonu `TrayBuildOverlayWindow`; notifier `AppTrayIcon`.
+Overlay'in `RestoreRequested`'ı tray ikonununkiyle AYNI handler'a bağlanır: `+= ShowFromTray` (~:817
+kalıbı — ikinci bir restore yolu YAZILMAZ).
 Overlay penceresi lazy yaratılır (ilk `ShowLoop`/`ShowStatic`), `MainWindow.OnClosed`'da dispose zinciri:
 `_tray?.Dispose()` yanına overlay `Close()`. Autostart yolu (`StartInTray`, ~:857) otomatik kapsanır:
 pencere hiç görünmediği için `IsVisibleChanged` hiç "visible" demez — ilk run'da overlay tepside belirir.
@@ -292,13 +303,19 @@ güncellemeleri bu task'ta — K-8).
 - `Overlay_window_realizes_without_a_hwnd` — realize (window.Content üzerinde).
 - `Overlay_window_declares_the_non_intrusive_shell` — XAML/CLR pinleri: `WindowStyle=None`,
   `AllowsTransparency`, `ShowInTaskbar=false`, `Topmost`, `ShowActivated=false`, `Focusable=false`.
+- `Clicking_the_overlay_requests_a_restore` — içerik köküne `MouseLeftButtonUpEvent` RaiseEvent edilir →
+  `RestoreRequested` tam bir kez tetiklenir; kök `Cursor == Cursors.Hand` (K-2). Ayrıca negatif pin:
+  ex-style kurulumunda `WS_EX_TRANSPARENT` YOK (per-pixel geçirgenlik layered pencereden gelir — bit
+  eklenirse logo tıklanamaz olur; kurulan bayrak kümesi test edilebilir bir sabitten okunur).
 - `Overlay_positions_into_the_bottom_right_of_a_given_work_area` — konum matematiği saf statik helper'a
   çıkarılır (`static (double Left, double Top) Place(Rect workArea, double w, double h, double margin)`)
   ve kenar payıyla birlikte pinlenir (K-3; WorkArea'yı test enjekte eder).
 
 **Implementasyon:** K-1 + K-2 + K-3. `ITrayBuildIndicatorView`'ı implemente eder: `ShowLoop` → konumla +
 `Show()` + `BeginLoop`; `ShowStatic` → konumla + `Show()` + `ShowStaticFrame`; `BeginExit` →
-`RequestFinish`; `HideNow` → `StopNow` + `Hide()`. WS_EX bayrakları `OnSourceInitialized`'da.
+`RequestFinish`; `HideNow` → `StopNow` + `Hide()`. WS_EX bayrakları `OnSourceInitialized`'da. Ek üye:
+`public event Action? RestoreRequested` (tray ikonundaki adlandırma kalıbı) — `MouseLeftButtonUp`'ta
+tetiklenir.
 
 **Kabul:** yeni testler yeşil; AntiSlop drop-shadow allowlist'i overlay'i kapsıyor.
 
@@ -333,8 +350,10 @@ pinler (Running'de engine ölür → balloon engine-died metnini taşır, health
 1. `dotnet test … --filter "Category!=Acceptance"` — TAM süit yeşil (token/motion/D8/AntiSlop guard'ları
    dahil).
 2. Elle senaryo listesi (uygulamayı kapatmadan Supervisor kilidi notuna dikkat):
-   - Run başlat → `X` ile tepsiye → overlay sağ altta döngüde, sayaç ilerliyor; tıklamalar overlay'in
-     ALTINDAKİ öğelere geçiyor (tray ikonu tıklanabilir).
+   - Run başlat → `X` ile tepsiye → overlay sağ altta döngüde, sayaç ilerliyor; logonun ETRAFINDAKİ
+     şeffaf alana tıklama alttaki pencereye geçiyor, tray ikonu tıklanabilir kalıyor.
+   - Logonun kendisine (şerit/şevron) tıkla → ana pencere geri geliyor, overlay anında kayboluyor; imleç
+     logo üzerinde el (Hand) oluyor.
    - Koşu biterken izle: döngü çıkış evresini tamamlıyor, son karede kaybolup balloon geliyor; metin
      ribbon'la aynı.
    - Balloon'lu bitişten sonra pencereyi aç: ribbon aynı terminal metnini gösteriyor.
@@ -349,8 +368,8 @@ pinler (Running'de engine ölür → balloon engine-died metnini taşır, health
 
 - **ARCHITECTURE §12.2:** "`AllowsTransparency` is never used" cümlesi ana pencere kabuğuna daraltılır
   (tray overlay bilinçli istisna, gerekçesiyle).
-- **ARCHITECTURE §12.3:** tepsi bölümüne overlay davranışı: ne zaman görünür, click-through/no-activate,
-  bitiş koreografisi + balloon'un ribbon satırını taşıması, birincil-ekran sınırı, gelecek kısayol notu
+- **ARCHITECTURE §12.3:** tepsi bölümüne overlay davranışı: ne zaman görünür, tıkla-aç (logo pikselleri
+  restore eder, şeffaf alan per-pixel geçirgen)/no-activate, bitiş koreografisi + balloon'un ribbon satırını taşıması, birincil-ekran sınırı, gelecek kısayol notu
   (tek cümle: gösterge faz-güdümlüdür, arka plan tetikleme eklendiğinde ek iş gerektirmez).
 - **ARCHITECTURE §14.4:** marka bölümü — geometri artık `BrandGeometry.xaml`'de tek kaynak, tüketiciler
   AppMark + TrayBuildIndicator; sayaç ara tonu eklendiyse token gerekçesi.
@@ -378,5 +397,8 @@ dictionary'sine ve T1'in view interface'ine bakar).
   OS bastırabilir) — bilinçli sınır, doc'a yazılır; uygulama-içi toast fallback'i YASAK (§14.7).
 - **Tek balloon garantisi** controller bayrağıyladır; Supervisor/VM çift terminal event üretirse (bilinen
   davranış değil) ikinci balloon yine bastırılır (`_notified` reset'i yalnız yeni run başlangıcında).
+- **Tıklama hedefi hareketli:** giriş/çıkış evrelerinde parçalar kayarken tık ancak çizili piksele denk
+  gelirse yakalanır; duruş evresi döngünün büyük kısmı olduğu için pratikte sorun değil (bilinçli sınır —
+  tam-dikdörtgen görünmez hit alanı BİLEREK yok: o alan altındaki tıklamaları çalar).
 - **Sayaç 4+ hane** (done/total 1000+) design'da öngörülmedi — OSYS ölçeği (~250) için sorun değil;
   taşarsa `Viewbox` şeridi taşırmaz ama metin sıkışır (bilinçli sınır, kontrol doc'una).
