@@ -286,9 +286,16 @@ default** with `error(debugHooksDisabled)`; only a Supervisor started with `--de
 App never passes that flag. In the shipped pair, ten commands execute.
 
 `startRun` carries the run id, the mode, the repository root, the configuration, the parallelism, the branch,
-the worktree intent, the dependent-propagation mode, the layer patterns and the perf mode name. Parallelism and
-perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name but never
-recomputes the worker count, which the App has already resolved from the same table.
+the worktree intent, the dependent-propagation mode, the layer patterns, the perf mode name and the external
+project list. Parallelism and perf mode are separate fields on purpose: the Supervisor derives cap and priority
+from the perf name but never recomputes the worker count, which the App has already resolved from the same
+table.
+
+Both `startRun` and `syncWorkspace` carry the **external project list** (§10.6) — the projects the user
+ordered in Settings, in that order. Each entry is a name, a directory and a build target; the version control
+kind and the working-copy root are deliberately absent, because they are rediscovered from disk on every run
+and can therefore never go stale. The field is last and defaults to null, so lines written before external
+projects existed still parse.
 
 Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
 camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
@@ -981,7 +988,11 @@ The complete set of git invocations in the codebase:
 | `worktree add --detach <path> <sha>` · `worktree remove --force <path>` | pool worktrees only |
 | `reset --hard <sha>` | **cwd is a pool worktree**, never the main repository |
 
-`checkout`, `switch`, `pull`, `merge`, `rebase`, `cherry-pick`, `stash` and `clean` do not appear anywhere.
+| `merge-base --is-ancestor` · `merge --ff-only` | **external working copies only** (§10.6) |
+
+`checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash` and `clean` do not appear anywhere. `merge`
+appears exactly once, as `--ff-only`, and only inside `Core/Externals` — the main repository never reaches it.
+A source guard fences that: a mutating git verb outside `Core/Externals` fails the suite.
 
 `reset --hard` passes three gates: the candidate path comes from git's own `worktree list --porcelain` and must
 be under the pool root; it is rejected if it equals the main repository root (junction defence); and it is
@@ -1044,6 +1055,57 @@ call site.
 Branch slugs replace `/`, `\` and `: * ? " < > |` and control characters with `-`, collapse repeated dashes,
 and **throw rather than fall back** if the result is empty or `.`/`..`. A separate validator rejects absolute
 paths, separators and `..` for any name that will become a directory segment.
+
+### 10.6 External project version control
+
+Some projects an OSYS build depends on live **outside** the main repository — customer-specific components
+kept in their own git repositories or TFVC workspaces. The user lists them in Settings, in the order they must
+be built; every run updates them from their own version control and compiles the ones that changed, before the
+main repository work begins.
+
+The user names a **directory**, not a repository root. The root is found by walking up from that directory to
+the first marker: `.git` (a directory in a normal clone, a file in a linked worktree) means git, `$tf` means a
+TFVC local workspace, and reaching the drive root without a marker means none. The nearest marker wins, so a
+TFVC workspace nested inside a git repository is read as TFVC. Neither the kind nor the root is ever
+persisted — they are rediscovered on every run, which is why moving a project or recreating its working copy
+needs no settings change.
+
+**Git externals** are updated with `fetch` + `merge --ff-only`, never `pull`. A pull would produce a merge
+commit or a rebase depending on configuration, and either one rewrites the user's repository on the tool's
+behalf. The flow is three typed steps instead: the dirty gate, a ref-only fetch, and a fast-forward taken only
+when `merge-base --is-ancestor` says one is genuinely possible. If it is not, the working copy is left exactly
+as it was.
+
+**TFVC externals** are updated with `tf vc get`, and `tf.exe` is resolved through the same `vswhere` search
+that finds `MSBuild.exe` — lazily, only when a TFVC external is actually present, so git-only users never need
+Team Explorer. No decision reads localized tool output: pending changes are read from the XML structure of
+`tf vc status`, failures from exit codes, and the changeset from the leading digits of the first data row.
+
+Two error classes are kept apart. Something the user has to resolve — uncommitted changes, a diverged branch,
+a detached HEAD, a missing folder, a missing `tf.exe` — **cancels the run before it starts**; a half-finished
+run helps nobody. A transient network or credential failure only warns and the local version is built, which
+is the same posture the main repository's degraded fetch takes.
+
+A working copy with no version control at all is built as-is: there is nothing to update, no dirty gate to
+apply, and its revision is unknown — so it can never appear up to date and is compiled on every run.
+
+**Sync only looks.** For git externals it reads the local `HEAD` and `status` — cheap, offline-tolerant
+queries — and produces a real preview; uncommitted changes there raise a warning but never block, because the
+gate that stops a run lives in Build, where the user has already decided to compile. TFVC externals stay
+hollow in Sync: their queries go to the server, and Sync must stay fast and offline-tolerant. A external that
+cannot be read leaves its own row hollow and the rest of the Sync intact.
+
+The incremental decision for an external is narrower than for a main-repository project, and deliberately so.
+Because a dirty external cancels the run, every external that gets compiled is clean, and its source state is
+therefore fully described by its revision id. The signature is `configuration + kind + revision`; no files are
+hashed and there are no upstreams. An unknown revision enters the signature as a distinguishing marker that no
+real revision can collide with, so such a project never looks up to date.
+
+On the wire, externals are **ordinary project nodes** placed at the head of the topology, carrying the layer
+name `External` at index −1 and a version-control badge. No new node type exists, which is why list grouping,
+the graph band and the filters carry them for free. Their revision travels in the existing built-commit slot.
+Sync's counters and its *no changes* narrative keep describing the main workspace — externals reach the UI
+through the topology and the preview instead.
 
 ---
 
