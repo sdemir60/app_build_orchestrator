@@ -122,3 +122,10 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 - Bir iş için kendi çalışma branch'ini aç, task başına commit at, bitince `main`'e merge + push.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
 - Oturum **`main` üzerinde** bitirilir.
+
+### Nerede çalışılır
+
+Çalışma **her zaman ana projede** (`D:\Projects\Other\Apps\app_build_orchestrator`) yapılır. Tek istisna:
+kullanıcı açıkça **"worktree'de yap"** derse — o zaman kalıcı worktree
+`D:\Projects\Other\Apps\app_build_orchestrator-ai` (branch `ai`) kullanılır, yenisi açılmaz. İş orada da
+kendi çalışma branch'inde yürür ve bitince `main`'e merge + push edilir; worktree yerinde kalır, silinmez.
