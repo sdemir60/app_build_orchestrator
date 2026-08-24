@@ -141,6 +141,56 @@ public class ScrollAnimatorTests
         Assert.True(ScrollAnimator.GetIsUserSuppressed(sv));
     }
 
+    /// <summary>
+    /// <b>İptal, paneli animasyonun BIRAKTIĞI yerde bırakır — hareketin BAŞLADIĞI yere geri atmaz.</b>
+    ///
+    /// <para>Kusur sahada şöyle görülüyordu: konsolda tekerlekle yukarı çıkılır, <c>⌄ latest</c> ile dibe
+    /// inilir, sonra tekrar tekerleğe dokunulur — panel dipten değil, pill'e basmadan ÖNCEKİ konumdan devam
+    /// ederdi. Sebep: <see cref="ScrollAnimator.AnimateTo"/> DP'nin TABAN değerini hareketin başlangıç
+    /// noktasına tohumlar, animasyon ise <c>HoldEnd</c> ile efektif değeri hedefte tutar. <c>BeginAnimation
+    /// (prop, null)</c> o tutmayı kaldırınca efektif değer TABANA — yani eski konuma — düşer,
+    /// <c>OnVerticalOffsetChanged</c> ateşlenir ve panel oraya kaydırılır.</para>
+    ///
+    /// <para>Kural: iptal bir <b>bırakma</b>dır, geri alma değil. Kullanıcı tekerleğe dokunduğu anda panel
+    /// nerede duruyorsa orada kalır ve tekerlek oradan devam eder.</para>
+    /// </summary>
+    [StaFact]
+    public void CancelForUser_leaves_the_panel_where_the_finished_animation_put_it()
+    {
+        var sv = NewLiveScrollViewer();
+
+        ScrollAnimator.AnimateTo(sv, 0, 500, animationsEnabled: true, TimeSpan.FromMilliseconds(30), new KeySpline(0.65, 0, 0.35, 1));
+        DispatcherPump.PumpUntil(() => sv.VerticalOffset >= 499.5, TimeSpan.FromSeconds(3));
+        Assert.InRange(sv.VerticalOffset, 499.5, 500.5); // ön-koşul: hareket gerçekten hedefe vardı
+
+        ScrollAnimator.CancelForUser(sv);
+        sv.UpdateLayout();
+
+        Assert.InRange(sv.VerticalOffset, 499.5, 500.5);
+        Assert.InRange(ScrollAnimator.GetVerticalOffset(sv), 499.5, 500.5); // taban da varılan yeri taşır
+    }
+
+    /// <summary>
+    /// Aynı kural hareket UÇUŞTAYKEN de geçerli: kullanıcı animasyonun ortasında tekerleğe dokunursa panel o
+    /// ana kadar geldiği yerde durur, başlangıca geri sarmaz (bkz. kardeş test — aynı kök neden, taban değeri
+    /// eski konumu taşıdığı için).
+    /// </summary>
+    [StaFact]
+    public void CancelForUser_mid_flight_leaves_the_panel_at_the_position_it_had_reached()
+    {
+        var sv = NewLiveScrollViewer();
+
+        ScrollAnimator.AnimateTo(sv, 0, 500, animationsEnabled: true, TimeSpan.FromMilliseconds(600), new KeySpline(0.65, 0, 0.35, 1));
+        DispatcherPump.PumpUntil(() => sv.VerticalOffset >= 50, TimeSpan.FromSeconds(3));
+        double reached = sv.VerticalOffset;
+        Assert.True(reached >= 50, $"ön-koşul: animasyon ilerlemeliydi, offset={reached}");
+
+        ScrollAnimator.CancelForUser(sv);
+        sv.UpdateLayout();
+
+        Assert.True(sv.VerticalOffset >= reached - 1, $"iptal geri sardı: {reached} → {sv.VerticalOffset}");
+    }
+
     [StaFact]
     public void AnimateTo_clears_a_prior_user_suppression_a_new_programmatic_move_is_no_longer_fighting_the_user()
     {
