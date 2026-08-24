@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -99,7 +99,7 @@ public class ExternalRunTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         var events = h.Events;
-        Assert.Empty(events.OfType<ProjectStartedEvent>().Where(e => ExternalNameOf(e.ProjectId) is "A" or "B"));
+        Assert.DoesNotContain(events.OfType<ProjectStartedEvent>(), e => ExternalNameOf(e.ProjectId) is "A" or "B");
         var failed = Assert.Single(events.OfType<ProjectFailedEvent>());
         Assert.Equal(TargetOf("Mail"), failed.ProjectId);
         var completed = Assert.IsType<RunCompletedEvent>(events[^1]);
@@ -219,6 +219,25 @@ public class ExternalRunTests
 
         Assert.DoesNotContain(invoker.Requests, r => r.ExternalTarget);
         Assert.DoesNotContain(h.Events.OfType<ProjectStartedEvent>(), e => ExternalNameOf(e.ProjectId) == "Mail");
+    }
+
+    [Fact]
+    public async Task A_preparation_failure_ends_the_run_before_it_starts()
+    {
+        // Kir, ayrışma ya da eksik tf.exe planlama sırasında yakalanır: koşu HİÇ başlamaz ve kullanıcı
+        // hatayı olduğu gibi görür (Build butonu geri açılır).
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(PlanOf(Node("A")), invoker,
+            planner: (_, _) => throw ExternalPreparationException.Dirty("Mail", @"D:\ext\mail"));
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var error = Assert.Single(h.Events.OfType<ErrorEvent>());
+        Assert.Equal("planFailed", error.Code);
+        Assert.Contains("'Mail'", error.Message);
+        Assert.Empty(h.Events.OfType<RunStartedEvent>());
+        Assert.Empty(invoker.Requests);
     }
 
     [Fact]
