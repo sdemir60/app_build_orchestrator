@@ -128,6 +128,28 @@ public sealed record BuildState(
     // Alan SONA ve default'lu eklendi: eski build-state.json kayıtları alansızdır ve false olarak çözülür.
     bool DepIssue = false);
 
+/// <summary>
+/// Bir harici projenin hangi sürüm kontrol sistemiyle güncelleneceği. Tel üzerinde camelCase METİN taşınır
+/// ("git"/"tfvc"/"unknown"), sayı olarak DEĞİL — üyeleri sonradan yeniden sıralamak eski satırların anlamını
+/// kaydırmaz. <c>Unknown</c> = çalışma kopyasının kökünde tanınan bir işaret bulunamadı: güncelleme ve dirty
+/// kapısı çalışmaz, revizyon bilinmez, proje her koşuda derlenir.
+/// </summary>
+public enum VcsKind { Git, Tfvc, Unknown }
+
+/// <summary>
+/// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi VCS'inden güncellenip derlenen bir proje (ör. müşteriye
+/// özel mail/OCR bileşenleri). Kullanıcı doğrudan proje dizinini verir; çalışma kopyasının kökü o dizinden
+/// yukarı yürünerek bulunur.
+///
+/// <para><b>Kimlik <see cref="TargetPath"/>'tir</b> — build-state anahtarı, IPC ProjectId'si, proje logu ve
+/// liste satırının Id'si odur. VCS türü ve VCS kökü KASITLI olarak burada YOKTUR: ikisi de persist edilmez,
+/// her koşuda diskten yeniden bulunur, böylece bayatlayamazlar.</para>
+/// </summary>
+/// <param name="Name">Kullanıcının verdiği görünen ad (liste ve node etiketi).</param>
+/// <param name="ProjectPath">Projenin dizini — VCS kökü aramasının başladığı yer.</param>
+/// <param name="TargetPath">Derlenecek .sln/.csproj'un tam yolu; bu projenin kimliği.</param>
+public sealed record ExternalProject(string Name, string ProjectPath, string TargetPath);
+
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);
 
