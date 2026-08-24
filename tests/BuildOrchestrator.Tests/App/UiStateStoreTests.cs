@@ -1,23 +1,8 @@
-using System.IO;
+﻿using System.IO;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
-
-/// <summary>Geçici bir dizin — <c>using</c> ömrü bitince kaskatla silinir (persist round-trip testleri için).</summary>
-internal sealed class TempDir : IDisposable
-{
-    public string Path { get; } = System.IO.Path.Combine(
-        System.IO.Path.GetTempPath(), "bo-uistate-" + Guid.NewGuid().ToString("N"));
-
-    public TempDir() => Directory.CreateDirectory(Path);
-
-    public void Dispose()
-    {
-        try { if (Directory.Exists(Path)) Directory.Delete(Path, recursive: true); }
-        catch (IOException) { /* CI'da kilitli dosya — sızıntı testin sonucunu etkilemez */ }
-    }
-}
 
 /// <summary>
 /// [T35] <see cref="UiState"/>'in 2×2 yerleşim alanlarıyla genişlemesi JSON store round-trip'inden geçmeli;
