@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -187,6 +187,21 @@ public sealed partial class RunViewModel
             : "Layers removed — single project list");
     }
 
+    /// <summary>[Harici projeler] Settings Save: yeni harici listesini uygular (sonraki Sync/Build komutlarıyla
+    /// motora gider) ve konsola dim bir not yazar — <see cref="ApplyLayerPatterns"/>'in aynası.
+    /// <para>Liste hem önce hem sonra BOŞSA hiçbir satır yazılmaz: katman-only bir Save'de "harici yok" demek
+    /// gürültüden başka bir şey olmazdı.</para></summary>
+    private void ApplyExternalProjects(IReadOnlyList<ExternalProject> externals)
+    {
+        bool hadAny = ExternalProjects is { Count: > 0 };
+        ExternalProjects = externals;
+
+        if (externals.Count > 0)
+            AppendRunLine($"External projects updated — {externals.Count} external projects");
+        else if (hadAny)
+            AppendRunLine("External projects removed");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -216,10 +231,13 @@ public sealed partial class RunViewModel
     /// kök yine de uygulanır: ikisi de motora dokunmaz, kök kalıcı duruma yazılır (UiState.RepositoryRoot) ve
     /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para></summary>
     /// <param name="patterns">Taslağın katman tanımları.</param>
+    /// <param name="externals">Taslağın harici proje listesi (sıra = build sırası).</param>
     /// <param name="repositoryRoot">Bekleyen repo kökü (değişmediyse mevcut kökün aynısı).</param>
-    public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot)
+    public async Task ApplySettingsAsync(
+        IReadOnlyList<LayerPattern> patterns, IReadOnlyList<ExternalProject> externals, string? repositoryRoot)
     {
         ApplyLayerPatterns(patterns);
+        ApplyExternalProjects(externals);
         if (IsMidRunLocked)
         {
             if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");

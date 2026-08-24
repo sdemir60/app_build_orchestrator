@@ -519,6 +519,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// tarafından seed edilecek — C2 yalnız GÖNDERİR; ObservableProperty gerekmez (UI'dan iki-yönlü bağlanmaz).</summary>
     public IReadOnlyList<LayerPattern>? LayerPatterns { get; set; }
 
+    /// <summary>[Harici projeler] Ana repo DIŞINDA yaşayan, build'den önce güncellenip derlenecek projeler —
+    /// <see cref="LayerPatterns"/>'in aynası: store tarafından seed edilir, App yalnız GÖNDERİR (sıralamayı
+    /// Ayarlar editörü kurar, kararı Core verir). SIRA ANLAMLIDIR.</summary>
+    public IReadOnlyList<ExternalProject>? ExternalProjects { get; set; }
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
@@ -588,7 +593,8 @@ public sealed partial class RunViewModel : ObservableObject
         // değeri ≠ niyet; seed'i niyet diye göndermek worktree'yi zorunlu kılıyor ve detached HEAD'de run'ı
         // hiç başlatmıyordu).
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
+            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
+            ExternalProjects);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
@@ -678,7 +684,7 @@ public sealed partial class RunViewModel : ObservableObject
         // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
         ArmEngineWatchdog();
         bool sent = await TrySendAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjects), "sync");
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).

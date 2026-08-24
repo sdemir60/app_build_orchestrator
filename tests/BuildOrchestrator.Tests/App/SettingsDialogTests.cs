@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -282,7 +282,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, @"^OSYS\.Types\.", "OSYS.Types")];
-        await run.ApplySettingsAsync(patterns, @"D:\repo"); // kök DEĞİŞMEDİ — Sync yine gider
+        await run.ApplySettingsAsync(patterns, [], @"D:\repo"); // kök DEĞİŞMEDİ — Sync yine gider
 
         var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());
         Assert.Equal(@"D:\repo", sync.RootPath);
@@ -302,7 +302,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\new\repo");
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], [], @"D:\new\repo");
 
         Assert.Equal(@"D:\new\repo", run.RootPath);
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
@@ -318,7 +318,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, null);
+        await run.ApplySettingsAsync(patterns, [], null);
 
         Assert.Same(patterns, run.LayerPatterns);
         Assert.Empty(sent);
@@ -342,7 +342,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\repo");
+        await run.ApplySettingsAsync(patterns, [], @"D:\repo");
 
         Assert.Equal(@"D:\repo", run.RootPath);
         Assert.True(run.HasWorkspace);
@@ -369,7 +369,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\other\repo");
+        await run.ApplySettingsAsync(patterns, [], @"D:\other\repo");
 
         Assert.Same(patterns, run.LayerPatterns);   // katmanlar YİNE uygulanır (sessizce kaybolmaz)
         Assert.Equal(@"D:\repo", run.RootPath);     // kök değişmedi
@@ -387,7 +387,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"d:\REPO"); // aynı kök, farklı harf durumu
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], [], @"d:\REPO"); // aynı kök, farklı harf durumu
 
         string text = run.GetRunDocumentText();
         Assert.Contains("Layer definitions updated — 1 layers", text); // non-vacuous: konsol boş değil
@@ -411,7 +411,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\new\repo");
+        await run.ApplySettingsAsync(patterns, [], @"D:\new\repo");
 
         Assert.Same(patterns, run.LayerPatterns);       // katmanlar kaydedilir
         Assert.Equal(@"D:\new\repo", run.RootPath);     // kök de uygulanır (kalıcı duruma yazılır)

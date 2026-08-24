@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
@@ -142,6 +142,9 @@ public partial class MainWindow : Window
         // çökertirdi). Null-safe desen (kardeş guard'larla — saved.Configuration is { }/saved.PerfMode is { } —
         // hizalı).
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
+        // [Harici projeler] Kalıcı harici listesi — katmanlarla AYNI null-safe desen. Boşsa liste null kalır
+        // ve motor özelliği tamamen kapalı görür (bugünkü davranış).
+        if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [A13/T2 · 2.1] design-v1 §2.1 title-bar bağlamı. AYRI bir abonelik (persist'le AYNI dört alanı dinler

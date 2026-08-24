@@ -1,9 +1,11 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
+using System.IO;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Planning;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -35,6 +37,56 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
 }
 
 /// <summary>
+/// [Harici projeler] EXTERNAL PROJECTS editörünün tek satırı: görünen ad, proje dizini ve derlenecek hedef.
+///
+/// <para><b>VCS rozeti TÜRETİLİR, yazılmaz.</b> Kullanıcı bir dizin seçer; sürüm kontrol türü her yol
+/// değişiminde diskten yeniden bulunur. Rozet hiçbir yerde persist edilmez — proje taşındığında ya da
+/// çalışma kopyası yeniden kurulduğunda kendiliğinden doğrulanır.</para>
+///
+/// <para><see cref="IDragReorderItem"/>: sıra build sırasıdır, o yüzden satırlar katmanlar gibi
+/// sürüklenerek yeniden dizilir.</para>
+/// </summary>
+public sealed partial class ExternalRowViewModel : ObservableObject, IDragReorderItem
+{
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIncomplete))]
+    private string _name;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIncomplete))]
+    [NotifyPropertyChangedFor(nameof(VcsLabel))]
+    private string _projectPath;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIncomplete))]
+    private string _targetPath;
+
+    /// <summary>Sürüklenen kart mı — kart şablonu zemin/kenarı bundan sürer (katman satırıyla aynı kalıp).</summary>
+    [ObservableProperty] private bool _isDragging;
+
+    public ExternalRowViewModel(string name, string projectPath, string targetPath)
+    {
+        _name = name;
+        _projectPath = projectPath;
+        _targetPath = targetPath;
+    }
+
+    /// <summary>Rozet metni: <c>git</c> / <c>tfvc</c> / <c>unknown</c>. Enum → metin eşlemesinin TEK yeri
+    /// burasıdır; yeni bir renk ya da ikon açılmaz, rozet mono ve soluk bir kelimedir.</summary>
+    public string VcsLabel => VcsDetector.DetectRoot(ProjectPath).Kind switch
+    {
+        VcsKind.Git => "git",
+        VcsKind.Tfvc => "tfvc",
+        _ => "unknown",
+    };
+
+    /// <summary>Satır kaydedilebilir mi — üç alanın üçü de dolu olmalı. Eksik bir satırla Save'e izin vermek,
+    /// motora derlenemeyecek bir hedef göndermek olurdu.</summary>
+    public bool IsIncomplete =>
+        Name.Trim().Length == 0 || ProjectPath.Trim().Length == 0 || TargetPath.Trim().Length == 0;
+}
+
+/// <summary>
 /// [D7/T66] Settings diyaloğunun LAYERS + REPOSITORY taslak VM'i — <b>saf, WPF'siz</b> (testler Window
 /// olmadan sürer). Canlı katman pattern'lerinin ve bekleyen repo kökünün bir TASLAK kopyası üzerinde çalışır:
 /// <see cref="CommitAsync"/> = kaydet (RunViewModel + UiState'e yazılır), Cancel = taslağı at (kopya olduğu
@@ -43,6 +95,9 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
 public sealed partial class SettingsDraftViewModel : ObservableObject
 {
     public ObservableCollection<LayerRowViewModel> Layers { get; } = [];
+
+    /// <summary>[Harici projeler] Editörün harici satırları — SIRA BUILD SIRASIDIR.</summary>
+    public ObservableCollection<ExternalRowViewModel> Externals { get; } = [];
 
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
     /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
@@ -53,21 +108,31 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// Kayıtlı katman YOKSA (null ya da boş) taslak <see cref="LayerDefaults"/> ile DOLU kurulur — araç
     /// paylaşıldığında kimse katmanları elle yazmasın. Bu YALNIZ taslaktır: Save'e basılmadıkça ne
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.</summary>
-    public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot)
+    /// <param name="initialExternals">Kayıtlı harici proje listesi — KAYITLI SIRASIYLA seed edilir (sıra
+    /// build sırasıdır). Katmanların aksine varsayılan bir liste YOKTUR: harici projeler kuruluma özeldir.</param>
+    public SettingsDraftViewModel(
+        IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
+        IReadOnlyList<ExternalProject>? initialExternals = null)
     {
         _repositoryRoot = repositoryRoot;
         Layers.CollectionChanged += OnLayersChanged;
+        Externals.CollectionChanged += OnExternalsChanged;
         if (initial is { Count: > 0 })
             foreach (var p in initial.OrderBy(p => p.Order))
                 AddRow(new LayerRowViewModel(p.Name, p.Regex));
         else
             AddDefaultRows();
+
+        foreach (var e in initialExternals ?? [])
+            Externals.Add(new ExternalRowViewModel(e.Name, e.ProjectPath, e.TargetPath));
     }
 
     /// <summary>[D7] Save yalnız bir katmanın adı BOŞ (trim sonrası) ya da regex'i DERLENEMEZ iken bloklanır;
     /// boş regex GEÇERLİdir (bloklamaz). BuildApp.jsx:1017 <c>valid = draft.every(name.trim() &amp;&amp; !invalid)</c>.
     /// Regex compile-check LayerEngine'in EKLEDİĞİ sınırlı-matchTimeout ctor'uyla AYNI (bkz. <see cref="LayerRowViewModel.RegexInvalid"/>).</summary>
-    public bool CanSave => Layers.All(r => r.Name.Trim().Length > 0 && !r.RegexInvalid);
+    public bool CanSave =>
+        Layers.All(r => r.Name.Trim().Length > 0 && !r.RegexInvalid)
+        && Externals.All(r => !r.IsIncomplete);
 
     /// <summary>"Restore default layers" — taslağı <see cref="LayerDefaults"/> ile değiştirir. A13.2 reset
     /// yasağı: <c>Clear()</c> yerine sondan sil + ekle (yalnız Remove/Add bildirimleri — Reset yok).</summary>
@@ -92,16 +157,39 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public IReadOnlyList<LayerPattern> BuildPatterns() =>
         Layers.Select((r, i) => new LayerPattern(i, r.Regex, r.Name.Trim())).ToList();
 
+    /// <summary>
+    /// [Harici projeler] Seçilen DİZİNDEN yeni bir satır kurar: ad varsayılan olarak klasör adıdır ve hedef,
+    /// dizinde tek bir solution varsa önerilir. Öneri yoksa satır EKSİK kalır ve Save kilitlenir — tahmin
+    /// yürütüp yanlış projeyi derletmektense kullanıcının seçmesi beklenir.
+    /// </summary>
+    public void AddExternal(string projectPath)
+    {
+        ArgumentNullException.ThrowIfNull(projectPath);
+
+        Externals.Add(new ExternalRowViewModel(
+            Path.GetFileName(projectPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
+            projectPath,
+            ExternalTargetResolver.AutoTarget(projectPath) ?? string.Empty));
+    }
+
+    public void RemoveExternal(ExternalRowViewModel row) => Externals.Remove(row);
+
+    /// <summary>Taslağı Contracts tipine çevirir: sıra editör sırasıdır (üstten alta = build sırası), ad trim'li.</summary>
+    public IReadOnlyList<ExternalProject> BuildExternals() =>
+        Externals.Select(r => new ExternalProject(r.Name.Trim(), r.ProjectPath, r.TargetPath)).ToList();
+
     /// <summary>Kaydet (commit): taslağı <see cref="UiState.LayerPatterns"/>'a persist eder ve TEK yoldan
     /// uygular — <see cref="RunViewModel.ApplySettingsAsync"/> katmanları, bekleyen repo kökünü ve TEK Sync'i
     /// birlikte sürer. Cancel bu metodu ÇAĞIRMAZ → taslak (kopya) atılır, canlı duruma dokunulmaz.</summary>
     public async Task CommitAsync(RunViewModel run, IUiStateStore store)
     {
         var patterns = BuildPatterns();
+        var externals = BuildExternals();
         var state = store.Load();
         state.LayerPatterns = patterns.ToList();
+        state.ExternalProjects = externals.ToList();
         store.Save(state);
-        await run.ApplySettingsAsync(patterns, RepositoryRoot);
+        await run.ApplySettingsAsync(patterns, externals, RepositoryRoot);
     }
 
     private void AddRow(LayerRowViewModel row) => Layers.Add(row);
@@ -120,5 +208,20 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     {
         if (e.PropertyName is nameof(LayerRowViewModel.Name) or nameof(LayerRowViewModel.RegexInvalid))
             OnPropertyChanged(nameof(CanSave));
+    }
+
+    // Harici satırlar da CanSave'i belirler — katman satırlarıyla AYNI bağlama kalıbı.
+    private void OnExternalsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+            foreach (ExternalRowViewModel row in e.OldItems) row.PropertyChanged -= OnExternalRowChanged;
+        if (e.NewItems is not null)
+            foreach (ExternalRowViewModel row in e.NewItems) row.PropertyChanged += OnExternalRowChanged;
+        OnPropertyChanged(nameof(CanSave));
+    }
+
+    private void OnExternalRowChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ExternalRowViewModel.IsIncomplete)) OnPropertyChanged(nameof(CanSave));
     }
 }

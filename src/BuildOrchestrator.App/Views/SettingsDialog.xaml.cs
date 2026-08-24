@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using BuildOrchestrator.App.Shell;
@@ -33,7 +33,7 @@ public partial class SettingsDialog : UserControl
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
-        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath);
+        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.ExternalProjects);
         DataContext = _draft;
         UpdateRepoLabel();
         Visibility = Visibility.Visible;

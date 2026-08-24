@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BuildOrchestrator.Contracts.Model;
@@ -52,6 +52,21 @@ public sealed class UiState
     /// <see cref="List{LayerPattern}"/>'e round-trip eder (startup wipe YOK). Diskte boş-OLMAYAN eski bir
     /// <c>List&lt;string&gt;</c> hiç var olmadı (PerfMode'daki gibi bir toleranslı converter GEREKMEZ).</para></summary>
     public List<LayerPattern> LayerPatterns { get; set; } = [];
+
+    /// <summary>[Harici projeler] Ayarlar'da sıralanan harici proje listesi — Save'de yazılır, startup'ta
+    /// <see cref="ViewModels.RunViewModel.ExternalProjects"/>'e seed edilir. SIRA ANLAMLIDIR: build sırası
+    /// tam olarak budur.
+    /// <para>Setter null'ı boş listeye çevirir: diskte açıkça <c>"ExternalProjects": null</c> yazan bir dosya
+    /// (elle düzenleme, yarım yazım) aksi halde koleksiyonu null bırakır ve ilk okuma tüm yerleşimi
+    /// sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe.</para></summary>
+    public List<ExternalProject> ExternalProjects
+    {
+        get => _externalProjects;
+        set => _externalProjects = value ?? [];
+    }
+
+    private List<ExternalProject> _externalProjects = [];
+
     public bool Autostart { get; set; }
 
 }
