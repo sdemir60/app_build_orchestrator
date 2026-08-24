@@ -19,6 +19,8 @@ public partial class SettingsDialog : UserControl
     private RunViewModel? _run;
     private IUiStateStore? _store;
     private Func<string?>? _pickFolder;
+    /// <summary>Harici hedef (.sln) seçici seam'i — argüman başlangıç dizinidir. Testler gerçek diyalog açmaz.</summary>
+    private Func<string, string?>? _pickBuildTarget;
 
     public SettingsDialog()
     {
@@ -28,11 +30,15 @@ public partial class SettingsDialog : UserControl
     /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
     /// gerçek diyalog açmaz — E1'deki IOsActions.PickFolder gelene dek OpenFolderDialog doğrudan çağrılır).</summary>
-    public void Open(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
+    /// <param name="pickBuildTarget">Harici projenin derlenecek hedefini (.sln) seçen seam; null ise
+    /// "Target…" butonu no-op'tur (testlerin çoğu onu sürmez).</param>
+    public void Open(RunViewModel run, IUiStateStore store, Func<string?> pickFolder,
+        Func<string, string?>? pickBuildTarget = null)
     {
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
+        _pickBuildTarget = pickBuildTarget;
         _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.ExternalProjects);
         DataContext = _draft;
         UpdateRepoLabel();
@@ -62,6 +68,35 @@ public partial class SettingsDialog : UserControl
     }
 
     private void OnRestoreDefaults(object sender, RoutedEventArgs e) => _draft?.RestoreDefaults();
+
+    // ---- External projects ----
+
+    // Kullanıcı bir DİZİN seçer; VCS türü ve derlenecek hedef oradan türetilir (taslak karar verir).
+    private void OnAddExternal(object sender, RoutedEventArgs e)
+    {
+        if (_pickFolder?.Invoke() is { Length: > 0 } path) _draft?.AddExternal(path);
+    }
+
+    private void OnRemoveExternal(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ExternalRowViewModel row }) _draft?.RemoveExternal(row);
+    }
+
+    // Dizin değişince rozet ve hedef önerisi kendiliğinden tazelenir (VcsLabel yolu okur).
+    private void OnChangeExternalFolder(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: ExternalRowViewModel row }) return;
+        if (_pickFolder?.Invoke() is not { Length: > 0 } path) return;
+
+        row.ProjectPath = path;
+        if (Core.Externals.ExternalTargetResolver.AutoTarget(path) is { } target) row.TargetPath = target;
+    }
+
+    private void OnChangeExternalTarget(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: ExternalRowViewModel row }) return;
+        if (_pickBuildTarget?.Invoke(row.ProjectPath) is { Length: > 0 } target) row.TargetPath = target;
+    }
 
     // ---- Repository (K10) ----
 

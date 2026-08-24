@@ -670,7 +670,7 @@ public partial class MainWindow : Window
     private void OnSettings(object sender, RoutedEventArgs e)
     {
         if (AnyDialogOpen) return;
-        SettingsOverlay.Open(_vm, _uiState, PickFolder);
+        SettingsOverlay.Open(_vm, _uiState, PickFolder, PickBuildTarget);
     }
 
     /// <summary>[About] Info butonu → About modali.</summary>
@@ -714,6 +714,19 @@ public partial class MainWindow : Window
         var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Select repository root" };
         if (_vm.RootPath.Length > 0) dialog.InitialDirectory = _vm.RootPath;
         return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
+    }
+
+    /// <summary>[Harici projeler] Harici bir projenin derlenecek hedefini seçer. Arama harici projenin KENDİ
+    /// dizininde başlar; iptal edilirse null.</summary>
+    private string? PickBuildTarget(string initialDirectory)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Select the build target",
+            Filter = "Solutions and projects (*.sln;*.csproj)|*.sln;*.csproj",
+        };
+        if (initialDirectory.Length > 0 && System.IO.Directory.Exists(initialDirectory)) dialog.InitialDirectory = initialDirectory;
+        return dialog.ShowDialog(this) == true ? dialog.FileName : null;
     }
 
     /// <summary>[E2/T10] Boş-durum daveti içindeki "Choose Folder": seçilen klasör HEMEN uygulanır —

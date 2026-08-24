@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace BuildOrchestrator.App;
 
@@ -122,6 +122,19 @@ public static class AccessibilityNames
     /// <summary>"Add layer" ghost butonu: görünür etiketi <c>Content</c>'in İÇİNDEKİ bir TextBlock'tur, bu
     /// yüzden WPF'in peer'ı adı içerikten türetemez (ölçüldü: ad boş kalır) — ad AÇIKÇA verilir.</summary>
     public const string AddLayer = "Add layer";
+
+    // ---- Settings: harici proje satırı ----
+    /// <summary>Harici kartındaki ad input'u (kolon başlığı "NAME" ile aynı sözcük).</summary>
+    public const string ExternalName = "External project name";
+    /// <summary>Projenin dizinini seçen buton — çalışma kopyasının kökü oradan yukarı yürünerek bulunur.</summary>
+    public const string ExternalRoot = "Change external project folder";
+    /// <summary>Derlenecek hedefi (.sln) seçen buton.</summary>
+    public const string ExternalTarget = "Change external build target";
+    /// <summary>"Add external project" ghost butonu — etiketi Content'in İÇİNDEKİ TextBlock'tur (bkz.
+    /// <see cref="AddLayer"/> gerekçesi).</summary>
+    public const string AddExternal = "Add external project";
+    /// <summary>Harici satırındaki çöp kutusunun UIA adı — liste birden çok satır taşır, hepsinde aynı ikon durur.</summary>
+    public const string DeleteExternal = "Delete external project";
 
     // ---- [A13/T5] Worktree popover: hedef satırı ----
     /// <summary>Hedef satırındaki çöp kutusunun tooltip'i (satır başına AYNI metin).</summary>
