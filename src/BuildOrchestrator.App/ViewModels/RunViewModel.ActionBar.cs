@@ -129,6 +129,21 @@ public sealed partial class RunViewModel
     /// zaten kısaysa olduğu gibi) — brief 7-hane pinler.</summary>
     internal static string Short7(string sha) => sha.Length > 7 ? sha[..7] : sha;
 
+    /// <summary>
+    /// [Harici projeler] Bir REVİZYON KİMLİĞİNİ kısaltır. Kısaltma yalnız gerçek bir git sha'sına (40 hex)
+    /// uygulanır; başka her değer olduğu gibi gösterilir.
+    ///
+    /// <para>Gerekçe: sha yuvası artık iki farklı sürüm kontrolünün kimliğini taşıyor. Bir TFVC changeset'i
+    /// (<c>C48213</c>) kırpılırsa anlamsız bir sayıya döner — 7 hane bir git alışkanlığıdır, evrensel bir
+    /// biçim değil.</para>
+    /// </summary>
+    internal static string ShortSha(string? revision)
+    {
+        if (string.IsNullOrEmpty(revision)) return string.Empty;
+
+        return revision.Length == 40 && revision.All(Uri.IsHexDigit) ? revision[..7] : revision;
+    }
+
     // ---------------------------------------------------------------- [T40] worktree auto-ad + silme
 
     /// <summary>[T40] Worktree otomatik adı (BuildApp.jsx:1154-1155): slug = branch'te <c>/</c>→<c>-</c>; ek sayı =

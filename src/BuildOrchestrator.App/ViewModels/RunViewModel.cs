@@ -47,6 +47,13 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(Status))]
     private bool _isRunActive;
 
+    /// <summary>[Harici projeler] Bu satır ana repo DIŞINDAN gelen bir projeyi mi anlatıyor —
+    /// <see cref="ProjectNode.ExternalVcs"/>'ten topoloji uzlaştırmasında taşınır ve satır ömrü boyunca
+    /// değişmez (kimlik gibi).
+    /// <para>Tek görünür sonucu şudur: ana reponun hedef commit'i bu satıra İTİLMEZ. O sha başka bir repoyu
+    /// anlatır ve harici satırın yanında duran bir yalan olurdu.</para></summary>
+    public bool IsExternal { get; init; }
+
     /// <summary>[T53-UI] Kartın soluk ikinci satırı — projenin ait olduğu solution'ın adı (prototip
     /// <c>p.sln</c>, BuildApp.jsx:384). Kaynak: <see cref="ProjectNode.SolutionNames"/> (ilk eleman); topoloji
     /// kurulurken atanır. Bir projeyi birden çok .sln içerebilir — kart tek (ilk) adı gösterir.</summary>
@@ -1194,6 +1201,8 @@ public sealed partial class RunViewModel : ObservableObject
         // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
         var row = new ProjectRowViewModel(id, name, initialState)
         { IsRunActive = RunActive, NamePrefix = _graphNamePrefix, TargetSha = TargetSha };
+        // Not: bu yol yalnız run ortasında, topolojide OLMAYAN bir id için satır doğurur — harici projeler
+        // topolojiden gelir, o yüzden burada harici bir satır oluşamaz.
         Projects.Add(row);
         return row;
     }

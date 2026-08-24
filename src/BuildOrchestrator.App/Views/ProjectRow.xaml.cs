@@ -411,15 +411,31 @@ public partial class ProjectRow : UserControl
         // [design v1.7.0 §2.4] SHA HER satırda görünür ve iki biçimi vardır: derlenecek satırda çift
         // ("cur → target", secondary), güncel satırda TEK sha (faint). Eskiden yalnız dirty satırlarda
         // gösteriliyordu ve hover'dan çıkıldığında satırlar arasında layout sıçraması oluyordu.
-        string cur = Short7(_vm?.CurrentSha);
-        string target = Short7(_vm?.TargetSha);
+        PART_Sha.Text = ShaSlotText(_vm?.CurrentSha, _vm?.TargetSha, _vm?.WillBuild == true);
         bool dirty = _vm?.WillBuild == true;
-        PART_Sha.Text = !dirty || cur.Length == 0 || cur == target ? target : $"{cur} → {target}";
         PART_Sha.SetResourceReference(TextBlock.ForegroundProperty,
             dirty ? "Brush.TextSecondary" : "Brush.TextFaint");
     }
 
-    private static string Short7(string? sha) => sha is null ? "" : ViewModels.RunViewModel.Short7(sha);
+    /// <summary>
+    /// Sha yuvasının metni — saf karar, kontrol dışında test edilir.
+    ///
+    /// <para>Derlenecek bir satırda çift ("cur → target"), aksi halde tek değer basılır. <b>Hedef yarısı
+    /// yoksa</b> (hiç derlenmemiş proje ya da HARİCİ bir satır — ana reponun hedef commit'i onlara itilmez)
+    /// yarım bir ok üretilmez: elde ne varsa o gösterilir.</para>
+    ///
+    /// <para>Kısaltma <see cref="ViewModels.RunViewModel.ShortSha"/>'ya aittir: git sha'sı 7 haneye iner,
+    /// TFVC changeset'i olduğu gibi kalır.</para>
+    /// </summary>
+    internal static string ShaSlotText(string? currentSha, string? targetSha, bool dirty)
+    {
+        string cur = ViewModels.RunViewModel.ShortSha(currentSha);
+        string target = ViewModels.RunViewModel.ShortSha(targetSha);
+
+        if (target.Length == 0) return cur;                 // hedef yok → elde ne varsa (yarım ok YOK)
+        if (!dirty || cur.Length == 0 || cur == target) return target;
+        return $"{cur} → {target}";
+    }
 
     /// <summary>Sağ blok: hover'da aç-ikonları, değilse (will==dirty) sha çifti (BuildApp.jsx:387-403).
     /// [L1] İkon bloğu hover'da TALEP ÜZERİNE kurulur; hover yokken kurulmamışsa dokunulacak bir şey de yoktur.</summary>
