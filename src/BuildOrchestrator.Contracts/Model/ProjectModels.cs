@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 
 namespace BuildOrchestrator.Contracts.Model;
 
@@ -27,7 +27,11 @@ public sealed record ProjectNode(
     bool? WillBuild,                        // T53: dirty=true, güncel=false, imza-yok/pre-Sync=null
     // WillBuild'in GEREKÇESİ (kullanıcıya gösterilir). Alan SONA ve default'lu: eski NDJSON/plan üreticileri
     // onu yazmaz ve null olarak çözülür — o hâlde yüzey jenerik metne düşer.
-    WillBuildReason? WillBuildReason = null)
+    WillBuildReason? WillBuildReason = null,
+    // [Harici projeler] Bu düğüm ana repo DIŞINDAN gelen bir projeyse çalışma kopyasının VCS türü; sıradan
+    // projelerde null. Ayrı bir düğüm tipi AÇILMAZ: hariciler sıradan ProjectNode olarak akar, böylece liste
+    // gruplaması, graf bandı ve filtreler onları bedavaya taşır — rozet yalnız bu alandan okunur.
+    VcsKind? ExternalVcs = null)
 {
     // Derleyicinin ürettiği record eşitliği, IReadOnlyList<string> alanlarında EqualityComparer<T>.Default
     // kullanır; List<string> Equals'ı override etmediği için bu referans eşitliğine düşer (JSON round-trip
@@ -44,7 +48,8 @@ public sealed record ProjectNode(
         && LayerName == other.LayerName
         && InCycle == other.InCycle
         && WillBuild == other.WillBuild
-        && WillBuildReason == other.WillBuildReason;
+        && WillBuildReason == other.WillBuildReason
+        && ExternalVcs == other.ExternalVcs;
 
     public override int GetHashCode()
     {
@@ -59,6 +64,7 @@ public sealed record ProjectNode(
         hash.Add(LayerName);
         hash.Add(InCycle);
         hash.Add(WillBuild);
+        hash.Add(ExternalVcs);
         return hash.ToHashCode();
     }
 }
