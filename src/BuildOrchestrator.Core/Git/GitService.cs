@@ -1,4 +1,4 @@
-using BuildOrchestrator.Core.Processes;
+﻿using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
 
@@ -80,7 +80,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// <summary>HEAD commit SHA'sı. Normal repo → 40-hex SHA. No-commits (unborn HEAD) → <c>Ok(null)</c> (hata DEĞİL, edge).</summary>
     public async Task<GitResult<string?>> GetHeadCommitAsync(CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["rev-parse", "--verify", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["rev-parse", "--verify", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -98,13 +98,13 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         // bir git hatasıdır ve Fail olarak yüzeye çıkarılmalı, "no-commits" ile karıştırılmamalıdır.
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null);
 
-        return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
     /// <summary>Checkout edilmiş branch adı. Normal → ad. Detached HEAD → <c>Ok(null)</c> (hata DEĞİL, edge).</summary>
     public async Task<GitResult<string?>> GetCurrentBranchAsync(CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["symbolic-ref", "--short", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["symbolic-ref", "--short", "-q", "HEAD"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -114,13 +114,13 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         // döner. Başka her kombinasyon (özellikle exit=128) gerçek bir git hatasıdır — Fail.
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null);
 
-        return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
     /// <summary>Working-tree + staged değişiklikler (`git status --porcelain`'den path listesi). Temiz repo → boş liste.</summary>
     public async Task<GitResult<IReadOnlyList<string>>> GetDirtyPathsAsync(CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["status", "--porcelain"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["status", "--porcelain"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<IReadOnlyList<string>>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -132,7 +132,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// <summary>Repo shallow mu (`git rev-parse --is-shallow-repository`, git 2.15+).</summary>
     public async Task<GitResult<bool>> IsShallowRepositoryAsync(CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["rev-parse", "--is-shallow-repository"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["rev-parse", "--is-shallow-repository"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<bool>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -146,7 +146,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     {
         // [A5/T69] %09 = TAB: "<refname>\t<objectname>". Sha, ref adıyla AYNI çağrıdan gelir — branch başına
         // ayrı bir rev-parse process'i spawn etmek çok branch'li bir repoda gereksiz pahalı olurdu.
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["for-each-ref", "--format=%(refname)%09%(objectname)", "refs/heads", "refs/remotes"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["for-each-ref", "--format=%(refname)%09%(objectname)", "refs/heads", "refs/remotes"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<IReadOnlyList<GitBranchInfo>>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -193,7 +193,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// </summary>
     public async Task<FetchResult> FetchRefOnlyAsync(string branch, CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["fetch", "origin", branch, "--no-tags"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["fetch", "origin", branch, "--no-tags"], _repoRoot, CommandTimeout, ct);
 
         if (outcome.Success && outcome.Value!.ExitCode == 0)
         {
@@ -207,7 +207,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
                 $"git fetch succeeded but the remote-tracking ref could not be read: {tracking.Error ?? "unexpected empty result"}", ct);
         }
 
-        string reason = outcome.Success ? GitCommandExecutor.DescribeGitFailure(outcome.Value!) : outcome.Error!;
+        string reason = outcome.Success ? CommandLineTool.DescribeFailure(CommandLineTool.Git, outcome.Value!) : outcome.Error!;
         return await DegradeToLocalHeadAsync(
             $"git fetch failed (offline/unreachable/invalid remote) — falling back to the local HEAD: {reason}", ct);
     }
@@ -219,7 +219,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// </summary>
     public async Task<GitResult<string?>> GetRemoteTrackingShaAsync(string branch, CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["rev-parse", "--verify", "-q", $"refs/remotes/origin/{branch}"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["rev-parse", "--verify", "-q", $"refs/remotes/origin/{branch}"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -233,7 +233,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
 
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // ref yok — henüz fetch edilmemiş
 
-        return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
     /// <summary>
@@ -247,7 +247,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// </summary>
     public async Task<GitResult<string?>> GetLocalBranchShaAsync(string branch, CancellationToken ct = default)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["rev-parse", "--verify", "-q", $"refs/heads/{branch}"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["rev-parse", "--verify", "-q", $"refs/heads/{branch}"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -261,7 +261,7 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
 
         if (IsUnbornHeadSignal(r)) return GitResult<string?>.Ok(null); // yerel ref yok — branch yalnız remote'ta olabilir
 
-        return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
     /// <summary>K1 fallback: fetch başarısız olduğunda hedef SHA yerel HEAD'e düşer; HEAD de okunamazsa null (güvenli taraf, throw yok).</summary>
@@ -303,11 +303,11 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         if (head.Value is null)
             return GitResult<IReadOnlyDictionary<string, string>>.Ok(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
 
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["ls-tree", "-r", "HEAD"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["ls-tree", "-r", "HEAD"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<IReadOnlyDictionary<string, string>>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<IReadOnlyDictionary<string, string>>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        if (r.ExitCode != 0) return GitResult<IReadOnlyDictionary<string, string>>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
 
         // ExitCode==0 iken stdout parse edilir; stderr'de CRLF-dönüşüm UYARISI gibi zararsız satırlar
         // olabilir (deneysel doğrulandı) — başarı, YALNIZ ExitCode'a bakılarak belirlenir.

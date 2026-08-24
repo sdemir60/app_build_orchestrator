@@ -1,4 +1,4 @@
-using BuildOrchestrator.Core.Git;
+﻿using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Externals;
@@ -110,8 +110,8 @@ public sealed class ExternalGitUpdater
         // 4) Fast-forward mümkün mü? exit=0 → HEAD hedefin atası (ileri sarılabilir), exit=1 → ayrışmış.
         //    Karar exit kodundan okunur; stderr METNİ ASLA ayrıştırılmaz (lokalize olabilir).
         string trackingRef = $"refs/remotes/origin/{branch.Value}";
-        var ancestry = await GitCommandExecutor.RunAsync(
-            _runner, _gitExecutable, ["merge-base", "--is-ancestor", "HEAD", trackingRef], _rootPath, QueryTimeout, ct);
+        var ancestry = await CommandLineTool.RunAsync(
+            _runner, CommandLineTool.Git, _gitExecutable, ["merge-base", "--is-ancestor", "HEAD", trackingRef], _rootPath, QueryTimeout, ct);
         if (!ancestry.Success) return Failed(ancestry.Error);
 
         if (ancestry.Value!.ExitCode == 1)
@@ -119,13 +119,13 @@ public sealed class ExternalGitUpdater
                 $"the local branch '{branch.Value}' has diverged from origin — fast-forward is not possible");
 
         if (ancestry.Value.ExitCode != 0)
-            return Failed(GitCommandExecutor.DescribeGitFailure(ancestry.Value));
+            return Failed(CommandLineTool.DescribeFailure(CommandLineTool.Git, ancestry.Value));
 
         // 5) Tek mutasyon: fast-forward. Merge commit'i üretmesi mümkün değildir (--ff-only).
-        var merge = await GitCommandExecutor.RunAsync(
-            _runner, _gitExecutable, ["merge", "--ff-only", trackingRef], _rootPath, MergeTimeout, ct);
+        var merge = await CommandLineTool.RunAsync(
+            _runner, CommandLineTool.Git, _gitExecutable, ["merge", "--ff-only", trackingRef], _rootPath, MergeTimeout, ct);
         if (!merge.Success) return Failed(merge.Error);
-        if (merge.Value!.ExitCode != 0) return Failed(GitCommandExecutor.DescribeGitFailure(merge.Value));
+        if (merge.Value!.ExitCode != 0) return Failed(CommandLineTool.DescribeFailure(CommandLineTool.Git, merge.Value));
 
         var updatedHead = await _git.GetHeadCommitAsync(ct);
         if (!updatedHead.Success) return Failed(updatedHead.Error);
