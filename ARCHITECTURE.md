@@ -2172,7 +2172,7 @@ Durations 80 / 120 / 180 / 280 ms; three easings — ease-out for entrances, eas
 ease-in-out for displacement. All three CSS curves are reproduced exactly as `KeySpline`s. No bounce, no
 overshoot; only transform and opacity are animated, never layout.
 
-Four contract rules, each enforced by a test:
+Five contract rules, each enforced by a test:
 
 1. **One hero at a time.** `MotionCoordinator` is the single gate; the graph frontier and the list frontier
    share one key and therefore count as *one* hero and play together, while any other hero is refused and its
@@ -2184,6 +2184,12 @@ Four contract rules, each enforced by a test:
 3. **No literals.** Hardcoded hex or millisecond values in animation code fail a guard test.
 4. **Frozen brushes cannot be animated.** Shared/frozen resources are copied per instance before being driven;
    `ContainerVisual.Opacity` cannot be animated at all, which is why graph layer hosts are `UIElement`s.
+5. **Transparent is white.** `Colors.Transparent` is `#00FFFFFF`, and WPF interpolates the colour channels
+   without premultiplying alpha — so a fade between transparent and a dark surface walks its RGB through white
+   and flashes a light grey at the midpoint. Every colour timeline is therefore built by one shared factory
+   (`MotionTokens.SplineColorTo`) that declares *both* endpoints and pulls the zero-alpha end onto the other
+   end's RGB, leaving alpha as the only channel in motion. This is what a browser's premultiplied `transparent`
+   does, and it is why no consumer may hand-roll a colour keyframe.
 
 Decorative infinite animations run at `DesiredFrameRate=30`; all counters tick from one `DispatcherTimer`;
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
@@ -2282,6 +2288,7 @@ A category of tests that assert properties of the *source*, not of a run:
 |---|---|
 | No hardcoded colour | no hex outside `Tokens.xaml` |
 | No hardcoded motion | no inline durations/easings outside `Motion.xaml` |
+| No hand-rolled colour keyframe | every colour timeline comes from the shared factory, so no surface can miss the premultiplied-transparent rule of §14.5 |
 | No sleep-poll | no `Thread.Sleep`-based waiting in tests — synchronization is by handle or signal |
 | No Turkish user text | no Turkish string reaches a user-visible surface |
 | Token realize coverage | every declared token actually resolves when the resource dictionaries are realized |
