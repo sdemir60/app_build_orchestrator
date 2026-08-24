@@ -2641,6 +2641,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | `MSBuild.exe` resolution via `vswhere` | `Core/MsBuild/MsBuildResolver.cs` |
+| The `vswhere` search itself (shared by `MSBuild.exe` and `TF.exe`) | `Core/MsBuild/VsWhereLocator.cs` |
 | Argument contract (build and restore) | `Core/MsBuild/MsBuildArguments.cs` |
 | Invocation, output pumping, per-project kill | `Core/MsBuild/MsBuildInvoker.cs` |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
@@ -2654,11 +2655,22 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | All git invocations (HEAD, status, refs, ls-tree, fetch) | `Core/Git/GitService.cs` |
-| Command execution wrapper and result shape | `Core/Git/GitCommandExecutor.cs`, `GitMessages.cs` |
+| Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
 | Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
 | Sync flow (fetch → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
 | Planning step texts (shared by Sync and the run planner) | `Core/Planning/PlanProgressLines.cs` |
+
+**External projects**
+
+| Behaviour | File |
+|---|---|
+| Working-copy root discovery (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
+| Layer name and index for the external group (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
+| Build target suggestion when a project is added | `Core/Externals/ExternalTargetResolver.cs` |
+| External signature and the will-build decision | `Core/Externals/ExternalSignature.cs`, `ExternalWillBuild.cs` |
+| The only mutating git surface: fetch + fast-forward | `Core/Externals/ExternalGitUpdater.cs` |
+| TFVC surface: pending changes, get latest, current changeset | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
 
 **Process control and resource governance**
 
