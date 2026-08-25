@@ -18,6 +18,10 @@ public sealed class AntiSlopTests
         Path.Combine("Resources", "Tokens.xaml"),      // Effect.* TANIMLARI
         Path.Combine("Resources", "Controls.xaml"),    // Ds.Popover / Ds.Dialog / ToolTip (floating overlay stilleri)
         Path.Combine("Controls", "LatestPill.xaml"),   // `⌄ latest` floating pill
+        // [tray indicator/K-8] Tepsi göstergesi tanımın TA KENDİSİDİR: masaüstünün üstünde, zeminsiz duran bir
+        // floating overlay. Gölge burada dekorasyon değil OKUNURLUK şartıdır — arka planda ne olduğu bilinmez
+        // (açık bir masaüstünde beyaz/gümüş şeritler gölgesiz kaybolur). Değerler kaynak sanattan gelir.
+        Path.Combine("Controls", "TrayBuildIndicator.xaml"),
     ];
 
     // Emoji: astral (surrogate çifti pictographic 1F000+) + BMP misc-symbols/dingbats (2600-27BF) + emoji

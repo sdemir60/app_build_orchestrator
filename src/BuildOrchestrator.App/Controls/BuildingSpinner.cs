@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -54,7 +54,6 @@ public class BuildingSpinner : Control
 
     /// <summary>Dekoratif, sonsuz dönen animasyon — GraphView'ün nabzıyla AYNI gerekçe (feasibility §3.4):
     /// tam kare hızında sürmek gereksiz GPU/CPU yükü.</summary>
-    private const int DecorativeFrameRate = 30;
 
     static BuildingSpinner()
         => DefaultStyleKeyProperty.OverrideMetadata(
@@ -141,7 +140,7 @@ public class BuildingSpinner : Control
         {
             RepeatBehavior = RepeatBehavior.Forever,
         };
-        Timeline.SetDesiredFrameRate(spin, DecorativeFrameRate);
+        Timeline.SetDesiredFrameRate(spin, MotionTokens.DecorativeFrameRate);
         return spin;
     }
 

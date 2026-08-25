@@ -21,6 +21,16 @@ internal static class MotionTokens
     /// yoktur, §2.5'e özgüdür.</summary>
     internal const double BlinkMs = 550.0;
 
+    /// <summary>
+    /// Dekoratif (sürekli/dönen/nabız atan) animasyonların kare hızı tavanı — feasibility §3.4: göze
+    /// görünmeyen bir kazanç için tam kare hızı harcanmaz.
+    ///
+    /// <para><b>Neden burada:</b> aynı 30 beş ayrı tipte (<see cref="BuildingSpinner"/>,
+    /// <see cref="StatusGlyph"/>, <c>GraphView</c>, <c>ProjectRow</c>, <c>StickyRibbon</c>) ayrı ayrı
+    /// tanımlıydı, bir de bu dosyanın blink animasyonunda çıplak literal olarak duruyordu. Kural tek
+    /// sayıdır; altıncı bir kopya eklemek yerine tek kaynağa alındı (kopya YASAK, CLAUDE.md).</para></summary>
+    public const int DecorativeFrameRate = 30;
+
     public static Duration ResolveDuration(FrameworkElement host, string key, double fallbackMs)
         => host.TryFindResource(key) is Duration d ? d : new Duration(TimeSpan.FromMilliseconds(fallbackMs));
 
@@ -36,7 +46,7 @@ internal static class MotionTokens
             RepeatBehavior = RepeatBehavior.Forever,
             EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
         };
-        Timeline.SetDesiredFrameRate(blink, 30);
+        Timeline.SetDesiredFrameRate(blink, DecorativeFrameRate);
         return blink;
     }
 
@@ -291,7 +301,9 @@ internal static class MotionTokens
     /// motion sinyali. Üç <c>TransitionX</c> metodu da (renk / double / thickness) BİREBİR aynı üç satırı
     /// yazıyordu — tek yer (kopya YASAK, CLAUDE.md). Süre ve sinyal ÇAĞRI ANINDA taze okunur (motion
     /// sözleşmesi); süre 0'a düşmüşse (reduced-motion) <c>Animate</c> false'tur ve çağıran hedefe anında yazar.</summary>
-    private static FastTransition ResolveFast(FrameworkElement host)
+    /// <remarks>[tray indicator/K-14] Sayacın yumuşak rakam takası da bu kapıdan geçer — kendi
+    /// <c>Duration.Fast</c> çözümünü yazsaydı token'ın ikinci bir okuyucusu doğardı (kopya YASAK).</remarks>
+    internal static FastTransition ResolveFast(FrameworkElement host)
     {
         var duration = ResolveDuration(host, "Duration.Fast", 120.0);          // prototip: --duration-fast
         var spline = ResolveKeySpline(host, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1)); // --ease-standard
@@ -300,7 +312,7 @@ internal static class MotionTokens
         return new FastTransition(animate, duration.TimeSpan, spline);
     }
 
-    private readonly record struct FastTransition(bool Animate, TimeSpan Duration, KeySpline Spline);
+    internal readonly record struct FastTransition(bool Animate, TimeSpan Duration, KeySpline Spline);
 
     /// <summary>[M-1] <see cref="Console.ConsoleView.AnimateToBottom"/> ve
     /// <see cref="StickyLayerList.AnimateScrollTo"/>'nun BİREBİR aynı desenini (taze <c>AnimationsEnabled</c> +

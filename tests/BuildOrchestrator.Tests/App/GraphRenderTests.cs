@@ -209,7 +209,8 @@ public class GraphRenderTests
         Assert.Equal(-view.BeadsGeometry.Perimeter, spin.To!.Value, 6);
         Assert.Equal(TimeSpan.FromMilliseconds(GraphBeads.CycleMs), spin.Duration.TimeSpan);
         Assert.Equal(RepeatBehavior.Forever, spin.RepeatBehavior);
-        Assert.Equal(GraphView.DecorativeFrameRate, Timeline.GetDesiredFrameRate(spin));
+        // [tray indicator] Sabit beş tipte ayrı ayrı tanımlıydı; tek kaynağa (MotionTokens) taşındı.
+        Assert.Equal(MotionTokens.DecorativeFrameRate, Timeline.GetDesiredFrameRate(spin));
     }
 
     /// <summary>

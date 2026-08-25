@@ -51,7 +51,6 @@ public partial class StickyRibbon : UserControl
     private const double IndeterminateWidthFraction = 0.35;
     private const double IndeterminateFromFactor = -1.10;
     private const double IndeterminateToFactor = 3.20;
-    private const int DecorativeFrameRate = 30;      // dekoratif sonsuz sweep — tam kare hızı gereksiz (feasibility §3.4)
 
     private readonly SolidColorBrush _indicatorBrush = new(Colors.Transparent); // per-instance (A13.2)
     private RunViewModel? _vm;
@@ -392,7 +391,7 @@ public partial class StickyRibbon : UserControl
         anim.KeyFrames.Add(new LinearDoubleKeyFrame(IndeterminateFromFactor * indW, KeyTime.FromTimeSpan(TimeSpan.Zero)));
         anim.KeyFrames.Add(new SplineDoubleKeyFrame(IndeterminateToFactor * indW,
             KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(IndeterminateSweepMs)), spline));
-        Timeline.SetDesiredFrameRate(anim, DecorativeFrameRate);
+        Timeline.SetDesiredFrameRate(anim, MotionTokens.DecorativeFrameRate);
         PART_IndicatorTranslate.BeginAnimation(TranslateTransform.XProperty, anim);
     }
 
