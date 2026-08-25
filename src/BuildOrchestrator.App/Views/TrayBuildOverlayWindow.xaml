@@ -1,0 +1,36 @@
+<Window x:Class="BuildOrchestrator.App.Views.TrayBuildOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ShowActivated="False"
+        Focusable="False"
+        ResizeMode="NoResize"
+        SizeToContent="Manual">
+  <!--
+    ============== TEPSİ BUILD OVERLAY'İ — penceresiz, arka plansız, odak çalmayan yüzey ==============
+
+    Ana pencere gizliyken (tepside) görünür kalması gereken TEK yüzey budur; bu yüzden ana pencerenin içindeki
+    bir Popup/Adorner OLAMAZ — kendi HWND'i şarttır.
+
+    Kabuğun tamamı bir dizi "olmama" kararıdır: kenarlık yok, görev çubuğunda yok, Alt-Tab'da yok, odak
+    çalmıyor. Kullanıcı derleme koşarken başka bir işle meşguldür; bu yüzey ona bakmadığı sürece hiçbir şey
+    istememelidir.
+
+    TIKLAMA MODELİ: `AllowsTransparency` pencereyi KATMANLI yapar ve işletim sistemi tıklamayı piksel piksel
+    alfaya göre yönlendirir — logonun etrafındaki şeffaf alan tıklamayı alttaki pencereye kendiliğinden
+    geçirir, yalnız çizili pikseller tıklama alır. Bu yüzden ne `WS_EX_TRANSPARENT` (eklenirse logo da
+    tıklanamaz olurdu) ne de tam-dikdörtgen görünmez bir hit alanı YAZILIR.
+
+    Genişlik/yükseklik kod tarafındaki tek kaynaktan gelir (bkz. OverlayWidth/OverlayHeight) — pencere her
+    gösterimde yeniden konumlanır, çünkü çalışma alanı bu arada değişmiş olabilir.
+
+    ARKA PLAN `Transparent`, `null` DEĞİL: null bir zemin katmanlı yüzeyde tanımsız piksel bırakır;
+    Transparent alfası sıfır GERÇEK bir piksel çizer ve işletim sisteminin geçirgenlik kararı ona dayanır.
+  -->
+  <controls:TrayBuildIndicator x:Name="IndicatorControl" Cursor="Hand" />
+</Window>
