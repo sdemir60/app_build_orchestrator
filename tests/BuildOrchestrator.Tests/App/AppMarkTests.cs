@@ -99,6 +99,36 @@ public class AppMarkTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// Altı figür, işaretin çerçevesinde KAYNAK SVG'nin verdiği yere oturur.
+    ///
+    /// <para><b>Neden ayrı bir test:</b> geometri paylaşılan sözlüğe taşınırken iki sayı birlikte değişti —
+    /// koordinatlar 5.5 büyüdü, iç tuval 5.5 geriye kaydı. Bunlar birbirini götürür; götürmezse işaret sessizce
+    /// kayar ve title bar'da yamuk durur. Yapısal testlerin hiçbiri (kaç figür var, hangi fırça) bunu göremez:
+    /// figürler doğru sayıda ve doğru renkte olup yanlış yerde durabilir. Burada ÇİZİLEN kutu ölçülür.</para>
+    ///
+    /// <para>Beklenen kutu: figürlerin birleşik sınırı kaynak uzayda (51.5, 83)–(229.5, 203)'tür; iç tuval
+    /// (−46.5, −78) kaydırınca 186×128'lik çerçevede (5, 5)–(183, 125) olur. Viewbox Uniform ölçeğiyle
+    /// verilen yüksekliğe iner.</para></summary>
+    [StaFact]
+    public void The_mark_lands_every_figure_at_its_source_coordinates()
+    {
+        var host = DsResources.NewHost();
+        var mark = new AppMark { Height = 30, HorizontalAlignment = HorizontalAlignment.Left };
+        var window = DsResources.Realize(host, mark);
+
+        var drawn = Rect.Empty;
+        foreach (var figure in DsResources.Descendants(mark).OfType<ShapePath>())
+            drawn.Union(figure.TransformToAncestor(mark).TransformBounds(figure.Data!.Bounds));
+
+        const double scale = 30.0 / 128.0;   // Viewbox Uniform: verilen yükseklik / işaretin kendi yüksekliği
+        Assert.Equal(5.0 * scale, drawn.Left, precision: 2);
+        Assert.Equal(5.0 * scale, drawn.Top, precision: 2);
+        Assert.Equal(183.0 * scale, drawn.Right, precision: 2);
+        Assert.Equal(125.0 * scale, drawn.Bottom, precision: 2);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Chevron amber bir GRADIENT'tir (design-v1.2.1: `#FFB52E → #EDA10F → #C9860C`) — düz dolgu
     /// değil. Üç durak da token'dan çözülür.</summary>
     [StaFact]
