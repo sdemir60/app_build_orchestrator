@@ -22,6 +22,7 @@ public static class IpcJson
 [JsonDerivedType(typeof(DebugSpawnChildrenCommand), "debugSpawnChildren")]
 [JsonDerivedType(typeof(StartRunCommand), "startRun")]
 [JsonDerivedType(typeof(SyncWorkspaceCommand), "syncWorkspace")]
+[JsonDerivedType(typeof(CleanWorkspaceCommand), "cleanWorkspace")]
 [JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
 [JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
 [JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
@@ -153,6 +154,21 @@ public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug",
     IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
 
+/// <summary>
+/// [clean] Aktif workspace'in derleme çıktısını sıfırla. <b>Siler:</b> <paramref name="RootPath"/> altında
+/// keşfedilen her csproj'un klasöründeki <c>bin\</c> ve <c>obj\</c> + o workspace'e ait
+/// <c>build-state.json</c> kayıtları (RootPath önekiyle, workspace-scoped). <b>Silmez:</b> <c>packages\</c>,
+/// ortak OutDir, worktree havuzu (<c>_obj</c> dahil), run logları, <c>evaluation-cache.json</c>,
+/// <c>ui-state.json</c>.
+/// <para><b>MSBuild <c>/t:Clean</c> ÇAĞRILMAZ</b> — yalnız dosya sistemi silme. Gerekçe: eski-stil
+/// projelerde <c>/t:Clean</c>'in sildiği küme (<c>FileListAbsolute.txt</c> kayıtlıları) bin/obj silmenin alt
+/// kümesidir; obj silinince o kayıt da gider; ve tracked çıktılar ortak OutDir'e yazılmışsa <c>/t:Clean</c>
+/// oradan da silerdi — "OutDir'e dokunulmaz" değişmezinin ihlali.</para>
+/// <para>Bir koşu uçuştayken komut <c>error(cleanRejected)</c> ile REDDEDİLİR; App kapısıyla birlikte çift
+/// katmanlı korumadır. Komut döngüsünü Sync gibi bloklar (arka plan task açılmaz).</para>
+/// </summary>
+public sealed record CleanWorkspaceCommand(string RootPath) : IpcCommand;
+
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 
@@ -182,6 +198,9 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
+[JsonDerivedType(typeof(CleanStartedEvent), "cleanStarted")]
+[JsonDerivedType(typeof(CleanProgressEvent), "cleanProgress")]
+[JsonDerivedType(typeof(CleanCompletedEvent), "cleanCompleted")]
 [JsonDerivedType(typeof(PlanProgressEvent), "planProgress")]
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
@@ -270,6 +289,22 @@ public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool F
 /// <param name="Succeeded">Fast-forward gerçekleşti mi. <c>true</c> ⇒ App chip'i düşürür ve otomatik bir Sync
 /// koşar (konsol KORUNARAK — kullanıcı kendi tetiklediği pull'un sonucunu görmeye devam etmeli).</param>
 public sealed record PullCompletedEvent(bool Succeeded) : IpcEvent;
+/// <summary>[clean] <see cref="CleanWorkspaceCommand"/> kabul edildi ve silme başlıyor.</summary>
+public sealed record CleanStartedEvent(string RootPath) : IpcEvent;
+/// <summary>[clean] Clean transkriptinin tek satırı. İmzası <see cref="SyncProgressEvent"/> ile aynıdır ama
+/// Sync yüzeyine AİT DEĞİLDİR: App'in <c>_syncInFlight</c> kapısını hiç ilgilendirmez, ayrı bir kanaldır
+/// (<see cref="PlanProgressEvent"/> emsali).</summary>
+/// <param name="Level">dim/info/warn — App tarafında satır rengini belirler.</param>
+public sealed record CleanProgressEvent(string Line, string Level) : IpcEvent;
+/// <summary>[clean] Clean bitti — tek bitiş özeti. Kilitli dosya HATA DEĞİLDİR: akış durmaz, dosya başına
+/// atlanır ve yalnız <paramref name="LockedFileCount"/> ile raporlanır.</summary>
+/// <param name="ProjectCount">Taramanın bulduğu ve temizlenen proje klasörü sayısı.</param>
+/// <param name="FoldersRemoved">Gerçekten silinen <c>bin</c>/<c>obj</c> klasörü sayısı.</param>
+/// <param name="BytesRemoved">Silinen dosyaların toplam boyutu.</param>
+/// <param name="LockedFileCount">Kullanımda olduğu için silinemeyen dosya sayısı.</param>
+/// <param name="StateEntriesCleared">Kaldırılan <c>build-state.json</c> kaydı sayısı (workspace-scoped).</param>
+public sealed record CleanCompletedEvent(int ProjectCount, int FoldersRemoved, long BytesRemoved,
+    int LockedFileCount, int StateEntriesCleared) : IpcEvent;
 
 public sealed record BranchListEvent(IReadOnlyList<BranchRef> Branches) : IpcEvent;
 
