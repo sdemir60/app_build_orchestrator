@@ -124,6 +124,25 @@ public sealed partial class RunViewModel
     /// penceresinin gözlemlenebilir hali (gönderimden önce kurulur, gönderim senkron düşerse geri açılır).</summary>
     internal bool SyncRequested => _syncRequested;
 
+    /// <summary>[clean guard] <c>cleanStarted</c> geldi ama <c>cleanCompleted</c> (ya da Clean'i bitiren bir
+    /// hata) HENÜZ gelmedi. Sync guard'ının birebir simetriğidir ve BİLEREK ayrı bir bayraktır: Clean, Sync
+    /// yüzeyine ait değildir (kendi event kanalı, kendi hata kodları) ve ikisi aynı bayrağı paylaşsaydı
+    /// birinin bırakılması ötekini de açardı.</summary>
+    private bool _cleanInFlight;
+
+    /// <summary>[clean guard] Clean İSTENDİ ama motor henüz <c>cleanStarted</c> ile cevap vermedi —
+    /// <see cref="_syncRequested"/>'ın gerekçesi aynen geçerli: gönderim milisaniyeler içinde biter, motor
+    /// ise sırası gelince başlar; arada düğme etkin kalırsa ikinci basış ikinci bir silme kuyruklatırdı.</summary>
+    private bool _cleanRequested;
+
+    /// <summary>[clean guard] Clean yüzeyi MEŞGUL mü — istek uçuşta YA DA <c>cleanStarted</c> görüldü.
+    /// Clean/Sync/Build/Rebuild/Cycles kapılarının TEK predicate'i (kopya YASAK).</summary>
+    private bool CleanBusy => _cleanRequested || _cleanInFlight;
+
+    /// <summary>[clean guard testi] YALNIZ testler için — istek ve uçuş pencerelerinin gözlemlenebilir hâli.</summary>
+    internal bool CleanRequested => _cleanRequested;
+    internal bool CleanInFlight => _cleanInFlight;
+
     /// <summary>Branch envanteri. <see cref="SnapshotCollection{T}"/>: yayın başına EN ÇOK bir bildirim, içerik
     /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
     public SnapshotCollection<BranchRef> Branches { get; } = [];
@@ -215,7 +234,58 @@ public sealed partial class RunViewModel
         BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da aynı kapıdadır
         RebuildProjectCommand.NotifyCanExecuteChanged();
         CleanProjectCommand.NotifyCanExecuteChanged();
+        CleanCommand.NotifyCanExecuteChanged(); // [clean] aynı kapıdan geçer — İKİNCİ bir liste açılmaz
+        PullRepositoryCommand.NotifyCanExecuteChanged(); // [v1.16.0] chip de SyncBusy/CleanBusy'ye bağlıdır (CanPullRepository)
     }
+
+    /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
+    /// DEĞİŞMEZ — Clean için yeni bir <see cref="AppPhase"/> AÇILMAZ, anlatı konsol satırlarıyla taşınır
+    /// (şerit bu iş boyunca dinlenme fazını göstermeye devam eder; kullanıcının baktığı yer konsoldur).</summary>
+    private void OnCleanStarted()
+    {
+        _cleanInFlight = true;
+        _cleanRequested = false;
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[clean guard] Clean bitti — yüzey serbest.</summary>
+    private void OnCleanCompleted() => ReleaseCleanSurface();
+
+    /// <summary>[clean guard] Uçuştaki Clean'i serbest bırakır: İKİ bayrak da temizlenir (motor Clean'e HİÇ
+    /// başlayamadan ölmüş olabilir, o hâlde uçuş bayrağı hiç kurulmamıştır) ve kapılar tek yerden açılır.
+    /// Çağıranlar: <see cref="OnCleanCompleted"/>, <see cref="TryConsumeCleanFailure"/> ve
+    /// <see cref="RunViewModel.ReleaseAfterEngineLoss"/> (motor mid-clean ölürse kapı sızmaz).</summary>
+    private void ReleaseCleanSurface()
+    {
+        _cleanInFlight = false;
+        _cleanRequested = false;
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[clean guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde (motor hazır değil/ölü)
+    /// çağrılır — o yolda hiçbir <c>cleanStarted</c> gelmeyeceği için kapı başka hiçbir yerde açılmazdı.</summary>
+    private void ReleaseCleanRequest()
+    {
+        _cleanRequested = false;
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[clean guard] Dönüş değeri = "bu hata Clean'e aittir, run/Sync state'ine DOKUNMA".
+    /// <see cref="TryConsumeSyncFailure"/>'ın BASİT hâlidir: Clean'in kodları
+    /// (<see cref="CleanErrorCodes"/>) hiçbir başka yüzeyle paylaşılmaz, bu yüzden kaynak ayırt etmek için
+    /// pencere karşılaştırmasına gerek yoktur — kod yeterlidir. Faz dalı da yoktur (Clean faz değiştirmez).
+    /// <para>Metin şeride taşınmaz: bu işin anlatısı konsoldadır ve hata satırı oraya zaten düşer
+    /// (<see cref="RunViewModel.OnError"/>'ın ilk satırı).</para></summary>
+    private bool TryConsumeCleanFailure(string code, string message)
+    {
+        if (!CleanErrorCodes.Contains(code) || !CleanBusy) return false;
+        ReleaseCleanSurface();
+        return true;
+    }
+
+    /// <summary>[clean guard] Clean'in yayınlayabildiği hata kodları: <c>cleanFailed</c> (beklenmeyen hata /
+    /// bozuk kök) ve <c>cleanRejected</c> (Supervisor'da bir koşu uçuşta). Run-bitiren kodlarla KESİŞMEZ.</summary>
+    private static readonly HashSet<string> CleanErrorCodes = new(StringComparer.Ordinal) { "cleanFailed", "cleanRejected" };
 
     /// <summary>[Sync guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde (motor hazır değil/ölü)
     /// çağrılır — o yolda hiçbir <c>syncStarted</c> gelmeyeceği için kapı başka hiçbir yerde açılmazdı.</summary>
@@ -243,9 +313,10 @@ public sealed partial class RunViewModel
         await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository");
     }
 
-    /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi).</summary>
+    /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi —
+    /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).</summary>
     private bool CanPullRepository() =>
-        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy;
+        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy;
 
     /// <summary>
     /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in

@@ -229,6 +229,13 @@ public sealed partial class RunViewModel
                 PushStream(StreamKind.Sync, null, StreamText.Sync(e.ToBuildCount, e.UpToDateCount));
                 break;
 
+            // [clean] Clean stream'e TEK satır düşer (ilerleme konsolda akar). Ton Sync'inkiyle aynıdır:
+            // ikisi de bir koşu değil, workspace'in durumunu değiştiren bir bakım anıdır.
+            case CleanCompletedEvent e:
+                PushStream(StreamKind.Sync, null,
+                    StreamText.CleanCompleted(e.ProjectCount, e.FoldersRemoved, e.BytesRemoved, e.LockedFileCount));
+                break;
+
             case RunCompletedEvent e:
                 if (e.Outcome == RunOutcome.Stopped)
                     PushStream(StreamKind.Info, null, StreamText.Stopped(e.Queued)); // stopped → info (parıltı YOK)

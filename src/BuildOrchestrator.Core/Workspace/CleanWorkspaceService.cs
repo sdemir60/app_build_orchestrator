@@ -196,9 +196,10 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
         return relative == "." ? Path.GetFileName(root) : relative;
     }
 
-    /// <summary>Kullanıcıya gösterilecek boyut metni. Projede insan-okur bayt biçimleyicisi YOKTU; ilk
-    /// tüketicisi burasıdır, ikinci bir tüketici doğarsa ortak bir yere taşınır (kopya YASAK).</summary>
-    internal static string FormatBytes(long bytes)
+    /// <summary>Kullanıcıya gösterilecek boyut metni. Projede insan-okur bayt biçimleyicisi YOKTU; TEK
+    /// tanımı burasıdır — konsol satırları da App'in stream özeti de (<c>StreamText.CleanCompleted</c>) BUNU
+    /// çağırır (kopya YASAK). Clean dışından üçüncü bir tüketici doğarsa ortak bir yere taşınır.</summary>
+    public static string FormatBytes(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
         double value = bytes;

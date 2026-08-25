@@ -42,6 +42,18 @@ public static class StreamText
     public static string Sync(int toBuild, int upToDate) =>
         string.Format(CultureInfo.InvariantCulture, "Sync — {0} to build, {1} up to date", toBuild, upToDate);
 
+    /// <summary>[clean] Clean'in TEK stream satırı: <c>Clean — {n} projects, {size} freed</c>; kilitli dosya
+    /// varsa sona <c> · {k} in use</c> eklenir. Boyut metni Core'un biçimleyicisinden gelir — konsol
+    /// satırlarıyla AYNI kaynak (kopya YASAK).</summary>
+    public static string CleanCompleted(int projectCount, int foldersRemoved, long bytesRemoved, int lockedFileCount)
+    {
+        string line = string.Format(CultureInfo.InvariantCulture, "Clean — {0} projects, {1} folders, {2} freed",
+            projectCount, foldersRemoved, Core.Workspace.CleanWorkspaceService.FormatBytes(bytesRemoved));
+        return lockedFileCount > 0
+            ? string.Format(CultureInfo.InvariantCulture, "{0} · {1} in use", line, lockedFileCount)
+            : line;
+    }
+
     /// <summary>build-data.js:309 — <c>Build started — {n} projects, parallelism {p}</c>.</summary>
     public static string BuildStarted(int projects, int parallelism) =>
         string.Format(CultureInfo.InvariantCulture, "Build started — {0} projects, parallelism {1}", projects, parallelism);

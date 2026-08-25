@@ -127,6 +127,31 @@ public sealed class EngineSilenceWatchdogTests
         Assert.Null(vm.EngineOverdueMessage);
     }
 
+    /// <summary>[clean] Clean penceresi de aynı gerekçeyle kapsamdadır: uçuşta bir Clean varken hiçbir düğme
+    /// açık değildir (Clean/Sync/Build/Rebuild/Cycles hepsi kapalı), yani donmuş bir motordan çıkışın TEK
+    /// yolu bu kapıdır. Clean faz DEĞİŞTİRMEZ — pencere yalnız bayraktan (CleanBusy) bilinir.</summary>
+    [Fact]
+    public async Task A_silent_engine_during_a_clean_raises_the_overdue_gate()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var (vm, clock) = NewVm(engine);
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+        Assert.False(vm.CleanCommand.CanExecute(null)); // ön-koşul: kapılar kapalı
+
+        clock.Advance(RunViewModel.EngineSilenceThresholdMs - 1);
+        vm.TickElapsed();
+        Assert.Null(vm.EngineOverdueMessage); // eşiğin ALTI: büyük bir workspace hâlâ siliniyor olabilir
+
+        clock.Advance(1);
+        vm.TickElapsed();
+        Assert.Equal(RunViewModel.EngineSilentMessage, vm.EngineOverdueMessage);
+
+        // Clean bitince uyarı KENDİLİĞİNDEN kalkar — kalıcı bir hata modu değildir.
+        vm.OnEvent(new CleanCompletedEvent(1, 2, 1024, 0, 1));
+        vm.TickElapsed();
+        Assert.Null(vm.EngineOverdueMessage);
+    }
+
     /// <summary>Sync'in ilerleme satırları da saati sıfırlar: yavaş ama KONUŞAN bir Sync (büyük fetch)
     /// asla uyarı üretmez.</summary>
     [Fact]
