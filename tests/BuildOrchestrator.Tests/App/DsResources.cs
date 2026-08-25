@@ -53,7 +53,8 @@ internal static class DsResources
     }
 
     /// <summary>Üretimdeki App.xaml merge sırası (AppResourcesMergeTests bunu ayrıca pinler).</summary>
-    private static readonly string[] MergeChain = ["Motion.xaml", "Tokens.xaml", "Icons.xaml", "Controls.xaml"];
+    private static readonly string[] MergeChain =
+        ["Motion.xaml", "Tokens.xaml", "Icons.xaml", "BrandGeometry.xaml", "Controls.xaml"];
 
     /// <summary>
     /// Uygulamanın merge zincirinin AYNISINI (Motion → Tokens → Icons → Controls) taşıyan bir kaynak kapsamı.

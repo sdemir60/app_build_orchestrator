@@ -44,22 +44,30 @@ public sealed class AntiSlopTests
     /// işaretin chevron'u kaynağında (<c>prototype/assets/app-mark.svg</c>) bir <c>linearGradient</c>'tir.
     /// Yasak arayüz dekorasyonu içindir — logoyu düzleştirmek onu YENİDEN ÇİZMEK olurdu ve "kaynak sanat
     /// birebir taşınır" kuralını çiğnerdi. İstisna DOSYA BAZINDA ve dar: yalnız markanın kendi çizim dosyası.
-    /// Başka bir XAML gradient kullanırsa test yine kırar.</para></summary>
+    /// Başka bir XAML gradient kullanırsa test yine kırar.</para>
+    ///
+    /// <para><b>[DEĞİŞEN DOSYA — tray indicator/K-7] İstisna <c>Controls/AppMark.xaml</c>'den
+    /// <c>Resources/BrandGeometry.xaml</c>'e TAŞINDI.</b> Chevron gradyanı artık orada tek bir fırça olarak
+    /// durur, çünkü ikinci bir tüketici (<c>TrayBuildIndicator</c>) aynı gradyanı ister ve iki dosyaya
+    /// kopyalamak yasağın korumaya çalıştığı şeyi (tek marka rengi, tek çizim) bozardı. Muafiyet SAYICA
+    /// büyümedi: hâlâ TEK dosya.</para></summary>
     [Fact]
     public void No_xaml_declares_a_gradient_fill_except_the_product_mark()
     {
-        string brandMark = Path.Combine("Controls", "AppMark.xaml");
         var offenders = ScanXaml((rel, text) =>
-            Gradient.IsMatch(text) && !rel.Equals(brandMark, StringComparison.OrdinalIgnoreCase) ? rel : null);
+            Gradient.IsMatch(text) && !rel.Equals(BrandGeometryFile, StringComparison.OrdinalIgnoreCase) ? rel : null);
         Assert.Empty(offenders);
     }
+
+    /// <summary>Markanın geometri + chevron gradyanının TEK tanım yeri (K-7). Muafiyet buna bağlıdır.</summary>
+    private static readonly string BrandGeometryFile = Path.Combine("Resources", "BrandGeometry.xaml");
 
     /// <summary>Muafiyet BOŞA DÜŞMESİN: markanın çizim dosyası hâlâ var ve hâlâ bir gradient taşıyor. Dosya
     /// taşınır ya da chevron düzleşirse yukarıdaki istisna sessizce ölü bir satıra dönerdi.</summary>
     [Fact]
     public void The_product_mark_really_is_the_gradient_the_guard_exempts()
     {
-        string path = Path.Combine(RepoPaths.AppSrcRoot, "Controls", "AppMark.xaml");
+        string path = Path.Combine(RepoPaths.AppSrcRoot, BrandGeometryFile);
         Assert.True(File.Exists(path), "markanın çizim dosyası taşınmış — gradient muafiyeti bayatladı");
         Assert.Matches(Gradient, File.ReadAllText(path));
     }

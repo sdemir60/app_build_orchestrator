@@ -1,0 +1,59 @@
+﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    ============================ ÜRÜN MARKASININ GEOMETRİSİ — TEK KAYNAK ============================
+
+    Build Orchestrator'ın işareti: beş pill + amber chevron. Kaynak `prototype/assets/app-mark.svg`
+    (viewBox 46.5 78 186 128); şekiller yeniden ÇİZİLMEDEN taşındı.
+
+    Neden burada, kontrolün içinde değil: işareti İKİ tüketici çizer —
+      · `Controls/AppMark`          durağan marka (title bar 19px, About başlığı 30px)
+      · `Controls/TrayBuildIndicator`  tepsideki animasyonlu derleme göstergesi
+    İkisi de AYNI silueti ister. İki ayrı çizim, sessizce ayrışabilecek ikinci bir doğruluk kaynağı olurdu:
+    biri düzeltilir, diğeri unutulur ve marka iki farklı yerde iki farklı şekil olur.
+
+    KOORDİNAT UZAYI — SVG'nin kendi uzayı. app-mark.svg şekilleri bir `translate(5.5 0)` grubunun içinde
+    tutar. AppMark bu ötelemeyi bir zamanlar kendi tuval kaymasına KATLIYORDU (X değerleri 5.5 daha küçüktü);
+    animasyon asset'i ise katlamamıştı. Ortak kaynak için katlama AÇILDI: burada duran değerler SVG'nin
+    yazdıklarıdır, tüketiciler kendi tuvalini kaydırır. Ekrandaki çıktı DEĞİŞMEZ.
+
+    Ölçüler burada bilerek "sihirli sayı"dır: bunlar tasarım token'ı değil, bir çizimin kendi
+    koordinatlarıdır (Icons.xaml'in ikon path'leriyle aynı statü). RENK ise token'dır — chevron gradyanının
+    üç durağı Tokens.xaml'den çözülür (bu sözlük App.xaml'de Tokens.xaml'den SONRA merge edilir).
+  -->
+
+  <!-- ================================ Pill'ler ================================
+       Sol üstten sağ alta: üst-koyu · amber · orta-koyu · beyaz · gümüş. Yarıçap her pill'in yarı
+       yüksekliğidir (tam yuvarlak uç) — bu yüzden 22 birimlik beyaz pill 11, diğerleri 10.5 taşır. -->
+
+  <RectangleGeometry x:Key="Brand.Pill.TopDark" Rect="73.5,83,35,21"   RadiusX="10.5" RadiusY="10.5" />
+  <RectangleGeometry x:Key="Brand.Pill.Amber"   Rect="119.5,83,51,21"  RadiusX="10.5" RadiusY="10.5" />
+  <RectangleGeometry x:Key="Brand.Pill.MidDark" Rect="51.5,131,39,21"  RadiusX="10.5" RadiusY="10.5" />
+  <RectangleGeometry x:Key="Brand.Pill.White"   Rect="102.5,131,60,22" RadiusX="11"   RadiusY="11" />
+  <RectangleGeometry x:Key="Brand.Pill.Silver"  Rect="65.5,178,57,21"  RadiusX="10.5" RadiusY="10.5" />
+
+  <!-- Beyaz pill'in SAYAÇLI varyantı — yalnız tepsi göstergesi kullanır. Üç haneli bir çift ("139/248")
+       60 birime sığmıyordu; logo-animasyonu deliverable'ı (v1.3) şeridi 66'ya genişletti ve çıkış mesafesini
+       buna göre yeniden hesapladı (88 → 82), böylece sağ ucu diğer parçalarla aynı hizada yok olur.
+       İki varyant da BURADA durur: marka orantısı (60) durağan işaretin, genişletilmiş olan (66)
+       göstergenindir — ikisi de tek dosyada olduğu için ayrışamazlar. -->
+  <RectangleGeometry x:Key="Brand.Pill.WhiteCounter" Rect="102.5,131,66,22" RadiusX="11" RadiusY="11" />
+
+  <!-- ================================ Chevron ================================ -->
+
+  <PathGeometry x:Key="Brand.Chevron"
+                Figures="M156.5 83 L177 83 C181.6 83 184.7 85.1 187.8 88.5 L225.3 131.5 C228.2 134.9 229.5 138.3 229.5 142.4 C229.5 146.5 228.2 149.8 225.3 153.2 L184.6 198.3 C181.5 201.6 177.8 203 173.5 203 L156.5 203 C151.3 203 147.6 200.4 146 196.4 C144.3 192.1 145.7 187.8 149 184.2 L183.3 146.2 C186.1 143.2 186.3 140.8 183.7 137.8 L150.2 103.7 C147.3 100.7 145.9 96.9 145.9 93 C145.9 87.5 150.6 83 156.5 83 Z" />
+
+  <!-- Chevron'un dolgusu. SVG gradyanı `userSpaceOnUse`tur; WPF karşılığı MappingMode="Absolute" — yani
+       duraklar chevron'un KENDİ koordinat uzayında verilir, ölçekten bağımsızdır.
+
+       Kaynak SVG dokuz duraklıdır; uygulama içindeki marka ARAYÜZ PALETİYLE konuşur (design-v1.2.1) ve üç
+       token durağa indirgenmiştir: AmberBright → Amber → Brand.ChevronDeep. Bu, anti-slop guard'ının
+       tanıdığı TEK gradient'tir (dekorasyon değil, kaynak sanatın kendisi). -->
+  <LinearGradientBrush x:Key="Brush.Brand.Chevron" MappingMode="Absolute" StartPoint="161.5,82" EndPoint="182.5,204">
+    <GradientStop Offset="0"   Color="{DynamicResource Color.AmberBright}" />
+    <GradientStop Offset="0.5" Color="{DynamicResource Color.Amber}" />
+    <GradientStop Offset="1"   Color="{DynamicResource Color.Brand.ChevronDeep}" />
+  </LinearGradientBrush>
+
+</ResourceDictionary>

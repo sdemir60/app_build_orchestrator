@@ -12,6 +12,9 @@
                 <ResourceDictionary Source="Resources/Motion.xaml" />
                 <ResourceDictionary Source="Resources/Tokens.xaml" />
                 <ResourceDictionary Source="Resources/Icons.xaml" />
+                <!-- [tray indicator/K-7] Ürün markasının geometrisi: AppMark ve TrayBuildIndicator ORTAK
+                     kaynağı. Tokens.xaml'den SONRA gelir (chevron gradyanı token renklerini çözer). -->
+                <ResourceDictionary Source="Resources/BrandGeometry.xaml" />
                 <ResourceDictionary Source="Resources/Controls.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>

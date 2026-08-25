@@ -75,15 +75,34 @@ public class AppResourcesMergeTests
         Assert.Contains("Resources/Controls.xaml", sources);
     }
 
+    [Fact]
+    public void App_xaml_merges_the_BrandGeometry_resource_dictionary()
+    {
+        var doc = LoadAppXaml();
+
+        var sources = doc.Descendants(Presentation + "ResourceDictionary")
+            .Attributes("Source")
+            .Select(a => a.Value)
+            .ToList();
+
+        Assert.Contains("Resources/BrandGeometry.xaml", sources);
+    }
+
     /// <summary>
     /// Beklenen liste [T64] ile İKİDEN ÜÇE, [T60] ile ÜÇTEN DÖRDE çıktı: <c>Resources/Icons.xaml</c>
     /// uygulamanın TEK ikon kaynağı, <c>Resources/Controls.xaml</c> ise TEK DS kontrol kütüphanesidir.
     /// İddia bilerek TAM EŞİTLİK'tir ("en az N" DEĞİL): bu testin tüm değeri, merge zincirine düşünmeden bir
     /// sözlük eklenmesinin derlemeyi kırmasıdır — YÜKLEME SIRASI da bilinçli bir karardır: Controls.xaml
     /// token/ikon anahtarlarını <c>{StaticResource}</c> ile de çözer, bu yüzden ONLARDAN SONRA gelmelidir.
+    ///
+    /// <para><b>[DEĞİŞEN İDDİA — tray indicator/K-7] Liste DÖRTTEN BEŞE çıktı:</b>
+    /// <c>Resources/BrandGeometry.xaml</c> ürün markasının pill + chevron geometrisinin TEK tanım yeridir
+    /// (<c>AppMark</c> ve <c>TrayBuildIndicator</c> ikisi de oradan tüketir). Sırası <c>Tokens.xaml</c>'den
+    /// SONRADIR — chevron gradyanının durakları token renklerini çözer — ve <c>Controls.xaml</c>'den
+    /// ÖNCEDİR, çünkü "kontrol kütüphanesi en sonda" kararı korunur.</para>
     /// </summary>
     [Fact]
-    public void App_xaml_merges_exactly_the_four_foundation_dictionaries_no_more_no_less()
+    public void App_xaml_merges_exactly_the_five_foundation_dictionaries_no_more_no_less()
     {
         var doc = LoadAppXaml();
 
@@ -94,7 +113,8 @@ public class AppResourcesMergeTests
             .ToList();
 
         Assert.Equal(
-            ["Resources/Motion.xaml", "Resources/Tokens.xaml", "Resources/Icons.xaml", "Resources/Controls.xaml"],
+            ["Resources/Motion.xaml", "Resources/Tokens.xaml", "Resources/Icons.xaml",
+             "Resources/BrandGeometry.xaml", "Resources/Controls.xaml"],
             sources);
     }
 }
