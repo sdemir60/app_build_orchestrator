@@ -335,6 +335,13 @@ than the ones a run makes so it can be followed by eye.
 Drag the empty background to pan (the cursor turns into a hand) and the mouse wheel zooms at the pointer;
 clicking empty background with nothing selected returns the view to its default.
 
+You do not have to keep the window open to watch a build. Closing it with `X` drops the app to the tray, and if
+a build is running the product mark animates in the bottom-right corner of the screen with the same
+`built/to-build` counter the ribbon shows — click it to bring the window back, or click straight through the
+empty space around it to whatever is underneath. When the run finishes the mark plays out its last turn, fades,
+and Windows shows a notification with the result; the same sentence is waiting in the ribbon when you open the
+window again. A run that finishes while the window is open shows no notification — the ribbon already says it.
+
 If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
 says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take
 minutes; the action is there for the case where waiting is no longer the answer. Restarting kills the engine

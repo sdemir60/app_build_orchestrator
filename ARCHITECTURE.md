@@ -1367,7 +1367,9 @@ the hero-motion coordinator.
 ### 12.2 Window chrome
 
 Custom dark title bar via `WindowChrome` (caption height 40, no Aero caption buttons) on a `SingleBorderWindow`.
-`AllowsTransparency` is never used. Consequences that had to be handled explicitly:
+**The main window never uses `AllowsTransparency`.** Exactly one surface does, and it is not this one: the tray
+build overlay of §12.3 has to be a layered window, because that is what makes the desktop show through where it
+is empty and what lets clicks fall through the same pixels. Consequences that had to be handled explicitly:
 
 - **Maximize padding correction is mandatory** (`dotnet/wpf#3887`): without it the content overflows the screen
   edge when maximized. It is driven by a `WindowState` dependency-property watcher rather than the `StateChanged`
@@ -1397,6 +1399,32 @@ balloon and exits with a distinct exit code.
 
 Closing the window with `X` minimizes to the tray. The first time this happens, an **OS tray balloon** explains
 it, once — in-app toasts are prohibited by the design.
+
+**A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
+in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
+animates in the bottom-right corner of the primary work area, carrying the same `finished/will-build` counter the
+ribbon shows. It appears if the user drops to the tray mid-run and disappears the instant the window comes back.
+The surface is its own top-level window: it must stay visible while the main window is hidden, so it cannot be a
+popup inside it.
+
+Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
+appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
+restores the window through the *same* path as clicking the tray icon, while clicks on the transparent area
+around it pass through to whatever is underneath — that separation is free, because a layered window is
+hit-tested per pixel by the OS against the alpha channel. `WS_EX_TRANSPARENT` is therefore deliberately absent:
+it would make the whole window click-through and kill the click-to-restore.
+
+When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
+slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
+events do not land on top of each other, an **OS balloon** reports the result. Its text is not composed a second
+time: it is the ribbon's own terminal line, so opening the window afterwards shows the same sentence. The icon
+follows the line's status glyph (info, or error when something failed). A run that ends while the window is
+*visible* produces no balloon at all — the ribbon is already on screen.
+
+The overlay always sits on the primary screen, because that is where the tray is; on a multi-monitor desk the
+user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also
+phase-driven rather than window-driven, so if starting a build from the tray without opening the window is ever
+added, the indicator needs no further work.
 
 The global hotkey (`Alt+B` by default, read from `ui-state.json`) is registered with `RegisterHotKey`. A
 conflict disables it silently; the tray icon still restores the window. There is no UI for changing it yet,
@@ -2706,20 +2734,34 @@ for the same reason; all three title-bar icon buttons read as one family.
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
 the product mark (title bar 19 px, About hero 30 px) and `Controls/BrandLogo.xaml` the company wordmark (title
-bar 10 px at 55 % opacity, About 13 px at 80 %). Guards assert each geometry appears in exactly one source
-file. The company logo is optional; where it is absent, the hairline separating it goes too.
+bar 10 px at 55 % opacity, About 13 px at 80 %). The company logo is optional; where it is absent, the hairline
+separating it goes too.
 
-The chevron is the one gradient in the application. Flat surfaces are the rule and a guard enforces it, with a
-single file-scoped exemption for the mark: flattening a logo would mean redrawing it, and source artwork is
-transferred verbatim. The chevron is amber — the same accent the interface uses — which is deliberate: the
-brand speaks the interface's palette. The cost is that the mark carries accent weight in the title bar, so no
-other amber element belongs in that region.
+**The product mark is drawn once and consumed twice.** The five pills and the chevron live in
+`Resources/BrandGeometry.xaml`; `AppMark` and the animated tray indicator (§12.3) both ask for them by key. A
+second drawing would be a second truth: one gets corrected, the other does not, and the brand quietly becomes
+two different shapes. A guard asserts the geometry appears in exactly one source file — the assertion is
+unchanged, only the file moved. The shared dictionary holds the source SVG's own coordinates rather than the
+folded-in ones the mark used to carry; each consumer shifts its own canvas instead, which is why a test measures
+the drawn box and not just the figure count.
 
-The mark's palette comes from the neutral ramp and the amber family, except two intermediate tones that exist
+The white pill is the one shape with two variants, both in that same file: the mark's own proportion and a wider
+one for the indicator, whose strip had to grow to fit a three-digit counter. The counter's slot is measured from
+that geometry rather than repeated as numbers next to it.
+
+The chevron is the one gradient in the application, and it too is a single shared brush. Flat surfaces are the
+rule and a guard enforces it, with a single file-scoped exemption for the mark's dictionary: flattening a logo
+would mean redrawing it, and source artwork is transferred verbatim. The chevron is amber — the same accent the
+interface uses — which is deliberate: the brand speaks the interface's palette. The cost is that the mark
+carries accent weight in the title bar, so no other amber element belongs in that region.
+
+The mark's palette comes from the neutral ramp and the amber family, except a few intermediate tones that exist
 only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
 the other values the design source does not name. Two of them are also exposed as raw `Color` resources
 because a gradient stop takes a colour rather than a brush — the brushes are derived from those colours, so no
-hex is written twice.
+hex is written twice. The tray counter's ink is one of these: it has to read against the light strip it sits on
+while staying quiet enough that the logo does not turn into a label, and no tone on the text ramp — tuned for
+dark surfaces — does both. Its opacity is folded into the alpha channel so the control carries no second one.
 
 **Raster icons** (`.exe`, taskbar, tray) are generated from the same artwork by `Assets/generate-app-icons.ps1`
 into a multi-size ICO. They ship **without a background**: the mark sits on a transparent canvas and is fitted
@@ -2756,7 +2798,14 @@ Five contract rules, each enforced by a test:
    live; the four `Duration.*` resources are zeroed and restored in place. Pure-XAML storyboards must use
    `DynamicResource` — a `StaticResource` resolves once and would never see the change — and code-driven
    animations must read the setting *at animation start*.
-3. **No literals.** Hardcoded hex or millisecond values in animation code fail a guard test.
+3. **No literals.** Hardcoded hex or millisecond values in animation code fail a guard test. There is one
+   file-scoped exemption on the XAML side, and it is the motion counterpart of the verbatim-artwork rule that
+   already exempts the mark's gradient: the tray indicator's three-second brand loop is a delivered timeline —
+   an entrance, a hold, and an exit, each piece with its own delay, curve and travel distance — not a member of
+   the 80–280 ms interface ramp. Binding it to a duration token would not shorten it, it would destroy it.
+   Reduced motion is honoured there by never starting the loop rather than by collapsing its durations, and the
+   exemption is paired with a test that fails if the exempt file stops carrying a timeline, so it cannot decay
+   into a dead line that someone later reads as permission.
 4. **Frozen brushes cannot be animated.** Shared/frozen resources are copied per instance before being driven;
    `ContainerVisual.Opacity` cannot be animated at all, which is why graph layer hosts are `UIElement`s.
 5. **WPF does not premultiply, CSS does.** WPF interpolates a colour's channels straight, so whenever the two
@@ -2856,7 +2905,18 @@ With nothing built it does not play at all, and a new operation cuts it instantl
 
 Under reduced motion neither choreography runs: the scope is marked and the run proceeds.
 
-Decorative infinite animations run at `DesiredFrameRate=30`; all counters tick from one `DispatcherTimer`;
+**A loop that has to finish gracefully cannot be infinite.** The tray indicator must complete the exit phase of
+whichever pass it is in when the build ends, and an endless storyboard has no boundary at which to ask that
+question — stopping it would mean cutting it in half. So it runs a single iteration and decides at each
+`Completed` whether to begin another; "finish" is then just a flag, with no seeking and no rate changes. The
+seam is invisible because the artwork was authored with no empty frame: the last strip dissolves exactly as the
+chevron re-enters. Two consequences are easy to get wrong and are pinned by tests — `Stop()` leaves the
+animations attached to their elements (and itself raises `Completed`, which would revive the loop), so tearing
+down means `Remove()` behind a re-entry guard; and a pending finish is honoured even when the indicator is
+dismissed early, or a run would end with no notification at all.
+
+Decorative infinite animations run at `DesiredFrameRate=30` — one shared constant, not a number repeated per
+owner; all counters tick from one `DispatcherTimer`;
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
 `DispatcherTimer` resolution. Resetting an observable collection is prohibited — it destroys running
 animations.
@@ -2870,6 +2930,15 @@ same discipline applies to periodic work: a one-shot `DispatcherTimer` stops its
 dispatcher roots it, so an unstopped one ticks forever and can never be collected), and anything called from
 the 200 ms tick writes only when the value actually changed, since assigning the same string still invalidates
 measure and draw five times a second.
+
+**Two seams in the tray indicator are deliberately not instant, and neither carries a number in code.** The
+overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
+a short breath separates them; its length is `Duration.Slow`, which means reduced motion collapses it to zero on
+its own — a user who asked for no animation is not made to wait. The breath is an injectable seam, so the suite
+proves the ordering without spending real time. The counter behaves the same way: it is never written with an
+unchanged value, and when the digits do change the text dims and returns over `Duration.Fast` instead of
+swapping hard. Only opacity moves — the strip is a fixed width and the digits are monospaced, so nothing
+reflows.
 
 ### 14.6 Copy and tone
 
@@ -3245,6 +3314,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
+| Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
+| …its wiring to the view model (line, counter, phase) | `App/Services/TrayIndicatorBinder.cs` |
+| …the animated mark itself (loop, counter, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
+| …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
+| Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | Shortcut display text and descriptions (single source) | `App/Shell/ShortcutCatalog.cs` |
@@ -3401,6 +3475,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
 | What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
+| Brand geometry and chevron gradient — one source, two consumers | `App/Resources/BrandGeometry.xaml` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
