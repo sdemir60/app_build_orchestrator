@@ -54,6 +54,21 @@ public sealed class NoHardcodedColorTests
     }
 
     /// <summary>
+    /// Renk OLMAYAN, 6/8 haneli paketlenmiş hex sabitleri. Her satır bir gerekçe taşır; gerekçesi olmayan bir
+    /// sabit buraya YAZILMAZ.
+    ///
+    /// <para>Değerler işletim sisteminin başlık dosyalarındaki HÂLİYLE (sıfır dolgulu) yazılır — kısaltmak
+    /// guard'ı susturur ama sabitin <c>winuser.h</c> ile karşılaştırılabilirliğini bozar; bir interop
+    /// sabitinde doğrulanabilirlik, guard'ı memnun etmekten önemlidir.</para></summary>
+    private static readonly string[] NonColourHexConstants =
+    [
+        "800401D0",  // CLIPBRD_E_CANT_OPEN HRESULT — Console/ClipboardRetry.cs
+        "00000080",  // WS_EX_TOOLWINDOW   — Shell/Win32.cs (tepsi overlay'i Alt-Tab'da görünmez)
+        "08000000",  // WS_EX_NOACTIVATE   — Shell/Win32.cs (overlay odak çalmaz)
+        "00000020",  // WS_EX_TRANSPARENT  — Shell/Win32.cs (BİLEREK kullanılmayan bayrak; yalnız tanımlı)
+    ];
+
+    /// <summary>
     /// [T49 FINAL PASS] <c>*.cs</c> tarafındaki renk literali biçimleri — üç ayrı kalıp, üçü de YASAK:
     /// <list type="number">
     /// <item>hex string literali (<c>"#3a3a42"</c>) — <c>ColorConverter</c>/<c>Brush</c> yolu;</item>
@@ -67,17 +82,18 @@ public sealed class NoHardcodedColorTests
     /// sürüm bunu HİÇ görmüyordu.</item>
     /// </list>
     ///
-    /// <para><b>Paketlenmiş literal için dar ve gerekçeli izin:</b> <c>0x800401D0</c> — <c>CLIPBRD_E_CANT_OPEN</c>
-    /// HRESULT'ı (<c>Console/ClipboardRetry.cs</c>), renk değil. İzin TEK bir değere verilir (dosyaya değil):
-    /// aynı dosyaya eklenecek gerçek bir renk literali yine yakalanır. Yeni bir 6/8 haneli hex sabiti guard'ı
-    /// kırmızıya çeker — bu BİLİNÇLİDİR: sayısal bir renk mi yoksa Win32 sabiti mi olduğu insan kararıdır.</para>
+    /// <para><b>Paketlenmiş literal için dar ve gerekçeli izin:</b> bkz. <see cref="NonColourHexConstants"/>.
+    /// İzin TEK TEK DEĞERLERE verilir (dosyaya değil): izinli bir sabitin yanına eklenecek gerçek bir renk
+    /// literali yine yakalanır. Yeni bir 6/8 haneli hex sabiti guard'ı kırmızıya çeker — bu BİLİNÇLİDİR:
+    /// sayısal bir renk mi yoksa Win32 sabiti mi olduğu insan kararıdır.</para>
     /// </summary>
     private static readonly Regex CodeColourLiteral = new(
         "\"#[0-9a-fA-F]{3,8}\"" +
         "|Color\\.From(?:Rgb|Argb|ScRgb)\\(\\s*(?:0x[0-9a-fA-F]+|[0-9.]+f?)\\s*(?:,\\s*(?:0x[0-9a-fA-F]+|[0-9.]+f?)\\s*)*\\)" +
         "|(?<![A-Za-z0-9_])Colors\\.(?!Transparent\\b)[A-Z][A-Za-z]*" + // (?<!…): SystemColors.* WPF sistem fırçasıdır, renk literali değil
-        "|0x(?!800401D0(?![0-9a-fA-F]))(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})(?![0-9a-fA-F])",
+        $"|0x(?!(?:{string.Join('|', NonColourHexConstants)})(?![0-9a-fA-F]))(?:[0-9a-fA-F]{{8}}|[0-9a-fA-F]{{6}})(?![0-9a-fA-F])",
         RegexOptions.Compiled);
+
 
     [Fact]
     public void No_cs_file_in_the_app_tree_declares_a_raw_colour()
@@ -108,6 +124,10 @@ public sealed class NoHardcodedColorTests
     [InlineData("unchecked((int)0xFF3A3A42)", true)]                       // [A2] paketlenmiş ARGB
     [InlineData("const uint Packed = 0x3A3A42;", true)]                    // [A2] paketlenmiş RGB
     [InlineData("const int CantOpen = unchecked((int)0x800401D0);", false)] // izinli: CLIPBRD_E_CANT_OPEN HRESULT
+    [InlineData("public const int WS_EX_TOOLWINDOW = 0x00000080;", false)]  // izinli: Win32 pencere stili
+    [InlineData("public const int WS_EX_NOACTIVATE = 0x08000000;", false)]  // izinli: Win32 pencere stili
+    [InlineData("public const int WS_EX_TRANSPARENT = 0x00000020;", false)] // izinli: Win32 pencere stili
+    [InlineData("public const int WS_EX_LAYERED = 0x00080000;", true)]      // İZİNSİZ bir Win32 sabiti YİNE yakalanır
     [InlineData("private const int GlobalHotkeyId = 0xB0;", false)]        // kısa sabit — renk olamaz
     public void Code_regex_separates_colour_literals_from_lookalike_code(string sample, bool isColour)
         => Assert.Equal(isColour, CodeColourLiteral.IsMatch(sample));

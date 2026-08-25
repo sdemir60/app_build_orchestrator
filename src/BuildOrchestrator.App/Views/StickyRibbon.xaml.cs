@@ -220,14 +220,9 @@ public partial class StickyRibbon : UserControl
     private void RefreshText()
     {
         if (_vm is null) return;
-        var c = _vm.Counters;
-        var line = RibbonText.Compose(_vm.Phase, _vm.HasWorkspace, _vm.AllClean, c,
-            _vm.WillBuildCount, _vm.FinishedOfWillBuild, c.Total,
-            _vm.ElapsedMs, _vm.EtaMs, checkDurMs: _vm.ElapsedMs, warnings: 0,
-            engineDiedMessage: _vm.EngineDiedMessage, syncError: _vm.SyncErrorMessage,
-            runError: _vm.RunErrorMessage, engineOverdue: _vm.EngineOverdueMessage,
-            resolvingCycles: _vm.IsResolvingCycles, cycleRound: _vm.CycleRound, cycleRoundCap: _vm.CycleRoundCap);
-        // NOT (wire gap): warnings=0 — App derleyici-warning sayısını izlemiyor (RunCompletedEvent'te yok). Bkz. report.
+        // [tray indicator/K-5] Satır artık VM'de üretilir: aynı cümleyi tepsideki bitiş bildirimi de taşır ve
+        // iki yerde compose etmek onların sessizce ayrışmasına açık kapı bırakırdı.
+        var line = _vm.RibbonLine;
 
         // [E2/T37] "Restart engine" kalıcı hata modunda görünür (banner/toast YOK — şerit-içi).
         // [D1] …ve yalnız yeniden başlatmanın ANLAMI varsa: Supervisor çıktısı hiç yoksa (EngineRestartable=false)

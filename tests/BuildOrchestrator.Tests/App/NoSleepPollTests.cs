@@ -65,6 +65,12 @@ public sealed class NoSleepPollTests
         [@"BuildOrchestrator.App\Shell\SingleInstance.cs"] = 1,
         // ConsoleBatcher tick'inin üretim varsayılanı (~50ms toplu boşaltma penceresi) — DI'da dikiş.
         [@"BuildOrchestrator.App\App.xaml.cs"] = 1,
+        // [tray indicator/K-14] Tepsi göstergesi kaybolduktan SONRA balloon'un patlamasına kadar geçen kısa
+        // nefesin üretim varsayılanı. Beklenecek bir handle/TCS yoktur — beklenen şey bir SÜREDİR (gözün iki
+        // olayı ayırabilmesi için). Süre token'dan gelir ve reduced-motion'da sıfıra düşer; gecikmenin kendisi
+        // enjekte edilebilir bir dikiştir (TrayBuildIndicatorController.ExitBreath), yani testte gerçek bekleme
+        // oluşmaz.
+        [@"BuildOrchestrator.App\MainWindow.xaml.cs"] = 1,
         // MSB302x contention retry'ının üretim varsayılanı — RunCoordinator'ın retryDelay dikişi.
         [@"BuildOrchestrator.Supervisor\RunCoordinator.cs"] = 1,
         // Test fixture'ı olarak SPAWN EDİLEN child process'in KENDİ komutu (powershell Start-Sleep); bizim

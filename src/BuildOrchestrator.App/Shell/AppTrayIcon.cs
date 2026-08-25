@@ -17,7 +17,7 @@ namespace BuildOrchestrator.App.Shell;
 /// artık var ama tepsi BİLEREK 16px varyantında kalır: tepsi zaten 16px ister ve elle ayarlanmış kare
 /// rasterlestirilmiş olandan nettir.</para>
 /// </summary>
-internal sealed class AppTrayIcon : IDisposable
+internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 {
     private const string IconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/tray-icon-16.ico";
 
@@ -66,6 +66,26 @@ internal sealed class AppTrayIcon : IDisposable
     /// bilinçli olarak OS bildirimi.</summary>
     public void ShowNotification(string title, string message) =>
         _icon.ShowNotification(title: title, message: message, icon: NotificationIcon.Warning);
+
+    /// <summary>
+    /// [tray indicator/K-5] Uygulama TEPSİDEYKEN biten bir koşunun sonucu.
+    ///
+    /// <para><paramref name="message"/> yeniden derlenmez — şeridin o anki terminal satırının TA KENDİSİDİR
+    /// (<c>RunViewModel.RibbonLine</c>). Kullanıcı pencereyi açtığında şeritte aynı cümleyi görür; iki yüzey
+    /// aynı şeyi söylemek zorundadır.</para>
+    ///
+    /// <para>Neden <see cref="ShowNotification"/> yeniden kullanılmıyor: o Warning ikonuna SABİTLENMİŞTİR ve
+    /// kendi çağıranı (ikinci instance uyarısı) vardır; onu parametreleştirmek mevcut davranışı değiştirirdi.
+    /// Burada ikon sonuca göre seçilir — başarılı bir derlemeye uyarı ikonu koymak yanlış sinyaldir.</para></summary>
+    public void ShowRunFinished(string message, bool healthy) => _icon.ShowNotification(
+        title: AppIdentity.Product,   // [About] ürün adı tek kaynaktan (kopya YASAK)
+        message: message,
+        icon: RunFinishedIcon(healthy));
+
+    /// <summary>Sonuç → balloon ikonu. Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye
+    /// (<c>TaskbarIcon</c> headless süitte kurulamaz).</summary>
+    internal static NotificationIcon RunFinishedIcon(bool healthy) =>
+        healthy ? NotificationIcon.Info : NotificationIcon.Error;
 
     public void Dispose() => _icon.Dispose();
 }

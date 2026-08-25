@@ -9,7 +9,20 @@ namespace BuildOrchestrator.App.ViewModels;
 /// opsiyonel statü glyph'i (<c>Glyph</c>: <c>"succeeded"</c>/<c>"failed"</c>/<c>null</c>). Saf DATA;
 /// hiçbir WPF türü taşımaz.
 /// </summary>
-public readonly record struct RibbonLine(string Text, string BrushKey, string? Glyph);
+public readonly record struct RibbonLine(string Text, string BrushKey, string? Glyph)
+{
+    /// <summary>
+    /// [tray indicator/K-5] Satır bir BAŞARISIZLIK bildirmiyor mu.
+    ///
+    /// <para>Ölçüt glyph'tir, metin değil: glyph zaten şeridin TEK statü sinyalidir ve failed sayısı,
+    /// run hatası, sync hatası, motor ölümü — hepsi ona düşer. Tepsideki bitiş bildirimi ikonunu (bilgi mi
+    /// hata mı) buradan seçer; ayrı bir "kötü mü" kuralı yazmak, aynı kararın ikinci bir tanımı olurdu.</para></summary>
+    public bool Healthy => Glyph != FailedGlyph;
+
+    /// <summary>Başarısızlık glyph'inin adı — <see cref="Healthy"/> ile şeridin glyph eşlemesi aynı dizgiyi
+    /// okur.</summary>
+    public const string FailedGlyph = "failed";
+}
 
 /// <summary>
 /// [D2/T38+T39+T70] Sticky şeridin SAF metin/ilerleme mantığı (design-v1 <c>BuildApp.jsx:752-776</c> birebir

@@ -13,6 +13,7 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Processes;
@@ -37,6 +38,11 @@ public partial class MainWindow : Window
     private readonly FirstCloseBalloonGate _closeBalloon;
     private AppTrayIcon? _tray;
     private HotkeyRegistration? _hotkey;
+
+    // [tray indicator] Tepsideyken koşan derlemenin göstergesi. Overlay penceresi LAZY yaratılır: kullanıcı
+    // uygulamayı hiç tepsiye indirmeden kullanabilir ve o zaman bir HWND'e hiç ödeme yapılmaz.
+    private TrayBuildOverlayWindow? _trayOverlay;
+    private TrayBuildIndicatorController? _trayIndicator;
     private bool _exiting; // tepsi Exit'i (gerçek çıkış) ile X'i (tepsiye küçült) ayıran TEK bayrak
 
     // [D5/T50] Graf ↔ VM köprüsü. GraphView düğümleri AD ile anahtarlar, VM seçimi ID (yol) ile; iki yönlü ad↔id
@@ -1005,12 +1011,82 @@ public partial class MainWindow : Window
         _tray.StopRequested += () => { if (_vm.StopCommand.CanExecute(null)) _vm.StopCommand.Execute(null); };
         _tray.ExitRequested += ExitApplication;
 
+        SetUpTrayBuildIndicator(_tray);
+
         HwndSource.FromHwnd(hwnd)!.AddHook(HotkeyWndProc);
 
         // [v7Δ-5] Alt+B (ayarlanabilir) — çakışmada SESSİZ devre dışı.
         if (!HotkeyBinding.TryParse(_uiState.Load().Hotkey, out var binding))
             HotkeyBinding.TryParse(HotkeyBinding.DefaultGesture, out binding);
         _hotkey = HotkeyRegistration.Register(hwnd, GlobalHotkeyId, binding);
+    }
+
+    // ==================================== Tepsi build göstergesi ====================================
+
+    /// <summary>
+    /// [tray indicator/K-12] Göstergeyi kurar: karar controller'da, çizim overlay penceresinde, bildirim
+    /// tepsi ikonunda. Burada yalnız üçünü birbirine bağlarız.
+    ///
+    /// <para>Kurulum tepsi ikonunun YANINDA durur çünkü ikisi aynı şeyin parçasıdır: uygulama tepsideyken
+    /// nasıl görünür ve nasıl konuşur. Autostart yolu (<see cref="StartInTray"/>) da kendiliğinden kapsanır —
+    /// pencere hiç gösterilmediği için <c>IsVisibleChanged</c> hiç "görünür" demez ve ilk koşuda gösterge
+    /// doğru şekilde tepside belirir.</para></summary>
+    private void SetUpTrayBuildIndicator(ITrayRunNotifier notifier)
+    {
+        var controller = new TrayBuildIndicatorController(new LazyOverlayView(this), notifier)
+        {
+            // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
+            // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
+            ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
+        };
+        _trayIndicator = controller;
+
+        controller.SetAnimationsEnabled(MotionGate.StaticAnimationsEnabled);
+        if (App.Motion is { } motion) motion.AnimationsEnabledChanged += OnTrayIndicatorMotionChanged;
+
+        // Pencerenin görünürlüğü göstergenin var olma koşulunun yarısıdır (diğer yarısı faz).
+        IsVisibleChanged += (_, _) => controller.SetMainWindowVisible(IsVisible);
+        controller.SetMainWindowVisible(IsVisible);
+
+        TrayIndicatorBinder.Attach(_vm, controller);
+    }
+
+    /// <summary>[K-11] OS ayarı koşu SIRASINDA değişebilir — değer her seferinde TAZE okunur.</summary>
+    private void OnTrayIndicatorMotionChanged(object? sender, EventArgs e) =>
+        _trayIndicator?.SetAnimationsEnabled(MotionGate.StaticAnimationsEnabled);
+
+    /// <summary>Overlay penceresini ilk gerçek gösterimde yaratır ve geri getirme yolunu tepsi ikonuyla AYNI
+    /// handler'a bağlar (ikinci bir restore yolu yazılmaz).</summary>
+    private TrayBuildOverlayWindow EnsureTrayOverlay()
+    {
+        if (_trayOverlay is not null) return _trayOverlay;
+        _trayOverlay = new TrayBuildOverlayWindow();
+        _trayOverlay.RestoreRequested += ShowFromTray;
+        return _trayOverlay;
+    }
+
+    /// <summary>
+    /// Controller'ın gördüğü view — overlay penceresini GEREKTİĞİNDE yaratır.
+    ///
+    /// <para>Gizleme/sayaç/çıkış fiilleri pencere yoksa sessizce düşer: gösterilmemiş bir göstergeyi gizlemek
+    /// ya da sayacını güncellemek anlamsızdır ve bunun için HWND yaratmak saçma olurdu. Tek istisna
+    /// <see cref="BeginExit"/>'tir — controller orada bir CEVAP bekler; pencere yoksa oynatılacak çıkış evresi
+    /// de yoktur, o yüzden hemen bitmiş sayılır (aksi halde bildirim sonsuza dek beklerdi).</para></summary>
+    private sealed class LazyOverlayView(MainWindow owner) : ITrayBuildIndicatorView
+    {
+        public void ShowLoop() => owner.EnsureTrayOverlay().ShowLoop();
+
+        public void ShowStatic() => owner.EnsureTrayOverlay().ShowStatic();
+
+        public void UpdateCounter(int done, int total) => owner._trayOverlay?.UpdateCounter(done, total);
+
+        public void BeginExit(Action onFinished)
+        {
+            if (owner._trayOverlay is { } overlay) overlay.BeginExit(onFinished);
+            else onFinished();
+        }
+
+        public void HideNow() => owner._trayOverlay?.HideNow();
     }
 
     /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir.</summary>
@@ -1083,6 +1159,9 @@ public partial class MainWindow : Window
         if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
         _hotkey?.Dispose();
         _tray?.Dispose();
+        // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
+        if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
+        _trayOverlay?.Close();
         base.OnClosed(e);
     }
 

@@ -79,6 +79,17 @@ internal static class MotionTokens
         return animation;
     }
 
+    /// <summary>
+    /// <c>Duration.Slow</c>'un TEK çözüm ifadesi (fallback dahil) — iki tüketicisi var ve ikisi de aynı
+    /// süreyi ister: kaydırma geçişleri (<see cref="AnimateSlowEaseInOut"/>) ve tepsi göstergesinin
+    /// kaybolma→bildirim nefesi (K-14).
+    ///
+    /// <para>Reduced-motion burada AYRICA denetlenmez ve denetlenmemelidir: <c>MotionSettings.Attach</c>
+    /// sinyal kapandığında sözlükteki <c>Duration.*</c> girdilerini topluca sıfıra çeker, yani bu çağrı
+    /// kendiliğinden 0 döner. Nefes de böylece kendiliğinden kaybolur — animasyon istemeyen kullanıcı
+    /// bekletilmez.</para></summary>
+    public static Duration ResolveSlow(FrameworkElement host) => ResolveDuration(host, "Duration.Slow", 280.0);
+
     public static KeySpline ResolveKeySpline(FrameworkElement host, string key, KeySpline fallback)
         => host.TryFindResource(key) is KeySpline k ? k : fallback;
 
@@ -323,7 +334,7 @@ internal static class MotionTokens
     public static bool AnimateSlowEaseInOut(FrameworkElement host, UIElement scrollTarget, double currentOffset, double targetOffset)
     {
         bool animationsEnabled = MotionGate.StaticAnimationsEnabled; // [W2] statik sinyalin TEK okuma ifadesi
-        var duration = ResolveDuration(host, "Duration.Slow", 280.0);
+        var duration = ResolveSlow(host);
         var spline = ResolveKeySpline(host, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
         return ScrollAnimator.AnimateTo(scrollTarget, currentOffset, targetOffset, animationsEnabled, duration.TimeSpan, spline);
     }

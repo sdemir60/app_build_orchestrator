@@ -441,6 +441,29 @@ public sealed partial class RunViewModel : ObservableObject
     /// davetini bununla ayırt eder.</summary>
     public bool HasWorkspace => RootPath.Length > 0;
 
+    /// <summary>
+    /// [D2/T38 · tray indicator/K-5] Şeridin O ANKİ tek satırı: metin + brush anahtarı + statü glyph'i.
+    ///
+    /// <para><b>Neden VM'de:</b> bu satırın İKİ tüketicisi var — ekrandaki şerit ve (uygulama tepsideyken)
+    /// koşu bitişini duyuran OS bildirimi. İkincisi için metni yeniden derlemek, aynı cümlenin iki ayrı yerde
+    /// üretilmesi olurdu: biri "3 failed · 24 succeeded" derken diğeri sessizce başka bir şey diyebilirdi.
+    /// Girdilerin hepsi zaten buradaki property'lerdir; satırı da burada üretmek tek doğruluk kaynağı bırakır.
+    /// (Önceden ifade görünümün içinde, <c>StickyRibbon</c>'da yaşıyordu.)</para>
+    ///
+    /// <para><b>PropertyChanged YAYMAZ</b> ve yaymamalıdır: değeri besleyen on kadar property'nin her biri zaten
+    /// kendi bildirimini yapar; tüketiciler onları dinleyip bunu okur. Ayrı bir bildirim, aynı değişimin ikinci
+    /// kez duyurulması olurdu.</para>
+    ///
+    /// <para><b>Bilinen boşluk (kablo):</b> <c>warnings: 0</c> — App derleyici-warning sayısını izlemiyor
+    /// (<c>RunCompletedEvent</c> taşımıyor). Satır bu yüzden " · N warnings" ekini hiç üretmez.</para></summary>
+    public RibbonLine RibbonLine => RibbonText.Compose(
+        Phase, HasWorkspace, AllClean, Counters,
+        WillBuildCount, FinishedOfWillBuild, Counters.Total,
+        ElapsedMs, EtaMs, checkDurMs: ElapsedMs, warnings: 0,
+        engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
+        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage,
+        resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap);
+
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
     // ABONE OLMAZ. Bu olmadan Stop/Continue butonları gerçek pencerede İLK bind sonrası ASLA yeniden
