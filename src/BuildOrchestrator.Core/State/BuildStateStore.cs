@@ -179,6 +179,57 @@ public sealed class BuildStateStore
     }
 
     /// <summary>
+    /// [clean] Verilen workspace kökü ALTINDAKİ tüm kayıtları kaldırır ve kaldırılan sayıyı döner — Clean'in
+    /// "build state reset" adımı. Dosya GLOBALDİR (birden çok workspace aynı <c>build-state.json</c>'ı
+    /// paylaşır), bu yüzden dosyanın kendisi SİLİNMEZ: yalnız <paramref name="rootPath"/> öneki taşıyan
+    /// anahtarlar çıkar. Önek ayraçla kapatılır (<c>C:\repo</c> isteği <c>C:\repo2\...</c>'yi ETKİLEMEZ) ve
+    /// karşılaştırma <see cref="StringComparison.OrdinalIgnoreCase"/>'tir. Silinmiş/yeniden adlandırılmış
+    /// projelerin artık kayıtları da bu süpürmeye takılır.
+    /// <para>Eşleşme yoksa dosyaya HİÇ dokunulmaz (yazım yok, rename yarışı yok). Bozuk yol ya da okunamaz
+    /// dosya fırlatmaz, 0 döner — <see cref="Load"/>'un never-throw sözleşmesiyle aynı çizgi.</para>
+    /// </summary>
+    public int RemoveUnderRoot(string rootPath)
+    {
+        string prefix;
+        try
+        {
+            prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath)) + Path.DirectorySeparatorChar;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+            return 0; // bozuk yol → temizlenecek kayıt yok; Clean akışı bunun için durmaz
+        }
+
+        _writeGate.Wait();
+        try
+        {
+            var map = new Dictionary<string, BuildState>(Load(), StringComparer.OrdinalIgnoreCase);
+            var doomed = map.Keys.Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (doomed.Count == 0) return 0; // dosyayı YENİDEN YAZMA — dokunulmamış kalır
+
+            foreach (string key in doomed) map.Remove(key);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+            string tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(tmp, JsonSerializer.Serialize(map, Json));
+                MoveAtomicWithRetry(tmp, _path);
+            }
+            catch
+            {
+                try { File.Delete(tmp); } catch { /* best-effort, temizlik başarısızlığı orijinal hatayı gölgelemez */ }
+                throw;
+            }
+            return doomed.Count;
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    /// <summary>
     /// <see cref="File.ReadAllText(string)"/> yerine: varsayılan <c>FileShare.Read</c> Delete-share İZİN VERMEZ,
     /// bu da eşzamanlı bir <see cref="Upsert"/>'in atomik rename'ini (<see cref="File.Move"/> hedefte açık bir
     /// okuma handle'ı varken silme/rename gerektirir) sharing-violation ile bloklayabilir. Nazik bir reader
