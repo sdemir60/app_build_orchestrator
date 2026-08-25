@@ -19,9 +19,10 @@ namespace BuildOrchestrator.App.Views;
 /// <para><b>Etiket YOK:</b> üç etiketli düğme barı 1240px minimumda taşırıyor ve Build split-button'ı
 /// eziyordu — anlamı tooltip taşır (<see cref="AccessibilityNames"/>).</para>
 ///
-/// <para><b>Clean/Optimize pasif (karar 2026-08-13):</b> arka uçları henüz yazılmadı. Düğmeler tasarımdaki
-/// yerlerinde durur, kalıcı olarak disabled'dır ve tooltip nedeni söyler — basılıp hiçbir şey olmaması
-/// yokluğu sessizce gizlemekten daha kötü olurdu.</para>
+/// <para><b>Optimize pasif (karar 2026-08-13):</b> arka ucu henüz yazılmadı. Düğme tasarımdaki yerinde durur,
+/// kalıcı olarak disabled'dır ve tooltip nedeni söyler — basılıp hiçbir şey olmaması yokluğu sessizce
+/// gizlemekten daha kötü olurdu. <b>Clean ve Resolve</b> gerçek komutlara bağlıdır; enable hâllerinin TEK
+/// yazıcısı o komutların <c>CanExecute</c>'udur.</para>
 /// </summary>
 public partial class MaintenanceBox : UserControl
 {
@@ -78,14 +79,16 @@ public partial class MaintenanceBox : UserControl
         // bağlanır: DataContext sonradan gelse de düğme doğru komuta bakar.
         PART_Resolve.SetBinding(ButtonBase.CommandProperty, new Binding(nameof(RunViewModel.BuildCyclesCommand)));
 
-        // Arka uç yok → kalıcı disabled. Tooltip'leri SABİT olduğu için bir kez yazılır; Refresh yalnız
-        // Resolve'unkini (sayılara bağlı) tazeler. Pasif kontrolde WPF tooltip'i varsayılan olarak
-        // göstermez — açıkça açılır, yoksa metin var ama kullanıcı hiç göremez.
-        foreach (var button in new[] { PART_Clean, PART_Optimize })
-        {
-            button.IsEnabled = false;
-            ToolTipService.SetShowOnDisabled(button, true);
-        }
+        // [clean] Clean'in motoru var: düğme komuta BAĞLANIR, enable'ı komutun CanExecute'undan gelir —
+        // kutu kendi enable hâlini YAZMAZ (Resolve ile aynı desen, iki yazıcı olmaz).
+        PART_Clean.SetBinding(ButtonBase.CommandProperty, new Binding(nameof(RunViewModel.CleanCommand)));
+
+        // Optimize'ın arka ucu yok → kalıcı disabled. Tooltip'ler SABİT olduğu için bir kez yazılır; Refresh
+        // yalnız Resolve'unkini (sayılara bağlı) tazeler. Pasif kontrolde WPF tooltip'i varsayılan olarak
+        // göstermez — açıkça açılır, yoksa metin var ama kullanıcı hiç göremez. Clean'de de KORUNUR: düğme
+        // mid-run/mid-sync pasiftir ve nedeni ancak tooltip'ten okunur.
+        PART_Optimize.IsEnabled = false;
+        foreach (var button in new[] { PART_Clean, PART_Optimize }) ToolTipService.SetShowOnDisabled(button, true);
         PART_Clean.ToolTip = AccessibilityNames.CleanTooltip;
         PART_Optimize.ToolTip = AccessibilityNames.OptimizeTooltip;
     }

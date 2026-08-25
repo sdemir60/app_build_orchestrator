@@ -83,25 +83,59 @@ public class MaintenanceBoxTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[karar 2026-08-13] Clean ve Optimize'ın ARKA UCU henüz yok. Düğmeler tasarımdaki yerlerinde
-    /// durur ama kalıcı olarak pasiftir ve tooltip bunu açıkça söyler — basılıp hiçbir şey olmaması, yokluğu
-    /// sessizce gizlemekten daha kötü olurdu. Tooltip'in gövdesi tasarım metnidir (§2.7-2), sonuna durum eki
-    /// gelir. Pasif kontrolde tooltip WPF'te varsayılan olarak GÖSTERİLMEZ; bu yüzden ShowOnDisabled da
-    /// pinlenir — aksi halde metin var ama kullanıcı hiç göremez.</summary>
+    /// <summary>
+    /// [DEĞİŞEN KURAL — clean] Eski iddia: "Clean ve Optimize'ın arka ucu yok, İKİSİ de kalıcı disabled"
+    /// (karar 2026-08-13). Clean'in motoru artık VAR (<c>cleanWorkspace</c>) — düğme gerçek komuta bağlıdır
+    /// ve enable'ı komutun <c>CanExecute</c>'undan gelir. Pin bu yüzden ikiye bölündü; Optimize'ınki aynen
+    /// aşağıdaki testte durur.
+    /// <para>Repo kapısı KOMUTTADIR (ActionBar/Resolve deseni): kutu kendi enable hâlini yazmaz, iki yerden
+    /// yazılan bir enable olmaz. ShowOnDisabled KORUNUR — düğme mid-run/mid-sync pasiftir ve kullanıcı
+    /// NEDEN pasif olduğunu ancak tooltip'ten okuyabilir.</para></summary>
     [StaFact]
-    public void Clean_and_optimize_are_disabled_and_say_so_in_a_tooltip_that_shows_while_disabled()
+    public void Clean_is_wired_to_the_clean_command_and_its_tooltip_names_the_job()
     {
         var vm = NewVm();
         var (box, window) = Realize(vm);
 
-        Assert.False(box.CleanButton.IsEnabled);
+        Assert.Same(vm.CleanCommand, box.CleanButton.Command);
+        Assert.True(box.CleanButton.IsEnabled); // repo seçili (NewVm) → komut açık
+        Assert.Equal("Clean — remove every project's bin/ and obj/ and reset the build state; "
+                     + "the next build compiles everything from scratch", box.CleanButton.ToolTip);
+        Assert.True(ToolTipService.GetShowOnDisabled(box.CleanButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[karar 2026-08-13] Optimize'ın ARKA UCU henüz yok: düğme tasarımdaki yerinde durur ama kalıcı
+    /// olarak pasiftir ve tooltip bunu açıkça söyler — basılıp hiçbir şey olmaması, yokluğu sessizce
+    /// gizlemekten daha kötü olurdu. Pasif kontrolde tooltip WPF'te varsayılan olarak GÖSTERİLMEZ; bu yüzden
+    /// ShowOnDisabled da pinlenir.</summary>
+    [StaFact]
+    public void Optimize_stays_disabled_and_says_so_in_a_tooltip_that_shows_while_disabled()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
         Assert.False(box.OptimizeButton.IsEnabled);
-        Assert.Equal("Clean — /t:Clean on every solution, then remove bin/, obj/, artifacts/ — not available yet",
-                     box.CleanButton.ToolTip);
         Assert.Equal("Optimize — restore packages, prune the cache, rebuild the dependency index — not available yet",
                      box.OptimizeButton.ToolTip);
-        Assert.True(ToolTipService.GetShowOnDisabled(box.CleanButton));
         Assert.True(ToolTipService.GetShowOnDisabled(box.OptimizeButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[clean] Düğmenin pasifliği komuttan gelir: repo yokken basılamaz, uçuşta bir Sync varken de.</summary>
+    [StaFact]
+    public void Clean_is_disabled_without_a_repository_and_while_a_sync_is_in_flight()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var (box, window) = Realize(vm);
+        Assert.False(box.CleanButton.IsEnabled); // repo yok
+
+        vm.RootPath = @"D:\repo";
+        Assert.True(box.CleanButton.IsEnabled);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(box.CleanButton.IsEnabled);
+
         GC.KeepAlive(window);
     }
 
