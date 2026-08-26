@@ -8,6 +8,7 @@
 | **Branch** | `feat/optimize-button-engine` |
 | **Plan** | `.claude/outputs/2026-08-19-22-18-optimize-button-engine-plan.md` |
 | **Uygulama promptu** | `.claude/outputs/2026-08-19-22-18-optimize-button-engine-opus-prompt.md` |
+| **Uygulama sonucu** | `.claude/outputs/2026-08-19-22-18-optimize-button-engine-results.md` |
 | **Merge hedefi** | `main` |
 | **Merge commit mesajı** | `merge: optimize butonu motoru` |
 
@@ -22,15 +23,18 @@ artıklarını siler, ölü cache girdilerini ve öksüz `.tmp`'leri budar. Geli
 
 - Plan: `.claude/outputs/2026-08-19-22-18-optimize-button-engine-plan.md`
 - Uygulama promptu: `.claude/outputs/2026-08-19-22-18-optimize-button-engine-opus-prompt.md`
+- **Uygulama sonucu:** `.claude/outputs/2026-08-19-22-18-optimize-button-engine-results.md`
 
 Bu iş artık `main`'e merge edilecek. Şu sırayla yürüt:
 
-1. **Bağlamı oku.** Önce `CLAUDE.md`, sonra yukarıdaki plan ve uygulama promptu. Planın bağlayıcı kararları
-   (K-1…K-14) ve edge-case dizini merge'ün ölçütüdür.
+1. **Bağlamı oku.** Önce `CLAUDE.md`, sonra plan, uygulama promptu ve **uygulama sonucu**. Planın bağlayıcı
+   kararları (K-1…K-14) ve edge-case dizini merge'ün ölçütüdür; sonuç kaydı ise planla kodun AYRILDIĞI
+   yerleri tek tek gerekçesiyle sayar.
 2. **Branch'i incele.** `git log --oneline main..feat/optimize-button-engine` ve
    `git diff --stat main...feat/optimize-button-engine` ile ne geldiğini çıkar. Planın task listesiyle
    karşılaştır: **eksik kalan task var mı**, plan dışına taşan değişiklik var mı (v1 sonrası adaylar bu işte
-   YAPILMAYACAKTI)? Varsa merge etmeden önce bana bildir.
+   YAPILMAYACAKTI)? **Önce sonuç kaydının "Plandan sapmalar" bölümüne bak** — orada gerekçesi yazılı bir
+   ayrılığı "eksik task" diye raporlama; yalnız orada AÇIKLANMAYAN bir fark varsa merge etmeden önce bildir.
 3. **Doğrula, iddia etme.** `git switch feat/optimize-button-engine` sonrası:
    ```powershell
    dotnet build BuildOrchestrator.slnx
@@ -59,3 +63,9 @@ Bu iş artık `main`'e merge edilecek. Şu sırayla yürüt:
 Bu iş **Clean butonu motoruyla** aynı yüzeye dokunur (MaintenanceBox, IPC komut/event kuyrukları).
 `feat/clean-button-engine` de merge bekliyorsa merge sırasını bana sor; ikinci merge'de çakışmaları bu
 planın "Clean planıyla paralel yürütme koordinasyonu" bölümüne göre çöz.
+
+**Ortak primitifleri BU branch kurdu** (Clean merge edilmemiş olduğu için): `RunCoordinator.IsRunActive`,
+`ClearConsoleBuffers()`, `Core/Formatting/ByteFormat`, `Core/Paths/RootScope` + `TempFileSweeper`, defter
+budama metotları, test tarafında `NdjsonWire`. Optimize önce merge olursa Clean bunları YENİDEN TANIMLAMAZ,
+var olanları kullanır — tam liste ve Clean merge'ünde yapılacaklar sonuç kaydının "Clean planıyla ortak
+primitifler" bölümündedir.
