@@ -8,6 +8,7 @@
 | **Branch** | `feat/clean-button-engine` |
 | **Plan** | `.claude/outputs/2026-08-19-17-33-clean-button-engine-plan.md` |
 | **Uygulama promptu** | `.claude/outputs/2026-08-19-17-33-clean-button-engine-opus-prompt.md` |
+| **Sonuç kaydı** | `.claude/outputs/2026-08-19-17-33-clean-button-engine-results.md` |
 | **Merge hedefi** | `main` |
 | **Merge commit mesajı** | `merge: clean butonu motoru` |
 
@@ -21,15 +22,18 @@ workspace'e ait `build-state.json` kayıtlarını siler. Geliştirme şu iki dos
 
 - Plan: `.claude/outputs/2026-08-19-17-33-clean-button-engine-plan.md`
 - Uygulama promptu: `.claude/outputs/2026-08-19-17-33-clean-button-engine-opus-prompt.md`
+- **Sonuç kaydı:** `.claude/outputs/2026-08-19-17-33-clean-button-engine-results.md` — commit haritası,
+  kararların hangi dosyaya düştüğü, planla arasındaki **4 sapma** ve öteki branch'lerle çakışma yüzeyi.
 
 Bu iş artık `main`'e merge edilecek. Şu sırayla yürüt:
 
-1. **Bağlamı oku.** Önce `CLAUDE.md`, sonra yukarıdaki plan ve uygulama promptu. Planın bağlayıcı kararları
-   (K-1…K-10) ve edge-case dizini merge'ün ölçütüdür.
+1. **Bağlamı oku.** Önce `CLAUDE.md`, sonra yukarıdaki plan, uygulama promptu ve **sonuç kaydı**. Planın
+   bağlayıcı kararları (K-1…K-10) ve edge-case dizini merge'ün ölçütüdür; sonuç kaydı bunların branch'te
+   nereye düştüğünü söyler.
 2. **Branch'i incele.** `git log --oneline main..feat/clean-button-engine` ve
    `git diff --stat main...feat/clean-button-engine` ile ne geldiğini çıkar. Planın task listesiyle
-   karşılaştır: **eksik kalan task var mı**, plan dışına taşan değişiklik var mı? Varsa merge etmeden önce
-   bana bildir.
+   karşılaştır: **eksik kalan task var mı**, plan dışına taşan değişiklik var mı? Sonuç kaydındaki 4 sapma
+   BİLİNENDİR — onları yeniden sorma; kayıtta olmayan bir fark bulursan merge etmeden önce bana bildir.
 3. **Doğrula, iddia etme.** `git switch feat/clean-button-engine` sonrası:
    ```powershell
    dotnet build BuildOrchestrator.slnx
@@ -41,8 +45,9 @@ Bu iş artık `main`'e merge edilecek. Şu sırayla yürüt:
    yanlış bir şey söylüyor mu (Clean butonu artık disabled değil)? Eksik varsa merge'den ÖNCE aynı
    branch'te tamamla.
 5. **Merge.** `main`'e geç, `--no-ff` ile merge et; commit mesajı: `merge: clean butonu motoru`. Sonra push.
-6. **Doğrula ve temizle.** Merge'ün `main`'e geçtiğini doğruladıktan **sonra** branch'i local ve remote'tan
-   sil. Oturum `main` üzerinde bitsin.
+6. **Doğrula ve temizle.** Merge'ün `main`'e geçtiğini doğruladıktan **sonra** branch'i sil. Branch yalnız
+   LOCAL'dir (remote'a hiç push edilmedi), yani `git push origin --delete` GEREKMEZ — denersen hata alırsın.
+   Oturum `main` üzerinde bitsin.
 
 **Bu işe özel dikkat:**
 
@@ -54,6 +59,16 @@ Bu iş artık `main`'e merge edilecek. Şu sırayla yürüt:
 - Silinmeyenler korunmuş mu: `packages\`, ortak OutDir, worktree havuzu (`_obj` dahil), run logları,
   `.tmp`'ler, `evaluation-cache.json`, `ui-state.json`.
 
+**Ortak yüzey / merge sırası:**
+
 Bu iş **Optimize butonu motoruyla** aynı yüzeye dokunur (MaintenanceBox, IPC komut/event kuyrukları).
 `feat/optimize-button-engine` de merge bekliyorsa merge sırasını bana sor; ikinci merge'de çakışmaları
-Optimize planının "Clean planıyla paralel yürütme koordinasyonu" bölümüne göre çöz.
+Optimize planının "Clean planıyla paralel yürütme koordinasyonu" bölümüne göre çöz. Çakışması beklenen
+noktaların tam listesi sonuç kaydının "Öteki branch'lerle çakışma yüzeyi" bölümündedir. İki tanesi kolayca
+gözden kaçar:
+
+- `NoSleepPollTests.AllowedSleeps` sözlüğüne Clean bir satır ekledi (`CleanWorkspaceService.cs` = 1) —
+  gerekçesi `BuildStateStore` satırıyla aynı. Optimize da bir retry backoff'u getirirse AYNI sözlüğe
+  dokunacak; çakışmayı satır SİLEREK değil, iki satırı da koruyarak çöz.
+- `WorkspaceServices` record'u Clean ile 4. bir parametre (`Func<string, CleanWorkspaceService> Clean`)
+  kazandı; onu elle kuran her test bu parametreyi verir.
