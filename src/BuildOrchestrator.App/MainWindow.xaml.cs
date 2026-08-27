@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
@@ -144,20 +144,10 @@ public partial class MainWindow : Window
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
-        // [A13/T2 · 2.1] design-v1 §2.1 title-bar bağlamı. AYRI bir abonelik (persist'le AYNI dört alanı dinler
-        // ama ONA BAĞLANMAZ): OnWorkflowPreferenceChanged'in tek sorumluluğu kalıcı duruma yazmaktır, görsel
-        // tazeleme oraya karışmamalı. Seed ATAMALARINDAN SONRA kurulur ve hemen bir kez elle sürülür — böylece
-        // açılışta hatırlanan repo/branch başlıkta ZATEN doğrudur (seed'ler yukarıda, abonelikten önce akıyor).
-        _vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName is nameof(RunViewModel.RootPath) or nameof(RunViewModel.Branch)
-                or nameof(RunViewModel.UseWorktree) or nameof(RunViewModel.WorktreeName)) RefreshTitleContext();
-        };
-        // [T2 fix-1 · I-G] EffectiveWorktreeName auto-ad dalında <see cref="RunViewModel.Worktrees"/>'e de
-        // BAĞLIDIR (AutoWorktreeName mevcut worktree sayısını sayar) — envanter geldiğinde gösterilen ad
-        // değişebilir. Yalnız dört özelliği dinlemek bu kaynağı KAÇIRIYORDU.
-        _vm.Worktrees.CollectionChanged += (_, _) => RefreshTitleContext();
-        RefreshTitleContext();
+        // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
+        // yalnız markayı taşır. Branch/worktree zaten alt bardaki chip'lerdeydi; geriye kalan tek yeni bilgi
+        // (hangi workspace) alt bara, branch chip'inin soluna geçti (§2.7-5a) ve orayı ActionBar kendi
+        // RootPath aboneliğiyle sürer. Bu yüzden burada tazelenecek bir başlık öğesi kalmadı.
 
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
@@ -720,18 +710,6 @@ public partial class MainWindow : Window
     private async void OnChooseFolder(object sender, RoutedEventArgs e)
     {
         if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);
-    }
-
-    /// <summary>[A13/T2 · 2.1] design-v1 §2.1 başlık bağlamını tazeler — karar SAF <see cref="TitleBarContext"/>'te,
-    /// burada YALNIZ uygulanır. Worktree eki boşsa öğe <c>Collapsed</c> olur: boş metin bırakmak 8px'lik marjını
-    /// yine de ödetirdi (logo/başlık hizası kayardı).</summary>
-    private void RefreshTitleContext()
-    {
-        ContextText.Text = TitleBarContext.Compose(_vm.RootPath, _vm.Branch);
-        // [T2 fix-1 · C1] ETKİN değer — zorunlu worktree'de başlık da worktree'yi göstermeli.
-        string suffix = TitleBarContext.WorktreeSuffix(_vm.RootPath, _vm.EffectiveUseWorktree, _vm.EffectiveWorktreeName);
-        ContextWorktreeText.Text = suffix;
-        ContextWorktreeText.Visibility = suffix.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>[A13/T2 · 2.3] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı

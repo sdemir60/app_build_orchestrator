@@ -174,24 +174,28 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T3c · c5] Sağ grubun sırası: branch · worktree · Debug|Release · perf · ayraç · Stop/Build
-    /// grid'i (BuildApp.jsx:1570-1614).</summary>
+    /// <summary>[A13/T3c · c5] Sağ grubun sırası: workspace adı · branch · worktree · Debug|Release · perf ·
+    /// ayraç · Stop/Build grid'i (BuildApp.jsx:1570-1614).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-5a]</b> Grup artık <b>workspace adıyla BAŞLAR</b>: title
+    /// bar'ın mono bağlam metni kaldırıldı ve geriye kalan tek yeni bilgi (hangi workspace) branch chip'inin
+    /// soluna geçti. Eski iddia gruba altı öğe sayıyordu ve ilk öğeyi branch chip'i sanıyordu.</para></summary>
     [StaFact]
-    public void The_right_group_orders_branch_worktree_config_perf_a_separator_then_the_build_area()
+    public void The_right_group_orders_workspace_branch_worktree_config_perf_a_separator_then_the_build_area()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
         var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
-        Assert.Equal(6, rightChildren.Count);
-        Assert.Same(bar.BranchChip, ((Grid)rightChildren[0]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.Segment, rightChildren[2]);
-        Assert.Same(bar.PerfChip, rightChildren[3]);
-        var rightSeparator = Assert.IsType<Border>(rightChildren[4]);
+        Assert.Equal(7, rightChildren.Count);
+        Assert.Same(bar.WorkspaceLabel, rightChildren[0]);
+        Assert.Same(bar.BranchChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[2]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.Segment, rightChildren[3]);
+        Assert.Same(bar.PerfChip, rightChildren[4]);
+        var rightSeparator = Assert.IsType<Border>(rightChildren[5]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
-        var buildArea = Assert.IsType<Grid>(rightChildren[5]);
+        var buildArea = Assert.IsType<Grid>(rightChildren[6]);
         Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
         Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
         GC.KeepAlive(window);

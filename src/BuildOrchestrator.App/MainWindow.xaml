@@ -1,4 +1,4 @@
-<Window x:Class="BuildOrchestrator.App.MainWindow"
+﻿<Window x:Class="BuildOrchestrator.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:BuildOrchestrator.App"
@@ -156,7 +156,7 @@
           </StackPanel>
 
           <!-- [design-v1.2.1 §2.1] LOGO KİLİDİ (sürükleme alanı — hit-test-visible DEĞİL):
-               ürün markası (19px, tam renk) → ürün adı → 1×13 ayraç → firma logosu (10px, %55) → mono bağlam.
+               ürün markası (19px, tam renk) → ürün adı → 1×13 ayraç → firma logosu (10px, %55). [v1.11.0]
                Hiyerarşi şart: ürün önde ve tam renk, firma arkada ve soluk. Öğeler arası boşluk 9px
                (kaynaktaki `gap: 9`) — WPF'te sol marj olarak verilir. -->
           <StackPanel x:Name="TitleBarLogoLock" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
@@ -177,30 +177,10 @@
                  Çizim Controls/BrandLogo.xaml'de. İkon-yalnız olduğu için firma adı tooltip'te verilir. -->
             <controls:BrandLogo x:Name="TitleBarLogo" Height="10" Opacity="0.55" Margin="9,0,0,0"
                                 VerticalAlignment="Center" ToolTip="Delta" />
-            <!-- [A13/T2 · 2.1] design-v1 §2.1 bağlamı: mono 11px, gövde text-dim + worktree eki text-faint.
-                 METİN ARTIK KOD-TARAFI sürülür (MainWindow.RefreshTitleContext → TitleBarContext) — XAML'de
-                 literal YOKTUR. Eski hâlinde "no repository" burada DONMUŞTU: repo/branch/worktree hiçbir
-                 zaman başlığa ulaşmıyordu. İki AYRI TextBlock zorunlu: tek Text literali iki ton veremez. -->
-            <!-- [T2 fix-1 · m5] MaxWidth ZORUNLU: yatay StackPanel çocuklarını SONSUZ genişlikle ölçer, yani
-                 MaxWidth olmadan TextTrimming HİÇ devreye girmez ve uzun bir repo/branch adı caption
-                 butonlarının altına sert kesilirdi. 320/200 için otorite SESSİZDİR (kaynak: bu iki sayı T2'nin
-                 kendi kararıdır); pinlenen sayı değil DAVRANIŞTIR — bkz. TitleBarContextTests. -->
-            <TextBlock x:Name="ContextText" VerticalAlignment="Center" Margin="9,0,0,0"
-                       MaxWidth="320" TextTrimming="CharacterEllipsis"
-                       FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
-                       Foreground="{DynamicResource Brush.TextDim}" />
-            <!-- [T2 fix-2 · m5 kalıntısı — ÖLÇÜLDÜ, marj BİLEREK KORUNDU] Otorite (BuildApp.jsx) gövde ve
-                 worktree ekini İKİ AYRI span olarak, ebeveyn `inline-flex` konteynerin gap'i ile ayırdığı iki
-                 kutu olarak kurar; ekin KENDİ metni yalnız `· {wtName}` (dot+space, ayraç ÖNÜNDE fazladan
-                 boşluk YOK). Yani CSS gap ile gövde-içi `" · "` metin ayracı OTORİTEDE de FARKLI iki
-                 mekanizmadır (kutular-arası boşluk vs. metin-içi karakter) — aynı genişlikte olmaları
-                 BEKLENMEZ. Bu marj o gap'in WPF karşılığıdır; TitleBarContext.WorktreeSuffix zaten
-                 "· {name}" döndürür (ek boşluk eklemez). Kaldırılacak bir kusur DEĞİL.
-                 [design-v1.2.0] Konteynerin gap'i logo kilidiyle birlikte 8 → 9 oldu; bu marj da onu izler. -->
-            <TextBlock x:Name="ContextWorktreeText" VerticalAlignment="Center" Margin="9,0,0,0"
-                       Visibility="Collapsed" MaxWidth="200" TextTrimming="CharacterEllipsis"
-                       FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
-                       Foreground="{DynamicResource Brush.TextFaint}" />
+            <!-- [design v1.11.0 §2.1] KİLİT BURADA BİTER. Eskiden burayı mono bir bağlam metni izliyordu
+                 (`OSYS · main` + `· main-2` eki, repo yokken `no repository`). v1.11.0 onu kaldırdı: branch ve
+                 worktree bilgisi zaten alt bardaki chip'lerde duruyordu (aynı olgu iki yerde), workspace adı
+                 ise alt bara — branch chip'inin soluna — taşındı (§2.7-5a, ActionBar.PART_Workspace). -->
           </StackPanel>
         </DockPanel>
       </Border>

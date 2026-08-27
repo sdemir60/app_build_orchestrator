@@ -82,6 +82,8 @@ public partial class ActionBar : UserControl
     internal ToggleButton WorktreeChip => PART_WorktreeChip;
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
+    /// <summary>[design v1.11.0 §2.7-5a] Branch chip'inin solundaki mono workspace etiketi.</summary>
+    internal TextBlock WorkspaceLabel => PART_Workspace;
     internal Button SyncButton => PART_Sync;
     internal MaintenanceBox MaintenanceBoxControl => PART_Maintenance;
     internal Button StopButton => PART_Stop;
@@ -173,6 +175,7 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.RootPath):
                 RefreshEnabled();
                 RefreshChips();
+                RefreshWorkspaceLabel();
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
@@ -198,6 +201,7 @@ public partial class ActionBar : UserControl
     {
         if (!_built) return;
         RefreshChips();
+        RefreshWorkspaceLabel();
         RefreshBranchWorktree();
         RefreshPerf();
         RefreshConfig();
@@ -384,6 +388,19 @@ public partial class ActionBar : UserControl
         var tb = new TextBlock { Margin = new Thickness(ChipContentGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, FontFamily = AppFonts.Mono };
         tb.SetBinding(TextBlock.ForegroundProperty, new Binding(nameof(Control.Foreground)) { Source = chip });
         return tb;
+    }
+
+    /// <summary>[design v1.11.0 §2.7-5a] Workspace etiketi: kökün klasör adı (karar SAF
+    /// <see cref="TitleBarContext.RepositoryName"/>'de — burada YALNIZ uygulanır), tooltip kökün kendisi.
+    /// Ad YOKSA öğe <c>Collapsed</c> olur: prototipte etiket <c>{workspace &amp;&amp; …}</c> ile koşulludur ve
+    /// boş bir metin bırakmak sağ marjını yine de ödetirdi (branch chip'i kayardı).</summary>
+    private void RefreshWorkspaceLabel()
+    {
+        if (!_built) return;
+        string name = TitleBarContext.RepositoryName(_vm?.RootPath ?? "");
+        PART_Workspace.Text = name;
+        PART_Workspace.ToolTip = _vm?.RootPath;
+        PART_Workspace.Visibility = name.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void RefreshBranchWorktree()
