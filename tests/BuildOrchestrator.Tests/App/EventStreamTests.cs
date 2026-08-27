@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
@@ -643,5 +643,29 @@ public class EventStreamTests
         Assert.True(row.ActualHeight >= 24.0, $"satır 24px altına küçüldü: {row.ActualHeight}px");
         Assert.Equal(12.0, row.GlyphHost.ActualWidth);
         GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir İŞLEM event stream'i de temizler — konsolla
+    /// birlikte. Ekrandaki her şey artık yürüyen işlemin hikâyesidir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Anlatı eskiden koşular boyu KÜMÜLATİFTİ ve <c>{n} events</c> sayacı hiç
+    /// sıfırlanmazdı (<c>StreamComposer.EndRun</c> yalnız building kümesini ve aktif satırı sıfırlardı).</para></summary>
+    [Fact]
+    public async Task A_new_operation_clears_the_stream_the_way_it_clears_the_console()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node("a", "A", 0)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem("a", "A", true)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", "a", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", "a", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        Assert.NotEmpty(vm.StreamEvents);            // ön-koşul: gerçekten satır var
+        Assert.True(vm.StreamEventCount > 0);
+
+        await vm.BuildCommand.ExecuteAsync(null);    // yeni işlem
+
+        Assert.Empty(vm.StreamEvents);
+        Assert.Equal(0, vm.StreamEventCount);
     }
 }

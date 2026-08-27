@@ -1284,7 +1284,9 @@ the frontier sits in the middle of the list, so a single wheel notch parked foll
 
 **Console.** See §13.5.
 
-**Event stream.** A capped list of chronological one-line events. It is not virtualized and does not need to
+**Event stream.** A capped list of chronological one-line events, cleared — like the console — whenever a new
+operation begins: everything on screen belongs to the operation that is running. Sync does not clear it, being
+the ground operations stand on rather than one of them. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows

@@ -617,6 +617,9 @@ public sealed partial class RunViewModel : ObservableObject
     {
         string runId = _newRunId();
         _currentRunId = runId;
+        // [design v1.11.0 §9-4 `_beginOp`] Konsol VE event stream temizlenir — ekrandaki her şey artık
+        // yürüyen işlemin hikâyesidir. Konsolu aşağıdaki `clearBuffers` dalı siler; stream buradan.
+        if (clearBuffers) ClearStreamForNewOperation();
         // [design v1.11.0 §2.2] İşlem pill'i TIKLAMA ANINDA yazılır (motorun cevabı beklenmez): pill "ne
         // yapmıştım?" sorusunu cevaplar ve o soru gönderim gecikmesi boyunca da geçerlidir.
         CurrentOperation = OperationLabel.ForRunMode(mode);
