@@ -16,15 +16,22 @@ public sealed partial class RunViewModel
 {
     // ---------------------------------------------------------------- [T40] statü chip'i filtre toggle'ı
 
-    /// <summary>[T40] Sayaç chip'i toggle'ı: aynı filtreye ikinci tık temizler; <c>null</c> (Σ) HER ZAMAN temizler.
+    /// <summary>[T40] Sayaç chip'i toggle'ı: aynı chip'e ikinci tık onu KÜMEDEN ÇIKARIR; <c>null</c> (Σ) TÜM
+    /// kümeyi temizler.
     /// <para>[design v1.7.0 — Filtreleme] Filtreye basmak SEÇİMİ DE DÜŞÜRÜR: seçim graf kamerasını bir düğüme
     /// kilitler ve konsolu o projenin loguna alır; filtre ise "bu kümeye bak" der. İkisi aynı anda açıkken
-    /// kullanıcı filtrelenmiş listeye bakarken graf ilgisiz bir düğüme odaklı kalıyordu.</para></summary>
+    /// kullanıcı filtrelenmiş listeye bakarken graf ilgisiz bir düğüme odaklı kalıyordu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-4]</b> Chip'ler ARTIK birbirini düşürmez: küme çoklu ve
+    /// VEYA'lıdır (✓ + ✗ = "bu koşuda derlenenler"). Yeni küme her seferinde YENİ bir örnektir — yerinde
+    /// mutasyon <c>PropertyChanged</c> yaymaz ve liste bayat kalırdı.</para></summary>
     public void ToggleFilter(string? filter)
     {
         SelectedProjectId = null;
-        if (filter is null) { ActiveFilter = null; return; }
-        ActiveFilter = string.Equals(ActiveFilter, filter, StringComparison.Ordinal) ? null : filter;
+        if (filter is null) { ActiveFilters = ProjectFilter.None; return; }
+
+        var next = new HashSet<string>(ActiveFilters, StringComparer.Ordinal);
+        if (!next.Remove(filter)) next.Add(filter);
+        ActiveFilters = next.Count == 0 ? ProjectFilter.None : next;
     }
 
     // ---------------------------------------------------------------- [K3] branch seçimi + worktree "forced"

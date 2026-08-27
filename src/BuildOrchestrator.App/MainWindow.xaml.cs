@@ -196,14 +196,14 @@ public partial class MainWindow : Window
         Shell.ProjectFilterChip.Click += (_, _) => _vm.ToggleFilter(null);
         _vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName != nameof(RunViewModel.ActiveFilter)) return;
+            if (e.PropertyName != nameof(RunViewModel.ActiveFilters)) return;
             RefreshFilterChip();
             // [E4] Filtre, seçimle AYNI SINIFTAN bir "şu an şuna bakıyorum" beyanıdır → frontier follow durur
             // (karar arbiter'da, tek yerde: ScrollArbiter.CanFollowFrontier).
-            _scrollArbiter.SetFilter(_vm.ActiveFilter is not null);
+            _scrollArbiter.SetFilter(_vm.ActiveFilters.Count > 0);
         };
         RefreshFilterChip();
-        _scrollArbiter.SetFilter(_vm.ActiveFilter is not null); // kalıcı durumdan gelen bir filtreyle açılış
+        _scrollArbiter.SetFilter(_vm.ActiveFilters.Count > 0); // kalıcı durumdan gelen bir filtreyle açılış
         RefreshGraphFilter();
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
@@ -712,11 +712,10 @@ public partial class MainWindow : Window
         if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);
     }
 
-    /// <summary>[A13/T2 · 2.3] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
-    /// <see cref="ProjectFilter.Label"/>'dır (action bar'ın chip tooltip'leriyle aynı tablo) — burada yeni bir
-    /// eşleme uydurulmaz. Filtre yoksa chip gizlenir.</summary>
-    private void RefreshFilterChip() =>
-        Shell.SetFilterChip(_vm.ActiveFilter is { } f ? ProjectFilter.Label(f) : null);
+    /// <summary>[design v1.11.0 §2.7-4] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
+    /// <see cref="ProjectFilter.ChipLabel"/>'dır — seçili KÜMEYİ <c>" + "</c> ile listeler (çoklu filtre);
+    /// burada yeni bir eşleme uydurulmaz. Küme boşsa chip gizlenir.</summary>
+    private void RefreshFilterChip() => Shell.SetFilterChip(ProjectFilter.ChipLabel(_vm.ActiveFilters));
 
     /// <summary>
     /// [design v1.7.0 — Filtreleme] Listede etkin bir filtre (ya da arama) varken graf da aynı kümeye iner:
@@ -725,7 +724,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshGraphFilter()
     {
-        bool filtering = _vm.ActiveFilter is not null || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
+        bool filtering = _vm.ActiveFilters.Count > 0 || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
         Shell.GraphHost.FilterMatches = filtering
             ? _vm.VisibleProjects.Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
             : null;

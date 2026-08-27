@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -137,15 +137,16 @@ public class StickyRibbonTests
         Assert.Equal(4.0, ribbon.FailureChips[1].Margin.Left);
         Assert.Equal(4.0, ribbon.FailureMoreChip!.Margin.Left);
 
-        // [6b fold] Failure-cluster metnini pinle: "N failed" + "· N dependency-affected" (view kodunda kuruluyor,
-        // RibbonText.Compose'ta DEĞİL — bunlar chip-sayımının kapsamadığı segmentler).
-        var texts = ribbon.FailureCluster.Children.OfType<TextBlock>().Select(t => t.Text).ToList();
-        Assert.Contains("5 failed", texts);
-        Assert.Contains("· 1 dependency-affected", texts);
+        // [design v1.11.0 §2.2 — DEĞİŞEN KURAL] Küme eskiden bir ✗ glyph'i ve "5 failed" + "· 1
+        // dependency-affected" sayaç metinleriyle başlıyordu; [6b fold] onları burada pinliyordu. v1.11.0
+        // ikisini de kaldırdı — aynı sayılar faz metninin bitiş satırında zaten var ve şerit tek satırda iki kez
+        // sayı okuyordu. Kümede ARTIK yalnız chip'ler vardır.
+        Assert.Empty(ribbon.FailureCluster.Children.OfType<TextBlock>());
+        Assert.Empty(ribbon.FailureCluster.Children.OfType<BuildOrchestrator.App.Controls.StatusGlyph>());
 
-        Assert.Null(vm.ActiveFilter);
+        Assert.Empty(vm.ActiveFilters);
         ribbon.FailureMoreChip!.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
-        Assert.Equal(ProjectFilter.Failed, vm.ActiveFilter); // "+N more" → Failed filtresi
+        Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order()); // "+N more" → Failed filtresi
         GC.KeepAlive(window);
     }
 
@@ -359,5 +360,84 @@ public class StickyRibbonTests
         Assert.Single(ribbon.BuildingChips);
         Assert.Equal("A", ChipLabel(ribbon.BuildingChips[0]));
         GC.KeepAlive(window);
+    }
+
+    // ================================================================ [design v1.11.0 §2.2 · §9-9] işlem pill'i
+
+    /// <summary>Hiç işlem tetiklenmemişken (açılış) pill YOKTUR — adı olmayan bir işlemin etiketi de olmaz.</summary>
+    [StaFact]
+    public void With_no_operation_yet_the_ribbon_carries_no_operation_pill()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+
+        Assert.Null(vm.CurrentOperation);
+        Assert.Equal(Visibility.Collapsed, ribbon.OpPill.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Pill koşarken AMBER yanar (amber-soft zemin, amber-border, amber-text) ve içinde spinner
+    /// döner; koşu bitince NÖTRLEŞİR (zemin yok, border-strong, text-dim) ama <b>KALIR</b> — "ne yapmıştım?"
+    /// sorusu bir sonraki işleme kadar cevaplı durur.</summary>
+    [StaFact]
+    public void The_pill_lights_amber_while_the_run_is_live_and_stays_neutral_after_it()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+        SetTopology(vm, (@"C:\p\a.csproj", "A"));
+        StartRun(vm, (@"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+
+        Assert.Equal(Visibility.Visible, ribbon.OpPill.Visibility);
+        Assert.Equal(OperationLabel.Build, ribbon.OpText.Text);
+        Assert.Same(ribbon.FindResource("Brush.AmberSoft"), ribbon.OpPill.Background);
+        Assert.Same(ribbon.FindResource("Brush.AmberBorder"), ribbon.OpPill.BorderBrush);
+        Assert.Equal(Visibility.Visible, ribbon.OpSpinner.Visibility);   // gösterge pill'in İÇİNDE
+        Assert.Equal(Visibility.Collapsed, ribbon.OpGlyph.Visibility);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        Assert.Equal(Visibility.Visible, ribbon.OpPill.Visibility);       // KALIR
+        Assert.Equal(OperationLabel.Build, ribbon.OpText.Text);
+        Assert.Null(ribbon.OpPill.Background);                            // nötr = dolgusuz
+        Assert.Same(ribbon.FindResource("Brush.BorderStrong"), ribbon.OpPill.BorderBrush);
+        Assert.Equal(Visibility.Collapsed, ribbon.OpSpinner.Visibility);
+        Assert.Equal(Visibility.Visible, ribbon.OpGlyph.Visibility);      // sonuç glyph'i pill'in içinde
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Succeeded, ribbon.OpGlyph.Status);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Pill varken faz metninin KENDİ glyph'i çizilmez — aynı işaret satırda iki kez durmaz.</summary>
+    [StaFact]
+    public void The_phase_glyph_is_not_drawn_next_to_the_pill()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+        SetTopology(vm, (@"C:\p\a.csproj", "A"));
+        StartRun(vm, (@"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        Assert.Equal(Visibility.Visible, ribbon.OpGlyph.Visibility);
+        Assert.Equal(Visibility.Collapsed, ribbon.PhaseGlyph.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Etiket işlemi AYIRT EDER: Rebuild ve Resolve kendi sözcüklerini yazar.</summary>
+    [StaTheory]
+    [InlineData(RunMode.Rebuild, OperationLabel.Rebuild)]
+    [InlineData(RunMode.Cycles, OperationLabel.Resolve)]
+    [InlineData(RunMode.Build, OperationLabel.Build)]
+    public void Each_run_mode_writes_its_own_word_into_the_pill(RunMode mode, string expected)
+        => Assert.Equal(expected, OperationLabel.ForRunMode(mode));
+
+    /// <summary>Hedefli işlemlerde (satırdan tetiklenen build/rebuild/clean) hedefin kısa adı eklenir.</summary>
+    [Fact]
+    public void A_targeted_operation_appends_the_short_project_name()
+    {
+        Assert.Equal("REBUILD — Sales.Core", OperationLabel.Compose(OperationLabel.Rebuild, "Sales.Core"));
+        Assert.Equal("BUILD", OperationLabel.Compose(OperationLabel.Build, null));
+        Assert.Equal("BUILD", OperationLabel.Compose(OperationLabel.Build, ""));
     }
 }

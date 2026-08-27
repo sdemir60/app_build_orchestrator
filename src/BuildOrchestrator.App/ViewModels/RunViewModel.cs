@@ -485,10 +485,19 @@ public sealed partial class RunViewModel : ObservableObject
     /// ile yönetilir (aynı projeye tekrar tıklama = deselect).</summary>
     [ObservableProperty] private string? _selectedProjectId;
 
-    /// <summary>[C2] Aktif statü chip'i (<see cref="ProjectFilter"/> sabitleri) — null = filtre yok.</summary>
+    /// <summary>[design v1.11.0 §2.7-4] Aktif statü chip'lerinin KÜMESİ (<see cref="ProjectFilter"/> sabitleri) —
+    /// boş küme = filtre yok. Chip'ler bağımsız açılıp kapanır ve seçili küme <b>VEYA</b> ile birleşir.
+    /// <para>Değer HER ZAMAN yeni bir küme örneğiyle DEĞİŞTİRİLİR (mutasyon YOK): <c>ObservableProperty</c>
+    /// referans eşitliğine bakar, yerinde değiştirilen bir küme <c>PropertyChanged</c> yaymaz ve
+    /// <see cref="VisibleProjects"/> bayat kalırdı.</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VisibleProjects))]
-    private string? _activeFilter;
+    private IReadOnlySet<string> _activeFilters = ProjectFilter.None;
+
+    /// <summary>[design v1.11.0 §2.2 · §9-9] Sticky şeridin KALICI işlem pill'inin metni — son tetiklenen
+    /// işlemin kimliği (<see cref="OperationLabel"/>). Koşu bitince SİLİNMEZ: bir sonraki işleme kadar durur;
+    /// hiç işlem yapılmadıysa (açılış) <c>null</c> ve pill hiç çizilmez.</summary>
+    [ObservableProperty] private string? _currentOperation;
 
     /// <summary>[C2] Serbest metin proje sorgusu (ada göre alt-dize).</summary>
     [ObservableProperty]
@@ -525,7 +534,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[C2] Sorgu + aktif filtre altında görünen satırlar (BuildApp.jsx:465-470).</summary>
     public IReadOnlyList<ProjectRowViewModel> VisibleProjects =>
-        Projects.Where(r => ProjectFilter.Matches(r, ProjectQuery, ActiveFilter)).ToList();
+        Projects.Where(r => ProjectFilter.Matches(r, ProjectQuery, ActiveFilters)).ToList();
 
     /// <summary>[C2 fold testi] YALNIZ testler: uçuştaki Sync bayrağının gözlemlenebilir hali (bkz.
     /// <see cref="OnEngineExited"/> fold'u — engine ölümü bu bayrağı bırakmalı).</summary>
@@ -564,6 +573,9 @@ public sealed partial class RunViewModel : ObservableObject
     {
         string runId = _newRunId();
         _currentRunId = runId;
+        // [design v1.11.0 §2.2] İşlem pill'i TIKLAMA ANINDA yazılır (motorun cevabı beklenmez): pill "ne
+        // yapmıştım?" sorusunu cevaplar ve o soru gönderim gecikmesi boyunca da geçerlidir.
+        CurrentOperation = OperationLabel.ForRunMode(mode);
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers)
@@ -668,6 +680,7 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task SyncAsync()
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
+        CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
         // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
@@ -831,7 +844,7 @@ public sealed partial class RunViewModel : ObservableObject
     private void ClearSelectionAndFilter()
     {
         SelectedProjectId = null;
-        ActiveFilter = null;
+        ActiveFilters = ProjectFilter.None;
     }
 
     /// <summary>[T43] Debug/Release değiştir (BuildApp.jsx:1355-1363). Koşarken KİLİTLİ (no-op) ve aynı değere
@@ -1036,6 +1049,11 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
+        // [design v1.11.0 §2.2] İşlem pill'i motorun CEVABINDAN da yazılır, yalnız tıklamadan değil: koşuyu
+        // hangi yol başlatmış olursa olsun (komut, ileride bir kısayol ya da dışarıdan gelen bir run) pill
+        // gerçekte KOŞAN işi söyler. Komut tarafındaki yazım (BeginRunAsync) yalnız gönderim penceresini
+        // kapatır; ikisi aynı değeri üretir (OperationLabel.ForRunMode — tek eşleme yeri).
+        CurrentOperation = OperationLabel.ForRunMode(e.Mode);
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir

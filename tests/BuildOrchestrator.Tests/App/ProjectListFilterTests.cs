@@ -1,4 +1,4 @@
-using BuildOrchestrator.App;
+﻿using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -13,11 +13,11 @@ namespace BuildOrchestrator.Tests.App;
 /// <c>MainWindow.RefreshProjectGroups</c> listeyi <c>_vm.BuildLayerGroups()</c>'tan besliyordu ve o da
 /// <c>LayerGrouping.Build(<b>Projects</b>, Topology)</c> — yani TÜM projeler.
 /// <c>rg VisibleProjects src</c> → <b>sıfır tüketici</b> (yalnız tanım + bildirim). Dolayısıyla action bar'ın
-/// statü chip'leri (<see cref="RunViewModel.ActiveFilter"/>) ve Ctrl+F filtre kutusu
+/// statü chip'leri (<see cref="RunViewModel.ActiveFilters"/>) ve Ctrl+F filtre kutusu
 /// (<see cref="RunViewModel.ProjectQuery"/>) listede <b>görsel olarak HİÇBİR ŞEY yapmıyordu</b>.</para>
 ///
 /// <para><b>Tetikleyici kuralı (A12 dersi):</b> filtre üretimdeki yoldan sürülür — VM'in gerçek
-/// <c>ActiveFilter</c>/<c>ProjectQuery</c> özellikleri set edilir ve pencere ÖNCE realize edilir, veri SONRA
+/// <c>ActiveFilters</c>/<c>ProjectQuery</c> özellikleri set edilir ve pencere ÖNCE realize edilir, veri SONRA
 /// akar. Liste doğrudan <c>SetGroups</c> ile beslenmez.</para>
 /// </summary>
 [Collection("Console UI (serial)")]
@@ -46,7 +46,7 @@ public class ProjectListFilterTests
         Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list)); // ön-koşul: hepsi görünür
 
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\Beta.csproj", 10, "boom"));
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
 
         Assert.Equal(new[] { "Beta" }, VisibleRowNames(list));
         GC.KeepAlive(window);
@@ -58,7 +58,7 @@ public class ProjectListFilterTests
         using var temp = new TempDir();
         var (window, vm, list) = NewShellWithProjects(temp);
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\Beta.csproj", 10, "boom"));
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         Assert.Single(VisibleRowNames(list)); // ön-koşul
 
         vm.ToggleFilter(null); // Σ chip'inin yolu
@@ -74,7 +74,7 @@ public class ProjectListFilterTests
     {
         using var temp = new TempDir();
         var (window, vm, list) = NewShellWithProjects(temp);
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         Assert.Empty(VisibleRowNames(list)); // ön-koşul: henüz hiç failed yok
 
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\Gamma.csproj", 10, "boom"));
@@ -111,7 +111,7 @@ public class ProjectListFilterTests
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\Alpha.csproj", 10, "boom"));
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\Beta.csproj", 10, "boom"));
 
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         Assert.Equal(new[] { "Alpha", "Beta" }, VisibleRowNames(list)); // yalnız statü
 
         vm.ProjectQuery = "Alpha";                                      // + ad → kesişim
@@ -342,7 +342,7 @@ public class ProjectListFilterTests
         // yani clamp'in kendisi 100'ü kesip 0'a indirmez (post-filtre extent hâlâ bol bol scrollable).
         for (int i = 0; i < 70; i++)
             vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf($"P{i}"), 10, "boom"));
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
 
         DispatcherPump.PumpUntil(() => VisibleRowNames(list).Count == 70, TimeSpan.FromSeconds(3));
         Assert.Equal(70, VisibleRowNames(list).Count); // filtre gerçekten uygulandı (non-vacuous)

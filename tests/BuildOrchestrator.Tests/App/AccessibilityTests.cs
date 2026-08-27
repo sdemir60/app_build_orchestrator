@@ -48,7 +48,7 @@ public class AccessibilityTests
         Assert.Equal(AccessibilityNames.FilterSucceeded, AutomationProperties.GetName(bar.SucceededChip));
         Assert.Equal(AccessibilityNames.FilterFailed, AutomationProperties.GetName(bar.FailedChip));
         Assert.Equal(AccessibilityNames.FilterSkipped, AutomationProperties.GetName(bar.SkippedChip));
-        Assert.Equal(AccessibilityNames.FilterDep, AutomationProperties.GetName(bar.DepChip));
+        Assert.Equal(AccessibilityNames.FilterWarn, AutomationProperties.GetName(bar.WarnChip));
         Assert.Equal(AccessibilityNames.BranchChip, AutomationProperties.GetName(bar.BranchChip));
         Assert.Equal(AccessibilityNames.WorktreeChip, AutomationProperties.GetName(bar.WorktreeChip));
         Assert.Equal(AccessibilityNames.PerfChip, AutomationProperties.GetName(bar.PerfChip));

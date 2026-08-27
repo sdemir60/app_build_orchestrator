@@ -352,12 +352,12 @@ public class RunViewModelStateTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.SelectProject(@"C:\p\a.csproj");
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
 
         await vm.SyncCommand.ExecuteAsync(null);
 
         Assert.Null(vm.SelectedProjectId);
-        Assert.Equal(ProjectFilter.Failed, vm.ActiveFilter); // filtre KORUNUR
+        Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order()); // filtre KORUNUR
     }
 
     [Fact]
@@ -367,16 +367,16 @@ public class RunViewModelStateTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.SelectProject(@"C:\p\a.csproj");
-        vm.ActiveFilter = ProjectFilter.Building;
+        vm.ToggleFilter(ProjectFilter.Building);
         await vm.BuildCommand.ExecuteAsync(null);
         Assert.Null(vm.SelectedProjectId);
-        Assert.Null(vm.ActiveFilter);
+        Assert.Empty(vm.ActiveFilters);
 
         vm.SelectProject(@"C:\p\b.csproj");
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         await vm.RebuildCommand.ExecuteAsync(null);
         Assert.Null(vm.SelectedProjectId);
-        Assert.Null(vm.ActiveFilter);
+        Assert.Empty(vm.ActiveFilters);
     }
 
     // ---------------------------------------------------------------- komut gönderimi (workspace argümanları)

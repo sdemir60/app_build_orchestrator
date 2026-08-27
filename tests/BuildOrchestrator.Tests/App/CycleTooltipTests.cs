@@ -88,43 +88,25 @@ public class CycleTooltipTests
         Assert.Contains("Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts", tip, StringComparison.Ordinal);
     }
 
-    /// <summary>§2.2: şeridin döngü kümesi iki satır söyler — ne olduğu + yol.</summary>
+    /// <summary>[design v1.11.0 §2.2] Şeritte döngü kümesi ARTIK YOKTUR.
+    /// <para><b>[DEĞİŞEN KURAL]</b> §2.2 (v1.7.0) şeritte turuncu bir döngü kümesi istiyordu ve iki test onu
+    /// pinliyordu ("iki satırlık tooltip: ne olduğu + yol", "birden çok döngü her biri kendi satırında").
+    /// v1.11.0 turuncuyu UI'dan tamamen çıkardı: döngü bilgisi satırdaki TEK amber üçgende ve alt bardaki ⚠
+    /// filtresinde yaşıyor. Şerit yalnız KOŞU sonuçlarını taşır — döngü bir koşu sonucu değildir. İki eski
+    /// iddia bu tek teste indi.</para>
+    /// <para>Döngü YOLUNUN kendisi silinmedi: <see cref="CycleText.Path"/> hâlâ üretilir ve satır VM'ine
+    /// itilir (yukarıdaki testler onu pinler) — yalnız ŞERİTTEKİ tüketicisi kalktı.</para></summary>
     [StaFact]
-    public void The_ribbon_cycle_cluster_has_a_two_line_tooltip()
+    public void The_ribbon_no_longer_carries_a_cycle_cluster()
     {
         var vm = NewVm();
         var ribbon = new StickyRibbon { DataContext = vm };
         var window = DsResources.Realize(DsResources.NewHost(), ribbon);
 
-        Assert.NotNull(ribbon.CycleChip);
-        string tip = Assert.IsType<string>(ribbon.CycleChip!.ToolTip);
-        Assert.Equal(
-            CycleText.ClusterHeadline + Environment.NewLine
-                + "Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts",
-            tip);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>Birden çok döngü varsa her biri kendi satırında listelenir.</summary>
-    [StaFact]
-    public void Several_cycles_are_listed_one_per_line()
-    {
-        const string D = @"C:\p\Sales.Core.csproj", E = @"C:\p\Sales.Api.csproj";
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe),
-            new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new WorkspaceTopologyEvent(
-            [Node(A, "Domain.Parts"), Node(B, "Parts.Inventory"), Node(D, "Sales.Core"), Node(E, "Sales.Api")],
-            [[A, B], [D, E]], [], []));
-
-        var ribbon = new StickyRibbon { DataContext = vm };
-        var window = DsResources.Realize(DsResources.NewHost(), ribbon);
-
-        string tip = Assert.IsType<string>(ribbon.CycleChip!.ToolTip);
-        Assert.Equal(
-            CycleText.ClusterHeadline + Environment.NewLine
-                + "Domain.Parts → Parts.Inventory → Domain.Parts" + Environment.NewLine
-                + "Sales.Core → Sales.Api → Sales.Core",
-            tip);
+        Assert.NotEmpty(vm.CyclePaths); // ön-koşul: topolojide GERÇEKTEN bir döngü var
+        var texts = DsResources.Descendants(ribbon).OfType<System.Windows.Controls.TextBlock>()
+            .Select(t => t.Text).ToList();
+        Assert.DoesNotContain(texts, t => t.Contains("in a dependency cycle", StringComparison.Ordinal));
         GC.KeepAlive(window);
     }
 }

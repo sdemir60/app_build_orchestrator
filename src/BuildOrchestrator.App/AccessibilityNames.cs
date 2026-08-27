@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace BuildOrchestrator.App;
 
@@ -18,8 +18,11 @@ public static class AccessibilityNames
     public const string FilterSucceeded = "Succeeded — filter";
     public const string FilterFailed = "Failed — filter";
     public const string FilterSkipped = "Skipped — filter";
-    public const string FilterDep = "Dependency-affected — filter";
-    public const string FilterCycle = "In a dependency cycle — filter";
+    /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i. <b>[DEĞİŞEN KURAL]</b> Burada eskiden İKİ ad
+    /// vardı — <c>FilterDep</c> ("Dependency-affected — filter") ve <c>FilterCycle</c> ("In a dependency cycle
+    /// — filter"). v1.11.0 turuncuyu UI'dan çıkardı ve iki uyarıyı TEK amber üçgende birleştirdi; filtre de
+    /// tekleşti.</summary>
+    public const string FilterWarn = "Warnings — dependency cycle or dependency issue";
 
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";
