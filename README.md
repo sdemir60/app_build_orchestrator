@@ -1,4 +1,4 @@
-# Build Orchestrator
+﻿# Build Orchestrator
 
 A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
 for projects, derives the dependency graph, decides which projects actually changed (from git, never from
@@ -123,20 +123,25 @@ the running instance first — tray icon → Exit).
 
 ## Using it
 
-1. **Pick a repository** — before a repository is selected, the *Choose Folder* button applies the folder
-   immediately: project states reset and a Sync starts. Repository *Change…* inside Settings only stages the
-   folder in the dialog; *Save* is what applies it, resetting project states and starting a Sync.
+1. **Configure the workspace** — on first run the project list invites you into Settings rather than opening
+   a folder picker: starting takes more than one setting now. Settings opens with the repository root (the one
+   thing the tool cannot run without — *Save* stays disabled while it is empty) and, below it, the optional
+   layer definitions. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
+   run it reads *Save and sync*. If you already have a settings file, *Import settings…* on the invitation
+   opens the dialog with the file picker already up.
+
+   Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
+   form — nothing is applied until you press *Save*.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. Until it
    has run, *Build*, *Rebuild* and *Resolve cycles* are disabled: a run before the first Sync would compile for
    real while the list and the graph stayed empty. While a Sync is *running*, those three and *Sync* itself are
    disabled too — the engine handles one at a time, and anything started in that window would land in the
    middle of the Sync's console output. It takes seconds; they re-enable the moment it finishes.
 
-   Every project marked amber in the list is amber in the graph too — the dot and the node's cube read the
-   same plan. Hover the dot and it tells you *why* it will build: never built, the last build failed, it was
-   built against a failed dependency, or its source changed. That last distinction is worth knowing, because
-   the commit pair beside it answers a different question: the dot is about the source signature, the pair is
-   about commits, and a project can be dirty while its commit has not moved at all.
+   **Sync colours nothing.** Which operation is coming is not known yet, so no plan is shown: every row sits
+   in the start mode — a dashed stripe, a dashed dot, a dashed glyph — and every graph node draws a dashed
+   border. What is stale is still readable, from the commit pair on the row: `a3f81c2 → b7e91d4` when the
+   project is behind, a single hash when it is not. Colour arrives when you press something.
 3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
    in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
@@ -146,6 +151,14 @@ the running instance first — tray icon → Exit).
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on a
      failure.
    - *Rebuild* — all projects, cached state ignored.
+   - *Clean* — `msbuild /t:Clean` on every solution, caches untouched. No engine behind it yet; the item is
+     there and disabled, and says so.
+
+   **Every operation opens the same way.** A short neutral moment, then the projects this operation will touch
+   light amber one at a time in random order, then everything else fades back and the run begins. Nothing is
+   delayed by it: the choreography plays over the planning the engine is doing anyway. When the run ends, the
+   graph — and only the graph — lights the projects it actually built, one by one like fluorescent tubes, then
+   brings the rest back together. With reduced motion turned on in Windows, neither plays.
 
    There is no *Continue* and no *Retry failed*. *Build* already covers both: a project that was killed or that
    failed had its recorded state invalidated, so it is stale again, while everything that finished green is
@@ -162,8 +175,20 @@ the running instance first — tray icon → Exit).
    *Build* again: everything that already succeeded is skipped as up to date, so only the remaining work runs.
    The elapsed clock starts from zero — it is a new run.
 
+**Reading the list.** One colour tells one story: the stripe on the left, the dot beside the name, the status
+glyph and the graph node all carry the same status, so there is nothing to cross-reference. A single amber
+triangle in the fixed slot on the right means something is off with this project's dependencies — a cycle, or
+a dependency that failed or was not rebuilt — and its one-line tooltip says which; the details are in the
+project log. The counter chips in the bottom bar are filters and they **combine**: press the tick and the
+cross together to see what this run built, and type in the filter box (`Ctrl+F`) to narrow that further. Each
+active chip lights in its own colour, and the chip in the PROJECTS header lists what is on.
+
+**Per-project actions** live on the row: hover it for a play button and a ⋯ menu — Build, Rebuild, Clean for
+that one project — and right-clicking the row opens the same menu. The engine behind them is not written yet,
+so they are visible but disabled and say so.
+
 Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
-them with the reason `in dependency cycle`, and their will-build dot stays grey. **Resolve cycles** — the
+them with the reason `in dependency cycle`. **Resolve cycles** — the
 third icon (unlink) of the maintenance box next to *Sync* — is what compiles them, and it is the only thing
 that does. It is enabled only when the workspace actually has a cycle, and its tooltip says what it will do
 once a Sync has found one: `Resolve cycles — build the N cycle projects in repeated rounds: stale references
@@ -192,10 +217,10 @@ while a member is actually compiling the active line names it and its place in t
 duration column that stays at `—` — only the member actually compiling is doing anything, and the group's own
 round line is what moves. When the group has a verdict the event stream says which one it got — converged,
 failed the same way twice, or hit the round cap — with how many rounds it took. Cycle rows show the normal
-build icons — green, red, the spinner — and carry a small orange cycle badge to say where they sit: in the list
-row's dependency slot, and as a permanent corner mark on the graph node, which otherwise now paints exactly
-like any other node at that status. Hovering that badge — or the row's will-build dot, or the ribbon's cycle
-chip — names the loop itself: `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`.
+build icons — green, red, the spinner — and carry a single amber warning triangle to say where they sit. Its
+tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
+`Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. The graph carries no cycle mark at all — colour
+there tells the story of the last run and nothing else.
 
 Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the
@@ -203,9 +228,9 @@ run log says why it is worth the rounds (`retrying — did not converge at this 
 remembers a failed convergence, but only to report it — refusing to retry would mean the button silently doing
 nothing, and the signature covers sources alone, so a package restore or anything outside the cycle may well
 have changed since. The summary line says how many projects are stuck in one, so a run whose only casualty is
-a cycle that would not converge never reads as an unqualified success — those rows keep the orange badge with
-a tooltip saying their projects are still out of date, and rows that compiled but never saw two clean rounds
-carry the dependency triangle, whose tooltip says their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
+a cycle that would not converge never reads as an unqualified success — those rows keep the amber warning triangle
+with a tooltip saying their projects are still out of date, and rows that compiled but never saw two clean
+rounds carry the same triangle with a tooltip saying their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
 still dirty, the event stream adds a closing line pointing at *Resolve cycles* as the next step.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
@@ -261,7 +286,7 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
 The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
-(Settings has LAYERS and REPOSITORY). If it cannot be registered — another application
+(Settings has WORKSPACE and LAYERS). If it cannot be registered — another application
 already owns that combination — it is silently disabled; the tray icon still restores the window, and the
 About screen marks that row *unavailable* so the loss is visible rather than mysterious.
 
@@ -273,7 +298,7 @@ first, so an unsaved Settings draft survives.
 
 The `i` button sits to the right of the gear in the title bar, and `F1` toggles the same screen. Its heading
 holds both marks in one composition — the product mark, the product name and one mono line with the version
-and copyright on the left; a *licensed to* block with the company logo on the right. Three tabs follow:
+and copyright on the left; a *licensed to* block with the company logo on the right. Four tabs follow:
 
 - **Shortcuts** — the table above, rendered from the same source the app binds its keys from, so a rebound
   key can never drift from what the screen claims.
@@ -283,6 +308,10 @@ and copyright on the left; a *licensed to* block with the company logo on the ri
   request.
 - **Third-party** — the OSS components the app ships with, their runtime versions and licences, including
   the Geist fonts under the SIL Open Font License.
+- **What is new** — the release notes, newest version first, grouped into Added / Changed / Fixed /
+  Performance / Removed. The three newest versions are open and the rest fold away. When the running version
+  is one you have not read yet, a small amber dot sits on the `i` button and About opens straight on this
+  tab; reading it clears the dot for good. There is no pop-up on launch.
 
 `MSBuild.exe` is located through `vswhere`, which costs a child process, so it resolves the first time the
 Environment tab is opened rather than when the screen appears.
