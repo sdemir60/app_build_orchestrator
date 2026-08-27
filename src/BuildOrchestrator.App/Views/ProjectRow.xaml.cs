@@ -14,7 +14,7 @@ using BuildOrchestrator.Core.Formatting;
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [T53/T54-UI] design-v1 proje kartı (BuildApp.jsx:355-416). 7 slot: statü şeridi · WillBuildDot · ad+sln ·
+/// [T53/T54-UI] design-v1 proje kartı (BuildApp.jsx:355-416). 7 slot: statü şeridi · StatusDot · ad+sln ·
 /// sağ blok (sha↔hover ikonları) · statü glyph'i · dep rozet slotu · süre. DataContext bir
 /// <see cref="ProjectRowViewModel"/>'dir; kart onun INotifyPropertyChanged'ini dinleyip yalnız DEĞİŞEN slotu
 /// tazeler (statü tikleri satır VM'inden akar — koleksiyon reset YOK).
@@ -36,18 +36,9 @@ public partial class ProjectRow : UserControl
     private const double StripeWidthNormal = 2;    // BuildApp.jsx:373
     private const double StripeWidthSelected = 3;
 
-    // [cycle rounds/Task 9] Dep-slot tooltip metinleri — TEK doğruluk kaynağı burası (CLAUDE.md kopya YASAK).
-    // "Failed dependency: …" metni ApplyDep içinde kalır (adlar interpolasyonlu, tek kullanım yeri zaten oradaydı).
-    private const string CycleUnsettledTooltip =
-        "Cycle did not fully settle — output may be one generation stale";
-    // "Bir daha denenmez" DEMEZ: açık bir Resolve basışı grubu her zaman yeniden dener (motor yakınsamama
-    // hafızasını bir kapı olarak değil, bir not olarak kullanır). Söylediği şey bu koşunun KANITIDIR.
-    private const string CycleUnconvergedTooltip =
-        "Cycle did not converge — its projects are still out of date";
-    // [cycles] Sıradan üyelik: satır bu koşuda GERÇEK bir sonuç aldığı için statü glyph'i artık döngüyü değil
-    // sonucu gösterir; yapısal olgu bu rozete taşınır. Yukarıdaki iki metinden farkı, hiçbir şey İDDİA
-    // ETMEMESİDİR — ne çıktının bayat olduğunu ne bir daha denenmeyeceğini söyler, yalnız yeri tarif eder.
-    private const string CycleMembershipTooltip = "In a dependency cycle";
+    // [design v1.11.0 §2.4-6] Uyarı üçgeninin metni SAF bir çekirdekten gelir (ViewModels/RowWarning) — kart
+    // kendi cümlelerini KURMAZ. Metinler eskiden burada üç sabit olarak duruyordu ve tooltip onları alt alta
+    // diziyordu; v1.11.0 tooltip'i TEK SATIRA indirdi.
 
     // [E3/T42] design-v1 bo-reveal (BuildApp.jsx:15/:27): opacity 0→1 + translateY(-5px)→0, .3s, ease-out —
     // GraphView katman reveal'iyle AYNI animasyon ailesi (GraphView.RevealMs/RevealRisePx). Liste satırı gecikmesi
@@ -123,7 +114,7 @@ public partial class ProjectRow : UserControl
 
     // ---------------------------------------------------------------- test yüzeyi
     internal Rectangle Stripe => PART_Stripe;
-    internal WillBuildDot Dot => PART_Dot;
+    internal StatusDot Dot => PART_Dot;
     internal TextBlock DurationText => PART_Duration;
     internal TextBlock ShaText => PART_Sha;
     /// <summary>[L1] Hover eylem bloğu — İLK HOVER'a kadar <c>null</c> (hiç kurulmaz).</summary>
@@ -133,8 +124,7 @@ public partial class ProjectRow : UserControl
     internal int ApplyAllCount { get; private set; }
     internal FrameworkElement DepSlot => PART_DepSlot;
     internal FrameworkElement DepIcon => PART_DepIcon;
-    /// <summary>[design v1.7.0 §2.4] Uyarı slotundaki TEK üçgen — rengi nedeni söyler (turuncu = yapısal
-    /// döngü, amber = geçici dep-issue).</summary>
+    /// <summary>[design v1.11.0 §2.4-6] Uyarı slotundaki TEK üçgen — HER ZAMAN amber.</summary>
     internal Path DepTriangle => PART_DepTriangle;
     internal FrameworkElement BreathLayer => PART_Breath;
     internal void SimulateHover(bool hover) => SetHover(hover);
@@ -143,7 +133,7 @@ public partial class ProjectRow : UserControl
     internal TranslateTransform ShakeTranslate => PART_ShakeTranslate; // [T42] reveal kayması Y'de akar (shake X)
     internal StatusGlyph Glyph => PART_Glyph;
     internal string? DepTooltip => PART_DepTip.Content as string;   // [Fix wave 1, Finding 3] birebir metin testi
-    internal string? GlyphTooltip => PART_GlyphTip.Content as string;
+    internal TextBlock NameText => PART_Name;
 
     /// <summary>[T54-UI test] Nefes animasyonunu üreten TEK yer — kontrol ve test AYNI fabrikayı kullanır;
     /// 30fps sınırı ve 3.8s süre burada pinlenir (inline magic number YOK).</summary>
@@ -174,6 +164,11 @@ public partial class ProjectRow : UserControl
         if (!_applied) { ApplyAll(); return; }
         ApplyRightBlock();
         ApplyBreathing();
+        // [design v1.11.0 §2.4-1] Başlangıç modunun KESİKLİ şerit fırçası bir DrawingBrush'tır ve rengini
+        // ANINDA çözer (SetResourceReference gibi geç bağlanamaz). Satır ağaca girmeden ApplyAll koştuysa
+        // (DataContext, Loaded'dan ÖNCE gelir) o çözüm boşa düşer — burada bir kez tazelenir. Düz dolgu
+        // yolunda no-op'tur (SetResourceReference zaten geç bağlıdır).
+        SetStripeFill();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -207,7 +202,7 @@ public partial class ProjectRow : UserControl
                 ApplyRightBlock();
                 break;
             case nameof(ProjectRowViewModel.Status):
-                ApplyStatusVisuals(); // [Fix wave 1, Finding 1] cycle/queued dahil TEK eşleme yolundan gelir
+                ApplyStatusVisuals(); // [Fix wave 1, Finding 1] queued dahil TEK eşleme yolundan gelir
                 ApplyDep();           // [cycles] üyelik rozetinin kapısı Status'tur — onunla birlikte tazelenir
                 // [cycles] CycleWaiting setter'ı Status'u da tetikler (RunViewModel.cs) — sıra kardeşe geçtiği ANDA
                 // nefes/süre burada da tazelenmeli. State case'i zaten çağırıyor; çift çağrı zararsız, iki metod
@@ -215,16 +210,20 @@ public partial class ProjectRow : UserControl
                 ApplyBreathing();
                 ApplyDuration();
                 break;
+            // [design v1.11.0 §9-2] Görsel durumun İKİ ek girdisi: başlangıç modu ve işaretlilik. Statü
+            // değişimi zaten yukarıdan geçer (VisualStatus onunla birlikte tazelenir); bu iki bayrak statüyü
+            // DEĞİŞTİRMEDEN de görünümü çevirir.
+            case nameof(ProjectRowViewModel.Fresh):
+            case nameof(ProjectRowViewModel.Marked):
+                ApplyStatusVisuals();
+                break;
             case nameof(ProjectRowViewModel.InCycle):
-            case nameof(ProjectRowViewModel.CyclePath): // [cycles] yol tooltip'in ikinci satırıdır
-                ApplyDot();
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
-            case nameof(ProjectRowViewModel.WillBuildReason):
-                ApplyDot();
+                // [design v1.11.0 §9-1] Plan kanalının TEK görünür kalıntısı çift SHA metnidir — nokta ARTIK
+                // planı taşımaz (statü rengini taşır). Bu yüzden burada yalnız sağ blok tazelenir.
                 ApplyRightBlock();
-                // Not: WillBuild, Status'u (queued) da tetikler → şerit/glyph Status case'inde tazelenir.
                 break;
             case nameof(ProjectRowViewModel.DepIssues):
             case nameof(ProjectRowViewModel.HasDepIssue):
@@ -235,7 +234,6 @@ public partial class ProjectRow : UserControl
                 break;
             case nameof(ProjectRowViewModel.DurationMs):
                 ApplyDuration();
-                UpdateGlyphTooltip(); // building'de canlı "Building — Ns"
                 break;
             case nameof(ProjectRowViewModel.IsSelected):
                 ApplySelection();
@@ -261,8 +259,7 @@ public partial class ProjectRow : UserControl
         // bir şey söylemez). Ad, satır VM'inden gelir (İngilizce proje adı).
         System.Windows.Automation.AutomationProperties.SetName(this, _vm?.Name ?? "");
         PART_Sln.Text = _vm?.SolutionName;
-        ApplyDot();
-        ApplyStatusVisuals(); // glyph/ad-rengi/şerit/tooltip (Status'tan)
+        ApplyStatusVisuals(); // glyph/ad-rengi/şerit/nokta (TEK görsel durumdan)
         ApplyBreathing();     // building nabzı (State'ten) — ilk kurulumda shake YOK (_prevState taze)
         ApplyDep();
         ApplyDuration();
@@ -270,27 +267,30 @@ public partial class ProjectRow : UserControl
         ApplyRightBlock(); // sha/hover ikonları
     }
 
-    /// <summary>[Fix wave 1, Finding 1] Statü-türevi görseller: glyph, ad soluk/parlak, şerit rengi, glyph
-    /// tooltip. Statü kaynağı <see cref="ProjectRowViewModel.Status"/> (cycle/queued dahil TEK eşleme yeri) —
-    /// kart artık kendi eşlemesini yapmaz.</summary>
+    /// <summary>[design v1.11.0 §9-2] Statü-türevi görsellerin TEK yazıcısı: glyph, ad vurgusu, sol şerit ve
+    /// nokta. Hepsi <see cref="ProjectRowViewModel.VisualStatus"/>'ten beslenir — kart kendi eşlemesini YAPMAZ
+    /// (tablo <see cref="VisualStatuses"/>'tedir; graf de aynı tablodan okur).</summary>
     private void ApplyStatusVisuals()
     {
         GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
-        var state = _vm?.State ?? ProjectRowState.Pending;
+        var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
 
         PART_Glyph.Status = status;
+        // [design v1.11.0 §2.4-5] Glyph TOOLTIP TAŞIMAZ; ekran okuyucunun duyacağı statü metni UIA adına
+        // yazılır (eşleme StatusGlyph.LabelFor — kopya YASAK).
+        System.Windows.Automation.AutomationProperties.SetName(PART_Glyph, StatusGlyph.LabelFor(status));
 
-        // [design v1.7.0 §2.4] Ad TEK kurala bağlıdır: bu koşuda İŞİ OLAN satır (dirty · queued · building ·
-        // failed) primary beyaz, güncel/atlanacak satır secondary gri. Eski kural alt-duruma bakıyordu ve
-        // "derlenecek ama henüz sırası gelmemiş" bir satırı da soluk gösteriyordu — oysa onun işi var.
+        // [design v1.11.0 §2.4-3] Ad TEK kurala bağlıdır: bu İŞLEMDE işi olan satır (marked · queued ·
+        // building · succeeded · failed) primary beyaz, geri kalanı secondary gri.
+        // [DEĞİŞEN KURAL] Eski kural planı (WillBuild) okuyordu; plan kanalı kalktığı için vurgu da görsel
+        // duruma bağlandı. Somut fark: SUCCEEDED satır artık PRIMARY'dir (eskiden secondary'ydi) — bu koşuda
+        // gerçekten iş yapmış bir satırın adı, hiç dokunulmamış bir satırla aynı tonda okunamaz.
         // Kalınlık HER ZAMAN 500'dür (XAML); bold satır ritmini bozuyordu.
-        bool hasWork = state is ProjectRowState.Started or ProjectRowState.Failed
-                       || (state == ProjectRowState.Pending && _vm?.WillBuild == true);
         PART_Name.SetResourceReference(TextBlock.ForegroundProperty,
-            hasWork ? "Brush.TextPrimary" : "Brush.TextSecondary");
+            VisualStatuses.NameIsEmphasised(visual) ? "Brush.TextPrimary" : "Brush.TextSecondary");
 
+        PART_Dot.State = visual;
         SetStripeFill();
-        UpdateGlyphTooltip();
     }
 
     /// <summary>State'e özel geçiş yan etkileri: hata ANINDA bir kez shake + building nefes geçişi.</summary>
@@ -305,27 +305,53 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>
-    /// [design v1.7.0 §2.4 — A kanalı] Sol şerit "bu koşuda ne oldu" der ve HER SATIRDA vardır: workspace
-    /// açıldığı andan itibaren gri, koşuda amber, bitişte sonuç rengi.
+    /// [design v1.11.0 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
+    /// modunda kesikli gri, işlem başlayınca düz gri, işaretlenince amber, bitişte sonuç rengi.
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> <c>discovered</c> eskiden ŞERİTSİZDİ (transparent) ve <c>skipped</c>'ten
-    /// farklı bir griye sahipti. İkisi de düzeltildi: şerit hiç kaybolmaz (Sync şeridi getirmez, zaten
-    /// oradadır — Sync yalnız plan kanalını tazeler) ve iki gri TEK griye indi; "bazıları koyu bazıları açık"
-    /// iki ayrı gri, aralarında bir anlam varmış izlenimi veriyordu. Zincir: gri → açık gri (queued) → amber
-    /// (building) → yeşil/kırmızı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — v1.11.0]</b> <c>Queued</c> eskiden kendi grisini (<c>Brush.StatusQueued</c>)
+    /// taşıyordu; artık kuyruk da işlemin kapsamıdır ve amber KALIR — işaretleme dalgasıyla yanan renk koşu
+    /// başlayınca sönmez. Ayrıca başlangıç modu (<c>fresh</c>) eklendi: şerit orada KESİKLİ çizilir
+    /// (3px dolu / 4px boş), çünkü Sync bir plan göstermez.</para>
+    ///
+    /// <para><b>[KORUNAN SAPMA]</b> §2.4 şeridin 1px dikey iç boşluklu olmasını ister; burada şerit satırın
+    /// tam yüksekliğince uzanır (kullanıcı kararı — ayrımı satırın alt çizgisi yapar). Bkz. ProjectRow.xaml.</para>
+    ///
+    /// <para><b>Kesikli çizim:</b> WPF'te bir <see cref="Rectangle"/> dolgusu "kesikli" olamaz — desen
+    /// TİLE'lanmış bir <see cref="System.Windows.Media.DrawingBrush"/> ile verilir (2×3 dolu blok, 2×7 tile).
+    /// Alternatif bir <c>Line</c> + <c>StrokeDashArray</c> idi; o, seçilide 2→3 genişleyen şeridi ve satır
+    /// yüksekliğini ayrıca yönetmeyi gerektirirdi.</para>
     /// </summary>
     private void SetStripeFill()
     {
-        string key = (_vm?.Status ?? GraphStatus.Discovered) switch
-        {
-            GraphStatus.Queued => "Brush.StatusQueued",
-            GraphStatus.Building => "Brush.Amber",
-            GraphStatus.Succeeded => "Brush.StatusSuccess",
-            GraphStatus.Failed => "Brush.StatusFail",
-            _ => "Brush.StatusSkippedBorder", // discovered ve skipped AYNI gri
-        };
-        PART_Stripe.SetResourceReference(Shape.FillProperty, key);
+        var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
+        string key = VisualStatuses.StripeBrushKey(visual);
+        if (!VisualStatuses.IsDashed(visual)) { PART_Stripe.SetResourceReference(Shape.FillProperty, key); return; }
+
+        PART_Stripe.Fill = BuildDashedStripeBrush(ResolveBrush(key));
     }
+
+    // [design v1.11.0 §2.4-1] `repeating-linear-gradient(to bottom, X 0 3px, transparent 3px 7px)` karşılığı.
+    private const double DashOnPx = 3, DashPeriodPx = 7;
+
+    /// <summary>[test seam] Başlangıç modunun kesikli şerit fırçasını üreten TEK yer — kontrol ve test AYNI
+    /// fabrikayı kullanır (BuildBreathingAnimation deseni).</summary>
+    internal static System.Windows.Media.DrawingBrush BuildDashedStripeBrush(System.Windows.Media.Brush color)
+    {
+        var drawing = new System.Windows.Media.GeometryDrawing(
+            color, null, new System.Windows.Media.RectangleGeometry(new Rect(0, 0, 2, DashOnPx)));
+        return new System.Windows.Media.DrawingBrush(drawing)
+        {
+            TileMode = System.Windows.Media.TileMode.Tile,
+            Viewport = new Rect(0, 0, 2, DashPeriodPx),
+            ViewportUnits = System.Windows.Media.BrushMappingMode.Absolute,
+            ViewboxUnits = System.Windows.Media.BrushMappingMode.Absolute,
+            Viewbox = new Rect(0, 0, 2, DashPeriodPx),
+            Stretch = System.Windows.Media.Stretch.None,
+        };
+    }
+
+    private System.Windows.Media.Brush ResolveBrush(string key) =>
+        TryFindResource(key) as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Transparent;
 
     private void ApplyDuration()
     {
@@ -344,56 +370,26 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>
-    /// [design v1.7.0 §2.4] Uyarı slotu: TEK üçgen, rengi EN AĞIR nedeni söyler ve tooltip nedenleri alt alta
-    /// listeler.
-    /// <list type="bullet">
-    /// <item><b>Döngü üyeliği → turuncu</b> (<c>Brush.StatusCycle</c>). Yapısal ve KALICIDIR: satırın dep-issue'su
-    /// da olsa turuncu kazanır, çünkü geçici olan diğeridir.</item>
-    /// <item><b>Yalnız dep-issue → amber</b> (<c>Brush.AmberText</c>). Geçicidir: bağımlılık düzelince bir
-    /// sonraki koşu temizler. Kırmızı KULLANILMAZ — kırmızı sonuç kanalınındır ("derlendi ve patladı"),
-    /// oysa bu satır kendi işini yapmış olabilir.</item>
-    /// <item><b>Satır building iken slot GİZLİDİR</b> — dönen spinner'la yarışmaz.</item>
-    /// </list>
-    /// Statü glyph'i bundan ETKİLENMEZ: o daima gerçek statüyü gösterir, uyarı onun yerine asla geçmez.
+    /// [design v1.11.0 §2.4-6 · §9-8] Uyarı slotu: statüden bağımsız, sabit 14px, TEK üçgen ve
+    /// <b>HER ZAMAN AMBER</b>. Tooltip <b>TEK SATIRDIR</b> ve metni saf çekirdek üretir
+    /// (<see cref="RowWarning.For"/>); döngü yolu, üye listesi ve gerekçe proje LOGUNDADIR.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Renk eskiden nedeni söylüyordu (yapısal döngü → turuncu, geçici dep-issue
+    /// → amber) ve tooltip nedenleri alt alta diziyordu. v1.11.0 turuncuyu UI'dan çıkardı: iki uyarı tek
+    /// amber üçgende birleşti ve ayrım tooltip'in TEK cümlesinde kaldı.</para>
+    ///
+    /// <para>Satır building iken slot GİZLİDİR — dönen spinner'la yarışmaz. Statü glyph'i bundan
+    /// ETKİLENMEZ: o daima gerçek statüyü gösterir.</para>
     /// </summary>
-    /// <summary>Noktanın (B/C kanalı) TEK yazıcısı: plan durumu, plan gerekçesi, döngü üyeliği ve döngü yolu
-    /// birlikte sürülür — ayrı yerlerden yazıldıklarında biri güncellenmeden kalabiliyordu.</summary>
-    private void ApplyDot() =>
-        PART_Dot.Apply(_vm?.WillBuild, _vm?.WillBuildReason, _vm?.InCycle ?? false, _vm?.CyclePath ?? "");
-
     private void ApplyDep()
     {
         bool building = _vm?.IsCompiling ?? false;
-        bool inCycle = _vm?.InCycle ?? false;
-        bool hasDepIssue = _vm?.HasDepIssue ?? false;
-        bool cycleUnsettled = _vm?.CycleUnsettled ?? false;
-        bool cycleUnconverged = _vm?.CycleUnconverged ?? false;
-        bool show = !building && (inCycle || hasDepIssue || cycleUnsettled || cycleUnconverged);
+        string? warn = building ? null : RowWarning.For(
+            _vm?.InCycle ?? false, _vm?.CycleUnsettled ?? false, _vm?.CycleUnconverged ?? false,
+            _vm?.DepIssues, _vm?.NamePrefix ?? "");
 
-        PART_DepIcon.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        if (!show) { PART_DepTip.Content = null; UpdateGlyphTooltip(); return; }
-
-        bool structural = inCycle || cycleUnsettled || cycleUnconverged;
-        PART_DepTriangle.SetResourceReference(Shape.StrokeProperty,
-            structural ? "Brush.StatusCycle" : "Brush.AmberText");
-
-        // Nedenler alt alta: en ağırdan (yapısal, kalıcı) en hafife (geçici dep-issue).
-        var reasons = new List<string>(3);
-        if (cycleUnconverged) reasons.Add(CycleUnconvergedTooltip);
-        else if (cycleUnsettled) reasons.Add(CycleUnsettledTooltip);
-        else if (inCycle) reasons.Add(CycleMembershipTooltip);
-        // [design v1.7.0 §2.4-6/§5] Nedenin ARDINDAN döngünün yolu: üçgen tek başına "bir şey ters" diyor,
-        // yol hangi projelerin birbirini beklediğini söylüyor. Yolu bu satır KURMAZ (CycleText.Path).
-        if (inCycle && _vm?.CyclePath is { Length: > 0 } path) reasons.Add(path);
-        if (hasDepIssue && _vm?.DepIssues is { } issues)
-        {
-            // Kısa adlar (veri-türevli ortak önek atılmış — D5); önek satıra RunViewModel'den itilir.
-            string prefix = _vm?.NamePrefix ?? "";
-            string names = string.Join(", ", issues.Select(n => GraphNode.ShortLabel(n, prefix)));
-            reasons.Add($"Dependency issue: {names} — last successful output referenced");
-        }
-        PART_DepTip.Content = string.Join(Environment.NewLine, reasons);
-        UpdateGlyphTooltip();
+        PART_DepIcon.Visibility = warn is null ? Visibility.Collapsed : Visibility.Visible;
+        PART_DepTip.Content = warn;
     }
 
     private void ApplySha()
@@ -464,31 +460,10 @@ public partial class ProjectRow : UserControl
         MotionTokens.TransitionColor(this, _bgBrush, target);
     }
 
-    /// <summary>[review fix 2] <c>PART_Glyph</c> satırın TEK her-zaman-görünür yüzeyidir — dep-slot boşken sıfır
-    /// yükseklikte çöker (<c>DepSlot</c>), bu yüzden döngü durumları BURADA da duyurulmalı, yalnız dep-slot'un
-    /// kendi tooltip'inde değil. Sıra <see cref="ApplyDep"/>'in 4-yollu önceliğiyle AYNI (CycleUnconverged —
-    /// yalnız Skipped'te, RunCounters kapısıyla aynı — &gt; dep-issue &gt; CycleUnsettled &gt; sıradan döngü
-    /// üyeliği); metinler TEKRAR YAZILMAZ, dep-slot'un KENDİ sabitleri (<see cref="CycleUnconvergedTooltip"/>/
-    /// <see cref="CycleUnsettledTooltip"/>/<see cref="CycleMembershipTooltip"/>) reuse edilir.</summary>
-    private void UpdateGlyphTooltip()
-    {
-        var state = _vm?.State ?? ProjectRowState.Pending;
-        GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
-        // [A13/T5] design-v1 EN_STATUS eşlemesi artık STATUS_META'nın yanında (StatusGlyph.LabelFor) — graf
-        // düğümünün ekran-okuyucu adı ikinci tüketicisidir, kopya YASAK.
-        string text = StatusGlyph.LabelFor(status);
-        if (state == ProjectRowState.Started)
-            text += " — " + DurationFormat.Elapsed(_vm?.DurationMs ?? 0);
-        else if (state == ProjectRowState.Skipped && (_vm?.CycleUnconverged ?? false))
-            text += " — " + CycleUnconvergedTooltip;
-        else if (_vm?.HasDepIssue ?? false)
-            text += " — dependency issue";
-        else if (_vm?.CycleUnsettled ?? false)
-            text += " — " + CycleUnsettledTooltip;
-        else if ((_vm?.InCycle ?? false) && status != GraphStatus.Cycle)
-            text += " — " + CycleMembershipTooltip;
-        PART_GlyphTip.Content = text;
-    }
+    // [design v1.11.0 §2.4-5 · §9-13] Statü glyph'inin TOOLTIP'i KALDIRILDI. Eski hâlinde glyph, statü
+    // etiketine ek olarak canlı süreyi ve döngü/dep gerekçelerini de söylüyordu — üçü de satırda ZATEN vardı
+    // (süre kolonu, uyarı üçgeni). Ekran okuyucu için statü metni glyph'in UIA adına yazılır
+    // (ApplyStatusVisuals); listede tooltip taşıyan TEK öğe uyarı üçgenidir.
 
     // ---------------------------------------------------------------- nefes / shake
     private void ApplyBreathing()

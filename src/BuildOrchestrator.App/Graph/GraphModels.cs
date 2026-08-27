@@ -13,13 +13,21 @@ namespace BuildOrchestrator.App.Graph;
 /// kartlarında yaşar). Bu yüzden kısa-ad öneki ve <c>HasDepIssue</c> bayrağı bu kayıttan SÖKÜLDÜ — grafta
 /// hiçbir okuyucuları kalmamıştı.</para>
 ///
-/// <para>[design v1.7.0 §2.3/§5] Düğüm ÜÇ kanal taşır ve hiçbiri diğerinin yerine geçmez:
-/// <see cref="Status"/> "bu koşuda ne oldu" (kenar), <see cref="WillBuild"/> "sıradaki Build buna dokunacak mı"
-/// ve <see cref="InCycle"/> "kodda döngü var mı" (ikisi birlikte ÇEKİRDEĞİ boyar). Üyelik statüden
-/// BAĞIMSIZDIR: statü koşu boyunca değişir (discovered → queued → building → sonuç) ama üyelik değişmez.</para>
+/// <para>[design v1.11.0 §2.3 "Renk kuralı"] Düğüm TEK bir renk kanalı taşır: <see cref="Visual"/>. Node
+/// border'ı, zemini ve içindeki küp AYNI görsel durumdan beslenir — ayrı bir "plan" ya da "cycle" çekirdeği
+/// YOKTUR ve grafta uyarı üçgeni de yoktur (döngü, liste satırındaki tek amber üçgende yaşar).</para>
+///
+/// <para><b>[DEĞİŞEN KURAL]</b> v1.7.0'da düğüm ÜÇ kanal taşıyordu: <c>Status</c> "bu koşuda ne oldu"
+/// (kenar), <c>WillBuild</c> "sıradaki Build buna dokunacak mı" ve <c>InCycle</c> "kodda döngü var mı" (son
+/// ikisi birlikte çekirdeği boyardı, turuncu amber'i eziyordu). v1.11.0 ikisini de kaldırdı; iki alan da bu
+/// kayıttan SÖKÜLDÜ çünkü grafta okuyucuları kalmadı.</para>
+///
+/// <para><see cref="Status"/> KALIR: beads animasyonunun kapısı (Building) ve ekran-okuyucu adı ondan gelir —
+/// ikisi de bir RENK sorusu değildir.</para>
 /// </summary>
-/// <param name="WillBuild">Plan kanalı: <c>true</c> derlenecek · <c>false</c> güncel · <c>null</c> bilinmiyor.</param>
-public sealed record GraphNode(string Name, int Layer, GraphStatus Status, bool InCycle = false, bool? WillBuild = null)
+/// <param name="Visual">Tek renk kanalı — <see cref="VisualStatuses"/> tablosuyla boyanır.</param>
+public sealed record GraphNode(string Name, int Layer, GraphStatus Status,
+    VisualStatus Visual = VisualStatus.Discovered)
 {
     /// <summary>[D5] Ortak öneği atılmış kısa ad. Grafın kendisi ARTIK kullanmaz (§2.3: node üstü etiket
     /// yok) ama proje adını dar bir yerde gösteren diğer yüzeyler kullanır: liste kartının dep-tooltip'i

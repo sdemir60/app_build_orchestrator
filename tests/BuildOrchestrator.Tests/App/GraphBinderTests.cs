@@ -1,4 +1,4 @@
-using BuildOrchestrator.App.Controls;
+﻿using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
@@ -129,12 +129,12 @@ public class GraphBinderTests
         var startedInCycleRow = new ProjectRowViewModel(Id("Z"), "Z", ProjectRowState.Started) { InCycle = true };
         Assert.Equal(GraphStatus.Building, GraphBinder.StatusOf(startedInCycleRow, synced: true));
 
-        // Uçtan uca: üyelik grafta STATÜDE değil, düğümün kendi InCycle alanındadır (çekirdeği o boyar).
+        // Uçtan uca: üyelik grafın RENK kanalına HİÇ girmez (design v1.11.0 §2.3 — grafta üçgen de yoktur);
+        // düğüm yalnız statü + görsel durum taşır.
         var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]) };
         var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
-        Assert.True(nodes.Single(n => n.Name == "X").InCycle);
-        Assert.False(nodes.Single(n => n.Name == "Y").InCycle);
         Assert.Equal(GraphStatus.Discovered, nodes.Single(n => n.Name == "X").Status);
+        Assert.Equal(nodes.Single(n => n.Name == "Y").Visual, nodes.Single(n => n.Name == "X").Visual);
     }
 
     // [quiet · SİLİNDİ] `Nodes_source_the_dep_badge_from_row_HasDepIssue` — v1.3.0 §2.3 "Kaldırılanlar" graf
@@ -142,63 +142,34 @@ public class GraphBinderTests
     // HasDepIssue taşımıyor ve binder'ın onu üretecek bir sebebi yok. Bayrağın kendisi
     // ProjectRowViewModel.HasDepIssue olarak duruyor ve ProjectRowTests'te pinli.
 
-    /// <summary>[Task 5] <c>GraphNode.InCycle</c> — kalıcı köşe rozetinin veri kaynağı. Statünün AKSİNE (satır
-    /// yoksa <c>inCycle</c> topoloji bayrağına düşer, StatusOf'un savunmacı dalıyla AYNI desen) burada da satır
-    /// varsa <c>row.InCycle</c> otorite, yoksa topolojinin kendi bayrağı.</summary>
+    /// <summary>
+    /// [design v1.11.0 §2.3] <b>Düğüm TEK renk kanalı taşır.</b>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Burada dört test vardı ve hepsi kalkan iki alanı pinliyordu:
+    /// <c>GraphNode.InCycle</c> ("üyelik satırdan gelir, satır yoksa topolojiden") ve <c>GraphNode.WillBuild</c>
+    /// ("plan satırdan gelir, satır yoksa topolojiden; satır bilirse o kazanır"). v1.11.0 ikisini de kaldırdı:
+    /// node border'ı ve içindeki küp AYNI görsel durumdan boyanır, plan bilgisi satırın çift SHA metnine,
+    /// döngü üyeliği liste satırındaki tek amber üçgene indi. Dördü bu tek teste indi.</para>
+    ///
+    /// <para>Görsel durumun kendisi satırdan gelir (statü + başlangıç modu + işaretlilik); satır YOKSA
+    /// başlangıç modu varsayılır — Sync'ten sonraki temiz hâl budur.</para>
+    /// </summary>
     [Fact]
-    public void Nodes_pass_the_rows_cycle_membership_through_to_the_graph_node()
+    public void Nodes_carry_the_rows_single_visual_status_and_default_to_the_fresh_start_mode()
     {
         var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]) };
         var rows = RowsFor(topology);
+        rows[Id("X")].Fresh = true;                 // Sync sonrası başlangıç modu
+        rows[Id("Y")].Marked = true;                // işlem kapsamı — dalgada amber'a yanar
 
         var nodes = GraphBinder.Nodes(topology, rows);
 
-        Assert.True(nodes.Single(n => n.Name == "X").InCycle);
-        Assert.False(nodes.Single(n => n.Name == "Y").InCycle);
-    }
+        Assert.Equal(VisualStatus.Fresh, nodes.Single(n => n.Name == "X").Visual);
+        Assert.Equal(VisualStatus.Marked, nodes.Single(n => n.Name == "Y").Visual);
 
-    /// <summary>Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı) üyelik topolojinin KENDİ
-    /// bayrağından gelir — <see cref="StatusOf"/>'un row-null dalıyla AYNI desen.</summary>
-    [Fact]
-    public void Nodes_fall_back_to_the_topology_cycle_flag_when_the_row_is_missing()
-    {
-        var topology = new[] { Node("X", [], inCycle: true) };
-
-        var nodes = GraphBinder.Nodes(topology, new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase));
-
-        Assert.True(nodes.Single().InCycle);
-    }
-
-    /// <summary>
-    /// AYIRT EDİCİ — plan kanalı (<c>WillBuild</c>) da üyelik gibi topolojiye DÜŞER: satır henüz plan
-    /// bilgisini almamışsa (<c>null</c>) topolojinin kendi değeri kullanılır.
-    ///
-    /// <para>Sahada görülen kusur bu boşluktandı: Sync'te topoloji önizlemeden ÖNCE gelir ve graf o anda
-    /// kurulur; satırların <c>WillBuild</c>'i henüz null olduğu için küpler nötr çiziliyordu. Oysa topoloji
-    /// düğümü değeri ZATEN taşıyor (<c>ProjectNode.WillBuild</c>) — üyelikte (<c>InCycle</c>) yıllardır olan
-    /// fallback burada eksikti.</para>
-    /// </summary>
-    [Fact]
-    public void Nodes_fall_back_to_the_topology_plan_flag_when_the_row_has_none()
-    {
-        var topology = new[] { Node("X", [], willBuild: true), Node("Y", [], willBuild: false) };
-        var rows = RowsFor(topology); // satırlar Pending, WillBuild = null
-
-        var nodes = GraphBinder.Nodes(topology, rows);
-
-        Assert.True(nodes.Single(n => n.Name == "X").WillBuild);
-        Assert.False(nodes.Single(n => n.Name == "Y").WillBuild);
-    }
-
-    /// <summary>Satır bir değer taşıyorsa OTORİTE odur — canlı koşuda satır topolojiden tazedir.</summary>
-    [Fact]
-    public void A_row_that_knows_its_plan_wins_over_the_topology()
-    {
-        var topology = new[] { Node("X", [], willBuild: true) };
-        var rows = RowsFor(topology);
-        rows[Id("X")].WillBuild = false; // koşu bitti, satır temize döndü
-
-        Assert.False(GraphBinder.Nodes(topology, rows).Single().WillBuild);
+        // Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı) başlangıç modu.
+        var orphan = GraphBinder.Nodes(topology, new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase));
+        Assert.All(orphan, n => Assert.Equal(VisualStatus.Fresh, n.Visual));
     }
 
     [Fact]

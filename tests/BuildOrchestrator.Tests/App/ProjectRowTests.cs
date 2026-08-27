@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -128,58 +128,44 @@ public class ProjectRowTests
     }
 
     /// <summary>
-    /// Nokta NEDEN derleneceğini söyler. Sahada kart üstünde nokta (plan) ile sha çifti (commit) yan yana
-    /// duruyor ve "commit aynı ama neden derlenecek?" diye okunuyordu — ikisi ayrı kanal, ve gerekçe
-    /// hiçbir yüzeyde yoktu. Renk gerekçeden ETKİLENMEZ: gerekçe yalnız metni özelleştirir.
+    /// [design v1.11.0 §2.4-2 · §9-1] <b>Nokta artık statü kanalıdır.</b> Sol şeritle AYNI rengi taşır ve
+    /// TOOLTIP TAŞIMAZ; başlangıç modunda dolgusuz + kesikli halkadır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Burada iki test vardı ve ikisi de kalkan ORTOGONAL plan kanalını
+    /// pinliyordu: <c>The_will_build_dot_says_why_the_project_will_build</c> (noktanın tooltip'i gerekçeyi
+    /// söyler: "Never built — will build" vb.) ve
+    /// <c>Will_build_dot_is_amber_when_dirty_grey_when_clean_and_a_hollow_ring_when_unknown</c> (dolu amber /
+    /// dolu gri / içi boş halka). v1.11.0 §9-1 o kanalı kaldırdı — <i>renk yalnız son işlemin hikâyesini
+    /// anlatır</i>; plan bilgisi satırın çift SHA metnine indi (aşağıdaki SHA testleri onu pinler). İki eski
+    /// iddia bu tek teste indi.</para>
     /// </summary>
     [StaFact]
-    public void The_will_build_dot_says_why_the_project_will_build()
+    public void The_status_dot_follows_the_stripe_colour_and_carries_no_tooltip()
     {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
-        {
-            WillBuild = true,
-            WillBuildReason = WillBuildReason.DepIssue,
-        };
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, Fresh = true };
         var (row, window, host) = Realize(vm);
         var dot = DsResources.Descendants(row.Dot).OfType<Ellipse>().Single();
 
-        Assert.Equal("Built against a failed dependency — will rebuild", row.Dot.ToolTip);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotDirty"), DsResources.ColorOf(dot.Fill)); // renk plan kanalının
+        Assert.Null(row.Dot.ToolTip);
 
-        vm.WillBuildReason = WillBuildReason.NeverBuilt;
+        // Başlangıç modu: DOLGU YOK, kesikli halka VAR — plan (WillBuild=true) hiçbir renk üretmez.
+        Assert.Null(dot.Fill);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(dot.Stroke));
+        Assert.NotEmpty(dot.StrokeDashArray);
+
+        // İşlem başladı (başlangıç modu düştü) ve satır kapsamda: nokta AMBER — şeridin ta kendisi.
+        vm.Fresh = false;
+        vm.Marked = true;
         row.UpdateLayout();
-        Assert.Equal("Never built — will build", row.Dot.ToolTip);
-
-        // Gerekçe bilinmiyorsa (eski önizleme / koşu-zamanlama kaynaklı pre-skip) jenerik metne düşülür.
-        vm.WillBuildReason = null;
-        row.UpdateLayout();
-        Assert.Equal("Changed — will build", row.Dot.ToolTip);
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
-    public void Will_build_dot_is_amber_when_dirty_grey_when_clean_and_a_hollow_ring_when_unknown()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true };
-        var (row, window, host) = Realize(vm);
-        var dot = DsResources.Descendants(row.Dot).OfType<Ellipse>().Single();
-
-        // dirty → dolu amber (DS WillBuildDot, olduğu gibi tüketilir).
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotDirty"), DsResources.ColorOf(dot.Fill));
+        Assert.Equal(DsResources.TokenColor(host, "Brush.Amber"), DsResources.ColorOf(dot.Fill));
+        Assert.Equal(DsResources.ColorOf(row.Stripe.Fill), DsResources.ColorOf(dot.Fill)); // şerit == nokta
         Assert.Null(dot.Stroke);
 
-        // clean → dolu gri, kontursuz.
-        vm.WillBuild = false;
+        // Sonuç geldi: ikisi birlikte sonuç rengine döner.
+        vm.State = ProjectRowState.Succeeded;
         row.UpdateLayout();
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotClean"), DsResources.ColorOf(dot.Fill));
-        Assert.Null(dot.Stroke);
-
-        // unknown(null) → içi boş + halka. Halka fırçası kontrolün KENDİ kararıdır (Brush.DotOutline, hakemlik
-        // bekleyen Ç-1) — kart onu EZMEZ, olduğu gibi tüketir.
-        vm.WillBuild = null;
-        row.UpdateLayout();
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotUnknown"), DsResources.ColorOf(dot.Fill));
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotOutline"), DsResources.ColorOf(dot.Stroke));
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSuccess"), DsResources.ColorOf(dot.Fill));
+        Assert.Equal(DsResources.ColorOf(row.Stripe.Fill), DsResources.ColorOf(dot.Fill));
         GC.KeepAlive(window);
     }
 
@@ -259,10 +245,17 @@ public class ProjectRowTests
         var actions = row.Actions!;
 
         // Erişilebilirlik adları + tooltip metinleri BİREBİR (design-v1) — kopya metinler değişmedi.
+        // [DEĞİŞEN KURAL — design v1.11.0 §2.4-4 · §9-13] Tooltip'ler DS <c>ToolTip</c> nesnesi olmaktan
+        // çıktı: satırda DS tooltip'i taşıyan TEK öğe uyarı üçgenidir. İkon butonlarınınki HTML'in native
+        // `title`'ının WPF karşılığıdır — düz metin + OS'un fare-üzerinde-bekleme gecikmesi.
         Assert.Equal("Reveal in Explorer", AutomationProperties.GetName(actions.RevealButton));
         Assert.Equal("Open in Visual Studio", AutomationProperties.GetName(actions.VsButton));
-        Assert.Equal("Reveal in Explorer", ((ToolTip)actions.RevealButton.ToolTip).Content);
-        Assert.Equal("Open in Visual Studio", ((ToolTip)actions.VsButton.ToolTip).Content);
+        Assert.Equal("Reveal in Explorer", actions.RevealButton.ToolTip);
+        Assert.Equal("Open in Visual Studio", actions.VsButton.ToolTip);
+        Assert.Equal(BuildOrchestrator.App.Controls.AppTooltipDefaults.NativeDelayMs,
+            ToolTipService.GetInitialShowDelay(actions.RevealButton));
+        Assert.Equal(BuildOrchestrator.App.Controls.AppTooltipDefaults.NativeDelayMs,
+            ToolTipService.GetInitialShowDelay(actions.VsButton));
 
         // Ds.IconButton stili çözüldü (şablon genişledi → Foreground'a bağlı ikon konturu boyanabilir).
         Assert.NotNull(actions.RevealButton.Style);
@@ -588,17 +581,17 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
-    // [DEĞİŞEN KURAL — design v1.7.0 §2.4] Sol şerit YALNIZ sonuç kanalıdır ve HER satırda vardır. İki iddia
-    // değişti: (a) döngü üyeliği şeridi ARTIK EZMEZ — yapısal kanal noktaya ve uyarı üçgenine taşındı;
-    // (b) discovered ile skipped AYNI gridir (`Brush.StatusSkippedBorder`) — iki ayrı gri, aralarında bir
-    // anlam varmış izlenimi veriyordu.
+    // [DEĞİŞEN KURAL — design v1.11.0 §2.4-1] Sol şerit TEK statü kanalıdır ve HER satırda vardır. Üç iddia
+    // sırayla değişti: (a) v1.7.0'da döngü üyeliği şeridi ARTIK EZMEZ; (b) discovered ile skipped AYNI gridir;
+    // (c) v1.11.0'da QUEUED da AMBER'dır — kuyruk bir sonuç değil, işlemin kapsamıdır ve işaretleme dalgasıyla
+    // yanan renk koşu başlayınca sönmez (eski değer `Brush.StatusQueued` idi).
     [StaTheory]
     [InlineData(ProjectRowState.Started, false, false, "Brush.Amber")]
     [InlineData(ProjectRowState.Succeeded, false, false, "Brush.StatusSuccess")]
     [InlineData(ProjectRowState.Failed, false, false, "Brush.StatusFail")]
     [InlineData(ProjectRowState.Skipped, false, false, "Brush.StatusSkippedBorder")]
     [InlineData(ProjectRowState.Pending, true, false, "Brush.StatusSkippedBorder")] // üyelik şeridi ezmez
-    [InlineData(ProjectRowState.Pending, false, true, "Brush.StatusQueued")]  // willBuild + run uçuşta → queued
+    [InlineData(ProjectRowState.Pending, false, true, "Brush.Amber")]  // willBuild + run uçuşta → queued
     public void Status_stripe_uses_the_right_token_brush_per_status(
         ProjectRowState state, bool inCycle, bool queued, string expectedKey)
     {
@@ -611,8 +604,7 @@ public class ProjectRowTests
     }
 
     /// <summary>[DEĞİŞEN KURAL — design v1.7.0 §2.4] Eski iddia: "discovered satırın şeridi ŞEFFAFTIR".
-    /// Şerit artık hiç kaybolmaz: workspace açıldığı andan itibaren gri durur (Sync şeridi getirmez, zaten
-    /// oradadır — Sync yalnız plan kanalını tazeler) ve skipped ile AYNI gridir.</summary>
+    /// Şerit artık hiç kaybolmaz: workspace açıldığı andan itibaren gri durur ve skipped ile AYNI gridir.</summary>
     [StaFact]
     public void Discovered_stripe_is_the_same_grey_as_skipped()
     {
@@ -623,24 +615,49 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.11.0 §2.4-1 · §9-3] Başlangıç modunda şerit KESİKLİ çizilir (3px dolu / 4px boş) —
+    /// Sync bir plan göstermez. WPF'te bir dolgu "kesikli" olamaz; desen tile'lanmış bir DrawingBrush'tır.</summary>
     [StaFact]
-    public void Dep_tooltip_is_the_verbatim_brief_text_with_the_common_prefix_stripped()
+    public void The_fresh_start_mode_draws_the_stripe_dashed_instead_of_solid()
     {
-        // [D5] Kısa-ad öneki artık VERİ-TÜREVLİ ve satıra RunViewModel'den itilir (NamePrefix) — hardcode "OSYS."
-        // yok. İzole kart testinde ata RunViewModel olmadığından öneki doğrudan satıra veririz (Sha testindeki
-        // "izole kartta run VM yok" deseninin eşi).
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { Fresh = true };
+        var (row, window, host) = Realize(vm);
+
+        var dashed = Assert.IsType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);
+        Assert.Equal(System.Windows.Media.TileMode.Tile, dashed.TileMode);
+        // Dolu blok tile'ın yarısından KISA olmalı — aksi halde "kesikli" değil düz okunurdu.
+        var drawing = Assert.IsType<System.Windows.Media.GeometryDrawing>(dashed.Drawing);
+        Assert.True(drawing.Geometry.Bounds.Height < dashed.Viewport.Height / 2);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(drawing.Brush));
+
+        // İşlem başlayınca (fresh düşünce) şerit DÜZ griye döner.
+        vm.Fresh = false;
+        row.UpdateLayout();
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
+        Assert.IsNotType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.11.0 §2.4-6] Uyarı tooltip'i TEK SATIRDIR: ilk dep'in kısa adı + kalanların SAYISI.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski metin tüm adları <c>", "</c> ile listeliyor ve
+    /// <c>" — last successful output referenced"</c> kuyruğunu taşıyordu. v1.11.0 tooltip'i kısalttı: tam liste
+    /// ve gerekçe proje LOGUNDADIR. Ortak önek atma kuralı (D5) DEĞİŞMEDİ.</para></summary>
+    [StaFact]
+    public void Dep_tooltip_is_one_line_with_the_first_name_and_a_plus_count()
+    {
+        // [D5] Kısa-ad öneki VERİ-TÜREVLİ ve satıra RunViewModel'den itilir (NamePrefix) — hardcode "OSYS." yok.
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Failed) { NamePrefix = "OSYS." };
         var (row, window, _) = Realize(vm);
 
-        // Tek dep: ortak önek atılır.
+        // Tek dep: ortak önek atılır, sayaç YOK.
         vm.DepIssues = new[] { "OSYS.Sales.Core" };
         row.UpdateLayout();
-        Assert.Equal("Dependency issue: Sales.Core — last successful output referenced", row.DepTooltip);
+        Assert.Equal("Dependency issue: Sales.Core", row.DepTooltip);
 
-        // İki dep: ", " ile birleşir (brief slot 6 birebir).
-        vm.DepIssues = new[] { "OSYS.Sales.Core", "OSYS.Billing.Core" };
+        // Üç dep: ilk ad + "+2" (tam liste logda).
+        vm.DepIssues = new[] { "OSYS.Sales.Core", "OSYS.Billing.Core", "OSYS.Base" };
         row.UpdateLayout();
-        Assert.Equal("Dependency issue: Sales.Core, Billing.Core — last successful output referenced", row.DepTooltip);
+        Assert.Equal("Dependency issue: Sales.Core +2", row.DepTooltip);
         GC.KeepAlive(window);
     }
 
@@ -677,62 +694,34 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.11.0 §2.4-5 · §9-13] <b>Statü glyph'i TOOLTIP TAŞIMAZ.</b>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Burada dört test vardı ve hepsi glyph tooltip'ini pinliyordu: statü etiketi
+    /// + building'de canlı süre (<c>Building — 5s</c>), <c>— dependency issue</c> eki, iki döngü eki ve
+    /// aralarındaki öncelik. v1.11.0 tooltip'i tamamen kaldırdı — üçü de satırda ZATEN vardı (süre kolonu,
+    /// uyarı üçgeni) ve aynı şey iki yerde okunuyordu. Listede tooltip taşıyan TEK öğe uyarı üçgenidir.</para>
+    ///
+    /// <para>Ekran okuyucu KAYBETMEZ: statü metni glyph'in UIA adına yazılır (eşleme
+    /// <see cref="StatusGlyph.LabelFor"/> — kopya YASAK).</para></summary>
     [StaFact]
-    public void Glyph_tooltip_is_the_status_label_with_building_elapsed_and_dependency_issue_suffix()
+    public void The_status_glyph_has_no_tooltip_and_announces_its_status_through_the_automation_name()
     {
-        // Building: "Building — {Elapsed}" (paylaşılan biçimleyici).
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started) { DurationMs = 5000 };
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started)
+        { DurationMs = 5000, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
         var (row, window, _) = Realize(vm);
-        Assert.Equal($"Building — {DurationFormat.Elapsed(5000)}", row.GlyphTooltip);
 
-        // Non-building, dep sorunsuz: yalın etiket.
-        vm.State = ProjectRowState.Succeeded;
+        Assert.Null(row.Glyph.ToolTip);
+        Assert.Equal(StatusGlyph.LabelFor(GraphStatus.Building),
+            System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
+
+        vm.State = ProjectRowState.Skipped;
+        vm.CycleUnconverged = true;
         row.UpdateLayout();
-        Assert.Equal("Succeeded", row.GlyphTooltip);
-
-        // Non-building + dep sorunu: " — dependency issue" eki.
-        vm.State = ProjectRowState.Failed;
-        vm.DepIssues = new[] { "OSYS.Sales.Core" };
-        row.UpdateLayout();
-        Assert.Equal("Failed — dependency issue", row.GlyphTooltip);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[review fix 2] <c>PART_Glyph</c> satırın TEK her-zaman-görünür yüzeyidir (dep-slot boşken sıfır
-    /// yükseklikte çöker) — döngü durumları da orada duyurulmalı, yalnız dep-slot tooltip'inde değil. Metin
-    /// dep-slot'unkiyle BİREBİR (aynı sabit reuse edilir, kopya YASAK).</summary>
-    [StaFact]
-    public void Glyph_tooltip_gets_the_cycle_unsettled_suffix_when_no_dep_issue_is_present()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { CycleUnsettled = true };
-        var (row, window, _) = Realize(vm);
-
-        Assert.Equal("Succeeded — Cycle did not fully settle — output may be one generation stale", row.GlyphTooltip);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[review fix 2] Aynı ek — <c>CycleUnconverged</c>, yalnız <c>Skipped</c>'te (render guard'la
-    /// aynı kapı).</summary>
-    [StaFact]
-    public void Glyph_tooltip_gets_the_cycle_unconverged_suffix_when_skipped()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { CycleUnconverged = true };
-        var (row, window, _) = Realize(vm);
-
-        Assert.Equal("Skipped — Cycle did not converge — its projects are still out of date", row.GlyphTooltip);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[review fix 2 — precedence] Dep-slot'taki ÖNCELİK glyph tooltip'inde de AYNI: CycleUnconverged,
-    /// bayat bir dep-issue'yu (Continue segment kalıntısı) ezer — iki yüzey ASLA çelişen hikaye anlatmaz.</summary>
-    [StaFact]
-    public void Glyph_tooltip_cycle_unconverged_suffix_wins_over_a_stale_dep_issue_suffix()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
-        { CycleUnconverged = true, DepIssues = ["OSYS.Sales.Core"], NamePrefix = "OSYS." };
-        var (row, window, _) = Realize(vm);
-
-        Assert.Equal("Skipped — Cycle did not converge — its projects are still out of date", row.GlyphTooltip);
+        Assert.Null(row.Glyph.ToolTip);
+        Assert.Equal(StatusGlyph.LabelFor(GraphStatus.Skipped),
+            System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
+        // ...gerekçe uyarı üçgeninde, TEK satır.
+        Assert.Equal(RowWarning.CycleUnconverged, row.DepTooltip);
         GC.KeepAlive(window);
     }
 
@@ -907,15 +896,20 @@ public class ProjectRowTests
     // söyler (döngü üyesi turuncu, yalnız dep-issue amber), tooltip nedenleri alt alta listeler ve satır
     // building iken slot gizlidir.
 
-    /// <summary>[cycles] Glyph tooltip'i dep-slot ile AYNI dördüncü dalı taşır: slot boşken sıfır yükseklikte
-    /// çöktüğü için satırın tek her-zaman-görünür yüzeyi glyph'tir.</summary>
+    /// <summary>[design v1.11.0 §2.4-6] Sıradan döngü üyeliği de TEK satırlık uyarı tooltip'inde duyurulur.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: "glyph tooltip'i de üyeliği duyurur (<c>Skipped — In a
+    /// dependency cycle</c>)" — gerekçesi dep-slot'un boşken sıfır yükseklikte çökmesiydi. Glyph tooltip'i
+    /// kalktı; slot ise burada BOŞ DEĞİLDİR (üyelik tam da onu doldurur), yani duyuru kaybolmadı, tek yere
+    /// indi.</para></summary>
     [StaFact]
-    public void The_glyph_tooltip_also_announces_plain_cycle_membership()
+    public void Plain_cycle_membership_is_announced_by_the_warning_triangle_alone()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped) { InCycle = true };
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal("Skipped — In a dependency cycle", row.GlyphTooltip);
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal(RowWarning.InCycle, row.DepTooltip);
+        Assert.Null(row.Glyph.ToolTip);
         GC.KeepAlive(window);
     }
 }

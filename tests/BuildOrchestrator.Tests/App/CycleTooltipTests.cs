@@ -64,28 +64,54 @@ public class CycleTooltipTests
         Assert.Equal("", Assert.Single(vm.Projects).CyclePath);
     }
 
-    /// <summary>§2.4-2: noktanın tooltip'i döngü açıklaması + yol.</summary>
+    /// <summary>[design v1.11.0 §2.4-2] Statü noktası TOOLTIP TAŞIMAZ.
+    /// <para><b>[DEĞİŞEN KURAL]</b> §2.4-2 (v1.7.0) noktaya iki satırlık bir tooltip veriyordu (döngü
+    /// açıklaması + yol) ve nokta ayrı bir plan/cycle kanalıydı. v1.11.0 o kanalı kaldırdı: nokta artık
+    /// şeritle aynı statü rengini taşır, tooltip'i yoktur ve listede tooltip taşıyan TEK öğe uyarı
+    /// üçgenidir (§9-13).</para></summary>
     [StaFact]
-    public void The_dot_tooltip_explains_the_cycle_and_shows_its_path()
+    public void The_status_dot_carries_no_tooltip_at_all()
     {
-        var dot = new WillBuildDot { InCycle = true, CyclePath = "A → B → A" };
-        DsResources.Realize(DsResources.NewHost(), dot);
+        var vm = NewVm();
+        var row = new ProjectRow { DataContext = vm.Projects[0] };
+        DsResources.Realize(DsResources.NewHost(), row);
 
-        string tip = Assert.IsType<string>(dot.ToolTip);
-        Assert.Equal(CycleText.Membership + Environment.NewLine + "A → B → A", tip);
+        Assert.Null(row.Dot.ToolTip);
+        GC.KeepAlive(row);
     }
 
-    /// <summary>§2.4-6: uyarı üçgeninin nedenleri de yolu taşır (en ağır neden en üstte).</summary>
+    /// <summary>[design v1.11.0 §2.4-6] Uyarı üçgeninin tooltip'i TEK SATIRDIR.
+    /// <para><b>[DEĞİŞEN KURAL]</b> §2.4-6 (v1.7.0) nedenleri alt alta listeliyordu ve döngü YOLUNU tooltip'in
+    /// ikinci satırı olarak veriyordu. v1.11.0 tooltip'i tek cümleye indirdi: <i>döngü yolu, üye listesi ve
+    /// gerekçe proje LOGUNDADIR</i>. Yolun kendisi silinmedi (yukarıdaki testler onu pinler) — yalnız
+    /// tooltip'teki tüketicisi kalktı.</para></summary>
     [StaFact]
-    public void The_warning_triangle_lists_the_cycle_path_under_its_reason()
+    public void The_warning_triangle_tooltip_is_a_single_line_without_the_cycle_path()
     {
         var vm = NewVm();
         var row = new ProjectRow { DataContext = vm.Projects[0] };
         DsResources.Realize(DsResources.NewHost(), row);
 
         string tip = Assert.IsType<string>(row.DepTooltip);
-        Assert.StartsWith("In a dependency cycle", tip, StringComparison.Ordinal);
-        Assert.Contains("Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts", tip, StringComparison.Ordinal);
+        Assert.Equal(RowWarning.InCycle, tip);
+        Assert.DoesNotContain(Environment.NewLine, tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("→", tip, StringComparison.Ordinal); // yol tooltip'te DEĞİL, logda
+        GC.KeepAlive(row);
+    }
+
+    /// <summary>[design v1.11.0 §2.4-6] Üçgen HER ZAMAN amberdir — yapısal/geçici ayrımı ARTIK renkle
+    /// yapılmaz (turuncu UI'dan çıktı), tooltip'in cümlesiyle yapılır.</summary>
+    [StaFact]
+    public void The_warning_triangle_is_always_amber_even_for_a_structural_cycle()
+    {
+        var vm = NewVm();
+        var host = DsResources.NewHost();
+        var row = new ProjectRow { DataContext = vm.Projects[0] };
+        DsResources.Realize(host, row);
+
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberText"), DsResources.ColorOf(row.DepTriangle.Stroke));
+        GC.KeepAlive(row);
     }
 
     /// <summary>[design v1.11.0 §2.2] Şeritte döngü kümesi ARTIK YOKTUR.

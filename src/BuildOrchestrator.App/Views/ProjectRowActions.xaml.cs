@@ -11,7 +11,15 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class ProjectRowActions : UserControl
 {
-    public ProjectRowActions() => InitializeComponent();
+    public ProjectRowActions()
+    {
+        InitializeComponent();
+        // [design v1.11.0 §2.4-4 · §9-13] Satırda DS tooltip'i taşıyan TEK öğe uyarı üçgenidir. İkon
+        // butonları tooltip'lerini korur ama uygulama genelindeki GECİKMESİZ kipten çıkarılır: fare satır
+        // boyunca gezerken arka arkaya balon açılmaz. Gerekçe: Controls/AppTooltipDefaults.NativeDelayMs.
+        foreach (var button in new DependencyObject[] { PART_RevealButton, PART_VsButton })
+            Controls.AppTooltipDefaults.UseNativeDelay(button);
+    }
 
     internal FrameworkElement HoverIcons => PART_HoverIcons;
     internal Button RevealButton => PART_RevealButton;

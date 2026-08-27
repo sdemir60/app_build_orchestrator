@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Markup;
@@ -447,31 +447,45 @@ public class DsControlTemplateTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.11.0 §2.4-2] Statü noktası: 8px daire, statü rengiyle DOLU; başlangıç modunda
+    /// (<c>fresh</c>) dolgusuz + KESİKLİ halka.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Kontrol <c>WillBuildDot</c> idi ve statüden ayrı bir plan kanalı taşıyordu
+    /// (dirty amber / clean gri / unknown içi boş halka, üstüne döngü üyeliği turuncuyla ezerdi). v1.11.0 o
+    /// kanalı kaldırdı; kontrol <c>StatusDot</c> oldu ve şeritle AYNI tablodan boyanıyor.</para></summary>
     [StaFact]
-    public void Will_build_dot_is_filled_when_known_and_a_hollow_ring_when_sync_has_not_run()
+    public void Status_dot_is_filled_with_the_status_colour_and_dashed_in_the_fresh_start_mode()
     {
-        // _ds_bundle.js:1859-1868 — dirty/clean DOLU, unknown içi boş + 1px halka; çap Size.DotSize (8).
         var host = DsResources.NewHost();
         var dot = (FrameworkElement)XamlReader.Parse("""
-            <controls:WillBuildDot xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                                   xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls;assembly=BuildOrchestrator.App" />
+            <controls:StatusDot xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                                xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls;assembly=BuildOrchestrator.App" />
             """);
         var window = DsResources.Realize(host, dot);
 
         var ellipse = DsResources.Descendants(dot).OfType<Ellipse>().Single();
         Assert.Equal((double)host.FindResource("Size.DotSize"), ellipse.Width);
-        // Varsayılan durum unknown'dır: Sync'ten ÖNCE hiçbir şey bilinmez (README:224).
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotUnknown"), DsResources.ColorOf(ellipse.Fill));
-        Assert.NotNull(ellipse.Stroke);
-
-        dot.SetValue(BuildOrchestrator.App.Controls.WillBuildDot.StateProperty, true);
-        dot.UpdateLayout();
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotDirty"), DsResources.ColorOf(ellipse.Fill));
+        // Varsayılan `discovered`: düz gri DOLU, halka yok.
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(ellipse.Fill));
         Assert.Null(ellipse.Stroke);
 
-        dot.SetValue(BuildOrchestrator.App.Controls.WillBuildDot.StateProperty, false);
+        dot.SetValue(BuildOrchestrator.App.Controls.StatusDot.StateProperty,
+            BuildOrchestrator.App.Controls.VisualStatus.Fresh);
         dot.UpdateLayout();
-        Assert.Equal(DsResources.TokenColor(host, "Brush.DotClean"), DsResources.ColorOf(ellipse.Fill));
+        Assert.Null(ellipse.Fill);                                  // başlangıç modunda DOLGU YOK
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(ellipse.Stroke));
+        Assert.Equal(BuildOrchestrator.App.Controls.StatusDot.FreshRingThickness, ellipse.StrokeThickness);
+        Assert.NotEmpty(ellipse.StrokeDashArray);                   // ...ve halka KESİKLİ
+
+        dot.SetValue(BuildOrchestrator.App.Controls.StatusDot.StateProperty,
+            BuildOrchestrator.App.Controls.VisualStatus.Marked);
+        dot.UpdateLayout();
+        Assert.Equal(DsResources.TokenColor(host, "Brush.Amber"), DsResources.ColorOf(ellipse.Fill));
+        Assert.Null(ellipse.Stroke);
+
+        dot.SetValue(BuildOrchestrator.App.Controls.StatusDot.StateProperty,
+            BuildOrchestrator.App.Controls.VisualStatus.Succeeded);
+        dot.UpdateLayout();
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSuccess"), DsResources.ColorOf(ellipse.Fill));
         GC.KeepAlive(window);
     }
 
@@ -523,17 +537,8 @@ public class DsControlTemplateTests
         GC.KeepAlive(window);
     }
 
-    [StaFact]
-    public void Will_build_dot_descriptions_are_english_not_the_turkish_source_labels()
-    {
-        // Kaynak DS Türkçe etiketler taşır (`aria-label="Kaldır"`, `title="Kapat"`, WillBuildDot'un
-        // "Değişti — derlenecek"i). Uygulamanın kullanıcı-görünür metni İNGİLİZCEDİR; çeviri kopyalamayla
-        // atlanmasın diye pinlenir (kod YORUMLARI Türkçe kalır — burada yalnız görünür metin denetlenir).
-        foreach (bool? state in new bool?[] { true, false, null })
-        {
-            string text = BuildOrchestrator.App.Controls.WillBuildDot.DescriptionFor(state);
-            Assert.DoesNotMatch("[ğüşıöçĞÜŞİÖÇ]", text); // kaynaktaki Türkçe etiketler çevrilmiş olmalı
-            Assert.NotEmpty(text);
-        }
-    }
+    // [design v1.11.0 §9-1] `WillBuildDot.DescriptionFor` KALDIRILDI: nokta artık bir tooltip/ekran-okuyucu
+    // metni taşımıyor (statü rengi zaten şeritle ve glyph'le aynı şeyi söylüyor), dolayısıyla o metinlerin
+    // İngilizceliğini pinleyen test de tüketicisiz kaldı. Uygulama genelindeki "kullanıcı metni Türkçe olamaz"
+    // guard'ı yerinde duruyor: NoTurkishUserTextTests.
 }

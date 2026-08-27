@@ -739,41 +739,20 @@ public partial class GraphView : UserControl
         AutomationProperties.SetName(
             visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Status)));
 
-        var (border, background, iconColor, dashed) = visual.Model.Status switch
-        {
-            GraphStatus.Queued => ("Brush.StatusQueued", "Brush.SurfaceRaised", "Brush.StatusQueuedText", false),
-            GraphStatus.Building => ("Brush.Amber", "Brush.AmberSoft", "Brush.AmberText", false),
-            GraphStatus.Succeeded => ("Brush.StatusSuccess", "Brush.StatusSuccessSoft", "Brush.StatusSuccessText", false),
-            GraphStatus.Failed => ("Brush.StatusFail", "Brush.StatusFailSoft", "Brush.StatusFailText", false),
-            GraphStatus.Skipped => ("Brush.StatusSkippedBorder", "Brush.StatusSkippedSoft", "Brush.StatusSkippedText", false),
-            _ => ("Brush.BorderStrong", "Brush.SurfaceRaised", "Brush.TextFaint", true),
-        };
-
-        // [design v1.7.0 §2.3] ÇEKİRDEK (içteki glyph) kart noktasının graf karşılığıdır ve kendi kanalını
-        // söyler — kenar "bu koşuda ne oldu" derken çekirdek "ne olacak / yapısal olarak ne var" der:
-        //   döngü üyesi  → HER ZAMAN turuncu (kalıcı; yeşil bitse de kod hâlâ döngülü)
-        //   bu koşuda bitti → sonuç rengi (graf kapanışta klasik sonuç haritasına döner)
-        //   aksi hâlde   → plan (amber = derlenecek · gri = güncel)
-        // Kart noktasıyla ayrışması bilinçlidir: dolgu iş bitene kadar planı söyler; bitince grafta SONUCA
-        // döner, kartta griye düşer.
-        // [DEĞİŞEN KURAL] Kuyruktaki düğüm ARTIK plan rengini korur. Eskiden Queued da statü rengini (gri)
-        // alıyordu ve bunun bedeli basış anında görülüyordu: Sync'ten sonra derlenecek düğümlerin küpü amber
-        // durur, Build'e basılınca statü Queued'a geçip küp ANINDA griye döner (renk geçişi yoktur) —
-        // ekrandaki tek renkli şey aynı anda kaybolduğu için "derlenecekler bir yanıp söndü" gibi okunuyordu.
-        // Kuyrukta olmak bir SONUÇ değildir; çekirdek hâlâ "bu proje derlenecek" der ve amber kalır, düğümün
-        // tamamı da herkesle birlikte tek seferde söner.
-        iconColor = visual.Model.InCycle ? "Brush.StatusCycle"
-            : visual.Model.Status switch
-            {
-                GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Skipped => iconColor,
-                GraphStatus.Building => iconColor,
-                _ => visual.Model.WillBuild switch
-                {
-                    true => "Brush.DotDirty",
-                    false => "Brush.DotClean",
-                    _ => iconColor,
-                },
-            };
+        // [design v1.11.0 §2.3 "Renk kuralı"] TEK statü kanalı: node border'ı, zemini ve içindeki küp AYNI
+        // görsel durumdan boyanır. Eşleme tablosu VisualStatuses'tedir — liste satırı da AYNI tablodan okur;
+        // graf ikinci bir eşleme YAZMAZ (kopya YASAK).
+        //
+        // [DEĞİŞEN KURAL] Burada eskiden İKİ eşleme vardı: kenar/zemin statüden, ÇEKİRDEK ise ayrı bir
+        // plan/cycle kanalından (döngü üyesi → turuncu; aksi halde amber "derlenecek" / gri "güncel").
+        // v1.11.0 o kanalları kaldırdı — renk yalnız son işlemin hikâyesini anlatır. Kesikli çerçeve de artık
+        // YALNIZ başlangıç modundadır (fresh); `discovered` DÜZ gridir ve "bir işlem başladı ama bu proje
+        // kapsamda değil" der.
+        var state = visual.Model.Visual;
+        string border = VisualStatuses.NodeBorderBrushKey(state);
+        string background = VisualStatuses.NodeBackgroundBrushKey(state);
+        string iconColor = VisualStatuses.NodeCoreBrushKey(state);
+        bool dashed = VisualStatuses.IsDashed(state);
 
         // [quiet · ÖLÇÜLMÜŞ SAPMA] §2.3 "Zemin/kenar/glyph renk geçişleri 380ms ease-standard" der; burada
         // renkler ANINDA uygulanır ve bu bilinçlidir.

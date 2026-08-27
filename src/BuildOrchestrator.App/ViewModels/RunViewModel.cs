@@ -28,6 +28,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private ProjectRowState _state;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Bu proje topolojide bir cycle (SCC) üyesi mi —
@@ -37,6 +38,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// alt-durumunu EZER.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _inCycle;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı (<see cref="RunViewModel.IsRunning"/> ||
@@ -45,6 +47,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// olmadan Pending bir satır ölü envanterden (Discovered) ayırt edilemez.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _isRunActive;
 
     /// <summary>[T53-UI] Kartın soluk ikinci satırı — projenin ait olduğu solution'ın adı (prototip
@@ -94,6 +97,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool? _willBuild;
 
     /// <summary><see cref="WillBuild"/>'in GEREKÇESİ — will-build noktasının tooltip'i bunu söyler.
@@ -132,6 +136,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// sayaç AYNI soruyu aynı şekilde cevaplar (tek kural, iki tüketici).</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     [NotifyPropertyChangedFor(nameof(IsCompiling))]
     private bool _cycleWaiting;
 
@@ -197,6 +202,25 @@ public sealed partial class ProjectRowViewModel : ObservableObject
         // "derlenmedi mi, atlandı mı, hiç görülmedi mi" sorusuna cevap veremiyordu.
         _ => Controls.GraphStatus.Discovered,
     };
+
+    /// <summary>[design v1.11.0 §3.1 · §9-3] <b>Başlangıç modu.</b> Sync ve uygulama açılışı hiçbir şeyi
+    /// renklendirmez: hangi işlemin geleceği belli olmadığı için plan gösterilmez. Satırda kesikli sol şerit +
+    /// kesikli nokta, grafta kesikli node border'ı. Bayrak, bir işlem BAŞLADIĞINDA düşer (motorun
+    /// <c>_neutralize</c>'ına karşılık gelir) ve bir sonraki Sync'te geri gelir.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    private bool _fresh;
+
+    /// <summary>[design v1.11.0 §9-4] Bu satır YÜRÜYEN işlemin kapsamında mı — açılış koreografisinin
+    /// dalgasında amber'a yanan küme. Koşu başlayınca statü kanalı devralır (queued/building/sonuç), bu yüzden
+    /// bayrak yalnız <c>discovered</c> satırlarda görünür bir fark yaratır.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    private bool _marked;
+
+    /// <summary>[design v1.11.0 §9-2] Satırın TEK görsel durumu — şerit, nokta, ad vurgusu ve graf node'u
+    /// hepsi bunu okur. Eşleme <see cref="Controls.VisualStatuses.For"/>'dadır; kart kendi tablosunu KURMAZ.</summary>
+    public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Fresh, Marked);
 
     public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)
     {
@@ -576,6 +600,9 @@ public sealed partial class RunViewModel : ObservableObject
         // [design v1.11.0 §2.2] İşlem pill'i TIKLAMA ANINDA yazılır (motorun cevabı beklenmez): pill "ne
         // yapmıştım?" sorusunu cevaplar ve o soru gönderim gecikmesi boyunca da geçerlidir.
         CurrentOperation = OperationLabel.ForRunMode(mode);
+        // [design v1.11.0 §9-4 `_neutralize`] Bir işlem BAŞLADI: başlangıç modu düşer — herkes düz nötr griye
+        // iner ve renk bundan sonra YALNIZ bu işlemin hikâyesini anlatır.
+        foreach (var row in Projects) row.Fresh = false;
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers)
@@ -1054,6 +1081,9 @@ public sealed partial class RunViewModel : ObservableObject
         // gerçekte KOŞAN işi söyler. Komut tarafındaki yazım (BeginRunAsync) yalnız gönderim penceresini
         // kapatır; ikisi aynı değeri üretir (OperationLabel.ForRunMode — tek eşleme yeri).
         CurrentOperation = OperationLabel.ForRunMode(e.Mode);
+        // [design v1.11.0 §9-4 `_neutralize`] Başlangıç modu da motorun cevabıyla düşer — pill'le AYNI
+        // gerekçe: koşuyu hangi yol başlatmış olursa olsun renk bundan sonra bu işlemin hikâyesini anlatır.
+        foreach (var row in Projects) row.Fresh = false;
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir

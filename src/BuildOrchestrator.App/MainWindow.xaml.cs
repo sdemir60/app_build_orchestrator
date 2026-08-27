@@ -607,6 +607,11 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Counters):
+            // [design v1.11.0 §3.1 · §9-3] Başlangıç modu grafın da RENK kanalıdır (kesikli node çerçevesi) ve
+            // bir işlem başlarken düşer. Bu geçiş <c>Counters</c>'ı DEĞİŞTİRMEZ (statüler aynı kalır), yani
+            // yukarıdaki kapı onu KAÇIRIRDI. İşlem etiketi, başlangıç modunun düştüğü ANIN gözlemlenebilir
+            // sinyalidir (BeginRunAsync ikisini birlikte yazar).
+            case nameof(RunViewModel.CurrentOperation):
                 PushGraphStatuses();
                 break;
             case nameof(RunViewModel.IsRunning):
