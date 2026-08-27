@@ -13,7 +13,7 @@ namespace BuildOrchestrator.App;
 public static class AccessibilityNames
 {
     // ---- Action bar: durum/filtre sayaç chip'leri (AYNI metin tooltip + UIA-adı) ----
-    public const string FilterAll = "All projects — clear filter";
+    public const string FilterAll = "All projects — clear filters";
     public const string FilterBuilding = "Building now — filter";
     public const string FilterSucceeded = "Succeeded — filter";
     public const string FilterFailed = "Failed — filter";

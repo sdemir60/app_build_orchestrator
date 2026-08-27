@@ -39,7 +39,10 @@ public sealed class ConsolePalette
         Cmd = Resolve(find, "Brush.TextPrimary"),
         Info = Resolve(find, "Brush.TextSecondary"),
         Dim = Resolve(find, "Brush.TextFaint"),
-        Warn = Resolve(find, "Brush.StatusCycleText"),
+        // [design v1.11.0 §1.1] warn satırları AMBER. [DEĞİŞEN KURAL] Eskiden cycle turuncusuydu
+        // (`Brush.StatusCycleText`); v1.11.0 turuncuyu UI'dan tamamen çıkardı — `--status-cycle*` token'ları
+        // dosyada durur ama bir statü kanalı olarak hiçbir yerde kullanılmaz.
+        Warn = Resolve(find, "Brush.AmberText"),
         Error = Resolve(find, "Brush.StatusFailText"),
     };
 

@@ -1577,7 +1577,8 @@ lines.
   shape (`… : error CS0103: …`, `… : warning MSB3277: …`) and the prefixes the application itself prints
   (`[error]`, `warning:`, a command line). Everything else is one tone. Scanning free text for `failed` or
   `succeeded` was tried and dropped: it caught the word inside a project name just as readily, and a colour
-  that is sometimes wrong is worth less than no colour at all.
+  that is sometimes wrong is worth less than no colour at all. Warnings are amber and errors red; orange left
+  the console with the rest of the interface (§14.3).
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`.
 - The live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**: scrolling
   to the top pages the previous slice back in, in either mode. The backlog behind the window is mode-independent
