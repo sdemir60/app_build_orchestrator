@@ -222,6 +222,15 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// hepsi bunu okur. Eşleme <see cref="Controls.VisualStatuses.For"/>'dadır; kart kendi tablosunu KURMAZ.</summary>
     public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Fresh, Marked);
 
+    /// <summary>[design v1.11.0 §9-4 · §2.4] Açılış koreografisinin satıra düşen payı: hedef opaklık + o
+    /// opaklığa giden geçişin süresi. Satırlar node'larla SENKRON söner (kapsam 0.45'e 440ms'de, kapsam dışı
+    /// 0.3'e 1120ms'de — ikisi aynı anda biter) ve koşu başlayınca tam opaklığa dönerler.
+    /// <para>Değer satıra İTİLİR (<see cref="NamePrefix"/>/<see cref="TargetSha"/> deseni): 200 satırın
+    /// <c>RunViewModel</c>'e tek tek abone olması yerine sürücü tek tek yazar — satır başına EK abone YOK.</para>
+    /// <para><b>Bitiş koreografisi (neon) satırlara UYGULANMAZ</b> (kullanıcı kararı): liste koşu bitiminde
+    /// sabit kalır, koreografi yalnız grafta yaşar.</para></summary>
+    [ObservableProperty] private RowFade _fade = RowFade.None;
+
     public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)
     {
         Id = id;
@@ -232,6 +241,17 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 }
 
 public enum ProjectRowState { Pending, Started, Succeeded, Failed, Skipped }
+
+/// <summary>[design v1.11.0 §9-4] Bir satırın koreografi opaklığı ve ona giden geçişin süresi — TEK
+/// bildirimde taşınırlar, çünkü ikisi ayrı yazıldığında satır iki kez animasyon kurardı (ilk yazımda eski
+/// süreyle, ikincisinde yeni süreyle).</summary>
+/// <param name="Opacity">Hedef opaklık (1 = koreografi yok).</param>
+/// <param name="DurationMs">O opaklığa giden geçişin süresi.</param>
+public readonly record struct RowFade(double Opacity, double DurationMs)
+{
+    /// <summary>Koreografi oynamıyor — tam opak, normal geçiş süresi.</summary>
+    public static readonly RowFade None = new(1.0, Controls.MarkingChoreography.IdleGlideMs);
+}
 
 /// <summary>[D4 review §3] Kart seçimi değişiminde konsolun izleyeceği aksiyon (<see cref="RunViewModel.NextConsoleSelection"/>
 /// kararı) — MainWindow yalnız uygular.</summary>
@@ -603,6 +623,9 @@ public sealed partial class RunViewModel : ObservableObject
         // [design v1.11.0 §9-4 `_neutralize`] Bir işlem BAŞLADI: başlangıç modu düşer — herkes düz nötr griye
         // iner ve renk bundan sonra YALNIZ bu işlemin hikâyesini anlatır.
         foreach (var row in Projects) row.Fresh = false;
+        // ...ve açılış koreografisi istenir. Kapsamı BURASI bilir (mod → hangi projeler); oynatma kabuğun
+        // işidir (zamanlama + görsel), bu yüzden bir OLAY olarak dışarı verilir.
+        OperationBegun?.Invoke(this, ScopeFor(mode));
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers)
@@ -634,6 +657,33 @@ public sealed partial class RunViewModel : ObservableObject
             Phase = previousPhase; // hiçbir engine event'i gelmeyecek — faz Starting'te asılı bırakılamaz
         }
     }
+
+    /// <summary>[design v1.11.0 §9-4] Bir işlem başladı — açılış koreografisinin KAPSAMIYLA birlikte.
+    /// Kabuk (<c>MainWindow</c>) bunu dinler ve koreografiyi oynatır; VM zamanlama BİLMEZ.</summary>
+    public event EventHandler<IReadOnlyList<ProjectRowViewModel>>? OperationBegun;
+
+    /// <summary>
+    /// [design v1.11.0 §9-4] Bir işlemin KAPSAMI — dalgada amber'a yanan küme.
+    /// <list type="bullet">
+    ///   <item><b>Build</b>: stale set (önizlemenin <c>WillBuild</c>'i true olan satırlar).</item>
+    ///   <item><b>Rebuild</b>: döngü dışı TÜM projeler (döngü üyeleri standart koşuya girmez — §3.2).</item>
+    ///   <item><b>Resolve cycles</b>: döngü üyeleri.</item>
+    /// </list>
+    /// Kapsam bir TAHMİN değildir: üçü de motorun aynı koşuda derleyeceği kümedir (motor kapsamı daraltırsa
+    /// koreografi zaten koşu başlarken biter ve statü kanalı devralır).
+    /// </summary>
+    public IReadOnlyList<ProjectRowViewModel> ScopeFor(RunMode mode) => mode switch
+    {
+        RunMode.Rebuild => [.. Projects.Where(r => !r.InCycle)],
+        RunMode.Cycles => [.. Projects.Where(r => r.InCycle)],
+        _ => [.. Projects.Where(r => r.WillBuild == true)],
+    };
+
+    /// <summary>[design v1.11.0 §9-5] Bu koşuda GERÇEKTEN derlenen projeler (succeeded ∪ failed) — bitiş
+    /// koreografisinin ("neon tutuşma") kapsamı. Atlananlar ve dokunulmayanlar BURADA DEĞİLDİR: onlar
+    /// koreografinin son adımında hep birlikte belirginleşir.</summary>
+    public IReadOnlyList<string> BuiltInThisRun() =>
+        [.. Projects.Where(r => r.State is ProjectRowState.Succeeded or ProjectRowState.Failed).Select(r => r.Name)];
 
     /// <summary>[planlama görünürlüğü] Run dokümanına düşen tek satırlık not: konsol, tıklamanın KALICI
     /// kaydıdır (şerit bir sonraki faz değişiminde üzerine yazar). Motorun planlama adımları hemen ardından

@@ -49,6 +49,13 @@ public partial class MainWindow : Window
     // [E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter (frontier follow'u seçime göre gate eder;
     // paneller bölgesel suppress'lerini buna bildirir — bir panelde kaydırmak diğerlerini duraklatmaz).
     private readonly ScrollArbiter _scrollArbiter = new();
+    /// <summary>[design v1.11.0 §9-4] Açılış koreografisinin sürücüsü — motion sinyalini TAZE okur
+    /// (reduced-motion'da koreografi hiç oynamaz).</summary>
+    private readonly Services.OperationChoreographer _choreographer =
+        new(() => App.Motion?.AnimationsEnabled ?? false);
+    /// <summary>[design v1.11.0 §9-5] Neonun random sırasını tohumlayan koşu sayacı — koreografi koşudan
+    /// koşuya farklı bir sıra oynasın diye artar.</summary>
+    private int _endFinaleRun;
     // [E4/T48] Liste satır sırası (başlık hariç) — SetGroups ile AYNI sıra; FollowRow/SelectRow satır index'i buradan
     // (her 200ms tick'te BuildLayerGroups'u yeniden kurmamak için yalnız topoloji değişiminde tazelenir).
     private IReadOnlyList<ProjectRowViewModel> _orderedRows = [];
@@ -210,6 +217,12 @@ public partial class MainWindow : Window
         // sinyalleri → grafı besle (UpdateStatuses/RunPhase/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
+
+        // [design v1.11.0 §9-4/§9-5] İki koreografi: açılış (işaretleme dalgası — satır + graf) ve bitiş
+        // (neon tutuşma — YALNIZ graf). Sürücü kabukta durur çünkü zamanlama ve görsel katman burasıdır;
+        // VM yalnız "bir işlem başladı, kapsamı bu" der.
+        _choreographer.PushToGraph = (step, marked) => Shell.GraphHost.SetMarking(step, marked);
+        _vm.OperationBegun += (_, scope) => _choreographer.Play(_vm.Projects, scope);
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
@@ -616,8 +629,20 @@ public partial class MainWindow : Window
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
+                // [design v1.11.0 §9-4] Koşu GERÇEKTEN başladı → açılış koreografisi biter ve statü kanalı
+                // devralır (işaretlilik silinir: queued/building zaten amberdir).
+                if (_vm.IsRunning)
+                {
+                    _choreographer.Cancel(_vm.Projects);
+                    _choreographer.ClearMarks(_vm.Projects);
+                }
                 PushGraphRunPhase();
                 PushGraphStatuses();
+                break;
+            case nameof(RunViewModel.Phase):
+                // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
+                if (_vm.Phase is AppPhase.Done or AppPhase.Stopped)
+                    Shell.GraphHost.PlayEndFinale(_vm.BuiltInThisRun(), _endFinaleRun++);
                 break;
             case nameof(RunViewModel.SelectedProjectId):
                 PushGraphSelection();

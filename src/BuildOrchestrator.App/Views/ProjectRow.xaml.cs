@@ -247,6 +247,9 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.IsSelected):
                 ApplySelection();
                 break;
+            case nameof(ProjectRowViewModel.Fade):
+                ApplyFade();
+                break;
             case nameof(ProjectRowViewModel.SolutionName):
                 PART_Sln.Text = _vm?.SolutionName;
                 break;
@@ -540,6 +543,31 @@ public partial class ProjectRow : UserControl
         slide.BeginTime = begin;
         slide.KeyFrames.Insert(0, new DiscreteDoubleKeyFrame(-RevealRisePx, KeyTime.FromTimeSpan(TimeSpan.Zero)));
         PART_ShakeTranslate.BeginAnimation(TranslateTransform.YProperty, slide);
+    }
+
+    /// <summary>
+    /// [design v1.11.0 §9-4 · §2.4] Açılış koreografisinin satır payı: satırlar graf node'larıyla SENKRON
+    /// söner. Hedef ve süre satır VM'inden gelir (<see cref="ProjectRowViewModel.Fade"/>) — karar
+    /// <see cref="MarkingChoreography"/>'de, burada YALNIZ uygulanır.
+    ///
+    /// <para>Reveal animasyonunun fill kilidi bırakılır: <see cref="PlayReveal"/> opaklığı <c>HoldEnd</c> ile
+    /// tutar ve koreografi onu ezemezdi (prototipte de <c>noReveal</c> ref'i aynı işi yapar).</para>
+    /// </summary>
+    private void ApplyFade()
+    {
+        var fade = _vm?.Fade ?? RowFade.None;
+        PART_Root.BeginAnimation(OpacityProperty, null); // reveal fill kilidini BIRAK
+
+        if (!AnimationsEnabledProvider())
+        {
+            PART_Root.Opacity = fade.Opacity;
+            return;
+        }
+
+        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
+        PART_Root.BeginAnimation(OpacityProperty,
+            MotionTokens.SplineTo(fade.Opacity, TimeSpan.FromMilliseconds(fade.DurationMs), spline),
+            HandoffBehavior.SnapshotAndReplace);
     }
 
     private void PlayShake()
