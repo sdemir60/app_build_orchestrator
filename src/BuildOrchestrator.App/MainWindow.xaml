@@ -146,12 +146,20 @@
                  kod-tarafı kurulur (MainWindow ctor). -->
             <Button x:Name="InfoButton" Style="{DynamicResource Ds.IconButton}" Click="OnAbout"
                     AutomationProperties.Name="{x:Static local:AccessibilityNames.About}">
-              <Viewbox Width="16" Height="16">
-                <Canvas Width="24" Height="24">
-                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Info}"
-                        StrokeThickness="{DynamicResource Icon.Info.StrokeThickness}" />
-                </Canvas>
-              </Viewbox>
+              <Grid>
+                <Viewbox Width="16" Height="16">
+                  <Canvas Width="24" Height="24">
+                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Info}"
+                          StrokeThickness="{DynamicResource Icon.Info.StrokeThickness}" />
+                  </Canvas>
+                </Viewbox>
+                <!-- [design v1.9.0 §2.10] GÖRÜLMEMİŞ SÜRÜM İŞARETİ: 5px amber nokta. Açılış toast'ı ya da
+                     karşılama pop-up'ı YOK (§8) — yönlendirme About'un What's new sekmesine yapılır ve
+                     sekme görülünce nokta söner. -->
+                <Ellipse x:Name="UnseenNotesDot" Width="5" Height="5" Visibility="Collapsed"
+                         HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
+                         Fill="{DynamicResource Brush.Amber}" IsHitTestVisible="False" />
+              </Grid>
             </Button>
           </StackPanel>
 

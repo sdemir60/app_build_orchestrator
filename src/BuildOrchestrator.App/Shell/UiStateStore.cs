@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BuildOrchestrator.Contracts.Model;
@@ -43,6 +43,12 @@ public sealed class UiState
     public string? Branch { get; set; }
     public bool UseWorktree { get; set; }
     public string? WorktreeName { get; set; }
+
+    /// <summary>[design v1.9.0 §2.10] Kullanıcının What is new sekmesinde EN SON gördüğü sürüm. Bu değer
+    /// çalışan sürümden farklıysa title bar in ⓘ düğmesinde 5px amber bir nokta durur ve About doğrudan o
+    /// sekmede açılır. Prototipteki <c>localStorage delta-bo-seen-version-v1</c> in karşılığıdır — kalıcı
+    /// durumun tek yeri burasıdır.</summary>
+    public string? SeenVersion { get; set; }
 
     /// <summary>[D7] Settings editörünün katman tanımları (Order/Regex/Name) — Save'de yazılır, startup'ta
     /// <see cref="ViewModels.RunViewModel.LayerPatterns"/>'a seed edilir.

@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -122,14 +122,16 @@ public class AboutDialogTests
 
     // ---------------------------------------------------------------- sekmeler
 
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.9.0 §2.10]</b> Sekme sayısı ÜÇTEN DÖRDE çıktı: sürüm notları
+    /// ayrı bir pencere ya da açılış pop-up'ı değil, About'un dördüncü sekmesi olarak eklendi.</summary>
     [StaFact]
-    public void It_has_three_tabs_and_the_first_one_is_selected()
+    public void It_has_four_tabs_and_the_first_one_is_selected()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             var tabs = Tabs(dialog);
-            Assert.Equal(3, tabs.Count);
+            Assert.Equal(4, tabs.Count);
             Assert.True(tabs[0].IsChecked);
             Assert.All(tabs.Skip(1), t => Assert.False(t.IsChecked));
         }
@@ -144,7 +146,7 @@ public class AboutDialogTests
         using (scope)
         {
             var panes = DsResources.Descendants(dialog).OfType<ScrollViewer>().ToList();
-            Assert.Equal(3, panes.Count);
+            Assert.Equal(4, panes.Count); // [v1.9.0] dördüncü panel: What's new
 
             for (int i = 0; i < Tabs(dialog).Count; i++)
             {
@@ -401,17 +403,33 @@ public class AboutDialogTests
         }
     }
 
-    /// <summary>[design-v1.2.1 §2.10] Gövde MIN-yükseklik 236'dır — sabit değil. Sekme değişince zıplamaz
-    /// (o iddia ayrı testte), ama içerik büyürse alan da büyüyebilir.</summary>
+    /// <summary>[design v1.9.0 §2.10] Gövdenin yüksekliği SABİTTİR ve uzayan panel kendi içinde kayar.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: <i>"gövde MIN-yükseklik 236'dır — sabit değil; içerik büyürse
+    /// alan da büyüyebilir"</i>. O kural üç sekmenin de 236'ya sığdığı bir dünyada doğruydu. <b>What's new</b>
+    /// sekmesi sürüm biriktikçe uzar ve min-height tek başına diyaloğu O sekmede büyütürdü — yani "sekme
+    /// değişince dialog zıplamaz" kuralı (§2.10) tam da yeni sekme yüzünden bozulurdu. Sabit yükseklik +
+    /// panel-içi scroll ikisini birden korur: "tüm geçmiş erişilir ama sekme bir ekran boyunda açılır".</para>
+    /// <para>Sayı DEĞİŞMEDİ (236) ve test onu değil DAVRANIŞI pinler — kardeş test
+    /// <see cref="Switching_tabs_never_resizes_the_dialog"/> zaten eşitliği ölçer; burada uzun bir panelin
+    /// gövdeyi BÜYÜTEMEDİĞİ ölçülür.</para></summary>
     [StaFact]
-    public void The_body_uses_a_minimum_height_not_a_fixed_one()
+    public void The_body_height_is_fixed_so_a_long_pane_scrolls_instead_of_growing_it()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
-            var body = DsResources.Descendants(dialog).OfType<Grid>()
-                .Single(g => g.MinHeight == 236.0);
-            Assert.True(double.IsNaN(body.Height), "gövde SABİT yükseklikte — tasarım min-height istiyor");
+            var body = DsResources.Descendants(dialog).OfType<Grid>().Single(g => g.Height == 236.0);
+            double before = body.ActualHeight;
+
+            dialog.WhatsNew.IsChecked = true;   // en uzun panel
+            dialog.UpdateLayout();
+
+            Assert.Equal(before, body.ActualHeight);
+            var pane = DsResources.Descendants(dialog).OfType<ScrollViewer>()
+                .Single(p => p.Visibility == Visibility.Visible);
+            Assert.True(pane.ExtentHeight >= pane.ViewportHeight,
+                "What's new paneli gövdeyi doldurmuyor — scroll iddiası vakumda");
         }
     }
 

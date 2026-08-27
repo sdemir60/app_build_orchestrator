@@ -221,6 +221,10 @@ public partial class MainWindow : Window
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
 
+        // [design v1.9.0 §2.10] Görülmemiş sürüm işareti: sekme görülünce kalıcı duruma yazılır ve nokta söner.
+        AboutOverlay.NotesSeen += OnNotesSeen;
+        RefreshUnseenNotesMark();
+
         // [design v1.11.0 §9-4/§9-5] İki koreografi: açılış (işaretleme dalgası — satır + graf) ve bitiş
         // (neon tutuşma — YALNIZ graf). Sürücü kabukta durur çünkü zamanlama ve görsel katman burasıdır;
         // VM yalnız "bir işlem başladı, kapsamı bu" der.
@@ -344,15 +348,44 @@ public partial class MainWindow : Window
     {
         // [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan
         // gelir — ikisi de burada elle yazılmaz.
+        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa cümle DEĞİŞİR: "About — what's new in {sürüm} (F1)".
         var about = ShortcutCatalog.Get(ShortcutId.About);
+        string sentence = HasUnseenNotes
+            ? string.Format(CultureInfo.InvariantCulture, "About — what's new in {0}", AppIdentity.Version)
+            : about.Description;
         var tooltip = new System.Windows.Controls.ToolTip
         {
-            Content = $"{about.Description} ({about.Gestures[0]})",
+            Content = $"{sentence} ({about.Gestures[0]})",
         };
         // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
         // ikinci kez yazılmaz.
         AppTooltip.SetSide(tooltip, AppTooltip.GetSide((System.Windows.Controls.ToolTip)GearButton.ToolTip));
         InfoButton.ToolTip = tooltip;
+    }
+
+    // ---------------------------------------------------------------- [design v1.9.0 §2.10] görülmemiş sürüm
+
+    /// <summary>Kullanıcının What's new sekmesinde en son gördüğü sürüm ÇALIŞAN sürümden farklı mı — ⓘ
+    /// üzerindeki 5px amber noktanın ve About'un hangi sekmede açılacağının TEK kaynağı.</summary>
+    private bool HasUnseenNotes =>
+        !string.Equals(_uiState.Load().SeenVersion, AppIdentity.Version, StringComparison.Ordinal);
+
+    /// <summary>Noktayı ve tooltip'i tazeler — ikisi AYNI karardan (<see cref="HasUnseenNotes"/>) beslenir.</summary>
+    private void RefreshUnseenNotesMark()
+    {
+        UnseenNotesDot.Visibility = HasUnseenNotes ? Visibility.Visible : Visibility.Collapsed;
+        SetupAboutButtonTooltip();
+    }
+
+    /// <summary>Sekme GÖRÜLDÜ: kalıcı duruma yazılır ve nokta söner. Sekmenin kendisi bunu bildirir
+    /// (<see cref="Views.AboutDialog.NotesSeen"/>) — diyalog kalıcı durumu BİLMEZ.</summary>
+    private void OnNotesSeen()
+    {
+        var state = _uiState.Load();
+        if (string.Equals(state.SeenVersion, AppIdentity.Version, StringComparison.Ordinal)) return;
+        state.SeenVersion = AppIdentity.Version;
+        _uiState.Save(state);
+        RefreshUnseenNotesMark();
     }
 
     /// <summary>[About] Bir modal AÇIK MI — Esc zinciri, F1 kapısı ve gear kapısı bu TEK karardan beslenir
@@ -743,7 +776,8 @@ public partial class MainWindow : Window
     private void OnAboutRequested()
     {
         if (AboutOverlay.Visibility == Visibility.Visible) { AboutOverlay.CloseDialog(); return; }
-        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync);
+        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa About DOĞRUDAN What's new'da açılır.
+        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync, HasUnseenNotes);
     }
 
     /// <summary>[About] MSBuild yolu + sürümü — About'un Environment sekmesi bunu LAZY çağırır (<c>vswhere</c>
