@@ -131,7 +131,7 @@
             <Button x:Name="GearButton" Style="{DynamicResource Ds.IconButton}" Click="OnSettings"
                     AutomationProperties.Name="Settings">
               <Button.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Bottom">Settings — layer definitions</ToolTip>
+                <ToolTip controls:AppTooltip.Side="Bottom">Settings — repository root and layer definitions</ToolTip>
               </Button.ToolTip>
               <Viewbox Width="16" Height="16">
                 <Canvas Width="24" Height="24">

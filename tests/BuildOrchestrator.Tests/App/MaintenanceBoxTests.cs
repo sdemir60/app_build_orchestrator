@@ -165,11 +165,15 @@ public class MaintenanceBoxTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[design v1.7.0 §2.7-2] Döngü VARKEN Resolve'un ikonu cycle turuncusuna döner: düğme tam da
-    /// listede ve grafta turuncuyla işaretlenmiş projeleri derler, bağ görsel olarak kurulur. Döngü yokken
-    /// nötr kalır — turuncu, var olmayan bir yapısal sorunu ima etmemeli.</summary>
+    /// <summary>[design v1.11.0 §2.7-2 · §3.7] Resolve'un ikonu HER ZAMAN NÖTRDÜR.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> v1.7.0'da ikon döngü varken cycle TURUNCUSUNA dönerdi ve gerekçesi
+    /// "düğme tam da listede ve grafta turuncuyla işaretlenmiş projeleri derler, bağ görsel olarak kurulur"
+    /// idi. v1.11.0 turuncuyu UI'dan tamamen çıkardı: o işaretin karşılığı artık yok (satırda tek amber üçgen
+    /// kaldı), yani bağ kuracak bir renk de kalmadı. Döngünün varlığını düğmenin ENABLE durumu ve tooltip'i
+    /// söyler — ikisi de aşağıda ve komşu testlerde pinli.</para></summary>
     [StaFact]
-    public void The_resolve_icon_turns_cycle_orange_only_while_a_cycle_exists()
+    public void The_resolve_icon_stays_neutral_because_orange_left_the_ui()
     {
         var vm = NewVm();
         var (box, window) = Realize(vm);
@@ -180,7 +184,9 @@ public class MaintenanceBoxTests
             [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1)],
             [[@"C:\p\a.csproj", @"C:\p\b.csproj"]], [], []));
 
-        Assert.Same(box.FindResource("Brush.StatusCycleText"), box.ResolveIconBrush);
+        Assert.Same(box.FindResource("Brush.TextSecondary"), box.ResolveIconBrush);
+        // ...ama düğme ARTIK anlamlıdır: döngü var, tooltip de onu söylüyor.
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.ResolveCyclesTooltip(1, 2), box.ResolveButton.ToolTip);
         GC.KeepAlive(window);
     }
 }

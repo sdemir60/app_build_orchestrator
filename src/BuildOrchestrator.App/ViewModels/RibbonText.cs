@@ -26,6 +26,12 @@ public readonly record struct RibbonLine(string Text, string BrushKey, string? G
 /// </summary>
 public static class RibbonText
 {
+    /// <summary>[design v1.8.0 §3.1] Repo yokken şeridin metni.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski metin <c>Not ready — no repository selected</c> idi ve "seçmek"
+    /// fiilini kullanıyordu, çünkü boş durum tek bir klasör seçiciye açılıyordu. v1.8.0 akışı Settings'e
+    /// yönlendirdi: eksik olan bir SEÇİM değil bir AYARDIR.</para></summary>
+    public const string NotConfigured = "Not configured — repository root not set";
+
     /// <summary>[T38] 11 koşulun her biri için TEK satır (design-v1 <c>BuildApp.jsx:752-770</c> birebir).</summary>
     /// <param name="phase">Uygulama fazı.</param>
     /// <param name="hasWorkspace">Repo seçili mi (prototip <c>workspace</c>).</param>
@@ -61,7 +67,7 @@ public static class RibbonText
             return new RibbonLine(engineOverdue, "Brush.AmberText", null);
 
         if (!hasWorkspace)
-            return new RibbonLine("Not ready — no repository selected", "Brush.TextFaint", null);
+            return new RibbonLine(NotConfigured, "Brush.TextFaint", null);
 
         // [E2/T10] Son Sync başarısız oldu (repo seçili): KIRMIZI "Sync failed — {reason}" — faz-metninin önüne
         // geçer (retry = Sync; başarılı Sync ya da yeni Sync başlangıcı temizler). Engine-died'dan sonra gelir.
@@ -195,7 +201,7 @@ public static class RibbonText
                 }
 
             default: // Empty (workspace var ama faz Empty — teorik; boot'a düşmeden önce) → nötr davet
-                return new RibbonLine("Not ready — no repository selected", "Brush.TextFaint", null);
+                return new RibbonLine(NotConfigured, "Brush.TextFaint", null);
         }
     }
 

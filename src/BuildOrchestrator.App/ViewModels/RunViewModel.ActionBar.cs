@@ -259,6 +259,10 @@ public sealed partial class RunViewModel
     private bool ApplyRepositoryRoot(string? path)
     {
         if (!IsRepositoryChange(path)) return false;
+        // [design v1.8.0 §2.9] Kök SONRADAN değiştiğinde konsola dim bir not düşer: durum SIFIRLANMAZ,
+        // kullanıcı Sync'ler. (İlk kurulumda — Empty'den çıkarken — not YAZILMAZ: orada zaten otomatik bir
+        // Sync akışı başlar ve not gürültü olurdu.)
+        if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(path));
         RootPath = path;
         ResetRowsToHollow();
         _willBuildIds.Clear();
@@ -273,6 +277,10 @@ public sealed partial class RunViewModel
     /// başka bir şey anlatırdı.</summary>
     private bool IsRepositoryChange([NotNullWhen(true)] string? path) =>
         !string.IsNullOrEmpty(path) && !string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>[design v1.8.0 §2.9] Kök değişiminin konsol notu — BİREBİR metin, TEK yer.</summary>
+    internal static string RepositoryRootChangedLine(string path) =>
+        string.Format(CultureInfo.InvariantCulture, "Repository root → {0} — Sync required", path);
 
     /// <summary>[D7] Satırları yeni bir taban için "hollow"a sıfırlar (durum Pending, will bilinmiyor, süre/dep
     /// temizli). Branch değişimi (<see cref="SelectBranch"/>) ve repo değişimi (<see cref="ChangeRepositoryAsync"/>)
