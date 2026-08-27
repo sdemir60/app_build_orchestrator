@@ -42,6 +42,28 @@ public static class AccessibilityNames
     public const string OptimizeTooltip =
         OptimizeButton + " — restore packages, prune the cache, rebuild the dependency index" + NotAvailableSuffix;
 
+    // ---- Build menüsü: Clean Solution (design v1.11.0 §2.7-11) ----
+    /// <summary>[design v1.11.0 §2.7-11] Build split-button menüsünün üçüncü maddesi. Bakım kutusundaki
+    /// <see cref="CleanTooltip"/> DERİN Clean'dir (bin/obj + artifacts + NuGet cache); bu ise Visual
+    /// Studio'nun <i>Clean Solution</i>'ıdır — yalnız <c>msbuild /t:Clean</c>, cache'lere dokunmaz. İkisi
+    /// birbirinin yerine GEÇMEZ, bu yüzden metin de tekrarlanmaz.
+    /// <para>Arka ucu henüz yazılmadı — madde tasarımdaki yerinde ama pasif durur (bakım kutusuyla aynı
+    /// karar).</para></summary>
+    public const string CleanSolutionTooltip =
+        "Clean — msbuild /t:Clean on every solution; caches are untouched" + NotAvailableSuffix;
+
+    // ---- Proje satırı: build eylemleri (design v1.11.0 §2.4-4 · §3.8) ----
+    /// <summary>Satırın birincil eylemi: yalnız o projeyi derler (bağımlılıkları DEĞİL — §3.8 v1.11.0).</summary>
+    public const string BuildThisProject = "Build this project";
+    /// <summary>Satır menüsünü açan ⋯ düğmesi (satıra sağ tık da aynı menüyü açar).</summary>
+    public const string MoreBuildActions = "More build actions";
+    /// <summary>Kapsamlı koşuyu durduran satır düğmesi (hedef satırda play'in yerini alır).</summary>
+    public const string StopThisBuild = "Stop build";
+
+    /// <summary>[design v1.11.0 §3.8] Satırdan tetiklenen üç eylemin de arka ucu henüz yazılmadı: düğmeler ve
+    /// menü tasarımdaki yerlerinde ama pasif durur (bakım kutusuyla aynı karar).</summary>
+    public const string RowActionsTooltip = BuildThisProject + NotAvailableSuffix;
+
     /// <summary>Resolve cycles düğmesinin ToolTip'i: döngü varsa ne yapacağını üye sayısıyla anlatır, yoksa
     /// neden pasif olduğunu söyler.
     ///

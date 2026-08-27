@@ -525,26 +525,29 @@ public partial class ActionBarTests
     /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.7-11]</b> Eski iddia: "menü hiçbir fazda <c>continue</c>
     /// sunmaz, <c>retry</c>'ı yalnız hata varken sunar". <c>retry</c> de kaldırıldı: Build zaten stale
     /// set'i derler — hatalı proje imzasını persist etmediği için bir sonraki Build'de hâlâ kirlidir ve
-    /// bağımlıları cascade ile gelir; ayrı bir yüzey aynı işi ikinci kez sunuyordu. Menü artık HER fazda
-    /// tam olarak iki maddedir.</para></summary>
+    /// bağımlıları cascade ile gelir; ayrı bir yüzey aynı işi ikinci kez sunuyordu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-11]</b> Eski iddia: "menü HER fazda tam olarak İKİ
+    /// maddedir". Üçüncü madde <b>Clean</b> eklendi (VS <i>Clean Solution</i>: yalnız <c>/t:Clean</c>,
+    /// cache'lere dokunmaz) — bakım kutusundaki DERİN Clean'in yerine geçmez, onun yanında durur. Koşulsuzluk
+    /// iddiası KORUNUR: üç madde de her fazda aynıdır.</para></summary>
     [StaFact]
-    public void Build_menu_offers_exactly_build_and_rebuild_in_every_phase()
+    public void Build_menu_offers_exactly_build_rebuild_and_clean_in_every_phase()
     {
         var vm = NewVm();
         var (menu, window) = RealizeMenu(vm);
 
-        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
+        Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
 
-        // Bir failure sonrası da aynı iki madde (Retry yüzeyi yok).
+        // Bir failure sonrası da aynı üç madde (Retry yüzeyi yok).
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 100, "exit 1"));
-        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
+        Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
 
-        // Stop sonrası da aynı iki madde (Continue yüzeyi yok).
+        // Stop sonrası da aynı üç madde (Continue yüzeyi yok).
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
-        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
+        Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
         GC.KeepAlive(window);
     }
 
