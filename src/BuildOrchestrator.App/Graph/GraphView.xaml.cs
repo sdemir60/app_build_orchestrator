@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -390,14 +390,19 @@ public partial class GraphView : UserControl
     /// prototipteki per-node <c>transition-delay</c>'in WPF karşılığı budur ve düğüm başına fırça animasyonu
     /// gerektirmez (bkz. ApplyNodeStatus'taki ölçülmüş sapma).</para>
     /// </summary>
+    /// <summary>
+    /// [design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başladı — bir önceki koşunun bitiş koreografisi
+    /// ANINDA kesilir. Bu, işaretleme dalgasından AYRI bir kapıdır: kapsamı boş bir işlem (ör. Sync'in hemen
+    /// ardından "Everything up to date" ile biten Build) hiç dalga oynatmaz ama yine de bir işlemdir.
+    /// </summary>
+    public void BeginOperation() => StopEndFinale();
+
     public void SetMarking(MarkStep step, IReadOnlySet<string> markedNodeNames)
     {
         ArgumentNullException.ThrowIfNull(markedNodeNames);
         _markedNodes = markedNodeNames;
         if (_markStep == step) { ApplyAllOpacities(); return; }
         _markStep = step;
-        // Yeni bir işlem bitiş koreografisini ANINDA keser (build-data.js:315 `_beginOp`).
-        if (step != MarkStep.None) StopEndFinale();
         ApplyAllOpacities();
     }
 

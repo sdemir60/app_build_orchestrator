@@ -333,9 +333,29 @@ public class ChoreographyTests
         view.PlayEndFinale(["built"], runCount: 1);
         DispatcherPump.PumpUntil(() => view.EndStep == EndStep.Hold, TimeSpan.FromSeconds(2));
 
+        view.BeginOperation();
         view.SetMarking(MarkStep.Neutral, new HashSet<string>(StringComparer.Ordinal));
 
         Assert.Equal(EndStep.None, view.EndStep);
         Assert.Equal(MarkStep.Neutral, view.MarkStep);
+    }
+
+    /// <summary>
+    /// [§9-4/§9-5] Kesme, işaretleme DALGASINA bağlı değildir. Kapsamı boş bir işlem (ör. Sync'in hemen
+    /// ardından "Everything up to date" ile biten Build) hiç dalga oynatmaz — sürücü grafa yalnız
+    /// <see cref="MarkStep.None"/> iter. Bitiş koreografisi yine de ANINDA kesilmelidir: ekranda bir önceki
+    /// koşunun neon'u yanarken yeni işlem başlamış olamaz.
+    /// </summary>
+    [StaFact]
+    public void An_operation_with_an_empty_scope_still_cuts_the_end_finale()
+    {
+        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        view.PlayEndFinale(["built"], runCount: 1);
+        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.Hold, TimeSpan.FromSeconds(2));
+
+        view.BeginOperation();
+        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal));
+
+        Assert.Equal(EndStep.None, view.EndStep);
     }
 }
