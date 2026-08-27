@@ -1,0 +1,25 @@
+<UserControl x:Class="BuildOrchestrator.App.Views.ProjectRowMenu"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+  <!-- [design v1.11.0 §2.4-4 · §9-6] SATIR MENÜSÜ: Build · Rebuild · Clean. Hem hover'daki ⋯ düğmesi hem
+       satıra SAĞ TIK bu menüyü açar (VS Solution Explorer alışkanlığı). Kapsam YALNIZ o projedir —
+       bağımlılıklar derlenmez (§3.8 v1.11.0).
+
+       Genişlik 154 ve iç ölçüler bileşenin KENDİ değerleridir (design-v1.11.0 BuildApp.jsx:599-614), token
+       değil — kaynak satırıyla yazılır. Kabuk (surface-overlay + 1px border-strong + radius-lg + overlay
+       gölgesi) DS'in ortak `Ds.Popover` stilidir: yeni bir overlay deseni GİRMEZ.
+
+       Başlıkta projenin KISA adı durur: menü satırdan koparıldığında (sağ tık imleç nerede olursa olsun aynı
+       menüyü açar) hangi proje için açıldığı okunabilsin. -->
+  <Border Style="{DynamicResource Ds.Popover}" Width="154" Padding="4">
+    <StackPanel>
+      <TextBlock x:Name="PART_Title" Margin="7,3,7,5"
+                 TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                 FontFamily="{x:Static controls:AppFonts.Mono}"
+                 FontSize="{DynamicResource FontSize.2xs}"
+                 Foreground="{DynamicResource Brush.TextFaint}" />
+      <StackPanel x:Name="PART_Rows" />
+    </StackPanel>
+  </Border>
+</UserControl>

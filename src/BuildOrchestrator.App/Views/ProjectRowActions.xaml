@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
              HorizontalAlignment="Right" VerticalAlignment="Center">
   <!-- [L1/It-5 perf] Proje kartının hover eylemleri (folder + VS ikonları) ve VS seçim popover'ı. Markup
        ProjectRow.xaml'den BİREBİR taşındı — görsel/davranış AYNI, değişen tek şey NE ZAMAN kurulduğu:
@@ -11,10 +12,31 @@
        (LayoutMetrics/FollowScrollController/ScrollArbiter) HİÇ girmez: hover bloğu Collapsed doğar ve satır
        yüksekliği (36px) PART_Root'ta sabittir. -->
   <Grid>
-    <!-- Hover ikonları (sha'nın YERİNE aynı blokta): folder + VS, 13px. -->
+    <!-- Hover ikonları (sha'nın YERİNE aynı blokta): [design v1.11.0 §2.4-4] play (14px) · ⋯ (13px) ·
+         folder (13px) · VS (13px). Play/⋯ ÖNDEDİR: play satırın BİRİNCİL eylemidir ve bu yüzden bir tık
+         büyüktür (§3.8). İkisinin de arka ucu henüz yazılmadı — play PASİF, ⋯ ise menüyü AÇAR (tasarımın
+         akışı ancak böyle görünür) ve menü maddeleri pasiftir. -->
     <StackPanel x:Name="PART_HoverIcons" Orientation="Horizontal" HorizontalAlignment="Right"
                 VerticalAlignment="Center" Visibility="Collapsed">
-      <Button x:Name="PART_RevealButton" Style="{DynamicResource Ds.IconButton}"
+      <Button x:Name="PART_BuildButton" Style="{DynamicResource Ds.IconButton}"
+              AutomationProperties.Name="Build this project">
+        <Viewbox Width="14" Height="14">
+          <Canvas Width="24" Height="24">
+            <Path Data="{DynamicResource Icon.Play}"
+                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+          </Canvas>
+        </Viewbox>
+      </Button>
+      <ToggleButton x:Name="PART_MoreButton" Style="{DynamicResource Ds.IconButton.Toggle}" Margin="2,0,0,0"
+                    AutomationProperties.Name="More build actions">
+        <Viewbox Width="13" Height="13">
+          <Canvas Width="24" Height="24">
+            <Path Data="{DynamicResource Icon.More}"
+                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ButtonBase}}" />
+          </Canvas>
+        </Viewbox>
+      </ToggleButton>
+      <Button x:Name="PART_RevealButton" Style="{DynamicResource Ds.IconButton}" Margin="2,0,0,0"
               AutomationProperties.Name="Reveal in Explorer" ToolTip="Reveal in Explorer">
         <Viewbox Width="13" Height="13">
           <Canvas Width="24" Height="24">
@@ -37,6 +59,17 @@
         </Viewbox>
       </Button>
     </StackPanel>
+
+    <!-- [design v1.11.0 §2.4-4 · §9-6] Satır menüsü (Build · Rebuild · Clean). ⋯ düğmesi ve satıra sağ tık
+         AYNI popup'ı açar; menü liste scroll kabının görünür alanına WPF'in kendi kelepçesiyle sığar
+         (Placement=Bottom + PlacementTarget). Prototipte de menü satırın rect'ine çakılır ve panelin görünür
+         alanına clamp'lenir (BuildApp.jsx:644-657). -->
+    <Popup x:Name="PART_RowMenu" StaysOpen="False" AllowsTransparency="True"
+           Placement="Bottom" PlacementTarget="{Binding ElementName=PART_MoreButton}"
+           PopupAnimation="None" VerticalOffset="4" HorizontalOffset="-118"
+           IsOpen="{Binding IsChecked, ElementName=PART_MoreButton, Mode=TwoWay}">
+      <views:ProjectRowMenu x:Name="PART_RowMenuContent" />
+    </Popup>
 
     <!-- [E1/T67] Birden çok solution içeren proje için Open-in-VS seçim popover'ı (D6 popover deseni:
          Ds.Popover chrome · StaysOpen=False dışa-tık-kapan · PopIn 140ms). Satırlar kod-tarafı kurulur

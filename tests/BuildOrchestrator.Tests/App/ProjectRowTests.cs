@@ -220,8 +220,12 @@ public class ProjectRowTests
         Assert.NotNull(row.Actions);
         Assert.Equal(Visibility.Visible, row.HoverIcons!.Visibility);
         var after = DsResources.RealizedObjects(row);
-        Assert.Equal(2, after.OfType<Button>().Count());
-        Assert.Single(after.OfType<Popup>());
+        // [DEĞİŞEN KURAL — design v1.11.0 §2.4-4] Blok eskiden İKİ düğme (folder + VS) ve TEK popup (VS
+        // seçici) taşıyordu. v1.11.0 satır aksiyonlarını ekledi: play (Button) + ⋯ (ToggleButton) ve ⋯'in
+        // menüsü ikinci bir popup'tır. Tembellik iddiası DEĞİŞMEDİ — hepsi hâlâ İLK HOVER'da doğar.
+        Assert.Equal(3, after.OfType<Button>().Count());          // play + folder + VS
+        Assert.Single(after.OfType<ToggleButton>());              // ⋯
+        Assert.Equal(2, after.OfType<Popup>().Count());           // satır menüsü + VS seçici
 
         // İkinci hover YENİDEN İNŞA ETMEZ (aynı instance).
         var built = row.Actions;

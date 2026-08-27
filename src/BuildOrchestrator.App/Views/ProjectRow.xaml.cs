@@ -86,6 +86,10 @@ public partial class ProjectRow : UserControl
         MouseEnter += (_, _) => SetHover(true);
         MouseLeave += (_, _) => SetHover(false);
         MouseLeftButtonUp += OnRowClicked;
+        // [design v1.11.0 §9-6] Satıra SAĞ TIK, ⋯ düğmesiyle AYNI menüyü açar (VS Solution Explorer
+        // alışkanlığı). Menü ⋯'in altında konumlanır: imlecin altında değil, satırın kendi çapasında —
+        // böylece iki yol da AYNI yerde aynı menüyü gösterir.
+        MouseRightButtonUp += OnRowRightClicked;
         KeyDown += OnRowKeyDown;
         _motion.Changed += OnAnimationsEnabledChanged;
         Loaded += OnLoaded;
@@ -107,6 +111,11 @@ public partial class ProjectRow : UserControl
         actions.RevealButton.Click += OnRevealClick;
         actions.VsButton.Click += OnVsClick;
         actions.VsChooser.Opened += (_, _) => PopIn.Play(actions.VsChooserContent);
+        // [design v1.11.0 §9-6] Menünün AÇIK/KAPALI kapısı ⋯ düğmesinin kendisidir (popup'ın IsOpen'ı ona
+        // iki-yönlü bağlıdır). Kablaj popup'a DEĞİL düğmeye takılır: sağ tık da bu düğmeyi işaretler ve
+        // sağ blok kuralı (menü açıkken ikonlar görünür kalır) popup'ın gerçekten açılmasını beklemeden işler.
+        actions.MoreButton.Checked += (_, _) => { actions.RowMenuContent.Title = ShortName(); ApplyRightBlock(); };
+        actions.MoreButton.Unchecked += (_, _) => ApplyRightBlock();
         PART_RightBlock.Children.Add(actions); // sha ile AYNI blok (üstünde) — eski XAML sırasıyla birebir
         _actions = actions;
         return actions;
@@ -421,8 +430,11 @@ public partial class ProjectRow : UserControl
     /// [L1] İkon bloğu hover'da TALEP ÜZERİNE kurulur; hover yokken kurulmamışsa dokunulacak bir şey de yoktur.</summary>
     private void ApplyRightBlock()
     {
-        bool showIcons = _hover;
-        bool showSha = !_hover; // [design v1.7.0 §2.4] SHA her satırda — yalnız hover ikonları onu örter
+        // [design v1.11.0 §9-6] Menü AÇIKKEN ikonlar görünür kalır: menü satırın çapasına bağlıdır ve
+        // çapa kaybolursa menü havada asılı kalırdı (prototipte de `hover || menuOpen`).
+        bool menuOpen = _actions?.MoreButton.IsChecked == true;
+        bool showIcons = _hover || menuOpen;
+        bool showSha = !showIcons; // [design v1.7.0 §2.4] SHA her satırda — yalnız hover ikonları onu örter
         if (showIcons) EnsureActions().HoverIcons.Visibility = Visibility.Visible;
         else if (_actions is { } actions) actions.HoverIcons.Visibility = Visibility.Collapsed;
         PART_Sha.Visibility = showSha ? Visibility.Visible : Visibility.Collapsed;
@@ -588,6 +600,19 @@ public partial class ProjectRow : UserControl
     {
         if (_vm is { } vm) FindRunViewModel()?.SelectProject(vm.Id);
     }
+
+    /// <summary>[design v1.11.0 §9-6] Sağ tık satır menüsünü açar. Hover bloğu talep üzerine kurulduğu için
+    /// (L1) önce o kurulur ve GÖRÜNÜR yapılır — menü kapandığında hover kuralı onu yeniden gizler.</summary>
+    private void OnRowRightClicked(object sender, MouseButtonEventArgs e)
+    {
+        var actions = EnsureActions();
+        actions.MoreButton.IsChecked = true; // Checked kablajı başlığı yazar ve sağ bloğu açar
+        e.Handled = true; // satır seçimi tetiklenmesin — sağ tık bir SEÇİM jesti değildir
+    }
+
+    /// <summary>Menü başlığındaki kısa ad — önek satır VM'inden gelir (D5, tek otorite).</summary>
+    private string ShortName() =>
+        _vm is { } vm ? GraphNode.ShortLabel(vm.Name, vm.NamePrefix) : "";
 
     private void OnRowKeyDown(object sender, KeyEventArgs e)
     {
