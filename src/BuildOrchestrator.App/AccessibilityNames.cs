@@ -148,6 +148,17 @@ public static class AccessibilityNames
     /// yüzden WPF'in peer'ı adı içerikten türetemez (ölçüldü: ad boş kalır) — ad AÇIKÇA verilir.</summary>
     public const string AddLayer = "Add layer";
 
+    // ---- [design v1.8.0/v1.10.0 §2.9] Settings: workspace + export/import/clear ----
+    /// <summary>Repository root input'u — watermark bir ÖRNEK yoldur, etiket değil.</summary>
+    public const string RepositoryRootInput = "Repository root";
+    /// <summary>Kök klasörü seçtiren düğme (etiketi Content'in İÇİNDE bir TextBlock).</summary>
+    public const string BrowseRepositoryRoot = "Browse for the repository root";
+    /// <summary>Footer'ın üç ikon-yalnız düğmesi. AYNI metin hem tooltip hem UIA-adı DEĞİLDİR: tooltip kısa
+    /// eylemi, ad işlevi tarif eder (chip'lerin kuralının aksine — burada tooltip'ler zaten kısadır).</summary>
+    public const string ExportSettings = "Export settings to a file";
+    public const string ImportSettings = "Import settings from a file";
+    public const string ClearSettings = "Clear the repository root and all layers";
+
     // ---- [A13/T5] Worktree popover: hedef satırı ----
     /// <summary>Hedef satırındaki çöp kutusunun tooltip'i (satır başına AYNI metin).</summary>
     public const string DeleteWorktree = "Delete worktree";

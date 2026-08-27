@@ -1,4 +1,4 @@
-namespace BuildOrchestrator.App.ViewModels;
+﻿namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [E2/T10] Etkileşim/boş-durum davet metinlerinin TEK KAYNAĞI (design-v1 README §"empty" + BuildApp.jsx:455-459
@@ -8,16 +8,41 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public static class InteractionText
 {
-    // ---- Proje listesi: repo seçilmemiş (empty) daveti ----
-    /// <summary>Boş-durum daveti başlığı (14px/600) — BuildApp.jsx:455.</summary>
-    public const string PickRepositoryTitle = "Pick a repository to get started";
+    // ---- [design v1.8.0 §2.4] Proje listesi: FIRST RUN kurulum daveti ----
+    // [DEĞİŞEN KURAL] Davet eskiden tek bir klasör seçiciye açılıyordu: "Pick a repository to get started" +
+    // "Point to the OSYS solution root…" + bir `Choose Folder` düğmesi. v1.8.0 onu KALDIRDI — gereken ayar
+    // sayısı arttığından (repository root + katman tanımları) boş durum artık Settings'e yönlendiriyor ve
+    // repository root da Settings'in bir parçası oldu (§2.9).
 
-    /// <summary>Boş-durum daveti açıklaması — BuildApp.jsx:457.</summary>
-    public const string PickRepositorySubtitle =
-        "Point to the OSYS solution root — projects and the dependency graph are discovered automatically.";
+    /// <summary>Kurulum davetinin başlığı (14px/600).</summary>
+    public const string ConfigureWorkspaceTitle = "Configure the workspace";
 
-    /// <summary>Boş-durum primary butonu (klasör ikonu) — BuildApp.jsx:459.</summary>
-    public const string ChooseFolderButton = "Choose Folder";
+    /// <summary>Kurulum davetinin açıklaması.</summary>
+    public const string ConfigureWorkspaceSubtitle =
+        "Set the repository root — and, if projects should be grouped, the layers. Discovery starts right after.";
+
+    /// <summary>Kurulum listesinin iki satırının etiketleri.</summary>
+    public const string SetupRepositoryRootLabel = "Repository root";
+    public const string SetupLayersLabel = "Layers";
+
+    /// <summary>Kök henüz girilmemişken kurulum listesinde görünen mono değer.</summary>
+    public const string SetupRootNotSet = "Not set";
+    /// <summary>Katman tanımı yokken: katmanlar zorunlu DEĞİLDİR (varsayılan tek liste).</summary>
+    public const string SetupLayersOptional = "Optional";
+    /// <summary>N katman tanımlıyken.</summary>
+    public static string SetupLayersDefined(int count) =>
+        string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0} defined", count);
+
+    /// <summary>Primary buton (dişli) — Settings'i açar.</summary>
+    public const string OpenSettingsButton = "Open settings";
+
+    /// <summary>[design v1.10.0 §2.4] Secondary buton (upload) — Settings'i açıp dosya seçiciyi HEMEN
+    /// tetikler; hazır ayar dosyası olan developer tek adımda başlar.</summary>
+    public const string ImportSettingsButton = "Import settings…";
+
+    /// <summary>Butonların altındaki 11px not — import'un bir şeyi UYGULAMADIĞINI söyler.</summary>
+    public const string ImportSettingsNote =
+        "Import fills the form from a settings file — nothing is applied until you save.";
 
     // ---- Proje listesi: repo var ama proje yok (0-proje) ----
     /// <summary>Repo Sync'lendi ama altında hiç proje bulunamadı.</summary>
@@ -42,7 +67,7 @@ public enum ListInviteState
 {
     /// <summary>Liste dolu (satır var) ya da Sync uçuşta/Boot — hiçbir davet gösterilmez.</summary>
     None,
-    /// <summary>Repo seçilmemiş → "Pick a repository…" daveti + Choose Folder.</summary>
+    /// <summary>[design v1.8.0 §2.4] Repo seçilmemiş → "Configure the workspace" kurulum daveti.</summary>
     PickRepository,
     /// <summary>Repo Sync'lendi (Idle) ama 0 proje → "No projects found under this folder."</summary>
     NoProjects,

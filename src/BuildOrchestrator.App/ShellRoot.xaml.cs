@@ -156,13 +156,34 @@ public partial class ShellRoot : UserControl
         _filterChip.IsChecked = true;
     }
 
-    // ---- [E2/T10] Proje listesi boş-durum davetleri (görünürlük + Choose Folder kablajı MainWindow'da) ----
-    /// <summary>[E2/T10] "Pick a repository…" daveti (title + subtitle + Choose Folder) — repo seçilmemişken.</summary>
+    // ---- [design v1.8.0 §2.4] Proje listesi boş-durum davetleri (görünürlük + kablaj MainWindow'da) ----
+    /// <summary>[design v1.8.0 §2.4] Kurulum daveti (başlık + açıklama + kurulum listesi + iki düğme) —
+    /// repo seçilmemişken.</summary>
     public UIElement ListInviteOverlay => PART_ListInvite;
     /// <summary>[E2/T10] "No projects found under this folder." — repo Sync'lendi ama 0 proje.</summary>
     public UIElement NoProjectsOverlay => PART_NoProjects;
-    /// <summary>[E2/T10] Boş-durum daveti primary butonu — MainWindow klasör seçiciyi buna bağlar.</summary>
-    public Button ChooseFolderButton => PART_ChooseFolder;
+    /// <summary>[design v1.8.0 §2.4] Kurulum davetinin primary butonu — MainWindow Settings'i buna bağlar.
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden <c>ChooseFolderButton</c>'dı ve doğrudan bir klasör seçici açardı.</summary>
+    public Button OpenSettingsButton => PART_OpenSettings;
+    /// <summary>[design v1.10.0 §2.4] Kurulum davetinin secondary butonu — Settings'i açıp dosya seçiciyi
+    /// HEMEN tetikler.</summary>
+    public Button ImportSettingsButton => PART_ImportSettings;
+
+    /// <summary>[design v1.8.0 §2.4] Kurulum listesinin iki değerini sürer: kök (girilmediyse <c>Not set</c>)
+    /// ve katman sayısı (<c>N defined</c> / yoksa <c>Optional</c>). Metinler tek kaynaktan
+    /// (<see cref="ViewModels.InteractionText"/>) — kabuk yeni cümle KURMAZ.</summary>
+    public void SetSetupChecklist(string? repositoryRoot, int layerCount)
+    {
+        PART_SetupRootValue.Text = string.IsNullOrWhiteSpace(repositoryRoot)
+            ? ViewModels.InteractionText.SetupRootNotSet
+            : repositoryRoot;
+        PART_SetupLayersValue.Text = layerCount > 0
+            ? ViewModels.InteractionText.SetupLayersDefined(layerCount)
+            : ViewModels.InteractionText.SetupLayersOptional;
+    }
+
+    /// <summary>[test yüzeyi] Kurulum listesinin o anki iki değeri.</summary>
+    internal (string Root, string Layers) SetupChecklist => (PART_SetupRootValue.Text, PART_SetupLayersValue.Text);
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü uygular (karar <see cref="ViewModels.ListInvite"/>'te
     /// verilir — SAF; burada YALNIZ uygulanır). PickRepository → invite paneli; NoProjects → 0-proje metni;

@@ -167,10 +167,13 @@ public partial class MainWindow : Window
         RefreshProjectGroups();
         RebuildGraph();
 
-        // [E2/T10] Proje listesi boş-durum davetleri: repo yok → "Pick a repository…" + Choose Folder; repo
-        // Sync'lendi ama 0 proje → "No projects found under this folder." Karar SAF (ListInvite.Resolve); burada
-        // yalnız tetik + uygulama. Choose Folder aynı repo-değiştir yolunu kullanır (PickFolder → ChangeRepositoryAsync).
-        Shell.ChooseFolderButton.Click += OnChooseFolder;
+        // [design v1.8.0 §2.4] Proje listesi boş-durum davetleri: repo yok → KURULUM DAVETİ (Open settings /
+        // Import settings…); repo Sync'lendi ama 0 proje → "No projects found under this folder." Karar SAF
+        // (ListInvite.Resolve); burada yalnız tetik + uygulama.
+        // [DEĞİŞEN KURAL] Davetin düğmesi eskiden doğrudan bir klasör seçici açıyordu; v1.8.0 onu Settings'e
+        // yönlendirdi — başlamak için gereken ayar sayısı arttı (kök + katmanlar) ve kök Settings'in parçası oldu.
+        Shell.OpenSettingsButton.Click += OnSettings;
+        Shell.ImportSettingsButton.Click += OnImportSettings;
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(RunViewModel.Phase) or nameof(RunViewModel.HasWorkspace)
@@ -687,7 +690,42 @@ public partial class MainWindow : Window
     private void OnSettings(object sender, RoutedEventArgs e)
     {
         if (AnyDialogOpen) return;
+        WireSettingsPickers();
         SettingsOverlay.Open(_vm, _uiState, PickFolder);
+    }
+
+    /// <summary>[design v1.10.0 §2.4] First run davetindeki <c>Import settings…</c>: Settings'i açar ve dosya
+    /// seçiciyi HEMEN tetikler — hazır bir ayar dosyası olan developer tek adımda başlar.</summary>
+    private void OnImportSettings(object sender, RoutedEventArgs e)
+    {
+        if (AnyDialogOpen) return;
+        WireSettingsPickers();
+        SettingsOverlay.OpenForImport(_vm, _uiState, PickFolder);
+    }
+
+    /// <summary>[design v1.10.0 §2.9] Export/Import dosya seçicileri — diyalogun seam'lerine gerçek Win32
+    /// diyalogları bağlanır (testler bu yolu by-pass eder, <see cref=PickFolder/> deseniyle AYNI).</summary>
+    private void WireSettingsPickers()
+    {
+        SettingsOverlay.PickExportPath ??= () =>
+        {
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                FileName = ViewModels.SettingsFile.FileName,
+                Filter = ViewModels.SettingsFile.FileFilter,
+                DefaultExt = ".json",
+            };
+            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+        };
+        SettingsOverlay.PickImportPath ??= () =>
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = ViewModels.SettingsFile.FileFilter,
+                CheckFileExists = true,
+            };
+            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+        };
     }
 
     /// <summary>[About] Info butonu → About modali.</summary>
@@ -733,14 +771,10 @@ public partial class MainWindow : Window
         return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
     }
 
-    /// <summary>[E2/T10] Boş-durum daveti içindeki "Choose Folder": seçilen klasör HEMEN uygulanır —
-    /// <see cref="PickFolder"/> → <see cref="RunViewModel.ChangeRepositoryAsync"/> (kök değişir, durumlar sıfırlanır,
-    /// otomatik Sync). Settings'in "Change…" düğmesi bu yolu KULLANMAZ: orada seçim yalnız taslağa yazılır ve
-    /// uygulanması Save'e ertelenir (<see cref="RunViewModel.ApplySettingsAsync"/>). Diyalog iptal edilirse no-op.</summary>
-    private async void OnChooseFolder(object sender, RoutedEventArgs e)
-    {
-        if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);
-    }
+    // [design v1.8.0 §2.4] "Choose Folder" yolu KALDIRILDI: boş durum artık doğrudan bir klasör seçici
+    // açmıyor, Settings'e yönlendiriyor ve kök orada (taslakta) düzenleniyor — uygulanması Save'e ertelenir
+    // (RunViewModel.ApplySettingsAsync). Klasör seçicinin kendisi (PickFolder) Settings'in "Browse…"
+    // düğmesine geçti; ChangeRepositoryAsync yolu ise kalıcı durumdan gelen kök için yerinde duruyor.
 
     /// <summary>[design v1.11.0 §2.7-4] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
     /// <see cref="ProjectFilter.ChipLabel"/>'dır — seçili KÜMEYİ <c>" + "</c> ile listeler (çoklu filtre);
@@ -761,8 +795,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
-    private void RefreshListInvite() =>
+    private void RefreshListInvite()
+    {
         Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count, _vm.VisibleProjects.Count));
+        // [design v1.8.0 §2.4] Kurulum listesi davetle AYNI sinyalden tazelenir: kök ve katman sayısı.
+        Shell.SetSetupChecklist(_vm.RootPath, _vm.LayerPatterns?.Count ?? 0);
+    }
 
     /// <summary>Split sürükleme sonu ya da mod değişimi → kalıcı UiState'e yaz + aktif mod düğmesini eşle.</summary>
     private void OnShellLayoutChanged(object? sender, LayoutState state)

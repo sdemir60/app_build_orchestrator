@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -34,7 +34,10 @@ public class SettingsDialogTests
     [Fact]
     public void Save_is_blocked_only_by_an_empty_name_or_an_uncompilable_regex_never_by_an_empty_pattern()
     {
-        var editor = new SettingsDraftViewModel(null, null);
+        // [DEĞİŞEN KURAL — design v1.8.0 §2.9] CanSave'in İKİNCİ koşulu eklendi: repository root BOŞ olamaz
+        // ("uygulamanın çalışması için zorunlu tek ayar budur"). Bu testin konusu KATMAN validasyonudur, bu
+        // yüzden kök dolu bir zeminde ölçülür — root kuralının kendisi ayrı bir testte pinlenir.
+        var editor = new SettingsDraftViewModel(null, @"D:\repo");
         // [değişti] Taze taslak ARTIK 4 varsayılan satırla gelir (LayerDefaults). Bu testin konusu
         // Save-validation'dır — tek satırlık bir zeminde ölçülür, o yüzden varsayılanlar önce boşaltılır.
         for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]);
@@ -142,7 +145,7 @@ public class SettingsDialogTests
         run.LayerPatterns = live;
         var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
-        draft.RestoreDefaults();
+        draft.LoadSampleLayers();
 
         Assert.Equal(4, draft.Layers.Count);
         Assert.Equal("OSYS.Types", draft.Layers[0].Name);
@@ -526,30 +529,66 @@ public class SettingsDialogViewTests
 
         var buttons = DsResources.RealizedObjects(dialog).OfType<Button>().ToList();
         Assert.Contains(buttons, b => Equals(b.Content, "Cancel"));
+        // Fixture'ın kökü DOLUDUR (HasWorkspace) → düğme "Save"dir. First run'daki "Save and sync" varyantı
+        // ayrı bir testte pinlenir (design v1.8.0 §2.9).
         Assert.Contains(buttons, b => Equals(b.Content, "Save"));
-        Assert.Contains(buttons, b => Equals(b.Content, "Restore default layers"));
+        // [DEĞİŞEN KURAL — §2.9] Sol ghost düğmenin adı "Restore default layers" idi; tasarım metni
+        // "Load sample layers"dır ve daha doğrudur: varsayılan konfigürasyon BOŞTUR, bu düğme örnekleri DOLDURUR.
+        Assert.Contains(buttons, b => Equals(b.Content, "Load sample layers"));
 
         // "Add layer": Content bir StackPanel'dir (ikon + TextBlock) — etiket ayrı aranır.
         var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
         Assert.Contains("Add layer", texts);
     }
 
-    /// <summary>Diyalogda "Change…": yalnız yol ETİKETİ güncellenir; canlı kök ve motor DOKUNULMAZ.</summary>
+    /// <summary>[design v1.8.0 §2.9] Diyalogdaki <c>Browse…</c>: yalnız TASLAK (ve onu gösteren mono input)
+    /// güncellenir; canlı kök ve motor DOKUNULMAZ — uygulanması Save'e ertelenir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Düğmenin adı <c>Change…</c> idi ve yanında düzenlenemez bir yol ETİKETİ
+    /// (<c>RepoPathText</c>) dururdu. v1.8.0 repository root'u Settings'in İLK bölümü yaptı: etiket yerini
+    /// düzenlenebilir mono bir input'a bıraktı, düğme de <c>Browse…</c> oldu.</para></summary>
     [StaFact]
-    public void Change_button_updates_only_the_dialog_label_until_save()
+    public void Browse_updates_only_the_draft_until_save()
     {
         var (dialog, run, _, scope) = SettingsDialogHost.OpenRealized(pickFolder: () => @"D:\picked\repo");
         using var _scope = scope;
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        var change = DsResources.RealizedObjects(dialog).OfType<Button>().Single(b => Equals(b.Content, "Change…"));
-        change.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        var browse = DsResources.RealizedObjects(dialog).OfType<Button>()
+            .Single(b => b.Content is StackPanel panel
+                         && panel.Children.OfType<TextBlock>().Any(t => t.Text == "Browse…"));
+        browse.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
         dialog.UpdateLayout();
 
-        var label = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Single(t => t.Name == "RepoPathText");
-        Assert.Equal(@"D:\picked\repo", label.Text);   // etiket YENİ yolu gösterir
-        Assert.Equal(@"D:\repo", run.RootPath);        // canlı kök ESKİ (fixture kökü)
-        Assert.Empty(sent);                            // Sync YOK
+        Assert.Equal(@"D:\picked\repo", dialog.RootInput.Text);  // input YENİ yolu gösterir
+        Assert.Equal(@"D:\picked\repo", dialog.Draft!.RepositoryRoot);
+        Assert.Equal(@"D:\repo", run.RootPath);                   // canlı kök ESKİ (fixture kökü)
+        Assert.Empty(sent);                                       // Sync YOK
+    }
+
+    /// <summary>[design v1.8.0 §2.9] First run'da (henüz workspace yok) kaydetmek AYNI ZAMANDA kurulumdur ve
+    /// düğme bunu söyler: <c>Save and sync</c>. Workspace açıldıktan sonra yalnız <c>Save</c>.</summary>
+    [StaFact]
+    public void The_first_run_save_button_says_save_and_sync()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.RootPath = "");
+        using var _scope = scope;
+
+        Assert.Equal("Save and sync", dialog.Save.Content);
+    }
+
+    /// <summary>[design v1.8.0 §2.9] "Root boşken Save disabled — uygulamanın çalışması için zorunlu tek ayar
+    /// budur."</summary>
+    [Fact]
+    public void Save_is_blocked_while_the_repository_root_is_empty()
+    {
+        var editor = new SettingsDraftViewModel(null, null);
+        Assert.False(editor.CanSave);
+
+        editor.RepositoryRoot = @"D:\src\osys";
+        Assert.True(editor.CanSave);
+
+        editor.RepositoryRoot = "   ";   // yalnız boşluk da BOŞtur
+        Assert.False(editor.CanSave);
     }
 }

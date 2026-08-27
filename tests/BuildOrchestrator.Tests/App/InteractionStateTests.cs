@@ -10,14 +10,28 @@ public class InteractionStateTests
 {
     // ---- Verbatim (byte-exact) davet/boş-durum metinleri ----
 
+    /// <summary>[design v1.8.0 §2.4 · v1.10.0] First run kurulum davetinin metinleri BİREBİR.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Davet eskiden bir klasör seçiciye açılıyordu ve üç metni vardı:
+    /// <c>Pick a repository to get started</c> · <c>Point to the OSYS solution root — …</c> ·
+    /// <c>Choose Folder</c>. v1.8.0 onu KALDIRDI — başlamak için gereken ayar sayısı arttığından (repository
+    /// root + katman tanımları) boş durum Settings'e yönlendiriyor; v1.10.0 ikinci bir düğme ekledi.</para></summary>
     [Fact]
-    public void Pick_repository_invitation_texts_are_verbatim()
+    public void First_run_setup_invitation_texts_are_verbatim()
     {
-        Assert.Equal("Pick a repository to get started", InteractionText.PickRepositoryTitle);
+        Assert.Equal("Configure the workspace", InteractionText.ConfigureWorkspaceTitle);
         Assert.Equal(
-            "Point to the OSYS solution root — projects and the dependency graph are discovered automatically.",
-            InteractionText.PickRepositorySubtitle);
-        Assert.Equal("Choose Folder", InteractionText.ChooseFolderButton);
+            "Set the repository root — and, if projects should be grouped, the layers. Discovery starts right after.",
+            InteractionText.ConfigureWorkspaceSubtitle);
+        Assert.Equal("Repository root", InteractionText.SetupRepositoryRootLabel);
+        Assert.Equal("Layers", InteractionText.SetupLayersLabel);
+        Assert.Equal("Not set", InteractionText.SetupRootNotSet);
+        Assert.Equal("Optional", InteractionText.SetupLayersOptional);
+        Assert.Equal("6 defined", InteractionText.SetupLayersDefined(6));
+        Assert.Equal("Open settings", InteractionText.OpenSettingsButton);
+        Assert.Equal("Import settings…", InteractionText.ImportSettingsButton);
+        Assert.Equal(
+            "Import fills the form from a settings file — nothing is applied until you save.",
+            InteractionText.ImportSettingsNote);
     }
 
     [Fact]

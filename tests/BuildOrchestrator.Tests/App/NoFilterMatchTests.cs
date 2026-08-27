@@ -129,7 +129,7 @@ public class NoFilterMatchTests
         window.Shell.UpdateLayout();
 
         var texts = VisibleTexts(window);
-        Assert.Contains(InteractionText.PickRepositoryTitle, texts);
+        Assert.Contains(InteractionText.ConfigureWorkspaceTitle, texts);
         Assert.DoesNotContain(Copy, texts);
         GC.KeepAlive(window);
     }

@@ -64,17 +64,47 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             AddDefaultRows();
     }
 
-    /// <summary>[D7] Save yalnız bir katmanın adı BOŞ (trim sonrası) ya da regex'i DERLENEMEZ iken bloklanır;
-    /// boş regex GEÇERLİdir (bloklamaz). BuildApp.jsx:1017 <c>valid = draft.every(name.trim() &amp;&amp; !invalid)</c>.
-    /// Regex compile-check LayerEngine'in EKLEDİĞİ sınırlı-matchTimeout ctor'uyla AYNI (bkz. <see cref="LayerRowViewModel.RegexInvalid"/>).</summary>
-    public bool CanSave => Layers.All(r => r.Name.Trim().Length > 0 && !r.RegexInvalid);
+    /// <summary>[design v1.8.0 §2.9] Save iki koşulda bloklanır: (a) bir katmanın adı BOŞ (trim sonrası) ya da
+    /// regex'i DERLENEMEZ — boş regex GEÇERLİdir; (b) <b>repository root BOŞ</b>. İkincisi v1.8.0'ın kuralıdır:
+    /// <i>"Root boşken Save disabled — uygulamanın çalışması için zorunlu tek ayar budur."</i>
+    /// Regex compile-check LayerEngine'in EKLEDİĞİ sınırlı-matchTimeout ctor'uyla AYNI
+    /// (bkz. <see cref="LayerRowViewModel.RegexInvalid"/>).</summary>
+    public bool CanSave =>
+        !string.IsNullOrWhiteSpace(RepositoryRoot) && Layers.All(r => r.Name.Trim().Length > 0 && !r.RegexInvalid);
 
-    /// <summary>"Restore default layers" — taslağı <see cref="LayerDefaults"/> ile değiştirir. A13.2 reset
-    /// yasağı: <c>Clear()</c> yerine sondan sil + ekle (yalnız Remove/Add bildirimleri — Reset yok).</summary>
-    public void RestoreDefaults()
+    // Root, CanSave'in ikinci koşuludur — değiştiğinde düğmenin de haberi olmalı.
+    partial void OnRepositoryRootChanged(string? value) => OnPropertyChanged(nameof(CanSave));
+
+    /// <summary>[design v1.8.0/§2.9 "Load sample layers"] Taslağı örnek katmanlarla (<see cref="LayerDefaults"/>)
+    /// doldurur. A13.2 reset yasağı: <c>Clear()</c> yerine sondan sil + ekle (yalnız Remove/Add bildirimleri).</summary>
+    public void LoadSampleLayers()
     {
         for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
         AddDefaultRows();
+    }
+
+    // ---------------------------------------------------------------- [design v1.10.0 §2.9] Export / Import / Clear
+
+    /// <summary>Taslağın o anki hâlini dosya biçimine çevirir — diyalog onu diske yazar.</summary>
+    public SettingsFile ToFile() => SettingsFile.From(RepositoryRoot, BuildPatterns());
+
+    /// <summary>Bir ayar dosyasını <b>FORMA</b> yükler. Hiçbir şey UYGULANMAZ: Save'e kadar ne
+    /// <see cref="RunViewModel"/> ne UiState değişir (§2.9 — onay dialogu da yoktur).
+    /// <para>Kök dosyada yoksa mevcut kök KORUNUR: bir katman dosyası kökü sıfırlamamalıdır.</para></summary>
+    public void LoadFrom(SettingsFile file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        if (!string.IsNullOrWhiteSpace(file.RepositoryRoot)) RepositoryRoot = file.RepositoryRoot;
+        for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
+        foreach (var layer in file.Layers) AddRow(new LayerRowViewModel(layer.Name, layer.Pattern));
+    }
+
+    /// <summary>[§2.9] Clear: kökü ve TÜM katmanları boşaltır. İki aşamalı onay ve geri bildirim diyalogdadır —
+    /// taslak yalnız boşalmayı bilir.</summary>
+    public void ClearAll()
+    {
+        RepositoryRoot = null;
+        for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
     }
 
     private void AddDefaultRows()
