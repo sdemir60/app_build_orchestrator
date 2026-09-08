@@ -209,9 +209,10 @@
                   Figures="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12" />
 
     <!-- ================= statü glyph'leri + spinner (viewBox 0 0 16 16) ================= -->
-    <!-- [T60] DS `StatusGlyph` (_ds_bundle.js:1446-1524) ve `Spinner` (:1385-1392) çizimleri. StatusGlyph'in
-         gövdesi ince bir HALKA + içine 1.5px'lik bir glyph'tir; `discovered` aynı halkanın KESİKLİSİDİR ve
-         `building` 270°'lik bir yaydır. Geometriler kodda parse EDİLMEZ (bkz. IconGeometryTests). -->
+    <!-- [T60] DS `StatusGlyph` çizimleri (_ds_bundle.js:1446-1524). Gövde ince bir HALKA + içine 1.5px'lik
+         bir glyph'tir; `discovered` aynı halkanın KESİKLİSİDİR. `building` AYRI BİR ÇİZİM DEĞİLDİR — aynı
+         kesikli halkanın amber, dönen hâlidir (BuildApp.jsx:162-171 `BuildingSpin`), bu yüzden burada yalnız
+         halkanın KENDİSİ durur. Geometriler kodda parse EDİLMEZ (bkz. IconGeometryTests). -->
 
     <!-- _ds_bundle.js:1446-1452 RING — <circle cx="8" cy="8" r="6.7" fill="none" strokeWidth="1" opacity=".6"/> -->
     <EllipseGeometry x:Key="Icon.StatusRing" Center="8,8" RadiusX="6.7" RadiusY="6.7" />
@@ -229,9 +230,6 @@
     <PathGeometry x:Key="Icon.StatusClock" Figures="M8 4.8v3.4l2.1 1.3" />
     <!-- _ds_bundle.js:1509-1513 cycle — uyarı üçgeni + ünlem (üç path) -->
     <PathGeometry x:Key="Icon.StatusCycle" Figures="M8 2.7 14.4 13.2H1.6Z M8 6.6v3 M8 11.4h.01" />
-    <!-- _ds_bundle.js:1392 (Spinner) / :1505 (StatusGlyph building) — 270° yay, AYNI path -->
-    <PathGeometry x:Key="Icon.Spinner" Figures="M8 1.3a6.7 6.7 0 1 1-6.7 6.7" />
-
     <!-- _ds_bundle.js:143 Chip chevron — <path d="M4.5 6.5 8 10l3.5-3.5"/> (Select'in ok'u da AYNI, :831) -->
     <PathGeometry x:Key="Icon.Chevron" Figures="M4.5 6.5 8 10l3.5-3.5" />
 
@@ -348,7 +346,7 @@
     <!-- strokeWidth="1.6" (_ds_bundle.js:1633 DependencyGraphNode paket ikonu) -->
     <sys:Double x:Key="Icon.Package.StrokeThickness">1.6</sys:Double>
 
-    <!-- strokeWidth="1.5" (_ds_bundle.js:143 chevron · :1457 StatusGlyph gövdesi · :1389 Spinner) -->
+    <!-- strokeWidth="1.5" (_ds_bundle.js:143 chevron · :1457 StatusGlyph gövdesi · BuildApp.jsx:166 spinner) -->
     <sys:Double x:Key="Icon.Chevron.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.ChipRemove.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.StatusCheck.StrokeThickness">1.5</sys:Double>

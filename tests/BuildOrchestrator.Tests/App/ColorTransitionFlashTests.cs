@@ -81,6 +81,45 @@ public sealed class ColorTransitionFlashTests
         }
     }
 
+    /// <summary>
+    /// Alt bardaki bir chip'in AKTİF olması (branch/worktree/filtre) da ortasında parlamaz.
+    ///
+    /// <para><b>Ölçülen kusur:</b> uçlardan biri opak (<c>surface-overlay</c>, hover), diğeri YARI SAYDAM
+    /// (<c>amber-soft</c>, <c>#1F</c> alfa). WPF kanalları premultiply ETMEDEN interpole ettiği için RGB
+    /// ambere doğru koşarken alfa henüz yüksek kalıyor: geçişin ortası ekranda <c>(84,63,25)</c>, yani her iki
+    /// ucun da (<c>(32,32,36)</c> ve <c>(46,37,22)</c>) İKİ KATI parlaklıkta. Kullanıcı bunu "tıkladığım anda
+    /// git gel eden bir renk" diye tarif etti. CSS aynı geçişi premultiply ederek yapar ve orta nokta
+    /// <c>(39,35,29)</c>'dur — iki ucun ARASINDA.</para>
+    ///
+    /// <para>Bu, sıfır-alfalı uç düzeltmesinin GENEL hâlidir: orada bir ucun alfası 0'dı, burada yalnızca
+    /// FARKLI. Aynı kusur, aynı neden.</para>
+    /// </summary>
+    [StaFact]
+    public void Activating_a_chip_never_brightens_past_either_endpoint()
+    {
+        var host = DsResources.NewHost();
+        Color backdrop = DsResources.TokenColor(host, "Brush.Surface");        // alt barın zemini
+        Color hover = DsResources.TokenColor(host, "Brush.SurfaceOverlay");    // Ds.Chip hover
+        Color active = DsResources.TokenColor(host, "Brush.AmberSoft");        // Ds.Chip IsChecked
+
+        AssertNoFlash(hover, active, backdrop);
+        AssertNoFlash(active, hover, backdrop); // kapanış da simetrik olmalı
+    }
+
+    /// <summary>Satırdaki <c>⋯</c> düğmesi (<c>Ds.IconButton.Toggle</c>) AYNI geçişi hover edilmiş bir satırın
+    /// üstünde yapar — kusurun ikinci görüldüğü yer.</summary>
+    [StaFact]
+    public void Activating_a_row_icon_toggle_never_brightens_past_either_endpoint()
+    {
+        var host = DsResources.NewHost();
+        Color backdrop = DsResources.TokenColor(host, "Brush.SurfaceHover");   // hover edilmiş satır
+        Color hover = DsResources.TokenColor(host, "Brush.SurfaceRaised");     // ikon butonun hover'ı
+        Color active = DsResources.TokenColor(host, "Brush.AmberSoft");
+
+        AssertNoFlash(hover, active, backdrop);
+        AssertNoFlash(active, hover, backdrop);
+    }
+
     /// <summary>Çakmayı yok etmek uçları KAYDIRARAK yapılmaz: geçiş görünür olarak hâlâ tam kaynaktan tam hedefe
     /// gitmelidir. Sıfır-alfalı ucun RGB'si değişebilir (görünmez), ama bindirilmiş rengi değişemez.</summary>
     [StaFact]

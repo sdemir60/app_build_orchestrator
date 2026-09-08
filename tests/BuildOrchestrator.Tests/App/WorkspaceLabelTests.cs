@@ -78,6 +78,33 @@ public class WorkspaceLabelTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// Etiket ile branch chip'i arasında barın KENDİ öğe-arası boşluğu durur — ikisi birleşik OKUNMAZ.
+    ///
+    /// <para>Prototipte bar bir flex satırıdır ve <c>gap: 8</c> taşır (BuildApp.jsx:2325); etiketin span'i
+    /// buna EK OLARAK <c>marginRight: 2</c> ekler (BuildApp.jsx:2394) → toplam 10px.</para>
+    ///
+    /// <para><b>Ölçülen kusur:</b> aralık 2px'ti — barın 8'lik öğe-arası boşluğu WPF'te her öğeye ELLE
+    /// yazılıyor ve branch chip'inin kabı onu almamıştı. Kullanıcı bunu "OSYS branch seçimi ile birleşik
+    /// olmuş" diye tarif etti.</para>
+    /// </summary>
+    [StaFact]
+    public void The_label_keeps_the_bars_own_gap_between_itself_and_the_branch_chip()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.RootPath = @"D:\src\osys";
+        bar.UpdateLayout(); // etiket YENİ göründü — yerleşim iddiaları taze bir pass ister
+
+        var label = bar.WorkspaceLabel;
+        double labelRight = label.TranslatePoint(new Point(label.ActualWidth, 0), bar).X;
+        double branchLeft = bar.BranchChip.TranslatePoint(new Point(0, 0), bar).X;
+
+        Assert.True(label.ActualWidth > 0, "ön-koşul: workspace etiketi hiç yerleşmedi");
+        Assert.Equal(10.0, branchLeft - labelRight, 3);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Uzun bir kök klasör adı barı ITMEZ: etiket kendi sınırında ellipsis'e düşer (title bar'daki
     /// eski bağlam metninin kırpma kuralı buraya taşındı).</summary>
     [StaFact]

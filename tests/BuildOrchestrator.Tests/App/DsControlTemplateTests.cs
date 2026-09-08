@@ -113,17 +113,19 @@ public class DsControlTemplateTests
         GC.KeepAlive(window);
     }
 
+    private static SplitButton NewSplitButton() => (SplitButton)XamlReader.Parse("""
+        <controls:SplitButton xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls;assembly=BuildOrchestrator.App"
+                              PrimaryContent="Build" />
+        """);
+
     [StaFact]
     public void Split_button_halves_share_one_body_with_flat_inner_corners()
     {
-        // BuildApp.jsx:1594 sol yarımın SAĞ köşeleri 0 · :1596 sağ yarımın SOL köşeleri 0 · aralarında
-        // 1px amber-dim çizgi. Köşeler gövdenin Radius.Sm token'ından TÜRETİLİR (literal yazılmaz).
+        // BuildApp.jsx:2418 sol yarımın SAĞ köşeleri 0 · :2421 sağ yarımın SOL köşeleri 0. Köşeler gövdenin
+        // Radius.Sm token'ından TÜRETİLİR (literal yazılmaz).
         var host = DsResources.NewHost();
-        var split = (FrameworkElement)XamlReader.Parse("""
-            <controls:SplitButton xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                                  xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls;assembly=BuildOrchestrator.App"
-                                  PrimaryContent="Build" />
-            """);
+        var split = NewSplitButton();
         var window = DsResources.Realize(host, split);
 
         double r = ((CornerRadius)host.FindResource("Radius.Sm")).TopLeft;
@@ -134,10 +136,69 @@ public class DsControlTemplateTests
 
         Assert.Contains(new CornerRadius(r, 0, 0, r), corners); // sol yarım: iç (sağ) köşeler DÜZ
         Assert.Contains(new CornerRadius(0, r, r, 0), corners); // sağ yarım: iç (sol) köşeler DÜZ
-
-        var divider = DsResources.Descendants(split).OfType<Rectangle>().Single(x => x.Width == 1);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberDim"), DsResources.ColorOf(divider.Fill));
         GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// İki yarımın ayracı sağ yarımın <b>KENDİ</b> sol kenarıdır — bağımsız bir çizgi öğesi DEĞİL
+    /// (BuildApp.jsx:2421 <c>borderLeft: '1px solid var(--amber-dim)'</c>).
+    ///
+    /// <para><b>ESKİ İDDİA (bu test bunu pinliyordu):</b> ayraç iki butonun ARASINDA duran 1px'lik bir
+    /// <c>Rectangle</c>'dı ve test onun <c>Fill</c>'inin <c>Brush.AmberDim</c> olduğunu doğruluyordu.
+    /// <b>Neden değişti (ÖLÇÜLDÜ):</b> iki yarım da <c>Ds.Button.Base</c>'ten 1px SAYDAM kenar alıyordu ve
+    /// WPF'te <see cref="Border.Background"/> kenarın İÇİNİ doldurur (CSS'in <c>background-clip: border-box</c>
+    /// varsayılanının tersi) — yani ayracın iki yanında birer piksel BOŞLUK kalıyordu. Ekranda görünen üç
+    /// çizgiydi: boşluk · amber-dim · boşluk. Kullanıcı bunu "sanki iki çizgi var gibi" diye tarif etti.
+    /// İkinci kusur: bağımsız <c>Rectangle</c>, butonların pasiflik opaklığından ETKİLENMİYORDU — buton
+    /// sönerken ayraç tam parlaklıkta kalıyordu.</para>
+    ///
+    /// <para>Yeni kural her ikisini de kapatır: sol yarımın kenarı YOKTUR (zemini sağ kenarına kadar dolar),
+    /// sağ yarımın YALNIZ sol kenarı vardır ve o kenar amber-dim'dir. Kenar butonun kendi gövdesine ait
+    /// olduğu için pasiflik opaklığını da onunla birlikte alır.</para>
+    /// </summary>
+    [StaFact]
+    public void The_split_buttons_divider_is_the_menu_halfs_own_left_border_not_a_separate_line()
+    {
+        var host = DsResources.NewHost();
+        var split = NewSplitButton();
+        var window = DsResources.Realize(host, split);
+
+        Assert.DoesNotContain(DsResources.Descendants(split).OfType<Rectangle>(), x => x.Width == 1);
+
+        Assert.Equal(new Thickness(0), split.PrimaryHalf!.BorderThickness);
+        Assert.Equal(new Thickness(1, 0, 0, 0), split.MenuToggle!.BorderThickness);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberDim"),
+            DsResources.ColorOf(split.MenuToggle.BorderBrush));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Chevron yarımı sol yarımla AYNI etkin durumu taşır (BuildApp.jsx:2417 ve :2419 birebir aynı
+    /// <c>disabled</c> ifadesini alır).
+    ///
+    /// <para><b>Ölçülen kusur:</b> <c>ActionBar</c> split button'ın kendisini yalnız workspace/sync
+    /// durumundan kısıyor; sol yarım BUNA EK OLARAK <c>PrimaryCommand</c>'ın <c>CanExecute</c>'undan da
+    /// kısılıyordu (<c>ButtonBase</c> komutu kendi <c>IsEnabled</c>'ıyla AND'ler). Komut hayır dediğinde
+    /// yalnız sol yarım 0.45 opaklığa düşüyor, chevron tam parlaklıkta kalıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void The_chevron_half_is_disabled_whenever_the_primary_half_is()
+    {
+        var host = DsResources.NewHost();
+        var split = NewSplitButton();
+        split.PrimaryCommand = new NeverExecutableCommand();
+        var window = DsResources.Realize(host, split);
+
+        Assert.False(split.PrimaryHalf!.IsEnabled, "ön-koşul: sol yarım komut yüzünden pasifleşmedi");
+        Assert.False(split.MenuToggle!.IsEnabled, "chevron yarımı sol yarımla birlikte pasifleşmedi");
+        GC.KeepAlive(window);
+    }
+
+    private sealed class NeverExecutableCommand : System.Windows.Input.ICommand
+    {
+        public event EventHandler? CanExecuteChanged;
+        public bool CanExecute(object? parameter) => false;
+        public void Execute(object? parameter) => throw new NotSupportedException();
     }
 
     [StaFact]

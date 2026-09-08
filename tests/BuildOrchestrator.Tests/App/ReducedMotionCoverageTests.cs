@@ -48,7 +48,7 @@ public class ReducedMotionCoverageTests
             Assert.Equal(TimeSpan.Zero, m.Effective(TimeSpan.FromMilliseconds(ms)));
     }
 
-    // ================================================================ 1) BuildingSpinner (900ms/270° dönüş)
+    // ================================================================ 1) BuildingSpinner (1.4s kesikli halka dönüşü)
 
     [StaFact]
     public void BuildingSpinner_never_starts_its_rotation_clock_under_reduced_motion()
@@ -62,20 +62,25 @@ public class ReducedMotionCoverageTests
         GC.KeepAlive(window);
     }
 
-    // ================================================================ 2) StatusGlyph (1.6s nabız)
+    // ================================================================ 2) StatusGlyph (building halkası)
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL] <b>Eski iddia:</b> <c>StatusGlyph</c>'in <c>building</c> nabzı (1.6s, opaklık
+    /// 1 → .45 → 1) reduced-motion'da hiç kurulmazdı. <b>Neden değişti:</b> o nabız kaldırıldı — tasarımda
+    /// building glyph'inin tek animasyonu halkanın DÖNÜŞÜdür (bkz. <c>BuildingSpinnerTests</c>). Geriye
+    /// kalan tek saat şablonun içindeki <see cref="BuildingSpinner"/>'ındır ve kapsam iddiası ona taşındı:
+    /// glyph reduced-motion'da HİÇBİR saat tutmaz — ne kendi opaklığında, ne halkasında.
+    /// </summary>
     [StaFact]
-    public void StatusGlyph_never_starts_its_building_pulse_under_reduced_motion()
+    public void StatusGlyph_keeps_no_clock_at_all_for_building_under_reduced_motion()
     {
         Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz sahip: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
         var host = DsResources.NewHost();
         var glyph = new StatusGlyph { Status = GraphStatus.Building };
         var window = DsResources.Realize(host, glyph);
 
-        // GERÇEK saat (BuildingSpinner.IsRotating kardeşi): nabız Opacity clock'u glyph'te HİÇ kurulmaz. İç
-        // _isPulsing bayrağı yalan söyleyebilir (bookkeeping) — asıl kanıt HasAnimatedProperties'tir.
-        Assert.False(glyph.HasAnimatedProperties); // nabız Opacity saati YOK
-        Assert.False(glyph.IsPulsing);             // ikincil: iç bayrak da kapalı
+        Assert.False(glyph.HasAnimatedProperties);                    // glyph'in kendi opaklık saati YOK
+        Assert.False(glyph.Spinner!.IsRotating);                      // halkanın dönüş saati de kurulmaz
         GC.KeepAlive(window);
     }
 

@@ -23,7 +23,11 @@
         <!-- [design v1.11.0 §2.7-5a] Workspace adı: mono 11px text-dim, branch chip'inin SOLUNDA; tooltip
              repository root'un kendisidir. Title bar'daki eski bağlam metninden buraya taşındı (§2.1).
              MaxWidth + ellipsis: uzun bir kök klasör adı barı itmemeli. Metni/görünürlüğü kod-tarafı sürer. -->
-        <TextBlock x:Name="PART_Workspace" VerticalAlignment="Center" Margin="0,0,2,0"
+        <!-- Aralık 10: barın öğe-arası boşluğu 8 (BuildApp.jsx:2325 `gap: 8`) + span'in kendi
+             `marginRight: 2`'si (BuildApp.jsx:2394). Boşluk chip'in kabına DEĞİL etikete yazılır: etiket
+             workspace yokken Collapsed olur ve o zaman boşluk da onunla birlikte kaybolur (kabına yazılsaydı
+             chip'ler workspace'siz durumda 8px sola kayardı). -->
+        <TextBlock x:Name="PART_Workspace" VerticalAlignment="Center" Margin="0,0,10,0"
                    Visibility="Collapsed" MaxWidth="160" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                    FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
                    Foreground="{DynamicResource Brush.TextDim}" />

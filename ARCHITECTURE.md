@@ -834,9 +834,21 @@ projects building on a four-worker run.
 **A group that did not converge persists nothing.** Only `Converged` is trusted: on no-progress, on the
 ceiling, on a stop, on cancellation and on an unexpected exception, every member is invalidated — including
 members that came back green — and a group cut short reports every member as failed rather than carrying an
-intermediate round's verdict out. Stop is deliberately asymmetric here: a single in-flight project is allowed
-to finish and persist, but a group is cut at the end of the round it is in, because the unit of work is all of
-the rounds, and continuing them after a stop would mean dozens more invocations.
+intermediate round's verdict out.
+
+**A stop cuts the group where it lands, not at the end of the round.** The member already compiling drains, as
+everywhere else; the members after it in the round are never invoked at all. A group runs its own loop rather
+than going back to the scheduler for each member, so the scheduler's stop gate does not cover it and the gate
+has to be repeated inside the loop — without it a stop kept spawning a fresh `MSBuild.exe` for every remaining
+member, which is the one place the application broke §4.5's promise that nothing new is dispatched. Cutting
+mid-round costs nothing, because an interrupted group discards every member's result anyway: the round that
+used to be carried to completion was thrown away when it ended.
+
+A round cut short is also **never put to the round policy**. Feeding it a partial round is the sharp edge here:
+in a second round whose members had all been clean so far, the policy would answer *converged* while some
+members had not been compiled at all, and a stopped run would persist a fresh signature — telling the next
+`Build` that the component is up to date. The decision therefore stays at *continue*, which is exactly the
+state the invalidate-everything path above keys on.
 
 **Non-convergence memory.** A group that ends in **no progress** records the composite signature it gave up
 at, per member, beside that member's build state (§7.5). A stop or an unexpected error never writes this —
@@ -1229,7 +1241,10 @@ a right-aligned block: on hover four icon buttons (*build this project*, a **⋯
 the fixed warning slot, and a 46 px duration column.
 
 The **⋯** menu — also opened by right-clicking the row, as in Solution Explorer — offers *Build · Rebuild ·
-Clean* scoped to that one project. The engine for those three, and for the play button, is not written yet:
+Clean* scoped to that one project. It is anchored to the **row**, not to the ⋯ button: its right edge sits 8 px
+inside the row's, it overlaps the row's bottom by 3 px, and it slides up to stay inside the list's viewport when
+a row near the bottom opens it. Anchoring to the button would have meant a fixed offset standing in for the
+width of the icons that follow it, and that number goes stale the moment the icon row changes. The engine for those three, and for the play button, is not written yet:
 the controls sit where the design puts them, disabled, and their tooltip says why. The same is true of *Clean*
 in the Build split menu.
 
@@ -1237,7 +1252,8 @@ Only one element in the row carries a design-system tooltip: the warning triangl
 none — colour, glyph and the duration column were all saying the same thing — and announces its status through
 its automation name instead. The icon buttons keep a plain, OS-delayed tooltip (the closest thing WPF has to
 an HTML `title`) so that a mouse crossing the row does not trail balloons behind it. The building row carries a motionless
-amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s); a sweep or a shine was tried and
+amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s) — that layer belongs to the row's
+background, not to the glyph, which only turns; a sweep or a shine was tried and
 rejected. A failing row shakes once, ±3 px over 360 ms.
 
 The stripe has **no vertical inset**, which is a deliberate departure from §2.4. The design insets it by 1 px
@@ -1370,7 +1386,12 @@ nothing was built, and a "stopped" line describing a run that never began would 
 ### 13.3 Popovers and dialogs
 
 Popovers open 8 px above their chip on `surface-overlay` with a `border-strong` hairline, radius 8, the overlay
-shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click or Esc closes them. Rows inside them are
+shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click, Esc, or a second press on the trigger
+that opened them closes them. That last one needs saying because WPF does not give it for free: a popup that
+closes on outside clicks drops its `IsOpen` while the press is still travelling, and the same press then
+re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
+the control that opened it. One gate (`PopoverToggle`) closes that window for all five popovers — branch,
+worktree, the Build chevron, the row menu and the Open-in-VS chooser. Rows inside them are
 28 px. The branch popover is 272 px wide and carries a search box; the worktree popover is 300 px and carries
 the switch, the target list and the `source` line.
 
@@ -1978,7 +1999,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Element | Form |
 |---|---|
 | Buttons | One shared `ControlTemplate` over four variants (primary / secondary / ghost / danger) × three sizes, differing only in brushes and metrics |
-| Split button | A custom control: two halves sharing the primary template, joined by per-corner radius and a 1 px divider — visually one body, semantically two buttons |
+| Split button | A custom control: two halves sharing the primary template, joined by per-corner radius — visually one body, semantically two buttons. The seam is the menu half's own 1 px left border, not a line between them: WPF paints a `Border`'s background *inside* its border, the inverse of CSS, so two halves each carrying a transparent 1 px edge leave a pixel of gap on either side of any separate line. For the same reason the two halves share one enabled state — the chevron reads the primary half's, which already folds in the command's `CanExecute`, so a divider and a chevron can never stay bright beside a greyed-out button |
 | Chip | A `ToggleButton` style plus a counter text style |
 | Icon button | Its own compact template, with a toggle variant for the layout-mode icons |
 | Switch | A `CheckBox` template — WPF has no toggle switch |
@@ -1987,7 +2008,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
-| Status glyph · building spinner · status dot | Custom controls drawing rings, arcs and dots |
+| Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width. Rotation is the *only* thing that moves there: the glyph itself holds no animation clock, so it is not a motion owner and carries no motion seam |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
 
 Three pieces of shared machinery keep the copies from multiplying:
@@ -2108,7 +2129,7 @@ meets 4.5:1.
 |---|---|---|
 | Discovered | dashed circle | Discovered |
 | Queued | clock | Queued |
-| Building | rotating dashed ring + breath | Building |
+| Building | rotating dashed ring | Building |
 | Succeeded | ✓ in a ring | Succeeded |
 | Failed | ✗ in a ring | Failed |
 | Skipped | — in a ring | Skipped |
@@ -2265,12 +2286,17 @@ Five contract rules, each enforced by a test:
 3. **No literals.** Hardcoded hex or millisecond values in animation code fail a guard test.
 4. **Frozen brushes cannot be animated.** Shared/frozen resources are copied per instance before being driven;
    `ContainerVisual.Opacity` cannot be animated at all, which is why graph layer hosts are `UIElement`s.
-5. **Transparent is white.** `Colors.Transparent` is `#00FFFFFF`, and WPF interpolates the colour channels
-   without premultiplying alpha — so a fade between transparent and a dark surface walks its RGB through white
-   and flashes a light grey at the midpoint. Every colour timeline is therefore built by one shared factory
-   (`MotionTokens.SplineColorTo`) that declares *both* endpoints and pulls the zero-alpha end onto the other
-   end's RGB, leaving alpha as the only channel in motion. This is what a browser's premultiplied `transparent`
-   does, and it is why no consumer may hand-roll a colour keyframe.
+5. **WPF does not premultiply, CSS does.** WPF interpolates a colour's channels straight, so whenever the two
+   ends of a fade carry *different* alpha the RGB races ahead of the alpha and the midpoint lands outside both
+   endpoints. `Colors.Transparent` is the loud case — it is `#00FFFFFF`, so a fade to a dark surface walks its
+   RGB through white and flashes light grey — but the same thing happens between any opaque colour and a
+   translucent one: a chip going from its hover grey to `amber-soft` composited to (84,63,25) halfway,
+   roughly twice as bright as either end, so the colour left and came back within one click. Every colour
+   timeline is therefore built by one shared factory (`MotionTokens.SplineColorTo`) which declares *both*
+   endpoints and, when their alphas differ, walks the **premultiplied** path a browser walks — sampled along
+   the easing curve's own parameter, since that path is not a single keyframe. Equal alphas are left alone:
+   there the common factor cancels and straight interpolation is already the premultiplied one. This is why
+   no consumer may hand-roll a colour keyframe.
 
 **Two choreographies frame an operation.** They are the largest pieces of motion in the application, and both
 are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in pure cores
@@ -2292,6 +2318,15 @@ farewell** — everything outside the scope starts fading over 1120 ms, and 560 
 halfway through, so ending the two at the same instant would look wrong; they finish 120 ms apart and are
 perceived as simultaneous. Rows and graph nodes fade together; the wave is random rather than in build order
 by explicit decision.
+
+Keeping the two surfaces together takes one deliberate wire. A row repaints itself from its own binding the
+instant it is marked, but the graph is a pushed channel: it is handed statuses, and if the wave does not hand
+them over it repaints only when the run tick next comes round, a fifth of a second later. At the wave's tempo
+that is six or seven nodes arriving at once against a list that is flowing, so the wave pushes the graph at
+its own pace rather than leaving it to the tick. For the same reason the first step of a choreography runs
+synchronously instead of waiting for the sequencer's first tick: requesting a run puts the graph into its run
+phase, which starts dimming every node, and the choreography only overrides that decision from its first step
+— one frame of nothing in between is one frame of the graph going out and coming back.
 
 **The run command goes out when the choreography ends**, not when the button is pressed. Overlapping the two
 was tried — send immediately, play the choreography over the engine's planning window (worktree preparation,
@@ -2413,8 +2448,10 @@ STA thread.
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
 (`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost`, `SettingsDialogHost`,
 `AboutDialogHost`, `SplitterHost`, `GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap
-proof both dialogs use), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
-`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`) and measurement
+proof both dialogs use), input synthesis (`MouseInput`, the one place a real mouse press is raised, both
+halves of the gesture), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
+`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`,
+`FakeMotionSignal`, `FakeMotionSettings`) and measurement
 (`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
 CPU-saturating job tests, the console UI tests and the build-state store tests.
 
@@ -2430,7 +2467,7 @@ A category of tests that assert properties of the *source*, not of a run:
 |---|---|
 | No hardcoded colour | no hex outside `Tokens.xaml` |
 | No hardcoded motion | no inline durations/easings outside `Motion.xaml` |
-| No hand-rolled colour keyframe | every colour timeline comes from the shared factory, so no surface can miss the premultiplied-transparent rule of §14.5 |
+| No hand-rolled colour keyframe | every colour timeline comes from the shared factory, so no surface can miss the premultiplied-alpha rule of §14.5 |
 | No sleep-poll | no `Thread.Sleep`-based waiting in tests — synchronization is by handle or signal |
 | No Turkish user text | no Turkish string reaches a user-visible surface |
 | Token realize coverage | every declared token actually resolves when the resource dictionaries are realized |
@@ -2829,6 +2866,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, sha pair, hover icons, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
+| Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
+| Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
 | Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
@@ -2852,6 +2891,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Ending choreography: neon timings and keyframes | `App/Controls/EndFinale.cs` |
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
+| Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
+| Wave repaint of the graph (marking step + node colours in one push) | `MainWindow.xaml.cs` (`ApplyMarkingToGraph`) |
+| Colour transition onto a token brush (the wave's amber) | `App/Controls/MotionTokens.cs` (`TransitionTokenBrush`) |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
 | Icon geometries | `App/Resources/Icons.xaml`, `App/Controls/IconVisual.cs`, `IconPaint.cs` |
 

@@ -18,10 +18,12 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 [TemplatePart(Name = PrimaryPart, Type = typeof(ButtonBase))]
 [TemplatePart(Name = MenuPart, Type = typeof(ToggleButton))]
+[TemplatePart(Name = MenuPopupPart, Type = typeof(Popup))]
 public class SplitButton : Control
 {
     private const string PrimaryPart = "PART_Primary";
     private const string MenuPart = "PART_Menu";
+    private const string MenuPopupPart = "PART_MenuPopup";
 
     static SplitButton()
         => DefaultStyleKeyProperty.OverrideMetadata(
@@ -71,11 +73,25 @@ public class SplitButton : Control
 
     public SplitButton() => Loaded += (_, _) => SplitCorners();
 
+    /// <summary>[test yüzeyi] Birincil eylemi taşıyan sol yarım — şablonun <c>PART_Primary</c>'si.</summary>
+    internal ButtonBase? PrimaryHalf { get; private set; }
+
+    /// <summary>[test yüzeyi] Menüyü açan chevron yarımı — şablonun <c>PART_Menu</c>'sü.</summary>
+    internal ToggleButton? MenuToggle { get; private set; }
+
+    /// <summary>[test yüzeyi] Menünün <see cref="Popup"/>'ı — şablonun <c>PART_MenuPopup</c>'ı.</summary>
+    internal Popup? MenuPopup { get; private set; }
+
     public override void OnApplyTemplate()
     {
         base.OnApplyTemplate();
-        if (GetTemplateChild(PrimaryPart) is ButtonBase primary)
+        PrimaryHalf = GetTemplateChild(PrimaryPart) as ButtonBase;
+        if (PrimaryHalf is { } primary)
             primary.Click += (_, e) => PrimaryClick?.Invoke(this, e);
+        MenuToggle = GetTemplateChild(MenuPart) as ToggleButton;
+        MenuPopup = GetTemplateChild(MenuPopupPart) as Popup;
+        // Açık menünün chevron'una basmak onu KAPATIR (BuildApp.jsx:2420 `setBuildMenu(!buildMenu)`).
+        if (MenuToggle is { } menu && MenuPopup is { } popup) PopoverToggle.Bind(menu, popup);
         SplitCorners();
     }
 

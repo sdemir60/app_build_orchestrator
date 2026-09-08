@@ -94,36 +94,83 @@ internal static class MotionTokens
     /// <see cref="SplineColorKeyFrame"/> o değerden hedefe eğriyle akar.
     ///
     /// <para><b>Neden başlangıç AÇIK yazılır:</b> WPF from'suz bir keyframe'i property'nin taban değerinden
-    /// başlatır ve taban <c>Colors.Transparent</c> ise o değer <c>#00FFFFFF</c>'tir — yani BEYAZ. WPF renk
-    /// kanallarını premultiply ETMEDEN interpole ettiğinden alfa 0'dan çıkarken RGB de beyazdan hedefe iner:
-    /// koyu bir zemine giden her hover geçişi ortasında parlak gri bir ÇAKMA üretir. Uçlar burada elde
-    /// olduğu için sıfır-alfalı uç, diğer ucun RGB'siyle eşitlenebilir (bkz. <see cref="AlphaSafeEndpoints"/>) —
-    /// CSS'in premultiplied <c>transparent</c> davranışının paritesi. Kanıt: <c>ColorTransitionFlashTests</c>.</para>
+    /// başlatır ve taban <c>Colors.Transparent</c> ise o değer <c>#00FFFFFF</c>'tir — yani BEYAZ.</para>
+    ///
+    /// <para><b>Neden alfa farklıysa yol ÖRNEKLENİR (premultiply pariteti).</b> WPF renk kanallarını
+    /// PREMULTIPLY ETMEDEN interpole eder, CSS ise eder. Uçların alfası farklı olduğunda fark görünürdür:
+    /// RGB hedefe koşarken alfa henüz yüksek kaldığı için ara kare ekranda İKİ UCUN DA DIŞINA taşar. Ölçülen
+    /// örnek — chip'in hover'dan aktife geçişi (<c>#FF202024</c> → <c>#1FEDA10F</c>, alt bar zemininde):
+    /// ortası <c>(84,63,25)</c>, uçlar ise <c>(32,32,36)</c> ve <c>(46,37,22)</c>. Yani renk çıkıp geri
+    /// dönüyordu; kullanıcı bunu "git gel efekti" diye tarif etti. Premultiplied yol aynı noktada
+    /// <c>(39,35,29)</c> verir — iki ucun arasında.</para>
+    ///
+    /// <para>Premultiplied interpolasyon tek bir keyframe ile ifade EDİLEMEZ (alfaya bölünen bir rasyonel
+    /// fonksiyondur), bu yüzden yol <see cref="PremultipliedSamples"/> noktada örneklenir. Örnekler
+    /// EĞRİNİN PARAMETRESİ boyunca alınır: bir <see cref="KeySpline"/> zamanı ve ilerlemeyi aynı parametreden
+    /// üretir (<c>X(s)</c> ve <c>Y(s)</c>), yani eğriyi ters çevirmeye gerek kalmaz ve yumuşatma birebir
+    /// korunur. <b>Alfa eşitse hiçbir şey değişmez:</b> ortak alfa çarpanı sadeleşir, premultiplied ve düz
+    /// interpolasyon AYNI sonucu verir — o durumda tek bir <see cref="SplineColorKeyFrame"/> kalır.</para>
+    ///
+    /// <para>Bu kural, eski "sıfır-alfalı ucu diğer ucun RGB'siyle eşitle" düzeltmesinin GENEL hâlidir ve onu
+    /// kapsar: alfası sıfır olan ucun premultiplied katkısı zaten sıfırdır, dolayısıyla RGB yol boyunca
+    /// hedefte sabit kalır ve yalnız alfa akar. Kanıt: <c>ColorTransitionFlashTests</c>.</para>
     /// </summary>
     public static ColorAnimationUsingKeyFrames SplineColorTo(Color from, Color to, TimeSpan duration, KeySpline keySpline)
     {
-        (from, to) = AlphaSafeEndpoints(from, to);
+        ArgumentNullException.ThrowIfNull(keySpline);
         var animation = new ColorAnimationUsingKeyFrames();
         animation.KeyFrames.Add(new DiscreteColorKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(duration), keySpline));
+
+        if (from.A == to.A)
+        {
+            animation.KeyFrames.Add(new SplineColorKeyFrame(to, KeyTime.FromTimeSpan(duration), keySpline));
+            return animation;
+        }
+
+        for (int i = 1; i <= PremultipliedSamples; i++)
+        {
+            double s = (double)i / PremultipliedSamples;
+            double time = CubicBezier(keySpline.ControlPoint1.X, keySpline.ControlPoint2.X, s);
+            double progress = CubicBezier(keySpline.ControlPoint1.Y, keySpline.ControlPoint2.Y, s);
+            animation.KeyFrames.Add(new LinearColorKeyFrame(
+                PremultipliedLerp(from, to, progress),
+                KeyTime.FromTimeSpan(TimeSpan.FromTicks((long)(duration.Ticks * time)))));
+        }
         return animation;
     }
 
-    /// <summary>
-    /// Bir geçişin GÖRÜNMEZ ucunu, görünür ucun rengiyle eşitler: alfası sıfır olan uç ekranda hiçbir renk
-    /// göstermez, ama WPF onun RGB'sini de interpole eder. <c>Colors.Transparent</c>'ın RGB'si BEYAZ olduğundan
-    /// koyu bir yüzeye giden/gelen her geçiş ortasında açık gri bir çakma üretirdi (kullanıcı: "satırdan satıra
-    /// geçerken gelip giden parlama"). Sıfır alfalı ucu diğer ucun RGB'sine çekmek yalnız ALFA'yı süren bir
-    /// geçiş bırakır — tarayıcıların premultiplied <c>transparent</c> davranışının aynısı.
-    ///
-    /// <para>Görünen renk DEĞİŞMEZ: alfası sıfır olan bir rengin RGB'si ekranda hiçbir şeye katkı vermez.
-    /// İki uç da saydamsa yapacak bir şey yoktur.</para>
-    /// </summary>
-    private static (Color From, Color To) AlphaSafeEndpoints(Color from, Color to)
+    /// <summary>Örneklenen yolun çözünürlüğü. Örnekler arasında WPF düz interpolasyon yapar; 120ms'lik bir
+    /// geçişte bu, kare başına birkaç ms'lik parçalar demektir ve eğriden sapma yuvarlama gürültüsünün
+    /// altındadır.</summary>
+    private const int PremultipliedSamples = 16;
+
+    /// <summary>Uçları <c>(0,0)</c> ve <c>(1,1)</c> olan kübik Bézier'in tek eksendeki değeri. Bir
+    /// <see cref="KeySpline"/> zamanı da ilerlemeyi de bu fonksiyonla, AYNI <paramref name="s"/>'ten üretir.</summary>
+    private static double CubicBezier(double c1, double c2, double s)
     {
-        if (from.A == 0 && to.A != 0) from = Color.FromArgb(0, to.R, to.G, to.B);
-        else if (to.A == 0 && from.A != 0) to = Color.FromArgb(0, from.R, from.G, from.B);
-        return (from, to);
+        double u = 1 - s;
+        return (3 * u * u * s * c1) + (3 * u * s * s * c2) + (s * s * s);
+    }
+
+    /// <summary>
+    /// İki rengin premultiplied karışımı — tarayıcının renk geçişiyle aynı yol. Alfa doğrudan, kanallar ise
+    /// alfayla ÇARPILMIŞ hâlde karışır ve sonuçta yeni alfaya geri bölünür.
+    ///
+    /// <para>Alfa sıfıra düştüğünde renk ekranda hiçbir şeye katkı vermez; kanallar o noktada hedefin
+    /// RGB'sinde bırakılır (sıfıra bölmek yerine), böylece bir sonraki örnek de aynı tondan devam eder.</para>
+    /// </summary>
+    private static Color PremultipliedLerp(Color from, Color to, double t)
+    {
+        double alpha = from.A + ((to.A - from.A) * t);
+        if (alpha <= 0) return Color.FromArgb(0, to.R, to.G, to.B);
+
+        return Color.FromArgb((byte)Math.Round(alpha),
+            Channel(from.A * from.R, to.A * to.R),
+            Channel(from.A * from.G, to.A * to.G),
+            Channel(from.A * from.B, to.A * to.B));
+
+        byte Channel(double premultipliedFrom, double premultipliedTo)
+            => (byte)Math.Clamp(Math.Round((premultipliedFrom + ((premultipliedTo - premultipliedFrom) * t)) / alpha), 0, 255);
     }
 
     /// <summary>

@@ -549,10 +549,25 @@ public class CycleRoundsTests
         Assert.Equal(0, done.Queued);
     }
 
-    // ---------------------------------------------------------------- 7b) stop sonrası YENİ tur açılmaz
+    // ---------------------------------------------------------------- 7b) stop'tan sonra YENİ dispatch yok
 
+    /// <summary>
+    /// Stop düştüğü anda grubun KALAN üyeleri de dispatch EDİLMEZ — ve grup asla yakınsamış sayılmaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL] Eski iddia:</b> stop'un düştüğü tur TAMAMLANIRDI (<c>["A#1","B#1"]</c>) ve
+    /// yalnız bir SONRAKİ tur açılmazdı. <b>Neden değişti:</b> graceful stop'un sözleşmesi (ARCHITECTURE §4.5)
+    /// "yeni hiçbir şey dispatch edilmez, in-flight <c>MSBuild.exe</c> child'ları biter"dir; turun kalan her
+    /// üyesi ise YENİ bir child demektir. Sıradan Build bunu scheduler'ın stop kapısıyla zaten sağlıyordu
+    /// (<c>ReadySetScheduler.RequestStop</c>); SCC turu kendi üye döngüsünü koştuğu için o kapının DIŞINDA
+    /// kalıyordu — kullanıcı bunu "Resolve'da stop'a basıyorum ama sürekli yenileri derlenmeye devam ediyor"
+    /// diye tarif etti. Turu yarıda kesmenin bir bedeli YOKTUR: yarıda kesilen grup zaten her üyesini Failed'a
+    /// çevirir ve hiçbir şey persist etmez — tamamlanan tur da çöpe gidiyordu.</para>
+    ///
+    /// <para>Hard stop seçilir çünkü orada in-flight child ÖLDÜRÜLÜR ama job yeni process kabul etmeye devam
+    /// eder: kapı yoksa kesilen turun üstüne TAZE child'lar doğar.</para>
+    /// </summary>
     [Fact]
-    public async Task a_stop_during_a_round_opens_no_new_round_and_the_group_never_counts_as_converged()
+    public async Task a_stop_dispatches_no_further_member_and_the_group_never_counts_as_converged()
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -562,10 +577,6 @@ public class CycleRoundsTests
             SeedGreen(store, "B");
             var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
             var rec = new RoundRecorder();
-            // Hard stop: inner job terminate edilir, in-flight child ölür ve invoke sıradan bir "exit N" gibi
-            // döner (ReasonFor bunu "stopped"a çevirir). Tur döngüsü stop'u GÖRMEZSE bir sonraki tur TAZE
-            // MSBuild child'ları doğurur — üstelik onlar yeşile dönerse grup "yakınsadı" sayılıp durdurulmuş
-            // bir koşu taze imza persist edebilirdi.
             RunCoordinator? sut = null;
             var invoker = rec.Invoker((name, round) =>
             {
@@ -578,8 +589,8 @@ public class CycleRoundsTests
             await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            Assert.Equal(["A#1", "B#1"], rec.Calls);   // tur 1 tamamlanır, İKİNCİ tur AÇILMAZ
-            Assert.Equal(["stopped", "stopped"],
+            Assert.Equal(["A#1"], rec.Calls);          // B HİÇ dispatch edilmez, ikinci tur da açılmaz
+            Assert.Equal(["stopped", "stopped"],       // hiç derlenmeyen üye de yarıda kesilmiş sayılır
                 h.Events.OfType<ProjectFailedEvent>().Select(e => e.Reason));
             Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
             Assert.Equal("old", store.Load()[Id("A")].BuiltSignature);
@@ -588,6 +599,52 @@ public class CycleRoundsTests
             // hafıza YAZILMAZ — bir sonraki Build yine gerçek bir deneme hakkı alır.
             Assert.Null(store.Load()[Id("A")].NonConvergentSignature);
             Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// Yarıda kesilen bir tur KARARA sokulmaz. Bu, yukarıdaki kuralın en tehlikeli köşesidir: üye döngüsünden
+    /// çıkıp turun sonundaki <see cref="CycleRoundPolicy.Decide"/>'a devam etmek, ikinci turda ve o ana kadarki
+    /// üyeler yeşilken <see cref="CycleRoundDecision.Converged"/> üretirdi — hiç derlenmemiş üyeler olduğu
+    /// hâlde grup "yakınsadı" sayılır ve <b>durdurulmuş bir koşu TAZE imza persist ederdi</b>. Yani stop, bir
+    /// sonraki Build'e "bu SCC güncel" diye yalan söylerdi.
+    ///
+    /// <para>Senaryo: tur 1 tamamen yeşil (karar Continue, tur 2 açılır), stop tur 2'nin İLK üyesinde düşer.
+    /// Kapı yoksa <c>Decide(2, {}, {})</c> → Converged.</para>
+    /// </summary>
+    [Fact]
+    public async Task a_round_cut_short_by_a_stop_is_never_judged_converged()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            RunCoordinator? sut = null;
+            var invoker = rec.Invoker((name, round) =>
+            {
+                // Tur 1 tamamen yeşil → Continue. Stop tur 2'nin ilk üyesinde düşer.
+                if (name == "A" && round == 2) Assert.True(sut!.TryRequestStop(StopKind.Graceful));
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker, stateStore: store);
+            sut = h.Sut;
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls);   // B tur 2'de HİÇ dispatch edilmez
+            // Grup yakınsamadı: hiçbir üye Succeeded yayınlamaz ve hiçbir imza persist edilmez.
+            Assert.Empty(h.Events.OfType<ProjectSucceededEvent>());
+            Assert.DoesNotContain(h.Events, e => e is CycleCompletedEvent);
+            Assert.All(h.Events.OfType<ProjectFailedEvent>(), e => Assert.Equal("stopped", e.Reason));
+            Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
+            Assert.Equal("old", store.Load()[Id("A")].BuiltSignature); // "sig" YAZILMADI
+            Assert.Equal("old", store.Load()[Id("B")].BuiltSignature);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

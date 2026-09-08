@@ -1239,8 +1239,18 @@ public sealed class RunCoordinator(
                     run.RunId, members[0], round, CycleRoundPolicy.RoundCap, members.Count));
 
                 var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                bool cutShort = false;
                 foreach (string id in members)                       // SIRALI — eşzamanlı invoke YOK
                 {
+                    // [§4.5] Stop istendiyse turun KALAN üyeleri de dispatch EDİLMEZ. Graceful stop'un
+                    // sözleşmesi "yeni hiçbir şey dispatch edilmez, in-flight child'lar biter"dir ve turun her
+                    // üyesi YENİ bir MSBuild.exe child'ıdır — sıradan Build bunu scheduler'ın stop kapısıyla
+                    // sağlar (ReadySetScheduler.RequestStop), grup ise kendi döngüsünü koştuğu için kapıyı
+                    // BURADA taşımak zorundadır. Halihazırda derlenen üye await edilerek DRAIN edilir.
+                    // Turu yarıda kesmenin bedeli yoktur: yarıda kesilen grup zaten her üyesini Failed'a
+                    // çevirir ve hiçbir şey persist etmez (aşağıdaki FailEveryMember).
+                    if (StopRequested) { cutShort = true; break; }
+
                     var member = state[id];
                     run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
                     var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct);
@@ -1253,17 +1263,20 @@ public sealed class RunCoordinator(
                     }
                 }
 
+                // YARIDA KESİLEN TUR KARARA SOKULMAZ. Decide'a devam etmek en tehlikeli köşedir: ikinci turda
+                // ve o ana kadarki üyeler yeşilken Decide(2, {}, {}) → Converged verirdi — hiç derlenmemiş
+                // üyeler olduğu hâlde grup "yakınsadı" sayılır, DURDURULMUŞ bir koşu taze imza persist eder ve
+                // bir sonraki Build'e "bu SCC güncel" diye yalan söylerdi. `decision` Continue'da bırakılır ⇒
+                // aşağıdaki FailEveryMember her üyeyi invalidate eder, RecordCycleOutcome hiçbir şey yazmaz.
+                if (cutShort) break;
+
                 roundsRun = round;
                 lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed);
                 previousFailed = failed;
-                // Stop istendiyse YENİ tur AÇILMAZ. Hard stop in-flight child'ları çoktan öldürmüştür (üyeler
-                // "stopped" raporlar) ama job yeni process kabul etmeye devam eder: guard olmasaydı bir sonraki
-                // tur öldürülmüş bir turun üstüne TAZE MSBuild child'ları doğururdu — üstelik o turlar yeşile
-                // dönebilir, grup "yakınsadı" sayılır ve DURDURULMUŞ bir koşu taze imza persist ederdi.
-                // Zaten Converged/NoProgress/CapReached ile biten tur bu daldan geçmez: yakınsama turların
-                // TAMAMLANMASINA dayanır, yarıda kesilen grup asla yakınsamış sayılmaz (decision Continue
-                // kalır ⇒ ReportCycleMember hiçbir şey persist etmez, her üyeyi invalidate eder).
+                // Stop istendiyse YENİ tur da AÇILMAZ. Turun TAMAMLANDIĞI hâlde stop'un tam tur sınırında
+                // düştüğü dar durumun kapısıdır bu; Converged/NoProgress/CapReached ile biten tur buradan
+                // geçmez, çünkü onlar GERÇEK kararlardır.
                 if (decision == CycleRoundDecision.Continue && StopRequested) break;
             }
         }

@@ -30,6 +30,26 @@ internal static class MouseInput
         return args;
     }
 
+    /// <summary>
+    /// Sol tuş basışının TÜNELLEYEN yarısı. <see cref="UIElement.PreviewMouseLeftButtonDown"/> de
+    /// <b>Direct</b>'tir ve tünelleme görüntüsünü <see cref="Mouse.PreviewMouseDownEvent"/> üzerindeki sınıf
+    /// handler'ı üretir — <see cref="PressLeft"/> ile AYNI gerekçe, yalnız yön ters.
+    ///
+    /// <para>Ayrı bir metot olmasının nedeni: bir <c>ButtonBase</c>'in tıkı YUTULABİLİR olması yalnız önizleme
+    /// yolunda karara bağlanır (handled bir önizleme basışında ButtonBase mouse'u hiç yakalamaz, dolayısıyla
+    /// bırakmada <c>Click</c> de doğmaz). Kabarma yarısını yükselten test bunu göremez.</para>
+    /// </summary>
+    public static MouseButtonEventArgs PreviewPressLeft(UIElement target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        {
+            RoutedEvent = Mouse.PreviewMouseDownEvent,
+        };
+        target.RaiseEvent(args);
+        return args;
+    }
+
     /// <summary>Sol tuş BIRAKMA. [quiet] Grafta "boş zemine tıklama" kararı artık bırakmaya aittir
     /// (basış bir sürüklemenin başı olabilir), dolayısıyla tam jesti sürmek için gerekir.</summary>
     public static MouseButtonEventArgs ReleaseLeft(UIElement target)

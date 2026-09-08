@@ -61,12 +61,14 @@
     </StackPanel>
 
     <!-- [design v1.11.0 §2.4-4 · §9-6] Satır menüsü (Build · Rebuild · Clean). ⋯ düğmesi ve satıra sağ tık
-         AYNI popup'ı açar; menü liste scroll kabının görünür alanına WPF'in kendi kelepçesiyle sığar
-         (Placement=Bottom + PlacementTarget). Prototipte de menü satırın rect'ine çakılır ve panelin görünür
-         alanına clamp'lenir (BuildApp.jsx:644-657). -->
+         AYNI popup'ı açar.
+
+         YERLEŞİM BURADA DEĞİL: menü ⋯ düğmesine değil SATIRIN sağ kenarına çakılır ve listenin görünür
+         alanına kelepçelenir (BuildApp.jsx:609/:659/:661-664). İkisi de satırın kendi ölçüsünü ve üstündeki
+         ScrollViewer'ı bilmeyi gerektirir → çapa ve geri çağrı ProjectRow.EnsureActions'ta kurulur, karar
+         Controls/RowMenuPlacement'ta yaşar. -->
     <Popup x:Name="PART_RowMenu" StaysOpen="False" AllowsTransparency="True"
-           Placement="Bottom" PlacementTarget="{Binding ElementName=PART_MoreButton}"
-           PopupAnimation="None" VerticalOffset="4" HorizontalOffset="-118"
+           Placement="Custom" PopupAnimation="None"
            IsOpen="{Binding IsChecked, ElementName=PART_MoreButton, Mode=TwoWay}">
       <views:ProjectRowMenu x:Name="PART_RowMenuContent" />
     </Popup>
