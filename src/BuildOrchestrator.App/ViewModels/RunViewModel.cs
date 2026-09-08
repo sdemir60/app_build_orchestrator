@@ -226,13 +226,17 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// uyarı üçgeninin grafik vekili.</para>
     public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Fresh, Marked, InCycle);
 
-    /// <summary>[design v1.11.0 §9-4 · §2.4] Açılış koreografisinin satıra düşen payı: hedef opaklık + o
-    /// opaklığa giden geçişin süresi. Satırlar node'larla SENKRON söner (kapsam 0.45'e 440ms'de, kapsam dışı
-    /// 0.3'e 1120ms'de — ikisi aynı anda biter) ve koşu başlayınca tam opaklığa dönerler.
+    /// <summary>[design v1.13.2 §9-4 · §2.4 · §3.2] Açılış koreografisinin satıra düşen payı: hedef opaklık +
+    /// o opaklığa giden geçişin süresi. <b>Değer koreografi boyunca <see cref="RowFade.None"/>'da SABİTTİR</b>
+    /// — <see cref="Services.OperationChoreographer"/> her adımda bunu yazar, satır opaklığı hiç oynamaz.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Koşu zaten başlamış olduğu için listede ikinci bir
+    /// sönme okunmuyordu." Eski kural: satırlar node'larla SENKRON sönerdi (kapsam 0.45'e 440ms'de, kapsam
+    /// dışı 0.3'e 1120ms'de — ikisi aynı anda biter) ve koşu başlayınca tam opaklığa dönerlerdi. Sönme/geri
+    /// gelme artık YALNIZ graf node'larında yaşıyor.</para>
     /// <para>Değer satıra İTİLİR (<see cref="NamePrefix"/>/<see cref="TargetSha"/> deseni): 200 satırın
     /// <c>RunViewModel</c>'e tek tek abone olması yerine sürücü tek tek yazar — satır başına EK abone YOK.</para>
-    /// <para><b>Bitiş koreografisi (neon) satırlara UYGULANMAZ</b> (kullanıcı kararı): liste koşu bitiminde
-    /// sabit kalır, koreografi yalnız grafta yaşar.</para></summary>
+    /// <para><b>Bitiş koreografisi (neon) satırlara UYGULANMAZ</b> (kullanıcı kararı, DEĞİŞMEDİ): liste koşu
+    /// bitiminde sabit kalır, koreografi yalnız grafta yaşar.</para></summary>
     [ObservableProperty] private RowFade _fade = RowFade.None;
 
     public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)

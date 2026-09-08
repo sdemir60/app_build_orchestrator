@@ -128,10 +128,17 @@ public static class MarkingChoreography
     }
 
     // ---- opaklık (BuildApp.jsx:500-505 node · :630-634 satır) ----
-    /// <summary>"Örtüşen veda"nın SARI yarısı: kapsam 0.45'e iner (440ms).</summary>
+    /// <summary>"Örtüşen veda"nın SARI yarısı: kapsam 0.45'e iner (440ms).
+    /// <para><b>[v1.13.2]</b> Bu sabiti artık YALNIZ graf okur (<c>GraphView</c>) — satırlara koreografi
+    /// opaklığı hiç yazılmıyor, bkz. <see cref="NodeEnvOpacity"/>'nin DEĞİŞEN KURAL notu.</para></summary>
     public const double MarkedOpacity = 0.45;
-    /// <summary>Vedanın GRİ yarısı — satırda 0.3, grafta 0.18 (graf zaten daha küçük ve yoğun).</summary>
-    public const double RowEnvOpacity = 0.3;
+
+    /// <summary>Vedanın GRİ yarısı — grafta 0.18 (graf zaten daha küçük ve yoğun).
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Koşu zaten başlamış olduğu için listede ikinci bir
+    /// sönme okunmuyordu." Satırın kendi env-opaklığı (eski adı <c>RowEnvOpacity</c>, eski değeri 0.3)
+    /// KALDIRILDI: <see cref="Services.OperationChoreographer"/> artık satırlara her adımda
+    /// <see cref="ViewModels.RowFade.None"/> (opaklık 1) yazıyor — sönme/geri gelme (veda + neon finali)
+    /// yalnız graf node'larında yaşıyor.</para></summary>
     public const double NodeEnvOpacity = 0.18;
     /// <summary>Sarının geçiş süresi. Griden KISA olması bilinçlidir: gri büyük bir opaklık düşüşü yaptığı
     /// için yolun ortasında "gitti" okunur — ikisi böylece ALGIDA aynı anda biter.</summary>

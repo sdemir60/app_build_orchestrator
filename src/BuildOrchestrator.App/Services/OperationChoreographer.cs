@@ -116,16 +116,19 @@ public sealed class OperationChoreographer
     /// <summary>Bekleyen <see cref="PlayAsync"/> çağrısının tamamlayıcısı; koreografi oynamiyorsa <c>null</c>.</summary>
     private TaskCompletionSource? _completion;
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL — v1.13.2, ölçüm: "koşu zaten başlamış olduğu için listede ikinci bir sönme
+    /// okunmuyordu"] Satırlara ARTIK koreografi opaklığı yazılmaz — her adımda <see cref="RowFade.None"/>
+    /// (opaklık 1) yazılır. Eski kural: kapsam dışı satır <c>MarkingChoreography.RowEnvOpacity</c>'ye (eski
+    /// değeri 0.3), kapsam içi satır vedanın sarı yarısında <see cref="MarkingChoreography.MarkedOpacity"/>'ye
+    /// (0.45) sönerdi. Veda ve neon finali artık YALNIZ grafta yaşar — <see cref="PushGraph"/> yolu
+    /// DEĞİŞMEDİ, graf hâlâ aynı opaklık zincirini (<see cref="MarkingChoreography.Opacity"/> +
+    /// <see cref="MarkingChoreography.NodeEnvOpacity"/>) okur.
+    /// </summary>
     private void Enter(MarkStep step, IReadOnlyList<ProjectRowViewModel> allRows)
     {
         Step = step;
-        foreach (var row in allRows)
-        {
-            bool marked = row.Marked;
-            row.Fade = new RowFade(
-                MarkingChoreography.Opacity(step, marked, MarkingChoreography.RowEnvOpacity),
-                MarkingChoreography.GlideMs(step, marked));
-        }
+        foreach (var row in allRows) row.Fade = RowFade.None;
         PushGraph();
     }
 

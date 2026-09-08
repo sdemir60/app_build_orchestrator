@@ -99,13 +99,17 @@ public class ChoreographyTests
         Assert.True(MarkingChoreography.MarkedGlideMs < MarkingChoreography.EnvGlideMs);
     }
 
-    /// <summary>Nötr anda kapsam da DÜZ GRİDİR — amber dalgayla gelir (BuildApp.jsx:296).</summary>
+    /// <summary>Nötr anda kapsam da DÜZ GRİDİR — amber dalgayla gelir (BuildApp.jsx:296).
+    /// <para>Saf çekirdek <see cref="MarkingChoreography.Opacity"/> hâlâ GRAF için kullanılıyor (v1.13.2'de
+    /// satır çağrısı düştü, imza kalır) — envOpacity parametresi burada <see cref="MarkingChoreography.NodeEnvOpacity"/>
+    /// ile sınanır; bu adımlarda hiç okunmaz (<c>IsEnvFading</c> henüz false), o yüzden hangi env değeri
+    /// verildiği sonucu etkilemez.</para></summary>
     [Fact]
     public void The_scope_stays_grey_through_the_neutral_moment()
     {
-        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: true, MarkingChoreography.RowEnvOpacity));
-        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: false, MarkingChoreography.RowEnvOpacity));
-        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Wave, marked: true, MarkingChoreography.RowEnvOpacity));
+        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: true, MarkingChoreography.NodeEnvOpacity));
+        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: false, MarkingChoreography.NodeEnvOpacity));
+        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Wave, marked: true, MarkingChoreography.NodeEnvOpacity));
     }
 
     /// <summary>Dalga RANDOM akar — derleme sırasıyla DEĞİL (kullanıcı kararı). Sıra deterministiktir:
@@ -359,8 +363,12 @@ public class ChoreographyTests
         DispatcherPump.PumpUntil(() => row.Root.Opacity > 0.99, TimeSpan.FromSeconds(5));
         Assert.True(row.Root.Opacity > 0.99, "ön-koşul: beliriş tamamlanmalı");
 
-        // Koreografinin ilk adımı: kapsam dışı satır 0.3'e söner. Devir uçuştaki değerden OLMALI.
-        vm.Fade = new RowFade(MarkingChoreography.RowEnvOpacity, MarkingChoreography.EnvGlideMs);
+        // Mekanizmanın kendisi (SnapshotAndReplace handoff) sınanıyor — hangi hedefe gidildiği ÖNEMSİZ, yalnız
+        // "1'den küçük bir hedefe geçiş uçuştaki değerden mi başlıyor" sorusu. [v1.13.2] Üretimde satırlara bu
+        // kadar düşük bir hedef artık HİÇ yazılmaz (MarkingChoreography.RowEnvOpacity kaldırıldı, satır çağrısı
+        // hep RowFade.None yazar) — burada keyfî bir "1'den küçük" probe değeri yeterlidir. Devir uçuştaki
+        // değerden OLMALI.
+        vm.Fade = new RowFade(0.3, MarkingChoreography.EnvGlideMs);
 
         Assert.True(row.Root.Opacity > 0.9,
             $"solma belirişin tabanından başladı (opaklık {row.Root.Opacity:0.000}) — satır bir an kayboluyor");
@@ -452,7 +460,16 @@ public class ChoreographyTests
     }
 
     /// <summary>[§9-4] Koreografi GERÇEK bir saatte oynar ve adımları sırayla geçer; işaretlenen satır
-    /// <c>marked</c> görsel durumuna (amber) düşer, kapsam dışı satır <c>discovered</c> kalır.</summary>
+    /// <c>marked</c> görsel durumuna (amber) düşer, kapsam dışı satır <c>discovered</c> kalır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Koşu zaten başlamış olduğu için listede ikinci bir
+    /// sönme okunmuyordu." Eski iddia: veda fazında kapsam dışı satır
+    /// <c>MarkingChoreography.RowEnvOpacity</c>'ye (eski değeri 0.3, 1120ms'de), kapsam içi satır Settle
+    /// adımında <see cref="MarkingChoreography.MarkedOpacity"/>'ye (0.45, 440ms'de) sönerdi. Artık satır
+    /// opaklığı koreografi boyunca <see cref="RowFade.None"/>'da SABİTTİR — sönme/geri gelme (veda + neon
+    /// finali) yalnız graf node'larında yaşar (<see cref="MarkingChoreography.NodeEnvOpacity"/> ve
+    /// <see cref="MarkingChoreography.MarkedOpacity"/> hâlâ ORADA, <c>GraphView</c> üzerinden okunur).</para>
+    /// </summary>
     [StaFact]
     public void The_wave_marks_the_scope_and_the_steps_advance_on_a_real_clock()
     {
@@ -469,16 +486,15 @@ public class ChoreographyTests
         Assert.Equal(VisualStatus.Marked, vm.Projects.Single(r => r.Name == "A").VisualStatus);
         Assert.Equal(VisualStatus.Discovered, vm.Projects.Single(r => r.Name == "C").VisualStatus);
 
-        // Veda: kapsam dışı satır ÖNCE (uzun geçişle) söner.
+        // Veda: grafta kapsam dışı satır (node) ÖNCE söner — ama LİSTEDE satır opaklığı sabit 1 kalır.
         DispatcherPump.PumpUntil(() => driver.Step == MarkStep.DimEnv, TimeSpan.FromSeconds(4));
-        Assert.Equal(MarkingChoreography.RowEnvOpacity, vm.Projects.Single(r => r.Name == "C").Fade.Opacity);
-        Assert.Equal(MarkingChoreography.EnvGlideMs, vm.Projects.Single(r => r.Name == "C").Fade.DurationMs);
-        Assert.Equal(1.0, vm.Projects.Single(r => r.Name == "A").Fade.Opacity); // sarılar HENÜZ katılmadı
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "C").Fade);
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "A").Fade);
 
-        // ...sarılar 560ms sonra, DAHA KISA bir geçişle katılır.
+        // ...sarılar 560ms sonra grafta katılır — listede hâlâ değişen bir şey yok.
         DispatcherPump.PumpUntil(() => driver.Step == MarkStep.Settle, TimeSpan.FromSeconds(4));
-        Assert.Equal(MarkingChoreography.MarkedOpacity, vm.Projects.Single(r => r.Name == "A").Fade.Opacity);
-        Assert.Equal(MarkingChoreography.MarkedGlideMs, vm.Projects.Single(r => r.Name == "A").Fade.DurationMs);
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "A").Fade);
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "C").Fade);
     }
 
     /// <summary>[§9-4] Koşu başlayınca koreografi biter: satırlar tam opaklığa döner ve İŞARETLİLİK SİLİNİR —
