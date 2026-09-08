@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -118,6 +119,12 @@ public partial class ProjectRow : UserControl
         // sağ blok kuralı (menü açıkken ikonlar görünür kalır) popup'ın gerçekten açılmasını beklemeden işler.
         actions.MoreButton.Checked += (_, _) => { actions.RowMenuContent.Title = ShortName(); ApplyRightBlock(); };
         actions.MoreButton.Unchecked += (_, _) => ApplyRightBlock();
+        // [design v1.11.0 §9-6] Menünün çapası SATIRIN KENDİSİDİR, ⋯ düğmesi değil (BuildApp.jsx:609
+        // `right: 8`). Yerleşim Custom'dır: WPF geri çağrıyı menü ÖLÇÜLDÜKTEN sonra çağırır, yani menünün
+        // gerçek genişliği/yüksekliği hesaba girer — sabit bir offset yazmak (eski `-118`) ikon sayısı ya da
+        // menü genişliği değişince sessizce bozulurdu.
+        actions.RowMenu.PlacementTarget = PART_Root;
+        actions.RowMenu.CustomPopupPlacementCallback = PlaceRowMenu;
         PART_RightBlock.Children.Add(actions); // sha ile AYNI blok (üstünde) — eski XAML sırasıyla birebir
         _actions = actions;
         return actions;
@@ -650,6 +657,35 @@ public partial class ProjectRow : UserControl
         var actions = EnsureActions();
         actions.MoreButton.IsChecked = true; // Checked kablajı başlığı yazar ve sağ bloğu açar
         e.Handled = true; // satır seçimi tetiklenmesin — sağ tık bir SEÇİM jesti değildir
+    }
+
+    /// <summary>
+    /// Satır menüsünün yerleşimi. Karar <see cref="RowMenuPlacement"/>'tadır; burada yalnız WPF'in ölçüleri
+    /// ona verilir ve sonuç çapaya (satırın kökü) göre offset'e çevrilir.
+    ///
+    /// <para>Dikey kelepçe için listenin GÖRÜNÜR alanı gerekir; üstteki <see cref="ScrollViewer"/> bulunamazsa
+    /// (tek başına realize edilmiş bir satır) kelepçe atlanır ve menü satırın altına oturur — prototipin
+    /// <c>cont</c> yokken yaptığının aynısı (BuildApp.jsx:660-665).</para>
+    /// </summary>
+    private CustomPopupPlacement[] PlaceRowMenu(Size popupSize, Size targetSize, Point offset)
+    {
+        double x = RowMenuPlacement.LeftInRow(targetSize.Width, popupSize.Width);
+        double y = targetSize.Height - RowMenuPlacement.RowOverlap;
+
+        if (FindScrollViewer() is { } viewport && PART_Root.IsDescendantOf(viewport))
+        {
+            double rowTop = PART_Root.TransformToAncestor(viewport).Transform(default).Y;
+            y = RowMenuPlacement.TopInViewport(rowTop, targetSize.Height, popupSize.Height, viewport.ViewportHeight)
+                - rowTop;
+        }
+        return [new CustomPopupPlacement(new Point(x, y), PopupPrimaryAxis.None)];
+    }
+
+    private ScrollViewer? FindScrollViewer()
+    {
+        for (DependencyObject? d = this; d is not null; d = VisualTreeHelper.GetParent(d))
+            if (d is ScrollViewer scroll) return scroll;
+        return null;
     }
 
     /// <summary>Menü başlığındaki kısa ad — önek satır VM'inden gelir (D5, tek otorite).</summary>
