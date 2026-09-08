@@ -156,20 +156,24 @@ the running instance first — tray icon → Exit).
      there and disabled, and says so.
 
    **Every operation opens the same way.** A short neutral moment, then the projects this operation will touch
-   light amber one at a time in random order, then everything else fades back and the run begins. Nothing is
-   delayed by it: the choreography plays over the planning the engine is doing anyway. When the run ends, the
-   graph — and only the graph — lights the projects it actually built, one by one like fluorescent tubes, then
-   brings the rest back together. With reduced motion turned on in Windows, neither plays.
+   light amber one at a time in random order, then everything else fades back and the run begins. The run
+   starts when that sequence ends, so it always plays in full; the operation itself begins on the first frame,
+   though — the pill lights, the button becomes *Stop*, the console records the request — and only the command
+   to the engine waits. When the run ends, the graph — and only the graph — lights the projects it actually
+   built, one by one like fluorescent tubes, then brings the rest back together. With reduced motion turned on
+   in Windows, neither plays and the run starts at once.
 
    There is no *Continue* and no *Retry failed*. *Build* already covers both: a project that was killed or that
    failed had its recorded state invalidated, so it is stale again, while everything that finished green is
    skipped as up to date.
 
-   Nothing compiles the moment you click. The engine first works out what to build — preparing the worktree if
-   one is in use, scanning, building the graph, then computing what changed — which on a large repository takes
-   seconds. The ribbon reads *"▸ Starting — resolving what to build"* and the console lists each step as it
-   completes; the button becomes *Stop* right away, so a stop pressed during this window is honoured and no
-   project is compiled at all.
+   Nothing compiles the moment you click, and *Stop* is available throughout. While the opening sequence is
+   playing the engine has not been asked for anything yet, so a stop there cancels the run outright — the
+   console says `Cancelled — build not started` and nothing is sent. Once the sequence ends the engine works
+   out what to build — preparing the worktree if one is in use, scanning, building the graph, then computing
+   what changed — which on a large repository takes seconds; the ribbon reads
+   *"▸ Starting — resolving what to build"* and the console lists each step as it completes. A stop in that
+   window is a real stop, and it still compiles nothing.
 5. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
    post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
    reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. To carry on, press

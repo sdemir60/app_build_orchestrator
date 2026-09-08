@@ -2319,6 +2319,15 @@ halfway through, so ending the two at the same instant would look wrong; they fi
 perceived as simultaneous. Rows and graph nodes fade together; the wave is random rather than in build order
 by explicit decision.
 
+Keeping the two surfaces together takes one deliberate wire. A row repaints itself from its own binding the
+instant it is marked, but the graph is a pushed channel: it is handed statuses, and if the wave does not hand
+them over it repaints only when the run tick next comes round, a fifth of a second later. At the wave's tempo
+that is six or seven nodes arriving at once against a list that is flowing, so the wave pushes the graph at
+its own pace rather than leaving it to the tick. For the same reason the first step of a choreography runs
+synchronously instead of waiting for the sequencer's first tick: requesting a run puts the graph into its run
+phase, which starts dimming every node, and the choreography only overrides that decision from its first step
+— one frame of nothing in between is one frame of the graph going out and coming back.
+
 **The run command goes out when the choreography ends**, not when the button is pressed. Overlapping the two
 was tried — send immediately, play the choreography over the engine's planning window (worktree preparation,
 scan, graph, topology, incremental) and let `runStarted` end it — and the cost was that the animation became
@@ -2439,8 +2448,10 @@ STA thread.
 Shared test infrastructure lives in one place per concern rather than being copied: resource realization
 (`DsResources`, `IconResources`), window and dialog hosts (`MainWindowHost`, `SettingsDialogHost`,
 `AboutDialogHost`, `SplitterHost`, `GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap
-proof both dialogs use), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
-`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`) and measurement
+proof both dialogs use), input synthesis (`MouseInput`, the one place a real mouse press is raised, both
+halves of the gesture), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
+`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`,
+`FakeMotionSignal`, `FakeMotionSettings`) and measurement
 (`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
 CPU-saturating job tests, the console UI tests and the build-state store tests.
 
@@ -2880,6 +2891,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Ending choreography: neon timings and keyframes | `App/Controls/EndFinale.cs` |
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
+| Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
+| Wave repaint of the graph (marking step + node colours in one push) | `MainWindow.xaml.cs` (`ApplyMarkingToGraph`) |
+| Colour transition onto a token brush (the wave's amber) | `App/Controls/MotionTokens.cs` (`TransitionTokenBrush`) |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
 | Icon geometries | `App/Resources/Icons.xaml`, `App/Controls/IconVisual.cs`, `IconPaint.cs` |
 
