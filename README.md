@@ -139,9 +139,10 @@ the running instance first — tray icon → Exit).
    middle of the Sync's console output. It takes seconds; they re-enable the moment it finishes.
 
    **Sync colours nothing.** Which operation is coming is not known yet, so no plan is shown: every row sits
-   in the start mode — a dashed stripe, a dashed dot, a dashed glyph — and every graph node draws a dashed
-   border. What is stale is still readable, from the commit pair on the row: `a3f81c2 → b7e91d4` when the
-   project is behind, a single hash when it is not. Colour arrives when you press something.
+   in the start mode — a faint stripe, a four-arc ring in place of the dot, a dashed glyph — and every graph
+   node draws a dashed border. What is stale is still readable, from the commit pair on the row:
+   `a3f81c2 → b7e91d4` when the project is behind, a single hash when it is not. Colour arrives when you press
+   something.
 3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
    in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
@@ -219,8 +220,9 @@ round line is what moves. When the group has a verdict the event stream says whi
 failed the same way twice, or hit the round cap — with how many rounds it took. Cycle rows show the normal
 build icons — green, red, the spinner — and carry a single amber warning triangle to say where they sit. Its
 tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
-`Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. The graph carries no cycle mark at all — colour
-there tells the story of the last run and nothing else.
+`Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build
+keeps its grey frame but shows an **amber cube** inside it — the triangle's proxy, so a finished run still
+answers "why was this one not built?". A member the run actually compiled wears its result colour alone.
 
 Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the

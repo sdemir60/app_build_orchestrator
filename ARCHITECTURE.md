@@ -1593,8 +1593,8 @@ lines.
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the
   ribbon's elapsed counter.
 - **Nothing is typed.** Live lines print immediately. The only live thing in the console is the prompt line at
-  the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), amber like the event stream's active
-  line, with `ready` beside it while idle. The line is unconditional — output empties its text, not the line —
+  the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), stepping through the console's own
+  line palette as it blinks (§14.3), with `ready` beside it while idle. The line is unconditional — output empties its text, not the line —
   so the caret stays put and new lines pile up above it. The editor reserves one full line of bottom padding,
   measured from the text view's own line height, so the caret sits below the last line instead of on top of
   it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
@@ -1709,12 +1709,14 @@ Under the status square sits an opaque base in the panel's own colour: the statu
 without it a selection edge passing behind a node would show straight through it.
 
 **One colour channel.** The node's border, its fill and the cube inside it are all painted from the same
-visual status (§14.3) — there is no separate "plan" core and no cycle mark of any kind in the graph. Cycle
-membership shows in exactly one place in the whole interface: the amber warning triangle on the list row
-(§14.3). Earlier versions carried it here too, first as an orange square and then as a persistent corner
-badge; both were part of a three-channel model — result, plan, structure — that put three meanings on the
-same 8–24 px surface and made amber and orange compete. What replaced it is a rule rather than a widget:
-**colour tells the story of the last operation, and nothing else.**
+visual status (§14.3) — there is no separate "plan" core. The single exception is a cycle member the current
+operation does not build: its frame stays grey and the **cube turns amber**, the graphical proxy of the list
+row's warning triangle. Earlier versions carried membership here as its own colour, first as an orange square
+and then as a persistent corner badge; both were part of a three-channel model — result, plan, structure — that
+put three meanings on the same 8–24 px surface and made amber and orange compete. The rule that replaced them
+still holds, because the cube borrows the warning's amber rather than opening a channel of its own:
+**colour tells the story of the last operation, and nothing else.** Without it a finished run could not answer
+"why was this one not built?" from the graph at all.
 
 The node's cell is deliberately **larger than the node** — by whichever overhangs further, the selection ring
 or the bead orbit. WPF clips a child to its arrange slot, and everything that reaches outside the square lives
@@ -1777,9 +1779,10 @@ and failure events skip the typewriter entirely, as does reduced motion, and eac
 recycled container does not replay it. A row counts as "typing" for 420 ms after its text completes, matching
 §6, which is also how long it keeps the single-writer slot.
 
-**The prompt line is an indicator, not a surface.** It has two states and both are amber: the project being
-compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. Its *text* never types and
-never takes an event's colour, so the line itself is the one thing on the panel that always reads the same.
+**The prompt line is an indicator, not a surface.** It has two states and its text is amber in both: the
+project being compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. Its *text*
+never types and never takes an event's colour, so the line itself is the one thing on the panel that always
+reads the same.
 
 The prompt is there from the first frame, before any event, and the stream has no empty-state text — the
 console shows a blinking caret the moment it opens and the two panels should say the same thing. Its presence
@@ -1787,17 +1790,20 @@ is unconditional. Gating it on the active project changing was a real defect: a 
 generation never moved and the caret never appeared until a second Sync happened to reset the gate as a side
 effect.
 
-The caret rests at **amber** in both panels — console and stream, waiting or idle. §2.5 tints the idle prompt
-dim and the prototype dims the stream's waiting row with it; the caret was pulled to one colour instead,
-because it is the application's "I am alive" mark and the two panels should say that the same way. The
-wall-clock stamp stays dim, which keeps the waiting row quiet.
+**The caret changes colour on every blink.** Both panels share one caret component, so both share the rhythm:
+the 1.1 s blink is untouched, and a second clock steps the colour through the console's own line palette in
+order — command white, info grey, success green, warning amber, error red, dim grey. The step is *discrete* and
+phased half a blink back, so the colour swaps at the bottom of the blink, while the caret is dark: there is no
+visible transition, the caret simply comes back a different colour. The palette is the source of the sequence
+(`ConsolePalette.Keys`), which is what guarantees the caret never wears a colour a console line could not carry.
+The wall-clock stamp stays dim, which keeps the waiting row quiet.
 
-**The stream's caret wears the colour of the event in hand.** While an event is being written the caret
-carries that event's *icon* colour — green for a success, red for a failure, grey for a skip — and it returns
-to amber when the writing is over. Amber is the resting tone, not a transition: it means there is nothing in
-hand. An event that prints instantly is never written, so it holds the caret for a short window instead —
-420 ms, the same figure the prompt's own caret hold uses — because without that window a failure could never
-tint the caret at all, since failures skip the writing by design.
+**With reduced motion the caret stands still in the line's colour**, and that is where the stream's tone
+channel is still visible: while an event is in hand the caret carries that event's *icon* colour — green for a
+success, red for a failure, grey for a skip — and it returns to amber, the resting tone, when the writing is
+over. An event that prints instantly is never written, so it holds the caret for a short window instead —
+420 ms, the same figure the prompt's own caret hold uses. When the colour cycle is running it takes precedence:
+the tone would otherwise cut the cycle short on the first event and freeze the caret on one colour.
 
 Both extremes were tried and measured. Colouring only for the exact duration of the typing left the caret
 amber most of the time and green was almost never seen; holding the colour indefinitely left it stale — a run
@@ -2110,15 +2116,31 @@ meets 4.5:1.
 **One colour channel — the visual status.** The row's stripe, the dot beside the name, the status glyph, the
 graph node's border and the cube inside it are all painted from a single value (`VisualStatus`), and colour
 therefore tells exactly one story: *what the last operation did*. The states are `fresh` (the start mode),
-`discovered` (plain neutral grey), `marked` (this operation's scope), `queued`, `building` and the three
-results. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation
-that is running, and the amber the marking wave lit must not go out when the run begins.
+`discovered` (plain neutral grey), `marked` (this operation's scope), `queued`, `building`, the three results,
+and the two cycle states below. `queued` is amber, not grey: being in the queue is not a result, it is the
+scope of the operation that is running, and the amber the marking wave lit must not go out when the run
+begins.
+
+**The one exception: a cycle member the operation does not build.** Its node keeps the grey frame but the cube
+inside turns **amber** (`cycle`, or `cycleSkipped` when the run skipped it) — the graphical proxy of the row's
+amber warning triangle. Nowhere else do the frame and the cube part company. The cube lights at the operation's
+neutral moment, stays through the run and the finale, and drops at the next Sync or when an operation actually
+builds the member: a member that Resolve cycles compiles wears its result colour alone. Membership never
+reaches the list's colour: there the stripe and the dot stay neutral grey, because the triangle already says
+it. This is not the orange channel returning — the tone is the warning's own amber.
 
 **The start mode.** Sync and application startup colour **nothing**. Which operation is coming is not yet
-known, so no plan is shown: every row draws a dashed grey stripe, a dashed dot and a dashed circle glyph, and
-every graph node a dashed border. What is stale is still readable without colour, from the commit pair
-(`a3f81c2 → b7e91d4`). The mode drops the moment an operation begins and returns with the next Sync; closing
-and reopening the application always lands back in it.
+known, so no plan is shown: every row draws a **faint** grey stripe (half opacity) and a **four-arc ring** in
+place of the filled dot, the glyph is a dashed circle, and every graph node carries a dashed border. What is
+stale is still readable without colour, from the commit pair (`a3f81c2 → b7e91d4`). The mode drops the moment
+an operation begins — the stripe rises to full opacity while the ring cross-fades into the filled dot, both in
+380 ms, same element, same size, so nothing shifts — and returns with the next Sync; closing and reopening the
+application always lands back in it.
+
+The row is drawn without dashes on purpose. A dashed 2 px stripe does not land on the pixel grid and an 8 px
+dashed circle renders ragged; opacity and an arc ring say the same thing cleanly. The node border stays dashed
+because a stroked rectangle has neither problem, and the glyph's dashed circle stays for the same reason —
+the building spinner is that ring, rotating.
 
 **Two channels were removed, and their information did not go with them.** Until v1.11 the interface carried
 three orthogonal channels: the result (stripe, glyph, node border), the plan (an amber/grey will-build dot and
@@ -2822,6 +2844,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
 | Visual status (the single colour channel) and its token table | `App/Controls/VisualStatus.cs` |
+| Start-mode drawing constants (faint stripe, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
+| The caret's colour cycle (palette order, step, phase) | `App/Controls/CursorHop.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
 | Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |
 | Opening choreography: step timeline, wave tempo and order | `App/Controls/MarkingChoreography.cs` |
