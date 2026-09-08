@@ -972,19 +972,25 @@
   <!-- Anahtar `{x:Type …}`: DefaultStyleKey ile aranan implicit style'dır. Themes/Generic.xaml'e GEREK YOK —
        uygulama kaynakları tema sözlüğünden ÖNCE taranır. -->
 
+  <!--
+    Building spinner AYRI BİR ÇİZİM DEĞİLDİR: başlangıç modundaki kesikli halkanın (Icon.StatusRing) amber,
+    dönen hâlidir (BuildApp.jsx:162-171 `BuildingSpin` · design README:69 · ARCHITECTURE §14.4). Kesik deseni
+    kod-tarafı türetilir (BuildingSpinner.DashesInStrokeUnits) çünkü SVG'de desen KULLANICI BİRİMİ, WPF'te
+    StrokeThickness ÇARPANIDIR ve bu halka iki farklı kalınlıkta çizilir.
+  -->
   <Style x:Key="{x:Type controls:BuildingSpinner}" TargetType="controls:BuildingSpinner">
-    <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.AmberText}" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="controls:BuildingSpinner">
           <Viewbox Width="{TemplateBinding Size}" Height="{TemplateBinding Size}" Stretch="Uniform">
             <Canvas Width="16" Height="16">
-              <Path Data="{DynamicResource Icon.Spinner}"
+              <Path x:Name="PART_Ring" Data="{DynamicResource Icon.StatusRing}"
                     StrokeThickness="{DynamicResource Icon.Spinner.StrokeThickness}"
                     Stroke="{Binding Foreground, RelativeSource={RelativeSource TemplatedParent}}"
-                    StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeDashCap="Round">
                 <Path.RenderTransform>
-                  <!-- _ds_bundle.js:1359 `transform-origin: center` — 16'lık kutunun merkezi. -->
+                  <!-- BuildApp.jsx:17 `transform-origin: center` — 16'lık kutunun merkezi. -->
                   <RotateTransform x:Name="PART_Rotation" CenterX="8" CenterY="8" />
                 </Path.RenderTransform>
               </Path>

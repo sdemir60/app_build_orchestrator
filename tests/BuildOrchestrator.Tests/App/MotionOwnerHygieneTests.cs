@@ -13,8 +13,8 @@ using BuildOrchestrator.App.Views;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [E3 fold'ları] Motion sahibi hijyeni: (1) BuildingSpinner'ın 900ms/270° dönüşünü sayısal PİNLER (C-2 kararı —
-/// bundle'ın 900ms'i, README'nin 1.4s'i DEĞİL — sessizce kaymasın); (2) motion-signal aboneliğinin idempotent
+/// [E3 fold'ları] Motion sahibi hijyeni: (1) BuildingSpinner'ın 1.4s'lik dönüşünü sayısal PİNLER (tasarım kararı —
+/// tasarımın 1.4s'i — sessizce kaymasın); (2) motion-signal aboneliğinin idempotent
 /// (subscribe-once) guard'ını kanıtlar — Loaded iki kez ateşlense de sahip TEK abonelik tutar (çift Refresh/
 /// ApplyBreathing birikmez). Aynı <c>-= sonra +=</c> idiomu ProjectRow/StickyRibbon/BuildingSpinner/StatusGlyph'te
 /// paylaşılır; burada seam'li ProjectRow üstünden pinlenir.
@@ -27,15 +27,22 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class MotionOwnerHygieneTests
 {
+    /// <summary>
+    /// [DEĞİŞEN KURAL] <b>Eski iddia:</b> dönüş 900 ms sürerdi ve doküman notu "C-2: 900ms (bundle) —
+    /// README'nin 1.4s'i DEĞİL; 270°'lik YAY görseli döner" diyordu. <b>Neden değişti:</b> o hakemlik
+    /// bundle'ın GENEL <c>Spinner</c>'ını esas almıştı; uygulamanın building spinner'ı ise prototipin
+    /// <c>BuildingSpin</c>'idir (<c>BuildApp.jsx:162-171</c>) ve <c>bo-rot</c> sınıfı 1.4 s'dir
+    /// (<c>BuildApp.jsx:17</c>). design README:69 ve ARCHITECTURE.md §14.4 de 1.4 s der — sapan taraf koddu.
+    /// </summary>
     [Fact]
-    public void The_building_spinner_rotates_a_full_turn_over_900ms_at_30fps()
+    public void The_building_spinner_rotates_a_full_turn_over_1400ms_at_30fps()
     {
-        // C-2: 900ms (bundle) — README'nin 1.4s'i DEĞİL. 270°'lik YAY görseli 0→360° tam tur döner.
-        Assert.Equal(900.0, BuildingSpinner.RotationMs);
+        // BuildApp.jsx:17 `animation: bo-rot 1.4s linear infinite` — kesikli halka 0→360° tam tur döner.
+        Assert.Equal(1400.0, BuildingSpinner.RotationMs);
         var spin = BuildingSpinner.BuildSpinAnimation();
         Assert.Equal(0.0, spin.From);
         Assert.Equal(360.0, spin.To);
-        Assert.Equal(TimeSpan.FromMilliseconds(900), spin.Duration.TimeSpan);
+        Assert.Equal(TimeSpan.FromMilliseconds(1400), spin.Duration.TimeSpan);
         Assert.Equal(RepeatBehavior.Forever, spin.RepeatBehavior);
         Assert.Equal(30, Timeline.GetDesiredFrameRate(spin)); // dekoratif sonsuz → 30fps tavanı (feasibility §3.4)
     }

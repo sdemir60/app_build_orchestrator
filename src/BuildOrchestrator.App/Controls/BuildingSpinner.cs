@@ -22,8 +22,35 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 public class BuildingSpinner : Control
 {
-    /// <summary>_ds_bundle.js:1359 — <c>animation: ds-spinner-rot 900ms linear infinite</c>.</summary>
-    internal const double RotationMs = 900;
+    /// <summary>BuildApp.jsx:17 — <c>animation: bo-rot 1.4s linear infinite</c>.</summary>
+    internal const double RotationMs = 1400;
+
+    /// <summary>
+    /// Kesikli halkanın opaklığı. TEK yer: <see cref="StatusGlyph"/>'in <c>discovered</c> halkası da bunu
+    /// okur — aynı halkanın duran ve dönen hâli AYNI sayıyı taşır (BuildApp.jsx:167 <c>opacity="0.9"</c> ·
+    /// _ds_bundle.js:1517).
+    /// </summary>
+    internal const double DashedRingOpacity = 0.9;
+
+    /// <summary>
+    /// Halkanın kesik desenini, verilen kontur kalınlığı için WPF'in beklediği birime çevirir.
+    ///
+    /// <para><b>Neden çevrim gerekiyor:</b> SVG'de <c>stroke-dasharray</c> KULLANICI BİRİMİDİR, WPF'te ise
+    /// <see cref="System.Windows.Shapes.Shape.StrokeDashArray"/> <c>StrokeThickness</c>'ın ÇARPANIDIR.
+    /// Tasarımda aynı desen iki farklı kalınlıkta çizilir — glyph'in halkası 1 (sayılar birebir geçer),
+    /// spinner 1.5 — bu yüzden ikinci bir sayı tablosu YAZILMAZ, desen tek kaynaktan
+    /// (<c>Icon.StatusRing.DashArray</c>) türetilir (kopya YASAK, CLAUDE.md).</para>
+    ///
+    /// <para>Kaynak zinciri yoksa boş döner: çağıran o zaman kesiksiz bir halka çizer — <c>StatusGlyph</c>'in
+    /// ve <c>IconPaint</c>'in headless host'ta sessizce boyamayı atlama deseniyle aynı.</para>
+    /// </summary>
+    internal static DoubleCollection DashesInStrokeUnits(FrameworkElement host, double strokeThickness)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        if (strokeThickness <= 0 || host.TryFindResource("Icon.StatusRing.DashArray") is not DoubleCollection userUnits)
+            return [];
+        return [.. userUnits.Select(d => d / strokeThickness)];
+    }
 
     /// <summary>Dekoratif, sonsuz dönen animasyon — GraphView'ün nabzıyla AYNI gerekçe (feasibility §3.4):
     /// tam kare hızında sürmek gereksiz GPU/CPU yükü.</summary>
@@ -77,6 +104,13 @@ public class BuildingSpinner : Control
     {
         base.OnApplyTemplate();
         _rotation = GetTemplateChild("PART_Rotation") as RotateTransform;
+        if (GetTemplateChild("PART_Ring") is System.Windows.Shapes.Path ring)
+        {
+            // Desen ve opaklık şablonda LİTERAL yazılamaz: desen kalınlığa göre türetilir, opaklık ise
+            // glyph'in duran halkasıyla PAYLAŞILAN tek sayıdır.
+            ring.StrokeDashArray = DashesInStrokeUnits(this, ring.StrokeThickness);
+            ring.Opacity = DashedRingOpacity;
+        }
         Refresh();
     }
 

@@ -48,7 +48,7 @@ public class ReducedMotionCoverageTests
             Assert.Equal(TimeSpan.Zero, m.Effective(TimeSpan.FromMilliseconds(ms)));
     }
 
-    // ================================================================ 1) BuildingSpinner (900ms/270° dönüş)
+    // ================================================================ 1) BuildingSpinner (1.4s kesikli halka dönüşü)
 
     [StaFact]
     public void BuildingSpinner_never_starts_its_rotation_clock_under_reduced_motion()

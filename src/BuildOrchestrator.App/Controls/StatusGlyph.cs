@@ -165,10 +165,12 @@ public class StatusGlyph : Control
             // discovered = AYNI halkanın kesiklisi (_ds_bundle.js:1515-1518): dash + opaklık .9;
             // diğerlerinde düz halka, opaklık .6 (_ds_bundle.js:1452).
             bool discovered = Status == GraphStatus.Discovered;
+            // Desen ve opaklık, halkanın DÖNEN hâliyle (BuildingSpinner) PAYLAŞILIR — aynı halkanın iki
+            // hâli iki ayrı sayı tablosu taşıyamaz (kopya YASAK, CLAUDE.md).
             _ring.StrokeDashArray = discovered
-                ? TryFindResource("Icon.StatusRing.DashArray") as DoubleCollection ?? []
+                ? BuildingSpinner.DashesInStrokeUnits(this, _ring.StrokeThickness)
                 : [];
-            _ring.Opacity = discovered ? 0.9 : 0.6;
+            _ring.Opacity = discovered ? BuildingSpinner.DashedRingOpacity : 0.6;
         }
 
         string? innerKey = InnerIconKeyFor(Status);
