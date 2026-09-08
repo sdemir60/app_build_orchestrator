@@ -1001,17 +1001,33 @@
     </Setter>
   </Style>
 
-  <!-- [design v1.11.0 §2.4-2] Statü noktası: 8px daire, şeritle AYNI rengi taşır; başlangıç modunda dolgusuz
-       + kesikli halka (kalınlık/dash kod-tarafı, StatusDot.ApplyState). Kontrol `WillBuildDot` adıyla doğmuştu
-       ve statüden ayrı bir plan kanalı taşıyordu — v1.11.0 o kanalı kaldırdı, kontrol yeniden adlandırıldı. -->
+  <!-- [design v1.12.0 §2.4-2] Statü noktası: 8px daire, şeritle AYNI rengi taşır. Başlangıç modunda üstteki
+       DÖRT YAYLI halka görünür; bir işlem başlayınca opaklıklar yer değiştirir (çapraz-sönüm, StatusDot).
+       İki eleman ÜST ÜSTE durur ve ikisi de aynı 8px kutuda ortalanır — geçişte hiza kaymaz.
+       [DEĞİŞEN KURAL] v1.11.0 başlangıç modunu TEK bir daire üstünde kesikli çemberle çiziyordu; 8px'te
+       kesikler tırtıklıydı (v1.12.0). Kontrol `WillBuildDot` adıyla doğmuştu ve statüden ayrı bir plan kanalı
+       taşıyordu — v1.11.0 o kanalı kaldırdı, kontrol yeniden adlandırıldı. -->
   <Style x:Key="{x:Type controls:StatusDot}" TargetType="controls:StatusDot">
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="controls:StatusDot">
           <!-- spacing.css dot-size:8px → Tokens.xaml `Size.DotSize`. -->
-          <Ellipse x:Name="PART_Dot"
-                   Width="{DynamicResource Size.DotSize}" Height="{DynamicResource Size.DotSize}"
-                   SnapsToDevicePixels="True" />
+          <Grid Width="{DynamicResource Size.DotSize}" Height="{DynamicResource Size.DotSize}">
+            <Ellipse x:Name="PART_Dot"
+                     Width="{DynamicResource Size.DotSize}" Height="{DynamicResource Size.DotSize}"
+                     SnapsToDevicePixels="True" />
+            <!-- Halkanın çapı/kalınlığı/dash'i StartMode'dadır (tek yer); burada yalnız yerleşim durur. -->
+            <Ellipse x:Name="PART_Ring" HorizontalAlignment="Center" VerticalAlignment="Center"
+                     Width="{x:Static controls:StartMode.RingDiameter}"
+                     Height="{x:Static controls:StartMode.RingDiameter}"
+                     StrokeThickness="{x:Static controls:StartMode.RingThickness}"
+                     StrokeDashArray="{x:Static controls:StartMode.RingDash}" />
+            <!-- Halkanın FIRÇASI şablondan DEĞİL koddan bağlanır (StatusDot.OnApplyTemplate). Gerekçe ölçüldü:
+                 bir ControlTemplate içinden `DynamicResource` ile anılan Freezable, şablon mühürlenirken
+                 DONDURULUR ve o token'ı paylaşan HER yüzeyin geçiş yolu değişir (donmuş fırça yerel kopyaya
+                 devreder, dalga bitince token referansına dönemez). Kod tarafı SetResourceReference bunu
+                 yapmaz. -->
+          </Grid>
         </ControlTemplate>
       </Setter.Value>
     </Setter>

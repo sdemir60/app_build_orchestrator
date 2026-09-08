@@ -116,10 +116,15 @@ public static class VisualStatuses
         _ => "Brush.TextFaint", // fresh · discovered
     };
 
-    /// <summary>Kesikli çizilen TEK durum başlangıç modudur (§2.3 "Renk kuralı"): şerit, nokta ve node
-    /// çerçevesi orada kesiklidir. <c>discovered</c> DÜZ gridir — o, bir işlemin başladığını ama bu projenin
-    /// kapsamda olmadığını söyler.</summary>
-    public static bool IsDashed(VisualStatus state) => state == VisualStatus.Fresh;
+    /// <summary>Bu durum <b>başlangıç modu</b> mu — Sync sonrası ve açılış hâli. Üç yüzey onu farklı çizer:
+    /// graf node'unun çerçevesi KESİKLİDİR, satırın şeridi DÜZ ama SOLUKTUR ve statü noktası dolu daire
+    /// yerine dört yaylı bir HALKA gösterir (<see cref="StartMode"/>).
+    /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Yüklem eskiden <c>IsDashed</c> adındaydı ve üç yüzeyin de
+    /// kesikli çizildiğini söylüyordu. Kesiklilik artık YALNIZ node'da kaldı (satırda tırtık yapıyordu), bu
+    /// yüzden yüklem taşıdığı bilgiyle adlandırıldı: "başlangıç modu mu", "kesikli mi" değil.</para>
+    /// <para><c>discovered</c> başlangıç modu DEĞİLDİR — o, bir işlemin başladığını ama bu projenin kapsamda
+    /// olmadığını söyler ve düz, tam opak gridir.</para></summary>
+    public static bool IsStartMode(VisualStatus state) => state == VisualStatus.Fresh;
 
     /// <summary>[§2.4-3] Adın vurgusu: bu işlemde İŞİ OLAN satır <c>text-primary</c>, geri kalanı
     /// <c>text-secondary</c> (prototip <c>emph</c>, BuildApp.jsx:636).</summary>

@@ -128,8 +128,12 @@ public class ProjectRowTests
     }
 
     /// <summary>
-    /// [design v1.11.0 §2.4-2 · §9-1] <b>Nokta artık statü kanalıdır.</b> Sol şeritle AYNI rengi taşır ve
-    /// TOOLTIP TAŞIMAZ; başlangıç modunda dolgusuz + kesikli halkadır.
+    /// [design v1.12.0 §2.4-2 · §9-1] <b>Nokta artık statü kanalıdır.</b> Sol şeritle AYNI rengi taşır ve
+    /// TOOLTIP TAŞIMAZ; başlangıç modunda onun yerine dört yaylı bir HALKA görünür.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Başlangıç modu eskiden AYNI daire üstünde dolgu silinip KESİKLİ
+    /// çember çizilerek anlatılıyordu; 8px'te kesikler tırtıklıydı. Artık iki eleman üst üste durur ve
+    /// aralarında yalnız opaklık değişir.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL]</b> Burada iki test vardı ve ikisi de kalkan ORTOGONAL plan kanalını
     /// pinliyordu: <c>The_will_build_dot_says_why_the_project_will_build</c> (noktanın tooltip'i gerekçeyi
@@ -144,22 +148,23 @@ public class ProjectRowTests
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, Fresh = true };
         var (row, window, host) = Realize(vm);
-        var dot = DsResources.Descendants(row.Dot).OfType<Ellipse>().Single();
 
         Assert.Null(row.Dot.ToolTip);
 
-        // Başlangıç modu: DOLGU YOK, kesikli halka VAR — plan (WillBuild=true) hiçbir renk üretmez.
-        Assert.Null(dot.Fill);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(dot.Stroke));
-        Assert.NotEmpty(dot.StrokeDashArray);
+        // Başlangıç modu: dolu daire GÖRÜNMEZ, halka görünür — plan (WillBuild=true) hiçbir renk üretmez.
+        Assert.Equal(0.0, row.Dot.Fill.Opacity);
+        Assert.Equal(StartMode.RingOpacity, row.Dot.Ring.Opacity);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Dot.Ring.Stroke));
+        Assert.NotEmpty(row.Dot.Ring.StrokeDashArray);
 
         // İşlem başladı (başlangıç modu düştü) ve satır kapsamda: nokta AMBER — şeridin ta kendisi.
         vm.Fresh = false;
         vm.Marked = true;
         row.UpdateLayout();
+        var dot = row.Dot.Fill;
         Assert.Equal(DsResources.TokenColor(host, "Brush.Amber"), DsResources.ColorOf(dot.Fill));
         Assert.Equal(DsResources.ColorOf(row.Stripe.Fill), DsResources.ColorOf(dot.Fill)); // şerit == nokta
-        Assert.Null(dot.Stroke);
+        Assert.Equal(0.0, row.Dot.Ring.Opacity);
 
         // Sonuç geldi: ikisi birlikte sonuç rengine döner.
         vm.State = ProjectRowState.Succeeded;
@@ -619,26 +624,27 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[design v1.11.0 §2.4-1 · §9-3] Başlangıç modunda şerit KESİKLİ çizilir (3px dolu / 4px boş) —
-    /// Sync bir plan göstermez. WPF'te bir dolgu "kesikli" olamaz; desen tile'lanmış bir DrawingBrush'tır.</summary>
+    /// <summary>[design v1.12.0 §2.4-1 · §9-3] Başlangıç modunda şerit DÜZ ama SOLUKTUR; işlem başlayınca
+    /// tam opaklığa çıkar. Renk iki durumda da AYNI nötr gridir — Sync bir plan göstermez.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: şerit başlangıç modunda KESİKLİ çizilir (3px dolu / 4px boş) ve
+    /// desen, WPF'te bir dolgu kesikli olamadığı için tile'lanmış bir <c>DrawingBrush</c>'tır. Değişme gerekçesi
+    /// (ölçüm): 2px'lik bir şeritte kesikli desen piksel ızgarasına oturmuyor, tırtıklı görünüyordu. Ayrım artık
+    /// OPAKLIKTIR (<see cref="StartMode.FaintOpacity"/>) ve dolgu her durumda tek bir token fırçasıdır.</para></summary>
     [StaFact]
-    public void The_fresh_start_mode_draws_the_stripe_dashed_instead_of_solid()
+    public void The_fresh_start_mode_draws_the_stripe_faint_instead_of_dashed()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { Fresh = true };
         var (row, window, host) = Realize(vm);
 
-        var dashed = Assert.IsType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);
-        Assert.Equal(System.Windows.Media.TileMode.Tile, dashed.TileMode);
-        // Dolu blok tile'ın yarısından KISA olmalı — aksi halde "kesikli" değil düz okunurdu.
-        var drawing = Assert.IsType<System.Windows.Media.GeometryDrawing>(dashed.Drawing);
-        Assert.True(drawing.Geometry.Bounds.Height < dashed.Viewport.Height / 2);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(drawing.Brush));
+        Assert.IsNotType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);   // kesikli desen YOK
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
+        Assert.Equal(StartMode.FaintOpacity, row.Stripe.Opacity);
 
-        // İşlem başlayınca (fresh düşünce) şerit DÜZ griye döner.
+        // İşlem başlayınca (fresh düşünce) şerit TAM opaklığa çıkar — rengi değişmez.
         vm.Fresh = false;
         row.UpdateLayout();
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
-        Assert.IsNotType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);
+        Assert.Equal(1.0, row.Stripe.Opacity);
         GC.KeepAlive(window);
     }
 

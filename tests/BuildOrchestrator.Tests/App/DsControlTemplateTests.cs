@@ -447,45 +447,48 @@ public class DsControlTemplateTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[design v1.11.0 §2.4-2] Statü noktası: 8px daire, statü rengiyle DOLU; başlangıç modunda
-    /// (<c>fresh</c>) dolgusuz + KESİKLİ halka.
-    /// <para><b>[DEĞİŞEN KURAL]</b> Kontrol <c>WillBuildDot</c> idi ve statüden ayrı bir plan kanalı taşıyordu
-    /// (dirty amber / clean gri / unknown içi boş halka, üstüne döngü üyeliği turuncuyla ezerdi). v1.11.0 o
-    /// kanalı kaldırdı; kontrol <c>StatusDot</c> oldu ve şeritle AYNI tablodan boyanıyor.</para></summary>
+    /// <summary>[design v1.12.0 §2.4-2] Statü noktası: 8px daire, statü rengiyle DOLU; başlangıç modunda
+    /// (<c>fresh</c>) onun yerine dört yaylı HALKA görünür.
+    /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Eski iddia: nokta TEK bir <c>Ellipse</c>'tir ve başlangıç
+    /// modunda dolgusu silinip yerine 1.5px KESİKLİ bir çember çizilir. Ölçülen kusur: 8px'lik bir çemberde
+    /// kesikler tırtıklı çiziliyordu. Yeni kural: iki eleman ÜST ÜSTE durur (dolu daire + 1.1px dört yaylı
+    /// halka) ve aralarında yalnız opaklık değişir — dolgu artık HİÇ silinmez, boyut hiç değişmez.</para>
+    /// <para><b>[DEĞİŞEN KURAL — v1.11.0]</b> Kontrol <c>WillBuildDot</c> idi ve statüden ayrı bir plan kanalı
+    /// taşıyordu (dirty amber / clean gri / unknown içi boş halka, üstüne döngü üyeliği turuncuyla ezerdi).
+    /// v1.11.0 o kanalı kaldırdı; kontrol <c>StatusDot</c> oldu ve şeritle AYNI tablodan boyanıyor.</para></summary>
     [StaFact]
-    public void Status_dot_is_filled_with_the_status_colour_and_dashed_in_the_fresh_start_mode()
+    public void Status_dot_is_filled_with_the_status_colour_and_shows_a_ring_in_the_fresh_start_mode()
     {
         var host = DsResources.NewHost();
-        var dot = (FrameworkElement)XamlReader.Parse("""
+        var dot = (BuildOrchestrator.App.Controls.StatusDot)XamlReader.Parse("""
             <controls:StatusDot xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                                 xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls;assembly=BuildOrchestrator.App" />
             """);
+        dot.AnimationsEnabledProvider = () => false; // opaklık hedefe ANINDA otursun
         var window = DsResources.Realize(host, dot);
 
-        var ellipse = DsResources.Descendants(dot).OfType<Ellipse>().Single();
-        Assert.Equal((double)host.FindResource("Size.DotSize"), ellipse.Width);
-        // Varsayılan `discovered`: düz gri DOLU, halka yok.
-        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(ellipse.Fill));
-        Assert.Null(ellipse.Stroke);
+        Assert.Equal((double)host.FindResource("Size.DotSize"), dot.Fill.Width);
+        // Varsayılan `discovered`: düz gri DOLU, halka görünmez.
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(dot.Fill.Fill));
+        Assert.Equal(1.0, dot.Fill.Opacity);
+        Assert.Equal(0.0, dot.Ring.Opacity);
 
-        dot.SetValue(BuildOrchestrator.App.Controls.StatusDot.StateProperty,
-            BuildOrchestrator.App.Controls.VisualStatus.Fresh);
+        dot.State = BuildOrchestrator.App.Controls.VisualStatus.Fresh;
         dot.UpdateLayout();
-        Assert.Null(ellipse.Fill);                                  // başlangıç modunda DOLGU YOK
-        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(ellipse.Stroke));
-        Assert.Equal(BuildOrchestrator.App.Controls.StatusDot.FreshRingThickness, ellipse.StrokeThickness);
-        Assert.NotEmpty(ellipse.StrokeDashArray);                   // ...ve halka KESİKLİ
+        Assert.Equal(0.0, dot.Fill.Opacity);                        // başlangıç modunda dolu daire GÖRÜNMEZ
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(dot.Ring.Stroke));
+        Assert.Equal(BuildOrchestrator.App.Controls.StartMode.RingThickness, dot.Ring.StrokeThickness);
+        Assert.Equal(BuildOrchestrator.App.Controls.StartMode.RingOpacity, dot.Ring.Opacity);
+        Assert.NotEmpty(dot.Ring.StrokeDashArray);                  // ...ve halka YAYLARDAN oluşur
 
-        dot.SetValue(BuildOrchestrator.App.Controls.StatusDot.StateProperty,
-            BuildOrchestrator.App.Controls.VisualStatus.Marked);
+        dot.State = BuildOrchestrator.App.Controls.VisualStatus.Marked;
         dot.UpdateLayout();
-        Assert.Equal(DsResources.TokenColor(host, "Brush.Amber"), DsResources.ColorOf(ellipse.Fill));
-        Assert.Null(ellipse.Stroke);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.Amber"), DsResources.ColorOf(dot.Fill.Fill));
+        Assert.Equal(0.0, dot.Ring.Opacity);
 
-        dot.SetValue(BuildOrchestrator.App.Controls.StatusDot.StateProperty,
-            BuildOrchestrator.App.Controls.VisualStatus.Succeeded);
+        dot.State = BuildOrchestrator.App.Controls.VisualStatus.Succeeded;
         dot.UpdateLayout();
-        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSuccess"), DsResources.ColorOf(ellipse.Fill));
+        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSuccess"), DsResources.ColorOf(dot.Fill.Fill));
         GC.KeepAlive(window);
     }
 

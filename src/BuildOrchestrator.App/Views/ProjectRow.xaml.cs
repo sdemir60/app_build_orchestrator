@@ -323,61 +323,48 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>
-    /// [design v1.11.0 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
-    /// modunda kesikli gri, işlem başlayınca düz gri, işaretlenince amber, bitişte sonuç rengi.
+    /// [design v1.12.0 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
+    /// modunda soluk gri, işlem başlayınca tam gri, işaretlenince amber, bitişte sonuç rengi.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Başlangıç modu KESİKLİ çiziliyordu (tile'lanmış bir
+    /// <c>DrawingBrush</c>: 3px dolu / 4px boş). Ölçülen kusur: 2px'lik bir şeritte kesikli desen piksel
+    /// ızgarasına oturmuyor, tırtıklı görünüyordu. Şerit artık HER durumda DÜZ bir token fırçasıyla dolar ve
+    /// başlangıç modunu yalnız OPAKLIK anlatır (<see cref="Controls.StartMode.FaintOpacity"/> → 1, geçiş
+    /// <see cref="Controls.StartMode.CrossFadeMs"/>). Noktanın çapraz-sönümüyle AYNI anda, AYNI sürede olur.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.11.0]</b> <c>Queued</c> eskiden kendi grisini (<c>Brush.StatusQueued</c>)
     /// taşıyordu; artık kuyruk da işlemin kapsamıdır ve amber KALIR — işaretleme dalgasıyla yanan renk koşu
-    /// başlayınca sönmez. Ayrıca başlangıç modu (<c>fresh</c>) eklendi: şerit orada KESİKLİ çizilir
-    /// (3px dolu / 4px boş), çünkü Sync bir plan göstermez.</para>
+    /// başlayınca sönmez.</para>
     ///
     /// <para><b>[KORUNAN SAPMA]</b> §2.4 şeridin 1px dikey iç boşluklu olmasını ister; burada şerit satırın
     /// tam yüksekliğince uzanır (kullanıcı kararı — ayrımı satırın alt çizgisi yapar). Bkz. ProjectRow.xaml.</para>
-    ///
-    /// <para><b>Kesikli çizim:</b> WPF'te bir <see cref="Rectangle"/> dolgusu "kesikli" olamaz — desen
-    /// TİLE'lanmış bir <see cref="System.Windows.Media.DrawingBrush"/> ile verilir (2×3 dolu blok, 2×7 tile).
-    /// Alternatif bir <c>Line</c> + <c>StrokeDashArray</c> idi; o, seçilide 2→3 genişleyen şeridi ve satır
-    /// yüksekliğini ayrıca yönetmeyi gerektirirdi.</para>
     /// </summary>
     private void SetStripeFill(bool lighting = false)
     {
         var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
         string key = VisualStatuses.StripeBrushKey(visual);
-        if (!VisualStatuses.IsDashed(visual))
+        // Renk geçişinin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
+        Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,
+            lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
+
+        double target = VisualStatuses.IsStartMode(visual) ? Controls.StartMode.FaintOpacity : 1.0;
+        if (Math.Abs(PART_Stripe.Opacity - target) < 0.001 && !PART_Stripe.HasAnimatedProperties) return;
+        if (!_stripeSettled || !_motion.Enabled)
         {
-            // Geçişin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
-            Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,
-                lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
+            // İlk çizim ANINDA oturur: açılışta bir sönüm oynatmak "az önce bir işlem oldu" derdi.
+            PART_Stripe.BeginAnimation(OpacityProperty, null);
+            PART_Stripe.Opacity = target;
+            _stripeSettled = true;
             return;
         }
-
-        // Başlangıç modunun kesikli şeridi bir DrawingBrush'tur — dalganın hedefi değildir (dalga düz amber'a
-        // yakar), bu yüzden geçiş aranmaz.
-        PART_Stripe.Fill = BuildDashedStripeBrush(ResolveBrush(key));
+        var spline = Controls.MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+        PART_Stripe.BeginAnimation(OpacityProperty,
+            Controls.MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(Controls.StartMode.CrossFadeMs), spline),
+            System.Windows.Media.Animation.HandoffBehavior.SnapshotAndReplace);
     }
 
-    // [design v1.11.0 §2.4-1] `repeating-linear-gradient(to bottom, X 0 3px, transparent 3px 7px)` karşılığı.
-    private const double DashOnPx = 3, DashPeriodPx = 7;
-
-    /// <summary>[test seam] Başlangıç modunun kesikli şerit fırçasını üreten TEK yer — kontrol ve test AYNI
-    /// fabrikayı kullanır (BuildBreathingAnimation deseni).</summary>
-    internal static System.Windows.Media.DrawingBrush BuildDashedStripeBrush(System.Windows.Media.Brush color)
-    {
-        var drawing = new System.Windows.Media.GeometryDrawing(
-            color, null, new System.Windows.Media.RectangleGeometry(new Rect(0, 0, 2, DashOnPx)));
-        return new System.Windows.Media.DrawingBrush(drawing)
-        {
-            TileMode = System.Windows.Media.TileMode.Tile,
-            Viewport = new Rect(0, 0, 2, DashPeriodPx),
-            ViewportUnits = System.Windows.Media.BrushMappingMode.Absolute,
-            ViewboxUnits = System.Windows.Media.BrushMappingMode.Absolute,
-            Viewbox = new Rect(0, 0, 2, DashPeriodPx),
-            Stretch = System.Windows.Media.Stretch.None,
-        };
-    }
-
-    private System.Windows.Media.Brush ResolveBrush(string key) =>
-        TryFindResource(key) as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Transparent;
+    /// <summary>Şeridin opaklığı bir kez YAZILDI mı — ilk çizim animasyonsuzdur (bkz. StatusDot deseni).</summary>
+    private bool _stripeSettled;
 
     private void ApplyDuration()
     {
