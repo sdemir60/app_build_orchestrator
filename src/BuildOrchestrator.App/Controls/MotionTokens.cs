@@ -40,6 +40,35 @@ internal static class MotionTokens
         return blink;
     }
 
+    /// <summary>
+    /// <b>KESİKLİ renk turu</b> — <paramref name="colors"/>'ı sırayla, her birini <paramref name="stepMs"/>
+    /// kadar gösteren sonsuz bir zaman çizelgesi. Ara kare YOKTUR: renk bir adımdan diğerine ATLAR.
+    ///
+    /// <para><b>Neden burada:</b> renk zaman çizelgelerinin TEK kurucusu bu dosyadır (kopya YASAK; guard
+    /// <c>ColorTransitionFlashTests.No_app_file_builds_its_own_color_keyframe_outside_the_shared_builder</c>).
+    /// <see cref="SplineColorTo"/>'nun premultiply düzeltmesi burada GEREKMEZ ve uygulanmaz — o düzeltme
+    /// interpolasyonun ürettiği çakmayı önler, kesikli bir keyframe ise hiç interpolasyon yapmaz.</para>
+    ///
+    /// <para><paramref name="beginMs"/> negatif verilebilir: çizelge geçmişte başlamış gibi kurulur, yani
+    /// adım sınırları istenen faza kaydırılır (bkz. <see cref="CursorHop"/>).</para>
+    /// </summary>
+    public static ColorAnimationUsingKeyFrames DiscreteColorCycle(
+        IReadOnlyList<Color> colors, double stepMs, double beginMs, int frameRate)
+    {
+        ArgumentNullException.ThrowIfNull(colors);
+        var animation = new ColorAnimationUsingKeyFrames
+        {
+            Duration = new Duration(TimeSpan.FromMilliseconds(stepMs * colors.Count)),
+            BeginTime = TimeSpan.FromMilliseconds(beginMs),
+            RepeatBehavior = RepeatBehavior.Forever,
+        };
+        for (int i = 0; i < colors.Count; i++)
+            animation.KeyFrames.Add(new DiscreteColorKeyFrame(
+                colors[i], KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(i * stepMs))));
+        Timeline.SetDesiredFrameRate(animation, frameRate);
+        return animation;
+    }
+
     public static KeySpline ResolveKeySpline(FrameworkElement host, string key, KeySpline fallback)
         => host.TryFindResource(key) is KeySpline k ? k : fallback;
 

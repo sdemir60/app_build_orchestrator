@@ -82,7 +82,10 @@ public static class CursorHop
     public static void Stop(Shape cursor, string restKey)
     {
         ArgumentNullException.ThrowIfNull(cursor);
-        if (cursor.Fill is SolidColorBrush brush) brush.BeginAnimation(SolidColorBrush.ColorProperty, null);
+        // YALNIZ turun kendi yerel fırçası sökülür: token fırçaları paylaşılır ve DONDURULMUŞTUR — donmuş bir
+        // Freezable'da animasyon sökmek de kurmak kadar yasaktır (InvalidOperationException).
+        if (cursor.Fill is SolidColorBrush { IsFrozen: false, HasAnimatedProperties: true } brush)
+            brush.BeginAnimation(SolidColorBrush.ColorProperty, null);
         cursor.SetResourceReference(Shape.FillProperty, restKey);
     }
 
@@ -90,20 +93,15 @@ public static class CursorHop
     /// TEK yerde tanımlıdır. Paletin bir tonu çözülemiyorsa <c>null</c> (bkz. <see cref="Start"/>).</summary>
     internal static ColorAnimationUsingKeyFrames? CreateAnimation(Func<string, object?> find)
     {
-        var animation = new ColorAnimationUsingKeyFrames
+        var colors = new List<Color>(BrushKeys.Count);
+        foreach (string key in BrushKeys)
         {
-            Duration = new Duration(TimeSpan.FromMilliseconds(TotalMs)),
-            BeginTime = TimeSpan.FromMilliseconds(PhaseMs),
-            RepeatBehavior = RepeatBehavior.Forever,
-        };
-        for (int i = 0; i < BrushKeys.Count; i++)
-        {
-            if ((find(BrushKeys[i]) as SolidColorBrush)?.Color is not { } color) return null;
-            animation.KeyFrames.Add(
-                new DiscreteColorKeyFrame(color, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(i * StepMs))));
+            if ((find(key) as SolidColorBrush)?.Color is not { } color) return null;
+            colors.Add(color);
         }
-        Timeline.SetDesiredFrameRate(animation, FrameRate);
-        return animation;
+        // Çizelgenin KENDİSİ MotionTokens'ta kurulur — renk zaman çizelgelerinin tek kurucusu orasıdır
+        // (kopya YASAK); burada yalnız HANGİ renkler, hangi ritimde sorusu cevaplanır.
+        return MotionTokens.DiscreteColorCycle(colors, StepMs, PhaseMs, FrameRate);
     }
 
     private static Color FirstColor(ColorAnimationUsingKeyFrames animation) => animation.KeyFrames[0].Value;
