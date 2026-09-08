@@ -73,6 +73,9 @@ public class SplitButton : Control
 
     public SplitButton() => Loaded += (_, _) => SplitCorners();
 
+    /// <summary>[test yüzeyi] Birincil eylemi taşıyan sol yarım — şablonun <c>PART_Primary</c>'si.</summary>
+    internal ButtonBase? PrimaryHalf { get; private set; }
+
     /// <summary>[test yüzeyi] Menüyü açan chevron yarımı — şablonun <c>PART_Menu</c>'sü.</summary>
     internal ToggleButton? MenuToggle { get; private set; }
 
@@ -82,7 +85,8 @@ public class SplitButton : Control
     public override void OnApplyTemplate()
     {
         base.OnApplyTemplate();
-        if (GetTemplateChild(PrimaryPart) is ButtonBase primary)
+        PrimaryHalf = GetTemplateChild(PrimaryPart) as ButtonBase;
+        if (PrimaryHalf is { } primary)
             primary.Click += (_, e) => PrimaryClick?.Invoke(this, e);
         MenuToggle = GetTemplateChild(MenuPart) as ToggleButton;
         MenuPopup = GetTemplateChild(MenuPopupPart) as Popup;

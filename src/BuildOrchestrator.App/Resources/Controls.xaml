@@ -237,15 +237,25 @@
 
   <!-- ==================================== SPLIT BUTTON ==================================== -->
   <!--
-    BuildApp.jsx:1591-1598. İki yarım AYNI primary gövdeyi paylaşır; birleşik görünüm yalnız İÇ köşelerin
-    düzleştirilmesiyle (:1594 sağ köşeler 0 · :1596 sol köşeler 0) ve aradaki 1px amber-dim çizgiyle kurulur.
+    BuildApp.jsx:2416-2422. İki yarım AYNI primary gövdeyi paylaşır; birleşik görünüm yalnız İÇ köşelerin
+    düzleştirilmesiyle (:2418 sağ köşeler 0 · :2421 sol köşeler 0) ve sağ yarımın KENDİ sol kenarıyla
+    (:2421 `borderLeft: 1px solid` CSS `amber-dim`) kurulur.
     Köşeleri SplitButton.SplitCorners gövdenin `Radius.Sm` token'ından TÜRETİR (literal köşe yazılmaz).
+
+    AYRAÇ NEDEN BUTONUN KENDİ KENARI: bağımsız bir 1px çizgi öğesi iki kusur üretiyordu (ÖLÇÜLDÜ).
+    (1) İki yarım da Ds.Button.Base'ten 1px SAYDAM kenar alır ve WPF'te Border.Background kenarın İÇİNİ
+    doldurur (CSS'in `background-clip: border-box` varsayılanının TERSİ) → çizginin iki yanında birer piksel
+    boşluk kalıyor, ekranda üç çizgi görünüyordu. (2) Ayrı öğe, butonların pasiflik opaklığını almıyordu →
+    buton sönerken ayraç parlak kalıyordu. Çözüm: sol yarımın kenarı YOK (zemini sağ kenarına kadar dolar),
+    sağ yarımın YALNIZ sol kenarı var ve amber-dim'dir.
   -->
   <Style x:Key="Ds.SplitButton.MenuHalf" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Button.Base}">
     <Setter Property="Height" Value="28" />
-    <!-- BuildApp.jsx:1596 `padding: '0 5px'` -->
+    <!-- BuildApp.jsx:2421 `padding: '0 5px'` -->
     <Setter Property="Padding" Value="5,0" />
-    <Setter Property="BorderBrush" Value="Transparent" />
+    <!-- BuildApp.jsx:2421 `borderLeft: 1px solid` CSS `amber-dim` — iki yarımın TEK ayracı. -->
+    <Setter Property="BorderThickness" Value="1,0,0,0" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.AmberDim}" />
     <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Amber}" />
     <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextOnAccent}" />
     <Style.Triggers>
@@ -266,13 +276,17 @@
         <ControlTemplate TargetType="controls:SplitButton">
           <Grid>
             <StackPanel Orientation="Horizontal">
+              <!-- Kenarı YOK: zemini ayraca kadar dolsun (bkz. stil notu — WPF zemini kenarın İÇİNE çizer). -->
               <Button x:Name="PART_Primary" Style="{DynamicResource Ds.Button.Primary.Md}"
+                      BorderThickness="0"
                       Content="{TemplateBinding PrimaryContent}"
                       Command="{TemplateBinding PrimaryCommand}" />
-              <!-- BuildApp.jsx:1596 `borderLeft: 1px solid CSS `amber-dim`` — iki yarımın ayracı. -->
-              <Rectangle Width="1" Fill="{DynamicResource Brush.AmberDim}" />
+              <!-- BuildApp.jsx:2417/:2419 — iki yarım AYNI `disabled` ifadesini alır. Sol yarım gövdenin
+                   IsEnabled'ına EK OLARAK komutun CanExecute'undan da kısılır; chevron o kısıntıyı ancak
+                   ondan okuyarak paylaşabilir (tek doğruluk kaynağı: sol yarımın ETKİN durumu). -->
               <ToggleButton x:Name="PART_Menu" Style="{DynamicResource Ds.SplitButton.MenuHalf}"
                             AutomationProperties.Name="Build options"
+                            IsEnabled="{Binding IsEnabled, ElementName=PART_Primary, Mode=OneWay}"
                             IsChecked="{Binding IsMenuOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
                 <!-- BuildApp.jsx:1597 `<I.chevUp/>` — 11px çizim; 24'lük viewBox Viewbox ile küçülür
                      (Path.Stretch stroke'u ölçeklemez, Viewbox ölçekler). Şablonun İÇİNDE durur:
