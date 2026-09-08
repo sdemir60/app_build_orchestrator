@@ -16,12 +16,12 @@ namespace BuildOrchestrator.Tests.App;
 /// [E3 fold'ları] Motion sahibi hijyeni: (1) BuildingSpinner'ın 1.4s'lik dönüşünü sayısal PİNLER (tasarım kararı —
 /// tasarımın 1.4s'i — sessizce kaymasın); (2) motion-signal aboneliğinin idempotent
 /// (subscribe-once) guard'ını kanıtlar — Loaded iki kez ateşlense de sahip TEK abonelik tutar (çift Refresh/
-/// ApplyBreathing birikmez). Aynı <c>-= sonra +=</c> idiomu ProjectRow/StickyRibbon/BuildingSpinner/StatusGlyph'te
+/// ApplyBreathing birikmez). Aynı <c>-= sonra +=</c> idiomu ProjectRow/StickyRibbon/BuildingSpinner'da
 /// paylaşılır; burada seam'li ProjectRow üstünden pinlenir.
 ///
 /// <para><b>[W2]</b> Kablaj artık <see cref="MotionGate"/>'tedir. Bu sınıf onun İKİ KİPİNİ de ayrı ayrı pinler —
 /// GraphView'ın <b>latch-first</b> sapması (ilk kaynaktan sonra atama yok sayılır; MainWindow buna dayanır) ve
-/// diğerlerinin <b>latch'siz</b> "her Loaded'da yeniden oku" davranışı. Ayrıca BuildingSpinner/StatusGlyph'in
+/// diğerlerinin <b>latch'siz</b> "her Loaded'da yeniden oku" davranışı. Ayrıca BuildingSpinner'ın
 /// W2'de kazandığı seam'in ÖLÜ KOD olmadığı (enjekte edilen sinyalde saatlerin gerçekten kurulduğu) kanıtlanır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
@@ -152,38 +152,33 @@ public class MotionOwnerHygieneTests
     public void The_building_spinner_subscribes_to_the_static_signal_exactly_once_across_repeated_loads()
         => AssertSubscribesOnce(new BuildingSpinner());
 
-    [StaFact]
-    public void The_status_glyph_subscribes_to_the_static_signal_exactly_once_across_repeated_loads()
-        => AssertSubscribesOnce(new StatusGlyph());
 
     // ---------------------------------------------------------------- [W2] seam genişletmesi
 
     /// <summary>
-    /// [W2] <see cref="BuildingSpinner"/> ve <see cref="StatusGlyph"/> artık statik <c>App.Motion</c>'a ÇİVİLENMİŞ
-    /// değildir: enjekte edilen sinyal (a) abonelikte ve (b) TAZE okumada gerçekten kullanılır. Bu, aşağıdaki
-    /// statik set/restore testinin (ve <c>ReducedMotionCoverageTests</c>'in) vacuous PASS'a düşmediğinin de kanıtı —
-    /// enjekte edilen AÇIK sinyalde saatler GERÇEKTEN kurulur.
+    /// [W2] <see cref="BuildingSpinner"/> artık statik <c>App.Motion</c>'a ÇİVİLENMİŞ değildir: enjekte edilen
+    /// sinyal (a) abonelikte ve (b) TAZE okumada gerçekten kullanılır. Bu, aşağıdaki statik set/restore
+    /// testinin (ve <c>ReducedMotionCoverageTests</c>'in) vacuous PASS'a düşmediğinin de kanıtı — enjekte
+    /// edilen AÇIK sinyalde saat GERÇEKTEN kurulur.
+    ///
+    /// <para>[DEĞİŞEN KURAL] Test eskiden <see cref="StatusGlyph"/>'i de sürüyordu: onun da bir motion kapısı
+    /// vardı ve <c>building</c> nabzını (opaklık 1 → .45 → 1) o kapı gatelerdi. Nabız kaldırıldı (tasarımda
+    /// building glyph'inin tek animasyonu halkanın dönüşüdür — bkz. <c>BuildingSpinnerTests</c>), glyph bir
+    /// motion sahibi olmaktan çıktı ve kapısı da onunla birlikte gitti; içindeki tek saatin sahibi zaten
+    /// spinner'dır ve o burada ayrıca pinleniyor.</para>
     /// </summary>
     [StaFact]
-    public void The_spinner_and_the_glyph_honour_an_injected_motion_signal_instead_of_the_static_one()
+    public void The_spinner_honours_an_injected_motion_signal_instead_of_the_static_one()
     {
-        Assert.Null(BuildOrchestrator.App.App.Motion); // statik kapalı: aşağıdaki saatler YALNIZ seam'den doğabilir
+        Assert.Null(BuildOrchestrator.App.App.Motion); // statik kapalı: aşağıdaki saat YALNIZ seam'den doğabilir
 
         var spinnerMotion = new CountingMotion();
-        var glyphMotion = new CountingMotion();
         var host = DsResources.NewHost();
         var spinner = new BuildingSpinner { MotionSettings = spinnerMotion, AnimationsEnabledProvider = () => true };
-        var glyph = new StatusGlyph
-        {
-            Status = GraphStatus.Building, MotionSettings = glyphMotion, AnimationsEnabledProvider = () => true,
-        };
-        var panel = new StackPanel { Children = { spinner, glyph } };
-        var window = DsResources.Realize(host, panel);
+        var window = DsResources.Realize(host, spinner);
 
-        Assert.True(spinner.IsRotating);          // enjekte edilen AÇIK sinyal → dönüş saati kuruldu
-        Assert.True(glyph.HasAnimatedProperties); // enjekte edilen AÇIK sinyal → nabız saati kuruldu
+        Assert.True(spinner.IsRotating);                // enjekte edilen AÇIK sinyal → dönüş saati kuruldu
         Assert.Equal(1, spinnerMotion.SubscriberCount); // abonelik de seam'e gitti (statiğe değil)
-        Assert.Equal(1, glyphMotion.SubscriberCount);
         GC.KeepAlive(window);
     }
 
@@ -192,7 +187,6 @@ public class MotionOwnerHygieneTests
     /// guard'dan geçtiğini ayrıca kanıtlar.</summary>
     [StaTheory]
     [InlineData(typeof(BuildingSpinner))]
-    [InlineData(typeof(StatusGlyph))]
     public void A_seam_fed_motion_owner_subscribes_exactly_once_across_repeated_loads(Type ownerType)
     {
         var motion = new CountingMotion();
@@ -200,7 +194,6 @@ public class MotionOwnerHygieneTests
         switch (owner)
         {
             case BuildingSpinner s: s.MotionSettings = motion; break;
-            case StatusGlyph g: g.MotionSettings = motion; break;
             default: throw new ArgumentOutOfRangeException(nameof(ownerType));
         }
 
@@ -210,7 +203,7 @@ public class MotionOwnerHygieneTests
         Assert.Equal(1, motion.SubscriberCount);
     }
 
-    /// <summary>[fix — #3/#5] BuildingSpinner/StatusGlyph seam'li DEĞİL: motion sinyalini statik <c>App.Motion</c>'dan
+    /// <summary>[fix — #3/#5] BuildingSpinner seam'li DEĞİL: motion sinyalini statik <c>App.Motion</c>'dan
     /// DOĞRUDAN okur → subscribe-once guard'ının gövdesi yalnız <c>App.Motion</c> null DEĞİLKEN koşar. Headless'ta
     /// null olduğundan guard hiç çalışmaz ve plain <c>+=</c>'e geri dönmek HİÇBİR testi düşürmezdi. Bu yüzden
     /// static'i geçici set/restore et (Console UI serial collection → mutasyon serileştirilir) ve Loaded'ı iki kez

@@ -347,18 +347,6 @@ public class GraphRenderTests
         Assert.Null(view.BeadsClock);
     }
 
-    private sealed class FakeMotionSettings : IMotionSettings
-    {
-        public bool AnimationsEnabled { get; set; }
-        public event EventHandler? AnimationsEnabledChanged;
-        public TimeSpan Effective(TimeSpan token) => AnimationsEnabled ? token : TimeSpan.Zero;
-        public void Flip(bool enabled)
-        {
-            AnimationsEnabled = enabled;
-            AnimationsEnabledChanged?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
     // ---------------------------------------------------------------- seçim sönmesi
 
     /// <summary>

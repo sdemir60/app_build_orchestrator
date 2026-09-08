@@ -73,4 +73,39 @@ public class BuildingSpinnerTests
         Assert.Equal(BuildingSpinner.DashedRingOpacity, ring.Opacity);
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// Building glyph'i <b>NEFES ALMAZ</b>: dönen halkanın üstünde ikinci bir opaklık animasyonu YOKTUR.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL] Eski iddia:</b> <c>StatusGlyph</c>, <c>building</c> statüsünde kendi
+    /// opaklığını 1 → 0.45 → 1 arasında 1.6 s'de sonsuz döndürüyordu (DS bundle'ının
+    /// <c>ds-pulse</c>'ı, <c>_ds_bundle.js:1440</c> ve <c>:1527</c>). <b>Neden değişti:</b> o nabız
+    /// bundle'ın GENEL <c>StatusGlyph</c>'ine aittir ve bu uygulama onu <c>building</c> için HİÇ
+    /// çizmez — kendi sarmalayıcısı araya girip her seferinde <c>BuildingSpin</c>'i koyar
+    /// (<c>BuildApp.jsx:172-175</c>), ve <c>BuildingSpin</c>'in tek animasyonu dönüştür. Prototipin
+    /// building glyph'i gösterdiği her yer bu yoldan geçer: satır (<c>:738</c>), seçim paneli
+    /// (<c>:2291</c>), şeridin canlı göstergesi (<c>:1166</c>, <c>:1170</c>) ve sayaç chip'i. Yani
+    /// nabız bu uygulamada hiç görünmemeliydi; kullanıcı onu "loading ikonu solup tekrar geliyor,
+    /// nefes alıyor gibi" diye tarif etti.</para>
+    ///
+    /// <para>Satırın KENDİ amber "nefes" katmanı (<c>bo-breath</c>, 3.8 s) bundan AYRIDIR ve yerinde
+    /// kalır — o satırın zeminidir, ikonun değil.</para>
+    /// </summary>
+    [StaFact]
+    public void A_building_glyph_does_not_breathe_only_its_ring_turns()
+    {
+        var motion = new FakeMotionSettings { AnimationsEnabled = true };
+        using var _ = MotionScope.Enable(motion); // açık sinyal: "hiç animasyon yok" boş bir yeşil olmasın
+
+        var host = DsResources.NewHost();
+        var glyph = new StatusGlyph { Status = GraphStatus.Building };
+        var window = DsResources.Realize(host, glyph);
+
+        var spinner = DsResources.Descendants(glyph).OfType<BuildingSpinner>().Single();
+        Assert.True(spinner.IsRotating, "ön-koşul: halka dönmüyor — sinyal ulaşmamış, test boş");
+        Assert.False(glyph.HasAnimatedProperties,
+            "building glyph'i bir opaklık saati tutuyor — ikon dönerken bir yandan nefes alıyor");
+        Assert.Equal(1.0, glyph.Opacity);
+        GC.KeepAlive(window);
+    }
 }

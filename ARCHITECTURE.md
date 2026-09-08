@@ -1240,7 +1240,8 @@ Only one element in the row carries a design-system tooltip: the warning triangl
 none — colour, glyph and the duration column were all saying the same thing — and announces its status through
 its automation name instead. The icon buttons keep a plain, OS-delayed tooltip (the closest thing WPF has to
 an HTML `title`) so that a mouse crossing the row does not trail balloons behind it. The building row carries a motionless
-amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s); a sweep or a shine was tried and
+amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s) — that layer belongs to the row's
+background, not to the glyph, which only turns; a sweep or a shine was tried and
 rejected. A failing row shakes once, ±3 px over 360 ms.
 
 The stripe has **no vertical inset**, which is a deliberate departure from §2.4. The design insets it by 1 px
@@ -1995,7 +1996,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
-| Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width |
+| Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width. Rotation is the *only* thing that moves there: the glyph itself holds no animation clock, so it is not a motion owner and carries no motion seam |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
 
 Three pieces of shared machinery keep the copies from multiplying:
@@ -2116,7 +2117,7 @@ meets 4.5:1.
 |---|---|---|
 | Discovered | dashed circle | Discovered |
 | Queued | clock | Queued |
-| Building | rotating dashed ring + breath | Building |
+| Building | rotating dashed ring | Building |
 | Succeeded | ✓ in a ring | Succeeded |
 | Failed | ✗ in a ring | Failed |
 | Skipped | — in a ring | Skipped |
