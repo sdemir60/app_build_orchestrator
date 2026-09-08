@@ -280,6 +280,62 @@ public class ChoreographyTests
     }
 
     /// <summary>
+    /// [design v1.13.2 §2.4 · §3.2] <b>Ad da dalgada şerit ve noktayla AYNI anda yanar.</b> Prototip:
+    /// <c>transition: color 200ms var(--ease-standard) &lt;waveDelay&gt;ms</c> (BuildApp.jsx:761).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> Eski davranış: ad rengi <c>SetResourceReference</c> ile
+    /// ANINDA oturuyordu — bütün adlar dalganın başında birden beyazlıyor, şerit ve nokta ise sırayla
+    /// amber'a dönüyordu. Ölçülen kusur budur: üç yüzey aynı hareketi anlatmıyordu. Artık ad da şeritle AYNI
+    /// yoldan (<see cref="Controls.MotionTokens.TransitionTokenBrush"/>) boyanır ve <see cref="ProjectRowViewModel.Marked"/>
+    /// AÇILDIĞINDA eski renkten akmaya başlar — çakmaz.</para>
+    ///
+    /// <para><b>Gecikme AYRI bir sabit DEĞİLDİR</b> (kopya YASAK): bu çağrının kendisi zaten satırın dalga
+    /// gecikmesi kadar geç gelir, çünkü <see cref="OperationChoreographer"/> her satırın <c>Marked</c>'ını
+    /// KENDİ sırasında gerçek zamanda değiştirir — şerit ve nokta da gecikmelerini aynı şekilde alır.</para>
+    /// </summary>
+    [StaFact]
+    public void The_wave_fades_the_row_name_into_primary_too()
+    {
+        var host = DsResources.NewHost();
+        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending);
+        var row = new ProjectRow { DataContext = vm, AnimationsEnabledProvider = () => true };
+        var window = DsResources.Realize(host, row);
+
+        var secondaryToken = (SolidColorBrush)row.FindResource("Brush.TextSecondary");
+        var primaryToken = (SolidColorBrush)row.FindResource("Brush.TextPrimary");
+        Assert.Same(secondaryToken, row.NameText.Foreground); // ön-koşul: paylaşılan token fırçası, işi yok
+
+        vm.Marked = true;
+
+        var lit = Assert.IsType<SolidColorBrush>(row.NameText.Foreground);
+        Assert.NotSame(primaryToken, lit);            // kendi kopyasına devretti — ANINDA beyazlamadı
+        Assert.Equal(secondaryToken.Color, lit.Color); // geçiş ESKİ renkten başlıyor (şeritle AYNI desen)
+
+        vm.Marked = false;
+        Assert.Same(secondaryToken, row.NameText.Foreground); // ...ve dalga bitince token referansına dönüyor
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Dalga DIŞINDA (<c>lighting == false</c>) ad rengi ANINDA oturmaya devam eder — geçiş yalnız
+    /// dalgaya aittir. Bir üstteki testin vacuous olmadığının kanıtı budur: her iki yol da aynı hedefe
+    /// (primary) gitse bile yalnız dalga yolu animasyon kurar.</summary>
+    [StaFact]
+    public void The_row_name_still_settles_instantly_outside_the_wave()
+    {
+        var host = DsResources.NewHost();
+        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending);
+        var row = new ProjectRow { DataContext = vm, AnimationsEnabledProvider = () => true };
+        var window = DsResources.Realize(host, row);
+
+        var primaryToken = (SolidColorBrush)row.FindResource("Brush.TextPrimary");
+
+        vm.State = ProjectRowState.Succeeded; // dalga DIŞI bir yol (Status case'i, lighting=false)
+
+        Assert.Same(primaryToken, row.NameText.Foreground); // token referansına ANINDA oturdu, kopya YOK
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// <b>Koreografinin solması satırı ÖNCE kaybetmez.</b> Ölçülen kusur (kullanıcı: "build dedim, o ara proje
     /// listesinde bazı satırlarda yanıp sönmeler oluyor"): <c>ApplyFade</c> her adımda önce
     /// <c>BeginAnimation(Opacity, null)</c> çağırıyordu. Bu, beliriş animasyonunun (<see cref="ProjectRow.PlayReveal"/>)

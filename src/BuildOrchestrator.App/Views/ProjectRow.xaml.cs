@@ -315,8 +315,17 @@ public partial class ProjectRow : UserControl
         // duruma bağlandı. Somut fark: SUCCEEDED satır artık PRIMARY'dir (eskiden secondary'ydi) — bu koşuda
         // gerçekten iş yapmış bir satırın adı, hiç dokunulmamış bir satırla aynı tonda okunamaz.
         // Kalınlık HER ZAMAN 500'dür (XAML); bold satır ritmini bozuyordu.
-        PART_Name.SetResourceReference(TextBlock.ForegroundProperty,
-            VisualStatuses.NameIsEmphasised(visual) ? "Brush.TextPrimary" : "Brush.TextSecondary");
+        //
+        // [DEĞİŞEN KURAL — v1.13.2, ölçüm] Renk eskiden SetResourceReference ile ANINDA oturuyordu: dalganın
+        // başında bütün adlar birden beyazlıyor, şerit ve nokta ise sırayla amber'a dönüyordu — üç yüzey aynı
+        // hareketi anlatmıyordu. Artık ad da AYNI yoldan (TransitionTokenBrush) boyanır: dalgada (lighting=true)
+        // 200ms'de akar. Gecikme AYRI bir sabit DEĞİLDİR (kopya YASAK) — bu çağrının kendisi zaten satırın
+        // dalga gecikmesi kadar geç gelir, çünkü OperationChoreographer her satırın Marked'ını KENDİ sırasında
+        // (NeutralMs + order[i]*stagger) gerçek zamanda değiştirir; şerit (SetStripeFill) ve nokta
+        // (PART_Dot.SetState) gecikmelerini de AYNI şekilde, çağrı anından alır — ad üçüncü bir kanal açmaz.
+        string nameKey = VisualStatuses.NameIsEmphasised(visual) ? "Brush.TextPrimary" : "Brush.TextSecondary";
+        Controls.MotionTokens.TransitionTokenBrush(this, PART_Name, TextBlock.ForegroundProperty, nameKey,
+            lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
 
         PART_Dot.SetState(visual, lighting);
         SetStripeFill(lighting);
