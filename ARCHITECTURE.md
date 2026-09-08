@@ -834,9 +834,21 @@ projects building on a four-worker run.
 **A group that did not converge persists nothing.** Only `Converged` is trusted: on no-progress, on the
 ceiling, on a stop, on cancellation and on an unexpected exception, every member is invalidated — including
 members that came back green — and a group cut short reports every member as failed rather than carrying an
-intermediate round's verdict out. Stop is deliberately asymmetric here: a single in-flight project is allowed
-to finish and persist, but a group is cut at the end of the round it is in, because the unit of work is all of
-the rounds, and continuing them after a stop would mean dozens more invocations.
+intermediate round's verdict out.
+
+**A stop cuts the group where it lands, not at the end of the round.** The member already compiling drains, as
+everywhere else; the members after it in the round are never invoked at all. A group runs its own loop rather
+than going back to the scheduler for each member, so the scheduler's stop gate does not cover it and the gate
+has to be repeated inside the loop — without it a stop kept spawning a fresh `MSBuild.exe` for every remaining
+member, which is the one place the application broke §4.5's promise that nothing new is dispatched. Cutting
+mid-round costs nothing, because an interrupted group discards every member's result anyway: the round that
+used to be carried to completion was thrown away when it ended.
+
+A round cut short is also **never put to the round policy**. Feeding it a partial round is the sharp edge here:
+in a second round whose members had all been clean so far, the policy would answer *converged* while some
+members had not been compiled at all, and a stopped run would persist a fresh signature — telling the next
+`Build` that the component is up to date. The decision therefore stays at *continue*, which is exactly the
+state the invalidate-everything path above keys on.
 
 **Non-convergence memory.** A group that ends in **no progress** records the composite signature it gave up
 at, per member, beside that member's build state (§7.5). A stop or an unexpected error never writes this —
