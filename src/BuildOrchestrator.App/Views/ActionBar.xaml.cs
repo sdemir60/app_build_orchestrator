@@ -62,6 +62,10 @@ public partial class ActionBar : UserControl
         PART_BranchPopover.CloseRequested += () => { PART_BranchChip.IsChecked = false; PART_BranchChip.Focus(); };
         PART_WorktreePopover.CloseRequested += () => { PART_WorktreeChip.IsChecked = false; PART_WorktreeChip.Focus(); };
         PART_BuildMenu.ItemInvoked += () => PART_Split.IsMenuOpen = false;
+        // Açık bir popover'ın chip'ine basmak onu KAPATIR (BuildApp.jsx:2399/:2404 `set…(!…)`); WPF'in
+        // StaysOpen=False capture yolu tek başına bırakılırsa aynı jest onu yeniden açardı. Kapı tek yerde.
+        PopoverToggle.Bind(PART_BranchChip, PART_BranchPopup);
+        PopoverToggle.Bind(PART_WorktreeChip, PART_WorktreePopup);
         // perf momentary; [T20-b] chip artık koşan run'a setPerfMode gönderdiği için VM tarafı async —
         // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli
         // (WorktreePopover'ın `_ = _vm.DeleteWorktreeAsync(...)` deseniyle aynı).

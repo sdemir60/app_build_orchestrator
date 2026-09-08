@@ -29,6 +29,10 @@ public partial class ProjectRowActions : UserControl
         ToolTipService.SetShowOnDisabled(PART_BuildButton, true);
         PART_MoreButton.ToolTip = "More — Rebuild, Clean";
         PART_RowMenu.Opened += (_, _) => PART_RowMenuContent.PlayPopIn();
+        // [design v1.11.0 §9-6] Açık menünün ⋯'sine basmak onu KAPATIR (BuildApp.jsx:657
+        // `if (menuOpen) { setMenu(null); return; }`); VS seçicisi de aynı kapıdan geçer.
+        Controls.PopoverToggle.Bind(PART_MoreButton, PART_RowMenu);
+        Controls.PopoverToggle.Bind(PART_VsButton, PART_VsChooser);
     }
 
     internal FrameworkElement HoverIcons => PART_HoverIcons;
