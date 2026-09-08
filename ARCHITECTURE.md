@@ -1812,8 +1812,8 @@ project" — in amber, grey and a permanent orange for cycle members; that chann
 arrangement was protecting is still protected by the new one: `queued` is amber rather than grey, so pressing
 Build no longer drains the only colour on screen in the same frame the graph dims.
 
-**Entering a run dims before it repaints.** Colour and border changes are instant here (measured deviation,
-below), so pressing Build used to land the dashed-to-solid switch of every planned node in the same frame the
+**Entering a run dims before it repaints.** Outside the marking wave, colour and border changes are instant
+here (measured deviation, below), so pressing Build used to land the dashed-to-solid switch of every planned node in the same frame the
 graph began to fade — the change was seen at full brightness and the fade arrived after it, which read as
 "the ones about to build appeared, then everything went out". Status pushes are therefore held for the length
 of the fade and applied once it finishes; only the last one is kept, since the intermediate states were never
@@ -2271,19 +2271,37 @@ halfway through, so ending the two at the same instant would look wrong; they fi
 perceived as simultaneous. Rows and graph nodes fade together; the wave is random rather than in build order
 by explicit decision.
 
-The choreography **overlaps the engine's planning window** rather than delaying the run. The prototype starts
-the run when the choreography ends, which costs nothing in a simulation; here the command is sent immediately
-and the choreography plays over `starting` — worktree preparation, scan, graph, topology, incremental — which
-takes seconds anyway. Delaying a real build by three seconds for an animation is not defensible, and the
-visible sequence is unchanged. `runStarted` ends the choreography and the status channel takes the amber over.
+**The run command goes out when the choreography ends**, not when the button is pressed. Overlapping the two
+was tried — send immediately, play the choreography over the engine's planning window (worktree preparation,
+scan, graph, topology, incremental) and let `runStarted` end it — and the cost was that the animation became
+conditional on how long planning took: warm repository, no worktree, and `runStarted` arrived before the wave
+finished; cold, and it did not. The same click was sometimes animated and sometimes instant. A choreography
+either always plays or never does. The operation itself still begins on the first frame — the pill lights,
+the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
+the scope and awaits a gate; the shell owns the timing and closes it.
 
-That handover is the reason `queued` is derived from a run that is *live*, not from one that has merely been
-requested. Were the planning window counted as a run, every project in the plan would turn queued-amber on the
-click itself and the neutral moment and the wave would both be invisible. No information is lost by waiting:
-the wave lights exactly the set the queue would have, only progressively — and when the choreography is
-skipped (reduced motion, or an empty scope) the scope is marked in one step, so the amber still appears at
-once. If the run never starts — the command fails, or the engine never answers — the marks are cleared, because
-an operation that did not happen may not leave its colour behind.
+Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it**:
+no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
+
+The wait is also why `queued` is derived from a run that is *live*, not from one that has merely been
+requested. Were the request counted as a run, every project in the plan would turn queued-amber on the click
+itself and the neutral moment and the wave would both be invisible. No information is lost by waiting: the
+wave lights exactly the set the queue would have, only progressively — and when the choreography is skipped
+(reduced motion, or an empty scope) the scope is marked in one step, so the amber still appears at once. If
+the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
+operation that did not happen may not leave its colour behind.
+
+**The scope fades into amber; it does not snap.** Every surface the wave touches — the node's border, its
+fill and the cube inside it, the row's stripe and its dot — crosses to the new colour over 200 ms on the
+standard curve, and all of them go through one function (`MotionTokens.TransitionTokenBrush`). Colour
+transitions are otherwise instant here, and that deviation is measured and deliberate: WPF cannot interpolate
+a brush property, so a transition means a local `SolidColorBrush` per surface plus a `ColorAnimation`, and
+when 177 projects change status in a single tick — which is exactly what the start of a run does — 531 of
+each push the tick from 11 ms to 51 ms and break the 50 ms UI event budget. The wave is the opposite case:
+its tempo is 110 ms per node (about 31 ms across 36 projects), so one or two nodes change per tick. The
+transition is therefore open only while a marking choreography is playing; a surface hands over to a local
+brush for its duration and is given the shared token brush back afterwards, so it never loses the reference
+permanently.
 
 The **ending** — the neon ignition — lives only in the graph; the list stays still. Everything holds dim for
 900 ms, then the projects this run actually built (succeeded ∪ failed) ignite in random order like fluorescent

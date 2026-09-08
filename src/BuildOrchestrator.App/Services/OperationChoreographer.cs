@@ -1,4 +1,4 @@
-using BuildOrchestrator.App.Controls;
+﻿using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
 
@@ -49,6 +49,19 @@ public sealed class OperationChoreographer
     /// </summary>
     /// <param name="allRows">Listenin TÜM satırları — kapsam dışındakiler "örtüşen veda"nın gri yarısıdır.</param>
     /// <param name="scope">Bu işlemin kapsamı (dalgada amber'a yanan küme).</param>
+    /// <summary>
+    /// <see cref="Play"/>'in bekleyen biçimi: dönen Task koreografi BİTTİĞİNDE (ya da kesildiğinde) tamamlanır.
+    /// Koşu komutunu bu Task'a bağlayan <c>RunViewModel</c>'dir — dizi böylece HER SEFERİNDE baştan sona oynar.
+    /// Koreografi hiç oynamayacaksa (reduced-motion ya da boş kapsam) tamamlanmış bir Task döner: bekleme yok.
+    /// </summary>
+    public Task PlayAsync(IReadOnlyList<ProjectRowViewModel> allRows, IReadOnlyList<ProjectRowViewModel> scope)
+    {
+        Play(allRows, scope); // içerideki Cancel önceki bekleyeni zaten serbest bırakır
+        if (!_player.IsPlaying) return Task.CompletedTask;
+        _completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return _completion.Task;
+    }
+
     public void Play(IReadOnlyList<ProjectRowViewModel> allRows, IReadOnlyList<ProjectRowViewModel> scope)
     {
         ArgumentNullException.ThrowIfNull(allRows);
@@ -100,6 +113,9 @@ public sealed class OperationChoreographer
         PushGraph();
     }
 
+    /// <summary>Bekleyen <see cref="PlayAsync"/> çağrısının tamamlayıcısı; koreografi oynamiyorsa <c>null</c>.</summary>
+    private TaskCompletionSource? _completion;
+
     private void Enter(MarkStep step, IReadOnlyList<ProjectRowViewModel> allRows)
     {
         Step = step;
@@ -115,6 +131,12 @@ public sealed class OperationChoreographer
 
     private void Finish(IReadOnlyList<ProjectRowViewModel> allRows)
     {
+        // Bekleyen serbest birakilir HER kosulda: kosu komutu buna baglidir ve koreografi kesilmis olsa da
+        // (Stop, yeni islem) cagiran sonsuza dek beklememelidir.
+        var completion = _completion;
+        _completion = null;
+        completion?.TrySetResult();
+
         if (Step == MarkStep.None) return;
         Step = MarkStep.None;
         foreach (var row in allRows) row.Fade = RowFade.None;

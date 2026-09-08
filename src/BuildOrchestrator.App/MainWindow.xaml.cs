@@ -229,10 +229,12 @@ public partial class MainWindow : Window
         // (neon tutuşma — YALNIZ graf). Sürücü kabukta durur çünkü zamanlama ve görsel katman burasıdır;
         // VM yalnız "bir işlem başladı, kapsamı bu" der.
         _choreographer.PushToGraph = ApplyMarkingToGraph;
-        _vm.OperationBegun += (_, scope) =>
+        // [design v1.11.0 §9-4] Koşu komutu koreografi BİTTİKTEN sonra gider — kapı budur. VM zamanlama
+        // bilmez; kabuk oynatır ve bitişini bildirir.
+        _vm.OperationChoreography = scope =>
         {
             Shell.GraphHost.BeginOperation(); // bir önceki koşunun neon'u anında kesilir (§9-5)
-            _choreographer.Play(_vm.Projects, scope);
+            return _choreographer.PlayAsync(_vm.Projects, scope);
         };
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>

@@ -92,6 +92,8 @@ public partial class ProjectRow : UserControl
         MouseRightButtonUp += OnRowRightClicked;
         KeyDown += OnRowKeyDown;
         _motion.Changed += OnAnimationsEnabledChanged;
+        // [design v1.11.0 §2.3] Nokta da satırın motion kapısını kullanır — iki yüzey aynı sinyali okur.
+        PART_Dot.AnimationsEnabledProvider = () => _motion.Enabled;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         // [L1] Hover ikonlarının kablajı ctor'dan EnsureActions'a taşındı — ikonlar artık ilk hover'da doğuyor.
@@ -224,7 +226,9 @@ public partial class ProjectRow : UserControl
             // DEĞİŞTİRMEDEN de görünümü çevirir.
             case nameof(ProjectRowViewModel.Fresh):
             case nameof(ProjectRowViewModel.Marked):
-                ApplyStatusVisuals();
+                // [design v1.11.0 §2.3] İşaretlilik = işaretleme DALGASI. Bu tek kanalda renk AKAR (200ms),
+                // çakmaz — satır node'la senkron yanmalıdır. Diğer tüm yollarda renk anında oturur.
+                ApplyStatusVisuals(lighting: true);
                 break;
             case nameof(ProjectRowViewModel.InCycle):
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
@@ -282,7 +286,9 @@ public partial class ProjectRow : UserControl
     /// <summary>[design v1.11.0 §9-2] Statü-türevi görsellerin TEK yazıcısı: glyph, ad vurgusu, sol şerit ve
     /// nokta. Hepsi <see cref="ProjectRowViewModel.VisualStatus"/>'ten beslenir — kart kendi eşlemesini YAPMAZ
     /// (tablo <see cref="VisualStatuses"/>'tedir; graf de aynı tablodan okur).</summary>
-    private void ApplyStatusVisuals()
+    /// <param name="lighting">[design v1.11.0 §2.3] Renk geçişle mi otursun — yalnız işaretleme dalgası
+    /// (<see cref="ProjectRowViewModel.Marked"/>/<see cref="ProjectRowViewModel.Fresh"/> kanalı) true verir.</param>
+    private void ApplyStatusVisuals(bool lighting = false)
     {
         GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
         var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
@@ -301,8 +307,8 @@ public partial class ProjectRow : UserControl
         PART_Name.SetResourceReference(TextBlock.ForegroundProperty,
             VisualStatuses.NameIsEmphasised(visual) ? "Brush.TextPrimary" : "Brush.TextSecondary");
 
-        PART_Dot.State = visual;
-        SetStripeFill();
+        PART_Dot.SetState(visual, lighting);
+        SetStripeFill(lighting);
     }
 
     /// <summary>State'e özel geçiş yan etkileri: hata ANINDA bir kez shake + building nefes geçişi.</summary>
@@ -333,12 +339,20 @@ public partial class ProjectRow : UserControl
     /// Alternatif bir <c>Line</c> + <c>StrokeDashArray</c> idi; o, seçilide 2→3 genişleyen şeridi ve satır
     /// yüksekliğini ayrıca yönetmeyi gerektirirdi.</para>
     /// </summary>
-    private void SetStripeFill()
+    private void SetStripeFill(bool lighting = false)
     {
         var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
         string key = VisualStatuses.StripeBrushKey(visual);
-        if (!VisualStatuses.IsDashed(visual)) { PART_Stripe.SetResourceReference(Shape.FillProperty, key); return; }
+        if (!VisualStatuses.IsDashed(visual))
+        {
+            // Geçişin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
+            Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,
+                lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
+            return;
+        }
 
+        // Başlangıç modunun kesikli şeridi bir DrawingBrush'tur — dalganın hedefi değildir (dalga düz amber'a
+        // yakar), bu yüzden geçiş aranmaz.
         PART_Stripe.Fill = BuildDashedStripeBrush(ResolveBrush(key));
     }
 

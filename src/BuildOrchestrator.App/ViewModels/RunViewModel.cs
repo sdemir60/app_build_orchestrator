@@ -632,9 +632,6 @@ public sealed partial class RunViewModel : ObservableObject
         // yeniden oku" dediği sinyaldir — başlangıç modunun düşüşü <c>Counters</c>'ı hareket ettirmez, bu
         // yüzden sayaca bakan kapı onu kaçırır. Sinyal erken çıkarsa graf önceki koşunun renkleriyle tazelenir.
         CurrentOperation = OperationLabel.ForRunMode(mode);
-        // ...ve açılış koreografisi istenir. Kapsamı BURASI bilir (mod → hangi projeler); oynatma kabuğun
-        // işidir (zamanlama + görsel), bu yüzden bir OLAY olarak dışarı verilir.
-        OperationBegun?.Invoke(this, scope);
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers)
@@ -653,6 +650,23 @@ public sealed partial class RunViewModel : ObservableObject
         var previousPhase = Phase;
         Phase = AppPhase.Starting;
         AppendRunLine(RunRequestedLine(mode));
+
+        // [design v1.11.0 §9-4 `_mark`] AÇILIŞ KOREOGRAFİSİ — koşu ondan SONRA başlar (prototipte de:
+        // `_mark(scope, () => startRun())`). Kapsamı VM bilir, zamanlamayı kabuk; bu yüzden kapı bir
+        // delegedir ve VM tek bir şey yapar: bitmesini bekler.
+        //
+        // Neden koşu beklenir: koreografi motorun planlama penceresiyle ÖRTÜŞTÜRÜLMÜŞTÜ ve bedeli ölçüldü —
+        // planlama koreografiden kısa sürdüğünde `runStarted` dalgayı ortasında kesiyordu, uzun sürdüğünde
+        // kesmiyordu: aynı tıklama bazen animasyonlu bazen anında açılıyordu. Bir koreografi ya her zaman
+        // oynar ya hiç. İşlem yine de İLK KAREDE başlar (pill, Stop, konsol satırı) — bekleyen yalnız komut.
+        if (OperationChoreography is { } playChoreography)
+        {
+            _pendingRunId = runId;
+            await playChoreography(scope);
+            // Koreografi sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ.
+            if (!string.Equals(_pendingRunId, runId, StringComparison.Ordinal)) return;
+            _pendingRunId = null;
+        }
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
         // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
@@ -667,9 +681,18 @@ public sealed partial class RunViewModel : ObservableObject
         }
     }
 
-    /// <summary>[design v1.11.0 §9-4] Bir işlem başladı — açılış koreografisinin KAPSAMIYLA birlikte.
-    /// Kabuk (<c>MainWindow</c>) bunu dinler ve koreografiyi oynatır; VM zamanlama BİLMEZ.</summary>
-    public event EventHandler<IReadOnlyList<ProjectRowViewModel>>? OperationBegun;
+    /// <summary>
+    /// [design v1.11.0 §9-4] <b>Açılış koreografisinin kapısı.</b> Kabuk (<c>MainWindow</c>) buraya kendi
+    /// oynatıcısını takar; VM koreografiyi İSTER ve bitmesini BEKLER — zamanlama, süre ve görsel bilgisi
+    /// VM'e hiç sızmaz. Kapı takılı değilse (çıplak VM testleri) komut doğrudan gider.
+    ///
+    /// <para>Argüman işlemin KAPSAMIdir (<see cref="ScopeFor"/>): dalgada amber'a yanan küme.</para>
+    /// </summary>
+    public Func<IReadOnlyList<ProjectRowViewModel>, Task>? OperationChoreography { get; set; }
+
+    /// <summary>Koreografisi oynarken henüz GÖNDERİLMEMİŞ koşunun id'si; <c>null</c> = bekleyen koşu yok.
+    /// Stop bu pencerede komutu değil <b>isteği</b> iptal eder (bkz. <see cref="CancelPendingRun"/>).</summary>
+    private string? _pendingRunId;
 
     /// <summary>
     /// [design v1.11.0 §9-4] Bir işlemin KAPSAMI — dalgada amber'a yanan küme.
@@ -856,9 +879,25 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="IsMidRunLocked"/> sürer (branch/worktree/configuration kilidi kalkmaz, split-button geri
     /// gelmez). Fazdan çıkış motorun sonucuna aittir — bkz. <see cref="OnRunCompleted"/>/
     /// <see cref="OnRunStopped"/>/<see cref="OnError"/>/<see cref="OnEngineExited"/>.</para></summary>
+    /// <summary>[design v1.11.0 §3.1 "Stop"] Marking fazında Stop: komut henüz gönderilmediği için
+    /// durdurulacak bir şey de yoktur — uygulama kendi isteğini geri alır. Motora ne <c>startRun</c> ne
+    /// <c>stopRun</c> gider; koreografiyi ve işaretleri kabuk <see cref="IsStarting"/> düşüşünde temizler.</summary>
+    internal static string RunCancelledLine => "Cancelled — build not started";
+
+    private void CancelPendingRun()
+    {
+        _pendingRunId = null;
+        IsStarting = false;
+        Phase = AppPhase.Idle;
+        AppendRunLine(RunCancelledLine);
+    }
+
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
     {
+        // [design v1.11.0 §3.1] Marking fazı: komut henüz gönderilmedi — durdurulacak bir koşu yok, geri
+        // alınacak bir İSTEK var. Motora hiçbir şey gitmez.
+        if (_pendingRunId is not null) { CancelPendingRun(); return; }
         if (_currentRunId is null) return;
         var previous = Phase;
         Phase = AppPhase.Stopping;

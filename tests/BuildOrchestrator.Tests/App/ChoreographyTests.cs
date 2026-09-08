@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using System.Windows.Media;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -174,6 +175,90 @@ public class ChoreographyTests
         // En az üç kez YÜKSELİP düşer — titreme budur.
         int drops = frames.Zip(frames.Skip(1), (a, b) => b.Opacity < a.Opacity).Count(dropped => dropped);
         Assert.True(drops >= 3, $"neon monoton yükseliyor (yalnız {drops} düşüş) — titreme yok");
+    }
+
+    // ================================================================ dalganın renk geçişi
+
+    /// <summary>
+    /// [§2.3 "dalga" · §1.3] <b>Kapsam amber'a YANAR, ÇAKMAZ.</b> Prototipte dalga sırasında düğümün zemini,
+    /// çerçevesi ve küpü <c>200ms var(--ease-standard)</c> ile geçer (BuildApp.jsx:529-533); rengin anında
+    /// oturması koreografiyi bir animasyon olmaktan çıkarıp bir dizi sıçramaya çevirir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> <c>ApplyNodeStatus</c> renkleri ANINDA uyguluyordu — gerekçesi ölçülmüş bir
+    /// sapmaydı: 177 projenin statüsünün TEK tick'te değiştiği durumda (koşu başlangıcı) 531 fırça + 531
+    /// ColorAnimation UI bütçesini aşıyordu. O ölçüm <b>toplu</b> değişim içindir ve GEÇERLİDİR; dalga ise tam
+    /// tersidir — tempo 110ms/node (36 projede ~31ms), yani tick başına bir-iki düğüm. Geçiş bu yüzden
+    /// YALNIZ koreografi oynarken açılır; bütçe ölçümün yapıldığı yolda dokunulmadan kalır.</para>
+    /// </summary>
+    [StaFact]
+    public void The_wave_fades_a_node_into_amber_instead_of_snapping_it()
+    {
+        var view = Graph(new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
+        var square = view.NodeVisuals["a"].Square;
+        var greyToken = TokenBrush(view, VisualStatus.Discovered);
+        var amberToken = TokenBrush(view, VisualStatus.Marked);
+        Assert.Same(greyToken, square.Stroke);       // ön-koşul: normalde PAYLAŞILAN token fırçası
+        Assert.NotEqual(greyToken.Color, amberToken.Color);
+
+        view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal));
+        view.UpdateStatuses([new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
+
+        var lit = Assert.IsType<SolidColorBrush>(square.Stroke);
+        Assert.NotSame(amberToken, lit);            // düğüm kendi kopyasına devretti
+        Assert.Equal(greyToken.Color, lit.Color);   // ...ve geçiş ESKİ renkten başlıyor: çakma yok
+    }
+
+    /// <summary>
+    /// [§2.3] Koreografi oynamazken renk ANINDA oturur ve yüzey PAYLAŞILAN token fırçasına geri döner —
+    /// ölçülmüş sapma (toplu statü değişimi) olduğu gibi durur ve düğüm token referansını KAYBETMEZ.
+    /// </summary>
+    [StaFact]
+    public void Outside_the_choreography_a_node_keeps_the_shared_token_brush()
+    {
+        var view = Graph(new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
+        var square = view.NodeVisuals["a"].Square;
+
+        view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal));
+        view.UpdateStatuses([new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
+        Assert.NotSame(TokenBrush(view, VisualStatus.Marked), square.Stroke); // ön-koşul: yerel fırçaya geçti
+
+        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal));
+        view.UpdateStatuses([new GraphNode("a", 0, GraphStatus.Succeeded, VisualStatus.Succeeded)]);
+
+        Assert.Same(TokenBrush(view, VisualStatus.Succeeded), square.Stroke);
+    }
+
+    /// <summary>Bir görsel durumun düğüm çerçevesi için çözülmüş token fırçası — test kendi anahtarını
+    /// YAZMAZ, eşleme <see cref="VisualStatuses"/>'tedir.</summary>
+    private static SolidColorBrush TokenBrush(GraphView view, VisualStatus state) =>
+        (SolidColorBrush)view.FindResource(VisualStatuses.NodeBorderBrushKey(state));
+
+    /// <summary>
+    /// [§2.3 "Satır listesi bu fazda node'larla senkron" · BuildApp.jsx:682/693] Satırın sol şeridi de dalga
+    /// sırasında amber'a AKAR: grafın çakmadan yandığı bir karede listenin çakması iki yüzeyi ayırırdı.
+    /// İşaretlilik düştüğünde yüzey PAYLAŞILAN token fırçasına geri döner.
+    /// </summary>
+    [StaFact]
+    public void The_wave_fades_the_row_stripe_into_amber_too()
+    {
+        var host = DsResources.NewHost();
+        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending);
+        var row = new ProjectRow { DataContext = vm, AnimationsEnabledProvider = () => true };
+        var window = DsResources.Realize(host, row);
+
+        var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
+        var greyToken = (SolidColorBrush)row.FindResource(VisualStatuses.StripeBrushKey(VisualStatus.Discovered));
+        var amberToken = (SolidColorBrush)row.FindResource(VisualStatuses.StripeBrushKey(VisualStatus.Marked));
+        Assert.Same(greyToken, stripe.Fill); // ön-koşul: paylaşılan token fırçası
+
+        vm.Marked = true;
+
+        var lit = Assert.IsType<SolidColorBrush>(stripe.Fill);
+        Assert.NotSame(amberToken, lit);          // kendi kopyasına devretti
+        Assert.Equal(greyToken.Color, lit.Color); // geçiş ESKİ renkten başlıyor
+
+        vm.Marked = false;
+        Assert.Same(greyToken, stripe.Fill);      // ...ve dalga bitince token referansına dönüyor
     }
 
     // ================================================================ sürücü: satırlar + graf

@@ -96,7 +96,7 @@ public class OperationPipelineTests
     {
         var vm = AfterOneCompletedRun();
         IReadOnlyList<ProjectRowViewModel>? scope = null;
-        vm.OperationBegun += (_, s) => scope = s;
+        vm.OperationChoreography = s => { scope = s; return Task.CompletedTask; };
 
         await vm.BuildCommand.ExecuteAsync(null);
 
@@ -192,6 +192,69 @@ public class OperationPipelineTests
         Assert.False(a.CycleWaiting);
         Assert.Null(a.SkipReason);
         Assert.True(a.InCycle); // ...ama yapısal olan durur
+    }
+
+    // ============================================================ koreografi kapısı
+
+    /// <summary>
+    /// [§9-4 · §3.1] <b>Koşu, açılış koreografisi BİTTİKTEN sonra başlar.</b> Prototipin borusunda son adım
+    /// budur (<c>_mark(scope, () =&gt; startRun())</c>, build-data.js:365-368) ve tasarımın bütün dizisi
+    /// (nötr an → dalga → sarı-gri an → örtüşen veda → nefes) ancak böyle HER SEFERİNDE görülür.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Komut önce TIKLAMA ANINDA gönderiliyor, koreografi motorun planlama
+    /// penceresiyle ÖRTÜŞÜYORDU. Ölçülen bedel: planlama koreografiden kısa sürdüğünde (sıcak repo, worktree
+    /// yok) <c>runStarted</c> dalgayı ortasında kesiyor, uzun sürdüğünde kesmiyordu — aynı tıklama bazen
+    /// animasyonlu bazen anında açılıyordu. Bir koreografi ya HER ZAMAN oynar ya hiç; "bazen" bir seçenek
+    /// değildir.</para>
+    ///
+    /// <para><b>Bedeli:</b> gerçek derleme koreografi kadar (≤40ms × ... ≤ ~4 sn) sonra başlar. Bu, tasarımın
+    /// kendi kabulüdür — ve işlem daha ilk karede başlamıştır: pill amber yanar, buton Stop'a döner, konsola
+    /// istek satırı düşer.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_run_command_waits_until_the_opening_choreography_has_finished()
+    {
+        var vm = AfterOneCompletedRun();
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        IpcCommand? sent = null;
+        vm.DebugOnCommandSent = c => sent = c;
+
+        var run = vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.Null(sent);            // koreografi oynarken motora HİÇBİR ŞEY gitmez
+        Assert.True(vm.IsStarting);   // ...ama işlem başladı: pill amber, Stop erişilebilir
+        Assert.Equal(AppPhase.Starting, vm.Phase);
+
+        choreography.SetResult();
+        await run;
+
+        Assert.IsType<StartRunCommand>(sent);
+    }
+
+    /// <summary>
+    /// [§3.1 "Stop"] <b>Marking fazında Stop: koşu HİÇ başlamaz.</b> Komut henüz gönderilmediği için
+    /// durdurulacak bir şey de yoktur — motora ne <c>startRun</c> ne <c>stopRun</c> gider; uygulama kendi
+    /// isteğini geri alır ve konsola tasarımın cümlesini düşürür.
+    /// </summary>
+    [Fact]
+    public async Task Stopping_during_the_choreography_cancels_the_run_before_it_is_sent()
+    {
+        var vm = AfterOneCompletedRun();
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        var run = vm.BuildCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        choreography.SetResult();
+        await run;
+
+        Assert.Empty(sent);
+        Assert.False(vm.IsStarting);
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+        Assert.Contains(RunViewModel.RunCancelledLine, vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
     // ============================================================ nötr an (planlama penceresi)

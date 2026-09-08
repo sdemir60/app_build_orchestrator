@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Shapes;
 
@@ -35,7 +35,11 @@ internal static class IconPaint
     /// gerçek bir SAYI olmak zorundadır — bu yüzden ağaçtaki bir host gerekir.</param>
     /// <param name="brushKey">Boyanın token anahtarı; ikon DOLUYSA <c>Fill</c>'e, KONTURLUYSA <c>Stroke</c>'a
     /// bağlanır — çağıran hangisi olduğunu bilmek ZORUNDA değildir, karar sözlüğündür.</param>
-    public static void Apply(Path path, FrameworkElement resourceHost, string iconKey, string brushKey)
+    /// <param name="animate">[design v1.11.0 §9-4] Boya geçişle mi otursun (işaretleme dalgası) yoksa anında
+    /// mı — karar çağırandır, yol tektir (<see cref="MotionTokens.TransitionTokenBrush"/>).</param>
+    /// <param name="durationMs">Geçiş süresi; <paramref name="animate"/> false iken anlamsızdır.</param>
+    public static void Apply(Path path, FrameworkElement resourceHost, string iconKey, string brushKey,
+        bool animate = false, double durationMs = 0)
     {
         path.SetResourceReference(Path.DataProperty, iconKey);
 
@@ -49,13 +53,13 @@ internal static class IconPaint
             path.StrokeStartLineCap = PenLineCap.Round;
             path.StrokeEndLineCap = PenLineCap.Round;
             path.StrokeLineJoin = PenLineJoin.Round;
-            path.SetResourceReference(Shape.StrokeProperty, brushKey);
+            MotionTokens.TransitionTokenBrush(resourceHost, path, Shape.StrokeProperty, brushKey, animate, durationMs);
         }
         else
         {
             path.Stroke = null;
             path.StrokeThickness = 0;
-            path.SetResourceReference(Shape.FillProperty, brushKey);
+            MotionTokens.TransitionTokenBrush(resourceHost, path, Shape.FillProperty, brushKey, animate, durationMs);
         }
     }
 }

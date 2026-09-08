@@ -57,6 +57,24 @@ public class StatusDot : Control
     }
 
     private Ellipse? _dot;
+    private bool _lighting;
+
+    /// <summary>Motion sinyalinin kapısı — ProjectRow kendi <c>MotionGate</c>'ini buraya bağlar; verilmezse
+    /// statik sinyal okunur (MotionGate'in kendi varsayılanıyla aynı desen).</summary>
+    public Func<bool> AnimationsEnabledProvider { get; set; } = () => MotionGate.StaticAnimationsEnabled;
+
+    /// <summary>
+    /// [design v1.11.0 §2.3] Durumu, rengin AKARAK mı yoksa anında mı oturacağıyla birlikte yazar.
+    /// <paramref name="lighting"/> yalnız işaretleme dalgasında true olur — nokta şeritle ve graf düğümüyle
+    /// AYNI karede yanmalıdır. Düz <see cref="State"/> yazan (dalga dışı) her yol anında oturur.
+    /// </summary>
+    public void SetState(VisualStatus state, bool lighting)
+    {
+        _lighting = lighting && AnimationsEnabledProvider();
+        if (State == state) ApplyState(); // aynı değer: DP değişmez, yine de kip değişmiş olabilir
+        else State = state;
+        _lighting = false;
+    }
 
     public override void OnApplyTemplate()
     {
@@ -73,7 +91,7 @@ public class StatusDot : Control
 
         if (fresh)
         {
-            // Başlangıç modu: dolgu YOK, kesikli halka VAR.
+            // Başlangıç modu: dolgu YOK, kesikli halka VAR. Dalganın hedefi değildir (dalga düz amber'a yakar).
             _dot.Fill = null;
             _dot.SetResourceReference(Shape.StrokeProperty, key);
             _dot.StrokeThickness = FreshRingThickness;
@@ -81,7 +99,9 @@ public class StatusDot : Control
             return;
         }
 
-        _dot.SetResourceReference(Shape.FillProperty, key);
+        // Geçişin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
+        MotionTokens.TransitionTokenBrush(this, _dot, Shape.FillProperty, key,
+            _lighting, MarkingChoreography.LightMs);
         _dot.Stroke = null;
         _dot.StrokeDashArray = null;
     }

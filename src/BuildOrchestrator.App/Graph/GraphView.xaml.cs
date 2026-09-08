@@ -880,22 +880,25 @@ public partial class GraphView : UserControl
         string iconColor = VisualStatuses.NodeCoreBrushKey(state);
         bool dashed = VisualStatuses.IsDashed(state);
 
-        // [quiet · ÖLÇÜLMÜŞ SAPMA] §2.3 "Zemin/kenar/glyph renk geçişleri 380ms ease-standard" der; burada
-        // renkler ANINDA uygulanır ve bu bilinçlidir.
+        // [§2.3 · §1.3] Renk geçişi YALNIZ işaretleme dalgası oynarken açıktır — kapsam amber'a 200ms'de
+        // AKAR, ÇAKMAZ (BuildApp.jsx:529-533).
         //
+        // [ÖLÇÜLMÜŞ SAPMA — dalga DIŞINDA geçerlidir] Renkler dalga dışında ANINDA uygulanır ve bu bilinçlidir.
         // WPF'te bir fırça DP'si interpolate EDİLEMEZ: geçiş, düğüm başına yerel bir SolidColorBrush kurup
         // onun Color'ını animasyonlamayı gerektirir. Uygulandı ve ölçüldü — 177 projenin statüsünün tek
         // tick'te değiştiği durumda (koşu başlangıcı: hepsi Discovered → Queued) üç yüzey × 177 düğüm = 531
         // fırça + 531 ColorAnimation, tick'i 11 ms'den 51 ms'ye çıkarıyor ve UI olay bütçesini (50 ms,
-        // UiResponsivenessBudgetTests.EventBudgetMs) AŞIYOR. Ayrıca bir kez yerel fırçaya devreden yüzey
-        // token referansını da kaybeder.
+        // UiResponsivenessBudgetTests.EventBudgetMs) AŞIYOR.
         //
-        // 8–24px'lik bir karede, opaklığı zaten animasyonlu değişen bir yüzeyin renk geçişi için bütçenin
-        // %80'ini harcamak savunulabilir değil. Bütçeyi gevşetmek YASAK (CLAUDE.md), o yüzden geçiş
-        // uygulanmadı. Gözle doğrulama listesinde açık madde olarak duruyor.
-        visual.Square.SetResourceReference(Shape.StrokeProperty, border);
-        visual.Square.SetResourceReference(Shape.FillProperty, background);
-        IconPaint.Apply(visual.Icon, this, PackageIconKey, iconColor);
+        // Dalga tam TERSİ durumdur ve ölçüm onu kapsamaz: tempo 110ms/node (36 projede ~31ms), yani tick
+        // başına bir-iki düğüm değişir. Yüzey dalga sırasında yerel fırçaya devreder ve dalga bitince token
+        // referansına GERİ döner (TransitionTokenBrush) — referans kalıcı kaybedilmez.
+        bool lighting = _markStep != MarkStep.None && AnimationsEnabledProvider();
+        MotionTokens.TransitionTokenBrush(this, visual.Square, Shape.StrokeProperty, border,
+            lighting, MarkingChoreography.LightMs);
+        MotionTokens.TransitionTokenBrush(this, visual.Square, Shape.FillProperty, background,
+            lighting, MarkingChoreography.LightMs);
+        IconPaint.Apply(visual.Icon, this, PackageIconKey, iconColor, lighting, MarkingChoreography.LightMs);
 
         // WPF Border dashed desteklemez → kesikli çerçeve Rectangle.StrokeDashArray ile. Dash birimi
         // StrokeThickness çarpanıdır: 1.5px'lik çerçevede {2,2} = 3px dolu / 3px boş.

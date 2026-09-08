@@ -1,4 +1,4 @@
-namespace BuildOrchestrator.App.Controls;
+﻿namespace BuildOrchestrator.App.Controls;
 
 /// <summary>[design v1.11.0 §9-4] Açılış koreografisinin adımları. <see cref="None"/> = koreografi oynamıyor.</summary>
 public enum MarkStep
@@ -37,6 +37,11 @@ public static class MarkingChoreography
 {
     // ---- zaman çizelgesi (build-data.js:356-368) ----
     /// <summary>Nötr anın süresi — dalga bundan sonra başlar.</summary>
+    /// <summary>[design §2.3 · BuildApp.jsx:529-533/682/693] Dalga sırasında bir yüzeyin amber'a AKMA süresi
+    /// (<c>200ms var(--ease-standard)</c>). Duration.* ailesine ait DEĞİLDİR — effects.css'te yoktur, dalgaya
+    /// özgüdür; bu yüzden <c>StatusGlyph.PulseMs</c> deseninde adlandırılmış bir sabittir.</summary>
+    public const double LightMs = 200.0;
+
     public const double NeutralMs = 440;
     /// <summary>Son node yandıktan sonraki tampon (<c>W = markStagger*(n-1) + 380</c>).</summary>
     public const double WaveTailMs = 380;
