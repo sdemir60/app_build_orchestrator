@@ -196,6 +196,10 @@ public partial class ProjectRow : UserControl
         _vm = e.NewValue as ProjectRowViewModel;
         _prevState = null;
         _applied = false; // yeni VM → tam tazeleme yeniden gerekir (container yeniden kullanımı dahil)
+        // [design v1.12.0] Geri dönüştürülen container YENİ verisinin hâline ANINDA oturur: çapraz-sönüm bir
+        // durum değişimini anlatır, veri değişimini değil (gerekçe StartMode.ShouldCrossFade'de).
+        _stripeWasStartMode = null;
+        PART_Dot.ResetTransitionLatch();
         if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
         ApplyAll();
     }
@@ -323,61 +327,51 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>
-    /// [design v1.11.0 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
-    /// modunda kesikli gri, işlem başlayınca düz gri, işaretlenince amber, bitişte sonuç rengi.
+    /// [design v1.12.0 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
+    /// modunda soluk gri, işlem başlayınca tam gri, işaretlenince amber, bitişte sonuç rengi.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Başlangıç modu KESİKLİ çiziliyordu (tile'lanmış bir
+    /// <c>DrawingBrush</c>: 3px dolu / 4px boş). Ölçülen kusur: 2px'lik bir şeritte kesikli desen piksel
+    /// ızgarasına oturmuyor, tırtıklı görünüyordu. Şerit artık HER durumda DÜZ bir token fırçasıyla dolar ve
+    /// başlangıç modunu yalnız OPAKLIK anlatır (<see cref="Controls.StartMode.FaintOpacity"/> → 1, geçiş
+    /// <see cref="Controls.StartMode.CrossFadeMs"/>). Noktanın çapraz-sönümüyle AYNI anda, AYNI sürede olur.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.11.0]</b> <c>Queued</c> eskiden kendi grisini (<c>Brush.StatusQueued</c>)
     /// taşıyordu; artık kuyruk da işlemin kapsamıdır ve amber KALIR — işaretleme dalgasıyla yanan renk koşu
-    /// başlayınca sönmez. Ayrıca başlangıç modu (<c>fresh</c>) eklendi: şerit orada KESİKLİ çizilir
-    /// (3px dolu / 4px boş), çünkü Sync bir plan göstermez.</para>
+    /// başlayınca sönmez.</para>
     ///
     /// <para><b>[KORUNAN SAPMA]</b> §2.4 şeridin 1px dikey iç boşluklu olmasını ister; burada şerit satırın
     /// tam yüksekliğince uzanır (kullanıcı kararı — ayrımı satırın alt çizgisi yapar). Bkz. ProjectRow.xaml.</para>
-    ///
-    /// <para><b>Kesikli çizim:</b> WPF'te bir <see cref="Rectangle"/> dolgusu "kesikli" olamaz — desen
-    /// TİLE'lanmış bir <see cref="System.Windows.Media.DrawingBrush"/> ile verilir (2×3 dolu blok, 2×7 tile).
-    /// Alternatif bir <c>Line</c> + <c>StrokeDashArray</c> idi; o, seçilide 2→3 genişleyen şeridi ve satır
-    /// yüksekliğini ayrıca yönetmeyi gerektirirdi.</para>
     /// </summary>
     private void SetStripeFill(bool lighting = false)
     {
         var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
         string key = VisualStatuses.StripeBrushKey(visual);
-        if (!VisualStatuses.IsDashed(visual))
+        // Renk geçişinin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
+        Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,
+            lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
+
+        // Soluktan tama geçiş: kural noktanınkiyle AYNI yerdedir (StartMode.ShouldCrossFade) — ikisi tek
+        // hareketin parçasıdır ve ayrı ayrı karar veremezler.
+        bool start = VisualStatuses.IsStartMode(visual);
+        bool animate = Controls.StartMode.ShouldCrossFade(_stripeWasStartMode, start) && _motion.Enabled;
+        _stripeWasStartMode = start;
+        double target = start ? Controls.StartMode.FaintOpacity : 1.0;
+        if (!animate)
         {
-            // Geçişin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
-            Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,
-                lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
+            PART_Stripe.BeginAnimation(OpacityProperty, null);
+            PART_Stripe.Opacity = target;
             return;
         }
-
-        // Başlangıç modunun kesikli şeridi bir DrawingBrush'tur — dalganın hedefi değildir (dalga düz amber'a
-        // yakar), bu yüzden geçiş aranmaz.
-        PART_Stripe.Fill = BuildDashedStripeBrush(ResolveBrush(key));
+        var spline = Controls.MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+        PART_Stripe.BeginAnimation(OpacityProperty,
+            Controls.MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(Controls.StartMode.CrossFadeMs), spline),
+            System.Windows.Media.Animation.HandoffBehavior.SnapshotAndReplace);
     }
 
-    // [design v1.11.0 §2.4-1] `repeating-linear-gradient(to bottom, X 0 3px, transparent 3px 7px)` karşılığı.
-    private const double DashOnPx = 3, DashPeriodPx = 7;
-
-    /// <summary>[test seam] Başlangıç modunun kesikli şerit fırçasını üreten TEK yer — kontrol ve test AYNI
-    /// fabrikayı kullanır (BuildBreathingAnimation deseni).</summary>
-    internal static System.Windows.Media.DrawingBrush BuildDashedStripeBrush(System.Windows.Media.Brush color)
-    {
-        var drawing = new System.Windows.Media.GeometryDrawing(
-            color, null, new System.Windows.Media.RectangleGeometry(new Rect(0, 0, 2, DashOnPx)));
-        return new System.Windows.Media.DrawingBrush(drawing)
-        {
-            TileMode = System.Windows.Media.TileMode.Tile,
-            Viewport = new Rect(0, 0, 2, DashPeriodPx),
-            ViewportUnits = System.Windows.Media.BrushMappingMode.Absolute,
-            ViewboxUnits = System.Windows.Media.BrushMappingMode.Absolute,
-            Viewbox = new Rect(0, 0, 2, DashPeriodPx),
-            Stretch = System.Windows.Media.Stretch.None,
-        };
-    }
-
-    private System.Windows.Media.Brush ResolveBrush(string key) =>
-        TryFindResource(key) as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Transparent;
+    /// <summary>Şerit bir ÖNCEKİ çizimde başlangıç modunda mıydı — geçişin kapısı; <c>null</c> = bu veri için
+    /// henüz çizilmedi (<see cref="Controls.StartMode.ShouldCrossFade"/>).</summary>
+    private bool? _stripeWasStartMode;
 
     private void ApplyDuration()
     {
@@ -564,16 +558,22 @@ public partial class ProjectRow : UserControl
     /// söner. Hedef ve süre satır VM'inden gelir (<see cref="ProjectRowViewModel.Fade"/>) — karar
     /// <see cref="MarkingChoreography"/>'de, burada YALNIZ uygulanır.
     ///
-    /// <para>Reveal animasyonunun fill kilidi bırakılır: <see cref="PlayReveal"/> opaklığı <c>HoldEnd</c> ile
-    /// tutar ve koreografi onu ezemezdi (prototipte de <c>noReveal</c> ref'i aynı işi yapar).</para>
+    /// <para><b>Devri <c>HandoffBehavior.SnapshotAndReplace</c> yapar</b> — animasyon ÖNCEDEN SÖKÜLMEZ.
+    /// <see cref="PlayReveal"/> opaklığı <c>HoldEnd</c> ile tutar ama TABAN değeri <b>0</b>'dır (beliriş
+    /// oradan başlar); animasyonu sökmek opaklığı o tabana düşürür ve yeni solma sıfırdan başlar.
+    /// <b>Ölçülen kusur:</b> koreografi yedi adımdır ve her adım <c>Fade</c>'i yeniden yazar, yani satır
+    /// koşu başlarken yedi kez bir an kaybolup geri geliyordu (kullanıcı: "proje listesinde bazı satırlarda
+    /// yanıp sönmeler"). Snapshot uçuştaki (ya da tutulan) değeri alır ve oradan hedefe gider — CSS'in
+    /// <c>transition</c> davranışının ta kendisi.</para>
     /// </summary>
     private void ApplyFade()
     {
         var fade = _vm?.Fade ?? RowFade.None;
-        PART_Root.BeginAnimation(OpacityProperty, null); // reveal fill kilidini BIRAK
 
         if (!AnimationsEnabledProvider())
         {
+            // Reduced-motion: değer YEREL yazılır, o yüzden uçuştaki saat burada sökülmelidir.
+            PART_Root.BeginAnimation(OpacityProperty, null);
             PART_Root.Opacity = fade.Opacity;
             return;
         }

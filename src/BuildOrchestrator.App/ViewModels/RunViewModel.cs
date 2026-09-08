@@ -33,9 +33,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Bu proje topolojide bir cycle (SCC) üyesi mi —
     /// <see cref="ProjectNode.InCycle"/>'dan topoloji uzlaştırmasında (<see cref="RunViewModel.OnWorkspaceTopology"/>)
-    /// taşınır (tıpkı <see cref="SolutionName"/> gibi). Cycle üyeleri motor tarafından pre-skip edilir; tasarım
-    /// onları <c>skipped</c> değil <c>cycle</c> gösterir — bu bayrak <see cref="Status"/>'ta Pending/Skipped
-    /// alt-durumunu EZER.</summary>
+    /// taşınır (tıpkı <see cref="SolutionName"/> gibi). Cycle üyeleri motor tarafından pre-skip edilir.
+    /// <para>[design v1.12.0] Bayrak <see cref="Status"/>'u EZMEZ (v1.11.0 o ezmeyi kaldırdı): statü yalnız
+    /// "bu koşuda ne oldu"yu söyler. Üyelik iki yerde görünür — listede tek amber uyarı üçgeni, grafta
+    /// <see cref="Controls.VisualStatus.Cycle"/>'ın amber küpü.</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
@@ -220,7 +221,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[design v1.11.0 §9-2] Satırın TEK görsel durumu — şerit, nokta, ad vurgusu ve graf node'u
     /// hepsi bunu okur. Eşleme <see cref="Controls.VisualStatuses.For"/>'dadır; kart kendi tablosunu KURMAZ.</summary>
-    public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Fresh, Marked);
+    /// <para>[design v1.12.0] Döngü ÜYELİĞİ de eşlemeye akar: motorun bu koşuda bu proje hakkında bir şey
+    /// söylemediği (ya da "atladım" dediği) durumda node gri kalır ama içindeki küp AMBER olur — satırdaki
+    /// uyarı üçgeninin grafik vekili.</para>
+    public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Fresh, Marked, InCycle);
 
     /// <summary>[design v1.11.0 §9-4 · §2.4] Açılış koreografisinin satıra düşen payı: hedef opaklık + o
     /// opaklığa giden geçişin süresi. Satırlar node'larla SENKRON söner (kapsam 0.45'e 440ms'de, kapsam dışı

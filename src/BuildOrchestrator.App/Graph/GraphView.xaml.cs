@@ -878,7 +878,7 @@ public partial class GraphView : UserControl
         string border = VisualStatuses.NodeBorderBrushKey(state);
         string background = VisualStatuses.NodeBackgroundBrushKey(state);
         string iconColor = VisualStatuses.NodeCoreBrushKey(state);
-        bool dashed = VisualStatuses.IsDashed(state);
+        bool dashed = VisualStatuses.IsStartMode(state);
 
         // [§2.3 · §1.3] Renk geçişi YALNIZ işaretleme dalgası oynarken açıktır — kapsam amber'a 200ms'de
         // AKAR, ÇAKMAZ (BuildApp.jsx:529-533).

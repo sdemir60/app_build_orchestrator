@@ -49,8 +49,15 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
     /// bir alt-ağaç geri sızarsa test kırılsın.
     ///
     /// <para>[T49 fix round 2] Sayım artık SATIRIN KENDİSİNİ de içeriyor (<c>RealizedObjects</c> kökü döner) →
-    /// 39 yerine 40; tavan aynı +1 marjı korumak için 41'e alındı. GERÇEK bütçe DEĞİŞMEDİ.</para></summary>
-    private const int UnhoveredRowObjectCeiling = 41;
+    /// 39 yerine 40; tavan aynı +1 marjı korumak için 41'e alındı. GERÇEK bütçe DEĞİŞMEDİ.</para>
+    ///
+    /// <para>[design v1.12.0] Statü noktası TASARIM GEREĞİ iki elemana bölündü: başlangıç modunun dört yaylı
+    /// halkası ile dolu daire ÜST ÜSTE durur ve aralarında çapraz-sönüm olur (tek elemanla, dolgu silinip
+    /// kesikli çember çizilerek yapılan eski çözüm 8px'te tırtıklıydı). Ölçülen artış <b>+2</b> nesnedir
+    /// (şablon kökü <c>Grid</c> + ikinci <c>Ellipse</c>): 40 → <b>42</b>. Tavan aynı +1 marjı korumak için
+    /// 43'e alındı — bu bir bütçe GEVŞETMESİ değildir, tasarımın getirdiği maliyetin ölçülüp yazılmasıdır;
+    /// marj daralmadı, yani eager bir alt-ağaç geri sızarsa test yine kırılır.</para></summary>
+    private const int UnhoveredRowObjectCeiling = 43;
 
     /// <summary>
     /// Liste kurulumunun maliyeti satır SAYISINDAN bağımsızdır — sanallaştırma yalnız viewport'u realize eder.

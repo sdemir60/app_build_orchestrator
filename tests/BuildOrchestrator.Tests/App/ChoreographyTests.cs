@@ -279,6 +279,38 @@ public class ChoreographyTests
         Assert.Same(greyToken, stripe.Fill);      // ...ve dalga bitince token referansına dönüyor
     }
 
+    /// <summary>
+    /// <b>Koreografinin solması satırı ÖNCE kaybetmez.</b> Ölçülen kusur (kullanıcı: "build dedim, o ara proje
+    /// listesinde bazı satırlarda yanıp sönmeler oluyor"): <c>ApplyFade</c> her adımda önce
+    /// <c>BeginAnimation(Opacity, null)</c> çağırıyordu. Bu, beliriş animasyonunun (<see cref="ProjectRow.PlayReveal"/>)
+    /// TUTTUĞU opaklığı bırakmakla kalmıyor, satırı belirişin TABAN değerine — yani <b>0'a</b> — düşürüyordu;
+    /// yeni animasyon oradan başladığı için satır her koreografi adımında bir an kaybolup geri geliyordu.
+    /// Koreografi yedi adımdır, yani bu yedi kez tekrarlanır.
+    ///
+    /// <para>Doğru devir <c>HandoffBehavior.SnapshotAndReplace</c>'in kendisidir: uçuştaki (ya da tutulan)
+    /// değeri anlık görüntüler ve oradan hedefe gider. Önce sökmek o anlık görüntüyü yok eder.</para>
+    /// </summary>
+    [StaFact]
+    public void The_choreography_fade_hands_off_from_the_reveal_instead_of_dropping_to_its_base()
+    {
+        var host = DsResources.NewHost();
+        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending);
+        var row = new ProjectRow { DataContext = vm, AnimationsEnabledProvider = () => true };
+        var window = DsResources.Realize(host, row);
+
+        // Beliriş: taban opaklık 0, animasyon 1'e (HoldEnd ile tutulur).
+        row.PlayReveal(0, animate: true);
+        DispatcherPump.PumpUntil(() => row.Root.Opacity > 0.99, TimeSpan.FromSeconds(5));
+        Assert.True(row.Root.Opacity > 0.99, "ön-koşul: beliriş tamamlanmalı");
+
+        // Koreografinin ilk adımı: kapsam dışı satır 0.3'e söner. Devir uçuştaki değerden OLMALI.
+        vm.Fade = new RowFade(MarkingChoreography.RowEnvOpacity, MarkingChoreography.EnvGlideMs);
+
+        Assert.True(row.Root.Opacity > 0.9,
+            $"solma belirişin tabanından başladı (opaklık {row.Root.Opacity:0.000}) — satır bir an kayboluyor");
+        GC.KeepAlive(window);
+    }
+
     // ================================================================ sürücü: satırlar + graf
 
     /// <summary>

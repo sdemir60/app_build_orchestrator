@@ -1,4 +1,4 @@
-using BuildOrchestrator.App.Controls;
+﻿using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Model;
 
@@ -46,7 +46,7 @@ public static class GraphBinder
             // (topoloji düğümünün satırı kurulmamış — savunmacı) başlangıç modu varsayılır: Sync'ten sonraki
             // temiz hâl budur.
             var visual = row is { } r
-                ? VisualStatuses.For(status, r.Fresh, r.Marked)
+                ? VisualStatuses.For(status, r.Fresh, r.Marked, r.InCycle)
                 : VisualStatus.Fresh;
             result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, visual));
         }

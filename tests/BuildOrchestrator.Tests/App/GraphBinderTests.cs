@@ -129,12 +129,18 @@ public class GraphBinderTests
         var startedInCycleRow = new ProjectRowViewModel(Id("Z"), "Z", ProjectRowState.Started) { InCycle = true };
         Assert.Equal(GraphStatus.Building, GraphBinder.StatusOf(startedInCycleRow, synced: true));
 
-        // Uçtan uca: üyelik grafın RENK kanalına HİÇ girmez (design v1.11.0 §2.3 — grafta üçgen de yoktur);
-        // düğüm yalnız statü + görsel durum taşır.
+        // Uçtan uca: üyelik STATÜ kanalına girmez — üye bir düğümün statüsü Discovered'dır.
         var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]) };
         var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
         Assert.Equal(GraphStatus.Discovered, nodes.Single(n => n.Name == "X").Status);
-        Assert.Equal(nodes.Single(n => n.Name == "Y").Visual, nodes.Single(n => n.Name == "X").Visual);
+
+        // [DEĞİŞEN KURAL — design v1.12.0 §2.3] Eski iddia: "üyelik grafın RENK kanalına HİÇ girmez" — üye ve
+        // üye olmayan düğüm AYNI görsel durumu taşırdı. Değişme gerekçesi: v1.11.0 döngüyü yalnız liste
+        // satırındaki üçgenle anlatıyordu ve bitmiş bir koşu incelenirken grafta "bu neden derlenmedi"
+        // okunmuyordu. Yeni kural: bu işlemde derlenmeyen üyede node GRİ kalır ama içindeki küp AMBER olur
+        // (VisualStatus.Cycle) — turuncu kanal geri gelmez, kullanılan ton uyarı üçgeninin kendi amberidir.
+        Assert.Equal(VisualStatus.Cycle, nodes.Single(n => n.Name == "X").Visual);
+        Assert.Equal(VisualStatus.Discovered, nodes.Single(n => n.Name == "Y").Visual);
     }
 
     // [quiet · SİLİNDİ] `Nodes_source_the_dep_badge_from_row_HasDepIssue` — v1.3.0 §2.3 "Kaldırılanlar" graf
