@@ -228,7 +228,7 @@ public partial class MainWindow : Window
         // [design v1.11.0 §9-4/§9-5] İki koreografi: açılış (işaretleme dalgası — satır + graf) ve bitiş
         // (neon tutuşma — YALNIZ graf). Sürücü kabukta durur çünkü zamanlama ve görsel katman burasıdır;
         // VM yalnız "bir işlem başladı, kapsamı bu" der.
-        _choreographer.PushToGraph = (step, marked) => Shell.GraphHost.SetMarking(step, marked);
+        _choreographer.PushToGraph = ApplyMarkingToGraph;
         _vm.OperationBegun += (_, scope) =>
         {
             Shell.GraphHost.BeginOperation(); // bir önceki koşunun neon'u anında kesilir (§9-5)
@@ -606,14 +606,28 @@ public partial class MainWindow : Window
         PushGraphSelection(); // mevcut seçim taze grafa yansısın
     }
 
+    /// <summary>
+    /// [design v1.11.0 §9-4] Açılış koreografisinin grafa düşen payı — <b>tek çağrıda iki şey</b>: koreografinin
+    /// KENDİ opaklık adımı (<see cref="Graph.GraphView.SetMarking"/>) ve düğüm RENKLERİ.
+    ///
+    /// <para>Kapsamın amber'a yanması ayrı bir kanal değildir: renk normal statü itişinden gelir. İtiş burada
+    /// olmazsa graf ancak koşu tikinin (200ms) insafıyla tazelenir — 36 projede tempo ~31ms/node olduğu için
+    /// dalga listede akıcı, grafta kesik kesik görünür. Tasarım ikisinin SENKRON olmasını ister (§9-4).</para>
+    /// </summary>
+    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedNames)
+    {
+        Shell.GraphHost.SetMarking(step, markedNames);
+        PushGraphStatuses();
+    }
+
     /// <summary>[D5] Statü/dep-badge/kenar/kamera'yı YERİNDE günceller (geometri korunur, stagger tekrar oynamaz).
     /// Topoloji yokken no-op.</summary>
     private void PushGraphStatuses()
     {
-        // [E2/§5-a] Projects boşken (ör. Rebuild başında OnRunStarted listeyi BuildPreview'dan ÖNCE boşaltır) push
-        // ETME: RowsById() boş olurdu ve GraphBinder her topoloji düğümünü bir kare Discovered'a "flash" ederdi
-        // (queued/dirty statüleri kaybolur, sonra BuildPreview yeniden doldurunca geri gelir). Guard no-op'tur —
-        // A13.2 Clear/reset EKLEMEZ; yalnız statü itişini Projects yeniden dolana dek erteler.
+        // [E2/§5-a] Projects boşken (topoloji henüz gelmedi ya da workspace değişti) push ETME: RowsById()
+        // boş olurdu ve GraphBinder her topoloji düğümünü bir kare Discovered'a "flash" ederdi (queued/dirty
+        // statüleri kaybolur, sonra liste yeniden dolunca geri gelir). Guard no-op'tur — A13.2 Clear/reset
+        // EKLEMEZ; yalnız statü itişini Projects yeniden dolana dek erteler.
         if (_vm.Topology.Count == 0 || _vm.Projects.Count == 0) return;
         Shell.GraphHost.UpdateStatuses(GraphBinder.Nodes(_vm.Topology, RowsById()));
     }
@@ -671,7 +685,11 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.IsStarting):
                 // [design v1.11.0 §9-4] Koşu GERÇEKTEN başladı → açılış koreografisi biter ve statü kanalı
                 // devralır (işaretlilik silinir: queued/building zaten amberdir).
-                if (_vm.IsRunning)
+                //
+                // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
+                // hiç açılmadı). İşaret o zaman da silinmelidir — aksi halde başlamayan bir işlemin amber kapsamı
+                // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                if (_vm.IsRunning || !_vm.IsStarting)
                 {
                     _choreographer.Cancel(_vm.Projects);
                     _choreographer.ClearMarks(_vm.Projects);

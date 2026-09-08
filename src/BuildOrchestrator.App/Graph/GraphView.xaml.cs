@@ -382,6 +382,13 @@ public partial class GraphView : UserControl
     internal MarkStep MarkStep => _markStep;
 
     /// <summary>
+    /// [design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başladı — bir önceki koşunun bitiş koreografisi
+    /// ANINDA kesilir. Bu, işaretleme dalgasından AYRI bir kapıdır: kapsamı boş bir işlem (ör. Sync'in hemen
+    /// ardından "Everything up to date" ile biten Build) hiç dalga oynatmaz ama yine de bir işlemdir.
+    /// </summary>
+    public void BeginOperation() => StopEndFinale();
+
+    /// <summary>
     /// [design v1.11.0 §9-4 · §2.3] Açılış koreografisinin adımını ve kapsamını grafa iter: node opaklıkları
     /// "örtüşen veda"yı oynar (kapsam 0.45'e 440ms'de, geri kalan 0.18'e 1120ms'de — ikisi aynı anda biter).
     ///
@@ -390,12 +397,6 @@ public partial class GraphView : UserControl
     /// prototipteki per-node <c>transition-delay</c>'in WPF karşılığı budur ve düğüm başına fırça animasyonu
     /// gerektirmez (bkz. ApplyNodeStatus'taki ölçülmüş sapma).</para>
     /// </summary>
-    /// <summary>
-    /// [design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başladı — bir önceki koşunun bitiş koreografisi
-    /// ANINDA kesilir. Bu, işaretleme dalgasından AYRI bir kapıdır: kapsamı boş bir işlem (ör. Sync'in hemen
-    /// ardından "Everything up to date" ile biten Build) hiç dalga oynatmaz ama yine de bir işlemdir.
-    /// </summary>
-    public void BeginOperation() => StopEndFinale();
 
     public void SetMarking(MarkStep step, IReadOnlySet<string> markedNodeNames)
     {

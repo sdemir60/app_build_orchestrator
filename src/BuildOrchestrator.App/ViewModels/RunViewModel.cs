@@ -620,15 +620,21 @@ public sealed partial class RunViewModel : ObservableObject
         // [design v1.11.0 §9-4 `_beginOp`] Konsol VE event stream temizlenir — ekrandaki her şey artık
         // yürüyen işlemin hikâyesidir. Konsolu aşağıdaki `clearBuffers` dalı siler; stream buradan.
         if (clearBuffers) ClearStreamForNewOperation();
+        // [design v1.11.0 §9-4 `_neutralize`] Kapsam ÖNCE okunur, sonra nötrleme yapılır — prototipteki sıra
+        // da budur (build-data.js:541-547: önce `st.will` yazılır, sonra `_neutralize()`).
+        var scope = ScopeFor(mode);
+        NeutralizeRows(fresh: false);
+        RefreshRunSurface(); // sayaclar/serit notrlenmis listeden yeniden turer
         // [design v1.11.0 §2.2] İşlem pill'i TIKLAMA ANINDA yazılır (motorun cevabı beklenmez): pill "ne
         // yapmıştım?" sorusunu cevaplar ve o soru gönderim gecikmesi boyunca da geçerlidir.
+        //
+        // Yazım NÖTRLEMEDEN SONRAdir: etiketin değişmesi, kabuğun grafa "yeni bir işlem başladı, statüleri
+        // yeniden oku" dediği sinyaldir — başlangıç modunun düşüşü <c>Counters</c>'ı hareket ettirmez, bu
+        // yüzden sayaca bakan kapı onu kaçırır. Sinyal erken çıkarsa graf önceki koşunun renkleriyle tazelenir.
         CurrentOperation = OperationLabel.ForRunMode(mode);
-        // [design v1.11.0 §9-4 `_neutralize`] Bir işlem BAŞLADI: başlangıç modu düşer — herkes düz nötr griye
-        // iner ve renk bundan sonra YALNIZ bu işlemin hikâyesini anlatır.
-        foreach (var row in Projects) row.Fresh = false;
         // ...ve açılış koreografisi istenir. Kapsamı BURASI bilir (mod → hangi projeler); oynatma kabuğun
         // işidir (zamanlama + görsel), bu yüzden bir OLAY olarak dışarı verilir.
-        OperationBegun?.Invoke(this, ScopeFor(mode));
+        OperationBegun?.Invoke(this, scope);
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers)
@@ -675,6 +681,33 @@ public sealed partial class RunViewModel : ObservableObject
     /// Kapsam bir TAHMİN değildir: üçü de motorun aynı koşuda derleyeceği kümedir (motor kapsamı daraltırsa
     /// koreografi zaten koşu başlarken biter ve statü kanalı devralır).
     /// </summary>
+    /// <summary>
+    /// [design v1.11.0 §9-4 <c>_neutralize</c>] <b>Önceki koşunun tüm izlerini siler.</b> Statü, süre ve
+    /// dependency uyarısı sıfırlanır, koreografi işareti düşer — herkes tek bir zemine iner. PLAN
+    /// (<see cref="ProjectRowViewModel.WillBuild"/>) ve yapısal bilgi (döngü üyeliği, SHA çifti, katman)
+    /// KORUNUR: kapsam plandan okunur, ve "neyin bayat olduğu" renk olmadan da SHA çiftinden okunmalıdır.
+    ///
+    /// <para>İki çağıranı vardir (Sync ve bir İŞLEMin başlangıcı) ve YALNIZ inilen zeminde ayrışırlar — bu
+    /// yüzden sıfırlama tek yerdedir.</para>
+    /// </summary>
+    /// <param name="fresh">
+    /// <c>true</c> → <b>başlangıç modu</b> (kesikli, renksiz): Sync'in ve açılışın zemini. Hangi işlemin
+    /// geleceği belli değildir, bu yüzden plan da gösterilmez (§3.1).
+    /// <c>false</c> → <b>düz nötr gri</b>: bir İŞLEM başladı; renk bundan sonra yalnız onun hikâyesini anlatır
+    /// ve kapsam amber'a ancak işaretleme dalgasıyla yanar.
+    /// </param>
+    private void NeutralizeRows(bool fresh)
+    {
+        foreach (var row in Projects)
+        {
+            row.State = ProjectRowState.Pending;
+            row.DepIssues = null;
+            row.DurationMs = 0;
+            row.Fresh = fresh;
+            row.Marked = false;
+        }
+    }
+
     public IReadOnlyList<ProjectRowViewModel> ScopeFor(RunMode mode) => mode switch
     {
         RunMode.Rebuild => [.. Projects.Where(r => !r.InCycle)],
@@ -897,15 +930,19 @@ public sealed partial class RunViewModel : ObservableObject
         PropagateSelectionToStream(value); // [D3] stream satırları da tek seçim kaynağından tazelenir
     }
 
-    /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı — <see cref="ProjectRowViewModel.Status"/>'un
-    /// <c>queued</c> türetimi için her satıra iter (IsSelected akışının eşi). <see cref="IsRunning"/>/
-    /// <see cref="IsStarting"/> değiştiğinde tazelenir; yeni doğan satırlar (<see cref="EnsureRow"/>/topoloji)
-    /// da mevcut değeri alır.</summary>
-    private bool RunActive => IsRunning || IsStarting;
+    /// <summary>Bir run GERÇEKTEN koşuyor mu — <see cref="ProjectRowViewModel.Status"/>'un <c>queued</c>
+    /// türetimi için her satıra iter (IsSelected akışının eşi). Yeni doğan satırlar
+    /// (<see cref="EnsureRow"/>/topoloji) da mevcut değeri alır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden <c>IsRunning || IsStarting</c>'di (Fix wave 1 · D1 review
+    /// Finding 1): planlama penceresinde ekran sessiz kalmasın diye kapsam daha TIKLAMA ANINDA kuyruk
+    /// amber'ına düşerdi. design v1.11.0'da o pencereyi açılış koreografisi doldurur ve kapsamı TAM OLARAK
+    /// aynı kümedir — bilgi kaybolmaz, yalnız anında değil dalga hâlinde belirir. Eski kural sürseydi
+    /// koreografinin ilk iki adımı (nötr an + dalga) hiç görünmezdi: kapsam zaten amber olurdu.</para></summary>
+    private bool RunActive => IsRunning;
     partial void OnIsRunningChanged(bool value) => PropagateRunActive();
     partial void OnIsStartingChanged(bool value)
     {
-        PropagateRunActive();
         if (value) ArmEngineWatchdog(); // run istendi — motor bundan sonra konuşmalı
     }
     private void PropagateRunActive()
@@ -1152,7 +1189,13 @@ public sealed partial class RunViewModel : ObservableObject
         _elapsedBaseMs = e.ElapsedMsAtStart;
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
-        if (e.Mode == RunMode.Rebuild) Projects.Clear(); // Continue'da liste (önceki segmentin sonuçları) korunur
+        // [design v1.11.0 §9-4] Rebuild yeni bir tabana döner — ama listeyi BOŞALTARAK değil, YERİNDE
+        // nötrleyerek. [DEĞİŞEN KURAL] Burada eskiden <c>Projects.Clear()</c> vardı; o, açılış
+        // koreografisinin işaretlediği satır nesnelerini ortasında yok ediyor ve listeyi remount ediyordu
+        // (design v1.10.0 §3.8: "liste yerinden oynamaz"). Komut yolundan gelen bir Rebuild burayı zaten
+        // nötrlenmiş bulur — çağrı, koşuyu başka bir yol başlattığında da tabanın temiz olmasını garanti eder.
+        // Build/Cycles'ta liste (önceki segmentin sonuçları) olduğu gibi korunur.
+        if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false);
         _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;

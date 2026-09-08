@@ -2254,8 +2254,15 @@ Five contract rules, each enforced by a test:
 are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in pure cores
 (`MarkingChoreography`, `EndFinale`).
 
-The **opening** plays the same way for every operation — Build, Rebuild, Clean, a row action, Resolve. A
-neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
+The **opening** plays the same way for every operation — Build, Rebuild, Clean, a row action, Resolve. It
+begins by **neutralising**: the console and the event stream are cleared, and every row drops to plain neutral
+grey — status, duration and dependency warning reset, the start mode dropped. The plan survives (the scope is
+read from it) and so does everything structural: cycle membership, the commit pair, the layer. Nothing of the
+previous run is on screen when the wave starts, which is what makes "colour tells the story of the last
+operation" true from the first frame. Rebuild neutralises in place rather than emptying the list — clearing it
+would destroy the very rows the wave is marking.
+
+Then a neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
 lights amber one project at a time in *random* order (110 ms per node, the chain capped at 1.1 s, so 36
 projects take no longer than four); then a moment with the plan standing on screen; then the **overlapping
 farewell** — everything outside the scope starts fading over 1120 ms, and 560 ms later the amber joins it over
@@ -2269,6 +2276,14 @@ the run when the choreography ends, which costs nothing in a simulation; here th
 and the choreography plays over `starting` — worktree preparation, scan, graph, topology, incremental — which
 takes seconds anyway. Delaying a real build by three seconds for an animation is not defensible, and the
 visible sequence is unchanged. `runStarted` ends the choreography and the status channel takes the amber over.
+
+That handover is the reason `queued` is derived from a run that is *live*, not from one that has merely been
+requested. Were the planning window counted as a run, every project in the plan would turn queued-amber on the
+click itself and the neutral moment and the wave would both be invisible. No information is lost by waiting:
+the wave lights exactly the set the queue would have, only progressively — and when the choreography is
+skipped (reduced motion, or an empty scope) the scope is marked in one step, so the amber still appears at
+once. If the run never starts — the command fails, or the engine never answers — the marks are cleared, because
+an operation that did not happen may not leave its colour behind.
 
 The **ending** — the neon ignition — lives only in the graph; the list stays still. Everything holds dim for
 900 ms, then the projects this run actually built (succeeded ∪ failed) ignite in random order like fluorescent

@@ -178,6 +178,29 @@ public class ChoreographyTests
 
     // ================================================================ sürücü: satırlar + graf
 
+    /// <summary>
+    /// [§9-4 "Satırlar node'larla senkron söner/yerleşir"] Dalga, her üyeyi işaretlediğinde grafa haber
+    /// verir — yalnız ADIM değiştikçe değil. Satır listesi binding'le anında boyanır; graf itilen bir
+    /// kanaldır ve haber gelmezse ancak koşu tikinin insafıyla tazelenir. Bu, iki yüzeyin aynı anda
+    /// değişmesinin ÖN KOŞULUdur (kablonun kendisi <see cref="MainWindow"/>'dadır).
+    /// </summary>
+    [Fact]
+    public void The_wave_tells_the_graph_about_every_single_mark_not_just_every_step()
+    {
+        var (vm, driver) = Driven();
+        int pushes = 0;
+        driver.PushToGraph = (_, _) => pushes++;
+        var scope = vm.ScopeFor(RunMode.Build);
+        Assert.Equal(2, scope.Count); // ön-koşul: A ve B
+
+        driver.Play(vm.Projects, scope);
+        int atStart = pushes;
+        DispatcherPump.PumpUntil(() => scope.All(r => r.Marked), TimeSpan.FromSeconds(4));
+
+        Assert.True(pushes - atStart >= scope.Count,
+            $"dalga {scope.Count} işaretleme için yalnız {pushes - atStart} haber verdi");
+    }
+
     private static (RunViewModel vm, OperationChoreographer driver) Driven(bool animations = true)
     {
         var vm = NewVm();
