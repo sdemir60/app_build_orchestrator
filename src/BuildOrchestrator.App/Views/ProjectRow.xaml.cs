@@ -558,16 +558,22 @@ public partial class ProjectRow : UserControl
     /// söner. Hedef ve süre satır VM'inden gelir (<see cref="ProjectRowViewModel.Fade"/>) — karar
     /// <see cref="MarkingChoreography"/>'de, burada YALNIZ uygulanır.
     ///
-    /// <para>Reveal animasyonunun fill kilidi bırakılır: <see cref="PlayReveal"/> opaklığı <c>HoldEnd</c> ile
-    /// tutar ve koreografi onu ezemezdi (prototipte de <c>noReveal</c> ref'i aynı işi yapar).</para>
+    /// <para><b>Devri <c>HandoffBehavior.SnapshotAndReplace</c> yapar</b> — animasyon ÖNCEDEN SÖKÜLMEZ.
+    /// <see cref="PlayReveal"/> opaklığı <c>HoldEnd</c> ile tutar ama TABAN değeri <b>0</b>'dır (beliriş
+    /// oradan başlar); animasyonu sökmek opaklığı o tabana düşürür ve yeni solma sıfırdan başlar.
+    /// <b>Ölçülen kusur:</b> koreografi yedi adımdır ve her adım <c>Fade</c>'i yeniden yazar, yani satır
+    /// koşu başlarken yedi kez bir an kaybolup geri geliyordu (kullanıcı: "proje listesinde bazı satırlarda
+    /// yanıp sönmeler"). Snapshot uçuştaki (ya da tutulan) değeri alır ve oradan hedefe gider — CSS'in
+    /// <c>transition</c> davranışının ta kendisi.</para>
     /// </summary>
     private void ApplyFade()
     {
         var fade = _vm?.Fade ?? RowFade.None;
-        PART_Root.BeginAnimation(OpacityProperty, null); // reveal fill kilidini BIRAK
 
         if (!AnimationsEnabledProvider())
         {
+            // Reduced-motion: değer YEREL yazılır, o yüzden uçuştaki saat burada sökülmelidir.
+            PART_Root.BeginAnimation(OpacityProperty, null);
             PART_Root.Opacity = fade.Opacity;
             return;
         }
