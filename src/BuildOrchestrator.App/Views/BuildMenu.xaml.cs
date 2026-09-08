@@ -14,13 +14,18 @@ namespace BuildOrchestrator.App.Views;
 public readonly record struct BuildMenuItem(string Kind, string Title, string Desc, string? Kbd);
 
 /// <summary>
-/// [D6/T40] Build split-button menüsü (design v1.7.0 §2.7-11). DataContext bir <see cref="RunViewModel"/>'dir.
-/// Menü HER fazda tam olarak iki maddedir:
+/// [D6/T40] Build split-button menüsü (design v1.11.0 §2.7-11). DataContext bir <see cref="RunViewModel"/>'dir.
+/// Menü HER fazda tam olarak üç maddedir:
 /// <list type="bullet">
 ///   <item><b>Build</b> — "Only stale projects" — F5.</item>
 ///   <item><b>Rebuild</b> — "All {total} projects — cache ignored" — Ctrl+F5.</item>
+///   <item><b>Clean</b> — "Remove build outputs — next build is full" — kısayolsuz.</item>
 /// </list>
 /// <b>Kbd rozetleri DISPLAY-ONLY (v7 K6):</b> gerçek global tuş yakalama E5'in işidir — burada jest bağlanmaz.
+///
+/// <para><b>İkon ailesi (§9-7):</b> üç madde tek grid/stroke'ta okunur — <c>play · rotate-cw · brush</c> — ve
+/// AYNI aile satır menüsünde de kullanılır. Rebuild'in ikonu bu yüzden Sync/Redo ailesinden
+/// (<c>Icon.Rot</c>) kendi ailesine (<c>Icon.Rebuild</c>) taşındı.</para>
 /// </summary>
 public partial class BuildMenu : UserControl
 {
@@ -44,6 +49,9 @@ public partial class BuildMenu : UserControl
     /// <summary>[test yüzeyi] O anki (VM durumundan türetilmiş) menü modeli — koşullu maddeler + F5 rozetinin yeri.</summary>
     internal IReadOnlyList<BuildMenuItem> Items { get; private set; } = [];
 
+    /// <summary>[test yüzeyi] Çizilmiş satırlar — pasif maddenin (Clean) enable/tooltip durumu buradan okunur.</summary>
+    internal IEnumerable<Border> Rows => PART_Rows.Children.Cast<Border>();
+
     /// <summary>[D6] Menü her açılışında 140ms pop-in (BuildApp.jsx:33) — ActionBar, IsMenuOpen true olunca çağırır.</summary>
     public void PlayPopIn() => PopIn.Play(PART_Rows);
 
@@ -64,8 +72,10 @@ public partial class BuildMenu : UserControl
     /// <summary>[T40] VM durumundan menü modelini kurar.
     /// <para>[B4] <c>continue</c> maddesi kaldırılmıştı; [design v1.7.0 §2.7-11] <c>retry</c> de kaldırıldı —
     /// Build zaten stale set'i (değişen + hatalı + hiç derlenmemiş + hatalıların bağımlıları) derler, iki
-    /// yüzey aynı işi sunuyordu. Menü KOŞULSUZDUR: her fazda aynı iki madde, aynı açıklamalar; F5 rozeti de
-    /// her fazda Build'de kalır. Tek değişken <paramref name="total"/>'dir (Rebuild'in açıklaması).</para></summary>
+    /// yüzey aynı işi sunuyordu. Menü KOŞULSUZDUR: her fazda aynı üç madde, aynı açıklamalar; F5 rozeti de
+    /// her fazda Build'de kalır. Tek değişken <paramref name="total"/>'dir (Rebuild'in açıklaması).</para>
+    /// <para>[design v1.11.0 §2.7-11] Üçüncü madde <b>Clean</b>'dir: VS'in <i>Clean Solution</i>'ı — yalnız
+    /// <c>msbuild /t:Clean</c>, cache'lere dokunmaz. Bakım kutusundaki DERİN Clean'in yerine GEÇMEZ.</para></summary>
     internal static IReadOnlyList<BuildMenuItem> ComposeItems(int total)
     {
         // [About] Rozet metni ARTIK literal DEĞİL: ShortcutCatalog jesti bağlama tablosundan türetir, böylece
@@ -76,6 +86,7 @@ public partial class BuildMenu : UserControl
             new("build", "Build", "Only stale projects", ShortcutCatalog.Get(ShortcutId.Build).Gestures[0]),
             new("rebuild", "Rebuild", Inv($"All {total} projects — cache ignored"),
                 ShortcutCatalog.Get(ShortcutId.Rebuild).Gestures[0]),
+            new("clean", "Clean", "Remove build outputs — next build is full", null),
         ];
     }
 
@@ -98,7 +109,7 @@ public partial class BuildMenu : UserControl
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var icon = IconVisual.Make(this, IconKey(item.Kind), "Brush.TextSecondary", TitleIconSize);
+        var icon = IconVisual.Make(this, IconKeyFor(item.Kind), "Brush.TextSecondary", TitleIconSize);
         icon.HorizontalAlignment = HorizontalAlignment.Center;
         icon.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(icon, 0);
@@ -133,6 +144,18 @@ public partial class BuildMenu : UserControl
             Child = grid,
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
+        // [design v1.11.0 §2.7-11] Clean'in arka ucu henüz yazılmadı (bakım kutusundaki Clean/Optimize ile
+        // AYNI karar): madde yerinde durur, PASİFTİR ve tooltip nedeni söyler. Hover zemini de takılmaz —
+        // tıklanabilirmiş gibi görünmesi, basılıp hiçbir şey olmamasından daha kötü olurdu.
+        if (item.Kind == "clean")
+        {
+            row.IsEnabled = false;
+            row.Opacity = DisabledOpacity;
+            row.Cursor = Cursors.Arrow;
+            row.ToolTip = AccessibilityNames.CleanSolutionTooltip;
+            ToolTipService.SetShowOnDisabled(row, true); // pasif kontrolde WPF tooltip'i varsayılan olarak saklar
+            return row;
+        }
         HoverBackground.Attach(row);
         string kind = item.Kind;
         row.MouseLeftButtonUp += (_, _) => Invoke(kind);
@@ -151,9 +174,16 @@ public partial class BuildMenu : UserControl
         if (command is not null && command.CanExecute(null)) command.Execute(null);
     }
 
-    private static string IconKey(string kind) => kind switch
+    /// <summary>[design v1.11.0 §9-7] Menünün ikon ailesi — <c>play · rotate-cw · brush</c>, tek grid/stroke.
+    /// AYNI eşleme satır menüsünde de kullanılır (kopya YASAK: <c>ProjectRowMenu</c> buradan okur).</summary>
+    internal static string IconKeyFor(string kind) => kind switch
     {
-        "rebuild" => "Icon.Rot",   // BuildApp.jsx:1606 <I.rot/>
-        _ => "Icon.Play",          // build <I.play/>
+        "rebuild" => "Icon.Rebuild", // design-v1.11.0 BuildApp.jsx:2415 <I.rebuild/>
+        "clean" => "Icon.Brush",     // :2417 <I.brush/>
+        _ => "Icon.Play",            // build <I.play/>
     };
+
+    /// <summary>Pasif menü maddesinin opaklığı — prototipte satır menüsünün <c>busy</c> hâliyle aynı değer
+    /// (design-v1.11.0 BuildApp.jsx:609 <c>opacity: busy ? 0.45 : 1</c>).</summary>
+    internal const double DisabledOpacity = 0.45;
 }

@@ -1,22 +1,22 @@
 using BuildOrchestrator.App;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// Sync'ten sonra <b>listede amber olan projenin graf küpü de amber olmalıdır.</b> İki yüzey aynı planı
-/// anlatır; ayrışırlarsa kullanıcı hangisine güveneceğini bilemez.
+/// <b>Liste ile graf AYNI hikâyeyi anlatır.</b> İki yüzey ayrışırsa kullanıcı hangisine güveneceğini bilemez;
+/// bu dosya zincirin GERÇEK ucunu ölçer — VM'e olay akıtılır ve <b>çizilmiş</b> düğümün glyph rengine bakılır.
 ///
-/// <para>Sahada görülen kusur tam buydu: liste satırı "derlenecek" derken graf düğümünün içi nötr kalıyordu.
-/// Küpün renk kararı doğruydu — kusur BESLEMEDEYDİ. <c>BuildPreviewEvent</c> satırların <c>WillBuild</c>'ini
-/// dolduruyor ama grafı besleyen hiçbir sinyal ateşlenmiyordu: graf yalnız topoloji değişiminde yeniden
-/// kuruluyor (o an satırlar henüz planı bilmiyor) ve <c>Counters</c> değişiminde statü itiliyor —
-/// <c>RunCounters</c> ise <c>WillBuild</c>'i hiç okumadığı için önizleme sonrası birebir aynı kalıyor ve
-/// bildirimi yutuyordu.</para>
+/// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §9-1/§9-3]</b> Eski iddia: <i>"Sync'ten sonra listede amber olan
+/// projenin graf küpü de amber olmalıdır"</i> — yani <c>BuildPreviewEvent</c> küpü PLAN rengiyle boyardı
+/// (<c>Brush.DotDirty</c>/<c>Brush.DotClean</c>). v1.11.0 plan kanalını kaldırdı ve Sync'i BAŞLANGIÇ MODU
+/// yaptı: <i>"Sync ve uygulama açılışı hiçbir şeyi renklendirmez"</i>. Yeni iddia bu yüzden terstir — önizleme
+/// grafta HİÇBİR renk üretmez; küp bir işlem başlayana kadar nötr kalır.</para>
 ///
-/// <para>Bu dosya zincirin GERÇEK ucunu ölçer: VM'e bir önizleme olayı akıtılır ve <b>çizilmiş</b> düğümün
-/// glyph rengine bakılır. Süitte bu soruyu soran başka test yoktu — <c>MainWindowHost</c> fixture'ı
-/// <c>BuildPreviewEvent</c> hiç göndermiyordu.</para>
+/// <para>Beslemenin kendisi (önizleme → graf) hâlâ ölçülüyor: kusur bir zamanlar tam oradaydı (graf yalnız
+/// topoloji değişiminde kurulup bir daha haber almıyordu) ve şimdi işlem başlangıcının grafa ulaştığı
+/// pinleniyor.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphWillBuildFeedTests
@@ -25,7 +25,7 @@ public class GraphWillBuildFeedTests
         DsResources.ColorOf(window.Shell.GraphHost.NodeVisuals[name].Icon.Stroke);
 
     [StaFact]
-    public void A_build_preview_after_sync_paints_the_cube_of_every_project_that_will_build()
+    public void A_build_preview_after_sync_leaves_every_cube_neutral_because_sync_shows_no_plan()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
@@ -37,7 +37,28 @@ public class GraphWillBuildFeedTests
         ]));
         content.UpdateLayout();
 
-        Assert.Equal(DsResources.TokenColor(window, "Brush.DotDirty"), CoreColour(window, "Dirty"));
-        Assert.Equal(DsResources.TokenColor(window, "Brush.DotClean"), CoreColour(window, "Clean"));
+        // Plan bilinse bile RENK yok: ikisi de başlangıç modunun nötr küpünü taşır.
+        Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Dirty"));
+        Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Clean"));
+        Assert.NotEmpty(window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray); // kesikli = fresh
+    }
+
+    /// <summary>Bir işlem başlayınca başlangıç modu DÜŞER ve bu graf'a ULAŞIR: kesikli çerçeve düze döner.
+    /// Besleme kusuru (graf haber almıyor) tam burada ölçülür.</summary>
+    [StaFact]
+    public void Starting_an_operation_drops_the_fresh_mode_and_the_graph_hears_about_it()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
+        var content = MainWindowHost.Realize(window);
+        Assert.NotEmpty(window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray); // ön-koşul
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        content.UpdateLayout();
+
+        DispatcherPump.PumpUntil(
+            () => window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray.Count == 0,
+            TimeSpan.FromSeconds(3));
+        Assert.Empty(window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray);
     }
 }

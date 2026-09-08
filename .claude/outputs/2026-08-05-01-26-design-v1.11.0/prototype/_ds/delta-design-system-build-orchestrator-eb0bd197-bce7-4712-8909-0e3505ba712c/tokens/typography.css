@@ -1,0 +1,13 @@
+/* Delta Build Orchestrator — type tokens
+   UI = Geist (sans). Makinenin ürettiği her şey (console, süre, SHA, sayaç) = Geist Mono, tabular rakam.
+   Temel UI metni 13px (yoğun geliştirici-aracı ölçeği). */
+:root {
+  --font-sans:'Geist','Segoe UI',system-ui,sans-serif;
+  --font-mono:'Geist Mono',ui-monospace,'Cascadia Code',monospace;
+
+  --text-2xs:11px; --text-xs:12px; --text-sm:13px; /* BASE */ --text-md:14px; --text-lg:16px;
+  --text-xl:20px; --text-2xl:26px; --text-3xl:34px;
+
+  --leading-tight:1.2; --leading-snug:1.35; --leading-normal:1.5; --leading-mono:1.55;
+  --tracking-tight:-0.01em; --tracking-wide:0.02em; --tracking-caps:0.07em;
+}

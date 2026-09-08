@@ -28,6 +28,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private ProjectRowState _state;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Bu proje topolojide bir cycle (SCC) üyesi mi —
@@ -37,6 +38,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// alt-durumunu EZER.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _inCycle;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı (<see cref="RunViewModel.IsRunning"/> ||
@@ -45,6 +47,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// olmadan Pending bir satır ölü envanterden (Discovered) ayırt edilemez.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _isRunActive;
 
     /// <summary>[T53-UI] Kartın soluk ikinci satırı — projenin ait olduğu solution'ın adı (prototip
@@ -94,6 +97,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool? _willBuild;
 
     /// <summary><see cref="WillBuild"/>'in GEREKÇESİ — will-build noktasının tooltip'i bunu söyler.
@@ -132,6 +136,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// sayaç AYNI soruyu aynı şekilde cevaplar (tek kural, iki tüketici).</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     [NotifyPropertyChangedFor(nameof(IsCompiling))]
     private bool _cycleWaiting;
 
@@ -198,6 +203,34 @@ public sealed partial class ProjectRowViewModel : ObservableObject
         _ => Controls.GraphStatus.Discovered,
     };
 
+    /// <summary>[design v1.11.0 §3.1 · §9-3] <b>Başlangıç modu.</b> Sync ve uygulama açılışı hiçbir şeyi
+    /// renklendirmez: hangi işlemin geleceği belli olmadığı için plan gösterilmez. Satırda kesikli sol şerit +
+    /// kesikli nokta, grafta kesikli node border'ı. Bayrak, bir işlem BAŞLADIĞINDA düşer (motorun
+    /// <c>_neutralize</c>'ına karşılık gelir) ve bir sonraki Sync'te geri gelir.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    private bool _fresh;
+
+    /// <summary>[design v1.11.0 §9-4] Bu satır YÜRÜYEN işlemin kapsamında mı — açılış koreografisinin
+    /// dalgasında amber'a yanan küme. Koşu başlayınca statü kanalı devralır (queued/building/sonuç), bu yüzden
+    /// bayrak yalnız <c>discovered</c> satırlarda görünür bir fark yaratır.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    private bool _marked;
+
+    /// <summary>[design v1.11.0 §9-2] Satırın TEK görsel durumu — şerit, nokta, ad vurgusu ve graf node'u
+    /// hepsi bunu okur. Eşleme <see cref="Controls.VisualStatuses.For"/>'dadır; kart kendi tablosunu KURMAZ.</summary>
+    public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Fresh, Marked);
+
+    /// <summary>[design v1.11.0 §9-4 · §2.4] Açılış koreografisinin satıra düşen payı: hedef opaklık + o
+    /// opaklığa giden geçişin süresi. Satırlar node'larla SENKRON söner (kapsam 0.45'e 440ms'de, kapsam dışı
+    /// 0.3'e 1120ms'de — ikisi aynı anda biter) ve koşu başlayınca tam opaklığa dönerler.
+    /// <para>Değer satıra İTİLİR (<see cref="NamePrefix"/>/<see cref="TargetSha"/> deseni): 200 satırın
+    /// <c>RunViewModel</c>'e tek tek abone olması yerine sürücü tek tek yazar — satır başına EK abone YOK.</para>
+    /// <para><b>Bitiş koreografisi (neon) satırlara UYGULANMAZ</b> (kullanıcı kararı): liste koşu bitiminde
+    /// sabit kalır, koreografi yalnız grafta yaşar.</para></summary>
+    [ObservableProperty] private RowFade _fade = RowFade.None;
+
     public ProjectRowViewModel(string id, string name, ProjectRowState state, string? solutionName = null)
     {
         Id = id;
@@ -208,6 +241,17 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 }
 
 public enum ProjectRowState { Pending, Started, Succeeded, Failed, Skipped }
+
+/// <summary>[design v1.11.0 §9-4] Bir satırın koreografi opaklığı ve ona giden geçişin süresi — TEK
+/// bildirimde taşınırlar, çünkü ikisi ayrı yazıldığında satır iki kez animasyon kurardı (ilk yazımda eski
+/// süreyle, ikincisinde yeni süreyle).</summary>
+/// <param name="Opacity">Hedef opaklık (1 = koreografi yok).</param>
+/// <param name="DurationMs">O opaklığa giden geçişin süresi.</param>
+public readonly record struct RowFade(double Opacity, double DurationMs)
+{
+    /// <summary>Koreografi oynamıyor — tam opak, normal geçiş süresi.</summary>
+    public static readonly RowFade None = new(1.0, Controls.MarkingChoreography.IdleGlideMs);
+}
 
 /// <summary>[D4 review §3] Kart seçimi değişiminde konsolun izleyeceği aksiyon (<see cref="RunViewModel.NextConsoleSelection"/>
 /// kararı) — MainWindow yalnız uygular.</summary>
@@ -485,10 +529,19 @@ public sealed partial class RunViewModel : ObservableObject
     /// ile yönetilir (aynı projeye tekrar tıklama = deselect).</summary>
     [ObservableProperty] private string? _selectedProjectId;
 
-    /// <summary>[C2] Aktif statü chip'i (<see cref="ProjectFilter"/> sabitleri) — null = filtre yok.</summary>
+    /// <summary>[design v1.11.0 §2.7-4] Aktif statü chip'lerinin KÜMESİ (<see cref="ProjectFilter"/> sabitleri) —
+    /// boş küme = filtre yok. Chip'ler bağımsız açılıp kapanır ve seçili küme <b>VEYA</b> ile birleşir.
+    /// <para>Değer HER ZAMAN yeni bir küme örneğiyle DEĞİŞTİRİLİR (mutasyon YOK): <c>ObservableProperty</c>
+    /// referans eşitliğine bakar, yerinde değiştirilen bir küme <c>PropertyChanged</c> yaymaz ve
+    /// <see cref="VisibleProjects"/> bayat kalırdı.</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VisibleProjects))]
-    private string? _activeFilter;
+    private IReadOnlySet<string> _activeFilters = ProjectFilter.None;
+
+    /// <summary>[design v1.11.0 §2.2 · §9-9] Sticky şeridin KALICI işlem pill'inin metni — son tetiklenen
+    /// işlemin kimliği (<see cref="OperationLabel"/>). Koşu bitince SİLİNMEZ: bir sonraki işleme kadar durur;
+    /// hiç işlem yapılmadıysa (açılış) <c>null</c> ve pill hiç çizilmez.</summary>
+    [ObservableProperty] private string? _currentOperation;
 
     /// <summary>[C2] Serbest metin proje sorgusu (ada göre alt-dize).</summary>
     [ObservableProperty]
@@ -525,7 +578,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[C2] Sorgu + aktif filtre altında görünen satırlar (BuildApp.jsx:465-470).</summary>
     public IReadOnlyList<ProjectRowViewModel> VisibleProjects =>
-        Projects.Where(r => ProjectFilter.Matches(r, ProjectQuery, ActiveFilter)).ToList();
+        Projects.Where(r => ProjectFilter.Matches(r, ProjectQuery, ActiveFilters)).ToList();
 
     /// <summary>[C2 fold testi] YALNIZ testler: uçuştaki Sync bayrağının gözlemlenebilir hali (bkz.
     /// <see cref="OnEngineExited"/> fold'u — engine ölümü bu bayrağı bırakmalı).</summary>
@@ -564,6 +617,21 @@ public sealed partial class RunViewModel : ObservableObject
     {
         string runId = _newRunId();
         _currentRunId = runId;
+        // [design v1.11.0 §9-4 `_beginOp`] Konsol VE event stream temizlenir — ekrandaki her şey artık
+        // yürüyen işlemin hikâyesidir. Konsolu aşağıdaki `clearBuffers` dalı siler; stream buradan.
+        if (clearBuffers) ClearStreamForNewOperation();
+        // [design v1.11.0 §9-4 `_neutralize`] Kapsam ÖNCE okunur, sonra nötrleme yapılır — prototipteki sıra
+        // da budur (build-data.js:541-547: önce `st.will` yazılır, sonra `_neutralize()`).
+        var scope = ScopeFor(mode);
+        NeutralizeRows(fresh: false);
+        RefreshRunSurface(); // sayaclar/serit notrlenmis listeden yeniden turer
+        // [design v1.11.0 §2.2] İşlem pill'i TIKLAMA ANINDA yazılır (motorun cevabı beklenmez): pill "ne
+        // yapmıştım?" sorusunu cevaplar ve o soru gönderim gecikmesi boyunca da geçerlidir.
+        //
+        // Yazım NÖTRLEMEDEN SONRAdir: etiketin değişmesi, kabuğun grafa "yeni bir işlem başladı, statüleri
+        // yeniden oku" dediği sinyaldir — başlangıç modunun düşüşü <c>Counters</c>'ı hareket ettirmez, bu
+        // yüzden sayaca bakan kapı onu kaçırır. Sinyal erken çıkarsa graf önceki koşunun renkleriyle tazelenir.
+        CurrentOperation = OperationLabel.ForRunMode(mode);
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers)
@@ -582,6 +650,23 @@ public sealed partial class RunViewModel : ObservableObject
         var previousPhase = Phase;
         Phase = AppPhase.Starting;
         AppendRunLine(RunRequestedLine(mode));
+
+        // [design v1.11.0 §9-4 `_mark`] AÇILIŞ KOREOGRAFİSİ — koşu ondan SONRA başlar (prototipte de:
+        // `_mark(scope, () => startRun())`). Kapsamı VM bilir, zamanlamayı kabuk; bu yüzden kapı bir
+        // delegedir ve VM tek bir şey yapar: bitmesini bekler.
+        //
+        // Neden koşu beklenir: koreografi motorun planlama penceresiyle ÖRTÜŞTÜRÜLMÜŞTÜ ve bedeli ölçüldü —
+        // planlama koreografiden kısa sürdüğünde `runStarted` dalgayı ortasında kesiyordu, uzun sürdüğünde
+        // kesmiyordu: aynı tıklama bazen animasyonlu bazen anında açılıyordu. Bir koreografi ya her zaman
+        // oynar ya hiç. İşlem yine de İLK KAREDE başlar (pill, Stop, konsol satırı) — bekleyen yalnız komut.
+        if (OperationChoreography is { } playChoreography)
+        {
+            _pendingRunId = runId;
+            await playChoreography(scope);
+            // Koreografi sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ.
+            if (!string.Equals(_pendingRunId, runId, StringComparison.Ordinal)) return;
+            _pendingRunId = null;
+        }
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
         // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
@@ -595,6 +680,75 @@ public sealed partial class RunViewModel : ObservableObject
             Phase = previousPhase; // hiçbir engine event'i gelmeyecek — faz Starting'te asılı bırakılamaz
         }
     }
+
+    /// <summary>
+    /// [design v1.11.0 §9-4] <b>Açılış koreografisinin kapısı.</b> Kabuk (<c>MainWindow</c>) buraya kendi
+    /// oynatıcısını takar; VM koreografiyi İSTER ve bitmesini BEKLER — zamanlama, süre ve görsel bilgisi
+    /// VM'e hiç sızmaz. Kapı takılı değilse (çıplak VM testleri) komut doğrudan gider.
+    ///
+    /// <para>Argüman işlemin KAPSAMIdir (<see cref="ScopeFor"/>): dalgada amber'a yanan küme.</para>
+    /// </summary>
+    public Func<IReadOnlyList<ProjectRowViewModel>, Task>? OperationChoreography { get; set; }
+
+    /// <summary>Koreografisi oynarken henüz GÖNDERİLMEMİŞ koşunun id'si; <c>null</c> = bekleyen koşu yok.
+    /// Stop bu pencerede komutu değil <b>isteği</b> iptal eder (bkz. <see cref="CancelPendingRun"/>).</summary>
+    private string? _pendingRunId;
+
+    /// <summary>
+    /// [design v1.11.0 §9-4] Bir işlemin KAPSAMI — dalgada amber'a yanan küme.
+    /// <list type="bullet">
+    ///   <item><b>Build</b>: stale set (önizlemenin <c>WillBuild</c>'i true olan satırlar).</item>
+    ///   <item><b>Rebuild</b>: döngü dışı TÜM projeler (döngü üyeleri standart koşuya girmez — §3.2).</item>
+    ///   <item><b>Resolve cycles</b>: döngü üyeleri.</item>
+    /// </list>
+    /// Kapsam bir TAHMİN değildir: üçü de motorun aynı koşuda derleyeceği kümedir (motor kapsamı daraltırsa
+    /// koreografi zaten koşu başlarken biter ve statü kanalı devralır).
+    /// </summary>
+    /// <summary>
+    /// [design v1.11.0 §9-4 <c>_neutralize</c>] <b>Önceki koşunun tüm izlerini siler.</b> Statü, süre ve
+    /// dependency uyarısı sıfırlanır, koreografi işareti düşer — herkes tek bir zemine iner. PLAN
+    /// (<see cref="ProjectRowViewModel.WillBuild"/>) ve yapısal bilgi (döngü üyeliği, SHA çifti, katman)
+    /// KORUNUR: kapsam plandan okunur, ve "neyin bayat olduğu" renk olmadan da SHA çiftinden okunmalıdır.
+    ///
+    /// <para>İki çağıranı vardir (Sync ve bir İŞLEMin başlangıcı) ve YALNIZ inilen zeminde ayrışırlar — bu
+    /// yüzden sıfırlama tek yerdedir.</para>
+    /// </summary>
+    /// <param name="fresh">
+    /// <c>true</c> → <b>başlangıç modu</b> (kesikli, renksiz): Sync'in ve açılışın zemini. Hangi işlemin
+    /// geleceği belli değildir, bu yüzden plan da gösterilmez (§3.1).
+    /// <c>false</c> → <b>düz nötr gri</b>: bir İŞLEM başladı; renk bundan sonra yalnız onun hikâyesini anlatır
+    /// ve kapsam amber'a ancak işaretleme dalgasıyla yanar.
+    /// </param>
+    private void NeutralizeRows(bool fresh)
+    {
+        foreach (var row in Projects)
+        {
+            row.State = ProjectRowState.Pending;
+            row.DepIssues = null;
+            row.DurationMs = 0;
+            // Uyari ucgeninin metnini secen oncelik sirasinda (RowWarning) bu iki hukum DepIssues'in
+            // USTUNDEDIR: temizlenmezlerse yeni islemin ilk karesinde ucgen hala gecen kosuyu anlatir.
+            row.CycleUnconverged = false;
+            row.CycleUnsettled = false;
+            row.CycleWaiting = false;
+            row.SkipReason = null;
+            row.Fresh = fresh;
+            row.Marked = false;
+        }
+    }
+
+    public IReadOnlyList<ProjectRowViewModel> ScopeFor(RunMode mode) => mode switch
+    {
+        RunMode.Rebuild => [.. Projects.Where(r => !r.InCycle)],
+        RunMode.Cycles => [.. Projects.Where(r => r.InCycle)],
+        _ => [.. Projects.Where(r => r.WillBuild == true)],
+    };
+
+    /// <summary>[design v1.11.0 §9-5] Bu koşuda GERÇEKTEN derlenen projeler (succeeded ∪ failed) — bitiş
+    /// koreografisinin ("neon tutuşma") kapsamı. Atlananlar ve dokunulmayanlar BURADA DEĞİLDİR: onlar
+    /// koreografinin son adımında hep birlikte belirginleşir.</summary>
+    public IReadOnlyList<string> BuiltInThisRun() =>
+        [.. Projects.Where(r => r.State is ProjectRowState.Succeeded or ProjectRowState.Failed).Select(r => r.Name)];
 
     /// <summary>[planlama görünürlüğü] Run dokümanına düşen tek satırlık not: konsol, tıklamanın KALICI
     /// kaydıdır (şerit bir sonraki faz değişiminde üzerine yazar). Motorun planlama adımları hemen ardından
@@ -668,6 +822,7 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task SyncAsync()
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
+        CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
         // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
@@ -724,9 +879,25 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="IsMidRunLocked"/> sürer (branch/worktree/configuration kilidi kalkmaz, split-button geri
     /// gelmez). Fazdan çıkış motorun sonucuna aittir — bkz. <see cref="OnRunCompleted"/>/
     /// <see cref="OnRunStopped"/>/<see cref="OnError"/>/<see cref="OnEngineExited"/>.</para></summary>
+    /// <summary>[design v1.11.0 §3.1 "Stop"] Marking fazında Stop: komut henüz gönderilmediği için
+    /// durdurulacak bir şey de yoktur — uygulama kendi isteğini geri alır. Motora ne <c>startRun</c> ne
+    /// <c>stopRun</c> gider; koreografiyi ve işaretleri kabuk <see cref="IsStarting"/> düşüşünde temizler.</summary>
+    internal static string RunCancelledLine => "Cancelled — build not started";
+
+    private void CancelPendingRun()
+    {
+        _pendingRunId = null;
+        IsStarting = false;
+        Phase = AppPhase.Idle;
+        AppendRunLine(RunCancelledLine);
+    }
+
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
     {
+        // [design v1.11.0 §3.1] Marking fazı: komut henüz gönderilmedi — durdurulacak bir koşu yok, geri
+        // alınacak bir İSTEK var. Motora hiçbir şey gitmez.
+        if (_pendingRunId is not null) { CancelPendingRun(); return; }
         if (_currentRunId is null) return;
         var previous = Phase;
         Phase = AppPhase.Stopping;
@@ -804,15 +975,19 @@ public sealed partial class RunViewModel : ObservableObject
         PropagateSelectionToStream(value); // [D3] stream satırları da tek seçim kaynağından tazelenir
     }
 
-    /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı — <see cref="ProjectRowViewModel.Status"/>'un
-    /// <c>queued</c> türetimi için her satıra iter (IsSelected akışının eşi). <see cref="IsRunning"/>/
-    /// <see cref="IsStarting"/> değiştiğinde tazelenir; yeni doğan satırlar (<see cref="EnsureRow"/>/topoloji)
-    /// da mevcut değeri alır.</summary>
-    private bool RunActive => IsRunning || IsStarting;
+    /// <summary>Bir run GERÇEKTEN koşuyor mu — <see cref="ProjectRowViewModel.Status"/>'un <c>queued</c>
+    /// türetimi için her satıra iter (IsSelected akışının eşi). Yeni doğan satırlar
+    /// (<see cref="EnsureRow"/>/topoloji) da mevcut değeri alır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden <c>IsRunning || IsStarting</c>'di (Fix wave 1 · D1 review
+    /// Finding 1): planlama penceresinde ekran sessiz kalmasın diye kapsam daha TIKLAMA ANINDA kuyruk
+    /// amber'ına düşerdi. design v1.11.0'da o pencereyi açılış koreografisi doldurur ve kapsamı TAM OLARAK
+    /// aynı kümedir — bilgi kaybolmaz, yalnız anında değil dalga hâlinde belirir. Eski kural sürseydi
+    /// koreografinin ilk iki adımı (nötr an + dalga) hiç görünmezdi: kapsam zaten amber olurdu.</para></summary>
+    private bool RunActive => IsRunning;
     partial void OnIsRunningChanged(bool value) => PropagateRunActive();
     partial void OnIsStartingChanged(bool value)
     {
-        PropagateRunActive();
         if (value) ArmEngineWatchdog(); // run istendi — motor bundan sonra konuşmalı
     }
     private void PropagateRunActive()
@@ -831,7 +1006,7 @@ public sealed partial class RunViewModel : ObservableObject
     private void ClearSelectionAndFilter()
     {
         SelectedProjectId = null;
-        ActiveFilter = null;
+        ActiveFilters = ProjectFilter.None;
     }
 
     /// <summary>[T43] Debug/Release değiştir (BuildApp.jsx:1355-1363). Koşarken KİLİTLİ (no-op) ve aynı değere
@@ -1036,6 +1211,14 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
+        // [design v1.11.0 §2.2] İşlem pill'i motorun CEVABINDAN da yazılır, yalnız tıklamadan değil: koşuyu
+        // hangi yol başlatmış olursa olsun (komut, ileride bir kısayol ya da dışarıdan gelen bir run) pill
+        // gerçekte KOŞAN işi söyler. Komut tarafındaki yazım (BeginRunAsync) yalnız gönderim penceresini
+        // kapatır; ikisi aynı değeri üretir (OperationLabel.ForRunMode — tek eşleme yeri).
+        CurrentOperation = OperationLabel.ForRunMode(e.Mode);
+        // [design v1.11.0 §9-4 `_neutralize`] Başlangıç modu da motorun cevabıyla düşer — pill'le AYNI
+        // gerekçe: koşuyu hangi yol başlatmış olursa olsun renk bundan sonra bu işlemin hikâyesini anlatır.
+        foreach (var row in Projects) row.Fresh = false;
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
@@ -1051,7 +1234,13 @@ public sealed partial class RunViewModel : ObservableObject
         _elapsedBaseMs = e.ElapsedMsAtStart;
         _elapsedStartMs = _nowMs();
         ElapsedMs = e.ElapsedMsAtStart;
-        if (e.Mode == RunMode.Rebuild) Projects.Clear(); // Continue'da liste (önceki segmentin sonuçları) korunur
+        // [design v1.11.0 §9-4] Rebuild yeni bir tabana döner — ama listeyi BOŞALTARAK değil, YERİNDE
+        // nötrleyerek. [DEĞİŞEN KURAL] Burada eskiden <c>Projects.Clear()</c> vardı; o, açılış
+        // koreografisinin işaretlediği satır nesnelerini ortasında yok ediyor ve listeyi remount ediyordu
+        // (design v1.10.0 §3.8: "liste yerinden oynamaz"). Komut yolundan gelen bir Rebuild burayı zaten
+        // nötrlenmiş bulur — çağrı, koşuyu başka bir yol başlattığında da tabanın temiz olmasını garanti eder.
+        // Build/Cycles'ta liste (önceki segmentin sonuçları) olduğu gibi korunur.
+        if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false);
         _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;

@@ -166,6 +166,51 @@ internal static class MotionTokens
         target.BeginAnimation(property, animation, HandoffBehavior.SnapshotAndReplace);
     }
 
+    /// <summary>
+    /// [design v1.11.0 §9-4 · §2.3] <b>Token anahtarıyla verilen bir fırçaya GEÇİŞ</b> — işaretleme
+    /// dalgasının "amber'a yanma"sı ve onun geri dönüşü. İşaretleme dalgasına giren HER yüzey (graf düğümünün
+    /// çerçevesi/zemini/küpü, satırın şeridi ve noktası) buradan boyanır; ikinci bir geçiş yolu YOKTUR.
+    ///
+    /// <para><b>İki kip:</b> <paramref name="animate"/> false ise yüzey <see cref="FrameworkElement.SetResourceReference"/>
+    /// ile PAYLAŞILAN (donmuş) token fırçasına bağlanır ve renk anında oturur — varsayılan ve ucuz yol. true ise
+    /// yüzey kendi DONMAMIŞ kopyasına devreder ve rengi animasyonla akar; sonraki bir <c>animate:false</c>
+    /// çağrısı onu token referansına GERİ verir, yani yüzey referansını kalıcı kaybetmez.</para>
+    ///
+    /// <para><paramref name="resourceHost"/> ayrı verilir (<see cref="IconPaint.Apply"/> ile aynı gerekçe):
+    /// graf düğümleri henüz ağaca girmemişken boyanır ve kendi <c>TryFindResource</c>'ları hiçbir sözlüğe
+    /// ulaşamaz.</para>
+    /// </summary>
+    public static void TransitionTokenBrush(FrameworkElement resourceHost, FrameworkElement target,
+        DependencyProperty property, string brushKey, bool animate, double durationMs)
+    {
+        var to = (resourceHost.TryFindResource(brushKey) as SolidColorBrush)?.Color;
+        // Motion sinyalinin kapısı ÇAĞIRANDADIR (GraphView.AnimationsEnabledProvider / satırın MotionGate'i):
+        // burada ikinci kez sorulsaydı karar iki yere dağılır ve test host'unun sinyali üretim yolundan
+        // ayrışırdı. Burası yalnız "geçiş istendi mi ve hedef çözüldü mü" sorusuna bakar.
+        bool motion = animate && to is not null && durationMs > 0;
+
+        if (!motion)
+        {
+            if (target.GetValue(property) is SolidColorBrush previous && !previous.IsFrozen)
+                previous.BeginAnimation(SolidColorBrush.ColorProperty, null);
+            target.SetResourceReference(property, brushKey);
+            return;
+        }
+
+        if (target.GetValue(property) is not SolidColorBrush local || local.IsFrozen)
+        {
+            // Devir: donmuş token fırçasının O ANKI renginden başlayan yerel bir kopya.
+            local = new SolidColorBrush((target.GetValue(property) as SolidColorBrush)?.Color ?? to!.Value);
+            target.SetValue(property, local);
+        }
+        if (local.Color == to!.Value) return; // zaten hedefte — boşuna animasyon kurma
+
+        var spline = ResolveKeySpline(resourceHost, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+        local.BeginAnimation(SolidColorBrush.ColorProperty,
+            SplineColorTo(local.Color, to.Value, TimeSpan.FromMilliseconds(durationMs), spline),
+            HandoffBehavior.SnapshotAndReplace);
+    }
+
     /// <summary>DS'in "durum değişimi" geçişinin ORTAK kapısı: <c>--duration-fast</c> + <c>--ease-standard</c> +
     /// motion sinyali. Üç <c>TransitionX</c> metodu da (renk / double / thickness) BİREBİR aynı üç satırı
     /// yazıyordu — tek yer (kopya YASAK, CLAUDE.md). Süre ve sinyal ÇAĞRI ANINDA taze okunur (motion

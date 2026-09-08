@@ -20,6 +20,27 @@ public static class AppTooltipDefaults
 {
     private static bool _applied;
 
+    /// <summary>
+    /// [design v1.11.0 §2.4-4 · §9-13] <b>"Native" tooltip gecikmesi.</b> v1.11.0, proje satırında DS
+    /// tooltip'ini yalnız uyarı üçgenine bıraktı: statü glyph'i ve hover ikon butonları (play · ⋯ · Explorer ·
+    /// VS) <i>"tooltip taşımaz — anlamları belli; erişilebilirlik için native <c>title</c> + <c>aria-label</c>
+    /// durur"</i>.
+    ///
+    /// <para>WPF'te HTML'in <c>title</c> özniteliğinin birebir karşılığı YOKTUR; en yakını, işletim
+    /// sisteminin fare-üzerinde-bekleme süresiyle açılan sıradan bir <see cref="ToolTip"/>'tir. Bu yüzden o
+    /// butonlar tooltip'lerini KORUR (aksi halde ikon-yalnız kontrolün ne yaptığını öğrenmenin hiçbir yolu
+    /// kalmazdı) ama uygulama genelindeki GECİKMESİZ davranıştan çıkarılırlar: fare satır boyunca gezerken
+    /// arka arkaya balon açılmaz, yalnız bir yerde bilerek beklenirse görünür.</para>
+    /// </summary>
+    public static int NativeDelayMs => System.Windows.SystemParameters.MouseHoverTime.Milliseconds;
+
+    /// <summary>Bir öğeyi uygulama genelindeki gecikmesiz kipten çıkarır — bkz. <see cref="NativeDelayMs"/>.</summary>
+    public static void UseNativeDelay(DependencyObject element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        ToolTipService.SetInitialShowDelay(element, NativeDelayMs);
+    }
+
     /// <summary>Uygulama başlarken bir kez çağrılır. Metadata ezmesi process başına TEK kez yapılabilir,
     /// bu yüzden idempotenttir (testler de çağırır).</summary>
     public static void Apply()

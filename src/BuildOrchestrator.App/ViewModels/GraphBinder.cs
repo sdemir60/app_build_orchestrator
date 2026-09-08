@@ -41,14 +41,14 @@ public static class GraphBinder
             rows.TryGetValue(node.Id, out var row);
             // Elde topoloji varsa Sync yapılmıştır (bu metot yalnız o zaman çağrılır) → synced: true.
             var status = StatusOf(row, synced: true);
-            // [Task 5] Üyelik de StatusOf'un savunmacı dalıyla AYNI desen: satır varsa TEK otorite (row.InCycle),
-            // yoksa (topoloji düğümünün henüz satırı yok) topolojinin kendi bayrağı.
-            bool inCycle = row?.InCycle ?? node.InCycle;
-            // Plan kanalı da AYNI desenle topolojiye düşer. Sync'te topoloji önizlemeden ÖNCE gelir ve graf o
-            // anda kurulur; satırlar planı henüz almadığı için burası eskiden null geçiyor ve küpler nötr
-            // çiziliyordu — oysa topoloji düğümü değeri zaten taşır.
-            bool? willBuild = row?.WillBuild ?? node.WillBuild;
-            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, inCycle, willBuild));
+            // [design v1.11.0 §2.3] TEK renk kanalı: satırın görsel durumu grafa AYNEN taşınır — iki yüzey
+            // (liste + graf) tek durumdan beslenir ve ikinci bir eşleme YAZILMAZ. Satır henüz yoksa
+            // (topoloji düğümünün satırı kurulmamış — savunmacı) başlangıç modu varsayılır: Sync'ten sonraki
+            // temiz hâl budur.
+            var visual = row is { } r
+                ? VisualStatuses.For(status, r.Fresh, r.Marked)
+                : VisualStatus.Fresh;
+            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, visual));
         }
         return result;
     }

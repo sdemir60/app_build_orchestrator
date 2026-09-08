@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
@@ -49,6 +49,13 @@ public partial class MainWindow : Window
     // [E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter (frontier follow'u seçime göre gate eder;
     // paneller bölgesel suppress'lerini buna bildirir — bir panelde kaydırmak diğerlerini duraklatmaz).
     private readonly ScrollArbiter _scrollArbiter = new();
+    /// <summary>[design v1.11.0 §9-4] Açılış koreografisinin sürücüsü — motion sinyalini TAZE okur
+    /// (reduced-motion'da koreografi hiç oynamaz).</summary>
+    private readonly Services.OperationChoreographer _choreographer =
+        new(() => App.Motion?.AnimationsEnabled ?? false);
+    /// <summary>[design v1.11.0 §9-5] Neonun random sırasını tohumlayan koşu sayacı — koreografi koşudan
+    /// koşuya farklı bir sıra oynasın diye artar.</summary>
+    private int _endFinaleRun;
     // [E4/T48] Liste satır sırası (başlık hariç) — SetGroups ile AYNI sıra; FollowRow/SelectRow satır index'i buradan
     // (her 200ms tick'te BuildLayerGroups'u yeniden kurmamak için yalnız topoloji değişiminde tazelenir).
     private IReadOnlyList<ProjectRowViewModel> _orderedRows = [];
@@ -144,20 +151,10 @@ public partial class MainWindow : Window
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
-        // [A13/T2 · 2.1] design-v1 §2.1 title-bar bağlamı. AYRI bir abonelik (persist'le AYNI dört alanı dinler
-        // ama ONA BAĞLANMAZ): OnWorkflowPreferenceChanged'in tek sorumluluğu kalıcı duruma yazmaktır, görsel
-        // tazeleme oraya karışmamalı. Seed ATAMALARINDAN SONRA kurulur ve hemen bir kez elle sürülür — böylece
-        // açılışta hatırlanan repo/branch başlıkta ZATEN doğrudur (seed'ler yukarıda, abonelikten önce akıyor).
-        _vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName is nameof(RunViewModel.RootPath) or nameof(RunViewModel.Branch)
-                or nameof(RunViewModel.UseWorktree) or nameof(RunViewModel.WorktreeName)) RefreshTitleContext();
-        };
-        // [T2 fix-1 · I-G] EffectiveWorktreeName auto-ad dalında <see cref="RunViewModel.Worktrees"/>'e de
-        // BAĞLIDIR (AutoWorktreeName mevcut worktree sayısını sayar) — envanter geldiğinde gösterilen ad
-        // değişebilir. Yalnız dört özelliği dinlemek bu kaynağı KAÇIRIYORDU.
-        _vm.Worktrees.CollectionChanged += (_, _) => RefreshTitleContext();
-        RefreshTitleContext();
+        // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
+        // yalnız markayı taşır. Branch/worktree zaten alt bardaki chip'lerdeydi; geriye kalan tek yeni bilgi
+        // (hangi workspace) alt bara, branch chip'inin soluna geçti (§2.7-5a) ve orayı ActionBar kendi
+        // RootPath aboneliğiyle sürer. Bu yüzden burada tazelenecek bir başlık öğesi kalmadı.
 
         // [D1] Proje listesini katman gruplarıyla besle. SetGroups YALNIZ topoloji/gruplama değişiminde (tam
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
@@ -170,10 +167,13 @@ public partial class MainWindow : Window
         RefreshProjectGroups();
         RebuildGraph();
 
-        // [E2/T10] Proje listesi boş-durum davetleri: repo yok → "Pick a repository…" + Choose Folder; repo
-        // Sync'lendi ama 0 proje → "No projects found under this folder." Karar SAF (ListInvite.Resolve); burada
-        // yalnız tetik + uygulama. Choose Folder aynı repo-değiştir yolunu kullanır (PickFolder → ChangeRepositoryAsync).
-        Shell.ChooseFolderButton.Click += OnChooseFolder;
+        // [design v1.8.0 §2.4] Proje listesi boş-durum davetleri: repo yok → KURULUM DAVETİ (Open settings /
+        // Import settings…); repo Sync'lendi ama 0 proje → "No projects found under this folder." Karar SAF
+        // (ListInvite.Resolve); burada yalnız tetik + uygulama.
+        // [DEĞİŞEN KURAL] Davetin düğmesi eskiden doğrudan bir klasör seçici açıyordu; v1.8.0 onu Settings'e
+        // yönlendirdi — başlamak için gereken ayar sayısı arttı (kök + katmanlar) ve kök Settings'in parçası oldu.
+        Shell.OpenSettingsButton.Click += OnSettings;
+        Shell.ImportSettingsButton.Click += OnImportSettings;
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(RunViewModel.Phase) or nameof(RunViewModel.HasWorkspace)
@@ -206,20 +206,36 @@ public partial class MainWindow : Window
         Shell.ProjectFilterChip.Click += (_, _) => _vm.ToggleFilter(null);
         _vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName != nameof(RunViewModel.ActiveFilter)) return;
+            if (e.PropertyName != nameof(RunViewModel.ActiveFilters)) return;
             RefreshFilterChip();
             // [E4] Filtre, seçimle AYNI SINIFTAN bir "şu an şuna bakıyorum" beyanıdır → frontier follow durur
             // (karar arbiter'da, tek yerde: ScrollArbiter.CanFollowFrontier).
-            _scrollArbiter.SetFilter(_vm.ActiveFilter is not null);
+            _scrollArbiter.SetFilter(_vm.ActiveFilters.Count > 0);
         };
         RefreshFilterChip();
-        _scrollArbiter.SetFilter(_vm.ActiveFilter is not null); // kalıcı durumdan gelen bir filtreyle açılış
+        _scrollArbiter.SetFilter(_vm.ActiveFilters.Count > 0); // kalıcı durumdan gelen bir filtreyle açılış
         RefreshGraphFilter();
 
         // [D5] Graf seçimi (AD) → VM seçimi (ID); echo koruması OnGraphSelectionChanged'de. VM statü/seçim/run
         // sinyalleri → grafı besle (UpdateStatuses/RunPhase/SelectedNode) — bkz. OnVmPropertyChangedForGraph.
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
+
+        // [design v1.9.0 §2.10] Görülmemiş sürüm işareti: sekme görülünce kalıcı duruma yazılır ve nokta söner.
+        AboutOverlay.NotesSeen += OnNotesSeen;
+        RefreshUnseenNotesMark();
+
+        // [design v1.11.0 §9-4/§9-5] İki koreografi: açılış (işaretleme dalgası — satır + graf) ve bitiş
+        // (neon tutuşma — YALNIZ graf). Sürücü kabukta durur çünkü zamanlama ve görsel katman burasıdır;
+        // VM yalnız "bir işlem başladı, kapsamı bu" der.
+        _choreographer.PushToGraph = ApplyMarkingToGraph;
+        // [design v1.11.0 §9-4] Koşu komutu koreografi BİTTİKTEN sonra gider — kapı budur. VM zamanlama
+        // bilmez; kabuk oynatır ve bitişini bildirir.
+        _vm.OperationChoreography = scope =>
+        {
+            Shell.GraphHost.BeginOperation(); // bir önceki koşunun neon'u anında kesilir (§9-5)
+            return _choreographer.PlayAsync(_vm.Projects, scope);
+        };
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
@@ -338,15 +354,44 @@ public partial class MainWindow : Window
     {
         // [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan
         // gelir — ikisi de burada elle yazılmaz.
+        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa cümle DEĞİŞİR: "About — what's new in {sürüm} (F1)".
         var about = ShortcutCatalog.Get(ShortcutId.About);
+        string sentence = HasUnseenNotes
+            ? string.Format(CultureInfo.InvariantCulture, "About — what's new in {0}", AppIdentity.Version)
+            : about.Description;
         var tooltip = new System.Windows.Controls.ToolTip
         {
-            Content = $"{about.Description} ({about.Gestures[0]})",
+            Content = $"{sentence} ({about.Gestures[0]})",
         };
         // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
         // ikinci kez yazılmaz.
         AppTooltip.SetSide(tooltip, AppTooltip.GetSide((System.Windows.Controls.ToolTip)GearButton.ToolTip));
         InfoButton.ToolTip = tooltip;
+    }
+
+    // ---------------------------------------------------------------- [design v1.9.0 §2.10] görülmemiş sürüm
+
+    /// <summary>Kullanıcının What's new sekmesinde en son gördüğü sürüm ÇALIŞAN sürümden farklı mı — ⓘ
+    /// üzerindeki 5px amber noktanın ve About'un hangi sekmede açılacağının TEK kaynağı.</summary>
+    private bool HasUnseenNotes =>
+        !string.Equals(_uiState.Load().SeenVersion, AppIdentity.Version, StringComparison.Ordinal);
+
+    /// <summary>Noktayı ve tooltip'i tazeler — ikisi AYNI karardan (<see cref="HasUnseenNotes"/>) beslenir.</summary>
+    private void RefreshUnseenNotesMark()
+    {
+        UnseenNotesDot.Visibility = HasUnseenNotes ? Visibility.Visible : Visibility.Collapsed;
+        SetupAboutButtonTooltip();
+    }
+
+    /// <summary>Sekme GÖRÜLDÜ: kalıcı duruma yazılır ve nokta söner. Sekmenin kendisi bunu bildirir
+    /// (<see cref="Views.AboutDialog.NotesSeen"/>) — diyalog kalıcı durumu BİLMEZ.</summary>
+    private void OnNotesSeen()
+    {
+        var state = _uiState.Load();
+        if (string.Equals(state.SeenVersion, AppIdentity.Version, StringComparison.Ordinal)) return;
+        state.SeenVersion = AppIdentity.Version;
+        _uiState.Save(state);
+        RefreshUnseenNotesMark();
     }
 
     /// <summary>[About] Bir modal AÇIK MI — Esc zinciri, F1 kapısı ve gear kapısı bu TEK karardan beslenir
@@ -563,14 +608,28 @@ public partial class MainWindow : Window
         PushGraphSelection(); // mevcut seçim taze grafa yansısın
     }
 
+    /// <summary>
+    /// [design v1.11.0 §9-4] Açılış koreografisinin grafa düşen payı — <b>tek çağrıda iki şey</b>: koreografinin
+    /// KENDİ opaklık adımı (<see cref="Graph.GraphView.SetMarking"/>) ve düğüm RENKLERİ.
+    ///
+    /// <para>Kapsamın amber'a yanması ayrı bir kanal değildir: renk normal statü itişinden gelir. İtiş burada
+    /// olmazsa graf ancak koşu tikinin (200ms) insafıyla tazelenir — 36 projede tempo ~31ms/node olduğu için
+    /// dalga listede akıcı, grafta kesik kesik görünür. Tasarım ikisinin SENKRON olmasını ister (§9-4).</para>
+    /// </summary>
+    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedNames)
+    {
+        Shell.GraphHost.SetMarking(step, markedNames);
+        PushGraphStatuses();
+    }
+
     /// <summary>[D5] Statü/dep-badge/kenar/kamera'yı YERİNDE günceller (geometri korunur, stagger tekrar oynamaz).
     /// Topoloji yokken no-op.</summary>
     private void PushGraphStatuses()
     {
-        // [E2/§5-a] Projects boşken (ör. Rebuild başında OnRunStarted listeyi BuildPreview'dan ÖNCE boşaltır) push
-        // ETME: RowsById() boş olurdu ve GraphBinder her topoloji düğümünü bir kare Discovered'a "flash" ederdi
-        // (queued/dirty statüleri kaybolur, sonra BuildPreview yeniden doldurunca geri gelir). Guard no-op'tur —
-        // A13.2 Clear/reset EKLEMEZ; yalnız statü itişini Projects yeniden dolana dek erteler.
+        // [E2/§5-a] Projects boşken (topoloji henüz gelmedi ya da workspace değişti) push ETME: RowsById()
+        // boş olurdu ve GraphBinder her topoloji düğümünü bir kare Discovered'a "flash" ederdi (queued/dirty
+        // statüleri kaybolur, sonra liste yeniden dolunca geri gelir). Guard no-op'tur — A13.2 Clear/reset
+        // EKLEMEZ; yalnız statü itişini Projects yeniden dolana dek erteler.
         if (_vm.Topology.Count == 0 || _vm.Projects.Count == 0) return;
         Shell.GraphHost.UpdateStatuses(GraphBinder.Nodes(_vm.Topology, RowsById()));
     }
@@ -617,12 +676,33 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Counters):
+            // [design v1.11.0 §3.1 · §9-3] Başlangıç modu grafın da RENK kanalıdır (kesikli node çerçevesi) ve
+            // bir işlem başlarken düşer. Bu geçiş <c>Counters</c>'ı DEĞİŞTİRMEZ (statüler aynı kalır), yani
+            // yukarıdaki kapı onu KAÇIRIRDI. İşlem etiketi, başlangıç modunun düştüğü ANIN gözlemlenebilir
+            // sinyalidir (BeginRunAsync ikisini birlikte yazar).
+            case nameof(RunViewModel.CurrentOperation):
                 PushGraphStatuses();
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
+                // [design v1.11.0 §9-4] Koşu GERÇEKTEN başladı → açılış koreografisi biter ve statü kanalı
+                // devralır (işaretlilik silinir: queued/building zaten amberdir).
+                //
+                // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
+                // hiç açılmadı). İşaret o zaman da silinmelidir — aksi halde başlamayan bir işlemin amber kapsamı
+                // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                if (_vm.IsRunning || !_vm.IsStarting)
+                {
+                    _choreographer.Cancel(_vm.Projects);
+                    _choreographer.ClearMarks(_vm.Projects);
+                }
                 PushGraphRunPhase();
                 PushGraphStatuses();
+                break;
+            case nameof(RunViewModel.Phase):
+                // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
+                if (_vm.Phase is AppPhase.Done or AppPhase.Stopped)
+                    Shell.GraphHost.PlayEndFinale(_vm.BuiltInThisRun(), _endFinaleRun++);
                 break;
             case nameof(RunViewModel.SelectedProjectId):
                 PushGraphSelection();
@@ -667,7 +747,42 @@ public partial class MainWindow : Window
     private void OnSettings(object sender, RoutedEventArgs e)
     {
         if (AnyDialogOpen) return;
+        WireSettingsPickers();
         SettingsOverlay.Open(_vm, _uiState, PickFolder);
+    }
+
+    /// <summary>[design v1.10.0 §2.4] First run davetindeki <c>Import settings…</c>: Settings'i açar ve dosya
+    /// seçiciyi HEMEN tetikler — hazır bir ayar dosyası olan developer tek adımda başlar.</summary>
+    private void OnImportSettings(object sender, RoutedEventArgs e)
+    {
+        if (AnyDialogOpen) return;
+        WireSettingsPickers();
+        SettingsOverlay.OpenForImport(_vm, _uiState, PickFolder);
+    }
+
+    /// <summary>[design v1.10.0 §2.9] Export/Import dosya seçicileri — diyalogun seam'lerine gerçek Win32
+    /// diyalogları bağlanır (testler bu yolu by-pass eder, <see cref=PickFolder/> deseniyle AYNI).</summary>
+    private void WireSettingsPickers()
+    {
+        SettingsOverlay.PickExportPath ??= () =>
+        {
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                FileName = ViewModels.SettingsFile.FileName,
+                Filter = ViewModels.SettingsFile.FileFilter,
+                DefaultExt = ".json",
+            };
+            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+        };
+        SettingsOverlay.PickImportPath ??= () =>
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = ViewModels.SettingsFile.FileFilter,
+                CheckFileExists = true,
+            };
+            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+        };
     }
 
     /// <summary>[About] Info butonu → About modali.</summary>
@@ -685,7 +800,8 @@ public partial class MainWindow : Window
     private void OnAboutRequested()
     {
         if (AboutOverlay.Visibility == Visibility.Visible) { AboutOverlay.CloseDialog(); return; }
-        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync);
+        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa About DOĞRUDAN What's new'da açılır.
+        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync, HasUnseenNotes);
     }
 
     /// <summary>[About] MSBuild yolu + sürümü — About'un Environment sekmesi bunu LAZY çağırır (<c>vswhere</c>
@@ -713,32 +829,15 @@ public partial class MainWindow : Window
         return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
     }
 
-    /// <summary>[E2/T10] Boş-durum daveti içindeki "Choose Folder": seçilen klasör HEMEN uygulanır —
-    /// <see cref="PickFolder"/> → <see cref="RunViewModel.ChangeRepositoryAsync"/> (kök değişir, durumlar sıfırlanır,
-    /// otomatik Sync). Settings'in "Change…" düğmesi bu yolu KULLANMAZ: orada seçim yalnız taslağa yazılır ve
-    /// uygulanması Save'e ertelenir (<see cref="RunViewModel.ApplySettingsAsync"/>). Diyalog iptal edilirse no-op.</summary>
-    private async void OnChooseFolder(object sender, RoutedEventArgs e)
-    {
-        if (PickFolder() is { } path) await _vm.ChangeRepositoryAsync(path);
-    }
+    // [design v1.8.0 §2.4] "Choose Folder" yolu KALDIRILDI: boş durum artık doğrudan bir klasör seçici
+    // açmıyor, Settings'e yönlendiriyor ve kök orada (taslakta) düzenleniyor — uygulanması Save'e ertelenir
+    // (RunViewModel.ApplySettingsAsync). Klasör seçicinin kendisi (PickFolder) Settings'in "Browse…"
+    // düğmesine geçti; ChangeRepositoryAsync yolu ise kalıcı durumdan gelen kök için yerinde duruyor.
 
-    /// <summary>[A13/T2 · 2.1] design-v1 §2.1 başlık bağlamını tazeler — karar SAF <see cref="TitleBarContext"/>'te,
-    /// burada YALNIZ uygulanır. Worktree eki boşsa öğe <c>Collapsed</c> olur: boş metin bırakmak 8px'lik marjını
-    /// yine de ödetirdi (logo/başlık hizası kayardı).</summary>
-    private void RefreshTitleContext()
-    {
-        ContextText.Text = TitleBarContext.Compose(_vm.RootPath, _vm.Branch);
-        // [T2 fix-1 · C1] ETKİN değer — zorunlu worktree'de başlık da worktree'yi göstermeli.
-        string suffix = TitleBarContext.WorktreeSuffix(_vm.RootPath, _vm.EffectiveUseWorktree, _vm.EffectiveWorktreeName);
-        ContextWorktreeText.Text = suffix;
-        ContextWorktreeText.Visibility = suffix.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-    }
-
-    /// <summary>[A13/T2 · 2.3] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
-    /// <see cref="ProjectFilter.Label"/>'dır (action bar'ın chip tooltip'leriyle aynı tablo) — burada yeni bir
-    /// eşleme uydurulmaz. Filtre yoksa chip gizlenir.</summary>
-    private void RefreshFilterChip() =>
-        Shell.SetFilterChip(_vm.ActiveFilter is { } f ? ProjectFilter.Label(f) : null);
+    /// <summary>[design v1.11.0 §2.7-4] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
+    /// <see cref="ProjectFilter.ChipLabel"/>'dır — seçili KÜMEYİ <c>" + "</c> ile listeler (çoklu filtre);
+    /// burada yeni bir eşleme uydurulmaz. Küme boşsa chip gizlenir.</summary>
+    private void RefreshFilterChip() => Shell.SetFilterChip(ProjectFilter.ChipLabel(_vm.ActiveFilters));
 
     /// <summary>
     /// [design v1.7.0 — Filtreleme] Listede etkin bir filtre (ya da arama) varken graf da aynı kümeye iner:
@@ -747,15 +846,19 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshGraphFilter()
     {
-        bool filtering = _vm.ActiveFilter is not null || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
+        bool filtering = _vm.ActiveFilters.Count > 0 || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
         Shell.GraphHost.FilterMatches = filtering
             ? _vm.VisibleProjects.Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
             : null;
     }
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
-    private void RefreshListInvite() =>
+    private void RefreshListInvite()
+    {
         Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count, _vm.VisibleProjects.Count));
+        // [design v1.8.0 §2.4] Kurulum listesi davetle AYNI sinyalden tazelenir: kök ve katman sayısı.
+        Shell.SetSetupChecklist(_vm.RootPath, _vm.LayerPatterns?.Count ?? 0);
+    }
 
     /// <summary>Split sürükleme sonu ya da mod değişimi → kalıcı UiState'e yaz + aktif mod düğmesini eşle.</summary>
     private void OnShellLayoutChanged(object? sender, LayoutState state)

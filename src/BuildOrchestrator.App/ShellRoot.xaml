@@ -84,21 +84,91 @@
           <Grid>
             <controls:StickyLayerList x:Name="PART_Projects" />
 
-            <!-- [E2/T10] Boş-durum davetleri (liste üstünde overlay; görünürlük MainWindow'da ListInvite.Resolve ile).
-                 Metinler tek kaynaktan (InteractionText, x:Static) — verbatim. Repo yokken PickRepository daveti +
-                 Choose Folder; repo Sync'lendi ama 0 proje ise "No projects found under this folder." -->
+            <!-- [design v1.8.0 §2.4 · v1.10.0] FIRST RUN kurulum daveti (liste üstünde overlay; görünürlük
+                 MainWindow'da ListInvite.Resolve ile). Metinler tek kaynaktan (InteractionText, x:Static) —
+                 verbatim.
+                 [DEĞİŞEN KURAL] Davet eskiden tek bir klasör seçiciye açılıyordu ("Pick a repository to get
+                 started" + `Choose Folder`); v1.8.0 onu Settings'e yönlendirmeye çevirdi ve araya bir KURULUM
+                 LİSTESİ koydu (Repository root → Not set · Layers → N defined/Optional), çünkü başlamak için
+                 gereken ayar sayısı arttı. v1.10.0 ikinci bir düğme ekledi: `Import settings…`. -->
             <StackPanel x:Name="PART_ListInvite" Visibility="Collapsed"
-                        HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="280" Margin="24">
-              <TextBlock Text="{x:Static vm:InteractionText.PickRepositoryTitle}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="292" Margin="24">
+              <TextBlock Text="{x:Static vm:InteractionText.ConfigureWorkspaceTitle}"
                          HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                          FontSize="{DynamicResource FontSize.Sm}" FontWeight="{DynamicResource FontWeight.Emphasis}"
                          Foreground="{DynamicResource Brush.TextPrimary}" />
-              <TextBlock Text="{x:Static vm:InteractionText.PickRepositorySubtitle}" Margin="0,8,0,0"
+              <TextBlock Text="{x:Static vm:InteractionText.ConfigureWorkspaceSubtitle}" Margin="0,8,0,0"
                          HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                          FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}" />
-              <Button x:Name="PART_ChooseFolder" Content="{x:Static vm:InteractionText.ChooseFolderButton}"
-                      Margin="0,14,0,0" HorizontalAlignment="Center"
-                      Style="{DynamicResource Ds.Button.Primary.Md}" />
+
+              <!-- Kurulum listesi: 292px kart, surface zemin + 1px border + radius-md; 30px satırlar,
+                   aralarında border-subtle. Değerler mono (SetupRootValue/SetupLayersValue kod-tarafı). -->
+              <Border Margin="0,14,0,0" Padding="0" CornerRadius="{DynamicResource Radius.Md}"
+                      Background="{DynamicResource Brush.Surface}"
+                      BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1">
+                <StackPanel>
+                  <DockPanel Height="30" Margin="10,0">
+                    <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center"
+                               Text="{x:Static vm:InteractionText.SetupRepositoryRootLabel}"
+                               FontSize="{DynamicResource FontSize.Xs}"
+                               Foreground="{DynamicResource Brush.TextDim}" />
+                    <TextBlock x:Name="PART_SetupRootValue" HorizontalAlignment="Right" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                               FontFamily="{x:Static controls:AppFonts.Mono}"
+                               FontSize="{DynamicResource FontSize.Xs}"
+                               Foreground="{DynamicResource Brush.TextSecondary}" />
+                  </DockPanel>
+                  <Border Height="1" Background="{DynamicResource Brush.BorderSubtle}" />
+                  <DockPanel Height="30" Margin="10,0">
+                    <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center"
+                               Text="{x:Static vm:InteractionText.SetupLayersLabel}"
+                               FontSize="{DynamicResource FontSize.Xs}"
+                               Foreground="{DynamicResource Brush.TextDim}" />
+                    <TextBlock x:Name="PART_SetupLayersValue" HorizontalAlignment="Right" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                               FontFamily="{x:Static controls:AppFonts.Mono}"
+                               FontSize="{DynamicResource FontSize.Xs}"
+                               Foreground="{DynamicResource Brush.TextFaint}" />
+                  </DockPanel>
+                </StackPanel>
+              </Border>
+
+              <StackPanel Orientation="Horizontal" Margin="0,14,0,0" HorizontalAlignment="Center">
+                <Button x:Name="PART_OpenSettings" Style="{DynamicResource Ds.Button.Primary.Md}"
+                        AutomationProperties.Name="{x:Static vm:InteractionText.OpenSettingsButton}">
+                  <StackPanel Orientation="Horizontal">
+                    <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+                      <Canvas Width="24" Height="24">
+                        <Path Data="{DynamicResource Icon.Gear}"
+                              StrokeThickness="{DynamicResource Icon.Gear.StrokeThickness}"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                      </Canvas>
+                    </Viewbox>
+                    <TextBlock Text="{x:Static vm:InteractionText.OpenSettingsButton}" VerticalAlignment="Center" />
+                  </StackPanel>
+                </Button>
+                <Button x:Name="PART_ImportSettings" Margin="8,0,0,0"
+                        Style="{DynamicResource Ds.Button.Secondary.Md}"
+                        AutomationProperties.Name="{x:Static vm:InteractionText.ImportSettingsButton}">
+                  <StackPanel Orientation="Horizontal">
+                    <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+                      <Canvas Width="24" Height="24">
+                        <Path Data="{DynamicResource Icon.Upload}"
+                              StrokeThickness="{DynamicResource Icon.Upload.StrokeThickness}"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                      </Canvas>
+                    </Viewbox>
+                    <TextBlock Text="{x:Static vm:InteractionText.ImportSettingsButton}" VerticalAlignment="Center" />
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+
+              <TextBlock Text="{x:Static vm:InteractionText.ImportSettingsNote}" Margin="0,8,0,0"
+                         HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                         FontSize="{DynamicResource FontSize.2xs}"
+                         Foreground="{DynamicResource Brush.TextFaint}" />
             </StackPanel>
 
             <TextBlock x:Name="PART_NoProjects" Text="{x:Static vm:InteractionText.NoProjectsFound}"

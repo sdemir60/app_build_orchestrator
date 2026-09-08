@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
@@ -41,11 +41,11 @@ public partial class ActionBar : UserControl
     private bool _syncingCfg; // segment'i programatik güncellerken Checked geri-tetiklemesini engeller
 
     // sayaç chip'leri + değer TextBlock'ları (StickyRibbon deseni — kod-tarafı kurulur, refresh'te güncellenir)
-    private ToggleButton _sigmaChip = null!, _buildingChip = null!, _succeededChip = null!, _failedChip = null!, _skippedChip = null!, _cycleChip = null!, _depChip = null!;
-    private TextBlock _sigmaValue = null!, _buildingValue = null!, _succeededValue = null!, _failedValue = null!, _skippedValue = null!, _cycleValue = null!, _depValue = null!;
+    private ToggleButton _sigmaChip = null!, _buildingChip = null!, _succeededChip = null!, _failedChip = null!, _skippedChip = null!, _warnChip = null!;
+    private TextBlock _sigmaValue = null!, _buildingValue = null!, _succeededValue = null!, _failedValue = null!, _skippedValue = null!, _warnValue = null!;
     private BuildingSpinner _buildingSpinner = null!;
     private Ellipse _buildingDot = null!;
-    private Path _depTriangle = null!;
+    private Path _warnTriangle = null!;
     private TextBlock _branchValue = null!, _worktreeValue = null!, _perfValue = null!;
 
     public ActionBar()
@@ -76,12 +76,15 @@ public partial class ActionBar : UserControl
     internal ToggleButton SucceededChip => _succeededChip;
     internal ToggleButton FailedChip => _failedChip;
     internal ToggleButton SkippedChip => _skippedChip;
-    internal ToggleButton CycleChip => _cycleChip;
-    internal ToggleButton DepChip => _depChip;
+    /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i (döngü ∪ dep-issue) — eski ⚠ cycle ve ▲ dep
+    /// chip'lerinin yerini alır.</summary>
+    internal ToggleButton WarnChip => _warnChip;
     internal ToggleButton BranchChip => PART_BranchChip;
     internal ToggleButton WorktreeChip => PART_WorktreeChip;
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
+    /// <summary>[design v1.11.0 §2.7-5a] Branch chip'inin solundaki mono workspace etiketi.</summary>
+    internal TextBlock WorkspaceLabel => PART_Workspace;
     internal Button SyncButton => PART_Sync;
     internal MaintenanceBox MaintenanceBoxControl => PART_Maintenance;
     internal Button StopButton => PART_Stop;
@@ -166,13 +169,14 @@ public partial class ActionBar : UserControl
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Counters):
-            case nameof(RunViewModel.ActiveFilter):
+            case nameof(RunViewModel.ActiveFilters):
                 RefreshChips();
                 break;
             case nameof(RunViewModel.HasWorkspace):
             case nameof(RunViewModel.RootPath):
                 RefreshEnabled();
                 RefreshChips();
+                RefreshWorkspaceLabel();
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
@@ -198,6 +202,7 @@ public partial class ActionBar : UserControl
     {
         if (!_built) return;
         RefreshChips();
+        RefreshWorkspaceLabel();
         RefreshBranchWorktree();
         RefreshPerf();
         RefreshConfig();
@@ -227,16 +232,13 @@ public partial class ActionBar : UserControl
             out _skippedValue, AccessibilityNames.FilterSkipped);
         _skippedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Skipped);
 
-        // [design v1.7.0 §2.7-4] Son iki chip İSTİSNAİ durumları anlatır ve YALNIZ listede karşılığı varken
-        // görünür — boş/gri hâlleriyle barda durmaları sinyali zayıflatıyordu (v1.5.2 kararı, cycle chip'i
-        // zaten öyleydi; dep chip'i de aynı kurala çekildi).
-        _cycleChip = AddCounterChip(
-            new StatusGlyph { Status = GraphStatus.Cycle, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _cycleValue, AccessibilityNames.FilterCycle);
-        _cycleChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Cycle);
-
-        _depChip = AddCounterChip(DepIcon(), out _depValue, AccessibilityNames.FilterDep);
-        _depChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Dep);
+        // [design v1.11.0 §2.7-4] Son chip İSTİSNAİ durumu anlatır ve YALNIZ listede karşılığı varken görünür —
+        // boş/gri hâliyle barda durması sinyali zayıflatıyordu (v1.5.2 kararı).
+        // [DEĞİŞEN KURAL] Eskiden burada İKİ chip vardı: turuncu ⚠ (cycle) ve kırmızı ▲ (dep-affected).
+        // v1.11.0 turuncuyu UI'dan çıkardı ve döngü ile dep-issue'yu TEK amber uyarı üçgeninde birleştirdi;
+        // iki ayrı filtre iki ayrı renk ima ediyordu. Chip artık tek ve amberdir.
+        _warnChip = AddCounterChip(WarnIcon(), out _warnValue, AccessibilityNames.FilterWarn);
+        _warnChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Warn);
     }
 
     // [E5/T47] AYNI metin hem tooltip hem UIA-adı (ikon-yalnız chip'in görsel içeriği ekran okuyucuya bir şey
@@ -281,16 +283,17 @@ public partial class ActionBar : UserControl
         return grid;
     }
 
-    private Viewbox DepIcon()
+    private Viewbox WarnIcon()
     {
-        // ▲ üçgen: sayı>0 ise StatusFailText, yoksa TextFaint (BuildApp.jsx:1566). Path ref RefreshChips'te renklenir.
-        _depTriangle = new Path
+        // [design v1.11.0 §2.7-4] ⚠ üçgen — satırdaki uyarı üçgeniyle AYNI çizim ve AYNI renk (amber).
+        // Chip zaten yalnız sayı>0 iken görünür, bu yüzden ikinci bir "boş" tonu yoktur.
+        _warnTriangle = new Path
         {
             StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round,
         };
-        IconPaint.Apply(_depTriangle, this, "Icon.AlertTri", "Brush.TextFaint");
+        IconPaint.Apply(_warnTriangle, this, "Icon.AlertTri", "Brush.AmberText");
         var canvas = new Canvas { Width = 24, Height = 24 };
-        canvas.Children.Add(_depTriangle);
+        canvas.Children.Add(_warnTriangle);
         return new Viewbox { Width = ChipIconSize, Height = ChipIconSize, Stretch = Stretch.Uniform, Child = canvas, VerticalAlignment = VerticalAlignment.Center };
     }
 
@@ -303,33 +306,32 @@ public partial class ActionBar : UserControl
         _succeededValue.Text = Inv(c.Succeeded);
         _failedValue.Text = Inv(c.Failed);
         _skippedValue.Text = Inv(c.Skipped);
-        _cycleValue.Text = Inv(c.Cycle);
-        _depValue.Text = Inv(c.DepAffected);
+        _warnValue.Text = Inv(c.Warn);
 
-        // İstisnai chip'ler: sayı 0 ise chip HİÇ YOKTUR (gri/boş hâli taşınmaz).
-        _cycleChip.Visibility = c.Cycle > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _depChip.Visibility = c.DepAffected > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // İstisnai chip: sayı 0 ise chip HİÇ YOKTUR (gri/boş hâli taşınmaz).
+        _warnChip.Visibility = c.Warn > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         _buildingSpinner.Visibility = c.Building > 0 ? Visibility.Visible : Visibility.Collapsed;
         _buildingDot.Visibility = c.Building > 0 ? Visibility.Collapsed : Visibility.Visible;
-        // Göründüğünde daima dolu ve kırmızıdır (boş hâli yok — yukarıdaki görünürlük kapısı).
-        _depTriangle.SetResourceReference(Shape.StrokeProperty, "Brush.StatusFailText");
 
-        string? f = _vm?.ActiveFilter;
+        var f = _vm?.ActiveFilters ?? ProjectFilter.None;
         _sigmaChip.IsChecked = false; // Σ hiç aktif olmaz (her zaman temizler)
-        SetChipActive(_buildingChip, _buildingValue, f == ProjectFilter.Building);
-        SetChipActive(_succeededChip, _succeededValue, f == ProjectFilter.Succeeded);
-        SetChipActive(_failedChip, _failedValue, f == ProjectFilter.Failed);
-        SetChipActive(_skippedChip, _skippedValue, f == ProjectFilter.Skipped);
-        SetChipActive(_cycleChip, _cycleValue, f == ProjectFilter.Cycle);
-        SetChipActive(_depChip, _depValue, f == ProjectFilter.Dep);
+        SetChipActive(_buildingChip, _buildingValue, ProjectFilter.Building, f);
+        SetChipActive(_succeededChip, _succeededValue, ProjectFilter.Succeeded, f);
+        SetChipActive(_failedChip, _failedValue, ProjectFilter.Failed, f);
+        SetChipActive(_skippedChip, _skippedValue, ProjectFilter.Skipped, f);
+        SetChipActive(_warnChip, _warnValue, ProjectFilter.Warn, f);
         _sigmaValue.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextPrimary");
     }
 
-    private static void SetChipActive(ToggleButton chip, TextBlock value, bool active)
+    /// <summary>[design v1.11.0 §2.7-4] "Aktif çip KENDİ statü renginde yanar" — hangi renk olduğunu
+    /// <see cref="ProjectFilter.ActiveBrushKey"/> söyler (bar kendi eşlemesini KURMAZ).</summary>
+    private static void SetChipActive(ToggleButton chip, TextBlock value, string filter, IReadOnlySet<string> active)
     {
-        chip.IsChecked = active;
-        value.SetResourceReference(TextBlock.ForegroundProperty, active ? "Brush.AmberText" : "Brush.TextPrimary");
+        bool on = active.Contains(filter);
+        chip.IsChecked = on;
+        value.SetResourceReference(TextBlock.ForegroundProperty,
+            on ? ProjectFilter.ActiveBrushKey(filter) : "Brush.TextPrimary");
     }
 
     // ---------------------------------------------------------------- branch / worktree / perf chip'leri
@@ -384,6 +386,19 @@ public partial class ActionBar : UserControl
         var tb = new TextBlock { Margin = new Thickness(ChipContentGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, FontFamily = AppFonts.Mono };
         tb.SetBinding(TextBlock.ForegroundProperty, new Binding(nameof(Control.Foreground)) { Source = chip });
         return tb;
+    }
+
+    /// <summary>[design v1.11.0 §2.7-5a] Workspace etiketi: kökün klasör adı (karar SAF
+    /// <see cref="TitleBarContext.RepositoryName"/>'de — burada YALNIZ uygulanır), tooltip kökün kendisi.
+    /// Ad YOKSA öğe <c>Collapsed</c> olur: prototipte etiket <c>{workspace &amp;&amp; …}</c> ile koşulludur ve
+    /// boş bir metin bırakmak sağ marjını yine de ödetirdi (branch chip'i kayardı).</summary>
+    private void RefreshWorkspaceLabel()
+    {
+        if (!_built) return;
+        string name = TitleBarContext.RepositoryName(_vm?.RootPath ?? "");
+        PART_Workspace.Text = name;
+        PART_Workspace.ToolTip = _vm?.RootPath;
+        PART_Workspace.Visibility = name.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void RefreshBranchWorktree()
@@ -471,7 +486,7 @@ public partial class ActionBar : UserControl
         bool syncing = _vm?.Phase == AppPhase.Syncing;
 
         // repo yokken sayaç chip'leri de disabled (README §3.1 — prototip hatası düzeltilir).
-        foreach (var chip in new[] { _sigmaChip, _buildingChip, _succeededChip, _failedChip, _skippedChip, _cycleChip, _depChip })
+        foreach (var chip in new[] { _sigmaChip, _buildingChip, _succeededChip, _failedChip, _skippedChip, _warnChip })
             chip.IsEnabled = hasWs;
 
         // T12: koşarken branch/worktree/Debug|Release görünür şekilde disabled; perf CANLI.

@@ -36,11 +36,15 @@ public class IconGeometryTests
         // BuildApp.jsx:59-61 — lucide eraser/gauge/unlink). Kutu etiketsizdir, anlamı TAŞIYAN tek şey bu üç
         // çizimdir; anahtar eksik olsaydı düğme runtime'da boş Data ile çizilirdi, derlemede patlamazdı.
         "Icon.Eraser", "Icon.Gauge", "Icon.Unlink",
+        // [design v1.11.0 §2.7-11 · §9-7] Build menüsü + satır menüsünün ortak ailesi (play · rotate-cw ·
+        // brush) ve satır menüsünü açan ⋯; [v1.10.0 §2.9] Settings footer'ının Export/Import ikonları.
+        "Icon.Rebuild", "Icon.Brush", "Icon.More", "Icon.Download", "Icon.Upload",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
-    /// BuildApp.jsx:47 play · :48 stop · :67 grip · :58 depWarn. Geri kalan her ikon KONTURLUDUR.</summary>
-    public static readonly string[] FilledKeys = ["Icon.Play", "Icon.Stop", "Icon.Grip", "Icon.DepWarn"];
+    /// BuildApp.jsx:47 play · :48 stop · :67 grip · :58 depWarn · [v1.11.0] :83 more. Geri kalan her ikon
+    /// KONTURLUDUR.</summary>
+    public static readonly string[] FilledKeys = ["Icon.Play", "Icon.Stop", "Icon.Grip", "Icon.DepWarn", "Icon.More"];
 
     [StaFact]
     public void Every_declared_icon_parses_to_a_non_empty_geometry()

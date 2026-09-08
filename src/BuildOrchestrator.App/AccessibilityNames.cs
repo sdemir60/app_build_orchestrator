@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace BuildOrchestrator.App;
 
@@ -13,13 +13,16 @@ namespace BuildOrchestrator.App;
 public static class AccessibilityNames
 {
     // ---- Action bar: durum/filtre sayaç chip'leri (AYNI metin tooltip + UIA-adı) ----
-    public const string FilterAll = "All projects — clear filter";
+    public const string FilterAll = "All projects — clear filters";
     public const string FilterBuilding = "Building now — filter";
     public const string FilterSucceeded = "Succeeded — filter";
     public const string FilterFailed = "Failed — filter";
     public const string FilterSkipped = "Skipped — filter";
-    public const string FilterDep = "Dependency-affected — filter";
-    public const string FilterCycle = "In a dependency cycle — filter";
+    /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i. <b>[DEĞİŞEN KURAL]</b> Burada eskiden İKİ ad
+    /// vardı — <c>FilterDep</c> ("Dependency-affected — filter") ve <c>FilterCycle</c> ("In a dependency cycle
+    /// — filter"). v1.11.0 turuncuyu UI'dan çıkardı ve iki uyarıyı TEK amber üçgende birleştirdi; filtre de
+    /// tekleşti.</summary>
+    public const string FilterWarn = "Warnings — dependency cycle or dependency issue";
 
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";
@@ -41,6 +44,28 @@ public static class AccessibilityNames
 
     public const string OptimizeTooltip =
         OptimizeButton + " — restore packages, prune the cache, rebuild the dependency index" + NotAvailableSuffix;
+
+    // ---- Build menüsü: Clean Solution (design v1.11.0 §2.7-11) ----
+    /// <summary>[design v1.11.0 §2.7-11] Build split-button menüsünün üçüncü maddesi. Bakım kutusundaki
+    /// <see cref="CleanTooltip"/> DERİN Clean'dir (bin/obj + artifacts + NuGet cache); bu ise Visual
+    /// Studio'nun <i>Clean Solution</i>'ıdır — yalnız <c>msbuild /t:Clean</c>, cache'lere dokunmaz. İkisi
+    /// birbirinin yerine GEÇMEZ, bu yüzden metin de tekrarlanmaz.
+    /// <para>Arka ucu henüz yazılmadı — madde tasarımdaki yerinde ama pasif durur (bakım kutusuyla aynı
+    /// karar).</para></summary>
+    public const string CleanSolutionTooltip =
+        "Clean — msbuild /t:Clean on every solution; caches are untouched" + NotAvailableSuffix;
+
+    // ---- Proje satırı: build eylemleri (design v1.11.0 §2.4-4 · §3.8) ----
+    /// <summary>Satırın birincil eylemi: yalnız o projeyi derler (bağımlılıkları DEĞİL — §3.8 v1.11.0).</summary>
+    public const string BuildThisProject = "Build this project";
+    /// <summary>Satır menüsünü açan ⋯ düğmesi (satıra sağ tık da aynı menüyü açar).</summary>
+    public const string MoreBuildActions = "More build actions";
+    /// <summary>Kapsamlı koşuyu durduran satır düğmesi (hedef satırda play'in yerini alır).</summary>
+    public const string StopThisBuild = "Stop build";
+
+    /// <summary>[design v1.11.0 §3.8] Satırdan tetiklenen üç eylemin de arka ucu henüz yazılmadı: düğmeler ve
+    /// menü tasarımdaki yerlerinde ama pasif durur (bakım kutusuyla aynı karar).</summary>
+    public const string RowActionsTooltip = BuildThisProject + NotAvailableSuffix;
 
     /// <summary>Resolve cycles düğmesinin ToolTip'i: döngü varsa ne yapacağını üye sayısıyla anlatır, yoksa
     /// neden pasif olduğunu söyler.
@@ -122,6 +147,17 @@ public static class AccessibilityNames
     /// <summary>"Add layer" ghost butonu: görünür etiketi <c>Content</c>'in İÇİNDEKİ bir TextBlock'tur, bu
     /// yüzden WPF'in peer'ı adı içerikten türetemez (ölçüldü: ad boş kalır) — ad AÇIKÇA verilir.</summary>
     public const string AddLayer = "Add layer";
+
+    // ---- [design v1.8.0/v1.10.0 §2.9] Settings: workspace + export/import/clear ----
+    /// <summary>Repository root input'u — watermark bir ÖRNEK yoldur, etiket değil.</summary>
+    public const string RepositoryRootInput = "Repository root";
+    /// <summary>Kök klasörü seçtiren düğme (etiketi Content'in İÇİNDE bir TextBlock).</summary>
+    public const string BrowseRepositoryRoot = "Browse for the repository root";
+    /// <summary>Footer'ın üç ikon-yalnız düğmesi. AYNI metin hem tooltip hem UIA-adı DEĞİLDİR: tooltip kısa
+    /// eylemi, ad işlevi tarif eder (chip'lerin kuralının aksine — burada tooltip'ler zaten kısadır).</summary>
+    public const string ExportSettings = "Export settings to a file";
+    public const string ImportSettings = "Import settings from a file";
+    public const string ClearSettings = "Clear the repository root and all layers";
 
     // ---- [A13/T5] Worktree popover: hedef satırı ----
     /// <summary>Hedef satırındaki çöp kutusunun tooltip'i (satır başına AYNI metin).</summary>

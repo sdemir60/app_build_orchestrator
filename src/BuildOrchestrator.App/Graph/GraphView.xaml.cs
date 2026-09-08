@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -160,6 +160,15 @@ public partial class GraphView : UserControl
     private GraphRunPhase _runPhase = GraphRunPhase.Idle;
     /// <summary>[design v1.7.0 — Filtreleme] Listenin görünür kümesinin proje ADLARI; null = filtre yok.</summary>
     private IReadOnlySet<string>? _filterMatches;
+
+    // ---- [design v1.11.0 §9-4/§9-5] koreografiler: açılış (marking) ve bitiş (neon) ----
+    private MarkStep _markStep = MarkStep.None;
+    private IReadOnlySet<string> _markedNodes = new HashSet<string>(StringComparer.Ordinal);
+    private EndStep _endStep = EndStep.None;
+    private IReadOnlySet<string> _builtNodes = new HashSet<string>(StringComparer.Ordinal);
+    private IReadOnlyDictionary<string, int> _endOrder = new Dictionary<string, int>(StringComparer.Ordinal);
+    private double _endStaggerMs;
+    private readonly StepPlayer _endPlayer = new();
     /// <summary>İmlecin altındaki düğüm — opaklık kararının son (ve her şeyi ezen) girdisi.</summary>
     private string? _hoveredNode;
 
@@ -246,6 +255,13 @@ public partial class GraphView : UserControl
     /// <summary>Durum değişimi eğrisi (ease-standard) — aynı gerekçe.</summary>
     private KeySpline EaseStandard =>
         _easeStandard ??= MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
+
+    /// <summary>[design v1.11.0 §9-4/§9-5] Yer değiştirme/örtüşen veda eğrisi (ease-in-out) — koreografilerin
+    /// opaklık geçişleri bunu kullanır (§1.3: <c>cubic-bezier(.65,0,.35,1)</c>).</summary>
+    private KeySpline EaseInOut =>
+        _easeInOut ??= MotionTokens.ResolveKeySpline(this, "KeySpline.EaseInOut", new KeySpline(0.65, 0, 0.35, 1));
+
+    private KeySpline? _easeInOut;
 
     /// <summary>Kameranın o an EKRANA uygulanmış hâli (animasyon sürüyorsa ara kare) — hedefi değil.</summary>
     private CameraTransform LiveCamera => new(_cameraScale.ScaleX, _cameraTranslate.X, _cameraTranslate.Y);
@@ -357,6 +373,116 @@ public partial class GraphView : UserControl
             ApplyAllOpacities();
             // Koşuya GİRİŞ: önce sönme oynasın, görünüm değişimi arkasına alınsın (HoldStatusesUntilDimmed).
             if (value == GraphRunPhase.Running) HoldStatusesUntilDimmed();
+        }
+    }
+
+    // ---------------------------------------------------------------- [design v1.11.0 §9-4] açılış koreografisi
+
+    /// <summary>[test yüzeyi] Grafın o anki açılış-koreografisi adımı.</summary>
+    internal MarkStep MarkStep => _markStep;
+
+    /// <summary>
+    /// [design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başladı — bir önceki koşunun bitiş koreografisi
+    /// ANINDA kesilir. Bu, işaretleme dalgasından AYRI bir kapıdır: kapsamı boş bir işlem (ör. Sync'in hemen
+    /// ardından "Everything up to date" ile biten Build) hiç dalga oynatmaz ama yine de bir işlemdir.
+    /// </summary>
+    public void BeginOperation() => StopEndFinale();
+
+    /// <summary>
+    /// [design v1.11.0 §9-4 · §2.3] Açılış koreografisinin adımını ve kapsamını grafa iter: node opaklıkları
+    /// "örtüşen veda"yı oynar (kapsam 0.45'e 440ms'de, geri kalan 0.18'e 1120ms'de — ikisi aynı anda biter).
+    ///
+    /// <para>Kapsamın AMBER'a yanması ayrı bir kanal DEĞİLDİR: dalga sırasında sürücü satırların
+    /// <c>Marked</c>'ını tek tek açar ve renk normal statü itişiyle (<see cref="UpdateStatuses"/>) gelir —
+    /// prototipteki per-node <c>transition-delay</c>'in WPF karşılığı budur ve düğüm başına fırça animasyonu
+    /// gerektirmez (bkz. ApplyNodeStatus'taki ölçülmüş sapma).</para>
+    /// </summary>
+
+    public void SetMarking(MarkStep step, IReadOnlySet<string> markedNodeNames)
+    {
+        ArgumentNullException.ThrowIfNull(markedNodeNames);
+        _markedNodes = markedNodeNames;
+        if (_markStep == step) { ApplyAllOpacities(); return; }
+        _markStep = step;
+        ApplyAllOpacities();
+    }
+
+    // ---------------------------------------------------------------- [design v1.11.0 §9-5] bitiş koreografisi
+
+    /// <summary>[test yüzeyi] Grafın o anki bitiş-koreografisi adımı.</summary>
+    internal EndStep EndStep => _endStep;
+
+    /// <summary>
+    /// [design v1.11.0 §9-5 · §2.3] <b>"Neon tutuşma".</b> Koşu bitince YALNIZ grafta oynar: hepsi soluk
+    /// bekler → bu koşuda derlenenler (succeeded ∪ failed) RANDOM sırayla düzensiz titreyerek tutuşur →
+    /// nefes → kalan tüm griler birlikte belirginleşir.
+    ///
+    /// <para>Derlenen yoksa (ya da reduced-motion) koreografi HİÇ oynamaz — final görünüme doğrudan gidilir.</para>
+    /// </summary>
+    /// <param name="builtNodeNames">Bu koşuda derlenen düğümlerin adları.</param>
+    /// <param name="runCount">Random sırayı tohumlayan koşu numarası.</param>
+    public void PlayEndFinale(IReadOnlyList<string> builtNodeNames, int runCount)
+    {
+        ArgumentNullException.ThrowIfNull(builtNodeNames);
+        StopEndFinale();
+        if (builtNodeNames.Count == 0 || !AnimationsEnabledProvider()) return;
+
+        _builtNodes = new HashSet<string>(builtNodeNames, StringComparer.Ordinal);
+        var order = EndFinale.Order(builtNodeNames.Count, runCount);
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < builtNodeNames.Count; i++) map[builtNodeNames[i]] = order[i];
+        _endOrder = map;
+        _endStaggerMs = EndFinale.StaggerMs(builtNodeNames.Count);
+
+        var steps = EndFinale.Steps
+            .Select(s => (EndFinale.StepAtMs(s, builtNodeNames.Count), (Action)(() => SetEndStep(s))))
+            .ToList();
+        steps.Add((EndFinale.TotalMs(builtNodeNames.Count), () => SetEndStep(EndStep.None)));
+        _endPlayer.Play(steps);
+    }
+
+    /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.</summary>
+    public void StopEndFinale()
+    {
+        _endPlayer.Stop();
+        if (_endStep == EndStep.None) return;
+        SetEndStep(EndStep.None);
+    }
+
+    private void SetEndStep(EndStep step)
+    {
+        _endStep = step;
+        if (step == EndStep.None)
+        {
+            _builtNodes = new HashSet<string>(StringComparer.Ordinal);
+            _endOrder = new Dictionary<string, int>(StringComparer.Ordinal);
+        }
+        ApplyAllOpacities();
+        if (step == EndStep.Neon) PlayNeon();
+    }
+
+    /// <summary>[§9-5] Derlenen her düğüm, kendi zincir gecikmesiyle <c>bo-neon</c>'u oynar: floresan lambanın
+    /// düzensiz tutuşması. Keyframe'ler <see cref="EndFinale.NeonKeyframes"/>'tedir (kopya YASAK).</summary>
+    private void PlayNeon()
+    {
+        foreach (var slot in _slotOrder)
+        {
+            if (!_builtNodes.Contains(slot.Model.Name)) continue;
+            int index = _endOrder.TryGetValue(slot.Model.Name, out int i) ? i : 0;
+
+            var flicker = new DoubleAnimationUsingKeyFrames
+            {
+                BeginTime = TimeSpan.FromMilliseconds(index * _endStaggerMs),
+                FillBehavior = FillBehavior.HoldEnd,
+            };
+            foreach (var (percent, opacity) in EndFinale.NeonKeyframes)
+                flicker.KeyFrames.Add(new DiscreteDoubleKeyFrame(
+                    opacity, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(EndFinale.NeonMs * percent))));
+            Timeline.SetDesiredFrameRate(flicker, DecorativeFrameRate);
+
+            slot.Visual.OpacityAnimation = flicker;
+            slot.Visual.OpacityTarget = double.NaN; // sıradaki ApplyNodeOpacity kapıyı GEÇSİN (değer titreşti)
+            slot.Visual.Body.BeginAnimation(OpacityProperty, flicker, HandoffBehavior.SnapshotAndReplace);
         }
     }
 
@@ -739,58 +865,40 @@ public partial class GraphView : UserControl
         AutomationProperties.SetName(
             visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Status)));
 
-        var (border, background, iconColor, dashed) = visual.Model.Status switch
-        {
-            GraphStatus.Queued => ("Brush.StatusQueued", "Brush.SurfaceRaised", "Brush.StatusQueuedText", false),
-            GraphStatus.Building => ("Brush.Amber", "Brush.AmberSoft", "Brush.AmberText", false),
-            GraphStatus.Succeeded => ("Brush.StatusSuccess", "Brush.StatusSuccessSoft", "Brush.StatusSuccessText", false),
-            GraphStatus.Failed => ("Brush.StatusFail", "Brush.StatusFailSoft", "Brush.StatusFailText", false),
-            GraphStatus.Skipped => ("Brush.StatusSkippedBorder", "Brush.StatusSkippedSoft", "Brush.StatusSkippedText", false),
-            _ => ("Brush.BorderStrong", "Brush.SurfaceRaised", "Brush.TextFaint", true),
-        };
-
-        // [design v1.7.0 §2.3] ÇEKİRDEK (içteki glyph) kart noktasının graf karşılığıdır ve kendi kanalını
-        // söyler — kenar "bu koşuda ne oldu" derken çekirdek "ne olacak / yapısal olarak ne var" der:
-        //   döngü üyesi  → HER ZAMAN turuncu (kalıcı; yeşil bitse de kod hâlâ döngülü)
-        //   bu koşuda bitti → sonuç rengi (graf kapanışta klasik sonuç haritasına döner)
-        //   aksi hâlde   → plan (amber = derlenecek · gri = güncel)
-        // Kart noktasıyla ayrışması bilinçlidir: dolgu iş bitene kadar planı söyler; bitince grafta SONUCA
-        // döner, kartta griye düşer.
-        // [DEĞİŞEN KURAL] Kuyruktaki düğüm ARTIK plan rengini korur. Eskiden Queued da statü rengini (gri)
-        // alıyordu ve bunun bedeli basış anında görülüyordu: Sync'ten sonra derlenecek düğümlerin küpü amber
-        // durur, Build'e basılınca statü Queued'a geçip küp ANINDA griye döner (renk geçişi yoktur) —
-        // ekrandaki tek renkli şey aynı anda kaybolduğu için "derlenecekler bir yanıp söndü" gibi okunuyordu.
-        // Kuyrukta olmak bir SONUÇ değildir; çekirdek hâlâ "bu proje derlenecek" der ve amber kalır, düğümün
-        // tamamı da herkesle birlikte tek seferde söner.
-        iconColor = visual.Model.InCycle ? "Brush.StatusCycle"
-            : visual.Model.Status switch
-            {
-                GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Skipped => iconColor,
-                GraphStatus.Building => iconColor,
-                _ => visual.Model.WillBuild switch
-                {
-                    true => "Brush.DotDirty",
-                    false => "Brush.DotClean",
-                    _ => iconColor,
-                },
-            };
-
-        // [quiet · ÖLÇÜLMÜŞ SAPMA] §2.3 "Zemin/kenar/glyph renk geçişleri 380ms ease-standard" der; burada
-        // renkler ANINDA uygulanır ve bu bilinçlidir.
+        // [design v1.11.0 §2.3 "Renk kuralı"] TEK statü kanalı: node border'ı, zemini ve içindeki küp AYNI
+        // görsel durumdan boyanır. Eşleme tablosu VisualStatuses'tedir — liste satırı da AYNI tablodan okur;
+        // graf ikinci bir eşleme YAZMAZ (kopya YASAK).
         //
+        // [DEĞİŞEN KURAL] Burada eskiden İKİ eşleme vardı: kenar/zemin statüden, ÇEKİRDEK ise ayrı bir
+        // plan/cycle kanalından (döngü üyesi → turuncu; aksi halde amber "derlenecek" / gri "güncel").
+        // v1.11.0 o kanalları kaldırdı — renk yalnız son işlemin hikâyesini anlatır. Kesikli çerçeve de artık
+        // YALNIZ başlangıç modundadır (fresh); `discovered` DÜZ gridir ve "bir işlem başladı ama bu proje
+        // kapsamda değil" der.
+        var state = visual.Model.Visual;
+        string border = VisualStatuses.NodeBorderBrushKey(state);
+        string background = VisualStatuses.NodeBackgroundBrushKey(state);
+        string iconColor = VisualStatuses.NodeCoreBrushKey(state);
+        bool dashed = VisualStatuses.IsDashed(state);
+
+        // [§2.3 · §1.3] Renk geçişi YALNIZ işaretleme dalgası oynarken açıktır — kapsam amber'a 200ms'de
+        // AKAR, ÇAKMAZ (BuildApp.jsx:529-533).
+        //
+        // [ÖLÇÜLMÜŞ SAPMA — dalga DIŞINDA geçerlidir] Renkler dalga dışında ANINDA uygulanır ve bu bilinçlidir.
         // WPF'te bir fırça DP'si interpolate EDİLEMEZ: geçiş, düğüm başına yerel bir SolidColorBrush kurup
         // onun Color'ını animasyonlamayı gerektirir. Uygulandı ve ölçüldü — 177 projenin statüsünün tek
         // tick'te değiştiği durumda (koşu başlangıcı: hepsi Discovered → Queued) üç yüzey × 177 düğüm = 531
         // fırça + 531 ColorAnimation, tick'i 11 ms'den 51 ms'ye çıkarıyor ve UI olay bütçesini (50 ms,
-        // UiResponsivenessBudgetTests.EventBudgetMs) AŞIYOR. Ayrıca bir kez yerel fırçaya devreden yüzey
-        // token referansını da kaybeder.
+        // UiResponsivenessBudgetTests.EventBudgetMs) AŞIYOR.
         //
-        // 8–24px'lik bir karede, opaklığı zaten animasyonlu değişen bir yüzeyin renk geçişi için bütçenin
-        // %80'ini harcamak savunulabilir değil. Bütçeyi gevşetmek YASAK (CLAUDE.md), o yüzden geçiş
-        // uygulanmadı. Gözle doğrulama listesinde açık madde olarak duruyor.
-        visual.Square.SetResourceReference(Shape.StrokeProperty, border);
-        visual.Square.SetResourceReference(Shape.FillProperty, background);
-        IconPaint.Apply(visual.Icon, this, PackageIconKey, iconColor);
+        // Dalga tam TERSİ durumdur ve ölçüm onu kapsamaz: tempo 110ms/node (36 projede ~31ms), yani tick
+        // başına bir-iki düğüm değişir. Yüzey dalga sırasında yerel fırçaya devreder ve dalga bitince token
+        // referansına GERİ döner (TransitionTokenBrush) — referans kalıcı kaybedilmez.
+        bool lighting = _markStep != MarkStep.None && AnimationsEnabledProvider();
+        MotionTokens.TransitionTokenBrush(this, visual.Square, Shape.StrokeProperty, border,
+            lighting, MarkingChoreography.LightMs);
+        MotionTokens.TransitionTokenBrush(this, visual.Square, Shape.FillProperty, background,
+            lighting, MarkingChoreography.LightMs);
+        IconPaint.Apply(visual.Icon, this, PackageIconKey, iconColor, lighting, MarkingChoreography.LightMs);
 
         // WPF Border dashed desteklemez → kesikli çerçeve Rectangle.StrokeDashArray ile. Dash birimi
         // StrokeThickness çarpanıdır: 1.5px'lik çerçevede {2,2} = 3px dolu / 3px boş.
@@ -1181,6 +1289,26 @@ public partial class GraphView : UserControl
     /// Yalnız filtre bunu ezer (<see cref="GraphNodeOpacity.FilterFadeMs"/>) — gerekçe orada.</param>
     private void ApplyNodeOpacity(GraphNodeVisual visual, double holdMs, double? glideMs = null)
     {
+        // [design v1.11.0 §9-4/§9-5] Koreografiler opaklık kararını EZER ve kendi süreleriyle koşar. Sıra:
+        // açılış (marking) > bitiş (neon) > normal koşu/seçim/filtre sistemi. Neonun KENDİ animasyonu
+        // (PlayNeon) bu yoldan geçmez — o adım burada yalnız hedefi 1'de tutar.
+        if (_markStep != MarkStep.None)
+        {
+            bool marked = _markedNodes.Contains(visual.Model.Name);
+            ApplyOpacityTarget(visual,
+                MarkingChoreography.Opacity(_markStep, marked, MarkingChoreography.NodeEnvOpacity),
+                MarkingChoreography.GlideMs(_markStep, marked), EaseInOut);
+            return;
+        }
+        if (_endStep != EndStep.None)
+        {
+            bool built = _builtNodes.Contains(visual.Model.Name);
+            // Neon adımında düğümün opaklığını PlayNeon sürüyor — burada ikinci bir animasyon kurma.
+            if (built && _endStep == EndStep.Neon) return;
+            ApplyOpacityTarget(visual, EndFinale.Opacity(_endStep, built), EndFinale.GlideMs(built), EaseInOut);
+            return;
+        }
+
         double target = GraphNodeOpacity.Resolve(
             visual.Model.Status,
             _runPhase,
@@ -1219,6 +1347,21 @@ public partial class GraphView : UserControl
                 target, TimeSpan.FromMilliseconds(glideMs ?? GraphNodeOpacity.GlideMs), EaseStandard);
         }
 
+        visual.OpacityAnimation = animation;
+        visual.Body.BeginAnimation(OpacityProperty, animation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    /// <summary>[design v1.11.0 §9-4/§9-5] Koreografilerin ortak opaklık uygulayıcısı: hedef + süre + eğri
+    /// dışarıdan gelir (koreografi kendi zamanlamasını taşır), "değişmediyse dokunma" kapısı ve
+    /// reduced-motion snap'i normal yolla AYNI kalır.</summary>
+    private void ApplyOpacityTarget(GraphNodeVisual visual, double target, double glideMs, KeySpline ease)
+    {
+        if (target.Equals(visual.OpacityTarget)) return;
+        visual.OpacityTarget = target;
+
+        if (!AnimationsEnabledProvider()) { SnapOpacity(visual, target); return; }
+
+        var animation = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(glideMs), ease);
         visual.OpacityAnimation = animation;
         visual.Body.BeginAnimation(OpacityProperty, animation, HandoffBehavior.SnapshotAndReplace);
     }

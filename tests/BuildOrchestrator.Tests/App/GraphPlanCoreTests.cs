@@ -6,14 +6,17 @@ using BuildOrchestrator.App.Graph;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [design v1.7.0 §2.3/§5] Düğümün ÇEKİRDEĞİ (içteki küp) plan kanalını söyler: amber = derlenecek,
-/// gri = güncel. Kenar "bu koşuda ne oldu" derken çekirdek "ne olacak" der.
+/// [design v1.11.0 §2.3 "Renk kuralı"] Düğümün ÇEKİRDEĞİ (içteki küp) <b>border'la AYNI</b> görsel durumdan
+/// boyanır — ayrı bir "plan" ya da "cycle" çekirdeği YOKTUR.
 ///
-/// <para><b>Neden bu dosya var:</b> kuyruğa alınmak bir SONUÇ değildir ama çekirdek onu sonuç gibi
-/// okuyordu — statü <c>Queued</c>'a geçer geçmez küp statü grisine dönüyordu. Bedeli basış anında
-/// görülüyordu: Sync'ten sonra derlenecek düğümlerin küpü amber durur, Build'e basılınca hepsi aynı anda
-/// griye döner (renk geçişi yok, anında) ve düğümler de sönmeye başlar — ekrandaki tek renkli şey aynı anda
-/// kaybolduğu için kullanıcı bunu "derlenecekler bir yanıp söndü" diye gördü.</para>
+/// <para><b>[DEĞİŞEN KURAL]</b> Bu dosya v1.7.0'ın üç-kanallı modelini pinliyordu: çekirdek plan kanalını
+/// söylerdi (amber "derlenecek" / gri "güncel"), kuyruğa alınmak onu DEĞİŞTİRMEZDİ ve döngü üyeliği her şeyi
+/// turuncuyla EZERDİ. v1.11.0 §9-1 o kanalları kaldırdı — <i>renk yalnız son işlemin hikâyesini anlatır</i>:
+/// plan bilgisi satırın çift SHA metnine, döngü üyeliği liste satırındaki tek amber üçgene indi. Eski
+/// iddialar silinmedi, YENİ kurala göre yeniden yazıldı.</para>
+///
+/// <para><b>Korunan davranış:</b> "basış anında düğüm ÖNCE söner, görünümü SONRA değişir" — o, renk
+/// kanallarından bağımsız bir sıra kuralıdır ve aynen duruyor.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphPlanCoreTests
@@ -28,60 +31,59 @@ public class GraphPlanCoreTests
     private static Color CoreColour(GraphView view, string node) =>
         ((SolidColorBrush)view.NodeVisuals[node].Icon.Stroke).Color;
 
+    private static Color BorderColour(GraphView view, string node) =>
+        ((SolidColorBrush)view.NodeVisuals[node].Square.Stroke).Color;
+
     private static Color Token(GraphView view, string key) =>
         ((SolidColorBrush)view.FindResource(key)).Color;
 
-    /// <summary>Sync'ten sonra: derlenecek amber, güncel gri.</summary>
+    /// <summary>Sync'ten sonra HİÇBİR ŞEY renklenmez: herkes başlangıç modundadır (kesikli çerçeve, nötr küp).
+    /// Eski iddia "derlenecek amber, güncel gri" idi — o plan kanalı kalktı.</summary>
     [StaFact]
-    public void After_sync_the_core_says_what_will_be_built()
+    public void After_sync_nothing_is_coloured_because_everyone_is_in_the_fresh_start_mode()
     {
         var view = Realized(
-            new("dirty", 0, GraphStatus.Discovered, false, true),
-            new("clean", 0, GraphStatus.Discovered, false, false));
+            new("dirty", 0, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("clean", 0, GraphStatus.Discovered, VisualStatus.Fresh));
 
-        Assert.Equal(Token(view, "Brush.DotDirty"), CoreColour(view, "dirty"));
-        Assert.Equal(Token(view, "Brush.DotClean"), CoreColour(view, "clean"));
+        Assert.Equal(Token(view, "Brush.TextFaint"), CoreColour(view, "dirty"));
+        Assert.Equal(Token(view, "Brush.TextFaint"), CoreColour(view, "clean"));
+        Assert.NotEmpty(view.NodeVisuals["dirty"].Square.StrokeDashArray); // başlangıç modu KESİKLİ
     }
 
-    /// <summary>
-    /// AYIRT EDİCİ — kuyruğa alınınca çekirdek DEĞİŞMEZ. Basış anında düğümün tek görünür değişimi
-    /// sönmesidir; rengi yerinde kalır, yani "hepsi toplu söner" ve hiçbir şey yanıp sönmez.
-    /// </summary>
-    [StaFact]
-    public void Queueing_a_node_does_not_change_its_core_colour()
-    {
-        var view = Realized(new GraphNode("dirty", 0, GraphStatus.Discovered, false, true));
-        var beforePress = CoreColour(view, "dirty");
-
-        view.RunPhase = GraphRunPhase.Running;                                    // basış: graf soluklaşır
-        view.UpdateStatuses([new("dirty", 0, GraphStatus.Queued, false, true)]);  // plan geldi: kuyruk
-
-        Assert.Equal(beforePress, CoreColour(view, "dirty"));
-        Assert.Equal(Token(view, "Brush.DotDirty"), CoreColour(view, "dirty"));
-    }
-
-    /// <summary>Kontrol: SONUÇ statüleri çekirdeği DEVRALIR — plan bittiğinde söylenecek şey sonuçtur.</summary>
+    /// <summary>Çekirdek ve çerçeve HER durumda aynı aileden boyanır — "tek statü kanalı" iddiasının kendisi.</summary>
     [StaTheory]
-    [InlineData(GraphStatus.Succeeded, "Brush.StatusSuccessText")]
-    [InlineData(GraphStatus.Failed, "Brush.StatusFailText")]
-    [InlineData(GraphStatus.Skipped, "Brush.StatusSkippedText")]
-    [InlineData(GraphStatus.Building, "Brush.AmberText")]
-    public void A_result_status_takes_the_core_over(GraphStatus status, string tokenKey)
+    [InlineData(VisualStatus.Marked, "Brush.Amber", "Brush.AmberText")]
+    [InlineData(VisualStatus.Queued, "Brush.Amber", "Brush.AmberText")]
+    [InlineData(VisualStatus.Building, "Brush.Amber", "Brush.AmberText")]
+    [InlineData(VisualStatus.Succeeded, "Brush.StatusSuccess", "Brush.StatusSuccessText")]
+    [InlineData(VisualStatus.Failed, "Brush.StatusFail", "Brush.StatusFailText")]
+    [InlineData(VisualStatus.Skipped, "Brush.StatusSkippedBorder", "Brush.StatusSkippedText")]
+    [InlineData(VisualStatus.Discovered, "Brush.BorderStrong", "Brush.TextFaint")]
+    public void The_border_and_the_core_are_painted_from_one_channel(
+        VisualStatus state, string borderKey, string coreKey)
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, false, true));
+        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
 
-        view.UpdateStatuses([new("n", 0, status, false, true)]);
+        view.UpdateStatuses([new("n", 0, GraphStatus.Discovered, state)]);
 
-        Assert.Equal(Token(view, tokenKey), CoreColour(view, "n"));
+        Assert.Equal(Token(view, borderKey), BorderColour(view, "n"));
+        Assert.Equal(Token(view, coreKey), CoreColour(view, "n"));
     }
 
-    /// <summary>Döngü üyeliği her şeyi ezer — kalıcı yapısal olgu (§5).</summary>
+    /// <summary>[design v1.11.0 §2.3] Kesikli çerçeve YALNIZ başlangıç modundadır; <c>discovered</c> DÜZ gridir
+    /// ("bir işlem başladı ama bu proje kapsamda değil").</summary>
     [StaFact]
-    public void Cycle_membership_still_wins()
+    public void Only_the_fresh_start_mode_is_dashed()
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Queued, true, true));
+        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        Assert.NotEmpty(view.NodeVisuals["n"].Square.StrokeDashArray);
 
-        Assert.Equal(Token(view, "Brush.StatusCycle"), CoreColour(view, "n"));
+        view.UpdateStatuses([new("n", 0, GraphStatus.Discovered, VisualStatus.Discovered)]);
+        DispatcherPump.PumpUntil(
+            () => view.NodeVisuals["n"].Square.StrokeDashArray.Count == 0, TimeSpan.FromSeconds(3));
+
+        Assert.Empty(view.NodeVisuals["n"].Square.StrokeDashArray);
     }
 
     /// <summary>
@@ -95,11 +97,11 @@ public class GraphPlanCoreTests
     [StaFact]
     public void Entering_a_run_dims_before_it_repaints()
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, false, true));
+        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
         var dashedAtRest = view.NodeVisuals["n"].Square.StrokeDashArray;
 
-        view.RunPhase = GraphRunPhase.Running;                                 // basış
-        view.UpdateStatuses([new("n", 0, GraphStatus.Queued, false, true)]);   // plan hemen ardından geldi
+        view.RunPhase = GraphRunPhase.Running;                                              // basış
+        view.UpdateStatuses([new("n", 0, GraphStatus.Queued, VisualStatus.Queued)]);        // plan hemen ardından geldi
 
         // Sönme oynarken çerçeve HÂLÂ kesikli: görünüm değişimi beklemede.
         Assert.Equal(dashedAtRest, view.NodeVisuals["n"].Square.StrokeDashArray);

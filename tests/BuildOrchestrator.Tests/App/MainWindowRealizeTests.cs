@@ -1,9 +1,10 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 
@@ -269,5 +270,29 @@ public class MainWindowRealizeTests
         Assert.All(glyphs, p => Assert.True(p.Data is not null || p.Stroke is not null,
             "title bar Path'i ne geometri ne kontur çözebildi — DynamicResource anahtarı kayıp olabilir"));
         GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [design v1.11.0 §9-4 "Satırlar node'larla senkron"] İşaretleme dalgası grafa ulaştığında düğümün
+    /// RENGİ de o anda değişir — bir sonraki koşu tiki beklenmez.
+    ///
+    /// <para><b>Neden bir test:</b> koreografinin grafa iki ayrı şeye ihtiyacı var — opaklık adımı
+    /// (<c>SetMarking</c>) ve düğüm renkleri (statü itişi). İkincisi kabloda yoktu: graf ancak
+    /// <c>_elapsedTimer</c>'ın 200ms'lik tikiyle tazeleniyordu. 36 projede dalga temposu ~31ms/node olduğu
+    /// için liste akıcı boyanırken graf 6-7 düğümlük bloklar hâlinde sıçrıyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void The_marking_wave_paints_the_graph_at_its_own_tempo_not_the_run_ticks()
+    {
+        using var temp = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("A", null), ("B", null));
+        var row = vm.Projects.Single(r => r.Name == "A");
+
+        row.Marked = true; // dalga bu üyeye geldi
+        window.ApplyMarkingToGraph(MarkStep.Wave, new HashSet<string>(["A"], StringComparer.Ordinal));
+
+        Assert.Equal(VisualStatus.Marked, window.Shell.GraphHost.NodeVisuals["A"].Model.Visual);
+        // B dalgaya girmedi: fixture Sync'ten geldiği için başlangıç modunda kalır — ama İŞARETLİ DEĞİL.
+        Assert.Equal(VisualStatus.Fresh, window.Shell.GraphHost.NodeVisuals["B"].Model.Visual);
     }
 }

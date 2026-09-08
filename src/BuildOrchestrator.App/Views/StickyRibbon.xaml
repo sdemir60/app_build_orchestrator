@@ -17,15 +17,32 @@
       <!-- İçerik satırı: yükseklik 32, padding '0 12', slotlar arası boşluk 10 (BuildApp.jsx:780). -->
       <Grid x:Name="PART_ContentRow" Grid.Row="0" Height="32" Margin="12,0">
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="Auto" />  <!-- statü glyph'i (yalnız done) -->
+          <ColumnDefinition Width="Auto" />  <!-- [v1.11.0] kalıcı işlem pill'i -->
+          <ColumnDefinition Width="Auto" />  <!-- statü glyph'i (yalnız pill YOKKEN) -->
           <ColumnDefinition Width="Auto" />  <!-- faz metni -->
           <ColumnDefinition Width="Auto" />  <!-- building chip'leri -->
           <ColumnDefinition Width="*" />     <!-- esnek boşluk -->
-          <ColumnDefinition Width="Auto" />  <!-- döngü kümesi (hata kümesinin SOLUNDA) -->
           <ColumnDefinition Width="Auto" />  <!-- hata kümesi (sağa yaslı) -->
         </Grid.ColumnDefinitions>
 
-        <controls:StatusGlyph x:Name="PART_PhaseGlyph" Grid.Column="0" Size="13"
+        <!-- [design v1.11.0 §2.2 · §9-9] KALICI İŞLEM PILL'İ: mono caps, 19px, 1px çerçeve; koşarken amber
+             (amber-soft zemin), bitince nötrleşir ama BİR SONRAKİ İŞLEME KADAR KALIR. Spinner / sonuç glyph'i
+             pill'in İÇİNDE, metnin hemen sağında (6px). Zemin/çerçeve/metin rengi kod-tarafı sürülür. -->
+        <Border x:Name="PART_OpPill" Grid.Column="0" Height="19" Padding="7,0" MaxWidth="280"
+                VerticalAlignment="Center" Visibility="Collapsed" BorderThickness="1"
+                CornerRadius="{DynamicResource Radius.Xs}">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock x:Name="PART_OpText" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                       FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}" />
+            <controls:StatusGlyph x:Name="PART_OpGlyph" Size="11" Margin="6,0,0,0"
+                                  VerticalAlignment="Center" Visibility="Collapsed" />
+            <controls:BuildingSpinner x:Name="PART_OpSpinner" Size="11" Margin="6,0,0,0"
+                                      VerticalAlignment="Center" Visibility="Collapsed" />
+          </StackPanel>
+        </Border>
+
+        <controls:StatusGlyph x:Name="PART_PhaseGlyph" Grid.Column="1" Size="13"
                               VerticalAlignment="Center" Visibility="Collapsed" />
 
         <!-- Margin kod-tarafında (RefreshText) glyph görünürlüğüne koşullu set edilir — D2 review fix Finding 5:
@@ -33,26 +50,23 @@
         <!-- [E5/T47] Faz metni bir LIVE REGION'dur: ekran okuyucu faz değişimini (empty→boot→…→done|stopped)
              duyurur. Duyuru YALNIZ faz/hata değişiminde tetiklenir (elapsed tick'te DEĞİL — spam olmasın);
              bkz. StickyRibbon.AnnouncePhase. -->
-        <TextBlock x:Name="PART_PhaseText" Grid.Column="1" VerticalAlignment="Center"
+        <TextBlock x:Name="PART_PhaseText" Grid.Column="2" VerticalAlignment="Center"
                    AutomationProperties.LiveSetting="Assertive"
                    FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Xs}"
                    Typography.NumeralAlignment="Tabular" TextWrapping="NoWrap" />
 
-        <StackPanel x:Name="PART_BuildingChips" Grid.Column="2" Margin="10,0,0,0" Orientation="Horizontal"
+        <StackPanel x:Name="PART_BuildingChips" Grid.Column="3" Margin="10,0,0,0" Orientation="Horizontal"
                     VerticalAlignment="Center" />
 
         <!-- [E2/T37] Engine-died kalıcı hata modu aksiyonu: banner/toast YOK — şerit-içi "Restart engine".
              Görünürlüğü EngineDiedMessage'a bağlı (RefreshText); ölmüş engine'i RestartEngineCommand yeniden başlatır. -->
-        <Button x:Name="PART_RestartEngine" Grid.Column="3" HorizontalAlignment="Left" VerticalAlignment="Center"
+        <Button x:Name="PART_RestartEngine" Grid.Column="4" HorizontalAlignment="Left" VerticalAlignment="Center"
                 Margin="12,0,0,0" Visibility="Collapsed" Content="Restart engine"
                 Style="{DynamicResource Ds.Button.Secondary.Sm}"
                 Command="{Binding RestartEngineCommand}" />
 
-        <!-- [design v1.7.0 §2.2] Döngü kümesi: yalnız Sync bir SCC bulduysa görünür ve hata kümesinin
-             SOLUNDA durur. Küme Sync'ten koşu sonuna kadar KALICIDIR — döngü bir koşu sonucu değil, bir
-             yapılandırma hatasıdır. -->
-        <StackPanel x:Name="PART_CycleCluster" Grid.Column="4" Orientation="Horizontal"
-                    VerticalAlignment="Center" Visibility="Collapsed" />
+        <!-- [design v1.11.0 §2.2] Döngü kümesi KALDIRILDI: turuncu UI'dan çıktı ve döngü bilgisi satırdaki tek
+             amber üçgende + alt bardaki ⚠ filtresinde yaşıyor. -->
 
         <StackPanel x:Name="PART_FailureCluster" Grid.Column="5" Orientation="Horizontal"
                     VerticalAlignment="Center" />

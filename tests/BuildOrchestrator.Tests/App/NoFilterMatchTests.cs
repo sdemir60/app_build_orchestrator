@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using BuildOrchestrator.App;
@@ -64,7 +64,7 @@ public class NoFilterMatchTests
         var (window, vm) = NewShell(temp);
         Assert.DoesNotContain(Copy, VisibleTexts(window)); // ön-koşul: filtre yokken metin YOK
 
-        vm.ActiveFilter = ProjectFilter.Failed; // hiçbir proje failed değil
+        vm.ToggleFilter(ProjectFilter.Failed); // hiçbir proje failed değil
         window.Shell.UpdateLayout();
 
         Assert.Contains(Copy, VisibleTexts(window));
@@ -89,7 +89,7 @@ public class NoFilterMatchTests
     {
         using var temp = new TempDir();
         var (window, vm) = NewShell(temp);
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         window.Shell.UpdateLayout();
         Assert.Contains(Copy, VisibleTexts(window)); // ön-koşul
 
@@ -125,11 +125,11 @@ public class NoFilterMatchTests
         var (window, vm) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         window.Shell.UpdateLayout();
 
         var texts = VisibleTexts(window);
-        Assert.Contains(InteractionText.PickRepositoryTitle, texts);
+        Assert.Contains(InteractionText.ConfigureWorkspaceTitle, texts);
         Assert.DoesNotContain(Copy, texts);
         GC.KeepAlive(window);
     }

@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -21,12 +21,15 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class QuietGraphNodeTests
 {
+    // [design v1.11.0 §2.3] Düğüm artık TEK renk kanalı taşır: statünün YANINDA görsel durum da verilir
+    // (üretimde ikisini GraphBinder birlikte kurar). "OSYS.Legacy" BAŞLANGIÇ MODUNDADIR (fresh) — kesikli
+    // çerçevenin tek sahibi odur.
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new("OSYS.Base", 0, GraphStatus.Succeeded),
-        new("OSYS.Data", 1, GraphStatus.Failed),
-        new("OSYS.Api", 2, GraphStatus.Queued),
-        new("OSYS.Legacy", 2, GraphStatus.Discovered),
+        new("OSYS.Base", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+        new("OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
+        new("OSYS.Api", 2, GraphStatus.Queued, VisualStatus.Queued),
+        new("OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>
@@ -158,27 +161,32 @@ public class QuietGraphNodeTests
         Assert.Equal(view.NodeSize * GraphView.IconFactor / 24.0, scale.ScaleX, 6);
     }
 
-    /// <summary>discovered düğüm kesikli çerçeve taşır — WPF <c>Border</c> dash desteklemediği için
-    /// <see cref="Rectangle"/>. Kesikli koleksiyon TEK, DONMUŞ ve PAYLAŞIMLIDIR (tick başına allocation yok).</summary>
+    /// <summary>Başlangıç modundaki düğüm kesikli çerçeve taşır — WPF <c>Border</c> dash desteklemediği için
+    /// <see cref="Rectangle"/>. Kesikli koleksiyon TEK, DONMUŞ ve PAYLAŞIMLIDIR (tick başına allocation yok).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.3]</b> Eski iddia "DISCOVERED düğüm kesiklidir" idi. Kesikli
+    /// çizim artık YALNIZ başlangıç moduna (<c>fresh</c>) aittir; <c>discovered</c> DÜZ gridir ve "bir işlem
+    /// başladı ama bu proje kapsamda değil" der. İki durum aynı görünseydi Sync sonrası ile işlem-ortası ayırt
+    /// edilemezdi.</para></summary>
     [StaFact]
-    public void A_discovered_node_gets_a_dashed_frame_from_one_shared_frozen_collection()
+    public void A_fresh_node_gets_a_dashed_frame_from_one_shared_frozen_collection()
     {
         var view = Built(new Size(640, 400));
 
-        var discovered = view.NodeVisuals["OSYS.Legacy"].Square;
-        Assert.NotEmpty(discovered.StrokeDashArray);
-        Assert.True(discovered.StrokeDashArray.IsFrozen);
+        var fresh = view.NodeVisuals["OSYS.Legacy"].Square;
+        Assert.NotEmpty(fresh.StrokeDashArray);
+        Assert.True(fresh.StrokeDashArray.IsFrozen);
         Assert.Empty(view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
 
-        // İkinci bir discovered düğüm AYNI örneği paylaşır.
+        // İkinci bir fresh düğüm AYNI örneği paylaşır; `discovered` ise KESİKLİ DEĞİLDİR.
         view.UpdateStatuses(
         [
-            new("OSYS.Base", 0, GraphStatus.Discovered),
-            new("OSYS.Data", 1, GraphStatus.Failed),
-            new("OSYS.Api", 2, GraphStatus.Queued),
-            new("OSYS.Legacy", 2, GraphStatus.Discovered),
+            new("OSYS.Base", 0, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
+            new("OSYS.Api", 2, GraphStatus.Discovered, VisualStatus.Discovered),
+            new("OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
         ]);
-        Assert.Same(discovered.StrokeDashArray, view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
+        Assert.Same(fresh.StrokeDashArray, view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
+        Assert.Empty(view.NodeVisuals["OSYS.Api"].Square.StrokeDashArray);
     }
 
     /// <summary>Renkler foundation token FIRÇALARINDAN çözülür — kodda hex YOK.</summary>
@@ -224,16 +232,10 @@ public class QuietGraphNodeTests
         }
     }
 
-    // ---------------------------------------------------------------- [Task 5] döngü üyeliği — kalıcı köşe rozeti
-
-    private static IReadOnlyList<GraphNode> CycleNodes(GraphStatus memberStatus) =>
-    [
-        new("OSYS.Member", 0, memberStatus, InCycle: true),
-        new("OSYS.Other", 1, GraphStatus.Discovered),
-    ];
-
-
-
+    // ---------------------------------------------------------------- döngü üyeliği
+    // [KALDIRILDI — design v1.11.0 §2.3] Düğüm ARTIK döngü üyeliği TAŞIMAZ: turuncu UI'dan çıktı ve grafta
+    // uyarı üçgeni de yoktur. Üyelik yalnız liste satırındaki tek amber üçgende yaşar (CycleTooltipTests).
+    // Bu bölümün tek kalıntısı olan `CycleNodes` fixture'ı da tüketicisiz kaldığı için silindi.
 
 
     // [KALDIRILDI — design v1.7.0 §2.3] Grafta node üstü/köşesi rozeti YOKTUR: döngüyü yalnız turuncu

@@ -1,4 +1,4 @@
-<UserControl x:Class="BuildOrchestrator.App.Views.AboutDialog"
+﻿<UserControl x:Class="BuildOrchestrator.App.Views.AboutDialog"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
@@ -73,13 +73,20 @@
                        Style="{DynamicResource Ds.Segment.Item}" Content="Environment" />
           <RadioButton x:Name="ThirdPartyTab" GroupName="about"
                        Style="{DynamicResource Ds.Segment.Item}" Content="Third-party" />
+          <!-- [design v1.9.0 §2.10] Sürüm notları AYRI bir pencere ya da açılış pop-up'ı DEĞİL: sürüm
+               numarasının zaten göründüğü About'a dördüncü sekme olarak eklenir. -->
+          <RadioButton x:Name="WhatsNewTab" GroupName="about" Checked="OnWhatsNewTabChecked"
+                       Style="{DynamicResource Ds.Segment.Item}" Content="What's new" />
         </ItemsControl>
 
         <!-- ============================ İÇERİK ============================ -->
         <!-- SABİT yükseklik: sekme değişince diyaloğun boyu ve footer'ın yeri OYNAMAZ. Sayı en uzun sekmeyi
              (Environment, 10 satır) sığdıracak şekilde seçildi — bir bütçe DEĞİLDİR; test sayıyı değil
-             "üç sekmede de aynı yükseklik" DAVRANIŞINI pinler (AboutDialogTests). -->
-        <Grid Grid.Row="2" MinHeight="236" Margin="18,0,18,4">
+             "her sekmede aynı yükseklik" DAVRANIŞINI pinler (AboutDialogTests).
+             [design v1.9.0 §2.10] Yükseklik ARTIK bir TAVAN da: What's new listesi sürüm biriktikçe uzar ve
+             MinHeight tek başına diyaloğu o sekmede büyütürdü. Uzayan panel kendi ScrollViewer'ında kayar —
+             "tüm geçmiş erişilir ama sekme bir ekran boyunda açılır". -->
+        <Grid Grid.Row="2" Height="236" Margin="18,0,18,4">
 
           <!-- SHORTCUTS · Görünürlük Style'dan gelir: yerel bir Visibility ataması Style setter'ını EZER,
                bu yüzden burada yerel değer YOKTUR (aynı kural üç panelde de geçerli). -->
@@ -212,6 +219,29 @@
               <TextBlock x:Name="FontLicenseNoteText" Margin="0,10,0,0" TextWrapping="Wrap"
                          FontSize="{DynamicResource FontSize.2xs}"
                          Foreground="{DynamicResource Brush.TextFaint}" />
+            </StackPanel>
+          </ScrollViewer>
+
+          <!-- WHAT'S NEW (design v1.9.0 §2.10) — en yeni sürüm üstte. Sürüm blokları ve kategori başlıkları
+               kod-tarafı kurulur (ReleaseNotes verisinden); son 3 sürüm açık, gerisi ghost bir düğmenin
+               altında katlıdır. -->
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ScrollViewer.Style>
+              <Style TargetType="ScrollViewer">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=WhatsNewTab}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </ScrollViewer.Style>
+            <StackPanel>
+              <StackPanel x:Name="WhatsNewRows" />
+              <Button x:Name="EarlierVersionsButton" HorizontalAlignment="Left" Margin="0,10,0,0"
+                      Visibility="Collapsed" Click="OnShowEarlierVersions"
+                      AutomationProperties.Name="Show earlier versions"
+                      Style="{DynamicResource Ds.Button.Ghost.Sm}" />
             </StackPanel>
           </ScrollViewer>
         </Grid>

@@ -167,31 +167,37 @@ public partial class ActionBarTests
 
         var chipOrder = counterStrip.Children.Cast<UIElement>().ToList();
         Assert.Equal(
-            // [design v1.7.0 §2.7-4] Temel beşli her zaman durur; son ikisi (cycle ⚠ + dep ▲) yalnız listede
-            // karşılığı varken GÖRÜNÜR — sırada yerleri sabittir, görünürlükleri koşulludur.
-            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.SucceededChip, bar.FailedChip, bar.SkippedChip, bar.CycleChip, bar.DepChip },
+            // [design v1.11.0 §2.7-4] Temel beşli her zaman durur; sonuncusu (birleşik ⚠) yalnız listede
+            // karşılığı varken GÖRÜNÜR — sırada yeri sabittir, görünürlüğü koşulludur.
+            // [DEĞİŞEN KURAL] Eskiden burada İKİ istisnai chip vardı (turuncu ⚠ cycle + kırmızı ▲ dep);
+            // v1.11.0 turuncuyu UI'dan çıkardı ve ikisini tek amber chip'te birleştirdi.
+            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.SucceededChip, bar.FailedChip, bar.SkippedChip, bar.WarnChip },
             chipOrder);
         GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T3c · c5] Sağ grubun sırası: branch · worktree · Debug|Release · perf · ayraç · Stop/Build
-    /// grid'i (BuildApp.jsx:1570-1614).</summary>
+    /// <summary>[A13/T3c · c5] Sağ grubun sırası: workspace adı · branch · worktree · Debug|Release · perf ·
+    /// ayraç · Stop/Build grid'i (BuildApp.jsx:1570-1614).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-5a]</b> Grup artık <b>workspace adıyla BAŞLAR</b>: title
+    /// bar'ın mono bağlam metni kaldırıldı ve geriye kalan tek yeni bilgi (hangi workspace) branch chip'inin
+    /// soluna geçti. Eski iddia gruba altı öğe sayıyordu ve ilk öğeyi branch chip'i sanıyordu.</para></summary>
     [StaFact]
-    public void The_right_group_orders_branch_worktree_config_perf_a_separator_then_the_build_area()
+    public void The_right_group_orders_workspace_branch_worktree_config_perf_a_separator_then_the_build_area()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
         var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
-        Assert.Equal(6, rightChildren.Count);
-        Assert.Same(bar.BranchChip, ((Grid)rightChildren[0]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.Segment, rightChildren[2]);
-        Assert.Same(bar.PerfChip, rightChildren[3]);
-        var rightSeparator = Assert.IsType<Border>(rightChildren[4]);
+        Assert.Equal(7, rightChildren.Count);
+        Assert.Same(bar.WorkspaceLabel, rightChildren[0]);
+        Assert.Same(bar.BranchChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[2]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.Segment, rightChildren[3]);
+        Assert.Same(bar.PerfChip, rightChildren[4]);
+        var rightSeparator = Assert.IsType<Border>(rightChildren[5]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
-        var buildArea = Assert.IsType<Grid>(rightChildren[5]);
+        var buildArea = Assert.IsType<Grid>(rightChildren[6]);
         Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
         Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
         GC.KeepAlive(window);
@@ -298,9 +304,9 @@ public partial class ActionBarTests
         Assert.Equal(GraphStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
         Assert.Equal(GraphStatus.Skipped, Assert.IsType<StatusGlyph>(ChipIcon(bar.SkippedChip)).Status);
 
-        var depCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.DepChip)).Child);
-        var depPath = Assert.IsType<System.Windows.Shapes.Path>(depCanvas.Children[0]);
-        Assert.Same(bar.FindResource("Icon.AlertTri"), depPath.Data);
+        var warnCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.WarnChip)).Child);
+        var warnPath = Assert.IsType<System.Windows.Shapes.Path>(warnCanvas.Children[0]);
+        Assert.Same(bar.FindResource("Icon.AlertTri"), warnPath.Data);
         GC.KeepAlive(window);
     }
 
@@ -350,34 +356,33 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T3c · c6.3] BuildApp.jsx:1566 <c>color: di ? 'var(--status-fail-text)' : 'var(--text-faint)'</c>
-    /// — ▲'nin kırmızıya dönmesi İKİ YÖNLÜDÜR (0'da faint, &gt;0'da kırmızı) ve ÜRETİM YOLUNDAN (gerçek bir proje
-    /// succeeded + depIssue taşıyarak <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN artırarak) tetiklenir —
-    /// alanı doğrudan set etmek/metodu çağırmak brief kural 6'yı ihlal ederdi.</summary>
+    /// <summary>[design v1.11.0 §2.7-4] Birleşik ⚠ chip'i YALNIZ listede karşılığı (döngü ∪ dep-issue) varken
+    /// görünür ve göründüğünde daima AMBER'dır. Üretim yolundan tetiklenir (gerçek bir proje succeeded +
+    /// depIssue taşıyarak <see cref="RunViewModel.Counters"/>'ı GERÇEKTEN artırır).
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia (A13/T3c · c6.3): "▲ dep chip'i sayı &gt;0 iken KIRMIZIYA
+    /// (<c>status-fail-text</c>) döner". v1.11.0 kırmızıyı sonuç kanalına bıraktı ("derlendi ve patladı") ve
+    /// uyarıyı amber'a çekti; aynı hamlede turuncu cycle chip'i de bu chip'in içinde eridi.</para></summary>
     [StaFact]
-    public void The_dep_chip_appears_only_once_some_project_carries_a_dep_issue()
+    public void The_warn_chip_appears_only_once_some_project_carries_a_warning()
     {
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0)); // → Idle
         var (bar, window) = Realize(vm);
 
-        var depCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.DepChip)).Child);
-        var depPath = Assert.IsType<System.Windows.Shapes.Path>(depCanvas.Children[0]);
+        var warnCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.WarnChip)).Child);
+        var warnPath = Assert.IsType<System.Windows.Shapes.Path>(warnCanvas.Children[0]);
 
-        // [DEĞİŞEN KURAL — design v1.5.2] Eski iddia: "chip hep durur, sayı 0 iken soluk". Chip artık YALNIZ
-        // listede karşılığı varken görünür — istisnai bir durumu anlatan bir chip'i sürekli boş taşımak
-        // sinyali zayıflatıyordu. Göründüğünde daima dolu ve kırmızıdır.
-        Assert.Equal(0, vm.Counters.DepAffected);
-        Assert.Equal(Visibility.Collapsed, bar.DepChip.Visibility);
+        Assert.Equal(0, vm.Counters.Warn);
+        Assert.Equal(Visibility.Collapsed, bar.WarnChip.Visibility);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100, ["dependent B henüz derlenmedi"]));
 
-        Assert.Equal(1, vm.Counters.DepAffected); // ön-koşul: sayaç GERÇEKTEN arttı
-        Assert.Equal(Visibility.Visible, bar.DepChip.Visibility);
-        Assert.Same(bar.FindResource("Brush.StatusFailText"), depPath.Stroke);
+        Assert.Equal(1, vm.Counters.Warn); // ön-koşul: sayaç GERÇEKTEN arttı
+        Assert.Equal(Visibility.Visible, bar.WarnChip.Visibility);
+        Assert.Same(bar.FindResource("Brush.AmberText"), warnPath.Stroke);
         GC.KeepAlive(window);
     }
 
@@ -478,25 +483,27 @@ public partial class ActionBarTests
     private static string StopLabel(ActionBar bar) =>
         ((StackPanel)bar.StopButton.Content).Children.OfType<TextBlock>().Single().Text;
 
+    /// <summary>[design v1.11.0 §2.7-4] <b>[DEĞİŞEN KURAL]</b> Eski iddia: "farklı bir chip'e tık öncekini
+    /// DEVRALIR" (tek filtre). Chip'ler artık bağımsız açılıp kapanır ve seçili küme VEYA ile birleşir; aynı
+    /// chip'e ikinci tık onu kümeden çıkarır, Σ hepsini temizler.</summary>
     [StaFact]
-    public void Counter_chips_toggle_the_filter_and_sigma_always_clears_it()
+    public void Counter_chips_toggle_independently_and_sigma_always_clears_them_all()
     {
         var vm = NewVm(); // RootPath dolu → HasWorkspace → chip'ler etkin
         var (bar, window) = Realize(vm);
 
-        Assert.Null(vm.ActiveFilter);
+        Assert.Empty(vm.ActiveFilters);
         Click(bar.FailedChip);
-        Assert.Equal(ProjectFilter.Failed, vm.ActiveFilter);
-        Click(bar.FailedChip);                                  // aynı chip'e ikinci tık → temizle
-        Assert.Null(vm.ActiveFilter);
+        Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order());
+        Click(bar.FailedChip);                                  // aynı chip'e ikinci tık → kümeden çıkar
+        Assert.Empty(vm.ActiveFilters);
 
         Click(bar.SucceededChip);
-        Assert.Equal(ProjectFilter.Succeeded, vm.ActiveFilter);
-        Click(bar.BuildingChip);                                // farklı chip → devral
-        Assert.Equal(ProjectFilter.Building, vm.ActiveFilter);
+        Click(bar.FailedChip);                                  // farklı chip → EKLENİR (devralmaz)
+        Assert.Equal([ProjectFilter.Failed, ProjectFilter.Succeeded], vm.ActiveFilters.Order());
 
-        Click(bar.SigmaChip);                                   // Σ HER ZAMAN temizler
-        Assert.Null(vm.ActiveFilter);
+        Click(bar.SigmaChip);                                   // Σ HER ZAMAN hepsini temizler
+        Assert.Empty(vm.ActiveFilters);
         Assert.False(bar.SigmaChip.IsChecked);                  // Σ hiç aktif olmaz
         GC.KeepAlive(window);
     }
@@ -504,7 +511,7 @@ public partial class ActionBarTests
     [StaFact]
     public void Sigma_chip_click_with_no_active_filter_still_ends_up_unchecked()
     {
-        // [D6 fix-wave] ActiveFilter zaten null iken Σ'ya tık: ToggleFilter(null) no-op'tur (null→null), bu
+        // [D6 fix-wave] Filtre kümesi zaten boşken Σ'ya tık: ToggleFilter(null) no-op'tur (boş→boş), bu
         // yüzden PropertyChanged YAYINLAMAZ (CommunityToolkit eşitlik kontrolü) → RefreshChips ÇALIŞMAZ.
         // WPF'in native ToggleButton.OnClick'i (OnToggle → IsChecked=true, SONRA Click event) burada
         // RaiseEvent ile bypass edildiğinden, native davranışı simüle etmek için tık ÖNCESİ IsChecked
@@ -512,11 +519,11 @@ public partial class ActionBarTests
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
-        Assert.Null(vm.ActiveFilter);       // hiçbir filtre aktif değilken başla
+        Assert.Empty(vm.ActiveFilters);     // hiçbir filtre aktif değilken başla
         bar.SigmaChip.IsChecked = true;     // native toggle-on-click'i simüle et
         Click(bar.SigmaChip);
 
-        Assert.Null(vm.ActiveFilter);       // ToggleFilter(null) no-op kalır
+        Assert.Empty(vm.ActiveFilters);     // ToggleFilter(null) no-op kalır
         Assert.False(bar.SigmaChip.IsChecked); // Σ HER ZAMAN unchecked bitmeli — amber'da takılı kalmamalı
         GC.KeepAlive(window);
     }
@@ -525,26 +532,29 @@ public partial class ActionBarTests
     /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.7-11]</b> Eski iddia: "menü hiçbir fazda <c>continue</c>
     /// sunmaz, <c>retry</c>'ı yalnız hata varken sunar". <c>retry</c> de kaldırıldı: Build zaten stale
     /// set'i derler — hatalı proje imzasını persist etmediği için bir sonraki Build'de hâlâ kirlidir ve
-    /// bağımlıları cascade ile gelir; ayrı bir yüzey aynı işi ikinci kez sunuyordu. Menü artık HER fazda
-    /// tam olarak iki maddedir.</para></summary>
+    /// bağımlıları cascade ile gelir; ayrı bir yüzey aynı işi ikinci kez sunuyordu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-11]</b> Eski iddia: "menü HER fazda tam olarak İKİ
+    /// maddedir". Üçüncü madde <b>Clean</b> eklendi (VS <i>Clean Solution</i>: yalnız <c>/t:Clean</c>,
+    /// cache'lere dokunmaz) — bakım kutusundaki DERİN Clean'in yerine geçmez, onun yanında durur. Koşulsuzluk
+    /// iddiası KORUNUR: üç madde de her fazda aynıdır.</para></summary>
     [StaFact]
-    public void Build_menu_offers_exactly_build_and_rebuild_in_every_phase()
+    public void Build_menu_offers_exactly_build_rebuild_and_clean_in_every_phase()
     {
         var vm = NewVm();
         var (menu, window) = RealizeMenu(vm);
 
-        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
+        Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
 
-        // Bir failure sonrası da aynı iki madde (Retry yüzeyi yok).
+        // Bir failure sonrası da aynı üç madde (Retry yüzeyi yok).
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 100, "exit 1"));
-        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
+        Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
 
-        // Stop sonrası da aynı iki madde (Continue yüzeyi yok).
+        // Stop sonrası da aynı üç madde (Continue yüzeyi yok).
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
-        Assert.Equal(["build", "rebuild"], menu.Items.Select(i => i.Kind));
+        Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
         GC.KeepAlive(window);
     }
 

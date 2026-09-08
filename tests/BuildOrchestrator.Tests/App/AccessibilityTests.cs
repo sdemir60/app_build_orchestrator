@@ -48,7 +48,7 @@ public class AccessibilityTests
         Assert.Equal(AccessibilityNames.FilterSucceeded, AutomationProperties.GetName(bar.SucceededChip));
         Assert.Equal(AccessibilityNames.FilterFailed, AutomationProperties.GetName(bar.FailedChip));
         Assert.Equal(AccessibilityNames.FilterSkipped, AutomationProperties.GetName(bar.SkippedChip));
-        Assert.Equal(AccessibilityNames.FilterDep, AutomationProperties.GetName(bar.DepChip));
+        Assert.Equal(AccessibilityNames.FilterWarn, AutomationProperties.GetName(bar.WarnChip));
         Assert.Equal(AccessibilityNames.BranchChip, AutomationProperties.GetName(bar.BranchChip));
         Assert.Equal(AccessibilityNames.WorktreeChip, AutomationProperties.GetName(bar.WorktreeChip));
         Assert.Equal(AccessibilityNames.PerfChip, AutomationProperties.GetName(bar.PerfChip));
@@ -185,11 +185,14 @@ public class AccessibilityTests
         dialog.UpdateLayout(); // katman satırı GERÇEKTEN kurulsun (ItemsControl kabı)
 
         var inputs = DsResources.RealizedObjects(dialog).OfType<TextBox>().ToList();
-        Assert.Equal(2, inputs.Count); // ön-koşul: satır kuruldu (yoksa aşağıdaki iddialar vakum olurdu)
+        // [DEĞİŞEN KURAL — design v1.8.0 §2.9] Diyalogda ARTIK ÜÇ input var: katman satırının iki alanı ve
+        // WORKSPACE bölümünün mono repository-root input'u (eskiden düzenlenemez bir etiketti).
+        Assert.Equal(3, inputs.Count); // ön-koşul: satır kuruldu (yoksa aşağıdaki iddialar vakum olurdu)
         var byWatermark = inputs.ToDictionary(t => DsChrome.GetWatermark(t)!, AutomationProperties.GetName,
             StringComparer.Ordinal);
         Assert.Equal(AccessibilityNames.LayerName, byWatermark["Layer name"]);
         Assert.Equal(AccessibilityNames.LayerPattern, byWatermark[@"^OSYS\.Domain\."]);
+        Assert.Equal(AccessibilityNames.RepositoryRootInput, byWatermark[@"D:\src\osys"]);
     }
 
     /// <summary>[A13/T5 · n5] Worktree hedef listesindeki çöp kutusu ikon-yalnızdır ve satır başına BİR tane

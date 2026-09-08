@@ -23,16 +23,19 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public readonly record struct RunCounters(int Total, int Building, int Queued, int Succeeded,
                                           int Failed, int Skipped, int DepAffected, int StuckCycles,
-                                          int Cycle = 0)
+                                          int Cycle = 0, int Warn = 0)
 {
     public static RunCounters From(IEnumerable<ProjectRowViewModel> rows)
     {
-        int total = 0, building = 0, queued = 0, succeeded = 0, failed = 0, skipped = 0, dep = 0, stuck = 0, cycle = 0;
+        int total = 0, building = 0, queued = 0, succeeded = 0, failed = 0, skipped = 0, dep = 0, stuck = 0, cycle = 0, warn = 0;
         foreach (var r in rows)
         {
             total++;
             if (r.HasDepIssue) dep++;        // [v1.5.1] statüden BAĞIMSIZ
             if (r.InCycle) cycle++;          // [v1.7.0 §5] kalıcı üyelik
+            // [design v1.11.0 §2.7-4] ⚠ chip'inin değeri: döngü ∪ dep-issue — ikisinin BİRLEŞİMİ, toplamı DEĞİL
+            // (bir satır ikisini birden taşıyabilir ve tek üçgen gösterir).
+            if (r.InCycle || r.HasDepIssue) warn++;
             if (r.CycleUnconverged) stuck++; // statüden BAĞIMSIZ — gerekçe aşağıda
             switch (r.State)
             {
@@ -44,6 +47,6 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
                 case ProjectRowState.Skipped: skipped++; break;
             }
         }
-        return new RunCounters(total, building, queued, succeeded, failed, skipped, dep, stuck, cycle);
+        return new RunCounters(total, building, queued, succeeded, failed, skipped, dep, stuck, cycle, warn);
     }
 }

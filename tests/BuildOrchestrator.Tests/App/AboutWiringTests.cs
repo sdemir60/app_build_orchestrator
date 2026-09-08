@@ -1,9 +1,10 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 
 namespace BuildOrchestrator.Tests.App;
@@ -59,10 +60,55 @@ public class AboutWiringTests
 
         // [design-v1.2.1 §2.1] Tooltip, katalog cümlesinin SONUNA jesti ekler: "… (F1)". Cümlenin kendisi
         // yine tek kaynaktan gelir — burada yazılan yalnız parantezli jest, o da katalogdan okunur.
+        // [DEĞİŞEN KURAL — design v1.9.0 §2.10] Cümle KOŞULLUDUR: görülmemiş bir sürüm varken
+        // "About — what's new in {sürüm}" olur ve ⓘ üzerinde 5px amber nokta durur. Taze bir TempDir'de
+        // (SeenVersion yazılmamış) durum TAM OLARAK budur — jest eki DEĞİŞMEZ.
         var tooltip = (ToolTip)window.InfoButton.ToolTip;
         var about = ShortcutCatalog.Get(ShortcutId.About);
-        Assert.Equal($"{about.Description} ({about.Gestures[0]})", tooltip.Content);
+        Assert.Equal($"About — what's new in {AppIdentity.Version} ({about.Gestures[0]})", tooltip.Content);
+        Assert.Equal(Visibility.Visible, window.UnseenNotesDot.Visibility);
         Assert.Equal(AccessibilityNames.About, AutomationProperties.GetName(window.InfoButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.9.0 §2.10] What's new sekmesi GÖRÜLÜNCE nokta söner, tooltip katalog cümlesine
+    /// döner ve karar kalıcı duruma yazılır (uygulama yeniden açılınca nokta geri gelmez).</summary>
+    [StaFact]
+    public void Seeing_the_whats_new_tab_clears_the_unseen_mark_for_good()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+        Assert.Equal(Visibility.Visible, window.UnseenNotesDot.Visibility); // ön-koşul
+
+        window.InfoButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        window.AboutOverlay.WhatsNew.IsChecked = true;
+
+        Assert.Equal(Visibility.Collapsed, window.UnseenNotesDot.Visibility);
+        var about = ShortcutCatalog.Get(ShortcutId.About);
+        Assert.Equal($"{about.Description} ({about.Gestures[0]})",
+            ((ToolTip)window.InfoButton.ToolTip).Content);
+
+        // ...ve karar KALICI: aynı state dizinini okuyan yeni bir pencerede nokta hiç doğmaz.
+        var (again, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(again);
+        Assert.Equal(Visibility.Collapsed, again.UnseenNotesDot.Visibility);
+        GC.KeepAlive(window);
+        GC.KeepAlive(again);
+    }
+
+    /// <summary>[design v1.9.0 §2.10] Görülmemiş bir sürüm varsa About DOĞRUDAN What's new sekmesinde açılır —
+    /// açılış toast'ı ya da karşılama pop-up'ı YOKTUR (§8), yönlendirme buraya yapılır.</summary>
+    [StaFact]
+    public void With_unseen_notes_about_opens_straight_on_the_whats_new_tab()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        window.InfoButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+        Assert.True(window.AboutOverlay.WhatsNew.IsChecked);
         GC.KeepAlive(window);
     }
 

@@ -33,6 +33,48 @@
         <!-- ============================ GÖVDE ============================ -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,0,20,4">
           <StackPanel>
+            <!-- ============================ WORKSPACE (design v1.8.0 §2.9) ============================
+                 Repository root ARTIK Settings'in bir parçası ve bölümlerin İLKİ: başlamak için gereken ayar
+                 sayısı arttığından (kök + katmanlar) first-run bir klasör seçiciye değil buraya açılıyor.
+                 Root boşken Save disabled — uygulamanın çalışması için zorunlu TEK ayar budur (CanSave).
+                 [DEĞİŞEN KURAL] Bu bölüm eskiden en ALTTA "REPOSITORY" başlığıyla ve tek satırlık bir yol
+                 etiketi + "Change…" düğmesiyle duruyordu; artık düzenlenebilir mono bir input + Browse…'dur. -->
+            <TextBlock Text="WORKSPACE" Margin="0,0,0,6"
+                       FontFamily="{x:Static controls:AppFonts.Ui}"
+                       FontSize="{DynamicResource FontSize.2xs}"
+                       FontWeight="{DynamicResource FontWeight.Emphasis}"
+                       Foreground="{DynamicResource Brush.TextFaint}" />
+            <TextBlock Text="Repository root — the folder that holds the OSYS solutions. Projects and the dependency graph are discovered from it on Sync."
+                       TextWrapping="Wrap" Margin="0,0,0,12"
+                       FontSize="{DynamicResource FontSize.Xs}"
+                       Foreground="{DynamicResource Brush.TextDim}" />
+            <DockPanel LastChildFill="True">
+              <Button DockPanel.Dock="Right" Margin="10,0,0,0" Click="OnChangeRepository"
+                      AutomationProperties.Name="{x:Static app:AccessibilityNames.BrowseRepositoryRoot}"
+                      Style="{DynamicResource Ds.Button.Secondary.Sm}">
+                <StackPanel Orientation="Horizontal">
+                  <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+                    <Canvas Width="24" Height="24">
+                      <Path Data="{DynamicResource Icon.Folder}"
+                            StrokeThickness="{DynamicResource Icon.Folder.StrokeThickness}"
+                            Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                            StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                    </Canvas>
+                  </Viewbox>
+                  <TextBlock Text="Browse…" VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
+              <TextBox x:Name="RepoRootInput" VerticalAlignment="Center"
+                       Style="{DynamicResource Ds.Input}"
+                       FontFamily="{x:Static controls:AppFonts.Mono}"
+                       controls:DsChrome.Watermark="D:\src\osys"
+                       AutomationProperties.Name="{x:Static app:AccessibilityNames.RepositoryRootInput}"
+                       Text="{Binding RepositoryRoot, UpdateSourceTrigger=PropertyChanged}" />
+            </DockPanel>
+
+            <!-- 18px boşluk + 1px ayraç, sonra Layers (§2.9). -->
+            <Border Height="1" Margin="0,18,0,18" Background="{DynamicResource Brush.BorderSubtle}" />
+
             <!-- LAYERS caps + açıklama (BİREBİR; "Other" mono) -->
             <TextBlock Text="LAYERS" Margin="0,0,0,6"
                        FontFamily="{x:Static controls:AppFonts.Ui}"
@@ -177,34 +219,65 @@
               </StackPanel>
             </Button>
 
-            <!-- ============================ REPOSITORY (K10) ============================ -->
-            <TextBlock Text="REPOSITORY" Margin="0,20,0,6"
-                       FontFamily="{x:Static controls:AppFonts.Ui}"
-                       FontSize="{DynamicResource FontSize.2xs}"
-                       FontWeight="{DynamicResource FontWeight.Emphasis}"
-                       Foreground="{DynamicResource Brush.TextFaint}" />
-            <DockPanel LastChildFill="True">
-              <Button DockPanel.Dock="Right" Content="Change…" Margin="10,0,0,0" Click="OnChangeRepository"
-                      Style="{DynamicResource Ds.Button.Secondary.Sm}" />
-              <TextBlock x:Name="RepoPathText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                         FontFamily="{x:Static controls:AppFonts.Mono}"
-                         FontSize="{DynamicResource FontSize.Xs}"
-                         Foreground="{DynamicResource Brush.TextSecondary}" />
-            </DockPanel>
-
           </StackPanel>
         </ScrollViewer>
 
-        <!-- ============================ FOOTER ============================ -->
+        <!-- ============================ FOOTER ============================
+             [design v1.10.0 §2.9] Solda: ghost `Load sample layers` · 1px ayraç · Export / Import / Clear ikon
+             butonları. Üçü de yalnız FORMU değiştirir — Save'e kadar hiçbir şey uygulanmaz, onay dialogu da
+             yoktur. Geri bildirim AYNI satırda 2.4 saniye durur (yeşil/kırmızı).
+             [DEĞİŞEN KURAL] Sol düğmenin adı "Restore default layers" idi; §2.9 metni "Load sample layers"dır
+             ve daha doğrudur: varsayılan konfigürasyon BOŞTUR, bu düğme örnek katmanları DOLDURUR. -->
         <Border Grid.Row="2" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,1,0,0">
           <DockPanel Margin="20,12">
-            <Button DockPanel.Dock="Left" Content="Restore default layers" Click="OnRestoreDefaults"
-                    Style="{DynamicResource Ds.Button.Ghost.Md}" />
+            <Button x:Name="SampleLayersButton" DockPanel.Dock="Left" Content="Load sample layers"
+                    Click="OnLoadSampleLayers" Style="{DynamicResource Ds.Button.Ghost.Md}" />
+            <Border DockPanel.Dock="Left" Width="1" Margin="10,4" Background="{DynamicResource Brush.BorderSubtle}" />
+            <Button x:Name="ExportButton" DockPanel.Dock="Left" Style="{DynamicResource Ds.IconButton}"
+                    Click="OnExport" ToolTip="Export settings…"
+                    AutomationProperties.Name="{x:Static app:AccessibilityNames.ExportSettings}">
+              <Viewbox Width="13" Height="13">
+                <Canvas Width="24" Height="24">
+                  <Path Data="{DynamicResource Icon.Download}"
+                        StrokeThickness="{DynamicResource Icon.Download.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+            </Button>
+            <Button x:Name="ImportButton" DockPanel.Dock="Left" Margin="2,0,0,0"
+                    Style="{DynamicResource Ds.IconButton}" Click="OnImport" ToolTip="Import settings…"
+                    AutomationProperties.Name="{x:Static app:AccessibilityNames.ImportSettings}">
+              <Viewbox Width="13" Height="13">
+                <Canvas Width="24" Height="24">
+                  <Path Data="{DynamicResource Icon.Upload}"
+                        StrokeThickness="{DynamicResource Icon.Upload.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+            </Button>
+            <Button x:Name="ClearButton" DockPanel.Dock="Left" Margin="2,0,0,0"
+                    Style="{DynamicResource Ds.IconButton}" Click="OnClear" ToolTip="Clear settings"
+                    AutomationProperties.Name="{x:Static app:AccessibilityNames.ClearSettings}">
+              <Viewbox Width="13" Height="13">
+                <Canvas Width="24" Height="24">
+                  <Path x:Name="ClearGlyph" Data="{DynamicResource Icon.Trash}"
+                        StrokeThickness="{DynamicResource Icon.Trash.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+            </Button>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
               <Button Content="Cancel" Click="OnCancel" Style="{DynamicResource Ds.Button.Secondary.Md}" />
-              <Button Content="Save" Click="OnSave" Margin="8,0,0,0" IsEnabled="{Binding CanSave}"
-                      Style="{DynamicResource Ds.Button.Primary.Md}" />
+              <Button x:Name="SaveButton" Content="Save" Click="OnSave" Margin="8,0,0,0"
+                      IsEnabled="{Binding CanSave}" Style="{DynamicResource Ds.Button.Primary.Md}" />
             </StackPanel>
+            <!-- Geri bildirim: aynı satırda, 2.4s (§2.9). Boşken yer kaplamaz. -->
+            <TextBlock x:Name="FeedbackText" Margin="10,0,10,0" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                       FontSize="{DynamicResource FontSize.Xs}" />
           </DockPanel>
         </Border>
       </Grid>

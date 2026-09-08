@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -352,6 +352,9 @@ public sealed partial class RunViewModel
                     InCycle = node.InCycle,
                     IsRunActive = RunActive,
                     TargetSha = TargetSha, // [W1] hedef sha satıra İTİLİR (kart onu atalardan çekmez)
+                    // [design v1.11.0 §3.1] Yeni doğan satır BAŞLANGIÇ MODUNDADIR: bir koşu ortasında gelen
+                    // topoloji hariç (orada koşan işlem zaten renk yazıyor).
+                    Fresh = !IsRunning,
                 });
             else
             {
@@ -361,13 +364,12 @@ public sealed partial class RunViewModel
             }
         }
 
-        if (!IsRunning)
-            foreach (var row in Projects)
-            {
-                row.State = ProjectRowState.Pending; // Sync = yeni taban: önceki run'ın sonuçları artık geçmiştir
-                row.DepIssues = null;
-                row.DurationMs = 0;
-            }
+        // Sync = yeni taban: önceki run'ın sonuçları artık geçmiştir. Sıfırlama bir İŞLEMİN nötrlemesiyle
+        // AYNIdir (bkz. NeutralizeRows) — ayrıştıkları tek nokta inilen zemindir.
+        // [design v1.11.0 §3.1 · §9-3] BAŞLANGIÇ MODU: Sync ve açılış hiçbir şeyi RENKLENDİRMEZ — hangi
+        // işlemin geleceği belli değildir, bu yüzden plan da gösterilmez. Satır kesikli griye, graf node'u
+        // kesikli çerçeveye döner; neyin bayat olduğu çift SHA metninden okunur.
+        if (!IsRunning) NeutralizeRows(fresh: true);
 
         // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;

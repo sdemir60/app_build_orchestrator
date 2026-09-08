@@ -89,7 +89,10 @@ public partial class AboutDialog : UserControl
     /// sessiz devre dışı — bkz. <see cref="HotkeyRegistration"/>); <c>false</c> ise o satır "unavailable"
     /// işaretlenir. <paramref name="resolveMsBuild"/> vswhere seam'idir (testler process başlatmaz).
     /// </summary>
-    public void Open(RunViewModel run, bool hotkeyRegistered, Func<Task<string>> resolveMsBuild)
+    /// <param name="openOnWhatsNew">[design v1.9.0 §2.10] Görülmemiş bir sürüm varsa diyalog DOĞRUDAN
+    /// <i>What's new</i> sekmesinde açılır.</param>
+    public void Open(RunViewModel run, bool hotkeyRegistered, Func<Task<string>> resolveMsBuild,
+        bool openOnWhatsNew = false)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(resolveMsBuild);
@@ -116,8 +119,12 @@ public partial class AboutDialog : UserControl
         FontLicenseNoteText.Text = ThirdPartyNotices.FontLicenseNote;
 
         RefreshDiagnostics();
+        BuildWhatsNew(showAll: false); // [§2.10] katlama her açılışta 3'e döner
 
-        ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
+        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa About DOĞRUDAN What's new'da açılır — yönlendirme
+        // bir açılış toast'ıyla değil, buraya yapılır (§8: karşılama pop-up'ı YOK).
+        if (openOnWhatsNew) WhatsNewTab.IsChecked = true;
+        else ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
         Visibility = Visibility.Visible;
         // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı. Visibility'den SONRA: animasyon görünür bir öğe
@@ -161,6 +168,132 @@ public partial class AboutDialog : UserControl
         _msBuildRequested = true;
         _msBuild = await resolve();
         RefreshDiagnostics();
+    }
+
+    // ---------------------------------------------------------------- [design v1.9.0 §2.10] What's new
+
+    /// <summary>Sekme GÖRÜLDÜ — title bar'daki "görülmemiş sürüm" noktası söner. Kablo <c>MainWindow</c>'da
+    /// (kalıcı duruma yazma orada; diyalog yalnız olguyu bildirir).</summary>
+    public event Action? NotesSeen;
+
+    /// <summary>[test yüzeyi] Çizilmiş sürüm blokları.</summary>
+    internal IReadOnlyList<FrameworkElement> WhatsNewBlocks => [.. WhatsNewRows.Children.Cast<FrameworkElement>()];
+    internal Button EarlierVersions => EarlierVersionsButton;
+    internal RadioButton WhatsNew => WhatsNewTab;
+
+    private void OnWhatsNewTabChecked(object sender, RoutedEventArgs e) => NotesSeen?.Invoke();
+
+    /// <summary>
+    /// [§2.10] Sürüm listesini kurar: en yeni üstte, <b>son 3 sürüm açık</b>, gerisi ghost bir düğmenin
+    /// altında katlı. Katlama diyalog her açılışında 3'e döner (geri katlama düğmesi YOKTUR — açtıysan
+    /// okuyorsundur).
+    /// </summary>
+    private void BuildWhatsNew(bool showAll)
+    {
+        WhatsNewRows.Children.Clear(); // minik, non-virtualized liste (BuildMenu deseni)
+        var all = ReleaseNotes.All;
+        int shown = showAll ? all.Count : Math.Min(ReleaseNotes.OpenByDefault, all.Count);
+        for (int i = 0; i < shown; i++) WhatsNewRows.Children.Add(BuildVersionBlock(all[i], first: i == 0));
+
+        int hidden = all.Count - shown;
+        EarlierVersionsButton.Content = ReleaseNotes.EarlierVersionsLabel(hidden);
+        EarlierVersionsButton.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnShowEarlierVersions(object sender, RoutedEventArgs e) => BuildWhatsNew(showAll: true);
+
+    /// <summary>[§2.10] Bir sürüm bloğu: mono numara + (güncelse) sessiz caps <c>CURRENT</c> etiketi + sağa
+    /// yaslı tarih; altında kategori BLOKLARI. Sürümler arasında 14px boşluk + 1px ayraç.</summary>
+    private FrameworkElement BuildVersionBlock(ReleaseEntry entry, bool first)
+    {
+        var block = new StackPanel { Margin = new Thickness(0, first ? 0 : 14, 0, 0) };
+        if (!first)
+        {
+            var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, 14) };
+            divider.SetResourceReference(Border.BackgroundProperty, "Brush.BorderSubtle");
+            block.Children.Insert(0, divider);
+        }
+
+        var header = new DockPanel();
+        var date = new TextBlock { Text = entry.Date, VerticalAlignment = VerticalAlignment.Center, FontFamily = Controls.AppFonts.Mono };
+        date.SetResourceReference(FontSizeProperty, "FontSize.2xs");
+        date.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
+        DockPanel.SetDock(date, Dock.Right);
+        header.Children.Add(date);
+
+        var version = new TextBlock { Text = entry.Version, VerticalAlignment = VerticalAlignment.Center, FontFamily = Controls.AppFonts.Mono };
+        version.SetResourceReference(FontSizeProperty, "FontSize.Sm");
+        version.SetResourceReference(FontWeightProperty, "FontWeight.Emphasis");
+        version.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextPrimary");
+        header.Children.Add(version);
+
+        // [§2.10] CURRENT etiketi SESSİZDİR: yalnız text-faint metin — zemin/çerçeve YOK (amber rozet göze
+        // batıyordu).
+        if (string.Equals(entry.Version, AppIdentity.Version, StringComparison.Ordinal))
+        {
+            var current = new Controls.TrackedTextBlock
+            {
+                Text = "CURRENT",
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            current.SetResourceReference(FontSizeProperty, "FontSize.2xs");
+            current.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
+            header.Children.Add(current);
+        }
+        block.Children.Add(header);
+
+        // [§2.10] Kategori BLOK başlığıdır (satır başına ikon/sigil YOK); boş kategori hiç çizilmez.
+        foreach (var kind in ReleaseNotes.KindOrder)
+        {
+            var items = entry.Notes.Where(n => n.Kind == kind).ToList();
+            if (items.Count == 0) continue;
+            block.Children.Add(BuildCategory(kind, items));
+        }
+        return block;
+    }
+
+    private FrameworkElement BuildCategory(NoteKind kind, IReadOnlyList<ReleaseNote> items)
+    {
+        var group = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+
+        var heading = new StackPanel { Orientation = Orientation.Horizontal };
+        var swatch = new System.Windows.Shapes.Rectangle
+        {
+            Width = 6,
+            Height = 6,
+            RadiusX = 1,
+            RadiusY = 1,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        swatch.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, ReleaseNotes.SwatchBrushKey(kind));
+        heading.Children.Add(swatch);
+
+        var label = new Controls.TrackedTextBlock
+        {
+            Text = ReleaseNotes.Label(kind),
+            Margin = new Thickness(7, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        label.SetResourceReference(FontSizeProperty, "FontSize.2xs");
+        label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim");
+        heading.Children.Add(label);
+        group.Children.Add(heading);
+
+        foreach (var note in items)
+        {
+            var text = new TextBlock
+            {
+                Text = note.Text,
+                Margin = new Thickness(13, 4, 0, 0),
+                TextWrapping = TextWrapping.Wrap,
+            };
+            text.SetResourceReference(FontSizeProperty, "FontSize.Sm");
+            text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
+            text.SetResourceReference(TextBlock.LineHeightProperty, "LineHeight.Snug13"); // 13px gövde → snug
+            group.Children.Add(text);
+        }
+        return group;
     }
 
     // ---------------------------------------------------------------- copy diagnostics

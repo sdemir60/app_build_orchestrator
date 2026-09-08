@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
@@ -72,27 +72,44 @@ public class ProjectFilterChipTests
         using var temp = new TempDir();
         var (window, vm) = NewShell(temp);
 
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
 
         var chip = Assert.Single(HeaderChips(window));
         Assert.Equal("Failed", TextOf(chip));       // ProjectFilter.Label — yeni etiket UYDURULMAZ
         GC.KeepAlive(window);
     }
 
-    /// <summary>Etiketler <see cref="ProjectFilter.Label"/>'dan gelir; "dep" için "Dependency issues".</summary>
+    /// <summary>Etiketler <see cref="ProjectFilter.Label"/>'dan gelir.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-4]</b> <c>dep</c> ve <c>cycle</c> chip'leri TEK bir
+    /// <c>warn</c> chip'inde birleşti ("Warnings"); eski <c>Dependency issues</c> etiketi artık YOKTUR.</para></summary>
     [StaTheory]
     [InlineData(ProjectFilter.Building, "Building")]
     [InlineData(ProjectFilter.Succeeded, "Succeeded")]
     [InlineData(ProjectFilter.Skipped, "Skipped")]
-    [InlineData(ProjectFilter.Dep, "Dependency issues")]
+    [InlineData(ProjectFilter.Warn, "Warnings")]
     public void The_chip_label_comes_from_the_existing_filter_label_table(string filter, string label)
     {
         using var temp = new TempDir();
         var (window, vm) = NewShell(temp);
 
-        vm.ActiveFilter = filter;
+        vm.ToggleFilter(filter);
 
         Assert.Equal(label, TextOf(Assert.Single(HeaderChips(window))));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.11.0 §2.7-4] Çoklu filtre: chip başlıkta seçili kümeyi <c>" + "</c> ile listeler ve
+    /// tek tıkla HEPSİNİ kaldırır. Sıra chip'lerin bardaki sırasıdır (küme sırası belirsizdir).</summary>
+    [StaFact]
+    public void Several_active_filters_are_listed_in_one_chip_joined_with_a_plus()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = NewShell(temp);
+
+        vm.ToggleFilter(ProjectFilter.Failed);
+        vm.ToggleFilter(ProjectFilter.Succeeded);
+
+        Assert.Equal("Succeeded + Failed", TextOf(Assert.Single(HeaderChips(window))));
         GC.KeepAlive(window);
     }
 
@@ -103,12 +120,12 @@ public class ProjectFilterChipTests
     {
         using var temp = new TempDir();
         var (window, vm) = NewShell(temp);
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         var chip = Assert.Single(HeaderChips(window));
 
         chip.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); // GERÇEK routed event
 
-        Assert.Null(vm.ActiveFilter);
+        Assert.Empty(vm.ActiveFilters);
         Assert.Empty(HeaderChips(window));
         Assert.Equal(2, window.Shell.ProjectsList.RowFlow.Items.OfType<ProjectRowViewModel>().Count());
         GC.KeepAlive(window);
@@ -123,7 +140,7 @@ public class ProjectFilterChipTests
         var (window, vm) = NewShell(temp);
         var host = DsResources.NewHost();
 
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         var chip = Assert.Single(HeaderChips(window));
         chip.UpdateLayout();
 
@@ -141,7 +158,7 @@ public class ProjectFilterChipTests
         using var temp = new TempDir();
         var (window, vm) = NewShell(temp);
 
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         var chip = Assert.Single(HeaderChips(window));
 
         var glyph = Assert.Single(DsResources.Descendants(chip).OfType<System.Windows.Shapes.Path>());
@@ -167,7 +184,7 @@ public class ProjectFilterChipTests
         using var temp = new TempDir();
         var (window, vm) = NewShell(temp);
 
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         var chip = Assert.Single(HeaderChips(window));
         var glyph = Assert.Single(DsResources.Descendants(chip).OfType<System.Windows.Shapes.Path>());
 
@@ -199,7 +216,7 @@ public class ProjectFilterChipTests
         var (window, vm) = NewShell(temp);
         var host = DsResources.NewHost();
 
-        vm.ActiveFilter = ProjectFilter.Failed;
+        vm.ToggleFilter(ProjectFilter.Failed);
         var chip = Assert.Single(HeaderChips(window));
 
         Assert.True(chip.IsChecked, "görünen chip AKTİF olmalı — Ds.Chip'in amber'ı tamamen buna bağlı");
@@ -209,10 +226,10 @@ public class ProjectFilterChipTests
         Assert.False(chip.IsChecked);                                          // ...IsChecked GERÇEKTEN düştü
         chip.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));           // ...ardından base.OnClick
 
-        Assert.Null(vm.ActiveFilter);              // tıklama filtreyi GERÇEKTEN kaldırdı
+        Assert.Empty(vm.ActiveFilters);              // tıklama filtreyi GERÇEKTEN kaldırdı
         Assert.Empty(HeaderChips(window));
 
-        vm.ActiveFilter = ProjectFilter.Succeeded; // chip yeniden göründüğünde HÂLÂ amber olmalı
+        vm.ToggleFilter(ProjectFilter.Succeeded); // chip yeniden göründüğünde HÂLÂ amber olmalı
         var again = Assert.Single(HeaderChips(window));
         again.UpdateLayout();
 

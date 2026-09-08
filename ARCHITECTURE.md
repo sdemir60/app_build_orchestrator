@@ -1,4 +1,4 @@
-# Build Orchestrator — Architecture and Technical Reference
+﻿# Build Orchestrator — Architecture and Technical Reference
 
 This document describes what the application is made of and why it is made that way: the process topology, the
 IPC contract, the incremental build decision, the build engine, the git surface, the UI architecture and the
@@ -513,38 +513,31 @@ is skipped as a group rather than rebuilt on every run.
 
 Before a run — and after every Sync — each project carries `WillBuild` as a tri-state:
 
-| Value | Meaning | Dot |
-|---|---|---|
-| `true` | dirty; will be built | filled amber |
-| `false` | up to date; will be skipped | filled grey |
-| `null` | no meaningful baseline yet (pre-Sync, or the signature could not be computed) | hollow ring |
+| Value | Meaning |
+|---|---|
+| `true` | dirty; will be built |
+| `false` | up to date; will be skipped |
+| `null` | no meaningful baseline yet (pre-Sync, or the signature could not be computed) |
 
-If there is no usable HEAD, *every* node is hollow and the counters are not reported at all — printing zeros
-would assert "everything is up to date", which is a different and false claim.
+**The plan has no colour of its own.** It used to paint an amber/grey/hollow dot on the row and the core of
+the graph node; that channel was removed (§14.3). What the user sees of the plan is the row's commit pair —
+`a3f81c2 → b7e91d4` when the project is stale, a single hash when it is not — and the scope of the marking
+wave when an operation actually begins. The tri-state itself is unchanged: it still decides what a run
+compiles, and it still feeds the counters.
+
+If there is no usable HEAD the counters are not reported at all — printing zeros would assert "everything is
+up to date", which is a different and false claim.
 
 A cycle member is evaluated by the same three rules; what it evaluates is the component's composite signature
-(§7.3), so a group's dots move together. The run's scope is the one short circuit: outside a `Cycles` run every
-member reads `false`, which is the truth — nothing in that run will compile them. Idle dots, which come from
-Sync, therefore always describe a `Build`.
+(§7.3), so a group's members move together. The run's scope is the one short circuit: outside a `Cycles` run
+every member reads `false`, which is the truth — nothing in that run will compile them.
 
-During a run the dot is live: the moment a project succeeds, its dot turns grey.
+During a run the value is live: the moment a project succeeds it turns `false`.
 
-**The dot also says why.** The evaluator decides in one place and returns its reason alongside the verdict —
-never built, last build failed, built against a failed dependency, or the signature changed — and that reason
-rides the preview to the row's tooltip. It exists because the card puts the dot next to the commit pair, and
-the two answer different questions: the dot is about the signature, the pair is about commits. Side by side
-they read as one channel, so "the commit is the same, why will it build?" had no answer on any surface. Two
-states carry no reason and fall back to the generic text: hollow, and a cycle member outside the run's scope —
-there the membership channel is already speaking. The coordinator's own pre-skips drop the reason too, since
-that verdict comes from a run-scheduling rule rather than from the signature, and a preview must not lie.
-
-**Both the dot and the graph node read the same plan.** The graph is fed from three signals, not two: a
-topology change rebuilds it, a status tick repaints it, and a preview — the plan channel — repaints it as
-well. The third one used to be missing, and it mattered because the engine emits the topology *before* the
-preview: at the moment the graph was built the rows did not know the plan yet, so the cubes stayed neutral
-while the list already showed amber. The counters tuple cannot carry that signal, because it never reads
-`WillBuild` and its value is unchanged by a preview. For the same reason the binder falls back to the
-topology's own `WillBuild` when a row has none — the mirror of what membership has always done.
+**The evaluator also returns why** — never built, last build failed, built against a failed dependency, or the
+signature changed. The reason no longer surfaces in the interface (the dot that carried it is gone), but it is
+still computed in one place and still travels on the preview, because it is the honest output of the decision
+and the next surface that needs it should not have to recompute it.
 
 ### 7.5 Build state
 
@@ -652,18 +645,17 @@ hidden:
   an inherited one.
 - The row and the graph node carry a filled red triangle in a **fixed 14 px slot** that exists on every row, so
   alignment never shifts.
-- The action bar gets a `▲ N` counter chip that filters the list to `dep`.
+- The action bar's `⚠ N` chip counts it, together with cycle membership, and filters the list to `warn`.
 - The event stream reads `built — dependency issue (2.4s)`, and the completion line reports
   `N dependency-affected`.
 
-That slot has three other tenants, all about cycles: a member of a group that ran out of rounds borrows the
-same triangle with its own tooltip, a member of a group this run could not converge replaces it with an orange
-cycle badge, and plain membership of a cycle takes that same badge once the row's status glyph has stopped
-carrying it (§14.3). A row shows exactly one of the four, never two; membership is the weakest of them and
-loses to all three. Membership also names the loop itself: the tooltip's second line is the cycle path,
-`Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`, closed back on its first member so it reads as a
-cycle rather than a chain. The dot carries the same two lines, and the ribbon's cycle cluster carries one line
-per cycle; all of them compose from a single place, so no surface can drift into its own wording.
+That slot has three other tenants, all about cycles: a member of a group that ran out of rounds, a member of
+a group this run could not converge, and plain membership. The triangle is the same in all four cases and
+always amber; only the tooltip's one line differs, and the strongest claim wins (§14.3). The loop itself is
+named in the **project log** rather than in the tooltip — `Domain.Parts → Parts.Inventory → Parts.Api →
+Domain.Parts`, closed back on its first member so it reads as a cycle rather than a chain — because a tooltip
+that has to hold a path is a tooltip doing a log's job. The path still composes from a single place, so no
+surface can drift into its own wording.
 
 **Such a success is recorded, with a note.** It is written to the build state like any other success, but
 flagged, and the evaluator turns that flag into "will build" until the dependency is fixed (§7.4). The set of
@@ -1184,25 +1176,37 @@ Text that the design specifies literally is produced by **pure, testable static 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ TITLE BAR 40px — logo · title · OSYS · main [· main-2]  ⊞ ≡ ▣ ⚙ i — □ ×│
+│ TITLE BAR 40px — product mark · title · company mark   ⊞ ≡ ▣ ⚙ i — □ ×│
 ├──────────────────────────────────────────────────────────────────────┤
-│ STICKY RIBBON 32px — phase · building chips · failure cluster        │
-│ global progress 2px                                                  │
+│ STICKY RIBBON 32px — operation pill · phase · building chips ·        │
+│                      failure chips        · global progress 2px      │
 ├────────────────────────────────┬─────────────────────────────────────┤
 │ DEPENDENCY GRAPH               │ CONSOLE                             │
 │ ═══════ horizontal splitter ═══│═══════ horizontal splitter ═════════│
 │ PROJECTS                       │ EVENT STREAM                        │
 ├────────────────────────────────┴─────────────────────────────────────┤
-│ ACTION BAR 42px — Sync · maintenance box · counters · branch ·        │
-│                   cfg · perf ·                            Build ▴     │
+│ ACTION BAR 42px — Sync · maintenance box · counters · workspace ·     │
+│                   branch · cfg · perf ·                   Build ▴     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Sticky ribbon.** One mono line describing the phase, plus 20 px chips for the projects currently building (at
-most four, then `+N`), plus — only when there are failures — a failure cluster on the right: `✗ 5 failed`,
-`· 4 dependency-affected` dimmed, the first three failing chips, and a `+N more` chip that applies the `failed`
-filter. Glyphs are 13 px in the phase line and 10 px inside chips. There is no dismissible banner: a failure
-summary that can be dismissed is a failure summary that will be missed. Underneath, a 2 px progress bar,
+**Title bar.** The brand alone: the product mark, the product name, a hairline, the company mark. It carries
+no repository, branch or worktree context — branch and worktree already have chips in the action bar, and the
+one remaining fact, *which workspace is open*, sits next to them as a mono label whose tooltip is the
+repository root.
+
+**Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `RESOLVE` —
+mono, caps, 19 px, one-pixel border. It lights amber while the engine is working on that operation and goes
+neutral when it finishes, but it *stays* until the next operation begins: the phase line is momentary, the
+pill is the identity of what was last asked for. The progress indicator lives inside it, six pixels right of
+the text — a spinner while live, the result glyph when done; the phase line does not draw a second one.
+
+Then one mono line describing the phase, plus 20 px chips for the projects currently building (at most four,
+then `+N`), plus — only when there are failures — the failing chips on the right: the first three, and a
+`+N more` chip that applies the `failed` filter. The cluster carries **no counter text**: the same numbers are
+already in the completion line, and the ribbon should not say a number twice. Glyphs are 13 px in the phase
+line and 10 px inside chips. There is no dismissible banner: a failure summary that can be dismissed is a
+failure summary that will be missed. Underneath, a 2 px progress bar,
 radius 0, coloured by phase. It runs indeterminate whenever the engine is working without a measurable
 denominator — during Sync, and during `starting`, where there is no plan yet and a determinate bar would sit
 frozen at zero while the line above it says work is under way.
@@ -1218,11 +1222,21 @@ a failure — and it clears itself the moment the engine speaks or the wait ends
 failure and does not take this path — declining a request with nothing to resume leaves the `stopped` line
 standing, because that line is still true.
 
-**Projects list.** 36 px rows: a 2 px status stripe (3 px and amber when selected) running the row's full
-height, the 8 px will-build dot,
-the project name with the solution name beside it, then a right-aligned block — on hover, *Reveal in Explorer*
-and *Open in Visual Studio* icons; without hover, `curSha → targetSha` for dirty projects — then the status
-glyph, the fixed dependency-issue slot, and a 46 px duration column. The building row carries a motionless
+**Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
+8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
+a right-aligned block: on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in Explorer*,
+*Open in Visual Studio*), and without hover `curSha → targetSha` for stale projects. Then the status glyph,
+the fixed warning slot, and a 46 px duration column.
+
+The **⋯** menu — also opened by right-clicking the row, as in Solution Explorer — offers *Build · Rebuild ·
+Clean* scoped to that one project. The engine for those three, and for the play button, is not written yet:
+the controls sit where the design puts them, disabled, and their tooltip says why. The same is true of *Clean*
+in the Build split menu.
+
+Only one element in the row carries a design-system tooltip: the warning triangle. The status glyph carries
+none — colour, glyph and the duration column were all saying the same thing — and announces its status through
+its automation name instead. The icon buttons keep a plain, OS-delayed tooltip (the closest thing WPF has to
+an HTML `title`) so that a mouse crossing the row does not trail balloons behind it. The building row carries a motionless
 amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s); a sweep or a shine was tried and
 rejected. A failing row shakes once, ±3 px over 360 ms.
 
@@ -1270,7 +1284,9 @@ the frontier sits in the middle of the list, so a single wheel notch parked foll
 
 **Console.** See §13.5.
 
-**Event stream.** A capped list of chronological one-line events. It is not virtualized and does not need to
+**Event stream.** A capped list of chronological one-line events, cleared — like the console — whenever a new
+operation begins: everything on screen belongs to the operation that is running. Sync does not clear it, being
+the ground operations stand on rather than one of them. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows
@@ -1281,28 +1297,36 @@ participate in the shared selection. A run that finishes with zero failures glow
 through the list or the graph.
 
 **Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
-there (`Σ`, building, `✓`, `✗`, `—`); two more appear **only when the list actually holds one** — `⚠` for cycle
-membership and `▲` for dependency-affected. Both describe exceptional situations, and carrying them permanently
-as empty grey chips weakened the signal. Pressing a filter also drops the selection: a selection locks the
-graph camera onto one node, a filter says "look at this set", and the two fought each other. A filter reaches
-the **graph** too — nodes outside the visible set fade to the same 0.1 the unfocused set uses. The matching
-rule lives in one place (`ProjectFilter.Matches`): the graph is handed the list's visible names and never
-writes a second matcher, so the chip, the list and the graph can never disagree.
-The remaining bar carries;
-the branch
-chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf chip; and the Build
-split-button, whose menu carries exactly two items in every phase: *Build — Only stale projects* and
-*Rebuild — All N projects — cache ignored*. There is no *Continue* and no *Retry failed*: a stopped run is
-started again and a failed one is built again, and *Build* already covers both sets (§8.1). While a run is in flight the primary button becomes *Stop*, and the
-branch, worktree and configuration controls lock; the perf chip stays live.
+there (`Σ`, building, `✓`, `✗`, `—`); one more appears **only when the list actually holds one** — `⚠`, the
+combined warning chip (a dependency cycle *or* a dependency issue). It describes an exceptional situation, and
+carrying it permanently as an empty grey chip weakened the signal.
+
+The chips **combine**. The active filter is a set: chips toggle independently and the selected ones are OR'd
+together — `✓` plus `✗` reads as "what this run built" — while the search box is AND'ed on top. An active chip
+lights in its own status colour, and the removable chip in the PROJECTS header lists the selected set joined
+with ` + `. Pressing a filter also drops the selection: a selection locks the graph camera onto one node, a
+filter says "look at this set", and the two fought each other. A filter reaches the **graph** too — nodes
+outside the visible set fade to the same 0.1 the unfocused set uses. The matching rule lives in one place
+(`ProjectFilter.Matches`): the graph is handed the list's visible names and never writes a second matcher, so
+the chip, the list and the graph can never disagree.
+
+The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root
+itself); the branch chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf
+chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
+projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
+There is no *Continue* and no *Retry failed*: a stopped run is started again and a failed one is built again,
+and *Build* already covers both sets (§8.1). *Clean* has no engine behind it yet and is drawn disabled with a
+tooltip that says so — the same decision as the maintenance box. While a run is in flight the primary button
+becomes *Stop*, and the branch, worktree and configuration controls lock; the perf chip stays live.
 
 **The maintenance box.** Three icon buttons in one chip-weight box — *Clean* (eraser), *Optimize* (gauge) and
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
 1px×14 divider between the buttons. The buttons carry no label: three labelled buttons overflow the bar at its
 1240px minimum and crush the Build split-button, so the meaning lives in the tooltip. *Clean* and *Optimize*
 have no engine behind them yet; they stay visibly disabled and their tooltips say so rather than doing nothing
-when pressed. *Resolve cycles* is the cycle run, disabled while the topology has no cycle and drawn in the
-cycle orange when it has one — the same orange the list and the graph use for the structural channel.
+when pressed. *Resolve cycles* is the cycle run, disabled while the topology has no cycle. Its icon is neutral: orange left
+the interface entirely, so there is no longer a structural channel for it to echo — the presence of a cycle is
+carried by the button's enabled state and its tooltip.
 
 The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
 you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
@@ -1362,10 +1386,17 @@ listeners each rebuilding on every notification the cost is quadratic in the num
 wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
 selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
-The Settings dialog is 620 px and carries the LAYERS editor and the REPOSITORY row (current root plus
-*Change…*). Building dependency cycles is **not** a setting: it is a run of its own, reached from the Cycles
-button beside Sync (§8.1, §13.2). A preference would have been the wrong shape — the question is not "should
-this tool ever build cycles" but "do I want to pay for it right now", and that is answered per run.
+The Settings dialog is 620 px and carries two sections. **WORKSPACE** comes first: a mono repository-root
+input with a *Browse…* button beside it. The root is the one setting the tool cannot run without, so *Save*
+stays disabled while it is empty. Then a hairline, then the **LAYERS** editor.
+
+The root lives here rather than behind a folder picker because starting takes more than one setting now — a
+root and, optionally, the layers — and a picker can only ask for one of them. That is also why the empty
+project list invites the user *here* rather than opening a picker of its own (§13.2).
+
+Building dependency cycles is **not** a setting: it is a run of its own, reached from the maintenance box
+beside Sync (§8.1, §13.2). A preference would have been the wrong shape — the question is not "should this
+tool ever build cycles" but "do I want to pay for it right now", and that is answered per run.
 
 Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` and a half-row swap
 threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
@@ -1373,17 +1404,17 @@ Neighbours snap without animation. An invalid regex puts its input into the inva
 
 When no layers have been saved yet, the editor opens pre-filled with four OSYS defaults, in match order:
 `OSYS.Types`, `OSYS.Business`, `OSYS.Orchestration`, `OSYS.UI` — each an anchored regex that matches the
-layer's name as a prefix of the project name (`^OSYS\.Types\.` and so on). The footer's *Restore default
-layers* button re-fills the editor from that same list at any time. Neither the initial fill nor the restore
+layer's name as a prefix of the project name (`^OSYS\.Types\.` and so on). The footer's *Load sample layers*
+button re-fills the editor from that same list at any time. Neither the initial fill nor the restore
 is a startup seed: the defaults live only in this dialog's draft, and nothing reaches disk or the engine until
 *Save* is pressed.
 
-*Change…* on the REPOSITORY row only writes the picked path into the draft and refreshes the label beside it;
-Cancel, Esc and a scrim click discard the draft — the pending root included — without touching anything live.
+*Browse…* only writes the picked path into the draft's root input; Cancel, Esc and a scrim click discard the
+draft — the pending root included — without touching anything live.
 *Save* is the single point where the draft is applied, in a fixed order: the layer patterns are applied first,
 then the pending repository root (which resets the project rows to
 hollow), then exactly one Sync is sent. The order is load-bearing, because the Sync command carries the
-layer patterns — sent before they were applied, it would carry stale ones and the idle dots
+layer patterns — sent before they were applied, it would carry stale ones and the grouping
 would be wrong for a whole Sync. The Sync itself is unconditional: Save does not compare old and new state to
 decide whether to run it.
 
@@ -1400,9 +1431,18 @@ permanent ribbon message, the same reason Sync, Build and Rebuild are disabled i
 that state. The root is still applied because it is local state that persists, and the first Sync after the
 engine returns carries it.
 
-The shell's own *Choose Folder* invitation, shown before any repository is selected, does not go through this
-dialog: it has no Save step, so the folder it picks applies immediately — the root changes, the project rows
-reset to hollow, and a Sync starts right away.
+A root that changes *later* announces itself in the console — `Repository root → D:\src\osys — Sync
+required` — and nothing is reset: the user syncs when ready. The first setup stays silent, because a Sync
+starts there anyway and the note would be noise.
+
+**Export · Import · Clear.** The footer carries three icon buttons beside *Load sample layers*. Export writes
+`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, layers[{ name, pattern }] }`; import
+reads one back **into the form**; clear empties the root and every layer. All three touch the draft only:
+nothing is applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button
+itself — the first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a
+second press empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A
+malformed file is not an error but a result: the user picked the wrong file, and the line says
+`Invalid settings file` while the form stays untouched.
 
 The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same 620 px
 `Ds.Dialog`, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog
@@ -1416,10 +1456,21 @@ company logo — and drops out entirely when there is no company logo. The versi
 version belongs to the Environment tab, and repeating it in the heading was noise.
 
 The body is tabbed rather than one long scroll, because the things it carries — keyboard shortcuts,
-environment, third-party notices — have nothing to say to each other. The tab switch is `Ds.Segment`, the same
-component the action bar uses for Debug/Release, so no new interaction pattern enters the design system. The
-content area carries a **minimum** height: switching tabs must not move the footer, and an Auto row would make
-the dialog jump between a six-row and a ten-row tab.
+environment, third-party notices, release notes — have nothing to say to each other. The tab switch is
+`Ds.Segment`, the same component the action bar uses for Debug/Release, so no new interaction pattern enters
+the design system. The content area carries a **fixed** height: switching tabs must not move the footer, and
+a pane that outgrows it scrolls inside itself rather than stretching the dialog.
+
+**What's new** is the fourth tab, and it is the only place release notes live — there is no separate window
+and no pop-up on launch. Versions are listed newest first: a mono number, a quiet `CURRENT` label on the
+running one, a right-aligned date, and the notes grouped into category **blocks** (a 6 px coloured swatch and
+a caps heading, the items plain underneath). The categories are fixed in order — Added, Changed, Fixed,
+Performance, Removed — and an empty one is not drawn. The three newest versions are open; the rest fold under
+an *Earlier versions (N)* button, and the fold returns on the next open.
+
+The tab is also where the user is *sent*. When the version last read differs from the running one, a 5 px
+amber dot sits on the title bar's ⓘ, its tooltip becomes `About — what's new in {version}`, and About opens
+straight on this tab. Seeing the tab clears the dot and records the version, so it does not come back.
 
 Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows from
 the same table the window binds its keys from, the environment rows from the diagnostics model, the notices
@@ -1526,7 +1577,8 @@ lines.
   shape (`… : error CS0103: …`, `… : warning MSB3277: …`) and the prefixes the application itself prints
   (`[error]`, `warning:`, a command line). Everything else is one tone. Scanning free text for `failed` or
   `succeeded` was tried and dropped: it caught the word inside a project name just as readily, and a colour
-  that is sometimes wrong is worth less than no colour at all.
+  that is sometimes wrong is worth less than no colour at all. Warnings are amber and errors red; orange left
+  the console with the rest of the interface (§14.3).
 - Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`.
 - The live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**: scrolling
   to the top pages the previous slice back in, in either mode. The backlog behind the window is mode-independent
@@ -1650,22 +1702,19 @@ read as a picture with a margin rather than as a panel that has been filled to t
 single source: the overlay layer clamps to it as well, so a label never ends up hugging a corner. The consequence is
 that the graph always fits — there is no scrollbar, and no canvas larger than the panel. A node is a square
 of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
-its edge; discovered nodes get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot be dashed.
+its edge; nodes in the **start mode** get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot
+be dashed. `discovered` is plain grey — the dash belongs to the start mode alone, so "nothing has happened
+yet" and "something is happening but not to this project" stay distinguishable.
 Under the status square sits an opaque base in the panel's own colour: the status fill is only 12 % alpha, so
 without it a selection edge passing behind a node would show straight through it.
 
-**Cycle membership does not get its own status colour here.** A node whose project sits in a
-strongly-connected component paints its status square exactly like any other node at that status —
-discovered, queued, building or a result — and carries a small persistent corner badge instead
-(`Icon.StatusCycle`, `Brush.StatusCycleText`, 40 % of the node edge, top-right, living inside `Body` so it
-inherits the run-phase opacity and the hover scale with no wiring of its own). The badge is built once, on
-demand, the first time a node is seen in a cycle, and after that it is only ever hidden, never torn down — the
-same lazy-build, never-teardown pattern the bead orbit already uses. It shows through every status a run
-carries a member across, which is the point: painting the whole square in the cycle's own orange family
-(`Brush.StatusCycle`/…Soft/…Border, §14.1) only while the node's status itself was `Cycle` made membership
-disappear the instant a run gave the node any other status — visible before a run and invisible during and
-after the one a viewer most wants to see it in. The list row keeps its own separate cycle glyph and
-dependency-slot badge (§8.3, §14.3); this corner mark is graph-only.
+**One colour channel.** The node's border, its fill and the cube inside it are all painted from the same
+visual status (§14.3) — there is no separate "plan" core and no cycle mark of any kind in the graph. Cycle
+membership shows in exactly one place in the whole interface: the amber warning triangle on the list row
+(§14.3). Earlier versions carried it here too, first as an orange square and then as a persistent corner
+badge; both were part of a three-channel model — result, plan, structure — that put three meanings on the
+same 8–24 px surface and made amber and orange compete. What replaced it is a rule rather than a widget:
+**colour tells the story of the last operation, and nothing else.**
 
 The node's cell is deliberately **larger than the node** — by whichever overhangs further, the selection ring
 or the bead orbit. WPF clips a child to its arrange slot, and everything that reaches outside the square lives
@@ -1757,16 +1806,14 @@ an event is being written the text is the event, in amber, and it takes its own 
 released into the buffer. The caret used to be bound to that text, which is exactly why it could never say
 anything of its own; the two are separate channels now.
 
-**The node's core is the plan channel.** The glyph inside the square answers "what will happen to this
-project" while the border answers "what happened in this run": amber when it will be built, grey when it is up
-to date, and permanently orange for a member of a cycle. Being **queued is not a result** and does not take the
-core over — it used to, and the cost showed at the moment of pressing Build: the amber cores of everything
-planned turned grey at once (colour changes are instant here) while the graph dimmed, so the only coloured
-thing on screen vanished in the same frame and read as a flash. Only a real outcome — building, succeeded,
-failed, skipped — takes the core.
+**The node's core is not a channel of its own.** The glyph inside the square is painted from the same visual
+status as the border, from one table (§14.3). It used to answer a second question — "what will happen to this
+project" — in amber, grey and a permanent orange for cycle members; that channel was removed. What the older
+arrangement was protecting is still protected by the new one: `queued` is amber rather than grey, so pressing
+Build no longer drains the only colour on screen in the same frame the graph dims.
 
-**Entering a run dims before it repaints.** Colour and border changes are instant here (measured deviation,
-below), so pressing Build used to land the dashed-to-solid switch of every planned node in the same frame the
+**Entering a run dims before it repaints.** Outside the marking wave, colour and border changes are instant
+here (measured deviation, below), so pressing Build used to land the dashed-to-solid switch of every planned node in the same frame the
 graph began to fade — the change was seen at full brightness and the fade arrived after it, which read as
 "the ones about to build appeared, then everything went out". Status pushes are therefore held for the length
 of the fade and applied once it finishes; only the last one is kept, since the intermediate states were never
@@ -1818,8 +1865,8 @@ orbit, a short hold, and a 45 ms-per-node wave in build order) on the argument t
 run and found the project current. Looking at it settled the question the other way: a grey node with an amber
 orbit around it says *working* and *skipped* at once, and the most common run in this tool is the one where
 nothing changed, so the whole graph stirred for seconds on every press. A quiet graph reports what *changed*,
-and being skipped is precisely nothing changing; the fact is already in the row's will-build dot, the ribbon
-counter and the console. Repainting the square amber for a moment would be worse still — it would state a
+and being skipped is precisely nothing changing; the fact is already in the row's status, the ribbon counter
+and the console. Repainting the square amber for a moment would be worse still — it would state a
 status the project never had, and the colour transition has a measured price of its own (above).
 
 **Names live in an overlay, not on the nodes.** There are no labels under the squares. Hovering a node scales
@@ -1914,7 +1961,8 @@ One canonical gesture: clicking a project row, a graph node or a stream line sel
 panel header enters `← Back` mode. Clicking the same element again, or `Back`, or Esc, clears it and follow-mode
 resumes. Text selection inside the console never clears the project selection.
 
-Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection.
+Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection. Right-clicking a
+row is not a selection gesture — it opens the row menu and leaves the selection alone.
 
 ### 13.8 Design-system control library
 
@@ -1933,7 +1981,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
-| Status glyph · building spinner · will-build dot | Custom controls drawing rings, arcs and dots |
+| Status glyph · building spinner · status dot | Custom controls drawing rings, arcs and dots |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
 
 Three pieces of shared machinery keep the copies from multiplying:
@@ -2059,23 +2107,32 @@ meets 4.5:1.
 | Failed | ✗ in a ring | Failed |
 | Skipped | — in a ring | Skipped |
 
-**Cycle membership is not a status.** Being in a dependency cycle is a permanent structural fact, not something
-that happened during a run, so it has its own channel and never occupies the status one: the row's dot and the
-graph node's core stay orange whatever the run did — even after the member builds green, because the source is
-still circular — and the row's fixed 14 px warning slot carries a single triangle whose colour names the
-heaviest reason (orange for the cycle, amber for a dependency issue on its own; red is never used here, since
-red means "built and blew up"). The status glyph always shows the real status; the warning never replaces it,
-and while the row is building the slot is empty so nothing competes with the spinner. A `Build` will not
-compile a cycle; *Resolve cycles* will (§8.1).
+**One colour channel — the visual status.** The row's stripe, the dot beside the name, the status glyph, the
+graph node's border and the cube inside it are all painted from a single value (`VisualStatus`), and colour
+therefore tells exactly one story: *what the last operation did*. The states are `fresh` (the start mode),
+`discovered` (plain neutral grey), `marked` (this operation's scope), `queued`, `building` and the three
+results. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation
+that is running, and the amber the marking wave lit must not go out when the run begins.
 
-**`Cycle` is a pre-run statement.** It holds while nothing has been said about the row in this run — after a
-Sync, or in a run that has not planned it. The moment the engine speaks about the row (started, finished,
-skipped, or planned for this run) the status glyph carries the engine's answer instead, and membership of the
-cycle moves to the badge in the dependency slot. Otherwise the two facts overwrite each other: with the glyph
-holding `Cycle` through `Skipped`, every cycle row looked identical after a `Build` to how it looked straight
-after a Sync — "this run skipped them" and "these are in a cycle" were indistinguishable — and a `Cycles` run
-would have hidden its own results the same way. Now the left slot answers *what happened in this run* and the
-right slot answers *where this project sits*, and neither hides the other.
+**The start mode.** Sync and application startup colour **nothing**. Which operation is coming is not yet
+known, so no plan is shown: every row draws a dashed grey stripe, a dashed dot and a dashed circle glyph, and
+every graph node a dashed border. What is stale is still readable without colour, from the commit pair
+(`a3f81c2 → b7e91d4`). The mode drops the moment an operation begins and returns with the next Sync; closing
+and reopening the application always lands back in it.
+
+**Two channels were removed, and their information did not go with them.** Until v1.11 the interface carried
+three orthogonal channels: the result (stripe, glyph, node border), the plan (an amber/grey will-build dot and
+the node's core), and the structure (an orange mark for cycle membership). Three meanings shared the same few
+pixels, and amber and orange were not reliably distinguishable side by side. The plan moved to the commit pair
+described above; the structure moved to a **single amber warning triangle** in the row's fixed 14 px slot.
+Orange left the interface entirely.
+
+**The warning triangle.** Statusless, always amber, one line of tooltip: `In a dependency cycle`, or
+`Dependency issue: Sales.Core +2` — the first name and a count. Red is never used here: red means "built and
+blew up". The *reason* — the cycle path, the full member list, why a project was skipped — lives in the
+project log, where there is room for it. The status glyph always shows the real status, the warning never
+replaces it, and while the row is building the slot is empty so nothing competes with the spinner. A `Build`
+will not compile a cycle; *Resolve cycles* will (§8.1). The graph carries no triangle at all.
 
 A member waiting its turn inside a running group reads `Queued` (clock glyph), not `Building`. Members are
 invoked one at a time and intermediate rounds are never published (§8.8), so the whole group sits in the
@@ -2092,32 +2149,22 @@ reads `—` instead of a running clock: it is not compiling, so a live count tha
 through would have reported noise, not progress. The terminal line, once the group has a result, carries the
 sum of every round instead (§8.8).
 
-Two channels are **orthogonal** to status and must not be conflated with it: the will-build dot (§7.4) and the
-dependency-issue triangle (§8.3).
+Four facts share the warning slot, and only the strongest is shown, because the tooltip is one line:
 
-Three cycle facts speak through that second channel rather than through status. The first two are about how
-much a result can be trusted rather than about what the result was; the third is the membership the glyph
-has just handed over:
+| Outcome | Tooltip |
+|---|---|
+| This run's rounds could not converge the group | `Cycle did not converge — its projects are still out of date` |
+| The group ran out of rounds and this member is green | `Cycle did not fully settle — output may be one generation stale` |
+| The row is in a cycle | `In a dependency cycle` |
+| A dependency failed or was not rebuilt | `Dependency issue: Sales.Core +2` |
 
-| Outcome | Slot | Tooltip |
-|---|---|---|
-| The group ran out of rounds and this member is green | the dependency triangle | `Cycle did not fully settle — output may be one generation stale` |
-| This run's rounds could not converge the group | the orange cycle badge, same slot and same 12 px | `Cycle did not converge — its projects are still out of date` |
-| The row is in a cycle and its glyph now shows a result | the same orange badge | `In a dependency cycle` |
-
-The first shares the triangle deliberately: it says the same sentence the dependency-issue triangle says —
-*this compiled, but something upstream is unresolved, do not fully trust the output* — and only the wording
-differs. The second may not: what it reports is the group's verdict, not this row's, so "last successful
-output referenced" would be a claim about the wrong thing. It therefore takes the badge and outranks anything
-stale left on the row. Its source is the run's own `cycleCompleted` verdict rather than a remembered one from
-an earlier run, so it appears in the very run that proved it and regardless of how the individual member
-ended — a member that went green inside a group that never converged is still holding a stale output. The
-counter reads it the same way, without a status gate. The third is the
-weakest of them and loses to all three: it asserts nothing about the output, only about the graph, and it is
-drawn only when the status glyph has stopped carrying `Cycle` itself — the alternative would be saying the
-same thing twice on one row. All of them also extend the
-status glyph's own tooltip, since the slot collapses to nothing when it is empty and the glyph is the row's
-one always-visible surface.
+The order runs from the most specific claim to the most general. The first two are about how much a result can
+be trusted rather than about what the result was; the convergence verdict comes from the run's own
+`cycleCompleted` rather than a memory of an earlier one, so it appears in the very run that proved it and
+regardless of how the individual member ended — a member that went green inside a group that never converged
+is still holding a stale output, and the counter reads it the same way, without a status gate. Membership is
+the weakest and loses to all of them: it asserts nothing about the output, only about the graph. Dependency
+issues come last because they are the most transient — the next run clears them.
 
 The run summary carries the same news at run level: `(N stuck in a cycle)` beside the skipped count, on the
 completion line and on the *everything up to date* line alike. Without it a run whose only casualty is a cycle
@@ -2127,8 +2174,12 @@ imply the cycle is not there.
 ### 14.4 Iconography
 
 Lucide geometry, 1.5–2 px stroke, single colour, 12–16 px, authored as XAML geometries. **Never emoji.** The
-building spinner is not a separate drawing — it is the discovered node's dashed ring, in amber, rotating
-linearly over 1.4 s. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
+building spinner is not a separate drawing — it is the start-mode dashed ring, in amber, rotating linearly
+over 1.4 s.
+
+The Build split menu and the project row menu share **one icon family** on a single grid: play, rotate-cw,
+brush. The mapping lives in one place so the two menus cannot drift; the ⋯ that opens the row menu belongs to
+the same family of filled marks as the drag grip. The application icon is a multi-size ICO with the 16 and 24 px rasters hand-corrected;
 carets and chevrons are drawn, not typed.
 
 Two icons have no literal counterpart in the design source and are marked *derived* in the dictionary, with
@@ -2199,6 +2250,67 @@ Five contract rules, each enforced by a test:
    end's RGB, leaving alpha as the only channel in motion. This is what a browser's premultiplied `transparent`
    does, and it is why no consumer may hand-roll a colour keyframe.
 
+**Two choreographies frame an operation.** They are the largest pieces of motion in the application, and both
+are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in pure cores
+(`MarkingChoreography`, `EndFinale`).
+
+The **opening** plays the same way for every operation — Build, Rebuild, Clean, a row action, Resolve. It
+begins by **neutralising**: the console and the event stream are cleared, and every row drops to plain neutral
+grey — status, duration and dependency warning reset, the start mode dropped. The plan survives (the scope is
+read from it) and so does everything structural: cycle membership, the commit pair, the layer. Nothing of the
+previous run is on screen when the wave starts, which is what makes "colour tells the story of the last
+operation" true from the first frame. Rebuild neutralises in place rather than emptying the list — clearing it
+would destroy the very rows the wave is marking.
+
+Then a neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
+lights amber one project at a time in *random* order (110 ms per node, the chain capped at 1.1 s, so 36
+projects take no longer than four); then a moment with the plan standing on screen; then the **overlapping
+farewell** — everything outside the scope starts fading over 1120 ms, and 560 ms later the amber joins it over
+440 ms. The amber's shorter duration is deliberate: grey makes a much larger opacity drop and reads as *gone*
+halfway through, so ending the two at the same instant would look wrong; they finish 120 ms apart and are
+perceived as simultaneous. Rows and graph nodes fade together; the wave is random rather than in build order
+by explicit decision.
+
+**The run command goes out when the choreography ends**, not when the button is pressed. Overlapping the two
+was tried — send immediately, play the choreography over the engine's planning window (worktree preparation,
+scan, graph, topology, incremental) and let `runStarted` end it — and the cost was that the animation became
+conditional on how long planning took: warm repository, no worktree, and `runStarted` arrived before the wave
+finished; cold, and it did not. The same click was sometimes animated and sometimes instant. A choreography
+either always plays or never does. The operation itself still begins on the first frame — the pill lights,
+the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
+the scope and awaits a gate; the shell owns the timing and closes it.
+
+Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it**:
+no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
+
+The wait is also why `queued` is derived from a run that is *live*, not from one that has merely been
+requested. Were the request counted as a run, every project in the plan would turn queued-amber on the click
+itself and the neutral moment and the wave would both be invisible. No information is lost by waiting: the
+wave lights exactly the set the queue would have, only progressively — and when the choreography is skipped
+(reduced motion, or an empty scope) the scope is marked in one step, so the amber still appears at once. If
+the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
+operation that did not happen may not leave its colour behind.
+
+**The scope fades into amber; it does not snap.** Every surface the wave touches — the node's border, its
+fill and the cube inside it, the row's stripe and its dot — crosses to the new colour over 200 ms on the
+standard curve, and all of them go through one function (`MotionTokens.TransitionTokenBrush`). Colour
+transitions are otherwise instant here, and that deviation is measured and deliberate: WPF cannot interpolate
+a brush property, so a transition means a local `SolidColorBrush` per surface plus a `ColorAnimation`, and
+when 177 projects change status in a single tick — which is exactly what the start of a run does — 531 of
+each push the tick from 11 ms to 51 ms and break the 50 ms UI event budget. The wave is the opposite case:
+its tempo is 110 ms per node (about 31 ms across 36 projects), so one or two nodes change per tick. The
+transition is therefore open only while a marking choreography is playing; a surface hands over to a local
+brush for its duration and is given the shared token brush back afterwards, so it never loses the reference
+permanently.
+
+The **ending** — the neon ignition — lives only in the graph; the list stays still. Everything holds dim for
+900 ms, then the projects this run actually built (succeeded ∪ failed) ignite in random order like fluorescent
+tubes, flickering irregularly over 1150 ms with a chain of at most 1.5 s; a 700 ms breath; then every
+remaining grey — skipped and untouched alike — comes up **together** over 980 ms. With nothing built it does
+not play at all, and a new operation cuts it instantly.
+
+Under reduced motion neither choreography runs: the scope is marked and the run proceeds.
+
 Decorative infinite animations run at `DesiredFrameRate=30`; all counters tick from one `DispatcherTimer`;
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
 `DispatcherTimer` resolution. Resetting an observable collection is prohibited — it destroys running
@@ -2255,7 +2367,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `logs\run-<timestamp>\` | per-run and per-project logs | — |
 | `build-state.json` | per-project signature, commit, result, duration, non-convergent cycle signature | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, hotkey, autostart, tray-balloon-shown | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, hotkey, autostart, tray-balloon-shown, last-seen release-notes version | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 | `worktrees\` | the worktree pool | LRU pruned to 20 GiB |
 
 Autostart additionally writes one `HKCU\...\Run` value.
@@ -2578,7 +2690,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Shortcut display text and descriptions (single source) | `App/Shell/ShortcutCatalog.cs` |
 | Product identity, diagnostics report, third-party notices | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs`, `ThirdPartyNotices.cs` |
 | Default layer definitions (Settings draft + *Restore default layers*) | `App/Shell/LayerDefaults.cs` |
-| Title bar context text (`OSYS · main · main-2`) | `App/ViewModels/TitleBarContext.cs` |
+| Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
+| Release notes (What's new data, categories, fold rule) | `App/Services/ReleaseNotes.cs` |
 
 **Engine and IPC**
 
@@ -2676,12 +2789,15 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
 | Ribbon phase lines and ETA display | `App/ViewModels/RibbonText.cs` |
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
-| Filter rule and chip labels | `App/ViewModels/ProjectFilter.cs` |
+| Filter rule, chip labels and active-chip colours (multi-select set) | `App/ViewModels/ProjectFilter.cs` |
+| Warning-triangle text (one line, strongest reason wins) | `App/ViewModels/RowWarning.cs` |
+| Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `RESOLVE`) | `App/ViewModels/OperationLabel.cs` |
 | Status counters | `App/ViewModels/RunCounters.cs` |
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
 | Settings draft state (layers + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
 **Views and controls**
@@ -2690,11 +2806,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, sha pair, hover icons, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
+| Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
 | Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
-| Build menu (Build / Rebuild) | `App/Views/BuildMenu.xaml(.cs)` |
+| Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
 | Maintenance box (Clean / Optimize / Resolve cycles) | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
@@ -2703,9 +2820,14 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
-| Status glyph, spinner, will-build dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `WillBuildDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
+| Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
+| Visual status (the single colour channel) and its token table | `App/Controls/VisualStatus.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
-| Cycle wording: membership line, cycle path, cluster headline | `App/ViewModels/CycleText.cs` |
+| Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |
+| Opening choreography: step timeline, wave tempo and order | `App/Controls/MarkingChoreography.cs` |
+| Ending choreography: neon timings and keyframes | `App/Controls/EndFinale.cs` |
+| Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
+| Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
 | Icon geometries | `App/Resources/Icons.xaml`, `App/Controls/IconVisual.cs`, `IconPaint.cs` |
 
@@ -2726,7 +2848,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Node visuals, status tick, opening wave, hover, hidden-panel gate | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
-| Persistent cycle-membership corner badge (built once, hidden not torn down) | `App/Graph/GraphView.xaml.cs` (`ApplyCycleBadge`/`EnsureCycleBadge`), `GraphNodeVisual.cs` (`CycleBadge`) |
+| Opening/ending choreography on the graph (marking opacity, neon flicker) | `App/Graph/GraphView.xaml.cs` (`SetMarking`/`PlayEndFinale`) |
 | Automatic pitch, layer bands, node size | `App/Graph/QuietGraphLayout.cs` |
 | Run lifecycle opacity and its hold/fade timings | `App/Graph/GraphNodeOpacity.cs` |
 | Bead orbit geometry and timings | `App/Graph/GraphBeads.cs` |

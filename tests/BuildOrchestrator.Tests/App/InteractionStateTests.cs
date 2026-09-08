@@ -1,4 +1,4 @@
-using BuildOrchestrator.App.ViewModels;
+﻿using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -10,14 +10,28 @@ public class InteractionStateTests
 {
     // ---- Verbatim (byte-exact) davet/boş-durum metinleri ----
 
+    /// <summary>[design v1.8.0 §2.4 · v1.10.0] First run kurulum davetinin metinleri BİREBİR.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Davet eskiden bir klasör seçiciye açılıyordu ve üç metni vardı:
+    /// <c>Pick a repository to get started</c> · <c>Point to the OSYS solution root — …</c> ·
+    /// <c>Choose Folder</c>. v1.8.0 onu KALDIRDI — başlamak için gereken ayar sayısı arttığından (repository
+    /// root + katman tanımları) boş durum Settings'e yönlendiriyor; v1.10.0 ikinci bir düğme ekledi.</para></summary>
     [Fact]
-    public void Pick_repository_invitation_texts_are_verbatim()
+    public void First_run_setup_invitation_texts_are_verbatim()
     {
-        Assert.Equal("Pick a repository to get started", InteractionText.PickRepositoryTitle);
+        Assert.Equal("Configure the workspace", InteractionText.ConfigureWorkspaceTitle);
         Assert.Equal(
-            "Point to the OSYS solution root — projects and the dependency graph are discovered automatically.",
-            InteractionText.PickRepositorySubtitle);
-        Assert.Equal("Choose Folder", InteractionText.ChooseFolderButton);
+            "Set the repository root — and, if projects should be grouped, the layers. Discovery starts right after.",
+            InteractionText.ConfigureWorkspaceSubtitle);
+        Assert.Equal("Repository root", InteractionText.SetupRepositoryRootLabel);
+        Assert.Equal("Layers", InteractionText.SetupLayersLabel);
+        Assert.Equal("Not set", InteractionText.SetupRootNotSet);
+        Assert.Equal("Optional", InteractionText.SetupLayersOptional);
+        Assert.Equal("6 defined", InteractionText.SetupLayersDefined(6));
+        Assert.Equal("Open settings", InteractionText.OpenSettingsButton);
+        Assert.Equal("Import settings…", InteractionText.ImportSettingsButton);
+        Assert.Equal(
+            "Import fills the form from a settings file — nothing is applied until you save.",
+            InteractionText.ImportSettingsNote);
     }
 
     [Fact]
@@ -32,17 +46,14 @@ public class InteractionStateTests
         Assert.NotEqual(InteractionText.NoProjectsFound, InteractionText.NoProjectsMatchFilter);
     }
 
-    // ---- [A13/T2 · 2.1] Title bar bağlamı (design-v1 §2.1) — SAF karar + verbatim metin ----
+    // ---- [design v1.11.0 §2.7-5a] Alt bardaki workspace etiketi — SAF karar ----
 
-    [Fact]
-    public void Title_context_texts_are_verbatim()
-    {
-        Assert.Equal("no repository", TitleBarContext.NoRepository);
-        Assert.Equal("no repository", TitleBarContext.Compose("", ""));
-        Assert.Equal("OSYS · main", TitleBarContext.Compose(@"D:\Projects\Delta\OSYS", "main"));
-        Assert.Equal("· main-2", TitleBarContext.WorktreeSuffix(@"D:\OSYS", useWorktree: true, "main-2"));
-    }
-
+    /// <summary><b>[DEĞİŞEN KURAL]</b> Burada eskiden title bar'ın mono BAĞLAM metni pinleniyordu
+    /// (<c>no repository</c> · <c>OSYS · main</c> · worktree eki <c>· main-2</c>). design-v1.11.0 §2.1 o metni
+    /// KALDIRDI — branch ve worktree zaten alt bardaki chip'lerdeydi — ve geriye kalan tek yeni bilgiyi,
+    /// workspace adını, alt bara taşıdı (§2.7-5a). <c>Compose</c>/<c>WorktreeSuffix</c>/<c>NoRepository</c>
+    /// tüketicisiz kaldıkları için silindi; onları pinleyen üç test de bu tek teste indi. Adın kendisi
+    /// (kökün klasör adı) DEĞİŞMEDİ.</summary>
     [Theory] // Repo adı = kökün KLASÖR adı; sondaki ayraç(lar) yok sayılır.
     [InlineData(@"D:\Projects\Delta\OSYS", "OSYS")]
     [InlineData(@"D:\Projects\Delta\OSYS\", "OSYS")]
@@ -51,14 +62,6 @@ public class InteractionStateTests
     [InlineData("", "")]
     public void The_repository_name_is_the_folder_name_of_the_root(string root, string expected)
         => Assert.Equal(expected, TitleBarContext.RepositoryName(root));
-
-    [Fact]
-    public void The_worktree_suffix_only_appears_for_a_real_repository_with_the_worktree_on()
-    {
-        Assert.Equal("", TitleBarContext.WorktreeSuffix("", useWorktree: true, "main-2"));      // repo yok
-        Assert.Equal("", TitleBarContext.WorktreeSuffix(@"D:\OSYS", useWorktree: false, "main-2")); // worktree kapalı
-        Assert.Equal("", TitleBarContext.WorktreeSuffix(@"D:\OSYS", useWorktree: true, null));  // ad henüz yok
-    }
 
     // ---- ListInvite.Resolve kararı ----
 

@@ -14,12 +14,17 @@ public class RibbonTextTests
                                         int failed = 0, int skipped = 0, int dep = 0, int total = 14, int stuck = 0)
         => new(total, building, queued, succeeded, failed, skipped, dep, stuck);
 
+    /// <summary>[design v1.8.0 §3.1] Repo yokken şerit nötr bir davettir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski metin <c>Not ready — no repository selected</c> idi ve "seçmek"
+    /// fiilini kullanıyordu, çünkü boş durum tek bir klasör seçiciye açılıyordu. v1.8.0 akışı Settings'e
+    /// yönlendirdi: eksik olan bir SEÇİM değil bir AYARDIR.</para></summary>
     [Fact]
     public void No_repository_line_is_the_neutral_invitation_in_faint_text()
     {
         var line = RibbonText.Compose(AppPhase.Empty, hasWorkspace: false, allClean: false, Counters(),
             willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 0, etaMs: null, checkDurMs: null, warnings: 0);
-        Assert.Equal("Not ready — no repository selected", line.Text);
+        Assert.Equal("Not configured — repository root not set", line.Text);
+        Assert.Equal(RibbonText.NotConfigured, line.Text);
         Assert.Equal("Brush.TextFaint", line.BrushKey);
         Assert.Null(line.Glyph);
     }

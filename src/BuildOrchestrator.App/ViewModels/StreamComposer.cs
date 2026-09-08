@@ -97,11 +97,23 @@ public sealed class StreamComposer
     }
 
     /// <summary>Koşu bitti/durdu — building kümesi + aktif satır sıfırlanır (build-data.js:319/483). Tampon
-    /// sayacı KORUNUR (anlatı koşular boyu kümülatiftir).</summary>
+    /// sayacı KORUNUR (bir koşunun İÇİNDE anlatı kümülatiftir).</summary>
     public void EndRun()
     {
         _building.Clear();
         ClearActive();
+    }
+
+    /// <summary>[design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir İŞLEM başlıyor — <b>her şey</b> sıfırlanır,
+    /// tampon sayacı dahil.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Anlatı eskiden koşular boyu kümülatifti ve <c>{n} events</c> hiç
+    /// sıfırlanmazdı. v1.11.0 her işlemi temiz bir sayfada başlatır: konsol da stream de silinir, çünkü
+    /// ekrandaki her şey ARTIK YÜRÜYEN işlemin hikâyesidir. Sync bu kapıdan GEÇMEZ (prototipte de
+    /// <c>startSync</c> <c>_beginOp</c> çağırmaz) — Sync bir işlem değil, işlemlerin zeminidir.</para></summary>
+    public void BeginOperation()
+    {
+        EndRun();
+        _count = 0;
     }
 
     // [D3 §1] nowMs artık kullanılmıyor (fırtına aktif satırı GATE ETMEZ — yalnız tampon satırları, bkz. Push);

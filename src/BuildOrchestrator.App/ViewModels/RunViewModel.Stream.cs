@@ -67,6 +67,19 @@ public sealed partial class RunViewModel
     /// <summary>"{n} events" sayacı — TAM tampon (≤260), render dilimi DEĞİL.</summary>
     [ObservableProperty] private int _streamEventCount;
 
+    /// <summary>[design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başlıyor: event stream de konsol gibi
+    /// TEMİZLENİR — ekrandaki her şey artık yürüyen işlemin hikâyesidir. Sync bu yoldan GEÇMEZ.
+    /// <para>Silme <c>RemoveAt</c> ile sondan yapılır: <c>Clear()</c> bir <c>Reset</c> bildirimidir ve koşan
+    /// satır animasyonlarını yıkar (A13.2 — koleksiyon reset'i YASAK).</para></summary>
+    private void ClearStreamForNewOperation()
+    {
+        _stream.BeginOperation();
+        for (int i = StreamEvents.Count - 1; i >= 0; i--) StreamEvents.RemoveAt(i);
+        StreamEventCount = 0;
+        _streamHadNewest = false; // ilk satır daktilosuz basılır (temiz sayfanın ilk satırıdır)
+        SyncActiveLine();
+    }
+
     /// <summary>Aktif satırın projesi (tıklama → <see cref="SelectProject"/>); hiç building yoksa null.</summary>
     [ObservableProperty] private string? _activeLineProjectId;
     /// <summary>Aktif satır metni "<c>{name} building…</c>" ya da null (satır gizli). [Task 4] Proje bir cycle

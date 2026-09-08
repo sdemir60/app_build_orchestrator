@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Markup;
@@ -55,7 +55,10 @@ public class ConsoleColorizerTests
 
         Assert.Same(tokens["Brush.StatusFailText"],
             colorizer.ComputeSpans("Program.cs(9,5): error CS0103: name").Single().Brush);
-        Assert.Same(tokens["Brush.StatusCycleText"],
+        // [design v1.11.0 §1.1] warn AMBER'dir. [DEĞİŞEN KURAL] Eski iddia bunun cycle turuncusu
+        // (`Brush.StatusCycleText`) olduğuydu; v1.11.0 turuncuyu bir statü kanalı olarak UI'dan tamamen
+        // çıkardı — token dosyada kalır ama kimse okumaz.
+        Assert.Same(tokens["Brush.AmberText"],
             colorizer.ComputeSpans("warning NU1701: package restored").Single().Brush);
 
         // Serbest metindeki "failed"/"succeeded" ARTIK renk vermez — sıradan çıktı satırıdır.

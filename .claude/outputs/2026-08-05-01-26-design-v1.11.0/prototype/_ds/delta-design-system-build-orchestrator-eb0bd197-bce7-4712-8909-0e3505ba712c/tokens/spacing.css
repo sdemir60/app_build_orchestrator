@@ -1,0 +1,11 @@
+/* Delta Build Orchestrator — spacing, radius, layout tokens
+   4px grid. Radius küçük ve tutarlı: kontrol 4 / kart-panel 6 / overlay 8 / CONSOLE 0. */
+:root {
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px;
+  --space-8:32px; --space-10:40px; --space-12:48px; --space-16:64px;
+
+  --radius-none:0; --radius-xs:3px; --radius-sm:4px; /* default: kontroller */ --radius-md:6px; /* kart/panel */ --radius-lg:8px; /* overlay */ --radius-full:999px;
+
+  --titlebar-height:40px; --toolbar-height:44px; --statusbar-height:28px;
+  --row-height:36px; --row-height-compact:30px;
+}

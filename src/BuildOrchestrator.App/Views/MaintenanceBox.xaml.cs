@@ -104,15 +104,17 @@ public partial class MaintenanceBox : UserControl
         return (Path)((Canvas)icon.Child).Children[0];
     }
 
-    /// <summary>Resolve'un tooltip'inin ve ikon renginin TEK yazıcısı.</summary>
+    /// <summary>Resolve'un tooltip'inin TEK yazıcısı.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-2/§3.7]</b> İkon döngü varken TURUNCUYA dönerdi
+    /// (<c>Brush.StatusCycleText</c>) — renk "listedeki ve graftaki yapısal işaretin aynısı" diye
+    /// gerekçelendirilmişti. v1.11.0 turuncuyu UI'dan tamamen çıkardı: o yapısal işaret artık yok (satırdaki
+    /// tek amber üçgen kaldı), dolayısıyla ikonun rengi de NÖTRDÜR. Döngünün varlığını düğmenin ENABLE
+    /// durumu ve tooltip'i söyler.</para></summary>
     private void Refresh()
     {
         if (!_built) return;
         int groups = _vm?.CycleGroupCount ?? 0;
         int members = _vm?.CycleMemberCount ?? 0;
         PART_Resolve.ToolTip = AccessibilityNames.ResolveCyclesTooltip(groups, members);
-        // Turuncu yalnız gerçekten döngü varken: renk, listedeki ve graftaki yapısal işaretin aynısıdır.
-        _resolveIcon.SetResourceReference(Shape.StrokeProperty,
-            members > 0 ? "Brush.StatusCycleText" : "Brush.TextSecondary");
     }
 }

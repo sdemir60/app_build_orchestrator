@@ -1,4 +1,4 @@
-using System.Collections.Specialized;
+﻿using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -59,7 +59,6 @@ public partial class StickyRibbon : UserControl
     private double _lastFraction; // determinate hedef (0..1) — resize'da yeniden uygulanır
     private string? _lastBuildingSig;
     private string? _lastFailedSig;
-    private int _lastCycleCount = -1;
     private AppPhase? _lastAnnouncedPhase; // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil)
     /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
     /// (<see cref="Controls.MotionGate"/>) — latch'siz kip (ProjectRow ile aynı).</summary>
@@ -104,10 +103,12 @@ public partial class StickyRibbon : UserControl
     internal TextBlock? BuildingOverflow { get; private set; }
     internal IReadOnlyList<ToggleButton> FailureChips { get; private set; } = [];
     internal ToggleButton? FailureMoreChip { get; private set; }
-    /// <summary>[design v1.7.0 §2.2] Şeritteki döngü chip'i — yalnız topolojide SCC varken kurulur.</summary>
-    internal ToggleButton? CycleChip { get; private set; }
-    internal StackPanel CycleCluster => PART_CycleCluster;
-    internal StackPanel FailureCluster => PART_FailureCluster; // [6b fold] testler "N failed"/"dependency-affected" metnini buradan pinler
+    /// <summary>[design v1.11.0 §2.2 · §9-9] Kalıcı işlem pill'i ve içindeki iki gösterge.</summary>
+    internal Border OpPill => PART_OpPill;
+    internal TextBlock OpText => PART_OpText;
+    internal StatusGlyph OpGlyph => PART_OpGlyph;
+    internal BuildingSpinner OpSpinner => PART_OpSpinner;
+    internal StackPanel FailureCluster => PART_FailureCluster; // testler hatalı chip'leri buradan pinler
     internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
     // ---------------------------------------------------------------- lifecycle
@@ -140,7 +141,6 @@ public partial class StickyRibbon : UserControl
         if (_vm is not null) UnsubscribeVm(_vm);
         _vm = e.NewValue as RunViewModel;
         _lastBuildingSig = _lastFailedSig = null; // yeni VM → chip imzalarını sıfırla (ilk kurulumda yeniden kur)
-        _lastCycleCount = -1;
         if (_vm is not null) SubscribeVm(_vm);
         RefreshAll();
     }
@@ -178,6 +178,7 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.EngineRestartable): // [D1] aksiyonun anlamlı olup olmadığı da metinle birlikte tazelenir
             case nameof(RunViewModel.SyncErrorMessage):
             case nameof(RunViewModel.RunErrorMessage): // [runFailed] aynı öncelik zincirinin üçüncü halkası
+            case nameof(RunViewModel.CurrentOperation):
             case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır + "Restart engine" kapısı
                 RefreshText();
                 RefreshProgress();
@@ -213,7 +214,6 @@ public partial class StickyRibbon : UserControl
         RefreshText();
         RefreshProgress();
         _lastBuildingSig = _lastFailedSig = null;
-        _lastCycleCount = -1;
         RebuildChipsIfChanged();
     }
 
@@ -243,16 +243,55 @@ public partial class StickyRibbon : UserControl
         PART_PhaseText.Text = line.Text;
         PART_PhaseText.SetResourceReference(TextBlock.ForegroundProperty, line.BrushKey);
 
-        if (line.Glyph is { } g && GlyphStatus(g) is { } status)
+        RefreshOpPill(line.Glyph);
+    }
+
+    /// <summary>
+    /// [design v1.11.0 §2.2 · §9-9] Kalıcı işlem pill'i: <c>SYNC</c> · <c>BUILD</c> · <c>REBUILD</c> ·
+    /// <c>RESOLVE</c>… Mono, caps, 19px, 1px çerçeve. <b>Koşarken amber</b> (amber-soft zemin, amber-border,
+    /// amber-text); bitince nötrleşir (şeffaf zemin, border-strong, text-dim) ama <b>bir sonraki işleme kadar
+    /// KALIR</b> — "ne yapmıştım?" sorusu tek bakışta biter.
+    ///
+    /// <para>Gösterge pill'in İÇİNDE, metnin hemen sağında (6px): koşarken amber spinner, bittiğinde faz
+    /// metninin sonuç glyph'i (✓/✗). Pill varken faz metninin kendi glyph'i ÇİZİLMEZ — aynı işaret satırda
+    /// iki kez durmaz.</para>
+    /// </summary>
+    private void RefreshOpPill(string? phaseGlyph)
+    {
+        string? op = _vm?.CurrentOperation;
+        bool hasPill = !string.IsNullOrEmpty(op) && (_vm?.HasWorkspace ?? false);
+        PART_OpPill.Visibility = hasPill ? Visibility.Visible : Visibility.Collapsed;
+
+        var status = phaseGlyph is { } g ? GlyphStatus(g) : null;
+
+        if (hasPill)
         {
-            PART_PhaseGlyph.Status = status;
+            // Canlı = motor bu işlem için çalışıyor (Sync dahil; koşu penceresinin tamamı IsMidRunLocked'tır).
+            bool live = (_vm?.IsMidRunLocked ?? false) || _vm?.Phase == AppPhase.Syncing;
+            PART_OpText.Text = op;
+            // Nötr hâlde zemin YOKTUR (prototip: `background: transparent`) — bir token değil, dolgusuzluk.
+            if (live) PART_OpPill.SetResourceReference(Border.BackgroundProperty, "Brush.AmberSoft");
+            else PART_OpPill.Background = null;
+            PART_OpPill.SetResourceReference(Border.BorderBrushProperty, live ? "Brush.AmberBorder" : "Brush.BorderStrong");
+            PART_OpText.SetResourceReference(TextBlock.ForegroundProperty, live ? "Brush.AmberText" : "Brush.TextDim");
+
+            PART_OpSpinner.Visibility = live ? Visibility.Visible : Visibility.Collapsed;
+            bool showResult = !live && status is { } s2 && s2 != GraphStatus.Building;
+            if (showResult) PART_OpGlyph.Status = status!.Value;
+            PART_OpGlyph.Visibility = showResult ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // Pill varken faz glyph'i çizilmez (gösterge pill'in içindedir); pill yokken eski davranış aynen sürer.
+        if (!hasPill && status is { } phase)
+        {
+            PART_PhaseGlyph.Status = phase;
             PART_PhaseGlyph.Visibility = Visibility.Visible;
             PART_PhaseText.Margin = PhaseTextMarginWithGlyph; // glyph→metin gap:10 (BuildApp.jsx content row gap:10)
         }
         else
         {
             PART_PhaseGlyph.Visibility = Visibility.Collapsed;
-            PART_PhaseText.Margin = PhaseTextMarginNoGlyph; // glyph yok → metin ilk flex item, leading gap yok
+            PART_PhaseText.Margin = hasPill ? PhaseTextMarginWithGlyph : PhaseTextMarginNoGlyph;
         }
     }
 
@@ -384,45 +423,11 @@ public partial class StickyRibbon : UserControl
         if (bSig != _lastBuildingSig) { _lastBuildingSig = bSig; BuildBuildingChips(building); }
         if (fSig != _lastFailedSig) { _lastFailedSig = fSig; BuildFailureCluster(failed); }
 
-        int cycleCount = _vm.Counters.Cycle;
-        if (cycleCount != _lastCycleCount) { _lastCycleCount = cycleCount; BuildCycleCluster(cycleCount); }
     }
 
-    /// <summary>
-    /// [design v1.7.0 §2.2] Döngü kümesi: turuncu üçgen glyph + <c>{n} in a dependency cycle</c> chip'i.
-    /// Tıklama listede <c>cycle</c> filtresini kurar. Hata kümesinin aksine bu küme bir KOŞU SONUCU değildir:
-    /// Sync bir SCC bulur bulmaz belirir ve koşu boyunca da durur — döngü bir yapılandırma hatasıdır ve
-    /// kullanıcının "N to build" ile listedeki proje sayısının neden tutmadığını hover etmeden görmesi
-    /// gerekir.
-    /// </summary>
-    private void BuildCycleCluster(int count)
-    {
-        PART_CycleCluster.Children.Clear();
-        CycleChip = null;
-        if (count == 0) { PART_CycleCluster.Visibility = Visibility.Collapsed; return; }
-        PART_CycleCluster.Visibility = Visibility.Visible;
-
-        PART_CycleCluster.Children.Add(new StatusGlyph
-        {
-            Status = GraphStatus.Cycle,
-            Size = FailureGlyphSize,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-
-        var text = new TextBlock
-        {
-            Text = count.ToString(System.Globalization.CultureInfo.InvariantCulture) + " in a dependency cycle",
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var chip = MakeChip(text, brushKey: "Brush.StatusCycleText");
-        chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0);
-        // [design v1.7.0 §2.2] Hover iki şey söyler: kümenin ne anlattığı + döngünün YOLU (birden çok döngü
-        // varsa her biri kendi satırında). Metin CycleText'ten gelir; şerit onu kendi içinde KURMAZ.
-        chip.ToolTip = CycleText.Lines([CycleText.ClusterHeadline, .. _vm?.CyclePaths ?? []]);
-        chip.Click += (_, _) => { if (_vm is not null) _vm.ActiveFilter = ProjectFilter.Cycle; ResetChip(chip); };
-        PART_CycleCluster.Children.Add(chip);
-        CycleChip = chip;
-    }
+    // [design v1.11.0 §2.2] Döngü kümesi (turuncu üçgen + "{n} in a dependency cycle" chip'i) KALDIRILDI.
+    // Turuncu UI'dan tamamen çıktı; döngü bilgisi satırdaki TEK amber üçgende ve alt bardaki ⚠ filtresinde
+    // yaşıyor. Şerit artık yalnız KOŞU sonuçlarını taşır — döngü bir koşu sonucu değildir.
 
     private void BuildBuildingChips(IReadOnlyList<ProjectRowViewModel> building)
     {
@@ -460,6 +465,12 @@ public partial class StickyRibbon : UserControl
         }
     }
 
+    /// <summary>[design v1.11.0 §2.2] Hata kümesi: <b>yalnız</b> ilk 3 hatalı chip + <c>+N more</c>.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Küme eskiden bir ✗ glyph'i, <c>{n} failed</c> ve (varsa)
+    /// <c>· {n} dependency-affected</c> sayaç metinleriyle başlıyordu. v1.11.0 ikisini de kaldırdı: aynı
+    /// sayılar faz metninin bitiş satırında zaten var (<c>Completed — 5 failed · 12 succeeded (4
+    /// dependency-affected) · …</c>) ve şerit tek satırda iki kez sayı okuyordu. Kalan chip'ler bir SAYI
+    /// değil, tıklanabilir bir KISAYOL sunar.</para></summary>
     private void BuildFailureCluster(IReadOnlyList<ProjectRowViewModel> failed)
     {
         PART_FailureCluster.Children.Clear();
@@ -468,35 +479,8 @@ public partial class StickyRibbon : UserControl
         if (failed.Count == 0) { PART_FailureCluster.Visibility = Visibility.Collapsed; return; }
         PART_FailureCluster.Visibility = Visibility.Visible;
 
-        // 13px failed glyph + "{n} failed" (Xs, StatusFailText, Medium)
-        PART_FailureCluster.Children.Add(new StatusGlyph { Status = GraphStatus.Failed, Size = FailureGlyphSize, VerticalAlignment = VerticalAlignment.Center });
-        var nFailed = new TextBlock
-        {
-            Text = failed.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) + " failed",
-            Margin = new Thickness(6, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        nFailed.SetResourceReference(FontSizeProperty, "FontSize.Xs");
-        nFailed.SetResourceReference(TextBlock.ForegroundProperty, "Brush.StatusFailText");
-        nFailed.SetResourceReference(FontWeightProperty, "FontWeight.Emphasis"); // Medium (500)
-        PART_FailureCluster.Children.Add(nFailed);
-
-        int di = _vm?.Counters.DepAffected ?? 0;
-        if (di > 0)
-        {
-            var dep = new TextBlock
-            {
-                Text = "· " + di.ToString(System.Globalization.CultureInfo.InvariantCulture) + " dependency-affected",
-                Margin = new Thickness(6, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            dep.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-            dep.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim");
-            PART_FailureCluster.Children.Add(dep);
-        }
-
         // İlk 3 hatalı chip (tıkla→seç) + varsa "+{n-3} more" (tıkla→Failed filtresi).
-        var chipStrip = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        var chipStrip = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var chips = new List<ToggleButton>();
         foreach (var row in failed.Take(MaxFailedChips))
         {
@@ -521,7 +505,17 @@ public partial class StickyRibbon : UserControl
             };
             var more = MakeChip(moreText, brushKey: "Brush.StatusFailText"); // "+N more" StatusFailText renkli (BuildApp.jsx:803)
             if (chipStrip.Children.Count > 0) more.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:801 flex gap:4
-            more.Click += (_, _) => { if (_vm is not null) _vm.ActiveFilter = ProjectFilter.Failed; ResetChip(more); };
+            // [design v1.11.0 §2.2] Tık → listede YALNIZ failed filtresi (çoklu küme bu tek chip'e indirgenir);
+            // seçim de düşer, ToggleFilter'ın kendi kuralıyla aynı (BuildApp.jsx:2222 onFilterFailed).
+            more.Click += (_, _) =>
+            {
+                if (_vm is not null)
+                {
+                    _vm.SelectedProjectId = null;
+                    _vm.ActiveFilters = new HashSet<string>(StringComparer.Ordinal) { ProjectFilter.Failed };
+                }
+                ResetChip(more);
+            };
             chipStrip.Children.Add(more);
             FailureMoreChip = more;
         }
