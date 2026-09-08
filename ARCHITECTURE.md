@@ -1229,7 +1229,10 @@ a right-aligned block: on hover four icon buttons (*build this project*, a **⋯
 the fixed warning slot, and a 46 px duration column.
 
 The **⋯** menu — also opened by right-clicking the row, as in Solution Explorer — offers *Build · Rebuild ·
-Clean* scoped to that one project. The engine for those three, and for the play button, is not written yet:
+Clean* scoped to that one project. It is anchored to the **row**, not to the ⋯ button: its right edge sits 8 px
+inside the row's, it overlaps the row's bottom by 3 px, and it slides up to stay inside the list's viewport when
+a row near the bottom opens it. Anchoring to the button would have meant a fixed offset standing in for the
+width of the icons that follow it, and that number goes stale the moment the icon row changes. The engine for those three, and for the play button, is not written yet:
 the controls sit where the design puts them, disabled, and their tooltip says why. The same is true of *Clean*
 in the Build split menu.
 
@@ -1370,7 +1373,12 @@ nothing was built, and a "stopped" line describing a run that never began would 
 ### 13.3 Popovers and dialogs
 
 Popovers open 8 px above their chip on `surface-overlay` with a `border-strong` hairline, radius 8, the overlay
-shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click or Esc closes them. Rows inside them are
+shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click, Esc, or a second press on the trigger
+that opened them closes them. That last one needs saying because WPF does not give it for free: a popup that
+closes on outside clicks drops its `IsOpen` while the press is still travelling, and the same press then
+re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
+the control that opened it. One gate (`PopoverToggle`) closes that window for all five popovers — branch,
+worktree, the Build chevron, the row menu and the Open-in-VS chooser. Rows inside them are
 28 px. The branch popover is 272 px wide and carries a search box; the worktree popover is 300 px and carries
 the switch, the target list and the `source` line.
 
@@ -1978,7 +1986,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Element | Form |
 |---|---|
 | Buttons | One shared `ControlTemplate` over four variants (primary / secondary / ghost / danger) × three sizes, differing only in brushes and metrics |
-| Split button | A custom control: two halves sharing the primary template, joined by per-corner radius and a 1 px divider — visually one body, semantically two buttons |
+| Split button | A custom control: two halves sharing the primary template, joined by per-corner radius — visually one body, semantically two buttons. The seam is the menu half's own 1 px left border, not a line between them: WPF paints a `Border`'s background *inside* its border, the inverse of CSS, so two halves each carrying a transparent 1 px edge leave a pixel of gap on either side of any separate line. For the same reason the two halves share one enabled state — the chevron reads the primary half's, which already folds in the command's `CanExecute`, so a divider and a chevron can never stay bright beside a greyed-out button |
 | Chip | A `ToggleButton` style plus a counter text style |
 | Icon button | Its own compact template, with a toggle variant for the layout-mode icons |
 | Switch | A `CheckBox` template — WPF has no toggle switch |
@@ -1987,7 +1995,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
-| Status glyph · building spinner · status dot | Custom controls drawing rings, arcs and dots |
+| Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
 
 Three pieces of shared machinery keep the copies from multiplying:
@@ -2829,6 +2837,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, sha pair, hover icons, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
+| Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
+| Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
 | Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
