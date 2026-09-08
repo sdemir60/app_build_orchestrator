@@ -117,8 +117,8 @@ public static class VisualStatuses
     };
 
     /// <summary>Bu durum <b>başlangıç modu</b> mu — Sync sonrası ve açılış hâli. Üç yüzey onu farklı çizer:
-    /// graf node'unun çerçevesi KESİKLİDİR, satırın şeridi DÜZ ama SOLUKTUR ve statü noktası dolu daire
-    /// yerine dört yaylı bir HALKA gösterir (<see cref="StartMode"/>).
+    /// graf node'unun çerçevesi KESİKLİDİR, satırın şeridi DÜZ VE TAM OPAKTIR (v1.13.2) ve statü noktası
+    /// dolu daire yerine dört yaylı bir HALKA gösterir (<see cref="StartMode"/>).
     /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Yüklem eskiden <c>IsDashed</c> adındaydı ve üç yüzeyin de
     /// kesikli çizildiğini söylüyordu. Kesiklilik artık YALNIZ node'da kaldı (satırda tırtık yapıyordu), bu
     /// yüzden yüklem taşıdığı bilgiyle adlandırıldı: "başlangıç modu mu", "kesikli mi" değil.</para>

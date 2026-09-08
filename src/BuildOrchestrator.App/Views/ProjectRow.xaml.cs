@@ -334,14 +334,20 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>
-    /// [design v1.12.0 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
-    /// modunda soluk gri, işlem başlayınca tam gri, işaretlenince amber, bitişte sonuç rengi.
+    /// [design v1.13.2 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
+    /// modunda da TAM OPAK nötr gri, işaretlenince amber, bitişte sonuç rengi.
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Başlangıç modu KESİKLİ çiziliyordu (tile'lanmış bir
     /// <c>DrawingBrush</c>: 3px dolu / 4px boş). Ölçülen kusur: 2px'lik bir şeritte kesikli desen piksel
     /// ızgarasına oturmuyor, tırtıklı görünüyordu. Şerit artık HER durumda DÜZ bir token fırçasıyla dolar ve
-    /// başlangıç modunu yalnız OPAKLIK anlatır (<see cref="Controls.StartMode.FaintOpacity"/> → 1, geçiş
+    /// başlangıç modunu OPAKLIK anlatır (<see cref="Controls.StartMode.FaintOpacity"/>, geçiş
     /// <see cref="Controls.StartMode.CrossFadeMs"/>). Noktanın çapraz-sönümüyle AYNI anda, AYNI sürede olur.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Sync sonrası liste silik görünüyordu." Başlangıç modunun
+    /// <see cref="Controls.StartMode.FaintOpacity"/>'si (eski değeri 0.5) kaldırıldı — artık <c>1.0</c>, yani
+    /// başlangıç modu ile başlangıç-dışı hâl arasında opaklık FARKI yok. Kod burada DEĞİŞMEDİ (geçiş köprüsü
+    /// hâlâ kurulur, bkz. <see cref="Controls.StartMode.CrossFadeMs"/>'in doc'u) — TEK doğruluk kaynağı
+    /// <see cref="Controls.StartMode"/>'daki sabittir.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.11.0]</b> <c>Queued</c> eskiden kendi grisini (<c>Brush.StatusQueued</c>)
     /// taşıyordu; artık kuyruk da işlemin kapsamıdır ve amber KALIR — işaretleme dalgasıyla yanan renk koşu

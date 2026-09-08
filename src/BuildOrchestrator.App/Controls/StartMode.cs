@@ -1,23 +1,38 @@
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// [design v1.12.0 §1.1 · §2.4] <b>Başlangıç modunun (<see cref="VisualStatus.Fresh"/>) liste satırındaki
-/// çizim sabitleri</b> — TEK yer. Şeridin soluklugu ve noktanın halkası aynı kuralın iki yüzüdür ve
+/// [design v1.13.2 §1.1 · §2.4] <b>Başlangıç modunun (<see cref="VisualStatus.Fresh"/>) liste satırındaki
+/// çizim sabitleri</b> — TEK yer. Şeridin opaklığı ve noktanın halkası aynı kuralın iki yüzüdür ve
 /// birbirinden ayrı değişemezler (kopya YASAK, CLAUDE.md).
 ///
-/// <para><b>[DEĞİŞEN KURAL]</b> v1.11.0 başlangıç modunu KESİKLİ çiziyordu: şerit tile'lanmış bir
+/// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> v1.11.0 başlangıç modunu KESİKLİ çiziyordu: şerit tile'lanmış bir
 /// <c>DrawingBrush</c> (3px dolu / 4px boş), nokta 1.5px kesikli bir çember. Ölçülen kusur: 2px'lik bir
 /// şeritte kesikli desen piksel ızgarasına oturmuyor, 8px'lik çemberin kesikleri tırtıklı çiziliyordu.
 /// Çözüm "orta yol": şerit DÜZ ama SOLUK, nokta ise dört EŞİT yaydan oluşan bir halka. Grafın node
 /// çerçevesi kesikli KALDI (kullanıcı kararı) — orada tırtık yoktu.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Sync sonrası liste silik görünüyordu." Şeridin SOLUK
+/// (<see cref="FaintOpacity"/>, eski değeri 0.5) ve halkanın dolu noktadan bir tık geride (<see cref="RingOpacity"/>,
+/// eski değeri 0.85) durması kaldırıldı: ikisi de artık <c>1.0</c> — başlangıç modu satırda TAM OPAKTIR.
+/// İşlem başlayınca renk geçişi olmaz — yalnız kesikli halka dolu noktaya çapraz-söner (kesikli glyph
+/// başlangıç moduyla uyumlu kalır); çapraz-sönümün KENDİSİ (<see cref="CrossFadeMs"/>, geometrisi)
+/// DEĞİŞMEDİ.</para>
 /// </summary>
 public static class StartMode
 {
-    /// <summary>Şeridin başlangıç modundaki opaklığı; işlem başlayınca <see cref="CrossFadeMs"/>'de 1'e çıkar.</summary>
-    public const double FaintOpacity = 0.5;
+    /// <summary>Şeridin başlangıç modundaki opaklığı.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> Eski değer <c>0.5</c>'ti (soluk); gerekçe: "Sync sonrası
+    /// liste silik görünüyordu." Artık <c>1.0</c> — satır Sync sonrası da tam opak. Başlangıç modu ile
+    /// başlangıç-dışı hâl arasında artık bir opaklık FARKI yok, bu yüzden <see cref="CrossFadeMs"/>'lik geçiş
+    /// görünmez hâle gelir; kural yine de TEK yerde (burada) durur — <c>ProjectRow.SetStripeFill</c> bu
+    /// sabiti OKUR, kendi değerini TAŞIMAZ.</para></summary>
+    public const double FaintOpacity = 1.0;
 
-    /// <summary>Halkanın opaklığı — dolu noktadan bir tık geride durur, çünkü henüz bir şey söylemiyor.</summary>
-    public const double RingOpacity = 0.85;
+    /// <summary>Halkanın opaklığı.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> Eski değer <c>0.85</c>'ti ("dolu noktadan bir tık geride
+    /// durur, çünkü henüz bir şey söylemiyor"); gerekçe: "Sync sonrası liste silik görünüyordu." Artık
+    /// <c>1.0</c> — tam opak.</para></summary>
+    public const double RingOpacity = 1.0;
 
     /// <summary>Halkanın TASARIMDAKİ yarıçapı (prototip <c>r=3.2</c>) — stroke'un MERKEZ çizgisi. Dolu
     /// noktadan (8px) küçüktür: dış kenarı 3.2 + 1.1/2 = 3.75 &lt; 4, yani çapraz-sönümde dışa taşan bir kenar
@@ -45,7 +60,9 @@ public static class StartMode
     public const double DashOnPx = 2.93, DashOffPx = 2.1;
 
     /// <summary>Başlangıç modundan işleme geçişin süresi (prototip <c>380ms ease-standard</c>): şeridin
-    /// soluklugu ile noktanın çapraz-sönümü AYNI anda, AYNI sürede olur — ikisi tek hareketin parçasıdır.</summary>
+    /// opaklık köprüsü ile noktanın çapraz-sönümü AYNI anda, AYNI sürede olur — ikisi tek hareketin
+    /// parçasıdır. <b>[v1.13.2]</b> Şeridin iki ucu artık AYNI değer (1.0) olsa da köprü kurulur (bkz.
+    /// <see cref="FaintOpacity"/>) — yalnız noktanın halka↔dolu geçişi GÖRÜNÜR kalır.</summary>
     public const double CrossFadeMs = 380.0;
 
     /// <summary>
