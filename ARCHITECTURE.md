@@ -2151,12 +2151,15 @@ reaches the list's colour: there the stripe and the dot stay neutral grey, becau
 it. This is not the orange channel returning — the tone is the warning's own amber.
 
 **The start mode.** Sync and application startup colour **nothing**. Which operation is coming is not yet
-known, so no plan is shown: every row draws a **faint** grey stripe (half opacity) and a **four-arc ring** in
+known, so no plan is shown: every row draws a plain grey stripe at full opacity and a **four-arc ring** in
 place of the filled dot, the glyph is a dashed circle, and every graph node carries a dashed border. What is
 stale is still readable without colour, from the commit pair (`a3f81c2 → b7e91d4`). The mode drops the moment
-an operation begins — the stripe rises to full opacity while the ring cross-fades into the filled dot, both in
-380 ms, same element, same size, so nothing shifts — and returns with the next Sync; closing and reopening the
-application always lands back in it.
+an operation begins — the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing
+shifts — and returns with the next Sync; closing and reopening the application always lands back in it. The
+stripe and the ring used to draw a shade fainter (half and 0.85 opacity), so a plan would not be implied
+before one existed; that read as the list looking washed-out right after a Sync rather than simply waiting,
+so both now match the full opacity of every other row, and the cross-fade survives only because the ring
+still has a real transition — from arcs to a filled circle — to make.
 
 The row is drawn without dashes on purpose. A dashed 2 px stripe does not land on the pixel grid and an 8 px
 dashed circle renders ragged; opacity and an arc ring say the same thing cleanly. The node border stays dashed
@@ -2313,11 +2316,13 @@ would destroy the very rows the wave is marking.
 Then a neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
 lights amber one project at a time in *random* order (110 ms per node, the chain capped at 1.1 s, so 36
 projects take no longer than four); then a moment with the plan standing on screen; then the **overlapping
-farewell** — everything outside the scope starts fading over 1120 ms, and 560 ms later the amber joins it over
-440 ms. The amber's shorter duration is deliberate: grey makes a much larger opacity drop and reads as *gone*
-halfway through, so ending the two at the same instant would look wrong; they finish 120 ms apart and are
-perceived as simultaneous. Rows and graph nodes fade together; the wave is random rather than in build order
-by explicit decision.
+farewell** — every graph node outside the scope starts fading over 1120 ms, and 560 ms later the amber ones
+join it over 440 ms. The amber's shorter duration is deliberate: grey makes a much larger opacity drop and
+reads as *gone* halfway through, so ending the two at the same instant would look wrong; they finish 120 ms
+apart and are perceived as simultaneous. The farewell lives only in the graph — the list's own opacity holds
+at 1 through the whole choreography, because a run has visibly already begun by the time the farewell plays,
+and a second fade there did not read as new information, only as noise (measured). The wave itself is random
+rather than in build order by explicit decision.
 
 Keeping the two surfaces together takes one deliberate wire. A row repaints itself from its own binding the
 instant it is marked, but the graph is a pushed channel: it is handed statuses, and if the wave does not hand
@@ -2349,8 +2354,12 @@ the run never starts — the command fails, or the engine never answers — the 
 operation that did not happen may not leave its colour behind.
 
 **The scope fades into amber; it does not snap.** Every surface the wave touches — the node's border, its
-fill and the cube inside it, the row's stripe and its dot — crosses to the new colour over 200 ms on the
-standard curve, and all of them go through one function (`MotionTokens.TransitionTokenBrush`). Colour
+fill and the cube inside it, the row's stripe, its dot and its name — crosses to the new colour over 200 ms
+on the standard curve, and all of them go through one function (`MotionTokens.TransitionTokenBrush`); the
+name used to jump straight to its emphasised colour the moment its row was marked instead of easing there
+like the stripe and dot, so the name and the rest of the row told two different stories about the same wave.
+It draws from the same delayed call the stripe and dot already get — a row's own turn in the wave, not a
+second timer. Colour
 transitions are otherwise instant here, and that deviation is measured and deliberate: WPF cannot interpolate
 a brush property, so a transition means a local `SolidColorBrush` per surface plus a `ColorAnimation`, and
 when 177 projects change status in a single tick — which is exactly what the start of a run does — 531 of
@@ -2883,7 +2892,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
 | Visual status (the single colour channel) and its token table | `App/Controls/VisualStatus.cs` |
-| Start-mode drawing constants (faint stripe, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
+| Start-mode drawing constants (stripe/ring opacity, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
 | The caret's colour cycle (palette order, step, phase) | `App/Controls/CursorHop.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
 | Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |
