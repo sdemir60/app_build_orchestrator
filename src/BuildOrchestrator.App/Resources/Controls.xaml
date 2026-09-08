@@ -1018,8 +1018,8 @@
                      SnapsToDevicePixels="True" />
             <!-- Halkanın çapı/kalınlığı/dash'i StartMode'dadır (tek yer); burada yalnız yerleşim durur. -->
             <Ellipse x:Name="PART_Ring" HorizontalAlignment="Center" VerticalAlignment="Center"
-                     Width="{x:Static controls:StartMode.RingDiameter}"
-                     Height="{x:Static controls:StartMode.RingDiameter}"
+                     Width="{x:Static controls:StartMode.RingBoxSize}"
+                     Height="{x:Static controls:StartMode.RingBoxSize}"
                      StrokeThickness="{x:Static controls:StartMode.RingThickness}"
                      StrokeDashArray="{x:Static controls:StartMode.RingDash}" />
             <!-- Halkanın FIRÇASI şablondan DEĞİL koddan bağlanır (StatusDot.OnApplyTemplate). Gerekçe ölçüldü:

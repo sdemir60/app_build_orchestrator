@@ -87,17 +87,95 @@ public class StartModeContinuousTests
     }
 
     /// <summary>Halka 4 EŞİT yaydan oluşur: r=3.2 çemberin çevresi (≈20.1px) dash periyoduna (2.93+2.1=5.03px)
-    /// tam dört kez sığar. Kesikli bir CSS border değil, stroke — tırtık yapmayan çizim budur.</summary>
+    /// tam dört kez sığar. Kesikli bir CSS border değil, stroke — tırtık yapmayan çizim budur.
+    ///
+    /// <para><b>Ölçüm ÇİZİLEN geometriden yapılır, layout kutusundan DEĞİL.</b> WPF bir <see cref="Ellipse"/>'in
+    /// stroke'unu kutunun İÇİNE çeker (merkez yarıçapı = (Width − StrokeThickness) / 2), yani kutu genişliğinden
+    /// hesaplanan bir çevre gerçekte çizilenle uyuşmaz. Testin ilk hâli tam bu yüzden VACUOUS'tu: 6.4px'lik
+    /// kutuda 4 yay ölçüyor, ekranda ise 2.65 yarıçaplı ve 3.31 yaylı bir halka duruyordu.</para></summary>
     [StaFact]
     public void The_ring_is_drawn_as_four_equal_arcs()
     {
         var dot = RealizeDot(VisualStatus.Fresh, out var window);
 
-        double circumference = Math.PI * dot.Ring.Width;   // Width = 2r
+        double drawnRadius = dot.Ring.RenderedGeometry.Bounds.Width / 2;   // stroke'un MERKEZ çizgisi
+        double circumference = Math.PI * drawnRadius * 2;
         double period = (dot.Ring.StrokeDashArray[0] + dot.Ring.StrokeDashArray[1]) * dot.Ring.StrokeThickness;
 
+        Assert.Equal(StartMode.DesignRadius, drawnRadius, 3);
         Assert.Equal(4.0, circumference / period, 1);
         Assert.Equal(StartMode.RingThickness, dot.Ring.StrokeThickness);
+        // Halka dolu noktanın İÇİNDE kalır: dış kenarı (r + kalınlığın yarısı) 4px'i geçmez.
+        Assert.True(drawnRadius + dot.Ring.StrokeThickness / 2 <= dot.Fill.Width / 2);
+        GC.KeepAlive(window);
+    }
+
+    // ------------------------------------------------------------------ geçiş NE ZAMAN oynar
+
+    /// <summary>
+    /// <b>Geri dönüştürülen bir satır YENİ verisinin hâline ANINDA oturur.</b> Liste sanallaştırılmıştır ve
+    /// container'lar yeniden kullanılır (<see cref="FixedHeightVirtualizingPanel"/>,
+    /// <c>VirtualizationMode.Recycling</c>): kaydırırken aynı <see cref="ProjectRow"/> kontrolü sırayla farklı
+    /// projelere bağlanır. Çapraz-sönüm bir DURUM DEĞİŞİMİNİ anlatır ("işlem başladı"); veri değişimini
+    /// anlatmaz — orada oynarsa liste kaydırıldıkça satırlar birbirine dönüşüyor gibi görünür.
+    /// </summary>
+    [StaFact]
+    public void A_recycled_row_lands_on_its_new_data_without_animating()
+    {
+        var (row, _, window) = Realize(fresh: true);
+        var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
+        row.AnimationsEnabledProvider = () => true;    // ön-koşul: motion AÇIK, yine de oynamamalı
+
+        row.DataContext = new ProjectRowViewModel("b", "B", ProjectRowState.Succeeded) { Fresh = false };
+        row.UpdateLayout();
+
+        Assert.False(stripe.HasAnimatedProperties, "geri dönüştürülen satırda şerit animasyonu kurulmamalı");
+        Assert.False(row.Dot.Ring.HasAnimatedProperties, "geri dönüştürülen satırda halka animasyonu kurulmamalı");
+        Assert.False(row.Dot.Fill.HasAnimatedProperties, "geri dönüştürülen satırda nokta animasyonu kurulmamalı");
+        Assert.Equal(1.0, stripe.Opacity);              // yeni veri başlangıç modunda DEĞİL
+        Assert.Equal(0.0, row.Dot.Ring.Opacity);
+        Assert.Equal(1.0, row.Dot.Fill.Opacity);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// <b>Statü tikleri çapraz-sönümü YENİDEN kurmaz.</b> Koşarken statü saniyede birkaç kez itilir; başlangıç
+    /// modu bu tiklerde değişmez, dolayısıyla oynatacak bir geçiş de yoktur. Hedefi değişmeyen bir animasyonu
+    /// her tikte yeniden arm etmek hem boşunadır hem de opaklığı kalıcı olarak bir saatin altında bırakır —
+    /// bir sonraki gerçek geçiş o zaman anında oturamaz.
+    /// </summary>
+    [StaFact]
+    public void A_status_tick_never_re_arms_the_cross_fade()
+    {
+        var (row, vm, window) = Realize(fresh: false);
+        var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
+        row.AnimationsEnabledProvider = () => true;
+
+        vm.State = ProjectRowState.Started;
+        vm.State = ProjectRowState.Succeeded;
+        row.UpdateLayout();
+
+        Assert.False(row.Dot.Ring.HasAnimatedProperties, "statü tiki halkada animasyon kurmamalı");
+        Assert.False(row.Dot.Fill.HasAnimatedProperties, "statü tiki noktada animasyon kurmamalı");
+        Assert.False(stripe.HasAnimatedProperties, "statü tiki şeritte animasyon kurmamalı");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Buna karşılık GERÇEK geçiş — başlangıç modunun düşmesi — motion açıkken oynar. Yukarıdaki iki
+    /// testin vacuous olmadığının kanıtı budur.</summary>
+    [StaFact]
+    public void Leaving_the_start_mode_really_does_cross_fade()
+    {
+        var (row, vm, window) = Realize(fresh: true);
+        var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
+        row.AnimationsEnabledProvider = () => true;
+
+        vm.Fresh = false;                               // bir işlem başladı
+        row.UpdateLayout();
+
+        Assert.True(row.Dot.Ring.HasAnimatedProperties, "başlangıç modundan çıkarken halka SÖNMELİ");
+        Assert.True(row.Dot.Fill.HasAnimatedProperties, "başlangıç modundan çıkarken nokta YANMALI");
+        Assert.True(stripe.HasAnimatedProperties, "başlangıç modundan çıkarken şerit tam opaklığa ÇIKMALI");
         GC.KeepAlive(window);
     }
 

@@ -53,7 +53,10 @@ public class StatusDot : Control
     private Ellipse? _fill;
     private Ellipse? _ring;
     private bool _lighting;
-    private bool _applied;
+
+    /// <summary>Bir ÖNCEKİ çizimde başlangıç modunda mıydı — çapraz-sönümün kapısı (<see cref="StartMode.ShouldCrossFade"/>).
+    /// <c>null</c> = bu veri için henüz çizim yapılmadı.</summary>
+    private bool? _wasStartMode;
 
     /// <summary>[test yüzeyi] Başlangıç modunun halkası ve statü renkli dolu daire.</summary>
     internal Ellipse Ring => _ring!;
@@ -76,6 +79,11 @@ public class StatusDot : Control
         _lighting = false;
     }
 
+    /// <summary>[sanallaştırma] Container geri dönüştürüldü: bir sonraki çizim YENİ verinin hâline anında
+    /// oturur, geçiş oynamaz (<see cref="StartMode.ShouldCrossFade"/>). <c>ProjectRow</c> yeni bir
+    /// <c>DataContext</c> aldığında çağırır — kontrol kendi başına "veri değişti"yi göremez.</summary>
+    internal void ResetTransitionLatch() => _wasStartMode = null;
+
     public override void OnApplyTemplate()
     {
         base.OnApplyTemplate();
@@ -84,7 +92,7 @@ public class StatusDot : Control
         // Halkanın nötr grisi: şablondan DEĞİL buradan bağlanır (gerekçe Controls.xaml'de — şablon içindeki
         // DynamicResource token fırçasını DONDURUR ve onu paylaşan her yüzeyin geçiş yolunu değiştirir).
         _ring?.SetResourceReference(Shape.StrokeProperty, VisualStatuses.StripeBrushKey(VisualStatus.Fresh));
-        _applied = false; // ilk çizim ANINDA oturur: açılışta çapraz-sönüm oynatmak "az önce bir işlem oldu" derdi
+        _wasStartMode = null; // ilk çizim ANINDA oturur
         ApplyState();
     }
 
@@ -98,11 +106,11 @@ public class StatusDot : Control
         MotionTokens.TransitionTokenBrush(this, _fill, Shape.FillProperty, key,
             _lighting, MarkingChoreography.LightMs);
 
-        // Çapraz-sönüm: eleman değişmez, yalnız opaklıklar yer değiştirir.
-        bool animate = _applied && AnimationsEnabledProvider();
+        // Çapraz-sönüm: eleman değişmez, yalnız opaklıklar yer değiştirir. Kural TEK yerde (StartMode).
+        bool animate = StartMode.ShouldCrossFade(_wasStartMode, start) && AnimationsEnabledProvider();
+        _wasStartMode = start;
         SetOpacity(_ring, start ? StartMode.RingOpacity : 0, animate);
         SetOpacity(_fill, start ? 0 : 1, animate);
-        _applied = true;
     }
 
     /// <summary>Opaklığı hedefe yazar. Animasyonlu yolda <see cref="MotionTokens.SplineTo"/> kullanılır —

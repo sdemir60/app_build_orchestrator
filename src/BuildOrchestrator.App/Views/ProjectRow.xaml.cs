@@ -196,6 +196,10 @@ public partial class ProjectRow : UserControl
         _vm = e.NewValue as ProjectRowViewModel;
         _prevState = null;
         _applied = false; // yeni VM → tam tazeleme yeniden gerekir (container yeniden kullanımı dahil)
+        // [design v1.12.0] Geri dönüştürülen container YENİ verisinin hâline ANINDA oturur: çapraz-sönüm bir
+        // durum değişimini anlatır, veri değişimini değil (gerekçe StartMode.ShouldCrossFade'de).
+        _stripeWasStartMode = null;
+        PART_Dot.ResetTransitionLatch();
         if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
         ApplyAll();
     }
@@ -347,14 +351,16 @@ public partial class ProjectRow : UserControl
         Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,
             lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
 
-        double target = VisualStatuses.IsStartMode(visual) ? Controls.StartMode.FaintOpacity : 1.0;
-        if (Math.Abs(PART_Stripe.Opacity - target) < 0.001 && !PART_Stripe.HasAnimatedProperties) return;
-        if (!_stripeSettled || !_motion.Enabled)
+        // Soluktan tama geçiş: kural noktanınkiyle AYNI yerdedir (StartMode.ShouldCrossFade) — ikisi tek
+        // hareketin parçasıdır ve ayrı ayrı karar veremezler.
+        bool start = VisualStatuses.IsStartMode(visual);
+        bool animate = Controls.StartMode.ShouldCrossFade(_stripeWasStartMode, start) && _motion.Enabled;
+        _stripeWasStartMode = start;
+        double target = start ? Controls.StartMode.FaintOpacity : 1.0;
+        if (!animate)
         {
-            // İlk çizim ANINDA oturur: açılışta bir sönüm oynatmak "az önce bir işlem oldu" derdi.
             PART_Stripe.BeginAnimation(OpacityProperty, null);
             PART_Stripe.Opacity = target;
-            _stripeSettled = true;
             return;
         }
         var spline = Controls.MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
@@ -363,8 +369,9 @@ public partial class ProjectRow : UserControl
             System.Windows.Media.Animation.HandoffBehavior.SnapshotAndReplace);
     }
 
-    /// <summary>Şeridin opaklığı bir kez YAZILDI mı — ilk çizim animasyonsuzdur (bkz. StatusDot deseni).</summary>
-    private bool _stripeSettled;
+    /// <summary>Şerit bir ÖNCEKİ çizimde başlangıç modunda mıydı — geçişin kapısı; <c>null</c> = bu veri için
+    /// henüz çizilmedi (<see cref="Controls.StartMode.ShouldCrossFade"/>).</summary>
+    private bool? _stripeWasStartMode;
 
     private void ApplyDuration()
     {
