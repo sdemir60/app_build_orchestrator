@@ -2273,12 +2273,17 @@ Five contract rules, each enforced by a test:
 3. **No literals.** Hardcoded hex or millisecond values in animation code fail a guard test.
 4. **Frozen brushes cannot be animated.** Shared/frozen resources are copied per instance before being driven;
    `ContainerVisual.Opacity` cannot be animated at all, which is why graph layer hosts are `UIElement`s.
-5. **Transparent is white.** `Colors.Transparent` is `#00FFFFFF`, and WPF interpolates the colour channels
-   without premultiplying alpha — so a fade between transparent and a dark surface walks its RGB through white
-   and flashes a light grey at the midpoint. Every colour timeline is therefore built by one shared factory
-   (`MotionTokens.SplineColorTo`) that declares *both* endpoints and pulls the zero-alpha end onto the other
-   end's RGB, leaving alpha as the only channel in motion. This is what a browser's premultiplied `transparent`
-   does, and it is why no consumer may hand-roll a colour keyframe.
+5. **WPF does not premultiply, CSS does.** WPF interpolates a colour's channels straight, so whenever the two
+   ends of a fade carry *different* alpha the RGB races ahead of the alpha and the midpoint lands outside both
+   endpoints. `Colors.Transparent` is the loud case — it is `#00FFFFFF`, so a fade to a dark surface walks its
+   RGB through white and flashes light grey — but the same thing happens between any opaque colour and a
+   translucent one: a chip going from its hover grey to `amber-soft` composited to (84,63,25) halfway,
+   roughly twice as bright as either end, so the colour left and came back within one click. Every colour
+   timeline is therefore built by one shared factory (`MotionTokens.SplineColorTo`) which declares *both*
+   endpoints and, when their alphas differ, walks the **premultiplied** path a browser walks — sampled along
+   the easing curve's own parameter, since that path is not a single keyframe. Equal alphas are left alone:
+   there the common factor cancels and straight interpolation is already the premultiplied one. This is why
+   no consumer may hand-roll a colour keyframe.
 
 **Two choreographies frame an operation.** They are the largest pieces of motion in the application, and both
 are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in pure cores
@@ -2438,7 +2443,7 @@ A category of tests that assert properties of the *source*, not of a run:
 |---|---|
 | No hardcoded colour | no hex outside `Tokens.xaml` |
 | No hardcoded motion | no inline durations/easings outside `Motion.xaml` |
-| No hand-rolled colour keyframe | every colour timeline comes from the shared factory, so no surface can miss the premultiplied-transparent rule of §14.5 |
+| No hand-rolled colour keyframe | every colour timeline comes from the shared factory, so no surface can miss the premultiplied-alpha rule of §14.5 |
 | No sleep-poll | no `Thread.Sleep`-based waiting in tests — synchronization is by handle or signal |
 | No Turkish user text | no Turkish string reaches a user-visible surface |
 | Token realize coverage | every declared token actually resolves when the resource dictionaries are realized |
