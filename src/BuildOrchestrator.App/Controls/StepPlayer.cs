@@ -1,4 +1,4 @@
-using System.Windows.Threading;
+﻿using System.Windows.Threading;
 
 namespace BuildOrchestrator.App.Controls;
 
@@ -38,6 +38,14 @@ public sealed class StepPlayer
         _steps.AddRange(steps.OrderBy(s => s.AtMs));
         _onDone = onDone;
         if (_steps.Count == 0) { onDone?.Invoke(); return; }
+
+        // t=0'a düşen adımlar SENKRON koşar. Bir tick beklemek koreografinin ilk karesini boş bırakır ve o
+        // karede ekranı başka bir sistem ele geçirir: koşu istendiğinde graf koşu fazına girip her düğümü
+        // söndürmeye başlar, koreografi o kararı ancak ilk adımında EZER — arada gözle görülür bir kırpış
+        // doğardı.
+        while (_next < _steps.Count && _steps[_next].AtMs <= 0) _steps[_next++].Do();
+        if (_next >= _steps.Count) { var done = _onDone; Stop(); done?.Invoke(); return; }
+
         Schedule();
     }
 

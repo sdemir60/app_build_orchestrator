@@ -177,6 +177,24 @@ public class ChoreographyTests
         Assert.True(drops >= 3, $"neon monoton yükseliyor (yalnız {drops} düşüş) — titreme yok");
     }
 
+    /// <summary>
+    /// [§9-4] Koreografinin İLK adımı <b>senkron</b> koşar — ilk tick beklenmez.
+    ///
+    /// <para><b>Neden:</b> koşu istendiği anda graf koşu fazına girer ve bütün düğümleri 0.13'e söndürmeye
+    /// başlar (§2.3 "soğuk/parlak"). Koreografi opaklık kararını EZER, ama ilk adım bir tick sonra
+    /// başlarsa o tek karede ezecek kimse yoktur: ekran önce sönmeye başlar, sonra koreografi onu geri
+    /// çeker — gözle bir kırpış. Aynı gerekçe bitiş koreografisi için de geçerlidir (aynı oynatıcı).</para>
+    /// </summary>
+    [StaFact]
+    public void The_first_step_runs_synchronously_so_no_frame_escapes_the_choreography()
+    {
+        var (vm, driver) = Driven();
+
+        driver.Play(vm.Projects, vm.ScopeFor(RunMode.Build));
+
+        Assert.Equal(MarkStep.Neutral, driver.Step); // tick BEKLENMEDEN
+    }
+
     // ================================================================ dalganın renk geçişi
 
     /// <summary>
