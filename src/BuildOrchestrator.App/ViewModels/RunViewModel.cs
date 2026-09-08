@@ -703,6 +703,12 @@ public sealed partial class RunViewModel : ObservableObject
             row.State = ProjectRowState.Pending;
             row.DepIssues = null;
             row.DurationMs = 0;
+            // Uyari ucgeninin metnini secen oncelik sirasinda (RowWarning) bu iki hukum DepIssues'in
+            // USTUNDEDIR: temizlenmezlerse yeni islemin ilk karesinde ucgen hala gecen kosuyu anlatir.
+            row.CycleUnconverged = false;
+            row.CycleUnsettled = false;
+            row.CycleWaiting = false;
+            row.SkipReason = null;
             row.Fresh = fresh;
             row.Marked = false;
         }

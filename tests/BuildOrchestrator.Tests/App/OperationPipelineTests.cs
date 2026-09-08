@@ -1,4 +1,4 @@
-using BuildOrchestrator.App.Console;
+﻿using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -24,9 +24,9 @@ public class OperationPipelineTests
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
-    private static ProjectNode Node(string id, string name, int buildOrder) =>
+    private static ProjectNode Node(string id, string name, int buildOrder, bool inCycle = false) =>
         new(id, name, id, SolutionNames: [], Dependencies: [], buildOrder,
-            LayerIndex: null, LayerName: null, InCycle: false, WillBuild: null);
+            LayerIndex: null, LayerName: null, inCycle, WillBuild: null);
 
     /// <summary>Bir Sync + bir tam koşu: A yeşil, B kırmızı, C atlanmış. Dönüş, sonraki işlemin BAŞLANGIÇ
     /// noktasıdır.</summary>
@@ -150,6 +150,48 @@ public class OperationPipelineTests
 
         Assert.NotNull(atSignal);
         Assert.All(atSignal, v => Assert.Equal(VisualStatus.Discovered, v));
+    }
+
+    /// <summary>
+    /// [§9-4 <c>_neutralize</c>] Nötrleme, ÖNCEKİ KOŞUNUN SONUCU olan HER alanı kapsar — yalnız statüyü,
+    /// süreyi ve dependency uyarısını değil. Uyarı üçgeninin metnini seçen öncelik sırasında
+    /// (<see cref="RowWarning"/>) <c>CycleUnconverged</c> ve <c>CycleUnsettled</c> <c>DepIssues</c>'ın
+    /// ÜSTÜNDEDIR: yalnız <c>DepIssues</c> temizlenirse yeni işlemin ilk karesinde üçgen hâlâ önceki koşunun
+    /// "did not converge" gerekçesini anlatır.
+    ///
+    /// <para>Yapısal olan KALIR: döngü ÜYELİĞİ (<c>InCycle</c>) bir koşu sonucu değil, topolojinin özelliğidir
+    /// — onun üçgeni yeni işlemde de durur.</para>
+    /// </summary>
+    [Fact]
+    public async Task Neutralizing_also_clears_the_previous_runs_cycle_verdicts()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node("a", "A", 0, inCycle: true), Node("b", "B", 1)], [["a"]], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 1));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem("a", "A", false),
+            new BuildPreviewItem("b", "B", true),
+        ]));
+        vm.OnEvent(new ProjectSkippedEvent("r1", "a", SkipReasons.CycleNonConvergent, CycleUnconverged: true));
+        vm.OnEvent(new ProjectStartedEvent("r1", "b", "B"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", "b", 500, null, CycleUnsettled: true));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
+
+        var a = Row(vm, "a");
+        var b = Row(vm, "b");
+        Assert.True(a.CycleUnconverged);  // ön-koşul: geçen koşunun hükmü gerçekten orada
+        Assert.True(b.CycleUnsettled);
+        Assert.NotNull(a.SkipReason);
+
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.False(a.CycleUnconverged);
+        Assert.False(b.CycleUnsettled);
+        Assert.False(a.CycleWaiting);
+        Assert.Null(a.SkipReason);
+        Assert.True(a.InCycle); // ...ama yapısal olan durur
     }
 
     // ============================================================ nötr an (planlama penceresi)
