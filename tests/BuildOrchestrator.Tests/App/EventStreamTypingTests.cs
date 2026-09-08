@@ -41,10 +41,10 @@ public class EventStreamTypingTests
             () => "r1", nowMs: () => _clock)
         { RootPath = @"D:\repo" };
 
-    private static (EventStreamView view, Window window) Realize(RunViewModel vm)
+    private static (EventStreamView view, Window window) Realize(RunViewModel vm, bool motion = true)
     {
         var host = DsResources.NewHost();
-        var view = new EventStreamView { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var view = new EventStreamView { AnimationsEnabledProvider = () => motion, DataContext = vm };
         return (view, DsResources.Realize(host, view));
     }
 
@@ -158,12 +158,17 @@ public class EventStreamTypingTests
     /// basılan satırları da kapsar — kırmızının görünebildiği tek yer orasıdır.</para>
     ///
     /// <para><b>METİN DEĞİŞMEDİ:</b> prompt metni her zaman amberdir; imleç ona bağlı değildir.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.12.1 §2.6]</b> Bu tazelik penceresi artık YALNIZ renk turu
+    /// dönmezken görünür: motion açıkken imlecin rengini <see cref="CursorHop"/> sürer (satır paletinde altı
+    /// adımlı tur) ve ton kanalı onu ezmez. Test bu yüzden <b>reduced-motion</b> kurar — pinlenen kural aynı
+    /// kural, yalnız görünür olduğu kip açıkça yazılır.</para>
     /// </summary>
     [StaFact]
     public void The_cursor_wears_a_fresh_events_colour_then_rests_at_amber()
     {
         var vm = NewVm();
-        var (view, window) = Realize(vm);
+        var (view, window) = Realize(vm, motion: false);
         Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // hiç olay yok → dinlenme
 
         // Başarılı satır TAZE iken yeşil...

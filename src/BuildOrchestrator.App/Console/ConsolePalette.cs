@@ -13,6 +13,33 @@ namespace BuildOrchestrator.App.Console;
 /// </summary>
 public sealed class ConsolePalette
 {
+    /// <summary>
+    /// Satır renklerinin <b>token anahtarları</b> — TEK doğruluk kaynağı. Paletin kendisi
+    /// (<see cref="FromLookup"/>) ve imleç renk sıçraması (<see cref="Controls.CursorHop"/>, design v1.12.1
+    /// §2.5) ikisi de buradan okur: imleç "bir konsol satırının taşıyamayacağı hiçbir rengi" almamalıdır ve
+    /// bunu ancak aynı anahtar listesinden beslenerek garanti edebilir (kopya YASAK, CLAUDE.md).
+    /// </summary>
+    public static class Keys
+    {
+        public const string Clock = "Brush.TextFaint";
+        public const string Icon = "Brush.AmberText";
+        public const string Cmd = "Brush.TextPrimary";
+        public const string Info = "Brush.TextSecondary";
+        public const string Dim = "Brush.TextFaint";
+
+        /// <summary>Başarı tonu. <see cref="ConsoleLineType"/>'ta karşılığı YOKTUR (onu döndüren tek yol metin
+        /// tahminiydi, kaldırıldı) ama satır paletinin bir rengidir: koşu sonu satırları ve statü glyph'i onu
+        /// taşır, imleç turu da (design v1.12.1) bu tonu içerir.</summary>
+        public const string Success = "Brush.StatusSuccessText";
+
+        /// <summary>[design v1.11.0 §1.1] warn satırları AMBER. <b>[DEĞİŞEN KURAL]</b> Eskiden cycle
+        /// turuncusuydu (<c>Brush.StatusCycleText</c>); v1.11.0 turuncuyu UI'dan tamamen çıkardı —
+        /// <c>--status-cycle*</c> token'ları dosyada durur ama bir statü kanalı olarak kullanılmaz.</summary>
+        public const string Warn = "Brush.AmberText";
+
+        public const string Error = "Brush.StatusFailText";
+    }
+
     public required Brush Clock { get; init; }
     public required Brush Icon { get; init; }
     public required Brush Cmd { get; init; }
@@ -34,16 +61,13 @@ public sealed class ConsolePalette
     /// (sessiz yanlış-renk yerine) — anahtar adları Tokens.xaml ile birebir.</summary>
     public static ConsolePalette FromLookup(Func<string, object?> find) => new()
     {
-        Clock = Resolve(find, "Brush.TextFaint"),
-        Icon = Resolve(find, "Brush.AmberText"),
-        Cmd = Resolve(find, "Brush.TextPrimary"),
-        Info = Resolve(find, "Brush.TextSecondary"),
-        Dim = Resolve(find, "Brush.TextFaint"),
-        // [design v1.11.0 §1.1] warn satırları AMBER. [DEĞİŞEN KURAL] Eskiden cycle turuncusuydu
-        // (`Brush.StatusCycleText`); v1.11.0 turuncuyu UI'dan tamamen çıkardı — `--status-cycle*` token'ları
-        // dosyada durur ama bir statü kanalı olarak hiçbir yerde kullanılmaz.
-        Warn = Resolve(find, "Brush.AmberText"),
-        Error = Resolve(find, "Brush.StatusFailText"),
+        Clock = Resolve(find, Keys.Clock),
+        Icon = Resolve(find, Keys.Icon),
+        Cmd = Resolve(find, Keys.Cmd),
+        Info = Resolve(find, Keys.Info),
+        Dim = Resolve(find, Keys.Dim),
+        Warn = Resolve(find, Keys.Warn),
+        Error = Resolve(find, Keys.Error),
     };
 
     private static Brush Resolve(Func<string, object?> find, string key) =>

@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -23,10 +24,18 @@ public class EventStreamIdlePromptTests
         new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1")
         { RootPath = @"D:\repo" };
 
-    private static (EventStreamView view, Window window) Realize(RunViewModel vm)
+    /// <summary>
+    /// [design v1.12.1 §2.6 · DEGISEN KURAL] Imlecin RENGINI okuyan testler <b>motion KAPALI</b> kurar.
+    ///
+    /// <para><b>Eski kural:</b> imlecin rengi her zaman ton kanalindan gelirdi (taze olayin ikon rengi, yoksa
+    /// amber). <b>Yeni kural:</b> motion acikken imlecin rengini <see cref="CursorHop"/> surer — satir
+    /// paletinde donen alti adimli tur — ve ton kanali onu ezmez. Ton, turun olmadigi yerde (reduced-motion)
+    /// hala TEK renk kaynagidir; bu testler onu orada pinler.</para>
+    /// </summary>
+    private static (EventStreamView view, Window window) Realize(RunViewModel vm, bool motion = true)
     {
         var host = DsResources.NewHost();
-        var view = new EventStreamView { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var view = new EventStreamView { AnimationsEnabledProvider = () => motion, DataContext = vm };
         return (view, DsResources.Realize(host, view));
     }
 
@@ -46,7 +55,9 @@ public class EventStreamIdlePromptTests
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         Assert.Equal(Visibility.Visible, view.ActiveLine.Visibility);       // ön-koşul
-        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));   // ön-koşul: canlıyken amber
+        // [DEĞİŞEN KURAL — v1.12.1] Ön-koşul artık "canlıyken amber" DEĞİL: motion açıkken imlecin rengini
+        // satır paletinde dönen tur sürer (bkz. Realize). Ölçülen şey satırın DURDUĞUDUR, rengi değil.
+        Assert.True(CursorHop.IsRunning((Rectangle)view.ActiveCursorGlyph));
 
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
@@ -67,12 +78,17 @@ public class EventStreamIdlePromptTests
     /// <para><b>Değişme gerekçesi (kullanıcı):</b> imleç en son olayın rengini söylemeli. Metne bağlıyken bunu
     /// yapması imkânsızdı: metin sabit amberdir ve öyle kalmalıdır (prompt bir göstergedir, yazı yüzeyi
     /// değil). İki kanal ayrıldı — metin amber, imleç son satırın ikon rengi.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.12.1 §2.6]</b> Ton kanalı artık YALNIZ renk turu dönmezken
+    /// (reduced-motion) görünür; motion açıkken imlecin rengi <see cref="CursorHop"/>'un turudur. Testin
+    /// iddiası değişmedi — imlecin metinden AYRI bir renk kaynağı vardır — yalnız o kaynağın görünür olduğu
+    /// kip pinlenir.</para>
     /// </summary>
     [StaFact]
     public void The_cursor_has_its_own_tone_and_no_longer_follows_the_prompt_text()
     {
         var vm = NewVm();
-        var (view, window) = Realize(vm);
+        var (view, window) = Realize(vm, motion: false);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
@@ -95,7 +111,7 @@ public class EventStreamIdlePromptTests
     public void The_cursor_rests_at_amber_once_the_run_is_over()
     {
         var vm = NewVm();
-        var (view, window) = Realize(vm);
+        var (view, window) = Realize(vm, motion: false); // [v1.12.1] ton yalnız tur dönmezken görünür
         Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // hiç olay yok
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
@@ -139,9 +155,10 @@ public class EventStreamIdlePromptTests
         // METİN yerinden oynamaz — testin asıl iddiası budur ve DEĞİŞMEDİ.
         Assert.Equal("A building…", view.ActiveText.Text);
         Assert.Equal(Token(view, "Brush.AmberText"), ((SolidColorBrush)view.ActiveText.Foreground).Color);
-        // [DEĞİŞEN KURAL] İmleç ise artık son satırın ikon rengini taşır (burada: atlanmış → gri). Eski hâli
-        // burada amber bekliyordu; o kural "ikide bir sarı" olduğu için kaldırıldı.
-        Assert.Equal(Token(view, "Brush.StatusSkippedText"), CursorColour(view));
+        // [DEĞİŞEN KURAL — v1.12.1] İmlecin rengi burada ÖLÇÜLMEZ: motion açıkken onu satır paletinde dönen
+        // tur sürer (ton kanalı yalnız reduced-motion'da görünür, bkz. Realize). Bu testin iddiası METNİN
+        // yerinden oynamadığıdır; imleç yalnız KESİLMEMİŞ olmalıdır.
+        Assert.True(CursorHop.IsRunning((Rectangle)view.ActiveCursorGlyph));
         GC.KeepAlive(window);
     }
 
@@ -162,7 +179,7 @@ public class EventStreamIdlePromptTests
 
         Assert.Equal(Visibility.Visible, view.ActiveLine.Visibility);
         Assert.Equal("", view.ActiveText.Text);
-        Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view));
+        Assert.True(CursorHop.IsRunning((Rectangle)view.ActiveCursorGlyph)); // [v1.12.1] renk turu ilk kareden
         Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties, "bekleme imleci yanıp sönmeli");
         GC.KeepAlive(window);
     }
@@ -179,7 +196,7 @@ public class EventStreamIdlePromptTests
     public void A_single_sync_event_leaves_the_prompt_line_standing()
     {
         var vm = NewVm();
-        var (view, window) = Realize(vm);
+        var (view, window) = Realize(vm, motion: false); // [v1.12.1] amber = ton kanalı, tur dönmezken
 
         vm.OnEvent(new SyncCompletedEvent("main", null, false, ProjectCount: 3, CycleCount: 0,
             ChangedCount: 1, ToBuildCount: 1, UpToDateCount: 2));

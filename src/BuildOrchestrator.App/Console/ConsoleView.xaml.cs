@@ -516,6 +516,9 @@ public partial class ConsoleView : UserControl
         if (_blinking) return;
         _blinking = true;
         ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
+        // [design v1.12.1 §2.5] Kırpmanın üstüne renk turu biner — ikisi ayrı saatlerdir ve yalnız FAZLARI
+        // ortaktır (renk kırpmanın dibinde atlar, bkz. CursorHop).
+        CursorHop.Start(this, ActiveCursor);
     }
 
     private void StopBlink()
@@ -523,6 +526,8 @@ public partial class ConsoleView : UserControl
         _blinking = false;
         ActiveCursor.BeginAnimation(OpacityProperty, null);
         ActiveCursor.Opacity = 1.0;
+        // Prompt'un dinlenme rengi amberdir — turdan çıkınca imleç oraya döner (stream'in ton kanalının eşi).
+        CursorHop.Stop(ActiveCursor, ConsolePalette.Keys.Icon);
     }
 
     // ---------------------------------------------------------------- narrative (run) modu

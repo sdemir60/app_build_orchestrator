@@ -100,6 +100,9 @@ public partial class EventStreamView : UserControl
         // [D3 §5] Unload'da daktilo saatiyle BİRLİKTE imlecin RepeatBehavior.Forever blink clock'unu da durdur
         // (aksi halde sonsuz clock unload'da terk edilirdi — StopActiveTypewriter yalnız type-timer'ı söküyordu).
         Unloaded += (_, _) => { StopCursorBlink(); StopCursorRest(); };
+        // [design v1.12.1 §2.6] İmlecin renk turu PALETİ okur; DataContext ağaca girmeden yazılabildiği için
+        // (o an kaynak sözlüğü YOKTUR) ilk deneme boşa düşebilir. Yükleme, turun garanti kurulduğu andır.
+        Loaded += (_, _) => { if (PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink(); };
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -285,6 +288,10 @@ public partial class EventStreamView : UserControl
     /// İkisi eskiden bind'liydi ve bu yüzden ayrışamazdı; artık ayrı kanallardır.</para></summary>
     private void RefreshCursorTone()
     {
+        // [design v1.12.1 §2.6 · DEĞİŞEN KURAL] Renk turu dönerken imlecin rengi PALETİN turudur; ton kanalı
+        // onu EZMEZ (ezseydi tur ilk olayda sökülür ve imleç tek renge donardı). Ton, turun olmadığı yerde —
+        // reduced-motion'da ve tur sökülmüşken — hâlâ TEK renk kaynağıdır.
+        if (CursorHop.IsRunning(PART_ActiveCursor)) return;
         string key = _cursorToneKey ?? WaitingToneKey;
         PART_ActiveCursor.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, key);
     }
@@ -398,6 +405,9 @@ public partial class EventStreamView : UserControl
     {
         if (!AnimationsEnabledProvider()) { PART_ActiveCursor.BeginAnimation(OpacityProperty, null); PART_ActiveCursor.Opacity = 1.0; return; }
         PART_ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
+        // [design v1.12.1 §2.6] Stream'in imleci konsolunkiyle AYNI bileşendir → aynı renk turunu döner.
+        // Tur zaten dönüyorsa YENİDEN kurulmaz (CursorHop.Start): bu metot her olayda çağrılır.
+        CursorHop.Start(this, PART_ActiveCursor);
     }
 
     /// <summary>Görünüm ağaçtan çıkarken tazelik saatini bırakır: tek atımlık bir <c>DispatcherTimer</c>'ı
@@ -408,6 +418,7 @@ public partial class EventStreamView : UserControl
     {
         PART_ActiveCursor.BeginAnimation(OpacityProperty, null);
         PART_ActiveCursor.Opacity = 1.0;
+        CursorHop.Stop(PART_ActiveCursor, _cursorToneKey ?? WaitingToneKey); // tur sökülür, ton kanalı devralır
     }
 
     // ---------------------------------------------------------------- alta-yapışma
