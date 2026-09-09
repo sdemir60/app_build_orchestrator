@@ -632,6 +632,33 @@ public class ChoreographyTests
     }
 
     /// <summary>
+    /// [design v1.13.2 §2.5] <b>Review bulgusu.</b> "Node halkası/outline" prototipte İKİ satırdır
+    /// (BuildApp.jsx:589 çerçeve kalınlığı, :592 CSS outline) ve ikisi AYNI <c>!finale</c> kapısını paylaşır
+    /// — ilk turda yalnız <c>:592</c> (<see cref="GraphNodeVisual.SelectionRing"/>, bir üstteki test) port
+    /// edilmişti. <c>:589</c>'un WPF karşılığı <see cref="ApplyHover"/>'ın <c>hovered</c> bayrağıdır (kalın
+    /// çerçeve + z-order öne alma + WPF'e özgü 1.5× büyütme — üçü de TEK bayraktan gelir, bkz. <c>ApplyHover</c>
+    /// XML doc'u) ve ham <c>_selectedNode</c> okuyordu; bu yüzden önceden seçili node finale boyunca VE final
+    /// hâlde "spotlight"ta (kalın çerçeveli, öne çıkmış) kalıyordu — kamerası, kenarları, halkası ve etiketi
+    /// bırakılmışken. Ölçek animasyonlu olduğu için (canlı DP değeri headless'ta güvenilir okunamaz) burada
+    /// AYNI bayraktan gelen İKİ senkron etkisi (çerçeve kalınlığı + z-order) pinleniyor; bayrak TEK olduğu
+    /// için biri doğruysa ölçek de doğrudur.
+    /// </summary>
+    [StaFact]
+    public void The_end_finale_also_drops_the_hover_spotlight_from_the_previously_selected_node()
+    {
+        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        view.SelectedNode = "built";
+        var visual = view.NodeVisuals["built"];
+        Assert.Equal(GraphView.HoverBorderThickness, visual.Square.StrokeThickness, 6);        // ön-koşul
+        Assert.Equal(1, System.Windows.Controls.Panel.GetZIndex(visual.Cell));                 // ön-koşul
+
+        view.PlayEndFinale(["built"], runCount: 1);
+
+        Assert.Equal(GraphView.NodeBorderThickness, visual.Square.StrokeThickness, 6);
+        Assert.Equal(0, System.Windows.Controls.Panel.GetZIndex(visual.Cell));
+    }
+
+    /// <summary>
     /// [design v1.13.2 §2.5] <b>Final hâl.</b> Koreografi doğal olarak bitince (<c>EndStep.None</c>) seçim
     /// SİLİNMEZ ama odak GERİ GELMEZ: kamera fit-all'da kalır ve seçim dimlemesi de uygulanmaz — odak dışı
     /// kalacak bir node (ne seçili ne komşusu) artık tam opak. "Seçim yokmuş gibi" final hâl budur; fit

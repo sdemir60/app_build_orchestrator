@@ -340,7 +340,8 @@ public partial class GraphView : UserControl
             // [design v1.13.2 §2.5] Bırakılan odak SEÇİM DEĞİŞİNCE düşer: yeni değer hatırlanandan
             // (_focusOff) farklıysa "final hâl" biter, odak normal çalışmasına döner (aynı projeyi yeniden
             // seçmek de bir DEĞİŞİKLİKTİR — Toggle önce null'a döner, buradan iki kez geçer).
-            if (_focusOff is not null && _focusOff != value) _focusOff = null;
+            if (_focusOff is not null && !string.Equals(_focusOff, value, StringComparison.Ordinal))
+                _focusOff = null;
             // §2.3: "Seçim değişince hover temizlenir (odak kayması sonrası imleç altında bayat hover
             // kalmaz)." Kamera 460ms'de başka bir yere gider; imleç artık o düğümün üstünde değildir.
             SetHover(null);
@@ -432,7 +433,8 @@ public partial class GraphView : UserControl
     /// <para>Prototip otoritesi (BuildApp.jsx:460-468): <c>const finale = !!endStep || (!!selected &amp;&amp;
     /// selected === focusOff);</c> — WPF karşılığı birebir aynı formüldür.</para>
     /// </summary>
-    private bool IsFinale => _endStep != EndStep.None || (_selectedNode is { } s && s == _focusOff);
+    private bool IsFinale => _endStep != EndStep.None
+        || (_selectedNode is { } s && string.Equals(s, _focusOff, StringComparison.Ordinal));
 
     /// <summary>Odak/kamera/kenar/halka/etiket sistemlerinin gördüğü seçim — <see cref="IsFinale"/> iken
     /// HER ZAMAN <c>null</c>. "Seçim yokmuş gibi davran" kuralının TEK kaynağı budur: beş yüzeyin hepsi
@@ -1098,13 +1100,20 @@ public partial class GraphView : UserControl
     /// bağlı, BuildApp.jsx:442) — Graph Lab denemesinde vardı ve ana prototipe taşınmamış; kullanıcı istenen
     /// davranışın o olduğunu doğruladı. Öne alma ise bir düzeltmedir: seçim halkası düğümden
     /// <see cref="SelectionRingInset"/> kadar taşar ve dar pitch'te komşular onun üstünü örtüyordu.</para>
+    ///
+    /// <para>[design v1.13.2 §2.5 — review fix] İkinci disjunct <see cref="EffectiveSelection"/> okur,
+    /// <see cref="_selectedNode"/> DEĞİL: "node halkası/outline" prototipte İKİ satırdır (BuildApp.jsx:589
+    /// kalın çerçeve, :592 CSS outline) ve ikisi AYNI <c>!finale</c> kapısını paylaşır. Bu üç etki (kalın
+    /// çerçeve, z-order öne alma, WPF'e özgü 1.5× büyütme) TEK <c>hovered</c> bayrağından geldiği için ham
+    /// <c>_selectedNode</c> okumak önceden seçili düğümü finale boyunca VE final hâlde "spotlight"ta
+    /// bırakırdı — kamerası, kenarları, halkası ve etiketi bırakılmışken.</para>
     /// </summary>
     private void ApplyHover(string nodeName)
     {
         if (!_slots.TryGetValue(nodeName, out var slot)) return;
         var visual = slot.Visual;
         bool hovered = string.Equals(_hoveredNode, nodeName, StringComparison.Ordinal)
-            || string.Equals(nodeName, _selectedNode, StringComparison.Ordinal);
+            || string.Equals(nodeName, EffectiveSelection, StringComparison.Ordinal);
 
         double target = hovered ? HoverScale : 1.0;
         var scale = (ScaleTransform)visual.Body.RenderTransform;
