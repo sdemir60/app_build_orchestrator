@@ -276,7 +276,7 @@ public class NotesDialogTests
             var expected = ReleaseNotes.All.Count > ReleaseNotes.OpenByDefault
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-            Assert.Equal(expected, dialog.EarlierVersions.Visibility);
+            Assert.Equal(expected, dialog.EarlierVersionsFold.Visibility); // ayraç + buton tek blok (§2.11)
         }
     }
 

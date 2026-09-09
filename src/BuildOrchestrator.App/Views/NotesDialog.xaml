@@ -79,12 +79,18 @@
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel>
               <StackPanel x:Name="WhatsNewRows" />
-              <!-- [v1.13.1] Sol margin -10, Ds.Button.Ghost.Sm'nin kendi 10px yatay padding'ini iptal eder —
-                   etiket madde metinleriyle tam sola hizalanır (üst margin 10 korunur). -->
-              <Button x:Name="EarlierVersionsButton" HorizontalAlignment="Left" Margin="-10,10,0,0"
-                      Visibility="Collapsed" Click="OnShowEarlierVersions"
-                      AutomationProperties.Name="Show earlier versions"
-                      Style="{DynamicResource Ds.Button.Ghost.Sm}" />
+              <!-- [§2.11] Katlı kısım: 6px boşluk + 1px border-subtle ayraç + 12px iç boşluk, sonra ghost buton
+                   (prototip: marginTop 6 · paddingTop 12 · borderTop). Blok yalnız katlanacak sürüm varken
+                   görünür (kod-tarafı, BuildWhatsNew).
+                   [v1.13.1] Butonun sol margin'i -10, Ds.Button.Ghost.Sm'nin kendi 10px yatay padding'ini
+                   iptal eder — etiket madde metinleriyle tam sola hizalanır. -->
+              <Border x:Name="EarlierVersionsBlock" Visibility="Collapsed" Margin="0,6,0,0" Padding="0,12,0,0"
+                      BorderThickness="0,1,0,0" BorderBrush="{DynamicResource Brush.BorderSubtle}">
+                <Button x:Name="EarlierVersionsButton" HorizontalAlignment="Left" Margin="-10,0,0,0"
+                        Click="OnShowEarlierVersions"
+                        AutomationProperties.Name="Show earlier versions"
+                        Style="{DynamicResource Ds.Button.Ghost.Sm}" />
+              </Border>
             </StackPanel>
           </ScrollViewer>
         </Grid>

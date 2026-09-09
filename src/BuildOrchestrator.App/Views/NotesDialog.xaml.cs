@@ -40,6 +40,8 @@ public partial class NotesDialog : UserControl
     /// <summary>[test yüzeyi] Çizilmiş sürüm blokları.</summary>
     internal IReadOnlyList<FrameworkElement> WhatsNewBlocks => [.. WhatsNewRows.Children.Cast<FrameworkElement>()];
     internal Button EarlierVersions => EarlierVersionsButton;
+    /// <summary>[test yüzeyi] Katlı kısmın bloğu (ayraç + buton) — görünürlük butona değil BUNA yazılır.</summary>
+    internal FrameworkElement EarlierVersionsFold => EarlierVersionsBlock;
 
     /// <summary>Diyaloğu açar: listeyi <c>showAll:false</c> ile kurar (katlama HER açılışta 3'e döner — geri
     /// katlama düğmesi YOKTUR, About'un eski davranışıyla AYNI), 180ms fade + 6px yukarı ile gösterir ve
@@ -81,7 +83,8 @@ public partial class NotesDialog : UserControl
 
         int hidden = all.Count - shown;
         EarlierVersionsButton.Content = ReleaseNotes.EarlierVersionsLabel(hidden);
-        EarlierVersionsButton.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Ayraç + buton tek blok olarak katlanır: buton gizliyken üstündeki hairline de çizilmez.
+        EarlierVersionsBlock.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>[§2.11] Bir sürüm bloğu: mono numara + (kuruluysa) nötr <c>INSTALLED</c> çipi + sağa yaslı
@@ -144,6 +147,10 @@ public partial class NotesDialog : UserControl
             BorderThickness = new Thickness(1),
             Margin = new Thickness(8, 0, 0, 0), // [prototip gap:8] sürüm numarasıyla arasındaki boşluk
             VerticalAlignment = VerticalAlignment.Center,
+            // Çip başlık satırının SON çocuğudur ve DockPanel son çocuğu kalan genişliğe YAYAR (LastChildFill);
+            // içeriğe sıkı kalması için sola yaslanır — aksi halde numaradan tarihe kadar uzanan kocaman bir
+            // kutu çiziliyordu (ölçüldü, render). Prototipte boşluğu esnek ayraç doldurur, çip `gap: 8`'de durur.
+            HorizontalAlignment = HorizontalAlignment.Left,
         };
         chip.SetResourceReference(Border.BackgroundProperty, "Brush.SurfaceRaised");
         chip.SetResourceReference(Border.BorderBrushProperty, "Brush.BorderStrong");
