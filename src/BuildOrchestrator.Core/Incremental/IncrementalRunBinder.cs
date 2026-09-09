@@ -27,13 +27,17 @@ public static class IncrementalRunBinder
     public static string ToRepoRelativeNormalized(string repoRoot, string absolutePath) =>
         Path.GetRelativePath(repoRoot, absolutePath).Replace('\\', '/');
 
-    /// <summary>Bir projenin build-etkileyen dosyalarının (csproj + compile dosyaları) repo-relative, `/`-normalize edilmiş yolları.</summary>
-    public static IReadOnlyList<string> RepoRelativeBuildFiles(string repoRoot, string projectId, EvaluatedProject? evaluated)
+    /// <summary>Bir projenin build-etkileyen dosyalarının (csproj + compile dosyaları) MUTLAK yolları.</summary>
+    public static IReadOnlyList<string> BuildFiles(string projectId, EvaluatedProject? evaluated)
     {
         var files = new List<string> { projectId };
         if (evaluated is not null) files.AddRange(evaluated.CompileFiles);
-        return files.Select(f => ToRepoRelativeNormalized(repoRoot, Path.GetFullPath(f))).ToList();
+        return [.. files.Select(Path.GetFullPath)];
     }
+
+    /// <summary>Bir projenin build-etkileyen dosyalarının (csproj + compile dosyaları) repo-relative, `/`-normalize edilmiş yolları.</summary>
+    public static IReadOnlyList<string> RepoRelativeBuildFiles(string repoRoot, string projectId, EvaluatedProject? evaluated) =>
+        [.. BuildFiles(projectId, evaluated).Select(f => ToRepoRelativeNormalized(repoRoot, f))];
 
     /// <summary>
     /// Planı incremental willBuild + imza haritası ile bağlar. <paramref name="evaluatedById"/> projectId (tam
@@ -55,7 +59,8 @@ public static class IncrementalRunBinder
         IReadOnlyDictionary<string, BuildState> state,
         bool inPlace,
         bool buildCycles,
-        DependentMode mode)
+        DependentMode mode,
+        IReadOnlySet<string>? externalProjectIds = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(evaluatedById);
@@ -69,8 +74,15 @@ public static class IncrementalRunBinder
             .Select(p => Path.GetFullPath(Path.Combine(repoRoot, p.Replace('/', Path.DirectorySeparatorChar))))
             .ToList();
 
+        bool IsExternal(ProjectNode node) => externalProjectIds is not null && externalProjectIds.Contains(node.Id);
+
         IReadOnlyList<string> DirtyFilesForNode(ProjectNode node)
         {
+            // Harici projelerde local-diff terimi YOKTUR: fingerprint zaten çalışma kopyasının İÇERİĞİNDEN
+            // hesaplanır, yani commit'lenmemiş değişiklik oraya girer. Ana reponun dirty listesi de zaten
+            // başka bir ağacı anlatır.
+            if (IsExternal(node)) return [];
+
             string? dir = Path.GetDirectoryName(Path.GetFullPath(node.Id));
             if (dir is null) return [];
             string prefix = dir.EndsWith(Path.DirectorySeparatorChar) ? dir : dir + Path.DirectorySeparatorChar;
@@ -79,9 +91,22 @@ public static class IncrementalRunBinder
 
         string? CommittedFingerprintForNode(ProjectNode node)
         {
-            var repoRel = RepoRelativeBuildFiles(repoRoot, node.Id,
-                evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null);
-            return IncrementalPlanner.ComputeCommittedFingerprint(trackedBlobHashes, repoRel);
+            var evaluated = evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null;
+
+            // Harici kök ana reponun git ağacında değildir (TFVC'de git hiç yoktur) — terim diskteki
+            // içerikten gelir; bkz. IncrementalPlanner.ComputeContentFingerprint.
+            if (IsExternal(node))
+                return IncrementalPlanner.ComputeContentFingerprint(BuildFiles(node.Id, evaluated), TryReadFile);
+
+            return IncrementalPlanner.ComputeCommittedFingerprint(
+                trackedBlobHashes, RepoRelativeBuildFiles(repoRoot, node.Id, evaluated));
+        }
+
+        // Canlı build ↔ tarama yarışında kaybolan dosya fingerprint'i düşürmez, yalnız o terimi eler.
+        static string? TryReadFile(string path)
+        {
+            try { return File.ReadAllText(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
         }
 
         var (boundPlan, signatures) = IncrementalPlanner.ComputeWillBuildWithSignatures(

@@ -59,6 +59,32 @@ public class ExternalWireShapeTests
     }
 
     [Fact]
+    public void A_command_written_before_the_update_flag_existed_still_updates_externals()
+    {
+        // Bayrağın varsayılanı true: alanı hiç yazmayan eski bir satır, özelliğin bugünkü davranışını
+        // (her Build'den önce güncelle) korumalı — false'a düşseydi sessizce bayat kaynak derlenirdi.
+        const string legacy = """
+            {"type":"startRun","runId":"run-1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}
+            """;
+
+        var back = (StartRunCommand)JsonSerializer.Deserialize<IpcCommand>(legacy, IpcJson.Options)!;
+
+        Assert.True(back.UpdateExternals);
+    }
+
+    [Fact]
+    public void The_update_flag_round_trips_when_it_is_turned_off()
+    {
+        var command = new StartRunCommand("run-1", RunMode.Build, @"D:\repo", "Debug", 4,
+            ExternalProjects: [Mail], UpdateExternals: false);
+
+        string json = JsonSerializer.Serialize<IpcCommand>(command, IpcJson.Options);
+        var back = (StartRunCommand)JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options)!;
+
+        Assert.False(back.UpdateExternals);
+    }
+
+    [Fact]
     public void Project_node_round_trips_its_vcs_badge()
     {
         var node = ExternalNode(VcsKind.Tfvc);

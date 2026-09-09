@@ -81,37 +81,4 @@ public sealed class TfvcService
             : GitResult<bool>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Tf, r));
     }
 
-    /// <summary>
-    /// Çalışma kopyasının kapsamındaki son changeset numarası — bu harici projenin revizyon kimliği.
-    ///
-    /// <para>Okunamazsa <c>Ok(null)</c> döner (hata DEĞİL): bilinmeyen revizyon imzaya ayırt edici bir
-    /// işaretle girer, proje her koşuda derlenir — güvenli taraf. Bir TFVC harici projeyi salt bu yüzden
-    /// derlememek, bayat bir binary bırakmaktan iyidir.</para>
-    /// </summary>
-    public async Task<GitResult<string?>> CurrentChangesetAsync(CancellationToken ct = default)
-    {
-        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Tf, _tfExePath,
-            ["vc", "history", ".", "/recursive", "/stopafter:1", "/noprompt", "/version:W", "/format:brief"],
-            _rootPath, QueryTimeout, ct);
-        if (!outcome.Success) return GitResult<string?>.Ok(null);
-
-        var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<string?>.Ok(null);
-
-        return GitResult<string?>.Ok(ParseLeadingChangeset(r.StandardOutput));
-    }
-
-    /// <summary>Başlık satırları lokalizedir; ilk RAKAMLA BAŞLAYAN satırın baştaki rakam dizisi alınır.</summary>
-    private static string? ParseLeadingChangeset(string output)
-    {
-        foreach (string line in output.Split('\n'))
-        {
-            string trimmed = line.TrimStart();
-            int digits = 0;
-            while (digits < trimmed.Length && char.IsAsciiDigit(trimmed[digits])) digits++;
-            if (digits > 0) return trimmed[..digits];
-        }
-
-        return null;
-    }
 }

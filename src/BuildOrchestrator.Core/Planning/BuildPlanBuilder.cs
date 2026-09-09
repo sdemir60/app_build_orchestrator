@@ -15,13 +15,27 @@ public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator e
         Build(scanner.Scan(root), configuration, layerPatterns);
 
     /// <summary>
+    /// [design v1.14.0 §9] Ana repo DIŞINDAKİ çalışma alanı köklerinden gelen projelerin id → kaynak rozeti
+    /// eşlemesi (bkz. <c>Core/Externals/ExternalWorkspaceResolver</c>). Bu sınıf harici projeleri hiçbir
+    /// biçimde ÖZEL ELE ALMAZ — birleşik taramanın içinde sıradan projelerdir, kenarları ve sıraları graftan
+    /// doğar; buradaki tek iş düğüme rozeti basmaktır (ikinci bir gezinti açmamak için node kurulurken).
+    /// </summary>
+    public BuildPlan Build(ScanResult scan, string configuration, IReadOnlyList<LayerPattern>? layerPatterns,
+        IReadOnlyDictionary<string, VcsKind>? externalVcsByProjectId) =>
+        BuildCore(scan, configuration, layerPatterns, externalVcsByProjectId);
+
+    /// <summary>
     /// [Task 18] <see cref="Build(string, string, IReadOnlyList{LayerPattern}?)"/> ile AYNI pipeline, yalnız
     /// scan ADIMI dışarıdan verilir: çağıran (ör. Supervisor'ın Program.cs'i) hem <see cref="BuildPlan"/>'ı hem
     /// de HAM <see cref="ScanResult"/>'ı (ör. <c>SolutionMapper.MapRefs</c> için .sln YOLLARI) istiyorsa,
     /// workspace'i İKİ KEZ taramak zorunda kalmaz — <c>scanner.Scan(root)</c> TEK SEFER çağrılır, sonucu her
     /// iki ihtiyaç için de paylaşılır.
     /// </summary>
-    public BuildPlan Build(ScanResult scan, string configuration, IReadOnlyList<LayerPattern>? layerPatterns = null)
+    public BuildPlan Build(ScanResult scan, string configuration, IReadOnlyList<LayerPattern>? layerPatterns = null) =>
+        BuildCore(scan, configuration, layerPatterns, null);
+
+    private BuildPlan BuildCore(ScanResult scan, string configuration, IReadOnlyList<LayerPattern>? layerPatterns,
+        IReadOnlyDictionary<string, VcsKind>? externalVcsByProjectId)
     {
         // GetOrEvaluate canlı build ↔ scan yarışında kaybolan bir dosya için null dönebilir
         // [Task 0/It-4a, savunmanın ikinci katı] — bu yollar plandan sessizce düşer (OfType null'ları eler).
@@ -46,7 +60,10 @@ public sealed class BuildPlanBuilder(WorkspaceScanner scanner, CsprojEvaluator e
                 SolutionNames: solutions.GetValueOrDefault(id, []),
                 Dependencies: edgeById.GetValueOrDefault(id, []),
                 BuildOrder: i, LayerIndex: null, LayerName: null,
-                InCycle: inCycle.Contains(id), WillBuild: null));
+                InCycle: inCycle.Contains(id), WillBuild: null,
+                WillBuildReason: null,
+                ExternalVcs: externalVcsByProjectId is not null && externalVcsByProjectId.TryGetValue(id, out var vcs)
+                    ? vcs : null));
         }
 
         // [T15][N8] Katman ataması + sert faz bariyeri: pattern yoksa (varsayılan) LayerEngine nodes'u aynen

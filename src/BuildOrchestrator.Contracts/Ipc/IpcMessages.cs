@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using BuildOrchestrator.Contracts.Model;
 
@@ -64,20 +64,27 @@ public enum DependentMode { Safe, Fast }
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri (bkz. <see cref="LayerPattern"/>); Core'daki
 /// <c>LayerEngine</c> yalnız bu liste DOLU geldiğinde çalışır — null/boş ise katmanlama KAPALIDIR (varsayılan,
 /// mevcut davranış). Sıra anlamlıdır: <c>Order</c> hem eşleşme önceliği hem atanan LayerIndex'tir.</param>
-/// <param name="ExternalProjects">[Harici projeler] Bu koşudan ÖNCE, liste sırasıyla güncellenip derlenecek
-/// harici projeler. Faz ana repo işinden önce biter ve herhangi biri başarısız olursa koşu hiç başlamaz
-/// (worker'lar doğmaz). <c>Cycles</c> modu bu listeyi tamamen atlar — o koşu ana reponun SCC onarımıdır.
-/// null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
+/// <param name="ExternalProjects">[Harici projeler] Ana repo DIŞINDA yaşayan çalışma alanı kökleri: her biri
+/// taranır, bulduğu projeler ana taramayla BİRLEŞİR ve tek bir grafa girer. Sıradan projelerdir — sıraları
+/// bağımlılıklarından doğar, listedeki sıradan değil. null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
 /// <param name="PerfMode">[T20-b/K11] Perf profilinin ADI ("Full"/"Balanced"/"Light") — Supervisor bunu Core'daki
 /// <c>PerfProfile.TryParse</c> ile çözer ve run boyunca inner Job'a CPU cap + priority uygular.
 /// <b>Yalnız cap/priority'nin kaynağıdır:</b> paralellik AYRI bir alandır (<paramref name="Parallelism"/>) ve
 /// App tarafında aynı tablodan türetilir — Supervisor worker sayısını burada YENİDEN hesaplamaz.
 /// <c>null</c> (varsayılan) ⇒ perf modu bildirilmemiş: cap/priority'ye HİÇ dokunulmaz. Bu alan nullable +
 /// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
+/// <param name="UpdateExternals">[Harici projeler] Bu koşu, harici çalışma kopyalarını derlemeden ÖNCE kendi
+/// sürüm kontrolünden güncellesin mi (git <c>fetch</c> + <c>merge --ff-only</c> / <c>tf vc get</c>).
+/// <b>Varsayılan <c>true</c></b> — alanı hiç yazmayan eski NDJSON satırları da güncelleme YAPAR, yani mevcut
+/// davranış korunur.
+/// <para><c>false</c> iken TEK BİR VCS komutu bile çalışmaz ve <b>kir kapısı da yoktur</b>: güncelleme
+/// olmayınca kullanıcının dosyalarının üstüne yazma riski de yoktur, harici tıpkı ana repo gibi olduğu hâliyle
+/// derlenir. Karar doğruluğu bundan etkilenmez — harici projelerin imzası çalışma kopyasının İÇERİĞİNDEN
+/// hesaplanır (bkz. <c>IncrementalPlanner.ComputeContentFingerprint</c>), revizyon kimliğinden değil.</para></param>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
-    IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
+    IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true) : IpcCommand;
 
 /// <summary>
 /// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar

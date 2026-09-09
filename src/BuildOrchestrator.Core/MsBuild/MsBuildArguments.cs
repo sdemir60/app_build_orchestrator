@@ -1,4 +1,4 @@
-﻿namespace BuildOrchestrator.Core.MsBuild;
+namespace BuildOrchestrator.Core.MsBuild;
 
 public static class MsBuildArguments
 {
@@ -24,42 +24,22 @@ public static class MsBuildArguments
     ];
 
     /// <summary>
-    /// [D10] HARİCİ hedefin build argümanları. Ana repo listesinden üç farkı vardır ve üçü de kasıtlıdır:
-    /// <c>BuildProjectReferences=false</c> YOKTUR (harici solution kendi referanslarını ve post-build copy
-    /// event'lerini kendisi derlemek zorundadır — OSYS'in HintPath ile okuduğu DLL'ler oraya böyle düşer),
-    /// obj yeniden yönlendirilmez (izolasyon worktree havuzuna aittir, harici çalışma kopyası orada yaşamaz)
-    /// ve <c>OutDir</c>'e hiçbir koşulda dokunulmaz.
-    /// </summary>
-    public static IReadOnlyList<string> BuildExternal(string projectPath, string configuration) =>
-    [
-        projectPath, "-t:Build", $"-p:Configuration={configuration}",
-        "-p:UseSharedCompilation=false", "-nodeReuse:false", "-clp:Summary", "-nologo",
-    ];
-
-    /// <summary>[D10] HARİCİ hedefin restore argümanları. <c>SolutionDir</c> DIŞARIDAN DAYATILMAZ: hedefin
-    /// kendisi bir solution'dır (ya da kendi bağlamını taşır) ve harici projenin paket yolunu bilen odur.</summary>
-    public static IReadOnlyList<string> RestoreExternal(string projectPath) =>
-    [
-        projectPath, "-t:restore", "-p:RestorePackagesConfig=true", "-nologo",
-    ];
-
-    /// <summary>
     /// Bir invoke isteğinin hangi MSBuild çağrılarına dönüştüğü — argüman seçiminin TEK kaynağı (invoker
     /// yalnız çalıştırır, seçmez).
     ///
-    /// <para>Harici hedefler HER ZAMAN restore edilir: <c>NeedsRestore</c> ana repo için hesaplanan bir
-    /// sinyaldir (projenin yanında <c>packages.config</c> var mı), harici solution'ın paket durumunu ise bu
-    /// araç bilmez — eksik paket, ana repo hiç derlenmeden gelen kriptik bir hataya dönerdi.</para>
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca harici hedefler AYRI bir argüman listesi kullandı
+    /// (<c>BuildProjectReferences</c> serbest, koşulsuz restore): o turda harici proje tek bir solution olarak,
+    /// bu aracın grafının DIŞINDA derleniyordu. Artık harici projeler taranıyor, grafa giriyor ve
+    /// bağımlılıkları bu araç tarafından ayrı düğümler olarak derleniyor — yani ana repo projeleriyle
+    /// tamamen aynı sözleşme geçerli. İkinci liste kaldırıldı (kopya YASAK, CLAUDE.md).</para>
     /// </summary>
     /// <returns>Restore çağrısı (gerekmiyorsa null) ve build çağrısı.</returns>
     public static (IReadOnlyList<string>? Restore, IReadOnlyList<string> Build) PlanFor(MsBuildInvokeRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        return request.ExternalTarget
-            ? (RestoreExternal(request.ProjectId), BuildExternal(request.ProjectId, request.Configuration))
-            : (request.NeedsRestore ? RestorePackagesConfig(request.ProjectId, request.SolutionDir) : null,
-               Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath));
+        return (request.NeedsRestore ? RestorePackagesConfig(request.ProjectId, request.SolutionDir) : null,
+                Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath));
     }
 
     public static string EnsureTrailingBackslash(string dir) =>

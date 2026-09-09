@@ -111,45 +111,4 @@ public class TfvcServiceTests
         Assert.False(result.Success);
         Assert.Contains("TF14098", result.Error);
     }
-
-    [Fact]
-    public async Task The_current_changeset_is_the_leading_number_of_the_first_data_row()
-    {
-        // Başlık satırları lokalizedir; yalnız baştaki rakam dizisi okunur.
-        var runner = new FakeProcessRunner(FakeProcessRunner.Output("""
-            Değişiklik Kümesi Kullanıcı           Tarih      Açıklama
-            ----------------- ------------------ ---------- ----------
-            48213             DOMAIN\dev         12.08.2026 ocr fix
-            """));
-
-        var result = await Service(runner).CurrentChangesetAsync();
-
-        Assert.True(result.Success);
-        Assert.Equal("48213", result.Value);
-        Assert.Equal(["vc", "history", ".", "/recursive", "/stopafter:1", "/noprompt", "/version:W", "/format:brief"],
-            runner.LastSpec.Arguments);
-    }
-
-    [Fact]
-    public async Task An_unreadable_changeset_is_reported_as_unknown_rather_than_an_error()
-    {
-        // Bilinmeyen revizyon güvenli taraftır: imzaya ayırt edici bir işaret girer ve proje derlenir.
-        var runner = new FakeProcessRunner(FakeProcessRunner.Failure(100, "TF14021: No history."));
-
-        var result = await Service(runner).CurrentChangesetAsync();
-
-        Assert.True(result.Success);
-        Assert.Null(result.Value);
-    }
-
-    [Fact]
-    public async Task Output_without_any_numeric_row_is_reported_as_unknown()
-    {
-        var runner = new FakeProcessRunner(FakeProcessRunner.Output("No history entries were found.\n"));
-
-        var result = await Service(runner).CurrentChangesetAsync();
-
-        Assert.True(result.Success);
-        Assert.Null(result.Value);
-    }
 }

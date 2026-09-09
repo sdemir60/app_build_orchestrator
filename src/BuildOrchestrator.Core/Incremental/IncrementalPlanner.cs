@@ -275,14 +275,60 @@ public static class IncrementalPlanner
 
         if (matches.Count == 0) return null; // proje hiç commit'lenmemiş / no-commits repo
 
+        return HashFingerprint(matches, path => trackedBlobHashes[path]);
+    }
+
+    /// <summary>
+    /// [design v1.14.0 §9] Ana repo DIŞINDAKİ bir projenin fingerprint'i — <see cref="ComputeCommittedFingerprint"/>
+    /// ile AYNI şekil, tek farkı terimin KAYNAĞI: git blob hash'i yerine dosyanın DİSKTEKİ içeriğinin hash'i.
+    ///
+    /// <para><b>Neden ayrı bir kaynak.</b> Committed fingerprint ana reponun <c>ls-tree</c> haritasından gelir
+    /// ve harici kökler o ağaçta yoktur; TFVC'de ise git hiç yoktur. İçerik hash'i her iki kaynak kontrolünde
+    /// de çalışır ve çalışma kopyasının GERÇEK hâlini anlatır — commit'lenmemiş değişiklik de doğal olarak
+    /// imzaya girer, bu yüzden harici projeler için ayrı bir local-diff terimine gerek kalmaz (ve karar
+    /// in-place / worktree ayrımından etkilenmez).</para>
+    ///
+    /// <para>§4 kaynak-sinyali kuralı korunur: yalnız kaynak dosya İÇERİĞİ okunur — DLL/bin/obj ya da herhangi
+    /// bir timestamp ASLA. Bedeli, proje başına build-etkileyen dosyaların okunmasıdır; ana repo bu maliyeti
+    /// ödemez (blob haritası zaten tek bir git çağrısından gelir), harici kökler ise küçüktür.</para>
+    ///
+    /// <para>Okunamayan dosyalar (canlı build ↔ tarama yarışı, silinmiş dosya) sessizce elenir; hiçbiri
+    /// okunamazsa <c>null</c> döner ve proje "hiç derlenmemiş" gibi ele alınır — güvenli taraf (over-build).</para>
+    /// </summary>
+    /// <param name="projectFiles">Projenin build-etkileyen dosyalarının MUTLAK yolları (csproj + compile dosyaları).</param>
+    /// <param name="readFileContent">path → içerik; okunamıyorsa <c>null</c>.</param>
+    public static string? ComputeContentFingerprint(
+        IReadOnlyList<string> projectFiles, Func<string, string?> readFileContent)
+    {
+        ArgumentNullException.ThrowIfNull(projectFiles);
+        ArgumentNullException.ThrowIfNull(readFileContent);
+
+        var contents = projectFiles
+            .Where(BuildSignature.IsBuildAffecting)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .Select(path => (Path: path, Content: readFileContent(path)))
+            .Where(x => x.Content is not null)
+            .ToList();
+
+        if (contents.Count == 0) return null;
+
+        var byPath = contents.ToDictionary(x => x.Path, x => BuildSignature.HashText(x.Content!), StringComparer.OrdinalIgnoreCase);
+        return HashFingerprint([.. contents.Select(x => x.Path)], path => byPath[path]);
+    }
+
+    /// <summary>İki fingerprint kaynağının PAYLAŞTIĞI gövde — ayraçlar, boundary-shift koruması ve hash
+    /// primitifi tek yerde kalsın diye (kopya YASAK, CLAUDE.md).</summary>
+    private static string HashFingerprint(IReadOnlyList<string> orderedPaths, Func<string, string> termOf)
+    {
         var sb = new StringBuilder();
-        foreach (var path in matches)
+        foreach (var path in orderedPaths)
         {
             // RAW path ASLA doğrudan ayraç yanına gömülmez — BuildSignature'daki boundary-shift korumasıyla
             // aynı kalıp (bkz. BuildSignatureTests: separator/`=` içeren id/yol testleri). HashText ve
             // ItemSeparator, BuildSignature'daki AYNI primitive'lerin (internal) reuse'u — review fix (Task 7b):
             // eskiden burada verbatim-kopya edilmişti, artık tek kaynak.
-            sb.Append(BuildSignature.HashText(path)).Append('=').Append(trackedBlobHashes[path]).Append(BuildSignature.ItemSeparator);
+            sb.Append(BuildSignature.HashText(path)).Append('=').Append(termOf(path)).Append(BuildSignature.ItemSeparator);
         }
 
         return BuildSignature.HashText(sb.ToString());
