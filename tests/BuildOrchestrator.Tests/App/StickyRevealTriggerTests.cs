@@ -209,6 +209,41 @@ public class StickyRevealTriggerTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.13.2 §2.4 · §9] <b>Aynı topolojiyle biten bir Sync ("no changes") da listeyi başa
+    /// alır.</b> Reveal'i yeniden oynatan şey topolojinin DEĞİŞMESİ değil, yayının bir <b>Sync'e</b> ait olmasıdır
+    /// (<c>RunViewModel.OnWorkspaceTopology</c>: <c>_syncInFlight</c> imza guard'ını geçer). Kardeş test
+    /// (<see cref="A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero"/>) imzayı değiştirerek
+    /// guard'dan kaçıyordu; bu test guard'ın tam ortasından geçer — kullanıcının gördüğü senaryo budur:
+    /// aynı repoda Sync'e basmak.</summary>
+    [StaFact]
+    public void A_no_changes_sync_returns_the_list_to_the_top()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = NewWithManyProjects(dir, 60);
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int before = list.RevealGeneration;
+        Assert.True(before > 0, "ilk reveal hiç oynamadı — bu testin taban çizgisi yok (vakum)");
+
+        DispatcherPump.PumpUntil(() => list.Scroll.ScrollableHeight > 200, TimeSpan.FromSeconds(3));
+        list.Scroll.ScrollToVerticalOffset(150);
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset >= 149.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset >= 149.5, "test scroll'u tutmadı — ön-koşul kurulamadı");
+
+        // ÜRETİM YOLU: Sync başlar, AYNI 60 proje yeniden yayınlanır (imza AYNI), Sync biter.
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent(ReplayedTopology(60), [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 60, 0));
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != before, TimeSpan.FromSeconds(3));
+        Assert.NotEqual(before, list.RevealGeneration); // reveal, imza aynıyken de YENİDEN oynadı
+
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset <= 0.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset <= 0.5,
+            $"[design v1.13.2] Sync sonrası liste başa dönmeliydi (VerticalOffset={list.Scroll.VerticalOffset})");
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[design v1.13.2 §2.4/§9] AYNI tetik ama SEÇİM VARKEN scroll'a dokunulmaz — kullanıcı kararı,
     /// imlecin altındaki satır kaçmasın. "Seçim var" bilgisi TEK kaynaktan: <see cref="FollowScrollController.IsFollowing"/>
     /// (<c>MainWindow.UpdateFrontierSelection</c> → <c>StickyLayerList.SelectRow</c> zaten besliyor).</summary>

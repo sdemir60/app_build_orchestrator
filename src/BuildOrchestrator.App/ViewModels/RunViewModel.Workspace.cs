@@ -139,39 +139,31 @@ public sealed partial class RunViewModel
     /// <summary>Topoloji DEĞİŞTİĞİNDE (her statü güncellemesinde DEĞİL) tetiklenir — D5 grafı yalnız bunda yeniden kurar.</summary>
     public event EventHandler? TopologyChanged;
 
-    /// <summary>[E2/§5-b verify-then-fix] Son yayınlanan topolojinin YAPI imzası (düğüm Id/Ad/katman + kenarlar) —
-    /// <see cref="OnWorkspaceTopology"/> her <c>workspaceTopology</c>'de değil, YALNIZ bu imza değiştiğinde
-    /// <see cref="TopologyChanged"/> ateşler. Aksi halde mid-run bir Sync (node seti değişmese de) koşan grafı
-    /// yeniden-reveal edip kamerayı re-home ediyordu (SetGraph = tam inşa + stagger). Statü değişimleri (InCycle/
-    /// WillBuild) BURAYA girmez — onlar zaten <c>UpdateStatuses</c> (PushGraphStatuses) yoluyla akar. <c>null</c> =
-    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur).
+    /// <summary>[E2/§5-b] Son yayınlanan topolojinin YAPI imzası (düğüm Id/Ad/katman + kenarlar).
+    /// <see cref="OnWorkspaceTopology"/> <see cref="TopologyChanged"/>'ı iki durumda ateşler: imza değiştiğinde
+    /// ya da yayın bir <b>Sync'e</b> aitse (<see cref="_syncInFlight"/>) — imza aynı olsa bile. <c>null</c> =
+    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur). Statü değişimleri
+    /// (InCycle/WillBuild) imzaya GİRMEZ — onlar <c>UpdateStatuses</c> (PushGraphStatuses) yoluyla akar.
     ///
-    /// <para><b>[A13/B3 · E4 — KARAR KAYDI, davranış DEĞİŞMEDİ]</b> Bu guard'ın <b>liste tarafındaki</b> sonucu
-    /// bugüne dek hiçbir yerde yazılı değildi: <c>TopologyChanged</c> ateşlemeyen bir Sync (yani "no changes" —
-    /// aynı yapının yeniden yayınlanması) <c>MainWindow.RefreshProjectGroups</c>'u <b>hiç çağırmaz</b>, dolayısıyla
-    /// <c>StickyLayerList.SetGroups</c> koşmaz ve <b>o Sync'te kademeli beliriş (bo-reveal) OYNAMAZ</b> — kartlar
-    /// yeniden belirmez.
-    /// <list type="bullet">
-    ///   <item><b>Bu KASITLIDIR — gerekçe "gereksiz churn"dür.</b> <c>SetGroups</c> <c>ItemsSource</c> ataması
-    ///   yapar; bu, <c>ItemsControl</c> için TAM reset'tir (container teardown + yeniden üretim). <b>Otoritenin
-    ///   metni niteliksizdir</b> (plan v7, A13.2 Motion maddesi: "koleksiyon reset'i YASAK"); bu repo kuralı
-    ///   <b>DAR okur</b> — yasağın koruduğu şeyler zarar görmedikçe reset meşru sayılır. <b>Bu okuma repoya
-    ///   aittir, otoritenin metni DEĞİLDİR.</b> Gerekçesi <c>StickyLayerList.SetGroups</c>'un XML doc'unda
-    ///   ("Reset semantiği BİLEREK KORUNDU") yazılıdır ve zararsızlık iki şarta bağlanır: (a) seçim satır VM'lerinde yaşar,
-    ///   (b) <b>gereksiz churn ÇAĞIRAN tarafta kapatılır</b>. <b>İşte bu guard, (b)'nin uygulanışıdır</b> —
-    ///   iki doc çelişmez, biri ötekinin şartını sağlar. Guard olmasaydı değişmemiş bir liste her Sync'te tam
-    ///   reset yer ve kullanıcıya sebepsiz bir "kartlar yeniden belirdi" flaşı olarak görünürdü.</item>
-    ///   <item><b>OTORİTE BURADA AYRIŞIYOR (ölçüldü, A13/B3 fix round 1).</b> Prototipte <c>doSync()</c>
-    ///   (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i <b>HER Sync'te KOŞULSUZ</b> artırır — topoloji
-    ///   değişti mi diye BAKMAZ; yani otoritede "no changes" bir Sync'te de kartlar yeniden belirir. Üretim
-    ///   bilerek AYRILIR: gerekçe yukarıdaki churn maddesidir. (<c>BuildApp.jsx:1378</c> Sync yolu DEĞİL,
-    ///   <c>pickFolder()</c>'dır — eski kayıt bu satıra dayanarak otoriteyi yanlışlıkla "destekleyici"
-    ///   gösteriyordu.) Ayrışma task-B3-report.md <c>## Concerns</c>'te de kayıtlıdır.</item>
-    ///   <item><b>Bedeli (E5 ile bağı):</b> "bir sonraki reveal eksik kalanı yakalar" gerekçesi bu yüzden
-    ///   GEÇERSİZDİR — bir sonraki reveal HİÇ gelmeyebilir. Reveal'in kapsamı bu nedenle kendi içinde eksiksiz
-    ///   olmak zorundadır (bkz. <c>StickyLayerList.PlayRevealStagger</c>'ın layout zorlaması).</item>
-    /// </list>
-    /// Karakterizasyon testi: <c>ProjectListFilterTests.A_no_changes_sync_neither_resets_the_list_nor_replays_the_reveal</c>.</para></summary>
+    /// <para><b>Sync = "sıfırdan listelendi" (design v1.13.2 §2.4 · §9).</b> Prototipte <c>doSync()</c>
+    /// (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i HER Sync'te KOŞULSUZ artırır: graf reveal'ini
+    /// yeniden oynar, liste kademeli belirir ve — seçim yokken — başa döner (<c>StickyLayerList.PlayRevealStagger</c>).
+    /// <c>TopologyChanged</c> bu yolu sürer (<c>MainWindow.RefreshProjectGroups</c> + <c>RebuildGraph</c>), bu
+    /// yüzden bir Sync'in topolojisi imzadan bağımsız ateşler. Bedeli <c>SetGroups</c>'un <c>ItemsSource</c>
+    /// ataması (tam reset) — Sync bilinçli bir "yeniden listele" olduğundan bu reset gereksiz churn değil,
+    /// tasarımın istediği belirişin kendisidir (A13.2'nin dar okuması: seçim satır VM'lerinde yaşar ve Sync
+    /// seçimi zaten düşürür).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüldü]</b> Guard eskiden HER yayın için imzaya bakıyordu; aynı
+    /// repoda ikinci bir Sync ("no changes") <c>TopologyChanged</c> ateşlemiyor, reveal oynamıyor ve liste
+    /// başa DÖNMÜYORDU — kullanıcı testinde "Sync'te scroll başa gelmiyor" diye görülen buydu. Gerekçe "gereksiz
+    /// churn" idi (mid-run bir Sync koşan grafı yeniden-reveal etmesin); ama Sync koşarken zaten kilitlidir
+    /// (<c>SyncCommand</c> CanExecute, <c>ApplySettingsAsync</c>/<c>ChangeRepositoryAsync</c>'in
+    /// <c>IsMidRunLocked</c> kapıları) ve motor topolojiyi YALNIZ Sync içinde yayınlar
+    /// (<c>SyncWorkspaceService</c>) — guard'ın koruduğu durum ulaşılabilir değildi. İmza karşılaştırması
+    /// Sync dışı bir yayın için savunma olarak durur.
+    /// Karakterizasyon testi: <c>ProjectListFilterTests.A_no_changes_sync_replays_the_reveal</c> ve
+    /// <c>StickyRevealTriggerTests.A_no_changes_sync_returns_the_list_to_the_top</c>.</para></summary>
     private string? _lastTopologySignature;
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
@@ -399,8 +391,12 @@ public sealed partial class RunViewModel
         // Yeni sırada reveal:true dalı listeyi kurar ve İMZAYI yazar; hemen sonra gelen RefreshRunSurface'in
         // VisibleProjects bildirimi guard'a çarpıp NO-OP olur. Sayaç tüketicileri sıradan etkilenmez:
         // TopologyChanged abonelerinden (RefreshProjectGroups/RebuildGraph) hiçbiri Counters okumaz.
+        // [design v1.13.2 §2.4 · §9] Bir Sync'in yayınladığı topoloji imza AYNI olsa da TopologyChanged
+        // ateşler: Sync = "sıfırdan listelendi" (prototipte revealKey her Sync'te artar) — graf reveal'ini
+        // yeniden oynar, liste kademeli belirir ve başa döner. İmza guard'ı yalnız Sync DIŞI yayınlar için
+        // kalır (bkz. _lastTopologySignature).
         string signature = TopologySignature(e.Nodes);
-        if (signature != _lastTopologySignature)
+        if (signature != _lastTopologySignature || _syncInFlight)
         {
             _lastTopologySignature = signature;
             TopologyChanged?.Invoke(this, EventArgs.Empty);
