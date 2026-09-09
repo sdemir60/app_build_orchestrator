@@ -14,9 +14,10 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <c>Compose(label, target)</c> metodu burada duruyordu. Tasarım v1.13.2 bunu kaldırdı: "tek proje derlemesi
 /// şeritte tam koşudan ayırt edilmiyor, süreç de birebir aynı" (prototip otoritesi: <c>build-data.js</c>
 /// <c>opLabel()</c> artık hedef adını yazmıyor). Hedefin kendisi konsolda ve grafta zaten bellidir; pill yalnız
-/// "ne yapmıştım?" sorusuna cevap verir, "neyi" sorusuna değil. <c>Compose</c> kaldırıldı — üretim kodunda
-/// zaten tek çağıranı YOKTU (satırdan tek-proje koşusunun arka ucu <see cref="Views.ProjectRowActions"/>'ta
-/// henüz yazılmadığından hiçbir üretim yolu ona hedef geçirmiyordu).</para>
+/// "ne yapmıştım?" sorusuna cevap verir, "neyi" sorusuna değil — "neyi", konsolun <c>build requested — X
+/// (single project)</c> satırında ve stream'in açılış satırındadır. <c>Compose</c> kaldırıldı; satırdan
+/// tetiklenen koşu da (<c>RunViewModel.BuildProjectCommand</c>) pill'e yalnız <see cref="ForRunMode"/>'un
+/// sözcüğünü yazar.</para>
 /// </summary>
 public static class OperationLabel
 {

@@ -128,9 +128,11 @@ public static class Program
             // ana repo gibi, oldukları hâliyle derlenir. [D12] Cycles ana reponun SCC onarımıdır — orada
             // kullanıcının çalışma kopyalarını güncellemek sürpriz olurdu; tarama yine de yapılır ki graf
             // Build'inkiyle AYNI kalsın.
+            // [tek proje] Kapsamlı koşuda yalnız hedefi içeren çalışma kopyası güncellenir (ExternalUpdater'ın
+            // kapsam kapısı) — kapsam dışına dokunulmaz.
             if (ExternalUpdater.ShouldUpdate(cmd.Mode, cmd.UpdateExternals, cmd.ExternalProjects))
                 new ExternalUpdater(new ProcessRunner())
-                    .UpdateAsync(cmd.ExternalProjects!, progress).GetAwaiter().GetResult();
+                    .UpdateAsync(cmd.ExternalProjects!, progress, cmd.ScopeProjectId).GetAwaiter().GetResult();
 
             var workspace = PrepareAsync(cmd, new ProcessRunner(), worktreePoolRoot,
                 Console.Error.WriteLine, progress).GetAwaiter().GetResult();

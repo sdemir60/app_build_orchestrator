@@ -187,8 +187,72 @@ public class ExternalUpdaterTests
         await UpdateAsync(Updater(), GitAt(second.RootPath), GitAt(first.RootPath));
 
         Assert.Equal(
-            [$"Updating external '{Path.GetFileName(second.RootPath)}'",
-             $"Updating external '{Path.GetFileName(first.RootPath)}'"],
+            [$"Updating external '{Post(second.RootPath)}'",
+             $"Updating external '{Post(first.RootPath)}'"],
             _progress.Where(l => l.StartsWith("Updating external", StringComparison.Ordinal)));
     }
+
+    private static string Post(string path) => Path.GetFileName(path);
+
+    // ---------------------------------------------------------------- [tek proje] kapsam: yalnız hedefin çalışma kopyası
+
+    /// <summary>[design v1.15.0 §9] Tek proje koşusunda YALNIZ hedefi içeren çalışma kopyası güncellenir —
+    /// kapsam dışına dokunulmaz: başka bir kartın kopyası ne fast-forward edilir ne de onun için satır yazılır.</summary>
+    [Fact]
+    public async Task A_scoped_run_updates_only_the_working_copy_that_holds_the_target()
+    {
+        using var upstreamA = new GitTestRepo();
+        upstreamA.WriteFile("a.cs", "one");
+        upstreamA.CommitAll("first");
+        string cloneA = upstreamA.CloneFull();
+        upstreamA.WriteFile("a.cs", "two");
+        string expectedA = upstreamA.CommitAll("second");
+
+        using var upstreamB = new GitTestRepo();
+        upstreamB.WriteFile("b.cs", "one");
+        upstreamB.CommitAll("first");
+        string cloneB = upstreamB.CloneFull();
+        string behindB = GitTestRepo.RunGitAt(cloneB, "rev-parse", "HEAD").Trim();
+        upstreamB.WriteFile("b.cs", "two");
+        upstreamB.CommitAll("second");
+
+        await Updater().UpdateAsync([GitAt(cloneB), GitAt(cloneA)], _progress.Add,
+            scopeProjectPath: Path.Combine(cloneA, "src", "A", "A.csproj"));
+
+        Assert.Equal(expectedA, GitTestRepo.RunGitAt(cloneA, "rev-parse", "HEAD").Trim()); // hedefin kopyası ilerledi
+        Assert.Equal(behindB, GitTestRepo.RunGitAt(cloneB, "rev-parse", "HEAD").Trim());   // diğeri OLDUĞU GİBİ
+        Assert.Equal([$"Updating external '{Post(cloneA)}'"],
+            _progress.Where(l => l.StartsWith("Updating external", StringComparison.Ordinal)));
+    }
+
+    /// <summary>Hedef ana repodaysa (hiçbir kartın altında değil) tek bir kopyaya bile dokunulmaz ve tek satır
+    /// bile yazılmaz — kartın çalışma kopyası olmasa da ("no working copy" uyarısı dahil).</summary>
+    [Fact]
+    public async Task A_scoped_run_for_a_repository_project_touches_no_external_card_at_all()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.cs", "one");
+        upstream.CommitAll("first");
+        string clone = upstream.CloneFull();
+        string behind = GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim();
+        upstream.WriteFile("a.cs", "two");
+        upstream.CommitAll("second");
+        using var noVcs = new TempDir();
+
+        await Updater().UpdateAsync([GitAt(clone), GitAt(noVcs.Path)], _progress.Add,
+            scopeProjectPath: @"D:\repo\src\Main\Main.csproj");
+
+        Assert.Equal(behind, GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim());
+        Assert.Empty(_progress);
+    }
+
+    /// <summary>Kapsam kararı saf bir yol sorusudur: hedef kartın arama kökünün ya da çalışma kopyasının
+    /// ALTINDA mı. Harf-duyarsız ve ayraç-farkındadır — <c>D:\ext\mail2</c>, <c>D:\ext\mail</c>'in altı değildir.</summary>
+    [Theory]
+    [InlineData(@"D:\ext\mail", @"d:\EXT\mail\src\Mail.csproj", true)]
+    [InlineData(@"D:\ext\mail\", @"D:\ext\mail\Mail.csproj", true)]
+    [InlineData(@"D:\ext\mail", @"D:\ext\mail2\Mail.csproj", false)]
+    [InlineData(@"D:\ext\mail", @"D:\other\Mail.csproj", false)]
+    public void The_scope_test_is_a_path_prefix_that_respects_separators(string root, string project, bool expected)
+        => Assert.Equal(expected, ExternalUpdater.Contains(root, project));
 }

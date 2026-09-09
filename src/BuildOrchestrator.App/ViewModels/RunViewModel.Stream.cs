@@ -133,6 +133,9 @@ public sealed partial class RunViewModel
                     int parallelism = _runParallelism ?? Parallelism;
                     PushStream(StreamKind.Info, null, mode switch
                     {
+                        // [tek proje] Kapsamlı koşu hedefi söyler — "1 projects, parallelism N" tek bir proje
+                        // için hem gramer hem anlam olarak yanlıştı (paralellik onu tarif etmez).
+                        _ when RunTargetId is { } targetId => StreamText.SingleProjectStarted(mode, ResolveName(targetId)),
                         // [cycles/Task 4] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin
                         // üyeleri sıralı derlenir. Kırılım will-build ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
                         // upstream/prerequisite'tir; kullanıcı "neden bu kadar proje derleniyor"u burada okur.

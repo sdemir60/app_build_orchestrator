@@ -674,6 +674,9 @@ public sealed class RunCoordinator(
         // güncel skip'ler HEM de yakınsamama hafızasından gelen SCC pre-skip'leri düşer; App'e giden ayırt
         // edici bayrak Reason METNİNDEN çıkarılmaz (kopya YASAK), doğrudan bu tuple alanından DecideSkipped'e taşınır.
         var upToDateSkips = new List<(string ProjectId, string Reason, bool CycleUnconverged)>();
+        // [tek proje] Hedefin bu koşuda DERLENMEYEN bayat bağımlılıkları (yalnız kapsamlı koşuda dolu) —
+        // dispatch'te dep-issue hesabına girer (bkz. ComputeDepIssues).
+        IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? staleDependenciesById = null;
 
         {
             // [Fix wave 1 — Finding 3] WorktreePreparationException: planner (Program.BuildRunPlan) seçili
@@ -688,6 +691,20 @@ public sealed class RunCoordinator(
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
                 or WorktreePreparationException or ExternalPreparationException)
             { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }
+
+            // [tek proje · design v1.11.0 §3.8] Satırdan tetiklenen koşu: plan TEK düğüme iner — bağımlılıklar
+            // derlenmez, kapsam dışı projeler koşuya hiç girmez. Planlama yine TAM yapıldı (kapsam kararı
+            // yukarıdaki planın WillBuild'lerinden okunur; hedefin imzası da o plandan gelir). Planda olmayan
+            // bir hedef (bayat topoloji) koşuyu HİÇ başlatmaz — mevcut planlama-hatası kanalıyla.
+            if (cmd.ScopeProjectId is { } scopeId)
+            {
+                var scope = ProjectRunScope.Of(runPlan.Plan, scopeId);
+                if (scope is null)
+                { events.TryWrite(new ErrorEvent("planFailed", ProjectRunScope.NotInPlanMessage(scopeId))); return; }
+                runPlan = runPlan with { Plan = scope.Plan };
+                staleDependenciesById = new Dictionary<string, IReadOnlyList<StaleDependency>>(StringComparer.OrdinalIgnoreCase)
+                { [scope.Target.Id] = scope.StaleDependencies };
+            }
 
             // [I2-K2/Task 10 · A4] cmd.UseWorktree=false → HER ZAMAN null (in-place, VS-parity). true iken
             // resolver YOKSA (ör. testlerin basit harness'ı) yine null'a düşer — obj izolasyonu ancak resolver
@@ -706,6 +723,9 @@ public sealed class RunCoordinator(
                 depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
                 stoppedFailedIds = _stoppedFailedIds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase); // [Task-13] taze run → taze birikim
             }
+            // [tek proje] decision.log kapsamı adıyla anar: "neden tek proje derlendi" sorusu diskten okunur.
+            if (staleDependenciesById is not null)
+                Decide(logs, $"scope: single project {runPlan.Plan.Nodes[0].Name} — dependencies are not rebuilt; stale ones are referenced as last known outputs");
             // [Task 19] Build modunda: planlayıcının hesapladığı WillBuild==false projeler "up to date" olarak
             // pre-skip edilir — scheduler'a Skipped tohumlanır (dependent'ları için resolved), dispatch
             // edilmezler. Rebuild HER ŞEYİ derler (tohum yok).
@@ -940,7 +960,8 @@ public sealed class RunCoordinator(
                 stoppedFailedIds, // [Task-13]
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
                 runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
-                groups); // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
+                groups, // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
+                staleDependenciesById); // [tek proje] hedefin derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda)
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -1595,7 +1616,11 @@ public sealed class RunCoordinator(
             dependencies,
             run.Scheduler.Completed,
             run.DepIssuesById,
-            id => run.NodeById.TryGetValue(id, out var n) ? n.Name : id);
+            id => run.NodeById.TryGetValue(id, out var n) ? n.Name : id,
+            // [tek proje] Kapsamlı koşuda hedefin derlenmeyen bayat bağımlılıkları da dep-issue'dur: düğüm
+            // haritası yalnız hedefi taşır, o bağımlılıklar Completed'ta hiç yoktur — buradan gelmeseler
+            // hedef bayat DLL'e karşı temiz bir başarı olarak persist edilirdi (gerekçe ProjectRunScope'ta).
+            run.StaleDependenciesById?.GetValueOrDefault(projectId));
         run.DepIssuesById[projectId] = depIssues.All;
         return depIssues;
     }
@@ -1612,6 +1637,12 @@ public sealed class RunCoordinator(
     {
         foreach (string root in depIssues.Direct)
             yield return $"warning: {root} failed in this run — last successful output referenced ({root})";
+        // [tek proje] Bayat bağımlılık: bu koşuda derlenmedi, son bilinen çıktısı referans alındı. Döngü
+        // üyesi için sebep farklıdır (turlar koşmadı), cümle de öyle — design §3.8'in iki uyarısı.
+        foreach (var stale in depIssues.Stale)
+            yield return stale.InCycle
+                ? $"warning: {stale.Name} is in a dependency cycle and was not rebuilt — last known output referenced"
+                : $"warning: {stale.Name} has pending changes and was not rebuilt in this run — last known output referenced";
         if (depIssues.Indirect.Count > 0)
             yield return $"warning: failure in dependency chain ({string.Join(", ", depIssues.Indirect)}) — referenced outputs may be stale";
     }
@@ -1781,7 +1812,10 @@ public sealed class RunCoordinator(
         IncrementalPlan? Incremental,
         // [cycle rounds] SCC üyelik haritası — <see cref="ReadySetScheduler"/>'a verilenin AYNI örneği (null ⇒
         // plan'da SCC yok ya da kill switch kapalı; o zaman worker yalnız tekil proje yolunu kullanır).
-        CycleGroups? Groups);
+        CycleGroups? Groups,
+        // [tek proje] projectId → bu koşuda derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda, yalnız
+        // hedef için dolu; null ⇒ tam koşu). ComputeDepIssues bunu DepIssueTracker'a geçirir.
+        IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? StaleDependenciesById = null);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

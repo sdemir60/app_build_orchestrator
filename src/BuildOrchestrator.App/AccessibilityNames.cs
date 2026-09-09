@@ -56,16 +56,24 @@ public static class AccessibilityNames
         "Clean — msbuild /t:Clean on every solution; caches are untouched" + NotAvailableSuffix;
 
     // ---- Proje satırı: build eylemleri (design v1.11.0 §2.4-4 · §3.8) ----
-    /// <summary>Satırın birincil eylemi: yalnız o projeyi derler (bağımlılıkları DEĞİL — §3.8 v1.11.0).</summary>
+    /// <summary>Satırın birincil eylemi: yalnız o projeyi derler (bağımlılıkları DEĞİL — §3.8 v1.11.0). Boşta
+    /// play düğmesinin tooltip'i de budur.</summary>
     public const string BuildThisProject = "Build this project";
     /// <summary>Satır menüsünü açan ⋯ düğmesi (satıra sağ tık da aynı menüyü açar).</summary>
     public const string MoreBuildActions = "More build actions";
-    /// <summary>Kapsamlı koşuyu durduran satır düğmesi (hedef satırda play'in yerini alır).</summary>
+    /// <summary>Kapsamlı koşuyu durduran satır düğmesinin UIA adı (hedef satırda play'in yerini alır).</summary>
     public const string StopThisBuild = "Stop build";
+    /// <summary>[design §3.8] Hedef satırdaki Stop'un tooltip'i — prototip: <c>Stop — cancel this build</c>.</summary>
+    public const string StopBuildTooltip = "Stop — cancel this build";
 
-    /// <summary>[design v1.11.0 §3.8] Satırdan tetiklenen üç eylemin de arka ucu henüz yazılmadı: düğmeler ve
-    /// menü tasarımdaki yerlerinde ama pasif durur (bakım kutusuyla aynı karar).</summary>
-    public const string RowActionsTooltip = BuildThisProject + NotAvailableSuffix;
+    /// <summary>[design §3.8] Bir koşu uçuştayken (planlama penceresi dahil) diğer satırların play'i ve menü
+    /// maddeleri pasiftir ve nedenini söyler — prototip: <c>Build in progress — wait or stop it first</c>.</summary>
+    public const string BuildBusyTooltip = "Build in progress — wait or stop it first";
+
+    /// <summary>[design §3.8] Satır menüsünün <i>Clean</i> maddesi: yalnız o projede <c>msbuild /t:Clean</c>.
+    /// Arka ucu henüz yazılmadı — madde tasarımdaki yerinde, pasif, tooltip nedenini söyler (split menünün
+    /// Clean'i ve bakım kutusuyla AYNI karar; Build/Rebuild ise tek proje koşusuna bağlıdır).</summary>
+    public const string RowCleanTooltip = "Clean — msbuild /t:Clean on this project; caches are untouched" + NotAvailableSuffix;
 
     /// <summary>Resolve cycles düğmesinin ToolTip'i: döngü varsa ne yapacağını üye sayısıyla anlatır, yoksa
     /// neden pasif olduğunu söyler.

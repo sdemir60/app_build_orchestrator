@@ -46,6 +46,14 @@ public static class StreamText
     public static string BuildStarted(int projects, int parallelism) =>
         string.Format(CultureInfo.InvariantCulture, "Build started — {0} projects, parallelism {1}", projects, parallelism);
 
+    /// <summary>[tek proje · design §3.8] Satırdan tetiklenen koşunun açılış satırı — prototip
+    /// (<c>build-data.js</c> <c>_startProjectNow</c>: <c>Build — {name} (single project)</c>) ile aynı
+    /// sözcükler, <see cref="BuildStarted"/>'ın "started" biçiminde: <c>Build started — {name} (single project)</c>
+    /// / <c>Rebuild started — …</c>. Paralellik yazılmaz: tek projeyi tarif etmez.</summary>
+    public static string SingleProjectStarted(RunMode mode, string name) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} started — {1} (single project)",
+            mode == RunMode.Rebuild ? "Rebuild" : "Build", name);
+
     /// <summary>[cycles] Bir <c>RunMode.Cycles</c> koşusunun açılış satırı. "Build started"ı yeniden
     /// kullanmaz: bu koşu bir build DEĞİLDİR ve kullanıcıyı bekleten şey de proje sayısı değil, TUR sayısıdır —
     /// satır tam olarak ne satın alındığını söyler. Tavan literal DEĞİL, tek kaynağı

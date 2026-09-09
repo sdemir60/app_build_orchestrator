@@ -152,4 +152,49 @@ public class DepIssueTrackerTests
 
         Assert.Equal(["A"], result.All);
     }
+
+    // ---------------------------------------------------------------- [tek proje] bayat bağımlılık (derlenmedi, son bilinen çıktı)
+
+    /// <summary>Tek proje koşusunda hedefin bayat bağımlılıkları bu koşuda HİÇ derlenmez (kapsam dışı) —
+    /// hedef onların son bilinen çıktısına karşı derlenir. Bu bir dep-issue'dur: <c>All</c>'a girer (event,
+    /// ▲ sayacı, build-state notu) ama <c>Direct</c>/<c>Indirect</c>'e DEĞİL — onlar "bu koşuda patlayan"
+    /// kökleri anlatır ve uyarı satırları ayrı yazılır.</summary>
+    [Fact]
+    public void a_stale_dependency_is_a_dep_issue_of_its_own_kind_and_reaches_All()
+    {
+        var completed = Completed(); // kapsam dışı bağımlılık koşuya hiç girmedi: Completed'ta YOK
+
+        var result = DepIssueTracker.Compute(["dep-id"], completed, Issues(), id => id == "dep-id" ? "Dep" : id,
+            stale: [new StaleDependency("dep-id", "Dep", InCycle: false)]);
+
+        var stale = Assert.Single(result.Stale);
+        Assert.Equal("Dep", stale.Name);   // görünen ad (kapsamı üreten taraf verir), ham id değil
+        Assert.False(stale.InCycle);
+        Assert.Equal(["Dep"], result.All);
+        Assert.Empty(result.Direct);
+        Assert.Empty(result.Indirect);
+    }
+
+    [Fact]
+    public void stale_roots_merge_with_failed_roots_deduped_and_sorted()
+    {
+        var completed = Completed(("F", BuildResult.Failed));
+
+        var result = DepIssueTracker.Compute(["F", "S"], completed, Issues(), IdentityName,
+            stale: [new StaleDependency("S", "S", InCycle: true), new StaleDependency("F", "F", InCycle: false)]);
+
+        Assert.Equal(["F", "S"], result.All);            // F bir kez — hem failed hem bayat listede
+        Assert.Equal(["F"], result.Direct);
+        Assert.Equal(["F", "S"], result.Stale.Select(s => s.Name)); // bayat listesi ad sıralı, kendi türüyle
+        Assert.True(result.Stale.Single(s => s.Name == "S").InCycle);
+    }
+
+    [Fact]
+    public void no_stale_list_means_the_result_shape_is_unchanged()
+    {
+        var result = DepIssueTracker.Compute([], Completed(), Issues(), IdentityName);
+
+        Assert.Same(DepIssueResult.Empty, result);
+        Assert.Empty(DepIssueResult.Empty.Stale);
+    }
 }

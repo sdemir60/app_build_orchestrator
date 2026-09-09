@@ -81,10 +81,20 @@ public enum DependentMode { Safe, Fast }
 /// olmayınca kullanıcının dosyalarının üstüne yazma riski de yoktur, harici tıpkı ana repo gibi olduğu hâliyle
 /// derlenir. Karar doğruluğu bundan etkilenmez — harici projelerin imzası çalışma kopyasının İÇERİĞİNDEN
 /// hesaplanır (bkz. <c>IncrementalPlanner.ComputeContentFingerprint</c>), revizyon kimliğinden değil.</para></param>
+/// <param name="ScopeProjectId">[tek proje · design v1.11.0 §3.8] Satırdan tetiklenen koşunun HEDEFİ — proje
+/// kimliği (tam csproj yolu). <c>null</c> (varsayılan) ⇒ kapsam yok, koşu <see cref="Mode"/>'un anlattığı tam
+/// kümedir; eski NDJSON satırları alansız çözülür.
+/// <para>Dolu iken motor planı TEK düğüme indirger (<c>Core.Planning.ProjectRunScope</c>): bağımlılıklar
+/// DERLENMEZ, kapsam dışı projeler koşuya hiç girmez (skip satırı yok, sayaç yok). Hedef tam koşuyla AYNI
+/// motor yolundan geçer — Build modunda incremental kural, Rebuild'de koşulsuz. Bayat (kirli) bağımlılıklar
+/// dep-issue olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu
+/// bayat bir DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi
+/// derlenir; döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
-    IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true) : IpcCommand;
+    IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true,
+    string? ScopeProjectId = null) : IpcCommand;
 
 /// <summary>
 /// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar

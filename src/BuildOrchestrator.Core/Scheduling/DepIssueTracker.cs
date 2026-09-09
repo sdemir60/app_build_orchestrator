@@ -10,10 +10,28 @@ using BuildOrchestrator.Contracts.Model;
 /// log-başı uyarı satırlarını seçmesi içindir (bkz. RunCoordinator.DepIssueWarnLines); <c>ProjectSucceeded/
 /// FailedEvent.DepIssues</c>'a yalnız <see cref="All"/> yazılır.
 /// </summary>
-public sealed record DepIssueResult(IReadOnlyList<string> All, IReadOnlyList<string> Direct, IReadOnlyList<string> Indirect)
+/// <param name="Stale">[tek proje] Bu koşuda DERLENMEYEN bayat bağımlılıklar (görünen adla) — hedef onların son
+/// bilinen çıktısına karşı derlendi. <see cref="All"/>'a girerler (event, ▲ sayacı, defter notu) ama
+/// <see cref="Direct"/>/<see cref="Indirect"/>'e DEĞİL: onlar bu koşuda PATLAYAN kökleri anlatır ve uyarı
+/// satırları başka bir cümleyle yazılır.</param>
+public sealed record DepIssueResult(IReadOnlyList<string> All, IReadOnlyList<string> Direct, IReadOnlyList<string> Indirect,
+    IReadOnlyList<StaleRoot> Stale)
 {
-    public static readonly DepIssueResult Empty = new([], [], []);
+    public static readonly DepIssueResult Empty = new([], [], [], []);
 }
+
+/// <summary>
+/// [tek proje · design v1.11.0 §3.8] Bir koşuda derlenmeyecek BAYAT bağımlılık — <c>ProjectRunScope</c>
+/// üretir, <see cref="DepIssueTracker.Compute"/> tüketir. <paramref name="InCycle"/> uyarı cümlesini seçer:
+/// döngü üyesi "turlar koşmadı", diğeri "bekleyen değişiklikleri var" diye anlatılır.
+/// </summary>
+/// <param name="Id">Bağımlılığın proje kimliği (tam csproj yolu).</param>
+/// <param name="Name">Görünen adı — kapsamlı koşuda düğüm haritası yalnız hedefi taşır, bu yüzden ad
+/// kapsamı üreten tarafın (tam planı gören) elinden gelir; koordinatörün ad çözümü onu bulamazdı.</param>
+public sealed record StaleDependency(string Id, string Name, bool InCycle);
+
+/// <summary><see cref="StaleDependency"/>'nin sonuç tarafı: görünen AD (ham id değil) + aynı döngü bayrağı.</summary>
+public sealed record StaleRoot(string Name, bool InCycle);
 
 /// <summary>
 /// [T54] Saf hesaplama — I/O, process, scheduler-state mutasyonu YOK [D3]. <see cref="ReadySetScheduler"/>'ın
@@ -34,11 +52,15 @@ public static class DepIssueTracker
     /// kök adlar). Bir bağımlılık bu sözlükte yoksa (ör. henüz hiç depIssue taşımadı, ya da cycle nedeniyle
     /// construction'da pre-skip edildiği için hiç dispatch edilmedi) miras edilecek bir şey yok sayılır.</param>
     /// <param name="nameOf">projectId → görünen ad (warn satırları ve DepIssues'a YAZILAN, ham id DEĞİL).</param>
+    /// <param name="stale">[tek proje] Bu koşuda derlenmeyen bayat bağımlılıklar (<c>ProjectRunScope</c>'tan);
+    /// null/boş ⇒ sonuç şekli bugünküyle birebir aynı. Failed bir kök aynı anda bayat listedeyse
+    /// <see cref="DepIssueResult.All"/>'da bir kez sayılır.</param>
     public static DepIssueResult Compute(
         IEnumerable<string> dependencyIds,
         IReadOnlyDictionary<string, BuildResult> completed,
         IReadOnlyDictionary<string, IReadOnlyList<string>> depIssuesById,
-        Func<string, string> nameOf)
+        Func<string, string> nameOf,
+        IReadOnlyList<StaleDependency>? stale = null)
     {
         ArgumentNullException.ThrowIfNull(dependencyIds);
         ArgumentNullException.ThrowIfNull(completed);
@@ -59,7 +81,15 @@ public static class DepIssueTracker
                     (inherited ??= new(StringComparer.Ordinal)).Add(root);
         }
 
-        if (direct is null && inherited is null) return DepIssueResult.Empty;
+        // Bayat kökler ad sıralı (D8) — aynı ad iki kez listelenmişse bir kez.
+        var staleRoots = stale is { Count: > 0 }
+            ? stale.Select(s => new StaleRoot(s.Name, s.InCycle))
+                .DistinctBy(s => s.Name, StringComparer.Ordinal)
+                .OrderBy(s => s.Name, StringComparer.Ordinal)
+                .ToList()
+            : null;
+
+        if (direct is null && inherited is null && staleRoots is null) return DepIssueResult.Empty;
 
         // Indirect = inherited EKSİ direct: bir kök hem doğrudan hem zincirden geliyorsa (diamond + doğrudan
         // bağımlılık aynı anda) yalnız Direct'te sayılır — warn satırı iki kez yazılmaz.
@@ -70,10 +100,12 @@ public static class DepIssueTracker
         var all = new SortedSet<string>(StringComparer.Ordinal);
         if (direct is not null) all.UnionWith(direct);
         if (inherited is not null) all.UnionWith(inherited);
+        if (staleRoots is not null) all.UnionWith(staleRoots.Select(s => s.Name));
 
         return new DepIssueResult(
             All: [.. all],
             Direct: direct is null ? [] : [.. direct],
-            Indirect: indirectOnly.Count == 0 ? [] : [.. indirectOnly]);
+            Indirect: indirectOnly.Count == 0 ? [] : [.. indirectOnly],
+            Stale: staleRoots ?? []);
     }
 }

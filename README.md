@@ -227,9 +227,13 @@ project log. The counter chips in the bottom bar are filters and they **combine*
 cross together to see what this run built, and type in the filter box (`Ctrl+F`) to narrow that further. Each
 active chip lights in its own colour, and the chip in the PROJECTS header lists what is on.
 
-**Per-project actions** live on the row: hover it for a play button and a ⋯ menu — Build, Rebuild, Clean for
-that one project — and right-clicking the row opens the same menu. The engine behind them is not written yet,
-so they are visible but disabled and say so.
+**Per-project actions** live on the row: hover it for a play button and a ⋯ menu — Build and Rebuild for
+that one project — and right-clicking the row opens the same menu. A run started this way compiles that
+project alone: its dependencies are not rebuilt, and a dependency that is stale is reported as a dependency
+issue on the row and in the project log, so the next *Build* compiles the project again against fresh inputs.
+Starting from a row clears the selection, so a graph focused on some node returns to the fitted view. While
+the run is in flight the row's play button becomes a red Stop and the other rows' play buttons wait. *Clean*
+in that menu has no engine behind it yet and says so.
 
 Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
 them with the reason `in dependency cycle`. **Resolve cycles** — the

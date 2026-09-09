@@ -12,9 +12,12 @@ namespace BuildOrchestrator.App.Views;
 /// <para><b>İkon ailesi Build menüsüyle ORTAKTIR</b> — <c>play · rotate-cw · brush</c>, tek grid/stroke.
 /// Eşleme <see cref="BuildMenu.IconKeyFor"/>'dan okunur; burada ikinci bir tablo YAZILMAZ (kopya YASAK).</para>
 ///
-/// <para><b>Arka uç henüz yazılmadı</b> (§3.8 tek-proje koşusu motorda yok): maddeler tasarımdaki yerlerinde
-/// ama PASİFTİR ve tooltip nedeni söyler — bakım kutusunun Clean/Optimize düğmeleriyle AYNI karar. Menünün
-/// kendisi açılır, çünkü tasarımın akışı (sağ tık → menü) ancak böyle görünür.</para>
+/// <para><b>Build ve Rebuild</b> tek proje koşusuna bağlıdır (§3.8): madde seçilince <see cref="ItemInvoked"/>
+/// türüyle ateşlenir, komutu satır (<see cref="ProjectRow"/>) kendi VM'inin kimliğiyle çalıştırır — menü
+/// hangi projeye ait olduğunu bilmez, satır bilir. Bir koşu uçuştayken iki madde pasifleşir ve nedenini
+/// söyler (<see cref="SetRunActionsEnabled"/>; prototip <c>busy</c>). <b>Clean</b>'in arka ucu henüz
+/// yazılmadı: tasarımdaki yerinde ama PASİFTİR ve tooltip nedeni söyler — split menünün Clean'i ve bakım
+/// kutusuyla AYNI karar.</para>
 /// </summary>
 public partial class ProjectRowMenu : UserControl
 {
@@ -34,6 +37,12 @@ public partial class ProjectRowMenu : UserControl
     }
 
     private bool _built;
+    private bool _runActionsEnabled = true;
+    private readonly List<Border> _runRows = [];
+
+    /// <summary>Bir madde seçildi — argüman maddenin <c>Kind</c>'ıdır (<c>build</c>/<c>rebuild</c>). Satır menüyü
+    /// kapatır ve komutu kendi projesiyle çalıştırır (BuildMenu'nün <c>ItemInvoked</c> deseni).</summary>
+    internal event Action<string>? ItemInvoked;
 
     /// <summary>Menünün başlığı — projenin KISA adı (ortak önek atılmış).</summary>
     internal string Title
@@ -47,6 +56,15 @@ public partial class ProjectRowMenu : UserControl
 
     /// <summary>[D6] Menü her açılışında 140ms pop-in (BuildApp.jsx:597 <c>bo-pop-in</c>).</summary>
     public void PlayPopIn() => PopIn.Play(PART_Rows);
+
+    /// <summary>[design §3.8] Build/Rebuild maddelerinin kapısı — satır menüyü açarken koşu kapısından
+    /// (<c>BuildProjectCommand.CanExecute</c>) okuyup buraya yazar. Kapalıyken maddeler pasiftir, prototipin
+    /// <c>busy</c> opaklığını alır ve tooltip nedeni söyler; Clean bundan bağımsız hep pasiftir.</summary>
+    internal void SetRunActionsEnabled(bool enabled)
+    {
+        _runActionsEnabled = enabled;
+        foreach (var row in _runRows) ApplyRunActionState(row);
+    }
 
     private void Build()
     {
@@ -82,15 +100,34 @@ public partial class ProjectRowMenu : UserControl
             Height = RowHeight,
             Padding = new Thickness(7, 0, 7, 0),
             Child = grid,
-            // Arka uç yok → pasif. Hover zemini de takılmaz: tıklanabilirmiş gibi görünmesi, basılıp hiçbir
-            // şey olmamasından daha kötü olurdu (BuildMenu'nün Clean maddesiyle AYNI karar).
-            IsEnabled = false,
-            Opacity = BuildMenu.DisabledOpacity,
-            Cursor = Cursors.Arrow,
-            ToolTip = AccessibilityNames.RowActionsTooltip,
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
         ToolTipService.SetShowOnDisabled(row, true); // pasif kontrolde WPF tooltip'i varsayılan olarak saklar
+
+        if (kind == "clean")
+        {
+            // Arka uç yok → pasif. Hover zemini de takılmaz: tıklanabilirmiş gibi görünmesi, basılıp hiçbir
+            // şey olmamasından daha kötü olurdu (BuildMenu'nün Clean maddesiyle AYNI karar).
+            row.IsEnabled = false;
+            row.Opacity = BuildMenu.DisabledOpacity;
+            row.Cursor = Cursors.Arrow;
+            row.ToolTip = AccessibilityNames.RowCleanTooltip;
+            return row;
+        }
+
+        HoverBackground.Attach(row);
+        row.MouseLeftButtonUp += (_, _) => ItemInvoked?.Invoke(kind);
+        _runRows.Add(row);
+        ApplyRunActionState(row);
         return row;
+    }
+
+    private void ApplyRunActionState(Border row)
+    {
+        bool enabled = _runActionsEnabled;
+        row.IsEnabled = enabled;
+        row.Opacity = enabled ? 1.0 : BuildMenu.DisabledOpacity; // prototip: busy ? 0.45 : 1
+        row.Cursor = enabled ? Cursors.Hand : Cursors.Arrow;
+        row.ToolTip = enabled ? null : AccessibilityNames.BuildBusyTooltip;
     }
 }

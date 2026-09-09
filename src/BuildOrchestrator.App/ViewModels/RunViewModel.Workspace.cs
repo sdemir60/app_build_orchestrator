@@ -206,6 +206,8 @@ public sealed partial class RunViewModel
         BuildCommand.NotifyCanExecuteChanged(); // [DEĞİŞEN KURAL] Build de Sync penceresinde bekler
         RebuildCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
+        BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da aynı kapıdadır
+        RebuildProjectCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>[Sync guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde (motor hazır değil/ölü)
@@ -344,6 +346,8 @@ public sealed partial class RunViewModel
                     // taşınır); Status bunu cycle görsel statüsüne çevirir. IsRunActive queued türetimi için.
                     InCycle = node.InCycle,
                     IsRunActive = RunActive,
+                    IsRunLocked = IsMidRunLocked, // [tek proje] kilit + hedef aynı itme deseninden
+                    IsRunTarget = string.Equals(node.Id, RunTargetId, StringComparison.OrdinalIgnoreCase),
                     // [Harici projeler] Rozet topolojiden gelir; satır ömrü boyunca değişmez.
                     IsExternal = node.ExternalVcs is not null,
                     // [W1] hedef sha satıra İTİLİR (kart onu atalardan çekmez) — ama YALNIZ ana repo satırlarına:
@@ -413,6 +417,8 @@ public sealed partial class RunViewModel
         BuildCommand.NotifyCanExecuteChanged();
         RebuildCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
+        BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da topoloji kapısındadır
+        RebuildProjectCommand.NotifyCanExecuteChanged();
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
     }
