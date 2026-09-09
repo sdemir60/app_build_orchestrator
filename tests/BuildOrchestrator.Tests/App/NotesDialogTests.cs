@@ -229,8 +229,15 @@ public class NotesDialogTests
         }
     }
 
-    /// <summary>[§2.11] Kategori BLOK başlığıdır: 6px renkli kare + caps etiket, sabit sırada. Maddelerin
-    /// başında ikon/sigil YOKTUR. (WhatsNewTests'ten TAŞINDI — About'un dördüncü sekmesi kalktı.)</summary>
+    /// <summary>[§2.11] Kategori BLOK başlığıdır: 6px renkli kare + caps <c>text-dim</c> etiket, sabit
+    /// sırada. Maddelerin başında ikon/sigil YOKTUR. (WhatsNewTests'ten TAŞINDI — About'un dördüncü sekmesi
+    /// kalktı.)
+    ///
+    /// <para>Başlığın RENGİ de pinlenir: etiket bir <see cref="TrackedTextBlock"/>'tur ve o KENDİ
+    /// <c>Foreground</c>/<c>FontSize</c> DP'lerini kaydeder — <c>TextBlock</c>/<c>Control</c> ailesindeki
+    /// aynı adlı DP'lere yazmak bu kontrolde ETKİSİZDİR ve etiket sessizce ctor varsayılanıyla
+    /// (<c>Brush.TextFaint</c>) çizilir. Aynı kural <see cref="The_installed_entry_shows_a_neutral_installed_chip_not_a_current_label"/>
+    /// çipinde de geçerlidir; bu assertion onu kategori başlığı için de kapatır.</para></summary>
     [StaFact]
     public void Each_category_is_a_block_heading_with_a_six_pixel_swatch_and_no_per_line_sigils()
     {
@@ -245,8 +252,12 @@ public class NotesDialogTests
             Assert.All(swatches, r => Assert.Equal(6.0, r.Height));
 
             var headings = DsResources.Descendants(first).OfType<TrackedTextBlock>()
-                .Select(t => t.Text).Where(t => t != "INSTALLED").ToList();
-            Assert.Equal(ReleaseNotes.KindOrder.Where(kinds.Contains).Select(ReleaseNotes.Label), headings);
+                .Where(t => t.Text != "INSTALLED").ToList();
+            Assert.Equal(ReleaseNotes.KindOrder.Where(kinds.Contains).Select(ReleaseNotes.Label),
+                headings.Select(t => t.Text));
+            Assert.All(headings, t => Assert.Equal(
+                DsResources.TokenColor(dialog, "Brush.TextDim"), DsResources.ColorOf(t.Foreground)));
+            Assert.All(headings, t => Assert.Equal((double)dialog.FindResource("FontSize.2xs"), t.FontSize));
 
             Assert.Empty(DsResources.Descendants(first).OfType<System.Windows.Shapes.Path>());
         }

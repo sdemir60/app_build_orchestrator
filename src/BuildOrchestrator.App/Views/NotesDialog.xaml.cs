@@ -177,8 +177,11 @@ public partial class NotesDialog : UserControl
             Margin = new Thickness(7, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        label.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-        label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim");
+        // Hedef DP'ler AÇIKÇA nitelenir (BuildInstalledChip ile AYNI kural): TrackedTextBlock kendi
+        // Foreground/FontSize DP'lerini kaydeder, TextBlock/Control ailesindekiler burada ETKİSİZDİR ve
+        // etiket sessizce ctor varsayılanına (Brush.TextFaint) düşerdi.
+        label.SetResourceReference(Controls.TrackedTextBlock.FontSizeProperty, "FontSize.2xs");
+        label.SetResourceReference(Controls.TrackedTextBlock.ForegroundProperty, "Brush.TextDim");
         heading.Children.Add(label);
         group.Children.Add(heading);
 
