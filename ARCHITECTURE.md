@@ -1519,9 +1519,11 @@ success tone for the same 1.4 s the console's copy button uses.
 A value that overflows its column — the resolved `MSBuild.exe` path is the usual case — is not truncated. An
 ellipsis with the full path in a tooltip was tried and dropped: the row instead sits in its own horizontally
 scrollable box with no visible bar, and a wheel notch over an overflowing row pans it sideways instead of
-scrolling the tab (a non-overflowing row leaves the wheel alone, so the Environment list still scrolls
-normally under it). Nothing is lost by not seeing the whole path at a glance — *Copy diagnostics* already
-puts the full text one click away.
+scrolling the tab. Over a row that does *not* overflow the box hands the notch on to its parent, and that
+forwarding is required rather than tidy: a `ScrollViewer` swallows the wheel in its bubbling class handler
+whether or not it has anything to scroll, so a row that merely sits there would otherwise kill the wheel over
+most of the tab's surface. Nothing is lost by not seeing the whole path at a glance — *Copy diagnostics*
+already puts the full text one click away.
 
 **What's new is the third modal, reusing the same shell once more** — the same scrim, the same `Ds.Dialog`
 border and focus trap, the same 180 ms/6 px entrance — but 620 px wide and without About's identity block or

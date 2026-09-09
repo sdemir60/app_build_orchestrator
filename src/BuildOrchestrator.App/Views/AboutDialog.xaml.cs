@@ -187,20 +187,39 @@ public partial class AboutDialog : UserControl
     /// da erteleme YOKTUR: istek senkron, doğrudan <see cref="ScrollViewer.ScrollToHorizontalOffset"/> ile
     /// uygulanır.</para>
     ///
-    /// <para><b>Taşmayan hücrede ekstra bir "kendi dikey davranışını kapat" adımı YOK (ÖLÇÜLDÜ):</b> bu
-    /// ScrollViewer'ın <c>VerticalScrollBarVisibility="Disabled"</c> olması TEK BAŞINA yeterli — dikeyde
-    /// kaydıracak bir şeyi olmayan bir ScrollViewer, kendi bubble-fazı <c>MouseWheel</c> class handler'ında
-    /// olayı YUTMUYOR (<c>Handled</c> false kalıyor), bu yüzden tab'ın kendi (dış) ScrollViewer'ına dokunulmadan
-    /// ulaşıyor. Test bunu doğrudan <c>Handled</c> üzerinden pinler
-    /// (<c>The_wheel_leaves_a_non_overflowing_environment_value_untouched</c>).</para>
+    /// <para><b>Taşmayan hücrede olay ELDEN GEÇİRİLİR (ÖLÇÜLDÜ):</b> <c>VerticalScrollBarVisibility="Disabled"</c>
+    /// olması TEK BAŞINA YETMEZ. Ölçüm: bu hücrenin üzerinde BALONCUK fazındaki <c>MouseWheel</c> olayı
+    /// <c>Handled=True</c> ile dönüyor ve dış panelin <c>VerticalOffset</c>'i 0'da kalıyor —
+    /// <see cref="ScrollViewer"/> kendi <c>OnMouseWheel</c> class handler'ında olayı, dikeyde kaydıracak bir
+    /// şeyi OLUP OLMADIĞINA BAKMADAN yutuyor. Değer hücresi satırın <c>DockPanel</c>'inde <c>LastChildFill</c>
+    /// olduğu için bu, Environment yüzeyinin çoğunda tekerleği ÖLDÜRÜRDÜ. Çözüm WPF'in standart iç-içe
+    /// ScrollViewer deseni: preview'da olayı yut (böylece class handler hiç koşmaz) ve ebeveynden yeni bir
+    /// baloncuk olayı yayınla — bkz. <see cref="ForwardWheelToParent"/>. Test dış panelin
+    /// <c>VerticalOffset</c>'inin gerçekten ARTTIĞINI pinler
+    /// (<c>The_wheel_over_a_non_overflowing_environment_value_still_scrolls_the_tab</c>); <c>Handled</c> tek
+    /// başına bu davranışı pinlemez.</para>
     /// </summary>
     private void OnEnvironmentValueWheel(object sender, MouseWheelEventArgs e)
     {
         var scroller = (ScrollViewer)sender;
-        if (scroller.ScrollableWidth <= 0) return; // taşmıyor: dikey tekerlek kendi yoluna gitsin
+        if (scroller.ScrollableWidth <= 0) { ForwardWheelToParent(scroller, e); return; }
         scroller.ScrollToHorizontalOffset(
             EnvironmentValueWheelOffset(scroller.HorizontalOffset, e.Delta, scroller.ScrollableWidth));
         e.Handled = true;
+    }
+
+    /// <summary>Taşmayan hücrenin tekerleğini ebeveyne devreder: preview'daki olay YUTULUR (iç ScrollViewer'ın
+    /// yutan class handler'ı böylece hiç koşmaz) ve ebeveynden AYNI delta'yla yeni bir baloncuk
+    /// <c>MouseWheel</c> yayınlanır — dış (sekme) ScrollViewer'a ulaşan olay budur. <c>Source</c> hücrenin
+    /// KENDİSİ kalır: olay yolun ilerisinde hâlâ nereden geldiğini söyler.
+    /// <para>Ebeveyn yoksa (hücre ağaçtan koparılmışsa) olay YUTULMAZ — devredilemeyen bir olayı yutmak, onu
+    /// sessizce yok etmek olurdu.</para></summary>
+    private static void ForwardWheelToParent(ScrollViewer scroller, MouseWheelEventArgs e)
+    {
+        if (VisualTreeHelper.GetParent(scroller) is not UIElement parent) return;
+        e.Handled = true;
+        parent.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+            { RoutedEvent = MouseWheelEvent, Source = scroller });
     }
 
     /// <summary>SAF karar: bir dikey tekerlek notch'unun (WPF <c>Delta</c>) yatay ofsete karşılığı, içeriğin

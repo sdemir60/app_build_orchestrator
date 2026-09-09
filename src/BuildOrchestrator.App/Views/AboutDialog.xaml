@@ -171,9 +171,10 @@
                          kırpma+tooltip fazladan bir etkileşim katmanıydı. YENİ: satır KIRILMAZ, yatay kayar;
                          çubuk GÖRÜNMEZ (Hidden — Controls.xaml'deki TextBox PART_ContentHost ile AYNI
                          "kaydırılabilir ama çubuksuz" karşılığı) ve dikey ASLA kaymaz (Disabled — tek satır
-                         içerik). Tekerlek yönlendirmesi OnEnvironmentValueWheel'dedir (AboutDialog.xaml.cs) —
-                         yalnız hücre GERÇEKTEN taşıyorsa devreye girer, taşmıyorsa olay dokunulmadan dikey
-                         yoluna (bu ScrollViewer'ın DIŞINA) devam eder; bkz. o metodun XML doc'u. -->
+                         içerik). Tekerlek yönlendirmesi OnEnvironmentValueWheel'dedir (AboutDialog.xaml.cs):
+                         hücre GERÇEKTEN taşıyorsa yatay kaydırır, taşmıyorsa olayı ebeveyne DEVREDER — iç
+                         ScrollViewer taşmasa da tekerleği kendiliğinden yutar (ölçüldü), bu yüzden devir
+                         ZORUNLUDUR; bkz. o metodun XML doc'u. -->
                     <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
                                   Focusable="False"
                                   VerticalAlignment="Center" PreviewMouseWheel="OnEnvironmentValueWheel">

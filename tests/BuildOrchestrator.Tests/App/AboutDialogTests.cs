@@ -51,16 +51,28 @@ public class AboutDialogTests
     /// doc'u); WPF düz dikey tekerleği zaten routed event olarak dağıttığı için doğrudan
     /// <see cref="UIElement.RaiseEvent"/> yeterlidir. Kaydırma senkrondur (OnEnvironmentValueWheel bir
     /// Dispatcher turu ERTELEMEZ), <c>UpdateLayout</c> yalnız yayınlanan <c>HorizontalOffset</c>'in bir
-    /// layout turu istediği ihtimaline karşı savunmacıdır.</summary>
+    /// layout turu istediği ihtimaline karşı savunmacıdır.
+    ///
+    /// <para><b>İKİ faz raise edilir, çünkü WPF'in <c>InputManager</c>'ı da öyle yapar:</b> önce tünel
+    /// (<c>PreviewMouseWheel</c>), preview YUTMADIYSA baloncuk (<c>MouseWheel</c>). Baloncuk fazı ŞARTTIR:
+    /// <see cref="ScrollViewer"/>'ın olayı yutan class handler'ı (<c>OnMouseWheel</c>) YALNIZ orada koşar —
+    /// tek başına preview raise etmek "hücre olayı dışarı bırakıyor mu" sorusunu HİÇ sormaz.</para></summary>
     private static MouseWheelEventArgs RaiseWheel(
         BuildOrchestrator.App.Views.AboutDialog dialog, ScrollViewer target, int delta)
     {
-        var args = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+        var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
             { RoutedEvent = UIElement.PreviewMouseWheelEvent };
-        target.RaiseEvent(args);
+        target.RaiseEvent(preview);
+        if (!preview.Handled)
+            target.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+                { RoutedEvent = UIElement.MouseWheelEvent });
         dialog.UpdateLayout();
-        return args;
+        return preview;
     }
+
+    /// <summary>Bir değer hücresini SARAN sekme paneli — Environment satırlarının dikey kaydırıcısı.</summary>
+    private static ScrollViewer EnvironmentTabScroller(ScrollViewer valueCell) =>
+        DsResources.Ancestors(valueCell).OfType<ScrollViewer>().First();
 
     // ---------------------------------------------------------------- kabuk
 
@@ -389,22 +401,40 @@ public class AboutDialogTests
         }
     }
 
-    /// <summary>Taşmayan hücrede tekerlek yatay ofsete DOKUNMAZ ve olayı YUTMAZ (<c>Handled</c> false kalır) —
-    /// aksi halde sekmenin kendi dikey kaydırması hiç çalışmazdı (brief T10 testler listesi).</summary>
+    /// <summary>
+    /// Taşmayan hücrede tekerlek yatay ofsete DOKUNMAZ ve sekmenin kendi dikey kaydırması ÇALIŞIR.
+    ///
+    /// <para><b>[DEĞİŞEN TEST — ölçüm]</b> ESKİ İDDİA: preview fazında raise edilen bir tekerlek olayının
+    /// <c>Handled</c>'ının false kalması bu davranışı pinlerdi. Ölçüm bunun yanlış olduğunu gösterdi:
+    /// <see cref="ScrollViewer"/> olayı BALONCUK fazındaki class handler'ında (<c>OnMouseWheel</c>) yutar ve
+    /// bunu dikeyde kaydıracak bir şeyi olup olmadığına BAKMADAN yapar — yani preview'daki <c>Handled</c>
+    /// false olsa bile dış panel HİÇ kaymıyordu. Test artık gerçek soruyu soruyor: dış
+    /// <see cref="ScrollViewer"/>'ın <c>VerticalOffset</c>'i ARTIYOR MU.</para>
+    ///
+    /// <para>Dış panelin gerçekten kaydırılabilir olması KURULUR (<c>MaxHeight</c>): Environment sekmesi
+    /// bugünkü tanı satırlarıyla 236px'lik kutusunu doldurmuyor, oysa kusur listenin taştığı ilk anda
+    /// görünür olur — <see cref="OverflowingRootPath"/>'in yatay taşma için yaptığının dikey eşi.</para>
+    /// </summary>
     [StaFact]
-    public void The_wheel_leaves_a_non_overflowing_environment_value_untouched()
+    public void The_wheel_over_a_non_overflowing_environment_value_still_scrolls_the_tab()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             Select(dialog, 1);
             var scroller = EnvironmentValueScroller(dialog, "App version");
-            Assert.Equal(0.0, scroller.ScrollableWidth); // ön-koşul: taşmıyor
+            var tab = EnvironmentTabScroller(scroller);
+            tab.MaxHeight = 60;
+            dialog.UpdateLayout();
 
-            var args = RaiseWheel(dialog, scroller, -Mouse.MouseWheelDeltaForOneLine);
+            Assert.Equal(0.0, scroller.ScrollableWidth);   // ön-koşul: hücre taşmıyor
+            Assert.True(tab.ScrollableHeight > 0);         // ön-koşul: sekme gerçekten kaydırılabilir
+            Assert.Equal(0.0, tab.VerticalOffset);
 
-            Assert.Equal(0.0, scroller.HorizontalOffset);
-            Assert.False(args.Handled); // YUTULMADI: dikey yoluna (sekmenin kendi ScrollViewer'ı) devam eder
+            RaiseWheel(dialog, scroller, -Mouse.MouseWheelDeltaForOneLine);
+
+            Assert.Equal(0.0, scroller.HorizontalOffset);  // hücre yatayda oynamadı
+            Assert.True(tab.VerticalOffset > 0, "tekerlek sekmenin dikey kaydırmasına HİÇ ulaşmadı");
         }
     }
 
