@@ -432,12 +432,15 @@ public class StickyRibbonTests
     public void Each_run_mode_writes_its_own_word_into_the_pill(RunMode mode, string expected)
         => Assert.Equal(expected, OperationLabel.ForRunMode(mode));
 
-    /// <summary>Hedefli işlemlerde (satırdan tetiklenen build/rebuild/clean) hedefin kısa adı eklenir.</summary>
+    /// <summary>[DEĞİŞEN KURAL — v1.13.2] Eski kural (v1.11.0): hedefli işlemlerde (satırdan tetiklenen
+    /// build/rebuild/clean) hedefin kısa adı em-dash ile ekleniyordu — <c>OperationLabel.Compose(label, target)</c>
+    /// (<c>REBUILD — Sales.Core</c>). Tasarım v1.13.2: "tek proje derlemesi şeritte tam koşudan ayırt edilmiyor,
+    /// süreç de birebir aynı" — <c>Compose</c> KALKTI. Pill'in TEK üreticisi artık
+    /// <see cref="OperationLabel.ForRunMode"/>'dur ve hiçbir hedef parametresi almaz; bu, tek tek çağrı yerlerinin
+    /// hedef geçmediğini değil, hedef EKLEME YOLUNUN kendisinin API'den bir daha geri gelmediğini pinler.</summary>
     [Fact]
-    public void A_targeted_operation_appends_the_short_project_name()
+    public void OperationLabel_no_longer_exposes_a_way_to_append_a_target()
     {
-        Assert.Equal("REBUILD — Sales.Core", OperationLabel.Compose(OperationLabel.Rebuild, "Sales.Core"));
-        Assert.Equal("BUILD", OperationLabel.Compose(OperationLabel.Build, null));
-        Assert.Equal("BUILD", OperationLabel.Compose(OperationLabel.Build, ""));
+        Assert.Null(typeof(OperationLabel).GetMethod("Compose"));
     }
 }
