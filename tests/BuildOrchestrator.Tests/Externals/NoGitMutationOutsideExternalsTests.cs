@@ -25,11 +25,19 @@ namespace BuildOrchestrator.Tests.Externals;
 public sealed class NoGitMutationOutsideExternalsTests
 {
     /// <summary>
-    /// Çalışma ağacını ya da branch ref'lerini değiştiren git fiilleri — argüman listesi literali biçiminde.
+    /// Çalışma ağacını ya da branch ref'lerini değiştiren git fiilleri — bir <c>ArgumentList</c> literalinin
+    /// İLK elemanı olarak (<c>["merge", ...]</c>); git fiili her zaman listenin başındadır.
     /// <c>fetch</c> BURADA YOKTUR: yalnız <c>refs/remotes/*</c>'ı günceller ve Sync'in temelidir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski kural HERHANGİ bir <c>"clean"</c>/<c>"reset"</c> string literalini
+    /// ihlal sayıyordu. Build menüsünün öğe türleri (<c>new("clean", "Clean", …)</c>, <c>ProjectRowMenu</c>)
+    /// aynı sözcükleri UI kimliği olarak taşıyınca guard git'le ilgisi olmayan koda kırmızı verdi. Kural artık
+    /// argüman listesinin başındaki fiile bakar — gerçek bir git çağrısı bu biçimden kaçamaz
+    /// (<see cref="The_rule_recognises_a_mutation_that_sneaks_into_another_file"/>), UI literalleri ise
+    /// bu biçimde yazılmaz (<see cref="The_rule_ignores_a_menu_item_kind_that_happens_to_share_the_word"/>).</para>
     /// </summary>
     private static readonly Regex MutatingGitVerb = new(
-        "\"(?:merge|checkout|switch|pull|rebase|cherry-pick|stash|clean|reset|commit|push)\"",
+        "\\[\\s*\"(?:merge|checkout|switch|pull|rebase|cherry-pick|stash|clean|reset|commit|push)\"",
         RegexOptions.Compiled);
 
     /// <summary>Mutasyonun MEŞRU olduğu yollar (src köküne göre) ve gerekçeleri.</summary>
@@ -82,5 +90,20 @@ public sealed class NoGitMutationOutsideExternalsTests
             MutatingGitVerb);
 
         Assert.Single(offenders);
+    }
+
+    [Fact]
+    public void The_rule_ignores_a_menu_item_kind_that_happens_to_share_the_word()
+    {
+        // UI öğe türleri git fiili değildir: "clean" bir menü kimliği olarak da yaşar (BuildMenu, ProjectRowMenu).
+        var offenders = SourceGuard.ScanText("App/Views/BuildMenu.xaml.cs",
+            """
+            new("clean", "Clean", "Remove build outputs", null);
+            if (item.Kind == "clean") { }
+            [("build", "Build"), ("clean", "Clean")];
+            """,
+            MutatingGitVerb);
+
+        Assert.Empty(offenders);
     }
 }
