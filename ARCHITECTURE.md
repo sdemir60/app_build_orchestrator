@@ -1504,9 +1504,11 @@ required` — and nothing is reset: the user syncs when ready. The first setup s
 starts there anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons beside *Load sample layers*. Export writes
-`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, layers[{ name, pattern }], externalProjects[{
-path, vcs }] }`, the external array holding only cards with a non-blank path; import reads one back **into the
-form**; clear empties the root, every layer and every external card. All three touch the draft only: nothing is
+`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path, vcs }],
+layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the field order the
+file is written in, not just a key that happens to be present) and holding only cards with a non-blank path;
+import reads one back **into the form**; clear empties the root, every layer and every external card. All
+three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed

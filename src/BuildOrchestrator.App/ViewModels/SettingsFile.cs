@@ -7,8 +7,10 @@ using BuildOrchestrator.Contracts.Model;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
-/// [design v1.10.0 §2.9] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
-/// <c>{ app, version, repositoryRoot, layers[{ name, pattern }] }</c>. Dosyanın adı
+/// [design v1.10.0 §2.9 · K5] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
+/// <c>{ app, version, repositoryRoot, externalProjects[{ path, vcs }], layers[{ name, pattern }] }</c> —
+/// <c>externalProjects</c> BİLEREK <c>repositoryRoot</c> ile <c>layers</c> ARASINDADIR (design v1.14.0/§9),
+/// hem burada hem sınıf içindeki alan bildirim sırasında (JSON çıktısını o sıra belirler). Dosyanın adı
 /// <see cref="FileName"/>'dir.
 ///
 /// <para><b>Yalnız FORMU taşır.</b> Import bir ayarı UYGULAMAZ — değerleri diyaloğun taslağına yükler; hiçbir
@@ -32,16 +34,20 @@ public sealed class SettingsFile
 
     [JsonPropertyName("repositoryRoot")] public string? RepositoryRoot { get; set; }
 
-    [JsonPropertyName("layers")] public List<SettingsFileLayer> Layers { get; set; } = [];
-
-    /// <summary>[K5 · design v1.14.0 §9] Harici proje listesi. <b>KASITLI OLARAK <c>null</c> BAŞLAR</b> (Layers'ın
-    /// aksine bir <c>= []</c> başlatıcısı YOK): "dosyada anahtar hiç yok" (null) ile "anahtar var ama dizi BOŞ"
-    /// (<c>[]</c>) ayrımı taşınmak ZORUNDADIR — <see cref="SettingsDraftViewModel.LoadFrom"/> yalnız BİRİNCİSİNDE
-    /// mevcut taslağı korur. Eleman biçimi TOLERANSLIDIR: nesne (<c>{path, vcs}</c>) YA DA düz bir string
-    /// (yalnız path) — bkz. <see cref="ExternalProjectListConverter"/>.</summary>
+    /// <summary>[K5 · design v1.14.0 §9] Harici proje listesi. <b>BİLDİRİM SIRASI BİLE İNÇTİR:</b> brief
+    /// "repositoryRoot ile layers ARASINA externalProjects" der — System.Text.Json alanları BİLDİRİM
+    /// sırasıyla yazar, bu yüzden bu özellik <see cref="Layers"/>'ın ÜSTÜNDE durmak ZORUNDADIR (aksi, dosyada
+    /// yanlış sıra üretir; round-trip testi sırayı ayrıca pinler).
+    /// <para><b>KASITLI OLARAK <c>null</c> BAŞLAR</b> (Layers'ın aksine bir <c>= []</c> başlatıcısı YOK):
+    /// "dosyada anahtar hiç yok" (null) ile "anahtar var ama dizi BOŞ" (<c>[]</c>) ayrımı taşınmak ZORUNDADIR —
+    /// <see cref="SettingsDraftViewModel.LoadFrom"/> yalnız BİRİNCİSİNDE mevcut taslağı korur. Eleman biçimi
+    /// TOLERANSLIDIR: nesne (<c>{path, vcs}</c>) YA DA düz bir string (yalnız path) — bkz.
+    /// <see cref="ExternalProjectListConverter"/>.</para></summary>
     [JsonPropertyName("externalProjects")]
     [JsonConverter(typeof(ExternalProjectListConverter))]
     public List<SettingsFileExternal>? ExternalProjects { get; set; }
+
+    [JsonPropertyName("layers")] public List<SettingsFileLayer> Layers { get; set; } = [];
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -61,9 +67,12 @@ public sealed class SettingsFile
         return new SettingsFile
         {
             RepositoryRoot = repositoryRoot,
-            Layers = [.. layers.OrderBy(l => l.Order).Select(l => new SettingsFileLayer { Name = l.Name, Pattern = l.Regex })],
+            // Sıra BİLEREK budur (RepositoryRoot → ExternalProjects → Layers): nesne başlatıcısının kendi
+            // sırası JSON çıktısını ETKİLEMEZ (System.Text.Json BİLDİRİM sırasını yazar), ama okunurluk için
+            // sınıftaki alan sırasıyla AYNI tutulur — iki sıra sessizce ayrışmasın.
             ExternalProjects = externals is null ? null
                 : [.. externals.Select(e => new SettingsFileExternal { Path = e.Path, Vcs = e.Vcs == VcsKind.Tfvc ? "tfvc" : "git" })],
+            Layers = [.. layers.OrderBy(l => l.Order).Select(l => new SettingsFileLayer { Name = l.Name, Pattern = l.Regex })],
         };
     }
 

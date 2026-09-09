@@ -67,6 +67,17 @@ public class SettingsPortabilityTests
         Assert.Equal([@"C:\a", @"D:\shared\b.csproj"], parsed.ExternalProjects!.Select(e => e.Path));
         Assert.Equal(["git", "tfvc"], parsed.ExternalProjects!.Select(e => e.Vcs));
         Assert.Contains("\"externalProjects\"", json, StringComparison.Ordinal);
+
+        // [review fix — Bulgu 1] Alan SIRASI da brief'in pinlediği yerdir: "repositoryRoot ile layers ARASINA
+        // externalProjects". System.Text.Json alanları BİLDİRİM sırasıyla yazar — bu yüzden sıra, dosyanın
+        // gerçek şeklinin bir PARÇASIdır (yalnız anahtarın VAR OLMASI değil).
+        int rootIndex = json.IndexOf("\"repositoryRoot\"", StringComparison.Ordinal);
+        int externalIndex = json.IndexOf("\"externalProjects\"", StringComparison.Ordinal);
+        int layersIndex = json.IndexOf("\"layers\"", StringComparison.Ordinal);
+        Assert.True(rootIndex < externalIndex,
+            $"externalProjects ({externalIndex}) repositoryRoot'tan ({rootIndex}) SONRA gelmeli");
+        Assert.True(externalIndex < layersIndex,
+            $"externalProjects ({externalIndex}) layers'tan ({layersIndex}) ÖNCE gelmeli");
     }
 
     /// <summary>[K5, §9] "externalProjects dizisi nesne YA DA düz string olabilir" — her eleman yalnız bir yol

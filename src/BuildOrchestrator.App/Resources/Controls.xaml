@@ -755,15 +755,19 @@
     ayraç/caps-başlık görünümünü paylaşır (§9: "Kart yapısı katmanlarla birebir aynı"). Bu STİLLER genel bir DS
     bileşeni DEĞİLDİR (yalnız Settings diyaloğunun iç düzenine ait) ama uygulamanın TEK kontrol-görünüm kaynağı
     Controls.xaml olduğundan (dosya başı yorumu) buraya, açıkça "Ds.Settings.*" adlarıyla ayrı bir blokta
-    eklenir — iki bölümden KULLANILIR, iki kopya YAZILMAZ (CLAUDE.md "kopya YASAK"). Değerler ÖNCEDEN
-    SettingsDialog.xaml'da inline yazılıydı (LAYERS'ın tek tüketicisiydi); burada yalnız TAŞINDI, DEĞİŞMEDİ.
+    eklenir — iki bölümden KULLANILIR, iki kopya YAZILMAZ (CLAUDE.md "kopya YASAK"). Değerlerin ÇOĞU ÖNCEDEN
+    SettingsDialog.xaml'da inline yazılıydı (LAYERS'ın tek tüketicisiydi) ve buraya TAŞINDI; TEK istisna
+    ayracın margin'i — orada 18/18 olarak kayıtlıydı, prototipten (18/16) sessiz bir sapmaydı ve bu tur
+    düzeltildi (bkz. aşağıdaki not).
   -->
 
-  <!-- Bölüm ayracı — 1px border-subtle, üstte 18 altta 18 boşluk (mevcut Workspace→Layers ayracının BİREBİR
-       değeri; K5 brief'in prototip ölçüsü 18/16'dır ama BURADAKİ değer ZATEN kayıtlı kod kararıdır, kod kazanır). -->
+  <!-- Bölüm ayracı — 1px border-subtle, üstte 18 altta 16 boşluk (BuildApp.jsx:1833
+       `margin: '18px 0 16px'`, birebir). [review fix — Bulgu 2] ÖNCEKİ turda bu değer sessizce 18/18'e
+       yuvarlanmıştı ("kod kararı" diye kayıtlıydı, ama gerekçesiz ve doküman/kod uyuşmazlığı raporlanmamıştı —
+       CLAUDE.md ihlali) — ruling: prototip kazanır, KURAL budur (sapma notu değil). -->
   <Style x:Key="Ds.Settings.SectionDivider" TargetType="Border">
     <Setter Property="Height" Value="1" />
-    <Setter Property="Margin" Value="0,18,0,18" />
+    <Setter Property="Margin" Value="0,18,0,16" />
     <Setter Property="Background" Value="{DynamicResource Brush.BorderSubtle}" />
   </Style>
 

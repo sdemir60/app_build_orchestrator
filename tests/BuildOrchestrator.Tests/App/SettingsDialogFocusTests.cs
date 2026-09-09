@@ -274,6 +274,29 @@ public class SettingsDialogFocusTests
         Assert.Equal(96.0, select.Width);
         Assert.Equal(96.0, select.ActualWidth);
         Assert.Equal(AccessibilityNames.ExternalProjectSource, AutomationProperties.GetName(select));
+
+        // [review fix — küçük madde 3] Path input'unun UIA adı da doğrulanır (Source'unki gibi) — yalnız
+        // watermark'ın "doğru göründüğü" değil, AutomationProperties.Name'in GERÇEKTEN o sabite ÇÖZÜLDÜĞÜ.
+        var pathInput = DsResources.Descendants(card0).OfType<TextBox>().Single();
+        Assert.Equal(AccessibilityNames.ExternalProjectPath, AutomationProperties.GetName(pathInput));
+    }
+
+    /// <summary>[review fix — Bulgu 2] Bölüm ayracı prototipin ÖLÇÜSÜNÜ taşır: üst 18 / alt 16
+    /// (BuildApp.jsx:1833 <c>margin: '18px 0 16px'</c>). Önceki turda paylaşılan stil sessizce 18/18'e
+    /// yuvarlanmıştı — ruling prototip kazanır. İki ayraç da (Workspace→External, External→Layers) AYNI
+    /// <c>Ds.Settings.SectionDivider</c> stilini paylaştığı için TEK assertion ikisini de kapsar.</summary>
+    [StaFact]
+    public void Section_dividers_use_an_eighteen_top_sixteen_bottom_margin()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var dividerStyle = dialog.FindResource("Ds.Settings.SectionDivider");
+        var dividers = DsResources.RealizedObjects(dialog).OfType<Border>()
+            .Where(b => ReferenceEquals(b.Style, dividerStyle)).ToList();
+
+        Assert.Equal(2, dividers.Count); // Workspace→External + External→Layers — ikisi de gerçekten realize oldu
+        Assert.All(dividers, b => Assert.Equal(new Thickness(0, 18, 0, 16), b.Margin));
     }
 
     /// <summary>[K5] <paramref name="row"/> bilerek <c>object</c>'tir: hem <see cref="LayerRowViewModel"/> hem
