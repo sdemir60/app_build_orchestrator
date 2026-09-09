@@ -89,18 +89,23 @@
             <Border Style="{DynamicResource Ds.Settings.SectionDivider}" />
 
             <!-- ============================ EXTERNAL PROJECTS (design v1.14.0 §9) ============================
-                 Workspace ile Layers ARASINDA: harici projeler derleme sırasının BAŞINDA olduğu için katmanlardan
-                 önce durur — bölümün KONUMU bu sırayı anlatır (§9: "Sıra kasıtlı"). Kart = yol (klasör / .sln /
-                 .csproj) + kaynak (Git / TFVC). Diyalog yolu TARAMAZ: liste Save'de UiState'e yazılır
-                 (SettingsDraftViewModel.CommitAsync) ve her Sync/Build komutuyla motora gider; hedef, ad ve
-                 çalışma kopyası kökü Core'da her koşuda yoldan çözülür (ARCHITECTURE §10.6). -->
+                 Workspace ile Layers ARASINDA: kartlar kökü genişletir, katmanlar ise bulunanları gruplar —
+                 bölümün konumu bu ilişkiyi anlatır. Kart = yol (klasör / .sln / .csproj) + kaynak (Git / TFVC).
+                 Diyalog yolu TARAMAZ: liste Save'de UiState'e yazılır (SettingsDraftViewModel.CommitAsync) ve
+                 her Sync/Build komutuyla motora gider; taranan projeler, adları ve çalışma kopyası kökü Core'da
+                 her koşuda yeniden çözülür (ARCHITECTURE §10.6).
+                 [DEĞİŞEN KURAL] Açıklama metni bir tur boyunca "They are built before everything else, in this
+                 order" diyordu; o tur harici projeyi grafın DIŞINDA, listeye göre sıralanan ayrı bir faz olarak
+                 ele alıyordu. Artık aynı grafa giriyorlar: sıra bağımlılıklardan gelir, kart sırası yalnız
+                 çalışma kopyalarının tazelenme sırasıdır. Vurgulanan sözcük de o cümleyle birlikte değişti
+                 ("before" → "same"), 3-Run yapısı ve tipografisi korunur (§9). -->
             <TextBlock Text="EXTERNAL PROJECTS" Margin="0,0,0,6" Style="{DynamicResource Ds.Settings.CapsHeading}" />
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
                        FontSize="{DynamicResource FontSize.Xs}"
                        Foreground="{DynamicResource Brush.TextDim}"><Run
-                       Text="Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. The working copy root is found from the path upwards. They are built " /><Run
-                       Text="before" FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextSecondary}" /><Run
-                       Text=" everything else, in this order; the rest follows the layers below." /></TextBlock>
+                       Text="Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. Everything found under a card joins the " /><Run
+                       Text="same" FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextSecondary}" /><Run
+                       Text=" project list and graph, so the build order comes from the dependencies; card order is the order their working copies are refreshed in." /></TextBlock>
 
             <!-- Boş durum — Layers'ın PAYLAŞTIĞI şablon (Ds.Settings.EmptyState*), yalnız metin ve
                  görünürlük-bağlama yolu (Externals.Count) farklı. -->

@@ -40,12 +40,13 @@ rebuilt, in what order, and how do we run that safely.**
 | Killing the app kills the whole build tree | Nested job objects with `KILL_ON_JOB_CLOSE`, no breakaway (§4) |
 | Stopping a run never leaves a torn DLL | Graceful stop drains at project boundaries; no compiler server lives outside the job (§4.5) |
 | The build order is deterministic | Order-preserving ready-set scheduler; no hashing, no randomness (§8.2) |
-| An external project is never built over the user's uncommitted work | The dirty gate cancels the run before it starts; updates are `--ff-only` and never `pull` (§10.6) |
+| An external working copy is never updated over the user's uncommitted work | The dirty gate cancels the run before it starts; updates are `--ff-only` and never `pull`, and they only run when the user leaves them on (§10.6) |
 
 ### 1.3 Non-goals (v1)
 
-Multi-repo *analysis* — one repository is scanned, graphed and made incremental at a time; external projects
-(§10.6) are updated and compiled ahead of it but never enter that graph. Headless/CLI operation. Light theme. Command palette. Onboarding flow. MSIX packaging.
+Multi-repo *history* — one repository's git history drives the target sha, the branch and the worktree pool.
+Additional **external roots** (§10.6) are scanned into the same graph and built alongside, but they contribute
+no branch, no target sha and no worktree. Headless/CLI operation. Light theme. Command palette. Onboarding flow. MSIX packaging.
 `packages.config` migration. Build-output isolation per branch. Graph editing. Attaching to an already-running
 Visual Studio instance via ROT/DTE (the "Open in Visual Studio" action resolves `devenv.exe` through `vswhere`
 — once per session, off the UI thread, since the query can take seconds and its timeout is 30 — and opens the
@@ -293,13 +294,16 @@ project list. Parallelism and perf mode are separate fields on purpose: the Supe
 from the perf name but never recomputes the worker count, which the App has already resolved from the same
 table.
 
-Both `startRun` and `syncWorkspace` carry the **external project list** (§10.6) — the projects the user
-ordered in Settings, in that order. Each entry is exactly what a Settings card holds: a path — a folder, a
-solution or a project file — and the source the user picked, Git or TFVC. The build target, the display name
-and the working-copy root are deliberately absent, because they are resolved from the path on every run and
-can therefore never go stale. The field is last and defaults to null, so lines written before external projects
-existed still parse; the App sends null rather than an empty list, so a setup without externals writes the same
-line it always did.
+Both `startRun` and `syncWorkspace` carry the **external root list** (§10.6) — the roots the user listed in
+Settings. Each entry is exactly what a Settings card holds: a path — a folder, a solution or a project file —
+and the source the user picked, Git or TFVC. Everything else about a root (which projects it contains, their
+names, the working-copy root above them) is resolved from that path on every run and therefore can never go
+stale. The field is last and defaults to null, so lines written before external roots existed still parse; the
+App sends null rather than an empty list, so a setup without them writes the same line it always did.
+
+`startRun` additionally carries **`updateExternals`**, which says whether this run may touch those working
+copies at all. It defaults to **true**, so a line written before the flag existed keeps updating — and when it
+is false the engine runs no version-control command and applies no dirty gate.
 
 Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
 camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
@@ -421,7 +425,7 @@ Not every `HintPath` resolves inside the repository, so each one is classified i
 |---|---|
 | `Edge` | Resolved to a producing project in this repository — becomes a graph edge |
 | `ExternalThirdParty` | Path rule identifies a package or an installed product |
-| `ExternalOsysPlatform` | A sibling-repository platform binary — legitimate external input, not tracked (v1 is single-repo) |
+| `ExternalOsysPlatform` | A sibling-repository platform binary. Registering that sibling as an external root (§10.6) turns these into real edges, because the producer map then spans both roots |
 | `Unclassified` | Neither — emitted as a warning line |
 
 The reported health metric is `Edge / (Edge + Unclassified)`: external classes are legitimate inputs and are
@@ -443,10 +447,6 @@ ready.
 
 Layers are optional and **empty by default** — with no patterns configured the list is a single flat list in
 build order.
-
-External projects (§10.6) occupy a reserved layer named `External` at index −1, which is why they always sit
-above every configured layer and can never collide with one. That layer is not configurable and no regex
-produces it — it is attached when the node is built.
 
 A layer definition is an ordered `(Order, Regex, Name)` triple. `Order` does double duty: it is the match
 priority (lowest first, first match wins) and it is the assigned layer index. The regex is matched against the
@@ -562,9 +562,10 @@ commit, the last result, the last run timestamp, the last branch, the last durat
 success was linked against a failed dependency (§8.3) and the signature at
 which this project's cycle last failed to converge (§8.8). That last field is deliberately *not* folded into
 the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a
-frozen upstream baseline — a signature that was never built would be taken for a clean one. An external project (§10.6) has a record too, keyed by its **build target** rather than a csproj: its
-signature is `configuration + version-control kind + revision`, and the built-commit slot carries that
-revision — a git sha, or a TFVC changeset written as `C48213`. It is written by
+frozen upstream baseline — a signature that was never built would be taken for a clean one. A project from an
+external root (§10.6) has the same record under the same key shape, with one difference: its built-commit and
+last-branch slots stay empty, because the repository's HEAD and branch describe a different repository and
+printing one beside an external row would be a lie. It is written by
 a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every project
 completes. Readers open with `FileShare.Delete` so they cannot block the writer's rename, and a transient
 sharing violation is retried a bounded number of times. A corrupt file never throws — it falls back to
@@ -720,18 +721,21 @@ Planning is entirely Core's work; the Supervisor's composition root only wires i
 (`Build`/`Rebuild`) the sequence is:
 
 ```
-prepare external projects (§10.6)                 ← before everything: a run that a dirty external
-                                                     will cancel should not open a worktree first
+update external working copies (§10.6)            ← before everything: a fast-forward can bring new
+                                                     project files, and a run a dirty external will
+                                                     cancel should not open a worktree first
   → prepare workspace (in-place or worktree)      ← the scan and the signature must see the same
-  → scan (once) → evaluate (cached) → producer map   resolved root
+  → scan (once, main root + every external root)     resolved root
+  → evaluate (cached) → producer map
   → edges → solution map → topological order → BuildPlan
   → rebase identities onto the main root          ← before the signature, not after
   → (Build only) incremental pass: per-project signature + willBuild
-  → RunPlan { plan, solutionRefs, incremental, buildPathById, externals }
+  → RunPlan { plan, solutionRefs, incremental, buildPathById }
 ```
 
-The external phase is skipped entirely by a `Cycles` run, which is a repair pass over the main repository's
-strongly connected components and has no business updating anyone's working copy.
+The update step is skipped when the user has turned it off and by a `Cycles` run, which is a repair pass over
+existing strongly connected components and has no business updating anyone's working copy. The *scan* still
+covers the external roots in every mode, so the graph a Cycles run repairs is the same graph a Build sees.
 
 **Identity is logical; the path is physical.** A project's id in this codebase is its full csproj path, so a
 build of another branch — which scans a pool worktree — would give the same project a completely different
@@ -792,14 +796,6 @@ Worktrees are prepared at **Build** time, not at branch selection — branch sel
 
 The Supervisor's coordinator owns one run at a time; a `startRun` while one is active answers
 `error(runInProgress)`.
-
-**External projects first.** When the plan carries externals (§10.6) they are compiled *before any worker is
-spawned*, one at a time, in the order the user listed them — two external solutions compiling at once would
-fight over shared package folders and post-build copy events. An external that is up to date is reported as a
-skip and never invoked. If one **fails, the run is over**: the remaining externals are not attempted, no
-worker is ever created, and the main projects are reported as queued. A half-finished run here is worse than
-none, because the main projects would link against a stale external DLL, go green, and persist a signature
-that makes the next build skip them. A graceful stop is honoured between two externals as well.
 
 **Worker loop.** N workers drive one scheduler instance. `TryDispatch == false` does **not** mean "the run is
 over" — it means "no ready work right now", because dependencies may still be compiling. A worker that gets
@@ -958,21 +954,10 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
   eliminate. Correctness was chosen over the 2.9×; revisiting it requires a mechanism that closes the emit
   window, not just a faster number.
 - No `-p:OutDir` and no `-p:OutputPath` is ever passed (§9.4).
-- **External projects (§10.6) use a different list**, and every difference is deliberate:
-
-  ```
-  <target> -t:restore -p:RestorePackagesConfig=true -nologo      ← always, never conditional
-  <target> -t:Build -p:Configuration=<cfg>
-           -p:UseSharedCompilation=false -nodeReuse:false
-           -clp:Summary -nologo
-  ```
-
-  `BuildProjectReferences` is **not** disabled: an external solution has to build its own references and run
-  its own post-build copy events, because that is how its outputs reach the places the main repository reads
-  them from through `HintPath`. `obj` is not redirected either — isolation belongs to the worktree pool, and
-  an external working copy does not live there. Restore is unconditional because this tool cannot know the
-  package state of a repository it does not analyse; a missing package would otherwise surface as a cryptic
-  compile error before the main build even starts.
+- Projects from an external root (§10.6) get **exactly this list**. They are ordinary nodes whose
+  dependencies this tool builds itself, so nothing about the contract changes. The single exception is `obj`:
+  isolation belongs to the worktree pool and an external working copy does not live there, so even a worktree
+  run leaves an external project's `obj` alone.
 
 Arguments are passed through `ProcessRunner`'s `ArgumentList` — manual string concatenation is prohibited — and
 `UseShellExecute` is false everywhere. `cmd.exe`/PowerShell is never used as an intermediary. Where a command
@@ -1030,7 +1015,7 @@ The complete set of git invocations in the codebase:
 | `worktree add --detach <path> <sha>` · `worktree remove --force <path>` | pool worktrees only |
 | `reset --hard <sha>` | **cwd is a pool worktree**, never the main repository |
 
-| `merge-base --is-ancestor` · `merge --ff-only` | **external working copies only** (§10.6) |
+| `merge-base --is-ancestor` · `merge --ff-only` | **external working copies only**, and only when updates are on (§10.6) |
 
 `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash` and `clean` do not appear anywhere. `merge`
 appears exactly once, as `--ff-only`, and only inside `Core/Externals` — the main repository never reaches it.
@@ -1098,63 +1083,73 @@ Branch slugs replace `/`, `\` and `: * ? " < > |` and control characters with `-
 and **throw rather than fall back** if the result is empty or `.`/`..`. A separate validator rejects absolute
 paths, separators and `..` for any name that will become a directory segment.
 
-### 10.6 External project version control
+### 10.6 External roots
 
-Some projects an OSYS build depends on live **outside** the main repository — customer-specific components
-kept in their own git repositories or TFVC workspaces. The user lists them in Settings, in the order they must
-be built; every run updates them from their own version control and compiles the ones that changed, before the
-main repository work begins.
+Some projects an OSYS build depends on live **outside** the repository root — customer-specific components
+kept in their own git repositories or TFVC workspaces. The user lists them in Settings; every Sync scans them
+into the same graph as the repository's own projects, and every Build updates their working copies before
+compiling.
 
-A card is a **path and a source**. The path may be a folder, a `.sln` or a `.csproj`: a file is its own build
-target; a folder resolves to the single solution it holds, or failing that to the single project. Anything
-else — nothing buildable, or more than one solution — is not guessed at: Sync reports it as a warning and
-Build refuses to start until the path points at the file to build. The source is the user's choice, Git or
-TFVC, never detected. The working-copy root is found by walking up from the target's folder to the first
-marker of the *selected* kind — `.git` (a directory in a normal clone, a file in a linked worktree) for Git,
-`$tf` for a TFVC local workspace — and only that kind is looked for, so a `$tf` workspace nested inside a git
-clone is read as TFVC when the user said TFVC and as part of the clone when they said Git. Neither the target
-nor the root is ever persisted — they are re-resolved on every run, which is why moving a project or
-recreating its working copy needs no settings change.
+**A card is a path and a source.** The path may be a folder, a `.sln` or a `.csproj`. A folder is scanned
+recursively exactly the way the repository root is; a solution contributes only the projects it lists, because
+scanning its folder would drag in siblings it deliberately excludes; a project file contributes itself. The
+source is the user's choice, Git or TFVC, and is never detected. Anything that resolves to no project at all —
+a path that is gone, an empty folder, a file that is neither — is reported: Sync warns and carries on, Build
+refuses to start. Letting a configured root silently vanish would produce a green build linked against
+whatever stale DLLs were lying around.
 
-**Git externals** are updated with `fetch` + `merge --ff-only`, never `pull`. A pull would produce a merge
-commit or a rebase depending on configuration, and either one rewrites the user's repository on the tool's
-behalf. The flow is three typed steps instead: the dirty gate, a ref-only fetch, and a fast-forward taken only
-when `merge-base --is-ancestor` says one is genuinely possible. If it is not, the working copy is left exactly
-as it was.
+**Everything else is derived, nothing is stored.** The project set, the display names and the working-copy
+root are resolved from the path on every run, so moving a project or recreating its working copy needs no
+settings change. The working-copy root is found by walking up from the path to the first marker of the
+*selected* kind — `.git` (a directory in a normal clone, a file in a linked worktree) for Git, `$tf` for a
+TFVC local workspace. Only that kind is looked for, so a `$tf` workspace nested inside a git clone reads as
+TFVC when the user said TFVC and as part of the clone when they said Git. If no working copy of that kind sits
+above the path, the projects are still built — after a warning naming the kind that was looked for.
 
-**TFVC externals** are updated with `tf vc get`, and `tf.exe` is resolved through the same `vswhere` search
-that finds `MSBuild.exe` — lazily, only when a TFVC external is actually present, so git-only users never need
-Team Explorer. No decision reads localized tool output: pending changes are read from the XML structure of
-`tf vc status`, failures from exit codes, and the changeset from the leading digits of the first data row.
+**Once scanned, an external project is an ordinary project.** Its edges come from the same HintPath-to-producer
+map, which now spans every root, so a repository project referencing an external DLL gets a real edge and the
+order falls out of the graph rather than out of the list. It goes through the same layer assignment, the same
+scheduler, the same parallelism and the same MSBuild argument contract, and a failure propagates through the
+same dependency-issue rule. There is no external phase, no forced group and no "externals first" rule — an
+earlier design had all three, and they were wrong for the common case, where the customer project depends on
+platform output and therefore has to build *after* it.
 
-Two error classes are kept apart. Something the user has to resolve — a path that does not resolve to a
-build target, uncommitted changes, a diverged branch, a detached HEAD, a missing `tf.exe` — **cancels the run
-before it starts**; a half-finished
-run helps nobody. A transient network or credential failure only warns and the local version is built, which
-is the same posture the main repository's degraded fetch takes.
+**Updating is a separate step, and optional.** Before anything is scanned, each external working copy is
+brought up to date: `fetch` + `merge --ff-only` for git, `tf vc get` for TFVC. It runs first because a
+fast-forward can bring new project files that the scan must see, and before the worktree is prepared because a
+run that a dirty external will cancel should not pay for a worktree. `pull` is never used: it would produce a
+merge commit or a rebase depending on configuration, and either one rewrites the user's repository on the
+tool's behalf. The flow is three typed steps instead — the dirty gate, a ref-only fetch, and a fast-forward
+taken only when `merge-base --is-ancestor` says one is genuinely possible. If it is not, the working copy is
+left exactly as it was.
 
-A path with no working copy of the selected kind above it is built as-is, after a warning naming the kind that
-was looked for: there is nothing to update, no dirty gate to apply, and its revision is unknown — so it can
-never appear up to date and is compiled on every run.
+The `updateExternals` flag (§5) turns the whole step off. With it off no version-control command runs at all
+and **there is no dirty gate either**: nothing is going to overwrite the user's files, so their working copy is
+compiled exactly as it stands, the same way the repository's own working copy always is. A `Cycles` run skips
+the step for the same reason — it repairs strongly connected components and has no business moving anyone's
+source.
 
-**Sync only looks.** For git externals it reads the local `HEAD` and `status` — cheap, offline-tolerant
-queries — and produces a real preview; uncommitted changes there raise a warning but never block, because the
-gate that stops a run lives in Build, where the user has already decided to compile. TFVC externals stay
-hollow in Sync: their queries go to the server, and Sync must stay fast and offline-tolerant. An external that
-cannot be read — or whose path does not resolve — leaves its own row hollow, named after the last segment of
-the path, and the rest of the Sync intact.
+`tf.exe` is resolved through the same `vswhere` search that finds `MSBuild.exe`, lazily and only when a TFVC
+card is actually present, so git-only users never need Team Explorer. No decision reads localized tool output:
+pending changes come from the XML structure of `tf vc status` and failures from exit codes.
 
-The incremental decision for an external is narrower than for a main-repository project, and deliberately so.
-Because a dirty external cancels the run, every external that gets compiled is clean, and its source state is
-therefore fully described by its revision id. The signature is `configuration + kind + revision`; no files are
-hashed and there are no upstreams. An unknown revision enters the signature as a distinguishing marker that no
-real revision can collide with, so such a project never looks up to date.
+Two error classes are kept apart. Something the user has to resolve — a path that resolves to no project,
+uncommitted changes, a diverged branch, a detached HEAD, a missing `tf.exe` — **cancels the run before it
+starts**; a half-finished run helps nobody. A transient network or credential failure only warns and the local
+version is built, which is the same posture the repository's degraded fetch takes.
 
-On the wire, externals are **ordinary project nodes** placed at the head of the topology, carrying the layer
-name `External` at index −1 and a version-control badge. No new node type exists, which is why list grouping,
-the graph band and the filters carry them for free. Their revision travels in the existing built-commit slot.
-Sync's counters and its *no changes* narrative keep describing the main workspace — externals reach the UI
-through the topology and the preview instead.
+**Sync only looks.** It runs no version-control command against an external root whatsoever — it scans files,
+and that is all. This is what keeps Sync fast and offline-tolerant, and it is why the dirty gate lives in
+Build, where the user has already decided to compile.
+
+The incremental decision needs no special case either, but its *input* differs. A repository project's
+committed fingerprint is read from the git blob map that one `ls-tree` produces; an external root is not in
+that tree, and a TFVC root has no git at all. So an external project's fingerprint is hashed from the content
+of its build-affecting files on disk — the same hash primitive, the same separators, the same signature
+function. Uncommitted work is captured naturally by that, which is why external projects need no local-diff
+term and behave identically in in-place and worktree runs. The cost is reading those files on every Sync and
+Build; the repository avoids it because its blob map is already free, and external roots are small enough that
+it does not show.
 
 ---
 
@@ -1540,11 +1535,11 @@ raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two li
 against its own collection. An empty path on any card disables *Save*, the same severity as an empty layer
 name. The list starts **empty** (unlike Layers, it has no seed) and shows the same dashed empty-state box the
 Layers section uses when its own list is empty. *Add external project* appends a blank, Git-sourced card.
-The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.6): Sync shows
-the cards as rows at the top of the project list, Build updates and compiles them first. A path is only
-validated when it is used — the dialog does not scan it — so a card that points at nothing buildable is a
-warning in Sync and a refused run in Build, not a red input here; the badge on its row and the `External` group
-it sits in come from the engine's topology, not from the card.
+The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.6): Sync scans
+each card's path and the projects it finds join the graph as ordinary rows, Build updates their working copies
+first and then compiles them in dependency order. A path is only validated when it is used — the dialog does
+not scan it — so a card pointing at nothing buildable is a warning in Sync and a refused run in Build, not a
+red input here.
 
 Its width is picked the same way About's and What's new's are — for the direction each grows in, not for what
 it holds today. Settings is the one most likely to grow: it already holds the root plus layer cards with a name
@@ -1590,7 +1585,7 @@ would describe the previous list. The Sync itself is unconditional: Save does no
 decide whether to run it.
 
 The external project note is quieter than the layer one: the layer line prints on *every* Save, but the
-external one prints only when the count actually changed — `External projects → 3 — built before the
+external one prints only when the count actually changed — `External projects → 3 — scanned with the
 repository projects`, or `External projects cleared` once it drops back to zero — so a Save that only touched
 layers stays quiet about a list it did not change.
 
@@ -2667,9 +2662,9 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs | — |
-| `build-state.json` | per-project signature, commit, result, duration, non-convergent cycle signature; external projects share the file, keyed by build target (§7.5) | falls back to empty |
+| `build-state.json` | per-project signature, commit, result, duration, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5) | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, external projects (path and source, §10.6), hotkey, autostart, tray-balloon-shown, last-seen release-notes version | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, external roots (path and source) and whether to update them (§10.6), hotkey, autostart, tray-balloon-shown, last-seen release-notes version | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 | `worktrees\` | the worktree pool | LRU pruned to 20 GiB |
 
 Autostart additionally writes one `HKCU\...\Run` value.
@@ -2836,10 +2831,10 @@ do, and how the interface works around each — useful to know before attempting
 
 ## 20. Known limits
 
-- **One repository at a time.** The scan, the graph and the incremental decision all describe a single
-  repository. External projects (§10.6) are the deliberate exception and stay outside that model: they are
-  updated and compiled ahead of the main work, in the order the user listed them, but they have no edges, no
-  dependents and no place in the graph.
+- **One repository's history at a time.** External roots (§10.6) are scanned into the same graph and built
+  with everything else, but the branch, the target sha and the worktree pool all describe the repository root
+  alone. Switching branches does not move an external working copy, and an external root's own branch is
+  whatever the user left checked out there.
 - **No build-output isolation between branches.** Only `obj` is isolated, and only in worktree mode; the shared
   `OutDir` is intentionally left alone for Visual Studio parity, so builds of different branches write to the
   same place.
@@ -2899,7 +2894,7 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Worktree name | UI / `ui-state.json` | validated as a single safe path segment | none |
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
-| External project path | Settings editor, or `ui-state.json` | resolved on every run (§10.6): the build target becomes an MSBuild argument, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
+| External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.6): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
 | `TF.exe` path | `vswhere` output, checked to exist on disk | argv element of the TFVC child process | none |
 
 Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
@@ -3087,12 +3082,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
+| Path → scannable root (folder, `.sln` or `.csproj`) merged into one workspace | `Core/Externals/ExternalWorkspaceResolver.cs` |
 | Working-copy root discovery for the selected source (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
-| Layer name and index for the external group (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
-| Path → build target resolution (folder, `.sln` or `.csproj`) and the display name | `Core/Externals/ExternalTargetResolver.cs` |
-| External signature and the will-build decision | `Core/Externals/ExternalSignature.cs`, `ExternalWillBuild.cs` |
+| The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
 | The only mutating git surface: fetch + fast-forward | `Core/Externals/ExternalGitUpdater.cs` |
-| TFVC surface: pending changes, get latest, current changeset | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
+| TFVC surface: pending changes, get latest | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
+| Content fingerprint for projects outside the repository tree | `Core/Incremental/IncrementalPlanner.cs` |
 
 **Process control and resource governance**
 
@@ -3117,7 +3112,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
-| Settings draft state (layers, external projects + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings draft state (layers, external roots + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 

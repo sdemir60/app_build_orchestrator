@@ -129,14 +129,15 @@ the running instance first — tray icon → Exit).
 1. **Configure the workspace** — on first run the project list invites you into Settings rather than opening
    a folder picker: starting takes more than one setting now. Settings opens with the repository root (the one
    thing the tool cannot run without — *Save* stays disabled while it is empty), then the optional external
-   projects, then the optional layer definitions. *Browse…* only stages the folder in the dialog; *Save* is
+   roots, then the optional layer definitions. *Browse…* only stages the folder in the dialog; *Save* is
    what applies it, and on first run it reads *Save and sync*. If you already have a settings file, *Import
    settings…* on the invitation opens the dialog with the file picker already up.
 
-   **External projects** are projects outside the repository root — each card is a path (a folder, a solution
-   or a project file) and a source, Git or TFVC — kept in the order they are meant to build, before everything
-   the repository root discovers. Cards reorder the same way layer cards do: drag the grip. What Build does
-   with them is step 4 below.
+   **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
+   or a project file) and a source, Git or TFVC. Everything found under a card joins the same project list and
+   the same graph as the repository's own projects. Cards reorder the same way layer cards do, by dragging the
+   grip; that order is the order their working copies are refreshed in, not the build order — the build order
+   comes from the dependencies. What Build does with them is step 4 below.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
@@ -157,26 +158,28 @@ the running instance first — tray icon → Exit).
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
 4. **External projects** *(optional)* — some projects a build depends on may live outside the repository. Add
-   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — the project's folder, or its `.sln` or
-   `.csproj` — and pick where it comes from, **Git** or **TFVC**. A folder is built through the single solution
-   it holds (or, failing that, its single project); if it holds several, point the path at the one to build —
-   the tool does not guess, it tells you. The working copy is found from the path upwards and nothing about it
-   is stored, so moving a project needs no edit here. Drag the grip to reorder: **top to bottom is build
-   order**.
+   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — a folder, a `.sln` or a `.csproj` — and
+   pick where it comes from, **Git** or **TFVC**.
 
-   Every Build updates these first, in that order, and compiles the ones that changed before touching the
-   repository. A git external is updated with a fetch and a fast-forward — never a `pull`, so nothing is
-   rewritten on your behalf; a TFVC external gets a `tf vc get`. **Uncommitted changes stop the run before it
-   starts**, with a line naming the project and its folder: commit, stash or shelve them and press Build
-   again. A branch that has diverged from its remote, or a path that no longer points at anything buildable,
-   stops the run the same way. A remote that cannot be reached only warns — the local version is built; so
-   does a path with no `.git` (or `$tf`) above it, which is simply built as-is. If an external fails to
-   compile, the run ends there and no repository project is built, because they would otherwise link against
-   its stale output and still go green.
+   Sync then scans that path the same way it scans the repository root. A folder contributes every project
+   under it; a solution contributes the projects it lists; a project file contributes itself. They appear in
+   the project list and the graph as ordinary rows, they are grouped by your layer patterns like everything
+   else, and a repository project that references one of their DLLs gets a **real dependency edge** — so the
+   build order comes from the graph rather than from where the card sits in the list. Everything else is
+   worked out from the path each time, so moving a project or recreating its working copy needs no edit here.
+   A path that resolves to no project at all is called out: Sync warns, Build refuses to start.
 
-   Externals appear at the top of the project list in a group called **External**, and their revision shows in
-   the same slot as the commit pair — a git sha shortened to seven characters, a TFVC changeset as `C48213`.
-   The second Build skips an external whose revision has not moved.
+   Before each Build their working copies are refreshed, in card order. A git root gets a fetch and a
+   fast-forward — never a `pull`, so nothing is rewritten on your behalf; a TFVC root gets a `tf vc get`.
+   **Uncommitted changes stop the run before it starts**, with a line naming the project and its folder:
+   commit, stash or shelve them and press Build again. A branch that has diverged from its remote stops the
+   run the same way. A remote that cannot be reached only warns and the local version is built; so does a path
+   with no `.git` (or `$tf`) above it, which is simply built as it stands.
+
+   This refresh can be turned off, and then **nothing** is fetched, merged or blocked — external projects are
+   compiled exactly as they sit on disk, the way the repository's own working copy always is. Whether they
+   changed is still worked out correctly: for external roots it is read from the files themselves rather than
+   from git, so an uncommitted edit marks the project stale just as a commit would.
 
 5. **Build / Rebuild** — from the split button and its menu:
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on a

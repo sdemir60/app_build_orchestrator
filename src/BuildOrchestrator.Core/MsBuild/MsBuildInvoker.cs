@@ -1,16 +1,13 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.MsBuild;
 
 /// <summary>Tek proje invoke isteği. It-2'de <c>BaseIntermediateOutputPath</c> HER ZAMAN null (I2-K2: in-place = default obj; obj-izolasyon It-3/worktree).</summary>
-/// <param name="ExternalTarget">[D10] Hedef ana repo DIŞINDAN gelen bir harici proje mi. Alan SONDA ve
-/// varsayılan değerlidir: mevcut çağrı yerleri bayt-bayt aynı davranır. Argüman eşlemesini invoker değil
-/// <see cref="MsBuildArguments.PlanFor"/> sahiplenir.</param>
 public sealed record MsBuildInvokeRequest(
     string ProjectId, string Configuration, string SolutionDir, bool NeedsRestore,
-    string? BaseIntermediateOutputPath = null, bool ExternalTarget = false);
+    string? BaseIntermediateOutputPath = null);
 
 public sealed record MsBuildInvokeResult(int ExitCode, long DurationMs, bool TimedOut, bool Killed);
 

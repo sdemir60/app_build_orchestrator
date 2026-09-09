@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
@@ -30,9 +30,7 @@ public sealed record WorkspaceServices(
         root => new SyncWorkspaceService(
             new WorkspaceScanner(), new CsprojEvaluator(),
             new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json")),
-            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
-            // [Harici projeler] Sync'in salt-okur harici incelemesi. Komutun listesi boşsa hiç çalışmaz.
-            new ExternalSyncInspector(new ProcessRunner())),
+            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot)),
         root => new GitService(new ProcessRunner(), root),
         root => new WorktreeManager(new ProcessRunner(), root, poolRoot));
 }

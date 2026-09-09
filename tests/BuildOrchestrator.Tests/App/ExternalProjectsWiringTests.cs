@@ -74,6 +74,38 @@ public class ExternalProjectsWiringTests
     }
 
     [Fact]
+    public async Task The_run_command_asks_for_an_update_by_default()
+    {
+        // Varsayılan AÇIK: kullanıcı kapatmadıkça her Build harici çalışma kopyalarını günceller.
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = NewVm(engine);
+        VmTopology.Seed(run);
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+        run.ExternalProjects = Externals(Mail);
+
+        await run.BuildCommand.ExecuteAsync(null);
+
+        Assert.True(Assert.Single(sent.OfType<StartRunCommand>()).UpdateExternals);
+    }
+
+    [Fact]
+    public async Task Turning_the_update_off_is_carried_to_the_engine()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = NewVm(engine);
+        VmTopology.Seed(run);
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+        run.ExternalProjects = Externals(Mail);
+        run.UpdateExternals = false;
+
+        await run.BuildCommand.ExecuteAsync(null);
+
+        Assert.False(Assert.Single(sent.OfType<StartRunCommand>()).UpdateExternals);
+    }
+
+    [Fact]
     public async Task Saving_settings_applies_the_list_before_the_single_sync()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);

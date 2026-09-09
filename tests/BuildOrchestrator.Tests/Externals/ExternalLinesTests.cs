@@ -15,32 +15,16 @@ public class ExternalLinesTests
         => Assert.Equal("Updating external 'Mail'", PlanProgressLines.UpdatingExternal("Mail"));
 
     [Fact]
-    public void Up_to_date_line_names_the_project()
-        => Assert.Equal("External 'Mail' is up to date", PlanProgressLines.ExternalUpToDate("Mail"));
-
-    [Fact]
     public void A_degraded_update_says_the_local_version_is_being_built()
         => Assert.Equal(
             "warning: external 'Mail' could not be updated — building the local version (no route to host)",
             PlanProgressLines.ExternalUpdateDegraded("Mail", "no route to host"));
 
     [Fact]
-    public void The_dirty_warning_says_what_the_user_has_to_do()
+    public void A_path_that_contributes_no_projects_is_reported_with_the_resolver_sentence()
         => Assert.Equal(
-            "warning: external 'Mail' has uncommitted changes — Build will refuse to run until they are committed or shelved",
-            PlanProgressLines.ExternalDirtyWarning("Mail"));
-
-    [Fact]
-    public void An_unresolvable_path_is_reported_with_the_resolver_sentence()
-        => Assert.Equal(
-            "warning: external 'Mail': the path was not found — state unknown",
-            PlanProgressLines.ExternalUnresolved("Mail", "the path was not found"));
-
-    [Fact]
-    public void An_unreadable_working_copy_is_reported_as_unknown_state()
-        => Assert.Equal(
-            "warning: external 'Mail': state unknown (not a git repository)",
-            PlanProgressLines.ExternalStateUnknown("Mail", "not a git repository"));
+            "warning: external 'Mail': the path was not found — no projects from it will be built",
+            PlanProgressLines.ExternalNotScanned("Mail", "the path was not found"));
 
     [Theory]
     [InlineData(VcsKind.Git, "git")]

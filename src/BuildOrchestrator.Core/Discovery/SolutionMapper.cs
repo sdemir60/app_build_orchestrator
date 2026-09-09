@@ -14,6 +14,27 @@ public static partial class SolutionMapper
     [GeneratedRegex(@"Project\(""\{[^}]*\}""\)\s*=\s*""[^""]*"",\s*""([^""]+\.csproj)""", RegexOptions.IgnoreCase)]
     private static partial Regex ProjectLine();
 
+    /// <summary>
+    /// Bir <c>.sln</c>'in listelediği, DİSKTE VAR OLAN csproj'ların tam yolları — <see cref="MapRefs"/> ile AYNI
+    /// satır regex'i (kopya YASAK). Harici bir çalışma alanı kökü doğrudan bir solution ile verildiğinde
+    /// (bkz. <c>Core/Externals/ExternalWorkspaceResolver</c>) taranacak proje kümesi budur: klasörü taramak
+    /// solution'a dahil OLMAYAN kardeş projeleri de içeri alırdı.
+    /// <para>Var olmayan girişler sessizce elenir — bir solution silinmiş bir projeyi listelemeye devam
+    /// edebilir ve bu, kökü tümden kullanılamaz yapmamalıdır. Determinizm [D8]: OrdinalIgnoreCase sıralı.</para>
+    /// </summary>
+    public static IReadOnlyList<string> ProjectsOf(string slnPath)
+    {
+        ArgumentNullException.ThrowIfNull(slnPath);
+
+        string full = Path.GetFullPath(slnPath);
+        string slnDir = Path.GetDirectoryName(full)!;
+        return [.. ProjectLine().Matches(File.ReadAllText(full))
+            .Select(m => Path.GetFullPath(Path.Combine(slnDir, m.Groups[1].Value)))
+            .Where(File.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)];
+    }
+
     /// <summary>csprojId → onu içeren solution'lar (ad + tam yol), Name'e göre OrdinalIgnoreCase sıralı. [T32]</summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> MapRefs(
         IReadOnlyList<string> slnPaths, IReadOnlyList<string> csprojPaths)

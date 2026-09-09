@@ -158,11 +158,11 @@ public static class VcsKinds
 /// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi VCS'inden güncellenip derlenen bir proje (ör. müşteriye
 /// özel mail/OCR bileşenleri). Ayarlar'daki bir kartın birebir karşılığı: bir yol ve bir kaynak.
 ///
-/// <para><b>Yol bir klasör, bir <c>.sln</c> ya da bir <c>.csproj</c> olabilir</b> (design v1.14.0 §9); derlenecek
-/// hedef, görünen ad ve çalışma kopyasının kökü her koşuda ondan yeniden çözülür
-/// (<c>Core/Externals/ExternalTargetResolver</c>, <c>VcsDetector</c>) — hiçbiri persist edilmez, böylece
-/// bayatlayamazlar. Kimlik çözülen hedef dosyadır: build-state anahtarı, IPC ProjectId'si, proje logu ve liste
-/// satırının Id'si odur.</para>
+/// <para><b>Yol bir klasör, bir <c>.sln</c> ya da bir <c>.csproj</c> olabilir</b> (design v1.14.0 §9). Bir KÖKtür:
+/// altındaki projeler her koşuda yeniden taranır ve ana taramayla birleşir
+/// (<c>Core/Externals/ExternalWorkspaceResolver</c>); çalışma kopyasının kökü de o yoldan yukarı yürünerek
+/// bulunur (<c>VcsDetector</c>). Hiçbiri persist edilmez, böylece bayatlayamazlar — bulunan her proje bundan
+/// sonra sıradan bir projedir, kimliği kendi csproj yoludur.</para>
 /// </summary>
 /// <param name="Path">Klasör, solution ya da proje dosyası — kullanıcının yazdığı gibi.</param>
 /// <param name="Vcs">Çalışma kopyasının sürüm kontrol türü — kullanıcının seçimi; tespit edilmez.</param>
