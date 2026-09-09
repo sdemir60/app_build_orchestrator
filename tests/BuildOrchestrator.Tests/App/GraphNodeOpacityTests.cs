@@ -57,14 +57,57 @@ public class GraphNodeOpacityTests
         => Assert.Equal(0.13, Op(GraphStatus.Skipped, GraphRunPhase.Running), 6);
 
     /// <summary>AYIRT EDİCİ: seçim koşu kararını EZER — odak kümesi tam opak, geri kalan HER ŞEY 0.1 (§2.3).
-    /// Sıra ters olsaydı koşarken seçilen bir queued düğüm 0.13'te kalırdı.</summary>
+    /// Sıra ters olsaydı koşarken seçilen bir queued düğüm 0.13'te kalırdı.
+    ///
+    /// <para><b>[DEĞİŞTİ — v1.13.2]</b> Eski iddia burada ikinci satırda <c>Building, focus:false → 0.1</c>
+    /// örneğiyle "building de dahil, odak dışı HER statü söner" diyordu. Tasarım v1.13.2 building'e bir
+    /// İSTİSNA getirdi (bkz. <see cref="A_live_building_node_stays_fully_opaque_outside_focus_but_only_while_running"/>)
+    /// — bu testteki örnek istisnaya TAKILMAYAN bir statüyle (Queued) değiştirildi; "odak dışı 0.1'e iner"
+    /// genel iddiası geçerliliğini KORUYOR, yalnız artık building bir muafiyet taşıyor.</para>
+    /// </summary>
     [Fact]
     public void A_selection_overrides_the_run_system_entirely()
     {
         Assert.Equal(1.0, Op(GraphStatus.Queued, GraphRunPhase.Running, selection: true, focus: true), 6);
-        Assert.Equal(0.1, Op(GraphStatus.Building, GraphRunPhase.Running, selection: true, focus: false), 6);
+        Assert.Equal(0.1, Op(GraphStatus.Queued, GraphRunPhase.Running, selection: true, focus: false), 6);
         Assert.Equal(0.1, Op(GraphStatus.Succeeded, GraphRunPhase.Idle, selection: true, focus: false), 6);
     }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — v1.13.2] Seçim dimlemesinde bir İSTİSNA var: o an DERLENEN (building, koşu
+    /// sürerken) düğüm odak kümesinde olmasa da tam opak kalır.
+    ///
+    /// <para><b>Eski davranış:</b> odak dışı HER statü (building dahil) 0.1'e
+    /// (<see cref="GraphNodeOpacity.Unfocused"/>) iniyordu. <b>Değişme gerekçesi</b> (tasarım v1.13.2):
+    /// "Beads halkası amber dönerken gövdenin 0.1'de kalması 'derlenmiyor' gibi okunuyordu." Prototip:
+    /// <c>const live = running &amp;&amp; s === 'building'; … focus.has(p.name) || live ? 1 : 0.1</c>
+    /// (BuildApp.jsx:545,562).</para>
+    /// </summary>
+    [Fact]
+    public void A_live_building_node_stays_fully_opaque_outside_focus_but_only_while_running()
+        => Assert.Equal(1.0, Op(GraphStatus.Building, GraphRunPhase.Running, selection: true, focus: false), 6);
+
+    /// <summary>Kontrol: istisna YALNIZ Building'edir — aynı koşulda başka bir statü (Queued) hâlâ odak
+    /// dışında 0.1'e iner.</summary>
+    [Fact]
+    public void A_non_building_node_still_dims_outside_focus()
+        => Assert.Equal(0.1, Op(GraphStatus.Queued, GraphRunPhase.Running, selection: true, focus: false), 6);
+
+    /// <summary>Kontrol: istisna KOŞU SÜRERKEN'e özeldir (<c>running &amp;&amp; s === 'building'</c>,
+    /// BuildApp.jsx:545) — run bitmişse (idle) building bir düğüm de odak dışında yine söner. Statik bir
+    /// "statü building ise muaf" kuralı olsaydı bu test KIRMIZI verirdi.</summary>
+    [Fact]
+    public void The_exception_requires_the_run_to_still_be_active()
+        => Assert.Equal(0.1, Op(GraphStatus.Building, GraphRunPhase.Idle, selection: true, focus: false), 6);
+
+    /// <summary>Kontrol: istisna YALNIZ <c>hasSelection</c> dalına aittir — filtre dalında building için
+    /// muafiyet YOK (prototipte filtre satırında <c>live</c> istisnası yok, BuildApp.jsx:563).</summary>
+    [Fact]
+    public void The_filter_branch_does_not_grant_the_live_building_exception()
+        => Assert.Equal(0.1, GraphNodeOpacity.Resolve(
+            GraphStatus.Building, GraphRunPhase.Running,
+            hasSelection: false, inFocus: false, hovered: false,
+            hasFilter: true, inFilter: false), 6);
 
     /// <summary>Hover her şeyi ezer — soluk moddayken bile opaklık 1 (§2.3 "Hover").</summary>
     [Fact]

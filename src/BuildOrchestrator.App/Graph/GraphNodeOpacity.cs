@@ -87,6 +87,13 @@ public static class GraphNodeOpacity
 
     /// <summary>
     /// Bir düğümün NİHAİ opaklığı. Sıra prototiple birebirdir (BuildApp.jsx:421-429).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2]</b> Seçim dimlemesinde bir İSTİSNA var: o an DERLENEN (building,
+    /// koşu sürerken) düğüm odak kümesinde olmasa da tam opak kalır. <b>Eski davranış:</b> odak dışı HER
+    /// statü (building dahil) <see cref="Unfocused"/>'a (0.1) iniyordu. <b>Değişme gerekçesi</b> (tasarım
+    /// v1.13.2): "Beads halkası amber dönerken gövdenin 0.1'de kalması 'derlenmiyor' gibi okunuyordu."
+    /// İstisna YALNIZ <paramref name="hasSelection"/> dalına aittir — <paramref name="hasFilter"/> dalında
+    /// YOK (prototipte filtre satırında <c>live</c> istisnası yok, BuildApp.jsx:545,562-563).</para>
     /// </summary>
     /// <param name="status">Düğümün statüsü.</param>
     /// <param name="phase">Koşu sürüyor mu.</param>
@@ -102,7 +109,9 @@ public static class GraphNodeOpacity
         double opacity = Full;
         if (hasSelection)
         {
-            opacity = inFocus ? Full : Unfocused;
+            // [DEĞİŞEN KURAL — v1.13.2] bkz. yukarıdaki XML doc — building istisnası.
+            bool live = phase == GraphRunPhase.Running && status == GraphStatus.Building;
+            opacity = inFocus || live ? Full : Unfocused;
         }
         else if (hasFilter)
         {
