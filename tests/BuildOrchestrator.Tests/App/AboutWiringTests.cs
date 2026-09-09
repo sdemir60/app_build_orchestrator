@@ -29,11 +29,16 @@ public class AboutWiringTests
 
     // ---------------------------------------------------------------- title bar butonu
 
-    /// <summary>Buton gear'ın SAĞINDA, aynı grupta durur: grup kullanım sıklığı azalan sırada dizilir
-    /// (layout &gt; settings &gt; about) ve Windows/Office geleneğinde Help/About uygulama komutlarının en
-    /// sonundadır.</summary>
+    /// <summary>Buton AYNI grupta durur: grup kullanım sıklığı azalan sırada dizilir (layout &gt; settings &gt;
+    /// what's new &gt; about) ve Windows/Office geleneğinde Help/About uygulama komutlarının en sonundadır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.1, D4/T8]</b> ESKİ İDDİA: info gear'ın HEMEN sağındaydı
+    /// (aralarında başka buton yoktu). v1.13.0 gear ile ⓘ arasına sparkle butonunu (What's new) soktu — info
+    /// artık gear'ın DEĞİL sparkle'ın hemen sağındadır. Grup sırasının TAM listesi
+    /// <c>NotesDialogWiringTests.The_notes_button_sits_between_the_gear_and_the_info_button</c>'da pinlidir;
+    /// burada yalnız info'nun kendi komşuluğu (gear'a göre +2) yerel olarak doğrulanır.</para></summary>
     [StaFact]
-    public void The_info_button_sits_immediately_to_the_right_of_the_gear()
+    public void The_info_button_sits_two_slots_to_the_right_of_the_gear_with_the_notes_button_between()
     {
         using var temp = new TempDir();
         var (window, _) = MainWindowHost.New(temp);
@@ -45,70 +50,54 @@ public class AboutWiringTests
 
         Assert.True(gear >= 0, "gear butonu beklenen grupta değil");
         Assert.True(info >= 0, "info butonu gear ile AYNI grupta değil");
-        Assert.Equal(gear + 1, info);
+        Assert.Equal(gear + 2, info); // aradaki tek slot sparkle butonudur
         GC.KeepAlive(window);
     }
 
     /// <summary>Butonun tooltip'i metni ELLE yazmaz — kısayol kataloğundan gelir (kopya YASAK); UIA adı ise
-    /// kontrolün işlevini KISA tarif eder ve <see cref="AccessibilityNames"/>'tedir.</summary>
+    /// kontrolün işlevini KISA tarif eder ve <see cref="AccessibilityNames"/>'tedir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.1/§2.10, D4/T8]</b> ESKİ İDDİA (design v1.9.0): cümle
+    /// KOŞULLUYDU — görülmemiş bir sürüm varken "About — what's new in {sürüm}" olurdu ve ⓘ üzerinde 5px amber
+    /// nokta dururdu. Okunmadı mekanizması (nokta + sürüm-adlı tooltip varyantı) ⓘ'dan sparkle butonuna TAŞINDI
+    /// (bkz. <c>NotesDialogWiringTests</c>) — ⓘ'nin tooltip'i ARTIK HER ZAMAN sabit katalog cümlesidir, hiçbir
+    /// koşula bağlı değildir.</para></summary>
     [StaFact]
     public void The_info_button_reads_its_tooltip_from_the_shortcut_catalog()
     {
-        using var temp = new TempDir();
+        using var temp = new TempDir(); // taze — SeenVersion yazılmamış, ama ⓘ artık bundan ETKİLENMEZ
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
         // [design-v1.2.1 §2.1] Tooltip, katalog cümlesinin SONUNA jesti ekler: "… (F1)". Cümlenin kendisi
         // yine tek kaynaktan gelir — burada yazılan yalnız parantezli jest, o da katalogdan okunur.
-        // [DEĞİŞEN KURAL — design v1.9.0 §2.10] Cümle KOŞULLUDUR: görülmemiş bir sürüm varken
-        // "About — what's new in {sürüm}" olur ve ⓘ üzerinde 5px amber nokta durur. Taze bir TempDir'de
-        // (SeenVersion yazılmamış) durum TAM OLARAK budur — jest eki DEĞİŞMEZ.
         var tooltip = (ToolTip)window.InfoButton.ToolTip;
         var about = ShortcutCatalog.Get(ShortcutId.About);
-        Assert.Equal($"About — what's new in {AppIdentity.Version} ({about.Gestures[0]})", tooltip.Content);
-        Assert.Equal(Visibility.Visible, window.UnseenNotesDot.Visibility);
+        Assert.Equal($"{about.Description} ({about.Gestures[0]})", tooltip.Content);
         Assert.Equal(AccessibilityNames.About, AutomationProperties.GetName(window.InfoButton));
         GC.KeepAlive(window);
     }
 
-    /// <summary>[design v1.9.0 §2.10] What's new sekmesi GÖRÜLÜNCE nokta söner, tooltip katalog cümlesine
-    /// döner ve karar kalıcı duruma yazılır (uygulama yeniden açılınca nokta geri gelmez).</summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — design v1.13.0 §2.10, D4/T9]</b> ESKİ İDDİA (design v1.9.0): görülmemiş bir sürüm
+    /// varsa About DOĞRUDAN What's new sekmesinde açılırdı. What's new kendi diyaloguna taşındığı için bu
+    /// yönlendirme KALKTI: ⓘ ve F1 artık okunmadı durumundan BAĞIMSIZ, HER ZAMAN Shortcuts'ta açar (yeni
+    /// sürüme yönlendirme sparkle butonunun/Ctrl+F1'in işi — bkz. <c>NotesDialogWiringTests</c>).
+    /// </summary>
     [StaFact]
-    public void Seeing_the_whats_new_tab_clears_the_unseen_mark_for_good()
+    public void About_always_opens_on_the_shortcuts_tab_even_with_unseen_notes()
     {
-        using var temp = new TempDir();
-        var (window, _) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-        Assert.Equal(Visibility.Visible, window.UnseenNotesDot.Visibility); // ön-koşul
-
-        window.InfoButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-        window.AboutOverlay.WhatsNew.IsChecked = true;
-
-        Assert.Equal(Visibility.Collapsed, window.UnseenNotesDot.Visibility);
-        var about = ShortcutCatalog.Get(ShortcutId.About);
-        Assert.Equal($"{about.Description} ({about.Gestures[0]})",
-            ((ToolTip)window.InfoButton.ToolTip).Content);
-
-        // ...ve karar KALICI: aynı state dizinini okuyan yeni bir pencerede nokta hiç doğmaz.
-        var (again, _) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(again);
-        Assert.Equal(Visibility.Collapsed, again.UnseenNotesDot.Visibility);
-        GC.KeepAlive(window);
-        GC.KeepAlive(again);
-    }
-
-    /// <summary>[design v1.9.0 §2.10] Görülmemiş bir sürüm varsa About DOĞRUDAN What's new sekmesinde açılır —
-    /// açılış toast'ı ya da karşılama pop-up'ı YOKTUR (§8), yönlendirme buraya yapılır.</summary>
-    [StaFact]
-    public void With_unseen_notes_about_opens_straight_on_the_whats_new_tab()
-    {
-        using var temp = new TempDir();
+        using var temp = new TempDir(); // taze — SeenVersion yazılmamış (görülmemiş sürüm hâli)
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
         window.InfoButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        window.AboutOverlay.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange (AboutDialogHost deseni)
 
-        Assert.True(window.AboutOverlay.WhatsNew.IsChecked);
+        var tabs = DsResources.Descendants(window.AboutOverlay).OfType<RadioButton>().ToList();
+        Assert.NotEmpty(tabs);
+        Assert.True(tabs[0].IsChecked); // Shortcuts
+        Assert.All(tabs.Skip(1), t => Assert.False(t.IsChecked));
         GC.KeepAlive(window);
     }
 
@@ -127,11 +116,14 @@ public class AboutWiringTests
 
     // ---------------------------------------------------------------- F1
 
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.13.0 §2.11, D4/T8]</b> ESKİ İDDİA: F1 tabloda TEK satırdı
+    /// (<c>Single(b =&gt; b.Key == Key.F1)</c> yeterliydi). Ctrl+F1 eklenince (What's new) F1 ARTIK iki
+    /// satırda geçiyor — sorgu modifier'a göre de daraltılır (bkz. Ctrl+F1 için
+    /// <c>NotesDialogWiringTests.Ctrl_f1_is_bound_to_the_show_notes_intent</c>).</summary>
     [Fact]
     public void F1_is_bound_to_the_show_about_intent()
     {
-        var binding = KeyboardShortcuts.WindowBindings.Single(b => b.Key == Key.F1);
-        Assert.Equal(ModifierKeys.None, binding.Modifiers);
+        var binding = KeyboardShortcuts.WindowBindings.Single(b => b.Key == Key.F1 && b.Modifiers == ModifierKeys.None);
         Assert.Equal(WindowIntent.ShowAbout, binding.Intent);
     }
 

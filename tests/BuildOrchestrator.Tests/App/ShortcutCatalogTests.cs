@@ -97,7 +97,8 @@ public class ShortcutCatalogTests
     [Fact]
     public void No_app_source_file_outside_the_catalog_writes_a_key_gesture_as_a_literal()
     {
-        string[] literals = ["\"F5\"", "\"Ctrl+F5\"", "\"Shift+F5\"", "\"Ctrl+F\"", "\"Esc\"", "\"F1\""];
+        string[] literals =
+            ["\"F5\"", "\"Ctrl+F5\"", "\"Shift+F5\"", "\"Ctrl+F\"", "\"Esc\"", "\"F1\"", "\"Ctrl+F1\""];
         string singleSource = Path.Combine("Shell", "ShortcutCatalog.cs");
 
         var offenders = new List<string>();

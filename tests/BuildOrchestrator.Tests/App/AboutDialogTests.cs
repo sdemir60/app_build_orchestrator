@@ -122,23 +122,32 @@ public class AboutDialogTests
 
     // ---------------------------------------------------------------- sekmeler
 
-    /// <summary><b>[DEĞİŞEN KURAL — design v1.9.0 §2.10]</b> Sekme sayısı ÜÇTEN DÖRDE çıktı: sürüm notları
-    /// ayrı bir pencere ya da açılış pop-up'ı değil, About'un dördüncü sekmesi olarak eklendi.</summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — design v1.13.0 §2.1/§2.10/§2.11, D4/T9]</b> ESKİ İDDİA (design v1.9.0): sekme sayısı
+    /// ÜÇTEN DÖRDE çıkmıştı — sürüm notları ayrı bir pencere ya da açılış pop-up'ı değil, About'un dördüncü
+    /// sekmesi olarak eklenmişti. v1.13.0 bunu GERİ ALDI: What's new kendi diyalogu (<see cref="BuildOrchestrator.App.Views.NotesDialog"/>)
+    /// ve kendi title bar butonu (sparkle) oldu — About DÖRTTEN ÜÇE döndü: <c>Shortcuts | Environment |
+    /// Third-party</c>. Liste kurma kodu KOPYALANMADI, <c>NotesDialog.xaml.cs</c>'e TAŞINDI (bkz.
+    /// <c>NotesDialogTests</c>).
+    /// </summary>
     [StaFact]
-    public void It_has_four_tabs_and_the_first_one_is_selected()
+    public void It_has_three_tabs_and_the_first_one_is_selected()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             var tabs = Tabs(dialog);
-            Assert.Equal(4, tabs.Count);
+            Assert.Equal(3, tabs.Count);
+            Assert.Equal(["Shortcuts", "Environment", "Third-party"], tabs.Select(t => (string)t.Content));
             Assert.True(tabs[0].IsChecked);
             Assert.All(tabs.Skip(1), t => Assert.False(t.IsChecked));
         }
     }
 
     /// <summary>Her an TAM BİR panel görünür. Bu, "sekme değişince boy değişmez" iddiasının ÖN KOŞULUdur:
-    /// üç panel birden görünür kalsaydı boy zaten sabit olurdu ve o test hiçbir şeyi ayırt etmezdi.</summary>
+    /// üç panel birden görünür kalsaydı boy zaten sabit olurdu ve o test hiçbir şeyi ayırt etmezdi.
+    /// <b>[DEĞİŞEN KURAL — design v1.13.0]</b> panel sayısı DÖRTTEN ÜÇE döndü (What's new NotesDialog'a
+    /// taşındı).</summary>
     [StaFact]
     public void Exactly_one_pane_is_visible_at_a_time()
     {
@@ -146,7 +155,7 @@ public class AboutDialogTests
         using (scope)
         {
             var panes = DsResources.Descendants(dialog).OfType<ScrollViewer>().ToList();
-            Assert.Equal(4, panes.Count); // [v1.9.0] dördüncü panel: What's new
+            Assert.Equal(3, panes.Count); // [v1.13.0] dördüncü panel (What's new) kalktı
 
             for (int i = 0; i < Tabs(dialog).Count; i++)
             {
@@ -403,33 +412,30 @@ public class AboutDialogTests
         }
     }
 
-    /// <summary>[design v1.9.0 §2.10] Gövdenin yüksekliği SABİTTİR ve uzayan panel kendi içinde kayar.
+    /// <summary>[design v1.9.0 §2.10] Gövdenin yüksekliği SABİTTİR (bir MinHeight değil) — hangi sekme uzarsa
+    /// uzasın, dialog büyümez, panel kendi içinde kayar.
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: <i>"gövde MIN-yükseklik 236'dır — sabit değil; içerik büyürse
-    /// alan da büyüyebilir"</i>. O kural üç sekmenin de 236'ya sığdığı bir dünyada doğruydu. <b>What's new</b>
-    /// sekmesi sürüm biriktikçe uzar ve min-height tek başına diyaloğu O sekmede büyütürdü — yani "sekme
-    /// değişince dialog zıplamaz" kuralı (§2.10) tam da yeni sekme yüzünden bozulurdu. Sabit yükseklik +
-    /// panel-içi scroll ikisini birden korur: "tüm geçmiş erişilir ama sekme bir ekran boyunda açılır".</para>
-    /// <para>Sayı DEĞİŞMEDİ (236) ve test onu değil DAVRANIŞI pinler — kardeş test
-    /// <see cref="Switching_tabs_never_resizes_the_dialog"/> zaten eşitliği ölçer; burada uzun bir panelin
-    /// gövdeyi BÜYÜTEMEDİĞİ ölçülür.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10/§2.11, D4/T9]</b> ESKİ İDDİA (design v1.9.0): bu test
+    /// <b>What's new</b> sekmesini seçip ("en uzun panel") gövdenin BÜYÜMEDİĞİNİ ve o panelin GERÇEKTEN taştığını
+    /// (<c>ExtentHeight &gt;= ViewportHeight</c>) ölçüyordu — What's new sürüm biriktikçe uzayan TEK sekmeydi.
+    /// v1.13.0 What's new'i About'tan çıkarıp <see cref="BuildOrchestrator.App.Views.NotesDialog"/>'a taşıdı (bkz.
+    /// <c>NotesDialogTests.The_body_height_is_fixed_at_400px</c> — taşan-panel kanıtı ORADA yaşıyor, kendi
+    /// 400px sabit gövdesiyle). Geriye kalan üç sekmenin (Shortcuts/Environment/Third-party) HİÇBİRİ bugünkü
+    /// içerikle 236px'i doldurmuyor, yani "gerçekten taşıyor" iddiası burada artık KANITLANAMAZ — sahte bir
+    /// taşma iddia etmek yerine bu test YAPISAL kalır: <c>Height==236.0</c> araması (About'un kendi 620px
+    /// genişliği gibi) bir <c>MinHeight</c> DEĞİL gerçek bir <c>Height</c> olduğunu doğrular — <c>Grid.Height</c>
+    /// okunur, <c>Grid.MinHeight</c> DEĞİL; MinHeight olsaydı <c>Height</c> NaN kalır ve <c>Single()</c>
+    /// eşleşmezdi. "Sekme değişince boy değişmez" davranışı zaten kardeş test
+    /// <see cref="Switching_tabs_never_resizes_the_dialog"/>'ta ayrıca ölçülüyor.</para></summary>
     [StaFact]
-    public void The_body_height_is_fixed_so_a_long_pane_scrolls_instead_of_growing_it()
+    public void The_body_uses_a_fixed_height_not_a_minimum_height()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             var body = DsResources.Descendants(dialog).OfType<Grid>().Single(g => g.Height == 236.0);
-            double before = body.ActualHeight;
-
-            dialog.WhatsNew.IsChecked = true;   // en uzun panel
-            dialog.UpdateLayout();
-
-            Assert.Equal(before, body.ActualHeight);
-            var pane = DsResources.Descendants(dialog).OfType<ScrollViewer>()
-                .Single(p => p.Visibility == Visibility.Visible);
-            Assert.True(pane.ExtentHeight >= pane.ViewportHeight,
-                "What's new paneli gövdeyi doldurmuyor — scroll iddiası vakumda");
+            Assert.True(body.ActualHeight > 0, "gövde hiç yerleşmedi");
+            Assert.Equal(236.0, body.ActualHeight);
         }
     }
 

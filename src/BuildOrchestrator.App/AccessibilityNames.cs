@@ -110,6 +110,10 @@ public static class AccessibilityNames
     /// işlevini KISA tarif eder.</summary>
     public const string About = "About";
 
+    /// <summary>[design v1.13.0 §2.1 · D4/T8] Title bar'daki ikon-yalnız sparkle butonu (dişli ile ⓘ
+    /// arasında). About ile AYNI kural: UIA adı kısa, tooltip <see cref="Shell.ShortcutCatalog"/>'dan.</summary>
+    public const string WhatsNew = "What's new";
+
     // ---- Ayraçlar (resize separator'ları — E5 fold: klavye ile odaklanır + ok tuşlarıyla resize) ----
     public const string ColumnSplitter = "Resize left and right columns";
     public const string GraphListSplitter = "Resize graph and project list";
