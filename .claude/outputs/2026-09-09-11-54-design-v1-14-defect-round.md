@@ -80,3 +80,27 @@ verisi olmadan çizilemez, bu turda yok.
 Her K için: kırmızı test (seam nerede izin veriyorsa) → fix → yeşil; sonra **uygulama çalıştırılıp ekran
 görüntüsüyle** davranış gözlenir. Bitişte tam süit yeşil; ARCHITECTURE.md/README.md yanlış kalan cümleler
 yerinde düzeltilir.
+
+## Kararlar (bu turda verilen ruling'ler)
+
+- **K2 — Sync her zaman reveal'i yeniden oynatır.** İmza guard'ının koruduğu "mid-run Sync" durumu ulaşılabilir
+  değildi (Sync koşarken kilitli, motor topolojiyi yalnız Sync içinde yayınlıyor); tasarım v1.13.2 notu kazandı.
+  Guard Sync dışı yayınlar için savunma olarak duruyor.
+- **K3 — Koreografi doğal bitişte son adımını tutar.** Prototipte `startRun()` koreografinin son anında çalışır;
+  gerçek motorun planlama penceresinde grafı 1.0'a geri getirmek "çift sönüş" üretiyordu. Kabuk `runStarted`'da
+  önce koşu fazını iter, sonra koreografiyi düşürür.
+- **K1 — Temizlik seçimden önce gelir.** Seçim düşünce kabuk anlatı belgesini yeniden kuruyor; temizlik sonra
+  gelseydi eski metin tilt'le gelip hemen silinirdi. `BeginRunAsync` ve `SyncCoreAsync` aynı sırayı izler
+  (`ClearSelectionAndFilter` bu yüzden komutlardan `BeginRunAsync`'e taşındı).
+- **K5 — Motor bu turda yok.** Harici proje listesi App'te kalıcı tutulur, Save'de uygulanır, motora gitmez;
+  kod ve doküman bunu açıkça söyler. Motor `feat/external-projects-prebuild` ile gelecek.
+- **K5 — Bölüm ayracı 18/16.** Prototip `margin: '18px 0 16px'`; uygulamadaki 18/18 önceki turdan kalan bir
+  ayrışmaydı — paylaşılan `Ds.Settings.SectionDivider` prototipe çekildi (Workspace→Layers ayracı da değişti).
+- **K5 — Export alan sırası** `repositoryRoot → externalProjects → layers` (brief + prototip `doExport`).
+- **Kırmızı test kuralı — yeni davranış.** Bir KUSUR düzeltilirken kırmızı zorunludur (test kusuru gerçekten
+  yakalamalı: K1-K4 ve K5'in export sırası böyle gösterildi). Sıfırdan yazılan bir özelliğin testinde "kırmızı"
+  özelliğin yokluğudur; kodu geri sarıp göstermek gösteri olurdu — K5'in ~30 yeni testi için tek yeşil koşu
+  kabul edildi, self-review'da yakalanan üç test hatası raporda kayıtlı.
+- **Doğrulama yöntemi.** K1-K4 çalışan uygulamada UIA ile sürülüp ekran görüntüsüyle doğrulandı; K5 ekran
+  kilitli olduğu için test host'unda ekran-dışı render (RenderTargetBitmap) ile doğrulandı — canlı uygulamada
+  açılır liste (popup) görülmedi, realize testleri kapsıyor.
