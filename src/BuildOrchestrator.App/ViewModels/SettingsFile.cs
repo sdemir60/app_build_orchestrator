@@ -47,6 +47,11 @@ public sealed class SettingsFile
     [JsonConverter(typeof(ExternalProjectListConverter))]
     public List<SettingsFileExternal>? ExternalProjects { get; set; }
 
+    /// <summary>[design v1.15.0 §2.9] Harici çalışma kopyaları build'den önce güncellensin mi.
+    /// <b>KASITLI OLARAK nullable:</b> "dosyada anahtar hiç yok" (null) ile "false yazılmış" ayrımı taşınmak
+    /// ZORUNDADIR — <see cref="SettingsDraftViewModel.LoadFrom"/> yalnız BİRİNCİSİNDE taslağı korur.</summary>
+    [JsonPropertyName("pullExternalBeforeBuild")] public bool? PullExternalBeforeBuild { get; set; }
+
     [JsonPropertyName("layers")] public List<SettingsFileLayer> Layers { get; set; } = [];
 
     private static readonly JsonSerializerOptions Options = new()
@@ -61,12 +66,13 @@ public sealed class SettingsFile
     /// HER ZAMAN gerçek (boş olabilir ama null OLMAYAN) bir liste geçer — bu yüzden GERÇEK bir Export anahtarı
     /// hiç eksik BIRAKMAZ (§9: "yalnız boş olmayan path'ler").</summary>
     public static SettingsFile From(string? repositoryRoot, IReadOnlyList<LayerPattern> layers,
-        IReadOnlyList<ExternalProject>? externals = null)
+        IReadOnlyList<ExternalProject>? externals = null, bool? pullExternalBeforeBuild = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
         return new SettingsFile
         {
             RepositoryRoot = repositoryRoot,
+            PullExternalBeforeBuild = pullExternalBeforeBuild,
             // Sıra BİLEREK budur (RepositoryRoot → ExternalProjects → Layers): nesne başlatıcısının kendi
             // sırası JSON çıktısını ETKİLEMEZ (System.Text.Json BİLDİRİM sırasını yazar), ama okunurluk için
             // sınıftaki alan sırasıyla AYNI tutulur — iki sıra sessizce ayrışmasın.

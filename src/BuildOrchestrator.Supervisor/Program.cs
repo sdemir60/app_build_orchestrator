@@ -176,8 +176,13 @@ public static class Program
             // Satır işin ÖNCESİNDE: incremental pass (git diff + proje başına imza) planlamanın EN UZUN adımıdır
             // ve kendi sayısını üretmez — sonrasına bırakılsa akış tam da en uzun beklemede sessizleşirdi.
             progress(PlanProgressLines.ComputingIncremental(plan.Nodes.Count));
+            // Harici köklerin revizyonu: satırın sha yuvasını besleyen TANI bilgisi. Bayraktan BAĞIMSIZ okunur
+            // (yerel `rev-parse HEAD`, ucuz) — güncelleme kapalıyken de kullanıcı hangi sürümü derlediğini görür.
+            var externalCommits = new ExternalRevisionReader(new ProcessRunner())
+                .ReadAsync(external.Roots).GetAwaiter().GetResult();
             var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, identity.Plan,
-                identity.EvaluatedById, stateStore, external.VcsByProjectId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
+                identity.EvaluatedById, stateStore, external.VcsByProjectId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase),
+                externalCommits);
             return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById);
         }
     }
@@ -399,10 +404,12 @@ public static class Program
     /// fingerprint'leri git blob haritasından DEĞİL, diskteki içeriklerinden hesaplanır (bkz.
     /// <see cref="IncrementalRunBinder.Bind"/>). Kimlik taşıması harici yolları etkilemez (worktree'nin altında
     /// değiller), bu yüzden bu küme rebase'den SONRA da geçerlidir.</param>
+    /// <param name="externalCommits">Harici projelerin kendi çalışma kopyalarının revizyonu — build-state'in
+    /// <c>BuiltCommit</c> yuvasına ana reponun HEAD'i yerine bu yazılır.</param>
     private static (BuildPlan Plan, IncrementalPlan? Info) ComputeIncremental(
         StartRunCommand cmd, PreparedWorkspace workspace, BuildPlan plan,
         IReadOnlyDictionary<string, EvaluatedProject> evaluatedById, BuildStateStore stateStore,
-        IReadOnlySet<string> externalProjectIds)
+        IReadOnlySet<string> externalProjectIds, IReadOnlyDictionary<string, string> externalCommits)
     {
         try
         {
@@ -427,7 +434,7 @@ public static class Program
                 plan, evaluatedById, cmd.RootPath, head, tracked, dirty,
                 stateStore.Load(), workspace.InPlace, cmd.Mode == RunMode.Cycles, cmd.DependentMode,
                 externalProjectIds);
-            return (bound, new IncrementalPlan(signatures, head, branch));
+            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits));
         }
         catch (Exception ex)
         {

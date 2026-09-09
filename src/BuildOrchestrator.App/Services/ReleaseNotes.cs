@@ -92,6 +92,8 @@ public static class ReleaseNotes
             new(NoteKind.Added, "The Build menu offers Clean — msbuild /t:Clean on every solution."),
             new(NoteKind.Added, "Projects caught in a dependency cycle show an amber cube inside a grey node — the graph now says “not built, in a cycle” while you inspect a finished run."),
             new(NoteKind.Added, "Settings has an External projects section: projects outside the repository root, each with its source (Git or TFVC), kept in build order."),
+            new(NoteKind.Added, "External projects are scanned into the same graph as the repository's own and build first, in their own External group at the top of the list."),
+            new(NoteKind.Added, "Pull before build, in the External projects header: every build refreshes each external working copy first — turn it off to build them exactly as they are on disk."),
             new(NoteKind.Changed, "The console cursor changes colour on every blink, stepping through the console’s own line palette — command, info, success, warning, error, dim."),
             new(NoteKind.Changed, "The initial state after Sync draws a plain strip and a four-arc ring instead of dashed lines, at full opacity — same sizes, no jagged edges; graph nodes keep their dashed border."),
             new(NoteKind.Changed, "Sync clears the console and the event stream like every other operation, replays the reveal and brings the project list back to the top."),

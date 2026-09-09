@@ -227,6 +227,25 @@ public sealed partial class RunViewModel
             : "External projects cleared");
     }
 
+    /// <summary>
+    /// [design v1.15.0 §2.9] Settings Save: "Pull before build" switch'ini uygular. Değer bir sonraki
+    /// <see cref="StartRunCommand"/> ile motora gider (Sync'i ilgilendirmez — Sync zaten hiçbir çalışma
+    /// kopyasına dokunmaz).
+    ///
+    /// <para>Not YALNIZ İKİ koşul birden sağlanınca yazılır: değer GERÇEKTEN değişti VE tanımlı harici proje
+    /// var. Harici projesi olmayan bir kurulumda bu bayrak hiçbir şey yapmaz; orada not yazmak, olmayan bir
+    /// işi anlatmak olurdu.</para>
+    /// </summary>
+    private void ApplyPullExternals(bool pull)
+    {
+        bool changed = pull != UpdateExternals;
+        UpdateExternals = pull;
+        if (!changed || ExternalProjects.Count == 0) return;
+        AppendRunLine(pull
+            ? "Pull before build on — external working copies update first"
+            : "Pull before build off — external working copies are used as they are");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -260,11 +279,14 @@ public sealed partial class RunViewModel
     /// <param name="externals">[K5] Taslağın harici proje listesi — katmanlarla AYNI koşulsuz adımda uygulanır
     /// (motora dokunmaz, mid-run kilidinden ETKİLENMEZ — <see cref="ApplyLayerPatterns"/> ile AYNI gerekçe:
     /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
+    /// <param name="pullExternalsBeforeBuild">[design v1.15.0] Bölümün "Pull before build" switch'i.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
-        IReadOnlyList<ExternalProject> externals)
+        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true)
     {
         ApplyLayerPatterns(patterns);
+        // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
         ApplyExternalProjects(externals);
+        ApplyPullExternals(pullExternalsBeforeBuild);
         if (IsMidRunLocked)
         {
             if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");

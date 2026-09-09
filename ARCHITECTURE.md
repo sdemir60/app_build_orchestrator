@@ -302,8 +302,9 @@ stale. The field is last and defaults to null, so lines written before external 
 App sends null rather than an empty list, so a setup without them writes the same line it always did.
 
 `startRun` additionally carries **`updateExternals`**, which says whether this run may touch those working
-copies at all. It defaults to **true**, so a line written before the flag existed keeps updating — and when it
-is false the engine runs no version-control command and applies no dirty gate.
+copies at all — the Settings switch described in §13.3. It defaults to **true**, so a line written before the
+flag existed keeps updating; when it is false the engine runs no version-control command and applies no dirty
+gate.
 
 Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
 camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
@@ -572,9 +573,10 @@ success was linked against a failed dependency (§8.3) and the signature at
 which this project's cycle last failed to converge (§8.8). That last field is deliberately *not* folded into
 the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a
 frozen upstream baseline — a signature that was never built would be taken for a clean one. A project from an
-external root (§10.6) has the same record under the same key shape, with one difference: its built-commit and
-last-branch slots stay empty, because the repository's HEAD and branch describe a different repository and
-printing one beside an external row would be a lie. It is written by
+external root (§10.6) has the same record under the same key shape, and its built-commit slot means the same
+thing — except that the revision written there is **its own** working copy's, not the repository's, because
+the repository's HEAD describes a different repository. The last-branch slot stays empty for the same reason,
+and so does the commit when the revision cannot be read locally (a TFVC root, §10.6). It is written by
 a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every project
 completes. Readers open with `FileShare.Delete` so they cannot block the writer's rename, and a transient
 sharing violation is retried a bounded number of times. A corrupt file never throws — it falls back to
@@ -1159,6 +1161,13 @@ version is built, which is the same posture the repository's degraded fetch take
 and that is all. This is what keeps Sync fast and offline-tolerant, and it is why the dirty gate lives in
 Build, where the user has already decided to compile.
 
+**Each root's revision is read at plan time**, independently of the update flag, and handed to every project
+that root produced. It is what fills the commit slot on those rows, so an external project says which version
+it was last built from exactly the way a repository project does. The read is local and cheap (`rev-parse
+HEAD`), which is why turning updates off does not turn it off too. TFVC has no local equivalent — its history
+query goes to the server — so TFVC roots are left without a revision and those rows show no commit rather than
+a wrong one. A failure to read is never fatal: the revision is diagnostic, and no decision depends on it.
+
 The incremental decision needs no special case either, but its *input* differs. A repository project's
 committed fingerprint is read from the git blob map that one `ls-tree` produces; an external root is not in
 that tree, and a TFVC root has no git at all. So an external project's fingerprint is hashed from the content
@@ -1552,6 +1561,15 @@ raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two li
 against its own collection. An empty path on any card disables *Save*, the same severity as an empty layer
 name. The list starts **empty** (unlike Layers, it has no seed) and shows the same dashed empty-state box the
 Layers section uses when its own list is empty. *Add external project* appends a blank, Git-sourced card.
+
+The section's **header is a rule row**: the caps label on the left, a hairline stretching across the middle,
+and on the right a second caps label, *Pull before build*, with a switch. It reads as a setting that belongs to
+the section, which is what it is — whether every build refreshes these working copies first (§10.6). It is
+deliberately not a chip in the action bar: that bar carries per-run choices (configuration, perf, branch,
+worktree), while this one follows the external list itself and changes rarely. The explanation lives in a
+tooltip rather than a second description line, so the body text and the card list are untouched. The switch
+follows the same draft rule as everything else here: nothing is applied until *Save*, it defaults to on, and
+*Clear* returns it to on rather than off.
 The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.6): Sync scans
 each card's path and the projects it finds join the graph as ordinary rows, Build updates their working copies
 first and then compiles them in dependency order. A path is only validated when it is used — the dialog does
@@ -1601,6 +1619,11 @@ they were applied, it would carry stale ones: the grouping would be wrong for a 
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
 decide whether to run it.
 
+The switch has a note of its own, and it is quieter still: it prints only when the value actually changed
+*and* external projects are defined — `Pull before build on — external working copies update first`, or
+`Pull before build off — external working copies are used as they are`. In a workspace with no external
+projects the flag does nothing, and saying otherwise would describe work that is not happening.
+
 The external project note is quieter than the layer one: the layer line prints on *every* Save, but the
 external one prints only when the count actually changed — `External projects → 3 — scanned with the
 repository projects`, or `External projects cleared` once it drops back to zero — so a Save that only touched
@@ -1625,15 +1648,19 @@ starts there anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons beside *Load sample layers*. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path, vcs }],
-layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the field order the
-file is written in, not just a key that happens to be present) and holding only cards with a non-blank path;
-import reads one back **into the form**; clear empties the root, every layer and every external card. All
+pullExternalBeforeBuild, layers[{ name, pattern }] }`, the external array sitting between the root and the
+layers (the field order the file is written in, not just a key that happens to be present) and holding only
+cards with a non-blank path; import reads one back **into the form**; clear empties the root, every layer and
+every external card, and returns the switch to on. All
 three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
 file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
 while the form stays untouched.
+
+A file that omits `pullExternalBeforeBuild` leaves the switch where it is, the same rule the external list
+already follows: a file cannot silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
 and a missing or unrecognized `vcs` reads as Git — both are simulated in the design package's own prototype and
@@ -3103,6 +3130,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Reserved layer name and index for external projects (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
 | Working-copy root discovery for the selected source (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
 | The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
+| Per-root revision read, spread over the projects it produced | `Core/Externals/ExternalRevisionReader.cs` |
 | The only mutating git surface: fetch + fast-forward | `Core/Externals/ExternalGitUpdater.cs` |
 | TFVC surface: pending changes, get latest | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
 | Content fingerprint for projects outside the repository tree | `Core/Incremental/IncrementalPlanner.cs` |

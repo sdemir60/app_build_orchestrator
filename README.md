@@ -170,17 +170,22 @@ the running instance first — tray icon → Exit).
    path each time, so moving a project or recreating its working copy needs no edit here. A path that resolves
    to no project at all is called out: Sync warns, Build refuses to start.
 
-   Before each Build their working copies are refreshed, in card order. A git root gets a fetch and a
-   fast-forward — never a `pull`, so nothing is rewritten on your behalf; a TFVC root gets a `tf vc get`.
+   Before each Build their working copies are refreshed, in card order — unless you turn **Pull before build**
+   off, the switch in the section's header. A git root gets a fetch and a fast-forward — never a `pull`, so
+   nothing is rewritten on your behalf; a TFVC root gets a `tf vc get`.
    **Uncommitted changes stop the run before it starts**, with a line naming the project and its folder:
    commit, stash or shelve them and press Build again. A branch that has diverged from its remote stops the
    run the same way. A remote that cannot be reached only warns and the local version is built; so does a path
    with no `.git` (or `$tf`) above it, which is simply built as it stands.
 
-   This refresh can be turned off, and then **nothing** is fetched, merged or blocked — external projects are
-   compiled exactly as they sit on disk, the way the repository's own working copy always is. Whether they
-   changed is still worked out correctly: for external roots it is read from the files themselves rather than
-   from git, so an uncommitted edit marks the project stale just as a commit would.
+   With the switch off **nothing** is fetched, merged or blocked — external projects are compiled exactly as
+   they sit on disk, the way the repository's own working copy always is. Whether they changed is still worked
+   out correctly: for external roots it is read from the files themselves rather than from git, so an
+   uncommitted edit marks the project stale just as a commit would.
+
+   Their rows carry a commit like everyone else's — the revision of **their own** working copy, not the
+   repository's. A TFVC root shows none, because reading its changeset would mean a round trip to the server
+   every time you plan a build.
 
 5. **Build / Rebuild** — from the split button and its menu:
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on a
