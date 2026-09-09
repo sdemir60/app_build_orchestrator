@@ -72,6 +72,16 @@ public sealed class SettingsFile
     public string ImportedMessage() => string.Format(CultureInfo.InvariantCulture,
         "Imported — {0} layers{1}", Layers.Count,
         string.IsNullOrWhiteSpace(RepositoryRoot) ? "" : " · root set");
+
+    /// <summary>Export'un geri bildirimi (§2.9) — yeşil, 2.4 saniye. Diyalog (ince view) bu metni doğrudan
+    /// kullanır, kendi başına kurmaz — dosya biçimiyle ilgili tüm kullanıcı metni burada toplanır
+    /// (<see cref="ImportedMessage"/> ile aynı ilke, kopya YASAK, CLAUDE.md).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1]</b> ESKİ metin kullanıcının SEÇTİĞİ gerçek dosya adını
+    /// taşıyordu (ör. "Exported build-orchestrator-settings.json" — dosya seçicide adı değiştirirse metin de
+    /// değişirdi). YENİ metin SABİTTİR ve dosya adından bağımsızdır: geri bildirim metinleri v1.13.1'de genel
+    /// olarak kısaldı (aynı gerekçeyle <c>SettingsDialog</c>'daki Clear metinleri de kısaldı).</para></summary>
+    public const string ExportedMessage = "Exported — settings JSON";
 }
 
 /// <summary>[design v1.10.0 §2.9] Dosyadaki tek katman: <c>{ name, pattern }</c>. Sıra dizinin KENDİ

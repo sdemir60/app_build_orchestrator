@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
@@ -106,7 +107,10 @@ public class SettingsPortabilityTests
 
         Assert.NotNull(written);
         Assert.Equal("Alpha", SettingsFile.TryParse(written!)!.Layers.Single().Name);
-        Assert.Equal("Exported build-orchestrator-settings.json", dialog.Feedback.Text);
+        // [DEĞİŞEN KURAL — design v1.13.1] Eski metin gerçek dosya adını taşıyordu ("Exported
+        // build-orchestrator-settings.json" — kullanıcının SEÇTİĞİ ad, sabit değil); yeni metin sabit ve dosya
+        // adından bağımsız (bkz. SettingsFile.ExportedMessage).
+        Assert.Equal("Exported — settings JSON", dialog.Feedback.Text);
         Assert.Empty(store.State.LayerPatterns);      // hiçbir şey UYGULANMADI
         Assert.Same(run.LayerPatterns, run.LayerPatterns);
     }
@@ -144,18 +148,26 @@ public class SettingsPortabilityTests
     }
 
     /// <summary>[§2.9] Clear İKİ AŞAMALIDIR: ilk tık yalnız uyarır (ve ikonu kırmızıya çevirir), ikinci tık
-    /// boşaltır. Ayrı bir onay dialogu YOKTUR.</summary>
+    /// boşaltır. Ayrı bir onay dialogu YOKTUR.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1]</b> Geri bildirim metinleri kısaldı: eski "Click again to
+    /// clear root and all layers" → "Click again to clear", eski "Cleared — nothing is applied until you save"
+    /// → "Cleared — save to apply". <b>Armed tooltip artık AYNI kısa metni taşıyor</b> — eskiden ikonun
+    /// tooltip'i armed durumdan hiç ETKİLENMİYORDU (sabit "Clear settings" kalıyordu, iki tık arasında da);
+    /// şimdi ilk tıkta footer'la AYNI cümleye döner ve ikinci tık/disarm'da TABANA geri döner.</para></summary>
     [StaFact]
     public void Clear_asks_once_before_it_empties_the_form()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
             r => r.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
         using var _scope = scope;
+        object? baseTooltip = dialog.Clear.ToolTip; // armed/disarmed karşılaştırması için ÖNCEDEN oku
 
         Click(dialog.Clear);
 
         Assert.True(dialog.IsClearArmed);
-        Assert.Equal("Click again to clear root and all layers", dialog.Feedback.Text);
+        Assert.Equal("Click again to clear", dialog.Feedback.Text);
+        Assert.Equal("Click again to clear", dialog.Clear.ToolTip); // armed tooltip = footer ile AYNI metin
         Assert.Equal(["Alpha"], dialog.Draft!.Layers.Select(l => l.Name)); // HENÜZ boşalmadı
         Assert.Same(dialog.FindResource("Brush.StatusFailText"), dialog.ClearIcon.Stroke);
 
@@ -164,7 +176,32 @@ public class SettingsPortabilityTests
         Assert.False(dialog.IsClearArmed);
         Assert.Empty(dialog.Draft!.Layers);
         Assert.Null(dialog.Draft!.RepositoryRoot);
-        Assert.Equal("Cleared — nothing is applied until you save", dialog.Feedback.Text);
+        Assert.Equal("Cleared — save to apply", dialog.Feedback.Text);
+        Assert.Equal(baseTooltip, dialog.Clear.ToolTip); // tooltip tabana DÖNDÜ
+    }
+
+    /// <summary>[§2.9] İkinci tık gelmezse armed durum KENDİNİ İPTAL EDER (aynı <c>FeedbackMs</c> penceresi,
+    /// footer geri bildirimiyle PAYLAŞILAN süre) — ayrı bir onay dialogu olmadığı için bu, kullanıcının fikrini
+    /// değiştirip hiçbir şey yapmamasının TEK güvenlik ağıdır. Daha önce yalnız İKİNCİ TIK yolu (yukarıdaki
+    /// test) pinliydi; bekleme yolu hiç ölçülmemişti.</summary>
+    [StaFact]
+    public async Task Clear_disarms_itself_after_the_feedback_window_elapses_without_a_second_click()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
+            r => r.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
+        using var _scope = scope;
+        object? baseTooltip = dialog.Clear.ToolTip;
+
+        Click(dialog.Clear);
+        Assert.True(dialog.IsClearArmed);
+
+        DispatcherPump.PumpUntil(() => !dialog.IsClearArmed,
+            TimeSpan.FromMilliseconds(SettingsDialog.FeedbackMs) + TimeSpan.FromSeconds(1));
+
+        Assert.False(dialog.IsClearArmed);
+        Assert.Equal(["Alpha"], dialog.Draft!.Layers.Select(l => l.Name)); // HİÇBİR ŞEY silinmedi — yalnız uyarı düştü
+        Assert.Equal("", dialog.Feedback.Text);          // geri bildirim de temizlendi
+        Assert.Equal(baseTooltip, dialog.Clear.ToolTip);  // tooltip tabana DÖNDÜ
     }
 
     /// <summary>Başka bir eyleme geçmek Clear'ın kurulu onayını DÜŞÜRÜR — kullanıcı fikrini değiştirmiştir.</summary>

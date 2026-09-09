@@ -25,18 +25,36 @@ public partial class SettingsDialog : UserControl
     /// <summary>[§2.9] Footer geri bildiriminin ve Clear'ın iki-aşamalı penceresinin süresi.</summary>
     internal const double FeedbackMs = 2400;
 
+    /// <summary>[design v1.13.1 §2.9] Clear armed olduğunda görünen metin — footer geri bildirimi VE ikonun
+    /// tooltip'i AYNI cümleyi taşır (kopya YASAK, CLAUDE.md): kullanıcı "tekrar tıklarsam silinecek" uyarısını
+    /// nerede okursa okusun aynı sözü görür (bkz. <see cref="OnClear"/>).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.1]</b> ESKİ metin (yalnız footer'da) "Click again to clear root and all
+    /// layers" idi; ikonun tooltip'i armed durumdan hiç ETKİLENMİYORDU (sabit "Clear settings" kalıyordu, iki
+    /// tık arasında da). Gerekçe (tasarım v1.13.1): geri bildirim metinleri genel olarak kısaldı; armed
+    /// tooltip'i de footer'la AYNI kısa metne bağlandı.</para></summary>
+    internal const string ClearArmedText = "Click again to clear";
+
+    /// <summary>[design v1.13.1 §2.9] İkinci tıktan sonraki (form boşaltıldı) geri bildirimi.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.1]</b> ESKİ metin "Cleared — nothing is applied until you save" idi.</para></summary>
+    internal const string ClearedText = "Cleared — save to apply";
+
     private SettingsDraftViewModel? _draft;
     private RunViewModel? _run;
     private IUiStateStore? _store;
     private Func<string?>? _pickFolder;
     private readonly DispatcherTimer _feedbackTimer = new();
     private bool _clearArmed;
+    /// <summary>Clear ikonunun TABAN (armed olmayan) tooltip'i — XAML'in kendi değeri (kopya YASAK: burada
+    /// yeniden yazılmaz, yalnız <see cref="DisarmClear"/> geri yüklemek için OKUR).</summary>
+    private readonly object? _clearBaseTooltip;
 
     public SettingsDialog()
     {
         InitializeComponent();
         _feedbackTimer.Interval = TimeSpan.FromMilliseconds(FeedbackMs);
         _feedbackTimer.Tick += (_, _) => ResetFeedback();
+        _clearBaseTooltip = ClearButton.ToolTip;
     }
 
     /// <summary>[§2.9] Dosya seçici seam'leri — testler gerçek diyalog açmaz. <c>MainWindow</c> gerçek Win32
@@ -136,7 +154,7 @@ public partial class SettingsDialog : UserControl
         try
         {
             WriteFile(path, _draft.ToFile().ToJson());
-            ShowFeedback("Exported " + System.IO.Path.GetFileName(path), success: true);
+            ShowFeedback(SettingsFile.ExportedMessage, success: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -166,19 +184,21 @@ public partial class SettingsDialog : UserControl
         {
             _clearArmed = true;
             ClearGlyph.SetResourceReference(Shape.StrokeProperty, "Brush.StatusFailText");
-            ShowFeedback("Click again to clear root and all layers", success: false);
+            ClearButton.ToolTip = ClearArmedText;
+            ShowFeedback(ClearArmedText, success: false);
             return;
         }
 
         DisarmClear();
         _draft.ClearAll();
-        ShowFeedback("Cleared — nothing is applied until you save", success: true);
+        ShowFeedback(ClearedText, success: true);
     }
 
     private void DisarmClear()
     {
         if (!_clearArmed) return;
         _clearArmed = false;
+        ClearButton.ToolTip = _clearBaseTooltip;
         // İkon kendi (animasyonlu) Foreground bağını geri alır — Ds.IconButton şablonunun kuralı.
         ClearGlyph.SetBinding(Shape.StrokeProperty,
             new System.Windows.Data.Binding(nameof(Control.Foreground)) { Source = ClearButton });
