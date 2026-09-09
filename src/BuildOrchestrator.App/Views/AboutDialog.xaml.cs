@@ -170,6 +170,47 @@ public partial class AboutDialog : UserControl
         RefreshDiagnostics();
     }
 
+    // ---------------------------------------------------------------- environment değer kaydırma
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — design v1.13.1 §2.10] Environment satırının DEĞER hücresi artık kırpılmaz (bkz.
+    /// AboutDialog.xaml'deki DataTemplate yorumu) — onun yerine yatay kayar, ve bu metot o kaydırmanın
+    /// tekerlek yönlendirmesidir. Normal (dikey) fare tekerleği, hücre GERÇEKTEN taşıyorsa
+    /// (<c>ScrollableWidth &gt; 0</c>) yatay ofsete uygulanır ve olay burada durur; taşmıyorsa HİÇBİR ŞEY
+    /// yapılmaz — olay kendi dikey yoluna (Environment sekmesinin ScrollViewer'ı) dokunulmadan devam eder.
+    ///
+    /// <para><b>Neden <see cref="Controls.HorizontalWheelScroll"/> DEĞİL:</b> o sınıf farklı bir sorunu çözer —
+    /// GERÇEKTEN yatay bir tekerlek/touchpad sinyali (<c>WM_MOUSEHWHEEL</c>) WPF'e HİÇ ulaşmaz, bu yüzden
+    /// pencerenin HWND mesaj yoluna kanca gerekir (+ bir Dispatcher turu ertelemesi, çünkü istek WndProc'un
+    /// İÇİNDEN yapılır). Buradaki istek FARKLI: prototipin <c>onWheel → scrollLeft += deltaY</c>'i — DÜZ dikey
+    /// tekerlek, ki WPF onu zaten normal bir <c>MouseWheel</c> routed event'i olarak dağıtır. HWND kancası ya
+    /// da erteleme YOKTUR: istek senkron, doğrudan <see cref="ScrollViewer.ScrollToHorizontalOffset"/> ile
+    /// uygulanır.</para>
+    ///
+    /// <para><b>Taşmayan hücrede ekstra bir "kendi dikey davranışını kapat" adımı YOK (ÖLÇÜLDÜ):</b> bu
+    /// ScrollViewer'ın <c>VerticalScrollBarVisibility="Disabled"</c> olması TEK BAŞINA yeterli — dikeyde
+    /// kaydıracak bir şeyi olmayan bir ScrollViewer, kendi bubble-fazı <c>MouseWheel</c> class handler'ında
+    /// olayı YUTMUYOR (<c>Handled</c> false kalıyor), bu yüzden tab'ın kendi (dış) ScrollViewer'ına dokunulmadan
+    /// ulaşıyor. Test bunu doğrudan <c>Handled</c> üzerinden pinler
+    /// (<c>The_wheel_leaves_a_non_overflowing_environment_value_untouched</c>).</para>
+    /// </summary>
+    private void OnEnvironmentValueWheel(object sender, MouseWheelEventArgs e)
+    {
+        var scroller = (ScrollViewer)sender;
+        if (scroller.ScrollableWidth <= 0) return; // taşmıyor: dikey tekerlek kendi yoluna gitsin
+        scroller.ScrollToHorizontalOffset(
+            EnvironmentValueWheelOffset(scroller.HorizontalOffset, e.Delta, scroller.ScrollableWidth));
+        e.Handled = true;
+    }
+
+    /// <summary>SAF karar: bir dikey tekerlek notch'unun (WPF <c>Delta</c>) yatay ofsete karşılığı, içeriğin
+    /// sınırlarına kelepçeli. WPF'in dikey ScrollViewer'ı pozitif <c>Delta</c>'yı YUKARI sayar (ofset AZALIR —
+    /// <c>e.Delta &gt; 0 ⇒ LineUp</c>); prototipin <c>scrollLeft += deltaY</c> hissiyle (tekerlek AŞAĞI ⇒ yol
+    /// SAĞA) aynı fiziksel yöne ulaşmak için işaret WPF'in KENDİ dikey kuralıyla aynı çevrilir:
+    /// <c>ofset -= delta</c>.</summary>
+    internal static double EnvironmentValueWheelOffset(double currentOffset, double delta, double scrollableWidth) =>
+        Math.Clamp(currentOffset - delta, 0, Math.Max(0, scrollableWidth));
+
     // ---------------------------------------------------------------- copy diagnostics
 
     private void OnCopyDiagnostics(object sender, RoutedEventArgs e) => CopyDiagnostics();

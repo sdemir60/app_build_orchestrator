@@ -19,6 +19,11 @@ public class AboutDialogTests
 {
     private static readonly TimeSpan PumpTimeout = TimeSpan.FromSeconds(2);
 
+    // Gerçek makinedeki LOCALAPPDATA yollarının uzunluğuna bel bağlamaz: hangi font gerçekten çözülürse
+    // çözülsün (headless testte AppFonts.Mono'nun pack:// kaynağı yoktur, WPF bir yedeğe düşer) bu uzunluk
+    // Environment hücresinin ~450px'lik görünür genişliğini KESİNLİKLE taşırır.
+    private static readonly string OverflowingRootPath = @"D:\" + new string('a', 200) + @"\repo";
+
     private static Border Shell(BuildOrchestrator.App.Views.AboutDialog dialog) =>
         (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
 
@@ -32,6 +37,29 @@ public class AboutDialogTests
     {
         Tabs(dialog)[index].IsChecked = true;
         dialog.UpdateLayout();
+    }
+
+    /// <summary>Bir Environment satırının değer hücresini ETİKETİNDEN bulur — <c>DataContext</c> şablonun
+    /// köküne bağlanan <see cref="DiagnosticsLine"/>'dan ScrollViewer'a KADAR aynen akar (WPF değer
+    /// kalıtımı), bu yüzden hücre kendi satırının verisiyle güvenle eşleştirilir.</summary>
+    private static ScrollViewer EnvironmentValueScroller(FrameworkElement dialog, string label) =>
+        DsResources.Descendants(dialog).OfType<ScrollViewer>()
+            .Single(sv => sv.DataContext is DiagnosticsLine line && line.Label == label);
+
+    /// <summary>Gerçek bir <c>MouseWheel</c> routed event'i — HWND/SendMessage GEREKMEZ (yalnız
+    /// <c>HorizontalWheelScroll</c>'un çözdüğü <c>WM_MOUSEHWHEEL</c> için gerekirdi, bkz. o sınıfın XML
+    /// doc'u); WPF düz dikey tekerleği zaten routed event olarak dağıttığı için doğrudan
+    /// <see cref="UIElement.RaiseEvent"/> yeterlidir. Kaydırma senkrondur (OnEnvironmentValueWheel bir
+    /// Dispatcher turu ERTELEMEZ), <c>UpdateLayout</c> yalnız yayınlanan <c>HorizontalOffset</c>'in bir
+    /// layout turu istediği ihtimaline karşı savunmacıdır.</summary>
+    private static MouseWheelEventArgs RaiseWheel(
+        BuildOrchestrator.App.Views.AboutDialog dialog, ScrollViewer target, int delta)
+    {
+        var args = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+            { RoutedEvent = UIElement.PreviewMouseWheelEvent };
+        target.RaiseEvent(args);
+        dialog.UpdateLayout();
+        return args;
     }
 
     // ---------------------------------------------------------------- kabuk
@@ -312,6 +340,72 @@ public class AboutDialogTests
         }
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — design v1.13.1 §2.10]</b> ESKİ İDDİA: değer hücresi
+    /// <c>TextTrimming="CharacterEllipsis"</c> ile kırpılır, tam metin <c>ToolTip</c>'te dururdu.
+    /// "Ellipsis + title ipucu" olarak denendi, İSTENMEDİ — tam metni okumanın zaten bir yolu var
+    /// (footer'daki Copy diagnostics), kırpma+tooltip fazladan bir etkileşim katmanıydı. YENİ kural: hiçbir
+    /// değer KIRPILMAZ ve hiçbirinde tooltip YOKTUR; uzun bir yol bunun yerine yatay kayar (aşağıdaki
+    /// <c>The_wheel_*</c> testleri).
+    /// </summary>
+    [StaFact]
+    public void Environment_values_are_not_truncated_and_carry_no_tooltip()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.RootPath = OverflowingRootPath);
+        using (scope)
+        {
+            Select(dialog, 1);
+
+            var valueCells = DsResources.Descendants(dialog).OfType<TextBlock>()
+                .Where(t => dialog.DiagnosticsLines.Any(l => l.Value == t.Text))
+                .ToList();
+
+            Assert.Equal(dialog.DiagnosticsLines.Count, valueCells.Count); // her satırın değeri BULUNDU
+            Assert.All(valueCells, t => Assert.Equal(TextTrimming.None, t.TextTrimming));
+            Assert.All(valueCells, t => Assert.Null(t.ToolTip));
+        }
+    }
+
+    /// <summary>Taşan hücrede tekerlek yatay ofseti ARTIRIR ve olayı YUTAR — brief T10 testler listesi.
+    /// Taşma <see cref="OverflowingRootPath"/> ile GARANTİ edilir; gerçek makinedeki LOCALAPPDATA yollarının
+    /// o an ne kadar uzun olduğuna bel bağlamaz.</summary>
+    [StaFact]
+    public void The_wheel_scrolls_an_overflowing_environment_value_sideways()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.RootPath = OverflowingRootPath);
+        using (scope)
+        {
+            Select(dialog, 1);
+            var scroller = EnvironmentValueScroller(dialog, "Repository root");
+            Assert.True(scroller.ScrollableWidth > 0); // ön-koşul: gerçekten taşıyor
+            Assert.Equal(0.0, scroller.HorizontalOffset);
+
+            var args = RaiseWheel(dialog, scroller, -Mouse.MouseWheelDeltaForOneLine);
+
+            Assert.True(scroller.HorizontalOffset > 0);
+            Assert.True(args.Handled); // taşan hücre olayı YUTAR — dışarıdaki dikey scroll'a sızmaz
+        }
+    }
+
+    /// <summary>Taşmayan hücrede tekerlek yatay ofsete DOKUNMAZ ve olayı YUTMAZ (<c>Handled</c> false kalır) —
+    /// aksi halde sekmenin kendi dikey kaydırması hiç çalışmazdı (brief T10 testler listesi).</summary>
+    [StaFact]
+    public void The_wheel_leaves_a_non_overflowing_environment_value_untouched()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Select(dialog, 1);
+            var scroller = EnvironmentValueScroller(dialog, "App version");
+            Assert.Equal(0.0, scroller.ScrollableWidth); // ön-koşul: taşmıyor
+
+            var args = RaiseWheel(dialog, scroller, -Mouse.MouseWheelDeltaForOneLine);
+
+            Assert.Equal(0.0, scroller.HorizontalOffset);
+            Assert.False(args.Handled); // YUTULMADI: dikey yoluna (sekmenin kendi ScrollViewer'ı) devam eder
+        }
+    }
+
     /// <summary>MSBuild çözümü ASYNC'tir: sekme açılana kadar HİÇ tetiklenmez (About'u açmak bir child process
     /// başlatmamalı) ve sonuç gelene kadar satır "resolving…" der. Sonuç bir kez çözülür, cache'lenir.</summary>
     [StaFact]
@@ -462,5 +556,47 @@ public class AboutDialogTests
             dialog.CopyDiagnostics();
             Assert.False(dialog.IsShowingCopied);
         }
+    }
+
+    // ---------------------------------------------------------------- saf karar (ofset aritmetiği)
+
+    /// <summary>WPF'in dikey kuralıyla AYNI çevrilir: pozitif <c>Delta</c> YUKARI'dır (dikeyde ofset azalır);
+    /// prototipin <c>scrollLeft += deltaY</c> hissiyle (tekerlek AŞAĞI ⇒ yol SAĞA) aynı fiziksel yöne
+    /// ulaşmak için "aşağı" (negatif <c>Delta</c>) burada yatay ofseti, notch'un TAM büyüklüğü kadar,
+    /// ARTIRIR — <see cref="HorizontalWheelScroll"/>'un aksine bir satır/adım ölçeklemesi YOKTUR, prototip
+    /// de kırpmaz (<c>scrollLeft += deltaY</c> düz toplamdır).</summary>
+    [Fact]
+    public void A_downward_notch_increases_the_horizontal_offset_by_its_full_magnitude()
+    {
+        Assert.Equal(120.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            0, -Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void An_upward_notch_decreases_the_horizontal_offset()
+    {
+        Assert.Equal(880.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            1000, Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void The_offset_never_goes_negative()
+    {
+        Assert.Equal(0.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            0, Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void The_offset_is_clamped_to_the_scrollable_width()
+    {
+        Assert.Equal(1000.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            950, -Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void A_non_overflowing_cell_always_clamps_to_zero()
+    {
+        Assert.Equal(0.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            0, -Mouse.MouseWheelDeltaForOneLine, 0));
     }
 }

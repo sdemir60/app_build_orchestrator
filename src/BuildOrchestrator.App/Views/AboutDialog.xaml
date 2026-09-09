@@ -165,12 +165,23 @@
                                VerticalAlignment="Center"
                                FontSize="{DynamicResource FontSize.Xs}"
                                Foreground="{DynamicResource Brush.TextDim}" />
-                    <!-- Yollar uzundur: kırpılır, tam metin tooltip'te durur. -->
-                    <TextBlock Text="{Binding Value}" ToolTip="{Binding Value}"
-                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                               FontFamily="{x:Static controls:AppFonts.Mono}"
-                               FontSize="{DynamicResource FontSize.Xs}"
-                               Foreground="{DynamicResource Brush.TextSecondary}" />
+                    <!-- [DEĞİŞEN KURAL — design v1.13.1 §2.10] ESKİ: TextTrimming="CharacterEllipsis" ile
+                         kırpılır, tam metin ToolTip'te dururdu. "Ellipsis + title ipucu" olarak denendi,
+                         İSTENMEDİ — tam metni okumanın zaten bir yolu var (footer'daki Copy diagnostics),
+                         kırpma+tooltip fazladan bir etkileşim katmanıydı. YENİ: satır KIRILMAZ, yatay kayar;
+                         çubuk GÖRÜNMEZ (Hidden — Controls.xaml'deki TextBox PART_ContentHost ile AYNI
+                         "kaydırılabilir ama çubuksuz" karşılığı) ve dikey ASLA kaymaz (Disabled — tek satır
+                         içerik). Tekerlek yönlendirmesi OnEnvironmentValueWheel'dedir (AboutDialog.xaml.cs) —
+                         yalnız hücre GERÇEKTEN taşıyorsa devreye girer, taşmıyorsa olay dokunulmadan dikey
+                         yoluna (bu ScrollViewer'ın DIŞINA) devam eder; bkz. o metodun XML doc'u. -->
+                    <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
+                                  Focusable="False"
+                                  VerticalAlignment="Center" PreviewMouseWheel="OnEnvironmentValueWheel">
+                      <TextBlock Text="{Binding Value}" VerticalAlignment="Center"
+                                 FontFamily="{x:Static controls:AppFonts.Mono}"
+                                 FontSize="{DynamicResource FontSize.Xs}"
+                                 Foreground="{DynamicResource Brush.TextSecondary}" />
+                    </ScrollViewer>
                   </DockPanel>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
