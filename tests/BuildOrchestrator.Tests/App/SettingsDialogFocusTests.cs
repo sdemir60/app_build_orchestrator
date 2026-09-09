@@ -1,9 +1,11 @@
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -242,7 +244,42 @@ public class SettingsDialogFocusTests
         Assert.Equal(170.0, nameBox.ActualWidth);
     }
 
-    private static Border CardBorder(ItemsControl list, LayerRowViewModel row)
+    /// <summary>[K5 · design v1.14.0 §9] Harici proje kartı — katman kartıyla BİREBİR aynı 36px + 6px boşluk
+    /// geometrisi ve AYNI grip mekanizması (<see cref="DragReorderBehavior.IsDragHandle"/>), + Source seçiminin
+    /// BİREBİR 96px genişliği (brief: "96px sabit").</summary>
+    [StaFact]
+    public void External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_a_96px_source_select()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.ExternalProjects =
+            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"C:\b", VcsKind.Tfvc)]);
+        using var _scope = scope;
+
+        var draft = (SettingsDraftViewModel)dialog.DataContext;
+        Assert.Equal(2, draft.Externals.Count); // ön-koşul: iki kart gerçekten var
+
+        var card0 = CardBorder(dialog.ExternalsList, draft.Externals[0]);
+        var card1 = CardBorder(dialog.ExternalsList, draft.Externals[1]);
+
+        Assert.Equal(36.0, card0.ActualHeight);
+        Assert.Equal(new Thickness(0, 0, 0, 6), card0.Margin);
+
+        double top0 = card0.TranslatePoint(new Point(0, 0), dialog).Y;
+        double top1 = card1.TranslatePoint(new Point(0, 0), dialog).Y;
+        Assert.Equal(42.0, top1 - top0, precision: 1);
+
+        var grip = DsResources.Descendants(card0).OfType<Border>().Single(b => DragReorderBehavior.GetIsDragHandle(b));
+        Assert.Equal("Drag to reorder", ((ToolTip)grip.ToolTip).Content);
+
+        var select = DsResources.Descendants(card0).OfType<ComboBox>().Single();
+        Assert.Equal(96.0, select.Width);
+        Assert.Equal(96.0, select.ActualWidth);
+        Assert.Equal(AccessibilityNames.ExternalProjectSource, AutomationProperties.GetName(select));
+    }
+
+    /// <summary>[K5] <paramref name="row"/> bilerek <c>object</c>'tir: hem <see cref="LayerRowViewModel"/> hem
+    /// <see cref="ExternalRowViewModel"/> AYNI kart şablonunu (<c>Ds.Settings.Card</c>) paylaştığı için bir
+    /// ikinci (kopya) yardımcıya gerek yok — <c>ContainerFromItem</c> zaten <c>object</c> alır.</summary>
+    private static Border CardBorder(ItemsControl list, object row)
     {
         var presenter = (ContentPresenter)list.ItemContainerGenerator.ContainerFromItem(row)!;
         presenter.ApplyTemplate();

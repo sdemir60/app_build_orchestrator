@@ -1,5 +1,6 @@
 using System.IO;
 using BuildOrchestrator.App.Shell;
+using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
@@ -50,6 +51,9 @@ public class UiStateStoreTests
         state.Branch = "feature/x"; state.UseWorktree = true; state.WorktreeName = "feature-x-1";
         // [D7] LayerPatterns artık List<LayerPattern> (Order/Regex/Name) — eskiden List<string>'ti.
         state.LayerPatterns = [new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")];
+        // [K5 · design v1.14.0 §9] ExternalProjects LayerPatterns'ın YANI BAŞINDA seed edilir — AYNI commit'te
+        // yazılır, bu yüzden round-trip testi de aynı senaryoya katılır (kopya YASAK, ikinci bir test yok).
+        state.ExternalProjects = [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"D:\shared\b.csproj", VcsKind.Tfvc)];
         state.Autostart = true;
         store.Save(state);
 
@@ -61,7 +65,27 @@ public class UiStateStoreTests
         Assert.True(reloaded.UseWorktree);
         Assert.Equal("feature-x-1", reloaded.WorktreeName);
         Assert.Equal([new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")], reloaded.LayerPatterns);
+        Assert.Equal(
+            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"D:\shared\b.csproj", VcsKind.Tfvc)],
+            reloaded.ExternalProjects);
         Assert.True(reloaded.Autostart);
+    }
+
+    /// <summary>[K5] Kalıcı dosyada <c>ExternalProjects</c> anahtarı hiç yoksa (K5 öncesi bir dosya) alan boş
+    /// listeye düşer — LayerPatterns'ın eski List&lt;string&gt;→List&lt;LayerPattern&gt; göçünün AYNI ilk-yazıcı
+    /// durumu: startup wipe YOK, diğer alanlar korunur.</summary>
+    [Fact]
+    public void A_pre_k5_file_with_no_external_projects_key_loads_with_an_empty_list()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path, """{ "ColPct": 61, "Branch": "feature/x" }""");
+
+        var reloaded = new JsonUiStateStore(path).Load();
+
+        Assert.Equal(61, reloaded.ColPct);
+        Assert.Equal("feature/x", reloaded.Branch);
+        Assert.Empty(reloaded.ExternalProjects);
     }
 
     [Fact] // [D6 fold] PerfMode bool→string? göçü: diskteki eski bool token'ı TÜM Load'u devirmemeli (startup wipe YOK).
