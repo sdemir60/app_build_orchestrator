@@ -12,10 +12,11 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [D7/T66] Settings modal diyaloğu (ince view). <b>WORKSPACE</b> (design v1.8.0 §2.9) ve <b>LAYERS</b>
-/// bölümlerinin ikisi de <see cref="SettingsDraftViewModel"/>'e (test edilebilir taslak) bağlıdır — Save'e
-/// kadar canlı <see cref="RunViewModel"/>'e dokunulmaz. Save = commit (persist + katmanlar + bekleyen repo
-/// kökü + TEK Sync, <see cref="SettingsDraftViewModel.CommitAsync"/>), Cancel/scrim/Esc = taslağı at.
+/// [D7/T66 · K5] Settings modal diyaloğu (ince view). <b>WORKSPACE</b> (design v1.8.0 §2.9),
+/// <b>EXTERNAL PROJECTS</b> (design v1.14.0 §9) ve <b>LAYERS</b> bölümlerinin üçü de
+/// <see cref="SettingsDraftViewModel"/>'e (test edilebilir taslak) bağlıdır — Save'e kadar canlı
+/// <see cref="RunViewModel"/>'e dokunulmaz. Save = commit (persist + katmanlar + harici projeler + bekleyen
+/// repo kökü + TEK Sync, <see cref="SettingsDraftViewModel.CommitAsync"/>), Cancel/scrim/Esc = taslağı at.
 ///
 /// <para>[design v1.10.0 §2.9] Footer ayrıca <b>Export / Import / Clear</b> taşır. Üçü de yalnız FORMU
 /// değiştirir: Save'e kadar hiçbir şey uygulanmaz ve onay dialogu yoktur — Clear'ın "onayı" iki aşamalı
@@ -88,7 +89,7 @@ public partial class SettingsDialog : UserControl
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
-        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath);
+        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.ExternalProjects);
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();
@@ -162,6 +163,15 @@ public partial class SettingsDialog : UserControl
     {
         _draft?.LoadSampleLayers();
         DisarmClear();
+    }
+
+    // ---- External projects (design v1.14.0 §9 · K5) ----
+
+    private void OnAddExternal(object sender, RoutedEventArgs e) => _draft?.AddExternal();
+
+    private void OnRemoveExternal(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ExternalRowViewModel row }) _draft?.RemoveExternal(row);
     }
 
     // ---- Workspace (design v1.8.0 §2.9) ----
