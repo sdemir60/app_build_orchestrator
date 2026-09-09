@@ -131,10 +131,10 @@ public class ExternalRunTests
     }
 
     [Fact]
-    public async Task A_successful_external_records_no_repository_commit_or_branch()
+    public async Task A_successful_external_records_its_own_revision_not_the_repositorys()
     {
-        // HEAD ve branch ANA REPOYU anlatır; harici satırın yanında başka bir reponun commit'ini göstermek
-        // yalan olurdu. Harici projelerin revizyonu hiçbir kararı beslemez (imza içerik tabanlıdır).
+        // Satırın sha yuvası "en son hangi sürümden derlendi" der. Harici proje BAŞKA bir çalışma
+        // kopyasından gelir: kendi revizyonu yazılır, ana reponun HEAD'i ve branch'i YAZILMAZ.
         string cacheRoot = Directory.CreateTempSubdirectory("bo-ext-state-").FullName;
         var store = new BuildStateStore(cacheRoot);
         var plan = PlanOf(ExternalNode("Mail"), Node("A")) with
@@ -145,7 +145,11 @@ public class ExternalRunTests
                     [ExternalId("Mail")] = "SIG-Mail",
                     [Id("A")] = "SIG-A",
                 },
-                HeadCommit: "1111111111111111111111111111111111111111", Branch: "main"),
+                HeadCommit: "1111111111111111111111111111111111111111", Branch: "main",
+                CommitByProjectId: new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [ExternalId("Mail")] = "abcdef1234567890abcdef1234567890abcdef12",
+                }),
         };
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         using var h = new Harness(plan, invoker, stateStore: store);
@@ -156,8 +160,8 @@ public class ExternalRunTests
         var loaded = store.Load();
         var external = loaded[ExternalId("Mail")];
         Assert.Equal("SIG-Mail", external.BuiltSignature);   // imza YAZILIR — incremental karar ona dayanır
-        Assert.Null(external.BuiltCommit);
-        Assert.Null(external.LastBranch);
+        Assert.Equal("abcdef1234567890abcdef1234567890abcdef12", external.BuiltCommit); // KENDİ revizyonu
+        Assert.Null(external.LastBranch);                    // branch her koşulda ana repoya ait
         Assert.Equal("1111111111111111111111111111111111111111", loaded[Id("A")].BuiltCommit); // ana repo etkilenmez
     }
 

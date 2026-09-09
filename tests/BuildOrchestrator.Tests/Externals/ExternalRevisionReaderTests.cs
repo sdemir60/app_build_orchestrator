@@ -1,0 +1,105 @@
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Externals;
+using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Tests.Git;
+
+namespace BuildOrchestrator.Tests.Externals;
+
+/// <summary>
+/// Harici bir projenin satırındaki sha, ana repo satırlarıyla AYNI şeyi anlatır: en son hangi sürümden
+/// derlendi. O sürüm ana reponun HEAD'i DEĞİL, projenin KENDİ çalışma kopyasının revizyonudur — bu okuyucu
+/// onu bulup kökten doğan her projeye dağıtır.
+/// </summary>
+public class ExternalRevisionReaderTests
+{
+    private static ExternalWorkspace Resolve(params ExternalProject[] cards) =>
+        ExternalWorkspaceResolver.Resolve(new ScanResult([], []), cards, new WorkspaceScanner());
+
+    private static string WriteProject(string directory, string name)
+    {
+        Directory.CreateDirectory(directory);
+        string csproj = Path.Combine(directory, name + ".csproj");
+        File.WriteAllText(csproj,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>" + name
+            + "</AssemblyName><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        return csproj;
+    }
+
+    private static Task<System.Collections.Generic.IReadOnlyDictionary<string, string>> ReadAsync(
+        ExternalWorkspace workspace) =>
+        new ExternalRevisionReader(new ProcessRunner()).ReadAsync(workspace.Roots);
+
+    [Fact]
+    public async Task Every_project_under_a_git_root_carries_that_working_copys_head()
+    {
+        using var repo = new GitTestRepo();
+        string mail = WriteProject(Path.Combine(repo.RootPath, "Mail"), "Mail");
+        string ocr = WriteProject(Path.Combine(repo.RootPath, "Ocr"), "Ocr");
+        string head = repo.CommitAll("first");
+
+        var revisions = await ReadAsync(Resolve(new ExternalProject(repo.RootPath, VcsKind.Git)));
+
+        Assert.Equal(head, revisions[mail]);
+        Assert.Equal(head, revisions[ocr]);   // tek çalışma kopyası → tek revizyon
+    }
+
+    [Fact]
+    public async Task The_working_copy_root_is_found_from_a_nested_card_path()
+    {
+        using var repo = new GitTestRepo();
+        string csproj = WriteProject(Path.Combine(repo.RootPath, "src", "Mail"), "Mail");
+        string head = repo.CommitAll("first");
+
+        // Kart doğrudan .csproj'u gösteriyor; kök yukarı yürünerek bulunur.
+        var revisions = await ReadAsync(Resolve(new ExternalProject(csproj, VcsKind.Git)));
+
+        Assert.Equal(head, revisions[csproj]);
+    }
+
+    [Fact]
+    public async Task A_tfvc_root_is_left_without_a_revision()
+    {
+        // TFVC karşılığı (`tf vc history`) SUNUCUYA gider; planlamayı ağa bağlamamak için okunmaz — o
+        // satırların sha yuvası boş kalır. Yanlış bir değer göstermektense hiçbir şey göstermek doğrudur.
+        using var temp = new TempDir();
+        Directory.CreateDirectory(Path.Combine(temp.Path, "$tf"));
+        WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
+
+        var revisions = await ReadAsync(Resolve(new ExternalProject(temp.Path, VcsKind.Tfvc)));
+
+        Assert.Empty(revisions);
+    }
+
+    [Fact]
+    public async Task A_path_with_no_git_working_copy_above_it_is_left_without_a_revision()
+    {
+        using var temp = new TempDir();
+        WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
+
+        var revisions = await ReadAsync(Resolve(new ExternalProject(temp.Path, VcsKind.Git)));
+
+        Assert.Empty(revisions);
+    }
+
+    [Fact]
+    public async Task Two_roots_keep_their_own_revisions()
+    {
+        using var first = new GitTestRepo();
+        string mail = WriteProject(Path.Combine(first.RootPath, "Mail"), "Mail");
+        string firstHead = first.CommitAll("first");
+        using var second = new GitTestRepo();
+        string ocr = WriteProject(Path.Combine(second.RootPath, "Ocr"), "Ocr");
+        string secondHead = second.CommitAll("second");
+
+        var revisions = await ReadAsync(Resolve(
+            new ExternalProject(first.RootPath, VcsKind.Git), new ExternalProject(second.RootPath, VcsKind.Git)));
+
+        Assert.Equal(firstHead, revisions[mail]);
+        Assert.Equal(secondHead, revisions[ocr]);
+        Assert.NotEqual(revisions[mail], revisions[ocr]);
+    }
+}

@@ -38,10 +38,15 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// [A2 fix-1] Bu yalnız BAŞARI yolu içindir: başarısızlıkta yapılan invalidasyon (bkz.
 /// <c>InvalidateBuildStateOnFailure</c>) imza/HEAD gerektirmez, mevcut kaydı yerinde günceller.
 /// </summary>
+/// <param name="CommitByProjectId">[design v1.14.0 §9] Proje başına revizyon ÜSTÜNE YAZMASI — yalnız harici
+/// köklerden gelen projeler için dolar (bkz. <see cref="ExternalRevisionReader"/>). <see cref="HeadCommit"/>
+/// ANA REPOYU anlatır; harici bir projenin kaydına onu yazmak başka bir reponun commit'ini o satırın sha
+/// yuvasında göstermek olurdu.</param>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
     string? HeadCommit,
-    string? Branch);
+    string? Branch,
+    IReadOnlyDictionary<string, string>? CommitByProjectId = null);
 
 /// <summary>
 /// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
@@ -1656,11 +1661,15 @@ public sealed class RunCoordinator(
             || !inc.SignatureById.TryGetValue(projectId, out var signature))
             return;
 
-        // [design v1.14.0 §9] HEAD ve branch ANA REPOYU anlatır; harici bir projenin kaydında onları taşımak
-        // satırın sha yuvasında başka bir reponun commit'ini göstermek olurdu. Harici projelerin revizyonu
-        // hiçbir kararı beslemez (imza içerik tabanlıdır), o yüzden yuva boş bırakılır.
+        // [design v1.14.0 §9] HEAD ve branch ANA REPOYU anlatır. Harici bir proje kendi çalışma kopyasının
+        // revizyonunu taşır (ExternalRevisionReader); okunamadıysa (TFVC, ya da git hatası) yuva BOŞ kalır —
+        // yanlış bir reponun commit'ini göstermektense hiçbir şey göstermek doğrudur. Branch her koşulda ana
+        // repoya aittir, harici kayda hiç yazılmaz.
         bool external = IsExternal(run, projectId);
-        var state = new BuildState(projectId, signature, external ? null : inc.HeadCommit, BuildResult.Succeeded,
+        string? builtCommit = external
+            ? inc.CommitByProjectId?.GetValueOrDefault(projectId)
+            : inc.HeadCommit;
+        var state = new BuildState(projectId, signature, builtCommit, BuildResult.Succeeded,
             DateTimeOffset.UtcNow, external ? null : inc.Branch, durationMs, DepIssue: depIssue);
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
