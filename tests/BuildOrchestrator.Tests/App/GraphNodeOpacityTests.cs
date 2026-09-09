@@ -62,14 +62,16 @@ public class GraphNodeOpacityTests
     /// <para><b>[DEĞİŞTİ — v1.13.2]</b> Eski iddia burada ikinci satırda <c>Building, focus:false → 0.1</c>
     /// örneğiyle "building de dahil, odak dışı HER statü söner" diyordu. Tasarım v1.13.2 building'e bir
     /// İSTİSNA getirdi (bkz. <see cref="A_live_building_node_stays_fully_opaque_outside_focus_but_only_while_running"/>)
-    /// — bu testteki örnek istisnaya TAKILMAYAN bir statüyle (Queued) değiştirildi; "odak dışı 0.1'e iner"
-    /// genel iddiası geçerliliğini KORUYOR, yalnız artık building bir muafiyet taşıyor.</para>
+    /// — bu testteki örnek istisnaya TAKILMAYAN bir statüyle (Discovered) değiştirildi; "odak dışı 0.1'e
+    /// iner" genel iddiası geçerliliğini KORUYOR, yalnız artık building bir muafiyet taşıyor. (Kontrolün
+    /// KENDİSİ — Queued'un hâlâ sönmesi — <see cref="A_non_building_node_still_dims_outside_focus"/>'ta,
+    /// kopya olmasın diye ayrı statüyle.)</para>
     /// </summary>
     [Fact]
     public void A_selection_overrides_the_run_system_entirely()
     {
         Assert.Equal(1.0, Op(GraphStatus.Queued, GraphRunPhase.Running, selection: true, focus: true), 6);
-        Assert.Equal(0.1, Op(GraphStatus.Queued, GraphRunPhase.Running, selection: true, focus: false), 6);
+        Assert.Equal(0.1, Op(GraphStatus.Discovered, GraphRunPhase.Running, selection: true, focus: false), 6);
         Assert.Equal(0.1, Op(GraphStatus.Succeeded, GraphRunPhase.Idle, selection: true, focus: false), 6);
     }
 
