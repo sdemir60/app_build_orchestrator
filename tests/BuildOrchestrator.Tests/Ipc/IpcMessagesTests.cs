@@ -106,6 +106,33 @@ public class IpcMessagesTests
         Assert.Null(cmd.WorktreeName);
         Assert.Equal(DependentMode.Safe, cmd.DependentMode);
         Assert.Null(cmd.LayerPatterns); // [A1] katman ataması varsayılan olarak KAPALI (mevcut davranış)
+        Assert.Null(cmd.ScopeProjectId); // [tek proje] varsayılan: kapsam yok, tam koşu
+    }
+
+    // [tek proje · design §3.8] Satırdan tetiklenen koşu kapsamını proje KİMLİĞİYLE taşır (tam csproj yolu —
+    // kod tabanının kimlik kuralı). Alan sondadır ve default'ludur: eski satırlar aynen çözülür.
+    [Fact]
+    public void StartRunCommand_scope_project_id_roundtrips_camelCase()
+    {
+        var cmd = new StartRunCommand("r1", RunMode.Build, @"D:\repo", "Debug", 6, ScopeProjectId: @"D:\repo\src\A\A.csproj");
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"scopeProjectId\":\"D:\\\\repo\\\\src\\\\A\\\\A.csproj\"", json);
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        Assert.Equal(cmd, back);
+    }
+
+    [Fact]
+    public void A_start_run_line_written_before_the_scope_field_existed_is_a_full_run()
+    {
+        const string legacy = """
+            {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}
+            """;
+
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(legacy, IpcJson.Options));
+
+        Assert.Null(back.ScopeProjectId);
+        // Kapsamsız komut alanı hiç YAZMAZ (WhenWritingNull): eski Supervisor'lar da aynı satırı görür.
+        Assert.DoesNotContain("scopeProjectId", JsonSerializer.Serialize<IpcCommand>(back, IpcJson.Options));
     }
 
     // [A1/T15] Katman pattern'leri App'ten Supervisor'a IPC ile taşınır — Core'daki LayerEngine ancak bu

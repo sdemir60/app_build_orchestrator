@@ -80,20 +80,32 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
 
     /// <param name="externals">Kullanıcının listesi, KENDİ SIRASIYLA — güncelleme de o sırada koşar.</param>
     /// <param name="progress">Kullanıcıya görünen satırlar buraya akar.</param>
+    /// <param name="scopeProjectPath">[tek proje · design v1.15.0 §9] Satırdan tetiklenen koşunun hedefi
+    /// (tam csproj yolu). Dolu iken YALNIZ hedefi içeren kart güncellenir — kapsam dışına dokunulmaz: başka bir
+    /// kartın kopyası ne güncellenir ne de onun için satır yazılır (çalışma kopyası olmayan kartın uyarısı
+    /// dahil). Hedef ana repodaysa hiçbir karta dokunulmaz. <c>null</c> ⇒ tam koşu, her kart.</param>
     public async Task UpdateAsync(
-        IReadOnlyList<ExternalProject> externals, Action<string> progress, CancellationToken ct = default)
+        IReadOnlyList<ExternalProject> externals, Action<string> progress,
+        string? scopeProjectPath = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(externals);
         ArgumentNullException.ThrowIfNull(progress);
 
         foreach (var project in externals)
-            await UpdateOneAsync(project, progress, ct);
+            await UpdateOneAsync(project, progress, scopeProjectPath, ct);
     }
 
-    private async Task UpdateOneAsync(ExternalProject project, Action<string> progress, CancellationToken ct)
+    private async Task UpdateOneAsync(ExternalProject project, Action<string> progress, string? scopeProjectPath, CancellationToken ct)
     {
         string name = ExternalWorkspaceResolver.DisplayName(project.Path);
-        string? root = VcsDetector.FindRoot(ExternalWorkspaceResolver.SearchRootOf(project.Path), project.Vcs);
+        string searchRoot = ExternalWorkspaceResolver.SearchRootOf(project.Path);
+        string? root = VcsDetector.FindRoot(searchRoot, project.Vcs);
+        // Kapsam kapısı: hedef ne kartın arama kökünün ne de çalışma kopyasının altındaysa kart bu koşunun
+        // konusu değildir — sessizce geçilir (uyarı satırı bile yok).
+        if (scopeProjectPath is not null
+            && !Contains(searchRoot, scopeProjectPath)
+            && !(root is not null && Contains(root, scopeProjectPath)))
+            return;
         if (root is null)
         {
             progress(PlanProgressLines.ExternalNoWorkingCopy(name, project.Vcs));
@@ -104,6 +116,27 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
 
         if (project.Vcs is VcsKind.Tfvc) await UpdateTfvcAsync(name, root, progress, ct);
         else await UpdateGitAsync(name, root, progress, ct);
+    }
+
+    /// <summary>
+    /// <paramref name="projectPath"/> <paramref name="root"/>'un ALTINDA mı — saf bir yol sorusu: harf-duyarsız
+    /// ve ayraç-farkında (<c>D:\ext\mail2</c>, <c>D:\ext\mail</c>'in altı DEĞİLDİR). Diske dokunmaz; bozuk bir
+    /// yol "içermiyor" sayılır.
+    /// </summary>
+    public static bool Contains(string root, string projectPath)
+    {
+        if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(projectPath)) return false;
+        try
+        {
+            string r = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root.Trim()));
+            string p = Path.GetFullPath(projectPath.Trim());
+            if (!p.StartsWith(r, StringComparison.OrdinalIgnoreCase)) return false;
+            return p.Length == r.Length || p[r.Length] == Path.DirectorySeparatorChar || p[r.Length] == Path.AltDirectorySeparatorChar;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     private async Task UpdateGitAsync(string name, string rootPath, Action<string> progress, CancellationToken ct)
