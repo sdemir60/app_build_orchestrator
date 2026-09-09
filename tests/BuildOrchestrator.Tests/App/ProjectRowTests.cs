@@ -228,7 +228,11 @@ public class ProjectRowTests
         // [DEĞİŞEN KURAL — design v1.11.0 §2.4-4] Blok eskiden İKİ düğme (folder + VS) ve TEK popup (VS
         // seçici) taşıyordu. v1.11.0 satır aksiyonlarını ekledi: play (Button) + ⋯ (ToggleButton) ve ⋯'in
         // menüsü ikinci bir popup'tır. Tembellik iddiası DEĞİŞMEDİ — hepsi hâlâ İLK HOVER'da doğar.
-        Assert.Equal(3, after.OfType<Button>().Count());          // play + folder + VS
+        // [DEĞİŞEN KURAL — §3.8 tek proje koşusu] Play'in yuvasında bir de kırmızı Stop (Button) durur — koşunun
+        // hedefi olan satırda play'in yerini alır, hiçbir zaman birlikte görünmezler. Eski iddia ÜÇ düğmeydi
+        // (play + folder + VS); Stop'un motoru (StopCommand) bağlandığı için düğme artık gerçekten var ve aynı
+        // tembel blokta doğar. Sayı bu yüzden dört.
+        Assert.Equal(4, after.OfType<Button>().Count());          // play + Stop + folder + VS
         Assert.Single(after.OfType<ToggleButton>());              // ⋯
         Assert.Equal(2, after.OfType<Popup>().Count());           // satır menüsü + VS seçici
 
