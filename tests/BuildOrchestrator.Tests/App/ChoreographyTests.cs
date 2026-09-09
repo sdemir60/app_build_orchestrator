@@ -37,6 +37,13 @@ public class ChoreographyTests
     private static ProjectNode Node(string name, int order, bool inCycle = false) =>
         new($@"C:\p\{name}.csproj", name, $@"C:\p\{name}.csproj", ["Osys"], [], order, null, null, inCycle, null);
 
+    /// <summary>Satırların v1.13.2 ÖNCESİ aldığı koreografi opaklığı (kaldırılan <c>RowEnvOpacity</c> = 0.3,
+    /// <see cref="MarkingChoreography.EnvGlideMs"/> süresiyle). Testler satırları koreografiden ÖNCE bununla
+    /// KİRLETİR: <see cref="RowFade.None"/>'ı doğrudan aramak hiçbir koşulda kırılamazdı — alan zaten
+    /// construction'dan itibaren <c>None</c>'dır ve üretimde başka bir değer yazılmaz, yani sürücünün
+    /// temizleme yazımı silinse bile assertion yeşil kalırdı.</summary>
+    private static readonly RowFade StaleFade = new(0.3, MarkingChoreography.EnvGlideMs);
+
     // ================================================================ saf çekirdek: açılış
 
     /// <summary>Dalga temposu: 110ms/node, ama zincir toplamı 1.1s'yi AŞMAZ — 36 projede de kısa kalır.</summary>
@@ -469,11 +476,16 @@ public class ChoreographyTests
     /// opaklığı koreografi boyunca <see cref="RowFade.None"/>'da SABİTTİR — sönme/geri gelme (veda + neon
     /// finali) yalnız graf node'larında yaşar (<see cref="MarkingChoreography.NodeEnvOpacity"/> ve
     /// <see cref="MarkingChoreography.MarkedOpacity"/> hâlâ ORADA, <c>GraphView</c> üzerinden okunur).</para>
+    ///
+    /// <para>Satırlar koreografiden ÖNCE <see cref="StaleFade"/> ile KİRLETİLİR — yeni kuralı gerçekten
+    /// pinleyen şey budur: sürücünün her adımda yaptığı <see cref="RowFade.None"/> yazımı kaldırılırsa
+    /// aşağıdaki dört assertion KIRILIR (kirletmeden aranan <c>None</c> hiçbir koşulda kırılamazdı).</para>
     /// </summary>
     [StaFact]
     public void The_wave_marks_the_scope_and_the_steps_advance_on_a_real_clock()
     {
         var (vm, driver) = Driven();
+        foreach (var row in vm.Projects) row.Fade = StaleFade; // koreografi ÖNCESİ kir
 
         // Üretim sırası: önce  (başlangıç modu düşer — RunViewModel.BeginRunAsync), sonra .
         foreach (var row in vm.Projects) row.Fresh = false;
@@ -498,7 +510,12 @@ public class ChoreographyTests
     }
 
     /// <summary>[§9-4] Koşu başlayınca koreografi biter: satırlar tam opaklığa döner ve İŞARETLİLİK SİLİNİR —
-    /// amberi bundan sonra statü kanalı (queued/building) taşır.</summary>
+    /// amberi bundan sonra statü kanalı (queued/building) taşır.
+    ///
+    /// <para>Kir <see cref="OperationChoreographer.Cancel"/>'dan HEMEN ÖNCE atılır, koreografinin başında
+    /// DEĞİL: adım yazımı (<c>Enter</c>) satırları çoktan temizlemiş olurdu ve bu testin ölçtüğü şey
+    /// kesilme yolunun KENDİ temizleme yazımıdır. Dispatcher bu iki satır arasında dönmez, yani araya bir
+    /// adım tiki giremez.</para></summary>
     [StaFact]
     public void Cancelling_restores_full_opacity_and_clearing_drops_the_marks()
     {
@@ -506,6 +523,7 @@ public class ChoreographyTests
         driver.Play(vm.Projects, vm.ScopeFor(RunMode.Build));
         DispatcherPump.PumpUntil(() => driver.Step == MarkStep.DimEnv, TimeSpan.FromSeconds(4));
 
+        foreach (var row in vm.Projects) row.Fade = StaleFade; // kesilme ÖNCESİ kir
         driver.Cancel(vm.Projects);
 
         Assert.False(driver.IsPlaying);
