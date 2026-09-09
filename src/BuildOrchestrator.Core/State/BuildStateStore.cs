@@ -94,12 +94,37 @@ public sealed class BuildStateStore
     /// </summary>
     public void Upsert(BuildState state)
     {
+        ArgumentNullException.ThrowIfNull(state);
+        Write(map => { map[state.ProjectId] = state; return true; });
+    }
+
+    /// <summary>
+    /// [tek proje · Clean] Bir projenin kaydını defterden SİLER — kayıt yoksa dosyaya hiç dokunulmaz.
+    ///
+    /// <para>Tek çağıranı başarılı bir <c>Clean</c> koşusudur: çıktılar gittiğinde defter de onları bilmemeli.
+    /// §4 gereği DLL/bin timestamp'i asla okunmaz, yani "diskte çıktı var mı" sorusunun tek cevabı bu
+    /// defterdir; kayıt kalsaydı bir sonraki <c>Build</c> projeyi "güncel" sayıp atlar ve kullanıcı silinmiş
+    /// çıktılarla yeşil bir koşu görürdü. Kaydı <b>geçersizleştirmek</b> (LastResult=Failed) yerine SİLMEK
+    /// doğrudur: proje başarısız olmadı, bu araç artık onun hiçbir çıktısını bilmiyor — <c>WillBuildEvaluator</c>
+    /// da kayıtsız projeyi tam olarak böyle okur.</para>
+    /// </summary>
+    public void Remove(string projectId)
+    {
+        ArgumentNullException.ThrowIfNull(projectId);
+        Write(map => map.Remove(projectId));
+    }
+
+    /// <summary>Defterin TEK yazma yolu: kilit → oku → değiştir → geçici dosya → atomik rename. <paramref
+    /// name="mutate"/> <c>false</c> derse (değişen bir şey yok) dosyaya hiç dokunulmaz.</summary>
+    private void Write(Func<Dictionary<string, BuildState>, bool> mutate)
+    {
         _writeGate.Wait();
         try
         {
             // Load() zaten ignore-case dedup edilmiş bir map döner (yukarıdaki [Review Important 1] fix'i); bu
-            // kopya sadece state.ProjectId'yi merge eder, ayrıca bir case-collision riski taşımaz.
-            var map = new Dictionary<string, BuildState>(Load(), StringComparer.OrdinalIgnoreCase) { [state.ProjectId] = state };
+            // kopya sadece ilgili anahtarı merge eder, ayrıca bir case-collision riski taşımaz.
+            var map = new Dictionary<string, BuildState>(Load(), StringComparer.OrdinalIgnoreCase);
+            if (!mutate(map)) return;
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             string tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try

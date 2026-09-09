@@ -444,6 +444,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
@@ -460,6 +461,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
@@ -486,6 +488,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private string? _engineDiedMessage;
@@ -501,6 +504,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private bool _engineRestartable = true;
@@ -836,6 +840,7 @@ public sealed partial class RunViewModel : ObservableObject
         RunMode.Rebuild => "rebuild",
         RunMode.Build => "build",
         RunMode.Cycles => "cycles",
+        RunMode.Clean => "clean",
         _ => "run",
     };
 
@@ -889,6 +894,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// aynı anlam) — hedef güncel olsa da derlenir.</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
     private Task RebuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Rebuild, clearBuffers: true, projectId);
+
+    /// <summary>[tek proje · design §3.8] ⋯ menüsünün <i>Clean</i> maddesi — Visual Studio'nun proje
+    /// Clean'i: yalnız o projede <c>msbuild /t:Clean</c>. Hiçbir şey derlenmez, başka hiçbir projeye
+    /// dokunulmaz; çıktılar gittiği için projenin defter kaydı silinir ve bir sonraki <i>Build</i> onu
+    /// baştan derler. Kapısı Build/Rebuild ile AYNIdır.</summary>
+    [RelayCommand(CanExecute = nameof(CanRunProject))]
+    private Task CleanProjectAsync(string? projectId) => BeginRunAsync(RunMode.Clean, clearBuffers: true, projectId);
 
     private bool CanRunProject(string? projectId) => projectId is not null && CanRebuildOrRetry();
 
@@ -1479,7 +1491,10 @@ public sealed partial class RunViewModel : ObservableObject
         row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         // [Task 17][v7Δ8] "succeeded→clean" CANLI geçiş: proje bu run içinde başarıyla derlendiği ANDA artık
         // güncel (clean) sayılır — preview'ın dirty=true'sunu (ya da hollow=null'ını) burada EZER.
-        if (state == ProjectRowState.Succeeded) row.WillBuild = false;
+        // [tek proje · Clean] Bir Clean koşusunda bu geçiş YAPILMAZ ve bu bir istisna değil aynı kuralın kendisi:
+        // orada başarı "derlendi" demek değil "çıktıları silindi" demektir, yani proje güncel DEĞİL, tam tersine
+        // derlenmesi gereken hâle gelmiştir. Motor da aynı anda defter kaydını siler (BuildStateStore.Remove).
+        if (state == ProjectRowState.Succeeded && !RunIsClean) row.WillBuild = false;
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla
         RefreshRunSurface();

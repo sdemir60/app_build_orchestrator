@@ -37,7 +37,7 @@ public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcC
 
 /// <summary>Bir koşunun KAPSAMINI seçer; NDJSON'a camelCase METİN olarak yazılır (<c>"cycles"</c>), sayı olarak
 /// DEĞİL — bu yüzden yeni bir değer sona eklemek mevcut satırların anlamını kaydırmaz.</summary>
-public enum RunMode { Rebuild, Build, Cycles }
+public enum RunMode { Rebuild, Build, Cycles, Clean }
 /// <summary>Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c> Safe/Fast, Task 7):
 /// Build modunda WillBuild hesabını besler — Safe = dirty + tüm transitive dependent'lar yeniden derlenir;
 /// Fast = yalnız dirty (cascade yok). [It-3]</summary>
@@ -54,7 +54,13 @@ public enum DependentMode { Safe, Fast }
 /// derlenmez). Kapsam dışı kalan her proje <see cref="SkipReasons.OutOfCycleScope"/> ile pre-skip edilir. Bu,
 /// diğer modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez (üyeleri
 /// <see cref="SkipReasons.InDependencyCycle"/> ile atlanır). İkisi ardışık kullanılır — önce Cycles, sonra
-/// Build.</para></param>
+/// Build.</para>
+/// <para><b>Clean</b> = kapsamdaki her projede <c>msbuild /t:Clean</c> — Visual Studio'nun <i>Clean</i>'i:
+/// yalnız o projenin derleme çıktıları silinir, cache'lere dokunulmaz. Hiçbir şey DERLEMEZ, dolayısıyla
+/// incremental karar da sorulmaz. Çıktılar gittiği için temizlenen projenin build-state kaydı SİLİNİR —
+/// §4 gereği DLL/bin timestamp'i okunmadığından defter, diskte çıktı olup olmadığını bilen tek yerdir ve
+/// kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlardı. Bugün yalnız satır menüsünden,
+/// <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
 /// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
 /// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
 /// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>

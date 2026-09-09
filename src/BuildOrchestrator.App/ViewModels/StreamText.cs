@@ -52,7 +52,7 @@ public static class StreamText
     /// / <c>Rebuild started — …</c>. Paralellik yazılmaz: tek projeyi tarif etmez.</summary>
     public static string SingleProjectStarted(RunMode mode, string name) =>
         string.Format(CultureInfo.InvariantCulture, "{0} started — {1} (single project)",
-            mode == RunMode.Rebuild ? "Rebuild" : "Build", name);
+            mode switch { RunMode.Rebuild => "Rebuild", RunMode.Clean => "Clean", _ => "Build" }, name);
 
     /// <summary>[cycles] Bir <c>RunMode.Cycles</c> koşusunun açılış satırı. "Build started"ı yeniden
     /// kullanmaz: bu koşu bir build DEĞİLDİR ve kullanıcıyı bekleten şey de proje sayısı değil, TUR sayısıdır —

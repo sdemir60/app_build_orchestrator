@@ -254,16 +254,17 @@ public class ProjectRowInputTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[§9-6] Menünün maddeleri: Build · Rebuild · Clean — Build split-button'la AYNI üçlü ve AYNI
-    /// ikon ailesi. Build ve Rebuild tıklanabilir (arka uçları tek proje koşusudur) ve bir koşu uçuştayken
-    /// pasifleşip nedenini söyler; Clean'in motoru henüz yok — tasarımdaki yerinde, pasif, tooltip nedeni
-    /// söyler (split menü ve bakım kutusuyla AYNI karar).
-    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: üçü de "not available yet" ile pasifti. Tek proje koşusu
-    /// yazıldı; yalnız Clean bekliyor.</para>
+    /// <summary>[§9-6] Menünün maddeleri: Build · Rebuild · Clean — Build split-button ile AYNI üçlü ve AYNI
+    /// ikon ailesi. ÜÇÜ DE tıklanabilir (arka uçları tek proje koşusudur) ve bir koşu uçuştayken üçü de
+    /// pasifleşip nedenini söyler.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: üçü de "not available yet" ile pasifti; sonra Build/Rebuild
+    /// açıldı, Clean pasif kaldı. Clean da yazıldı — satırdan Clean, Visual Studio&apos;nun proje Clean&apos;idir
+    /// (<c>msbuild /t:Clean</c>). Bakım kutusundaki DERİN Clean ile Build split menüsünün Clean&apos;i AYRI
+    /// yüzeylerdir ve hâlâ motorlarını bekler.</para>
     /// <para>Menü kabuğu, KAPALI bir popup içinde realize olmadığı için burada TEK BAŞINA kurulur
     /// (BuildMenuTests deseni) — satırın kablajı aşağıdaki testte, içeriği burada pinlenir.</para></summary>
     [StaFact]
-    public void The_row_menu_enables_build_and_rebuild_and_keeps_clean_disabled_with_its_reason()
+    public void The_row_menu_offers_build_rebuild_and_clean_and_locks_all_three_while_a_run_is_in_flight()
     {
         var host = DsResources.NewHost();
         var menu = new ProjectRowMenu();
@@ -272,23 +273,19 @@ public class ProjectRowInputTests
         Assert.Equal(["build", "rebuild", "clean"], ProjectRowMenu.Items.Select(i => i.Kind));
         var rows = menu.Rows.ToList();
         Assert.Equal(3, rows.Count);
-        Assert.True(rows[0].IsEnabled);
-        Assert.True(rows[1].IsEnabled);
-        Assert.Equal(Cursors.Hand, rows[0].Cursor);
-        Assert.False(rows[2].IsEnabled);
-        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.RowCleanTooltip, rows[2].ToolTip);
+        Assert.All(rows, r => Assert.True(r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(Cursors.Hand, r.Cursor));
+        Assert.All(rows, r => Assert.Null(r.ToolTip));
+
+        menu.SetRunActionsEnabled(false); // bir koşu uçuşta: menü açılır ama maddeler pasiftir
+        Assert.All(rows, r => Assert.False(r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
+        Assert.All(rows, r => Assert.Equal(BuildMenu.DisabledOpacity, r.Opacity));
         Assert.True(ToolTipService.GetShowOnDisabled(rows[2]));
 
-        menu.SetRunActionsEnabled(false); // bir koşu uçuşta: menü açılır ama Build/Rebuild pasiftir
-        Assert.False(rows[0].IsEnabled);
-        Assert.False(rows[1].IsEnabled);
-        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, rows[0].ToolTip);
-        Assert.Equal(BuildMenu.DisabledOpacity, rows[1].Opacity);
-
         menu.SetRunActionsEnabled(true);
-        Assert.True(rows[0].IsEnabled);
-        Assert.Null(rows[0].ToolTip);
-        Assert.Equal(1.0, rows[0].Opacity);
+        Assert.All(rows, r => Assert.True(r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(1.0, r.Opacity));
         GC.KeepAlive(window);
     }
 
@@ -296,7 +293,7 @@ public class ProjectRowInputTests
     /// Rebuild aynı yoldan kendi modunu gönderir. Kablaj GERÇEK fare olayıyla sınanır: menü satırı
     /// tıklanır, komut satır VM'inin kimliğiyle gider.</summary>
     [StaFact]
-    public void Picking_build_or_rebuild_in_the_row_menu_runs_that_project_and_closes_the_menu()
+    public void Picking_a_row_menu_item_runs_that_project_in_its_own_mode_and_closes_the_menu()
     {
         var runVm = NewRunVm();
         VmTopology.Seed(runVm, RowId);
@@ -323,13 +320,16 @@ public class ProjectRowInputTests
         Assert.Equal((RunMode.Build, RowId), (build.Mode, build.ScopeProjectId));
         Assert.Null(runVm.SelectedProjectId);                  // satırdan tetiklemek satıra tıklamak DEĞİLDİR
 
-        actions.MoreButton.IsChecked = true;                   // yeniden aç, Rebuild'i seç
-        rows[1].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
-        { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
-
-        Assert.False(actions.MoreButton.IsChecked);
-        Assert.Equal(2, sent.Count);
-        Assert.Equal((RunMode.Rebuild, RowId), (sent[1].Mode, sent[1].ScopeProjectId));
+        // Üç maddenin üçü de kendi modunu, AYNI hedefle gönderir.
+        foreach (var (index, mode) in new[] { (1, RunMode.Rebuild), (2, RunMode.Clean) })
+        {
+            actions.MoreButton.IsChecked = true;
+            rows[index].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+            Assert.False(actions.MoreButton.IsChecked);
+            Assert.Equal((mode, RowId), (sent[^1].Mode, sent[^1].ScopeProjectId));
+        }
+        Assert.Equal(3, sent.Count);
         GC.KeepAlive(window);
     }
 

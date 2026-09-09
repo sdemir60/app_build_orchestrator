@@ -544,6 +544,7 @@ public partial class ProjectRow : UserControl
         {
             "build" => run.BuildProjectCommand,
             "rebuild" => run.RebuildProjectCommand,
+            "clean" => run.CleanProjectCommand,
             _ => null,
         };
         if (command is not null && command.CanExecute(vm.Id)) command.Execute(vm.Id);

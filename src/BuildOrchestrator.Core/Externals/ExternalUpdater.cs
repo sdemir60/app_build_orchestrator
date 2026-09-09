@@ -70,13 +70,14 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
     /// Üç koşul da sağlanmalı:
     /// <list type="bullet">
     /// <item>[D5] kullanıcı güncellemeyi açık bırakmış olmalı (<paramref name="updateExternals"/>);</item>
-    /// <item>[D12] koşu <see cref="RunMode.Cycles"/> OLMAMALI — o, ana reponun SCC onarımıdır ve kullanıcının
-    /// çalışma kopyalarını güncellemek orada sürpriz olurdu (tarama yine yapılır: graf Build'inkiyle aynı kalır);</item>
+    /// <item>[D12] koşu <see cref="RunMode.Cycles"/> ya da <see cref="RunMode.Clean"/> OLMAMALI — ilki ana
+    /// reponun SCC onarımıdır, ikincisi ise yalnız çıktı siler; ikisinde de kullanıcının çalışma kopyalarını
+    /// güncellemek sürpriz olurdu (tarama yine yapılır: graf Build'inkiyle aynı kalır);</item>
     /// <item>ortada gerçekten bir harici kart olmalı — boş listede tek bir process bile açılmaz.</item>
     /// </list>
     /// </summary>
     public static bool ShouldUpdate(RunMode mode, bool updateExternals, IReadOnlyList<ExternalProject>? externals) =>
-        updateExternals && mode != RunMode.Cycles && externals is { Count: > 0 };
+        updateExternals && mode is not (RunMode.Cycles or RunMode.Clean) && externals is { Count: > 0 };
 
     /// <param name="externals">Kullanıcının listesi, KENDİ SIRASIYLA — güncelleme de o sırada koşar.</param>
     /// <param name="progress">Kullanıcıya görünen satırlar buraya akar.</param>

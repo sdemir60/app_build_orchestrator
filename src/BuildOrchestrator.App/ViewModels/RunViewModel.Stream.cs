@@ -43,6 +43,11 @@ public sealed partial class RunViewModel
     private int _cycleRound;
     private int _cycleRoundCap;
 
+    /// <summary>[tek proje · Clean] Uçuştaki koşu bir <b>Clean</b> mi — <see cref="OnProjectDone"/> bunu okur
+    /// ("başarı" orada güncelliğe değil, çıktının SİLİNMİŞ olmasına karşılık gelir). Kaynak, koşunun modunu
+    /// zaten tutan <see cref="_streamRunMode"/>'dur: ikinci bir alan tutulmaz (kopya YASAK).</summary>
+    private bool RunIsClean => _streamRunMode == RunMode.Clean;
+
     /// <summary>[design v1.7.0 §3.7] Şu an bir <b>Resolve cycles</b> koşusu mu sürüyor — şerit koşu satırını
     /// buna göre yazar (sıradan bir Build değil, döngü çözen ardışık turlar).</summary>
     public bool IsResolvingCycles => _streamRunMode == RunMode.Cycles && RunActive;

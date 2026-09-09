@@ -38,6 +38,7 @@ public class ExternalUpdaterTests
     [InlineData(RunMode.Rebuild, true, true)]
     [InlineData(RunMode.Build, false, false)]     // [D5] kullanıcı kapatmış
     [InlineData(RunMode.Cycles, true, false)]     // [D12] SCC onarımı çalışma kopyalarına dokunmaz
+    [InlineData(RunMode.Clean, true, false)]      // Clean yalnız çıktı siler — kaynak güncellemek sürpriz olurdu
     public void The_gate_says_whether_this_run_touches_working_copies(RunMode mode, bool flag, bool expected)
         => Assert.Equal(expected, ExternalUpdater.ShouldUpdate(mode, flag, [GitAt(@"D:\ext\mail")]));
 

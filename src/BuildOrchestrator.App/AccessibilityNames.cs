@@ -70,10 +70,6 @@ public static class AccessibilityNames
     /// maddeleri pasiftir ve nedenini söyler — prototip: <c>Build in progress — wait or stop it first</c>.</summary>
     public const string BuildBusyTooltip = "Build in progress — wait or stop it first";
 
-    /// <summary>[design §3.8] Satır menüsünün <i>Clean</i> maddesi: yalnız o projede <c>msbuild /t:Clean</c>.
-    /// Arka ucu henüz yazılmadı — madde tasarımdaki yerinde, pasif, tooltip nedenini söyler (split menünün
-    /// Clean'i ve bakım kutusuyla AYNI karar; Build/Rebuild ise tek proje koşusuna bağlıdır).</summary>
-    public const string RowCleanTooltip = "Clean — msbuild /t:Clean on this project; caches are untouched" + NotAvailableSuffix;
 
     /// <summary>Resolve cycles düğmesinin ToolTip'i: döngü varsa ne yapacağını üye sayısıyla anlatır, yoksa
     /// neden pasif olduğunu söyler.

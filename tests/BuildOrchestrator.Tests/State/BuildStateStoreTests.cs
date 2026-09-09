@@ -28,6 +28,29 @@ public class BuildStateStoreTests : IDisposable
 
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 
+    /// <summary>[tek proje · Clean] Temizlenen projenin kaydı SİLİNİR — geçersizleştirilmez. Çıktı artık yok;
+    /// §4 gereği DLL/bin timestamp'i okunmadığı için "diskte çıktı var mı" sorusunun tek cevabı bu defterdir
+    /// ve kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlardı. Kaydı olmayan bir projeyi silmek
+    /// dosyaya HİÇ dokunmaz: hiç derlenmemiş bir projeyi temizlemek defteri şişirmez.</summary>
+    [Fact]
+    public void Removing_a_record_forgets_only_that_project_and_never_writes_when_there_is_none()
+    {
+        var store = new BuildStateStore(_root);
+        store.Upsert(new BuildState(@"C:\r\A.csproj", "sigA", LastResult: BuildResult.Succeeded));
+        store.Upsert(new BuildState(@"C:\r\B.csproj", "sigB", LastResult: BuildResult.Succeeded));
+
+        store.Remove(@"c:\R\a.CSPROJ"); // proje Id'leri Windows yollarıdır → harf-duyarsız
+
+        var after = store.Load();
+        Assert.DoesNotContain(@"C:\r\A.csproj", after);
+        Assert.Contains(@"C:\r\B.csproj", after);
+
+        var stamp = File.GetLastWriteTimeUtc(StatePath);
+        store.Remove(@"C:\r\Never.csproj");             // kaydı olmayan proje
+        Assert.Single(store.Load());
+        Assert.Equal(stamp, File.GetLastWriteTimeUtc(StatePath)); // dosyaya hiç dokunulmadı
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {

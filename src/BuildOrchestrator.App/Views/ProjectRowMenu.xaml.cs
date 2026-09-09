@@ -12,12 +12,11 @@ namespace BuildOrchestrator.App.Views;
 /// <para><b>İkon ailesi Build menüsüyle ORTAKTIR</b> — <c>play · rotate-cw · brush</c>, tek grid/stroke.
 /// Eşleme <see cref="BuildMenu.IconKeyFor"/>'dan okunur; burada ikinci bir tablo YAZILMAZ (kopya YASAK).</para>
 ///
-/// <para><b>Build ve Rebuild</b> tek proje koşusuna bağlıdır (§3.8): madde seçilince <see cref="ItemInvoked"/>
-/// türüyle ateşlenir, komutu satır (<see cref="ProjectRow"/>) kendi VM'inin kimliğiyle çalıştırır — menü
-/// hangi projeye ait olduğunu bilmez, satır bilir. Bir koşu uçuştayken iki madde pasifleşir ve nedenini
-/// söyler (<see cref="SetRunActionsEnabled"/>; prototip <c>busy</c>). <b>Clean</b>'in arka ucu henüz
-/// yazılmadı: tasarımdaki yerinde ama PASİFTİR ve tooltip nedeni söyler — split menünün Clean'i ve bakım
-/// kutusuyla AYNI karar.</para>
+/// <para><b>Üçü de tek proje koşusuna bağlıdır</b> (§3.8): madde seçilince <see cref="ItemInvoked"/> türüyle
+/// ateşlenir, komutu satır (<see cref="ProjectRow"/>) kendi VM'inin kimliğiyle çalıştırır — menü hangi
+/// projeye ait olduğunu bilmez, satır bilir. Bir koşu uçuştayken üçü de pasifleşir ve nedenini söyler
+/// (<see cref="SetRunActionsEnabled"/>; prototip <c>busy</c>). <b>Clean</b>, Visual Studio'nun proje
+/// Clean'idir: yalnız o projede <c>msbuild /t:Clean</c> (bakım kutusundaki DERİN Clean'in yerine GEÇMEZ).</para>
 /// </summary>
 public partial class ProjectRowMenu : UserControl
 {
@@ -103,17 +102,6 @@ public partial class ProjectRowMenu : UserControl
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
         ToolTipService.SetShowOnDisabled(row, true); // pasif kontrolde WPF tooltip'i varsayılan olarak saklar
-
-        if (kind == "clean")
-        {
-            // Arka uç yok → pasif. Hover zemini de takılmaz: tıklanabilirmiş gibi görünmesi, basılıp hiçbir
-            // şey olmamasından daha kötü olurdu (BuildMenu'nün Clean maddesiyle AYNI karar).
-            row.IsEnabled = false;
-            row.Opacity = BuildMenu.DisabledOpacity;
-            row.Cursor = Cursors.Arrow;
-            row.ToolTip = AccessibilityNames.RowCleanTooltip;
-            return row;
-        }
 
         HoverBackground.Attach(row);
         row.MouseLeftButtonUp += (_, _) => ItemInvoked?.Invoke(kind);

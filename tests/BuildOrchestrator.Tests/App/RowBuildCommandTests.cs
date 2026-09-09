@@ -122,6 +122,61 @@ public class RowBuildCommandTests
         Assert.Equal(viaPlay.Sent with { RunId = "" }, viaMenu.Sent with { RunId = "" }); // runId dışında AYNI komut
     }
 
+    /// <summary>
+    /// [Clean] Menünün <b>Clean</b> maddesi kapsamlı bir <c>RunMode.Clean</c> koşusu gönderir ve konsol/stream
+    /// hedefi adıyla anar. Pill sözcüğü <c>CLEAN</c>'dir — hedef adı pill'e YAZILMAZ (v1.13.2).
+    /// </summary>
+    [Fact]
+    public async Task Clean_project_sends_a_scoped_clean_and_names_the_target()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = NewVm(engine);
+        StartRunCommand? sent = null;
+        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
+
+        await vm.CleanProjectCommand.ExecuteAsync(A);
+
+        Assert.Equal((RunMode.Clean, A), (sent!.Mode, sent.ScopeProjectId));
+        Assert.Equal(OperationLabel.Clean, vm.CurrentOperation);
+        Assert.Contains("clean requested — a (single project)", vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+        // Gönderim motorsuz harness'ta senkron düşer ve kilit inerken hedef bırakılır; stream satırı bu yüzden
+        // hedefi AÇIKÇA kurulmuş bir koşuda sınanır (kardeş test The_stream_opens_a_scoped_run_… ile aynı desen).
+        vm.RunTargetId = A;
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", true)]));
+        Assert.Contains(vm.StreamEvents, l => l.Text == "Clean started — a (single project)");
+    }
+
+    /// <summary>
+    /// <b>Temizlenen proje "güncel" sayılmaz.</b> Sıradan bir koşuda başarı, satırın will-build noktasını
+    /// söndürür ("succeeded-to-clean" canlı geçişi); bir Clean koşusunda başarı ise çıktının SİLİNDİĞİ anlamına
+    /// gelir — proje tam tersine derlenmesi gereken hâle gelmiştir. Nokta amber KALIR ve motor da aynı anda
+    /// defter kaydını siler, yani iki taraf aynı şeyi söyler.
+    /// </summary>
+    [Fact]
+    public async Task A_cleaned_project_stays_dirty_while_an_ordinary_build_turns_it_clean()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+
+        var cleaned = NewVm(engine);
+        cleaned.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug", 0));
+        cleaned.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", true)]));
+        cleaned.OnEvent(new ProjectStartedEvent("r1", A, "a"));
+        cleaned.OnEvent(new ProjectSucceededEvent("r1", A, 120));
+
+        Assert.Equal(ProjectRowState.Succeeded, Row(cleaned, A).State);
+        Assert.True(Row(cleaned, A).WillBuild);   // temizlendi -> yine derlenecek
+
+        var built = NewVm(engine);                // kontrol grubu: sıradan Build AYNI olay dizisiyle
+        built.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug", 0));
+        built.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", true)]));
+        built.OnEvent(new ProjectStartedEvent("r2", A, "a"));
+        built.OnEvent(new ProjectSucceededEvent("r2", A, 120));
+
+        Assert.False(Row(built, A).WillBuild);
+    }
+
     /// <summary>Hedef satır TIKLAMA ANINDA işaretlenir (gönderim penceresi dahil) ve koşu bittiğinde bırakılır;
     /// gönderim senkron düşerse hemen bırakılır — hiçbir yol satırı sonsuza dek "Stop" hâlinde bırakamaz.</summary>
     [Fact]

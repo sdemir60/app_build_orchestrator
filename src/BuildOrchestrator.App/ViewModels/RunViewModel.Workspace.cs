@@ -208,6 +208,7 @@ public sealed partial class RunViewModel
         BuildCyclesCommand.NotifyCanExecuteChanged();
         BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da aynı kapıdadır
         RebuildProjectCommand.NotifyCanExecuteChanged();
+        CleanProjectCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>[Sync guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde (motor hazır değil/ölü)
@@ -419,6 +420,7 @@ public sealed partial class RunViewModel
         BuildCyclesCommand.NotifyCanExecuteChanged();
         BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da topoloji kapısındadır
         RebuildProjectCommand.NotifyCanExecuteChanged();
+        CleanProjectCommand.NotifyCanExecuteChanged();
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
     }

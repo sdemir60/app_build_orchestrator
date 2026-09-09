@@ -962,13 +962,16 @@ public sealed class RunCoordinator(
                 runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
                 groups, // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
                 staleDependenciesById, // [tek proje] hedefin derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda)
-                // [tek proje · design §3.8] MSBuild hedefi YALNIZ satırdan tetiklenen Rebuild'de değişir:
-                // alt bardaki Rebuild "cache'i yok say" demektir ve proje başına yine -t:Build koşar; tek
-                // projelik bir kapsamda o anlamı zaten Build taşıdığı için satırdaki Rebuild MSBuild'in
-                // kendi Rebuild'i (Clean+Build) olur.
-                cmd.ScopeProjectId is not null && cmd.Mode == RunMode.Rebuild
-                    ? MsBuildTarget.Rebuild
-                    : MsBuildTarget.Build);
+                // [tek proje · design §3.8] MSBuild hedefi: Clean modu doğrudan -t:Clean koşar (hiçbir şey
+                // derlenmez). Rebuild YALNIZ satırdan tetiklendiğinde MSBuild'in kendi Rebuild'i olur — alt
+                // bardaki Rebuild "cache'i yok say" demektir ve proje başına yine -t:Build koşar; tek projelik
+                // bir kapsamda o anlamı zaten Build taşıdığı için satırdaki Rebuild'in ayrı bir anlamı olmalıdır.
+                cmd.Mode switch
+                {
+                    RunMode.Clean => MsBuildTarget.Clean,
+                    RunMode.Rebuild when cmd.ScopeProjectId is not null => MsBuildTarget.Rebuild,
+                    _ => MsBuildTarget.Build,
+                });
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -1163,7 +1166,10 @@ public sealed class RunCoordinator(
                 // materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
                 // [cycle rounds] trustedResult AYRI bir kapıdır ve KORUNUR: yakınsamayan grubun ara-tur sonucu
                 // bir "başarı" değildir, imzası da anlamlı değildir — o hiç persist edilmez.
-                if (trustedResult)
+                // [tek proje · Clean] Temizlenen projenin kaydı SİLİNİR (persist edilmez): çıktı artık yok,
+                // defter de onu bilmemeli — gerekçe BuildStateStore.Remove'da.
+                if (run.MsBuildTarget == MsBuildTarget.Clean) ForgetBuildStateOnClean(run, projectId);
+                else if (trustedResult)
                     PersistBuildStateOnSuccess(run, projectId, durationMs, depIssue: depIssuesForEvent is not null);
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent, cycleUnsettled));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
@@ -1574,7 +1580,8 @@ public sealed class RunCoordinator(
             ProjectId: buildPath,
             Configuration: run.Configuration,
             SolutionDir: SolutionDirResolver.Resolve(buildPath, run.SolutionRefs.GetValueOrDefault(projectId, [])),
-            NeedsRestore: HasPackagesConfig(buildPath),
+            // Clean hiçbir şey derlemez: paket restore'u onun için anlamsız bir bekleme olurdu.
+            NeedsRestore: run.MsBuildTarget != MsBuildTarget.Clean && HasPackagesConfig(buildPath),
             // [I2-K2/Task 10] worktree kökü verilmişse proje-Id başına izole obj; aksi halde in-place =
             // projenin kendi (VS-parity) obj'i — bkz. RunCoordinator ctor'daki worktreeObjRootResolver doc'u.
             // [design v1.14.0 §9] HARİCİ projeler bu izolasyonun DIŞINDADIR: izolasyon worktree havuzuna
@@ -1714,6 +1721,17 @@ public sealed class RunCoordinator(
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+    }
+
+    /// <summary>[tek proje · Clean] Başarılı bir <c>Clean</c>'den sonra projenin defter kaydını siler —
+    /// gerekçe <see cref="BuildStateStore.Remove"/>'da. Defter I/O hatası koşuyu ÖLDÜRMEZ (warn-only), tıpkı
+    /// persist ve invalidate yollarında olduğu gibi.</summary>
+    private void ForgetBuildStateOnClean(RunContext run, string projectId)
+    {
+        if (run.StateStore is null) return;
+        try { run.StateStore.Remove(projectId); }
+        catch (Exception ex)
+        { console("warning: build-state could not be cleared (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
 
     /// <summary>
