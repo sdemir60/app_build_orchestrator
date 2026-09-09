@@ -125,7 +125,7 @@ public static class Program
             // [D12] Cycles ana reponun SCC onarımıdır: harici fazı orada tamamen atlanır.
             var externals = cmd.Mode != RunMode.Cycles && cmd.ExternalProjects is { Count: > 0 } externalList
                 ? new ExternalRunPlanner(new ProcessRunner()).PlanAsync(
-                    externalList, cmd.Configuration, cmd.Mode == RunMode.Rebuild, stateStore?.Load(), progress)
+                    externalList, cmd.Configuration, cmd.Mode == RunMode.Rebuild, stateStore.Load(), progress)
                     .GetAwaiter().GetResult()
                 : null;
 
