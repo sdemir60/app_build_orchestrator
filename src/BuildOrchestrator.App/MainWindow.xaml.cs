@@ -221,6 +221,15 @@ public partial class MainWindow : Window
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
 
+        // [design v1.13.2 §2.5 · §9] Konsol her işlemde temizlenir — VM tamponu silindiği anda ekrandaki belge
+        // de boşalır. Yalnız ANLATI modunda: proje logu açıkken belge o loga aittir, dokunulmaz (← Back zaten
+        // taze anlatı belgesini kurar — ShowRunConsole). Event stream'in kendi yolu ayrı: StreamEvents'ten
+        // silinen satırları EventStreamView CollectionChanged ile düşürür.
+        _vm.ConsoleCleared += (_, _) =>
+        {
+            if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.ClearRunDocument();
+        };
+
         // [design v1.13.0 §2.11] Görülmemiş sürüm işareti: NotesDialog AÇILDIĞI anda kalıcı duruma yazılır ve
         // nokta söner (eskiden design v1.9.0'da About'un What's new sekmesi görülünce yazılırdı — About artık
         // bu olguyu bilmiyor, bkz. NotesDialog.NotesSeen).

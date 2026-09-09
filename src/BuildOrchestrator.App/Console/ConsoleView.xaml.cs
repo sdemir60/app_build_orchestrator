@@ -547,6 +547,30 @@ public partial class ConsoleView : UserControl
     /// <para>[design v1.7.0 §2.5] Geçiş animasyonu İKİ YÖNDE de aynıdır (<see cref="PlayTiltIn"/>).</para></summary>
     public void ShowRunDocument(string fullRunText)
     {
+        ResetRunDocument(fullRunText);
+        PlayTiltIn(fromAbove: true); // dönüş açılışın TAM AYNASI
+    }
+
+    /// <summary>
+    /// [design v1.13.2 §2.5 · §9] <b>Yeni işlem başladı: anlatı belgesi ANINDA boşalır.</b> Konsol ve event
+    /// stream her işlemde (Build · Rebuild · Resolve · Sync) temizlenir, ardından yalnız o işlemin satırları
+    /// yazılır. VM kendi tamponunu <c>RunViewModel.ClearConsoleForNewOperation</c>'da siler; ekrandaki belge
+    /// onu BU çağrıyla izler (kablo <c>MainWindow</c>'da, <c>RunViewModel.ConsoleCleared</c>).
+    ///
+    /// <para><b>Tilt YOK:</b> <see cref="PlayTiltIn"/> yalnız panel GEÇİŞİNDE (proje logu ↔ anlatı) oynar; bu
+    /// ise aynı panelin sıfırlanmasıdır — <see cref="ShowRunDocument"/>'ın tilt'siz çekirdeği. "ready" satırına
+    /// dokunulmaz: ilk anlatı satırı gelince metni zaten boşalır (<see cref="ClearReadyText"/>).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden işlem başlangıcında ekrana hiç dokunulmuyordu: VM
+    /// tamponu silinse de AvalonEdit belgesi yalnız mod geçişinde yeniden kuruluyordu, yeni işlemin satırları
+    /// bir öncekinin ALTINA ekleniyordu — Build ve Sync'te konsol "hiç temizlenmiyor" diye görülen buydu.</para>
+    /// </summary>
+    public void ClearRunDocument() => ResetRunDocument("");
+
+    /// <summary>Anlatı belgesini verilen metinle yeniden kurar (render dilimi + chunk loader + dip pini +
+    /// takip): <see cref="ShowRunDocument"/> ile <see cref="ClearRunDocument"/>'ın ORTAK gövdesi (kopya YASAK).</summary>
+    private void ResetRunDocument(string fullRunText)
+    {
         _projectMode = false;
         _armedForChunk = false; // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _backlogLines = SplitLines(fullRunText ?? "");
@@ -563,7 +587,6 @@ public partial class ConsoleView : UserControl
         // buydu. Pin'den SONRA geometri doğrudur: uzaklık sıfır, pill hiç çıkmaz.
         _bottomAnchor.ForceStuck(true);
         RefreshPrompt(); // anlatıya dönüldü → prompt satırı geri gelir
-        PlayTiltIn(fromAbove: true); // dönüş açılışın TAM AYNASI
     }
 
     // ---------------------------------------------------------------- proje-log kaskatı

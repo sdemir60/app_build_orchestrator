@@ -644,6 +644,11 @@ public sealed partial class RunViewModel : ObservableObject
         ActiveProjectId = null;
         IsStarting = true;
         if (clearBuffers) ClearConsoleForNewOperation();
+        // [design doBuild — BuildApp.jsx:1199-1200] Tam koşu: seçim + filtre sıfırlanır. SIRA ÖNEMLİ: konsol
+        // temizliğinden SONRA — seçim düşünce kabuk anlatı belgesini yeniden kurar (ShowRunConsole →
+        // SeedRunDocument); temizlik ondan sonra gelseydi o kurulum bir önceki koşunun metnini tilt'le
+        // getirir, temizlik onu hemen silerdi (görünür bir kırpışma). SyncCoreAsync aynı sırayı izler.
+        ClearSelectionAndFilter();
         // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
         // bir not düşer. Motor runStarted'a kadar (taze segmentte: worktree hazırlığı → tarama → graf → topo →
         // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
@@ -765,11 +770,7 @@ public sealed partial class RunViewModel : ObservableObject
     };
 
     [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
-    private Task RebuildAsync()
-    {
-        ClearSelectionAndFilter(); // [design doRebuild→doBuild] tam run: seçim + filtre sıfırlanır
-        return BeginRunAsync(RunMode.Rebuild, clearBuffers: true);
-    }
+    private Task RebuildAsync() => BeginRunAsync(RunMode.Rebuild, clearBuffers: true); // seçim + filtre orada düşer
     // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
     // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
     private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
@@ -789,11 +790,7 @@ public sealed partial class RunViewModel : ObservableObject
     // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
     // (gerekçe CanRebuildOrRetry'ın yorumundadır).
     [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
-    private Task BuildAsync()
-    {
-        ClearSelectionAndFilter(); // BuildApp.jsx:1199-1200
-        return BeginRunAsync(RunMode.Build, clearBuffers: true);
-    }
+    private Task BuildAsync() => BeginRunAsync(RunMode.Build, clearBuffers: true); // seçim + filtre orada düşer
 
     /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
     /// projeleri, sıralı turlarla derler. Build'in yerine geçmez, ONDAN ÖNCE gelir — Build bir SCC'yi asla
@@ -808,11 +805,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="CanRebuildOrRetry"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
     /// bozulmasını üretirdi.</para></summary>
     [RelayCommand(CanExecute = nameof(CanBuildCycles))]
-    private Task BuildCyclesAsync()
-    {
-        ClearSelectionAndFilter();
-        return BeginRunAsync(RunMode.Cycles, clearBuffers: true);
-    }
+    private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles, clearBuffers: true); // seçim + filtre orada düşer
 
     /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
     /// workspace'te bu koşunun kapsamı BOŞTUR (bkz. <c>CycleRunScope</c>) ve her projeyi atlar — pasif
@@ -839,16 +832,18 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     private async Task SyncCoreAsync(bool clearBuffers)
     {
-        SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
-        CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
-        // Sıra ÖNEMLİ: aşağıdaki `_syncRequested`/gönderim ne olursa olsun (senkron başarısız dahil) ekran
-        // zaten bu satırda sıfırlanmış olur; bir sonraki syncProgress bir öncekinin tortusunun ÜZERİNE yazılmaz
-        // (bkz. ClearConsoleForNewOperation XML doc'undaki DEĞİŞEN KURAL).
+        // Sıra ÖNEMLİ: temizlik SEÇİMDEN ÖNCE gelir. Seçim düşünce kabuk anlatı belgesini yeniden kurar
+        // (ShowRunConsole → SeedRunDocument); temizlik sonra gelseydi o kurulum bir önceki işlemin metnini
+        // tilt'le getirir, temizlik onu hemen silerdi (görünür bir kırpışma). Aşağıdaki `_syncRequested`/
+        // gönderim ne olursa olsun (senkron başarısız dahil) ekran zaten burada sıfırlanmış olur; bir sonraki
+        // syncProgress bir öncekinin tortusunun ÜZERİNE yazılmaz (bkz. ClearConsoleForNewOperation).
         if (clearBuffers)
         {
             ClearConsoleForNewOperation();
             ClearStreamForNewOperation();
         }
+        SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
+        CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
         // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
@@ -1709,8 +1704,20 @@ public sealed partial class RunViewModel : ObservableObject
             _runText.Clear();
             _runLineCount = 0;
             _projectLineCount.Clear();
+            // Uçuştaki bayat batch'ler düşer (SeedRunDocument ile AYNI sentinel): temizlikten ÖNCE pompaya girmiş
+            // bir önceki işlemin satırı, temizlikten SONRA ekrana sızamaz (nesil damgası — ConsoleBatcher).
+            _console.PostReseedDrop();
         }
+        ConsoleCleared?.Invoke(this, EventArgs.Empty); // kilit DIŞINDA: kabuk WPF belgesini kurar
     }
+
+    /// <summary>
+    /// [design v1.13.2 §2.5 · §9] Konsol tamponu bir işlem başlangıcında SİLİNDİĞİNDE ateşler
+    /// (<see cref="ClearConsoleForNewOperation"/>) — kabuk ekrandaki AvalonEdit belgesini de boşaltır
+    /// (<c>ConsoleView.ClearRunDocument</c>). VM tamponu ile ekran ayrı iki kopyadır ve ikincisi yalnız
+    /// mod geçişinde yeniden kuruluyordu; bu olay o kopyayı işlem başlangıcında da hizalar.
+    /// </summary>
+    public event EventHandler? ConsoleCleared;
 
     private void AppendRunLine(string text)
     {
