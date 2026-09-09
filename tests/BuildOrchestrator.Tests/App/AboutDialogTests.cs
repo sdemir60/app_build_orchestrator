@@ -351,6 +351,8 @@ public class AboutDialogTests
     [StaFact]
     public void Environment_values_are_not_truncated_and_carry_no_tooltip()
     {
+        // Kısa bir değerde TextTrimming=None zaten anlamsız olurdu (kırpma etkinleşmez ki) — taşan bir kökle
+        // iddia GERÇEK bir senaryoyu kapsar: kullanıcı bu satırı görünce yol gerçekten kırpılmıyor.
         var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.RootPath = OverflowingRootPath);
         using (scope)
         {
