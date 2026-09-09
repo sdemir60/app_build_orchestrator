@@ -1,4 +1,5 @@
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
@@ -38,8 +39,14 @@ internal static class SettingsDialogHost
     /// <summary>Realize edilmiş + <see cref="SettingsDialog.Open"/> edilmiş diyalog. Dönen <see cref="IDisposable"/>
     /// hem ekran dışı pencereyi canlı tutar hem de <see cref="EngineHost"/>'u kapatır — o ctor inert DEĞİLDİR:
     /// <c>JobObject.CreateKillOnClose()</c> ile bir Win32 handle açar (lens2/lens3 · C9).</summary>
+    /// <param name="windowWidth">Host penceresinin genişliği.</param>
+    /// <param name="windowHeight">Host penceresinin yüksekliği — AboutDialogHost/NotesDialogHost'un AYNI kararı
+    /// (800×700): varsayılan 400×200'de gövde <c>MinHeight</c>'ı (task-D6, 300px) pencereden BÜYÜK kalır ve
+    /// dialog dikeyde kırpılırdı (DsResources.Realize gerekçesiyle AYNI risk). Pencere yüksekliğine bağlı gövde
+    /// sınırını (<see cref="SettingsBodyHeight"/>) AYRICA sınayan çağıranlar bu iki parametreyi ELLE verir.</param>
     public static (SettingsDialog dialog, RunViewModel run, FakeStore store, IDisposable scope) OpenRealized(
-        Action<RunViewModel>? configure = null, Func<string?>? pickFolder = null)
+        Action<RunViewModel>? configure = null, Func<string?>? pickFolder = null,
+        double windowWidth = 800, double windowHeight = 700)
     {
         var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -47,7 +54,7 @@ internal static class SettingsDialogHost
 
         var host = DsResources.NewHost();
         var dialog = new SettingsDialog();
-        var window = DsResources.Realize(host, dialog);
+        var window = DsResources.Realize(host, dialog, windowWidth, windowHeight);
 
         var store = new FakeStore();
         dialog.Open(run, store, pickFolder ?? (() => null));

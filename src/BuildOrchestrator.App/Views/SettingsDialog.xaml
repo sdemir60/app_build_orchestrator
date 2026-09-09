@@ -5,7 +5,7 @@
              xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
              xmlns:app="clr-namespace:BuildOrchestrator.App"
              Visibility="Collapsed" Focusable="True">
-  <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 620px Ds.Dialog
+  <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 760px Ds.Dialog
        (Brush.SurfaceRaised — README §2.9'daki surface-overlay sapması burada KAYITLI, kod kazanır). Diyaloğun
        mantığı SettingsDraftViewModel'de (test edilebilir, WPF'siz); bu view ince kabuktur. BuildApp.jsx:988-1069. -->
   <!-- [D7 re-review][Fix1] Klavye odak tuzağı: scrim sadece FARE'yi bloklardı, Tab arka plandaki kontrollere
@@ -15,7 +15,14 @@
         KeyboardNavigation.TabNavigation="Cycle"
         KeyboardNavigation.ControlTabNavigation="Cycle"
         FocusManager.IsFocusScope="True">
-    <Border Width="620" MaxHeight="640" HorizontalAlignment="Center" VerticalAlignment="Center"
+    <!-- [DEĞİŞEN KURAL — design v1.13.1] Genişlik 620 → 760: üç dialog aynı 620 kalıbını paylaşıyordu, artık
+         her biri büyüme yönüne göre ölçülüyor; Settings en çok büyüyecek olan (root + katman kartları, yarın
+         MSBuild yolu/paralellik/worktree/bildirim). [design v1.14.0 · ruling task-D6] Kökte ARTIK MaxHeight
+         YOK: eski 640 sabiti gövdenin (Grid.Row="1") kendi min(56vh,460px) sınırıyla (bkz. SettingsBodyHeight)
+         hiç ÇAKIŞMAZ ama hiç BAĞLAMAZ da — gövde en çok 460 + başlık/footer'ın kendi Auto yüksekliği ≈576px'e
+         ulaşır, 640 asla devreye girmeyen ölü bir tavan kalırdı (iki doğruluk kaynağı, kopya YASAK). Yükseklik
+         artık TEK yerden, gövdenin kendi Min/MaxHeight'ından yönetilir. -->
+    <Border Width="760" HorizontalAlignment="Center" VerticalAlignment="Center"
             Style="{DynamicResource Ds.Dialog}" MouseLeftButtonDown="OnDialogClick">
       <Grid>
         <Grid.RowDefinitions>
@@ -30,8 +37,17 @@
                    FontWeight="{DynamicResource FontWeight.Emphasis}"
                    Foreground="{DynamicResource Brush.TextPrimary}" />
 
-        <!-- ============================ GÖVDE ============================ -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,0,20,4">
+        <!-- ============================ GÖVDE ============================
+             [design v1.14.0 §2.9 · ruling task-D6] Kendi içinde kaydırılır: üst sınır min(pencere-yüksekliği ×
+             56%, 460px) — hesap SettingsBodyHeight'ta (kopya YASAK), kablaj SettingsDialog.xaml.cs
+             Open()/TrackHostWindowSize()'da (pencere yeniden boyutlandığında YENİDEN çağrılır). Alt taban
+             300px MinHeight'a SABİT bağlanır (katman listesi boşken dialog çökmesin).
+             VerticalScrollBarVisibility="Visible" (Auto DEĞİL): scrollbar sütunu HER ZAMAN ayrılır, prototipin
+             `padding-right:10px / margin-right:-10px` hilesinin WPF karşılığı — bar gerektiğinde belirmesi
+             içeriği daraltmaz. Kaydıracak şey yokken DS'in kendi IsEnabled=False tetikleyicisi track'i gizler
+             (ScrollBarStyleTests — "restraint"), yani boşken çirkin dolu bir hap da GÖRÜNMEZ. -->
+        <ScrollViewer x:Name="Body" Grid.Row="1" VerticalScrollBarVisibility="Visible"
+                      MinHeight="{x:Static controls:SettingsBodyHeight.MinFloor}" Padding="20,0,20,4">
           <StackPanel>
             <!-- ============================ WORKSPACE (design v1.8.0 §2.9) ============================
                  Repository root ARTIK Settings'in bir parçası ve bölümlerin İLKİ: başlamak için gereken ayar

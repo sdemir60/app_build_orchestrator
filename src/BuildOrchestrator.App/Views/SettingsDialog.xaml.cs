@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Shapes;
 using ShapePath = System.Windows.Shapes.Path;
 using System.Windows.Threading;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 
@@ -48,6 +49,7 @@ public partial class SettingsDialog : UserControl
     /// <summary>Clear ikonunun TABAN (armed olmayan) tooltip'i — XAML'in kendi değeri (kopya YASAK: burada
     /// yeniden yazılmaz, yalnız <see cref="DisarmClear"/> geri yüklemek için OKUR).</summary>
     private readonly object? _clearBaseTooltip;
+    private Window? _hostWindow;
 
     public SettingsDialog()
     {
@@ -95,7 +97,34 @@ public partial class SettingsDialog : UserControl
         // [D7 re-review][Fix1] Odağı UserControl'ün KENDİSİNDEN diyaloğun İÇİNE taşı (ilk input tercih edilir) —
         // Scrim bir FocusManager.IsFocusScope olduğundan bu arama diyalog alt-ağacıyla SINIRLIdır.
         Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
+        TrackHostWindowSize();
     }
+
+    /// <summary>[design v1.14.0 §2.9 · ruling task-D6] Gövdenin (<see cref="Body"/>) üst yükseklik sınırını
+    /// dialogu barındıran PENCEREYE bağlar: WPF'te <c>vh</c> (tarayıcı viewport'u) yoktur, en yakın karşılık
+    /// dialogun İÇİNDE yaşadığı <see cref="System.Windows.Window"/>'un <c>ActualHeight</c>'ıdır — bağlayıcı
+    /// sınır ekran değil PENCEREDİR. Hesabın kendisi <see cref="SettingsBodyHeight"/>'ta TEK yerde
+    /// (kopya YASAK); burada yalnız GÜNCEL pencereyi bulup ilk değeri uygular ve pencere yeniden
+    /// boyutlandığında (<see cref="OnHostWindowSizeChanged"/>) yeniden çağrılmasını KURAR.
+    ///
+    /// <para>Abonelik İDEMPOTENTtir: diyalog kapanıp yeniden açıldığında (aynı üst pencerede) tekrar tekrar
+    /// çağrılır ama aynı pencereye İKİNCİ KEZ abone OLUNMAZ.</para></summary>
+    private void TrackHostWindowSize()
+    {
+        var window = Window.GetWindow(this);
+        if (!ReferenceEquals(window, _hostWindow))
+        {
+            if (_hostWindow is not null) _hostWindow.SizeChanged -= OnHostWindowSizeChanged;
+            _hostWindow = window;
+            if (_hostWindow is not null) _hostWindow.SizeChanged += OnHostWindowSizeChanged;
+        }
+        UpdateBodyHeightLimit();
+    }
+
+    private void OnHostWindowSizeChanged(object sender, SizeChangedEventArgs e) => UpdateBodyHeightLimit();
+
+    private void UpdateBodyHeightLimit() =>
+        Body.MaxHeight = SettingsBodyHeight.MaxHeightFor(_hostWindow?.ActualHeight ?? 0);
 
     /// <summary>[design v1.10.0 §2.4] First run'daki <c>Import settings…</c> kısayolu: diyaloğu açar ve dosya
     /// seçiciyi HEMEN tetikler — hazır bir ayar dosyası olan developer tek adımda başlar.</summary>
