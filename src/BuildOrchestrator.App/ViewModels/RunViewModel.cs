@@ -1690,7 +1690,10 @@ public sealed partial class RunViewModel : ObservableObject
     /// (run dokümanı + tüm proje logları) TEMİZLENİR — ekrandaki her şey artık yürüyen işlemin hikâyesidir.
     /// <see cref="ClearStreamForNewOperation"/>'ın konsol eşi; ikisi birlikte "her işlemde temizlenir" kuralını
     /// oluşturur. <see cref="BeginRunAsync"/> (Build/Rebuild/Cycles) VE <see cref="SyncCoreAsync"/> (Sync)
-    /// AYNI metodu paylaşır — inline kopya YASAK.
+    /// AYNI metodu paylaşır — inline kopya YASAK. <b>Koşulsuz "her işlemde" OKUMA:</b> <see cref="SyncCoreAsync"/>'in
+    /// üç çağıranından ikisi (<see cref="ApplySettingsAsync"/>, <see cref="ChangeRepositoryAsync"/>) bu metodu
+    /// hiç ÇAĞIRMAZ — nüans (kendi hazırlık notlarını korumak için) <see cref="SyncCoreAsync"/>'in kendi XML
+    /// doc'undadır.
     /// <para><b>[DEĞİŞEN KURAL — v1.13.2]</b> Bu gövde önceden yalnız <see cref="BeginRunAsync"/>'in İÇİNDE,
     /// adsız bir <c>if (clearBuffers) lock (_gate) { … }</c> bloğuydu; Sync bu bloğa hiç uğramadığından
     /// motorun <c>syncProgress</c> satırları bir önceki işlemin tortusunun ÜZERİNE yazılıyordu (kanıt:

@@ -1301,8 +1301,12 @@ the frontier sits in the middle of the list, so a single wheel notch parked foll
 **Console.** See §13.5.
 
 **Event stream.** A capped list of chronological one-line events, cleared — like the console — whenever a new
-operation begins: everything on screen belongs to the operation that is running. Sync does not clear it, being
-the ground operations stand on rather than one of them. It is not virtualized and does not need to
+operation begins, Sync included: everything on screen belongs to the operation that is running. What decides
+the clear is not the operation's kind but whether the click that starts it already left a note of its own in
+the console — Sync from the ribbon button clears both panels, since nothing precedes it; a Sync that Settings'
+Save sends does not, because Save already wrote the console's first line (the new layer count, or the new
+root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one before
+it. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows
