@@ -5,7 +5,9 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
+using System.Windows.Automation;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -141,10 +143,11 @@ public class ProjectRowInputTests
 
     // ================================================================ [design v1.11.0 §2.4-4 · §9-6] satır aksiyonları
 
-    /// <summary>Hover bloğu DÖRT ikon taşır ve sırası sabittir: <b>play · ⋯ · Explorer · VS</b>. Play birincil
-    /// eylemdir ve bir tık büyüktür (14px, diğerleri 13px — §3.8).</summary>
+    /// <summary>Hover bloğu DÖRT yuva taşır ve sırası sabittir: <b>play/Stop · ⋯ · Explorer · VS</b>. İlk
+    /// yuvanın iki kiracısı vardır ve hiçbir zaman birlikte görünmez: play, koşunun hedefi olan satırda
+    /// Stop'a döner (§3.8). Play birincil eylemdir ve bir tık büyüktür (14px, diğerleri 13px).</summary>
     [StaFact]
-    public void The_hover_block_orders_play_more_explorer_and_visual_studio()
+    public void The_hover_block_orders_play_or_stop_more_explorer_and_visual_studio()
     {
         var runVm = NewRunVm();
         var rowVm = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending);
@@ -155,32 +158,81 @@ public class ProjectRowInputTests
         var strip = (Panel)actions.HoverIcons;
 
         Assert.Equal(
-            new UIElement[] { actions.BuildButton, actions.MoreButton, actions.RevealButton, actions.VsButton },
+            new UIElement[] { actions.BuildButton, actions.StopButton, actions.MoreButton, actions.RevealButton, actions.VsButton },
             strip.Children.Cast<UIElement>());
+        Assert.Equal(Visibility.Visible, actions.BuildButton.Visibility);   // hedef değil → play
+        Assert.Equal(Visibility.Collapsed, actions.StopButton.Visibility);
         Assert.Equal(14.0, ((FrameworkElement)actions.BuildButton.Content).Width);   // birincil eylem: bir tık büyük
         Assert.Equal(13.0, ((FrameworkElement)actions.MoreButton.Content).Width);
         GC.KeepAlive(window);
     }
 
-    /// <summary>[§3.8] Tek-proje koşusunun arka ucu henüz yazılmadı: play PASİFTİR ve tooltip nedenini
-    /// söyler (bakım kutusundaki Clean/Optimize ile AYNI karar).</summary>
+    /// <summary>[§3.8] Play, satırı YALNIZ o projeyi derleyen komuta bağlar (parametre satırın kimliği) ve
+    /// tooltip'i kilide göre değişir: boşta <c>Build this project</c>; bir koşu uçuştayken (planlama penceresi
+    /// DAHİL) düğme pasiftir ve tooltip nedenini söyler — <c>Build in progress — wait or stop it first</c>.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: motoru yazılmadığı için play pasifti ve "not available yet"
+    /// derdi. Tek proje koşusunun motoru yazıldı (<see cref="StartRunCommand.ScopeProjectId"/>); pasiflik
+    /// artık yalnız kilidin sonucudur ve kilit kalkınca düğme geri gelir.</para></summary>
     [StaFact]
-    public void The_play_button_is_disabled_with_a_reason_until_its_engine_exists()
+    public void The_play_button_runs_the_row_through_the_build_project_command_and_locks_with_a_reason_mid_run()
     {
         var runVm = NewRunVm();
-        var rowVm = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending);
-        var row = Realize(runVm, rowVm, out var window);
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
 
         RaiseMouse(row, Mouse.MouseEnterEvent);
+        var play = row.Actions!.BuildButton;
 
-        Assert.False(row.Actions!.BuildButton.IsEnabled);
-        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.RowActionsTooltip, row.Actions!.BuildButton.ToolTip);
-        Assert.True(ToolTipService.GetShowOnDisabled(row.Actions!.BuildButton));
+        Assert.Same(runVm.BuildProjectCommand, play.Command);
+        Assert.Equal(RowId, play.CommandParameter);
+        Assert.True(play.IsEnabled);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildThisProject, play.ToolTip);
+
+        runVm.IsStarting = true; // bir koşu İSTENDİ — daha planlama penceresinde kilit iner
+        Assert.False(play.IsEnabled);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, play.ToolTip);
+        Assert.True(ToolTipService.GetShowOnDisabled(play));
+
+        runVm.IsStarting = false;
+        Assert.True(play.IsEnabled);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildThisProject, play.ToolTip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[§3.8] Koşunun HEDEFİ olan satırda play kırmızı <b>Stop</b>'a döner ve hover olmadan da görünür
+    /// kalır (Stop, play ile aynı boyda — birincil eylem); koşu bitince satır hover kuralına geri döner. Stop
+    /// düğmesi ana Stop ile AYNI komuta bağlıdır — ikinci bir durdurma yolu yazılmaz.</summary>
+    [StaFact]
+    public void The_target_row_shows_a_red_stop_button_without_hover_until_the_run_ends()
+    {
+        var runVm = NewRunVm();
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
+        Assert.Null(row.HoverIcons); // hover yok → ikon bloğu henüz kurulmadı
+
+        runVm.RunTargetId = RowId;   // satırdan Build'e basıldı (BeginRunAsync bunu tıklama anında yazar)
+        runVm.IsStarting = true;
+
+        var actions = row.Actions!;
+        Assert.Equal(Visibility.Visible, actions.HoverIcons.Visibility);   // hover'sız görünür
+        Assert.Equal(Visibility.Visible, actions.StopButton.Visibility);
+        Assert.Equal(Visibility.Collapsed, actions.BuildButton.Visibility);
+        Assert.Same(runVm.StopCommand, actions.StopButton.Command);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.StopThisBuild, AutomationProperties.GetName(actions.StopButton));
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.StopBuildTooltip, actions.StopButton.ToolTip);
+        Assert.Equal(14.0, ((FrameworkElement)actions.StopButton.Content).Width);
+        Assert.Same(row.FindResource("Brush.StatusFailText"), actions.StopIcon.Fill);
+
+        runVm.IsStarting = false; // koşu bitti — kilit düşer, hedef bırakılır
+        Assert.Null(runVm.RunTargetId);
+        Assert.Equal(Visibility.Collapsed, actions.StopButton.Visibility);
+        Assert.Equal(Visibility.Visible, actions.BuildButton.Visibility);
+        Assert.Equal(Visibility.Collapsed, actions.HoverIcons.Visibility); // hover yok → sha'ya döner
         GC.KeepAlive(window);
     }
 
     /// <summary>[§9-6] Satıra SAĞ TIK, ⋯ ile AYNI menüyü açar; menü başlığı projenin kısa adıdır ve maddeleri
-    /// Build · Rebuild · Clean'dir (arka uç yokken pasif).</summary>
+    /// Build · Rebuild · Clean'dir (Build/Rebuild tek proje koşusuna bağlı, Clean motoru bekliyor).</summary>
     [StaFact]
     public void Right_clicking_the_row_opens_the_same_menu_the_ellipsis_opens()
     {
@@ -201,11 +253,15 @@ public class ProjectRowInputTests
     }
 
     /// <summary>[§9-6] Menünün maddeleri: Build · Rebuild · Clean — Build split-button'la AYNI üçlü ve AYNI
-    /// ikon ailesi. Arka uç yokken üçü de pasiftir ve tooltip nedeni söyler.
+    /// ikon ailesi. Build ve Rebuild tıklanabilir (arka uçları tek proje koşusudur) ve bir koşu uçuştayken
+    /// pasifleşip nedenini söyler; Clean'in motoru henüz yok — tasarımdaki yerinde, pasif, tooltip nedeni
+    /// söyler (split menü ve bakım kutusuyla AYNI karar).
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: üçü de "not available yet" ile pasifti. Tek proje koşusu
+    /// yazıldı; yalnız Clean bekliyor.</para>
     /// <para>Menü kabuğu, KAPALI bir popup içinde realize olmadığı için burada TEK BAŞINA kurulur
-    /// (BuildMenuTests deseni) — satırın kablajı yukarıdaki testte, içeriği burada pinlenir.</para></summary>
+    /// (BuildMenuTests deseni) — satırın kablajı aşağıdaki testte, içeriği burada pinlenir.</para></summary>
     [StaFact]
-    public void The_row_menu_offers_build_rebuild_and_clean_disabled_until_their_engine_exists()
+    public void The_row_menu_enables_build_and_rebuild_and_keeps_clean_disabled_with_its_reason()
     {
         var host = DsResources.NewHost();
         var menu = new ProjectRowMenu();
@@ -214,8 +270,64 @@ public class ProjectRowInputTests
         Assert.Equal(["build", "rebuild", "clean"], ProjectRowMenu.Items.Select(i => i.Kind));
         var rows = menu.Rows.ToList();
         Assert.Equal(3, rows.Count);
-        Assert.All(rows, r => Assert.False(r.IsEnabled));
-        Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.RowActionsTooltip, r.ToolTip));
+        Assert.True(rows[0].IsEnabled);
+        Assert.True(rows[1].IsEnabled);
+        Assert.Equal(Cursors.Hand, rows[0].Cursor);
+        Assert.False(rows[2].IsEnabled);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.RowCleanTooltip, rows[2].ToolTip);
+        Assert.True(ToolTipService.GetShowOnDisabled(rows[2]));
+
+        menu.SetRunActionsEnabled(false); // bir koşu uçuşta: menü açılır ama Build/Rebuild pasiftir
+        Assert.False(rows[0].IsEnabled);
+        Assert.False(rows[1].IsEnabled);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, rows[0].ToolTip);
+        Assert.Equal(BuildMenu.DisabledOpacity, rows[1].Opacity);
+
+        menu.SetRunActionsEnabled(true);
+        Assert.True(rows[0].IsEnabled);
+        Assert.Null(rows[0].ToolTip);
+        Assert.Equal(1.0, rows[0].Opacity);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[§9-6] Menüden Build seçmek satırın projesini derler (kapsamlı komut) ve menüyü kapatır;
+    /// Rebuild aynı yoldan kendi modunu gönderir. Kablaj GERÇEK fare olayıyla sınanır: menü satırı
+    /// tıklanır, komut satır VM'inin kimliğiyle gider.</summary>
+    [StaFact]
+    public void Picking_build_or_rebuild_in_the_row_menu_runs_that_project_and_closes_the_menu()
+    {
+        var runVm = NewRunVm();
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
+        var sent = new List<StartRunCommand>();
+        runVm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent.Add(s); };
+
+        RaiseMouse(row, Mouse.MouseEnterEvent); // ikon bloğu kurulsun ki Opened'a abone olunabilsin
+        var actions = row.Actions!;
+        bool opened = false;
+        actions.RowMenu.Opened += (_, _) => opened = true;
+        row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
+        { RoutedEvent = UIElement.MouseRightButtonUpEvent });
+        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
+        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
+        actions.RowMenuContent.UpdateLayout();
+        var rows = actions.RowMenuContent.Rows.ToList();
+
+        rows[0].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+
+        Assert.False(actions.MoreButton.IsChecked);            // menü kapandı
+        var build = Assert.Single(sent);
+        Assert.Equal((RunMode.Build, RowId), (build.Mode, build.ScopeProjectId));
+        Assert.Null(runVm.SelectedProjectId);                  // satırdan tetiklemek satıra tıklamak DEĞİLDİR
+
+        actions.MoreButton.IsChecked = true;                   // yeniden aç, Rebuild'i seç
+        rows[1].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+
+        Assert.False(actions.MoreButton.IsChecked);
+        Assert.Equal(2, sent.Count);
+        Assert.Equal((RunMode.Rebuild, RowId), (sent[1].Mode, sent[1].ScopeProjectId));
         GC.KeepAlive(window);
     }
 

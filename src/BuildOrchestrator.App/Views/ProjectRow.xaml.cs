@@ -117,8 +117,22 @@ public partial class ProjectRow : UserControl
         // [design v1.11.0 §9-6] Menünün AÇIK/KAPALI kapısı ⋯ düğmesinin kendisidir (popup'ın IsOpen'ı ona
         // iki-yönlü bağlıdır). Kablaj popup'a DEĞİL düğmeye takılır: sağ tık da bu düğmeyi işaretler ve
         // sağ blok kuralı (menü açıkken ikonlar görünür kalır) popup'ın gerçekten açılmasını beklemeden işler.
-        actions.MoreButton.Checked += (_, _) => { actions.RowMenuContent.Title = ShortName(); ApplyRightBlock(); };
+        actions.MoreButton.Checked += (_, _) =>
+        {
+            actions.RowMenuContent.Title = ShortName();
+            // [design §3.8] Menü açılırken Build/Rebuild kapısı koşu kapısından okunur (prototip `busy`).
+            actions.RowMenuContent.SetRunActionsEnabled(CanRunProject());
+            ApplyRightBlock();
+        };
         actions.MoreButton.Unchecked += (_, _) => ApplyRightBlock();
+        // [tek proje · design §3.8] Play → YALNIZ bu projeyi derleyen kapsamlı komut (parametre satırın kimliği,
+        // ApplyActionState yazar); Stop → ana Stop komutunun TA KENDİSİ (ikinci bir durdurma yolu yok). Komutlar
+        // RunViewModel'de yaşar, düğmeler WPF'in CanExecute → IsEnabled kablosunu kullanır: koşu uçuştayken play
+        // kendiliğinden pasifleşir. Menü maddeleri komutu satır üzerinden çalıştırır — menü projesini bilmez.
+        var run = FindRunViewModel();
+        actions.BuildButton.Command = run?.BuildProjectCommand;
+        actions.StopButton.Command = run?.StopCommand;
+        actions.RowMenuContent.ItemInvoked += OnRowMenuItem;
         // [design v1.11.0 §9-6] Menünün çapası SATIRIN KENDİSİDİR, ⋯ düğmesi değil (BuildApp.jsx:609
         // `right: 8`). Yerleşim Custom'dır: WPF geri çağrıyı menü ÖLÇÜLDÜKTEN sonra çağırır, yani menünün
         // gerçek genişliği/yüksekliği hesaba girer — sabit bir offset yazmak (eski `-118`) ikon sayısı ya da
@@ -261,6 +275,10 @@ public partial class ProjectRow : UserControl
                 break;
             case nameof(ProjectRowViewModel.IsSelected):
                 ApplySelection();
+                break;
+            case nameof(ProjectRowViewModel.IsRunTarget): // [§3.8] hedef satır: play ↔ Stop, hover'sız görünürlük
+            case nameof(ProjectRowViewModel.IsRunLocked): // [§3.8] play tooltip'i: boşta / koşarken
+                ApplyRightBlock();
                 break;
             case nameof(ProjectRowViewModel.Fade):
                 ApplyFade();
@@ -482,12 +500,53 @@ public partial class ProjectRow : UserControl
         // [design v1.11.0 §9-6] Menü AÇIKKEN ikonlar görünür kalır: menü satırın çapasına bağlıdır ve
         // çapa kaybolursa menü havada asılı kalırdı (prototipte de `hover || menuOpen`).
         bool menuOpen = _actions?.MoreButton.IsChecked == true;
-        bool showIcons = _hover || menuOpen;
+        // [design §3.8] Koşunun HEDEFİ olan satırda Stop hover OLMADAN da görünür (prototip `hover || isTarget || menuOpen`).
+        bool target = _vm?.IsRunTarget == true;
+        bool showIcons = _hover || menuOpen || target;
         bool showSha = !showIcons; // [design v1.7.0 §2.4] SHA her satırda — yalnız hover ikonları onu örter
         if (showIcons) EnsureActions().HoverIcons.Visibility = Visibility.Visible;
-        else if (_actions is { } actions) actions.HoverIcons.Visibility = Visibility.Collapsed;
+        else if (_actions is { } hidden) hidden.HoverIcons.Visibility = Visibility.Collapsed;
+        // Kurulmuş blok gizliyken de tazelenir: hedef bırakıldığında play, Stop'un yerine geri dönmüş olmalı —
+        // bir sonraki hover'da satır Stop göstermemeli.
+        if (_actions is { } actions) ApplyActionState(actions);
         PART_Sha.Visibility = showSha ? Visibility.Visible : Visibility.Collapsed;
         if (showSha) ApplySha();
+    }
+
+    /// <summary>[tek proje · design §3.8] Hover bloğunun koşuya bağlı hâli: play'in hedefi (satırın kimliği —
+    /// geri dönüştürülen container yeni VM'inin kimliğini alır), play/Stop yuvası (hedef satırda Stop) ve
+    /// play'in tooltip'i (kilitliyken <see cref="AccessibilityNames.BuildBusyTooltip"/>). Pasiflik burada
+    /// YAZILMAZ: komutun CanExecute'u düğmeyi zaten kapatır.</summary>
+    private void ApplyActionState(ProjectRowActions actions)
+    {
+        bool target = _vm?.IsRunTarget == true;
+        actions.BuildButton.CommandParameter = _vm?.Id;
+        actions.BuildButton.Visibility = target ? Visibility.Collapsed : Visibility.Visible;
+        actions.StopButton.Visibility = target ? Visibility.Visible : Visibility.Collapsed;
+        actions.BuildButton.ToolTip = _vm?.IsRunLocked == true
+            ? AccessibilityNames.BuildBusyTooltip
+            : AccessibilityNames.BuildThisProject;
+    }
+
+    /// <summary>Satırın projesi ŞU AN satırdan derlenebilir mi — menünün Build/Rebuild kapısı, play ile AYNI
+    /// komuttan okunur (ikinci bir kural yazılmaz).</summary>
+    private bool CanRunProject() =>
+        _vm is { } vm && FindRunViewModel()?.BuildProjectCommand.CanExecute(vm.Id) == true;
+
+    /// <summary>[design §9-6] Menü maddesi seçildi: menü kapanır (BuildMenu deseni), komut satırın projesiyle
+    /// çalışır. Satırdan tetiklemek satıra tıklamak DEĞİLDİR — seçim burada değişmez (komut kendi kuralıyla
+    /// seçimi ve filtreyi düşürür).</summary>
+    private void OnRowMenuItem(string kind)
+    {
+        if (_actions is { } actions) actions.MoreButton.IsChecked = false;
+        if (_vm is not { } vm || FindRunViewModel() is not { } run) return;
+        System.Windows.Input.ICommand? command = kind switch
+        {
+            "build" => run.BuildProjectCommand,
+            "rebuild" => run.RebuildProjectCommand,
+            _ => null,
+        };
+        if (command is not null && command.CanExecute(vm.Id)) command.Execute(vm.Id);
     }
 
     /// <summary>Seçim: şerit 2→3 (80ms), iç-sarmalayıcı TranslateX (120ms EaseOut), zemin (120ms). Şerit rengi

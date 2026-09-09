@@ -82,6 +82,21 @@ public class GraphSelectionFocusTests
         Assert.Null(view.EdgeFlowClock);
     }
 
+    /// <summary>[tek proje · §3.8] Satırdan Build seçimi düşürür (satıra tıklamak DEĞİLDİR) ve graf odaktan
+    /// varsayılan fit-all görünümüne döner — kamera seçimle gider, seçim kalkınca geri gelir. Kamera başka
+    /// hiçbir sebeple hareket etmediği için bu geçiş yalnız seçime bağlıdır.</summary>
+    [StaFact]
+    public void Clearing_the_selection_returns_the_camera_to_the_default_view()
+    {
+        var view = Wired();
+        view.SelectedNode = "OSYS.Data";
+        Assert.NotEqual(GraphCamera.Default, view.CurrentCamera); // ön-koşul: seçim kamerayı odaklamış olmalı
+
+        view.SelectedNode = null;
+
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera);
+    }
+
     /// <summary>Akan kesikler TEK paylaşımlı saate bağlanır (beads ile aynı gerekçe) ve reduced-motion'da
     /// hiç doğmaz (§2.3: "prefers-reduced-motion: beads ve akan çizgiler tamamen kapalı").</summary>
     [StaFact]

@@ -51,6 +51,18 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _isRunActive;
 
+    /// <summary>[tek proje · design §3.8] Bir koşu KİLİTLİ mi (<see cref="RunViewModel.IsMidRunLocked"/> —
+    /// planlama penceresi DAHİL) — <see cref="RunViewModel"/> her satıra iter (<see cref="IsRunActive"/>
+    /// deseni). Kart bunu play düğmesinin tooltip'i için okur: kilitliyken <c>Build in progress — wait or
+    /// stop it first</c>. <see cref="IsRunActive"/>'den AYRIDIR: o yalnız <c>runStarted</c>'dan sonra true olur,
+    /// oysa ikinci bir koşu daha tıklama anından itibaren başlatılamaz.</summary>
+    [ObservableProperty] private bool _isRunLocked;
+
+    /// <summary>[tek proje · design §3.8] Bu satır, uçuştaki kapsamlı koşunun HEDEFİ mi —
+    /// <see cref="RunViewModel.RunTargetId"/>'den her satıra itilir. Hedef satırda play ikonu kırmızı
+    /// <b>Stop</b>'a döner ve hover olmadan da görünür kalır; koşu bitince (her çıkış yolundan) düşer.</summary>
+    [ObservableProperty] private bool _isRunTarget;
+
     /// <summary>[Harici projeler] Bu satır ana repo DIŞINDAN gelen bir projeyi mi anlatıyor —
     /// <see cref="ProjectNode.ExternalVcs"/>'ten topoloji uzlaştırmasında taşınır ve satır ömrü boyunca
     /// değişmez (kimlik gibi).
@@ -430,6 +442,8 @@ public sealed partial class RunViewModel : ObservableObject
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
@@ -444,11 +458,20 @@ public sealed partial class RunViewModel : ObservableObject
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
     private bool _isStarting;
+
+    /// <summary>[tek proje · design §3.8] Uçuştaki KAPSAMLI koşunun hedefi (proje kimliği); <c>null</c> = tam
+    /// koşu ya da koşu yok. Tıklama anında yazılır (gönderim penceresi dahil — hedef satır o an Stop'a döner)
+    /// ve kilidin düştüğü HER yolda (<c>runCompleted</c>/<c>runStopped</c>, run-bitiren hata, motor ölümü,
+    /// iptal, senkron düşen gönderim) tek yerden bırakılır: <see cref="PropagateRunLock"/>. Satırlara
+    /// <see cref="ProjectRowViewModel.IsRunTarget"/> olarak itilir.</summary>
+    [ObservableProperty] private string? _runTargetId;
 
     [ObservableProperty] private string? _activeProjectId; // null = run dokümanı gösteriliyor
 
@@ -461,6 +484,8 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsEngineUnavailable))]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private string? _engineDiedMessage;
@@ -474,6 +499,8 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsEngineUnavailable))]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     private bool _engineRestartable = true;
@@ -649,7 +676,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// düşmeden ÖNCE varabilir. <b>Continue temizlemez</b> (önceki segmentin log/proje sonuçlarını korur).</para>
     /// <para>[Fix wave 2, Finding 1] Gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
     /// geri açılır — aksi halde hiçbir engine event'i gelmeyeceğinden buton kalıcı kilitli kalırdı.</para></summary>
-    private async Task BeginRunAsync(RunMode mode, bool clearBuffers)
+    /// <param name="scopeProjectId">[tek proje · design §3.8] Satırdan tetiklenen koşunun hedefi; <c>null</c> =
+    /// tam koşu. Dolu iken kapsam yalnız o satırdır (koreografi de yalnız onu işaretler), komut
+    /// <see cref="StartRunCommand.ScopeProjectId"/> taşır ve <see cref="RunTargetId"/> tıklama anında yazılır.
+    /// Satırdan tetiklemek satıra tıklamak DEĞİLDİR: seçim + filtre tam koşudaki gibi düşer — graf odaktan fit
+    /// görünüme, konsol ana loga döner; pill hedef adı taşımaz (v1.13.2).</param>
+    private async Task BeginRunAsync(RunMode mode, bool clearBuffers, string? scopeProjectId = null)
     {
         string runId = _newRunId();
         _currentRunId = runId;
@@ -659,7 +691,8 @@ public sealed partial class RunViewModel : ObservableObject
         if (clearBuffers) ClearStreamForNewOperation();
         // [design v1.11.0 §9-4 `_neutralize`] Kapsam ÖNCE okunur, sonra nötrleme yapılır — prototipteki sıra
         // da budur (build-data.js:541-547: önce `st.will` yazılır, sonra `_neutralize()`).
-        var scope = ScopeFor(mode);
+        var target = scopeProjectId is null ? null : FindRow(scopeProjectId);
+        var scope = target is null ? ScopeFor(mode) : [target];
         NeutralizeRows(fresh: false);
         RefreshRunSurface(); // sayaclar/serit notrlenmis listeden yeniden turer
         // [design v1.11.0 §2.2] İşlem pill'i TIKLAMA ANINDA yazılır (motorun cevabı beklenmez): pill "ne
@@ -670,6 +703,9 @@ public sealed partial class RunViewModel : ObservableObject
         // yüzden sayaca bakan kapı onu kaçırır. Sinyal erken çıkarsa graf önceki koşunun renkleriyle tazelenir.
         CurrentOperation = OperationLabel.ForRunMode(mode);
         ActiveProjectId = null;
+        // [tek proje] Hedef, kilitten ÖNCE yazılır: kilit düşerken (PropagateRunLock) bırakılır, dolayısıyla
+        // sıra ters olsaydı hedef daha tıklama anında silinirdi. Tam koşuda açıkça null'dır.
+        RunTargetId = scopeProjectId;
         IsStarting = true;
         if (clearBuffers) ClearConsoleForNewOperation();
         // [design doBuild — BuildApp.jsx:1199-1200] Tam koşu: seçim + filtre sıfırlanır. SIRA ÖNEMLİ: konsol
@@ -683,7 +719,7 @@ public sealed partial class RunViewModel : ObservableObject
         // temizliğinden SONRA yazılır — aksi halde ilk iş olarak silinirdi.
         var previousPhase = Phase;
         Phase = AppPhase.Starting;
-        AppendRunLine(RunRequestedLine(mode));
+        AppendRunLine(RunRequestedLine(mode, target?.Name));
 
         // [design v1.11.0 §9-4 `_mark`] AÇILIŞ KOREOGRAFİSİ — koşu ondan SONRA başlar (prototipte de:
         // `_mark(scope, () => startRun())`). Kapsamı VM bilir, zamanlamayı kabuk; bu yüzden kapı bir
@@ -708,7 +744,7 @@ public sealed partial class RunViewModel : ObservableObject
         // hiç başlatmıyordu).
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
             RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
-            ExternalProjectsForWire, UpdateExternals);
+            ExternalProjectsForWire, UpdateExternals, scopeProjectId);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
@@ -788,7 +824,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[planlama görünürlüğü] Run dokümanına düşen tek satırlık not: konsol, tıklamanın KALICI
     /// kaydıdır (şerit bir sonraki faz değişiminde üzerine yazar). Motorun planlama adımları hemen ardından
     /// akar. Mod adı <see cref="RunModeLabel"/>'dan gelir — gönderim hata satırıyla AYNI kaynak.</summary>
-    internal static string RunRequestedLine(RunMode mode) => RunModeLabel(mode) + " requested";
+    /// <param name="targetName">[tek proje] Kapsamlı koşuda hedefin adı — satır "neyi" sorusunu da cevaplar
+    /// (pill cevaplamaz); <c>null</c> = tam koşu.</param>
+    internal static string RunRequestedLine(RunMode mode, string? targetName = null) =>
+        targetName is null
+            ? RunModeLabel(mode) + " requested"
+            : RunModeLabel(mode) + " requested — " + targetName + " (single project)";
 
     private static string RunModeLabel(RunMode mode) => mode switch
     {
@@ -835,6 +876,21 @@ public sealed partial class RunViewModel : ObservableObject
     /// bozulmasını üretirdi.</para></summary>
     [RelayCommand(CanExecute = nameof(CanBuildCycles))]
     private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles, clearBuffers: true); // seçim + filtre orada düşer
+
+    /// <summary>[tek proje · design v1.11.0 §3.8] Satırın play düğmesi ve ⋯ menüsünün <i>Build</i> maddesi:
+    /// YALNIZ o projeyi derler — bağımlılıklar derlenmez, kapsam dışına dokunulmaz. Hedef tam koşuyla aynı
+    /// motor yolundan geçer (güncelse <c>up to date</c> atlanır; koşulsuz derlemek <see cref="RebuildProjectCommand"/>'ın
+    /// işidir). Parametre satırın kimliğidir; kapı tam koşununkiyle AYNI (<see cref="CanRebuildOrRetry"/>) +
+    /// bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu başlatılamaz.</summary>
+    [RelayCommand(CanExecute = nameof(CanRunProject))]
+    private Task BuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Build, clearBuffers: true, projectId);
+
+    /// <summary>[tek proje] ⋯ menüsünün <i>Rebuild</i> maddesi: aynı kapsam, cache yok sayılır (tam Rebuild ile
+    /// aynı anlam) — hedef güncel olsa da derlenir.</summary>
+    [RelayCommand(CanExecute = nameof(CanRunProject))]
+    private Task RebuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Rebuild, clearBuffers: true, projectId);
+
+    private bool CanRunProject(string? projectId) => projectId is not null && CanRebuildOrRetry();
 
     /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
     /// workspace'te bu koşunun kapsamı BOŞTUR (bkz. <c>CycleRunScope</c>) ve her projeyi atlar — pasif
@@ -1035,15 +1091,37 @@ public sealed partial class RunViewModel : ObservableObject
     /// aynı kümedir — bilgi kaybolmaz, yalnız anında değil dalga hâlinde belirir. Eski kural sürseydi
     /// koreografinin ilk iki adımı (nötr an + dalga) hiç görünmezdi: kapsam zaten amber olurdu.</para></summary>
     private bool RunActive => IsRunning;
-    partial void OnIsRunningChanged(bool value) => PropagateRunActive();
+    partial void OnIsRunningChanged(bool value)
+    {
+        PropagateRunActive();
+        PropagateRunLock();
+    }
     partial void OnIsStartingChanged(bool value)
     {
         if (value) ArmEngineWatchdog(); // run istendi — motor bundan sonra konuşmalı
+        PropagateRunLock();
     }
     private void PropagateRunActive()
     {
         bool active = RunActive;
         foreach (var row in Projects) row.IsRunActive = active;
+    }
+
+    /// <summary>[tek proje] Kilit (<see cref="IsMidRunLocked"/>) her satıra itilir ve kilit düşerken hedef
+    /// TEK yerden bırakılır — <c>runCompleted</c>/<c>runStopped</c>, run-bitiren hata, motor ölümü, iptal ve
+    /// senkron düşen gönderim <see cref="IsRunning"/>/<see cref="IsStarting"/>'i zaten düşürür; hedefi ayrıca
+    /// hatırlamak gerekmez ve unutulamaz.</summary>
+    private void PropagateRunLock()
+    {
+        bool locked = IsMidRunLocked;
+        foreach (var row in Projects) row.IsRunLocked = locked;
+        if (!locked) RunTargetId = null;
+    }
+
+    partial void OnRunTargetIdChanged(string? value)
+    {
+        foreach (var row in Projects)
+            row.IsRunTarget = value is not null && string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>[T53/T54-UI] Proje listesini katman gruplarına böler — gruplama YALNIZ topolojiden
@@ -1426,7 +1504,12 @@ public sealed partial class RunViewModel : ObservableObject
         // [W1] TargetSha da IsRunActive/NamePrefix ile AYNI itme deseninden gelir: run ortasında doğan bir satır
         // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
         var row = new ProjectRowViewModel(id, name, initialState)
-        { IsRunActive = RunActive, NamePrefix = _graphNamePrefix, TargetSha = TargetSha };
+        {
+            IsRunActive = RunActive, NamePrefix = _graphNamePrefix, TargetSha = TargetSha,
+            // [tek proje] kilit + hedef de aynı itme deseninden gelir (koşu ortasında doğan satır bilir)
+            IsRunLocked = IsMidRunLocked,
+            IsRunTarget = string.Equals(id, RunTargetId, StringComparison.OrdinalIgnoreCase),
+        };
         // Not: bu yol yalnız run ortasında, topolojide OLMAYAN bir id için satır doğurur — harici projeler
         // topolojiden gelir, o yüzden burada harici bir satır oluşamaz.
         Projects.Add(row);

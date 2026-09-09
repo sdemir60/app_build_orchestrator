@@ -14,8 +14,10 @@
   <Grid>
     <!-- Hover ikonları (sha'nın YERİNE aynı blokta): [design v1.11.0 §2.4-4] play (14px) · ⋯ (13px) ·
          folder (13px) · VS (13px). Play/⋯ ÖNDEDİR: play satırın BİRİNCİL eylemidir ve bu yüzden bir tık
-         büyüktür (§3.8). İkisinin de arka ucu henüz yazılmadı — play PASİF, ⋯ ise menüyü AÇAR (tasarımın
-         akışı ancak böyle görünür) ve menü maddeleri pasiftir. -->
+         büyüktür (§3.8). Play, YALNIZ o projeyi derleyen kapsamlı koşuyu başlatır (RunViewModel.BuildProjectCommand);
+         koşunun HEDEFİ olan satırda aynı yuvada kırmızı Stop durur (§3.8: "kapsam hedefi satırında play
+         kırmızı Stop'a döner ve hover olmadan da görünür") — ikisi hiçbir zaman birlikte görünmez, kablaj ve
+         görünürlük ProjectRow.ApplyActionState'tedir. -->
     <StackPanel x:Name="PART_HoverIcons" Orientation="Horizontal" HorizontalAlignment="Right"
                 VerticalAlignment="Center" Visibility="Collapsed">
       <Button x:Name="PART_BuildButton" Style="{DynamicResource Ds.IconButton}"
@@ -24,6 +26,16 @@
           <Canvas Width="24" Height="24">
             <Path Data="{DynamicResource Icon.Play}"
                   Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+          </Canvas>
+        </Viewbox>
+      </Button>
+      <!-- [design §3.8] Stop: play ile AYNI boy (birincil eylem), kırmızı (prototipin status-fail-text
+           rengi), varsayılan gizli. UIA adı ve tooltip'i kod-tarafı AccessibilityNames'ten yazılır (kopya YASAK). -->
+      <Button x:Name="PART_StopButton" Style="{DynamicResource Ds.IconButton}" Visibility="Collapsed">
+        <Viewbox Width="14" Height="14">
+          <Canvas Width="24" Height="24">
+            <Path x:Name="PART_StopIcon" Data="{DynamicResource Icon.Stop}"
+                  Fill="{DynamicResource Brush.StatusFailText}" />
           </Canvas>
         </Viewbox>
       </Button>

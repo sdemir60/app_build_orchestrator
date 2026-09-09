@@ -1,14 +1,17 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Shapes;
 using BuildOrchestrator.App;
 
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [L1/It-5 perf] <see cref="ProjectRow"/>'un hover eylem bloğu: folder + VS ikon butonları ve Open-in-VS seçim
-/// popover'ı. Kendi başına DAVRANIŞ taşımaz — tıklama/popover kablajı ve içerik üretimi <see cref="ProjectRow"/>'da
-/// kalır (mantık dağıtılmaz); bu kök yalnız markup'ı taşır ki satır onu İLK HOVER'da bir kez kurabilsin.
+/// [L1/It-5 perf] <see cref="ProjectRow"/>'un hover eylem bloğu: play/Stop, ⋯, folder + VS ikon butonları ve
+/// Open-in-VS seçim popover'ı. Kendi başına DAVRANIŞ taşımaz — tıklama/popover kablajı ve içerik üretimi
+/// <see cref="ProjectRow"/>'da kalır (mantık dağıtılmaz); bu kök yalnız markup'ı taşır ki satır onu İLK HOVER'da
+/// (ya da koşunun hedefi olduğunda) bir kez kurabilsin.
 /// </summary>
 public partial class ProjectRowActions : UserControl
 {
@@ -18,15 +21,16 @@ public partial class ProjectRowActions : UserControl
         // [design v1.11.0 §2.4-4 · §9-13] Satırda DS tooltip'i taşıyan TEK öğe uyarı üçgenidir. İkon
         // butonları tooltip'lerini korur ama uygulama genelindeki GECİKMESİZ kipten çıkarılır: fare satır
         // boyunca gezerken arka arkaya balon açılmaz. Gerekçe: Controls/AppTooltipDefaults.NativeDelayMs.
-        foreach (var button in new DependencyObject[] { PART_BuildButton, PART_MoreButton, PART_RevealButton, PART_VsButton })
+        foreach (var button in new DependencyObject[] { PART_BuildButton, PART_StopButton, PART_MoreButton, PART_RevealButton, PART_VsButton })
             Controls.AppTooltipDefaults.UseNativeDelay(button);
 
-        // [design v1.11.0 §3.8] Tek-proje koşusunun arka ucu henüz yazılmadı: play PASİFTİR ve tooltip
-        // nedenini söyler (bakım kutusundaki Clean/Optimize ile AYNI karar). ⋯ AÇIK kalır — menü açılmazsa
-        // tasarımın akışı (sağ tık → Build/Rebuild/Clean) hiç görünmezdi; maddeleri de pasiftir.
-        PART_BuildButton.IsEnabled = false;
-        PART_BuildButton.ToolTip = AccessibilityNames.RowActionsTooltip;
+        // [design §3.8] Play'in tooltip'i kilide göre değişir (boşta "Build this project", koşarken "Build in
+        // progress — …") ve pasif düğme de nedenini söylemelidir — yazıcı ProjectRow.ApplyActionState'tir,
+        // burada yalnız boştaki metin ve pasif-tooltip kapısı kurulur. Stop'un adı/tooltip'i sabittir.
+        PART_BuildButton.ToolTip = AccessibilityNames.BuildThisProject;
         ToolTipService.SetShowOnDisabled(PART_BuildButton, true);
+        AutomationProperties.SetName(PART_StopButton, AccessibilityNames.StopThisBuild);
+        PART_StopButton.ToolTip = AccessibilityNames.StopBuildTooltip;
         PART_MoreButton.ToolTip = "More — Rebuild, Clean";
         PART_RowMenu.Opened += (_, _) => PART_RowMenuContent.PlayPopIn();
         // [design v1.11.0 §9-6] Açık menünün ⋯'sine basmak onu KAPATIR (BuildApp.jsx:657
@@ -38,6 +42,10 @@ public partial class ProjectRowActions : UserControl
     internal FrameworkElement HoverIcons => PART_HoverIcons;
     /// <summary>[design v1.11.0 §2.4-4] Satırın birincil eylemi — yalnız o projeyi derler (§3.8).</summary>
     internal Button BuildButton => PART_BuildButton;
+    /// <summary>[design §3.8] Koşunun hedefi olan satırda play'in yerini alan kırmızı Stop — ana Stop ile AYNI komut.</summary>
+    internal Button StopButton => PART_StopButton;
+    /// <summary>[test yüzeyi] Stop ikonunun yolu — kırmızı dolgu buradan okunur.</summary>
+    internal Path StopIcon => PART_StopIcon;
     /// <summary>[design v1.11.0 §9-6] Satır menüsünü açan ⋯ (satıra sağ tık da aynı menüyü açar).</summary>
     internal ToggleButton MoreButton => PART_MoreButton;
     internal Popup RowMenu => PART_RowMenu;
