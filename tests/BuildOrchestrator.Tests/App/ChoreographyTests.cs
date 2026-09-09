@@ -535,6 +535,37 @@ public class ChoreographyTests
         Assert.All(vm.Projects, r => Assert.False(r.Marked));
     }
 
+    /// <summary>
+    /// [design v1.13.2 §3.2] <b>Doğal bitişte koreografi son adımında BEKLER.</b> Prototipte <c>startRun()</c>
+    /// koreografinin son anında çalışır (<c>build-data.js:445</c>): vedanın son opaklıkları (0.45/0.18) doğrudan
+    /// koşu opaklıklarına (1/0.13/0.2) geçer, arada 1.0'a geri dönüş yoktur. Burada komut koreografi bitince
+    /// gönderilir ve motor planlamaya saniyeler harcayabilir — o pencerede graf vedanın son hâlinde tutulur;
+    /// düşürmek yalnız <see cref="OperationChoreographer.Cancel"/>'ın işidir (koşu başladı ya da başlayamadı).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden bitişte adım <see cref="MarkStep.None"/>'a düşüyor, graf
+    /// 1.0'a GERİ geliyor ve <c>runStarted</c> gelince node'lar ikinci kez sönüyordu ("sönüş ve akış garip").</para>
+    /// </summary>
+    [StaFact]
+    public void When_the_choreography_ends_on_its_own_it_holds_its_last_step_until_the_run_takes_over()
+    {
+        var (vm, driver) = Driven();
+        MarkStep lastPushed = MarkStep.None;
+        driver.PushToGraph = (step, _) => lastPushed = step;
+
+        var gate = driver.PlayAsync(vm.Projects, vm.ScopeFor(RunMode.Build));
+        DispatcherPump.PumpUntil(() => gate.IsCompleted, TimeSpan.FromSeconds(6));
+        Assert.True(gate.IsCompleted, "koreografi bitmedi — komut kapısı asılı kalırdı");
+
+        Assert.False(driver.IsPlaying);
+        Assert.Equal(MarkStep.Wait2, driver.Step);          // son adım TUTULUR
+        Assert.Equal(MarkStep.Wait2, lastPushed);           // grafa None İTİLMEDİ: opaklıklar vedanın son hâlinde
+        Assert.Equal(2, vm.Projects.Count(r => r.Marked));  // işaret de durur — statü kanalı devralana dek
+
+        driver.Cancel(vm.Projects);                         // runStarted → kabuk düşürür
+        Assert.Equal(MarkStep.None, driver.Step);
+        Assert.Equal(MarkStep.None, lastPushed);
+    }
+
     // ================================================================ bitiş koreografisi (graf)
 
     private static GraphView Graph(params GraphNode[] nodes)

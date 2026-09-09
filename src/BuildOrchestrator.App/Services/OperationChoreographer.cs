@@ -14,12 +14,16 @@ namespace BuildOrchestrator.App.Services;
 /// prototipteki per-node <c>transition-delay</c>'in WPF karşılığı budur ve düğüm başına fırça animasyonu
 /// gerektirmez.</para>
 ///
-/// <para><b>[BİLİNÇLİ SAPMA — üretim kararı]</b> Prototipte koşu koreografinin SONUNDA başlar (motor
-/// simüledir, beklemenin bedeli yoktur). Burada koreografi motorun PLANLAMA penceresiyle (<c>Starting</c>
-/// fazı: worktree hazırlığı → tarama → graf → topoloji → incremental) ÖRTÜŞÜR: komut anında gönderilir,
-/// koreografi onun üzerinde oynar. Gerekçe: gerçek bir derlemeyi 3 saniye geciktirmek bir animasyon için
-/// savunulabilir değildir ve planlama zaten saniyeler sürer — görsel sıra korunur, maliyeti sıfırdır.
-/// Koreografi <c>runStarted</c> geldiğinde biter (<see cref="Cancel"/>).</para>
+/// <para><b>Bitiş ve koşunun devralması.</b> Prototipte koşu koreografinin son anında başlar
+/// (<c>_mark(scope, () =&gt; startRun())</c>): vedanın son opaklıkları (0.45 / 0.18) doğrudan koşu
+/// opaklıklarına (1 / 0.13 / 0.2) geçer, arada "geri gelme" yoktur. Burada komut koreografi BİTİNCE gönderilir
+/// (<c>RunViewModel.BeginRunAsync</c>'in kapısı) ve motor planlamaya (worktree → tarama → graf → incremental)
+/// saniyeler harcayabilir; bu pencerede ekran koreografinin <b>son adımında TUTULUR</b> (<see cref="Settle"/>) —
+/// <c>runStarted</c> gelince kabuk koşu fazını grafa iter ve ardından <see cref="Cancel"/> ile adımı düşürür,
+/// yani settle → running tek geçiştir.
+/// <b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden doğal bitişte adım <see cref="MarkStep.None"/>'a düşüyor ve graf
+/// 1.0 opaklığa GERİ GELİYOR, motor koşuyu başlatınca node'lar İKİNCİ kez sönüyordu — "sönüş ve akış garip"
+/// diye görülen buydu.</para>
 ///
 /// <para><b>Reduced-motion:</b> koreografi HİÇ oynamaz (§1.3 "tüm süreler 0") — kapsam işaretlenir ve satırlar
 /// doğrudan koşu görünümüne geçer.</para>
@@ -92,11 +96,24 @@ public sealed class OperationChoreographer
             steps.Add((MarkingChoreography.NeutralMs + order[i] * stagger, () => { row.Marked = true; PushGraph(); }));
         }
 
-        _player.Play(steps, onDone: () => Finish(allRows));
+        _player.Play(steps, onDone: Settle);
+    }
+
+    /// <summary>
+    /// Doğal bitiş: bekleyen koşu komutu serbest bırakılır ama adım (<see cref="MarkStep.Wait2"/>) ve grafa
+    /// itilmiş opaklıklar <b>olduğu gibi KALIR</b> — ekran koşu başlayana dek vedanın son hâlinde bekler.
+    /// Sıfırlama yalnız <see cref="Cancel"/>'dadır (koşu başladı ya da başlayamadı).
+    /// </summary>
+    private void Settle()
+    {
+        var completion = _completion;
+        _completion = null;
+        completion?.TrySetResult();
     }
 
     /// <summary>Koreografiyi keser: adım <see cref="MarkStep.None"/>'a döner ve satırlar tam opaklığa çıkar.
-    /// <b>İşaretlilik KORUNUR</b> — koşu başladığında amber kapsam sönmemelidir; onu statü kanalı devralır.</summary>
+    /// <b>İşaretlilik KORUNUR</b> — koşu başladığında amber kapsam sönmemelidir; onu statü kanalı devralır.
+    /// Doğal bitişten sonra da çağrılır (<see cref="Settle"/>'ın tuttuğu adımı düşürür).</summary>
     public void Cancel(IReadOnlyList<ProjectRowViewModel> allRows)
     {
         ArgumentNullException.ThrowIfNull(allRows);

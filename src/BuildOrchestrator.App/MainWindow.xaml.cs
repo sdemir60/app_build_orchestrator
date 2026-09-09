@@ -741,13 +741,19 @@ public partial class MainWindow : Window
                 // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
                 // hiç açılmadı). İşaret o zaman da silinmelidir — aksi halde başlamayan bir işlemin amber kapsamı
                 // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                //
+                // [SIRA ÖNEMLİ — design v1.13.2 §3.2] Koşu fazı ve statüler grafa koreografi düşürülmeden ÖNCE
+                // itilir: koreografi doğal bitişinde son adımında BEKLER (OperationChoreographer.Settle) ve
+                // Cancel adımı düşürdüğü anda grafın normal opaklık yolu artık koşu fazını görür — vedanın son
+                // hâlinden (0.45/0.18) koşu opaklıklarına (1/0.13/0.2) TEK geçiş. Ters sırada Cancel önce
+                // herkesi 1.0'a getirir, PushGraphRunPhase sonra yeniden söndürürdü.
+                PushGraphRunPhase();
+                PushGraphStatuses();
                 if (_vm.IsRunning || !_vm.IsStarting)
                 {
                     _choreographer.Cancel(_vm.Projects);
                     _choreographer.ClearMarks(_vm.Projects);
                 }
-                PushGraphRunPhase();
-                PushGraphStatuses();
                 break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
