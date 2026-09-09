@@ -385,6 +385,53 @@ public class ProjectRowInputTests
         return null;
     }
 
+    /// <summary>
+    /// <b>Satırın KENDİ eylem bloğundan gelen bir tık, satır tıklaması DEĞİLDİR.</b> Kusur ölçüldü: ⋯
+    /// menüsünden <i>Build</i> seçmek satırı SEÇİYORDU — koşu seçimi düşürdükten hemen sonra satır yeniden
+    /// seçildiği için graf fit görünüme dönmek yerine o düğüme ODAKLANIYOR (her şey 0.1 opaklığa iniyor) ve
+    /// konsol koşu anlatısı yerine proje loguna geçiyordu; kullanıcı bunu "menüden build'de fit ve
+    /// animasyonlar tam çalışmıyor" diye bildirdi.
+    ///
+    /// <para><b>Mekanizma:</b> bir <see cref="System.Windows.Controls.Primitives.Popup"/>'ın içindeki fare
+    /// olayının yolu <c>PopupRoot</c>'tan Popup'ın MANTIKSAL ebeveynine — yani bu satıra — devam eder, ve
+    /// <see cref="UIElement.MouseLeftButtonUpEvent"/> <b>Direct</b> bir olaydır: girdi sistemi onu yol
+    /// üstündeki HER öğede ayrıca yükseltir, satırın <c>MouseLeftButtonUp</c> handler'ı da bu yüzden koşar.
+    /// Test bunu birebir taklit eder — olay SATIRDA yükselir, kaynağı menü satırıdır. (Olayı doğrudan menü
+    /// satırında yükseltmek bir şey KANITLAMAZ: Direct olay elle yükseltildiğinde ağaçta hiç ilerlemez.)</para>
+    /// </summary>
+    [StaFact]
+    public void A_click_that_originates_inside_the_rows_own_actions_does_not_select_the_row()
+    {
+        var runVm = NewRunVm();
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
+        RaiseMouse(row, Mouse.MouseEnterEvent);
+        var actions = row.Actions!;
+        bool opened = false;
+        actions.RowMenu.Opened += (_, _) => opened = true;
+        actions.MoreButton.IsChecked = true;
+        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
+        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
+        actions.RowMenuContent.UpdateLayout();
+
+        foreach (object source in new object[] { actions.RowMenuContent.Rows.First(), actions.BuildButton, actions.VsChooserRows })
+        {
+            runVm.SelectProject(null);
+            row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            { RoutedEvent = UIElement.MouseLeftButtonUpEvent, Source = source });
+
+            Assert.Null(runVm.SelectedProjectId);
+        }
+
+        // AYIRT EDİCİ: satırın kendi gövdesinden gelen tık HÂLÂ seçer — kapı yalnız eylem bloğunu kapsar.
+        row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        { RoutedEvent = UIElement.MouseLeftButtonUpEvent, Source = row.NameText });
+        Assert.Equal(RowId, runVm.SelectedProjectId);
+
+        actions.MoreButton.IsChecked = false;
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Menü AÇIKKEN hover ikonları görünür kalır — menü satırın çapasına bağlıdır; çapa kaybolursa
     /// menü havada asılı kalırdı (prototipte de <c>hover || menuOpen</c>).</summary>
     [StaFact]

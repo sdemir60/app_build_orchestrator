@@ -2321,6 +2321,15 @@ resumes. Text selection inside the console never clears the project selection.
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.
 
+**Neither is a click inside the row's own action block** — the hover icons, the ⋯ menu and the Open-in-Visual
+Studio chooser. The row has to say so explicitly, because a mouse event raised inside a `Popup` continues out
+of the popup to its *logical* parent, which is the row, and `MouseLeftButtonUp` is a **direct** event that the
+input system raises separately on every element along that route. Left implicit, picking *Build* from the row
+menu selected the row a moment after the run had cleared the selection: the graph focused that node instead of
+returning to the fitted view, and the console switched to the project's log rather than the run's narrative.
+The gate reads the event's source rather than listing elements, so anything that grows in that block is
+covered by it.
+
 ### 13.8 Design-system control library
 
 WPF ships almost none of the design's vocabulary, so `Resources/Controls.xaml` defines it as templates and

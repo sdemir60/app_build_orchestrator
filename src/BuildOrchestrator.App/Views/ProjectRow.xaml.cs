@@ -736,9 +736,40 @@ public partial class ProjectRow : UserControl
     }
 
     // ---------------------------------------------------------------- etkileşim
+
+    /// <summary>
+    /// Satıra tıklamak projeyi seçer — <b>ama satırın KENDİ eylem bloğundan gelen tık bir satır tıklaması
+    /// değildir</b> (ikonlar ve onların popup'ları: ⋯ menüsü, VS seçici).
+    ///
+    /// <para><b>Neden bir kapı gerekiyor (ölçüldü).</b> Bir <see cref="System.Windows.Controls.Primitives.Popup"/>
+    /// içindeki fare olayının yolu <c>PopupRoot</c>'tan Popup'ın MANTIKSAL ebeveynine — yani bu satıra — devam
+    /// eder, ve <see cref="UIElement.MouseLeftButtonUpEvent"/> <b>Direct</b> bir olaydır: girdi sistemi onu yol
+    /// üstündeki HER öğede ayrıca yükseltir. Menüden <i>Build</i> seçmek bu yüzden satırı da seçiyordu ve
+    /// koşu seçimi düşürdükten hemen SONRA satır yeniden seçildiği için graf fit görünüme dönmek yerine o
+    /// düğüme odaklanıyor, konsol da koşu anlatısı yerine proje loguna geçiyordu. İkon <i>düğmeleri</i> bunu
+    /// kendi <c>Handled</c>'larıyla zaten kesiyordu; menü satırları düz <see cref="Border"/>'dır ve kesmiyordu.</para>
+    ///
+    /// <para>Kapı kaynağa bakar, tekil öğelere değil: eylem bloğunun İÇİNDEN doğan her tık dışarıda kalır
+    /// (ikonlar arasındaki boşluk dahil — orası da satırın gövdesi değil, eylem bloğudur).</para>
+    /// </summary>
     private void OnRowClicked(object sender, MouseButtonEventArgs e)
     {
+        if (IsFromRowActions(e.OriginalSource as DependencyObject ?? e.Source as DependencyObject)) return;
         if (_vm is { } vm) FindRunViewModel()?.SelectProject(vm.Id);
+    }
+
+    /// <summary>Kaynak, satırın eylem bloğunun içinde mi. Yürüyüş MANTIKSAL ebeveyni önceler: popup'ın
+    /// çocuğundan çıkışın TEK yolu odur (görsel ebeveyn <c>PopupRoot</c>'ta biter); şablon içi parçalar için
+    /// görsel ebeveyne düşer.</summary>
+    private bool IsFromRowActions(DependencyObject? source)
+    {
+        if (_actions is not { } actions) return false;
+        for (var node = source; node is not null; node = ParentOf(node))
+            if (ReferenceEquals(node, actions)) return true;
+        return false;
+
+        static DependencyObject? ParentOf(DependencyObject node) =>
+            LogicalTreeHelper.GetParent(node) ?? (node is Visual visual ? VisualTreeHelper.GetParent(visual) : null);
     }
 
     /// <summary>[design v1.11.0 §9-6] Sağ tık satır menüsünü açar. Hover bloğu talep üzerine kurulduğu için
