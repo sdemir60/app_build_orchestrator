@@ -1470,10 +1470,16 @@ second press empties the form. Feedback for all three sits on the same footer li
 malformed file is not an error but a result: the user picked the wrong file, and the line says
 `Invalid settings file` while the form stays untouched.
 
-The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same 620 px
-`Ds.Dialog`, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog
-does not have — a 180 ms fade with a 6 px rise, the duration read from the `Duration.Base` token, snapping to
-the end state under reduced motion.
+The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same `Ds.Dialog`
+border, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog does
+not have — a 180 ms fade with a 6 px rise, the duration read from the `Duration.Base` token, snapping to the
+end state under reduced motion. Its width, though, no longer follows Settings': the two used to share one
+620 px figure, but a dialog's width is now chosen for the direction it grows in rather than for what it holds
+today, and About is a static reference — version, shortcuts, environment, third-party notices — that only ever
+grows *taller*, as the third-party list lengthens, which argues for the narrowest figure of the three. It grew
+slightly wider anyway, to 660 px, because the longest line the Environment tab carries — a full `MSBuild.exe`
+path — still would not fit on one line at a width worth paying for; rather than chase it with an ever wider
+dialog, the tab scrolls that line sideways instead (below), and 660 px is where that trade-off settled.
 
 It has no title row. In its place is an identity block that holds both marks in one composition: the product
 mark at 30 px, the product name, the one-line description, and a single mono line carrying the application
@@ -1495,6 +1501,13 @@ value: `vswhere` is a child process, so it runs when the Environment tab is firs
 dialog opens, and the row reads `resolving…` until it lands. *Copy diagnostics* prepends the product and
 version to those rows so a pasted report says what it came from, and confirms with the check icon and the
 success tone for the same 1.4 s the console's copy button uses.
+
+A value that overflows its column — the resolved `MSBuild.exe` path is the usual case — is not truncated. An
+ellipsis with the full path in a tooltip was tried and dropped: the row instead sits in its own horizontally
+scrollable box with no visible bar, and a wheel notch over an overflowing row pans it sideways instead of
+scrolling the tab (a non-overflowing row leaves the wheel alone, so the Environment list still scrolls
+normally under it). Nothing is lost by not seeing the whole path at a glance — *Copy diagnostics* already
+puts the full text one click away.
 
 **What's new is the third modal, reusing the same shell once more** — the same scrim, the same `Ds.Dialog`
 border and focus trap, the same 180 ms/6 px entrance — but 620 px wide and without About's identity block or
@@ -1590,13 +1603,19 @@ event — `WM_MOUSEHWHEEL` is never dispatched, so neither a precision touchpad'
 reaches any element. `HorizontalWheelScroll.Enable` puts a hook on the window's message path; the panel that
 enabled it tests the message's screen point against its own bounds and drives the first horizontally scrollable
 viewer inside it — template included, since the console's viewer lives inside AvalonEdit's. The console is the
-only panel that enables it: it is the only surface with horizontal overflow (`WordWrap=False`). Two details are
-measured rather than assumed, and both are recorded on the class: the scroll must be requested one dispatcher
-turn later (a request issued inside the window procedure is silently dropped), and the target offset is
-accumulated across one gesture instead of being read back from the viewer each time (the viewer publishes the
-new offset only after a layout pass, so reading it back loses steps). A step is the horizontal twin of WPF's
-vertical one — `WheelScrollLines × 16 px` per notch — except that the delta's *magnitude* is honoured, which is
-what makes a touchpad's stream of small deltas track the finger.
+only panel that enables it: it is the only surface whose overflow (`WordWrap=False`) needs *that native
+signal*. Two details are measured rather than assumed, and both are recorded on the class: the scroll must be
+requested one dispatcher turn later (a request issued inside the window procedure is silently dropped), and the
+target offset is accumulated across one gesture instead of being read back from the viewer each time (the
+viewer publishes the new offset only after a layout pass, so reading it back loses steps). A step is the
+horizontal twin of WPF's vertical one — `WheelScrollLines × 16 px` per notch — except that the delta's
+*magnitude* is honoured, which is what makes a touchpad's stream of small deltas track the finger.
+
+About's Environment values scroll sideways too (§13.3), but that is the simpler, ordinary case: an overflowing
+row's value sits in its own `ScrollViewer`, and a `PreviewMouseWheel` handler redirects a plain vertical notch
+— which WPF already dispatches as a routed event, no hook required — straight into `ScrollToHorizontalOffset`,
+synchronously, no dispatcher turn to wait for. None of `HorizontalWheelScroll`'s machinery carries over: the
+two solve different problems, one a message WPF never delivers, the other a message it delivers plenty.
 
 `LayoutMetrics` is the shared arithmetic behind sticky headers, follow-mode and selection scrolling: one
 cumulative offset table over mixed 36 px rows and 24 px headers, giving any row's absolute Y, the pinned header
