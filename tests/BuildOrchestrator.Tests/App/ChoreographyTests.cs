@@ -38,10 +38,10 @@ public class ChoreographyTests
         new($@"C:\p\{name}.csproj", name, $@"C:\p\{name}.csproj", ["Osys"], [], order, null, null, inCycle, null);
 
     /// <summary>Satırların v1.13.2 ÖNCESİ aldığı koreografi opaklığı (kaldırılan <c>RowEnvOpacity</c> = 0.3,
-    /// <see cref="MarkingChoreography.EnvGlideMs"/> süresiyle). Testler satırları koreografiden ÖNCE bununla
-    /// KİRLETİR: <see cref="RowFade.None"/>'ı doğrudan aramak hiçbir koşulda kırılamazdı — alan zaten
-    /// construction'dan itibaren <c>None</c>'dır ve üretimde başka bir değer yazılmaz, yani sürücünün
-    /// temizleme yazımı silinse bile assertion yeşil kalırdı.</summary>
+    /// <see cref="MarkingChoreography.EnvGlideMs"/> süresiyle). Testler satırları ÖLÇÜLECEK temizleme
+    /// yazımından hemen önce bununla KİRLETİR: <see cref="RowFade.None"/>'ı düz aramak hiçbir koşulda
+    /// kırılamazdı — alan zaten construction'dan itibaren <c>None</c>'dır ve üretimde başka bir değer
+    /// yazılmaz, yani sürücünün temizleme yazımı silinse bile assertion yeşil kalırdı.</summary>
     private static readonly RowFade StaleFade = new(0.3, MarkingChoreography.EnvGlideMs);
 
     // ================================================================ saf çekirdek: açılış
@@ -485,10 +485,10 @@ public class ChoreographyTests
     public void The_wave_marks_the_scope_and_the_steps_advance_on_a_real_clock()
     {
         var (vm, driver) = Driven();
-        foreach (var row in vm.Projects) row.Fade = StaleFade; // koreografi ÖNCESİ kir
 
         // Üretim sırası: önce  (başlangıç modu düşer — RunViewModel.BeginRunAsync), sonra .
         foreach (var row in vm.Projects) row.Fresh = false;
+        foreach (var row in vm.Projects) row.Fade = StaleFade; // koreografi ÖNCESİ kir
 
         driver.Play(vm.Projects, vm.ScopeFor(RunMode.Build));
         Assert.True(driver.IsPlaying);

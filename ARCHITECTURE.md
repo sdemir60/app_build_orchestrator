@@ -1158,8 +1158,8 @@ Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No adm
 
 The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
 hairline, and finally the company logo at 10 px and 55 % opacity. The hierarchy is the point — product ahead
-and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the
-workspace, the branch and the worktree are all said once, by the action bar's chips. The window's application
+and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the action
+bar below says it once, with the workspace name and the branch and worktree chips. The window's application
 commands sit at the other end, ahead of the caption buttons, in decreasing order of use: the three view-mode
 toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i` (About).
 
@@ -2122,8 +2122,8 @@ The key → intent table is a pure, tested structure that `MainWindow` merely wi
 every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` and
 `Ctrl+F1` are ungated: each toggles its own dialog and fires even while another modal is open, because
 layering the three answers the unsaved-draft worry better than deafening a key would (§13.3). Double-Shift
-and `Ctrl+P` are
-*negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by accident.
+and `Ctrl+P` are *negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by
+accident.
 
 The table above is not written twice. A **shortcut catalog** derives each gesture's display text from that
 same key → intent table — and the global hotkey's from the hotkey default — and pairs it with the one
