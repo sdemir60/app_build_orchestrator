@@ -125,10 +125,16 @@ the running instance first — tray icon → Exit).
 
 1. **Configure the workspace** — on first run the project list invites you into Settings rather than opening
    a folder picker: starting takes more than one setting now. Settings opens with the repository root (the one
-   thing the tool cannot run without — *Save* stays disabled while it is empty) and, below it, the optional
-   layer definitions. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
-   run it reads *Save and sync*. If you already have a settings file, *Import settings…* on the invitation
-   opens the dialog with the file picker already up.
+   thing the tool cannot run without — *Save* stays disabled while it is empty), then the optional external
+   projects, then the optional layer definitions. *Browse…* only stages the folder in the dialog; *Save* is
+   what applies it, and on first run it reads *Save and sync*. If you already have a settings file, *Import
+   settings…* on the invitation opens the dialog with the file picker already up.
+
+   **External projects** are projects outside the repository root — each card is a path (a folder, a solution
+   or a project file) and a source, Git or TFVC — kept in the order they are meant to build, before everything
+   the repository root discovers. Cards reorder the same way layer cards do: drag the grip. This section is UI
+   and persistence only for now: the list is saved with the rest of your settings, but nothing is scanned and
+   nothing reaches the build engine yet.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
@@ -293,7 +299,7 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
 The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
-(Settings has WORKSPACE and LAYERS). If it cannot be registered — another application
+(Settings has WORKSPACE, EXTERNAL PROJECTS and LAYERS). If it cannot be registered — another application
 already owns that combination — it is silently disabled; the tray icon still restores the window, and the
 About screen marks that row *unavailable* so the loss is visible rather than mysterious.
 

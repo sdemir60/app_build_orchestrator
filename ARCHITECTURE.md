@@ -1419,9 +1419,24 @@ listeners each rebuilding on every notification the cost is quadratic in the num
 wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
 selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
-The Settings dialog is 760 px wide and carries two sections. **WORKSPACE** comes first: a mono repository-root
+The Settings dialog is 760 px wide and carries three sections. **WORKSPACE** comes first: a mono repository-root
 input with a *Browse…* button beside it. The root is the one setting the tool cannot run without, so *Save*
-stays disabled while it is empty. Then a hairline, then the **LAYERS** editor.
+stays disabled while it is empty. Then a hairline, then **EXTERNAL PROJECTS**, then another hairline, then the
+**LAYERS** editor.
+
+**External projects** sit between Workspace and Layers on purpose: they are meant to build *before* everything
+the repository root discovers, so the section's position tells that story before any card does. A card is a
+path — a folder, a solution or a project file — and a source, Git or TFVC, picked from a two-item `Ds.Select`
+(the design system's `<select>`, ported to a `ComboBox` template since the app had no combo-box style before
+this). Cards share the layer card's shell byte-for-byte — same 36 px height, same border and radius, same
+raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two lists reorder independently, each
+against its own collection. An empty path on any card disables *Save*, the same severity as an empty layer
+name. The list starts **empty** (unlike Layers, it has no seed) and shows the same dashed empty-state box the
+Layers section uses when its own list is empty. *Add external project* appends a blank, Git-sourced card.
+**This section is UI and persistence only.** The list lives in the app and is written to disk on *Save*, but it
+does not reach the engine yet — no path is scanned, no working-copy root is discovered, and the project list
+and graph carry no trace of it. That connection is a separate branch merging separately; wiring it in here would
+have made the dialog claim a scan that was not happening.
 
 Its width is picked the same way About's and What's new's are — for the direction each grows in, not for what
 it holds today. Settings is the one most likely to grow: it already holds the root plus layer cards with a name
@@ -1457,24 +1472,30 @@ is a startup seed: the defaults live only in this dialog's draft, and nothing re
 *Save* is pressed.
 
 *Browse…* only writes the picked path into the draft's root input; Cancel, Esc and a scrim click discard the
-draft — the pending root included — without touching anything live.
-*Save* is the single point where the draft is applied, in a fixed order: the layer patterns are applied first,
-then the pending repository root (which resets the project rows to
+draft — the pending root, external cards and all — without touching anything live.
+*Save* is the single point where the draft is applied, in a fixed order: the layer patterns and the external
+project list are applied first (neither touches the engine, so the order between the two of them does not
+matter), then the pending repository root (which resets the project rows to
 hollow), then exactly one Sync is sent. The order is load-bearing, because the Sync command carries the
 layer patterns — sent before they were applied, it would carry stale ones and the grouping
 would be wrong for a whole Sync. The Sync itself is unconditional: Save does not compare old and new state to
 decide whether to run it.
 
-Three gates hold. While a run is in flight the layer patterns are applied but the repository
-root is left alone and no Sync is sent, since pulling the root out from under a running build would be wrong;
-because the dialog's label has already confirmed the picked folder, a root change this gate drops is announced
-in the console as `Repository change deferred — run in flight`, while a Save that carries no root change stays
-silent.
+The external project note is quieter than the layer one: the layer line prints on *every* Save, but the
+external one prints only when the count actually changed — `External projects → 3 — built before the
+repository projects`, or `External projects cleared` once it drops back to zero — so a Save that only touched
+layers stays quiet about a list it did not change.
+
+Three gates hold. While a run is in flight the layer patterns and the external project list are applied but the
+repository root is left alone and no Sync is sent, since pulling the root out from under a running build would
+be wrong; because the dialog's label has already confirmed the picked folder, a root change this gate drops is
+announced in the console as `Repository change deferred — run in flight`, while a Save that carries no root
+change stays silent.
 If no repository has ever been selected, there is nothing to Sync — that gate sits *after* the root is
 applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
-there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers
-and the root are applied but nothing is sent: each send would fail and print an error line contradicting the
-permanent ribbon message, the same reason Sync, Build and Rebuild are disabled in
+there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers,
+the external projects and the root are all applied but nothing is sent: each send would fail and print an error
+line contradicting the permanent ribbon message, the same reason Sync, Build and Rebuild are disabled in
 that state. The root is still applied because it is local state that persists, and the first Sync after the
 engine returns carries it.
 
@@ -1483,13 +1504,22 @@ required` — and nothing is reset: the user syncs when ready. The first setup s
 starts there anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons beside *Load sample layers*. Export writes
-`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, layers[{ name, pattern }] }`; import
-reads one back **into the form**; clear empties the root and every layer. All three touch the draft only:
-nothing is applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button
-itself — the first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a
-second press empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A
-malformed file is not an error but a result: the user picked the wrong file, and the line says
-`Invalid settings file` while the form stays untouched.
+`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, layers[{ name, pattern }], externalProjects[{
+path, vcs }] }`, the external array holding only cards with a non-blank path; import reads one back **into the
+form**; clear empties the root, every layer and every external card. All three touch the draft only: nothing is
+applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
+first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
+empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
+file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
+while the form stays untouched.
+
+Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
+and a missing or unrecognized `vcs` reads as Git — both are simulated in the design package's own prototype and
+carried through unchanged. A file that omits the key entirely leaves the draft's external list untouched, the
+same rule the repository root already followed; a file that carries the key — an empty array included —
+replaces the list outright, because the key's presence is itself a decision. The import feedback line reflects
+that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file
+carried the key at all.
 
 The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same `Ds.Dialog`
 border, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog does
@@ -2084,6 +2114,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
+| Select | A `ComboBox` template — the app's first, ported from the design system's `<select>` for the Settings dialog's external-project Source picker (Git/TFVC). Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
@@ -2959,7 +2990,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
-| Settings draft state (layers + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings draft state (layers, external projects + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
@@ -2980,7 +3011,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maintenance box (Clean / Optimize / Resolve cycles) | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
-| Settings dialog, layer drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
+| Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
 | What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
