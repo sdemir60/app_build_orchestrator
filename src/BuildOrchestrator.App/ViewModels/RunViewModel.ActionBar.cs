@@ -222,11 +222,8 @@ public sealed partial class RunViewModel
         int previousCount = ExternalProjects.Count;
         ExternalProjects = externals;
         if (externals.Count == previousCount) return; // değişmedi → not YOK
-        // [DEĞİŞEN KURAL] Not bir tur boyunca "built before the repository projects" diyordu — o tur harici
-        // projeleri grafın dışında, listeye göre sıralanan ayrı bir faz olarak derliyordu. Artık aynı grafa
-        // giriyorlar; not da yaptıkları şeyi anlatır: bir sonraki Sync onları tarar.
         AppendRunLine(externals.Count > 0
-            ? $"External projects → {externals.Count} — scanned with the repository projects"
+            ? $"External projects → {externals.Count} — built before the repository projects"
             : "External projects cleared");
     }
 

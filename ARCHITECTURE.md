@@ -448,6 +448,15 @@ ready.
 Layers are optional and **empty by default** — with no patterns configured the list is a single flat list in
 build order.
 
+Projects from an external root (§10.6) are the one exception: they occupy a **reserved layer** named
+`External` at index −1, which is why they sit above every configured layer and above `Other`, and why they
+lead the build order. That layer is not configurable and no regex produces it — membership is read from the
+node's own source badge. User patterns are not applied to these projects at all: a pattern that happens to
+match one does not move it out, and a project that matches nothing does not fall into `Other`, which is the
+bucket for the repository's own unclassified projects. Because the assignment is independent of patterns, it
+also runs when none are configured — that is the only case in which an empty pattern list still reorders the
+list.
+
 A layer definition is an ordered `(Order, Regex, Name)` triple. `Order` does double duty: it is the match
 priority (lowest first, first match wins) and it is the assigned layer index. The regex is matched against the
 project *name* (the assembly-name-derived short name), not the path, because that is how people think about
@@ -1106,13 +1115,21 @@ TFVC local workspace. Only that kind is looked for, so a `$tf` workspace nested 
 TFVC when the user said TFVC and as part of the clone when they said Git. If no working copy of that kind sits
 above the path, the projects are still built — after a warning naming the kind that was looked for.
 
-**Once scanned, an external project is an ordinary project.** Its edges come from the same HintPath-to-producer
-map, which now spans every root, so a repository project referencing an external DLL gets a real edge and the
-order falls out of the graph rather than out of the list. It goes through the same layer assignment, the same
-scheduler, the same parallelism and the same MSBuild argument contract, and a failure propagates through the
-same dependency-issue rule. There is no external phase, no forced group and no "externals first" rule — an
-earlier design had all three, and they were wrong for the common case, where the customer project depends on
-platform output and therefore has to build *after* it.
+**Once scanned, an external project is an ordinary project** in everything that matters to the engine: the
+same scheduler, the same parallelism, the same MSBuild argument contract, the same incremental decision, and a
+failure that propagates through the same dependency-issue rule. Its edges come from the same
+HintPath-to-producer map, which now spans every root, so a repository project referencing an external DLL gets
+a **real edge** — the correctness of the order rests on that edge, not on a phase.
+
+What it does not share is the layer: externals occupy the reserved `External` layer at index −1 (§6.6), so
+they head the list, the graph and the build order. That is what the user asks for and what the dependency
+direction says — the repository's projects consume the external output, not the other way round. It is a
+*preference*, not a barrier: a repository project with no dependency on any external can still start in
+parallel with them, which is safe precisely because a project that does depend on one waits for its edge.
+
+The earlier design instead ran externals as a separate serial phase before any worker was spawned and aborted
+the whole run when one failed. That phase is gone: with real edges the graph enforces the same guarantee, and
+a failure now costs only the projects that actually depend on it.
 
 **Updating is a separate step, and optional.** Before anything is scanned, each external working copy is
 brought up to date: `fetch` + `merge --ff-only` for git, `tf vc get` for TFVC. It runs first because a
@@ -3083,6 +3100,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Path → scannable root (folder, `.sln` or `.csproj`) merged into one workspace | `Core/Externals/ExternalWorkspaceResolver.cs` |
+| Reserved layer name and index for external projects (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
 | Working-copy root discovery for the selected source (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
 | The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
 | The only mutating git surface: fetch + fast-forward | `Core/Externals/ExternalGitUpdater.cs` |
