@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -89,7 +89,8 @@ public partial class SettingsDialog : UserControl
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
-        _draft = new SettingsDraftViewModel(run.LayerPatterns, run.RootPath, run.ExternalProjects);
+        _draft = new SettingsDraftViewModel(
+            run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals);
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();

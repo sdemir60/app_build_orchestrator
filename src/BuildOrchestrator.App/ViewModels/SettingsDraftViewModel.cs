@@ -70,6 +70,11 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// tek gerçek varsayılan boş listedir).</summary>
     public ObservableCollection<ExternalRowViewModel> Externals { get; } = [];
 
+    /// <summary>[design v1.15.0 §2.9] Harici çalışma kopyaları her build'den ÖNCE güncellensin mi — EXTERNAL
+    /// PROJECTS bölümünün başlık satırındaki switch. Bölüme ait bir KURAL olduğu için kartların yanında değil
+    /// başlıkta durur. Varsayılan AÇIK; Save'e kadar yalnız taslaktır.</summary>
+    [ObservableProperty] private bool _pullExternalsBeforeBuild = true;
+
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
     /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
     /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
@@ -81,10 +86,12 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.
     /// <paramref name="initialExternals"/> harici proje listesinin AYNI kuralla gelen taslağıdır (K5) — boşsa
     /// taslak da boş kalır.</summary>
+    /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
-        IReadOnlyList<ExternalProject>? initialExternals = null)
+        IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true)
     {
         _repositoryRoot = repositoryRoot;
+        _pullExternalsBeforeBuild = pullExternalsBeforeBuild;
         Layers.CollectionChanged += OnLayersChanged;
         Externals.CollectionChanged += OnExternalsChanged;
         if (initial is { Count: > 0 })
@@ -123,7 +130,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     // ---------------------------------------------------------------- [design v1.10.0 §2.9] Export / Import / Clear
 
     /// <summary>Taslağın o anki hâlini dosya biçimine çevirir — diyalog onu diske yazar.</summary>
-    public SettingsFile ToFile() => SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals());
+    public SettingsFile ToFile() =>
+        SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild);
 
     /// <summary>Bir ayar dosyasını <b>FORMA</b> yükler. Hiçbir şey UYGULANMAZ: Save'e kadar ne
     /// <see cref="RunViewModel"/> ne UiState değişir (§2.9 — onay dialogu da yoktur).
@@ -145,6 +153,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             foreach (var ext in externals)
                 AddExternalRow(new ExternalRowViewModel(ext.Path, VcsKinds.Parse(ext.Vcs)));
         }
+
+        // [design v1.15.0] Bayrak dosyada YOKSA (eski/yalnız-katman dosyası) taslaktaki değer KORUNUR — harici
+        // liste kuralının aynısı: bir dosyanın taşımadığı ayarı sıfırlamak sessiz bir karar olurdu.
+        if (file.PullExternalBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
         // else: anahtar dosyada yok — mevcut harici liste KORUNUR (yukarıdaki XML doc).
     }
 
@@ -153,6 +165,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public void ClearAll()
     {
         RepositoryRoot = null;
+        PullExternalsBeforeBuild = true; // [§2.9 v1.15.0] switch VARSAYILANINA döner, kapanmaz
         for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
         for (int i = Externals.Count - 1; i >= 0; i--) RemoveExternal(Externals[i]);
     }
@@ -195,8 +208,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         var state = store.Load();
         state.LayerPatterns = patterns.ToList();
         state.ExternalProjects = externals.ToList();
+        state.UpdateExternals = PullExternalsBeforeBuild;
         store.Save(state);
-        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals);
+        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild);
     }
 
     private void AddRow(LayerRowViewModel row) => Layers.Add(row);

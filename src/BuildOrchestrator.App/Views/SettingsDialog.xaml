@@ -98,7 +98,33 @@
                  dururlar ve build-order'da ana repo projelerinden önce gelirler. §9'un "in this order" ifadesi
                  KULLANILMAZ: kart sırası yalnız çalışma kopyalarının tazelenme sırasıdır, harici projeler
                  arasındaki derleme sırası da topolojiden gelir. -->
-            <TextBlock Text="EXTERNAL PROJECTS" Margin="0,0,0,6" Style="{DynamicResource Ds.Settings.CapsHeading}" />
+            <!-- [design v1.15.0 §2.9, yerleşim 1c] Bölüm başlığı SATIRI iki uçlu: solda bölümün adı, arada
+                 esneyen 1px border-subtle çizgi, sağda bölümün KURALI (pull) — gövde metni, kart listesi ve
+                 "Add external project" satırı hiç değişmez. Kural bar'a DEĞİL buraya konuldu: alt bar per-run
+                 seçimleri taşır (Debug/Release, perf, branch), bu ise harici proje TANIMINA bağlı, seyrek
+                 değişen bir ayardır. Açıklama satırı yerine tooltip (§2.9). -->
+            <Grid Margin="0,0,0,6">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Text="EXTERNAL PROJECTS" VerticalAlignment="Center"
+                         Style="{DynamicResource Ds.Settings.CapsHeading}" />
+              <Border Grid.Column="1" Height="1" Margin="12,0" VerticalAlignment="Center"
+                      Background="{DynamicResource Brush.BorderSubtle}" />
+              <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel.ToolTip>
+                  <ToolTip controls:AppTooltip.Side="Top">Every build starts by updating each external working copy — git pull --ff-only or tf get, one command per copy. Off: the copies are built as they are on disk.</ToolTip>
+                </StackPanel.ToolTip>
+                <TextBlock Text="PULL BEFORE BUILD" VerticalAlignment="Center" Margin="0,0,9,0"
+                           Style="{DynamicResource Ds.Settings.CapsHeading}" />
+                <CheckBox x:Name="PullExternalsSwitch" Style="{DynamicResource Ds.Switch}"
+                          VerticalAlignment="Center"
+                          AutomationProperties.Name="{x:Static app:AccessibilityNames.PullExternalsBeforeBuild}"
+                          IsChecked="{Binding PullExternalsBeforeBuild, Mode=TwoWay}" />
+              </StackPanel>
+            </Grid>
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
                        FontSize="{DynamicResource FontSize.Xs}"
                        Foreground="{DynamicResource Brush.TextDim}"><Run
