@@ -16,13 +16,15 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// MSBuild argüman sözleşmesi, aynı dependent kuralı — tek işaretleri <see cref="ProjectNode.ExternalVcs"/>
 /// rozetidir ve o rozet yalnız iki şeye karar verir: obj izolasyonu ve defterdeki commit/branch yuvası.
 ///
-/// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca hariciler koşunun BAŞINDA, worker'lar doğmadan önce, tek tek
-/// derlenen ayrı bir fazdı; biri patlarsa koşu tümden iptal olurdu ve o faz kendi sayaçlarını, kendi
-/// önizleme öğelerini, kendi argüman listesini ve kendi build-state persist'ini taşıyordu. O tasarım harici
-/// projeyi grafın DIŞINDA, tek bir solution hedefi olarak ele alıyordu. Artık harici kökler taranıp aynı
-/// grafa giriyor: sıra bağımlılıklardan doğuyor, "önce hariciler" diye bir kural kalmıyor ve başarısız bir
-/// haricinin sonucunu mevcut dependent kuralı taşıyor. Bu dosya eski fazın pinlerini DEĞİL, yeni kuralı
-/// pinler.</para>
+/// <para>Hariciler build-order'ın BAŞINDA gelir — ama bunu sağlayan şey ayrılmış <c>External</c> katmanıdır
+/// (index −1, §6.6), koordinatörde ayrı bir faz değil. Ana projeler zaten onların çıktısına bağlıdır ve o
+/// bağımlılık grafta gerçek bir kenardır; katman TERCİHTİR, kenar GARANTİDİR.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca hariciler koşunun başında, worker'lar doğmadan önce, tek tek
+/// derlenen ayrı bir fazdı; biri patlarsa koşu tümden iptal olurdu ve o faz kendi sayaçlarını, önizleme
+/// öğelerini, argüman listesini ve build-state persist'ini taşıyordu. O tasarım harici projeyi grafın DIŞINDA,
+/// tek bir solution hedefi olarak ele alıyordu. Artık grafın içindeler: aynı scheduler, aynı sayaçlar ve
+/// başarısızlık için mevcut dependent kuralı. Bu dosya eski fazın pinlerini DEĞİL, yeni kuralı pinler.</para>
 /// </summary>
 public class ExternalRunTests
 {
@@ -76,7 +78,8 @@ public class ExternalRunTests
     [Fact]
     public async Task An_external_project_waits_for_a_repository_dependency_instead_of_leading_the_run()
     {
-        // Müşteri projesi tipik olarak platform DLL'lerine bağımlıdır — sıra graftan gelir, listeden değil.
+        // Katman TERCİH, kenar GARANTİDİR: ters yönde gerçek bir bağımlılık varsa harici −1'de olsa bile
+        // bekler (scheduler bağımlılığa uyar, katman sırasına değil).
         var plan = PlanOf(ExternalNode("Mail", [Id("A")]), Node("A"));  // harici, ana projenin ÇIKTISINA bağlı
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         using var h = new Harness(plan, invoker);

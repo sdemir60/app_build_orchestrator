@@ -2,6 +2,7 @@ namespace BuildOrchestrator.Core.Planning;
 
 using System.Text.RegularExpressions;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Externals;
 
 /// <summary>[T15][A6/N8] AssignLayers sonucu: sert faz bariyerine göre yeniden sıralanmış Nodes (LayerIndex/
 /// LayerName uygulanmış, BuildOrder yeni pozisyona göre yeniden numaralanmış) + ters katman bağımlılığı
@@ -26,7 +27,15 @@ public sealed record LayerAssignmentResult(IReadOnlyList<ProjectNode> Nodes, IRe
 /// invaryantı) korunur.
 ///
 /// Boş pattern listesi → layering devre dışı: Nodes aynen (aynı sıra, LayerIndex/LayerName dokunulmamış =
-/// zaten null) döner, Warnings boş — mevcut (Task 15 öncesi) davranışla birebir aynı.
+/// zaten null) döner, Warnings boş — mevcut (Task 15 öncesi) davranışla birebir aynı. <b>Tek istisna harici
+/// projelerdir</b> (aşağıya bakınız): onlar varsa pattern olmasa bile atama ve yeniden sıralama koşar.
+///
+/// Harici kökten gelen projeler (<see cref="ProjectNode.ExternalVcs"/> dolu) AYRILMIŞ katmana girer:
+/// <see cref="ExternalProjectsConventions"/> — ad <c>External</c>, indeks −1. Kullanıcı pattern'leri onlara
+/// UYGULANMAZ: eşleşseler bile <c>External</c>'da kalırlar, eşleşmeseler bile <c>Other</c>'a DÜŞMEZLER
+/// (<c>Other</c> ana reponun sınıflanmamış projeleri içindir). Negatif indeks sayesinde listede ve grafta her
+/// zaman en üstte dururlar ve build-order'da ana repo projelerinden önce gelirler — ana projeler zaten
+/// onların çıktısına bağlıdır. Üyelik düğümün ROZETİNDEN okunur; ayrı bir liste taşınmaz.
 ///
 /// Ters katman bağımlılığı [warn-only]: bir proje P (layer i), bağımlılığı olan bir üretici Q'nun (layer j)
 /// j &gt; i olduğu durumda — yani P'nin ürettiği bağımlılık P'den SONRAKİ bir katmanda — bu BLOKLANMAZ veya
@@ -73,7 +82,9 @@ public static class LayerEngine
         ArgumentNullException.ThrowIfNull(nodesInBuildOrder);
         ArgumentNullException.ThrowIfNull(patterns);
 
-        if (patterns.Count == 0)
+        bool anyExternal = nodesInBuildOrder.Any(n => n.ExternalVcs is not null);
+        // Ne pattern ne harici varsa liste HİÇ dokunulmadan döner (Task 15 öncesi davranış, bayt-bayt).
+        if (patterns.Count == 0 && !anyExternal)
             return new LayerAssignmentResult(nodesInBuildOrder, []);
 
         var ordered = patterns.OrderBy(p => p.Order).ToList();
@@ -87,13 +98,21 @@ public static class LayerEngine
         var compiled = ordered
             .Select(p => (p.Order, p.Name, Regex: string.IsNullOrWhiteSpace(p.Regex) ? null : CompileUserPattern(p.Regex)))
             .ToList();
-        int otherLayerIndex = ordered.Max(p => p.Order) + 1;
+        // Pattern YOKSA "Other" diye bir kova da yoktur: o durumda ana projeler isimsiz kalır (aşağıda null).
+        int? otherLayerIndex = ordered.Count > 0 ? ordered.Max(p => p.Order) + 1 : null;
 
         // [A1→D7 fold] Timeout'a giren pattern adları — her biri için bir kez warn-only uyarı üretilir (spam yok).
         var timedOutPatterns = new HashSet<string>(StringComparer.Ordinal);
-        var byId = new Dictionary<string, (int LayerIndex, string LayerName)>(StringComparer.OrdinalIgnoreCase);
+        var byId = new Dictionary<string, (int? LayerIndex, string? LayerName)>(StringComparer.OrdinalIgnoreCase);
         foreach (var n in nodesInBuildOrder)
         {
+            // Harici projeler pattern döngüsüne HİÇ girmez — ayrılmış katman her koşulda kazanır.
+            if (n.ExternalVcs is not null)
+            {
+                byId[n.Id] = (ExternalProjectsConventions.LayerIndex, ExternalProjectsConventions.LayerName);
+                continue;
+            }
+
             (int Order, string Name)? match = null;
             foreach (var c in compiled)
             {
@@ -113,7 +132,9 @@ public static class LayerEngine
                 }
                 if (isMatch) { match = (c.Order, c.Name); break; }
             }
-            byId[n.Id] = match is { } m ? (m.Order, m.Name) : (otherLayerIndex, OtherLayerName);
+            byId[n.Id] = match is { } m ? (m.Order, m.Name)
+                : otherLayerIndex is { } other ? (other, OtherLayerName)
+                : (null, null); // pattern yok → ana projeler isimsiz (düz liste), yalnız hariciler ayrılır
         }
 
         var warnings = new List<string>();
@@ -124,20 +145,23 @@ public static class LayerEngine
         foreach (var n in nodesInBuildOrder)
         {
             var (layer, layerName) = byId[n.Id];
+            if (layer is not { } layerIndex) continue; // isimsiz (pattern yok) → karşılaştıracak katman yok
             foreach (var depId in n.Dependencies)
             {
-                if (byId.TryGetValue(depId, out var dep) && dep.LayerIndex > layer)
+                if (byId.TryGetValue(depId, out var dep) && dep.LayerIndex is { } depIndex && depIndex > layerIndex)
                 {
                     warnings.Add(
-                        $"reverse layer dependency: '{n.Name}' (layer {layer} '{layerName}') depends on " +
-                        $"producer '{depId}' (layer {dep.LayerIndex} '{dep.LayerName}')");
+                        $"reverse layer dependency: '{n.Name}' (layer {layerIndex} '{layerName}') depends on " +
+                        $"producer '{depId}' (layer {depIndex} '{dep.LayerName}')");
                 }
             }
         }
 
         var reordered = nodesInBuildOrder
             .Select(n => n with { LayerIndex = byId[n.Id].LayerIndex, LayerName = byId[n.Id].LayerName })
-            .OrderBy(n => n.LayerIndex) // stabil: girdi zaten topo/build-order'da, katman-içi sıra korunur
+            // Sıralama anahtarı null'ı 0 sayar: pattern yokken ana projeler 0'da kalır, hariciler −1 ile
+            // ÖNLERİNE geçer. (Ham `OrderBy(LayerIndex)` null'ı en başa koyardı — ana projeler öne geçerdi.)
+            .OrderBy(n => n.LayerIndex ?? 0) // stabil: girdi zaten topo/build-order'da, katman-içi sıra korunur
             .Select((n, i) => n with { BuildOrder = i })
             .ToList();
 

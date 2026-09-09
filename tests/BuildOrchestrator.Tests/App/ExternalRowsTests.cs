@@ -4,21 +4,17 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Tests.Supervisor;
 using static BuildOrchestrator.Tests.App.MainWindowHost;
 
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// Harici projelerin proje listesindeki hâli: <b>sıradan satırlardır</b>. Sıraları topolojiden gelir, katman
-/// ataması onlara da diğerleriyle aynı uygulanır. Ana reponun hedef commit'i onlara İTİLMEZ — o sha başka bir
-/// repoyu anlatır ve harici satırın yanında yalan söylerdi.
-///
-/// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca hariciler listenin BAŞINDA, <c>External</c> adlı zorlanmış bir
-/// katmanda (index −1) duruyordu. O katman kalktı: müşteri projesi tipik olarak platform DLL'lerine
-/// bağımlıdır, yani ana projelerin ARDINDAN gelir — index −1 her koşuda sahte bir "reverse layer dependency"
-/// uyarısı üretir ve dispatch tercihini yanlış yöne çevirirdi. Satırın harici olduğunu artık yalnız
-/// <see cref="ProjectNode.ExternalVcs"/> rozeti söyler.</para>
+/// Harici projelerin proje listesindeki hâli: satır mekaniği sıradan projelerinkiyle aynıdır, ama listenin
+/// BAŞINDA ve kendi <c>External</c> grubunda dururlar (katman index −1) — ana projeler onların çıktısına
+/// bağlıdır, o yüzden önce derlenirler. Ana reponun hedef commit'i onlara İTİLMEZ: o sha başka bir repoyu
+/// anlatır ve harici satırın yanında yalan söylerdi.
 /// </summary>
 public class ExternalRowsTests
 {
@@ -28,7 +24,8 @@ public class ExternalRowsTests
         new(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
     private static ProjectNode ExternalNode(string name, string target, int order = 0) =>
-        new(target, name, target, [System.IO.Path.GetFileName(target)], [], order, null, null, false, true,
+        new(target, name, target, [System.IO.Path.GetFileName(target)], [], order,
+            ExternalProjectsConventions.LayerIndex, ExternalProjectsConventions.LayerName, false, true,
             WillBuildReason.NeverBuilt, VcsKind.Git);
 
     private static ProjectNode MainNode(string id, string name, int order) =>
@@ -50,18 +47,17 @@ public class ExternalRowsTests
     }
 
     [Fact]
-    public async Task Rows_follow_the_topology_order_not_a_forced_external_group()
+    public async Task Externals_lead_the_list()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = NewVm(engine);
 
-        // Harici proje topolojide İKİNCİ sırada geliyorsa listede de ikinci görünür — "önce hariciler" YOK.
         vm.OnEvent(new WorkspaceTopologyEvent(
-            [MainNode(@"D:\repo\a.csproj", "A", 0), ExternalNode("Mail", MailTarget, 1)], [], [], []));
+            [ExternalNode("Mail", MailTarget), MainNode(@"D:\repo\a.csproj", "A", 1)], [], [], []));
 
-        Assert.Equal(["A", "Mail"], vm.Projects.Select(r => r.Name));
-        Assert.False(vm.Projects[0].IsExternal);
-        Assert.True(vm.Projects[1].IsExternal);
+        Assert.Equal(["Mail", "A"], vm.Projects.Select(r => r.Name));
+        Assert.True(vm.Projects[0].IsExternal);
+        Assert.False(vm.Projects[1].IsExternal);
     }
 
     [Fact]
@@ -94,21 +90,39 @@ public class ExternalRowsTests
     }
 
     [Fact]
-    public async Task An_external_row_groups_by_its_layer_like_any_other_row()
+    public async Task The_external_group_comes_first_and_is_named_External()
     {
-        // Katman ataması Core'da yapılır ve haricileri ayırt etmez: aynı katmandaysa aynı grupta dururlar.
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = NewVm(engine);
 
         ProjectNode[] topology =
         [
-            MainNode(@"D:\repo\a.csproj", "A", 0) with { LayerIndex = 0, LayerName = "Types" },
-            ExternalNode("Mail", MailTarget, 1) with { LayerIndex = 0, LayerName = "Types" },
+            ExternalNode("Mail", MailTarget),
+            MainNode(@"D:\repo\a.csproj", "A", 1) with { LayerIndex = 0, LayerName = "Types" },
         ];
         vm.OnEvent(new WorkspaceTopologyEvent(topology, [], [], []));
 
-        var group = Assert.Single(LayerGrouping.Build([.. vm.Projects], topology));
-        Assert.Equal("Types", group.Name);
-        Assert.Equal(["A", "Mail"], group.Rows.Select(r => r.Name));
+        var groups = LayerGrouping.Build([.. vm.Projects], topology);
+        Assert.Equal(ExternalProjectsConventions.LayerName, groups[0].Name);
+        Assert.Equal(["Mail"], groups[0].Rows.Select(r => r.Name));
+        Assert.Equal("Types", groups[1].Name);
+    }
+
+    [Fact]
+    public async Task An_external_row_is_not_swept_into_the_other_group()
+    {
+        // Other, ana reponun sınıflanmamış projeleri içindir; harici oraya karışırsa listede en ALTA düşerdi.
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = NewVm(engine);
+
+        ProjectNode[] topology =
+        [
+            ExternalNode("Mail", MailTarget),
+            MainNode(@"D:\repo\a.csproj", "A", 1) with { LayerIndex = 1, LayerName = "Other" },
+        ];
+        vm.OnEvent(new WorkspaceTopologyEvent(topology, [], [], []));
+
+        var groups = LayerGrouping.Build([.. vm.Projects], topology);
+        Assert.Equal([ExternalProjectsConventions.LayerName, "Other"], groups.Select(g => g.Name));
     }
 }
