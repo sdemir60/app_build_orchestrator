@@ -411,6 +411,38 @@
     </Style.Triggers>
   </Style>
 
+  <!--
+    [design §2.4-4 — KAYITLI SAPMA] SATIRDAKİ ikon butonlar. Paylaşılan Ds.IconButton hover zemini
+    `Brush.SurfaceRaised`tır; satırın KENDİ hover zemini ise `Brush.SurfaceHover`dır ve ikisi de #1a1a1e'dir
+    (tasarım token'larında da öyle: surface-hover ve surface-raised ikisi de neutral-850). Satır ikonları
+    YALNIZ satır hover'dayken görünür, yani buton her zaman zaten o renge boyanmış bir zeminin üstündedir:
+    sonuç, fare ikonun üstündeyken hiçbir zemin değişiminin görünmemesidir.
+
+    Sapma yalnız hover ZEMİNİDİR: bir kademe üstteki `Brush.SurfaceOverlay`. Kural, action bar'daki
+    butonların aldığı GÖRELİ kontrastın aynısıdır — "hover zemini, üstünde durduğun yüzeyden bir kademe
+    yukarısı". Ön plan (TextSecondary → TextPrimary), ölçüler ve şablon DEĞİŞMEZ; BasedOn zinciriyle yalnız
+    tek setter ezilir (kopya YASAK). Aynı gerekçeyle ToggleButton (⋯) karşılığı da burada.
+  -->
+  <Style x:Key="Ds.IconButton.OnRow" TargetType="Button" BasedOn="{StaticResource Ds.IconButton}">
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <Style x:Key="Ds.IconButton.Toggle.OnRow" TargetType="ToggleButton" BasedOn="{StaticResource Ds.IconButton.Toggle}">
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+      </Trigger>
+      <!-- İşaretli (menü açık) hâli amber kalır — hover ezmesin diye tetikleyici SONRA gelir. -->
+      <Trigger Property="IsChecked" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoft}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- ======================================= SWITCH ======================================= -->
   <!--
     _ds_bundle.js:876-903 — ray 28×16, radius-full, padding 1, 1px kenar; kapalı: surface-overlay zemin +

@@ -1,6 +1,8 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -329,6 +331,58 @@ public class ProjectRowInputTests
         Assert.Equal(2, sent.Count);
         Assert.Equal((RunMode.Rebuild, RowId), (sent[1].Mode, sent[1].ScopeProjectId));
         GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [design §2.4-4 · ölçüldü] <b>Satırdaki ikon butonların hover zemini, satırın KENDİ hover zemininden
+    /// bir kademe yukarıda olmalıdır.</b> İkonlar yalnız satır hover'dayken görünür — yani buton her zaman
+    /// zaten boyanmış bir zeminin üstündedir. Paylaşılan <c>Ds.IconButton</c> hover'ı
+    /// <c>Brush.SurfaceRaised</c>'dır ve satırın hover'ı <c>Brush.SurfaceHover</c>'dır; ikisi de <c>#1a1a1e</c>
+    /// (tasarım token'larında da öyle: <c>--surface-hover</c> ve <c>--surface-raised</c> ikisi de
+    /// <c>neutral-850</c>) — sonuç: fare ikonun üstündeyken HİÇBİR zemin değişimi görünmez ve kullanıcı
+    /// hangi ikonun üstünde olduğunu bilemez.
+    ///
+    /// <para><b>KAYITLI SAPMA:</b> satırdaki butonlar bir kademe üstteki <c>Brush.SurfaceOverlay</c>'e hover
+    /// eder. Bu, action bar'daki butonların aldığı GÖRELİ kontrastın aynısıdır (orada buton
+    /// <c>Brush.Surface</c> üstünde durur ve <c>SurfaceRaised</c>'e çıkar) — kural "hover zemini, üstünde
+    /// durduğun yüzeyden bir kademe yukarısı"dır.</para>
+    /// </summary>
+    [StaFact]
+    public void Row_icon_buttons_hover_one_step_above_the_hovered_row_surface()
+    {
+        var runVm = NewRunVm();
+        var rowVm = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending);
+        var row = Realize(runVm, rowVm, out var window);
+        RaiseMouse(row, Mouse.MouseEnterEvent);
+        var actions = row.Actions!;
+
+        var rowHover = (SolidColorBrush)row.FindResource("Brush.SurfaceHover");
+        foreach (var button in new ButtonBase[] { actions.BuildButton, actions.StopButton, actions.MoreButton,
+                                                 actions.RevealButton, actions.VsButton })
+        {
+            object? key = HoverBackgroundKeyOf(button);
+            Assert.Equal("Brush.SurfaceOverlay", key);                  // bir kademe yukarısı
+            var hover = (SolidColorBrush)row.FindResource(key!);
+            Assert.NotEqual(rowHover.Color, hover.Color);               // aynı renkse hover GÖRÜNMEZ
+        }
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Bir düğmenin stilindeki <c>IsMouseOver</c> tetikleyicisinin yazdığı zemin fırçasının KAYNAK
+    /// ANAHTARI. Değerin kendisi bir fırça DEĞİLDİR: setter <c>{DynamicResource …}</c> taşır, yani anahtar
+    /// çalışma anında çözülür (motion sözleşmesi: token'lar dinamik okunur). BasedOn zincirinde en TÜRETİLMİŞ
+    /// eşleşme kazanır — WPF de aynı sırayı uygular.</summary>
+    private static object? HoverBackgroundKeyOf(ButtonBase button)
+    {
+        for (var style = button.Style; style is not null; style = style.BasedOn)
+            foreach (var trigger in style.Triggers.OfType<Trigger>())
+            {
+                if (trigger.Property != UIElement.IsMouseOverProperty || !Equals(trigger.Value, true)) continue;
+                foreach (var setter in trigger.Setters.OfType<Setter>())
+                    if (setter.Property == BuildOrchestrator.App.Controls.DsTransition.AnimatedBackgroundProperty)
+                        return (setter.Value as DynamicResourceExtension)?.ResourceKey ?? setter.Value;
+            }
+        return null;
     }
 
     /// <summary>Menü AÇIKKEN hover ikonları görünür kalır — menü satırın çapasına bağlıdır; çapa kaybolursa
