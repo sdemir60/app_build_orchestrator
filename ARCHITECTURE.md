@@ -1937,7 +1937,9 @@ and the pointer is no longer over what it was.
 **Selection focuses and fits.** Clicking a node — or a list row, or a stream line — fits the bounding box of
 the selection plus its direct dependencies and dependents into the panel: scale is `min(W/bw, H/bh)` clamped
 to 0.7–2.6 with a padding of `3 × node + 48 px`, and the camera glides there over 460 ms. Everything outside
-that focus set drops to 0.1, and the selected node holds the hover treatment: it stays at 1.7×, keeps its
+that focus set drops to 0.1 — except a project the run is actively building, which stays fully lit even
+outside it, because a dim body under a live amber orbit reads as *not building* rather than *in progress*. The
+selected node also holds the hover treatment: it stays at 1.7×, keeps its
 thicker border, is pulled to the front so nothing can cover its ring, and gains a 2 px amber focus ring. (The
 main prototype does not enlarge a selected node — that came from the Graph Lab study and is a deliberate
 departure from §2.3.) Pulling it forward is a fix rather than a flourish: the ring extends past the node, and
@@ -1947,6 +1949,15 @@ beziers whose control points sit at the mid-height of their two ends, in amber d
 shared clock. Clearing the selection tears them down again. Because WPF measures dash arrays in multiples of
 stroke thickness rather than pixels, the design's absolute 4/8 px pattern and 24 px travel are divided by the
 1.2 px thickness so the drawn result matches the design.
+
+**The end-of-run finale releases focus, not the selection.** When the graph's closing choreography begins
+(§14.5) the camera abandons any focus-and-fit and glides to the default view instead, taking the dependency
+lines, the focus ring and the name label down with it — the finale is meant to read across the whole graph,
+not a corner of it zoomed in. The selection itself is untouched; the console still shows that project's log.
+Focus does not return when the choreography ends, either: the graph remembers the selection it released focus
+from and stays on the default view for as long as that project remains selected. What reopens it is the user
+picking a different node (or clearing the selection and picking the same one again) — nothing brings it back
+on its own.
 
 **Navigation, and why the pan is unclamped.** The wheel zooms at the cursor — the world point under the
 pointer stays under it — by a multiplicative 1.14 per notch inside 0.7–5.0. Pressing empty ground and moving
@@ -2372,8 +2383,9 @@ permanently.
 The **ending** — the neon ignition — lives only in the graph; the list stays still. Everything holds dim for
 900 ms, then the projects this run actually built (succeeded ∪ failed) ignite in random order like fluorescent
 tubes, flickering irregularly over 1150 ms with a chain of at most 1.5 s; a 700 ms breath; then every
-remaining grey — skipped and untouched alike — comes up **together** over 980 ms. With nothing built it does
-not play at all, and a new operation cuts it instantly.
+remaining grey — skipped and untouched alike — comes up **together** over 980 ms. The graph also releases any
+selection focus for the same span, gliding to the default view so the whole finale stays in frame (§13.6).
+With nothing built it does not play at all, and a new operation cuts it instantly.
 
 Under reduced motion neither choreography runs: the scope is marked and the run proceeds.
 
