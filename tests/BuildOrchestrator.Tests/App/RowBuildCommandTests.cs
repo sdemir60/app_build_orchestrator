@@ -77,6 +77,51 @@ public class RowBuildCommandTests
         Assert.Equal([Row(vm, A)], scope);
     }
 
+    /// <summary>
+    /// <b>Satırdaki play ile ⋯ menüsünün Build maddesi AYNI yoldan geçer</b> — ikisi de aynı komuta aynı
+    /// hedefi verir, dolayısıyla seçim düşmesi (graf odaktan fit görünüme dönmesi), filtre sıfırlaması,
+    /// koreografi kapsamı ve gönderilen komut BİREBİR aynıdır.
+    /// <para>Bu test kullanıcı bildirimi üzerine yazıldı ("play çalışıyor, menüden Build'de fit olmuyor"):
+    /// iki yolun ayrışabileceği tek yer komutun kendisidir ve o da paylaşılır. Menü, komutu satırın kendi
+    /// kimliğiyle çalıştırır (<c>ProjectRow.OnRowMenuItem</c>); burada o çağrının VM tarafındaki sonucu,
+    /// play'in sonucuyla KARŞILAŞTIRILARAK pinlenir.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_menus_build_item_produces_exactly_what_the_play_button_produces()
+    {
+        static async Task<(string? Selection, IReadOnlySet<string> Filters, IReadOnlyList<string> Scope, StartRunCommand Sent)>
+            RunAsync(EngineHost engine, Func<RunViewModel, Task> invoke)
+        {
+            var vm = NewVm(engine);
+            vm.SelectProject(B);                       // grafta BAŞKA bir projeye odaklanılmış
+            vm.ToggleFilter(ProjectFilter.Failed);
+            IReadOnlyList<ProjectRowViewModel> scope = [];
+            vm.OperationChoreography = s => { scope = s; return Task.CompletedTask; };
+            StartRunCommand? sent = null;
+            vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
+            await invoke(vm);
+            return (vm.SelectedProjectId, vm.ActiveFilters, [.. scope.Select(r => r.Id)], sent!);
+        }
+
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var viaPlay = await RunAsync(engine, vm => vm.BuildProjectCommand.ExecuteAsync(A));
+        // Menü maddesi komutu satır üzerinden ICommand olarak çalıştırır — ProjectRow.OnRowMenuItem'ın yaptığı.
+        var viaMenu = await RunAsync(engine, vm =>
+        {
+            System.Windows.Input.ICommand command = vm.BuildProjectCommand;
+            Assert.True(command.CanExecute(A));
+            command.Execute(A);
+            return Task.CompletedTask;
+        });
+
+        Assert.Null(viaMenu.Selection);                       // seçim düştü → graf fit görünüme döner
+        Assert.Equal(viaPlay.Selection, viaMenu.Selection);
+        Assert.Empty(viaMenu.Filters);
+        Assert.Equal([A], viaMenu.Scope);                     // koreografi yalnız hedefi işaretler
+        Assert.Equal(viaPlay.Scope, viaMenu.Scope);
+        Assert.Equal(viaPlay.Sent with { RunId = "" }, viaMenu.Sent with { RunId = "" }); // runId dışında AYNI komut
+    }
+
     /// <summary>Hedef satır TIKLAMA ANINDA işaretlenir (gönderim penceresi dahil) ve koşu bittiğinde bırakılır;
     /// gönderim senkron düşerse hemen bırakılır — hiçbir yol satırı sonsuza dek "Stop" hâlinde bırakamaz.</summary>
     [Fact]

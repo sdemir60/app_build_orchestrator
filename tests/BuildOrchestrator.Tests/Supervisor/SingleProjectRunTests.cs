@@ -48,10 +48,15 @@ public class SingleProjectRunTests
         Assert.Contains("scope: single project Target", h.DecisionLog);
     }
 
-    /// <summary>Hedef tam koşudaki incremental kurala tabidir: güncel bir hedef Build'de
-    /// <c>skipped — up to date</c> olur ve MSBuild hiç çağrılmaz; Rebuild aynı hedefi koşulsuz derler.</summary>
+    /// <summary>
+    /// <b>Hedef güncel olsa da derlenir</b> — satırdaki play bir emirdir (design §3.8 "koşul yok").
+    /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eski iddia: kapsamlı Build tam koşunun incremental kuralına
+    /// tabiydi ve güncel bir hedefi <c>skipped — up to date</c> ile atlardı. Sahada bunun anlamı şuydu: ilk
+    /// basış derliyor, ikinci basış hiçbir şey yapmadan satırı gri bırakıyor — kullanıcı bunu "satırdan build
+    /// bazen gri kalıyor" diye bildirdi. Gerekçe <see cref="Core.Planning.ProjectRunScope"/>'ta.</para>
+    /// </summary>
     [Fact]
-    public async Task A_scoped_build_keeps_the_incremental_rule_and_a_scoped_rebuild_ignores_it()
+    public async Task A_scoped_build_compiles_its_target_even_when_it_is_up_to_date()
     {
         var plan = PlanOf(Node("Target", willBuild: false), Node("Other", willBuild: true));
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
@@ -60,15 +65,40 @@ public class SingleProjectRunTests
         await h.Sut.StartAsync(Scoped("Target", RunMode.Build, "r1"), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
-        Assert.Equal((Id("Target"), SkipReasons.UpToDate), (skipped.ProjectId, skipped.Reason));
-        Assert.Empty(invoker.Requests);
+        Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());                     // "up to date" atlaması YOK
+        Assert.Equal([Id("Target")], invoker.Requests.Select(r => r.ProjectId));  // GERÇEKTEN derlendi
+        Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+        Assert.True(Assert.Single(preview.Items).WillBuild);                      // önizleme de "derlenecek" der
+    }
 
-        await h.Sut.StartAsync(Scoped("Target", RunMode.Rebuild, "r2"), default);
+    /// <summary>
+    /// Menünün iki maddesi FARKLI şeyler yapar: <b>Build</b> projeyi derler (<c>-t:Build</c>), <b>Rebuild</b>
+    /// MSBuild'in kendi Rebuild hedefini koşar (<c>-t:Rebuild</c> = önce Clean, sonra Build) — prototipin
+    /// satır menüsü de tam olarak bunu yazar (<c>msbuild X.csproj /t:Rebuild</c>).
+    /// <para><b>Alt bardaki Rebuild BUNDAN AYRIDIR ve değişmez:</b> orada "Rebuild" cache'i yok saymak
+    /// demektir (proje başına yine <c>-t:Build</c>) — tek projelik bir kapsamda cache'i yok saymayı zaten
+    /// Build yapıyor, dolayısıyla satırdaki Rebuild'in ayrı bir anlamı olmalıdır.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_scoped_rebuild_runs_msbuilds_rebuild_target_while_a_full_rebuild_still_builds()
+    {
+        var plan = PlanOf(Node("Target", willBuild: false), Node("Other", willBuild: false));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Scoped("Target", RunMode.Rebuild, "r1"), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal([Id("Target")], invoker.Requests.Select(r => r.ProjectId));
-        Assert.Single(h.Events.OfType<ProjectSkippedEvent>()); // ikinci koşuda yeni skip YOK
+        Assert.Equal(MsBuildTarget.Rebuild, Assert.Single(invoker.Requests).Target);
+        Assert.Contains("-t:Rebuild", MsBuildArguments.PlanFor(invoker.Requests[0]).Build);
+        // Proje logunun İLK satırı gerçek komut satırıdır (v7Δ-7) — hedef oraya da yansır.
+        Assert.Contains("-t:Rebuild", LogTextsFor(h, "Target")[0]);
+
+        await h.Sut.StartAsync(Start(RunMode.Rebuild, parallelism: 1, "r2"), default); // ALT BARDAKİ Rebuild
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.All(invoker.Requests.Skip(1), r => Assert.Equal(MsBuildTarget.Build, r.Target));
     }
 
     /// <summary>

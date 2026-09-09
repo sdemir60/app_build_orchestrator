@@ -606,10 +606,19 @@ and is meant to be run before a build, not instead of one.
 **A single project is a scope, not a mode.** A run started from a row (§13.2) carries the project's identity
 and keeps the mode of the item pressed — *Build* or *Rebuild*. Planning runs in full, exactly as for any run,
 and the plan is then cut down to that one node (`ProjectRunScope`): its dependencies are not compiled, and the
-other projects never enter the run at all — no skip line, no counter, no row changes. Inside the scope the
-mode means what it always means: a scoped `Build` skips the target as `up to date` when its signature is
-clean, a scoped `Rebuild` compiles it regardless. A cycle member can be built from its row too: it enters the
-run as a plain node and compiles once, alone, against its cycle-mates' last known outputs.
+other projects never enter the run at all — no skip line, no counter, no row changes. A cycle member can be
+built from its row too: it enters the run as a plain node and compiles once, alone, against its cycle-mates'
+last known outputs.
+
+**The target always compiles, even when it is up to date.** Pressing play is not a question but an
+instruction: the incremental decision is what *Build* consults across a whole workspace, and inside a scope of
+one there is nothing left for it to decide — honouring it would swallow the command. It used to be honoured,
+and the cost was plain: the first press compiled the project and the second did nothing at all, leaving the
+row grey. The reason behind the will-build dot is dropped for a target that was already clean, because none
+of the reasons is true of it. The two menu items stay distinct through the MSBuild target instead: *Build*
+runs `-t:Build`, *Rebuild* runs `-t:Rebuild` — MSBuild's own clean-then-build for that project. That is the
+one place the two words diverge from the action bar, where *Rebuild* means "ignore the cache" and still runs
+`-t:Build` per project; in a scope of one, ignoring the cache is what *Build* already does.
 
 **What the target was built against is recorded.** A direct dependency that this run did not compile but
 whose signature is dirty (or unknown) is a **stale** input: the target links to that dependency's previous
@@ -977,12 +986,14 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 ### 9.2 Argument contract
 
 ```
-<project> -t:Build -p:Configuration=<cfg>
+<project> -t:Build|-t:Rebuild -p:Configuration=<cfg>
           -p:UseSharedCompilation=false -nodeReuse:false -p:BuildProjectReferences=false
           -clp:Summary -nologo
           [-p:BaseIntermediateOutputPath=<isolated obj>\]
 ```
 
+- The target is `-t:Build` everywhere except one case: *Rebuild* pressed in a **row menu** (§8.1), which runs
+  `-t:Rebuild`. Nothing else about the list changes with it, so the two targets share one contract.
 - `-p:BuildProjectReferences=false` is **mandatory**. The orchestrator already builds every dependency as its
   own node; letting MSBuild walk the `ProjectReference` chain again re-enters sibling projects and hits their
   `obj` state.
@@ -1406,7 +1417,8 @@ a row near the bottom opens it. Anchoring to the button would have meant a fixed
 width of the icons that follow it, and that number goes stale the moment the icon row changes.
 
 *Build* and the play button start a **single-project run** (§8.1) — the project alone, its dependencies
-untouched — and *Rebuild* does the same with the cache ignored. Starting from a row is not selecting the row:
+untouched, and always compiled even when it is up to date — while *Rebuild* runs MSBuild's own clean-then-build
+for it. Starting from a row is not selecting the row:
 the selection and the filter drop, exactly as they do for a full run, so a graph that was focused on some node
 glides back to the fitted view and the console returns to the run log; the opening choreography marks just
 that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name — the target is named in the
@@ -1416,6 +1428,13 @@ stop command as the action bar; every other row's play button is disabled and it
 (`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
 has no engine behind it yet: it sits where the design puts it, disabled, and its tooltip says so — the same
 decision as *Clean* in the Build split menu.
+
+The row's icon buttons are the one place the shared icon-button style is overridden: they hover to
+`surface-overlay` rather than `surface-raised`. The icons only appear while the row is hovered, and a hovered
+row is already painted `surface-hover` — which is the same colour as `surface-raised`, in the design's own
+tokens as much as here. Left shared, the hover was invisible exactly where it was needed. The rule the
+override keeps is the one the action bar gets for free: the hover surface is one step above whatever the
+button sits on.
 
 Only one element in the row carries a design-system tooltip: the warning triangle. The status glyph carries
 none — colour, glyph and the duration column were all saying the same thing — and announces its status through
@@ -3144,7 +3163,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | `MSBuild.exe` resolution via `vswhere` | `Core/MsBuild/MsBuildResolver.cs` |
 | The `vswhere` search itself (shared by `MSBuild.exe` and `TF.exe`) | `Core/MsBuild/VsWhereLocator.cs` |
-| Argument contract (build and restore) | `Core/MsBuild/MsBuildArguments.cs` |
+| Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
 | Invocation, output pumping, per-project kill | `Core/MsBuild/MsBuildInvoker.cs` |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |

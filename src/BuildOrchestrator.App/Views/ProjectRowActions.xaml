@@ -20,7 +20,7 @@
          görünürlük ProjectRow.ApplyActionState'tedir. -->
     <StackPanel x:Name="PART_HoverIcons" Orientation="Horizontal" HorizontalAlignment="Right"
                 VerticalAlignment="Center" Visibility="Collapsed">
-      <Button x:Name="PART_BuildButton" Style="{DynamicResource Ds.IconButton}"
+      <Button x:Name="PART_BuildButton" Style="{DynamicResource Ds.IconButton.OnRow}"
               AutomationProperties.Name="Build this project">
         <Viewbox Width="14" Height="14">
           <Canvas Width="24" Height="24">
@@ -31,7 +31,7 @@
       </Button>
       <!-- [design §3.8] Stop: play ile AYNI boy (birincil eylem), kırmızı (prototipin status-fail-text
            rengi), varsayılan gizli. UIA adı ve tooltip'i kod-tarafı AccessibilityNames'ten yazılır (kopya YASAK). -->
-      <Button x:Name="PART_StopButton" Style="{DynamicResource Ds.IconButton}" Visibility="Collapsed">
+      <Button x:Name="PART_StopButton" Style="{DynamicResource Ds.IconButton.OnRow}" Visibility="Collapsed">
         <Viewbox Width="14" Height="14">
           <Canvas Width="24" Height="24">
             <Path x:Name="PART_StopIcon" Data="{DynamicResource Icon.Stop}"
@@ -39,7 +39,7 @@
           </Canvas>
         </Viewbox>
       </Button>
-      <ToggleButton x:Name="PART_MoreButton" Style="{DynamicResource Ds.IconButton.Toggle}" Margin="2,0,0,0"
+      <ToggleButton x:Name="PART_MoreButton" Style="{DynamicResource Ds.IconButton.Toggle.OnRow}" Margin="2,0,0,0"
                     AutomationProperties.Name="More build actions">
         <Viewbox Width="13" Height="13">
           <Canvas Width="24" Height="24">
@@ -48,7 +48,7 @@
           </Canvas>
         </Viewbox>
       </ToggleButton>
-      <Button x:Name="PART_RevealButton" Style="{DynamicResource Ds.IconButton}" Margin="2,0,0,0"
+      <Button x:Name="PART_RevealButton" Style="{DynamicResource Ds.IconButton.OnRow}" Margin="2,0,0,0"
               AutomationProperties.Name="Reveal in Explorer" ToolTip="Reveal in Explorer">
         <Viewbox Width="13" Height="13">
           <Canvas Width="24" Height="24">
@@ -59,7 +59,7 @@
           </Canvas>
         </Viewbox>
       </Button>
-      <Button x:Name="PART_VsButton" Style="{DynamicResource Ds.IconButton}" Margin="2,0,0,0"
+      <Button x:Name="PART_VsButton" Style="{DynamicResource Ds.IconButton.OnRow}" Margin="2,0,0,0"
               AutomationProperties.Name="Open in Visual Studio" ToolTip="Open in Visual Studio">
         <Viewbox Width="13" Height="13">
           <Canvas Width="24" Height="24">

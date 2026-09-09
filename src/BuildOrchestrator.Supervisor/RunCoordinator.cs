@@ -961,7 +961,14 @@ public sealed class RunCoordinator(
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
                 runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
                 groups, // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
-                staleDependenciesById); // [tek proje] hedefin derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda)
+                staleDependenciesById, // [tek proje] hedefin derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda)
+                // [tek proje · design §3.8] MSBuild hedefi YALNIZ satırdan tetiklenen Rebuild'de değişir:
+                // alt bardaki Rebuild "cache'i yok say" demektir ve proje başına yine -t:Build koşar; tek
+                // projelik bir kapsamda o anlamı zaten Build taşıdığı için satırdaki Rebuild MSBuild'in
+                // kendi Rebuild'i (Clean+Build) olur.
+                cmd.ScopeProjectId is not null && cmd.Mode == RunMode.Rebuild
+                    ? MsBuildTarget.Rebuild
+                    : MsBuildTarget.Build);
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -1575,7 +1582,8 @@ public sealed class RunCoordinator(
             // yerinde, kendi obj'iyle derlenir.
             BaseIntermediateOutputPath: run.WorktreeObjRoot is not null && !IsExternal(run, projectId)
                 ? WorktreeObjPathResolver.Resolve(run.WorktreeObjRoot, projectId)
-                : null);
+                : null,
+            Target: run.MsBuildTarget);
 
         // [Kısıt 1] Proje logunu bu metot AÇMAZ ve KAPATMAZ — ömrü çağıranındır: OpenProjectLog
         // FileMode.Create ile truncate ettiği için, log'u burada açmak tur döngüsünde önceki turların
@@ -1660,7 +1668,8 @@ public sealed class RunCoordinator(
             yield return WindowsCommandLine.Build(msbuildExePath,
                 [.. MsBuildArguments.RestorePackagesConfig(request.ProjectId, request.SolutionDir)]);
         yield return WindowsCommandLine.Build(msbuildExePath,
-            [.. MsBuildArguments.Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath)]);
+            [.. MsBuildArguments.Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath,
+                request.Target)]);
     }
 
     /// <summary>
@@ -1815,7 +1824,9 @@ public sealed class RunCoordinator(
         CycleGroups? Groups,
         // [tek proje] projectId → bu koşuda derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda, yalnız
         // hedef için dolu; null ⇒ tam koşu). ComputeDepIssues bunu DepIssueTracker'a geçirir.
-        IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? StaleDependenciesById = null);
+        IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? StaleDependenciesById = null,
+        // [tek proje] Bu koşunun MSBuild hedefi — yalnız satır menüsünün Rebuild'i Build'den ayrılır (§3.8).
+        MsBuildTarget MsBuildTarget = MsBuildTarget.Build);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

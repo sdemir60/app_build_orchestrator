@@ -5,9 +5,12 @@ using BuildOrchestrator.Core.Processes;
 namespace BuildOrchestrator.Core.MsBuild;
 
 /// <summary>Tek proje invoke isteği. It-2'de <c>BaseIntermediateOutputPath</c> HER ZAMAN null (I2-K2: in-place = default obj; obj-izolasyon It-3/worktree).</summary>
+/// <param name="Target">[tek proje · design §3.8] Bu çağrının MSBuild hedefi — varsayılan
+/// <see cref="MsBuildTarget.Build"/>; alanı hiç vermeyen her çağrı yeri (tam koşu, SCC turları) birebir aynı
+/// komut satırını üretmeye devam eder.</param>
 public sealed record MsBuildInvokeRequest(
     string ProjectId, string Configuration, string SolutionDir, bool NeedsRestore,
-    string? BaseIntermediateOutputPath = null);
+    string? BaseIntermediateOutputPath = null, MsBuildTarget Target = MsBuildTarget.Build);
 
 public sealed record MsBuildInvokeResult(int ExitCode, long DurationMs, bool TimedOut, bool Killed);
 
