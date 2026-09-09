@@ -294,10 +294,12 @@ from the perf name but never recomputes the worker count, which the App has alre
 table.
 
 Both `startRun` and `syncWorkspace` carry the **external project list** (§10.6) — the projects the user
-ordered in Settings, in that order. Each entry is a name, a directory and a build target; the version control
-kind and the working-copy root are deliberately absent, because they are rediscovered from disk on every run
-and can therefore never go stale. The field is last and defaults to null, so lines written before external
-projects existed still parse.
+ordered in Settings, in that order. Each entry is exactly what a Settings card holds: a path — a folder, a
+solution or a project file — and the source the user picked, Git or TFVC. The build target, the display name
+and the working-copy root are deliberately absent, because they are resolved from the path on every run and
+can therefore never go stale. The field is last and defaults to null, so lines written before external projects
+existed still parse; the App sends null rather than an empty list, so a setup without externals writes the same
+line it always did.
 
 Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
 camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
@@ -1103,12 +1105,16 @@ kept in their own git repositories or TFVC workspaces. The user lists them in Se
 be built; every run updates them from their own version control and compiles the ones that changed, before the
 main repository work begins.
 
-The user names a **directory**, not a repository root. The root is found by walking up from that directory to
-the first marker: `.git` (a directory in a normal clone, a file in a linked worktree) means git, `$tf` means a
-TFVC local workspace, and reaching the drive root without a marker means none. The nearest marker wins, so a
-TFVC workspace nested inside a git repository is read as TFVC. Neither the kind nor the root is ever
-persisted — they are rediscovered on every run, which is why moving a project or recreating its working copy
-needs no settings change.
+A card is a **path and a source**. The path may be a folder, a `.sln` or a `.csproj`: a file is its own build
+target; a folder resolves to the single solution it holds, or failing that to the single project. Anything
+else — nothing buildable, or more than one solution — is not guessed at: Sync reports it as a warning and
+Build refuses to start until the path points at the file to build. The source is the user's choice, Git or
+TFVC, never detected. The working-copy root is found by walking up from the target's folder to the first
+marker of the *selected* kind — `.git` (a directory in a normal clone, a file in a linked worktree) for Git,
+`$tf` for a TFVC local workspace — and only that kind is looked for, so a `$tf` workspace nested inside a git
+clone is read as TFVC when the user said TFVC and as part of the clone when they said Git. Neither the target
+nor the root is ever persisted — they are re-resolved on every run, which is why moving a project or
+recreating its working copy needs no settings change.
 
 **Git externals** are updated with `fetch` + `merge --ff-only`, never `pull`. A pull would produce a merge
 commit or a rebase depending on configuration, and either one rewrites the user's repository on the tool's
@@ -1121,19 +1127,22 @@ that finds `MSBuild.exe` — lazily, only when a TFVC external is actually prese
 Team Explorer. No decision reads localized tool output: pending changes are read from the XML structure of
 `tf vc status`, failures from exit codes, and the changeset from the leading digits of the first data row.
 
-Two error classes are kept apart. Something the user has to resolve — uncommitted changes, a diverged branch,
-a detached HEAD, a missing folder, a missing `tf.exe` — **cancels the run before it starts**; a half-finished
+Two error classes are kept apart. Something the user has to resolve — a path that does not resolve to a
+build target, uncommitted changes, a diverged branch, a detached HEAD, a missing `tf.exe` — **cancels the run
+before it starts**; a half-finished
 run helps nobody. A transient network or credential failure only warns and the local version is built, which
 is the same posture the main repository's degraded fetch takes.
 
-A working copy with no version control at all is built as-is: there is nothing to update, no dirty gate to
-apply, and its revision is unknown — so it can never appear up to date and is compiled on every run.
+A path with no working copy of the selected kind above it is built as-is, after a warning naming the kind that
+was looked for: there is nothing to update, no dirty gate to apply, and its revision is unknown — so it can
+never appear up to date and is compiled on every run.
 
 **Sync only looks.** For git externals it reads the local `HEAD` and `status` — cheap, offline-tolerant
 queries — and produces a real preview; uncommitted changes there raise a warning but never block, because the
 gate that stops a run lives in Build, where the user has already decided to compile. TFVC externals stay
-hollow in Sync: their queries go to the server, and Sync must stay fast and offline-tolerant. A external that
-cannot be read leaves its own row hollow and the rest of the Sync intact.
+hollow in Sync: their queries go to the server, and Sync must stay fast and offline-tolerant. An external that
+cannot be read — or whose path does not resolve — leaves its own row hollow, named after the last segment of
+the path, and the rest of the Sync intact.
 
 The incremental decision for an external is narrower than for a main-repository project, and deliberately so.
 Because a dirty external cancels the run, every external that gets compiled is clean, and its source state is
@@ -1531,10 +1540,11 @@ raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two li
 against its own collection. An empty path on any card disables *Save*, the same severity as an empty layer
 name. The list starts **empty** (unlike Layers, it has no seed) and shows the same dashed empty-state box the
 Layers section uses when its own list is empty. *Add external project* appends a blank, Git-sourced card.
-**This section is UI and persistence only.** The list lives in the app and is written to disk on *Save*, but it
-does not reach the engine yet — no path is scanned, no working-copy root is discovered, and the project list
-and graph carry no trace of it. That connection is a separate branch merging separately; wiring it in here would
-have made the dialog claim a scan that was not happening.
+The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.6): Sync shows
+the cards as rows at the top of the project list, Build updates and compiles them first. A path is only
+validated when it is used — the dialog does not scan it — so a card that points at nothing buildable is a
+warning in Sync and a refused run in Build, not a red input here; the badge on its row and the `External` group
+it sits in come from the engine's topology, not from the card.
 
 Its width is picked the same way About's and What's new's are — for the direction each grows in, not for what
 it holds today. Settings is the one most likely to grow: it already holds the root plus layer cards with a name
@@ -1572,11 +1582,11 @@ is a startup seed: the defaults live only in this dialog's draft, and nothing re
 *Browse…* only writes the picked path into the draft's root input; Cancel, Esc and a scrim click discard the
 draft — the pending root, external cards and all — without touching anything live.
 *Save* is the single point where the draft is applied, in a fixed order: the layer patterns and the external
-project list are applied first (neither touches the engine, so the order between the two of them does not
-matter), then the pending repository root (which resets the project rows to
-hollow), then exactly one Sync is sent. The order is load-bearing, because the Sync command carries the
-layer patterns — sent before they were applied, it would carry stale ones and the grouping
-would be wrong for a whole Sync. The Sync itself is unconditional: Save does not compare old and new state to
+project list are applied first (both are app-side state; the order between the two of them does not matter),
+then the pending repository root (which resets the project rows to hollow), then exactly one Sync is sent. The
+order is load-bearing, because the Sync command carries the layer patterns and the external list — sent before
+they were applied, it would carry stale ones: the grouping would be wrong for a whole Sync and the external rows
+would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
 decide whether to run it.
 
 The external project note is quieter than the layer one: the layer line prints on *every* Save, but the
@@ -2889,8 +2899,7 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Worktree name | UI / `ui-state.json` | validated as a single safe path segment | none |
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
-| External project folder | folder picker, or `ui-state.json` | working directory of `git`/`tf` — not an argument (§10.6) | none |
-| External build target | file picker, or `ui-state.json` | MSBuild command line, escaped per MSVCRT rules | none |
+| External project path | Settings editor, or `ui-state.json` | resolved on every run (§10.6): the build target becomes an MSBuild argument, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
 | `TF.exe` path | `vswhere` output, checked to exist on disk | argv element of the TFVC child process | none |
 
 Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
@@ -3078,9 +3087,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Working-copy root discovery (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
+| Working-copy root discovery for the selected source (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
 | Layer name and index for the external group (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
-| Build target suggestion when a project is added | `Core/Externals/ExternalTargetResolver.cs` |
+| Path → build target resolution (folder, `.sln` or `.csproj`) and the display name | `Core/Externals/ExternalTargetResolver.cs` |
 | External signature and the will-build decision | `Core/Externals/ExternalSignature.cs`, `ExternalWillBuild.cs` |
 | The only mutating git surface: fetch + fast-forward | `Core/Externals/ExternalGitUpdater.cs` |
 | TFVC surface: pending changes, get latest, current changeset | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |

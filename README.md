@@ -135,9 +135,8 @@ the running instance first — tray icon → Exit).
 
    **External projects** are projects outside the repository root — each card is a path (a folder, a solution
    or a project file) and a source, Git or TFVC — kept in the order they are meant to build, before everything
-   the repository root discovers. Cards reorder the same way layer cards do: drag the grip. This section is UI
-   and persistence only for now: the list is saved with the rest of your settings, but nothing is scanned and
-   nothing reaches the build engine yet.
+   the repository root discovers. Cards reorder the same way layer cards do: drag the grip. What Build does
+   with them is step 4 below.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
@@ -158,19 +157,22 @@ the running instance first — tray icon → Exit).
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
 4. **External projects** *(optional)* — some projects a build depends on may live outside the repository. Add
-   them under *Settings → EXTERNAL PROJECTS*: pick the project's **folder**, give it a name, and confirm the
-   build target (a folder with exactly one `.sln` fills it in for you). The badge beside each row shows the
-   version control found on disk — `git`, `tfvc` or `unknown` — and refreshes whenever you change the path;
-   nothing about it is stored, so moving a project needs no edit here. Drag the grip to reorder: **top to
-   bottom is build order**.
+   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — the project's folder, or its `.sln` or
+   `.csproj` — and pick where it comes from, **Git** or **TFVC**. A folder is built through the single solution
+   it holds (or, failing that, its single project); if it holds several, point the path at the one to build —
+   the tool does not guess, it tells you. The working copy is found from the path upwards and nothing about it
+   is stored, so moving a project needs no edit here. Drag the grip to reorder: **top to bottom is build
+   order**.
 
    Every Build updates these first, in that order, and compiles the ones that changed before touching the
    repository. A git external is updated with a fetch and a fast-forward — never a `pull`, so nothing is
    rewritten on your behalf; a TFVC external gets a `tf vc get`. **Uncommitted changes stop the run before it
    starts**, with a line naming the project and its folder: commit, stash or shelve them and press Build
-   again. A branch that has diverged from its remote stops the run the same way. A remote that cannot be
-   reached only warns — the local version is built. If an external fails to compile, the run ends there and no
-   repository project is built, because they would otherwise link against its stale output and still go green.
+   again. A branch that has diverged from its remote, or a path that no longer points at anything buildable,
+   stops the run the same way. A remote that cannot be reached only warns — the local version is built; so
+   does a path with no `.git` (or `$tf`) above it, which is simply built as-is. If an external fails to
+   compile, the run ends there and no repository project is built, because they would otherwise link against
+   its stale output and still go green.
 
    Externals appear at the top of the project list in a group called **External**, and their revision shows in
    the same slot as the commit pair — a git sha shortened to seven characters, a TFVC changeset as `C48213`.
