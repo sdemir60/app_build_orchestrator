@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 using BuildOrchestrator.Contracts.Model;
 
@@ -64,6 +64,10 @@ public enum DependentMode { Safe, Fast }
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri (bkz. <see cref="LayerPattern"/>); Core'daki
 /// <c>LayerEngine</c> yalnız bu liste DOLU geldiğinde çalışır — null/boş ise katmanlama KAPALIDIR (varsayılan,
 /// mevcut davranış). Sıra anlamlıdır: <c>Order</c> hem eşleşme önceliği hem atanan LayerIndex'tir.</param>
+/// <param name="ExternalProjects">[Harici projeler] Bu koşudan ÖNCE, liste sırasıyla güncellenip derlenecek
+/// harici projeler. Faz ana repo işinden önce biter ve herhangi biri başarısız olursa koşu hiç başlamaz
+/// (worker'lar doğmaz). <c>Cycles</c> modu bu listeyi tamamen atlar — o koşu ana reponun SCC onarımıdır.
+/// null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
 /// <param name="PerfMode">[T20-b/K11] Perf profilinin ADI ("Full"/"Balanced"/"Light") — Supervisor bunu Core'daki
 /// <c>PerfProfile.TryParse</c> ile çözer ve run boyunca inner Job'a CPU cap + priority uygular.
 /// <b>Yalnız cap/priority'nin kaynağıdır:</b> paralellik AYRI bir alandır (<paramref name="Parallelism"/>) ve
@@ -72,7 +76,8 @@ public enum DependentMode { Safe, Fast }
 /// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
-    IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null) : IpcCommand;
+    IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
+    IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
 
 /// <summary>
 /// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar
@@ -102,11 +107,16 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri — <see cref="StartRunCommand.LayerPatterns"/>
 /// ile AYNI anlam. null/boş ise katmanlama KAPALIDIR; dolu ise topoloji event'i LayerIndex/LayerName ve
 /// ters-katman uyarılarını taşır.</param>
+/// <param name="ExternalProjects">[Harici projeler] Ana repo DIŞINDA yaşayan, build'den önce güncellenip
+/// derlenen projeler — kullanıcının Ayarlar'da sıraladığı liste, o sırayla. Sync bunları yalnız OKUR
+/// (hiçbir VCS mutasyonu yapmaz): git olanların yerel HEAD'i ve kirliliği okunur, TFVC olanlar hollow
+/// kalır. null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
 /// <param name="Configuration">Will-build pass'inin imza terimine giren configuration (Debug/Release) — config
 /// değişimi TÜM projeleri dirty yapar (bkz. <c>BuildSignature.Compute</c> "cfg=" terimi), bu yüzden Sync'in
 /// önizlemesi ancak doğru configuration ile anlamlıdır.</param>
 public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
-    IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug") : IpcCommand;
+    IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug",
+    IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
 
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;

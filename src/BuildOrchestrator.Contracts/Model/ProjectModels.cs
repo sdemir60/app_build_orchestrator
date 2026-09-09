@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 
 namespace BuildOrchestrator.Contracts.Model;
 
@@ -27,7 +27,11 @@ public sealed record ProjectNode(
     bool? WillBuild,                        // T53: dirty=true, güncel=false, imza-yok/pre-Sync=null
     // WillBuild'in GEREKÇESİ (kullanıcıya gösterilir). Alan SONA ve default'lu: eski NDJSON/plan üreticileri
     // onu yazmaz ve null olarak çözülür — o hâlde yüzey jenerik metne düşer.
-    WillBuildReason? WillBuildReason = null)
+    WillBuildReason? WillBuildReason = null,
+    // [Harici projeler] Bu düğüm ana repo DIŞINDAN gelen bir projeyse çalışma kopyasının VCS türü; sıradan
+    // projelerde null. Ayrı bir düğüm tipi AÇILMAZ: hariciler sıradan ProjectNode olarak akar, böylece liste
+    // gruplaması, graf bandı ve filtreler onları bedavaya taşır — rozet yalnız bu alandan okunur.
+    VcsKind? ExternalVcs = null)
 {
     // Derleyicinin ürettiği record eşitliği, IReadOnlyList<string> alanlarında EqualityComparer<T>.Default
     // kullanır; List<string> Equals'ı override etmediği için bu referans eşitliğine düşer (JSON round-trip
@@ -44,7 +48,8 @@ public sealed record ProjectNode(
         && LayerName == other.LayerName
         && InCycle == other.InCycle
         && WillBuild == other.WillBuild
-        && WillBuildReason == other.WillBuildReason;
+        && WillBuildReason == other.WillBuildReason
+        && ExternalVcs == other.ExternalVcs;
 
     public override int GetHashCode()
     {
@@ -59,6 +64,7 @@ public sealed record ProjectNode(
         hash.Add(LayerName);
         hash.Add(InCycle);
         hash.Add(WillBuild);
+        hash.Add(ExternalVcs);
         return hash.ToHashCode();
     }
 }
@@ -127,6 +133,28 @@ public sealed record BuildState(
     // Succeeded KALIR — derleme gerçekten başarılıydı; bu ortogonal bir uyarıdır, sonucun kendisi değil.
     // Alan SONA ve default'lu eklendi: eski build-state.json kayıtları alansızdır ve false olarak çözülür.
     bool DepIssue = false);
+
+/// <summary>
+/// Bir harici projenin hangi sürüm kontrol sistemiyle güncelleneceği. Tel üzerinde camelCase METİN taşınır
+/// ("git"/"tfvc"/"unknown"), sayı olarak DEĞİL — üyeleri sonradan yeniden sıralamak eski satırların anlamını
+/// kaydırmaz. <c>Unknown</c> = çalışma kopyasının kökünde tanınan bir işaret bulunamadı: güncelleme ve dirty
+/// kapısı çalışmaz, revizyon bilinmez, proje her koşuda derlenir.
+/// </summary>
+public enum VcsKind { Git, Tfvc, Unknown }
+
+/// <summary>
+/// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi VCS'inden güncellenip derlenen bir proje (ör. müşteriye
+/// özel mail/OCR bileşenleri). Kullanıcı doğrudan proje dizinini verir; çalışma kopyasının kökü o dizinden
+/// yukarı yürünerek bulunur.
+///
+/// <para><b>Kimlik <see cref="TargetPath"/>'tir</b> — build-state anahtarı, IPC ProjectId'si, proje logu ve
+/// liste satırının Id'si odur. VCS türü ve VCS kökü KASITLI olarak burada YOKTUR: ikisi de persist edilmez,
+/// her koşuda diskten yeniden bulunur, böylece bayatlayamazlar.</para>
+/// </summary>
+/// <param name="Name">Kullanıcının verdiği görünen ad (liste ve node etiketi).</param>
+/// <param name="ProjectPath">Projenin dizini — VCS kökü aramasının başladığı yer.</param>
+/// <param name="TargetPath">Derlenecek .sln/.csproj'un tam yolu; bu projenin kimliği.</param>
+public sealed record ExternalProject(string Name, string ProjectPath, string TargetPath);
 
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);

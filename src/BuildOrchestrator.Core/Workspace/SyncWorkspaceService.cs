@@ -1,6 +1,7 @@
-using BuildOrchestrator.Contracts.Ipc;
+﻿using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Planning;
@@ -32,12 +33,15 @@ namespace BuildOrchestrator.Core.Workspace;
 /// </summary>
 /// <param name="git">Kökü <see cref="SyncWorkspaceCommand.RootPath"/>'e BAĞLI bir <see cref="GitService"/> —
 /// worktree değil, KULLANICININ REPO KÖKÜ (Sync, Supervisor'ın build-anı worktree hazırlığıyla yarışmaz).</param>
+/// <param name="externalInspector">[Harici projeler] Harici çalışma kopyalarını SALT-OKUR inceleyen yüzey.
+/// <c>null</c> ise (ve komutun listesi boşsa) akış bugünküyle bayt-bayt aynıdır.</param>
 public sealed class SyncWorkspaceService(
     WorkspaceScanner scanner,
     CsprojEvaluator evaluator,
     EvaluationCache cache,
     GitService git,
-    BuildStateStore stateStore)
+    BuildStateStore stateStore,
+    ExternalSyncInspector? externalInspector = null)
 {
     /// <summary>Will-build pass'inin sonucu: bağlanmış plan + §3.1 konsol satırlarının/D2 şeridinin okuduğu sayaçlar.</summary>
     /// <param name="Known">false ⇒ anlamlı bir taban yok (repo'da hiç commit yok ya da pass hata verdi) — TÜM
@@ -108,15 +112,27 @@ public sealed class SyncWorkspaceService(
         var state = stateStore.Load();
         var outcome = await ComputeWillBuildAsync(cmd, plan, scan, head.Value, state, emit, ct);
 
+        // --- 3b) hariciler. SALT-OKUR ve İSTEĞE BAĞLI: liste boşsa tek bir process bile açılmaz ve aşağıdaki
+        // yayınlar bugünküyle bayt-bayt aynı kalır. Uyarılar burada basılır; kir Sync'i DURDURMAZ — koşuyu
+        // durduran kapı Build tarafındadır.
+        var externals = await InspectExternalsAsync(cmd, state, emit, ct);
+
         // --- 4) topoloji + önizleme. Önizleme AYRI bir will-build yolu DEĞİLDİR: App'in mevcut
         // BuildPreviewEvent handler'ı satırların WillBuild'ini zaten bu event'ten kurar (ikinci bir yol açılmaz).
+        // Hariciler listelerin BAŞINDA durur; ana düğümlerin BuildOrder'ı kaydırılır ki topolojiyi okuyan her
+        // algoritmanın dayandığı "Nodes[i].BuildOrder == i" değişmezi korunsun.
+        var externalNodes = externals.Select((inspection, i) => ExternalNodeBuilder.ToNode(inspection, i)).ToList();
+        var allNodes = externalNodes
+            .Concat(outcome.Plan.Nodes.Select(n => n with { BuildOrder = n.BuildOrder + externalNodes.Count }))
+            .ToList();
+
         emit(new WorkspaceTopologyEvent(
-            Nodes: outcome.Plan.Nodes,
+            Nodes: allNodes,
             Cycles: outcome.Plan.Cycles,
             Solutions: ToSolutionRefs(scan),
             LayerWarnings: outcome.Plan.LayerWarnings ?? []));
         emit(new BuildPreviewEvent(
-            outcome.Plan.Nodes
+            allNodes
                 .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason))
                 .ToList()));
@@ -145,6 +161,25 @@ public sealed class SyncWorkspaceService(
         emit(new SyncCompletedEvent(cmd.Branch, targetSha, fetch.Degraded,
             ProjectCount: outcome.Plan.Nodes.Count, CycleCount: outcome.Plan.Cycles.Count,
             ChangedCount: outcome.Changed, ToBuildCount: outcome.ToBuild, UpToDateCount: outcome.UpToDate));
+    }
+
+    /// <summary>
+    /// [D5] Harici projeleri inceler ve uyarılarını yayınlar. Liste boş/null ya da inspector verilmemişse
+    /// hiçbir şey yapmaz — mevcut akış korunur.
+    ///
+    /// <para><b>Sayaçlara karışmaz:</b> "changed / to build / up to date" sayıları ve "no changes" satırı ana
+    /// workspace'i anlatmaya devam eder; hariciler UI'a topoloji ve önizleme üzerinden ulaşır.</para>
+    /// </summary>
+    private async Task<IReadOnlyList<ExternalInspection>> InspectExternalsAsync(
+        SyncWorkspaceCommand cmd, IReadOnlyDictionary<string, BuildState> state, Action<IpcEvent> emit, CancellationToken ct)
+    {
+        if (externalInspector is null || cmd.ExternalProjects is not { Count: > 0 } externals) return [];
+
+        var inspections = await externalInspector.InspectAsync(externals, cmd.Configuration, state, ct);
+        foreach (var inspection in inspections)
+            if (inspection.Warning is not null) emit(Warn(inspection.Warning));
+
+        return inspections;
     }
 
     /// <summary>
