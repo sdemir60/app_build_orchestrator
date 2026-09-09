@@ -27,7 +27,15 @@ public class StickyScrollTriggerTests
         new("L2", [new Proj("i"), new Proj("j"), new Proj("k"), new Proj("l"), new Proj("m"), new Proj("n")]),
     ];
 
-    /// <summary>ÜRETİM SIRASI (A12 dersi): kabuk önce realize edilir, gruplar SONRA akar.</summary>
+    /// <summary>ÜRETİM SIRASI (A12 dersi): kabuk önce realize edilir, gruplar SONRA akar.
+    ///
+    /// <para><b>[D3/T5 · design v1.13.2]</b> Reveal'in KENDİ scroll sıfırlaması (<c>PlayRevealStagger</c>,
+    /// <c>DispatcherPriority.Loaded</c>'da ERTELENİR) burada settle olması beklenir — aksi halde bu dosyanın
+    /// testleri kendi DOĞRUDAN <c>ScrollToVerticalOffset</c> çağrılarından SONRA hâlâ kuyrukta bekleyen bir
+    /// reveal'e yakalanır ve o, ikinci pompalamada ateşlenip scroll'u 0'a geri sıfırlar (ölçüldü: bu satır
+    /// olmadan iki test de KIRMIZI). Seçim hiç kurulmadığından (<c>IsFollowing</c> varsayılan <c>true</c>) her
+    /// reveal 0'a döner — burada bir kez tüketmek yeter, testler kendi ADIMLARINDA yeniden reveal TETİKLEMEZ.</para>
+    /// </summary>
     private static StickyLayerList RealizeThenFeed(out Window window)
     {
         var list = new StickyLayerList { AnimationsEnabledProvider = () => false };
@@ -35,6 +43,7 @@ public class StickyScrollTriggerTests
         window = DsResources.Realize(host, list);
         list.SetGroups(SampleGroups());
         list.UpdateLayout();
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
         return list;
     }
 

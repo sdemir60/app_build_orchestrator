@@ -68,7 +68,13 @@ public sealed partial class RunViewModel
     [ObservableProperty] private int _streamEventCount;
 
     /// <summary>[design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başlıyor: event stream de konsol gibi
-    /// TEMİZLENİR — ekrandaki her şey artık yürüyen işlemin hikâyesidir. Sync bu yoldan GEÇMEZ.
+    /// TEMİZLENİR — ekrandaki her şey artık yürüyen işlemin hikâyesidir.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2]</b> Bu satır eskiden "Sync bu yoldan GEÇMEZ" diyordu — <see cref="SyncAsync"/>
+    /// yalnız faz metnini/pill'i güncelliyordu, tamponlara dokunmuyordu. Tasarım v1.13.2 "her işlemde
+    /// temizlenir" kuralını Sync'i de kapsayacak netleştirdi; Sync düğmesi artık <see cref="SyncCoreAsync"/>
+    /// üzerinden BeginRunAsync ile AYNI iki metodu (bunu ve konsol eşi <see cref="ClearConsoleForNewOperation"/>'ı)
+    /// TIKLAMA ANINDA çağırır (Settings/Choose-Folder türevi Sync'ler kendi hazırlık notlarını korumak için bu
+    /// ikisini atlar — bkz. <see cref="SyncCoreAsync"/> XML doc'u).</para>
     /// <para>Silme <c>RemoveAt</c> ile sondan yapılır: <c>Clear()</c> bir <c>Reset</c> bildirimidir ve koşan
     /// satır animasyonlarını yıkar (A13.2 — koleksiyon reset'i YASAK).</para></summary>
     private void ClearStreamForNewOperation()

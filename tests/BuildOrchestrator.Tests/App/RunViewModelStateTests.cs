@@ -360,6 +360,36 @@ public class RunViewModelStateTests
         Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order()); // filtre KORUNUR
     }
 
+    /// <summary>[D3/T5 · design v1.13.2 §9] "Konsol + event stream her işlemde temizlenir, ardından yalnız o
+    /// işlemin satırları yazılır" — Build/Rebuild/Cycles bunu <c>BeginRunAsync(clearBuffers:true)</c> ile zaten
+    /// yapıyordu. Sync ise TIKLAMA ANINDA (motorun cevabı beklenmeden, pill'in kendisiyle AYNI an) konsolu VE
+    /// event stream'i temizlemiyordu — bir önceki işlemin tortusu, Sync'in kendi <c>syncProgress</c> satırlarının
+    /// ÜZERİNE yazılıyordu (bkz. <c>RunViewModel.cs:784-793</c>'teki mid-Sync run guard'ının gerekçesi: "…ama
+    /// SyncProgressEvent hâlâ _runText'e satır ekliyor olabilir").</summary>
+    [Fact]
+    public async Task Sync_clears_the_console_and_stream_left_over_from_the_previous_operation()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        // Önceki bir Build konsola VE event stream'e satır bırakır.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "Build succeeded"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        Assert.NotEqual("", vm.GetRunDocumentText()); // ön-koşul: konsolda ÖNCEKİ işlemden iz var — vakum değil
+        Assert.True(vm.StreamEventCount > 0, "ön-koşul: event stream'de ÖNCEKİ işlemden iz yok — vakum");
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        // Bu harness'te engine hiç başlatılmaz (sınıf özeti) — gönderim SENKRON düşer ve TrySendAsync kendi
+        // "[error] failed to send sync: …" satırını YENİ konsola yazar (meşru, BU Sync denemesinin satırı).
+        // Asıl iddia stale içeriğin GİTMİŞ olması: önceki işlemin "Build succeeded" satırı bir daha görünmez.
+        Assert.DoesNotContain("Build succeeded", vm.GetRunDocumentText());
+        Assert.Equal(0, vm.StreamEventCount); // TrySendAsync hatası yalnız konsola yazar, stream'e dokunmaz
+    }
+
     [Fact]
     public async Task Build_and_retry_clear_both_selection_and_filter()
     {

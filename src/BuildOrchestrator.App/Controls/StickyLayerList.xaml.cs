@@ -350,6 +350,22 @@ public partial class StickyLayerList : UserControl
     /// </summary>
     internal void PlayRevealStagger()
     {
+        // [D3/T5 · design v1.13.2 §2.4/§9] Reveal GERÇEKTEN oynadığı an — bu metodun HER çağrılışı, yalnız
+        // SetGroups(reveal:true) yolundan (Sync, workspace kaydı) gelir — VE seçim yokken liste scroll'u
+        // yumuşak 0'a döner: graf da reveal'ini yeniden oynadığından ikisi birlikte "sıfırdan listelendi"
+        // okunur. Build/Rebuild/Clean/Resolve ve satırdan tetiklenenler bu metodu HİÇ çağırmaz (reveal:false
+        // ya da hiç SetGroups yok) — o işlemler scroll'a dokunmaz (kullanıcı kararı: imlecin altındaki satır
+        // kaçmasın, o işlemlerde zaten işaretleme koreografisi anlatıyor).
+        //
+        // "Seçim yok" bilgisi TEK kaynaktan okunur: FollowScrollController.IsFollowing — yeni bir seçim kaynağı
+        // İCAT EDİLMEZ (ClearSelection/SelectRow zaten burada, MainWindow.UpdateFrontierSelection besler).
+        // _follow SetGroups'ta kurulur ve bu metot yalnız SetGroups sonrasında (senkron ya da testten doğrudan)
+        // çağrıldığından pratikte hep dolu olsa da, null ise "seçim yok" varsayılır (0'a dönmek zararsız).
+        //
+        // Animasyon yolu ZATEN VAR (AnimateScrollTo, ~satır 291) — reduced-motion altında kayma ANINDA olur
+        // (ScrollAnimator'ın mevcut davranışı), burada ayrı bir dal YAZILMAZ.
+        if (_follow is null || _follow.IsFollowing) AnimateScrollTo(0);
+
         // [A13/B3 · E5] Container'lar ZORLA üretilir. Virtualization KAPALI olduğundan TEK bir senkron layout turu
         // tüm ContentPresenter'ları measure eder ve her birinin ProjectRow çocuğunu kurar (ölçüm:
         // ListRealizationPerfTests.RealizeOnce — UpdateLayout'tan sonra realize == N). Layout zaten temizse NO-OP'tur

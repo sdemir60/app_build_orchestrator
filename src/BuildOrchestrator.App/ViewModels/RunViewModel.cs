@@ -626,7 +626,8 @@ public sealed partial class RunViewModel : ObservableObject
         string runId = _newRunId();
         _currentRunId = runId;
         // [design v1.11.0 §9-4 `_beginOp`] Konsol VE event stream temizlenir — ekrandaki her şey artık
-        // yürüyen işlemin hikâyesidir. Konsolu aşağıdaki `clearBuffers` dalı siler; stream buradan.
+        // yürüyen işlemin hikâyesidir. İkisi de <c>clearBuffers</c> dalında, birbirinin eşi iki adlandırılmış
+        // metotla (kopya YASAK) — <see cref="ClearConsoleForNewOperation"/> ile SyncCoreAsync AYNI metodu paylaşır.
         if (clearBuffers) ClearStreamForNewOperation();
         // [design v1.11.0 §9-4 `_neutralize`] Kapsam ÖNCE okunur, sonra nötrleme yapılır — prototipteki sıra
         // da budur (build-data.js:541-547: önce `st.will` yazılır, sonra `_neutralize()`).
@@ -642,15 +643,7 @@ public sealed partial class RunViewModel : ObservableObject
         CurrentOperation = OperationLabel.ForRunMode(mode);
         ActiveProjectId = null;
         IsStarting = true;
-        if (clearBuffers)
-            lock (_gate)
-            {
-                _liveLines.Clear();
-                _projectText.Clear();
-                _runText.Clear();
-                _runLineCount = 0;
-                _projectLineCount.Clear();
-            }
+        if (clearBuffers) ClearConsoleForNewOperation();
         // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
         // bir not düşer. Motor runStarted'a kadar (taze segmentte: worktree hazırlığı → tarama → graf → topo →
         // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
@@ -826,11 +819,36 @@ public sealed partial class RunViewModel : ObservableObject
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
     private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
 
+    /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, kendinden önce hiçbir
+    /// hazırlık notu YAZMAYAN saf Sync. <see cref="SyncCoreAsync"/>'i <c>clearBuffers:true</c> ile çağırır.</summary>
     [RelayCommand(CanExecute = nameof(CanSync))]
-    private async Task SyncAsync()
+    private Task SyncAsync() => SyncCoreAsync(clearBuffers: true);
+
+    /// <summary>
+    /// Sync'in ortak gövdesi — üç girişi vardır: bu sınıftaki <see cref="SyncAsync"/> (Sync düğmesi),
+    /// <see cref="ApplySettingsAsync"/> (Settings → Save) ve <see cref="ChangeRepositoryAsync"/> (Choose Folder).
+    ///
+    /// <para><b><paramref name="clearBuffers"/>:</b> Sync düğmesi <c>true</c> geçer — [design v1.13.2 §9]
+    /// BeginRunAsync(clearBuffers:true) ile AYNI kural, AYNI iki metot (kopya YASAK): konsol + event stream
+    /// TIKLAMA ANINDA temizlenir, pill'in kendisiyle aynı gerekçe, motorun cevabı beklenmez. Diğer iki çağıran
+    /// <c>false</c> geçer: ikisi de bu Sync'ten HEMEN ÖNCE KENDİ hazırlık notunu yazar (<c>"Layer definitions
+    /// updated — N layers"</c>, <c>"Repository root → … — Sync required"</c>) ve o not "bu işlemin İLK satırı"dır
+    /// — bir önceki İŞLEMİN tortusu değildir, ikinci bir clear onu da silerdi
+    /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>
+    /// bu notun HALA orada olduğunu pinler).</para>
+    /// </summary>
+    private async Task SyncCoreAsync(bool clearBuffers)
     {
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
         CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
+        // Sıra ÖNEMLİ: aşağıdaki `_syncRequested`/gönderim ne olursa olsun (senkron başarısız dahil) ekran
+        // zaten bu satırda sıfırlanmış olur; bir sonraki syncProgress bir öncekinin tortusunun ÜZERİNE yazılmaz
+        // (bkz. ClearConsoleForNewOperation XML doc'undaki DEĞİŞEN KURAL).
+        if (clearBuffers)
+        {
+            ClearConsoleForNewOperation();
+            ClearStreamForNewOperation();
+        }
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
         // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
@@ -1666,6 +1684,29 @@ public sealed partial class RunViewModel : ObservableObject
             _projectText[projectId] = sb = new StringBuilder();
         sb.Append(text).Append('\n');
         _projectLineCount[projectId] = (_projectLineCount.TryGetValue(projectId, out var n) ? n : 0) + 1;
+    }
+
+    /// <summary>[design v1.11.0 §9-4 `_beginOp` · D3/T5 v1.13.2] Yeni bir işlem başlıyor: konsol tamponları
+    /// (run dokümanı + tüm proje logları) TEMİZLENİR — ekrandaki her şey artık yürüyen işlemin hikâyesidir.
+    /// <see cref="ClearStreamForNewOperation"/>'ın konsol eşi; ikisi birlikte "her işlemde temizlenir" kuralını
+    /// oluşturur. <see cref="BeginRunAsync"/> (Build/Rebuild/Cycles) VE <see cref="SyncCoreAsync"/> (Sync)
+    /// AYNI metodu paylaşır — inline kopya YASAK.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2]</b> Bu gövde önceden yalnız <see cref="BeginRunAsync"/>'in İÇİNDE,
+    /// adsız bir <c>if (clearBuffers) lock (_gate) { … }</c> bloğuydu; Sync bu bloğa hiç uğramadığından
+    /// motorun <c>syncProgress</c> satırları bir önceki işlemin tortusunun ÜZERİNE yazılıyordu (kanıt:
+    /// <see cref="RunViewModelStateTests.Sync_clears_the_console_and_stream_left_over_from_the_previous_operation"/>).
+    /// Tasarım v1.13.2 "Konsol + event stream her işlemde temizlenir" kuralını Sync'i de kapsayacak şekilde
+    /// netleştirdi; blok burada adlandırılıp <see cref="SyncCoreAsync"/>'e de bağlandı.</para></summary>
+    private void ClearConsoleForNewOperation()
+    {
+        lock (_gate)
+        {
+            _liveLines.Clear();
+            _projectText.Clear();
+            _runText.Clear();
+            _runLineCount = 0;
+            _projectLineCount.Clear();
+        }
     }
 
     private void AppendRunLine(string text)

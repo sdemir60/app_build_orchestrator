@@ -235,7 +235,9 @@ public sealed partial class RunViewModel
         ApplyRepositoryRoot(repositoryRoot);
         if (RootPath.Length == 0) return;
         if (IsEngineUnavailable) return;
-        await SyncAsync();
+        // [D3/T5 · design v1.13.2] clearBuffers:false — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten
+        // HEMEN ÖNCE KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); ikinci bir clear onu da silerdi.
+        await SyncCoreAsync(clearBuffers: false);
     }
 
     /// <summary>[D7 · K10] Kabuğun "Choose Folder" yolu: yeni bir repo kökü seçilince kökü değiştirir, proje
@@ -246,7 +248,10 @@ public sealed partial class RunViewModel
     {
         if (IsMidRunLocked) return;
         if (!ApplyRepositoryRoot(path)) return;
-        await SyncAsync();
+        // [D3/T5 · design v1.13.2] clearBuffers:false — ilk kurulumda not YOK (konsol zaten boş), sonraki bir
+        // kök değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; ikinci bir clear onu
+        // da silerdi (bkz. SyncCoreAsync XML doc'u).
+        await SyncCoreAsync(clearBuffers: false);
     }
 
     /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot

@@ -321,6 +321,12 @@ public class ProjectListFilterTests
     /// <para><b>Ayırt edici kanıt:</b> bu testi yazdıktan sonra <c>SetGroups</c>'un sonuna bilerek
     /// <c>Scroll.ScrollToVerticalOffset(0)</c> eklenip test KIRMIZI görüldü, sonra geri alındı (bkz.
     /// task-T2-report.md §4) — yani bu test gerçekten üretim davranışını ölçüyor, sahte-yeşil değil.</para>
+    ///
+    /// <para><b>[D3/T5 · design v1.13.2]</b> İkinci bir işi de var: <see cref="StickyLayerList.PlayRevealStagger"/>
+    /// artık seçim yokken scroll'u 0'a döndürüyor, ama YALNIZ <c>reveal:true</c> yolundan (bkz. o metodun XML
+    /// doc'u) — burada tetiklenen filtre tazelemesi <c>reveal:false</c>'tur, yani bu test AYNI ZAMANDA "filtre
+    /// tazelemesi reveal'in scroll sıfırlamasını TETİKLEMEZ" iddiasının da kanıtıdır (T5'in üçüncü yönü — ayrı
+    /// bir kopya test YAZILMADI).</para>
     /// </summary>
     [StaFact]
     public void Filtering_the_list_preserves_the_scroll_offset_instead_of_snapping_to_the_top()
