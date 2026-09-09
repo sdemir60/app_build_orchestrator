@@ -156,6 +156,10 @@ public partial class GraphView : UserControl
 
     private QuietLayoutResult _layout = QuietGraphLayout.Compute([], new Size(0, 0));
     private string? _selectedNode;
+    /// <summary>[design v1.13.2 §2.5] Bitiş koreografisi doğarken BIRAKILAN seçim (prototip <c>focusOff</c>,
+    /// BuildApp.jsx:460-468). <c>null</c> = ya hiç finale olmadı ya da seçim o zamandan beri değişti (odak
+    /// normal çalışıyor). <see cref="IsFinale"/>'nin TEK okuyucusu budur — kopya YASAK.</summary>
+    private string? _focusOff;
     private HashSet<string> _focusSet = new(StringComparer.Ordinal);
     private GraphRunPhase _runPhase = GraphRunPhase.Idle;
     /// <summary>[design v1.7.0 — Filtreleme] Listenin görünür kümesinin proje ADLARI; null = filtre yok.</summary>
@@ -333,6 +337,10 @@ public partial class GraphView : UserControl
         {
             if (string.Equals(_selectedNode, value, StringComparison.Ordinal)) return;
             _selectedNode = value;
+            // [design v1.13.2 §2.5] Bırakılan odak SEÇİM DEĞİŞİNCE düşer: yeni değer hatırlanandan
+            // (_focusOff) farklıysa "final hâl" biter, odak normal çalışmasına döner (aynı projeyi yeniden
+            // seçmek de bir DEĞİŞİKLİKTİR — Toggle önce null'a döner, buradan iki kez geçer).
+            if (_focusOff is not null && _focusOff != value) _focusOff = null;
             // §2.3: "Seçim değişince hover temizlenir (odak kayması sonrası imleç altında bayat hover
             // kalmaz)." Kamera 460ms'de başka bir yere gider; imleç artık o düğümün üstünde değildir.
             SetHover(null);
@@ -413,6 +421,26 @@ public partial class GraphView : UserControl
     internal EndStep EndStep => _endStep;
 
     /// <summary>
+    /// [design v1.13.2 §2.5] <b>Bitiş koreografisi tam görünümde oynar.</b> Koreografi doğarken (Hold'dan
+    /// itibaren) VE bittikten SONRA — o sıradaki seçim hâlâ <see cref="_focusOff"/>'a eşit olduğu sürece —
+    /// graf seçim odağını BIRAKMIŞ sayılır: kamera, odak kümesi, seçim kenarları, node halkası ve ad
+    /// etiketi hepsi "seçim yokmuş gibi" davranır (bkz. <see cref="EffectiveSelection"/>, bu beş yüzeyin
+    /// TEK okuduğu yer — kopya YASAK). <b>Seçimin kendisi SİLİNMEZ</b> — yalnız ona odaklanma bırakılır ve
+    /// BİR DAHA geri gelmez, ta ki kullanıcı seçimi DEĞİŞTİRENE dek (<see cref="SelectedNode"/> setter'ı
+    /// <see cref="_focusOff"/>'u o an düşürür).
+    ///
+    /// <para>Prototip otoritesi (BuildApp.jsx:460-468): <c>const finale = !!endStep || (!!selected &amp;&amp;
+    /// selected === focusOff);</c> — WPF karşılığı birebir aynı formüldür.</para>
+    /// </summary>
+    private bool IsFinale => _endStep != EndStep.None || (_selectedNode is { } s && s == _focusOff);
+
+    /// <summary>Odak/kamera/kenar/halka/etiket sistemlerinin gördüğü seçim — <see cref="IsFinale"/> iken
+    /// HER ZAMAN <c>null</c>. "Seçim yokmuş gibi davran" kuralının TEK kaynağı budur: beş yüzeyin hepsi
+    /// <see cref="_selectedNode"/> yerine BUNU okur, kendi <c>IsFinale ? null : _selectedNode</c> kopyasını
+    /// yazmaz.</summary>
+    private string? EffectiveSelection => IsFinale ? null : _selectedNode;
+
+    /// <summary>
     /// [design v1.11.0 §9-5 · §2.3] <b>"Neon tutuşma".</b> Koşu bitince YALNIZ grafta oynar: hepsi soluk
     /// bekler → bu koşuda derlenenler (succeeded ∪ failed) RANDOM sırayla düzensiz titreyerek tutuşur →
     /// nefes → kalan tüm griler birlikte belirginleşir.
@@ -426,6 +454,11 @@ public partial class GraphView : UserControl
         ArgumentNullException.ThrowIfNull(builtNodeNames);
         StopEndFinale();
         if (builtNodeNames.Count == 0 || !AnimationsEnabledProvider()) return;
+
+        // [design v1.13.2 §2.5] Koreografi doğarken o anki seçim "bırakılmış odak" olarak hatırlanır — bkz.
+        // IsFinale. Hemen aşağıdaki _endPlayer.Play ilk adımı (Hold) SENKRON tetikler (StepPlayer.Play);
+        // SetEndStep bu değeri okuyup kamerayı ve odağa bağlı görselleri ANINDA tazeler.
+        _focusOff = _selectedNode;
 
         _builtNodes = new HashSet<string>(builtNodeNames, StringComparer.Ordinal);
         var order = EndFinale.Order(builtNodeNames.Count, runCount);
@@ -458,6 +491,11 @@ public partial class GraphView : UserControl
             _endOrder = new Dictionary<string, int>(StringComparer.Ordinal);
         }
         ApplyAllOpacities();
+        // [design v1.13.2 §2.5] IsFinale burada değişmiş olabilir (finale doğarken ya da None'a dönerken) —
+        // odağa bağlı BEŞ yüzeyin hepsi (ApplySelection'ın kurduğu odak kümesi/kenar/halka/etiket + kamera)
+        // TEK yerden tazelenir; hedef/değer değişmediyse ilgili çağrılar zaten no-op'tur.
+        ApplySelection();
+        ApplyCamera(animate: true);
         if (step == EndStep.Neon) PlayNeon();
     }
 
@@ -1100,8 +1138,9 @@ public partial class GraphView : UserControl
 
         TooltipText.Text = name; // §2.3: TAM proje adı, kısaltmasız
         TooltipBox.Visibility = Visibility.Visible;
-        // Hover edilen düğüm vurgu ölçeğindedir; halkası ancak AYNI ZAMANDA seçiliyse vardır.
-        bool ringed = string.Equals(name, _selectedNode, StringComparison.Ordinal);
+        // Hover edilen düğüm vurgu ölçeğindedir; halkası ancak AYNI ZAMANDA seçiliyse vardır (finale
+        // sırasında/sonrasında hiç yoktur — EffectiveSelection null döner).
+        bool ringed = string.Equals(name, EffectiveSelection, StringComparison.Ordinal);
         PlaceOverlayBox(TooltipBox, box => GraphOverlay.TooltipTopLeft(
             slot.Center, LiveCamera, PaintedHalfExtent(ringed, LiveCamera.Scale), ViewportSize, box));
     }
@@ -1143,11 +1182,13 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- seçim (halka + sönme)
 
-    /// <summary>Odak kümesi = seçili düğüm + DOĞRUDAN bağımlılıkları + DOĞRUDAN bağımlıları (§2.3).</summary>
+    /// <summary>Odak kümesi = seçili düğüm + DOĞRUDAN bağımlılıkları + DOĞRUDAN bağımlıları (§2.3).
+    /// [design v1.13.2 §2.5] Finale sırasında/sonrasında (<see cref="IsFinale"/>) <see cref="EffectiveSelection"/>
+    /// null döner — odak kümesi BOŞ kurulur, yani "seçim yokmuş gibi" davranır.</summary>
     private void ApplySelection()
     {
         _focusSet = new HashSet<string>(StringComparer.Ordinal);
-        if (_selectedNode is { } selected)
+        if (EffectiveSelection is { } selected)
         {
             _focusSet.Add(selected);
             foreach (string name in DirectNeighboursOf(selected))
@@ -1159,7 +1200,7 @@ public partial class GraphView : UserControl
         foreach (var slot in _slotOrder)
         {
             string name = slot.Model.Name;
-            bool isSelected = string.Equals(name, _selectedNode, StringComparison.Ordinal);
+            bool isSelected = string.Equals(name, EffectiveSelection, StringComparison.Ordinal);
             slot.Visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
             // DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
             ApplyHover(name); // ölçek + çerçeve + z-order + opaklık TEK yerden (kopya YASAK)
@@ -1180,6 +1221,8 @@ public partial class GraphView : UserControl
     /// <summary>
     /// [quiet] §2.3: "Bağımlılık çizgileri YALNIZ seçimde: deps→node ve node→dependents." Seçim değişince
     /// eski çizgiler SÖKÜLÜR — kalıcı bir ağ yoktur, dolayısıyla koşarken stillenecek kenar da yoktur.
+    /// [design v1.13.2 §2.5] Finale sırasında/sonrasında da (<see cref="EffectiveSelection"/> null) hiç
+    /// kurulmaz.
     /// </summary>
     private void RebuildSelectionEdges()
     {
@@ -1187,7 +1230,7 @@ public partial class GraphView : UserControl
         _selectionEdges.Clear();
         ReleaseEdgeFlowClock();
 
-        if (_selectedNode is not { } selected || !_slots.TryGetValue(selected, out var target)) return;
+        if (EffectiveSelection is not { } selected || !_slots.TryGetValue(selected, out var target)) return;
 
         var centre = ToWorld(target.Center);
         if (_deps.TryGetValue(selected, out var deps))
@@ -1249,7 +1292,7 @@ public partial class GraphView : UserControl
     /// AYNI overlay katmanında, TEK bir öğe olarak yaşar.</summary>
     private void UpdateSelectionLabel()
     {
-        if (_selectedNode is not { } selected || !_slots.TryGetValue(selected, out var slot))
+        if (EffectiveSelection is not { } selected || !_slots.TryGetValue(selected, out var slot))
         {
             SelectionLabelBox.Visibility = Visibility.Collapsed;
             return;
@@ -1312,7 +1355,7 @@ public partial class GraphView : UserControl
         double target = GraphNodeOpacity.Resolve(
             visual.Model.Status,
             _runPhase,
-            _selectedNode is not null,
+            EffectiveSelection is not null,
             _focusSet.Contains(visual.Model.Name),
             string.Equals(_hoveredNode, visual.Model.Name, StringComparison.Ordinal),
             _filterMatches is not null,
@@ -1534,7 +1577,9 @@ public partial class GraphView : UserControl
 
     private CameraTransform ResolveCameraTarget(Size panel)
     {
-        if (_selectedNode is not { } selected || !_slots.TryGetValue(selected, out var target))
+        // [design v1.13.2 §2.5] Finale sırasında/sonrasında EffectiveSelection null döner ⇒ kamera
+        // sığdırma yapmaz, doğrudan fit-all'a (Default) döner.
+        if (EffectiveSelection is not { } selected || !_slots.TryGetValue(selected, out var target))
             return GraphCamera.Default;
 
         double x0 = double.PositiveInfinity, x1 = double.NegativeInfinity;

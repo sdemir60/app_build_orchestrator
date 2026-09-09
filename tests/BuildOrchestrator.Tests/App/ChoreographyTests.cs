@@ -588,4 +588,88 @@ public class ChoreographyTests
 
         Assert.Equal(EndStep.None, view.EndStep);
     }
+
+    // ================================================================ [design v1.13.2 §2.5] bitiş
+    // koreografisi tam görünümde + odak istisnası
+
+    /// <summary>
+    /// [design v1.13.2 §2.5] <b>Bitiş koreografisi tam görünümde oynar.</b> Koreografi doğduğunda (<c>Hold</c>)
+    /// graf seçim odağını bırakır ve kamera fit-all'a (<see cref="GraphCamera.Default"/>) döner — SEÇİM
+    /// VARKEN bile. <c>Hold</c> fazı (900ms) bu geçişi karşılar, böylece neon zinciri hep tam görünümde başlar.
+    /// </summary>
+    [StaFact]
+    public void The_end_finale_moves_the_camera_to_the_default_view_even_with_a_selection()
+    {
+        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        view.SelectedNode = "built";
+        Assert.NotEqual(GraphCamera.Default, view.CurrentCamera); // ön-koşul: seçim kamerayı odaklamış olmalı
+
+        view.PlayEndFinale(["built"], runCount: 1);
+
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera);
+    }
+
+    /// <summary>[design v1.13.2 §2.5] Finale boyunca seçimin akan kenarları, halkası ve kelepçeli ad
+    /// etiketi çizilmez — "seçim yokmuş gibi" davranır (kamera dışındaki dört yüzeyden üçü).</summary>
+    [StaFact]
+    public void The_end_finale_hides_the_selection_edges_the_ring_and_the_name_label()
+    {
+        var view = GraphTestView.Realized(new Size(640, 400), () => true);
+        view.SetGraph(
+            [new("dep", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+             new("built", 1, GraphStatus.Succeeded, VisualStatus.Succeeded)],
+            [new GraphEdge("dep", "built")]);
+        view.SelectedNode = "built";
+        Assert.NotEmpty(view.SelectionEdgePaths);                                            // ön-koşul
+        Assert.Equal(Visibility.Visible, view.NodeVisuals["built"].SelectionRing.Visibility); // ön-koşul
+        Assert.Equal(Visibility.Visible, view.SelectionLabelVisibility);                      // ön-koşul
+
+        view.PlayEndFinale(["dep", "built"], runCount: 1);
+
+        Assert.Empty(view.SelectionEdgePaths);
+        Assert.Equal(Visibility.Collapsed, view.NodeVisuals["built"].SelectionRing.Visibility);
+        Assert.Equal(Visibility.Collapsed, view.SelectionLabelVisibility);
+    }
+
+    /// <summary>
+    /// [design v1.13.2 §2.5] <b>Final hâl.</b> Koreografi doğal olarak bitince (<c>EndStep.None</c>) seçim
+    /// SİLİNMEZ ama odak GERİ GELMEZ: kamera fit-all'da kalır ve seçim dimlemesi de uygulanmaz — odak dışı
+    /// kalacak bir node (ne seçili ne komşusu) artık tam opak. "Seçim yokmuş gibi" final hâl budur; fit
+    /// görünüm kalıcıdır, bir sonraki adım yalnız seçim DEĞİŞİNCE gelir (aşağıdaki test).
+    /// </summary>
+    [StaFact]
+    public void The_end_finale_keeps_the_selection_but_the_view_stays_released_once_it_ends()
+    {
+        var view = Graph(
+            new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+            new GraphNode("other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
+        view.SelectedNode = "built";
+
+        view.PlayEndFinale(["built"], runCount: 1);
+        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(6));
+
+        Assert.Equal("built", view.SelectedNode);                     // seçim silinmedi
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera);        // odak geri gelmedi
+        Assert.Equal(1.0, view.NodeVisuals["other"].OpacityTarget, 6); // seçim dimlemesi uygulanmıyor
+    }
+
+    /// <summary>[design v1.13.2 §2.5] <b>Odak yeniden açılır.</b> Finale bittikten sonra kullanıcı BAŞKA
+    /// bir projeyi seçince kamera o projenin odak hedefine döner ve halkası belirir — bırakılan odak SEÇİM
+    /// DEĞİŞİNCE düşer.</summary>
+    [StaFact]
+    public void Selecting_a_different_project_reopens_focus_after_the_finale_ends()
+    {
+        var view = Graph(
+            new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+            new GraphNode("other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
+        view.SelectedNode = "built";
+        view.PlayEndFinale(["built"], runCount: 1);
+        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(6));
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera); // ön-koşul: final hâlde fit-all
+
+        view.SelectedNode = "other";
+
+        Assert.NotEqual(GraphCamera.Default, view.CurrentCamera);
+        Assert.Equal(Visibility.Visible, view.NodeVisuals["other"].SelectionRing.Visibility);
+    }
 }
