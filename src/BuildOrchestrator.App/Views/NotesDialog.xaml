@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
              Visibility="Collapsed" Focusable="True">
   <!-- [design v1.13.0/v1.13.1 §2.11 · D4/T9] What's new — kendi diyalogu. About'un dördüncü sekmesiydi
        (design v1.9.0); v1.13.0 onu ÇIKARDI: kendi title bar butonu (sparkle, dişli ile ⓘ arasında) ve kendi
@@ -34,13 +35,20 @@
              içe alır; sürüm bloğu böylece aşağıdaki listenin tarih sütunuyla tam sağa hizalanır. CSS
              `align-items: flex-end` + `margin-bottom: 3px` burada satırın kendisinde VerticalAlignment=Bottom
              (iki kolon da) + sürüm bloğunun alt marjı 3 ile karşılanır: mono sürüm satırının taban çizgisi
-             soldaki açıklama satırının taban çizgisiyle hizalanır. -->
+             soldaki açıklama satırının taban çizgisiyle hizalanır.
+
+             [KORUNAN SAPMA] §2.11 hem `What's new` başlığı hem sürüm numarası için 15px ister; ikisi de
+             FontSize.Md (14) çizilir. DS ölçeğinde 15px adımı YOKTUR (§1.2: 11 · 12 · 13 · 14 · 16 · 20) ve
+             tasarımın KENDİ prototipi de her iki yerde `text-md` (14px) token'ını kullanır — sapma
+             prototiple uyum yönündedir. Caps etiketin 10px'i ölçek dışı ama tasarım kaynağında da ham bir
+             sayıdır;
+             tek tanım yeri NotesDialog.CapsLabelPx'tir (INSTALLED çipiyle PAYLAŞILIR, kopya YASAK). -->
         <Border Grid.Row="0" BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
           <DockPanel Margin="18,16,28,12">
             <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Bottom"
                         Margin="12,0,0,3">
               <controls:TrackedTextBlock Text="INSTALLED VERSION" HorizontalAlignment="Right"
-                                         FontSize="10"
+                                         FontSize="{x:Static views:NotesDialog.CapsLabelPx}"
                                          Foreground="{DynamicResource Brush.TextFaint}" />
               <TextBlock Text="{x:Static services:AppIdentity.Version}" Margin="0,2,0,0"
                          HorizontalAlignment="Right"

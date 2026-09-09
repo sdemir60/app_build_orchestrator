@@ -425,8 +425,11 @@ public partial class MainWindow : Window
         RefreshUnseenNotesMark();
     }
 
-    /// <summary>[About] Bir modal AÇIK MI — Esc zinciri ve gear kapısı bu TEK karardan beslenir (üç yerde ayrı
-    /// ayrı sorulsaydı biri güncellenip diğerleri unutulurdu).
+    /// <summary>[About] Bir modal AÇIK MI — üç tüketici bu TEK karardan beslenir (her biri kendi listesini
+    /// saysaydı biri güncellenip diğerleri unutulurdu): Esc zinciri (<see cref="OnEscapePressed"/>), gear
+    /// kapısı (<see cref="OnSettings"/>) ve first-run davetindeki <c>Import settings…</c>
+    /// (<see cref="OnImportSettings"/>). <b>F1/Ctrl+F1 buraya BAKMAZ</b> — About ve What's new kendi
+    /// diyaloglarını toggle eder ve üste binerler (bkz. <see cref="OnAboutRequested"/>).
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.11]</b> ESKİ İDDİA: yalnız Settings ve About'a bakardı.
     /// Üçüncü modal (<see cref="NotesOverlay"/>) eklendiği için buraya da KATILDI — gear artık What's new
@@ -887,7 +890,9 @@ public partial class MainWindow : Window
     // [design v1.8.0 §2.4] "Choose Folder" yolu KALDIRILDI: boş durum artık doğrudan bir klasör seçici
     // açmıyor, Settings'e yönlendiriyor ve kök orada (taslakta) düzenleniyor — uygulanması Save'e ertelenir
     // (RunViewModel.ApplySettingsAsync). Klasör seçicinin kendisi (PickFolder) Settings'in "Browse…"
-    // düğmesine geçti; ChangeRepositoryAsync yolu ise kalıcı durumdan gelen kök için yerinde duruyor.
+    // düğmesine geçti. Kalıcı durumdan gelen kök DOĞRUDAN RootPath set'iyle seed edilir (yukarıda, D7 M3 —
+    // seed-but-idle, hiçbir komut göndermez); RunViewModel.ChangeRepositoryAsync'in üretimde çağıranı YOKTUR,
+    // yalnız testlerden sürülür.
 
     /// <summary>[design v1.11.0 §2.7-4] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
     /// <see cref="ProjectFilter.ChipLabel"/>'dır — seçili KÜMEYİ <c>" + "</c> ile listeler (çoklu filtre);

@@ -21,6 +21,13 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class NotesDialog : UserControl
 {
+    /// <summary>[§2.11] Bu diyalogdaki caps etiketlerin ölçüsü: başlıktaki <c>INSTALLED VERSION</c> ve
+    /// <see cref="BuildInstalledChip"/>'in <c>INSTALLED</c> metni AYNI sayıyı kullanır. DS ölçeğinde 10px
+    /// adımı YOKTUR (§1.2: 11 · 12 · 13 · 14 · 16 · 20) — tasarım kaynağı da burada ham bir sayı verir, yani
+    /// bu component-specific bir ölçüdür ve ARCHITECTURE §14.1 gereği onu çizen kontrolde ADLANDIRILMIŞ tek
+    /// bir sabit olarak durur (iki çıplak literal DEĞİL).</summary>
+    public const double CapsLabelPx = 10;
+
     public NotesDialog() => InitializeComponent();
 
     /// <summary>[design v1.13.0 §2.11] Diyalog GÖRÜLDÜ — title bar'daki sparkle butonunun okunmadı noktası
@@ -124,9 +131,8 @@ public partial class NotesDialog : UserControl
 
     /// <summary>[§2.11 · v1.13.1] Nötr <c>INSTALLED</c> çipi — <see cref="BuildVersionBlock"/>'un CURRENT
     /// metninin yerini alan tek yeni parça: 17px yüksek, yatay padding 6px, <c>surface-raised</c> zemin + 1px
-    /// <c>border-strong</c>, <c>radius-xs</c>, 10px caps <c>text-dim</c>. 10px ölçek TOKENİNDE karşılığı
-    /// yoktur — tasarım kaynağı da ham <c>fontSize: 10</c> kullanır; component-specific ölçü olarak burada
-    /// literal kalır (ARCHITECTURE §14.1'in izin verdiği istisna). <see cref="Controls.TrackedTextBlock"/>'un
+    /// <c>border-strong</c>, <c>radius-xs</c>, caps <c>text-dim</c> metin. Ölçüsü başlık satırındaki caps
+    /// etiketle PAYLAŞILIR — tek tanım yeri <see cref="CapsLabelPx"/>. <see cref="Controls.TrackedTextBlock"/>'un
     /// KENDİ DP'leri doğrudan (SetResourceReference'ın hedef DP'si AÇIKÇA nitelenerek) sürülür — TextBlock'un
     /// Foreground/FontSize'ı burada ETKİSİZDİR (ayrı bir DependencyProperty ailesi).</summary>
     private static FrameworkElement BuildInstalledChip()
@@ -146,7 +152,7 @@ public partial class NotesDialog : UserControl
         var label = new Controls.TrackedTextBlock
         {
             Text = "INSTALLED",
-            FontSize = 10,
+            FontSize = CapsLabelPx,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
         };

@@ -130,7 +130,9 @@ public class NotesDialogTests
 
     /// <summary>Sürüm numarası LİTERAL DEĞİLDİR — <see cref="AppIdentity.Version"/>'dan gelir (kopya YASAK).
     /// Başlıktaki "INSTALLED VERSION" caps etiketi bir <see cref="TrackedTextBlock"/>'tur (harf aralıklı) —
-    /// TextBlock DEĞİL, ayrı aranır.</summary>
+    /// TextBlock DEĞİL, ayrı aranır. Ölçüsü de literal değildir: caps ölçüsünün tek tanım yeri
+    /// <see cref="BuildOrchestrator.App.Views.NotesDialog.CapsLabelPx"/>'tir ve XAML onu <c>x:Static</c> ile
+    /// okur (aynı sayıyı INSTALLED çipi de kullanır).</summary>
     [StaFact]
     public void The_header_version_block_reads_the_installed_version_from_app_identity()
     {
@@ -140,7 +142,7 @@ public class NotesDialogTests
             Assert.Contains(AppIdentity.Version, VisibleTexts(dialog));
             var caption = DsResources.Descendants(dialog).OfType<TrackedTextBlock>()
                 .Single(t => t.Text.Equals("INSTALLED VERSION", StringComparison.Ordinal));
-            Assert.NotNull(caption);
+            Assert.Equal(BuildOrchestrator.App.Views.NotesDialog.CapsLabelPx, caption.FontSize);
         }
     }
 
@@ -292,17 +294,18 @@ public class NotesDialogTests
     // ---------------------------------------------------------------- footer
 
     /// <summary>[§2.11] Footer yalnız sağda secondary Close taşır — Copy diagnostics About'ta kalır, buraya
-    /// gelmez.</summary>
+    /// gelmez. "Yalnız" iddiası footer'ın KENDİ çocuk sayısından okunur: Close'un bulunduğunu ve About'un
+    /// metninin bulunmadığını ölçmek, footer'a üçüncü bir düğme eklenmesini yakalamazdı.</summary>
     [StaFact]
     public void The_footer_has_only_a_close_button()
     {
         var (dialog, scope) = NotesDialogHost.OpenRealized();
         using (scope)
         {
-            var buttons = DsResources.Descendants(dialog).OfType<Button>()
-                .Where(b => b.Visibility == Visibility.Visible)
-                .ToList();
-            Assert.Contains(buttons, b => Equals(b.Content, "Close"));
+            var close = DsResources.Descendants(dialog).OfType<Button>().Single(b => Equals(b.Content, "Close"));
+            var footer = (DockPanel)VisualTreeHelper.GetParent(close);
+
+            Assert.Same(close, Assert.Single(footer.Children.Cast<UIElement>()));
             Assert.DoesNotContain(VisibleTexts(dialog), t => t.Contains("Copy diagnostics", StringComparison.Ordinal));
         }
     }
