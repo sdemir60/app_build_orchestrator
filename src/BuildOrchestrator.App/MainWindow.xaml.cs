@@ -153,6 +153,9 @@ public partial class MainWindow : Window
         // yanı başında) — null-safe desen kardeşleriyle hizalı. Seed yalnız App içi listeyi doldurur, hiçbir
         // IPC/Sync tetiklemez; liste bir sonraki Sync/Build komutuyla motora gider.
         if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
+        // [design v1.14.0 §9] Bayrak hiç yazılmamışsa (ya da bayat bir null token'sa) varsayılan GÜNCELLE:
+        // bayrak öncesi kaydedilmiş bir dosya özelliğin bugünkü davranışını korumalıdır.
+        _vm.UpdateExternals = saved.UpdateExternals ?? true;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -962,6 +965,7 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.UseWorktree):
             case nameof(RunViewModel.WorktreeName):
             case nameof(RunViewModel.PerfMode):
+            case nameof(RunViewModel.UpdateExternals):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
@@ -969,6 +973,7 @@ public partial class MainWindow : Window
                 s.UseWorktree = _vm.UseWorktree;
                 s.WorktreeName = _vm.WorktreeName;
                 s.PerfMode = _vm.PerfMode;
+                s.UpdateExternals = _vm.UpdateExternals;
                 _uiState.Save(s);
                 break;
         }

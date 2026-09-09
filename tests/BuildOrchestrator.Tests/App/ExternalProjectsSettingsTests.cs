@@ -58,6 +58,41 @@ public class ExternalProjectsSettingsTests
     }
 
     [Fact]
+    public void The_update_flag_round_trips_when_it_is_turned_off()
+    {
+        using var temp = new TempDir();
+        var store = new JsonUiStateStore(Path.Combine(temp.Path, "ui-state.json"));
+        store.Save(new UiState { UpdateExternals = false });
+
+        Assert.False(store.Load().UpdateExternals);
+    }
+
+    [Fact]
+    public void A_state_file_written_before_the_update_flag_existed_reads_as_not_set()
+    {
+        // Alan NULLABLE: "hiç yazılmamış" ile "false yazılmış" ayrımı taşınmak zorunda — MainWindow ilkini
+        // varsayılan AÇIK olarak seed eder, yani bayrak öncesi bir dosya bugünkü davranışı korur.
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path, """{"ColPct":42}""");
+
+        Assert.Null(new JsonUiStateStore(path).Load().UpdateExternals);
+    }
+
+    [Fact]
+    public void An_explicit_null_update_flag_does_not_wipe_the_rest_of_the_layout()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path, """{"ColPct":31,"UpdateExternals":null}""");
+
+        var loaded = new JsonUiStateStore(path).Load();
+
+        Assert.Null(loaded.UpdateExternals);
+        Assert.Equal(31, loaded.ColPct);
+    }
+
+    [Fact]
     public void The_saved_json_uses_the_shared_contract_shape()
     {
         // Diskteki şekil Contracts tipinin kendisidir (yol + kaynak) — App-yerel ikinci bir kopya yoktur.

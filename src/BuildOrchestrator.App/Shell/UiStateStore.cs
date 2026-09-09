@@ -74,6 +74,15 @@ public sealed class UiState
 
     private List<ExternalProject> _externalProjects = [];
 
+    /// <summary>[design v1.14.0 §9] Build, harici çalışma kopyalarını derlemeden ÖNCE kendi sürüm
+    /// kontrolünden güncellesin mi.
+    /// <para><b>Alan NULLABLE ve varsayılanı "güncelle"dir.</b> <c>bool</c> olsaydı diskteki açık bir
+    /// <c>null</c> token'ı (elle düzenleme, yarım yazım) <see cref="JsonUiStateStore.Load"/>'u düşürür ve TÜM
+    /// yerleşimi sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe. Ayrıca "hiç
+    /// yazılmamış" ile "false yazılmış" ayrımı burada taşınmak zorundadır: bayrak öncesi kaydedilmiş bir
+    /// dosya, özelliğin bugünkü davranışını (güncelle) korumalıdır.</para></summary>
+    public bool? UpdateExternals { get; set; }
+
     public bool Autostart { get; set; }
 }
 

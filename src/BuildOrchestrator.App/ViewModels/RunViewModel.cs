@@ -598,6 +598,16 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>Komutlara giden hâli: boş liste → <c>null</c> (özellik kapalı, alan hiç yazılmaz).</summary>
     private IReadOnlyList<ExternalProject>? ExternalProjectsForWire => ExternalProjects.Count > 0 ? ExternalProjects : null;
 
+    /// <summary>[design v1.14.0 §9] Build, harici çalışma kopyalarını derlemeden ÖNCE kendi sürüm
+    /// kontrolünden güncellesin mi (git <c>fetch</c> + <c>merge --ff-only</c> / <c>tf vc get</c>).
+    /// <b>Varsayılan: evet.</b>
+    /// <para>Kapalıyken tek bir VCS komutu bile çalışmaz ve kir kapısı da yoktur — harici projeler ana repo
+    /// gibi, oldukları hâliyle derlenir. Karar doğruluğu bundan etkilenmez: harici projelerin imzası çalışma
+    /// kopyasının İÇERİĞİNDEN hesaplanır.</para>
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer ve bir aç/kapa
+    /// kontrolü doğrudan buna bağlanabilir.</para></summary>
+    [ObservableProperty] private bool _updateExternals = true;
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
@@ -698,7 +708,7 @@ public sealed partial class RunViewModel : ObservableObject
         // hiç başlatmıyordu).
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
             RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
-            ExternalProjectsForWire);
+            ExternalProjectsForWire, UpdateExternals);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
