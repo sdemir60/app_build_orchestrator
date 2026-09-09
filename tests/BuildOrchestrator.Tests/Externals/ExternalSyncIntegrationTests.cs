@@ -17,12 +17,15 @@ namespace BuildOrchestrator.Tests.Externals;
 /// <summary>
 /// Sync'in harici köklerle birleşimi: harici klasördeki projeler TARANIR, ana taramayla birleşir ve TEK bir
 /// grafa girer. Ana bir projenin HintPath'i harici bir projenin DLL'ine denk gelince kenar kendiliğinden
-/// oluşur — "önce hariciler" diye bir kural yoktur, sıra graftan gelir.
+/// oluşur.
 ///
-/// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca hariciler topolojinin BAŞINA eklenen, kenarsız, <c>External</c>
-/// adlı bir katmanda duran sanal düğümlerdi ve Sync'in sayaçlarına KARIŞMAZLARDI. O tasarım harici projeyi
-/// tek bir solution hedefi olarak ele alıyordu; artık sıradan projeler oldukları için sayaçlara da girerler.
-/// Sync hâlâ HİÇBİR VCS komutu çalıştırmaz: yalnız dosya sistemini okur.</para>
+/// <para>Bulunan projeler AYRILMIŞ <c>External</c> katmanına (index −1) girer: listede ve grafta en üstte
+/// dururlar ve build-order'da ana repo projelerinden önce gelirler — ana projeler zaten onların çıktısına
+/// bağlıdır.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca hariciler kenarsız SANAL düğümlerdi (tek solution hedefi) ve
+/// Sync'in sayaçlarına KARIŞMAZLARDI. Artık gerçek projeler: kenarları var, sayaçlara girerler ve incremental
+/// kararları ana repo projeleriyle aynı yoldan gelir. Sync hâlâ HİÇBİR VCS komutu çalıştırmaz.</para>
 /// </summary>
 public class ExternalSyncIntegrationTests
 {
@@ -93,7 +96,10 @@ public class ExternalSyncIntegrationTests
 
         var node = Assert.Single(topology.Nodes, n => n.Id == mail);
         Assert.Equal("Mail", node.Name);
-        Assert.Equal(VcsKind.Git, node.ExternalVcs);          // rozet: yalnız hangi kaynaktan geldiğini söyler
+        Assert.Equal(VcsKind.Git, node.ExternalVcs);          // rozet: hangi kaynaktan geldiğini söyler
+        Assert.Equal(Core.Externals.ExternalProjectsConventions.LayerName, node.LayerName);
+        Assert.Equal(Core.Externals.ExternalProjectsConventions.LayerIndex, node.LayerIndex);
+        Assert.Equal(0, node.BuildOrder);                     // listenin ve grafın EN ÜSTÜ
         Assert.Contains(topology.Nodes, n => n.Name == "A" && n.ExternalVcs is null);
     }
 
@@ -113,10 +119,27 @@ public class ExternalSyncIntegrationTests
     }
 
     [Fact]
+    public async Task Externals_lead_the_build_order_even_when_nothing_references_them()
+    {
+        // Ayrılmış katman (index −1) her koşulda en üstte: kenar olmasa bile ana projelerden önce gelirler.
+        using var main = new GitTestRepo();
+        WriteWorkspace(main);
+        main.CommitAll("workspace");
+        using var external = new TempDir();
+        string mail = WriteExternal(external.Path, "Mail");
+
+        var topology = Topology(await RunSyncAsync(main, NewCacheRoot(),
+            new ExternalProject(external.Path, VcsKind.Git)));
+
+        Assert.Equal(mail, topology.Nodes[0].Id);
+    }
+
+    [Fact]
     public async Task An_external_project_that_a_repository_project_references_becomes_a_real_edge()
     {
         // Kenar primeri HintPath basename → producer eşlemesidir ve producer map artık İKİ kökü birden görür.
-        // Bu, "önce hariciler" kuralının yerini alan mekanizmadır: sıra graftan gelir.
+        // Ayrılmış katman sırayı zaten kurar; kenar onu GRAFTA da zorunlu kılar — yani bir harici geç
+        // derlenmeye kalksa bile ona bağımlı proje beklemek zorundadır.
         using var main = new GitTestRepo();
         WriteWorkspace(main, hintPathDll: "Mail.dll");
         main.CommitAll("workspace");

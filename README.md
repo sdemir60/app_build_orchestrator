@@ -135,9 +135,9 @@ the running instance first — tray icon → Exit).
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
    or a project file) and a source, Git or TFVC. Everything found under a card joins the same project list and
-   the same graph as the repository's own projects. Cards reorder the same way layer cards do, by dragging the
-   grip; that order is the order their working copies are refreshed in, not the build order — the build order
-   comes from the dependencies. What Build does with them is step 4 below.
+   the same graph as the repository's own projects, in an *External* group at the top, and is built first.
+   Cards reorder the same way layer cards do, by dragging the grip; that order is the order their working
+   copies are refreshed in. What Build does with them is step 4 below.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
@@ -163,11 +163,12 @@ the running instance first — tray icon → Exit).
 
    Sync then scans that path the same way it scans the repository root. A folder contributes every project
    under it; a solution contributes the projects it lists; a project file contributes itself. They appear in
-   the project list and the graph as ordinary rows, they are grouped by your layer patterns like everything
-   else, and a repository project that references one of their DLLs gets a **real dependency edge** — so the
-   build order comes from the graph rather than from where the card sits in the list. Everything else is
-   worked out from the path each time, so moving a project or recreating its working copy needs no edit here.
-   A path that resolves to no project at all is called out: Sync warns, Build refuses to start.
+   the project list and the graph in their own **External** group at the very top, and they are built before
+   the repository's own projects — your layer patterns are not applied to them, and they never fall into
+   *Other*. A repository project that references one of their DLLs also gets a **real dependency edge**, so
+   that order is enforced by the graph and not only by the grouping. Everything else is worked out from the
+   path each time, so moving a project or recreating its working copy needs no edit here. A path that resolves
+   to no project at all is called out: Sync warns, Build refuses to start.
 
    Before each Build their working copies are refreshed, in card order. A git root gets a fetch and a
    fast-forward — never a `pull`, so nothing is rewritten on your behalf; a TFVC root gets a `tf vc get`.

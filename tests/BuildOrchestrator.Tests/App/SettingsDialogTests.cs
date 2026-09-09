@@ -517,9 +517,8 @@ public class SettingsDialogTests
 
     /// <summary>[K5] Save: harici projeler katmanlarla AYNI commit'te UiState'e yazılır ve
     /// <see cref="RunViewModel.ExternalProjects"/>'e uygulanır; konsol notu sayı 0'dan artınca BİREBİR budur.
-    /// <para><b>[DEĞİŞEN KURAL]</b> Not eskiden "built before the repository projects" diyordu — o tur harici
-    /// projeleri grafın DIŞINDA, listeye göre sıralanan ayrı bir faz olarak derliyordu. Artık aynı grafa
-    /// giriyorlar ve sıra bağımlılıklardan geliyor, dolayısıyla "önce" iddiası yanlıştı.</para></summary>
+    /// <para>Not "built before the repository projects" der ve bu DOĞRUDUR: harici projeler ayrılmış
+    /// <c>External</c> katmanındadır (index −1), yani build-order'da ana repo projelerinden önce gelirler.</para></summary>
     [Fact]
     public async Task Saving_externals_persists_them_alongside_layers_in_the_same_commit()
     {
@@ -534,7 +533,7 @@ public class SettingsDialogTests
 
         await editor.CommitAsync(run, store);
 
-        Assert.Contains("External projects → 1 — scanned with the repository projects", run.GetRunDocumentText());
+        Assert.Contains("External projects → 1 — built before the repository projects", run.GetRunDocumentText());
         Assert.Equal(
             [new ExternalProject(@"C:\src\shared\Delta.Common\Delta.Common.csproj", VcsKind.Tfvc)],
             run.ExternalProjects);
@@ -554,7 +553,7 @@ public class SettingsDialogTests
         // 0 → 2: sayı DEĞİŞTİ → not YAZILIR (N ≥ 1 deseni).
         await run.ApplySettingsAsync(patterns, @"D:\repo",
             [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"C:\b", VcsKind.Tfvc)]);
-        Assert.Contains("External projects → 2 — scanned with the repository projects", run.GetRunDocumentText());
+        Assert.Contains("External projects → 2 — built before the repository projects", run.GetRunDocumentText());
         Assert.Equal(2, run.ExternalProjects.Count);
 
         // 2 → 2 (FARKLI path'ler, AYNI sayı): sayı DEĞİŞMEDİ → İKİNCİ bir not satırı EKLENMEZ — ama liste yine
@@ -614,7 +613,7 @@ public class SettingsDialogViewTests
 
         // description TextBlock 3 <Run>'dan kurulu — headless'ta TextBlock.Text (ContentStart/End tabanlı)
         // Inlines'ı yansıtmaz; Run'lar doğrudan birleştirilir (aynı okunabilir metin, farklı okuma yolu).
-        // [K5] EXTERNAL PROJECTS'in açıklaması da 3 Run'dan kurulu (aynı tek-sözcük vurgusu deseni) — artık İKİ
+        // [K5] EXTERNAL PROJECTS'in açıklaması da 3 Run'dan kurulu (aynı "before" vurgusu deseni) — artık İKİ
         // 3-Run'lı blok var, bu yüzden LAYERS'ınki "regex" sözcüğüyle ayırt edilir (yalnız Layers açıklaması taşır).
         string description = string.Concat(
             blocks.Single(b => b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text.Contains("regex")))
@@ -747,13 +746,12 @@ public class SettingsDialogViewTests
         Assert.True(externalY < layersY, "EXTERNAL PROJECTS, LAYERS'tan önce durmalı");
     }
 
-    /// <summary>[K5] design v1.14.0 §9 BİREBİR: caps başlığı, açıklama (3 Run — vurgulanan sözcük ayrı) ve
-    /// boş-durum kutusunun metni. Vurgu text-secondary + 500 taşır (§9: "text-secondary, 500").
-    /// <para><b>[DEĞİŞEN KURAL]</b> Cümle eskiden "They are built <i>before</i> everything else, in this order"
-    /// idi ve vurgulanan sözcük "before"du. O tur harici projeyi grafın DIŞINDA, listeye göre sıralanan ayrı
-    /// bir faz olarak ele alıyordu; artık kartın altındakiler AYNI grafa giriyor ve sıra bağımlılıklardan
-    /// geliyor, yani eski cümle yanlış bir söz veriyordu. §9'un 3-Run yapısı ve tipografisi korunur, yalnız
-    /// cümle ve vurgulanan sözcük değişti.</para></summary>
+    /// <summary>[K5] design v1.14.0 §9 BİREBİR: caps başlığı, açıklama (3 Run — "before" vurgusu ayrı) ve
+    /// boş-durum kutusunun metni. "before" text-secondary + 500 taşır (§9: "before sözcüğü text-secondary, 500").
+    /// <para><b>[DEĞİŞEN KURAL]</b> §9'un cümlesi "They are built before everything else, <i>in this order</i>"
+    /// idi. "before" iddiası KORUNUR ve doğrudur (ayrılmış <c>External</c> katmanı, index −1); "in this order"
+    /// DÜŞTÜ — kart sırası yalnız çalışma kopyalarının tazelenme sırasıdır, harici projeler arasındaki derleme
+    /// sırası topolojiden gelir. 3-Run yapısı, vurgulanan sözcük ve tipografi korunur.</para></summary>
     [StaFact]
     public void Settings_dialog_pins_the_external_projects_caption_description_and_empty_state_box_verbatim()
     {
@@ -765,12 +763,12 @@ public class SettingsDialogViewTests
         Assert.Contains("EXTERNAL PROJECTS", texts);
 
         var description = blocks.Single(b =>
-            b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text == "same"));
+            b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text == "before"));
         Assert.Equal(
-            """Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. Everything found under a card joins the same project list and graph, so the build order comes from the dependencies; card order is the order their working copies are refreshed in.""",
+            """Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. Everything found under a card joins the same project list and graph, grouped at the top and built before the repository's own projects.""",
             string.Concat(description.Inlines.OfType<Run>().Select(r => r.Text)));
 
-        var emphasis = description.Inlines.OfType<Run>().Single(r => r.Text == "same");
+        var emphasis = description.Inlines.OfType<Run>().Single(r => r.Text == "before");
         Assert.Equal(dialog.FindResource("Brush.TextSecondary"), emphasis.Foreground);
         Assert.Equal(dialog.FindResource("FontWeight.Emphasis"), emphasis.FontWeight);
 
