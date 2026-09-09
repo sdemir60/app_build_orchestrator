@@ -15,6 +15,19 @@ public sealed class WorkspaceScanner
     private static readonly HashSet<string> Ignored = new(StringComparer.OrdinalIgnoreCase)
         { ".git", "bin", "obj", "node_modules", ".vs" }; // [Global Constraints scan ignore]
 
+    /// <summary>
+    /// Bu yol, canlı bir build'in saniyeler içinde sileceği geçici bir artefakt mı — kalıcı bir kaynak dosya
+    /// DEĞİL. Bugün tek örneği WPF'in <c>MarkupCompilePass</c>'inin proje klasöründe (obj DEĞİL) ürettiği
+    /// <c>&lt;Ad&gt;_&lt;8hex&gt;_wpftmp.csproj</c>'tur.
+    ///
+    /// <para><b>Neden ortak (public) bir karar:</b> dosyayı LİSTELEYEN ile OKUYAN arasında bir yarış vardır —
+    /// enumerate ile okuma arasında dosya silinir ve okuma patlar. Bu tuzağa yalnız üretim taraması değil,
+    /// repo ağacını okuyan kaynak guard'ları da düşer; kararın iki yerde yazılması ikisinin sessizce
+    /// ayrışması demekti (kopya YASAK, CLAUDE.md).</para>
+    /// </summary>
+    public static bool IsTransientBuildArtifact(string path) =>
+        path.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase);
+
     public ScanResult Scan(string root)
     {
         var csproj = new List<string>();
@@ -31,10 +44,7 @@ public sealed class WorkspaceScanner
         {
             if (file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
             {
-                // Canlı build sırasında WPF MarkupCompilePass proje klasöründe (obj DEĞİL) geçici
-                // "<Ad>_<8hex>_wpftmp.csproj" üretip saniyeler içinde siler — kalıcı proje değil,
-                // canlı build artefaktı; scan ile silinme arasındaki yarışı önlemek için atla.
-                if (file.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsTransientBuildArtifact(file)) continue; // canlı build artefaktı — bkz. metodun doc'u
                 csproj.Add(Path.GetFullPath(file));
             }
             else if (file.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)) sln.Add(Path.GetFullPath(file));
