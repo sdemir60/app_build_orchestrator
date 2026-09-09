@@ -9,8 +9,10 @@ using BuildOrchestrator.App.Shell;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// About modali. Kabuk Settings ile AYNI (scrim + 620px Ds.Dialog + odak tuzağı + Esc); farkı sekmeli
-/// gövdesidir. Headless süit XAML runtime çözümlemesini görmez — bu yüzden realize ZORUNLU (CLAUDE.md).
+/// About modali. Kabuk Settings ile AYNI DESENDİR (scrim + Ds.Dialog + odak tuzağı + Esc) ama genişlik
+/// BİLEREK farklı (660px — design v1.13.1 §2.10: üç dialog artık bugünkü içeriğine değil büyüme yönüne göre
+/// ölçülüyor); farkı ayrıca sekmeli gövdesidir. Headless süit XAML runtime çözümlemesini görmez — bu yüzden
+/// realize ZORUNLU (CLAUDE.md).
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class AboutDialogTests
@@ -34,15 +36,25 @@ public class AboutDialogTests
 
     // ---------------------------------------------------------------- kabuk
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — design v1.13.1 §2.10]</b> ESKİ İDDİA: About, Settings'le AYNI 620px kalıbını
+    /// paylaşıyordu (üç dialog da 620px'ti). v1.13.1 bunu ayırdı: her dialog artık bugünkü içeriğine değil
+    /// BÜYÜME YÖNÜNE göre ölçülüyor. About statik bir referanstır (sürüm, kısayollar, environment,
+    /// third-party) ve zamanla yalnız third-party listesi uzar → dikeyde büyür — üçünün en darı olması bu
+    /// yüzden doğrudur: en az iş yapan dialog odur. YENİ genişlik 660px: en uzun yol (85 karakterlik MSBuild
+    /// yolu, 12px mono'da ~610px) tek satıra genişlik büyüyünce bile hâlâ sığmıyor, o yüzden genişliğin
+    /// yanına Environment'taki yatay kaydırma kondu (aşağıdaki <c>Environment_*</c>/<c>The_wheel_*</c>
+    /// testleri).
+    /// </summary>
     [StaFact]
-    public void The_dialog_realizes_and_is_six_hundred_twenty_pixels_wide()
+    public void The_dialog_realizes_and_is_six_hundred_sixty_pixels_wide()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             Assert.Equal(Visibility.Visible, dialog.Visibility);
-            Assert.Equal(620.0, Shell(dialog).Width);
-            Assert.Equal(620.0, Shell(dialog).ActualWidth); // realize zorunlu — literal okumak yetmez
+            Assert.Equal(660.0, Shell(dialog).Width);
+            Assert.Equal(660.0, Shell(dialog).ActualWidth); // realize zorunlu — literal okumak yetmez
         }
     }
 
@@ -422,7 +434,7 @@ public class AboutDialogTests
     /// <c>NotesDialogTests.The_body_height_is_fixed_at_400px</c> — taşan-panel kanıtı ORADA yaşıyor, kendi
     /// 400px sabit gövdesiyle). Geriye kalan üç sekmenin (Shortcuts/Environment/Third-party) HİÇBİRİ bugünkü
     /// içerikle 236px'i doldurmuyor, yani "gerçekten taşıyor" iddiası burada artık KANITLANAMAZ — sahte bir
-    /// taşma iddia etmek yerine bu test YAPISAL kalır: <c>Height==236.0</c> araması (About'un kendi 620px
+    /// taşma iddia etmek yerine bu test YAPISAL kalır: <c>Height==236.0</c> araması (About'un kendi 660px
     /// genişliği gibi) bir <c>MinHeight</c> DEĞİL gerçek bir <c>Height</c> olduğunu doğrular — <c>Grid.Height</c>
     /// okunur, <c>Grid.MinHeight</c> DEĞİL; MinHeight olsaydı <c>Height</c> NaN kalır ve <c>Single()</c>
     /// eşleşmezdi. "Sekme değişince boy değişmez" davranışı zaten kardeş test

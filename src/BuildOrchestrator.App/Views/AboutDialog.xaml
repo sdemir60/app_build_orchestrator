@@ -4,8 +4,10 @@
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:app="clr-namespace:BuildOrchestrator.App"
              Visibility="Collapsed" Focusable="True">
-  <!-- [About] İkinci modal diyalog. Kabuk SettingsDialog ile BİREBİR aynı (full-bleed Brush.Scrim + 620px
-       Ds.Dialog + odak tuzağı + Esc/scrim ile kapanma) — yeni bir modal deseni GİRMEZ.
+  <!-- [About] İkinci modal diyalog. Kabuk SettingsDialog ile BİREBİR aynı DESENDİR (full-bleed Brush.Scrim +
+       Ds.Dialog + odak tuzağı + Esc/scrim ile kapanma) — yeni bir modal deseni GİRMEZ. Genişlik ise BİLEREK
+       farklı: 660px (design v1.13.1 §2.10) — üçü aynı 620px kalıbını paylaşırken artık her biri büyüme yönüne
+       göre ölçülüyor, About en az iş yapan (statik referans) olduğu için en dar olanı.
 
        Farkı sekmeli gövdesidir: dört içerik sınıfı (kimlik / kısayol / ortam / lisans) birbirine bakmaz ve
        tek bir uzun scroll'da taranmak zorunda kalırdı. Sekme anahtarı Ds.Segment'tir — ActionBar'ın
@@ -17,7 +19,7 @@
         KeyboardNavigation.TabNavigation="Cycle"
         KeyboardNavigation.ControlTabNavigation="Cycle"
         FocusManager.IsFocusScope="True">
-    <Border x:Name="DialogShell" Width="620" HorizontalAlignment="Center" VerticalAlignment="Center"
+    <Border x:Name="DialogShell" Width="660" HorizontalAlignment="Center" VerticalAlignment="Center"
             Style="{DynamicResource Ds.Dialog}" MouseLeftButtonDown="OnDialogClick">
       <Grid>
         <Grid.RowDefinitions>
