@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 
 namespace BuildOrchestrator.Contracts.Model;
 
@@ -135,26 +135,38 @@ public sealed record BuildState(
     bool DepIssue = false);
 
 /// <summary>
-/// Bir harici projenin hangi sürüm kontrol sistemiyle güncelleneceği. Tel üzerinde camelCase METİN taşınır
-/// ("git"/"tfvc"/"unknown"), sayı olarak DEĞİL — üyeleri sonradan yeniden sıralamak eski satırların anlamını
-/// kaydırmaz. <c>Unknown</c> = çalışma kopyasının kökünde tanınan bir işaret bulunamadı: güncelleme ve dirty
-/// kapısı çalışmaz, revizyon bilinmez, proje her koşuda derlenir.
+/// Bir harici projenin çalışma kopyasının hangi sürüm kontrol sistemiyle güncelleneceği — kullanıcının
+/// Ayarlar'da SEÇTİĞİ değer (design v1.14.0 §9: "Source seçimi... yalnız bu ikisi"). Tel üzerinde camelCase
+/// METİN taşınır ("git"/"tfvc"), sayı olarak DEĞİL — üyeleri sonradan yeniden sıralamak eski satırların anlamını
+/// kaydırmaz. Kullanıcı metni ve dosya biçimi aynı iki sözcüğü <see cref="VcsKinds"/> üzerinden kullanır.
 /// </summary>
-public enum VcsKind { Git, Tfvc, Unknown }
+public enum VcsKind { Git, Tfvc }
+
+/// <summary>
+/// <see cref="VcsKind"/>'ın kullanıcıya görünen / dosyaya yazılan metni — TEK eşleme yeri (Settings dosyası,
+/// konsol satırları ve tel aynı sözcükleri kullanır; kopya YASAK). Bilinmeyen ya da eksik metin
+/// <see cref="VcsKind.Git"/>'e düşer (design v1.14.0 §9: "eksik/bilinmeyen vcs sessizce git'e düşer").
+/// </summary>
+public static class VcsKinds
+{
+    public static string Label(VcsKind kind) => kind == VcsKind.Tfvc ? "tfvc" : "git";
+
+    public static VcsKind Parse(string? text) => text == "tfvc" ? VcsKind.Tfvc : VcsKind.Git;
+}
 
 /// <summary>
 /// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi VCS'inden güncellenip derlenen bir proje (ör. müşteriye
-/// özel mail/OCR bileşenleri). Kullanıcı doğrudan proje dizinini verir; çalışma kopyasının kökü o dizinden
-/// yukarı yürünerek bulunur.
+/// özel mail/OCR bileşenleri). Ayarlar'daki bir kartın birebir karşılığı: bir yol ve bir kaynak.
 ///
-/// <para><b>Kimlik <see cref="TargetPath"/>'tir</b> — build-state anahtarı, IPC ProjectId'si, proje logu ve
-/// liste satırının Id'si odur. VCS türü ve VCS kökü KASITLI olarak burada YOKTUR: ikisi de persist edilmez,
-/// her koşuda diskten yeniden bulunur, böylece bayatlayamazlar.</para>
+/// <para><b>Yol bir klasör, bir <c>.sln</c> ya da bir <c>.csproj</c> olabilir</b> (design v1.14.0 §9); derlenecek
+/// hedef, görünen ad ve çalışma kopyasının kökü her koşuda ondan yeniden çözülür
+/// (<c>Core/Externals/ExternalTargetResolver</c>, <c>VcsDetector</c>) — hiçbiri persist edilmez, böylece
+/// bayatlayamazlar. Kimlik çözülen hedef dosyadır: build-state anahtarı, IPC ProjectId'si, proje logu ve liste
+/// satırının Id'si odur.</para>
 /// </summary>
-/// <param name="Name">Kullanıcının verdiği görünen ad (liste ve node etiketi).</param>
-/// <param name="ProjectPath">Projenin dizini — VCS kökü aramasının başladığı yer.</param>
-/// <param name="TargetPath">Derlenecek .sln/.csproj'un tam yolu; bu projenin kimliği.</param>
-public sealed record ExternalProject(string Name, string ProjectPath, string TargetPath);
+/// <param name="Path">Klasör, solution ya da proje dosyası — kullanıcının yazdığı gibi.</param>
+/// <param name="Vcs">Çalışma kopyasının sürüm kontrol türü — kullanıcının seçimi; tespit edilmez.</param>
+public sealed record ExternalProject(string Path, VcsKind Vcs);
 
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);

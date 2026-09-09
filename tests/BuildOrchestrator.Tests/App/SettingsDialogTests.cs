@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -512,7 +512,7 @@ public class SettingsDialogTests
 
         var built = editor.BuildExternals();
 
-        Assert.Equal([new ExternalProjectRef(@"C:\a", VcsKind.Tfvc)], built);
+        Assert.Equal([new ExternalProject(@"C:\a", VcsKind.Tfvc)], built);
     }
 
     /// <summary>[K5] Save: harici projeler katmanlarla AYNI commit'te UiState'e yazılır ve
@@ -533,7 +533,7 @@ public class SettingsDialogTests
 
         Assert.Contains("External projects → 1 — built before the repository projects", run.GetRunDocumentText());
         Assert.Equal(
-            [new ExternalProjectRef(@"C:\src\shared\Delta.Common\Delta.Common.csproj", VcsKind.Tfvc)],
+            [new ExternalProject(@"C:\src\shared\Delta.Common\Delta.Common.csproj", VcsKind.Tfvc)],
             run.ExternalProjects);
         Assert.Equal(run.ExternalProjects, store.State.ExternalProjects); // AYNI commit'te UiState'e de yazıldı
     }
@@ -550,14 +550,14 @@ public class SettingsDialogTests
 
         // 0 → 2: sayı DEĞİŞTİ → not YAZILIR (N ≥ 1 deseni).
         await run.ApplySettingsAsync(patterns, @"D:\repo",
-            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"C:\b", VcsKind.Tfvc)]);
+            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"C:\b", VcsKind.Tfvc)]);
         Assert.Contains("External projects → 2 — built before the repository projects", run.GetRunDocumentText());
         Assert.Equal(2, run.ExternalProjects.Count);
 
         // 2 → 2 (FARKLI path'ler, AYNI sayı): sayı DEĞİŞMEDİ → İKİNCİ bir not satırı EKLENMEZ — ama liste yine
         // GERÇEKTEN güncellenir (not-gating yalnız KONSOLU susturur, veriyi DONDURMAZ).
         await run.ApplySettingsAsync(patterns, @"D:\repo",
-            [new ExternalProjectRef(@"C:\c", VcsKind.Git), new ExternalProjectRef(@"C:\d", VcsKind.Git)]);
+            [new ExternalProject(@"C:\c", VcsKind.Git), new ExternalProject(@"C:\d", VcsKind.Git)]);
         Assert.Equal(1, CountOccurrences(run.GetRunDocumentText(), "External projects → 2"));
         Assert.Equal(@"C:\c", run.ExternalProjects[0].Path);
 
@@ -730,7 +730,7 @@ public class SettingsDialogViewTests
     public void Settings_dialog_sections_appear_in_workspace_external_layers_order()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
-            run => run.ExternalProjects = [new ExternalProjectRef(@"C:\a", VcsKind.Git)]);
+            run => run.ExternalProjects = [new ExternalProject(@"C:\a", VcsKind.Git)]);
         using var _scope = scope;
 
         var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();

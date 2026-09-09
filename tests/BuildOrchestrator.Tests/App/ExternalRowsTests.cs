@@ -1,7 +1,7 @@
-﻿using System;
 using System.Linq;
-using BuildOrchestrator.App.ViewModels;
+using System.Threading.Tasks;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;

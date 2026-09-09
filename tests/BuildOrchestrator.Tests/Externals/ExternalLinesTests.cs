@@ -1,3 +1,4 @@
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
 
 namespace BuildOrchestrator.Tests.Externals;
@@ -30,10 +31,10 @@ public class ExternalLinesTests
             PlanProgressLines.ExternalDirtyWarning("Mail"));
 
     [Fact]
-    public void A_missing_folder_is_reported_as_unknown_state()
+    public void An_unresolvable_path_is_reported_with_the_resolver_sentence()
         => Assert.Equal(
-            "warning: external 'Mail': folder not found — state unknown",
-            PlanProgressLines.ExternalFolderMissing("Mail"));
+            "warning: external 'Mail': the path was not found — state unknown",
+            PlanProgressLines.ExternalUnresolved("Mail", "the path was not found"));
 
     [Fact]
     public void An_unreadable_working_copy_is_reported_as_unknown_state()
@@ -41,9 +42,11 @@ public class ExternalLinesTests
             "warning: external 'Mail': state unknown (not a git repository)",
             PlanProgressLines.ExternalStateUnknown("Mail", "not a git repository"));
 
-    [Fact]
-    public void A_working_copy_without_version_control_says_it_is_built_as_is()
+    [Theory]
+    [InlineData(VcsKind.Git, "git")]
+    [InlineData(VcsKind.Tfvc, "tfvc")]
+    public void A_path_without_a_working_copy_of_the_selected_kind_says_it_is_built_as_is(VcsKind vcs, string label)
         => Assert.Equal(
-            "warning: external 'Mail': no version control detected — building as-is",
-            PlanProgressLines.ExternalNoVersionControl("Mail"));
+            $"warning: external 'Mail': no {label} working copy found above its path — building as-is",
+            PlanProgressLines.ExternalNoWorkingCopy("Mail", vcs));
 }

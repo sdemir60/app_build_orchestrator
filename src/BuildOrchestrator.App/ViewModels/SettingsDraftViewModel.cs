@@ -34,21 +34,6 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
     public bool RegexInvalid => !LayerEngine.IsPatternCompilable(Regex);
 }
 
-/// <summary>[K5 · design v1.14.0 §9] Harici bir projenin çalışma kopyası hangi sürüm kontrol sisteminde durur —
-/// yalnız iki değer ("Source seçimi... yalnız bu ikisi"). <b>App-yerel tiptir</b>: motor bu turda harici listeyi
-/// hiç tüketmiyor (IPC'ye gitmiyor, K5 kapsamı yalnız UI + kalıcılık), bu yüzden Contracts'a EKLENMEZ — motor
-/// bağlantısı ayrı bir branch'te (feat/external-projects-prebuild) hazırlanıyor.</summary>
-public enum VcsKind
-{
-    Git,
-    Tfvc,
-}
-
-/// <summary>[K5] Bir harici projenin kalıcı/uygulanan hâli: yol + sürüm kontrol türü. <see cref="LayerPattern"/>'ın
-/// (Contracts) bu turdaki App-yerel karşılığı — <see cref="UiState.ExternalProjects"/>, <see cref="RunViewModel.ExternalProjects"/>
-/// ve <see cref="SettingsDraftViewModel.BuildExternals"/> arasında taşınan TEK biçim (kopya YASAK).</summary>
-public sealed record ExternalProjectRef(string Path, VcsKind Vcs);
-
 /// <summary>[K5] Settings diyaloğundaki EXTERNAL PROJECTS editörünün tek satırı — düzenlenebilir yol + sürüm
 /// kontrol seçimi. <see cref="IDragReorderItem"/>: katman kartıyla AYNI sürükle-bırak mekanizmasını paylaşır
 /// (<see cref="DragReorderBehavior"/> öğe tipini bilmeden bu bayrağı set eder) — katman listesinden BAĞIMSIZ
@@ -81,8 +66,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>[K5] Harici proje kartlarının taslağı — katmanlardan tamamen BAĞIMSIZ bir koleksiyon (kendi
     /// sürükle-bırak oturumu, kendi CanSave kapısı). Kayıtlı harici proje YOKSA (null ya da boş) BOŞ kalır —
-    /// katmanların aksine bir "varsayılan doldur" kavramı yoktur (§9 v1.14.0: motor bağlantısı olmadan tek
-    /// gerçek varsayılan boş listedir).</summary>
+    /// katmanların aksine bir "varsayılan doldur" kavramı yoktur (§9 v1.14.0: harici projeler kuruluma özeldir,
+    /// tek gerçek varsayılan boş listedir).</summary>
     public ObservableCollection<ExternalRowViewModel> Externals { get; } = [];
 
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
@@ -97,7 +82,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <paramref name="initialExternals"/> harici proje listesinin AYNI kuralla gelen taslağıdır (K5) — boşsa
     /// taslak da boş kalır.</summary>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
-        IReadOnlyList<ExternalProjectRef>? initialExternals = null)
+        IReadOnlyList<ExternalProject>? initialExternals = null)
     {
         _repositoryRoot = repositoryRoot;
         Layers.CollectionChanged += OnLayersChanged;
@@ -158,7 +143,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         {
             for (int i = Externals.Count - 1; i >= 0; i--) RemoveExternal(Externals[i]);
             foreach (var ext in externals)
-                AddExternalRow(new ExternalRowViewModel(ext.Path, ext.Vcs == "tfvc" ? VcsKind.Tfvc : VcsKind.Git));
+                AddExternalRow(new ExternalRowViewModel(ext.Path, VcsKinds.Parse(ext.Vcs)));
         }
         // else: anahtar dosyada yok — mevcut harici liste KORUNUR (yukarıdaki XML doc).
     }
@@ -192,12 +177,12 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public IReadOnlyList<LayerPattern> BuildPatterns() =>
         Layers.Select((r, i) => new LayerPattern(i, r.Regex, r.Name.Trim())).ToList();
 
-    /// <summary>[K5] Taslağı <see cref="ExternalProjectRef"/> listesine çevirir: path TRIM'li, BOŞ path'ler
+    /// <summary>[K5] Taslağı <see cref="ExternalProject"/> listesine çevirir: path TRIM'li, BOŞ path'ler
     /// DÜŞER (prototip <c>ext.filter((x) =&gt; x.path)</c> — hem Export hem Save bu TEK metodu paylaşır, kopya
     /// YASAK). Save'e kadar zaten <see cref="CanSave"/> boş path bırakmaz; filtre Export'un kendi güvenlik
     /// ağıdır (Export, CanSave'e bakmadan her zaman etkindir).</summary>
-    public IReadOnlyList<ExternalProjectRef> BuildExternals() =>
-        [.. Externals.Select(x => new ExternalProjectRef(x.Path.Trim(), x.Vcs)).Where(x => x.Path.Length > 0)];
+    public IReadOnlyList<ExternalProject> BuildExternals() =>
+        [.. Externals.Select(x => new ExternalProject(x.Path.Trim(), x.Vcs)).Where(x => x.Path.Length > 0)];
 
     /// <summary>Kaydet (commit): taslağı <see cref="UiState.LayerPatterns"/> VE <see cref="UiState.ExternalProjects"/>'e
     /// (K5) AYNI commit'te persist eder ve TEK yoldan uygular — <see cref="RunViewModel.ApplySettingsAsync"/>

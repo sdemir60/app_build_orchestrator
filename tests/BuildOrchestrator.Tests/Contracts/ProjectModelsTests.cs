@@ -38,9 +38,10 @@ public class ProjectModelsTests
     [Fact]
     public void ExternalProject_round_trips_through_ipc_json()
     {
-        var external = new ExternalProject("Mail", @"D:\ext\mail", @"D:\ext\mail\Mail.sln");
+        var external = new ExternalProject(@"D:\ext\mail\Mail.sln", VcsKind.Tfvc);
         string json = JsonSerializer.Serialize(external, IpcJson.Options);
-        Assert.Contains("\"targetPath\":", json); // camelCase
+        Assert.Contains("\"path\":", json);   // camelCase
+        Assert.Contains("\"vcs\":\"tfvc\"", json); // enum METİN olarak
         var back = JsonSerializer.Deserialize<ExternalProject>(json, IpcJson.Options)!;
         Assert.Equal(external, back);
     }
@@ -48,7 +49,6 @@ public class ProjectModelsTests
     [Theory]
     [InlineData(VcsKind.Git, "\"git\"")]
     [InlineData(VcsKind.Tfvc, "\"tfvc\"")]
-    [InlineData(VcsKind.Unknown, "\"unknown\"")]
     public void VcsKind_serializes_camelCase_text(VcsKind kind, string expected)
     {
         // Tel üzerinde METİN taşınır: sonradan enum üyelerini yeniden sıralamak eski NDJSON satırlarının

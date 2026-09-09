@@ -56,8 +56,8 @@ public class SettingsPortabilityTests
     [Fact]
     public void The_settings_file_round_trips_the_external_projects_in_order()
     {
-        IReadOnlyList<ExternalProjectRef> externals =
-            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"D:\shared\b.csproj", VcsKind.Tfvc)];
+        IReadOnlyList<ExternalProject> externals =
+            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"D:\shared\b.csproj", VcsKind.Tfvc)];
 
         string json = SettingsFile.From(@"D:\src\osys", [], externals).ToJson();
         var parsed = SettingsFile.TryParse(json);
@@ -140,7 +140,7 @@ public class SettingsPortabilityTests
     [Fact]
     public void The_import_feedback_mentions_external_projects_only_when_the_file_carries_the_key()
     {
-        var withExternals = SettingsFile.From(@"D:\src\osys", [], [new ExternalProjectRef(@"C:\a", VcsKind.Git)]);
+        var withExternals = SettingsFile.From(@"D:\src\osys", [], [new ExternalProject(@"C:\a", VcsKind.Git)]);
         Assert.Equal("Imported — 0 layers · 1 external · root set", withExternals.ImportedMessage());
 
         var withoutKey = SettingsFile.From(@"D:\src\osys", []); // externals parametresiz → anahtar YOK
@@ -155,7 +155,7 @@ public class SettingsPortabilityTests
     [Fact]
     public void Importing_a_layer_only_file_keeps_the_existing_external_projects()
     {
-        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProjectRef(@"C:\kept", VcsKind.Git)]);
+        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProject(@"C:\kept", VcsKind.Git)]);
 
         draft.LoadFrom(SettingsFile.From(@"D:\new", [new LayerPattern(0, "^X", "Xeno")]));
 
@@ -167,7 +167,7 @@ public class SettingsPortabilityTests
     [Fact]
     public void Importing_a_file_with_an_empty_external_projects_array_clears_the_draft_list()
     {
-        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProjectRef(@"C:\kept", VcsKind.Git)]);
+        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProject(@"C:\kept", VcsKind.Git)]);
 
         draft.LoadFrom(SettingsFile.From(@"D:\new", [], []));
 
@@ -179,7 +179,7 @@ public class SettingsPortabilityTests
     {
         var draft = new SettingsDraftViewModel(null, @"D:\old");
 
-        draft.LoadFrom(SettingsFile.From(@"D:\new", [], [new ExternalProjectRef(@"C:\new", VcsKind.Tfvc)]));
+        draft.LoadFrom(SettingsFile.From(@"D:\new", [], [new ExternalProject(@"C:\new", VcsKind.Tfvc)]));
 
         var row = Assert.Single(draft.Externals);
         Assert.Equal(@"C:\new", row.Path);
@@ -235,7 +235,7 @@ public class SettingsPortabilityTests
     public void Clearing_empties_the_root_every_layer_and_every_external_project()
     {
         var draft = new SettingsDraftViewModel(
-            [new LayerPattern(0, "^A", "Alpha")], @"D:\src\osys", [new ExternalProjectRef(@"C:\a", VcsKind.Git)]);
+            [new LayerPattern(0, "^A", "Alpha")], @"D:\src\osys", [new ExternalProject(@"C:\a", VcsKind.Git)]);
 
         draft.ClearAll();
 
@@ -282,7 +282,7 @@ public class SettingsPortabilityTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
         dialog.PickImportPath = () => @"D:\in\settings.json";
-        dialog.ReadFile = _ => SettingsFile.From(@"D:\imported", [], [new ExternalProjectRef(@"C:\a", VcsKind.Git)]).ToJson();
+        dialog.ReadFile = _ => SettingsFile.From(@"D:\imported", [], [new ExternalProject(@"C:\a", VcsKind.Git)]).ToJson();
 
         Click(dialog.Import);
 
@@ -363,7 +363,7 @@ public class SettingsPortabilityTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r =>
         {
             r.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")];
-            r.ExternalProjects = [new ExternalProjectRef(@"C:\a", VcsKind.Git)];
+            r.ExternalProjects = [new ExternalProject(@"C:\a", VcsKind.Git)];
         });
         using var _scope = scope;
         object? baseTooltip = dialog.Clear.ToolTip; // armed/disarmed karşılaştırması için ÖNCEDEN oku

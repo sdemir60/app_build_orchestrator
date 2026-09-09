@@ -136,6 +136,21 @@ public sealed partial class RunViewModel
     /// zaten kısaysa olduğu gibi) — brief 7-hane pinler.</summary>
     internal static string Short7(string sha) => sha.Length > 7 ? sha[..7] : sha;
 
+    /// <summary>
+    /// [Harici projeler] Bir REVİZYON KİMLİĞİNİ kısaltır. Kısaltma yalnız gerçek bir git sha'sına (40 hex)
+    /// uygulanır; başka her değer olduğu gibi gösterilir.
+    ///
+    /// <para>Gerekçe: sha yuvası artık iki farklı sürüm kontrolünün kimliğini taşıyor. Bir TFVC changeset'i
+    /// (<c>C48213</c>) kırpılırsa anlamsız bir sayıya döner — 7 hane bir git alışkanlığıdır, evrensel bir
+    /// biçim değil.</para>
+    /// </summary>
+    internal static string ShortSha(string? revision)
+    {
+        if (string.IsNullOrEmpty(revision)) return string.Empty;
+
+        return revision.Length == 40 && revision.All(Uri.IsHexDigit) ? revision[..7] : revision;
+    }
+
     // ---------------------------------------------------------------- [T40] worktree auto-ad + silme
 
     /// <summary>[T40] Worktree otomatik adı (BuildApp.jsx:1154-1155): slug = branch'te <c>/</c>→<c>-</c>; ek sayı =
@@ -194,14 +209,15 @@ public sealed partial class RunViewModel
             : "Layers removed — single project list");
     }
 
-    /// <summary>[K5 · design v1.14.0/§9] Settings Save: harici proje listesini uygular. <see cref="ExternalProjects"/>
-    /// set edilir; motor bu turda TÜKETMEZ (IPC'ye gitmez — yalnız App içi liste ve konsol notu).
+    /// <summary>[design v1.14.0/§9 · externals] Settings Save: harici proje listesini uygular. <see cref="ExternalProjects"/>
+    /// set edilir ve konsola not düşülür; motora AYRI bir komut gitmez — liste, Save'in gönderdiği tek Sync'le
+    /// (ve sonraki her Build'le) taşınır, bu yüzden bu metot o Sync'ten ÖNCE çağrılmak zorundadır.
     ///
     /// <para><b>[DEĞİŞEN KURAL — katman notundan FARKLI]</b> <see cref="ApplyLayerPatterns"/> HER Save'de
     /// KOŞULSUZ bir not yazar (sayı değişmese bile); harici projeler notu ise YALNIZ SAYI DEĞİŞTİYSE yazılır —
     /// brief'in birebir cümlesi: <i>"sayı değiştiyse ... yazılır ... Değişmediyse not yok."</i> Katman-only bir
     /// Save'de (harici liste aynı kaldıysa) gürültü OLMASIN diye.</para></summary>
-    private void ApplyExternalProjects(IReadOnlyList<ExternalProjectRef> externals)
+    private void ApplyExternalProjects(IReadOnlyList<ExternalProject> externals)
     {
         int previousCount = ExternalProjects.Count;
         ExternalProjects = externals;
@@ -245,7 +261,7 @@ public sealed partial class RunViewModel
     /// (motora dokunmaz, mid-run kilidinden ETKİLENMEZ — <see cref="ApplyLayerPatterns"/> ile AYNI gerekçe:
     /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
-        IReadOnlyList<ExternalProjectRef> externals)
+        IReadOnlyList<ExternalProject> externals)
     {
         ApplyLayerPatterns(patterns);
         ApplyExternalProjects(externals);

@@ -1,4 +1,6 @@
-﻿namespace BuildOrchestrator.Core.Planning;
+using BuildOrchestrator.Contracts.Model;
+
+namespace BuildOrchestrator.Core.Planning;
 
 /// <summary>
 /// Planlama adımlarının kullanıcıya görünen satırları — TEK kaynak.
@@ -59,18 +61,19 @@ public static class PlanProgressLines
     public static string ExternalDirtyWarning(string name)
         => $"warning: external '{name}' has uncommitted changes — Build will refuse to run until they are committed or shelved";
 
-    /// <summary>Harici projenin dizini diskte yok.</summary>
-    public static string ExternalFolderMissing(string name)
-        => $"warning: external '{name}': folder not found — state unknown";
+    /// <summary>Yol bir hedefe çözülemedi (yok, ya da içinde tek bir solution/proje yok) — durum bilinmiyor,
+    /// önizleme hollow kalır. <paramref name="problem"/> <c>ExternalTargetResolver</c>'ın cümlesidir.</summary>
+    public static string ExternalUnresolved(string name, string problem)
+        => $"warning: external '{name}': {problem} — state unknown";
 
     /// <summary>Çalışma kopyası okunamadı — durum bilinmiyor, önizleme hollow kalır.</summary>
     public static string ExternalStateUnknown(string name, string reason)
         => $"warning: external '{name}': state unknown ({reason})";
 
-    /// <summary>Dizinin üstünde tanınan bir sürüm kontrol işareti yok — güncelleme ve kir kapısı çalışmaz,
-    /// proje olduğu gibi derlenir.</summary>
-    public static string ExternalNoVersionControl(string name)
-        => $"warning: external '{name}': no version control detected — building as-is";
+    /// <summary>Yolun üstünde SEÇİLEN türde bir çalışma kopyası işareti yok (git için <c>.git</c>, TFVC için
+    /// <c>$tf</c>) — güncelleme ve kir kapısı çalışmaz, proje olduğu gibi derlenir.</summary>
+    public static string ExternalNoWorkingCopy(string name, VcsKind vcs)
+        => $"warning: external '{name}': no {VcsKinds.Label(vcs)} working copy found above its path — building as-is";
 
     // Planner'dan SONRAKİ iki adım (MSBuild.exe çözümü, bayat-obj taraması) BİLEREK raporlanmaz: vswhere
     // sonucu Supervisor ömrü boyunca cache'lenir (ilk run dışında "resolving" demek yalan olurdu), bayat-obj

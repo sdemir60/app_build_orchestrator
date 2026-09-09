@@ -1,7 +1,6 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.App.Shell;
@@ -60,9 +59,10 @@ public sealed class UiState
     /// <c>List&lt;string&gt;</c> hiç var olmadı (PerfMode'daki gibi bir toleranslı converter GEREKMEZ).</para></summary>
     public List<LayerPattern> LayerPatterns { get; set; } = [];
 
-    /// <summary>[Harici projeler] Ayarlar'da sıralanan harici proje listesi — Save'de yazılır, startup'ta
-    /// <see cref="ViewModels.RunViewModel.ExternalProjects"/>'e seed edilir. SIRA ANLAMLIDIR: build sırası
-    /// tam olarak budur.
+    /// <summary>[design v1.14.0 §9] Settings editörünün EXTERNAL PROJECTS listesi (yol + vcs) — Save'de
+    /// katmanlarla AYNI commit'te yazılır, startup'ta <see cref="ViewModels.RunViewModel.ExternalProjects"/>'e
+    /// seed edilir ve her Sync/Build komutuyla motora gider. SIRA ANLAMLIDIR: build sırası tam olarak budur —
+    /// <see cref="LayerPatterns"/>'ın deseniyle AYNI, ayrı bir <c>order</c> alanı yazılmaz.
     /// <para>Setter null'ı boş listeye çevirir: diskte açıkça <c>"ExternalProjects": null</c> yazan bir dosya
     /// (elle düzenleme, yarım yazım) aksi halde koleksiyonu null bırakır ve ilk okuma tüm yerleşimi
     /// sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe.</para></summary>
@@ -75,13 +75,6 @@ public sealed class UiState
     private List<ExternalProject> _externalProjects = [];
 
     public bool Autostart { get; set; }
-
-    /// <summary>[K5 · design v1.14.0 §9] Settings editörünün EXTERNAL PROJECTS listesi (yol + vcs) — Save'de
-    /// katmanlarla AYNI commit'te yazılır, startup'ta <see cref="ViewModels.RunViewModel.ExternalProjects"/>'e
-    /// seed edilir. <b>Motor bu turda TÜKETMİYOR:</b> IPC komutuna gitmiyor, yalnız App içinde kalıcı tutulur —
-    /// harici projelerin gerçekten derlenmesi ayrı bir branch'in (motor bağlantısı) işidir. Sıra dizinin KENDİ
-    /// sırasıdır — <see cref="LayerPatterns"/>'ın deseniyle AYNI, ayrı bir <c>order</c> alanı yazılmaz.</summary>
-    public List<ExternalProjectRef> ExternalProjects { get; set; } = [];
 }
 
 /// <summary>

@@ -20,8 +20,15 @@ public class ExternalSyncInspectorTests
 
     private static ExternalSyncInspector Inspector() => new(new ProcessRunner());
 
-    private static ExternalProject ProjectAt(string directory, string name = "Mail")
-        => new(name, directory, Path.Combine(directory, name + ".sln"));
+    /// <summary>Klasörde tek bir <c>&lt;name&gt;.sln</c> bırakır (COMMIT'TEN ÖNCE çağrılmalı — yoksa kir sayılır)
+    /// ve klasörü yol olarak veren bir harici döner.</summary>
+    private static ExternalProject ProjectAt(string directory, VcsKind vcs = VcsKind.Git, string name = "Mail")
+    {
+        File.WriteAllText(Path.Combine(directory, name + ".sln"), "");
+        return new ExternalProject(directory, vcs);
+    }
+
+    private static string TargetOf(string directory, string name = "Mail") => Path.Combine(directory, name + ".sln");
 
     private static IReadOnlyDictionary<string, BuildState> Built(string targetPath, string signature) =>
         new Dictionary<string, BuildState>
@@ -34,11 +41,11 @@ public class ExternalSyncInspectorTests
     {
         using var repo = new GitTestRepo();
         repo.WriteFile("a.cs", "one");
-        string head = repo.CommitAll("first");
         var project = ProjectAt(repo.RootPath);
+        string head = repo.CommitAll("first");
         string signature = ExternalSignature.Compute(Configuration, VcsKind.Git, head);
 
-        var inspection = (await Inspector().InspectAsync([project], Configuration, Built(project.TargetPath, signature))).Single();
+        var inspection = (await Inspector().InspectAsync([project], Configuration, Built(TargetOf(repo.RootPath), signature))).Single();
 
         Assert.Equal(VcsKind.Git, inspection.Vcs);
         Assert.Equal(head, inspection.Revision);
@@ -46,6 +53,7 @@ public class ExternalSyncInspectorTests
         Assert.Equal(WillBuildReason.UpToDate, inspection.Reason);
         Assert.False(inspection.Dirty);
         Assert.Null(inspection.Warning);
+        Assert.Equal(TargetOf(repo.RootPath), inspection.Target.TargetPath);
     }
 
     [Fact]
@@ -53,11 +61,11 @@ public class ExternalSyncInspectorTests
     {
         using var repo = new GitTestRepo();
         repo.WriteFile("a.cs", "one");
-        repo.CommitAll("first");
         var project = ProjectAt(repo.RootPath);
+        repo.CommitAll("first");
 
         var inspection = (await Inspector().InspectAsync([project], Configuration,
-            Built(project.TargetPath, ExternalSignature.Compute(Configuration, VcsKind.Git, "0000")))).Single();
+            Built(TargetOf(repo.RootPath), ExternalSignature.Compute(Configuration, VcsKind.Git, "0000")))).Single();
 
         Assert.True(inspection.WillBuild);
         Assert.Equal(WillBuildReason.SignatureChanged, inspection.Reason);
@@ -68,12 +76,29 @@ public class ExternalSyncInspectorTests
     {
         using var repo = new GitTestRepo();
         repo.WriteFile("a.cs", "one");
+        var project = ProjectAt(repo.RootPath);
         repo.CommitAll("first");
 
-        var inspection = (await Inspector().InspectAsync([ProjectAt(repo.RootPath)], Configuration, null)).Single();
+        var inspection = (await Inspector().InspectAsync([project], Configuration, null)).Single();
 
         Assert.True(inspection.WillBuild);
         Assert.Equal(WillBuildReason.NeverBuilt, inspection.Reason);
+    }
+
+    [Fact]
+    public async Task A_path_that_names_the_solution_file_itself_is_read_the_same_way()
+    {
+        // §9: yol bir klasör YA DA bir solution/proje dosyası olabilir — ikisi de aynı hedefe çözülür.
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.cs", "one");
+        ProjectAt(repo.RootPath);
+        repo.CommitAll("first");
+
+        var inspection = (await Inspector().InspectAsync(
+            [new ExternalProject(TargetOf(repo.RootPath), VcsKind.Git)], Configuration, null)).Single();
+
+        Assert.Equal(TargetOf(repo.RootPath), inspection.Target.TargetPath);
+        Assert.True(inspection.WillBuild);
     }
 
     [Fact]
@@ -82,12 +107,12 @@ public class ExternalSyncInspectorTests
         // Kir Sync'i bloklamaz ve önizlemeyi bozmaz — yalnız bir uyarı taşır; koşuyu durduran kapı Build'dedir.
         using var repo = new GitTestRepo();
         repo.WriteFile("a.cs", "one");
-        string head = repo.CommitAll("first");
         var project = ProjectAt(repo.RootPath);
+        string head = repo.CommitAll("first");
         string signature = ExternalSignature.Compute(Configuration, VcsKind.Git, head);
         File.WriteAllText(Path.Combine(repo.RootPath, "a.cs"), "edited");
 
-        var inspection = (await Inspector().InspectAsync([project], Configuration, Built(project.TargetPath, signature))).Single();
+        var inspection = (await Inspector().InspectAsync([project], Configuration, Built(TargetOf(repo.RootPath), signature))).Single();
 
         Assert.True(inspection.Dirty);
         Assert.False(inspection.WillBuild);
@@ -102,38 +127,43 @@ public class ExternalSyncInspectorTests
         Directory.CreateDirectory(Path.Combine(workspace, "$tf"));
         var runner = new RecordingProcessRunner();
 
-        var inspection = (await new ExternalSyncInspector(runner).InspectAsync([ProjectAt(workspace)], Configuration, null)).Single();
+        var inspection = (await new ExternalSyncInspector(runner).InspectAsync(
+            [ProjectAt(workspace, VcsKind.Tfvc)], Configuration, null)).Single();
 
         Assert.Equal(VcsKind.Tfvc, inspection.Vcs);
         Assert.Null(inspection.WillBuild);
         Assert.Null(inspection.Reason);
         Assert.Null(inspection.Revision);
+        Assert.Null(inspection.Warning);
         // Sync hızlı ve çevrimdışı-toleranslı kalmalı: tf.exe burada ÇALIŞTIRILMAZ.
         Assert.Empty(runner.Started);
     }
 
     [Fact]
-    public async Task A_missing_folder_is_reported_as_unknown()
+    public async Task A_path_that_cannot_be_resolved_is_reported_as_unknown_and_still_gets_a_row()
     {
         var missing = Path.Combine(Path.GetTempPath(), "no-such-external-4b7d");
 
-        var inspection = (await Inspector().InspectAsync([ProjectAt(missing)], Configuration, null)).Single();
+        var inspection = (await Inspector().InspectAsync([new ExternalProject(missing, VcsKind.Git)], Configuration, null)).Single();
 
-        Assert.Equal(VcsKind.Unknown, inspection.Vcs);
         Assert.Null(inspection.WillBuild);
-        Assert.Contains("folder not found", inspection.Warning);
+        Assert.Contains("was not found", inspection.Warning);
+        Assert.Equal("no-such-external-4b7d", inspection.Target.Name); // hollow satırın adı yolun son parçasıdır
+        Assert.Equal(missing, inspection.Target.TargetPath);           // kimliği yolun kendisi
     }
 
     [Fact]
-    public async Task A_folder_without_version_control_is_reported_as_hollow()
+    public async Task A_path_with_no_working_copy_of_the_selected_kind_is_hollow_with_a_warning()
     {
+        // Kullanıcı "Git" dedi ama yolun üstünde .git yok: güncellenemez, durumu bilinmez — ama koşuda
+        // olduğu gibi derlenecek; Sync bunu söyler.
         using var temp = new TempDir();
 
         var inspection = (await Inspector().InspectAsync([ProjectAt(temp.Path)], Configuration, null)).Single();
 
-        Assert.Equal(VcsKind.Unknown, inspection.Vcs);
+        Assert.Equal(VcsKind.Git, inspection.Vcs);
         Assert.Null(inspection.WillBuild);
-        Assert.Contains("no version control", inspection.Warning);
+        Assert.Contains("no git working copy found", inspection.Warning);
     }
 
     [Fact]
@@ -141,14 +171,14 @@ public class ExternalSyncInspectorTests
     {
         using var repo = new GitTestRepo();
         repo.WriteFile("a.cs", "one");
-        repo.CommitAll("first");
-        var broken = ProjectAt(Path.Combine(Path.GetTempPath(), "no-such-external-91cc"), "Ocr");
         var healthy = ProjectAt(repo.RootPath);
+        repo.CommitAll("first");
+        var broken = new ExternalProject(Path.Combine(Path.GetTempPath(), "Ocr-91cc"), VcsKind.Git);
 
         var inspections = await Inspector().InspectAsync([broken, healthy], Configuration, null);
 
         Assert.Equal(2, inspections.Count);
-        Assert.Equal(["Ocr", "Mail"], inspections.Select(i => i.Project.Name)); // liste sırası korunur
+        Assert.Equal(["Ocr-91cc", "Mail"], inspections.Select(i => i.Target.Name)); // liste sırası korunur
         Assert.True(inspections[1].WillBuild);
     }
 

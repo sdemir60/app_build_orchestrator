@@ -1,4 +1,4 @@
-﻿using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Processes;
@@ -6,15 +6,16 @@ using BuildOrchestrator.Core.Processes;
 namespace BuildOrchestrator.Core.Externals;
 
 /// <summary>Sync'in bir harici proje hakkında OKUYARAK öğrendikleri.</summary>
-/// <param name="Project">Kullanıcının listelediği harici proje.</param>
-/// <param name="Vcs">Çalışma kopyasının sürüm kontrol türü.</param>
+/// <param name="Target">Yoldan çözülen hedef (ad, dizin, derlenecek dosya). Yol çözülemediyse hollow bir
+/// yer tutucudur: ad yolun son parçası, hedef yolun kendisi — satır yine listede görünür ve uyarısını taşır.</param>
+/// <param name="Vcs">Kullanıcının seçtiği sürüm kontrol türü.</param>
 /// <param name="Revision">Yerel revizyon kimliği (git HEAD); bilinmiyorsa null.</param>
 /// <param name="WillBuild">Önizleme kararı; durum bilinmiyorsa null (hollow).</param>
 /// <param name="Reason">Kararın gerekçesi; hollow ise null.</param>
 /// <param name="Dirty">Commit'lenmemiş yerel değişiklik var mı — önizlemeyi DEĞİŞTİRMEZ, yalnız uyarır.</param>
 /// <param name="Warning">Kullanıcıya gösterilecek uyarı satırı; yoksa null.</param>
 public sealed record ExternalInspection(
-    ExternalProject Project,
+    ExternalTarget Target,
     VcsKind Vcs,
     string? Revision,
     bool? WillBuild,
@@ -61,38 +62,44 @@ public sealed class ExternalSyncInspector(IProcessRunner runner)
     private async Task<ExternalInspection> InspectOneAsync(
         ExternalProject project, string configuration, IReadOnlyDictionary<string, BuildState>? state, CancellationToken ct)
     {
-        if (!Directory.Exists(project.ProjectPath))
-            return Hollow(project, VcsKind.Unknown, PlanProgressLines.ExternalFolderMissing(project.Name));
+        var resolution = ExternalTargetResolver.Resolve(project.Path);
+        if (resolution.Target is not { } target)
+        {
+            // Yol çözülemedi: satır yine de görünsün diye yer tutucu bir hedef — kimliği yolun kendisidir.
+            string name = ExternalTargetResolver.DisplayName(project.Path);
+            return Hollow(new ExternalTarget(name, project.Path, project.Path), project.Vcs,
+                PlanProgressLines.ExternalUnresolved(name, resolution.Problem!));
+        }
 
-        var root = VcsDetector.DetectRoot(project.ProjectPath);
-        if (root.Kind is VcsKind.Unknown)
-            return Hollow(project, VcsKind.Unknown, PlanProgressLines.ExternalNoVersionControl(project.Name));
+        string? root = VcsDetector.FindRoot(target.Directory, project.Vcs);
+        if (root is null)
+            return Hollow(target, project.Vcs, PlanProgressLines.ExternalNoWorkingCopy(target.Name, project.Vcs));
 
         // TFVC: sunucuya gitmeden söylenebilecek bir şey yok — hollow, uyarısız (bu bir arıza değil, tasarım).
-        if (root.Kind is VcsKind.Tfvc)
-            return Hollow(project, VcsKind.Tfvc, warning: null);
+        if (project.Vcs is VcsKind.Tfvc)
+            return Hollow(target, VcsKind.Tfvc, warning: null);
 
-        var git = new GitService(runner, root.RootPath!);
+        var git = new GitService(runner, root);
 
         var head = await git.GetHeadCommitAsync(ct);
         if (!head.Success)
-            return Hollow(project, VcsKind.Git, PlanProgressLines.ExternalStateUnknown(project.Name, head.Error!));
+            return Hollow(target, VcsKind.Git, PlanProgressLines.ExternalStateUnknown(target.Name, head.Error!));
 
         var dirty = await git.GetDirtyPathsAsync(ct);
         if (!dirty.Success)
-            return Hollow(project, VcsKind.Git, PlanProgressLines.ExternalStateUnknown(project.Name, dirty.Error!));
+            return Hollow(target, VcsKind.Git, PlanProgressLines.ExternalStateUnknown(target.Name, dirty.Error!));
 
         bool isDirty = dirty.Value!.Count > 0;
         string signature = ExternalSignature.Compute(configuration, VcsKind.Git, head.Value);
-        var decision = ExternalWillBuild.Decide(Lookup(state, project.TargetPath), signature);
+        var decision = ExternalWillBuild.Decide(Lookup(state, target.TargetPath), signature);
 
-        return new ExternalInspection(project, VcsKind.Git, head.Value, decision.WillBuild, decision.Reason,
-            isDirty, isDirty ? PlanProgressLines.ExternalDirtyWarning(project.Name) : null);
+        return new ExternalInspection(target, VcsKind.Git, head.Value, decision.WillBuild, decision.Reason,
+            isDirty, isDirty ? PlanProgressLines.ExternalDirtyWarning(target.Name) : null);
     }
 
     private static BuildState? Lookup(IReadOnlyDictionary<string, BuildState>? state, string targetPath)
         => state is not null && state.TryGetValue(targetPath, out var record) ? record : null;
 
-    private static ExternalInspection Hollow(ExternalProject project, VcsKind vcs, string? warning)
-        => new(project, vcs, null, null, null, false, warning);
+    private static ExternalInspection Hollow(ExternalTarget target, VcsKind vcs, string? warning)
+        => new(target, vcs, null, null, null, false, warning);
 }

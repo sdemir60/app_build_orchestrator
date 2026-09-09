@@ -2,14 +2,11 @@ using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Core.Externals;
 
-/// <summary>Bir harici projenin çalışma kopyası kökü ve o kökün sürüm kontrol türü.</summary>
-/// <param name="Kind">Bulunan sürüm kontrol türü; işaret yoksa <see cref="VcsKind.Unknown"/>.</param>
-/// <param name="RootPath">Çalışma kopyasının kökü; <see cref="VcsKind.Unknown"/> ise null.</param>
-public sealed record VcsRoot(VcsKind Kind, string? RootPath);
-
 /// <summary>
-/// [D3] Kök keşfi: kullanıcı harici projenin dizinini verir, çalışma kopyasının kökü oradan yukarı
-/// yürünerek bulunur. İlk rastlanan işaret kazanır — iç içe çalışma kopyalarında EN YAKIN kök doğrudur.
+/// [D3 · design v1.14.0 §9] Kök keşfi: kullanıcı harici projenin yolunu ve sürüm kontrol türünü verir (Source
+/// seçimi), çalışma kopyasının kökü o yoldan yukarı yürünerek bulunur — ama yalnız SEÇİLEN türün işareti
+/// aranır. Tür tespit EDİLMEZ: kullanıcı "TFVC" dediyse yolun üstündeki bir <c>.git</c> dizini önemsizdir;
+/// aranan yalnız <c>$tf</c>'dir. İlk rastlanan işaret kazanır — iç içe çalışma kopyalarında EN YAKIN kök doğrudur.
 ///
 /// <para>Sonuç hiçbir yerde persist EDİLMEZ: her koşuda diskten yeniden bulunur, böylece kullanıcı projeyi
 /// taşıdığında ya da çalışma kopyasını yeniden kurduğunda bayat bir kök kalmaz.</para>
@@ -24,13 +21,14 @@ public static class VcsDetector
     private const string TfvcMarker = "$tf";
 
     /// <summary>
-    /// <paramref name="startDirectory"/>'den başlayıp sürücü köküne kadar yukarı yürür ve ilk işaretin
-    /// türüyle birlikte onu taşıyan dizini döner. Boş, var olmayan ya da hiçbir işaret barındırmayan bir
-    /// yol için <c>(Unknown, null)</c> döner — çağıran bunu "sürüm kontrolü yok" diye okur.
+    /// <paramref name="startDirectory"/>'den başlayıp sürücü köküne kadar yukarı yürür ve <paramref name="kind"/>
+    /// türünün ilk işaretini taşıyan dizini döner. Boş, var olmayan ya da o işareti hiç barındırmayan bir yol
+    /// için <c>null</c> döner — çağıran bunu "seçilen türde çalışma kopyası yok" diye okur (güncelleme ve kir
+    /// kapısı çalışmaz, proje olduğu gibi derlenir).
     /// </summary>
-    public static VcsRoot DetectRoot(string startDirectory)
+    public static string? FindRoot(string startDirectory, VcsKind kind)
     {
-        if (string.IsNullOrWhiteSpace(startDirectory)) return new VcsRoot(VcsKind.Unknown, null);
+        if (string.IsNullOrWhiteSpace(startDirectory)) return null;
 
         DirectoryInfo? current;
         try
@@ -39,22 +37,22 @@ public static class VcsDetector
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            return new VcsRoot(VcsKind.Unknown, null); // ayrıştırılamayan yol = işaret yok
+            return null; // ayrıştırılamayan yol = işaret yok
         }
 
-        if (!current.Exists) return new VcsRoot(VcsKind.Unknown, null);
+        if (!current.Exists) return null;
 
         for (; current is not null; current = current.Parent)
-        {
-            // .git dizin VEYA dosya olabilir — ikisi de aynı anlama gelir.
-            if (Directory.Exists(Path.Combine(current.FullName, GitMarker))
-                || File.Exists(Path.Combine(current.FullName, GitMarker)))
-                return new VcsRoot(VcsKind.Git, current.FullName);
+            if (HasMarker(current.FullName, kind)) return current.FullName;
 
-            if (Directory.Exists(Path.Combine(current.FullName, TfvcMarker)))
-                return new VcsRoot(VcsKind.Tfvc, current.FullName);
-        }
-
-        return new VcsRoot(VcsKind.Unknown, null);
+        return null;
     }
+
+    private static bool HasMarker(string directory, VcsKind kind) => kind switch
+    {
+        // .git dizin VEYA dosya olabilir — ikisi de aynı anlama gelir.
+        VcsKind.Git => Directory.Exists(Path.Combine(directory, GitMarker)) || File.Exists(Path.Combine(directory, GitMarker)),
+        VcsKind.Tfvc => Directory.Exists(Path.Combine(directory, TfvcMarker)),
+        _ => false,
+    };
 }

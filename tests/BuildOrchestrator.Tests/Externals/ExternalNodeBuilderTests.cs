@@ -10,7 +10,7 @@ namespace BuildOrchestrator.Tests.Externals;
 /// </summary>
 public class ExternalNodeBuilderTests
 {
-    private static readonly ExternalProject Mail = new("Mail", @"D:\ext\mail", @"D:\ext\mail\Mail.sln");
+    private static readonly ExternalTarget Mail = new("Mail", @"D:\ext\mail", @"D:\ext\mail\Mail.sln");
 
     private static ExternalInspection Inspection(bool? willBuild = true, VcsKind vcs = VcsKind.Git) =>
         new(Mail, vcs, "abc123", willBuild, willBuild is true ? WillBuildReason.NeverBuilt : null, false, null);
@@ -57,7 +57,7 @@ public class ExternalNodeBuilderTests
     public void The_vcs_badge_comes_from_the_inspection()
     {
         Assert.Equal(VcsKind.Tfvc, ExternalNodeBuilder.ToNode(Inspection(vcs: VcsKind.Tfvc), 0).ExternalVcs);
-        Assert.Equal(VcsKind.Unknown, ExternalNodeBuilder.ToNode(Inspection(vcs: VcsKind.Unknown), 0).ExternalVcs);
+        Assert.Equal(VcsKind.Git, ExternalNodeBuilder.ToNode(Inspection(vcs: VcsKind.Git), 0).ExternalVcs);
     }
 
     [Fact]

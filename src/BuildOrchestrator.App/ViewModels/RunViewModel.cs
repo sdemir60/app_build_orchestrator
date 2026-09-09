@@ -698,7 +698,7 @@ public sealed partial class RunViewModel : ObservableObject
         // hiç başlatmıyordu).
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
             RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
-            ExternalProjects);
+            ExternalProjectsForWire);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
@@ -873,7 +873,7 @@ public sealed partial class RunViewModel : ObservableObject
         // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
         ArmEngineWatchdog();
         bool sent = await TrySendAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjects), "sync");
+            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire), "sync");
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).

@@ -13,8 +13,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ExternalProjectsSettingsTests
 {
-    private static readonly ExternalProject Mail = new("Mail", @"D:\ext\mail", @"D:\ext\mail\Mail.sln");
-    private static readonly ExternalProject Ocr = new("Ocr", @"D:\ext\ocr", @"D:\ext\ocr\Ocr.sln");
+    private static readonly ExternalProject Mail = new(@"D:\ext\mail", VcsKind.Git);
+    private static readonly ExternalProject Ocr = new(@"D:\ext\ocr\Ocr.sln", VcsKind.Tfvc);
 
     [Fact]
     public void The_external_list_survives_a_store_round_trip_in_order()
@@ -60,13 +60,14 @@ public class ExternalProjectsSettingsTests
     [Fact]
     public void The_saved_json_uses_the_shared_contract_shape()
     {
+        // Diskteki şekil Contracts tipinin kendisidir (yol + kaynak) — App-yerel ikinci bir kopya yoktur.
         using var temp = new TempDir();
         string path = Path.Combine(temp.Path, "ui-state.json");
-        new JsonUiStateStore(path).Save(new UiState { ExternalProjects = [Mail] });
+        new JsonUiStateStore(path).Save(new UiState { ExternalProjects = [Ocr] });
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var entry = document.RootElement.GetProperty("ExternalProjects").EnumerateArray().Single();
-        Assert.Equal("Mail", entry.GetProperty("Name").GetString());
-        Assert.Equal(@"D:\ext\mail\Mail.sln", entry.GetProperty("TargetPath").GetString());
+        Assert.Equal(@"D:\ext\ocr\Ocr.sln", entry.GetProperty("Path").GetString());
+        Assert.True(entry.TryGetProperty("Vcs", out _));
     }
 }

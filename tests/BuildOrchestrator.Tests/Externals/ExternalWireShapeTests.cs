@@ -5,12 +5,13 @@ using BuildOrchestrator.Contracts.Model;
 namespace BuildOrchestrator.Tests.Externals;
 
 /// <summary>
-/// Harici projelerin tel üzerindeki yüzeyi: komutlara eklenen liste ve node'a eklenen VCS rozeti. Alanlar
-/// KUYRUKTA ve varsayılan değerlidir — bu alanları hiç yazmayan eski NDJSON satırları çözülmeye devam eder.
+/// Harici projelerin tel üzerindeki yüzeyi: komutlara eklenen liste (yol + kaynak) ve node'a eklenen VCS
+/// rozeti. Alanlar KUYRUKTA ve varsayılan değerlidir — bu alanları hiç yazmayan eski NDJSON satırları
+/// çözülmeye devam eder.
 /// </summary>
 public class ExternalWireShapeTests
 {
-    private static readonly ExternalProject Mail = new("Mail", @"D:\ext\mail", @"D:\ext\mail\Mail.sln");
+    private static readonly ExternalProject Mail = new(@"D:\ext\mail", VcsKind.Git);
 
     [Fact]
     public void Sync_command_carries_the_external_list()
@@ -20,6 +21,7 @@ public class ExternalWireShapeTests
         string json = JsonSerializer.Serialize<IpcCommand>(command, IpcJson.Options);
         var back = (SyncWorkspaceCommand)JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options)!;
 
+        Assert.Contains("\"vcs\":\"git\"", json); // kaynak METİN olarak
         Assert.Equal([Mail], back.ExternalProjects);
     }
 

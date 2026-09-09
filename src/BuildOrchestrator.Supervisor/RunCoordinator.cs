@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
@@ -879,7 +879,7 @@ public sealed class RunCoordinator(
             // Hariciler listenin BAŞINDA — derlenme sıraları da budur. Revizyonları mevcut built-commit
             // yuvasında taşınır (yeni bir alan açılmaz).
             [.. externals.Select(e => new BuildPreviewItem(
-                    e.Project.TargetPath, e.Project.Name, e.WillBuild, e.Revision, e.Reason)),
+                    e.Target.TargetPath, e.Target.Name, e.WillBuild, e.Revision, e.Reason)),
             // Pre-skip edilenlerde gerekçe de DÜŞER (null): o "false" imzadan değil koşu-zamanlama kuralından
             // gelir (yakınsamama hafızası / Cycles kapsamı) ve düğümün imza gerekçesini göstermek yalan olurdu.
             .. plan.Nodes.Select(n => preSkipped.Contains(n.Id)
@@ -958,12 +958,12 @@ public sealed class RunCoordinator(
             bool externalAborted = false;
             foreach (var external in externals)
             {
-                string targetPath = external.Project.TargetPath;
+                string targetPath = external.Target.TargetPath;
 
                 if (!external.WillBuild)
                 {
                     events.TryWrite(new ProjectSkippedEvent(cmd.RunId, targetPath, SkipReasons.UpToDate, false));
-                    Decide(logs, $"{external.Project.Name}: skipped — {SkipReasons.UpToDate}");
+                    Decide(logs, $"{external.Target.Name}: skipped — {SkipReasons.UpToDate}");
                     externalSkipped++;
                     continue;
                 }
@@ -1047,8 +1047,8 @@ public sealed class RunCoordinator(
     /// <returns>Derleme yeşil bittiyse true.</returns>
     private async Task<bool> BuildExternalAsync(RunContext run, ExternalBuildPlan external, CancellationToken ct)
     {
-        string targetPath = external.Project.TargetPath;
-        string name = external.Project.Name;
+        string targetPath = external.Target.TargetPath;
+        string name = external.Target.Name;
         run.Events.TryWrite(new ProjectStartedEvent(run.RunId, targetPath, name));
 
         var result = BuildResult.Failed;
@@ -1093,11 +1093,11 @@ public sealed class RunCoordinator(
     {
         if (run.StateStore is null) return;
 
-        var state = new BuildState(external.Project.TargetPath, external.Signature, external.Revision,
+        var state = new BuildState(external.Target.TargetPath, external.Signature, external.Revision,
             BuildResult.Succeeded, DateTimeOffset.UtcNow, LastBranch: null, durationMs);
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { console("warning: build-state could not be written (" + external.Project.Name + "): " + ex.Message); }
+        { console("warning: build-state could not be written (" + external.Target.Name + "): " + ex.Message); }
     }
 
     /// <summary>

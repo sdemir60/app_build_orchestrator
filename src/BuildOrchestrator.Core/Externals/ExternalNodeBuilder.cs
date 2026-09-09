@@ -18,10 +18,10 @@ public static class ExternalNodeBuilder
         ArgumentNullException.ThrowIfNull(inspection);
 
         return new ProjectNode(
-            Id: inspection.Project.TargetPath,               // kimlik = derlenecek hedef (build-state anahtarı)
-            Name: inspection.Project.Name,
-            ProjectPath: inspection.Project.TargetPath,
-            SolutionNames: [Path.GetFileName(inspection.Project.TargetPath)],
+            Id: inspection.Target.TargetPath,                // kimlik = derlenecek hedef (build-state anahtarı)
+            Name: inspection.Target.Name,
+            ProjectPath: inspection.Target.TargetPath,
+            SolutionNames: [Path.GetFileName(inspection.Target.TargetPath)],
             Dependencies: [],                                // haricilerin grafta kenarı yoktur
             BuildOrder: order,
             LayerIndex: ExternalProjectsConventions.LayerIndex,

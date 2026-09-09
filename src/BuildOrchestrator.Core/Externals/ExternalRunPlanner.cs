@@ -24,9 +24,10 @@ public sealed class ExternalPreparationException(string message) : Exception(mes
     public static ExternalPreparationException Detached(string name, string rootPath) => new(
         $"External project '{name}' is not on a branch in '{rootPath}' — check out a branch, then build again.");
 
-    /// <summary>Harici projenin dizini diskte yok.</summary>
-    public static ExternalPreparationException FolderMissing(string name, string projectPath) => new(
-        $"External project '{name}' was not found at '{projectPath}' — fix the path in Settings, then build again.");
+    /// <summary>Ayarlar'daki yol bir hedefe çözülemedi (yok, ya da içinde tek bir solution/proje yok) —
+    /// <paramref name="problem"/> <see cref="ExternalTargetResolver"/>'ın cümlesidir.</summary>
+    public static ExternalPreparationException Unresolvable(string name, string path, string problem) => new(
+        $"External project '{name}' cannot be built from '{path}': {problem} — fix the path in Settings, then build again.");
 
     /// <summary>Çalışma kopyası okunamadı / güncellenemedi (ağ hatası DEĞİL — o degrade edilir).</summary>
     public static ExternalPreparationException UpdateFailed(string name, string rootPath, string? detail) => new(
@@ -38,14 +39,14 @@ public sealed class ExternalPreparationException(string message) : Exception(mes
 }
 
 /// <summary>Bir harici projenin bu koşu için hazırlanmış hâli.</summary>
-/// <param name="Project">Kullanıcının listelediği harici proje.</param>
-/// <param name="Vcs">Çalışma kopyasının sürüm kontrol türü.</param>
+/// <param name="Target">Yoldan çözülen hedef (ad, dizin, derlenecek dosya).</param>
+/// <param name="Vcs">Kullanıcının seçtiği sürüm kontrol türü.</param>
 /// <param name="Revision">Güncelleme sonrası revizyon kimliği; bilinmiyorsa null.</param>
 /// <param name="Signature">Bu koşudaki imza — derleme başarılı biterse deftere bu yazılır.</param>
 /// <param name="WillBuild">Derlenecek mi.</param>
 /// <param name="Reason">Kararın gerekçesi; Rebuild zorlamasında null.</param>
 public sealed record ExternalBuildPlan(
-    ExternalProject Project,
+    ExternalTarget Target,
     VcsKind Vcs,
     string? Revision,
     string Signature,
@@ -53,11 +54,11 @@ public sealed record ExternalBuildPlan(
     WillBuildReason? Reason);
 
 /// <summary>
-/// [D6] Build anındaki harici fazı: liste sırasıyla her harici için kök keşfi → kir kapısı → güncelleme →
-/// revizyon → karar.
+/// [D6] Build anındaki harici fazı: liste sırasıyla her harici için hedef çözümü → kök keşfi → kir kapısı →
+/// güncelleme → revizyon → karar.
 ///
-/// <para><b>İki farklı hata sınıfı.</b> Kullanıcının çözmesi gereken bir durum (kir, ayrışma, detached HEAD,
-/// eksik dizin, kurulu olmayan tf.exe) koşuyu <see cref="ExternalPreparationException"/> ile HİÇ
+/// <para><b>İki farklı hata sınıfı.</b> Kullanıcının çözmesi gereken bir durum (çözülemeyen yol, kir, ayrışma,
+/// detached HEAD, kurulu olmayan tf.exe) koşuyu <see cref="ExternalPreparationException"/> ile HİÇ
 /// BAŞLATMADAN durdurur — yarım bir koşu kimseye yaramaz. Geçici bir ağ/kimlik hatası ise yalnız uyarır ve
 /// yerel sürümle devam edilir; ana reponun degraded fetch davranışı da tam olarak budur.</para>
 ///
@@ -98,31 +99,34 @@ public sealed class ExternalRunPlanner(IProcessRunner runner, Func<CancellationT
         ExternalProject project, string configuration, bool rebuild,
         IReadOnlyDictionary<string, BuildState>? state, Action<string> progress, CancellationToken ct)
     {
-        progress(PlanProgressLines.UpdatingExternal(project.Name));
+        var resolution = ExternalTargetResolver.Resolve(project.Path);
+        if (resolution.Target is not { } target)
+            throw ExternalPreparationException.Unresolvable(
+                ExternalTargetResolver.DisplayName(project.Path), project.Path, resolution.Problem!);
 
-        if (!Directory.Exists(project.ProjectPath))
-            throw ExternalPreparationException.FolderMissing(project.Name, project.ProjectPath);
+        progress(PlanProgressLines.UpdatingExternal(target.Name));
 
-        var root = VcsDetector.DetectRoot(project.ProjectPath);
-        string? revision = root.Kind switch
-        {
-            VcsKind.Git => await UpdateGitAsync(project, root.RootPath!, progress, ct),
-            VcsKind.Tfvc => await UpdateTfvcAsync(project, root.RootPath!, progress, ct),
-            _ => NoVersionControl(project, progress),
-        };
+        string? root = VcsDetector.FindRoot(target.Directory, project.Vcs);
+        string? revision = root is null
+            ? NoWorkingCopy(target, project.Vcs, progress)
+            : project.Vcs switch
+            {
+                VcsKind.Tfvc => await UpdateTfvcAsync(target, root, progress, ct),
+                _ => await UpdateGitAsync(target, root, progress, ct),
+            };
 
-        string signature = ExternalSignature.Compute(configuration, root.Kind, revision);
+        string signature = ExternalSignature.Compute(configuration, project.Vcs, revision);
         var decision = rebuild
             ? new ExternalBuildDecision(true, WillBuildReason.NeverBuilt) // gerekçe Rebuild'de gösterilmez
-            : ExternalWillBuild.Decide(Lookup(state, project.TargetPath), signature);
+            : ExternalWillBuild.Decide(Lookup(state, target.TargetPath), signature);
 
-        if (!decision.WillBuild) progress(PlanProgressLines.ExternalUpToDate(project.Name));
+        if (!decision.WillBuild) progress(PlanProgressLines.ExternalUpToDate(target.Name));
 
-        return new ExternalBuildPlan(project, root.Kind, revision, signature,
+        return new ExternalBuildPlan(target, project.Vcs, revision, signature,
             decision.WillBuild, rebuild ? null : decision.Reason);
     }
 
-    private async Task<string?> UpdateGitAsync(ExternalProject project, string rootPath, Action<string> progress, CancellationToken ct)
+    private async Task<string?> UpdateGitAsync(ExternalTarget target, string rootPath, Action<string> progress, CancellationToken ct)
     {
         var result = await new ExternalGitUpdater(runner, rootPath).UpdateAsync(ct);
 
@@ -134,31 +138,31 @@ public sealed class ExternalRunPlanner(IProcessRunner runner, Func<CancellationT
 
             case ExternalUpdateStatus.DegradedOffline:
                 // Ağ yok: koşu ölmez, yerel sürüm derlenir.
-                progress(PlanProgressLines.ExternalUpdateDegraded(project.Name, result.Detail ?? "unreachable remote"));
+                progress(PlanProgressLines.ExternalUpdateDegraded(target.Name, result.Detail ?? "unreachable remote"));
                 return result.Revision;
 
             case ExternalUpdateStatus.Dirty:
-                throw ExternalPreparationException.Dirty(project.Name, rootPath);
+                throw ExternalPreparationException.Dirty(target.Name, rootPath);
             case ExternalUpdateStatus.Diverged:
-                throw ExternalPreparationException.Diverged(project.Name, rootPath);
+                throw ExternalPreparationException.Diverged(target.Name, rootPath);
             case ExternalUpdateStatus.Detached:
-                throw ExternalPreparationException.Detached(project.Name, rootPath);
+                throw ExternalPreparationException.Detached(target.Name, rootPath);
             default:
-                throw ExternalPreparationException.UpdateFailed(project.Name, rootPath, result.Detail);
+                throw ExternalPreparationException.UpdateFailed(target.Name, rootPath, result.Detail);
         }
     }
 
-    private async Task<string?> UpdateTfvcAsync(ExternalProject project, string rootPath, Action<string> progress, CancellationToken ct)
+    private async Task<string?> UpdateTfvcAsync(ExternalTarget target, string rootPath, Action<string> progress, CancellationToken ct)
     {
-        var tfvc = new TfvcService(runner, rootPath, await ResolveTfAsync(project.Name, ct));
+        var tfvc = new TfvcService(runner, rootPath, await ResolveTfAsync(target.Name, ct));
 
         var pending = await tfvc.HasPendingChangesAsync(ct);
-        if (!pending.Success) throw ExternalPreparationException.Tfvc(project.Name, pending.Error!);
-        if (pending.Value) throw ExternalPreparationException.Dirty(project.Name, rootPath);
+        if (!pending.Success) throw ExternalPreparationException.Tfvc(target.Name, pending.Error!);
+        if (pending.Value) throw ExternalPreparationException.Dirty(target.Name, rootPath);
 
         var get = await tfvc.GetLatestAsync(ct);
         if (!get.Success)
-            progress(PlanProgressLines.ExternalUpdateDegraded(project.Name, get.Error!));
+            progress(PlanProgressLines.ExternalUpdateDegraded(target.Name, get.Error!));
 
         var changeset = await tfvc.CurrentChangesetAsync(ct);
         // "C" öneki changeset numarasını git sha'sından ayırır — ikisi aynı imza alanında yaşar.
@@ -185,9 +189,9 @@ public sealed class ExternalRunPlanner(IProcessRunner runner, Func<CancellationT
         return _tfExePath;
     }
 
-    private static string? NoVersionControl(ExternalProject project, Action<string> progress)
+    private static string? NoWorkingCopy(ExternalTarget target, VcsKind vcs, Action<string> progress)
     {
-        progress(PlanProgressLines.ExternalNoVersionControl(project.Name));
+        progress(PlanProgressLines.ExternalNoWorkingCopy(target.Name, vcs));
         return null; // bilinmeyen revizyon → proje her koşuda derlenir
     }
 

@@ -7,26 +7,24 @@ using BuildOrchestrator.Tests.Git;
 namespace BuildOrchestrator.Tests.Externals;
 
 /// <summary>
-/// Kök keşfi [D3]: kullanıcı harici projenin DİZİNİNİ verir, çalışma kopyasının kökü oradan yukarı
-/// yürünerek bulunur. Kök ve VCS türü hiçbir yerde persist edilmez — her koşuda burada yeniden bulunur.
+/// Kök keşfi [D3 · design v1.14.0 §9]: kullanıcı yolu VE sürüm kontrol türünü verir; çalışma kopyasının kökü
+/// yoldan yukarı yürünerek bulunur ama yalnız SEÇİLEN türün işareti aranır. Kök hiçbir yerde persist edilmez —
+/// her koşuda burada yeniden bulunur.
 /// </summary>
 public class VcsDetectorTests
 {
     [Fact]
-    public void Detect_finds_git_root_from_a_subdirectory()
+    public void A_git_root_is_found_from_a_subdirectory()
     {
         using var repo = new GitTestRepo();
         string nested = Path.Combine(repo.RootPath, "src", "Mail", "deep");
         Directory.CreateDirectory(nested);
 
-        var root = VcsDetector.DetectRoot(nested);
-
-        Assert.Equal(VcsKind.Git, root.Kind);
-        Assert.Equal(repo.RootPath, root.RootPath);
+        Assert.Equal(repo.RootPath, VcsDetector.FindRoot(nested, VcsKind.Git));
     }
 
     [Fact]
-    public void Detect_reports_git_for_a_gitfile_worktree()
+    public void A_gitfile_worktree_counts_as_a_git_root()
     {
         // Linked worktree'de .git bir DİZİN değil, gitdir'i gösteren bir DOSYADIR — dizin-only kontrol
         // burayı ıskalar ve kök arayışı sürücü köküne kadar yürürdü.
@@ -35,14 +33,11 @@ public class VcsDetectorTests
         Directory.CreateDirectory(Path.Combine(workingCopy, "src"));
         File.WriteAllText(Path.Combine(workingCopy, ".git"), "gitdir: D:/repo/.git/worktrees/wt-mail");
 
-        var root = VcsDetector.DetectRoot(Path.Combine(workingCopy, "src"));
-
-        Assert.Equal(VcsKind.Git, root.Kind);
-        Assert.Equal(workingCopy, root.RootPath);
+        Assert.Equal(workingCopy, VcsDetector.FindRoot(Path.Combine(workingCopy, "src"), VcsKind.Git));
     }
 
     [Fact]
-    public void Detect_finds_tfvc_root_from_a_subdirectory()
+    public void A_tfvc_root_is_found_from_a_subdirectory()
     {
         using var temp = new TempDir();
         string workspace = Path.Combine(temp.Path, "tfs-workspace");
@@ -50,58 +45,43 @@ public class VcsDetectorTests
         string project = Path.Combine(workspace, "Customer", "Ocr");
         Directory.CreateDirectory(project);
 
-        var root = VcsDetector.DetectRoot(project);
-
-        Assert.Equal(VcsKind.Tfvc, root.Kind);
-        Assert.Equal(workspace, root.RootPath);
+        Assert.Equal(workspace, VcsDetector.FindRoot(project, VcsKind.Tfvc));
     }
 
     [Fact]
-    public void Detect_prefers_the_nearest_marker_when_a_tfvc_workspace_sits_inside_a_git_repo()
+    public void Only_the_selected_kind_is_looked_for()
     {
-        // İç içe çalışma kopyalarında EN YAKIN işaret kazanır — yoksa git kökü TFVC projesini yutardı.
+        // Kullanıcı "TFVC" dediyse yolun üstündeki .git önemsizdir: git kökü TFVC projesini yutmaz —
+        // ve tersi: git seçiliyken $tf hiç görülmez.
         using var repo = new GitTestRepo();
         string workspace = Path.Combine(repo.RootPath, "vendor", "tfs");
         Directory.CreateDirectory(Path.Combine(workspace, "$tf"));
         string project = Path.Combine(workspace, "Ocr");
         Directory.CreateDirectory(project);
 
-        var root = VcsDetector.DetectRoot(project);
-
-        Assert.Equal(VcsKind.Tfvc, root.Kind);
-        Assert.Equal(workspace, root.RootPath);
+        Assert.Equal(workspace, VcsDetector.FindRoot(project, VcsKind.Tfvc));
+        Assert.Equal(repo.RootPath, VcsDetector.FindRoot(project, VcsKind.Git));
     }
 
     [Fact]
-    public void Detect_reports_unknown_when_no_marker_up_to_drive_root()
+    public void No_marker_of_the_selected_kind_up_to_the_drive_root_means_no_root()
     {
         using var temp = new TempDir();
         string project = Path.Combine(temp.Path, "loose", "Mail");
         Directory.CreateDirectory(project);
 
-        var root = VcsDetector.DetectRoot(project);
-
-        Assert.Equal(VcsKind.Unknown, root.Kind);
-        Assert.Null(root.RootPath);
+        Assert.Null(VcsDetector.FindRoot(project, VcsKind.Git));
+        Assert.Null(VcsDetector.FindRoot(project, VcsKind.Tfvc));
     }
 
     [Fact]
-    public void Detect_reports_unknown_for_a_directory_that_does_not_exist()
-    {
-        var root = VcsDetector.DetectRoot(Path.Combine(Path.GetTempPath(), "no-such-" + Guid.NewGuid().ToString("N")));
-
-        Assert.Equal(VcsKind.Unknown, root.Kind);
-        Assert.Null(root.RootPath);
-    }
+    public void A_directory_that_does_not_exist_has_no_root()
+        => Assert.Null(VcsDetector.FindRoot(
+            Path.Combine(Path.GetTempPath(), "no-such-" + Guid.NewGuid().ToString("N")), VcsKind.Git));
 
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public void Detect_reports_unknown_for_a_blank_directory(string startDirectory)
-    {
-        var root = VcsDetector.DetectRoot(startDirectory);
-
-        Assert.Equal(VcsKind.Unknown, root.Kind);
-        Assert.Null(root.RootPath);
-    }
+    public void A_blank_directory_has_no_root(string startDirectory)
+        => Assert.Null(VcsDetector.FindRoot(startDirectory, VcsKind.Git));
 }

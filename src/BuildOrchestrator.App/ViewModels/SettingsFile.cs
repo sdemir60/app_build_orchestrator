@@ -61,7 +61,7 @@ public sealed class SettingsFile
     /// HER ZAMAN gerçek (boş olabilir ama null OLMAYAN) bir liste geçer — bu yüzden GERÇEK bir Export anahtarı
     /// hiç eksik BIRAKMAZ (§9: "yalnız boş olmayan path'ler").</summary>
     public static SettingsFile From(string? repositoryRoot, IReadOnlyList<LayerPattern> layers,
-        IReadOnlyList<ExternalProjectRef>? externals = null)
+        IReadOnlyList<ExternalProject>? externals = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
         return new SettingsFile
@@ -71,7 +71,7 @@ public sealed class SettingsFile
             // sırası JSON çıktısını ETKİLEMEZ (System.Text.Json BİLDİRİM sırasını yazar), ama okunurluk için
             // sınıftaki alan sırasıyla AYNI tutulur — iki sıra sessizce ayrışmasın.
             ExternalProjects = externals is null ? null
-                : [.. externals.Select(e => new SettingsFileExternal { Path = e.Path, Vcs = e.Vcs == VcsKind.Tfvc ? "tfvc" : "git" })],
+                : [.. externals.Select(e => new SettingsFileExternal { Path = e.Path, Vcs = VcsKinds.Label(e.Vcs) })],
             Layers = [.. layers.OrderBy(l => l.Order).Select(l => new SettingsFileLayer { Name = l.Name, Pattern = l.Regex })],
         };
     }
@@ -176,7 +176,7 @@ internal sealed class ExternalProjectListConverter : JsonConverter<List<Settings
             }
 
             if (string.IsNullOrWhiteSpace(path)) continue; // boş path'ler düşer (§9)
-            result.Add(new SettingsFileExternal { Path = path, Vcs = vcs == "tfvc" ? "tfvc" : "git" });
+            result.Add(new SettingsFileExternal { Path = path, Vcs = VcsKinds.Label(VcsKinds.Parse(vcs)) });
         }
         return result;
     }

@@ -42,8 +42,17 @@ public class ExternalSyncIntegrationTests
             new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
             new ExternalSyncInspector(new ProcessRunner()));
 
-    private static ExternalProject ExternalAt(string directory, string name = "Mail")
-        => new(name, directory, Path.Combine(directory, name + ".sln"));
+    /// <summary>Harici repo: tek bir <c>Mail.sln</c> + bir kaynak dosya, tek commit. Döndürülen sha HEAD'dir.</summary>
+    private static string SeedExternal(GitTestRepo external)
+    {
+        external.WriteFile("Mail.cs", "one");
+        external.WriteFile("Mail.sln", "");
+        return external.CommitAll("mail");
+    }
+
+    private static ExternalProject ExternalAt(string directory) => new(directory, VcsKind.Git);
+
+    private static string TargetOf(GitTestRepo external) => Path.Combine(external.RootPath, "Mail.sln");
 
     private static async Task<List<IpcEvent>> RunSyncAsync(GitTestRepo main, string cacheRoot, params ExternalProject[] externals)
     {
@@ -66,13 +75,13 @@ public class ExternalSyncIntegrationTests
         WriteWorkspace(main);
         main.CommitAll("workspace");
         using var external = new GitTestRepo();
-        external.WriteFile("Mail.cs", "one");
-        external.CommitAll("mail");
+        SeedExternal(external);
 
         var topology = Topology(await RunSyncAsync(main, NewCacheRoot(), ExternalAt(external.RootPath)));
 
         var first = topology.Nodes[0];
         Assert.Equal("Mail", first.Name);
+        Assert.Equal(TargetOf(external), first.Id);
         Assert.Equal(ExternalProjectsConventions.LayerName, first.LayerName);
         Assert.Equal(ExternalProjectsConventions.LayerIndex, first.LayerIndex);
         Assert.Equal(VcsKind.Git, first.ExternalVcs);
@@ -87,8 +96,7 @@ public class ExternalSyncIntegrationTests
         WriteWorkspace(main);
         main.CommitAll("workspace");
         using var external = new GitTestRepo();
-        external.WriteFile("Mail.cs", "one");
-        external.CommitAll("mail");
+        SeedExternal(external);
 
         var topology = Topology(await RunSyncAsync(main, NewCacheRoot(), ExternalAt(external.RootPath)));
 
@@ -102,18 +110,16 @@ public class ExternalSyncIntegrationTests
         WriteWorkspace(main);
         main.CommitAll("workspace");
         using var external = new GitTestRepo();
-        external.WriteFile("Mail.cs", "one");
-        string head = external.CommitAll("mail");
+        string head = SeedExternal(external);
         string cacheRoot = NewCacheRoot();
-        var project = ExternalAt(external.RootPath);
         // Defterde bu revizyondan derlenmiş bir kayıt var → önizleme "up to date" demeli ve sha'yı taşımalı.
-        new BuildStateStore(cacheRoot).Upsert(new BuildState(project.TargetPath,
+        new BuildStateStore(cacheRoot).Upsert(new BuildState(TargetOf(external),
             ExternalSignature.Compute("Debug", VcsKind.Git, head), BuiltCommit: head, LastResult: BuildResult.Succeeded));
 
-        var events = await RunSyncAsync(main, cacheRoot, project);
+        var events = await RunSyncAsync(main, cacheRoot, ExternalAt(external.RootPath));
 
         var item = events.OfType<BuildPreviewEvent>().Single().Items[0];
-        Assert.Equal(project.TargetPath, item.ProjectId);
+        Assert.Equal(TargetOf(external), item.ProjectId);
         Assert.False(item.WillBuild);
         Assert.Equal(WillBuildReason.UpToDate, item.Reason);
         Assert.Equal(head, item.BuiltCommit);
@@ -126,8 +132,7 @@ public class ExternalSyncIntegrationTests
         WriteWorkspace(main);
         main.CommitAll("workspace");
         using var external = new GitTestRepo();
-        external.WriteFile("Mail.cs", "one");
-        external.CommitAll("mail");
+        SeedExternal(external);
         File.WriteAllText(Path.Combine(external.RootPath, "Mail.cs"), "edited");
 
         var events = await RunSyncAsync(main, NewCacheRoot(), ExternalAt(external.RootPath));
@@ -144,8 +149,7 @@ public class ExternalSyncIntegrationTests
         WriteWorkspace(main);
         main.CommitAll("workspace");
         using var external = new GitTestRepo();
-        external.WriteFile("Mail.cs", "one");
-        external.CommitAll("mail");
+        SeedExternal(external);
 
         var withExternal = await RunSyncAsync(main, NewCacheRoot(), ExternalAt(external.RootPath));
         var withoutExternal = await RunSyncAsync(main, NewCacheRoot());
@@ -175,18 +179,18 @@ public class ExternalSyncIntegrationTests
     }
 
     [Fact]
-    public async Task A_missing_external_folder_warns_and_still_appears_as_a_hollow_row()
+    public async Task An_unresolvable_external_path_warns_and_still_appears_as_a_hollow_row()
     {
         using var main = new GitTestRepo();
         WriteWorkspace(main);
         main.CommitAll("workspace");
-        var missing = ExternalAt(Path.Combine(Path.GetTempPath(), "no-such-external-77aa"), "Ocr");
+        var missing = ExternalAt(Path.Combine(Path.GetTempPath(), "Ocr-77aa"));
 
         var events = await RunSyncAsync(main, NewCacheRoot(), missing);
 
-        Assert.Contains(ProgressLines(events), l => l.Contains("folder not found", StringComparison.Ordinal));
+        Assert.Contains(ProgressLines(events), l => l.Contains("was not found", StringComparison.Ordinal));
         var node = Topology(events).Nodes[0];
-        Assert.Equal("Ocr", node.Name);
+        Assert.Equal("Ocr-77aa", node.Name);
         Assert.Null(node.WillBuild);
     }
 }

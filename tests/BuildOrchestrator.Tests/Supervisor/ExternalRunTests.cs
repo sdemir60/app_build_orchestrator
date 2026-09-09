@@ -1,13 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Externals;
-using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Supervisor;
 using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
@@ -26,7 +23,7 @@ public class ExternalRunTests
     private static string TargetOf(string name) => Path.Combine(ExternalRoot, name, name + ".sln");
 
     private static ExternalBuildPlan External(string name, bool willBuild = true, string? revision = "abc123") =>
-        new(new ExternalProject(name, Path.Combine(ExternalRoot, name), TargetOf(name)),
+        new(new ExternalTarget(name, Path.Combine(ExternalRoot, name), TargetOf(name)),
             VcsKind.Git, revision, "SIG-" + name, willBuild, willBuild ? WillBuildReason.NeverBuilt : WillBuildReason.UpToDate);
 
     private static RunPlan PlanWithExternals(RunPlan plan, params ExternalBuildPlan[] externals)
