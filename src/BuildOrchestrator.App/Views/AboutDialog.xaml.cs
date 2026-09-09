@@ -176,8 +176,10 @@ public partial class AboutDialog : UserControl
     /// [DEĞİŞEN KURAL — design v1.13.1 §2.10] Environment satırının DEĞER hücresi artık kırpılmaz (bkz.
     /// AboutDialog.xaml'deki DataTemplate yorumu) — onun yerine yatay kayar, ve bu metot o kaydırmanın
     /// tekerlek yönlendirmesidir. Normal (dikey) fare tekerleği, hücre GERÇEKTEN taşıyorsa
-    /// (<c>ScrollableWidth &gt; 0</c>) yatay ofsete uygulanır ve olay burada durur; taşmıyorsa HİÇBİR ŞEY
-    /// yapılmaz — olay kendi dikey yoluna (Environment sekmesinin ScrollViewer'ı) dokunulmadan devam eder.
+    /// (<c>ScrollableWidth &gt; 0</c>) yatay ofsete uygulanır ve olay burada durur. Taşmıyorsa yatay ofsete
+    /// DOKUNULMAZ ama olay yine de elden geçer: ebeveyne DEVREDİLEREK kendi dikey yoluna (Environment
+    /// sekmesinin ScrollViewer'ı) ulaştırılır — bkz. <see cref="ForwardWheelToParent"/> ve aşağıdaki ölçüm
+    /// paragrafı. Devir olmadan iç ScrollViewer olayı yutar ve sekme HİÇ kaymaz.
     ///
     /// <para><b>Neden <see cref="Controls.HorizontalWheelScroll"/> DEĞİL:</b> o sınıf farklı bir sorunu çözer —
     /// GERÇEKTEN yatay bir tekerlek/touchpad sinyali (<c>WM_MOUSEHWHEEL</c>) WPF'e HİÇ ulaşmaz, bu yüzden
