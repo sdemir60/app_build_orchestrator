@@ -44,9 +44,13 @@ public class KeyboardWiringTests
     /// <summary>
     /// [About] ESKİ İDDİA: "tabloda TAM 5 satır var". O sayı bir bütçe değil, günün kısayol kümesinin
     /// negatif-pin'iydi (yanlışlıkla eklenen bir bağlamayı yakalamak için). About ekranı F1'i ekledi, yani
-    /// KURAL BİLEREK DEĞİŞTİ: satır sayısı 6'dır ve tablo artık <see cref="WindowIntent.ShowAbout"/>'u da
-    /// taşır. Negatif-pin'in NİYETİ korunuyor — sayı tablodan türetilmiyor, açıkça yazılıyor ki fazladan ya da
-    /// kayıp bir bağlama yine kırsın.
+    /// KURAL BİLEREK DEĞİŞTİ: satır sayısı 6'ya çıktı ve tablo <see cref="WindowIntent.ShowAbout"/>'u da
+    /// taşıdı.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.1/§2.11, D4/T8]</b> What's new About'un sekmesi olmaktan
+    /// çıkıp kendi kısayolunu (Ctrl+F1) kazandı: satır sayısı 6'dan <b>7</b>'ye çıktı ve tablo artık
+    /// <see cref="WindowIntent.ShowNotes"/>'u da taşıyor. Negatif-pin'in NİYETİ yine korunuyor — sayı tablodan
+    /// türetilmiyor, açıkça yazılıyor ki fazladan ya da kayıp bir bağlama yine kırsın.</para>
     /// </summary>
     [Fact]
     public void The_window_binding_table_maps_each_key_gesture_to_the_correct_intent()
@@ -60,9 +64,10 @@ public class KeyboardWiringTests
         Assert.Equal(WindowIntent.F5StateBranch, Intent(Key.F5, ModifierKeys.None));  // çıplak F5 → duruma-dallı
         Assert.Equal(WindowIntent.FocusFilter, Intent(Key.F, ModifierKeys.Control));  // Ctrl+F   → filtre odağı
         Assert.Equal(WindowIntent.ShowAbout, Intent(Key.F1, ModifierKeys.None));      // F1       → About
+        Assert.Equal(WindowIntent.ShowNotes, Intent(Key.F1, ModifierKeys.Control));   // Ctrl+F1  → What's new
         Assert.Equal(WindowIntent.Escape, Intent(Key.Escape, ModifierKeys.None));     // Esc      → katman zinciri
 
-        // Negatif-pin: tabloda TAM 6 satır — fazladan/kayıp bir bağlama (ör. yanlışlıkla eklenen Ctrl+P) kırar.
-        Assert.Equal(6, KeyboardShortcuts.WindowBindings.Count);
+        // Negatif-pin: tabloda TAM 7 satır — fazladan/kayıp bir bağlama (ör. yanlışlıkla eklenen Ctrl+P) kırar.
+        Assert.Equal(7, KeyboardShortcuts.WindowBindings.Count);
     }
 }

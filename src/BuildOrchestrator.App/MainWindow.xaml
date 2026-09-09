@@ -140,26 +140,40 @@
                 </Canvas>
               </Viewbox>
             </Button>
-            <!-- [About] Gear'ın SAĞINDA, aynı grupta: grup kullanım sıklığı azalan sırada dizilir
-                 (layout > settings > about) ve Windows/Office geleneğinde Help/About uygulama komutlarının en
-                 sonundadır. Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir (kopya YASAK), o yüzden
-                 kod-tarafı kurulur (MainWindow ctor). -->
-            <Button x:Name="InfoButton" Style="{DynamicResource Ds.IconButton}" Click="OnAbout"
-                    AutomationProperties.Name="{x:Static local:AccessibilityNames.About}">
+            <!-- [design v1.13.0 §2.1 · D4/T8] What's new butonu: dişli ile ⓘ ARASINDA, ikisiyle AYNI optik
+                 ağırlıkta (Icon.WhatsNew.StrokeThickness = Icon.Gear/Icon.Info ile aynı 1.7px). Tooltip metni
+                 ELLE yazılmaz — ShortcutCatalog'dan gelir (kopya YASAK), o yüzden kod-tarafı kurulur
+                 (MainWindow ctor, About'un info butonuyla AYNI desen). -->
+            <Button x:Name="NotesButton" Style="{DynamicResource Ds.IconButton}" Click="OnNotes"
+                    AutomationProperties.Name="{x:Static local:AccessibilityNames.WhatsNew}">
               <Grid>
                 <Viewbox Width="16" Height="16">
                   <Canvas Width="24" Height="24">
-                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Info}"
-                          StrokeThickness="{DynamicResource Icon.Info.StrokeThickness}" />
+                    <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.WhatsNew}"
+                          StrokeThickness="{DynamicResource Icon.WhatsNew.StrokeThickness}" />
                   </Canvas>
                 </Viewbox>
-                <!-- [design v1.9.0 §2.10] GÖRÜLMEMİŞ SÜRÜM İŞARETİ: 5px amber nokta. Açılış toast'ı ya da
-                     karşılama pop-up'ı YOK (§8) — yönlendirme About'un What's new sekmesine yapılır ve
-                     sekme görülünce nokta söner. -->
+                <!-- [design v1.13.0 §2.1/§2.11] GÖRÜLMEMİŞ SÜRÜM İŞARETİ: 5px amber nokta — açılış toast'ı /
+                     karşılama pop-up'ı YOK (§8), diyalog görülünce nokta söner.
+                     ⓘ'dan buraya TAŞINDI (eskiden design v1.9.0'da About'un What's new sekmesine
+                     yönlendiriyordu; artık bu butonun kendi diyaloguna — NotesDialog — açar). -->
                 <Ellipse x:Name="UnseenNotesDot" Width="5" Height="5" Visibility="Collapsed"
                          HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
                          Fill="{DynamicResource Brush.Amber}" IsHitTestVisible="False" />
               </Grid>
+            </Button>
+            <!-- [About] Gear/What's new butonunun SAĞINDA, aynı grupta: grup kullanım sıklığı azalan sırada
+                 dizilir (layout > settings > what's new > about) ve Windows/Office geleneğinde Help/About
+                 uygulama komutlarının en sonundadır. Tooltip metni ELLE yazılmaz — ShortcutCatalog'dan gelir
+                 (kopya YASAK), o yüzden kod-tarafı kurulur (MainWindow ctor). -->
+            <Button x:Name="InfoButton" Style="{DynamicResource Ds.IconButton}" Click="OnAbout"
+                    AutomationProperties.Name="{x:Static local:AccessibilityNames.About}">
+              <Viewbox Width="16" Height="16">
+                <Canvas Width="24" Height="24">
+                  <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.Info}"
+                        StrokeThickness="{DynamicResource Icon.Info.StrokeThickness}" />
+                </Canvas>
+              </Viewbox>
             </Button>
           </StackPanel>
 
@@ -203,8 +217,16 @@
 
       <!-- [About] İkinci modal: About diyaloğu. Settings ile AYNI katman kuralları — scrim tüm pencereyi
            (başlık bandı dahil) kaplar, caption bölgesinde de tıklama alsın diye IsHitTestVisibleInChrome=True.
-           İkisi aynı anda AÇILAMAZ (MainWindow.AnyDialogOpen kapısı). Varsayılan Collapsed. -->
+           About Settings'in ÜSTÜNE açılır (gear yalnız TERSİNİ engeller — MainWindow.AnyDialogOpen, About
+           açıkken Settings'i açtırmaz); ikisi BİRLİKTE açık durabilir. Varsayılan Collapsed. -->
       <views:AboutDialog x:Name="AboutOverlay" Grid.Row="0" Grid.RowSpan="2"
+                         WindowChrome.IsHitTestVisibleInChrome="True" />
+
+      <!-- [design v1.13.0 §2.11 · D4/T9] Üçüncü ve EN ÜST modal: What's new diyaloğu. About/Settings ile AYNI
+           katman kuralları. XAML'de SONUNCU olarak durur, bu yüzden z-sırası daima en üstte (About üzerinde
+           de açılabilir — prototipte zIndex 101, About 100); Esc zinciri bunu ÖNCE kapatır (bkz.
+           MainWindow.OnEscapePressed). Varsayılan Collapsed. -->
+      <views:NotesDialog x:Name="NotesOverlay" Grid.Row="0" Grid.RowSpan="2"
                          WindowChrome.IsHitTestVisibleInChrome="True" />
     </Grid>
   </Border>

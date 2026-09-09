@@ -110,6 +110,10 @@ public static class AccessibilityNames
     /// işlevini KISA tarif eder.</summary>
     public const string About = "About";
 
+    /// <summary>[design v1.13.0 §2.1 · D4/T8] Title bar'daki ikon-yalnız sparkle butonu (dişli ile ⓘ
+    /// arasında). About ile AYNI kural: UIA adı kısa, tooltip <see cref="Shell.ShortcutCatalog"/>'dan.</summary>
+    public const string WhatsNew = "What's new";
+
     // ---- Ayraçlar (resize separator'ları — E5 fold: klavye ile odaklanır + ok tuşlarıyla resize) ----
     public const string ColumnSplitter = "Resize left and right columns";
     public const string GraphListSplitter = "Resize graph and project list";
@@ -158,6 +162,14 @@ public static class AccessibilityNames
     public const string ExportSettings = "Export settings to a file";
     public const string ImportSettings = "Import settings from a file";
     public const string ClearSettings = "Clear the repository root and all layers";
+
+    // ---- [K5 · design v1.14.0 §9] Settings: EXTERNAL PROJECTS satırı ----
+    /// <summary>Harici proje kartındaki mono path input'u — kolon başlığı "PROJECT PATH", watermark bir
+    /// ÖRNEK yoldur, etiket değildir.</summary>
+    public const string ExternalProjectPath = "External project path";
+    /// <summary>Harici proje kartındaki Source (Git/TFVC) seçimi — kolon başlığı "SOURCE" ama ekran
+    /// okuyucunun duyacağı ad README §9 v1.14.0'da pinlenen "Version control"dur.</summary>
+    public const string ExternalProjectSource = "Version control";
 
     // ---- [A13/T5] Worktree popover: hedef satırı ----
     /// <summary>Hedef satırındaki çöp kutusunun tooltip'i (satır başına AYNI metin).</summary>

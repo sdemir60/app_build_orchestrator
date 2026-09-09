@@ -36,9 +36,14 @@ public enum WindowIntent
     F5StateBranch,
     /// <summary>Ctrl+F → proje filtre input'una odak.</summary>
     FocusFilter,
-    /// <summary>[About] F1 → About diyaloğu (sürüm, kısayollar, tanı) — Windows'un Help geleneği. Bir modal
-    /// AÇIKKEN NO-OP'tur: kaydedilmemiş bir Settings taslağı sessizce atılmamalı.</summary>
+    /// <summary>[About] F1 → About diyaloğu (sürüm, kısayollar, tanı) — Windows'un Help geleneği. TOGGLE'dır
+    /// (açıkken tekrar basmak kapatır) ve başka bir modal AÇIKKEN de çalışır: About üste biner, alttaki
+    /// taslağı YOK ETMEZ, Esc en üst katmanı indirir (bkz. <see cref="ResolveEsc"/>).</summary>
     ShowAbout,
+    /// <summary>[design v1.13.0 §2.1/§2.11 · D4/T8] Ctrl+F1 → What's new diyaloğu, TOGGLE (açıkken tekrar
+    /// basmak kapatır — About'un F1'inden farkı budur). About gibi bir modal açıkken de çalışır: en üst
+    /// katman What's new'dir (bkz. <see cref="ResolveEsc"/>'in kapsadığı katman sırası).</summary>
+    ShowNotes,
     /// <summary>Esc → EN ÜST açık katmanı kapat (dialog &gt; popover/menü &gt; seçim; bkz. <see cref="ResolveEsc"/>).</summary>
     Escape,
 }
@@ -63,7 +68,10 @@ public static class KeyboardShortcuts
     /// SetupKeyboardShortcuts bunu iterasyonla <see cref="KeyBinding"/>'lere çevirir — "hangi tuş+modifier hangi
     /// niyete bağlı" kararı BURADA tek yerde pinlenir (yanlış modifier/tuş/niyet testte kırar). Ctrl+F5 ve
     /// Shift+F5 ikisi de Rebuild; çıplak F5 duruma-dallı; Ctrl+F filtre; Esc katman zinciri. Otorite v7 K6 +
-    /// BuildApp.jsx:1302-1319. Negatif-pin: Ctrl+P ve çıplak Shift bu tabloda YOK.</summary>
+    /// BuildApp.jsx:1302-1319. Negatif-pin: Ctrl+P ve çıplak Shift bu tabloda YOK.
+    ///
+    /// <para>[design v1.13.0 §2.1/§2.11 · D4/T8] Ctrl+F1 → <see cref="WindowIntent.ShowNotes"/> eklendi:
+    /// What's new artık About'un sekmesi değil, kendi kısayolu olan kendi diyalogu.</para></summary>
     public static IReadOnlyList<WindowBinding> WindowBindings { get; } =
     [
         new(Key.F5, ModifierKeys.Control, WindowIntent.Rebuild),        // Ctrl+F5  → Rebuild (doğrudan)
@@ -71,6 +79,7 @@ public static class KeyboardShortcuts
         new(Key.F5, ModifierKeys.None, WindowIntent.F5StateBranch),    // çıplak F5 → Stop/Build (duruma göre)
         new(Key.F, ModifierKeys.Control, WindowIntent.FocusFilter),    // Ctrl+F   → proje filtre odağı
         new(Key.F1, ModifierKeys.None, WindowIntent.ShowAbout),        // F1       → About (Windows Help geleneği)
+        new(Key.F1, ModifierKeys.Control, WindowIntent.ShowNotes),     // Ctrl+F1  → What's new (toggle)
         new(Key.Escape, ModifierKeys.None, WindowIntent.Escape),       // Esc      → EN ÜST açık katman
     ];
 

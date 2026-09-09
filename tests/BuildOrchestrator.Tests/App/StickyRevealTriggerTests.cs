@@ -158,4 +158,128 @@ public class StickyRevealTriggerTests
             $"'{((ProjectRowViewModel)r.DataContext).Name}' satırı reveal OYNAMADI — reveal kapsamı eksik kaldı."));
         GC.KeepAlive(window);
     }
+
+    // ---------------------------------------------------------------- [D3/T5 · design v1.13.2 §2.4/§9] Sync listeyi başa alır
+
+    private static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithManyProjects(TempDir dir, int count) =>
+        MainWindowHost.NewWithProjects(dir, [.. Enumerable.Range(0, count).Select(i => ($"P{i}", (string?)null))]);
+
+    /// <summary>İKİNCİ (farklı) bir topoloji — <c>count</c> proje, <c>MainWindowHost.Node</c> ile BİREBİR aynı
+    /// kural. Bir öncekinden en az bir proje FAZLA olduğundan <c>TopologySignature</c> her zaman değişir (bkz.
+    /// <c>RunViewModel.Workspace.cs</c>'teki <c>_lastTopologySignature</c> imza guard'ı) — reveal'in GERÇEKTEN
+    /// yeniden oynaması bu yüzden garantidir, "no changes" guard'ına takılmaz.</summary>
+    private static List<ProjectNode> ReplayedTopology(int count) =>
+        [.. Enumerable.Range(0, count).Select(i => MainWindowHost.Node($"P{i}", i))];
+
+    /// <summary>[design v1.13.2 §2.4/§9] Liste yeni bir topolojiyle (Sync/workspace kaydı — <c>SetGroups(reveal:
+    /// true)</c> yolu) tazelendiğinde VE seçim yokken, scroll'u yumuşak 0'a döner — graf da reveal'ini yeniden
+    /// oynadığından ikisi birlikte "sıfırdan listelendi" okunur. Tetik <see cref="StickyLayerList.PlayRevealStagger"/>
+    /// çevresidir (<c>_revealPending</c>'in tüketildiği yer), <c>SetGroups</c>'un HER çağrısı değil — bu yüzden
+    /// senaryo doğrudan <c>PlayRevealStagger</c> yerine ÜRETİM tetiğiyle (ikinci <c>WorkspaceTopologyEvent</c>)
+    /// kurulur.</summary>
+    [StaFact]
+    public void A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = NewWithManyProjects(dir, 60);
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int before = list.RevealGeneration;
+        Assert.True(before > 0, "ilk reveal hiç oynamadı — bu testin taban çizgisi yok (vakum)");
+        Assert.True(list.FollowController!.IsFollowing, "ön-koşul: seçim yok");
+
+        DispatcherPump.PumpUntil(() => list.Scroll.ScrollableHeight > 200, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.ScrollableHeight > 200,
+            $"liste kaydırılamıyor (ScrollableHeight={list.Scroll.ScrollableHeight}) — senaryo kurulamadı");
+
+        list.Scroll.ScrollToVerticalOffset(150);
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset >= 149.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset >= 149.5, "test scroll'u tutmadı — ön-koşul kurulamadı");
+
+        // ÜRETİM YOLU: yeni bir topoloji (Sync tekrarı gibi) — seçim YOK.
+        vm.OnEvent(new WorkspaceTopologyEvent(ReplayedTopology(61), [], [], []));
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != before, TimeSpan.FromSeconds(3));
+        Assert.NotEqual(before, list.RevealGeneration); // ön-koşul: reveal GERÇEKTEN yeniden oynadı
+
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset <= 0.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset <= 0.5,
+            $"[design v1.13.2] reveal yeniden oynadı ve seçim yoktu — scroll 0'a dönmeliydi " +
+            $"(VerticalOffset={list.Scroll.VerticalOffset})");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.13.2 §2.4 · §9] <b>Aynı topolojiyle biten bir Sync ("no changes") da listeyi başa
+    /// alır.</b> Reveal'i yeniden oynatan şey topolojinin DEĞİŞMESİ değil, yayının bir <b>Sync'e</b> ait olmasıdır
+    /// (<c>RunViewModel.OnWorkspaceTopology</c>: <c>_syncInFlight</c> imza guard'ını geçer). Kardeş test
+    /// (<see cref="A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero"/>) imzayı değiştirerek
+    /// guard'dan kaçıyordu; bu test guard'ın tam ortasından geçer — kullanıcının gördüğü senaryo budur:
+    /// aynı repoda Sync'e basmak.</summary>
+    [StaFact]
+    public void A_no_changes_sync_returns_the_list_to_the_top()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = NewWithManyProjects(dir, 60);
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int before = list.RevealGeneration;
+        Assert.True(before > 0, "ilk reveal hiç oynamadı — bu testin taban çizgisi yok (vakum)");
+
+        DispatcherPump.PumpUntil(() => list.Scroll.ScrollableHeight > 200, TimeSpan.FromSeconds(3));
+        list.Scroll.ScrollToVerticalOffset(150);
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset >= 149.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset >= 149.5, "test scroll'u tutmadı — ön-koşul kurulamadı");
+
+        // ÜRETİM YOLU: Sync başlar, AYNI 60 proje yeniden yayınlanır (imza AYNI), Sync biter.
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent(ReplayedTopology(60), [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 60, 0));
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != before, TimeSpan.FromSeconds(3));
+        Assert.NotEqual(before, list.RevealGeneration); // reveal, imza aynıyken de YENİDEN oynadı
+
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset <= 0.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset <= 0.5,
+            $"[design v1.13.2] Sync sonrası liste başa dönmeliydi (VerticalOffset={list.Scroll.VerticalOffset})");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.13.2 §2.4/§9] AYNI tetik ama SEÇİM VARKEN scroll'a dokunulmaz — kullanıcı kararı,
+    /// imlecin altındaki satır kaçmasın. "Seçim var" bilgisi TEK kaynaktan: <see cref="FollowScrollController.IsFollowing"/>
+    /// (<c>MainWindow.UpdateFrontierSelection</c> → <c>StickyLayerList.SelectRow</c> zaten besliyor).</summary>
+    [StaFact]
+    public void A_replayed_reveal_with_a_selection_leaves_the_scroll_position_alone()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = NewWithManyProjects(dir, 60);
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int before = list.RevealGeneration;
+        Assert.True(before > 0, "ilk reveal hiç oynamadı — bu testin taban çizgisi yok (vakum)");
+
+        DispatcherPump.PumpUntil(() => list.Scroll.ScrollableHeight > 200, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.ScrollableHeight > 200,
+            $"liste kaydırılamıyor (ScrollableHeight={list.Scroll.ScrollableHeight}) — senaryo kurulamadı");
+
+        // Bir kart seçilir; SelectRow'un KENDİ 90ms gecikmeli kaydırması settle olsun diye pompalanır — aksi
+        // halde bu testin kendi ölçümüyle (aşağıdaki "settled") yarışır.
+        vm.SelectProject(MainWindowHost.IdOf("P30"));
+        Assert.False(list.FollowController!.IsFollowing, "ön-koşul: seçim kurulamadı");
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset > 50, TimeSpan.FromSeconds(3));
+        double settled = list.Scroll.VerticalOffset;
+        Assert.True(settled > 50,
+            $"seçimin kendi kaydırması ölçülebilir bir konuma varmadı (VerticalOffset={settled}) — senaryo kurulamadı");
+
+        // ÜRETİM YOLU: yeni bir topoloji — seçili proje YİNE var (superset), seçim KORUNUR.
+        vm.OnEvent(new WorkspaceTopologyEvent(ReplayedTopology(61), [], [], []));
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != before, TimeSpan.FromSeconds(3));
+        Assert.NotEqual(before, list.RevealGeneration); // ön-koşul: reveal GERÇEKTEN yeniden oynadı
+        Assert.False(list.FollowController!.IsFollowing, "seçim ikinci topolojide de KORUNMALIYDI — vakum değil");
+
+        Assert.True(Math.Abs(list.Scroll.VerticalOffset - settled) < 1.0,
+            $"[design v1.13.2] seçim VARKEN reveal yeniden oynadı — scroll'a DOKUNULMAMALIYDI " +
+            $"(önce={settled:N1}, şimdi={list.Scroll.VerticalOffset:N1})");
+        GC.KeepAlive(window);
+    }
 }

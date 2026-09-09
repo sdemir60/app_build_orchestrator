@@ -88,11 +88,13 @@ public partial class AboutDialog : UserControl
     /// <paramref name="hotkeyRegistered"/> global kısayolun GERÇEKTEN kayıtlı olup olmadığıdır (çakışmada
     /// sessiz devre dışı — bkz. <see cref="HotkeyRegistration"/>); <c>false</c> ise o satır "unavailable"
     /// işaretlenir. <paramref name="resolveMsBuild"/> vswhere seam'idir (testler process başlatmaz).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10]</b> ESKİ İMZA bir <c>openOnWhatsNew</c> parametresi
+    /// taşıyordu: görülmemiş bir sürüm varsa diyalog DOĞRUDAN What's new sekmesinde açılırdı. What's new
+    /// kendi diyaloguna (<see cref="NotesDialog"/>) taşındığı için bu yönlendirme kalktı — About artık HER
+    /// açılışta Shortcuts'ta başlar (yönlendirme MainWindow'da sparkle butonuna/Ctrl+F1'e gider).</para>
     /// </summary>
-    /// <param name="openOnWhatsNew">[design v1.9.0 §2.10] Görülmemiş bir sürüm varsa diyalog DOĞRUDAN
-    /// <i>What's new</i> sekmesinde açılır.</param>
-    public void Open(RunViewModel run, bool hotkeyRegistered, Func<Task<string>> resolveMsBuild,
-        bool openOnWhatsNew = false)
+    public void Open(RunViewModel run, bool hotkeyRegistered, Func<Task<string>> resolveMsBuild)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(resolveMsBuild);
@@ -119,12 +121,10 @@ public partial class AboutDialog : UserControl
         FontLicenseNoteText.Text = ThirdPartyNotices.FontLicenseNote;
 
         RefreshDiagnostics();
-        BuildWhatsNew(showAll: false); // [§2.10] katlama her açılışta 3'e döner
 
-        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa About DOĞRUDAN What's new'da açılır — yönlendirme
-        // bir açılış toast'ıyla değil, buraya yapılır (§8: karşılama pop-up'ı YOK).
-        if (openOnWhatsNew) WhatsNewTab.IsChecked = true;
-        else ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
+        // [design v1.13.0 §2.10] ⓘ ve F1 her zaman Shortcuts'ta açar — What's new'e yönlendirme YOKTUR
+        // artık (o dialog kendi butonundan/Ctrl+F1'den açılır).
+        ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
         Visibility = Visibility.Visible;
         // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı. Visibility'den SONRA: animasyon görünür bir öğe
@@ -170,131 +170,67 @@ public partial class AboutDialog : UserControl
         RefreshDiagnostics();
     }
 
-    // ---------------------------------------------------------------- [design v1.9.0 §2.10] What's new
-
-    /// <summary>Sekme GÖRÜLDÜ — title bar'daki "görülmemiş sürüm" noktası söner. Kablo <c>MainWindow</c>'da
-    /// (kalıcı duruma yazma orada; diyalog yalnız olguyu bildirir).</summary>
-    public event Action? NotesSeen;
-
-    /// <summary>[test yüzeyi] Çizilmiş sürüm blokları.</summary>
-    internal IReadOnlyList<FrameworkElement> WhatsNewBlocks => [.. WhatsNewRows.Children.Cast<FrameworkElement>()];
-    internal Button EarlierVersions => EarlierVersionsButton;
-    internal RadioButton WhatsNew => WhatsNewTab;
-
-    private void OnWhatsNewTabChecked(object sender, RoutedEventArgs e) => NotesSeen?.Invoke();
+    // ---------------------------------------------------------------- environment değer kaydırma
 
     /// <summary>
-    /// [§2.10] Sürüm listesini kurar: en yeni üstte, <b>son 3 sürüm açık</b>, gerisi ghost bir düğmenin
-    /// altında katlı. Katlama diyalog her açılışında 3'e döner (geri katlama düğmesi YOKTUR — açtıysan
-    /// okuyorsundur).
+    /// [DEĞİŞEN KURAL — design v1.13.1 §2.10] Environment satırının DEĞER hücresi artık kırpılmaz (bkz.
+    /// AboutDialog.xaml'deki DataTemplate yorumu) — onun yerine yatay kayar, ve bu metot o kaydırmanın
+    /// tekerlek yönlendirmesidir. Normal (dikey) fare tekerleği, hücre GERÇEKTEN taşıyorsa
+    /// (<c>ScrollableWidth &gt; 0</c>) yatay ofsete uygulanır ve olay burada durur. Taşmıyorsa yatay ofsete
+    /// DOKUNULMAZ ama olay yine de elden geçer: ebeveyne DEVREDİLEREK kendi dikey yoluna (Environment
+    /// sekmesinin ScrollViewer'ı) ulaştırılır — bkz. <see cref="ForwardWheelToParent"/> ve aşağıdaki ölçüm
+    /// paragrafı. Devir olmadan iç ScrollViewer olayı yutar ve sekme HİÇ kaymaz.
+    ///
+    /// <para><b>Neden <see cref="Controls.HorizontalWheelScroll"/> DEĞİL:</b> o sınıf farklı bir sorunu çözer —
+    /// GERÇEKTEN yatay bir tekerlek/touchpad sinyali (<c>WM_MOUSEHWHEEL</c>) WPF'e HİÇ ulaşmaz, bu yüzden
+    /// pencerenin HWND mesaj yoluna kanca gerekir (+ bir Dispatcher turu ertelemesi, çünkü istek WndProc'un
+    /// İÇİNDEN yapılır). Buradaki istek FARKLI: prototipin <c>onWheel → scrollLeft += deltaY</c>'i — DÜZ dikey
+    /// tekerlek, ki WPF onu zaten normal bir <c>MouseWheel</c> routed event'i olarak dağıtır. HWND kancası ya
+    /// da erteleme YOKTUR: istek senkron, doğrudan <see cref="ScrollViewer.ScrollToHorizontalOffset"/> ile
+    /// uygulanır.</para>
+    ///
+    /// <para><b>Taşmayan hücrede olay ELDEN GEÇİRİLİR (ÖLÇÜLDÜ):</b> <c>VerticalScrollBarVisibility="Disabled"</c>
+    /// olması TEK BAŞINA YETMEZ. Ölçüm: bu hücrenin üzerinde BALONCUK fazındaki <c>MouseWheel</c> olayı
+    /// <c>Handled=True</c> ile dönüyor ve dış panelin <c>VerticalOffset</c>'i 0'da kalıyor —
+    /// <see cref="ScrollViewer"/> kendi <c>OnMouseWheel</c> class handler'ında olayı, dikeyde kaydıracak bir
+    /// şeyi OLUP OLMADIĞINA BAKMADAN yutuyor. Değer hücresi satırın <c>DockPanel</c>'inde <c>LastChildFill</c>
+    /// olduğu için bu, Environment yüzeyinin çoğunda tekerleği ÖLDÜRÜRDÜ. Çözüm WPF'in standart iç-içe
+    /// ScrollViewer deseni: preview'da olayı yut (böylece class handler hiç koşmaz) ve ebeveynden yeni bir
+    /// baloncuk olayı yayınla — bkz. <see cref="ForwardWheelToParent"/>. Test dış panelin
+    /// <c>VerticalOffset</c>'inin gerçekten ARTTIĞINI pinler
+    /// (<c>The_wheel_over_a_non_overflowing_environment_value_still_scrolls_the_tab</c>); <c>Handled</c> tek
+    /// başına bu davranışı pinlemez.</para>
     /// </summary>
-    private void BuildWhatsNew(bool showAll)
+    private void OnEnvironmentValueWheel(object sender, MouseWheelEventArgs e)
     {
-        WhatsNewRows.Children.Clear(); // minik, non-virtualized liste (BuildMenu deseni)
-        var all = ReleaseNotes.All;
-        int shown = showAll ? all.Count : Math.Min(ReleaseNotes.OpenByDefault, all.Count);
-        for (int i = 0; i < shown; i++) WhatsNewRows.Children.Add(BuildVersionBlock(all[i], first: i == 0));
-
-        int hidden = all.Count - shown;
-        EarlierVersionsButton.Content = ReleaseNotes.EarlierVersionsLabel(hidden);
-        EarlierVersionsButton.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var scroller = (ScrollViewer)sender;
+        if (scroller.ScrollableWidth <= 0) { ForwardWheelToParent(scroller, e); return; }
+        scroller.ScrollToHorizontalOffset(
+            EnvironmentValueWheelOffset(scroller.HorizontalOffset, e.Delta, scroller.ScrollableWidth));
+        e.Handled = true;
     }
 
-    private void OnShowEarlierVersions(object sender, RoutedEventArgs e) => BuildWhatsNew(showAll: true);
-
-    /// <summary>[§2.10] Bir sürüm bloğu: mono numara + (güncelse) sessiz caps <c>CURRENT</c> etiketi + sağa
-    /// yaslı tarih; altında kategori BLOKLARI. Sürümler arasında 14px boşluk + 1px ayraç.</summary>
-    private FrameworkElement BuildVersionBlock(ReleaseEntry entry, bool first)
+    /// <summary>Taşmayan hücrenin tekerleğini ebeveyne devreder: preview'daki olay YUTULUR (iç ScrollViewer'ın
+    /// yutan class handler'ı böylece hiç koşmaz) ve ebeveynden AYNI delta'yla yeni bir baloncuk
+    /// <c>MouseWheel</c> yayınlanır — dış (sekme) ScrollViewer'a ulaşan olay budur. <c>Source</c> hücrenin
+    /// KENDİSİ kalır: olay yolun ilerisinde hâlâ nereden geldiğini söyler.
+    /// <para>Ebeveyn yoksa (hücre ağaçtan koparılmışsa) olay YUTULMAZ — devredilemeyen bir olayı yutmak, onu
+    /// sessizce yok etmek olurdu.</para></summary>
+    private static void ForwardWheelToParent(ScrollViewer scroller, MouseWheelEventArgs e)
     {
-        var block = new StackPanel { Margin = new Thickness(0, first ? 0 : 14, 0, 0) };
-        if (!first)
-        {
-            var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, 14) };
-            divider.SetResourceReference(Border.BackgroundProperty, "Brush.BorderSubtle");
-            block.Children.Insert(0, divider);
-        }
-
-        var header = new DockPanel();
-        var date = new TextBlock { Text = entry.Date, VerticalAlignment = VerticalAlignment.Center, FontFamily = Controls.AppFonts.Mono };
-        date.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-        date.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
-        DockPanel.SetDock(date, Dock.Right);
-        header.Children.Add(date);
-
-        var version = new TextBlock { Text = entry.Version, VerticalAlignment = VerticalAlignment.Center, FontFamily = Controls.AppFonts.Mono };
-        version.SetResourceReference(FontSizeProperty, "FontSize.Sm");
-        version.SetResourceReference(FontWeightProperty, "FontWeight.Emphasis");
-        version.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextPrimary");
-        header.Children.Add(version);
-
-        // [§2.10] CURRENT etiketi SESSİZDİR: yalnız text-faint metin — zemin/çerçeve YOK (amber rozet göze
-        // batıyordu).
-        if (string.Equals(entry.Version, AppIdentity.Version, StringComparison.Ordinal))
-        {
-            var current = new Controls.TrackedTextBlock
-            {
-                Text = "CURRENT",
-                Margin = new Thickness(8, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            current.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-            current.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
-            header.Children.Add(current);
-        }
-        block.Children.Add(header);
-
-        // [§2.10] Kategori BLOK başlığıdır (satır başına ikon/sigil YOK); boş kategori hiç çizilmez.
-        foreach (var kind in ReleaseNotes.KindOrder)
-        {
-            var items = entry.Notes.Where(n => n.Kind == kind).ToList();
-            if (items.Count == 0) continue;
-            block.Children.Add(BuildCategory(kind, items));
-        }
-        return block;
+        if (VisualTreeHelper.GetParent(scroller) is not UIElement parent) return;
+        e.Handled = true;
+        parent.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+            { RoutedEvent = MouseWheelEvent, Source = scroller });
     }
 
-    private FrameworkElement BuildCategory(NoteKind kind, IReadOnlyList<ReleaseNote> items)
-    {
-        var group = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
-
-        var heading = new StackPanel { Orientation = Orientation.Horizontal };
-        var swatch = new System.Windows.Shapes.Rectangle
-        {
-            Width = 6,
-            Height = 6,
-            RadiusX = 1,
-            RadiusY = 1,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        swatch.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, ReleaseNotes.SwatchBrushKey(kind));
-        heading.Children.Add(swatch);
-
-        var label = new Controls.TrackedTextBlock
-        {
-            Text = ReleaseNotes.Label(kind),
-            Margin = new Thickness(7, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        label.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-        label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextDim");
-        heading.Children.Add(label);
-        group.Children.Add(heading);
-
-        foreach (var note in items)
-        {
-            var text = new TextBlock
-            {
-                Text = note.Text,
-                Margin = new Thickness(13, 4, 0, 0),
-                TextWrapping = TextWrapping.Wrap,
-            };
-            text.SetResourceReference(FontSizeProperty, "FontSize.Sm");
-            text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
-            text.SetResourceReference(TextBlock.LineHeightProperty, "LineHeight.Snug13"); // 13px gövde → snug
-            group.Children.Add(text);
-        }
-        return group;
-    }
+    /// <summary>SAF karar: bir dikey tekerlek notch'unun (WPF <c>Delta</c>) yatay ofsete karşılığı, içeriğin
+    /// sınırlarına kelepçeli. WPF'in dikey ScrollViewer'ı pozitif <c>Delta</c>'yı YUKARI sayar (ofset AZALIR —
+    /// <c>e.Delta &gt; 0 ⇒ LineUp</c>); prototipin <c>scrollLeft += deltaY</c> hissiyle (tekerlek AŞAĞI ⇒ yol
+    /// SAĞA) aynı fiziksel yöne ulaşmak için işaret WPF'in KENDİ dikey kuralıyla aynı çevrilir:
+    /// <c>ofset -= delta</c>.</summary>
+    internal static double EnvironmentValueWheelOffset(double currentOffset, double delta, double scrollableWidth) =>
+        Math.Clamp(currentOffset - delta, 0, Math.Max(0, scrollableWidth));
 
     // ---------------------------------------------------------------- copy diagnostics
 

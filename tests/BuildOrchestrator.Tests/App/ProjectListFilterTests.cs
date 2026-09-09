@@ -262,26 +262,23 @@ public class ProjectListFilterTests
     }
 
     /// <summary>
-    /// [A13/B3 · E4 — KARAKTERİZASYON, davranış DEĞİŞTİRİLMEDİ] <b>"No changes" bir Sync listeyi ne resetler ne de
-    /// reveal'i yeniden oynatır.</b> Karar ve gerekçesi <c>RunViewModel._lastTopologySignature</c>'ın XML doc'unda
-    /// kayıtlıdır (özet: <c>SetGroups</c> = <c>ItemsSource</c> tam reset'i; değişmemiş bir liste için her Sync'te
-    /// container teardown + "kartlar yeniden belirdi" flaşı <b>gereksiz churn</b>'ün ta kendisi olurdu — bu guard,
-    /// <c>StickyLayerList.SetGroups</c> doc'undaki "churn ÇAĞIRAN tarafta kapatılır" şartının uygulanışıdır.
-    /// A13.2'nin metni reset'i NİTELİKSİZ yasaklar; "gereksiz olanı yasaktır" bu repo'nun DAR okumasıdır).
+    /// [design v1.13.2 §2.4 · §9] <b>"No changes" bir Sync de reveal'i yeniden oynatır.</b> Sync "sıfırdan
+    /// listelendi" demektir: prototipte <c>doSync()</c> (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i HER
+    /// Sync'te KOŞULSUZ artırır — üretim aynı kuralı izler. Karar ve gerekçesi
+    /// <c>RunViewModel._lastTopologySignature</c>'ın XML doc'unda.
     ///
-    /// <para><b>Otorite AYRIŞIYOR (A13/B3 fix round 1, ölçüldü):</b> prototipte <c>doSync()</c>
-    /// (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i HER Sync'te KOŞULSUZ artırır. Üretim bilerek ayrılır;
-    /// bu test o AYRILIĞI pinler, otoriteye uyumu değil.</para>
-    ///
-    /// <para><b>Neden pin gerekiyor:</b> bu davranış tek bir imza karşılaştırmasına dayanıyor. Guard kaldırılırsa
-    /// (ya da imzaya statü alanları sızarsa) kullanıcı KOŞARKEN gelen her mid-run Sync'te listeyi baştan
-    /// belirirken görürdü ve hiçbir test bunu yakalamazdı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüldü]</b> ESKİ İDDİA (A13/B3 · E4): "no changes bir Sync listeyi ne
+    /// resetler ne de reveal'i yeniden oynatır" — imza guard'ı her yayına uygulanıyordu, gerekçesi "gereksiz churn"
+    /// (mid-run bir Sync koşan grafı yeniden-reveal etmesin). Kullanıcı testinde ölçülen: aynı repoda ikinci
+    /// Sync'te kartlar yeniden belirmiyor, liste başa DÖNMÜYORDU. Mid-run Sync zaten ulaşılamaz (Sync koşarken
+    /// kilitli), guard yalnız Sync DIŞI yayınlar için kaldı.</para>
     ///
     /// <para><b>Vakum değil:</b> (a) reveal'in taban çizgisi 0'ın ÜSTÜNDE olduğu ayrıca assert edilir,
-    /// (b) yeniden yayınlanan topolojinin gerçekten TÜKETİLDİĞİ (aynı satırlar, aynı sırada) assert edilir.</para>
+    /// (b) yeniden yayınlanan topolojinin gerçekten TÜKETİLDİĞİ (aynı satırlar, aynı sırada) assert edilir.
+    /// Scroll'un başa dönüşü <c>StickyRevealTriggerTests.A_no_changes_sync_returns_the_list_to_the_top</c>'ta.</para>
     /// </summary>
     [StaFact]
-    public void A_no_changes_sync_neither_resets_the_list_nor_replays_the_reveal()
+    public void A_no_changes_sync_replays_the_reveal()
     {
         using var temp = new TempDir();
         var (window, vm, list) = NewShellWithProjects(temp);
@@ -290,19 +287,16 @@ public class ProjectListFilterTests
         int afterTopology = list.RevealGeneration;
         Assert.True(afterTopology > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
 
-        int resets = 0;
-        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => resets++;
-
-        // ÜRETİM YOLU: AYNI topoloji yeniden yayınlanır ("no changes" Sync) + syncCompleted.
+        // ÜRETİM YOLU: Sync başlar, AYNI topoloji yeniden yayınlanır ("no changes"), Sync biter.
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
         vm.OnEvent(new WorkspaceTopologyEvent(
             [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Beta", 1, "Core"), MainWindowHost.Node("Gamma", 2, "Ui")],
             [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
-        DispatcherPump.PumpUntil(() => list.RevealGeneration != afterTopology || resets > 0, TimeSpan.FromMilliseconds(400));
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != afterTopology, TimeSpan.FromSeconds(3));
 
         Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list)); // topoloji GERÇEKTEN tüketildi
-        Assert.Equal(0, resets);                 // A13.2: koleksiyon reset YOK
-        Assert.Equal(afterTopology, list.RevealGeneration); // ...ve reveal yeniden OYNAMADI
+        Assert.NotEqual(afterTopology, list.RevealGeneration);              // ...ve reveal YENİDEN OYNADI
         GC.KeepAlive(window);
     }
 
@@ -321,6 +315,12 @@ public class ProjectListFilterTests
     /// <para><b>Ayırt edici kanıt:</b> bu testi yazdıktan sonra <c>SetGroups</c>'un sonuna bilerek
     /// <c>Scroll.ScrollToVerticalOffset(0)</c> eklenip test KIRMIZI görüldü, sonra geri alındı (bkz.
     /// task-T2-report.md §4) — yani bu test gerçekten üretim davranışını ölçüyor, sahte-yeşil değil.</para>
+    ///
+    /// <para><b>[D3/T5 · design v1.13.2]</b> İkinci bir işi de var: <see cref="StickyLayerList.PlayRevealStagger"/>
+    /// artık seçim yokken scroll'u 0'a döndürüyor, ama YALNIZ <c>reveal:true</c> yolundan (bkz. o metodun XML
+    /// doc'u) — burada tetiklenen filtre tazelemesi <c>reveal:false</c>'tur, yani bu test AYNI ZAMANDA "filtre
+    /// tazelemesi reveal'in scroll sıfırlamasını TETİKLEMEZ" iddiasının da kanıtıdır (T5'in üçüncü yönü — ayrı
+    /// bir kopya test YAZILMADI).</para>
     /// </summary>
     [StaFact]
     public void Filtering_the_list_preserves_the_scroll_offset_instead_of_snapping_to_the_top()

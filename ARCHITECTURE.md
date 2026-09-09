@@ -1157,10 +1157,11 @@ Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No adm
 ### 12.4 Layout modes and persistence
 
 The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
-hairline, then the company logo at 10 px and 55 % opacity, and finally the mono repository context. The
-hierarchy is the point — product ahead and vivid, company behind and quiet. Its application commands sit at
-the other end, between the context text and the caption buttons, in decreasing order of use: the three
-view-mode toggles, a hairline separator, then the gear (Settings) and the `i` (About).
+hairline, and finally the company logo at 10 px and 55 % opacity. The hierarchy is the point — product ahead
+and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the action
+bar below says it once, with the workspace name and the branch and worktree chips. The window's application
+commands sit at the other end, ahead of the caption buttons, in decreasing order of use: the three view-mode
+toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i` (About).
 
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
@@ -1279,6 +1280,13 @@ realized in the same layout round.
 One consequence is deliberate: the staggered reveal reaches the rows that exist, which is the visible window.
 Rows scrolled into view later simply appear.
 
+**Every Sync replays the reveal.** The topology a Sync publishes is a fresh listing even when nothing in it
+changed, so the list is rebuilt and revealed again, and — when nothing is selected — scrolled back to the
+top; the graph replays its own reveal in the same moment, so the two read together as "listed from scratch".
+Build, Rebuild, Clean and Resolve leave the scroll where it is: the opening choreography already tells their
+story, and the row under the pointer must not run away. A structural signature still gates republishes that
+do not come from a Sync.
+
 Follow-mode keeps the frontier visible while a run is in flight and nothing is selected: at most one scroll
 animation every 550 ms, and none at all if the target is within 54 px.
 
@@ -1301,8 +1309,12 @@ the frontier sits in the middle of the list, so a single wheel notch parked foll
 **Console.** See §13.5.
 
 **Event stream.** A capped list of chronological one-line events, cleared — like the console — whenever a new
-operation begins: everything on screen belongs to the operation that is running. Sync does not clear it, being
-the ground operations stand on rather than one of them. It is not virtualized and does not need to
+operation begins, Sync included: everything on screen belongs to the operation that is running. What decides
+the clear is not the operation's kind but whether the click that starts it already left a note of its own in
+the console — Sync from the ribbon button clears both panels, since nothing precedes it; a Sync that Settings'
+Save sends does not, because Save already wrote the console's first line (the new layer count, or the new
+root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one before
+it. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows
@@ -1407,9 +1419,38 @@ listeners each rebuilding on every notification the cost is quadratic in the num
 wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
 selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
-The Settings dialog is 620 px and carries two sections. **WORKSPACE** comes first: a mono repository-root
+The Settings dialog is 760 px wide and carries three sections. **WORKSPACE** comes first: a mono repository-root
 input with a *Browse…* button beside it. The root is the one setting the tool cannot run without, so *Save*
-stays disabled while it is empty. Then a hairline, then the **LAYERS** editor.
+stays disabled while it is empty. Then a hairline, then **EXTERNAL PROJECTS**, then another hairline, then the
+**LAYERS** editor.
+
+**External projects** sit between Workspace and Layers on purpose: they are meant to build *before* everything
+the repository root discovers, so the section's position tells that story before any card does. A card is a
+path — a folder, a solution or a project file — and a source, Git or TFVC, picked from a two-item `Ds.Select`
+(the design system's `<select>`, ported to a `ComboBox` template since the app had no combo-box style before
+this). Cards share the layer card's shell byte-for-byte — same 36 px height, same border and radius, same
+raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two lists reorder independently, each
+against its own collection. An empty path on any card disables *Save*, the same severity as an empty layer
+name. The list starts **empty** (unlike Layers, it has no seed) and shows the same dashed empty-state box the
+Layers section uses when its own list is empty. *Add external project* appends a blank, Git-sourced card.
+**This section is UI and persistence only.** The list lives in the app and is written to disk on *Save*, but it
+does not reach the engine yet — no path is scanned, no working-copy root is discovered, and the project list
+and graph carry no trace of it. That connection is a separate branch merging separately; wiring it in here would
+have made the dialog claim a scan that was not happening.
+
+Its width is picked the same way About's and What's new's are — for the direction each grows in, not for what
+it holds today. Settings is the one most likely to grow: it already holds the root plus layer cards with a name
+and a pattern side by side, and the sections a wider config surface would add next — an MSBuild path,
+parallelism, a worktree pool, notification preferences — all extend the same two-column shape, which makes it
+the widest of the three. If growth continues, the next step is a section list down the left rather than a wider
+dialog; the width stays at 760 px either way.
+
+The body — everything between the title row and the footer — scrolls inside itself instead of letting the
+dialog grow past the window around it: its height is clamped between 300 px and 460 px, tracking 56% of that
+window's height in between, and recomputed whenever the window is resized. The floor keeps the dialog from
+collapsing when the layer list is empty; the ceiling keeps it off the screen edges once the list grows long. The
+scrollbar's column stays reserved whether a scrollbar is currently needed or not, so a row crossing the overflow
+threshold does not shave ten pixels off every input already on screen the way a plain auto-hiding bar would.
 
 The root lives here rather than behind a folder picker because starting takes more than one setting now — a
 root and, optionally, the layers — and a picker can only ask for one of them. That is also why the empty
@@ -1431,24 +1472,30 @@ is a startup seed: the defaults live only in this dialog's draft, and nothing re
 *Save* is pressed.
 
 *Browse…* only writes the picked path into the draft's root input; Cancel, Esc and a scrim click discard the
-draft — the pending root included — without touching anything live.
-*Save* is the single point where the draft is applied, in a fixed order: the layer patterns are applied first,
-then the pending repository root (which resets the project rows to
+draft — the pending root, external cards and all — without touching anything live.
+*Save* is the single point where the draft is applied, in a fixed order: the layer patterns and the external
+project list are applied first (neither touches the engine, so the order between the two of them does not
+matter), then the pending repository root (which resets the project rows to
 hollow), then exactly one Sync is sent. The order is load-bearing, because the Sync command carries the
 layer patterns — sent before they were applied, it would carry stale ones and the grouping
 would be wrong for a whole Sync. The Sync itself is unconditional: Save does not compare old and new state to
 decide whether to run it.
 
-Three gates hold. While a run is in flight the layer patterns are applied but the repository
-root is left alone and no Sync is sent, since pulling the root out from under a running build would be wrong;
-because the dialog's label has already confirmed the picked folder, a root change this gate drops is announced
-in the console as `Repository change deferred — run in flight`, while a Save that carries no root change stays
-silent.
+The external project note is quieter than the layer one: the layer line prints on *every* Save, but the
+external one prints only when the count actually changed — `External projects → 3 — built before the
+repository projects`, or `External projects cleared` once it drops back to zero — so a Save that only touched
+layers stays quiet about a list it did not change.
+
+Three gates hold. While a run is in flight the layer patterns and the external project list are applied but the
+repository root is left alone and no Sync is sent, since pulling the root out from under a running build would
+be wrong; because the dialog's label has already confirmed the picked folder, a root change this gate drops is
+announced in the console as `Repository change deferred — run in flight`, while a Save that carries no root
+change stays silent.
 If no repository has ever been selected, there is nothing to Sync — that gate sits *after* the root is
 applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
-there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers
-and the root are applied but nothing is sent: each send would fail and print an error line contradicting the
-permanent ribbon message, the same reason Sync, Build and Rebuild are disabled in
+there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers,
+the external projects and the root are all applied but nothing is sent: each send would fail and print an error
+line contradicting the permanent ribbon message, the same reason Sync, Build and Rebuild are disabled in
 that state. The root is still applied because it is local state that persists, and the first Sync after the
 engine returns carries it.
 
@@ -1457,18 +1504,35 @@ required` — and nothing is reset: the user syncs when ready. The first setup s
 starts there anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons beside *Load sample layers*. Export writes
-`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, layers[{ name, pattern }] }`; import
-reads one back **into the form**; clear empties the root and every layer. All three touch the draft only:
-nothing is applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button
-itself — the first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a
-second press empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A
-malformed file is not an error but a result: the user picked the wrong file, and the line says
-`Invalid settings file` while the form stays untouched.
+`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path, vcs }],
+layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the field order the
+file is written in, not just a key that happens to be present) and holding only cards with a non-blank path;
+import reads one back **into the form**; clear empties the root, every layer and every external card. All
+three touch the draft only: nothing is
+applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
+first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
+empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
+file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
+while the form stays untouched.
 
-The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same 620 px
-`Ds.Dialog`, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog
-does not have — a 180 ms fade with a 6 px rise, the duration read from the `Duration.Base` token, snapping to
-the end state under reduced motion.
+Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
+and a missing or unrecognized `vcs` reads as Git — both are simulated in the design package's own prototype and
+carried through unchanged. A file that omits the key entirely leaves the draft's external list untouched, the
+same rule the repository root already followed; a file that carries the key — an empty array included —
+replaces the list outright, because the key's presence is itself a decision. The import feedback line reflects
+that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file
+carried the key at all.
+
+The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same `Ds.Dialog`
+border, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog does
+not have — a 180 ms fade with a 6 px rise, the duration read from the `Duration.Base` token, snapping to the
+end state under reduced motion. Its width, though, no longer follows Settings': the two used to share one
+620 px figure, but a dialog's width is now chosen for the direction it grows in rather than for what it holds
+today, and About is a static reference — version, shortcuts, environment, third-party notices — that only ever
+grows *taller*, as the third-party list lengthens, which argues for the narrowest figure of the three. It grew
+slightly wider anyway, to 660 px, because the longest line the Environment tab carries — a full `MSBuild.exe`
+path — still would not fit on one line at a width worth paying for; rather than chase it with an ever wider
+dialog, the tab scrolls that line sideways instead (below), and 660 px is where that trade-off settled.
 
 It has no title row. In its place is an identity block that holds both marks in one composition: the product
 mark at 30 px, the product name, the one-line description, and a single mono line carrying the application
@@ -1477,21 +1541,11 @@ company logo — and drops out entirely when there is no company logo. The versi
 version belongs to the Environment tab, and repeating it in the heading was noise.
 
 The body is tabbed rather than one long scroll, because the things it carries — keyboard shortcuts,
-environment, third-party notices, release notes — have nothing to say to each other. The tab switch is
-`Ds.Segment`, the same component the action bar uses for Debug/Release, so no new interaction pattern enters
-the design system. The content area carries a **fixed** height: switching tabs must not move the footer, and
-a pane that outgrows it scrolls inside itself rather than stretching the dialog.
-
-**What's new** is the fourth tab, and it is the only place release notes live — there is no separate window
-and no pop-up on launch. Versions are listed newest first: a mono number, a quiet `CURRENT` label on the
-running one, a right-aligned date, and the notes grouped into category **blocks** (a 6 px coloured swatch and
-a caps heading, the items plain underneath). The categories are fixed in order — Added, Changed, Fixed,
-Performance, Removed — and an empty one is not drawn. The three newest versions are open; the rest fold under
-an *Earlier versions (N)* button, and the fold returns on the next open.
-
-The tab is also where the user is *sent*. When the version last read differs from the running one, a 5 px
-amber dot sits on the title bar's ⓘ, its tooltip becomes `About — what's new in {version}`, and About opens
-straight on this tab. Seeing the tab clears the dot and records the version, so it does not come back.
+environment, third-party notices — have nothing to say to each other. The tab switch is `Ds.Segment`, the same
+component the action bar uses for Debug/Release, so no new interaction pattern enters the design system. The
+content area carries a **fixed** height: switching tabs must not move the footer, and a pane that outgrows it
+scrolls inside itself rather than stretching the dialog. ⓘ and `F1` always open on the first tab (Shortcuts) —
+there is no conditional routing left inside About; the paragraph below covers where that used to go.
 
 Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows from
 the same table the window binds its keys from, the environment rows from the diagnostics model, the notices
@@ -1501,13 +1555,44 @@ dialog opens, and the row reads `resolving…` until it lands. *Copy diagnostics
 version to those rows so a pasted report says what it came from, and confirms with the check icon and the
 success tone for the same 1.4 s the console's copy button uses.
 
-**Both modals can be open at once, and About is always the upper one.** It is declared after Settings, so the
-z-order follows the markup. `F1` toggles it and does so even while Settings is open: Esc closes the topmost
-layer first, which means About goes and the Settings draft stays untouched. An earlier rule deafened `F1`
-whenever any dialog was open — the key is a window-level `InputBinding` and fires regardless of the Settings
-focus trap, so the fear was that it would discard an unsaved draft. Layering answers that better than silence
-did. The gear still no-ops while anything is open, which costs nothing: under the scrim it cannot be clicked
-anyway.
+A value that overflows its column — the resolved `MSBuild.exe` path is the usual case — is not truncated. An
+ellipsis with the full path in a tooltip was tried and dropped: the row instead sits in its own horizontally
+scrollable box with no visible bar, and a wheel notch over an overflowing row pans it sideways instead of
+scrolling the tab. Over a row that does *not* overflow the box hands the notch on to its parent, and that
+forwarding is required rather than tidy: a `ScrollViewer` swallows the wheel in its bubbling class handler
+whether or not it has anything to scroll, so a row that merely sits there would otherwise kill the wheel over
+most of the tab's surface. Nothing is lost by not seeing the whole path at a glance — *Copy diagnostics*
+already puts the full text one click away.
+
+**What's new is the third modal, reusing the same shell once more** — the same scrim, the same `Ds.Dialog`
+border and focus trap, the same 180 ms/6 px entrance — but 620 px wide and without About's identity block or
+tab switch: the dialog has exactly one job. A two-line header carries the title and a one-line description on
+the left and, right-aligned, the installed version under a small caps label; the version block sits 3 px
+higher than a plain baseline match would give it, because a mono line at `line-height: 1` sits low against a
+sans line next to it. The body is a **fixed** 400 px — not a minimum — for the same reason About's content
+area is fixed: an *Earlier versions* button that unfolds the whole history must not push the dialog past the
+screen, so the list scrolls inside its own box instead. Versions are listed newest first: a mono number, a
+neutral `INSTALLED` chip on the running one (a bordered pill, not the quiet unbordered `CURRENT` label an
+earlier pass tried), a right-aligned date, and the notes grouped into category **blocks** (a 6 px coloured
+swatch and a caps heading, the items plain underneath). The categories are fixed in order — Added, Changed,
+Fixed, Performance, Removed — and an empty one is not drawn. The three newest versions are open; the rest fold
+under an *Earlier versions (N)* button aligned flush with the content column (its own left padding cancelled
+by a negative margin), and the fold returns on the next open. The footer carries only *Close* — *Copy
+diagnostics* stays on About, where the rest of the diagnostics live.
+
+This is also where the user is *sent*. When the version last read differs from the running one, a 5 px amber
+dot sits on the title bar's sparkle button, its tooltip becomes `What's new in {version}`, and it stays there
+even on a fresh install with no recorded version at all. Opening the dialog clears the dot and records the
+version, so it does not come back until the next one ships. ⓘ's tooltip no longer varies with this state — the
+routing an earlier pass sent through About is gone along with the tab it pointed at.
+
+**All three modals can be open at once, and What's new is always the uppermost, with About above Settings.**
+Each is declared after the last, so z-order follows the markup. Both `F1` and `Ctrl+F1` toggle their own
+dialog and do so even while another is open: Esc closes the topmost layer first, which means the drafts
+underneath survive. An earlier rule deafened `F1` whenever any dialog was open — the key is a window-level
+`InputBinding` and fires regardless of the Settings focus trap, so the fear was that it would discard an
+unsaved draft. Layering answers that better than silence did. The gear still no-ops while anything is open,
+which costs nothing: under the scrim it cannot be clicked anyway.
 
 ### 13.4 Scroll infrastructure
 
@@ -1573,13 +1658,19 @@ event — `WM_MOUSEHWHEEL` is never dispatched, so neither a precision touchpad'
 reaches any element. `HorizontalWheelScroll.Enable` puts a hook on the window's message path; the panel that
 enabled it tests the message's screen point against its own bounds and drives the first horizontally scrollable
 viewer inside it — template included, since the console's viewer lives inside AvalonEdit's. The console is the
-only panel that enables it: it is the only surface with horizontal overflow (`WordWrap=False`). Two details are
-measured rather than assumed, and both are recorded on the class: the scroll must be requested one dispatcher
-turn later (a request issued inside the window procedure is silently dropped), and the target offset is
-accumulated across one gesture instead of being read back from the viewer each time (the viewer publishes the
-new offset only after a layout pass, so reading it back loses steps). A step is the horizontal twin of WPF's
-vertical one — `WheelScrollLines × 16 px` per notch — except that the delta's *magnitude* is honoured, which is
-what makes a touchpad's stream of small deltas track the finger.
+only panel that enables it: it is the only surface whose overflow (`WordWrap=False`) needs *that native
+signal*. Two details are measured rather than assumed, and both are recorded on the class: the scroll must be
+requested one dispatcher turn later (a request issued inside the window procedure is silently dropped), and the
+target offset is accumulated across one gesture instead of being read back from the viewer each time (the
+viewer publishes the new offset only after a layout pass, so reading it back loses steps). A step is the
+horizontal twin of WPF's vertical one — `WheelScrollLines × 16 px` per notch — except that the delta's
+*magnitude* is honoured, which is what makes a touchpad's stream of small deltas track the finger.
+
+About's Environment values scroll sideways too (§13.3), but that is the simpler, ordinary case: an overflowing
+row's value sits in its own `ScrollViewer`, and a `PreviewMouseWheel` handler redirects a plain vertical notch
+— which WPF already dispatches as a routed event, no hook required — straight into `ScrollToHorizontalOffset`,
+synchronously, no dispatcher turn to wait for. None of `HorizontalWheelScroll`'s machinery carries over: the
+two solve different problems, one a message WPF never delivers, the other a message it delivers plenty.
 
 `LayoutMetrics` is the shared arithmetic behind sticky headers, follow-mode and selection scrolling: one
 cumulative offset table over mixed 36 px rows and 24 px headers, giving any row's absolute Y, the pinned header
@@ -1699,6 +1790,11 @@ lines.
   error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
   hands following back, by the same rule as any other user scroll. This is a deliberate departure from §5.1,
   which pins both directions to the bottom.
+- **A new operation empties the narrative in place.** The view-model clears its buffer and says so
+  (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
+  switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
+  `← Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
+  by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -1937,7 +2033,9 @@ and the pointer is no longer over what it was.
 **Selection focuses and fits.** Clicking a node — or a list row, or a stream line — fits the bounding box of
 the selection plus its direct dependencies and dependents into the panel: scale is `min(W/bw, H/bh)` clamped
 to 0.7–2.6 with a padding of `3 × node + 48 px`, and the camera glides there over 460 ms. Everything outside
-that focus set drops to 0.1, and the selected node holds the hover treatment: it stays at 1.7×, keeps its
+that focus set drops to 0.1 — except a project the run is actively building, which stays fully lit even
+outside it, because a dim body under a live amber orbit reads as *not building* rather than *in progress*. The
+selected node also holds the hover treatment: it stays at that same 1.5×, keeps its
 thicker border, is pulled to the front so nothing can cover its ring, and gains a 2 px amber focus ring. (The
 main prototype does not enlarge a selected node — that came from the Graph Lab study and is a deliberate
 departure from §2.3.) Pulling it forward is a fix rather than a flourish: the ring extends past the node, and
@@ -1947,6 +2045,19 @@ beziers whose control points sit at the mid-height of their two ends, in amber d
 shared clock. Clearing the selection tears them down again. Because WPF measures dash arrays in multiples of
 stroke thickness rather than pixels, the design's absolute 4/8 px pattern and 24 px travel are divided by the
 1.2 px thickness so the drawn result matches the design.
+
+**The end-of-run finale releases focus, not the selection.** When the graph's closing choreography begins
+(§14.5) the camera abandons any focus-and-fit and glides to the default view instead, taking the dependency
+lines, the focus ring and the name label down with it — the finale is meant to read across the whole graph,
+not a corner of it zoomed in. The hover treatment the selected node was holding goes with them: it falls back
+to its plain size, its plain border and its normal z-order. That is one release rather than three, because
+those effects come from a single flag, and leaving it set would keep one square enlarged and thick-bordered —
+still lit as *the* node — after everything else that named it had already been taken away. The selection
+itself is untouched; the console still shows that project's log. None of it returns when the choreography
+ends, either: the graph remembers the selection it released focus from and stays on the default view, with
+that node drawn like any other, for as long as it remains selected. What reopens it is the user picking a
+different node (or clearing the selection and picking the same one again) — nothing brings it back on its
+own.
 
 **Navigation, and why the pan is unclamped.** The wheel zooms at the cursor — the world point under the
 pointer stays under it — by a multiplicative 1.14 per notch inside 0.7–5.0. Pressing empty ground and moving
@@ -2005,6 +2116,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
+| Select | A `ComboBox` template — the app's first, ported from the design system's `<select>` for the Settings dialog's external-project Source picker (Git/TFVC). Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
@@ -2047,19 +2159,23 @@ filter appears as a removable chip in the panel header.
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
 | `F1` | About — version, shortcuts and diagnostics |
+| `Ctrl+F1` | What's new — release notes (toggle) |
 | `Esc` | Close the topmost layer (see above) |
 | `Alt+B` | Global hotkey: restore the window from the tray |
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s, and
-every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` carries
-an extra gate of its own: it does nothing while any modal is open (§13.3). Double-Shift and `Ctrl+P` are
-*negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by accident.
+every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` and
+`Ctrl+F1` are ungated: each toggles its own dialog and fires even while another modal is open, because
+layering the three answers the unsaved-draft worry better than deafening a key would (§13.3). Double-Shift
+and `Ctrl+P` are *negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by
+accident.
 
 The table above is not written twice. A **shortcut catalog** derives each gesture's display text from that
 same key → intent table — and the global hotkey's from the hotkey default — and pairs it with the one
 sentence that describes it. The About screen's shortcut rows, the Build menu's `Ds.Kbd` badges and the info
-button's tooltip all read from it, and a source guard forbids any production file from writing a gesture as a
-literal. The badges used to be hand-typed strings living next to a binding table that could change
+button's and the What's new button's tooltips all read from it, and a source guard forbids any production file
+from writing a gesture as a literal. The badges used to be hand-typed strings living next to a binding table
+that could change
 underneath them.
 
 ---
@@ -2151,12 +2267,15 @@ reaches the list's colour: there the stripe and the dot stay neutral grey, becau
 it. This is not the orange channel returning — the tone is the warning's own amber.
 
 **The start mode.** Sync and application startup colour **nothing**. Which operation is coming is not yet
-known, so no plan is shown: every row draws a **faint** grey stripe (half opacity) and a **four-arc ring** in
+known, so no plan is shown: every row draws a plain grey stripe at full opacity and a **four-arc ring** in
 place of the filled dot, the glyph is a dashed circle, and every graph node carries a dashed border. What is
 stale is still readable without colour, from the commit pair (`a3f81c2 → b7e91d4`). The mode drops the moment
-an operation begins — the stripe rises to full opacity while the ring cross-fades into the filled dot, both in
-380 ms, same element, same size, so nothing shifts — and returns with the next Sync; closing and reopening the
-application always lands back in it.
+an operation begins — the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing
+shifts — and returns with the next Sync; closing and reopening the application always lands back in it. The
+stripe and the ring used to draw a shade fainter (half and 0.85 opacity), so a plan would not be implied
+before one existed; that read as the list looking washed-out right after a Sync rather than simply waiting,
+so both now match the full opacity of every other row, and the cross-fade survives only because the ring
+still has a real transition — from arcs to a filled circle — to make.
 
 The row is drawn without dashes on purpose. A dashed 2 px stripe does not land on the pixel grid and an 8 px
 dashed circle renders ragged; opacity and an arc ring say the same thing cleanly. The node border stays dashed
@@ -2228,7 +2347,10 @@ carets and chevrons are drawn, not typed.
 Two icons have no literal counterpart in the design source and are marked *derived* in the dictionary, with
 the reasoning written beside them: the caption restore glyph, and the `info` circle in the title bar. Both are
 drawn on the same grid and at the same stroke weight as the neighbour they sit next to — the info icon shares
-`Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight.
+`Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight. The What's new icon between them (a
+four-point star, keyed `Icon.WhatsNew` rather than the design's own name for it — that name collides with an
+unrelated source guard protecting the event stream's own celebration vocabulary) is drawn at the same 1.7 px
+for the same reason; all three title-bar icon buttons read as one family.
 
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
@@ -2313,11 +2435,13 @@ would destroy the very rows the wave is marking.
 Then a neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
 lights amber one project at a time in *random* order (110 ms per node, the chain capped at 1.1 s, so 36
 projects take no longer than four); then a moment with the plan standing on screen; then the **overlapping
-farewell** — everything outside the scope starts fading over 1120 ms, and 560 ms later the amber joins it over
-440 ms. The amber's shorter duration is deliberate: grey makes a much larger opacity drop and reads as *gone*
-halfway through, so ending the two at the same instant would look wrong; they finish 120 ms apart and are
-perceived as simultaneous. Rows and graph nodes fade together; the wave is random rather than in build order
-by explicit decision.
+farewell** — every graph node outside the scope starts fading over 1120 ms, and 560 ms later the amber ones
+join it over 440 ms. The amber's shorter duration is deliberate: grey makes a much larger opacity drop and
+reads as *gone* halfway through, so ending the two at the same instant would look wrong; they finish 120 ms
+apart and are perceived as simultaneous. The farewell lives only in the graph — the list's own opacity holds
+at 1 through the whole choreography, because a run has visibly already begun by the time the farewell plays,
+and a second fade there did not read as new information, only as noise (measured). The wave itself is random
+rather than in build order by explicit decision.
 
 Keeping the two surfaces together takes one deliberate wire. A row repaints itself from its own binding the
 instant it is marked, but the graph is a pushed channel: it is handed statuses, and if the wave does not hand
@@ -2337,6 +2461,14 @@ either always plays or never does. The operation itself still begins on the firs
 the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
 the scope and awaits a gate; the shell owns the timing and closes it.
 
+**The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
+releases the gate but keeps its final step: the settled opacities (0.45 on the scope, 0.18 on the rest) stay
+on the graph while the engine plans. `runStarted` is what drops them — the shell pushes the run phase and the
+fresh statuses first and only then cancels the choreography, so the graph moves from the farewell straight
+into the run's own opacities in a single transition. The prototype starts the run in the same instant the
+sequence ends; under a real engine, holding the frame is the equivalent. Letting the sequence fall back to
+full brightness and dimming again seconds later, when the run began, read as a double fade.
+
 Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it**:
 no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
 
@@ -2349,8 +2481,12 @@ the run never starts — the command fails, or the engine never answers — the 
 operation that did not happen may not leave its colour behind.
 
 **The scope fades into amber; it does not snap.** Every surface the wave touches — the node's border, its
-fill and the cube inside it, the row's stripe and its dot — crosses to the new colour over 200 ms on the
-standard curve, and all of them go through one function (`MotionTokens.TransitionTokenBrush`). Colour
+fill and the cube inside it, the row's stripe, its dot and its name — crosses to the new colour over 200 ms
+on the standard curve, and all of them go through one function (`MotionTokens.TransitionTokenBrush`); the
+name used to jump straight to its emphasised colour the moment its row was marked instead of easing there
+like the stripe and dot, so the name and the rest of the row told two different stories about the same wave.
+It draws from the same delayed call the stripe and dot already get — a row's own turn in the wave, not a
+second timer. Colour
 transitions are otherwise instant here, and that deviation is measured and deliberate: WPF cannot interpolate
 a brush property, so a transition means a local `SolidColorBrush` per surface plus a `ColorAnimation`, and
 when 177 projects change status in a single tick — which is exactly what the start of a run does — 531 of
@@ -2363,8 +2499,9 @@ permanently.
 The **ending** — the neon ignition — lives only in the graph; the list stays still. Everything holds dim for
 900 ms, then the projects this run actually built (succeeded ∪ failed) ignite in random order like fluorescent
 tubes, flickering irregularly over 1150 ms with a chain of at most 1.5 s; a 700 ms breath; then every
-remaining grey — skipped and untouched alike — comes up **together** over 980 ms. With nothing built it does
-not play at all, and a new operation cuts it instantly.
+remaining grey — skipped and untouched alike — comes up **together** over 980 ms. The graph also releases any
+selection focus for the same span, gliding to the default view so the whole finale stays in frame (§13.6).
+With nothing built it does not play at all, and a new operation cuts it instantly.
 
 Under reduced motion neither choreography runs: the scope is marked and the run proceeds.
 
@@ -2855,7 +2992,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
-| Settings draft state (layers + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings draft state (layers, external projects + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
@@ -2876,14 +3013,15 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maintenance box (Clean / Optimize / Resolve cycles) | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
-| Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
+| Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
+| What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
 | Visual status (the single colour channel) and its token table | `App/Controls/VisualStatus.cs` |
-| Start-mode drawing constants (faint stripe, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
+| Start-mode drawing constants (stripe/ring opacity, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
 | The caret's colour cycle (palette order, step, phase) | `App/Controls/CursorHop.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
 | Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |

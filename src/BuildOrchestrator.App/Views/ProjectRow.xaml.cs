@@ -315,8 +315,17 @@ public partial class ProjectRow : UserControl
         // duruma bağlandı. Somut fark: SUCCEEDED satır artık PRIMARY'dir (eskiden secondary'ydi) — bu koşuda
         // gerçekten iş yapmış bir satırın adı, hiç dokunulmamış bir satırla aynı tonda okunamaz.
         // Kalınlık HER ZAMAN 500'dür (XAML); bold satır ritmini bozuyordu.
-        PART_Name.SetResourceReference(TextBlock.ForegroundProperty,
-            VisualStatuses.NameIsEmphasised(visual) ? "Brush.TextPrimary" : "Brush.TextSecondary");
+        //
+        // [DEĞİŞEN KURAL — v1.13.2, ölçüm] Renk eskiden SetResourceReference ile ANINDA oturuyordu: dalganın
+        // başında bütün adlar birden beyazlıyor, şerit ve nokta ise sırayla amber'a dönüyordu — üç yüzey aynı
+        // hareketi anlatmıyordu. Artık ad da AYNI yoldan (TransitionTokenBrush) boyanır: dalgada (lighting=true)
+        // 200ms'de akar. Gecikme AYRI bir sabit DEĞİLDİR (kopya YASAK) — bu çağrının kendisi zaten satırın
+        // dalga gecikmesi kadar geç gelir, çünkü OperationChoreographer her satırın Marked'ını KENDİ sırasında
+        // (NeutralMs + order[i]*stagger) gerçek zamanda değiştirir; şerit (SetStripeFill) ve nokta
+        // (PART_Dot.SetState) gecikmelerini de AYNI şekilde, çağrı anından alır — ad üçüncü bir kanal açmaz.
+        string nameKey = VisualStatuses.NameIsEmphasised(visual) ? "Brush.TextPrimary" : "Brush.TextSecondary";
+        Controls.MotionTokens.TransitionTokenBrush(this, PART_Name, TextBlock.ForegroundProperty, nameKey,
+            lighting && _motion.Enabled, Controls.MarkingChoreography.LightMs);
 
         PART_Dot.SetState(visual, lighting);
         SetStripeFill(lighting);
@@ -334,14 +343,20 @@ public partial class ProjectRow : UserControl
     }
 
     /// <summary>
-    /// [design v1.12.0 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
-    /// modunda soluk gri, işlem başlayınca tam gri, işaretlenince amber, bitişte sonuç rengi.
+    /// [design v1.13.2 §2.4-1] Sol şerit HER SATIRDA vardır ve <b>noktayla AYNI</b> rengi taşır: başlangıç
+    /// modunda da TAM OPAK nötr gri, işaretlenince amber, bitişte sonuç rengi.
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Başlangıç modu KESİKLİ çiziliyordu (tile'lanmış bir
     /// <c>DrawingBrush</c>: 3px dolu / 4px boş). Ölçülen kusur: 2px'lik bir şeritte kesikli desen piksel
     /// ızgarasına oturmuyor, tırtıklı görünüyordu. Şerit artık HER durumda DÜZ bir token fırçasıyla dolar ve
-    /// başlangıç modunu yalnız OPAKLIK anlatır (<see cref="Controls.StartMode.FaintOpacity"/> → 1, geçiş
+    /// başlangıç modunu OPAKLIK anlatır (<see cref="Controls.StartMode.FaintOpacity"/>, geçiş
     /// <see cref="Controls.StartMode.CrossFadeMs"/>). Noktanın çapraz-sönümüyle AYNI anda, AYNI sürede olur.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Sync sonrası liste silik görünüyordu." Başlangıç modunun
+    /// <see cref="Controls.StartMode.FaintOpacity"/>'si (eski değeri 0.5) kaldırıldı — artık <c>1.0</c>, yani
+    /// başlangıç modu ile başlangıç-dışı hâl arasında opaklık FARKI yok. Kod burada DEĞİŞMEDİ (geçiş köprüsü
+    /// hâlâ kurulur, bkz. <see cref="Controls.StartMode.CrossFadeMs"/>'in doc'u) — TEK doğruluk kaynağı
+    /// <see cref="Controls.StartMode"/>'daki sabittir.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.11.0]</b> <c>Queued</c> eskiden kendi grisini (<c>Brush.StatusQueued</c>)
     /// taşıyordu; artık kuyruk da işlemin kapsamıdır ve amber KALIR — işaretleme dalgasıyla yanan renk koşu

@@ -191,6 +191,22 @@
         <PathGeometry Figures="M12 16v-4 M12 8h.01" />
     </GeometryGroup>
 
+    <!--
+      [design v1.13.1 §2.1 · D4/T8] What's new — tek 4 kollu yıldız (tasarım kaynağında bu ikonun adı
+      "sparkle"dır). İkon turu bu sürüme kadar çok-yıldızlı varyant → megaphone → dört kollu yıldız şeklinde
+      ilerledi (design v1.13.0/v1.13.1); güncel geometri kaynağı
+      `.claude/outputs/2026-09-09-00-28-design-v1.14.0/prototype/app/BuildApp.jsx:79` (viewBox 0 0 24 24).
+      Dişli ile ⓘ ARASINDA durur ve ikisiyle AYNI 1.7px kalınlığı taşır (aşağıda).
+
+      Anahtar adı BİLEREK tasarımın ikon adını birebir taşımaz — What's new butonuyla adlandırıldı. Tasarım
+      kaynağındaki İngilizce ad, event stream'in tek seferlik başarı-parıltı efektine ayrılmış bir kaynak-guard
+      testinin ARADIĞI (ve yalnız o efektin kendi dosyasında GÖRMEYİ beklediği) bir sözcükle harfiyen
+      çakışıyordu; bu ikonun o efektle hiçbir ilgisi yok, isim çakışmasını önlemek için buton rolüne göre
+      adlandırıldı.
+    -->
+    <PathGeometry x:Key="Icon.WhatsNew"
+                  Figures="M12 2.8l2.1 5.8a2 2 0 0 0 1.3 1.3l5.8 2.1-5.8 2.1a2 2 0 0 0-1.3 1.3L12 21.2l-2.1-5.8a2 2 0 0 0-1.3-1.3L2.8 12l5.8-2.1a2 2 0 0 0 1.3-1.3z" />
+
     <!-- BuildApp.jsx:61 sigma -->
     <PathGeometry x:Key="Icon.Sigma" Figures="M18 7V4H6l6 8-6 8h12v-3" />
 
@@ -342,6 +358,9 @@
     <sys:Double x:Key="Icon.AlertTri.StrokeThickness">1.7</sys:Double>
     <sys:Double x:Key="Icon.Gear.StrokeThickness">1.7</sys:Double>
     <sys:Double x:Key="Icon.Info.StrokeThickness">1.7</sys:Double>
+    <!-- [design v1.13.1 §2.1] BuildApp.jsx:79 (What's new ikonu) — title bar'da Gear/Info ile AYNI kalınlık
+         (optik ağırlık eşleşmesi tasarımın kendi kararı). -->
+    <sys:Double x:Key="Icon.WhatsNew.StrokeThickness">1.7</sys:Double>
 
     <!-- strokeWidth="1.6" (_ds_bundle.js:1633 DependencyGraphNode paket ikonu) -->
     <sys:Double x:Key="Icon.Package.StrokeThickness">1.6</sys:Double>

@@ -81,9 +81,9 @@ public static class ReleaseNotes
     /// </summary>
     public static IReadOnlyList<ReleaseEntry> All { get; } =
     [
-        new(AppIdentity.Version, "2026-08-27",
+        new(AppIdentity.Version, "2026-09-09",
         [
-            new(NoteKind.Added, "What's new — release notes now live in this window."),
+            new(NoteKind.Added, "What's new has its own window — the sparkle button in the title bar, or Ctrl+F1."),
             new(NoteKind.Added, "First run opens Settings: the repository root moved into it, next to the layers."),
             new(NoteKind.Added, "Settings can be exported to and imported from a file, or cleared in place."),
             new(NoteKind.Added, "Every operation opens with the same choreography: the scope lights up in a wave, then the rest fades out."),
@@ -91,8 +91,14 @@ public static class ReleaseNotes
             new(NoteKind.Added, "Row actions: build a single project, or right-click for Build · Rebuild · Clean."),
             new(NoteKind.Added, "The Build menu offers Clean — msbuild /t:Clean on every solution."),
             new(NoteKind.Added, "Projects caught in a dependency cycle show an amber cube inside a grey node — the graph now says “not built, in a cycle” while you inspect a finished run."),
+            new(NoteKind.Added, "Settings has an External projects section: projects outside the repository root, each with its source (Git or TFVC), kept in build order."),
             new(NoteKind.Changed, "The console cursor changes colour on every blink, stepping through the console’s own line palette — command, info, success, warning, error, dim."),
-            new(NoteKind.Changed, "The initial state after Sync draws a faint strip and a four-arc ring instead of dashed lines — same sizes, no jagged edges; graph nodes keep their dashed border."),
+            new(NoteKind.Changed, "The initial state after Sync draws a plain strip and a four-arc ring instead of dashed lines, at full opacity — same sizes, no jagged edges; graph nodes keep their dashed border."),
+            new(NoteKind.Changed, "Sync clears the console and the event stream like every other operation, replays the reveal and brings the project list back to the top."),
+            new(NoteKind.Changed, "The opening choreography holds its last frame until the run actually starts — no flash back to full brightness in between."),
+            new(NoteKind.Changed, "When a run ends the graph lets go of the selected project's focus and plays the finale in full view; the selection itself stays."),
+            new(NoteKind.Changed, "Dialogs are sized by how they grow: Settings 760px with a scrolling body, About 660px, What's new 620px with a fixed 400px body."),
+            new(NoteKind.Changed, "Long paths in About's Environment tab scroll sideways under the mouse wheel instead of being cut short."),
             new(NoteKind.Changed, "Colour tells one story: the stripe, the dot, the glyph and the graph node all carry the same status."),
             new(NoteKind.Changed, "Sync colours nothing — every project waits in the dashed start mode until an operation begins."),
             new(NoteKind.Changed, "Status chips filter together: pick several and the list shows their union."),

@@ -5,7 +5,7 @@
              xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
              xmlns:app="clr-namespace:BuildOrchestrator.App"
              Visibility="Collapsed" Focusable="True">
-  <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 620px Ds.Dialog
+  <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 760px Ds.Dialog
        (Brush.SurfaceRaised — README §2.9'daki surface-overlay sapması burada KAYITLI, kod kazanır). Diyaloğun
        mantığı SettingsDraftViewModel'de (test edilebilir, WPF'siz); bu view ince kabuktur. BuildApp.jsx:988-1069. -->
   <!-- [D7 re-review][Fix1] Klavye odak tuzağı: scrim sadece FARE'yi bloklardı, Tab arka plandaki kontrollere
@@ -15,7 +15,14 @@
         KeyboardNavigation.TabNavigation="Cycle"
         KeyboardNavigation.ControlTabNavigation="Cycle"
         FocusManager.IsFocusScope="True">
-    <Border Width="620" MaxHeight="640" HorizontalAlignment="Center" VerticalAlignment="Center"
+    <!-- [DEĞİŞEN KURAL — design v1.13.1] Genişlik 620 → 760: üç dialog aynı 620 kalıbını paylaşıyordu, artık
+         her biri büyüme yönüne göre ölçülüyor; Settings en çok büyüyecek olan (root + katman kartları, yarın
+         MSBuild yolu/paralellik/worktree/bildirim). [design v1.14.0 · ruling task-D6] Kökte ARTIK MaxHeight
+         YOK: eski 640 sabiti gövdenin (Grid.Row="1") kendi min(56vh,460px) sınırıyla (bkz. SettingsBodyHeight)
+         hiç ÇAKIŞMAZ ama hiç BAĞLAMAZ da — gövde en çok 460 + başlık/footer'ın kendi Auto yüksekliği ≈576px'e
+         ulaşır, 640 asla devreye girmeyen ölü bir tavan kalırdı (iki doğruluk kaynağı, kopya YASAK). Yükseklik
+         artık TEK yerden, gövdenin kendi Min/MaxHeight'ından yönetilir. -->
+    <Border Width="760" HorizontalAlignment="Center" VerticalAlignment="Center"
             Style="{DynamicResource Ds.Dialog}" MouseLeftButtonDown="OnDialogClick">
       <Grid>
         <Grid.RowDefinitions>
@@ -30,8 +37,17 @@
                    FontWeight="{DynamicResource FontWeight.Emphasis}"
                    Foreground="{DynamicResource Brush.TextPrimary}" />
 
-        <!-- ============================ GÖVDE ============================ -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,0,20,4">
+        <!-- ============================ GÖVDE ============================
+             [design v1.14.0 §2.9 · ruling task-D6] Kendi içinde kaydırılır: üst sınır min(pencere-yüksekliği ×
+             56%, 460px) — hesap SettingsBodyHeight'ta (kopya YASAK), kablaj SettingsDialog.xaml.cs
+             Open()/TrackHostWindowSize()'da (pencere yeniden boyutlandığında YENİDEN çağrılır). Alt taban
+             300px MinHeight'a SABİT bağlanır (katman listesi boşken dialog çökmesin).
+             VerticalScrollBarVisibility="Visible" (Auto DEĞİL): scrollbar sütunu HER ZAMAN ayrılır, prototipin
+             `padding-right:10px / margin-right:-10px` hilesinin WPF karşılığı — bar gerektiğinde belirmesi
+             içeriği daraltmaz. Kaydıracak şey yokken DS'in kendi IsEnabled=False tetikleyicisi track'i gizler
+             (ScrollBarStyleTests — "restraint"), yani boşken çirkin dolu bir hap da GÖRÜNMEZ. -->
+        <ScrollViewer x:Name="Body" Grid.Row="1" VerticalScrollBarVisibility="Visible"
+                      MinHeight="{x:Static controls:SettingsBodyHeight.MinFloor}" Padding="20,0,20,4">
           <StackPanel>
             <!-- ============================ WORKSPACE (design v1.8.0 §2.9) ============================
                  Repository root ARTIK Settings'in bir parçası ve bölümlerin İLKİ: başlamak için gereken ayar
@@ -39,11 +55,7 @@
                  Root boşken Save disabled — uygulamanın çalışması için zorunlu TEK ayar budur (CanSave).
                  [DEĞİŞEN KURAL] Bu bölüm eskiden en ALTTA "REPOSITORY" başlığıyla ve tek satırlık bir yol
                  etiketi + "Change…" düğmesiyle duruyordu; artık düzenlenebilir mono bir input + Browse…'dur. -->
-            <TextBlock Text="WORKSPACE" Margin="0,0,0,6"
-                       FontFamily="{x:Static controls:AppFonts.Ui}"
-                       FontSize="{DynamicResource FontSize.2xs}"
-                       FontWeight="{DynamicResource FontWeight.Emphasis}"
-                       Foreground="{DynamicResource Brush.TextFaint}" />
+            <TextBlock Text="WORKSPACE" Margin="0,0,0,6" Style="{DynamicResource Ds.Settings.CapsHeading}" />
             <TextBlock Text="Repository root — the folder that holds the OSYS solutions. Projects and the dependency graph are discovered from it on Sync."
                        TextWrapping="Wrap" Margin="0,0,0,12"
                        FontSize="{DynamicResource FontSize.Xs}"
@@ -72,15 +84,139 @@
                        Text="{Binding RepositoryRoot, UpdateSourceTrigger=PropertyChanged}" />
             </DockPanel>
 
+            <!-- 18px boşluk + 1px ayraç, sonra External projects (design v1.14.0 §9). -->
+            <Border Style="{DynamicResource Ds.Settings.SectionDivider}" />
+
+            <!-- ============================ EXTERNAL PROJECTS (design v1.14.0 §9 · K5) ============================
+                 Workspace ile Layers ARASINDA: harici projeler derleme sırasının BAŞINDA olduğu için katmanlardan
+                 önce durur — bölümün KONUMU bu sırayı anlatır (§9: "Sıra kasıtlı"). [K5 KAPSAMI] Bu tur yalnız
+                 UI + kalıcılıktır: liste App içinde tutulur ve Save'de UiState'e yazılır (SettingsDraftViewModel.
+                 CommitAsync), ama MOTORA GİTMEZ — hiçbir IPC komutuna eklenmez, proje listesinde/grafta bu turda
+                 karşılığı YOKTUR (motor bağlantısı ayrı bir branch'te — feat/external-projects-prebuild — hazır,
+                 ayrı bir oturumda birleşecek; RunViewModel.ApplyExternalProjects'in XML doc'u aynı notu taşır). -->
+            <TextBlock Text="EXTERNAL PROJECTS" Margin="0,0,0,6" Style="{DynamicResource Ds.Settings.CapsHeading}" />
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
+                       FontSize="{DynamicResource FontSize.Xs}"
+                       Foreground="{DynamicResource Brush.TextDim}"><Run
+                       Text="Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. The working copy root is found from the path upwards. They are built " /><Run
+                       Text="before" FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextSecondary}" /><Run
+                       Text=" everything else, in this order; the rest follows the layers below." /></TextBlock>
+
+            <!-- Boş durum — Layers'ın PAYLAŞTIĞI şablon (Ds.Settings.EmptyState*), yalnız metin ve
+                 görünürlük-bağlama yolu (Externals.Count) farklı. -->
+            <Grid x:Name="ExternalEmptyState">
+              <Grid.Style>
+                <Style TargetType="Grid">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding Externals.Count}" Value="0">
+                      <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Grid.Style>
+              <Rectangle Style="{DynamicResource Ds.Settings.EmptyStateRectangle}" />
+              <TextBlock Text="No external projects — only what is discovered under the repository root is built."
+                         Style="{DynamicResource Ds.Settings.EmptyStateText}" />
+            </Grid>
+
+            <!-- Kolon başlıkları — yalnız harici proje varken. PROJECT PATH esnek + SOURCE 96px sağda (§9). -->
+            <Grid Margin="30,0,34,4">
+              <Grid.Style>
+                <Style TargetType="Grid">
+                  <Setter Property="Visibility" Value="Visible" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding Externals.Count}" Value="0">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Grid.Style>
+              <TextBlock Text="PROJECT PATH" HorizontalAlignment="Left" Style="{DynamicResource Ds.Settings.CapsHeading}" />
+              <TextBlock Text="SOURCE" Width="96" HorizontalAlignment="Right" Style="{DynamicResource Ds.Settings.CapsHeading}" />
+            </Grid>
+
+            <!-- Harici proje kartları — sürüklenebilir. Katman kartıyla BİREBİR aynı Border stili/trigger'ı
+                 (Ds.Settings.Card) ve AYNI sürükle-bırak mekanizması (DragReorderBehavior), ama AYRI bir
+                 koleksiyon (Externals) üzerinde — iki liste birbirinden BAĞIMSIZ sıralanır. Virtualization
+                 KAPALI (Layers'la aynı karar, A13.2). -->
+            <ItemsControl x:Name="ExternalsList" ItemsSource="{Binding Externals}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:ExternalRowViewModel}">
+                  <Border Style="{DynamicResource Ds.Settings.Card}">
+                    <DockPanel LastChildFill="True">
+                      <!-- Grip: katman kartıyla BİREBİR aynı sürükle-bırak deseni (Mouse.Capture, OLE YASAK). -->
+                      <Border DockPanel.Dock="Left" Width="20" Background="Transparent" Cursor="SizeAll"
+                              controls:DragReorderBehavior.IsDragHandle="True">
+                        <Border.ToolTip>
+                          <ToolTip controls:AppTooltip.Side="Top">Drag to reorder</ToolTip>
+                        </Border.ToolTip>
+                        <Viewbox Width="16" Height="16">
+                          <Canvas Width="24" Height="24">
+                            <Path Data="{DynamicResource Icon.Grip}" Fill="{DynamicResource Brush.TextFaint}" />
+                          </Canvas>
+                        </Viewbox>
+                      </Border>
+                      <!-- Sil -->
+                      <Button DockPanel.Dock="Right" Style="{DynamicResource Ds.IconButton}"
+                              Click="OnRemoveExternal" AutomationProperties.Name="Remove external project">
+                        <Button.ToolTip>
+                          <ToolTip controls:AppTooltip.Side="Top">Remove external project</ToolTip>
+                        </Button.ToolTip>
+                        <Viewbox Width="14" Height="14">
+                          <Canvas Width="24" Height="24">
+                            <Path Data="{DynamicResource Icon.Trash}"
+                                  StrokeThickness="{DynamicResource Icon.Trash.StrokeThickness}"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                          </Canvas>
+                        </Viewbox>
+                      </Button>
+                      <!-- Source: 96px sabit, Ds.Select (DS Select'in WPF portu) — yalnız Git/TFVC, varsayılan Git. -->
+                      <ComboBox DockPanel.Dock="Right" Width="96" Margin="0,0,6,0" VerticalAlignment="Center"
+                                Style="{DynamicResource Ds.Select}" SelectedValuePath="Tag"
+                                AutomationProperties.Name="{x:Static app:AccessibilityNames.ExternalProjectSource}"
+                                SelectedValue="{Binding Vcs, UpdateSourceTrigger=PropertyChanged}">
+                        <ComboBoxItem Content="Git" Tag="{x:Static vm:VcsKind.Git}" />
+                        <ComboBoxItem Content="TFVC" Tag="{x:Static vm:VcsKind.Tfvc}" />
+                      </ComboBox>
+                      <!-- Path inputu (mono, esnek) — katman kartındaki ad input'uyla AYNI x'te başlar (sıra
+                           numarası YOK — denendi, kaldırıldı: sıra zaten kart sırası, §9). -->
+                      <TextBox Margin="6,0,6,0" VerticalAlignment="Center"
+                               Style="{DynamicResource Ds.Input}"
+                               FontFamily="{x:Static controls:AppFonts.Mono}"
+                               controls:DsChrome.Watermark="C:\src\shared\Delta.Common\Delta.Common.csproj"
+                               AutomationProperties.Name="{x:Static app:AccessibilityNames.ExternalProjectPath}"
+                               Text="{Binding Path, UpdateSourceTrigger=PropertyChanged}" />
+                    </DockPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Add external project (ghost). Layers'ın Add layer butonuyla AYNI stil/ikon; 10px boşluk (§9,
+                 prototipin İKİ Add butonu da marginTop 10 kullanır — burada BİREBİR uygulanır). -->
+            <Button HorizontalAlignment="Left" Margin="0,10,0,0" Click="OnAddExternal"
+                    AutomationProperties.Name="Add external project"
+                    Style="{DynamicResource Ds.Button.Ghost.Sm}">
+              <StackPanel Orientation="Horizontal">
+                <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+                  <Canvas Width="24" Height="24">
+                    <Path Data="{DynamicResource Icon.Plus}"
+                          StrokeThickness="{DynamicResource Icon.Plus.StrokeThickness}"
+                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                  </Canvas>
+                </Viewbox>
+                <TextBlock Text="Add external project" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+
             <!-- 18px boşluk + 1px ayraç, sonra Layers (§2.9). -->
-            <Border Height="1" Margin="0,18,0,18" Background="{DynamicResource Brush.BorderSubtle}" />
+            <Border Style="{DynamicResource Ds.Settings.SectionDivider}" />
 
             <!-- LAYERS caps + açıklama (BİREBİR; "Other" mono) -->
-            <TextBlock Text="LAYERS" Margin="0,0,0,6"
-                       FontFamily="{x:Static controls:AppFonts.Ui}"
-                       FontSize="{DynamicResource FontSize.2xs}"
-                       FontWeight="{DynamicResource FontWeight.Emphasis}"
-                       Foreground="{DynamicResource Brush.TextFaint}" />
+            <TextBlock Text="LAYERS" Margin="0,0,0,6" Style="{DynamicResource Ds.Settings.CapsHeading}" />
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
                        FontSize="{DynamicResource FontSize.Xs}"
                        Foreground="{DynamicResource Brush.TextDim}"><Run
@@ -99,12 +235,9 @@
                   </Style.Triggers>
                 </Style>
               </Grid.Style>
-              <Rectangle Stroke="{DynamicResource Brush.Border}" StrokeThickness="1" StrokeDashArray="4 3"
-                         RadiusX="6" RadiusY="6" SnapsToDevicePixels="True" />
+              <Rectangle Style="{DynamicResource Ds.Settings.EmptyStateRectangle}" />
               <TextBlock Text="No layers yet — projects show as a single list in build order."
-                         Margin="16,14" TextWrapping="Wrap"
-                         FontSize="{DynamicResource FontSize.Xs}"
-                         Foreground="{DynamicResource Brush.TextDim}" />
+                         Style="{DynamicResource Ds.Settings.EmptyStateText}" />
             </Grid>
 
             <!-- Kolon başlıkları — yalnız katman varken -->
@@ -119,37 +252,15 @@
                   </Style.Triggers>
                 </Style>
               </Grid.Style>
-              <TextBlock Text="LAYER NAME" HorizontalAlignment="Left" Width="170"
-                         FontFamily="{x:Static controls:AppFonts.Ui}"
-                         FontSize="{DynamicResource FontSize.2xs}"
-                         FontWeight="{DynamicResource FontWeight.Emphasis}"
-                         Foreground="{DynamicResource Brush.TextFaint}" />
-              <TextBlock Text="PATTERN" Margin="176,0,0,0" HorizontalAlignment="Left"
-                         FontFamily="{x:Static controls:AppFonts.Ui}"
-                         FontSize="{DynamicResource FontSize.2xs}"
-                         FontWeight="{DynamicResource FontWeight.Emphasis}"
-                         Foreground="{DynamicResource Brush.TextFaint}" />
+              <TextBlock Text="LAYER NAME" HorizontalAlignment="Left" Width="170" Style="{DynamicResource Ds.Settings.CapsHeading}" />
+              <TextBlock Text="PATTERN" Margin="176,0,0,0" HorizontalAlignment="Left" Style="{DynamicResource Ds.Settings.CapsHeading}" />
             </Grid>
 
             <!-- Katman kartları — sürüklenebilir. Virtualization KAPALI (ItemsControl varsayılanı, A13.2). -->
             <ItemsControl x:Name="LayersList" ItemsSource="{Binding Layers}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate DataType="{x:Type vm:LayerRowViewModel}">
-                  <Border Height="36" Margin="0,0,0,6" Padding="2,0,6,0" BorderThickness="1"
-                          CornerRadius="{DynamicResource Radius.Md}">
-                    <Border.Style>
-                      <Style TargetType="Border">
-                        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
-                        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-                        <Style.Triggers>
-                          <!-- Sürüklenen kart: Brush.SurfaceRaised + Brush.BorderStrong (template-local, A13.2). -->
-                          <DataTrigger Binding="{Binding IsDragging}" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource Brush.SurfaceRaised}" />
-                            <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
-                          </DataTrigger>
-                        </Style.Triggers>
-                      </Style>
-                    </Border.Style>
+                  <Border Style="{DynamicResource Ds.Settings.Card}">
                     <DockPanel LastChildFill="True">
                       <!-- Grip: Mouse.Capture tabanlı sürükle (DragReorderBehavior; OLE DragDrop YASAK). -->
                       <Border DockPanel.Dock="Left" Width="20" Background="Transparent" Cursor="SizeAll"

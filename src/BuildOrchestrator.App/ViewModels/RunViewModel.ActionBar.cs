@@ -194,6 +194,23 @@ public sealed partial class RunViewModel
             : "Layers removed — single project list");
     }
 
+    /// <summary>[K5 · design v1.14.0/§9] Settings Save: harici proje listesini uygular. <see cref="ExternalProjects"/>
+    /// set edilir; motor bu turda TÜKETMEZ (IPC'ye gitmez — yalnız App içi liste ve konsol notu).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — katman notundan FARKLI]</b> <see cref="ApplyLayerPatterns"/> HER Save'de
+    /// KOŞULSUZ bir not yazar (sayı değişmese bile); harici projeler notu ise YALNIZ SAYI DEĞİŞTİYSE yazılır —
+    /// brief'in birebir cümlesi: <i>"sayı değiştiyse ... yazılır ... Değişmediyse not yok."</i> Katman-only bir
+    /// Save'de (harici liste aynı kaldıysa) gürültü OLMASIN diye.</para></summary>
+    private void ApplyExternalProjects(IReadOnlyList<ExternalProjectRef> externals)
+    {
+        int previousCount = ExternalProjects.Count;
+        ExternalProjects = externals;
+        if (externals.Count == previousCount) return; // değişmedi → not YOK
+        AppendRunLine(externals.Count > 0
+            ? $"External projects → {externals.Count} — built before the repository projects"
+            : "External projects cleared");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -224,9 +241,14 @@ public sealed partial class RunViewModel
     /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para></summary>
     /// <param name="patterns">Taslağın katman tanımları.</param>
     /// <param name="repositoryRoot">Bekleyen repo kökü (değişmediyse mevcut kökün aynısı).</param>
-    public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot)
+    /// <param name="externals">[K5] Taslağın harici proje listesi — katmanlarla AYNI koşulsuz adımda uygulanır
+    /// (motora dokunmaz, mid-run kilidinden ETKİLENMEZ — <see cref="ApplyLayerPatterns"/> ile AYNI gerekçe:
+    /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
+    public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
+        IReadOnlyList<ExternalProjectRef> externals)
     {
         ApplyLayerPatterns(patterns);
+        ApplyExternalProjects(externals);
         if (IsMidRunLocked)
         {
             if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");
@@ -235,7 +257,9 @@ public sealed partial class RunViewModel
         ApplyRepositoryRoot(repositoryRoot);
         if (RootPath.Length == 0) return;
         if (IsEngineUnavailable) return;
-        await SyncAsync();
+        // [D3/T5 · design v1.13.2] clearBuffers:false — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten
+        // HEMEN ÖNCE KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); ikinci bir clear onu da silerdi.
+        await SyncCoreAsync(clearBuffers: false);
     }
 
     /// <summary>[D7 · K10] Kabuğun "Choose Folder" yolu: yeni bir repo kökü seçilince kökü değiştirir, proje
@@ -246,7 +270,10 @@ public sealed partial class RunViewModel
     {
         if (IsMidRunLocked) return;
         if (!ApplyRepositoryRoot(path)) return;
-        await SyncAsync();
+        // [D3/T5 · design v1.13.2] clearBuffers:false — ilk kurulumda not YOK (konsol zaten boş), sonraki bir
+        // kök değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; ikinci bir clear onu
+        // da silerdi (bkz. SyncCoreAsync XML doc'u).
+        await SyncCoreAsync(clearBuffers: false);
     }
 
     /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot

@@ -37,6 +37,13 @@ public class ChoreographyTests
     private static ProjectNode Node(string name, int order, bool inCycle = false) =>
         new($@"C:\p\{name}.csproj", name, $@"C:\p\{name}.csproj", ["Osys"], [], order, null, null, inCycle, null);
 
+    /// <summary>Satırların v1.13.2 ÖNCESİ aldığı koreografi opaklığı (kaldırılan <c>RowEnvOpacity</c> = 0.3,
+    /// <see cref="MarkingChoreography.EnvGlideMs"/> süresiyle). Testler satırları ÖLÇÜLECEK temizleme
+    /// yazımından hemen önce bununla KİRLETİR: <see cref="RowFade.None"/>'ı düz aramak hiçbir koşulda
+    /// kırılamazdı — alan zaten construction'dan itibaren <c>None</c>'dır ve üretimde başka bir değer
+    /// yazılmaz, yani sürücünün temizleme yazımı silinse bile assertion yeşil kalırdı.</summary>
+    private static readonly RowFade StaleFade = new(0.3, MarkingChoreography.EnvGlideMs);
+
     // ================================================================ saf çekirdek: açılış
 
     /// <summary>Dalga temposu: 110ms/node, ama zincir toplamı 1.1s'yi AŞMAZ — 36 projede de kısa kalır.</summary>
@@ -99,13 +106,17 @@ public class ChoreographyTests
         Assert.True(MarkingChoreography.MarkedGlideMs < MarkingChoreography.EnvGlideMs);
     }
 
-    /// <summary>Nötr anda kapsam da DÜZ GRİDİR — amber dalgayla gelir (BuildApp.jsx:296).</summary>
+    /// <summary>Nötr anda kapsam da DÜZ GRİDİR — amber dalgayla gelir (BuildApp.jsx:296).
+    /// <para>Saf çekirdek <see cref="MarkingChoreography.Opacity"/> hâlâ GRAF için kullanılıyor (v1.13.2'de
+    /// satır çağrısı düştü, imza kalır) — envOpacity parametresi burada <see cref="MarkingChoreography.NodeEnvOpacity"/>
+    /// ile sınanır; bu adımlarda hiç okunmaz (<c>IsEnvFading</c> henüz false), o yüzden hangi env değeri
+    /// verildiği sonucu etkilemez.</para></summary>
     [Fact]
     public void The_scope_stays_grey_through_the_neutral_moment()
     {
-        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: true, MarkingChoreography.RowEnvOpacity));
-        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: false, MarkingChoreography.RowEnvOpacity));
-        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Wave, marked: true, MarkingChoreography.RowEnvOpacity));
+        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: true, MarkingChoreography.NodeEnvOpacity));
+        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: false, MarkingChoreography.NodeEnvOpacity));
+        Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Wave, marked: true, MarkingChoreography.NodeEnvOpacity));
     }
 
     /// <summary>Dalga RANDOM akar — derleme sırasıyla DEĞİL (kullanıcı kararı). Sıra deterministiktir:
@@ -280,6 +291,62 @@ public class ChoreographyTests
     }
 
     /// <summary>
+    /// [design v1.13.2 §2.4 · §3.2] <b>Ad da dalgada şerit ve noktayla AYNI anda yanar.</b> Prototip:
+    /// <c>transition: color 200ms var(--ease-standard) &lt;waveDelay&gt;ms</c> (BuildApp.jsx:761).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> Eski davranış: ad rengi <c>SetResourceReference</c> ile
+    /// ANINDA oturuyordu — bütün adlar dalganın başında birden beyazlıyor, şerit ve nokta ise sırayla
+    /// amber'a dönüyordu. Ölçülen kusur budur: üç yüzey aynı hareketi anlatmıyordu. Artık ad da şeritle AYNI
+    /// yoldan (<see cref="Controls.MotionTokens.TransitionTokenBrush"/>) boyanır ve <see cref="ProjectRowViewModel.Marked"/>
+    /// AÇILDIĞINDA eski renkten akmaya başlar — çakmaz.</para>
+    ///
+    /// <para><b>Gecikme AYRI bir sabit DEĞİLDİR</b> (kopya YASAK): bu çağrının kendisi zaten satırın dalga
+    /// gecikmesi kadar geç gelir, çünkü <see cref="OperationChoreographer"/> her satırın <c>Marked</c>'ını
+    /// KENDİ sırasında gerçek zamanda değiştirir — şerit ve nokta da gecikmelerini aynı şekilde alır.</para>
+    /// </summary>
+    [StaFact]
+    public void The_wave_fades_the_row_name_into_primary_too()
+    {
+        var host = DsResources.NewHost();
+        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending);
+        var row = new ProjectRow { DataContext = vm, AnimationsEnabledProvider = () => true };
+        var window = DsResources.Realize(host, row);
+
+        var secondaryToken = (SolidColorBrush)row.FindResource("Brush.TextSecondary");
+        var primaryToken = (SolidColorBrush)row.FindResource("Brush.TextPrimary");
+        Assert.Same(secondaryToken, row.NameText.Foreground); // ön-koşul: paylaşılan token fırçası, işi yok
+
+        vm.Marked = true;
+
+        var lit = Assert.IsType<SolidColorBrush>(row.NameText.Foreground);
+        Assert.NotSame(primaryToken, lit);            // kendi kopyasına devretti — ANINDA beyazlamadı
+        Assert.Equal(secondaryToken.Color, lit.Color); // geçiş ESKİ renkten başlıyor (şeritle AYNI desen)
+
+        vm.Marked = false;
+        Assert.Same(secondaryToken, row.NameText.Foreground); // ...ve dalga bitince token referansına dönüyor
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Dalga DIŞINDA (<c>lighting == false</c>) ad rengi ANINDA oturmaya devam eder — geçiş yalnız
+    /// dalgaya aittir. Bir üstteki testin vacuous olmadığının kanıtı budur: her iki yol da aynı hedefe
+    /// (primary) gitse bile yalnız dalga yolu animasyon kurar.</summary>
+    [StaFact]
+    public void The_row_name_still_settles_instantly_outside_the_wave()
+    {
+        var host = DsResources.NewHost();
+        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending);
+        var row = new ProjectRow { DataContext = vm, AnimationsEnabledProvider = () => true };
+        var window = DsResources.Realize(host, row);
+
+        var primaryToken = (SolidColorBrush)row.FindResource("Brush.TextPrimary");
+
+        vm.State = ProjectRowState.Succeeded; // dalga DIŞI bir yol (Status case'i, lighting=false)
+
+        Assert.Same(primaryToken, row.NameText.Foreground); // token referansına ANINDA oturdu, kopya YOK
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// <b>Koreografinin solması satırı ÖNCE kaybetmez.</b> Ölçülen kusur (kullanıcı: "build dedim, o ara proje
     /// listesinde bazı satırlarda yanıp sönmeler oluyor"): <c>ApplyFade</c> her adımda önce
     /// <c>BeginAnimation(Opacity, null)</c> çağırıyordu. Bu, beliriş animasyonunun (<see cref="ProjectRow.PlayReveal"/>)
@@ -303,8 +370,12 @@ public class ChoreographyTests
         DispatcherPump.PumpUntil(() => row.Root.Opacity > 0.99, TimeSpan.FromSeconds(5));
         Assert.True(row.Root.Opacity > 0.99, "ön-koşul: beliriş tamamlanmalı");
 
-        // Koreografinin ilk adımı: kapsam dışı satır 0.3'e söner. Devir uçuştaki değerden OLMALI.
-        vm.Fade = new RowFade(MarkingChoreography.RowEnvOpacity, MarkingChoreography.EnvGlideMs);
+        // Mekanizmanın kendisi (SnapshotAndReplace handoff) sınanıyor — hangi hedefe gidildiği ÖNEMSİZ, yalnız
+        // "1'den küçük bir hedefe geçiş uçuştaki değerden mi başlıyor" sorusu. [v1.13.2] Üretimde satırlara bu
+        // kadar düşük bir hedef artık HİÇ yazılmaz (MarkingChoreography.RowEnvOpacity kaldırıldı, satır çağrısı
+        // hep RowFade.None yazar) — burada keyfî bir "1'den küçük" probe değeri yeterlidir. Devir uçuştaki
+        // değerden OLMALI.
+        vm.Fade = new RowFade(0.3, MarkingChoreography.EnvGlideMs);
 
         Assert.True(row.Root.Opacity > 0.9,
             $"solma belirişin tabanından başladı (opaklık {row.Root.Opacity:0.000}) — satır bir an kayboluyor");
@@ -396,7 +467,20 @@ public class ChoreographyTests
     }
 
     /// <summary>[§9-4] Koreografi GERÇEK bir saatte oynar ve adımları sırayla geçer; işaretlenen satır
-    /// <c>marked</c> görsel durumuna (amber) düşer, kapsam dışı satır <c>discovered</c> kalır.</summary>
+    /// <c>marked</c> görsel durumuna (amber) düşer, kapsam dışı satır <c>discovered</c> kalır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Koşu zaten başlamış olduğu için listede ikinci bir
+    /// sönme okunmuyordu." Eski iddia: veda fazında kapsam dışı satır
+    /// <c>MarkingChoreography.RowEnvOpacity</c>'ye (eski değeri 0.3, 1120ms'de), kapsam içi satır Settle
+    /// adımında <see cref="MarkingChoreography.MarkedOpacity"/>'ye (0.45, 440ms'de) sönerdi. Artık satır
+    /// opaklığı koreografi boyunca <see cref="RowFade.None"/>'da SABİTTİR — sönme/geri gelme (veda + neon
+    /// finali) yalnız graf node'larında yaşar (<see cref="MarkingChoreography.NodeEnvOpacity"/> ve
+    /// <see cref="MarkingChoreography.MarkedOpacity"/> hâlâ ORADA, <c>GraphView</c> üzerinden okunur).</para>
+    ///
+    /// <para>Satırlar koreografiden ÖNCE <see cref="StaleFade"/> ile KİRLETİLİR — yeni kuralı gerçekten
+    /// pinleyen şey budur: sürücünün her adımda yaptığı <see cref="RowFade.None"/> yazımı kaldırılırsa
+    /// aşağıdaki dört assertion KIRILIR (kirletmeden aranan <c>None</c> hiçbir koşulda kırılamazdı).</para>
+    /// </summary>
     [StaFact]
     public void The_wave_marks_the_scope_and_the_steps_advance_on_a_real_clock()
     {
@@ -404,6 +488,7 @@ public class ChoreographyTests
 
         // Üretim sırası: önce  (başlangıç modu düşer — RunViewModel.BeginRunAsync), sonra .
         foreach (var row in vm.Projects) row.Fresh = false;
+        foreach (var row in vm.Projects) row.Fade = StaleFade; // koreografi ÖNCESİ kir
 
         driver.Play(vm.Projects, vm.ScopeFor(RunMode.Build));
         Assert.True(driver.IsPlaying);
@@ -413,20 +498,24 @@ public class ChoreographyTests
         Assert.Equal(VisualStatus.Marked, vm.Projects.Single(r => r.Name == "A").VisualStatus);
         Assert.Equal(VisualStatus.Discovered, vm.Projects.Single(r => r.Name == "C").VisualStatus);
 
-        // Veda: kapsam dışı satır ÖNCE (uzun geçişle) söner.
+        // Veda: grafta kapsam dışı satır (node) ÖNCE söner — ama LİSTEDE satır opaklığı sabit 1 kalır.
         DispatcherPump.PumpUntil(() => driver.Step == MarkStep.DimEnv, TimeSpan.FromSeconds(4));
-        Assert.Equal(MarkingChoreography.RowEnvOpacity, vm.Projects.Single(r => r.Name == "C").Fade.Opacity);
-        Assert.Equal(MarkingChoreography.EnvGlideMs, vm.Projects.Single(r => r.Name == "C").Fade.DurationMs);
-        Assert.Equal(1.0, vm.Projects.Single(r => r.Name == "A").Fade.Opacity); // sarılar HENÜZ katılmadı
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "C").Fade);
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "A").Fade);
 
-        // ...sarılar 560ms sonra, DAHA KISA bir geçişle katılır.
+        // ...sarılar 560ms sonra grafta katılır — listede hâlâ değişen bir şey yok.
         DispatcherPump.PumpUntil(() => driver.Step == MarkStep.Settle, TimeSpan.FromSeconds(4));
-        Assert.Equal(MarkingChoreography.MarkedOpacity, vm.Projects.Single(r => r.Name == "A").Fade.Opacity);
-        Assert.Equal(MarkingChoreography.MarkedGlideMs, vm.Projects.Single(r => r.Name == "A").Fade.DurationMs);
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "A").Fade);
+        Assert.Equal(RowFade.None, vm.Projects.Single(r => r.Name == "C").Fade);
     }
 
     /// <summary>[§9-4] Koşu başlayınca koreografi biter: satırlar tam opaklığa döner ve İŞARETLİLİK SİLİNİR —
-    /// amberi bundan sonra statü kanalı (queued/building) taşır.</summary>
+    /// amberi bundan sonra statü kanalı (queued/building) taşır.
+    ///
+    /// <para>Kir <see cref="OperationChoreographer.Cancel"/>'dan HEMEN ÖNCE atılır, koreografinin başında
+    /// DEĞİL: adım yazımı (<c>Enter</c>) satırları çoktan temizlemiş olurdu ve bu testin ölçtüğü şey
+    /// kesilme yolunun KENDİ temizleme yazımıdır. Dispatcher bu iki satır arasında dönmez, yani araya bir
+    /// adım tiki giremez.</para></summary>
     [StaFact]
     public void Cancelling_restores_full_opacity_and_clearing_drops_the_marks()
     {
@@ -434,6 +523,7 @@ public class ChoreographyTests
         driver.Play(vm.Projects, vm.ScopeFor(RunMode.Build));
         DispatcherPump.PumpUntil(() => driver.Step == MarkStep.DimEnv, TimeSpan.FromSeconds(4));
 
+        foreach (var row in vm.Projects) row.Fade = StaleFade; // kesilme ÖNCESİ kir
         driver.Cancel(vm.Projects);
 
         Assert.False(driver.IsPlaying);
@@ -443,6 +533,37 @@ public class ChoreographyTests
 
         driver.ClearMarks(vm.Projects);
         Assert.All(vm.Projects, r => Assert.False(r.Marked));
+    }
+
+    /// <summary>
+    /// [design v1.13.2 §3.2] <b>Doğal bitişte koreografi son adımında BEKLER.</b> Prototipte <c>startRun()</c>
+    /// koreografinin son anında çalışır (<c>build-data.js:445</c>): vedanın son opaklıkları (0.45/0.18) doğrudan
+    /// koşu opaklıklarına (1/0.13/0.2) geçer, arada 1.0'a geri dönüş yoktur. Burada komut koreografi bitince
+    /// gönderilir ve motor planlamaya saniyeler harcayabilir — o pencerede graf vedanın son hâlinde tutulur;
+    /// düşürmek yalnız <see cref="OperationChoreographer.Cancel"/>'ın işidir (koşu başladı ya da başlayamadı).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden bitişte adım <see cref="MarkStep.None"/>'a düşüyor, graf
+    /// 1.0'a GERİ geliyor ve <c>runStarted</c> gelince node'lar ikinci kez sönüyordu ("sönüş ve akış garip").</para>
+    /// </summary>
+    [StaFact]
+    public void When_the_choreography_ends_on_its_own_it_holds_its_last_step_until_the_run_takes_over()
+    {
+        var (vm, driver) = Driven();
+        MarkStep lastPushed = MarkStep.None;
+        driver.PushToGraph = (step, _) => lastPushed = step;
+
+        var gate = driver.PlayAsync(vm.Projects, vm.ScopeFor(RunMode.Build));
+        DispatcherPump.PumpUntil(() => gate.IsCompleted, TimeSpan.FromSeconds(6));
+        Assert.True(gate.IsCompleted, "koreografi bitmedi — komut kapısı asılı kalırdı");
+
+        Assert.False(driver.IsPlaying);
+        Assert.Equal(MarkStep.Wait2, driver.Step);          // son adım TUTULUR
+        Assert.Equal(MarkStep.Wait2, lastPushed);           // grafa None İTİLMEDİ: opaklıklar vedanın son hâlinde
+        Assert.Equal(2, vm.Projects.Count(r => r.Marked));  // işaret de durur — statü kanalı devralana dek
+
+        driver.Cancel(vm.Projects);                         // runStarted → kabuk düşürür
+        Assert.Equal(MarkStep.None, driver.Step);
+        Assert.Equal(MarkStep.None, lastPushed);
     }
 
     // ================================================================ bitiş koreografisi (graf)
@@ -515,5 +636,116 @@ public class ChoreographyTests
         view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal));
 
         Assert.Equal(EndStep.None, view.EndStep);
+    }
+
+    // ================================================================ [design v1.13.2 §2.5] bitiş
+    // koreografisi tam görünümde + odak istisnası
+
+    /// <summary>
+    /// [design v1.13.2 §2.5] <b>Bitiş koreografisi tam görünümde oynar.</b> Koreografi doğduğunda (<c>Hold</c>)
+    /// graf seçim odağını bırakır ve kamera fit-all'a (<see cref="GraphCamera.Default"/>) döner — SEÇİM
+    /// VARKEN bile. <c>Hold</c> fazı (900ms) bu geçişi karşılar, böylece neon zinciri hep tam görünümde başlar.
+    /// </summary>
+    [StaFact]
+    public void The_end_finale_moves_the_camera_to_the_default_view_even_with_a_selection()
+    {
+        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        view.SelectedNode = "built";
+        Assert.NotEqual(GraphCamera.Default, view.CurrentCamera); // ön-koşul: seçim kamerayı odaklamış olmalı
+
+        view.PlayEndFinale(["built"], runCount: 1);
+
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera);
+    }
+
+    /// <summary>[design v1.13.2 §2.5] Finale boyunca seçimin akan kenarları, halkası ve kelepçeli ad
+    /// etiketi çizilmez — "seçim yokmuş gibi" davranır (kamera dışındaki dört yüzeyden üçü).</summary>
+    [StaFact]
+    public void The_end_finale_hides_the_selection_edges_the_ring_and_the_name_label()
+    {
+        var view = GraphTestView.Realized(new Size(640, 400), () => true);
+        view.SetGraph(
+            [new("dep", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+             new("built", 1, GraphStatus.Succeeded, VisualStatus.Succeeded)],
+            [new GraphEdge("dep", "built")]);
+        view.SelectedNode = "built";
+        Assert.NotEmpty(view.SelectionEdgePaths);                                            // ön-koşul
+        Assert.Equal(Visibility.Visible, view.NodeVisuals["built"].SelectionRing.Visibility); // ön-koşul
+        Assert.Equal(Visibility.Visible, view.SelectionLabelVisibility);                      // ön-koşul
+
+        view.PlayEndFinale(["dep", "built"], runCount: 1);
+
+        Assert.Empty(view.SelectionEdgePaths);
+        Assert.Equal(Visibility.Collapsed, view.NodeVisuals["built"].SelectionRing.Visibility);
+        Assert.Equal(Visibility.Collapsed, view.SelectionLabelVisibility);
+    }
+
+    /// <summary>
+    /// [design v1.13.2 §2.5] <b>Review bulgusu.</b> "Node halkası/outline" prototipte İKİ satırdır
+    /// (BuildApp.jsx:589 çerçeve kalınlığı, :592 CSS outline) ve ikisi AYNI <c>!finale</c> kapısını paylaşır
+    /// — ilk turda yalnız <c>:592</c> (<see cref="GraphNodeVisual.SelectionRing"/>, bir üstteki test) port
+    /// edilmişti. <c>:589</c>'un WPF karşılığı <see cref="ApplyHover"/>'ın <c>hovered</c> bayrağıdır (kalın
+    /// çerçeve + z-order öne alma + WPF'e özgü 1.5× büyütme — üçü de TEK bayraktan gelir, bkz. <c>ApplyHover</c>
+    /// XML doc'u) ve ham <c>_selectedNode</c> okuyordu; bu yüzden önceden seçili node finale boyunca VE final
+    /// hâlde "spotlight"ta (kalın çerçeveli, öne çıkmış) kalıyordu — kamerası, kenarları, halkası ve etiketi
+    /// bırakılmışken. Ölçek animasyonlu olduğu için (canlı DP değeri headless'ta güvenilir okunamaz) burada
+    /// AYNI bayraktan gelen İKİ senkron etkisi (çerçeve kalınlığı + z-order) pinleniyor; bayrak TEK olduğu
+    /// için biri doğruysa ölçek de doğrudur.
+    /// </summary>
+    [StaFact]
+    public void The_end_finale_also_drops_the_hover_spotlight_from_the_previously_selected_node()
+    {
+        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        view.SelectedNode = "built";
+        var visual = view.NodeVisuals["built"];
+        Assert.Equal(GraphView.HoverBorderThickness, visual.Square.StrokeThickness, 6);        // ön-koşul
+        Assert.Equal(1, System.Windows.Controls.Panel.GetZIndex(visual.Cell));                 // ön-koşul
+
+        view.PlayEndFinale(["built"], runCount: 1);
+
+        Assert.Equal(GraphView.NodeBorderThickness, visual.Square.StrokeThickness, 6);
+        Assert.Equal(0, System.Windows.Controls.Panel.GetZIndex(visual.Cell));
+    }
+
+    /// <summary>
+    /// [design v1.13.2 §2.5] <b>Final hâl.</b> Koreografi doğal olarak bitince (<c>EndStep.None</c>) seçim
+    /// SİLİNMEZ ama odak GERİ GELMEZ: kamera fit-all'da kalır ve seçim dimlemesi de uygulanmaz — odak dışı
+    /// kalacak bir node (ne seçili ne komşusu) artık tam opak. "Seçim yokmuş gibi" final hâl budur; fit
+    /// görünüm kalıcıdır, bir sonraki adım yalnız seçim DEĞİŞİNCE gelir (aşağıdaki test).
+    /// </summary>
+    [StaFact]
+    public void The_end_finale_keeps_the_selection_but_the_view_stays_released_once_it_ends()
+    {
+        var view = Graph(
+            new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+            new GraphNode("other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
+        view.SelectedNode = "built";
+
+        view.PlayEndFinale(["built"], runCount: 1);
+        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(6));
+
+        Assert.Equal("built", view.SelectedNode);                     // seçim silinmedi
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera);        // odak geri gelmedi
+        Assert.Equal(1.0, view.NodeVisuals["other"].OpacityTarget, 6); // seçim dimlemesi uygulanmıyor
+    }
+
+    /// <summary>[design v1.13.2 §2.5] <b>Odak yeniden açılır.</b> Finale bittikten sonra kullanıcı BAŞKA
+    /// bir projeyi seçince kamera o projenin odak hedefine döner ve halkası belirir — bırakılan odak SEÇİM
+    /// DEĞİŞİNCE düşer.</summary>
+    [StaFact]
+    public void Selecting_a_different_project_reopens_focus_after_the_finale_ends()
+    {
+        var view = Graph(
+            new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+            new GraphNode("other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
+        view.SelectedNode = "built";
+        view.PlayEndFinale(["built"], runCount: 1);
+        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(6));
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera); // ön-koşul: final hâlde fit-all
+
+        view.SelectedNode = "other";
+
+        Assert.NotEqual(GraphCamera.Default, view.CurrentCamera);
+        Assert.Equal(Visibility.Visible, view.NodeVisuals["other"].SelectionRing.Visibility);
     }
 }

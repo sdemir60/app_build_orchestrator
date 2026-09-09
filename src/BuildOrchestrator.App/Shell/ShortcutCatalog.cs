@@ -10,6 +10,8 @@ public enum ShortcutId
     Rebuild,
     FocusFilter,
     About,
+    /// <summary>[design v1.13.0 §2.1/§2.11] What's new — kendi dialogu, kendi title bar butonu (sparkle).</summary>
+    WhatsNew,
     Escape,
     /// <summary>Global kısayol (tepsiden pencereyi getir) — <see cref="KeyboardShortcuts.WindowBindings"/>'te
     /// DEĞİLDİR, <see cref="HotkeyBinding"/> üzerinden RegisterHotKey ile kaydedilir.</summary>
@@ -63,6 +65,13 @@ public static class ShortcutCatalog
         // yazılmaz.
         new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
             "About — version, shortcuts and diagnostics"),
+        // [design v1.13.0/v1.13.1 §2.1/§2.11 · D4/T8] Bu cümle AYNI ZAMANDA sparkle butonunun (görülmemiş
+        // sürüm yokken) tooltip'idir — MainWindow kendi cümlesini kurmaz, buradan okur (About'un deseni
+        // birebir budur). Görülmemiş sürüm varken tooltip AYRI bir cümleye döner ("What's new in <sürüm>");
+        // o cümle sürüm numarası taşıdığı için burada TANIMLANMAZ (kopya YASAK'ın öbür ucu: sabit olmayan
+        // metin sabit bir katalog girdisinde YAŞAMAZ).
+        new(ShortcutId.WhatsNew, GesturesFor(WindowIntent.ShowNotes),
+            "What's new — release notes"),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
             "Close the topmost open layer: dialog → popover/menu → selection"),
         new(ShortcutId.RestoreFromTray, [HotkeyBinding.DefaultGesture],

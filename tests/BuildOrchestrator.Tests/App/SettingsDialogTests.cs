@@ -285,7 +285,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, @"^OSYS\.Types\.", "OSYS.Types")];
-        await run.ApplySettingsAsync(patterns, @"D:\repo"); // kök DEĞİŞMEDİ — Sync yine gider
+        await run.ApplySettingsAsync(patterns, @"D:\repo", []); // kök DEĞİŞMEDİ — Sync yine gider
 
         var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());
         Assert.Equal(@"D:\repo", sync.RootPath);
@@ -305,7 +305,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\new\repo");
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\new\repo", []);
 
         Assert.Equal(@"D:\new\repo", run.RootPath);
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
@@ -321,7 +321,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, null);
+        await run.ApplySettingsAsync(patterns, null, []);
 
         Assert.Same(patterns, run.LayerPatterns);
         Assert.Empty(sent);
@@ -345,7 +345,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\repo");
+        await run.ApplySettingsAsync(patterns, @"D:\repo", []);
 
         Assert.Equal(@"D:\repo", run.RootPath);
         Assert.True(run.HasWorkspace);
@@ -372,7 +372,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\other\repo");
+        await run.ApplySettingsAsync(patterns, @"D:\other\repo", []);
 
         Assert.Same(patterns, run.LayerPatterns);   // katmanlar YİNE uygulanır (sessizce kaybolmaz)
         Assert.Equal(@"D:\repo", run.RootPath);     // kök değişmedi
@@ -390,7 +390,7 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"d:\REPO"); // aynı kök, farklı harf durumu
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"d:\REPO", []); // aynı kök, farklı harf durumu
 
         string text = run.GetRunDocumentText();
         Assert.Contains("Layer definitions updated — 1 layers", text); // non-vacuous: konsol boş değil
@@ -414,7 +414,7 @@ public class SettingsDialogTests
         run.DebugOnCommandSent = sent.Add;
 
         IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
-        await run.ApplySettingsAsync(patterns, @"D:\new\repo");
+        await run.ApplySettingsAsync(patterns, @"D:\new\repo", []);
 
         Assert.Same(patterns, run.LayerPatterns);       // katmanlar kaydedilir
         Assert.Equal(@"D:\new\repo", run.RootPath);     // kök de uygulanır (kalıcı duruma yazılır)
@@ -459,6 +459,132 @@ public class SettingsDialogTests
         Assert.Equal(4, store.State.LayerPatterns.Count); // varsayılan taslak da aynı Save'de persist edildi
     }
 
+    // ================================================================ [K5 · design v1.14.0 §9] EXTERNAL PROJECTS
+
+    /// <summary>[K5] Save katman adı kuralıyla AYNI sertlikte üçüncü bir koşulla bloklanır: herhangi bir harici
+    /// kartın path'i BOŞ (trim sonrası). <c>AddExternal</c>'ın kendisi de burada pinlenir: boş path + Git
+    /// varsayılan (§9 birebir: "boş path'li, Git kaynaklı kart ekler").</summary>
+    [Fact]
+    public void Save_is_blocked_only_by_an_empty_external_path_never_by_a_filled_one()
+    {
+        var editor = new SettingsDraftViewModel(null, @"D:\repo");
+        for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]); // katman gürültüsü at
+
+        int canSaveNotifications = 0;
+        editor.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SettingsDraftViewModel.CanSave)) canSaveNotifications++;
+        };
+
+        editor.AddExternal();
+        Assert.True(canSaveNotifications > 0, "AddExternal sonrası CanSave bildirimi YOK");
+        var row = Assert.Single(editor.Externals);
+        Assert.Equal("", row.Path);
+        Assert.Equal(VcsKind.Git, row.Vcs); // §9: "boş path'li, Git kaynaklı kart ekler"
+        Assert.False(editor.CanSave); // boş path → bloklar
+
+        canSaveNotifications = 0;
+        row.Path = "   "; // yalnız boşluk da BOŞtur (trim) — katman adı kuralıyla AYNI
+        Assert.True(canSaveNotifications > 0, "Path değişimi sonrası CanSave bildirimi YOK");
+        Assert.False(editor.CanSave);
+
+        row.Path = @"C:\src\shared\Delta.Common\Delta.Common.csproj";
+        Assert.True(editor.CanSave); // dolu path → artık bloklamaz
+
+        canSaveNotifications = 0;
+        editor.RemoveExternal(row);
+        Assert.True(canSaveNotifications > 0, "RemoveExternal sonrası CanSave bildirimi YOK");
+        Assert.Empty(editor.Externals);
+        Assert.True(editor.CanSave);
+    }
+
+    /// <summary>[K5] <c>BuildExternals</c> Export'un VE Save'in PAYLAŞTIĞI TEK dönüşümdür: path TRIM'lenir, boş
+    /// (yalnız boşluk dahil) path'ler DÜŞER — prototip <c>ext.filter((x) =&gt; x.path)</c>'in birebir portu.</summary>
+    [Fact]
+    public void BuildExternals_trims_paths_and_drops_blank_ones()
+    {
+        var editor = new SettingsDraftViewModel(null, @"D:\repo");
+        editor.AddExternal();
+        editor.Externals[0].Path = "  C:\\a  ";
+        editor.Externals[0].Vcs = VcsKind.Tfvc;
+        editor.AddExternal();
+        editor.Externals[1].Path = "   "; // boş — düşer
+
+        var built = editor.BuildExternals();
+
+        Assert.Equal([new ExternalProjectRef(@"C:\a", VcsKind.Tfvc)], built);
+    }
+
+    /// <summary>[K5] Save: harici projeler katmanlarla AYNI commit'te UiState'e yazılır ve
+    /// <see cref="RunViewModel.ExternalProjects"/>'e uygulanır; konsol notu sayı 0'dan artınca BİREBİR budur.</summary>
+    [Fact]
+    public async Task Saving_externals_persists_them_alongside_layers_in_the_same_commit()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var store = NewStore();
+
+        var editor = new SettingsDraftViewModel(null, @"D:\repo"); // 4 varsayılan katman
+        editor.AddExternal();
+        editor.Externals[0].Path = @"C:\src\shared\Delta.Common\Delta.Common.csproj";
+        editor.Externals[0].Vcs = VcsKind.Tfvc;
+
+        await editor.CommitAsync(run, store);
+
+        Assert.Contains("External projects → 1 — built before the repository projects", run.GetRunDocumentText());
+        Assert.Equal(
+            [new ExternalProjectRef(@"C:\src\shared\Delta.Common\Delta.Common.csproj", VcsKind.Tfvc)],
+            run.ExternalProjects);
+        Assert.Equal(run.ExternalProjects, store.State.ExternalProjects); // AYNI commit'te UiState'e de yazıldı
+    }
+
+    /// <summary>[K5] Save notu — katman notundan (<c>ApplyLayerPatterns</c>, HER Save'de koşulsuz) FARKLI kural:
+    /// harici projeler notu YALNIZ SAYI DEĞİŞTİYSE yazılır. Üç geçiş: 0→2 (not VAR), 2→2 farklı içerik (not YOK,
+    /// ama liste GERÇEKTEN güncellenir), 2→0 (temizlendi notu).</summary>
+    [Fact]
+    public async Task Applying_settings_writes_the_external_note_only_when_the_count_changes()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")]; // sabit — bu testin konusu DEĞİL
+
+        // 0 → 2: sayı DEĞİŞTİ → not YAZILIR (N ≥ 1 deseni).
+        await run.ApplySettingsAsync(patterns, @"D:\repo",
+            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"C:\b", VcsKind.Tfvc)]);
+        Assert.Contains("External projects → 2 — built before the repository projects", run.GetRunDocumentText());
+        Assert.Equal(2, run.ExternalProjects.Count);
+
+        // 2 → 2 (FARKLI path'ler, AYNI sayı): sayı DEĞİŞMEDİ → İKİNCİ bir not satırı EKLENMEZ — ama liste yine
+        // GERÇEKTEN güncellenir (not-gating yalnız KONSOLU susturur, veriyi DONDURMAZ).
+        await run.ApplySettingsAsync(patterns, @"D:\repo",
+            [new ExternalProjectRef(@"C:\c", VcsKind.Git), new ExternalProjectRef(@"C:\d", VcsKind.Git)]);
+        Assert.Equal(1, CountOccurrences(run.GetRunDocumentText(), "External projects → 2"));
+        Assert.Equal(@"C:\c", run.ExternalProjects[0].Path);
+
+        // 2 → 0: sayı DEĞİŞTİ (0'a düştü) → "cleared" notu.
+        await run.ApplySettingsAsync(patterns, @"D:\repo", []);
+        Assert.Contains("External projects cleared", run.GetRunDocumentText());
+    }
+
+    /// <summary>[K5] Hiç harici proje YOKKEN (0) ve verilen liste de BOŞSA (0) Save gürültü ÜRETMEMELİDİR —
+    /// "değişmediyse not yok" kuralının en sık koşacağı yol (katman-only bir Save).</summary>
+    [Fact]
+    public async Task Applying_settings_with_no_external_projects_and_none_before_writes_no_note()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        await run.ApplySettingsAsync([new LayerPattern(0, "^A", "Alpha")], @"D:\repo", []);
+
+        Assert.DoesNotContain("External projects", run.GetRunDocumentText());
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        int count = 0, index = 0;
+        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0) { count++; index += needle.Length; }
+        return count;
+    }
 }
 
 /// <summary>
@@ -485,8 +611,11 @@ public class SettingsDialogViewTests
 
         // description TextBlock 3 <Run>'dan kurulu — headless'ta TextBlock.Text (ContentStart/End tabanlı)
         // Inlines'ı yansıtmaz; Run'lar doğrudan birleştirilir (aynı okunabilir metin, farklı okuma yolu).
+        // [K5] EXTERNAL PROJECTS'in açıklaması da 3 Run'dan kurulu (aynı "before" vurgusu deseni) — artık İKİ
+        // 3-Run'lı blok var, bu yüzden LAYERS'ınki "regex" sözcüğüyle ayırt edilir (yalnız Layers açıklaması taşır).
         string description = string.Concat(
-            blocks.Single(b => b.Inlines.Count == 3).Inlines.OfType<Run>().Select(r => r.Text));
+            blocks.Single(b => b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text.Contains("regex")))
+                .Inlines.OfType<Run>().Select(r => r.Text));
         Assert.Equal(
             "Projects are grouped by the first matching pattern (regex on the project name), top to bottom; " +
             "card order is the layer order in the list. Non-matching projects fall under Other.",
@@ -590,5 +719,116 @@ public class SettingsDialogViewTests
 
         editor.RepositoryRoot = "   ";   // yalnız boşluk da BOŞtur
         Assert.False(editor.CanSave);
+    }
+
+    // ================================================================ [K5 · design v1.14.0 §9] EXTERNAL PROJECTS
+
+    /// <summary>[K5] Gövde sırası BİREBİR: WORKSPACE → EXTERNAL PROJECTS → LAYERS (§9: "harici projeler
+    /// derleme sırasının başında olduğu için katmanlardan önce durur"). Geometri kanıtı (TranslatePoint) —
+    /// tree-walk sırasına değil GERÇEK ekran konumuna bakar.</summary>
+    [StaFact]
+    public void Settings_dialog_sections_appear_in_workspace_external_layers_order()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
+            run => run.ExternalProjects = [new ExternalProjectRef(@"C:\a", VcsKind.Git)]);
+        using var _scope = scope;
+
+        var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
+        double YOf(string text) => blocks.Single(b => b.Text == text).TranslatePoint(new Point(0, 0), dialog).Y;
+
+        double workspaceY = YOf("WORKSPACE");
+        double externalY = YOf("EXTERNAL PROJECTS");
+        double layersY = YOf("LAYERS");
+
+        Assert.True(workspaceY < externalY, "WORKSPACE, EXTERNAL PROJECTS'ten önce durmalı");
+        Assert.True(externalY < layersY, "EXTERNAL PROJECTS, LAYERS'tan önce durmalı");
+    }
+
+    /// <summary>[K5] design v1.14.0 §9 BİREBİR: caps başlığı, açıklama (3 Run — "before" vurgusu ayrı) ve
+    /// boş-durum kutusunun metni. "before" text-secondary + 500 taşır (§9: "before sözcüğü text-secondary, 500").</summary>
+    [StaFact]
+    public void Settings_dialog_pins_the_external_projects_caption_description_and_empty_state_box_verbatim()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
+        var texts = blocks.Select(t => t.Text).ToList();
+        Assert.Contains("EXTERNAL PROJECTS", texts);
+
+        var description = blocks.Single(b =>
+            b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text == "before"));
+        Assert.Equal(
+            "Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. The working copy root is found from the path upwards. They are built before everything else, in this order; the rest follows the layers below.",
+            string.Concat(description.Inlines.OfType<Run>().Select(r => r.Text)));
+
+        var emphasis = description.Inlines.OfType<Run>().Single(r => r.Text == "before");
+        Assert.Equal(dialog.FindResource("Brush.TextSecondary"), emphasis.Foreground);
+        Assert.Equal(dialog.FindResource("FontWeight.Emphasis"), emphasis.FontWeight);
+
+        Assert.Contains("No external projects — only what is discovered under the repository root is built.", texts);
+    }
+
+    /// <summary>[K5] Harici liste — katmanların AKSİNE — VARSAYILAN OLARAK BOŞTUR (bir "seed" kavramı yok);
+    /// boş-durum kutusu bu yüzden TAZE diyalogda görünür ve ilk kart eklenince kaybolur (Layers'ın tersi
+    /// başlangıç durumu, AYNI mekanizma).</summary>
+    [StaFact]
+    public void External_empty_state_box_appears_only_when_the_list_is_empty()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var box = DsResources.RealizedObjects(dialog).OfType<Grid>().Single(g => g.Name == "ExternalEmptyState");
+        Assert.Equal(Visibility.Visible, box.Visibility); // taze diyalog: harici liste BAŞTAN boş
+
+        var draft = (SettingsDraftViewModel)dialog.DataContext;
+        draft.AddExternal();
+        dialog.UpdateLayout();
+
+        Assert.Equal(Visibility.Collapsed, box.Visibility);
+    }
+
+    /// <summary>[K5] "Add external project": VM satırı (boş path + Git) VE gerçekten realize edilen bir kart
+    /// (path input'u ekranda, doğru satıra bağlı) — "kart" iddiasının GEOMETRİK değil ama GERÇEK kanıtı.</summary>
+    [StaFact]
+    public void Add_external_project_appends_a_realized_card_with_an_empty_path_and_git_selected()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var addButton = DsResources.RealizedObjects(dialog).OfType<Button>()
+            .Single(b => b.Content is StackPanel panel
+                         && panel.Children.OfType<TextBlock>().Any(t => t.Text == "Add external project"));
+        addButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        dialog.UpdateLayout();
+
+        var draft = (SettingsDraftViewModel)dialog.DataContext;
+        var row = Assert.Single(draft.Externals);
+        Assert.Equal("", row.Path);
+        Assert.Equal(VcsKind.Git, row.Vcs); // §9: "boş path'li, Git kaynaklı kart ekler"
+
+        var pathInput = DsResources.Descendants(dialog).OfType<TextBox>()
+            .Single(t => BuildOrchestrator.App.Controls.DsChrome.GetWatermark(t) == @"C:\src\shared\Delta.Common\Delta.Common.csproj");
+        Assert.Same(row, pathInput.DataContext);
+    }
+
+    /// <summary>[K5] Save katman adı kuralıyla AYNI sertlikte: boş bir harici kart path'i düğmeyi disable eder,
+    /// doldurulunca geri açar — bu WPF seviyesinde <c>dialog.Save.IsEnabled</c> (CanSave binding'i) üzerinden.</summary>
+    [StaFact]
+    public void Save_is_disabled_while_an_external_card_has_an_empty_path()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var draft = (SettingsDraftViewModel)dialog.DataContext;
+        draft.AddExternal();
+        dialog.UpdateLayout();
+
+        Assert.False(dialog.Save.IsEnabled);
+
+        draft.Externals[0].Path = @"C:\a";
+        dialog.UpdateLayout();
+
+        Assert.True(dialog.Save.IsEnabled);
     }
 }

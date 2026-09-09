@@ -9,13 +9,20 @@ using BuildOrchestrator.App.Shell;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// About modali. Kabuk Settings ile AYNI (scrim + 620px Ds.Dialog + odak tuzağı + Esc); farkı sekmeli
-/// gövdesidir. Headless süit XAML runtime çözümlemesini görmez — bu yüzden realize ZORUNLU (CLAUDE.md).
+/// About modali. Kabuk Settings ile AYNI DESENDİR (scrim + Ds.Dialog + odak tuzağı + Esc) ama genişlik
+/// BİLEREK farklı (660px — design v1.13.1 §2.10: üç dialog artık bugünkü içeriğine değil büyüme yönüne göre
+/// ölçülüyor); farkı ayrıca sekmeli gövdesidir. Headless süit XAML runtime çözümlemesini görmez — bu yüzden
+/// realize ZORUNLU (CLAUDE.md).
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class AboutDialogTests
 {
     private static readonly TimeSpan PumpTimeout = TimeSpan.FromSeconds(2);
+
+    // Gerçek makinedeki LOCALAPPDATA yollarının uzunluğuna bel bağlamaz: hangi font gerçekten çözülürse
+    // çözülsün (headless testte AppFonts.Mono'nun pack:// kaynağı yoktur, WPF bir yedeğe düşer) bu uzunluk
+    // Environment hücresinin ~450px'lik görünür genişliğini KESİNLİKLE taşırır.
+    private static readonly string OverflowingRootPath = @"D:\" + new string('a', 200) + @"\repo";
 
     private static Border Shell(BuildOrchestrator.App.Views.AboutDialog dialog) =>
         (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
@@ -32,17 +39,62 @@ public class AboutDialogTests
         dialog.UpdateLayout();
     }
 
+    /// <summary>Bir Environment satırının değer hücresini ETİKETİNDEN bulur — <c>DataContext</c> şablonun
+    /// köküne bağlanan <see cref="DiagnosticsLine"/>'dan ScrollViewer'a KADAR aynen akar (WPF değer
+    /// kalıtımı), bu yüzden hücre kendi satırının verisiyle güvenle eşleştirilir.</summary>
+    private static ScrollViewer EnvironmentValueScroller(FrameworkElement dialog, string label) =>
+        DsResources.Descendants(dialog).OfType<ScrollViewer>()
+            .Single(sv => sv.DataContext is DiagnosticsLine line && line.Label == label);
+
+    /// <summary>Gerçek bir <c>MouseWheel</c> routed event'i — HWND/SendMessage GEREKMEZ (yalnız
+    /// <c>HorizontalWheelScroll</c>'un çözdüğü <c>WM_MOUSEHWHEEL</c> için gerekirdi, bkz. o sınıfın XML
+    /// doc'u); WPF düz dikey tekerleği zaten routed event olarak dağıttığı için doğrudan
+    /// <see cref="UIElement.RaiseEvent"/> yeterlidir. Kaydırma senkrondur (OnEnvironmentValueWheel bir
+    /// Dispatcher turu ERTELEMEZ), <c>UpdateLayout</c> yalnız yayınlanan <c>HorizontalOffset</c>'in bir
+    /// layout turu istediği ihtimaline karşı savunmacıdır.
+    ///
+    /// <para><b>İKİ faz raise edilir, çünkü WPF'in <c>InputManager</c>'ı da öyle yapar:</b> önce tünel
+    /// (<c>PreviewMouseWheel</c>), preview YUTMADIYSA baloncuk (<c>MouseWheel</c>). Baloncuk fazı ŞARTTIR:
+    /// <see cref="ScrollViewer"/>'ın olayı yutan class handler'ı (<c>OnMouseWheel</c>) YALNIZ orada koşar —
+    /// tek başına preview raise etmek "hücre olayı dışarı bırakıyor mu" sorusunu HİÇ sormaz.</para></summary>
+    private static MouseWheelEventArgs RaiseWheel(
+        BuildOrchestrator.App.Views.AboutDialog dialog, ScrollViewer target, int delta)
+    {
+        var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+            { RoutedEvent = UIElement.PreviewMouseWheelEvent };
+        target.RaiseEvent(preview);
+        if (!preview.Handled)
+            target.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+                { RoutedEvent = UIElement.MouseWheelEvent });
+        dialog.UpdateLayout();
+        return preview;
+    }
+
+    /// <summary>Bir değer hücresini SARAN sekme paneli — Environment satırlarının dikey kaydırıcısı.</summary>
+    private static ScrollViewer EnvironmentTabScroller(ScrollViewer valueCell) =>
+        DsResources.Ancestors(valueCell).OfType<ScrollViewer>().First();
+
     // ---------------------------------------------------------------- kabuk
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — design v1.13.1 §2.10]</b> ESKİ İDDİA: About, Settings'le AYNI 620px kalıbını
+    /// paylaşıyordu (üç dialog da 620px'ti). v1.13.1 bunu ayırdı: her dialog artık bugünkü içeriğine değil
+    /// BÜYÜME YÖNÜNE göre ölçülüyor. About statik bir referanstır (sürüm, kısayollar, environment,
+    /// third-party) ve zamanla yalnız third-party listesi uzar → dikeyde büyür — üçünün en darı olması bu
+    /// yüzden doğrudur: en az iş yapan dialog odur. YENİ genişlik 660px: en uzun yol (85 karakterlik MSBuild
+    /// yolu, 12px mono'da ~610px) tek satıra genişlik büyüyünce bile hâlâ sığmıyor, o yüzden genişliğin
+    /// yanına Environment'taki yatay kaydırma kondu (aşağıdaki <c>Environment_*</c>/<c>The_wheel_*</c>
+    /// testleri).
+    /// </summary>
     [StaFact]
-    public void The_dialog_realizes_and_is_six_hundred_twenty_pixels_wide()
+    public void The_dialog_realizes_and_is_six_hundred_sixty_pixels_wide()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             Assert.Equal(Visibility.Visible, dialog.Visibility);
-            Assert.Equal(620.0, Shell(dialog).Width);
-            Assert.Equal(620.0, Shell(dialog).ActualWidth); // realize zorunlu — literal okumak yetmez
+            Assert.Equal(660.0, Shell(dialog).Width);
+            Assert.Equal(660.0, Shell(dialog).ActualWidth); // realize zorunlu — literal okumak yetmez
         }
     }
 
@@ -122,23 +174,32 @@ public class AboutDialogTests
 
     // ---------------------------------------------------------------- sekmeler
 
-    /// <summary><b>[DEĞİŞEN KURAL — design v1.9.0 §2.10]</b> Sekme sayısı ÜÇTEN DÖRDE çıktı: sürüm notları
-    /// ayrı bir pencere ya da açılış pop-up'ı değil, About'un dördüncü sekmesi olarak eklendi.</summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — design v1.13.0 §2.1/§2.10/§2.11, D4/T9]</b> ESKİ İDDİA (design v1.9.0): sekme sayısı
+    /// ÜÇTEN DÖRDE çıkmıştı — sürüm notları ayrı bir pencere ya da açılış pop-up'ı değil, About'un dördüncü
+    /// sekmesi olarak eklenmişti. v1.13.0 bunu GERİ ALDI: What's new kendi diyalogu (<see cref="BuildOrchestrator.App.Views.NotesDialog"/>)
+    /// ve kendi title bar butonu (sparkle) oldu — About DÖRTTEN ÜÇE döndü: <c>Shortcuts | Environment |
+    /// Third-party</c>. Liste kurma kodu KOPYALANMADI, <c>NotesDialog.xaml.cs</c>'e TAŞINDI (bkz.
+    /// <c>NotesDialogTests</c>).
+    /// </summary>
     [StaFact]
-    public void It_has_four_tabs_and_the_first_one_is_selected()
+    public void It_has_three_tabs_and_the_first_one_is_selected()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             var tabs = Tabs(dialog);
-            Assert.Equal(4, tabs.Count);
+            Assert.Equal(3, tabs.Count);
+            Assert.Equal(["Shortcuts", "Environment", "Third-party"], tabs.Select(t => (string)t.Content));
             Assert.True(tabs[0].IsChecked);
             Assert.All(tabs.Skip(1), t => Assert.False(t.IsChecked));
         }
     }
 
     /// <summary>Her an TAM BİR panel görünür. Bu, "sekme değişince boy değişmez" iddiasının ÖN KOŞULUdur:
-    /// üç panel birden görünür kalsaydı boy zaten sabit olurdu ve o test hiçbir şeyi ayırt etmezdi.</summary>
+    /// üç panel birden görünür kalsaydı boy zaten sabit olurdu ve o test hiçbir şeyi ayırt etmezdi.
+    /// <b>[DEĞİŞEN KURAL — design v1.13.0]</b> panel sayısı DÖRTTEN ÜÇE döndü (What's new NotesDialog'a
+    /// taşındı).</summary>
     [StaFact]
     public void Exactly_one_pane_is_visible_at_a_time()
     {
@@ -146,7 +207,7 @@ public class AboutDialogTests
         using (scope)
         {
             var panes = DsResources.Descendants(dialog).OfType<ScrollViewer>().ToList();
-            Assert.Equal(4, panes.Count); // [v1.9.0] dördüncü panel: What's new
+            Assert.Equal(3, panes.Count); // [v1.13.0] dördüncü panel (What's new) kalktı
 
             for (int i = 0; i < Tabs(dialog).Count; i++)
             {
@@ -291,6 +352,92 @@ public class AboutDialogTests
         }
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — design v1.13.1 §2.10]</b> ESKİ İDDİA: değer hücresi
+    /// <c>TextTrimming="CharacterEllipsis"</c> ile kırpılır, tam metin <c>ToolTip</c>'te dururdu.
+    /// "Ellipsis + title ipucu" olarak denendi, İSTENMEDİ — tam metni okumanın zaten bir yolu var
+    /// (footer'daki Copy diagnostics), kırpma+tooltip fazladan bir etkileşim katmanıydı. YENİ kural: hiçbir
+    /// değer KIRPILMAZ ve hiçbirinde tooltip YOKTUR; uzun bir yol bunun yerine yatay kayar (aşağıdaki
+    /// <c>The_wheel_*</c> testleri).
+    /// </summary>
+    [StaFact]
+    public void Environment_values_are_not_truncated_and_carry_no_tooltip()
+    {
+        // Kısa bir değerde TextTrimming=None zaten anlamsız olurdu (kırpma etkinleşmez ki) — taşan bir kökle
+        // iddia GERÇEK bir senaryoyu kapsar: kullanıcı bu satırı görünce yol gerçekten kırpılmıyor.
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.RootPath = OverflowingRootPath);
+        using (scope)
+        {
+            Select(dialog, 1);
+
+            var valueCells = DsResources.Descendants(dialog).OfType<TextBlock>()
+                .Where(t => dialog.DiagnosticsLines.Any(l => l.Value == t.Text))
+                .ToList();
+
+            Assert.Equal(dialog.DiagnosticsLines.Count, valueCells.Count); // her satırın değeri BULUNDU
+            Assert.All(valueCells, t => Assert.Equal(TextTrimming.None, t.TextTrimming));
+            Assert.All(valueCells, t => Assert.Null(t.ToolTip));
+        }
+    }
+
+    /// <summary>Taşan hücrede tekerlek yatay ofseti ARTIRIR ve olayı YUTAR — brief T10 testler listesi.
+    /// Taşma <see cref="OverflowingRootPath"/> ile GARANTİ edilir; gerçek makinedeki LOCALAPPDATA yollarının
+    /// o an ne kadar uzun olduğuna bel bağlamaz.</summary>
+    [StaFact]
+    public void The_wheel_scrolls_an_overflowing_environment_value_sideways()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized(run => run.RootPath = OverflowingRootPath);
+        using (scope)
+        {
+            Select(dialog, 1);
+            var scroller = EnvironmentValueScroller(dialog, "Repository root");
+            Assert.True(scroller.ScrollableWidth > 0); // ön-koşul: gerçekten taşıyor
+            Assert.Equal(0.0, scroller.HorizontalOffset);
+
+            var args = RaiseWheel(dialog, scroller, -Mouse.MouseWheelDeltaForOneLine);
+
+            Assert.True(scroller.HorizontalOffset > 0);
+            Assert.True(args.Handled); // taşan hücre olayı YUTAR — dışarıdaki dikey scroll'a sızmaz
+        }
+    }
+
+    /// <summary>
+    /// Taşmayan hücrede tekerlek yatay ofsete DOKUNMAZ ve sekmenin kendi dikey kaydırması ÇALIŞIR.
+    ///
+    /// <para><b>[DEĞİŞEN TEST — ölçüm]</b> ESKİ İDDİA: preview fazında raise edilen bir tekerlek olayının
+    /// <c>Handled</c>'ının false kalması bu davranışı pinlerdi. Ölçüm bunun yanlış olduğunu gösterdi:
+    /// <see cref="ScrollViewer"/> olayı BALONCUK fazındaki class handler'ında (<c>OnMouseWheel</c>) yutar ve
+    /// bunu dikeyde kaydıracak bir şeyi olup olmadığına BAKMADAN yapar — yani preview'daki <c>Handled</c>
+    /// false olsa bile dış panel HİÇ kaymıyordu. Test artık gerçek soruyu soruyor: dış
+    /// <see cref="ScrollViewer"/>'ın <c>VerticalOffset</c>'i ARTIYOR MU.</para>
+    ///
+    /// <para>Dış panelin gerçekten kaydırılabilir olması KURULUR (<c>MaxHeight</c>): Environment sekmesi
+    /// bugünkü tanı satırlarıyla 236px'lik kutusunu doldurmuyor, oysa kusur listenin taştığı ilk anda
+    /// görünür olur — <see cref="OverflowingRootPath"/>'in yatay taşma için yaptığının dikey eşi.</para>
+    /// </summary>
+    [StaFact]
+    public void The_wheel_over_a_non_overflowing_environment_value_still_scrolls_the_tab()
+    {
+        var (dialog, _, scope) = AboutDialogHost.OpenRealized();
+        using (scope)
+        {
+            Select(dialog, 1);
+            var scroller = EnvironmentValueScroller(dialog, "App version");
+            var tab = EnvironmentTabScroller(scroller);
+            tab.MaxHeight = 60;
+            dialog.UpdateLayout();
+
+            Assert.Equal(0.0, scroller.ScrollableWidth);   // ön-koşul: hücre taşmıyor
+            Assert.True(tab.ScrollableHeight > 0);         // ön-koşul: sekme gerçekten kaydırılabilir
+            Assert.Equal(0.0, tab.VerticalOffset);
+
+            RaiseWheel(dialog, scroller, -Mouse.MouseWheelDeltaForOneLine);
+
+            Assert.Equal(0.0, scroller.HorizontalOffset);  // hücre yatayda oynamadı
+            Assert.True(tab.VerticalOffset > 0, "tekerlek sekmenin dikey kaydırmasına HİÇ ulaşmadı");
+        }
+    }
+
     /// <summary>MSBuild çözümü ASYNC'tir: sekme açılana kadar HİÇ tetiklenmez (About'u açmak bir child process
     /// başlatmamalı) ve sonuç gelene kadar satır "resolving…" der. Sonuç bir kez çözülür, cache'lenir.</summary>
     [StaFact]
@@ -403,33 +550,30 @@ public class AboutDialogTests
         }
     }
 
-    /// <summary>[design v1.9.0 §2.10] Gövdenin yüksekliği SABİTTİR ve uzayan panel kendi içinde kayar.
+    /// <summary>[design v1.9.0 §2.10] Gövdenin yüksekliği SABİTTİR (bir MinHeight değil) — hangi sekme uzarsa
+    /// uzasın, dialog büyümez, panel kendi içinde kayar.
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: <i>"gövde MIN-yükseklik 236'dır — sabit değil; içerik büyürse
-    /// alan da büyüyebilir"</i>. O kural üç sekmenin de 236'ya sığdığı bir dünyada doğruydu. <b>What's new</b>
-    /// sekmesi sürüm biriktikçe uzar ve min-height tek başına diyaloğu O sekmede büyütürdü — yani "sekme
-    /// değişince dialog zıplamaz" kuralı (§2.10) tam da yeni sekme yüzünden bozulurdu. Sabit yükseklik +
-    /// panel-içi scroll ikisini birden korur: "tüm geçmiş erişilir ama sekme bir ekran boyunda açılır".</para>
-    /// <para>Sayı DEĞİŞMEDİ (236) ve test onu değil DAVRANIŞI pinler — kardeş test
-    /// <see cref="Switching_tabs_never_resizes_the_dialog"/> zaten eşitliği ölçer; burada uzun bir panelin
-    /// gövdeyi BÜYÜTEMEDİĞİ ölçülür.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10/§2.11, D4/T9]</b> ESKİ İDDİA (design v1.9.0): bu test
+    /// <b>What's new</b> sekmesini seçip ("en uzun panel") gövdenin BÜYÜMEDİĞİNİ ve o panelin GERÇEKTEN taştığını
+    /// (<c>ExtentHeight &gt;= ViewportHeight</c>) ölçüyordu — What's new sürüm biriktikçe uzayan TEK sekmeydi.
+    /// v1.13.0 What's new'i About'tan çıkarıp <see cref="BuildOrchestrator.App.Views.NotesDialog"/>'a taşıdı (bkz.
+    /// <c>NotesDialogTests.The_body_height_is_fixed_at_400px</c> — taşan-panel kanıtı ORADA yaşıyor, kendi
+    /// 400px sabit gövdesiyle). Geriye kalan üç sekmenin (Shortcuts/Environment/Third-party) HİÇBİRİ bugünkü
+    /// içerikle 236px'i doldurmuyor, yani "gerçekten taşıyor" iddiası burada artık KANITLANAMAZ — sahte bir
+    /// taşma iddia etmek yerine bu test YAPISAL kalır: <c>Height==236.0</c> araması (About'un kendi 660px
+    /// genişliği gibi) bir <c>MinHeight</c> DEĞİL gerçek bir <c>Height</c> olduğunu doğrular — <c>Grid.Height</c>
+    /// okunur, <c>Grid.MinHeight</c> DEĞİL; MinHeight olsaydı <c>Height</c> NaN kalır ve <c>Single()</c>
+    /// eşleşmezdi. "Sekme değişince boy değişmez" davranışı zaten kardeş test
+    /// <see cref="Switching_tabs_never_resizes_the_dialog"/>'ta ayrıca ölçülüyor.</para></summary>
     [StaFact]
-    public void The_body_height_is_fixed_so_a_long_pane_scrolls_instead_of_growing_it()
+    public void The_body_uses_a_fixed_height_not_a_minimum_height()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
             var body = DsResources.Descendants(dialog).OfType<Grid>().Single(g => g.Height == 236.0);
-            double before = body.ActualHeight;
-
-            dialog.WhatsNew.IsChecked = true;   // en uzun panel
-            dialog.UpdateLayout();
-
-            Assert.Equal(before, body.ActualHeight);
-            var pane = DsResources.Descendants(dialog).OfType<ScrollViewer>()
-                .Single(p => p.Visibility == Visibility.Visible);
-            Assert.True(pane.ExtentHeight >= pane.ViewportHeight,
-                "What's new paneli gövdeyi doldurmuyor — scroll iddiası vakumda");
+            Assert.True(body.ActualHeight > 0, "gövde hiç yerleşmedi");
+            Assert.Equal(236.0, body.ActualHeight);
         }
     }
 
@@ -444,5 +588,47 @@ public class AboutDialogTests
             dialog.CopyDiagnostics();
             Assert.False(dialog.IsShowingCopied);
         }
+    }
+
+    // ---------------------------------------------------------------- saf karar (ofset aritmetiği)
+
+    /// <summary>WPF'in dikey kuralıyla AYNI çevrilir: pozitif <c>Delta</c> YUKARI'dır (dikeyde ofset azalır);
+    /// prototipin <c>scrollLeft += deltaY</c> hissiyle (tekerlek AŞAĞI ⇒ yol SAĞA) aynı fiziksel yöne
+    /// ulaşmak için "aşağı" (negatif <c>Delta</c>) burada yatay ofseti, notch'un TAM büyüklüğü kadar,
+    /// ARTIRIR — <see cref="HorizontalWheelScroll"/>'un aksine bir satır/adım ölçeklemesi YOKTUR, prototip
+    /// de kırpmaz (<c>scrollLeft += deltaY</c> düz toplamdır).</summary>
+    [Fact]
+    public void A_downward_notch_increases_the_horizontal_offset_by_its_full_magnitude()
+    {
+        Assert.Equal(120.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            0, -Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void An_upward_notch_decreases_the_horizontal_offset()
+    {
+        Assert.Equal(880.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            1000, Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void The_offset_never_goes_negative()
+    {
+        Assert.Equal(0.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            0, Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void The_offset_is_clamped_to_the_scrollable_width()
+    {
+        Assert.Equal(1000.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            950, -Mouse.MouseWheelDeltaForOneLine, 1000));
+    }
+
+    [Fact]
+    public void A_non_overflowing_cell_always_clamps_to_zero()
+    {
+        Assert.Equal(0.0, BuildOrchestrator.App.Views.AboutDialog.EnvironmentValueWheelOffset(
+            0, -Mouse.MouseWheelDeltaForOneLine, 0));
     }
 }

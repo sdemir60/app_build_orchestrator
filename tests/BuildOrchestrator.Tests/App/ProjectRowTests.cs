@@ -624,23 +624,27 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[design v1.12.0 §2.4-1 · §9-3] Başlangıç modunda şerit DÜZ ama SOLUKTUR; işlem başlayınca
-    /// tam opaklığa çıkar. Renk iki durumda da AYNI nötr gridir — Sync bir plan göstermez.
-    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: şerit başlangıç modunda KESİKLİ çizilir (3px dolu / 4px boş) ve
-    /// desen, WPF'te bir dolgu kesikli olamadığı için tile'lanmış bir <c>DrawingBrush</c>'tır. Değişme gerekçesi
-    /// (ölçüm): 2px'lik bir şeritte kesikli desen piksel ızgarasına oturmuyor, tırtıklı görünüyordu. Ayrım artık
-    /// OPAKLIKTIR (<see cref="StartMode.FaintOpacity"/>) ve dolgu her durumda tek bir token fırçasıdır.</para></summary>
+    /// <summary>[design v1.12.0 §2.4-1 · §9-3] Başlangıç modunda şerit DÜZ bir token fırçasıyla dolar —
+    /// kesikli desen YOKTUR. Renk iki durumda da AYNI nötr gridir — Sync bir plan göstermez.
+    /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Eski iddia: şerit başlangıç modunda KESİKLİ çizilir (3px dolu /
+    /// 4px boş) ve desen, WPF'te bir dolgu kesikli olamadığı için tile'lanmış bir <c>DrawingBrush</c>'tır.
+    /// Değişme gerekçesi (ölçüm): 2px'lik bir şeritte kesikli desen piksel ızgarasına oturmuyor, tırtıklı
+    /// görünüyordu. Ayrım OPAKLIĞA taşındı ve dolgu her durumda tek bir token fırçası oldu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Sync sonrası liste silik görünüyordu." O opaklık ayrımı
+    /// da kaldırıldı: eski iddia şeridin başlangıç modunda <see cref="StartMode.FaintOpacity"/> (eski değeri
+    /// 0.5) ile SOLUK çizildiğiydi. Artık başlangıç modu da TAM OPAK (1.0) — şerit hiçbir zaman
+    /// soluklaşmaz.</para></summary>
     [StaFact]
-    public void The_fresh_start_mode_draws_the_stripe_faint_instead_of_dashed()
+    public void The_fresh_start_mode_draws_the_stripe_fully_opaque()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { Fresh = true };
         var (row, window, host) = Realize(vm);
 
-        Assert.IsNotType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);   // kesikli desen YOK
+        Assert.IsNotType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);   // kesikli desen YOK (v1.12.0)
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
-        Assert.Equal(StartMode.FaintOpacity, row.Stripe.Opacity);
+        Assert.Equal(1.0, row.Stripe.Opacity);                                  // v1.13.2: silik değil, TAM opak
 
-        // İşlem başlayınca (fresh düşünce) şerit TAM opaklığa çıkar — rengi değişmez.
+        // İşlem başlayınca (fresh düşünce) opaklık zaten 1'di — değişmez, rengi de değişmez.
         vm.Fresh = false;
         row.UpdateLayout();
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));

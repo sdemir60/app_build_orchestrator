@@ -149,6 +149,10 @@ public partial class MainWindow : Window
         // çökertirdi). Null-safe desen (kardeş guard'larla — saved.Configuration is { }/saved.PerfMode is { } —
         // hizalı).
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
+        // [K5 · design v1.14.0 §9] Kalıcı harici proje listesini AYNI yerde seed et (LayerPatterns'ın yanı
+        // başında) — null-safe desen kardeşleriyle hizalı. Motor bu turda TÜKETMİYOR: seed yalnız App içi
+        // listeyi doldurur, hiçbir IPC/Sync tetiklemez.
+        if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -221,8 +225,19 @@ public partial class MainWindow : Window
         Shell.GraphHost.SelectionChanged += OnGraphSelectionChanged;
         _vm.PropertyChanged += OnVmPropertyChangedForGraph;
 
-        // [design v1.9.0 §2.10] Görülmemiş sürüm işareti: sekme görülünce kalıcı duruma yazılır ve nokta söner.
-        AboutOverlay.NotesSeen += OnNotesSeen;
+        // [design v1.13.2 §2.5 · §9] Konsol her işlemde temizlenir — VM tamponu silindiği anda ekrandaki belge
+        // de boşalır. Yalnız ANLATI modunda: proje logu açıkken belge o loga aittir, dokunulmaz (← Back zaten
+        // taze anlatı belgesini kurar — ShowRunConsole). Event stream'in kendi yolu ayrı: StreamEvents'ten
+        // silinen satırları EventStreamView CollectionChanged ile düşürür.
+        _vm.ConsoleCleared += (_, _) =>
+        {
+            if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.ClearRunDocument();
+        };
+
+        // [design v1.13.0 §2.11] Görülmemiş sürüm işareti: NotesDialog AÇILDIĞI anda kalıcı duruma yazılır ve
+        // nokta söner (eskiden design v1.9.0'da About'un What's new sekmesi görülünce yazılırdı — About artık
+        // bu olguyu bilmiyor, bkz. NotesDialog.NotesSeen).
+        NotesOverlay.NotesSeen += OnNotesSeen;
         RefreshUnseenNotesMark();
 
         // [design v1.11.0 §9-4/§9-5] İki koreografi: açılış (işaretleme dalgası — satır + graf) ve bitiş
@@ -322,7 +337,8 @@ public partial class MainWindow : Window
             [WindowIntent.Rebuild] = _vm.RebuildCommand,                    // Ctrl/Shift+F5 → doğrudan
             [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Continue/Build (duruma göre)
             [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
-            [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (modal açıkken no-op)
+            [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (her zaman Shortcuts'ta)
+            [WindowIntent.ShowNotes] = new RelayCommand(OnNotesRequested),   // Ctrl+F1 → What's new (toggle)
             [WindowIntent.Escape] = new RelayCommand(OnEscapePressed),
         };
         foreach (var b in KeyboardShortcuts.WindowBindings)
@@ -349,19 +365,20 @@ public partial class MainWindow : Window
     /// <summary>[About] Info butonunun tooltip'i — metin ELLE yazılmaz, <see cref="ShortcutCatalog"/>'dan gelir
     /// (About sekmesindeki F1 satırıyla AYNI cümle; kopya YASAK). XAML'de bir <c>x:Static</c> sarmalayıcı
     /// gerekmesin diye kod-tarafı kurulur — diğer title bar tooltip'leriyle aynı <c>AppTooltip.Side</c>
-    /// yerleşimini kullanır.</summary>
+    /// yerleşimini kullanır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.1/§2.10]</b> ESKİ İDDİA (design v1.9.0): görülmemiş bir
+    /// sürüm varsa cümle "About — what's new in {sürüm}"e dönerdi. Okunmadı mekanizması sparkle butonuna
+    /// taşındığı için (bkz. <see cref="SetupNotesButtonTooltip"/>) ⓘ'nin cümlesi artık HER ZAMAN sabit katalog
+    /// cümlesidir — koşullu dal DÜŞTÜ.</para></summary>
     private void SetupAboutButtonTooltip()
     {
         // [design-v1.2.1 §2.1] Tooltip cümlenin SONUNA jesti ekler: "… (F1)". Cümle de jest de katalogdan
         // gelir — ikisi de burada elle yazılmaz.
-        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa cümle DEĞİŞİR: "About — what's new in {sürüm} (F1)".
         var about = ShortcutCatalog.Get(ShortcutId.About);
-        string sentence = HasUnseenNotes
-            ? string.Format(CultureInfo.InvariantCulture, "About — what's new in {0}", AppIdentity.Version)
-            : about.Description;
         var tooltip = new System.Windows.Controls.ToolTip
         {
-            Content = $"{sentence} ({about.Gestures[0]})",
+            Content = $"{about.Description} ({about.Gestures[0]})",
         };
         // Yerleşim gear'ınkiyle AYNI olmalı (ikisi de title bar'da, aşağı açılır) — değer ORADAN okunur,
         // ikinci kez yazılmaz.
@@ -369,22 +386,49 @@ public partial class MainWindow : Window
         InfoButton.ToolTip = tooltip;
     }
 
-    // ---------------------------------------------------------------- [design v1.9.0 §2.10] görülmemiş sürüm
+    /// <summary>[design v1.13.0/v1.13.1 §2.1/§2.11] What's new butonunun tooltip'i — About'un eski
+    /// (design v1.9.0) koşullu deseninin TAŞINMIŞ hâli: nokta VARKEN cümle sürüm adlı olur ("What's new in
+    /// {sürüm}"), yokken katalogdan gelen sabit cümleye döner. Jest kısmı ("(Ctrl+F1)") ELLE yazılmaz —
+    /// <see cref="ShortcutCatalog"/>'dan okunur.</summary>
+    private void SetupNotesButtonTooltip()
+    {
+        var notes = ShortcutCatalog.Get(ShortcutId.WhatsNew);
+        string sentence = HasUnseenNotes
+            ? string.Format(CultureInfo.InvariantCulture, "What's new in {0}", AppIdentity.Version)
+            : notes.Description;
+        var tooltip = new System.Windows.Controls.ToolTip
+        {
+            Content = $"{sentence} ({notes.Gestures[0]})",
+        };
+        AppTooltip.SetSide(tooltip, AppTooltip.GetSide((System.Windows.Controls.ToolTip)GearButton.ToolTip));
+        NotesButton.ToolTip = tooltip;
+    }
 
-    /// <summary>Kullanıcının What's new sekmesinde en son gördüğü sürüm ÇALIŞAN sürümden farklı mı — ⓘ
-    /// üzerindeki 5px amber noktanın ve About'un hangi sekmede açılacağının TEK kaynağı.</summary>
+    // ---------------------------------------------------------------- [design v1.13.0/v1.13.1 §2.11] görülmemiş sürüm
+
+    /// <summary>Kullanıcının What's new diyaloğunda en son gördüğü sürüm ÇALIŞAN sürümden farklı mı — sparkle
+    /// butonundaki 5px amber noktanın TEK kaynağı.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0]</b> ESKİ İDDİA: bu karar AYRICA About'un hangi sekmede
+    /// açılacağını da belirlerdi ("What's new sekmesinde mi, Shortcuts'ta mı"). What's new kendi diyaloguna
+    /// taşındığı için About artık bu karardan TAMAMEN bağımsızdır — her zaman Shortcuts'ta açar.</para></summary>
     private bool HasUnseenNotes =>
         !string.Equals(_uiState.Load().SeenVersion, AppIdentity.Version, StringComparison.Ordinal);
 
-    /// <summary>Noktayı ve tooltip'i tazeler — ikisi AYNI karardan (<see cref="HasUnseenNotes"/>) beslenir.</summary>
+    /// <summary>Noktayı ve sparkle butonunun tooltip'ini tazeler — ikisi AYNI karardan
+    /// (<see cref="HasUnseenNotes"/>) beslenir. ⓘ'nin tooltip'i artık bu karardan bağımsızdır (sabit).</summary>
     private void RefreshUnseenNotesMark()
     {
         UnseenNotesDot.Visibility = HasUnseenNotes ? Visibility.Visible : Visibility.Collapsed;
-        SetupAboutButtonTooltip();
+        SetupNotesButtonTooltip();
     }
 
-    /// <summary>Sekme GÖRÜLDÜ: kalıcı duruma yazılır ve nokta söner. Sekmenin kendisi bunu bildirir
-    /// (<see cref="Views.AboutDialog.NotesSeen"/>) — diyalog kalıcı durumu BİLMEZ.</summary>
+    /// <summary>Diyalog GÖRÜLDÜ (açıldığı anda): kalıcı duruma yazılır ve nokta söner. Diyaloğun kendisi bunu
+    /// bildirir (<see cref="Views.NotesDialog.NotesSeen"/>) — diyalog kalıcı durumu BİLMEZ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0]</b> ESKİ İDDİA: tetikleyici About'un What's new SEKMESİ
+    /// görülmesiydi (<c>Views.AboutDialog.NotesSeen</c>). Artık tetikleyici <see cref="Views.NotesDialog"/>'un
+    /// AÇILMASIdır — kalıcı duruma yazma kuralı ve karar (üç durum: kayıt yok/eşit/farklı) DEĞİŞMEDİ.</para></summary>
     private void OnNotesSeen()
     {
         var state = _uiState.Load();
@@ -394,19 +438,29 @@ public partial class MainWindow : Window
         RefreshUnseenNotesMark();
     }
 
-    /// <summary>[About] Bir modal AÇIK MI — Esc zinciri, F1 kapısı ve gear kapısı bu TEK karardan beslenir
-    /// (üç yerde ayrı ayrı sorulsaydı biri güncellenip diğerleri unutulurdu).</summary>
+    /// <summary>[About] Bir modal AÇIK MI — üç tüketici bu TEK karardan beslenir (her biri kendi listesini
+    /// saysaydı biri güncellenip diğerleri unutulurdu): Esc zinciri (<see cref="OnEscapePressed"/>), gear
+    /// kapısı (<see cref="OnSettings"/>) ve first-run davetindeki <c>Import settings…</c>
+    /// (<see cref="OnImportSettings"/>). <b>F1/Ctrl+F1 buraya BAKMAZ</b> — About ve What's new kendi
+    /// diyaloglarını toggle eder ve üste binerler (bkz. <see cref="OnAboutRequested"/>).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.11]</b> ESKİ İDDİA: yalnız Settings ve About'a bakardı.
+    /// Üçüncü modal (<see cref="NotesOverlay"/>) eklendiği için buraya da KATILDI — gear artık What's new
+    /// açıkken de Settings'i açtırmaz.</para></summary>
     private bool AnyDialogOpen =>
-        SettingsOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible;
+        SettingsOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible
+        || NotesOverlay.Visibility == Visibility.Visible;
 
+    /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b>. Üçü
+    /// BİRLİKTE açık durabilir (What's new About'un, About da Settings'in üstüne biner — XAML'de en son
+    /// geldiği için z-sırası doğru); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.</summary>
     private void OnEscapePressed()
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null))
         {
-            // [design-v1.2.1 §2.10] About ÖNCE kapanır: iki modal aynı anda açık olabilir (F1, Settings'in
-            // üstüne biner) ve Esc her zaman EN ÜST katmanı indirir — alta sızmaz, alttaki taslak durur.
             case EscAction.CloseDialog:
-                if (AboutOverlay.Visibility == Visibility.Visible) AboutOverlay.CloseDialog();
+                if (NotesOverlay.Visibility == Visibility.Visible) NotesOverlay.CloseDialog();
+                else if (AboutOverlay.Visibility == Visibility.Visible) AboutOverlay.CloseDialog();
                 else SettingsOverlay.CloseDialog();
                 break;
             case EscAction.ClosePopovers: Shell.CloseAllPopovers(); break;
@@ -691,13 +745,19 @@ public partial class MainWindow : Window
                 // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
                 // hiç açılmadı). İşaret o zaman da silinmelidir — aksi halde başlamayan bir işlemin amber kapsamı
                 // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                //
+                // [SIRA ÖNEMLİ — design v1.13.2 §3.2] Koşu fazı ve statüler grafa koreografi düşürülmeden ÖNCE
+                // itilir: koreografi doğal bitişinde son adımında BEKLER (OperationChoreographer.Settle) ve
+                // Cancel adımı düşürdüğü anda grafın normal opaklık yolu artık koşu fazını görür — vedanın son
+                // hâlinden (0.45/0.18) koşu opaklıklarına (1/0.13/0.2) TEK geçiş. Ters sırada Cancel önce
+                // herkesi 1.0'a getirir, PushGraphRunPhase sonra yeniden söndürürdü.
+                PushGraphRunPhase();
+                PushGraphStatuses();
                 if (_vm.IsRunning || !_vm.IsStarting)
                 {
                     _choreographer.Cancel(_vm.Projects);
                     _choreographer.ClearMarks(_vm.Projects);
                 }
-                PushGraphRunPhase();
-                PushGraphStatuses();
                 break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
@@ -796,12 +856,29 @@ public partial class MainWindow : Window
     ///
     /// <para>Global kısayolun GERÇEKTEN kayıtlı olup olmadığı diyaloğa geçirilir: çakışmada kayıt sessizce
     /// düşer (<see cref="HotkeyRegistration"/>) ve kullanıcının bunu görebileceği tek yer About'tur. Hotkey
-    /// yalnız <c>OnSourceInitialized</c>'da kurulur — pencere hiç gösterilmediyse (headless test) null'dır.</para></summary>
+    /// yalnız <c>OnSourceInitialized</c>'da kurulur — pencere hiç gösterilmediyse (headless test) null'dır.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10]</b> ESKİ İDDİA (design v1.9.0): görülmemiş bir sürüm
+    /// varsa About DOĞRUDAN What's new sekmesinde açılırdı. What's new kendi diyaloguna taşındığı için bu
+    /// yönlendirme KALKTI — About her zaman Shortcuts'ta açar (<c>Open</c> artık bir <c>openOnWhatsNew</c>
+    /// parametresi almaz).</para></summary>
     private void OnAboutRequested()
     {
         if (AboutOverlay.Visibility == Visibility.Visible) { AboutOverlay.CloseDialog(); return; }
-        // [design v1.9.0 §2.10] Görülmemiş bir sürüm varsa About DOĞRUDAN What's new'da açılır.
-        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync, HasUnseenNotes);
+        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync);
+    }
+
+    /// <summary>[design v1.13.0 §2.11] What's new butonu → What's new modali.</summary>
+    private void OnNotes(object sender, RoutedEventArgs e) => OnNotesRequested();
+
+    /// <summary>[design v1.13.0 §2.11] What's new'i AÇAR ya da KAPATIR — Ctrl+F1 bir TOGGLE'dır (About'un
+    /// F1'iyle AYNI desen). Herhangi bir modal açıkken de çalışır: What's new EN ÜST katmandır, Settings/About
+    /// üzerine biner (XAML'de en son geldiği için z-sırası doğru) ve taslakları YOK ETMEZ — Esc önce What's
+    /// new'i kapatır (bkz. <see cref="OnEscapePressed"/>).</summary>
+    private void OnNotesRequested()
+    {
+        if (NotesOverlay.Visibility == Visibility.Visible) { NotesOverlay.CloseDialog(); return; }
+        NotesOverlay.Open();
     }
 
     /// <summary>[About] MSBuild yolu + sürümü — About'un Environment sekmesi bunu LAZY çağırır (<c>vswhere</c>
@@ -832,7 +909,9 @@ public partial class MainWindow : Window
     // [design v1.8.0 §2.4] "Choose Folder" yolu KALDIRILDI: boş durum artık doğrudan bir klasör seçici
     // açmıyor, Settings'e yönlendiriyor ve kök orada (taslakta) düzenleniyor — uygulanması Save'e ertelenir
     // (RunViewModel.ApplySettingsAsync). Klasör seçicinin kendisi (PickFolder) Settings'in "Browse…"
-    // düğmesine geçti; ChangeRepositoryAsync yolu ise kalıcı durumdan gelen kök için yerinde duruyor.
+    // düğmesine geçti. Kalıcı durumdan gelen kök DOĞRUDAN RootPath set'iyle seed edilir (yukarıda, D7 M3 —
+    // seed-but-idle, hiçbir komut göndermez); RunViewModel.ChangeRepositoryAsync'in üretimde çağıranı YOKTUR,
+    // yalnız testlerden sürülür.
 
     /// <summary>[design v1.11.0 §2.7-4] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
     /// <see cref="ProjectFilter.ChipLabel"/>'dır — seçili KÜMEYİ <c>" + "</c> ile listeler (çoklu filtre);

@@ -1,9 +1,13 @@
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
@@ -63,7 +67,11 @@ public class SettingsDialogFocusTests
         var dialog = new SettingsDialog();
         root.Children.Add(dialog);
 
-        var window = DsResources.Realize(host, root);
+        // [review fix-2] SettingsDialogHost.OpenRealized'ın AYNI kararı (800×700): varsayılan 400×200'de
+        // Open()'ın artık kurduğu pencere-boyutu kablajı (TrackHostWindowSize, task-D6) gövdenin MinHeight'ı
+        // (300) ile hiç uyuşmayan bir MaxHeight (200×0.56=112) hesaplardı — hiçbir assertion kırılmaz (WPF'in
+        // Min/Max önceliği çökmeyi engeller) ama dialog kendi içinde çelişkili bir arrange durumunda kalırdı.
+        var window = DsResources.Realize(host, root, width: 800, height: 700);
 
         dialog.Open(run, NewStore(), () => null);
         root.UpdateLayout(); // diyalog artık Visible — satır/buton container'ları yerleşsin
@@ -74,20 +82,135 @@ public class SettingsDialogFocusTests
 
     // ================================================================ [A13/T3b] ölçü/geometri (b2/b3)
 
-    /// <summary>[A13/T3b · b2] design-v1 README §2.9: "Settings dialog (620px)". <c>DesignTokenScaleTests.cs:141</c>
-    /// içinde geçen 620 AYRI bir kalemdir (<c>Size.WindowMinHeight</c>) — karıştırılmaz (brief notu). Diyaloğun
-    /// KENDİ genişliği testsizdi.</summary>
+    /// <summary>[A13/T3b · b2 → task-D6/T12] design-v1 README §2.9: "Settings dialog (760px)".
+    /// <c>DesignTokenScaleTests.cs:141</c> içinde geçen 620 AYRI bir kalemdir (<c>Size.WindowMinHeight</c>) —
+    /// karıştırılmaz (brief notu).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1]</b> ESKİ İDDİA: 620px — üç dialog (Settings/About/What's new)
+    /// AYNI kalıbı paylaşıyordu. YENİ: her dialog bugünkü içeriğine değil BÜYÜME YÖNÜNE göre ölçülüyor;
+    /// Settings en çok büyüyecek olan (bugün root + katman kartları, yarın MSBuild yolu/paralellik/worktree
+    /// havuzu/bildirim tercihleri — form + iki kolonlu kart en geniş bileşimdir) → 760px. Büyüme sürerse bir
+    /// bölüm listesi (sol nav) eklenir, genişlik yine 760'ta kalır.</para></summary>
     [StaFact]
-    public void Settings_dialog_shell_is_six_hundred_twenty_pixels_wide()
+    public void Settings_dialog_shell_is_seven_hundred_sixty_pixels_wide()
     {
         // [fix-1 · B6/C9] Kurulum + EngineHost sahipliği tek yerde (SettingsDialogHost).
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using (scope)
         {
             var shell = (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
-            Assert.Equal(620.0, shell.Width);
-            Assert.Equal(620.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
+            Assert.Equal(760.0, shell.Width);
+            Assert.Equal(760.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
         }
+    }
+
+    // ================================================================ [task-D6/T12 · design v1.14.0 §2.9]
+    // Gövde kendi içinde kaydırılır: üst sınır min(pencere-yüksekliği × 56%, 460px) — SAF hesap
+    // SettingsBodyHeight'ta (kopya YASAK); burada yalnız GERÇEK pencereye KABLAJ sınanır. Alt taban 300px
+    // ScrollViewer.MinHeight'a sabit bağlanır (XAML, x:Static).
+
+    /// <summary>Alt taban HER pencerede sabittir — WPF'in kendi Min/Max önceliği (Min, Max'ı ezer) çok küçük
+    /// pencerede dialogun çökmesini bu tek satır üzerinden engeller.
+    /// <para><b>[review fix-1]</b> Tavanın <c>Settings_body_max_height_caps_at_460_in_a_tall_window</c>'da
+    /// SERT literal (460.0) ile pinlendiği AYNI desen: yalnız sembolle (<c>SettingsBodyHeight.MinFloor</c>)
+    /// karşılaştırmak totolojikti — sabit kayarsa bu satır ASLA kırılmaz, yalnız KABLAJ bozulursa kırılır.
+    /// Literal satır sabitin KENDİSİ 300'ün dışına kayarsa da kırılır.</para></summary>
+    [StaFact]
+    public void Settings_body_min_height_is_300_so_the_dialog_never_collapses()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using (scope)
+        {
+            Assert.Equal(SettingsBodyHeight.MinFloor, dialog.Body.MinHeight); // kablaj: XAML gerçekten OKUYOR
+            Assert.Equal(300.0, dialog.Body.MinHeight);                      // sert literal: değer GERÇEKTEN 300
+        }
+    }
+
+    /// <summary>Büyük pencere: gövde 460px'te SABİTLENİR (tasarımın üst sınırı) — pencere ne kadar büyürse
+    /// büyüsün dialog ekranı kaplamaya devam ETMEZ.</summary>
+    [StaFact]
+    public void Settings_body_max_height_caps_at_460_in_a_tall_window()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(windowHeight: 1200);
+        using (scope)
+        {
+            Assert.Equal(460.0, dialog.Body.MaxHeight);
+        }
+    }
+
+    /// <summary>Orta pencere: üst sınır pencere yüksekliğinin GERÇEKTEN %56'sını izler (ne taban ne tavana
+    /// yapışık) — kablajın <see cref="SettingsBodyHeight.MaxHeightFor"/>'u GERÇEK <c>Window.ActualHeight</c>'la
+    /// çağırdığının doğrudan kanıtı.</summary>
+    [StaFact]
+    public void Settings_body_max_height_follows_56_percent_of_the_window_between_the_floor_and_the_cap()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(windowHeight: 700);
+        using (scope)
+        {
+            Assert.Equal(SettingsBodyHeight.MaxHeightFor(700), dialog.Body.MaxHeight, precision: 3);
+            Assert.Equal(392.0, dialog.Body.MaxHeight, precision: 3); // 700 × 0.56 — ne 300 ne 460
+        }
+    }
+
+    /// <summary>Ruling task-D6: hesap pencere yeniden boyutlandığında YENİDEN çağrılır — bir kere hesaplanıp
+    /// unutulmaz. GraphRealizationPerfTests'teki AYNI desen (<c>window.Height = …; content.UpdateLayout();</c>).</summary>
+    [StaFact]
+    public void Settings_body_max_height_updates_when_the_hosting_window_is_resized()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(windowHeight: 1200);
+        using (scope)
+        {
+            Assert.Equal(460.0, dialog.Body.MaxHeight); // başlangıç: tavana yapışık
+
+            var window = Window.GetWindow(dialog)!;
+            window.Height = 700;
+            dialog.UpdateLayout();
+
+            Assert.Equal(392.0, dialog.Body.MaxHeight, precision: 3); // YENİDEN hesaplandı — 700 × 0.56
+        }
+    }
+
+    /// <summary>[task-D6/T12] Prototipin <c>padding-right:10px / margin-right:-10px</c> hilesinin WPF karşılığı:
+    /// scrollbar sütunu HER ZAMAN ayrılır (<c>Auto</c> yerine <c>Visible</c>) — böylece bar gerektiğinde
+    /// belirmesi/kaybolması içerik genişliğini OYNATMAZ. DS'in <c>IsEnabled=False</c> tetikleyicisi (kaydıracak
+    /// şey yokken track'i gizleyen, ScrollBarStyleTests'teki "restraint" kuralı) bu modda da devrededir — WPF'in
+    /// stok ScrollViewer şablonu <c>Maximum=0</c> iken bar'ı otomatik <c>IsEnabled=False</c> yapar (ölçüldü),
+    /// yani boşken çirkin bir "dolu hap" da GÖRÜNMEZ.</summary>
+    [StaFact]
+    public void Settings_body_reserves_the_scrollbar_column_instead_of_auto_collapsing_it()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using (scope)
+        {
+            Assert.Equal(ScrollBarVisibility.Visible, dialog.Body.VerticalScrollBarVisibility);
+        }
+    }
+
+    /// <summary>[task-D6/T12] SONUÇ testi (mekanizma değil): bir katman kartının PATTERN input'u — DockPanel'in
+    /// <c>LastChildFill</c> ile "esnek genişlik" alanı, dolayısıyla scrollbar sütunu daralırsa/genişlerse İLK
+    /// etkilenen ölçü — az satırda (scrollbar GEREKMEZ) ve çok satırda (scrollbar GERÇEKTEN taşar) AYNI genişliği
+    /// ölçer. Non-vacuous: iki senaryonun GERÇEKTEN farklı scroll durumunda olduğu ayrıca doğrulanır.</summary>
+    [StaFact]
+    public void Settings_body_layer_card_width_stays_constant_whether_or_not_the_scrollbar_is_needed()
+    {
+        var (fits, _, _, fitsScope) = SettingsDialogHost.OpenRealized(
+            r => r.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")], windowHeight: 1200);
+        using var _fitsScope = fitsScope;
+        var (overflowing, _, _, overflowScope) = SettingsDialogHost.OpenRealized(
+            r => r.LayerPatterns = [.. Enumerable.Range(0, 20).Select(i => new LayerPattern(i, "^A" + i, "Layer " + i))],
+            windowHeight: 1200);
+        using var _overflowScope = overflowScope;
+
+        var fitsBar = BodyVerticalScrollBar(fits.Body);
+        var overflowingBar = BodyVerticalScrollBar(overflowing.Body);
+        Assert.Equal(0.0, fitsBar.Maximum);          // non-vacuous: 1 satır GERÇEKTEN kaymaz
+        Assert.True(overflowingBar.Maximum > 0);     // non-vacuous: 20 satır GERÇEKTEN kayar (460'ı aşar)
+
+        double fitsWidth = PatternInputOf(fits.LayersList, ((SettingsDraftViewModel)fits.DataContext).Layers[0]).ActualWidth;
+        double overflowingWidth = PatternInputOf(overflowing.LayersList, ((SettingsDraftViewModel)overflowing.DataContext).Layers[0]).ActualWidth;
+
+        Assert.True(fitsWidth > 0);
+        Assert.Equal(fitsWidth, overflowingWidth, precision: 1); // scrollbar belirmesi genişliği OYNATMADI
     }
 
     /// <summary>[A13/T3b · b3] design-v1 README §2.9: "Katman kartları (36px + 6px boşluk) ... ad inputu
@@ -121,10 +244,80 @@ public class SettingsDialogFocusTests
         Assert.Equal(170.0, nameBox.ActualWidth);
     }
 
-    private static Border CardBorder(ItemsControl list, LayerRowViewModel row)
+    /// <summary>[K5 · design v1.14.0 §9] Harici proje kartı — katman kartıyla BİREBİR aynı 36px + 6px boşluk
+    /// geometrisi ve AYNI grip mekanizması (<see cref="DragReorderBehavior.IsDragHandle"/>), + Source seçiminin
+    /// BİREBİR 96px genişliği (brief: "96px sabit").</summary>
+    [StaFact]
+    public void External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_a_96px_source_select()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.ExternalProjects =
+            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"C:\b", VcsKind.Tfvc)]);
+        using var _scope = scope;
+
+        var draft = (SettingsDraftViewModel)dialog.DataContext;
+        Assert.Equal(2, draft.Externals.Count); // ön-koşul: iki kart gerçekten var
+
+        var card0 = CardBorder(dialog.ExternalsList, draft.Externals[0]);
+        var card1 = CardBorder(dialog.ExternalsList, draft.Externals[1]);
+
+        Assert.Equal(36.0, card0.ActualHeight);
+        Assert.Equal(new Thickness(0, 0, 0, 6), card0.Margin);
+
+        double top0 = card0.TranslatePoint(new Point(0, 0), dialog).Y;
+        double top1 = card1.TranslatePoint(new Point(0, 0), dialog).Y;
+        Assert.Equal(42.0, top1 - top0, precision: 1);
+
+        var grip = DsResources.Descendants(card0).OfType<Border>().Single(b => DragReorderBehavior.GetIsDragHandle(b));
+        Assert.Equal("Drag to reorder", ((ToolTip)grip.ToolTip).Content);
+
+        var select = DsResources.Descendants(card0).OfType<ComboBox>().Single();
+        Assert.Equal(96.0, select.Width);
+        Assert.Equal(96.0, select.ActualWidth);
+        Assert.Equal(AccessibilityNames.ExternalProjectSource, AutomationProperties.GetName(select));
+
+        // [review fix — küçük madde 3] Path input'unun UIA adı da doğrulanır (Source'unki gibi) — yalnız
+        // watermark'ın "doğru göründüğü" değil, AutomationProperties.Name'in GERÇEKTEN o sabite ÇÖZÜLDÜĞÜ.
+        var pathInput = DsResources.Descendants(card0).OfType<TextBox>().Single();
+        Assert.Equal(AccessibilityNames.ExternalProjectPath, AutomationProperties.GetName(pathInput));
+    }
+
+    /// <summary>[review fix — Bulgu 2] Bölüm ayracı prototipin ÖLÇÜSÜNÜ taşır: üst 18 / alt 16
+    /// (BuildApp.jsx:1833 <c>margin: '18px 0 16px'</c>). Önceki turda paylaşılan stil sessizce 18/18'e
+    /// yuvarlanmıştı — ruling prototip kazanır. İki ayraç da (Workspace→External, External→Layers) AYNI
+    /// <c>Ds.Settings.SectionDivider</c> stilini paylaştığı için TEK assertion ikisini de kapsar.</summary>
+    [StaFact]
+    public void Section_dividers_use_an_eighteen_top_sixteen_bottom_margin()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var dividerStyle = dialog.FindResource("Ds.Settings.SectionDivider");
+        var dividers = DsResources.RealizedObjects(dialog).OfType<Border>()
+            .Where(b => ReferenceEquals(b.Style, dividerStyle)).ToList();
+
+        Assert.Equal(2, dividers.Count); // Workspace→External + External→Layers — ikisi de gerçekten realize oldu
+        Assert.All(dividers, b => Assert.Equal(new Thickness(0, 18, 0, 16), b.Margin));
+    }
+
+    /// <summary>[K5] <paramref name="row"/> bilerek <c>object</c>'tir: hem <see cref="LayerRowViewModel"/> hem
+    /// <see cref="ExternalRowViewModel"/> AYNI kart şablonunu (<c>Ds.Settings.Card</c>) paylaştığı için bir
+    /// ikinci (kopya) yardımcıya gerek yok — <c>ContainerFromItem</c> zaten <c>object</c> alır.</summary>
+    private static Border CardBorder(ItemsControl list, object row)
     {
         var presenter = (ContentPresenter)list.ItemContainerGenerator.ContainerFromItem(row)!;
         presenter.ApplyTemplate();
         return (Border)VisualTreeHelper.GetChild(presenter, 0);
     }
+
+    /// <summary>Bir katman kartının PATTERN input'u (ad input'unun İKİZİ — <c>CardBorder</c>'ın izinden gider).</summary>
+    private static TextBox PatternInputOf(ItemsControl list, LayerRowViewModel row) =>
+        DsResources.Descendants(CardBorder(list, row)).OfType<TextBox>()
+            .Single(t => DsChrome.GetWatermark(t) != "Layer name");
+
+    /// <summary>Gövdenin KENDİ dikey scrollbar'ı — <c>Descendants(body).OfType&lt;ScrollBar&gt;()</c> tek başına
+    /// YETMEZ: her katman kartındaki TextBox'ın KENDİ şablonu da bir <c>PART_ContentHost</c> ScrollViewer'ı (ve
+    /// onun görünmez scrollbar'larını) taşır — birden fazla "dikey" bar bulunur. <c>PART_VerticalScrollBar</c>
+    /// ScrollViewer'ın KENDİ şablonunun sabit (WPF sözleşmesi) parça adıdır, iç içe olanlarla KARIŞMAZ.</summary>
+    private static ScrollBar BodyVerticalScrollBar(ScrollViewer body) =>
+        (ScrollBar)body.Template.FindName("PART_VerticalScrollBar", body);
 }

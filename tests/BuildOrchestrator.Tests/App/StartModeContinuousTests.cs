@@ -14,12 +14,16 @@ namespace BuildOrchestrator.Tests.App;
 /// <c>DrawingBrush</c>) 1px hairline'da piksel ızgarasına oturmuyor, 8px'lik kesikli nokta çemberi tırtıklı
 /// çiziliyordu.</para>
 ///
-/// <para><b>[DEĞİŞEN KURAL]</b> Eski kural: "kesikli çizilen TEK durum başlangıç modudur — şerit, nokta ve
-/// node çerçevesi orada kesiklidir" (v1.11.0 §2.3). Yeni kural: <b>şerit DÜZ ve SOLUK</b> (opaklık 0.5,
-/// işlem başlayınca 380ms'de 1) · <b>nokta 4 yaylı bir HALKA</b> (kesikli çember değil) ve işlem başlayınca
-/// dolu noktaya <b>çapraz-söner</b> — eleman ve boyut sabit kalır, hiza kaymaz. <b>Node'un kesikli çerçevesi
-/// KORUNDU</b> (kullanıcı kararı): tırtık şikâyeti yalnız şerit ve noktaya aitti, SVG stroke ile çizilen
-/// çember tırtık yapmıyor.</para>
+/// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Eski kural: "kesikli çizilen TEK durum başlangıç modudur — şerit,
+/// nokta ve node çerçevesi orada kesiklidir" (v1.11.0 §2.3). Yeni kural: <b>şerit DÜZ</b> · <b>nokta 4 yaylı
+/// bir HALKA</b> (kesikli çember değil) ve işlem başlayınca dolu noktaya <b>çapraz-söner</b> — eleman ve
+/// boyut sabit kalır, hiza kaymaz. <b>Node'un kesikli çerçevesi KORUNDU</b> (kullanıcı kararı): tırtık
+/// şikâyeti yalnız şerit ve noktaya aitti, SVG stroke ile çizilen çember tırtık yapmıyor.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Sync sonrası liste silik görünüyordu." v1.12.0'da şerit
+/// SOLUK (opaklık 0.5, işlem başlayınca 380ms'de 1) ve halka dolu noktadan bir tık geride (opaklık 0.85)
+/// çiziliyordu; ikisi de kaldırıldı — <b>ikisi de artık TAM OPAK (1.0)</b>. Çapraz-sönümün KENDİSİ
+/// (<see cref="StartMode.CrossFadeMs"/>, geometrisi) DEĞİŞMEDİ; ayrıntı <see cref="StartMode"/>'tadır.</para>
 ///
 /// <para>Statü glyph'inin kesikli çemberi de DEĞİŞMEDİ — o da SVG stroke'tur ve building spinner'ı onun dönen
 /// hâlidir.</para>
@@ -45,14 +49,18 @@ public class StartModeContinuousTests
 
     // ------------------------------------------------------------------ şerit
 
-    /// <summary>Şerit her durumda DÜZ bir token fırçasıyla dolar; başlangıç modunu SOLUKLUK anlatır.</summary>
+    /// <summary>Şerit her durumda DÜZ bir token fırçasıyla dolar ve TAM OPAKTIR — başlangıç modunun onu
+    /// soluklaştırdığı bir ara hâl artık yoktur.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> Eski iddia: başlangıç modunda şerit
+    /// <see cref="StartMode.FaintOpacity"/> (eski değeri 0.5) ile SOLUK çizilir, işlem başlayınca 380ms'de
+    /// 1'e çıkar. Gerekçe: "Sync sonrası liste silik görünüyordu."</para></summary>
     [StaFact]
-    public void The_stripe_is_solid_and_only_faint_in_the_start_mode()
+    public void The_stripe_is_solid_and_always_fully_opaque()
     {
         var (row, vm, window) = Realize(fresh: true);
 
-        Assert.IsType<SolidColorBrush>(row.Stripe.Fill);            // tile'lanmış kesikli fırça YOK
-        Assert.Equal(StartMode.FaintOpacity, row.Stripe.Opacity);
+        Assert.IsType<SolidColorBrush>(row.Stripe.Fill);            // tile'lanmış kesikli fırça YOK (v1.12.0)
+        Assert.Equal(1.0, row.Stripe.Opacity);                      // v1.13.2: başlangıç modunda da TAM opak
 
         vm.Fresh = false;                                           // bir işlem başladı (_neutralize)
         Assert.IsType<SolidColorBrush>(row.Stripe.Fill);
@@ -63,7 +71,10 @@ public class StartModeContinuousTests
     // ------------------------------------------------------------------ nokta
 
     /// <summary>Nokta TEK bir elemandır: halka ve dolu daire üst üste durur, aralarında yalnız opaklık
-    /// değişir. Boyutlar sabittir — bu, "hiza kaymaz, titreme yok" iddiasının ta kendisidir.</summary>
+    /// değişir. Boyutlar sabittir — bu, "hiza kaymaz, titreme yok" iddiasının ta kendisidir.
+    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> Eski iddia: halka başlangıç modunda dolu noktadan "bir
+    /// tık geride" durur (<see cref="StartMode.RingOpacity"/>, eski değeri 0.85). Artık o da TAM OPAK (1.0)
+    /// — gerekçe: "Sync sonrası liste silik görünüyordu."</para></summary>
     [StaFact]
     public void The_dot_cross_fades_between_a_four_arc_ring_and_a_filled_circle()
     {
@@ -71,8 +82,8 @@ public class StartModeContinuousTests
 
         double ringWidth = dot.Ring.Width, fillWidth = dot.Fill.Width;
 
-        // Başlangıç modu: halka görünür, dolu daire yok.
-        Assert.Equal(StartMode.RingOpacity, dot.Ring.Opacity);
+        // Başlangıç modu: halka TAM OPAK görünür (v1.13.2), dolu daire yok.
+        Assert.Equal(1.0, dot.Ring.Opacity);
         Assert.Equal(0.0, dot.Fill.Opacity);
 
         dot.State = VisualStatus.Discovered;
@@ -175,7 +186,9 @@ public class StartModeContinuousTests
 
         Assert.True(row.Dot.Ring.HasAnimatedProperties, "başlangıç modundan çıkarken halka SÖNMELİ");
         Assert.True(row.Dot.Fill.HasAnimatedProperties, "başlangıç modundan çıkarken nokta YANMALI");
-        Assert.True(stripe.HasAnimatedProperties, "başlangıç modundan çıkarken şerit tam opaklığa ÇIKMALI");
+        // [v1.13.2] Hedef de aynı (1.0) olsa da köprü AYNI yoldan kurulur (StartMode.ShouldCrossFade moda
+        // bakar, değere değil) — ikinci bir "değer aynıysa atla" dalı açılmadı.
+        Assert.True(stripe.HasAnimatedProperties, "başlangıç modundan çıkarken şerit geçiş animasyonu KURULMALI");
         GC.KeepAlive(window);
     }
 
