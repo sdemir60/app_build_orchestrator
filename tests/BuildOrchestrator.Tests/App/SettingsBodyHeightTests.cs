@@ -16,6 +16,16 @@ public class SettingsBodyHeightTests
         Assert.Equal(460.0, SettingsBodyHeight.MaxHeightFor(1200));
     }
 
+    /// <summary>[review fix-1] Taban SABİTİNİN kendisi — tavanın <c>A_tall_window_caps_at_460</c>'ta SERT
+    /// literal (460.0) ile pinlendiği AYNI desen. <c>A_small_window_yields_a_result_below_the_floor_by_design</c>
+    /// yalnız "sonuç &lt; MinFloor" diyordu — bu, MinFloor'un KENDİSİ 300'ün dışına kayarsa (250'ye, 350'ye)
+    /// SESSİZCE geçen totolojik bir iddiaydı. Burada değer DOĞRUDAN 300'e karşı ölçülür.</summary>
+    [Fact]
+    public void The_floor_is_300_pixels()
+    {
+        Assert.Equal(300.0, SettingsBodyHeight.MinFloor);
+    }
+
     [Fact] // Orta pencere: oran tavanın ALTINDA kalır → oranın kendisi kazanır (56%'nin gerçekten UYGULANDIĞININ kanıtı).
     public void A_mid_size_window_follows_56_percent_of_its_height()
     {

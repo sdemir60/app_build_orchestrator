@@ -65,7 +65,11 @@ public class SettingsDialogFocusTests
         var dialog = new SettingsDialog();
         root.Children.Add(dialog);
 
-        var window = DsResources.Realize(host, root);
+        // [review fix-2] SettingsDialogHost.OpenRealized'ın AYNI kararı (800×700): varsayılan 400×200'de
+        // Open()'ın artık kurduğu pencere-boyutu kablajı (TrackHostWindowSize, task-D6) gövdenin MinHeight'ı
+        // (300) ile hiç uyuşmayan bir MaxHeight (200×0.56=112) hesaplardı — hiçbir assertion kırılmaz (WPF'in
+        // Min/Max önceliği çökmeyi engeller) ama dialog kendi içinde çelişkili bir arrange durumunda kalırdı.
+        var window = DsResources.Realize(host, root, width: 800, height: 700);
 
         dialog.Open(run, NewStore(), () => null);
         root.UpdateLayout(); // diyalog artık Visible — satır/buton container'ları yerleşsin
@@ -104,14 +108,19 @@ public class SettingsDialogFocusTests
     // ScrollViewer.MinHeight'a sabit bağlanır (XAML, x:Static).
 
     /// <summary>Alt taban HER pencerede sabittir — WPF'in kendi Min/Max önceliği (Min, Max'ı ezer) çok küçük
-    /// pencerede dialogun çökmesini bu tek satır üzerinden engeller.</summary>
+    /// pencerede dialogun çökmesini bu tek satır üzerinden engeller.
+    /// <para><b>[review fix-1]</b> Tavanın <c>Settings_body_max_height_caps_at_460_in_a_tall_window</c>'da
+    /// SERT literal (460.0) ile pinlendiği AYNI desen: yalnız sembolle (<c>SettingsBodyHeight.MinFloor</c>)
+    /// karşılaştırmak totolojikti — sabit kayarsa bu satır ASLA kırılmaz, yalnız KABLAJ bozulursa kırılır.
+    /// Literal satır sabitin KENDİSİ 300'ün dışına kayarsa da kırılır.</para></summary>
     [StaFact]
     public void Settings_body_min_height_is_300_so_the_dialog_never_collapses()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using (scope)
         {
-            Assert.Equal(SettingsBodyHeight.MinFloor, dialog.Body.MinHeight);
+            Assert.Equal(SettingsBodyHeight.MinFloor, dialog.Body.MinHeight); // kablaj: XAML gerçekten OKUYOR
+            Assert.Equal(300.0, dialog.Body.MinHeight);                      // sert literal: değer GERÇEKTEN 300
         }
     }
 
