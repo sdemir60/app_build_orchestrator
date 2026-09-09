@@ -1280,6 +1280,13 @@ realized in the same layout round.
 One consequence is deliberate: the staggered reveal reaches the rows that exist, which is the visible window.
 Rows scrolled into view later simply appear.
 
+**Every Sync replays the reveal.** The topology a Sync publishes is a fresh listing even when nothing in it
+changed, so the list is rebuilt and revealed again, and — when nothing is selected — scrolled back to the
+top; the graph replays its own reveal in the same moment, so the two read together as "listed from scratch".
+Build, Rebuild, Clean and Resolve leave the scroll where it is: the opening choreography already tells their
+story, and the row under the pointer must not run away. A structural signature still gates republishes that
+do not come from a Sync.
+
 Follow-mode keeps the frontier visible while a run is in flight and nothing is selected: at most one scroll
 animation every 550 ms, and none at all if the target is within 54 px.
 
@@ -1751,6 +1758,11 @@ lines.
   error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
   hands following back, by the same rule as any other user scroll. This is a deliberate departure from §5.1,
   which pins both directions to the bottom.
+- **A new operation empties the narrative in place.** The view-model clears its buffer and says so
+  (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
+  switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
+  `← Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
+  by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -2415,6 +2427,14 @@ finished; cold, and it did not. The same click was sometimes animated and someti
 either always plays or never does. The operation itself still begins on the first frame — the pill lights,
 the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
 the scope and awaits a gate; the shell owns the timing and closes it.
+
+**The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
+releases the gate but keeps its final step: the settled opacities (0.45 on the scope, 0.18 on the rest) stay
+on the graph while the engine plans. `runStarted` is what drops them — the shell pushes the run phase and the
+fresh statuses first and only then cancels the choreography, so the graph moves from the farewell straight
+into the run's own opacities in a single transition. The prototype starts the run in the same instant the
+sequence ends; under a real engine, holding the frame is the equivalent. Letting the sequence fall back to
+full brightness and dimming again seconds later, when the run began, read as a double fade.
 
 Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it**:
 no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
