@@ -39,6 +39,7 @@ public static class OperationLabel
     {
         Contracts.Ipc.RunMode.Rebuild => Rebuild,
         Contracts.Ipc.RunMode.Cycles => Resolve,
+        Contracts.Ipc.RunMode.Clean => Clean,
         _ => Build,
     };
 }

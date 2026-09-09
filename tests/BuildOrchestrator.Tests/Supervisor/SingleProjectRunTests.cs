@@ -165,6 +165,46 @@ public class SingleProjectRunTests
             LogTextsFor(h, "A")[1]);
     }
 
+    /// <summary>
+    /// [tek proje · Clean] Satır menüsünün <b>Clean</b>'i Visual Studio'nun proje Clean'idir: yalnız hedefte
+    /// <c>msbuild /t:Clean</c>, hiçbir şey derlenmez, hiçbir başka projeye dokunulmaz.
+    /// <para><b>Defter kaydı SİLİNİR</b> — çıktılar gittiğinde defter de onları bilmemeli; §4 gereği DLL/bin
+    /// timestamp'i okunmadığı için kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlar ve kullanıcı
+    /// silinmiş çıktılarla yeşil bir koşu görürdü. Paket restore'u da koşmaz: Clean derlemez.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_scoped_clean_runs_msbuilds_clean_target_and_forgets_the_projects_ledger_row()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("Target"), "sig", "headsha", BuildResult.Succeeded));
+            store.Upsert(new BuildState(Id("Other"), "sig", "headsha", BuildResult.Succeeded));
+            var plan = new RunPlan(
+                new BuildPlan([Node("Target") with { BuildOrder = 0 }, Node("Other") with { BuildOrder = 1 }],
+                    Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: RunCoordinatorTests.Incremental("Target", "Other"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Scoped("Target", RunMode.Clean), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var request = Assert.Single(invoker.Requests);
+            Assert.Equal(MsBuildTarget.Clean, request.Target);
+            Assert.False(request.NeedsRestore);                         // Clean derlemez → restore de yok
+            Assert.Contains("-t:Clean", MsBuildArguments.PlanFor(request).Build);
+            Assert.Contains("-t:Clean", LogTextsFor(h, "Target")[0]);   // proje logunun İLK satırı gerçek komuttur
+
+            var after = store.Load();
+            Assert.DoesNotContain(Id("Target"), after);                 // çıktı yok → kayıt da yok
+            Assert.Contains(Id("Other"), after);                        // kapsam dışına DOKUNULMAZ
+            Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     /// <summary>Planda olmayan bir hedef (bayat topoloji: proje silinmiş/taşınmış) koşuyu HİÇ başlatmaz —
     /// mevcut planlama-hatası kanalı (<c>planFailed</c>) kullanılır, App onu zaten tanır.</summary>
     [Fact]

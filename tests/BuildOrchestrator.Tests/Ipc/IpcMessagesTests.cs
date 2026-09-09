@@ -111,6 +111,17 @@ public class IpcMessagesTests
 
     // [tek proje · design §3.8] Satırdan tetiklenen koşu kapsamını proje KİMLİĞİYLE taşır (tam csproj yolu —
     // kod tabanının kimlik kuralı). Alan sondadır ve default'ludur: eski satırlar aynen çözülür.
+    /// <summary>[tek proje · Clean] Yeni mod da camelCase METİN olarak gider — sona eklendiği için eski
+    /// satırların anlamı kaymaz.</summary>
+    [Fact]
+    public void RunMode_clean_roundtrips_camelCase()
+    {
+        var cmd = new StartRunCommand("r1", RunMode.Clean, @"D:\repo", "Debug", 1, ScopeProjectId: @"D:\repo\A\A.csproj");
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"mode\":\"clean\"", json);
+        Assert.Equal(cmd, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
     [Fact]
     public void StartRunCommand_scope_project_id_roundtrips_camelCase()
     {

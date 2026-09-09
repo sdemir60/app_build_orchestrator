@@ -17,9 +17,11 @@ public class MsBuildArgumentsTests
     [Theory]
     [InlineData(MsBuildTarget.Build, "-t:Build")]
     [InlineData(MsBuildTarget.Rebuild, "-t:Rebuild")]
+    [InlineData(MsBuildTarget.Clean, "-t:Clean")]
     public void The_build_target_is_selectable_and_nothing_else_changes(MsBuildTarget target, string expected)
     {
-        var args = MsBuildArguments.Build(@"c:\p.csproj", "Debug", target: target);
+        var args = MsBuildArguments.Build(@"c:
+\p.csproj", "Debug", target: target);
 
         Assert.Contains(expected, args);
         Assert.Single(args, a => a.StartsWith("-t:", StringComparison.Ordinal)); // tek hedef, çelişen ikinci YOK
@@ -31,7 +33,8 @@ public class MsBuildArgumentsTests
     /// SCC turları) birebir aynı komut satırını üretmeye devam eder.</summary>
     [Fact]
     public void The_default_target_is_build()
-        => Assert.Contains("-t:Build", MsBuildArguments.Build(@"c:\p.csproj", "Debug"));
+        => Assert.Contains("-t:Build", MsBuildArguments.Build(@"c:
+\p.csproj", "Debug"));
 
     [Fact]
     public void Build_contains_v1_flags_and_BuildProjectReferences_false() // [SPIKE S2 şart-3 + D9]

@@ -8,8 +8,12 @@ namespace BuildOrchestrator.Core.MsBuild;
 /// <para><see cref="Rebuild"/> yalnız satır menüsünün <b>Rebuild</b> maddesinden gelir (design §3.8; prototip
 /// <c>msbuild X.csproj /t:Rebuild</c>): tek projelik bir kapsamda "cache'i yok say"ı zaten Build yapar, bu
 /// yüzden satırdaki Rebuild'in ayrı bir anlamı olmalıdır — MSBuild'in kendi Clean+Build'i.</para>
+///
+/// <para><see cref="Clean"/> satır menüsünün <b>Clean</b> maddesidir ve Visual Studio'nun proje Clean'iyle
+/// AYNI şeydir: <c>msbuild /t:Clean</c>, yani MSBuild'in o proje için bildiği çıktıların silinmesi. Hiçbir
+/// şey derlenmez; cache'lere, NuGet'e ya da başka projelere dokunulmaz.</para>
 /// </summary>
-public enum MsBuildTarget { Build, Rebuild }
+public enum MsBuildTarget { Build, Rebuild, Clean }
 
 public static class MsBuildArguments
 {
@@ -19,7 +23,7 @@ public static class MsBuildArguments
     {
         var args = new List<string>
         {
-            projectPath, target == MsBuildTarget.Rebuild ? "-t:Rebuild" : "-t:Build", $"-p:Configuration={configuration}",
+            projectPath, TargetArg(target), $"-p:Configuration={configuration}",
             "-p:UseSharedCompilation=false", "-nodeReuse:false", "-p:BuildProjectReferences=false",
             "-clp:Summary", "-nologo",
         };
@@ -53,6 +57,14 @@ public static class MsBuildArguments
         return (request.NeedsRestore ? RestorePackagesConfig(request.ProjectId, request.SolutionDir) : null,
                 Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath, request.Target));
     }
+
+    /// <summary>Hedefin komut satırı karşılığı — TEK yer; <c>-t:</c> argümanını başka hiçbir yol yazmaz.</summary>
+    private static string TargetArg(MsBuildTarget target) => target switch
+    {
+        MsBuildTarget.Rebuild => "-t:Rebuild",
+        MsBuildTarget.Clean => "-t:Clean",
+        _ => "-t:Build",
+    };
 
     public static string EnsureTrailingBackslash(string dir) =>
         dir.EndsWith('\\') || dir.EndsWith('/') ? dir : dir + '\\';

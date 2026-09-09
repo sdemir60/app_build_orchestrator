@@ -230,12 +230,13 @@ active chip lights in its own colour, and the chip in the PROJECTS header lists 
 **Per-project actions** live on the row: hover it for a play button and a ⋯ menu — Build and Rebuild for
 that one project — and right-clicking the row opens the same menu. A run started this way compiles that
 project alone, and it compiles it even when nothing changed: pressing play is an instruction, not a question.
-*Rebuild* runs MSBuild's own clean-then-build for it. Dependencies are never rebuilt, and one that is stale is
+*Rebuild* runs MSBuild's own clean-then-build for it, and *Clean* is Visual Studio's project clean —
+`msbuild /t:Clean` on that project, nothing compiled and no caches touched; afterwards the project is marked
+for building again, because its outputs are gone. Dependencies are never rebuilt, and one that is stale is
 reported as a dependency issue on the row and in the project log, so the next *Build* compiles the project
 again against fresh inputs.
 Starting from a row clears the selection, so a graph focused on some node returns to the fitted view. While
-the run is in flight the row's play button becomes a red Stop and the other rows' play buttons wait. *Clean*
-in that menu has no engine behind it yet and says so.
+the run is in flight the row's play button becomes a red Stop and the other rows' actions wait.
 
 Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
 them with the reason `in dependency cycle`. **Resolve cycles** — the

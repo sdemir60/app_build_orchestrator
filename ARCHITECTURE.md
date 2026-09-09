@@ -598,6 +598,7 @@ defaults.
 | `Build` | the will-build set (incremental) |
 | `Rebuild` | all projects; cached state ignored |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
+| `Clean` | the run's scope, with `-t:Clean` instead of a compile — Visual Studio's *Clean*. Sent only from a row today (§13.2) |
 
 `Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
 a cycle, `Cycles` compiles the cycles. It is the third icon of the maintenance box in the action bar (§13.2)
@@ -615,10 +616,22 @@ instruction: the incremental decision is what *Build* consults across a whole wo
 one there is nothing left for it to decide — honouring it would swallow the command. It used to be honoured,
 and the cost was plain: the first press compiled the project and the second did nothing at all, leaving the
 row grey. The reason behind the will-build dot is dropped for a target that was already clean, because none
-of the reasons is true of it. The two menu items stay distinct through the MSBuild target instead: *Build*
+of the reasons is true of it. The menu items stay distinct through the MSBuild target instead: *Build*
 runs `-t:Build`, *Rebuild* runs `-t:Rebuild` — MSBuild's own clean-then-build for that project. That is the
 one place the two words diverge from the action bar, where *Rebuild* means "ignore the cache" and still runs
 `-t:Build` per project; in a scope of one, ignoring the cache is what *Build* already does.
+
+**Clean is the third target, and it is Visual Studio's.** *Clean* in a row menu runs `-t:Clean` on that
+project alone: MSBuild deletes the outputs it knows about, nothing is compiled, and no cache — NuGet's, the
+evaluation cache, another project's `obj` — is touched. It is a run like any other, so it reports a result,
+writes a project log and can be stopped; the maintenance box's deep *Clean* is a different, wider surface and
+still waits for its own engine. Two things follow from "the outputs are gone". The project's **build-state
+row is deleted**, not invalidated: the project did not fail, this tool simply no longer knows any output of
+it, and §4 forbids reading a DLL or `bin` timestamp to find out — a row left behind would let the next
+`Build` skip the project as up to date and report a green run over deleted outputs. And the row's will-build
+dot **stays lit** after the clean succeeds: elsewhere a success means "this is now current", here it means
+"its outputs are gone", which is the opposite. Package restore is skipped for the same reason a compile is:
+there is nothing to build.
 
 **What the target was built against is recorded.** A direct dependency that this run did not compile but
 whose signature is dirty (or unknown) is a **stale** input: the target links to that dependency's previous
@@ -1425,9 +1438,9 @@ that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name
 console (`build requested — X (single project)`) and in the stream's opening line. While the run is in flight
 the target row's play button turns into a red **Stop** that stays visible without hover and drives the same
 stop command as the action bar; every other row's play button is disabled and its tooltip says why
-(`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
-has no engine behind it yet: it sits where the design puts it, disabled, and its tooltip says so — the same
-decision as *Clean* in the Build split menu.
+(`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean* is Visual Studio's project clean — `-t:Clean` on that project — and it
+locks with the other two while a run is in flight. It is not the maintenance box's deep *Clean*, which is a
+wider surface and still disabled, and neither is the *Clean* in the Build split menu.
 
 The row's icon buttons are the one place the shared icon-button style is overridden: they hover to
 `surface-overlay` rather than `surface-raised`. The icons only appear while the row is hovered, and a hovered
@@ -3229,7 +3242,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
 | Project row: stripe, dot, sha pair, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
-| Single-project run commands, run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
+| Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
+| Build-state row removal after a clean | `Core/State/BuildStateStore.cs` (`Remove`) |
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
 | Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
