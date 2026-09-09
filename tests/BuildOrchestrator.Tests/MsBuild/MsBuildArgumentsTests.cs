@@ -8,6 +8,31 @@ namespace BuildOrchestrator.Tests.MsBuild;
 
 public class MsBuildArgumentsTests
 {
+    /// <summary>
+    /// [tek proje · design §3.8] Derleme hedefi SEÇİLEBİLİR: varsayılan <c>-t:Build</c>, satır menüsünün
+    /// <b>Rebuild</b>'i <c>-t:Rebuild</c> (MSBuild'in kendi Clean+Build'i). Hedef TEK yerde yazılır — komut
+    /// satırının geri kalanı (v1 bayrakları, BuildProjectReferences=false, obj izolasyonu) DEĞİŞMEZ, yani
+    /// iki hedef arasında sözleşme farkı yoktur.
+    /// </summary>
+    [Theory]
+    [InlineData(MsBuildTarget.Build, "-t:Build")]
+    [InlineData(MsBuildTarget.Rebuild, "-t:Rebuild")]
+    public void The_build_target_is_selectable_and_nothing_else_changes(MsBuildTarget target, string expected)
+    {
+        var args = MsBuildArguments.Build(@"c:\p.csproj", "Debug", target: target);
+
+        Assert.Contains(expected, args);
+        Assert.Single(args, a => a.StartsWith("-t:", StringComparison.Ordinal)); // tek hedef, çelişen ikinci YOK
+        Assert.Contains("-p:BuildProjectReferences=false", args);
+        Assert.Contains("-p:UseSharedCompilation=false", args);
+    }
+
+    /// <summary>Hedef verilmezse <c>-t:Build</c>'dir: bu alandan ÖNCE yazılmış her çağrı yeri (tam koşu,
+    /// SCC turları) birebir aynı komut satırını üretmeye devam eder.</summary>
+    [Fact]
+    public void The_default_target_is_build()
+        => Assert.Contains("-t:Build", MsBuildArguments.Build(@"c:\p.csproj", "Debug"));
+
     [Fact]
     public void Build_contains_v1_flags_and_BuildProjectReferences_false() // [SPIKE S2 şart-3 + D9]
     {

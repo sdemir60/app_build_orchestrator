@@ -49,18 +49,44 @@ public class ProjectRunScopeTests
         Assert.Null(ProjectRunScope.Of(plan, @"C:\r\B\B.csproj"));
     }
 
-    /// <summary>Hedefin incremental kararı KORUNUR: Build modunda güncel bir hedef tam koşudaki gibi
-    /// <c>skipped — up to date</c> olur, Rebuild onu koşulsuz derler — "aynı motor yolu, tek fark kapsam".</summary>
+    /// <summary>
+    /// <b>Hedef HER ZAMAN derlenir</b> — güncel olsa bile. Satırdaki play bir SORU değil, bir EMİRDİR:
+    /// kullanıcı o projeyi derlemeyi istemiştir (design §3.8 "koşul yok": atlanmış, hatalı ya da döngü üyesi
+    /// bir proje de satırından derlenebilir; prototip <c>beginProject</c> hedefi koşulsuz
+    /// <c>willBuild</c>'e sokar).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eski iddia: hedef kendi <c>WillBuild</c>'ini KORURDU, yani
+    /// Build modunda güncel bir hedef tam koşudaki gibi <c>skipped — up to date</c> olurdu. Sahada ölçülen
+    /// sonuç: ilk basış projeyi derleyip temizliyor, İKİNCİ basış hiçbir şey yapmadan satırı gri bırakıyordu —
+    /// kullanıcı "satırdan build bazen gri kalıyor" diye bildirdi. Tek projelik bir kapsamda "cache'i yok say"
+    /// zaten play'in kendisidir; incremental karar orada koruyacak bir şey değil, yutulacak bir komuttur.</para>
+    ///
+    /// <para>Gerekçe (<see cref="WillBuildReason"/>) DÜŞER: hiçbir değeri doğru değildir — proje güncel ama
+    /// yine de derlenecektir; <c>UpToDate</c> gerekçesiyle <c>WillBuild=true</c> kendi kendisiyle çelişirdi.</para>
+    /// </summary>
     [Fact]
-    public void An_ordinary_target_keeps_its_own_will_build_decision()
+    public void A_scoped_run_always_builds_its_target_even_when_it_is_up_to_date()
     {
         var plan = Plan(Node("Dep", willBuild: false), Node("Target", willBuild: false, deps: ["Dep"]));
 
         var scope = ProjectRunScope.Of(plan, "Target")!;
 
-        Assert.False(scope.Target.WillBuild);
-        Assert.Equal(WillBuildReason.UpToDate, scope.Target.WillBuildReason ?? WillBuildReason.UpToDate);
+        Assert.True(scope.Target.WillBuild);
+        Assert.Null(scope.Target.WillBuildReason);
         Assert.Empty(scope.StaleDependencies); // güncel bağımlılık bayat DEĞİLDİR
+    }
+
+    /// <summary>Kirli bir hedefin GEREKÇESİ korunur — orada "neden derleniyor" sorusunun gerçek bir cevabı
+    /// vardır ve satırın will-build noktası onu söyler.</summary>
+    [Fact]
+    public void A_dirty_targets_own_reason_survives()
+    {
+        var plan = Plan(Node("Target", willBuild: true));
+
+        var scope = ProjectRunScope.Of(plan, "Target")!;
+
+        Assert.True(scope.Target.WillBuild);
+        Assert.Equal(WillBuildReason.SignatureChanged, scope.Target.WillBuildReason);
     }
 
     /// <summary>Kirli (<c>WillBuild=true</c>) ya da bilinmeyen (<c>null</c>) DOĞRUDAN bağımlılıklar bayattır:
@@ -100,8 +126,7 @@ public class ProjectRunScopeTests
     /// <summary>
     /// Döngü üyesi bir hedef satırından TEK BAŞINA derlenir (design §3.8 "koşul yok"): düğüm koşuya döngü
     /// dışıymış gibi girer (scheduler onu pre-skip etmesin) ve planın "kapsam dışı" anlamındaki
-    /// <c>WillBuild=false</c>'u taşımaz — o değer güncel demek değildir, Build modunda hedefi
-    /// <c>up to date</c> diye atlatırdı.
+    /// <c>WillBuild=false</c>'unu taşımaz — her hedef gibi o da derlenir.
     /// </summary>
     [Fact]
     public void A_cycle_member_target_enters_the_run_as_a_plain_node_that_will_build()
@@ -113,7 +138,7 @@ public class ProjectRunScopeTests
         var scope = ProjectRunScope.Of(plan, "A")!;
 
         Assert.False(scope.Target.InCycle);
-        Assert.Null(scope.Target.WillBuild);
+        Assert.True(scope.Target.WillBuild);
         Assert.Null(scope.Target.WillBuildReason);
     }
 

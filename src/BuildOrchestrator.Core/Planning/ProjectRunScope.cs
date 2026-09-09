@@ -8,9 +8,13 @@ using BuildOrchestrator.Core.Scheduling;
 /// Bağımlılıklar derlenmez, kapsam dışına dokunulmaz — plan tek düğüme indirgenir ve diğer projeler koşuya
 /// hiç girmez (skip satırı yok, sayaç şişmez).
 ///
-/// <para><b>Hedef tam koşuyla AYNI motor yolundan geçer</b> — tek fark kapsamın büyüklüğü: Build modunda
-/// incremental kural (güncelse <c>skipped — up to date</c>), Rebuild'de koşulsuz. Bu yüzden düğümün kendi
-/// <see cref="ProjectNode.WillBuild"/>'i korunur.</para>
+/// <para><b>Hedef HER ZAMAN derlenir</b> — güncel olsa bile. Satırdaki play bir soru değil bir EMİRDİR
+/// (design §3.8 "koşul yok"; prototip <c>beginProject</c> hedefi koşulsuz <c>willBuild</c>'e sokar).
+/// <b>[DEĞİŞEN KURAL — ölçüldü]</b> Önce düğümün kendi <see cref="ProjectNode.WillBuild"/>'i korunuyordu, yani
+/// güncel bir hedef tam koşudaki gibi <c>skipped — up to date</c> oluyordu; sahada bunun anlamı "ilk basış
+/// derliyor, ikinci basış hiçbir şey yapmadan satırı gri bırakıyor" oldu. Tek projelik bir kapsamda
+/// incremental karar korunacak bir bilgi değil, yutulan bir komuttur. Kapsam DIŞI her şey (bağımlılıklar
+/// dahil) yine dokunulmadan kalır.</para>
 ///
 /// <para><b>Bayat bağımlılık = dep-issue.</b> Kirli (ya da bilinmeyen) bir bağımlılık bu koşuda derlenmez;
 /// hedef onun SON BİLİNEN çıktısına karşı derlenir. Bu, <see cref="CycleRunScope"/>'un anlattığı deliğin ta
@@ -36,7 +40,7 @@ using BuildOrchestrator.Core.Scheduling;
 /// Saf Core state: I/O, process, async, log YOK [D3].
 /// </summary>
 /// <param name="Plan">Yalnız hedefi taşıyan plan. Kapsam dışı projeleri anlatan katman uyarıları düşer.</param>
-/// <param name="Target"><see cref="Plan"/>'daki tek düğüm.</param>
+/// <param name="Target"><see cref="Plan"/>'daki tek düğüm — <c>WillBuild</c> her zaman <c>true</c>.</param>
 /// <param name="StaleDependencies">Hedefin bu koşuda DERLENMEYECEK bayat doğrudan bağımlılıkları —
 /// koordinatör bunları dep-issue olarak hedefe verir.</param>
 public sealed record ProjectRunScope(BuildPlan Plan, ProjectNode Target, IReadOnlyList<StaleDependency> StaleDependencies)
@@ -68,8 +72,11 @@ public sealed record ProjectRunScope(BuildPlan Plan, ProjectNode Target, IReadOn
         {
             BuildOrder = 0,
             InCycle = false,
-            WillBuild = target.InCycle ? null : target.WillBuild,
-            WillBuildReason = target.InCycle ? null : target.WillBuildReason,
+            // Hedef koşulsuz derlenir; gerekçe YALNIZ gerçekten kirliyken taşınır — güncel bir projede
+            // hiçbir <see cref="WillBuildReason"/> doğru değildir (UpToDate + WillBuild=true çelişkidir) ve
+            // yüzey o durumda jenerik metne düşer.
+            WillBuild = true,
+            WillBuildReason = target.WillBuild == true ? target.WillBuildReason : null,
         };
         return new ProjectRunScope(
             new BuildPlan([node], Cycles: [], plan.Configuration, LayerWarnings: null),

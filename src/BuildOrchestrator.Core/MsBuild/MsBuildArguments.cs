@@ -1,13 +1,25 @@
 namespace BuildOrchestrator.Core.MsBuild;
 
+/// <summary>
+/// Bir derleme çağrısının MSBuild HEDEFİ. Varsayılan <see cref="Build"/>'dir ve tam koşuların (Build,
+/// Rebuild, Cycles) hepsi onu kullanır — <b>alt bardaki "Rebuild" MSBuild'in Rebuild'i DEĞİLDİR</b>, "cache'i
+/// yok say, her projeyi derle" demektir ve proje başına yine <c>-t:Build</c> koşar.
+///
+/// <para><see cref="Rebuild"/> yalnız satır menüsünün <b>Rebuild</b> maddesinden gelir (design §3.8; prototip
+/// <c>msbuild X.csproj /t:Rebuild</c>): tek projelik bir kapsamda "cache'i yok say"ı zaten Build yapar, bu
+/// yüzden satırdaki Rebuild'in ayrı bir anlamı olmalıdır — MSBuild'in kendi Clean+Build'i.</para>
+/// </summary>
+public enum MsBuildTarget { Build, Rebuild }
+
 public static class MsBuildArguments
 {
     /// [D9 + SPIKE S2] v1 flag'leri SABİT; BuildProjectReferences=false ZORUNLU (bağımlılıklar ayrı node olarak derlenir).
-    public static IReadOnlyList<string> Build(string projectPath, string configuration, string? baseIntermediateOutputPath = null)
+    public static IReadOnlyList<string> Build(string projectPath, string configuration,
+        string? baseIntermediateOutputPath = null, MsBuildTarget target = MsBuildTarget.Build)
     {
         var args = new List<string>
         {
-            projectPath, "-t:Build", $"-p:Configuration={configuration}",
+            projectPath, target == MsBuildTarget.Rebuild ? "-t:Rebuild" : "-t:Build", $"-p:Configuration={configuration}",
             "-p:UseSharedCompilation=false", "-nodeReuse:false", "-p:BuildProjectReferences=false",
             "-clp:Summary", "-nologo",
         };
@@ -39,7 +51,7 @@ public static class MsBuildArguments
         ArgumentNullException.ThrowIfNull(request);
 
         return (request.NeedsRestore ? RestorePackagesConfig(request.ProjectId, request.SolutionDir) : null,
-                Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath));
+                Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath, request.Target));
     }
 
     public static string EnsureTrailingBackslash(string dir) =>
