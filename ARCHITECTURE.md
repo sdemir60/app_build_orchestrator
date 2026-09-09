@@ -306,6 +306,11 @@ copies at all — the Settings switch described in §13.3. It defaults to **true
 flag existed keeps updating; when it is false the engine runs no version-control command and applies no dirty
 gate.
 
+`startRun` may also carry **`scopeProjectId`** — the identity of one project, sent when a run is started from
+a row (§13.2). It is the last field and defaults to null, so a full run writes the same line it always did.
+When it is set the engine plans in full and then cuts the plan down to that one project (§8.1): dependencies
+are not compiled and nothing outside the scope enters the run.
+
 Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
 camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
 `syncWorkspace` carries no cycle decision at all: its preview always describes a `Build`, and `Build` never
@@ -598,6 +603,26 @@ defaults.
 a cycle, `Cycles` compiles the cycles. It is the third icon of the maintenance box in the action bar (§13.2)
 and is meant to be run before a build, not instead of one.
 
+**A single project is a scope, not a mode.** A run started from a row (§13.2) carries the project's identity
+and keeps the mode of the item pressed — *Build* or *Rebuild*. Planning runs in full, exactly as for any run,
+and the plan is then cut down to that one node (`ProjectRunScope`): its dependencies are not compiled, and the
+other projects never enter the run at all — no skip line, no counter, no row changes. Inside the scope the
+mode means what it always means: a scoped `Build` skips the target as `up to date` when its signature is
+clean, a scoped `Rebuild` compiles it regardless. A cycle member can be built from its row too: it enters the
+run as a plain node and compiles once, alone, against its cycle-mates' last known outputs.
+
+**What the target was built against is recorded.** A direct dependency that this run did not compile but
+whose signature is dirty (or unknown) is a **stale** input: the target links to that dependency's previous
+output. It is surfaced as a dependency issue (§8.3) — a warning line at the head of the target's log
+(`X has pending changes and was not rebuilt in this run — last known output referenced`, or the cycle wording
+for a cycle-mate), the triangle on the row, and the note in the build state — so the next `Build` compiles
+the target again. Without the note the target's fresh signature, which already contains the dependency's new
+source term, would read as up to date for good: the same permanent-stale-binary hole the `Cycles` scope
+closes by pulling its upstream in. The scope stays at one project by design (*build with dependencies* is
+not offered); the ledger closes the hole instead. A cycle member's cycle-mates are always stale inputs, so a
+member built alone can never make its group read as up to date for the next `Cycles` run. External working
+copies follow the same rule: only the copy that holds the target is updated before a scoped run (§10.6).
+
 **Resuming and retrying are not modes.** A stopped run is not resumed and a failed run is not retried by a
 separate command: in both cases the user presses *Build* again, and the incremental decision produces exactly
 the set the old modes produced. Projects that finished green persisted their signature and are skipped as up
@@ -677,6 +702,9 @@ hidden:
 - The action bar's `⚠ N` chip counts it, together with cycle membership, and filters the list to `warn`.
 - The event stream reads `built — dependency issue (2.4s)`, and the completion line reports
   `N dependency-affected`.
+- A single-project run (§8.1) adds a second kind of root: a dependency the run deliberately did not compile
+  although it is stale. The warning line says so (`X has pending changes and was not rebuilt in this run —
+  last known output referenced`), and the flag, the triangle and the counter work exactly as for a failure.
 
 That slot has three other tenants, all about cycles: a member of a group that ran out of rounds, a member of
 a group this run could not converge, and plain membership. The triangle is the same in all four cases and
@@ -1140,7 +1168,9 @@ run that a dirty external will cancel should not pay for a worktree. `pull` is n
 merge commit or a rebase depending on configuration, and either one rewrites the user's repository on the
 tool's behalf. The flow is three typed steps instead — the dirty gate, a ref-only fetch, and a fast-forward
 taken only when `merge-base --is-ancestor` says one is genuinely possible. If it is not, the working copy is
-left exactly as it was.
+left exactly as it was. A run scoped to one project (§8.1) updates only the working copy that holds that
+project; every other card is left alone and writes no line — not even the missing-working-copy warning — and
+a target inside the repository updates nothing at all.
 
 The `updateExternals` flag (§5) turns the whole step off. With it off no version-control command runs at all
 and **there is no dirty gate either**: nothing is going to overwrite the user's files, so their working copy is
@@ -1373,9 +1403,19 @@ The **⋯** menu — also opened by right-clicking the row, as in Solution Explo
 Clean* scoped to that one project. It is anchored to the **row**, not to the ⋯ button: its right edge sits 8 px
 inside the row's, it overlaps the row's bottom by 3 px, and it slides up to stay inside the list's viewport when
 a row near the bottom opens it. Anchoring to the button would have meant a fixed offset standing in for the
-width of the icons that follow it, and that number goes stale the moment the icon row changes. The engine for those three, and for the play button, is not written yet:
-the controls sit where the design puts them, disabled, and their tooltip says why. The same is true of *Clean*
-in the Build split menu.
+width of the icons that follow it, and that number goes stale the moment the icon row changes.
+
+*Build* and the play button start a **single-project run** (§8.1) — the project alone, its dependencies
+untouched — and *Rebuild* does the same with the cache ignored. Starting from a row is not selecting the row:
+the selection and the filter drop, exactly as they do for a full run, so a graph that was focused on some node
+glides back to the fitted view and the console returns to the run log; the opening choreography marks just
+that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name — the target is named in the
+console (`build requested — X (single project)`) and in the stream's opening line. While the run is in flight
+the target row's play button turns into a red **Stop** that stays visible without hover and drives the same
+stop command as the action bar; every other row's play button is disabled and its tooltip says why
+(`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
+has no engine behind it yet: it sits where the design puts it, disabled, and its tooltip says so — the same
+decision as *Clean* in the Build split menu.
 
 Only one element in the row carries a design-system tooltip: the warning triangle. The status glyph carries
 none — colour, glyph and the duration column were all saying the same thing — and announces its status through
@@ -3090,7 +3130,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Cycle round stopping rule (converged / no progress / cap) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
-| Dependency-issue propagation | `Core/Scheduling/DepIssueTracker.cs` |
+| Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
+| Dependency-issue propagation (failed roots, stale inputs of a scoped run) | `Core/Scheduling/DepIssueTracker.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory | `Supervisor/RunCoordinator.cs` |
@@ -3167,8 +3208,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
-| Project row: stripe, dot, sha pair, hover icons, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
+| Project row: stripe, dot, sha pair, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
+| Single-project run commands, run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
 | Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
