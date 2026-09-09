@@ -1412,9 +1412,23 @@ listeners each rebuilding on every notification the cost is quadratic in the num
 wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
 selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
-The Settings dialog is 620 px and carries two sections. **WORKSPACE** comes first: a mono repository-root
+The Settings dialog is 760 px wide and carries two sections. **WORKSPACE** comes first: a mono repository-root
 input with a *Browse…* button beside it. The root is the one setting the tool cannot run without, so *Save*
 stays disabled while it is empty. Then a hairline, then the **LAYERS** editor.
+
+Its width is picked the same way About's and What's new's are — for the direction each grows in, not for what
+it holds today. Settings is the one most likely to grow: it already holds the root plus layer cards with a name
+and a pattern side by side, and the sections a wider config surface would add next — an MSBuild path,
+parallelism, a worktree pool, notification preferences — all extend the same two-column shape, which makes it
+the widest of the three. If growth continues, the next step is a section list down the left rather than a wider
+dialog; the width stays at 760 px either way.
+
+The body — everything between the title row and the footer — scrolls inside itself instead of letting the
+dialog grow past the window around it: its height is clamped between 300 px and 460 px, tracking 56% of that
+window's height in between, and recomputed whenever the window is resized. The floor keeps the dialog from
+collapsing when the layer list is empty; the ceiling keeps it off the screen edges once the list grows long. The
+scrollbar's column stays reserved whether a scrollbar is currently needed or not, so a row crossing the overflow
+threshold does not shave ten pixels off every input already on screen the way a plain auto-hiding bar would.
 
 The root lives here rather than behind a folder picker because starting takes more than one setting now — a
 root and, optionally, the layers — and a picker can only ask for one of them. That is also why the empty
@@ -2938,7 +2952,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maintenance box (Clean / Optimize / Resolve cycles) | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
-| Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
+| Settings dialog, layer drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
 | What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
