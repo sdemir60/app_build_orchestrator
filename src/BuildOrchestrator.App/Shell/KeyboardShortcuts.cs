@@ -36,8 +36,9 @@ public enum WindowIntent
     F5StateBranch,
     /// <summary>Ctrl+F → proje filtre input'una odak.</summary>
     FocusFilter,
-    /// <summary>[About] F1 → About diyaloğu (sürüm, kısayollar, tanı) — Windows'un Help geleneği. Bir modal
-    /// AÇIKKEN NO-OP'tur: kaydedilmemiş bir Settings taslağı sessizce atılmamalı.</summary>
+    /// <summary>[About] F1 → About diyaloğu (sürüm, kısayollar, tanı) — Windows'un Help geleneği. TOGGLE'dır
+    /// (açıkken tekrar basmak kapatır) ve başka bir modal AÇIKKEN de çalışır: About üste biner, alttaki
+    /// taslağı YOK ETMEZ, Esc en üst katmanı indirir (bkz. <see cref="ResolveEsc"/>).</summary>
     ShowAbout,
     /// <summary>[design v1.13.0 §2.1/§2.11 · D4/T8] Ctrl+F1 → What's new diyaloğu, TOGGLE (açıkken tekrar
     /// basmak kapatır — About'un F1'inden farkı budur). About gibi bir modal açıkken de çalışır: en üst

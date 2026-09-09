@@ -326,8 +326,8 @@ A dedicated 620 px dialog, opened from its own title-bar button — a four-point
 `i` — or with `Ctrl+F1` (a toggle: pressing it again closes the dialog). It carries no identity block and no
 tabs; the body is release notes only, newest version first, grouped into Added / Changed / Fixed /
 Performance / Removed. The three newest versions are open and the rest fold under an *Earlier versions*
-button; the running version carries a small `INSTALLED` label instead of a version number that would
-otherwise be ambiguous. There is no pop-up on launch.
+button; the running version's line carries a small, neutral `INSTALLED` chip next to its number. There is no
+pop-up on launch.
 
 When the version you last opened this dialog on differs from the running one — including on a fresh install,
 where nothing has been opened yet — a small amber dot sits on the star button and its tooltip names the new

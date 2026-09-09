@@ -1157,11 +1157,11 @@ Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No adm
 ### 12.4 Layout modes and persistence
 
 The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
-hairline, then the company logo at 10 px and 55 % opacity, and finally the mono repository context. The
-hierarchy is the point — product ahead and vivid, company behind and quiet. Its application commands sit at
-the other end, between the context text and the caption buttons, in decreasing order of use: the three
-view-mode toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i`
-(About).
+hairline, and finally the company logo at 10 px and 55 % opacity. The hierarchy is the point — product ahead
+and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the
+workspace, the branch and the worktree are all said once, by the action bar's chips. The window's application
+commands sit at the other end, ahead of the caption buttons, in decreasing order of use: the three view-mode
+toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i` (About).
 
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
@@ -1991,7 +1991,7 @@ the selection plus its direct dependencies and dependents into the panel: scale 
 to 0.7–2.6 with a padding of `3 × node + 48 px`, and the camera glides there over 460 ms. Everything outside
 that focus set drops to 0.1 — except a project the run is actively building, which stays fully lit even
 outside it, because a dim body under a live amber orbit reads as *not building* rather than *in progress*. The
-selected node also holds the hover treatment: it stays at 1.7×, keeps its
+selected node also holds the hover treatment: it stays at that same 1.5×, keeps its
 thicker border, is pulled to the front so nothing can cover its ring, and gains a 2 px amber focus ring. (The
 main prototype does not enlarge a selected node — that came from the Graph Lab study and is a deliberate
 departure from §2.3.) Pulling it forward is a fix rather than a flourish: the ring extends past the node, and
@@ -2005,11 +2005,15 @@ stroke thickness rather than pixels, the design's absolute 4/8 px pattern and 24
 **The end-of-run finale releases focus, not the selection.** When the graph's closing choreography begins
 (§14.5) the camera abandons any focus-and-fit and glides to the default view instead, taking the dependency
 lines, the focus ring and the name label down with it — the finale is meant to read across the whole graph,
-not a corner of it zoomed in. The selection itself is untouched; the console still shows that project's log.
-Focus does not return when the choreography ends, either: the graph remembers the selection it released focus
-from and stays on the default view for as long as that project remains selected. What reopens it is the user
-picking a different node (or clearing the selection and picking the same one again) — nothing brings it back
-on its own.
+not a corner of it zoomed in. The hover treatment the selected node was holding goes with them: it falls back
+to its plain size, its plain border and its normal z-order. That is one release rather than three, because
+those effects come from a single flag, and leaving it set would keep one square enlarged and thick-bordered —
+still lit as *the* node — after everything else that named it had already been taken away. The selection
+itself is untouched; the console still shows that project's log. None of it returns when the choreography
+ends, either: the graph remembers the selection it released focus from and stays on the default view, with
+that node drawn like any other, for as long as it remains selected. What reopens it is the user picking a
+different node (or clearing the selection and picking the same one again) — nothing brings it back on its
+own.
 
 **Navigation, and why the pan is unclamped.** The wheel zooms at the cursor — the world point under the
 pointer stays under it — by a multiplicative 1.14 per notch inside 0.7–5.0. Pressing empty ground and moving
@@ -2115,8 +2119,10 @@ filter appears as a removable chip in the panel header.
 | `Alt+B` | Global hotkey: restore the window from the tray |
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s, and
-every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` carries
-an extra gate of its own: it does nothing while any modal is open (§13.3). Double-Shift and `Ctrl+P` are
+every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` and
+`Ctrl+F1` are ungated: each toggles its own dialog and fires even while another modal is open, because
+layering the three answers the unsaved-draft worry better than deafening a key would (§13.3). Double-Shift
+and `Ctrl+P` are
 *negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by accident.
 
 The table above is not written twice. A **shortcut catalog** derives each gesture's display text from that

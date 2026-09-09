@@ -245,7 +245,7 @@ internal static class MotionTokens
     /// <summary>
     /// [design v1.11.0 §9-4 · §2.3] <b>Token anahtarıyla verilen bir fırçaya GEÇİŞ</b> — işaretleme
     /// dalgasının "amber'a yanma"sı ve onun geri dönüşü. İşaretleme dalgasına giren HER yüzey (graf düğümünün
-    /// çerçevesi/zemini/küpü, satırın şeridi ve noktası) buradan boyanır; ikinci bir geçiş yolu YOKTUR.
+    /// çerçevesi/zemini/küpü, satırın şeridi, noktası ve adı) buradan boyanır; ikinci bir geçiş yolu YOKTUR.
     ///
     /// <para><b>İki kip:</b> <paramref name="animate"/> false ise yüzey <see cref="FrameworkElement.SetResourceReference"/>
     /// ile PAYLAŞILAN (donmuş) token fırçasına bağlanır ve renk anında oturur — varsayılan ve ucuz yol. true ise
