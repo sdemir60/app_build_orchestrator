@@ -1,4 +1,4 @@
-﻿using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Externals;
@@ -33,15 +33,12 @@ namespace BuildOrchestrator.Core.Workspace;
 /// </summary>
 /// <param name="git">Kökü <see cref="SyncWorkspaceCommand.RootPath"/>'e BAĞLI bir <see cref="GitService"/> —
 /// worktree değil, KULLANICININ REPO KÖKÜ (Sync, Supervisor'ın build-anı worktree hazırlığıyla yarışmaz).</param>
-/// <param name="externalInspector">[Harici projeler] Harici çalışma kopyalarını SALT-OKUR inceleyen yüzey.
-/// <c>null</c> ise (ve komutun listesi boşsa) akış bugünküyle bayt-bayt aynıdır.</param>
 public sealed class SyncWorkspaceService(
     WorkspaceScanner scanner,
     CsprojEvaluator evaluator,
     EvaluationCache cache,
     GitService git,
-    BuildStateStore stateStore,
-    ExternalSyncInspector? externalInspector = null)
+    BuildStateStore stateStore)
 {
     /// <summary>Will-build pass'inin sonucu: bağlanmış plan + §3.1 konsol satırlarının/D2 şeridinin okuduğu sayaçlar.</summary>
     /// <param name="Known">false ⇒ anlamlı bir taban yok (repo'da hiç commit yok ya da pass hata verdi) — TÜM
@@ -94,11 +91,20 @@ public sealed class SyncWorkspaceService(
         // BuildRunPlan'ı da yayınlar (Build'e basıldığında planlama yeniden koşar) — metin iki yerde
         // tanımlanamaz (CLAUDE.md kopya yasağı). Ton (dim/info) burada kalır: o, Sync transkriptinin
         // sunumudur, satırın kendisi değil.
-        var scan = scanner.Scan(cmd.RootPath);
+        // [design v1.14.0 §9] Harici kartlar TARANABİLİR köklerdir: bulunan projeler ana taramayla BİRLEŞİR
+        // ve buradan sonrası onları ayırt etmez — kenarları, sıraları ve incremental kararları sıradan
+        // projelerinkiyle aynı yoldan gelir. Hiçbir VCS komutu çalışmaz: Sync yalnız BAKAR.
+        var workspace = ExternalWorkspaceResolver.Resolve(
+            scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner);
+        foreach (var problem in workspace.Problems)
+            emit(Warn(PlanProgressLines.ExternalNotScanned(problem.Name, problem.Problem)));
+
+        var scan = workspace.Scan;
         emit(Dim(PlanProgressLines.ScanningSolutions(scan.SlnPaths.Count)));
         emit(Dim(PlanProgressLines.ReadingProjectItems(scan.CsprojPaths.Count)));
 
-        var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, cmd.Configuration, cmd.LayerPatterns);
+        var plan = new BuildPlanBuilder(scanner, evaluator, cache)
+            .Build(scan, cmd.Configuration, cmd.LayerPatterns, workspace.VcsByProjectId);
         emit(Dim(PlanProgressLines.DependencyGraph(plan.Cycles.Count)));
         emit(Info(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count)));
 
@@ -110,29 +116,17 @@ public sealed class SyncWorkspaceService(
         // yarısı). Pass'in İÇİNDE kalsaydı hollow/hata dallarında (pass hiç koşmaz) elde state olmazdı ve
         // "durumu bilinmeyen ama daha önce derlenmiş" satır sha'sını kaybederdi. SALT-OKUR: yalnız Load.
         var state = stateStore.Load();
-        var outcome = await ComputeWillBuildAsync(cmd, plan, scan, head.Value, state, emit, ct);
-
-        // --- 3b) hariciler. SALT-OKUR ve İSTEĞE BAĞLI: liste boşsa tek bir process bile açılmaz ve aşağıdaki
-        // yayınlar bugünküyle bayt-bayt aynı kalır. Uyarılar burada basılır; kir Sync'i DURDURMAZ — koşuyu
-        // durduran kapı Build tarafındadır.
-        var externals = await InspectExternalsAsync(cmd, state, emit, ct);
+        var outcome = await ComputeWillBuildAsync(cmd, plan, scan, workspace, head.Value, state, emit, ct);
 
         // --- 4) topoloji + önizleme. Önizleme AYRI bir will-build yolu DEĞİLDİR: App'in mevcut
         // BuildPreviewEvent handler'ı satırların WillBuild'ini zaten bu event'ten kurar (ikinci bir yol açılmaz).
-        // Hariciler listelerin BAŞINDA durur; ana düğümlerin BuildOrder'ı kaydırılır ki topolojiyi okuyan her
-        // algoritmanın dayandığı "Nodes[i].BuildOrder == i" değişmezi korunsun.
-        var externalNodes = externals.Select((inspection, i) => ExternalNodeBuilder.ToNode(inspection, i)).ToList();
-        var allNodes = externalNodes
-            .Concat(outcome.Plan.Nodes.Select(n => n with { BuildOrder = n.BuildOrder + externalNodes.Count }))
-            .ToList();
-
         emit(new WorkspaceTopologyEvent(
-            Nodes: allNodes,
+            Nodes: outcome.Plan.Nodes,
             Cycles: outcome.Plan.Cycles,
             Solutions: ToSolutionRefs(scan),
             LayerWarnings: outcome.Plan.LayerWarnings ?? []));
         emit(new BuildPreviewEvent(
-            allNodes
+            outcome.Plan.Nodes
                 .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason))
                 .ToList()));
@@ -164,25 +158,6 @@ public sealed class SyncWorkspaceService(
     }
 
     /// <summary>
-    /// [D5] Harici projeleri inceler ve uyarılarını yayınlar. Liste boş/null ya da inspector verilmemişse
-    /// hiçbir şey yapmaz — mevcut akış korunur.
-    ///
-    /// <para><b>Sayaçlara karışmaz:</b> "changed / to build / up to date" sayıları ve "no changes" satırı ana
-    /// workspace'i anlatmaya devam eder; hariciler UI'a topoloji ve önizleme üzerinden ulaşır.</para>
-    /// </summary>
-    private async Task<IReadOnlyList<ExternalInspection>> InspectExternalsAsync(
-        SyncWorkspaceCommand cmd, IReadOnlyDictionary<string, BuildState> state, Action<IpcEvent> emit, CancellationToken ct)
-    {
-        if (externalInspector is null || cmd.ExternalProjects is not { Count: > 0 } externals) return [];
-
-        var inspections = await externalInspector.InspectAsync(externals, cmd.Configuration, state, ct);
-        foreach (var inspection in inspections)
-            if (inspection.Warning is not null) emit(Warn(inspection.Warning));
-
-        return inspections;
-    }
-
-    /// <summary>
     /// [A5/T69] Plan'ı incremental willBuild ile bağlar ve §3.1 sayaçlarını üretir.
     /// <para>
     /// <b>İki pass, çünkü "changed" ≠ "to build":</b> <c>Safe</c> (dirty + transitive dependent) will-build
@@ -202,8 +177,8 @@ public sealed class SyncWorkspaceService(
     /// <param name="state">[W1] Çağıranın okuduğu build-state map'i — burada AYRICA <c>Load()</c> ÇAĞRILMAZ
     /// (aynı Sync'te iki disk okuması olurdu; bkz. <see cref="RunAsync"/>).</param>
     private async Task<WillBuildOutcome> ComputeWillBuildAsync(SyncWorkspaceCommand cmd, BuildPlan plan,
-        ScanResult scan, string? headCommit, IReadOnlyDictionary<string, BuildState> state,
-        Action<IpcEvent> emit, CancellationToken ct)
+        ScanResult scan, ExternalWorkspace workspace, string? headCommit,
+        IReadOnlyDictionary<string, BuildState> state, Action<IpcEvent> emit, CancellationToken ct)
     {
         // Commit'i olmayan repo: IncrementalPlanner'ın hollow kapısı zaten TÜM düğümleri null yapar — pass'i
         // hiç koşturmaya (ve ls-tree/status maliyetine) gerek yok.
@@ -232,12 +207,15 @@ public sealed class SyncWorkspaceService(
             // derlemez, bu yüzden buradaki kapı SABİT KAPALIDIR (buildCycles: false) ve cycle üyeleri her zaman
             // WillBuild=false gelir. Onları derleyen tek şey ayrı bir koştur (RunMode.Cycles) ve o koşu kendi
             // önizlemesini kendi başlangıcında yayınlar — Sync burada onun adına söz VERMEZ.
+            // Harici düğümlerin fingerprint'i ana reponun git ağacından DEĞİL, kendi dosyalarının
+            // içeriğinden gelir (bkz. IncrementalRunBinder) — TFVC'de git hiç yoktur.
+            var externalIds = workspace.VcsByProjectId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var (safePlan, _) = IncrementalRunBinder.Bind(
                 plan, evaluatedById, cmd.RootPath, headCommit, tracked, dirty, state,
-                inPlace: true, buildCycles: false, DependentMode.Safe);
+                inPlace: true, buildCycles: false, DependentMode.Safe, externalIds);
             var (fastPlan, _) = IncrementalRunBinder.Bind(
                 plan, evaluatedById, cmd.RootPath, headCommit, tracked, dirty, state,
-                inPlace: true, buildCycles: false, DependentMode.Fast);
+                inPlace: true, buildCycles: false, DependentMode.Fast, externalIds);
 
             return new WillBuildOutcome(
                 Plan: safePlan,

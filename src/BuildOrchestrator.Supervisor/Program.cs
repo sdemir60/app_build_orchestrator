@@ -1,4 +1,4 @@
-﻿using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Externals;
@@ -118,16 +118,19 @@ public static class Program
             // [A5/T69] Havuz kökü artık TEK yerden gelir (`--worktrees` ile override edilebilir) — build-anı
             // hazırlığı ile listWorktrees/deleteWorktree AYNI havuzu görmelidir, aksi halde App'in listelediği
             // worktree'ler build'in kullandıklarından farklı olurdu.
-            // [D6] HARİCİ FAZI EN ÖNCE: güncelleme ve kir kapısı worktree hazırlığından da önce koşar, çünkü
-            // kir yüzünden iptal edilecek bir koşu için worktree açmak boşuna disk ve saniyelerdir. Hazırlık
-            // hatası (kir, ayrışma, eksik tf.exe) ExternalPreparationException fırlatır ve koordinatörün
-            // planlama-hatası kanalından planFailed olarak yüzeye çıkar — koşu hiç başlamaz.
-            // [D12] Cycles ana reponun SCC onarımıdır: harici fazı orada tamamen atlanır.
-            var externals = cmd.Mode != RunMode.Cycles && cmd.ExternalProjects is { Count: > 0 } externalList
-                ? new ExternalRunPlanner(new ProcessRunner()).PlanAsync(
-                    externalList, cmd.Configuration, cmd.Mode == RunMode.Rebuild, stateStore.Load(), progress)
-                    .GetAwaiter().GetResult()
-                : null;
+            // [design v1.14.0 §9] HARİCİ GÜNCELLEME EN ÖNCE: taramadan da worktree hazırlığından da önce
+            // koşar. Taramadan önce olmak ZORUNDA, çünkü bir fast-forward yeni proje dosyaları getirebilir ve
+            // tarama onları görmelidir; worktree'den önce olması ise kir yüzünden iptal edilecek bir koşu için
+            // boşuna worktree açmamak içindir. Hazırlık hatası (kir, ayrışma, eksik tf.exe)
+            // ExternalPreparationException fırlatır ve koordinatörün planlama-hatası kanalından planFailed
+            // olarak yüzeye çıkar — koşu hiç başlamaz.
+            // [D5] Bayrak kapalıysa TEK BİR VCS komutu bile çalışmaz (kir kapısı da yoktur): harici projeler
+            // ana repo gibi, oldukları hâliyle derlenir. [D12] Cycles ana reponun SCC onarımıdır — orada
+            // kullanıcının çalışma kopyalarını güncellemek sürpriz olurdu; tarama yine de yapılır ki graf
+            // Build'inkiyle AYNI kalsın.
+            if (ExternalUpdater.ShouldUpdate(cmd.Mode, cmd.UpdateExternals, cmd.ExternalProjects))
+                new ExternalUpdater(new ProcessRunner())
+                    .UpdateAsync(cmd.ExternalProjects!, progress).GetAwaiter().GetResult();
 
             var workspace = PrepareAsync(cmd, new ProcessRunner(), worktreePoolRoot,
                 Console.Error.WriteLine, progress).GetAwaiter().GetResult();
@@ -140,12 +143,25 @@ public static class Program
             // [Task 18] TEK tarama: BuildPlanBuilder'ın ScanResult-alan overload'ı kullanılır — packages.config
             // restore'un istediği SolutionDir için .sln YOLLARI (ProjectNode yalnız solution ADI taşır) aynı
             // scan'den (`scan.SlnPaths`) elde edilir, workspace ikinci kez taranmaz.
-            var scan = scanner.Scan(workspace.ScanRoot);
+            // [design v1.14.0 §9] Harici kökler ana taramayla BİRLEŞİR — buradan sonrası harici projeleri
+            // ayırt etmez: kenarları, sıraları, imzaları ve derlemeleri sıradan projelerinkiyle aynı yoldan
+            // gelir. Çözülemeyen bir kart koşuyu DURDURUR (Sync yalnız uyarır): yapılandırılmış bir haricinin
+            // sessizce düşmesi, bayat bir DLL'e link'lenmiş yeşil bir build demektir.
+            var external = ExternalWorkspaceResolver.Resolve(
+                scanner.Scan(workspace.ScanRoot), cmd.ExternalProjects, scanner);
+            if (external.Problems.Count > 0)
+            {
+                var first = external.Problems[0];
+                throw ExternalPreparationException.NotScanned(first.Name, first.Project.Path, first.Problem);
+            }
+
+            var scan = external.Scan;
             progress(PlanProgressLines.ScanningSolutions(scan.SlnPaths.Count));
             progress(PlanProgressLines.ReadingProjectItems(scan.CsprojPaths.Count));
             // [A1/T15] Katman pattern'leri komuttan Core'a AKTARILIR — null/boş ise LayerEngine devre dışıdır
             // (varsayılan, mevcut davranış); dolu ise sert faz bariyeri + ters-katman uyarıları devreye girer.
-            var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, cmd.Configuration, cmd.LayerPatterns);
+            var plan = new BuildPlanBuilder(scanner, evaluator, cache)
+                .Build(scan, cmd.Configuration, cmd.LayerPatterns, external.VcsByProjectId);
             progress(PlanProgressLines.DependencyGraph(plan.Cycles.Count));
             progress(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count));
             var solutionRefs = SolutionMapper.MapRefs(scan.SlnPaths, scan.CsprojPaths);
@@ -160,8 +176,9 @@ public static class Program
             // Satır işin ÖNCESİNDE: incremental pass (git diff + proje başına imza) planlamanın EN UZUN adımıdır
             // ve kendi sayısını üretmez — sonrasına bırakılsa akış tam da en uzun beklemede sessizleşirdi.
             progress(PlanProgressLines.ComputingIncremental(plan.Nodes.Count));
-            var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, identity.Plan, identity.EvaluatedById, stateStore);
-            return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById, externals);
+            var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, identity.Plan,
+                identity.EvaluatedById, stateStore, external.VcsByProjectId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
+            return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById);
         }
     }
 
@@ -378,9 +395,14 @@ public static class Program
         }
     }
 
+    /// <param name="externalProjectIds">[design v1.14.0 §9] Ana repo DIŞINDAKİ köklerden gelen proje id'leri —
+    /// fingerprint'leri git blob haritasından DEĞİL, diskteki içeriklerinden hesaplanır (bkz.
+    /// <see cref="IncrementalRunBinder.Bind"/>). Kimlik taşıması harici yolları etkilemez (worktree'nin altında
+    /// değiller), bu yüzden bu küme rebase'den SONRA da geçerlidir.</param>
     private static (BuildPlan Plan, IncrementalPlan? Info) ComputeIncremental(
         StartRunCommand cmd, PreparedWorkspace workspace, BuildPlan plan,
-        IReadOnlyDictionary<string, EvaluatedProject> evaluatedById, BuildStateStore stateStore)
+        IReadOnlyDictionary<string, EvaluatedProject> evaluatedById, BuildStateStore stateStore,
+        IReadOnlySet<string> externalProjectIds)
     {
         try
         {
@@ -403,7 +425,8 @@ public static class Program
             // repo-göreli formattadır.
             var (bound, signatures) = IncrementalRunBinder.Bind(
                 plan, evaluatedById, cmd.RootPath, head, tracked, dirty,
-                stateStore.Load(), workspace.InPlace, cmd.Mode == RunMode.Cycles, cmd.DependentMode);
+                stateStore.Load(), workspace.InPlace, cmd.Mode == RunMode.Cycles, cmd.DependentMode,
+                externalProjectIds);
             return (bound, new IncrementalPlan(signatures, head, branch));
         }
         catch (Exception ex)
