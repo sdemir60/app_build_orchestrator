@@ -39,6 +39,10 @@ public class IconGeometryTests
         // [design v1.11.0 §2.7-11 · §9-7] Build menüsü + satır menüsünün ortak ailesi (play · rotate-cw ·
         // brush) ve satır menüsünü açan ⋯; [v1.10.0 §2.9] Settings footer'ının Export/Import ikonları.
         "Icon.Rebuild", "Icon.Brush", "Icon.More", "Icon.Download", "Icon.Upload",
+        // [design v1.13.1 §2.1 · D4/T8] Title bar'da dişli ile ⓘ arasındaki What's new butonu — tek 4 kollu
+        // yıldız (tasarım kaynağında adı "sparkle"; anahtar adı burada buton rolüyle verilir — bkz.
+        // Icons.xaml'deki gerekçe: SuccessFlourishTests'in kutlama sözlüğü guard'ıyla isim çakışmasın diye).
+        "Icon.WhatsNew",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
