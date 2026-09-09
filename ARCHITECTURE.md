@@ -1160,7 +1160,8 @@ The title bar opens with a **logo lock**: the product mark at 19 px in full colo
 hairline, then the company logo at 10 px and 55 % opacity, and finally the mono repository context. The
 hierarchy is the point — product ahead and vivid, company behind and quiet. Its application commands sit at
 the other end, between the context text and the caption buttons, in decreasing order of use: the three
-view-mode toggles, a hairline separator, then the gear (Settings) and the `i` (About).
+view-mode toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i`
+(About).
 
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
@@ -1481,21 +1482,11 @@ company logo — and drops out entirely when there is no company logo. The versi
 version belongs to the Environment tab, and repeating it in the heading was noise.
 
 The body is tabbed rather than one long scroll, because the things it carries — keyboard shortcuts,
-environment, third-party notices, release notes — have nothing to say to each other. The tab switch is
-`Ds.Segment`, the same component the action bar uses for Debug/Release, so no new interaction pattern enters
-the design system. The content area carries a **fixed** height: switching tabs must not move the footer, and
-a pane that outgrows it scrolls inside itself rather than stretching the dialog.
-
-**What's new** is the fourth tab, and it is the only place release notes live — there is no separate window
-and no pop-up on launch. Versions are listed newest first: a mono number, a quiet `CURRENT` label on the
-running one, a right-aligned date, and the notes grouped into category **blocks** (a 6 px coloured swatch and
-a caps heading, the items plain underneath). The categories are fixed in order — Added, Changed, Fixed,
-Performance, Removed — and an empty one is not drawn. The three newest versions are open; the rest fold under
-an *Earlier versions (N)* button, and the fold returns on the next open.
-
-The tab is also where the user is *sent*. When the version last read differs from the running one, a 5 px
-amber dot sits on the title bar's ⓘ, its tooltip becomes `About — what's new in {version}`, and About opens
-straight on this tab. Seeing the tab clears the dot and records the version, so it does not come back.
+environment, third-party notices — have nothing to say to each other. The tab switch is `Ds.Segment`, the same
+component the action bar uses for Debug/Release, so no new interaction pattern enters the design system. The
+content area carries a **fixed** height: switching tabs must not move the footer, and a pane that outgrows it
+scrolls inside itself rather than stretching the dialog. ⓘ and `F1` always open on the first tab (Shortcuts) —
+there is no conditional routing left inside About; the paragraph below covers where that used to go.
 
 Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows from
 the same table the window binds its keys from, the environment rows from the diagnostics model, the notices
@@ -1505,13 +1496,35 @@ dialog opens, and the row reads `resolving…` until it lands. *Copy diagnostics
 version to those rows so a pasted report says what it came from, and confirms with the check icon and the
 success tone for the same 1.4 s the console's copy button uses.
 
-**Both modals can be open at once, and About is always the upper one.** It is declared after Settings, so the
-z-order follows the markup. `F1` toggles it and does so even while Settings is open: Esc closes the topmost
-layer first, which means About goes and the Settings draft stays untouched. An earlier rule deafened `F1`
-whenever any dialog was open — the key is a window-level `InputBinding` and fires regardless of the Settings
-focus trap, so the fear was that it would discard an unsaved draft. Layering answers that better than silence
-did. The gear still no-ops while anything is open, which costs nothing: under the scrim it cannot be clicked
-anyway.
+**What's new is the third modal, reusing the same shell once more** — the same scrim, the same `Ds.Dialog`
+border and focus trap, the same 180 ms/6 px entrance — but 620 px wide and without About's identity block or
+tab switch: the dialog has exactly one job. A two-line header carries the title and a one-line description on
+the left and, right-aligned, the installed version under a small caps label; the version block sits 3 px
+higher than a plain baseline match would give it, because a mono line at `line-height: 1` sits low against a
+sans line next to it. The body is a **fixed** 400 px — not a minimum — for the same reason About's content
+area is fixed: an *Earlier versions* button that unfolds the whole history must not push the dialog past the
+screen, so the list scrolls inside its own box instead. Versions are listed newest first: a mono number, a
+neutral `INSTALLED` chip on the running one (a bordered pill, not the quiet unbordered `CURRENT` label an
+earlier pass tried), a right-aligned date, and the notes grouped into category **blocks** (a 6 px coloured
+swatch and a caps heading, the items plain underneath). The categories are fixed in order — Added, Changed,
+Fixed, Performance, Removed — and an empty one is not drawn. The three newest versions are open; the rest fold
+under an *Earlier versions (N)* button aligned flush with the content column (its own left padding cancelled
+by a negative margin), and the fold returns on the next open. The footer carries only *Close* — *Copy
+diagnostics* stays on About, where the rest of the diagnostics live.
+
+This is also where the user is *sent*. When the version last read differs from the running one, a 5 px amber
+dot sits on the title bar's sparkle button, its tooltip becomes `What's new in {version}`, and it stays there
+even on a fresh install with no recorded version at all. Opening the dialog clears the dot and records the
+version, so it does not come back until the next one ships. ⓘ's tooltip no longer varies with this state — the
+routing an earlier pass sent through About is gone along with the tab it pointed at.
+
+**All three modals can be open at once, and What's new is always the uppermost, with About above Settings.**
+Each is declared after the last, so z-order follows the markup. Both `F1` and `Ctrl+F1` toggle their own
+dialog and do so even while another is open: Esc closes the topmost layer first, which means the drafts
+underneath survive. An earlier rule deafened `F1` whenever any dialog was open — the key is a window-level
+`InputBinding` and fires regardless of the Settings focus trap, so the fear was that it would discard an
+unsaved draft. Layering answers that better than silence did. The gear still no-ops while anything is open,
+which costs nothing: under the scrim it cannot be clicked anyway.
 
 ### 13.4 Scroll infrastructure
 
@@ -2062,6 +2075,7 @@ filter appears as a removable chip in the panel header.
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
 | `F1` | About — version, shortcuts and diagnostics |
+| `Ctrl+F1` | What's new — release notes (toggle) |
 | `Esc` | Close the topmost layer (see above) |
 | `Alt+B` | Global hotkey: restore the window from the tray |
 
@@ -2073,8 +2087,9 @@ an extra gate of its own: it does nothing while any modal is open (§13.3). Doub
 The table above is not written twice. A **shortcut catalog** derives each gesture's display text from that
 same key → intent table — and the global hotkey's from the hotkey default — and pairs it with the one
 sentence that describes it. The About screen's shortcut rows, the Build menu's `Ds.Kbd` badges and the info
-button's tooltip all read from it, and a source guard forbids any production file from writing a gesture as a
-literal. The badges used to be hand-typed strings living next to a binding table that could change
+button's and the What's new button's tooltips all read from it, and a source guard forbids any production file
+from writing a gesture as a literal. The badges used to be hand-typed strings living next to a binding table
+that could change
 underneath them.
 
 ---
@@ -2246,7 +2261,10 @@ carets and chevrons are drawn, not typed.
 Two icons have no literal counterpart in the design source and are marked *derived* in the dictionary, with
 the reasoning written beside them: the caption restore glyph, and the `info` circle in the title bar. Both are
 drawn on the same grid and at the same stroke weight as the neighbour they sit next to — the info icon shares
-`Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight.
+`Icon.Gear`'s 1.7 px so the two buttons carry equal optical weight. The What's new icon between them (a
+four-point star, keyed `Icon.WhatsNew` rather than the design's own name for it — that name collides with an
+unrelated source guard protecting the event stream's own celebration vocabulary) is drawn at the same 1.7 px
+for the same reason; all three title-bar icon buttons read as one family.
 
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
@@ -2903,6 +2921,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
+| What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |

@@ -288,6 +288,7 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `Ctrl+F5` / `Shift+F5` | Rebuild |
 | `Ctrl+F` | Focus the project filter |
 | `F1` | About — version, shortcuts and diagnostics |
+| `Ctrl+F1` | What's new — release notes (toggle) |
 | `Esc` | Close the topmost open layer: dialog → popover/menu → selection |
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
@@ -297,14 +298,15 @@ already owns that combination — it is silently disabled; the tray icon still r
 About screen marks that row *unavailable* so the loss is visible rather than mysterious.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
-`F1` toggles About and works even while Settings is open: About opens on top, and Esc closes the topmost layer
-first, so an unsaved Settings draft survives.
+`F1` and `Ctrl+F1` toggle their own screens and work even while another dialog is open: each opens on top, and
+Esc closes the topmost layer first, so a lower one (an unsaved Settings draft, say) survives underneath.
 
 ### About
 
-The `i` button sits to the right of the gear in the title bar, and `F1` toggles the same screen. Its heading
-holds both marks in one composition — the product mark, the product name and one mono line with the version
-and copyright on the left; a *licensed to* block with the company logo on the right. Four tabs follow:
+The `i` button sits at the right end of the title bar's command group, and `F1` toggles the same screen. Its
+heading holds both marks in one composition — the product mark, the product name and one mono line with the
+version and copyright on the left; a *licensed to* block with the company logo on the right. Three tabs
+follow, and ⓘ/`F1` always land on the first one:
 
 - **Shortcuts** — the table above, rendered from the same source the app binds its keys from, so a rebound
   key can never drift from what the screen claims.
@@ -314,13 +316,26 @@ and copyright on the left; a *licensed to* block with the company logo on the ri
   request.
 - **Third-party** — the OSS components the app ships with, their runtime versions and licences, including
   the Geist fonts under the SIL Open Font License.
-- **What is new** — the release notes, newest version first, grouped into Added / Changed / Fixed /
-  Performance / Removed. The three newest versions are open and the rest fold away. When the running version
-  is one you have not read yet, a small amber dot sits on the `i` button and About opens straight on this
-  tab; reading it clears the dot for good. There is no pop-up on launch.
 
 `MSBuild.exe` is located through `vswhere`, which costs a child process, so it resolves the first time the
 Environment tab is opened rather than when the screen appears.
+
+### What's new
+
+A dedicated 620 px dialog, opened from its own title-bar button — a four-point star between the gear and
+`i` — or with `Ctrl+F1` (a toggle: pressing it again closes the dialog). It carries no identity block and no
+tabs; the body is release notes only, newest version first, grouped into Added / Changed / Fixed /
+Performance / Removed. The three newest versions are open and the rest fold under an *Earlier versions*
+button; the running version carries a small `INSTALLED` label instead of a version number that would
+otherwise be ambiguous. There is no pop-up on launch.
+
+When the version you last opened this dialog on differs from the running one — including on a fresh install,
+where nothing has been opened yet — a small amber dot sits on the star button and its tooltip names the new
+version. Opening the dialog clears the dot for good; it does not return until the next version ships. About's
+`i` button no longer takes part in this: its tooltip is fixed, and `F1` always opens on the Shortcuts tab.
+
+Esc closes whichever dialog is on top first: What's new, then About, then Settings, so a lower one's state
+survives a stray keypress.
 
 ### State on disk
 
