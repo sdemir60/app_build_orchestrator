@@ -580,6 +580,14 @@ public sealed partial class RunViewModel : ObservableObject
     /// tarafından seed edilecek — C2 yalnız GÖNDERİR; ObservableProperty gerekmez (UI'dan iki-yönlü bağlanmaz).</summary>
     public IReadOnlyList<LayerPattern>? LayerPatterns { get; set; }
 
+    /// <summary>[K5 · design v1.14.0 §9] Harici proje listesi (yol + vcs) — Store tarafından seed edilecek,
+    /// Settings Save'de yeniden yazılır (<see cref="RunViewModel.ApplySettingsAsync"/>). <b>Motor bu turda
+    /// TÜKETMİYOR:</b> hiçbir IPC komutuna geçmez, yalnız App içinde tutulur ve Save'in konsol notunda görünür
+    /// — K5 kapsamı yalnız UI + kalıcılıktır (motor bağlantısı ayrı bir branch'te, ayrı bir oturumda birleşecek).
+    /// <see cref="LayerPatterns"/>'ın aksine <c>null</c> ayrımı GEREKMEZ (motor tarafında "yok" ile "boş"
+    /// arasında bir fark YOK) — bu yüzden hep boş listeyle başlar.</summary>
+    public IReadOnlyList<ExternalProjectRef> ExternalProjects { get; set; } = [];
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;

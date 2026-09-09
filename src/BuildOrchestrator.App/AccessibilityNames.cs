@@ -163,6 +163,14 @@ public static class AccessibilityNames
     public const string ImportSettings = "Import settings from a file";
     public const string ClearSettings = "Clear the repository root and all layers";
 
+    // ---- [K5 · design v1.14.0 §9] Settings: EXTERNAL PROJECTS satırı ----
+    /// <summary>Harici proje kartındaki mono path input'u — kolon başlığı "PROJECT PATH", watermark bir
+    /// ÖRNEK yoldur, etiket değildir.</summary>
+    public const string ExternalProjectPath = "External project path";
+    /// <summary>Harici proje kartındaki Source (Git/TFVC) seçimi — kolon başlığı "SOURCE" ama ekran
+    /// okuyucunun duyacağı ad README §9 v1.14.0'da pinlenen "Version control"dur.</summary>
+    public const string ExternalProjectSource = "Version control";
+
     // ---- [A13/T5] Worktree popover: hedef satırı ----
     /// <summary>Hedef satırındaki çöp kutusunun tooltip'i (satır başına AYNI metin).</summary>
     public const string DeleteWorktree = "Delete worktree";

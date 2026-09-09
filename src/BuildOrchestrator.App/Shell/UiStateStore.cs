@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.App.Shell;
@@ -60,6 +61,12 @@ public sealed class UiState
     public List<LayerPattern> LayerPatterns { get; set; } = [];
     public bool Autostart { get; set; }
 
+    /// <summary>[K5 · design v1.14.0 §9] Settings editörünün EXTERNAL PROJECTS listesi (yol + vcs) — Save'de
+    /// katmanlarla AYNI commit'te yazılır, startup'ta <see cref="ViewModels.RunViewModel.ExternalProjects"/>'e
+    /// seed edilir. <b>Motor bu turda TÜKETMİYOR:</b> IPC komutuna gitmiyor, yalnız App içinde kalıcı tutulur —
+    /// harici projelerin gerçekten derlenmesi ayrı bir branch'in (motor bağlantısı) işidir. Sıra dizinin KENDİ
+    /// sırasıdır — <see cref="LayerPatterns"/>'ın deseniyle AYNI, ayrı bir <c>order</c> alanı yazılmaz.</summary>
+    public List<ExternalProjectRef> ExternalProjects { get; set; } = [];
 }
 
 /// <summary>

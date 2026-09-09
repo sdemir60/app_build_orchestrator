@@ -149,6 +149,10 @@ public partial class MainWindow : Window
         // çökertirdi). Null-safe desen (kardeş guard'larla — saved.Configuration is { }/saved.PerfMode is { } —
         // hizalı).
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
+        // [K5 · design v1.14.0 §9] Kalıcı harici proje listesini AYNI yerde seed et (LayerPatterns'ın yanı
+        // başında) — null-safe desen kardeşleriyle hizalı. Motor bu turda TÜKETMİYOR: seed yalnız App içi
+        // listeyi doldurur, hiçbir IPC/Sync tetiklemez.
+        if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
