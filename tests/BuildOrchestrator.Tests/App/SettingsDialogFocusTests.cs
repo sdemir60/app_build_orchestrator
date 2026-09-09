@@ -251,7 +251,7 @@ public class SettingsDialogFocusTests
     public void External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_a_96px_source_select()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.ExternalProjects =
-            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"C:\b", VcsKind.Tfvc)]);
+            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"C:\b", VcsKind.Tfvc)]);
         using var _scope = scope;
 
         var draft = (SettingsDraftViewModel)dialog.DataContext;

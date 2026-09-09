@@ -32,8 +32,9 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 - **Nested Job Object:** App outer job sahibi, Supervisor içinde, `MSBuild.exe` inner job'da. Managed
   parent-watcher / PID heuristiği yok.
 - **OutDir'e dokunulmaz.** Yalnız `obj` (worktree modunda, proje Id anahtarıyla) izole edilir. "Değişti mi"
-  kararı sadece kaynak sinyalinden; DLL/bin timestamp asla okunmaz.
-- **Git salt-okur:** `checkout`/`switch`/`pull`/`reset` ana repoda hiç çalıştırılmaz.
+  kararı sadece kaynak sinyalinden; DLL/bin timestamp asla okunmaz. Harici projeler HER ZAMAN yerinde
+  derlenir: onlara ne obj izolasyonu ne de `BuildProjectReferences=false` uygulanır.
+- **Git salt-okur:** `checkout`/`switch`/`pull`/`reset` ana repoda hiç çalıştırılmaz. Tek istisna kayıtlı **harici projelerdir**: build anında kendi köklerinde ff-only güncelleme (`fetch` + `merge --ff-only`) ya da `tf vc get` koşar. Bu yüzey `Core/Externals` dışına çıkamaz (kaynak guard'ı).
 - **stdout yalnız NDJSON;** tüm log/tanı stderr'e.
 - **Planlama Core'da.** İş mantığını App/Supervisor'a sızdırma; Core UI ve process bağımsız test edilebilir kalır.
 - **Kopya YASAK / tek doğruluk kaynağı:** aynı değer, metin veya primitif iki yerde tanımlanmaz — ne kodda

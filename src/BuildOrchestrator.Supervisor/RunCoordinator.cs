@@ -4,6 +4,7 @@ using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
@@ -23,9 +24,13 @@ namespace BuildOrchestrator.Supervisor;
 /// koşusunda kimlikler ana repo köküne taşınır (<c>ProjectIdentityRebase</c>) — imza, state, event'ler ve App
 /// hep ana kökü görür; yalnız derlemenin kendisi worktree'deki dosyayı açar. In-place koşuda boş: kimlik
 /// zaten fiziksel yoldur.</param>
+/// <param name="Externals">[Harici projeler] Ana repo işinden ÖNCE, liste sırasıyla ve tek tek derlenecek
+/// harici projeler. Planlama (güncelleme, kir kapısı, karar) zaten Core'da yapılmıştır — koordinatör burada
+/// yalnız yürütür. <c>null</c>/boş ⇒ koşu bugünküyle bayt-bayt aynıdır.</param>
 public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs,
     IncrementalPlan? Incremental = null,
-    IReadOnlyDictionary<string, string>? BuildPathById = null);
+    IReadOnlyDictionary<string, string>? BuildPathById = null,
+    IReadOnlyList<ExternalBuildPlan>? Externals = null);
 
 /// <summary>
 /// [Task 19 wiring] Bir fresh (Rebuild/Build) run için incremental karar verileri: her projenin planlama
@@ -680,7 +685,7 @@ public sealed class RunCoordinator(
             // planlayıcı senkron çalıştığı için bu şarttır.
             try { runPlan = planner(cmd, line => events.TryWrite(new PlanProgressEvent(line))); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
-                or WorktreePreparationException)
+                or WorktreePreparationException or ExternalPreparationException)
             { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }
 
             // [I2-K2/Task 10 · A4] cmd.UseWorktree=false → HER ZAMAN null (in-place, VS-parity). true iken
@@ -844,7 +849,13 @@ public sealed class RunCoordinator(
         clock.Start();
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
-        events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
+        // [D12] Cycles koşusu ana reponun SCC onarımıdır — harici fazı TAMAMEN atlar. Diğer modlarda liste
+        // planlayıcıdan (Core) gelir; boşsa aşağıdaki her şey no-op'tur ve koşu bugünküyle bayt-bayt aynıdır.
+        var externals = cmd.Mode == RunMode.Cycles ? [] : runPlan.Externals ?? [];
+        // Harici sonuçları scheduler'da YAŞAMAZ (o yalnız ana repo grafını bilir) — kapanış sayaçlarına
+        // eklenmek üzere burada tutulur.
+        int externalSucceeded = 0, externalFailed = 0, externalSkipped = 0;
+        events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count + externals.Count, parallelism,
             plan.Configuration, elapsedAtStart, appliedCap));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
@@ -865,9 +876,13 @@ public sealed class RunCoordinator(
         // Cycles modunun kapsam dışı bıraktığı projeler.
         var preSkipped = upToDateSkips.Select(s => s.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new BuildPreviewEvent(
+            // Hariciler listenin BAŞINDA — derlenme sıraları da budur. Revizyonları mevcut built-commit
+            // yuvasında taşınır (yeni bir alan açılmaz).
+            [.. externals.Select(e => new BuildPreviewItem(
+                    e.Target.TargetPath, e.Target.Name, e.WillBuild, e.Revision, e.Reason)),
             // Pre-skip edilenlerde gerekçe de DÜŞER (null): o "false" imzadan değil koşu-zamanlama kuralından
             // gelir (yakınsamama hafızası / Cycles kapsamı) ve düğümün imza gerekçesini göstermek yalan olurdu.
-            [.. plan.Nodes.Select(n => preSkipped.Contains(n.Id)
+            .. plan.Nodes.Select(n => preSkipped.Contains(n.Id)
                 ? new BuildPreviewItem(n.Id, n.Name, false, BuildStateStore.BuiltCommitOf(builtCommits, n.Id))
                 : new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason))]));
@@ -936,7 +951,38 @@ public sealed class RunCoordinator(
                 runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
                 groups); // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
 
-            var workers = Enumerable.Range(0, parallelism)
+            // [D9] HARİCİ FAZI: worker'lar doğmadan ÖNCE, liste sırasıyla ve TEK TEK. Paralellik yoktur —
+            // iki harici solution aynı anda derlenirse ortak paket klasörleri ve post-build copy event'leri
+            // birbirini ezer. Bir harici patlarsa ana repo HİÇ derlenmez: bayat bir harici DLL'e link'lenmiş
+            // ana projeler yeşil döner ve sessizce yanlış çıktı verir.
+            bool externalAborted = false;
+            foreach (var external in externals)
+            {
+                string targetPath = external.Target.TargetPath;
+
+                if (!external.WillBuild)
+                {
+                    events.TryWrite(new ProjectSkippedEvent(cmd.RunId, targetPath, SkipReasons.UpToDate, false));
+                    Decide(logs, $"{external.Target.Name}: skipped — {SkipReasons.UpToDate}");
+                    externalSkipped++;
+                    continue;
+                }
+
+                // Graceful stop iki harici ARASINDA da dinlenir; in-flight olan biter, sıradaki hiç başlamaz.
+                if (StopRequested) break;
+
+                if (await BuildExternalAsync(run, external, ct)) { externalSucceeded++; continue; }
+
+                externalFailed++;
+                externalAborted = true;
+                break;
+            }
+
+            // Harici faz koşuyu iptal ettiyse worker'lar HİÇ doğmaz: ana projeler dispatch edilmemiş kalır ve
+            // kapanışta Queued olarak raporlanır — gerçekten yapılmayan iş, yapılmış gibi görünmez.
+            var workers = externalAborted
+                ? []
+                : Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
                 .ToArray();
             try { await Task.WhenAll(workers); }
@@ -962,9 +1008,10 @@ public sealed class RunCoordinator(
 
             var outcome = stopKind is null ? RunOutcome.Completed : RunOutcome.Stopped;
             var completed = scheduler.Completed;
-            int succeeded = completed.Count(kv => kv.Value == BuildResult.Succeeded);
-            int failed = completed.Count(kv => kv.Value == BuildResult.Failed);
-            int skipped = completed.Count(kv => kv.Value == BuildResult.Skipped);
+            // Hariciler scheduler'da yaşamaz ama koşunun bir parçasıdır — sayaçlara burada katılırlar.
+            int succeeded = completed.Count(kv => kv.Value == BuildResult.Succeeded) + externalSucceeded;
+            int failed = completed.Count(kv => kv.Value == BuildResult.Failed) + externalFailed;
+            int skipped = completed.Count(kv => kv.Value == BuildResult.Skipped) + externalSkipped;
             // [T54] Run genelinde (Continue segmentleri DAHİL, kümülatif) dependency-affected proje sayısı —
             // depIssues'u boş OLMAYAN projeler. Kendisi failed bir kök, kendi depIssue'unu taşımaz (sayılmaz).
             int depIssueCount = depIssuesById.Values.Count(v => v.Count > 0);
@@ -988,6 +1035,69 @@ public sealed class RunCoordinator(
             lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; _worktreeObjRoot = null; }
             logs.Dispose();
         }
+    }
+
+    /// <summary>
+    /// [D9] TEK bir harici projeyi derler ve sonucunu raporlar. Ana repo yolundan üç noktada ayrılır ve üçü de
+    /// kasıtlıdır: scheduler'a dokunulmaz (harici grafta yoktur), bağımlılık uyarısı hesaplanmaz (haricinin
+    /// kenarı yoktur) ve imza doğrudan harici planından gelir (<c>IncrementalPlan</c> ana repoyu anlatır).
+    ///
+    /// <para>Kimlik <c>TargetPath</c>'tir: event'ler, proje logu ve defter kaydı hep onunla akar.</para>
+    /// </summary>
+    /// <returns>Derleme yeşil bittiyse true.</returns>
+    private async Task<bool> BuildExternalAsync(RunContext run, ExternalBuildPlan external, CancellationToken ct)
+    {
+        string targetPath = external.Target.TargetPath;
+        string name = external.Target.Name;
+        run.Events.TryWrite(new ProjectStartedEvent(run.RunId, targetPath, name));
+
+        var result = BuildResult.Failed;
+        long durationMs = 0;
+        string? failReason = null;
+
+        try
+        {
+            // [Kısıt 1] Log ömrü burada — invoke bittikten sonra dispose edilir.
+            using var log = run.Logs.OpenProjectLog(targetPath);
+            var outcome = await InvokeOnceAsync(run, targetPath, DepIssueResult.Empty, log, ct, externalTarget: true);
+            result = outcome.Result;
+            durationMs = outcome.DurationMs;
+            failReason = outcome.FailReason;
+        }
+        catch (OperationCanceledException) { failReason = "stopped"; }
+        catch (Exception ex) { failReason = "invoke error: " + ex.Message; }
+
+        if (result == BuildResult.Succeeded)
+        {
+            PersistExternalState(run, external, durationMs);
+            run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, targetPath, durationMs, null, false));
+            Decide(run.Logs, $"{name}: external succeeded in {durationMs}ms");
+            return true;
+        }
+
+        // Başarısız bir harici "bilinen iyi" DEĞİLDİR: kaydı geçersizleştirilir, yoksa bir sonraki koşu onu
+        // güncel sayıp atlar ve ana repo bayat bir DLL'e link'lenmeye devam eder.
+        InvalidateBuildStateOnFailure(run, targetPath);
+        run.Events.TryWrite(new ProjectFailedEvent(run.RunId, targetPath, durationMs, failReason ?? "failed", null));
+        console($"error: external project '{name}' failed — stopping before the main repository build");
+        Decide(run.Logs, $"{name}: external failed ({failReason}) — main repository build not started");
+        return false;
+    }
+
+    /// <summary>
+    /// Başarılı bir haricinin defter kaydı. İmza ve revizyon <see cref="ExternalBuildPlan"/>'dan gelir — ana
+    /// repo persist'i (<c>PersistBuildStateOnSuccess</c>) <see cref="IncrementalPlan"/>'e bakar ve orada
+    /// haricilerin imzası YOKTUR. I/O hatası koşuyu öldürmez (warn-only, aynı kalıp).
+    /// </summary>
+    private void PersistExternalState(RunContext run, ExternalBuildPlan external, long durationMs)
+    {
+        if (run.StateStore is null) return;
+
+        var state = new BuildState(external.Target.TargetPath, external.Signature, external.Revision,
+            BuildResult.Succeeded, DateTimeOffset.UtcNow, LastBranch: null, durationMs);
+        try { run.StateStore.Upsert(state); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { console("warning: build-state could not be written (" + external.Target.Name + "): " + ex.Message); }
     }
 
     /// <summary>
@@ -1523,14 +1633,22 @@ public sealed class RunCoordinator(
     /// raporlar. İki yol aynı invoke gövdesini paylaşmazsa komut satırı/log/retry davranışı sessizce
     /// ayrışırdı (kopya YASAK, CLAUDE.md).
     /// </summary>
+    /// <param name="externalTarget">[D10] Hedef ana repo DIŞINDAN gelen bir harici proje mi. Öyleyse yol
+    /// kimlikten TÜRETİLMEZ (harici çalışma kopyası worktree havuzunda yaşamaz, kimlik taşıması yapılmamıştır),
+    /// obj yeniden yönlendirilmez ve restore kararı harici sözleşmesine bırakılır.</param>
     private async Task<InvokeOutcome> InvokeOnceAsync(
-        RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct)
+        RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct,
+        bool externalTarget = false)
     {
         // [worktree] KİMLİKTEN FİZİKSEL YOLA geçilen TEK nokta burasıdır: worktree koşusunda kimlikler ana
         // repo köküne taşınmıştır (ProjectIdentityRebase) ve derlenecek dosya başka bir dizindedir. Diğer her
         // şey — scheduler, event'ler, önizleme, persist, decision.log, log adlandırma — kimlikle akar.
         string buildPath = run.BuildPathById.GetValueOrDefault(projectId, projectId);
-        var request = new MsBuildInvokeRequest(
+        var request = externalTarget
+            ? new MsBuildInvokeRequest(projectId, run.Configuration,
+                SolutionDir: Path.GetDirectoryName(projectId) ?? string.Empty, NeedsRestore: false,
+                BaseIntermediateOutputPath: null, ExternalTarget: true)
+            : new MsBuildInvokeRequest(
             ProjectId: buildPath,
             Configuration: run.Configuration,
             SolutionDir: SolutionDirResolver.Resolve(buildPath, run.SolutionRefs.GetValueOrDefault(projectId, [])),

@@ -740,14 +740,21 @@ public class ProjectRowTests
     }
 
     [StaFact]
-    public void Sha_text_interpolates_current_and_target_with_an_arrow()
+    public void Sha_shows_the_current_half_alone_when_the_target_is_not_known()
     {
-        // [lens Minor] "{cur} → {target}". [W1] Target da satır VM'inden gelir; burada set EDİLMEDİĞİ için
-        // (henüz syncCompleted gelmemiş satır) boştur — ok + cur yarısı yine de pinlenir.
+        // [DEĞİŞEN KURAL] Bu test eskiden yarım bir ok pinliyordu ("a3f81c2 → "): hedef bilinmezken cur yarısı
+        // ok'la birlikte basılıyordu. Kardeş kural ise ters yöndeydi — sol yarı yokken ok ÜRETİLMEZ diyordu
+        // (bkz. Sha_shows_the_target_alone_when_the_project_was_never_built) — yani iki eksik-yarı vakası
+        // birbirinden farklı davranıyordu.
+        //
+        // Harici projelerle birlikte bu tutarsızlık görünür bir kusura döndü: harici satırlara ana reponun
+        // hedef commit'i İTİLMEZ (o sha başka bir repoyu anlatır), dolayısıyla her harici satır kalıcı olarak
+        // yarım bir ok gösterirdi. Kural artık simetrik: eksik olan hangi yarı olursa olsun, elde ne varsa o
+        // basılır.
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal("a3f81c2 → ", row.ShaText.Text);
+        Assert.Equal("a3f81c2", row.ShaText.Text);
         GC.KeepAlive(window);
     }
 
@@ -792,7 +799,7 @@ public class ProjectRowTests
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         { WillBuild = true, CurrentSha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b" };
         var (row, window, _) = Realize(vm);
-        Assert.Equal("a3f81c2 → ", row.ShaText.Text); // hedef henüz bilinmiyor
+        Assert.Equal("a3f81c2", row.ShaText.Text); // hedef henüz bilinmiyor → tek yarı (bkz. yukarıdaki DEĞİŞEN KURAL)
 
         vm.TargetSha = "b7e91d4c0affee1122334455667788990aabbccd"; // syncCompleted
         row.UpdateLayout();

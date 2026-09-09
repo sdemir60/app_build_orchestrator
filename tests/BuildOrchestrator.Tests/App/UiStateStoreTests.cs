@@ -5,21 +5,6 @@ using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
 
-/// <summary>Geçici bir dizin — <c>using</c> ömrü bitince kaskatla silinir (persist round-trip testleri için).</summary>
-internal sealed class TempDir : IDisposable
-{
-    public string Path { get; } = System.IO.Path.Combine(
-        System.IO.Path.GetTempPath(), "bo-uistate-" + Guid.NewGuid().ToString("N"));
-
-    public TempDir() => Directory.CreateDirectory(Path);
-
-    public void Dispose()
-    {
-        try { if (Directory.Exists(Path)) Directory.Delete(Path, recursive: true); }
-        catch (IOException) { /* CI'da kilitli dosya — sızıntı testin sonucunu etkilemez */ }
-    }
-}
-
 /// <summary>
 /// [T35] <see cref="UiState"/>'in 2×2 yerleşim alanlarıyla genişlemesi JSON store round-trip'inden geçmeli;
 /// mevcut kabuk alanları (TrayBalloonShown/Hotkey) bozulmamalı (şema genişlemesi geriye dönük tolere edilir).
@@ -53,7 +38,7 @@ public class UiStateStoreTests
         state.LayerPatterns = [new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")];
         // [K5 · design v1.14.0 §9] ExternalProjects LayerPatterns'ın YANI BAŞINDA seed edilir — AYNI commit'te
         // yazılır, bu yüzden round-trip testi de aynı senaryoya katılır (kopya YASAK, ikinci bir test yok).
-        state.ExternalProjects = [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"D:\shared\b.csproj", VcsKind.Tfvc)];
+        state.ExternalProjects = [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"D:\shared\b.csproj", VcsKind.Tfvc)];
         state.Autostart = true;
         store.Save(state);
 
@@ -66,7 +51,7 @@ public class UiStateStoreTests
         Assert.Equal("feature-x-1", reloaded.WorktreeName);
         Assert.Equal([new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")], reloaded.LayerPatterns);
         Assert.Equal(
-            [new ExternalProjectRef(@"C:\a", VcsKind.Git), new ExternalProjectRef(@"D:\shared\b.csproj", VcsKind.Tfvc)],
+            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"D:\shared\b.csproj", VcsKind.Tfvc)],
             reloaded.ExternalProjects);
         Assert.True(reloaded.Autostart);
     }

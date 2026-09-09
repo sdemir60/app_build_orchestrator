@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -85,7 +85,8 @@ public sealed partial class RunViewModel
     /// abonesi AÇILMAZ (satır zaten yalnız kendi VM'ini dinler) — L1'in satır-realize bütçesi korunur.</summary>
     partial void OnTargetShaChanged(string? value)
     {
-        foreach (var row in Projects) row.TargetSha = value;
+        // [Harici projeler] Hedef sha ANA REPOYU anlatır — harici satırlar bu itmenin dışında kalır.
+        foreach (var row in Projects) if (!row.IsExternal) row.TargetSha = value;
     }
 
     /// <summary>true ⇒ son Sync'te fetch başarısız oldu ve akış yerel HEAD ile devam etti (offline degrade).</summary>
@@ -343,7 +344,11 @@ public sealed partial class RunViewModel
                     // taşınır); Status bunu cycle görsel statüsüne çevirir. IsRunActive queued türetimi için.
                     InCycle = node.InCycle,
                     IsRunActive = RunActive,
-                    TargetSha = TargetSha, // [W1] hedef sha satıra İTİLİR (kart onu atalardan çekmez)
+                    // [Harici projeler] Rozet topolojiden gelir; satır ömrü boyunca değişmez.
+                    IsExternal = node.ExternalVcs is not null,
+                    // [W1] hedef sha satıra İTİLİR (kart onu atalardan çekmez) — ama YALNIZ ana repo satırlarına:
+                    // harici bir projenin yanında ana reponun commit'i yanlış bir şey söylerdi.
+                    TargetSha = node.ExternalVcs is null ? TargetSha : null,
                     // [design v1.11.0 §3.1] Yeni doğan satır BAŞLANGIÇ MODUNDADIR: bir koşu ortasında gelen
                     // topoloji hariç (orada koşan işlem zaten renk yazıyor).
                     Fresh = !IsRunning,

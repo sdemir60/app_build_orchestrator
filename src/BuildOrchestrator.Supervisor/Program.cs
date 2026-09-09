@@ -1,6 +1,7 @@
-using BuildOrchestrator.Contracts.Ipc;
+﻿using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
@@ -117,6 +118,17 @@ public static class Program
             // [A5/T69] Havuz kökü artık TEK yerden gelir (`--worktrees` ile override edilebilir) — build-anı
             // hazırlığı ile listWorktrees/deleteWorktree AYNI havuzu görmelidir, aksi halde App'in listelediği
             // worktree'ler build'in kullandıklarından farklı olurdu.
+            // [D6] HARİCİ FAZI EN ÖNCE: güncelleme ve kir kapısı worktree hazırlığından da önce koşar, çünkü
+            // kir yüzünden iptal edilecek bir koşu için worktree açmak boşuna disk ve saniyelerdir. Hazırlık
+            // hatası (kir, ayrışma, eksik tf.exe) ExternalPreparationException fırlatır ve koordinatörün
+            // planlama-hatası kanalından planFailed olarak yüzeye çıkar — koşu hiç başlamaz.
+            // [D12] Cycles ana reponun SCC onarımıdır: harici fazı orada tamamen atlanır.
+            var externals = cmd.Mode != RunMode.Cycles && cmd.ExternalProjects is { Count: > 0 } externalList
+                ? new ExternalRunPlanner(new ProcessRunner()).PlanAsync(
+                    externalList, cmd.Configuration, cmd.Mode == RunMode.Rebuild, stateStore.Load(), progress)
+                    .GetAwaiter().GetResult()
+                : null;
+
             var workspace = PrepareAsync(cmd, new ProcessRunner(), worktreePoolRoot,
                 Console.Error.WriteLine, progress).GetAwaiter().GetResult();
             prepared = workspace;
@@ -149,7 +161,7 @@ public static class Program
             // ve kendi sayısını üretmez — sonrasına bırakılsa akış tam da en uzun beklemede sessizleşirdi.
             progress(PlanProgressLines.ComputingIncremental(plan.Nodes.Count));
             var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, identity.Plan, identity.EvaluatedById, stateStore);
-            return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById);
+            return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById, externals);
         }
     }
 

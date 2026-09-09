@@ -1,12 +1,16 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.MsBuild;
 
 /// <summary>Tek proje invoke isteği. It-2'de <c>BaseIntermediateOutputPath</c> HER ZAMAN null (I2-K2: in-place = default obj; obj-izolasyon It-3/worktree).</summary>
+/// <param name="ExternalTarget">[D10] Hedef ana repo DIŞINDAN gelen bir harici proje mi. Alan SONDA ve
+/// varsayılan değerlidir: mevcut çağrı yerleri bayt-bayt aynı davranır. Argüman eşlemesini invoker değil
+/// <see cref="MsBuildArguments.PlanFor"/> sahiplenir.</param>
 public sealed record MsBuildInvokeRequest(
-    string ProjectId, string Configuration, string SolutionDir, bool NeedsRestore, string? BaseIntermediateOutputPath = null);
+    string ProjectId, string Configuration, string SolutionDir, bool NeedsRestore,
+    string? BaseIntermediateOutputPath = null, bool ExternalTarget = false);
 
 public sealed record MsBuildInvokeResult(int ExitCode, long DurationMs, bool TimedOut, bool Killed);
 
@@ -48,15 +52,14 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutOnlyCts.Token);
 
         // DurationMs tüm invoke'u (restore + build) kapsar — sw yalnız bir kez başlar, iki child de aynı sw'yi okur.
-        if (req.NeedsRestore)
+        var (restoreArgs, buildArgs) = MsBuildArguments.PlanFor(req);
+        if (restoreArgs is not null)
         {
-            var restoreArgs = MsBuildArguments.RestorePackagesConfig(req.ProjectId, req.SolutionDir);
             var restoreResult = await RunChildAsync(restoreArgs, workingDirectory, sw, onLine, linkedCts.Token, timeoutOnlyCts);
             if (restoreResult.ExitCode != 0 || restoreResult.TimedOut || restoreResult.Killed)
                 return restoreResult; // restore başarısızsa build DENENMEZ
         }
 
-        var buildArgs = MsBuildArguments.Build(req.ProjectId, req.Configuration, req.BaseIntermediateOutputPath);
         return await RunChildAsync(buildArgs, workingDirectory, sw, onLine, linkedCts.Token, timeoutOnlyCts);
     }
 

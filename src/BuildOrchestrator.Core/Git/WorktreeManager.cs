@@ -1,4 +1,4 @@
-using BuildOrchestrator.Core.Processes;
+﻿using BuildOrchestrator.Core.Processes;
 
 namespace BuildOrchestrator.Core.Git;
 
@@ -184,11 +184,11 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
 
         Directory.CreateDirectory(_poolRoot);
 
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "add", "--detach", plan.Path, plan.Sha], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["worktree", "add", "--detach", plan.Path, plan.Sha], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<string>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        if (r.ExitCode != 0) return GitResult<string>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
 
         try
         {
@@ -294,11 +294,11 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
         if (branchAtWorktree.Value is { } attached)
             return GitResult<string?>.Fail($"the pool worktree ('{chosen.Name}') is not detached ('{attached}' is checked out) — not reused.");
 
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["reset", "--hard", sha], chosen.Path, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["reset", "--hard", sha], chosen.Path, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<string?>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<string?>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        if (r.ExitCode != 0) return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
 
         // Sidecar zaten doğru branch'i taşıyor; best-effort tazeleme (dosya silinmişse geri gelir).
         try { File.WriteAllText(Path.Combine(chosen.Path, MetadataFileName), selectedBranch); }
@@ -364,11 +364,11 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
             return GitResult<bool>.Fail($"unsafe worktree name: '{name}'.");
 
         string path = Path.Combine(_poolRoot, name);
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "remove", "--force", path], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["worktree", "remove", "--force", path], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<bool>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<bool>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        if (r.ExitCode != 0) return GitResult<bool>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
 
         return GitResult<bool>.Ok(true);
     }
@@ -384,11 +384,11 @@ public sealed class WorktreeManager(IProcessRunner runner, string repoRoot, stri
     /// </summary>
     private async Task<GitResult<IReadOnlyList<PoolEntry>>> ListPoolEntriesAsync(CancellationToken ct)
     {
-        var outcome = await GitCommandExecutor.RunAsync(_runner, _gitExecutable, ["worktree", "list", "--porcelain"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["worktree", "list", "--porcelain"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<IReadOnlyList<PoolEntry>>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
-        if (r.ExitCode != 0) return GitResult<IReadOnlyList<PoolEntry>>.Fail(GitCommandExecutor.DescribeGitFailure(r));
+        if (r.ExitCode != 0) return GitResult<IReadOnlyList<PoolEntry>>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
 
         string poolRootNormalized = NormalizeForCompare(_poolRoot);
         var list = new List<PoolEntry>();

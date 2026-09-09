@@ -1,3 +1,5 @@
+using BuildOrchestrator.Contracts.Model;
+
 namespace BuildOrchestrator.Core.Planning;
 
 /// <summary>
@@ -38,6 +40,40 @@ public static class PlanProgressLines
     /// sayısını üretmez — satır işin ÖNCESİNDE yazılır, yoksa akış tam da en uzun beklemede sessizleşirdi.
     /// Yalnız run yolunda: Sync kendi iki-pass'ini <c>changed/to build</c> özetiyle raporlar.</summary>
     public static string ComputingIncremental(int projects) => $"Computing incremental state ({projects} projects)";
+
+    // --- Harici projeler ------------------------------------------------------------------------
+    // Aynı metinler iki yüzeyde görünür: Sync transkripti (salt-okur önizleme) ve koşu planlaması (gerçek
+    // güncelleme). Bu yüzden onlar da burada, tek kaynakta durur. Koşuyu İPTAL eden dirty mesajı buraya
+    // GİRMEZ — o bir progress satırı değil, ExternalPreparationException'ın gövdesidir.
+
+    /// <summary>Bir haricinin güncellenmesi başlıyor — iş sürerken satır önce yazılır.</summary>
+    public static string UpdatingExternal(string name) => $"Updating external '{name}'";
+
+    /// <summary>Harici güncel ve derlenmeyecek.</summary>
+    public static string ExternalUpToDate(string name) => $"External '{name}' is up to date";
+
+    /// <summary>Remote'a ulaşılamadı; yerel sürümle devam edilir (ana repo degraded fetch ile aynı felsefe).</summary>
+    public static string ExternalUpdateDegraded(string name, string reason)
+        => $"warning: external '{name}' could not be updated — building the local version ({reason})";
+
+    /// <summary>Sync'te görülen kir. Yalnız UYARIR: koşuyu durduran kapı Build tarafındadır, çünkü kullanıcı
+    /// Sync ile dosyalarına bakarken uyarılıp Build'e basmadan önce karar verebilmelidir.</summary>
+    public static string ExternalDirtyWarning(string name)
+        => $"warning: external '{name}' has uncommitted changes — Build will refuse to run until they are committed or shelved";
+
+    /// <summary>Yol bir hedefe çözülemedi (yok, ya da içinde tek bir solution/proje yok) — durum bilinmiyor,
+    /// önizleme hollow kalır. <paramref name="problem"/> <c>ExternalTargetResolver</c>'ın cümlesidir.</summary>
+    public static string ExternalUnresolved(string name, string problem)
+        => $"warning: external '{name}': {problem} — state unknown";
+
+    /// <summary>Çalışma kopyası okunamadı — durum bilinmiyor, önizleme hollow kalır.</summary>
+    public static string ExternalStateUnknown(string name, string reason)
+        => $"warning: external '{name}': state unknown ({reason})";
+
+    /// <summary>Yolun üstünde SEÇİLEN türde bir çalışma kopyası işareti yok (git için <c>.git</c>, TFVC için
+    /// <c>$tf</c>) — güncelleme ve kir kapısı çalışmaz, proje olduğu gibi derlenir.</summary>
+    public static string ExternalNoWorkingCopy(string name, VcsKind vcs)
+        => $"warning: external '{name}': no {VcsKinds.Label(vcs)} working copy found above its path — building as-is";
 
     // Planner'dan SONRAKİ iki adım (MSBuild.exe çözümü, bayat-obj taraması) BİLEREK raporlanmaz: vswhere
     // sonucu Supervisor ömrü boyunca cache'lenir (ilk run dışında "resolving" demek yalan olurdu), bayat-obj

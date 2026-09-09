@@ -4,6 +4,7 @@
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
              xmlns:app="clr-namespace:BuildOrchestrator.App"
+             xmlns:model="clr-namespace:BuildOrchestrator.Contracts.Model;assembly=BuildOrchestrator.Contracts"
              Visibility="Collapsed" Focusable="True">
   <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 760px Ds.Dialog
        (Brush.SurfaceRaised — README §2.9'daki surface-overlay sapması burada KAYITLI, kod kazanır). Diyaloğun
@@ -87,13 +88,12 @@
             <!-- 18px boşluk + 1px ayraç, sonra External projects (design v1.14.0 §9). -->
             <Border Style="{DynamicResource Ds.Settings.SectionDivider}" />
 
-            <!-- ============================ EXTERNAL PROJECTS (design v1.14.0 §9 · K5) ============================
+            <!-- ============================ EXTERNAL PROJECTS (design v1.14.0 §9) ============================
                  Workspace ile Layers ARASINDA: harici projeler derleme sırasının BAŞINDA olduğu için katmanlardan
-                 önce durur — bölümün KONUMU bu sırayı anlatır (§9: "Sıra kasıtlı"). [K5 KAPSAMI] Bu tur yalnız
-                 UI + kalıcılıktır: liste App içinde tutulur ve Save'de UiState'e yazılır (SettingsDraftViewModel.
-                 CommitAsync), ama MOTORA GİTMEZ — hiçbir IPC komutuna eklenmez, proje listesinde/grafta bu turda
-                 karşılığı YOKTUR (motor bağlantısı ayrı bir branch'te — feat/external-projects-prebuild — hazır,
-                 ayrı bir oturumda birleşecek; RunViewModel.ApplyExternalProjects'in XML doc'u aynı notu taşır). -->
+                 önce durur — bölümün KONUMU bu sırayı anlatır (§9: "Sıra kasıtlı"). Kart = yol (klasör / .sln /
+                 .csproj) + kaynak (Git / TFVC). Diyalog yolu TARAMAZ: liste Save'de UiState'e yazılır
+                 (SettingsDraftViewModel.CommitAsync) ve her Sync/Build komutuyla motora gider; hedef, ad ve
+                 çalışma kopyası kökü Core'da her koşuda yoldan çözülür (ARCHITECTURE §10.6). -->
             <TextBlock Text="EXTERNAL PROJECTS" Margin="0,0,0,6" Style="{DynamicResource Ds.Settings.CapsHeading}" />
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
                        FontSize="{DynamicResource FontSize.Xs}"
@@ -177,8 +177,8 @@
                                 Style="{DynamicResource Ds.Select}" SelectedValuePath="Tag"
                                 AutomationProperties.Name="{x:Static app:AccessibilityNames.ExternalProjectSource}"
                                 SelectedValue="{Binding Vcs, UpdateSourceTrigger=PropertyChanged}">
-                        <ComboBoxItem Content="Git" Tag="{x:Static vm:VcsKind.Git}" />
-                        <ComboBoxItem Content="TFVC" Tag="{x:Static vm:VcsKind.Tfvc}" />
+                        <ComboBoxItem Content="Git" Tag="{x:Static model:VcsKind.Git}" />
+                        <ComboBoxItem Content="TFVC" Tag="{x:Static model:VcsKind.Tfvc}" />
                       </ComboBox>
                       <!-- Path inputu (mono, esnek) — katman kartındaki ad input'uyla AYNI x'te başlar (sıra
                            numarası YOK — denendi, kaldırıldı: sıra zaten kart sırası, §9). -->

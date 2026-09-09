@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -50,6 +50,13 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(Status))]
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _isRunActive;
+
+    /// <summary>[Harici projeler] Bu satır ana repo DIŞINDAN gelen bir projeyi mi anlatıyor —
+    /// <see cref="ProjectNode.ExternalVcs"/>'ten topoloji uzlaştırmasında taşınır ve satır ömrü boyunca
+    /// değişmez (kimlik gibi).
+    /// <para>Tek görünür sonucu şudur: ana reponun hedef commit'i bu satıra İTİLMEZ. O sha başka bir repoyu
+    /// anlatır ve harici satırın yanında duran bir yalan olurdu.</para></summary>
+    public bool IsExternal { get; init; }
 
     /// <summary>[T53-UI] Kartın soluk ikinci satırı — projenin ait olduğu solution'ın adı (prototip
     /// <c>p.sln</c>, BuildApp.jsx:384). Kaynak: <see cref="ProjectNode.SolutionNames"/> (ilk eleman); topoloji
@@ -580,13 +587,16 @@ public sealed partial class RunViewModel : ObservableObject
     /// tarafından seed edilecek — C2 yalnız GÖNDERİR; ObservableProperty gerekmez (UI'dan iki-yönlü bağlanmaz).</summary>
     public IReadOnlyList<LayerPattern>? LayerPatterns { get; set; }
 
-    /// <summary>[K5 · design v1.14.0 §9] Harici proje listesi (yol + vcs) — Store tarafından seed edilecek,
-    /// Settings Save'de yeniden yazılır (<see cref="RunViewModel.ApplySettingsAsync"/>). <b>Motor bu turda
-    /// TÜKETMİYOR:</b> hiçbir IPC komutuna geçmez, yalnız App içinde tutulur ve Save'in konsol notunda görünür
-    /// — K5 kapsamı yalnız UI + kalıcılıktır (motor bağlantısı ayrı bir branch'te, ayrı bir oturumda birleşecek).
+    /// <summary>[design v1.14.0 §9 · externals] Harici proje listesi (yol + vcs) — Store tarafından seed edilir,
+    /// Settings Save'de yeniden yazılır (<see cref="RunViewModel.ApplySettingsAsync"/>) ve HER Sync/Build
+    /// komutuyla motora GÖNDERİLİR (sıralamayı Ayarlar editörü kurar, kararı Core verir — SIRA build sırasıdır).
     /// <see cref="LayerPatterns"/>'ın aksine <c>null</c> ayrımı GEREKMEZ (motor tarafında "yok" ile "boş"
-    /// arasında bir fark YOK) — bu yüzden hep boş listeyle başlar.</summary>
-    public IReadOnlyList<ExternalProjectRef> ExternalProjects { get; set; } = [];
+    /// arasında bir fark YOK) — bu yüzden hep boş listeyle başlar; tel üzerine boş liste <c>null</c> olarak
+    /// çıkar (<see cref="ExternalProjectsForWire"/>) ki eski NDJSON şekli bayt-bayt korunsun.</summary>
+    public IReadOnlyList<ExternalProject> ExternalProjects { get; set; } = [];
+
+    /// <summary>Komutlara giden hâli: boş liste → <c>null</c> (özellik kapalı, alan hiç yazılmaz).</summary>
+    private IReadOnlyList<ExternalProject>? ExternalProjectsForWire => ExternalProjects.Count > 0 ? ExternalProjects : null;
 
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
@@ -687,7 +697,8 @@ public sealed partial class RunViewModel : ObservableObject
         // değeri ≠ niyet; seed'i niyet diye göndermek worktree'yi zorunlu kılıyor ve detached HEAD'de run'ı
         // hiç başlatmıyordu).
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode);
+            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
+            ExternalProjectsForWire);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
@@ -862,7 +873,7 @@ public sealed partial class RunViewModel : ObservableObject
         // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
         ArmEngineWatchdog();
         bool sent = await TrySendAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration), "sync");
+            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire), "sync");
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
@@ -1406,6 +1417,8 @@ public sealed partial class RunViewModel : ObservableObject
         // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
         var row = new ProjectRowViewModel(id, name, initialState)
         { IsRunActive = RunActive, NamePrefix = _graphNamePrefix, TargetSha = TargetSha };
+        // Not: bu yol yalnız run ortasında, topolojide OLMAYAN bir id için satır doğurur — harici projeler
+        // topolojiden gelir, o yüzden burada harici bir satır oluşamaz.
         Projects.Add(row);
         return row;
     }

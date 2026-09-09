@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
@@ -149,9 +149,9 @@ public partial class MainWindow : Window
         // çökertirdi). Null-safe desen (kardeş guard'larla — saved.Configuration is { }/saved.PerfMode is { } —
         // hizalı).
         if (saved.LayerPatterns is { Count: > 0 }) _vm.LayerPatterns = saved.LayerPatterns;
-        // [K5 · design v1.14.0 §9] Kalıcı harici proje listesini AYNI yerde seed et (LayerPatterns'ın yanı
-        // başında) — null-safe desen kardeşleriyle hizalı. Motor bu turda TÜKETMİYOR: seed yalnız App içi
-        // listeyi doldurur, hiçbir IPC/Sync tetiklemez.
+        // [design v1.14.0 §9 · externals] Kalıcı harici proje listesini AYNI yerde seed et (LayerPatterns'ın
+        // yanı başında) — null-safe desen kardeşleriyle hizalı. Seed yalnız App içi listeyi doldurur, hiçbir
+        // IPC/Sync tetiklemez; liste bir sonraki Sync/Build komutuyla motora gider.
         if (saved.ExternalProjects is { Count: > 0 }) _vm.ExternalProjects = saved.ExternalProjects;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 

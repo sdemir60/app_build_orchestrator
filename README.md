@@ -1,4 +1,4 @@
-﻿# Build Orchestrator
+# Build Orchestrator
 
 A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
 for projects, derives the dependency graph, decides which projects actually changed (from git, never from
@@ -71,6 +71,9 @@ Key consequences of that layout:
   `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe`; without it, builds fail with a resolve
   error (the Supervisor itself still starts). "Open in Visual Studio" additionally needs a full VS IDE install.
 - **`git` on `PATH`** — the engine invokes `git` by name.
+- **Team Explorer**, only if you register a TFVC external project. `TF.exe` is resolved through the same
+  `vswhere` lookup that finds `MSBuild.exe`, and only when such a project is actually present — a git-only
+  setup never needs it.
 
 ## Build, test, run
 
@@ -132,9 +135,8 @@ the running instance first — tray icon → Exit).
 
    **External projects** are projects outside the repository root — each card is a path (a folder, a solution
    or a project file) and a source, Git or TFVC — kept in the order they are meant to build, before everything
-   the repository root discovers. Cards reorder the same way layer cards do: drag the grip. This section is UI
-   and persistence only for now: the list is saved with the rest of your settings, but nothing is scanned and
-   nothing reaches the build engine yet.
+   the repository root discovers. Cards reorder the same way layer cards do: drag the grip. What Build does
+   with them is step 4 below.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
@@ -154,7 +156,29 @@ the running instance first — tray icon → Exit).
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
-4. **Build / Rebuild** — from the split button and its menu:
+4. **External projects** *(optional)* — some projects a build depends on may live outside the repository. Add
+   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — the project's folder, or its `.sln` or
+   `.csproj` — and pick where it comes from, **Git** or **TFVC**. A folder is built through the single solution
+   it holds (or, failing that, its single project); if it holds several, point the path at the one to build —
+   the tool does not guess, it tells you. The working copy is found from the path upwards and nothing about it
+   is stored, so moving a project needs no edit here. Drag the grip to reorder: **top to bottom is build
+   order**.
+
+   Every Build updates these first, in that order, and compiles the ones that changed before touching the
+   repository. A git external is updated with a fetch and a fast-forward — never a `pull`, so nothing is
+   rewritten on your behalf; a TFVC external gets a `tf vc get`. **Uncommitted changes stop the run before it
+   starts**, with a line naming the project and its folder: commit, stash or shelve them and press Build
+   again. A branch that has diverged from its remote, or a path that no longer points at anything buildable,
+   stops the run the same way. A remote that cannot be reached only warns — the local version is built; so
+   does a path with no `.git` (or `$tf`) above it, which is simply built as-is. If an external fails to
+   compile, the run ends there and no repository project is built, because they would otherwise link against
+   its stale output and still go green.
+
+   Externals appear at the top of the project list in a group called **External**, and their revision shows in
+   the same slot as the commit pair — a git sha shortened to seven characters, a TFVC changeset as `C48213`.
+   The second Build skips an external whose revision has not moved.
+
+5. **Build / Rebuild** — from the split button and its menu:
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on a
      failure.
    - *Rebuild* — all projects, cached state ignored.
@@ -180,7 +204,7 @@ the running instance first — tray icon → Exit).
    what changed — which on a large repository takes seconds; the ribbon reads
    *"▸ Starting — resolving what to build"* and the console lists each step as it completes. A stop in that
    window is a real stop, and it still compiles nothing.
-5. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
+6. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
    post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
    reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. To carry on, press
    *Build* again: everything that already succeeded is skipped as up to date, so only the remaining work runs.
@@ -380,7 +404,7 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 
 ## Known limits (v1)
 
-- **One repository at a time.**
+- **One repository at a time.** External projects are updated and compiled ahead of the main work, but they never enter its graph — no edges, no dependents, no incremental cascade.
 - **No build-output isolation for worktrees.** Only `obj` is isolated (per project id, in worktree mode); the
   shared `OutDir` is intentionally left alone for Visual Studio parity, so builds of different branches write
   their output to the same place.

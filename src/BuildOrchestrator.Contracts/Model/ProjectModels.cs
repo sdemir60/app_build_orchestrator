@@ -27,7 +27,11 @@ public sealed record ProjectNode(
     bool? WillBuild,                        // T53: dirty=true, güncel=false, imza-yok/pre-Sync=null
     // WillBuild'in GEREKÇESİ (kullanıcıya gösterilir). Alan SONA ve default'lu: eski NDJSON/plan üreticileri
     // onu yazmaz ve null olarak çözülür — o hâlde yüzey jenerik metne düşer.
-    WillBuildReason? WillBuildReason = null)
+    WillBuildReason? WillBuildReason = null,
+    // [Harici projeler] Bu düğüm ana repo DIŞINDAN gelen bir projeyse çalışma kopyasının VCS türü; sıradan
+    // projelerde null. Ayrı bir düğüm tipi AÇILMAZ: hariciler sıradan ProjectNode olarak akar, böylece liste
+    // gruplaması, graf bandı ve filtreler onları bedavaya taşır — rozet yalnız bu alandan okunur.
+    VcsKind? ExternalVcs = null)
 {
     // Derleyicinin ürettiği record eşitliği, IReadOnlyList<string> alanlarında EqualityComparer<T>.Default
     // kullanır; List<string> Equals'ı override etmediği için bu referans eşitliğine düşer (JSON round-trip
@@ -44,7 +48,8 @@ public sealed record ProjectNode(
         && LayerName == other.LayerName
         && InCycle == other.InCycle
         && WillBuild == other.WillBuild
-        && WillBuildReason == other.WillBuildReason;
+        && WillBuildReason == other.WillBuildReason
+        && ExternalVcs == other.ExternalVcs;
 
     public override int GetHashCode()
     {
@@ -59,6 +64,7 @@ public sealed record ProjectNode(
         hash.Add(LayerName);
         hash.Add(InCycle);
         hash.Add(WillBuild);
+        hash.Add(ExternalVcs);
         return hash.ToHashCode();
     }
 }
@@ -127,6 +133,40 @@ public sealed record BuildState(
     // Succeeded KALIR — derleme gerçekten başarılıydı; bu ortogonal bir uyarıdır, sonucun kendisi değil.
     // Alan SONA ve default'lu eklendi: eski build-state.json kayıtları alansızdır ve false olarak çözülür.
     bool DepIssue = false);
+
+/// <summary>
+/// Bir harici projenin çalışma kopyasının hangi sürüm kontrol sistemiyle güncelleneceği — kullanıcının
+/// Ayarlar'da SEÇTİĞİ değer (design v1.14.0 §9: "Source seçimi... yalnız bu ikisi"). Tel üzerinde camelCase
+/// METİN taşınır ("git"/"tfvc"), sayı olarak DEĞİL — üyeleri sonradan yeniden sıralamak eski satırların anlamını
+/// kaydırmaz. Kullanıcı metni ve dosya biçimi aynı iki sözcüğü <see cref="VcsKinds"/> üzerinden kullanır.
+/// </summary>
+public enum VcsKind { Git, Tfvc }
+
+/// <summary>
+/// <see cref="VcsKind"/>'ın kullanıcıya görünen / dosyaya yazılan metni — TEK eşleme yeri (Settings dosyası,
+/// konsol satırları ve tel aynı sözcükleri kullanır; kopya YASAK). Bilinmeyen ya da eksik metin
+/// <see cref="VcsKind.Git"/>'e düşer (design v1.14.0 §9: "eksik/bilinmeyen vcs sessizce git'e düşer").
+/// </summary>
+public static class VcsKinds
+{
+    public static string Label(VcsKind kind) => kind == VcsKind.Tfvc ? "tfvc" : "git";
+
+    public static VcsKind Parse(string? text) => text == "tfvc" ? VcsKind.Tfvc : VcsKind.Git;
+}
+
+/// <summary>
+/// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi VCS'inden güncellenip derlenen bir proje (ör. müşteriye
+/// özel mail/OCR bileşenleri). Ayarlar'daki bir kartın birebir karşılığı: bir yol ve bir kaynak.
+///
+/// <para><b>Yol bir klasör, bir <c>.sln</c> ya da bir <c>.csproj</c> olabilir</b> (design v1.14.0 §9); derlenecek
+/// hedef, görünen ad ve çalışma kopyasının kökü her koşuda ondan yeniden çözülür
+/// (<c>Core/Externals/ExternalTargetResolver</c>, <c>VcsDetector</c>) — hiçbiri persist edilmez, böylece
+/// bayatlayamazlar. Kimlik çözülen hedef dosyadır: build-state anahtarı, IPC ProjectId'si, proje logu ve liste
+/// satırının Id'si odur.</para>
+/// </summary>
+/// <param name="Path">Klasör, solution ya da proje dosyası — kullanıcının yazdığı gibi.</param>
+/// <param name="Vcs">Çalışma kopyasının sürüm kontrol türü — kullanıcının seçimi; tespit edilmez.</param>
+public sealed record ExternalProject(string Path, VcsKind Vcs);
 
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);

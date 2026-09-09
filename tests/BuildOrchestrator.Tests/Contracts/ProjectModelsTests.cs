@@ -36,6 +36,27 @@ public class ProjectModelsTests
     }
 
     [Fact]
+    public void ExternalProject_round_trips_through_ipc_json()
+    {
+        var external = new ExternalProject(@"D:\ext\mail\Mail.sln", VcsKind.Tfvc);
+        string json = JsonSerializer.Serialize(external, IpcJson.Options);
+        Assert.Contains("\"path\":", json);   // camelCase
+        Assert.Contains("\"vcs\":\"tfvc\"", json); // enum METİN olarak
+        var back = JsonSerializer.Deserialize<ExternalProject>(json, IpcJson.Options)!;
+        Assert.Equal(external, back);
+    }
+
+    [Theory]
+    [InlineData(VcsKind.Git, "\"git\"")]
+    [InlineData(VcsKind.Tfvc, "\"tfvc\"")]
+    public void VcsKind_serializes_camelCase_text(VcsKind kind, string expected)
+    {
+        // Tel üzerinde METİN taşınır: sonradan enum üyelerini yeniden sıralamak eski NDJSON satırlarının
+        // anlamını kaydıramaz.
+        Assert.Equal(expected, JsonSerializer.Serialize(kind, IpcJson.Options));
+    }
+
+    [Fact]
     public void Worktree_round_trips_with_ipc_json_options_and_omits_null_diskSizeBytes()
     {
         var worktree = new Worktree("wt-1", "feature/x", @"D:\repo\.worktrees\wt-1", false, null);
