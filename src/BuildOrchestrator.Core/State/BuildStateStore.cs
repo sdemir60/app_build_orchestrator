@@ -185,8 +185,9 @@ public sealed class BuildStateStore
     /// anahtarlar çıkar. Önek ayraçla kapatılır (<c>C:\repo</c> isteği <c>C:\repo2\...</c>'yi ETKİLEMEZ) ve
     /// karşılaştırma <see cref="StringComparison.OrdinalIgnoreCase"/>'tir. Silinmiş/yeniden adlandırılmış
     /// projelerin artık kayıtları da bu süpürmeye takılır.
-    /// <para>Eşleşme yoksa dosyaya HİÇ dokunulmaz (yazım yok, rename yarışı yok). Bozuk yol ya da okunamaz
-    /// dosya fırlatmaz, 0 döner — <see cref="Load"/>'un never-throw sözleşmesiyle aynı çizgi.</para>
+    /// <para>Eşleşme yoksa dosyaya HİÇ dokunulmaz (yazım yok, rename yarışı yok) — <see cref="Write"/>'ın
+    /// "değişen bir şey yok" sözleşmesi. Bozuk yol ya da okunamaz dosya fırlatmaz, 0 döner — <see cref="Load"/>'un
+    /// never-throw sözleşmesiyle aynı çizgi.</para>
     /// </summary>
     public int RemoveUnderRoot(string rootPath)
     {
@@ -200,33 +201,15 @@ public sealed class BuildStateStore
             return 0; // bozuk yol → temizlenecek kayıt yok; Clean akışı bunun için durmaz
         }
 
-        _writeGate.Wait();
-        try
+        int removed = 0;
+        Write(map =>
         {
-            var map = new Dictionary<string, BuildState>(Load(), StringComparer.OrdinalIgnoreCase);
             var doomed = map.Keys.Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (doomed.Count == 0) return 0; // dosyayı YENİDEN YAZMA — dokunulmamış kalır
-
             foreach (string key in doomed) map.Remove(key);
-
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            string tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                File.WriteAllText(tmp, JsonSerializer.Serialize(map, Json));
-                MoveAtomicWithRetry(tmp, _path);
-            }
-            catch
-            {
-                try { File.Delete(tmp); } catch { /* best-effort, temizlik başarısızlığı orijinal hatayı gölgelemez */ }
-                throw;
-            }
-            return doomed.Count;
-        }
-        finally
-        {
-            _writeGate.Release();
-        }
+            removed = doomed.Count;
+            return removed > 0; // 0 ⇒ Write dosyayı YENİDEN YAZMAZ — dokunulmamış kalır
+        });
+        return removed;
     }
 
     /// <summary>
