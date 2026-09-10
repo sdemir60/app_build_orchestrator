@@ -383,6 +383,67 @@ public class GitServiceTests
         Assert.NotNull(result.Error);
     }
 
+    /// <summary>
+    /// [v1.16.0] Uzak uçtan mesafe: alt bardaki <c>N behind</c> chip'i ve Sync'in mesafe satırı bu tek
+    /// sayıdan beslenir. Ölçüm YEREL bir sorgudur — uzak uç Sync'in ref-only fetch'iyle çözülmüştür.
+    /// </summary>
+    [Fact]
+    public async Task CountBehindAsync_counts_the_commits_the_local_head_is_missing()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.txt", "v1");
+        upstream.CommitAll("c1");
+        string clone = upstream.CloneFull();
+        upstream.WriteFile("a.txt", "v2");
+        upstream.CommitAll("c2");
+        upstream.WriteFile("a.txt", "v3");
+        string target = upstream.CommitAll("c3");
+
+        // Üretimde bu sırayı Sync kurar: önce ref-only fetch (uzak uç yerel nesne veritabanına iner), sonra
+        // mesafe ölçümü. Fetch olmadan hedef commit yerelde YOKTUR.
+        var svc = new GitService(Runner, clone);
+        await svc.FetchRefOnlyAsync(upstream.CurrentBranchName());
+
+        var behind = await svc.CountBehindAsync(target);
+
+        Assert.True(behind.Success);
+        Assert.Equal(2, behind.Value);
+    }
+
+    /// <summary>
+    /// Yerelde OLMAYAN bir hedef (fetch yapılmamış) sayı üretmez — tanımlı bir hata döner. Çağıran bunu
+    /// "mesafe bilinmiyor" diye okur: chip çizilmez, konsola uydurma bir sayı yazılmaz.
+    /// </summary>
+    [Fact]
+    public async Task CountBehindAsync_reports_a_defined_error_for_a_target_the_clone_has_never_seen()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.txt", "v1");
+        upstream.CommitAll("c1");
+        string clone = upstream.CloneFull();
+        upstream.WriteFile("a.txt", "v2");
+        string unseen = upstream.CommitAll("c2");
+
+        var behind = await new GitService(Runner, clone).CountBehindAsync(unseen);
+
+        Assert.False(behind.Success);
+        Assert.NotNull(behind.Error);
+    }
+
+    [Fact]
+    public async Task CountBehindAsync_is_zero_when_the_local_head_already_has_everything()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.txt", "v1");
+        string head = upstream.CommitAll("c1");
+        string clone = upstream.CloneFull();
+
+        var behind = await new GitService(Runner, clone).CountBehindAsync(head);
+
+        Assert.True(behind.Success);
+        Assert.Equal(0, behind.Value);
+    }
+
     [Fact]
     public async Task GetHeadCommitAsync_with_missing_git_executable_returns_defined_error_without_throwing()
     {

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
@@ -5,118 +6,151 @@ using BuildOrchestrator.Core.Discovery;
 namespace BuildOrchestrator.Core.Incremental;
 
 /// <summary>
-/// [Task 19 wiring] Supervisor kompozisyon kökü (Program.cs) ile <see cref="IncrementalPlanner"/> arasındaki
-/// glue: her projenin build-etkileyen dosyalarını (csproj + <see cref="EvaluatedProject.CompileFiles"/>)
-/// <b>repo-relative, `/`-normalize edilmiş</b> yollara çevirip (deferred Task 7b) <see
-/// cref="IncrementalPlanner.ComputeCommittedFingerprint"/>'e verir, working-tree dirty yollarını proje
-/// dizinine göre projeye atfeder ve <see cref="IncrementalPlanner.ComputeWillBuildWithSignatures"/>'ı sürer.
-/// <para>
-/// §4: DLL/bin/obj timestamp'ı ASLA okunmaz — committed terim git blob SHA'sından (harita), dirty terim
-/// yalnız <paramref name="dirtyRepoRelativePaths"/> ile filtrelenen kaynak dosyaların İÇERİĞİNDEN gelir.
-/// </para>
-/// <para>
-/// <b>repoRoot varsayımı:</b> <paramref name="repoRoot"/> = git repo toplevel (workspace root ile aynı kabul
-/// edilir — OSYS için doğru). Workspace root git toplevel'ın bir alt dizini ise committed fingerprint boşa
-/// düşer → o proje never-committed sayılır → WillBuild=true (güvenli tarafta over-build; It-4'te toplevel
-/// çözümü ile giderilecek).
-/// </para>
+/// [Task 19 wiring][D1] Planlama kökleri (Supervisor'ın <c>Program</c>'ı ve Core'un Sync servisi) ile <see
+/// cref="IncrementalPlanner"/> arasındaki glue: her projenin GİRDİ KÜMESİNİ (<see cref="ProjectInputs"/>) bir
+/// kez toplar, içerik özetlerini <see cref="SourceHashCache"/>'ten okur ve planı imzalarla bağlar.
+///
+/// <para><b>Neden bir NESNE (statik metot değil):</b> aynı koşu planı BİRDEN ÇOK kez bağlar — Sync hem
+/// <c>Safe</c> (derlenecek küme) hem <c>Fast</c> (yalnız kendi dosyası değişenler) geçişini yapar, Build de
+/// aynı ikiliyi satır etiketleri için ister. Girdi toplama (klasör taraması) ve fingerprint hesabı bu
+/// geçişler arasında PAYLAŞILIR; statik bir metot her çağrıda diski yeniden tarardı.</para>
+///
+/// <para><b>§4:</b> DLL/bin/obj timestamp'ı ASLA okunmaz. Okunan tek şey KAYNAK dosyaların içeriğidir; stat
+/// bilgisi yalnız <see cref="SourceHashCache"/>'in "yeniden özetlemeye gerek var mı" kapısıdır.</para>
+///
+/// <para><b>Kök varsayımı:</b> <c>workspaceRoot</c> kullanıcının çalışma alanı köküdür ve imzanın yol
+/// terimleri ona göredir. Kökün DIŞINDA kalan girdiler (harici köklerden gelen projeler, kökün üstündeki bir
+/// <c>Directory.Build.props</c>) tam yolla temsil edilir — bkz. <see cref="PathTerm"/>.</para>
 /// </summary>
-public static class IncrementalRunBinder
+public sealed class IncrementalRunBinder
 {
-    /// <summary>Bir mutlak yolu repo köküne göre relative + `/`-normalize eder (git ls-tree / porcelain formatı ile eşleşsin).</summary>
-    public static string ToRepoRelativeNormalized(string repoRoot, string absolutePath) =>
-        Path.GetRelativePath(repoRoot, absolutePath).Replace('\\', '/');
+    private readonly BuildPlan _plan;
+    private readonly string _workspaceRoot;
+    private readonly SourceHashCache _hashes;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<ProjectInput>> _inputsById;
+    // Fingerprint'ler Prefill'de PARALEL ısıtılır (aşağıda) ve DFS'ten tek tek okunur — eşzamanlı sözlük şart.
+    private readonly ConcurrentDictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Bir projenin build-etkileyen dosyalarının (csproj + compile dosyaları) MUTLAK yolları.</summary>
-    public static IReadOnlyList<string> BuildFiles(string projectId, EvaluatedProject? evaluated)
-    {
-        var files = new List<string> { projectId };
-        if (evaluated is not null) files.AddRange(evaluated.CompileFiles);
-        return [.. files.Select(Path.GetFullPath)];
-    }
-
-    /// <summary>Bir projenin build-etkileyen dosyalarının (csproj + compile dosyaları) repo-relative, `/`-normalize edilmiş yolları.</summary>
-    public static IReadOnlyList<string> RepoRelativeBuildFiles(string repoRoot, string projectId, EvaluatedProject? evaluated) =>
-        [.. BuildFiles(projectId, evaluated).Select(f => ToRepoRelativeNormalized(repoRoot, f))];
-
-    /// <summary>
-    /// Planı incremental willBuild + imza haritası ile bağlar. <paramref name="evaluatedById"/> projectId (tam
-    /// csproj yolu) → <see cref="EvaluatedProject"/>; <paramref name="dirtyRepoRelativePaths"/> git'ten gelen
-    /// (repo-relative, `/`) working-tree dirty yolları. Dönen imza haritası yalnız <b>non-null</b> imzaları içerir
-    /// (hollow/never-committed projeler persist edilmez).
-    /// <para>[Task 11] <paramref name="buildCycles"/> kill switch'i buradan geçirilir — bkz.
-    /// <see cref="IncrementalPlanner.ComputeWillBuild"/>. Varsayılanı YOKTUR: bu metodun İKİ çağıranı vardır
-    /// (Supervisor'ın run planlayıcısı ve Sync'in analizi) ve ikisi de önizleme yayınlar; biri değeri sessizce
-    /// atlarsa o yüzeydeki will-dot'lar motorla ayrışır.</para>
-    /// </summary>
-    public static (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) Bind(
+    /// <param name="plan">Bağlanacak plan (kimlikleri ana köke taşınmış olmalıdır — bkz. <see
+    /// cref="BuildOrchestrator.Core.Planning.ProjectIdentityRebase"/>).</param>
+    /// <param name="evaluatedById">projectId (tam csproj yolu) → değerlendirme; eksik proje yalnız kendi
+    /// klasörünün taramasıyla temsil edilir.</param>
+    /// <param name="workspaceRoot">Çalışma alanı kökü — imzanın yol terimleri buna göredir.</param>
+    /// <param name="hashes">Kaynak içerik özetlerinin önbelleği (koşu boyunca TEK örnek).</param>
+    /// <param name="physicalPathOf">Kimlik yolu → diskteki gerçek yol. Worktree koşusunda havuzdaki kopyayı
+    /// gösterir; <c>null</c> ⇒ in-place.</param>
+    public IncrementalRunBinder(
         BuildPlan plan,
         IReadOnlyDictionary<string, EvaluatedProject> evaluatedById,
-        string repoRoot,
-        string? headCommit,
-        IReadOnlyDictionary<string, string> trackedBlobHashes,
-        IReadOnlyList<string> dirtyRepoRelativePaths,
-        IReadOnlyDictionary<string, BuildState> state,
-        bool inPlace,
-        bool buildCycles,
-        DependentMode mode,
-        IReadOnlySet<string>? externalProjectIds = null)
+        string workspaceRoot,
+        SourceHashCache hashes,
+        Func<string, string>? physicalPathOf = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(evaluatedById);
-        ArgumentNullException.ThrowIfNull(repoRoot);
-        ArgumentNullException.ThrowIfNull(trackedBlobHashes);
-        ArgumentNullException.ThrowIfNull(dirtyRepoRelativePaths);
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
+        ArgumentNullException.ThrowIfNull(hashes);
+
+        _plan = plan;
+        _workspaceRoot = Path.GetFullPath(workspaceRoot);
+        _hashes = hashes;
+        // Girdi toplama proje başına BAĞIMSIZDIR ve büyük kısmı klasör taramasıdır (IO). Gerçek OSYS'te 177
+        // projenin toplamı seri koşuşta ölçülebilir bir gecikmeydi; paralel toplamak sonucu değiştirmez.
+        var collected = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
+        Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 }, node =>
+            collected[node.Id] = ProjectInputs.Collect(
+                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot, physicalPathOf));
+        _inputsById = collected;
+    }
+
+    /// <summary>Bu koşuda özeti gerekecek TÜM fiziksel dosyalar (tekil).</summary>
+    public IReadOnlyList<string> PhysicalPaths =>
+        [.. _inputsById.Values.SelectMany(i => i).Select(i => i.PhysicalPath).Distinct(StringComparer.OrdinalIgnoreCase)];
+
+    /// <summary>
+    /// Önbellekte olmayan dosyaların özetlerini PARALEL hesaplar (bkz. <see cref="SourceHashCache.Prefill"/>).
+    /// Bağlamadan ÖNCE çağrılır: aksi hâlde ilk geçiş tek tek, sıralı okunurdu — ölçümde soğuk diskte dosya
+    /// başına 8,89 ms yerine 1,86 ms.
+    /// </summary>
+    /// <param name="announce">Okunacak dosya sayısı, okuma başlamadan önce (konsol satırı için).</param>
+    public int Prefill(Action<int>? announce = null, CancellationToken ct = default)
+    {
+        int read = _hashes.Prefill(PhysicalPaths, announce, ct);
+
+        // Fingerprint'ler de BURADA, proje başına paralel ısıtılır. Ölçüldü: sıcak önbellekte bile bedelin
+        // yarısı stat geçişiydi ve bağlama DFS'i tek iş parçacığında ilerlediği için o geçiş seri koşuyordu
+        // (gerçek OSYS'te 177 proje / 22.982 dosya: 544 ms). Projeler birbirinden bağımsız olduğundan ısıtma
+        // paralelleştirilebilir; hesaplanan değer birebir aynıdır, yalnız daha erken ve daha hızlı hazırdır.
+        Parallel.ForEach(
+            _plan.Nodes,
+            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            node => FingerprintOf(node));
+
+        return read;
+    }
+
+    /// <summary>
+    /// Planı incremental willBuild + imza haritası ile bağlar. Dönen imzalar <b>her zaman non-null</b>'dır:
+    /// karar diskten geldiği için hesaplanamayan bir imza yoktur (bkz. <see cref="IncrementalPlanner"/>).
+    /// </summary>
+    /// <param name="state">projectId → build-state kaydı (<see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>).</param>
+    /// <param name="buildCycles">[Task 11] Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>.
+    /// <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını açıkça yazar, yoksa o yüzeydeki önizleme
+    /// motorla ayrışır.</param>
+    /// <param name="mode">Safe (dirty + transitive dependent) ya da Fast (yalnız kendi terimi bayatlayanlar).</param>
+    public (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) Bind(
+        IReadOnlyDictionary<string, BuildState> state, bool buildCycles, DependentMode mode)
+    {
         ArgumentNullException.ThrowIfNull(state);
+        return IncrementalPlanner.ComputeWillBuildWithSignatures(
+            _plan, FingerprintOf, state, buildCycles, mode);
+    }
 
-        // Dirty yolları BİR KEZ mutlak yola çevir (proje dizinine göre atfetmek için) — git porcelain repo-relative verir.
-        var dirtyAbs = dirtyRepoRelativePaths
-            .Select(p => Path.GetFullPath(Path.Combine(repoRoot, p.Replace('/', Path.DirectorySeparatorChar))))
-            .ToList();
+    /// <summary>
+    /// [v1.16.0] Proje → KENDİ girdi dosyalarının içerik özeti (upstream ve configuration HARİÇ).
+    ///
+    /// <para>İmzadan ayrı yayınlanır çünkü ayrı bir soruyu cevaplar: "bu projenin kendi dosyaları değişti mi?"
+    /// Satırın <c>modified</c> ↔ <c>affected</c> ayrımı ve deftere yazılan <see cref="BuildState.BuiltContent"/>
+    /// bunu okur. <c>Fast</c> geçişinden türetilemez: bir bağımlılığın kaydı geçersizleştiğinde (hata sonrası)
+    /// Fast de "değişti" der ve satır kullanıcının hiç dokunmadığı bir projeye <c>modified</c> yazardı.</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, string?> ContentById =>
+        _plan.Nodes.ToDictionary(n => n.Id, FingerprintOf, StringComparer.OrdinalIgnoreCase);
 
-        bool IsExternal(ProjectNode node) => externalProjectIds is not null && externalProjectIds.Contains(node.Id);
+    /// <summary>Bir projenin girdi dosyaları (kimlik + fiziksel yol) — tanı ve test içindir.</summary>
+    public IReadOnlyList<ProjectInput> InputsOf(string projectId) =>
+        _inputsById.TryGetValue(projectId, out var inputs) ? inputs : [];
 
-        IReadOnlyList<string> DirtyFilesForNode(ProjectNode node)
-        {
-            // Harici projelerde local-diff terimi YOKTUR: fingerprint zaten çalışma kopyasının İÇERİĞİNDEN
-            // hesaplanır, yani commit'lenmemiş değişiklik oraya girer. Ana reponun dirty listesi de zaten
-            // başka bir ağacı anlatır.
-            if (IsExternal(node)) return [];
+    /// <summary>
+    /// Fingerprint koşu boyunca proje başına BİR KEZ hesaplanır: iki bağlama geçişi (Safe/Fast) ve SCC
+    /// kompoziti aynı değeri okur — hem ikinci bir stat geçişi ödenmez hem de iki geçiş aynı diski görür.
+    /// </summary>
+    private string? FingerprintOf(ProjectNode node) =>
+        _fingerprintById.GetOrAdd(node.Id, _ => IncrementalPlanner.ComputeContentFingerprint(
+            InputsOf(node.Id), logical => PathTerm(_workspaceRoot, logical), _hashes.HashOf));
 
-            string? dir = Path.GetDirectoryName(Path.GetFullPath(node.Id));
-            if (dir is null) return [];
-            string prefix = dir.EndsWith(Path.DirectorySeparatorChar) ? dir : dir + Path.DirectorySeparatorChar;
-            return dirtyAbs.Where(a => a.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
-        }
+    /// <summary>
+    /// [D5] Bir girdi dosyasının imzaya giren YOL terimi: çalışma alanı kökünün altındaysa köke göreli ve
+    /// <c>/</c>-normalize, değilse tam yol (yine <c>/</c>-normalize).
+    ///
+    /// <para>Köke göreli olmak zorunludur: worktree koşusunda dosyalar başka bir kökün altında yaşar ve tam
+    /// yol kullanılsaydı aynı içerik iki modda FARKLI imza üretirdi — worktree ile alınan tek bir Build'den
+    /// sonra her şey yeniden "derlenecek" görünürdü.</para>
+    ///
+    /// <para>Kök DIŞINDAKİ girdiler (harici köklerden gelen projeler, kökün üstündeki bir
+    /// <c>Directory.Build.props</c>) tam yolla temsil edilir: onların köke göreli bir kimliği yoktur ve
+    /// bulundukları yer koşudan koşuya değişmez.</para>
+    /// </summary>
+    public static string PathTerm(string workspaceRoot, string logicalPath)
+    {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
+        ArgumentNullException.ThrowIfNull(logicalPath);
 
-        string? CommittedFingerprintForNode(ProjectNode node)
-        {
-            var evaluated = evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null;
+        string full = Path.GetFullPath(logicalPath);
+        string relative = Path.GetRelativePath(workspaceRoot, full);
+        bool outside = Path.IsPathRooted(relative)
+            || relative.StartsWith("..", StringComparison.Ordinal);
 
-            // Harici kök ana reponun git ağacında değildir (TFVC'de git hiç yoktur) — terim diskteki
-            // içerikten gelir; bkz. IncrementalPlanner.ComputeContentFingerprint.
-            if (IsExternal(node))
-                return IncrementalPlanner.ComputeContentFingerprint(BuildFiles(node.Id, evaluated), TryReadFile);
-
-            return IncrementalPlanner.ComputeCommittedFingerprint(
-                trackedBlobHashes, RepoRelativeBuildFiles(repoRoot, node.Id, evaluated));
-        }
-
-        // Canlı build ↔ tarama yarışında kaybolan dosya fingerprint'i düşürmez, yalnız o terimi eler.
-        static string? TryReadFile(string path)
-        {
-            try { return File.ReadAllText(path); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-        }
-
-        var (boundPlan, signatures) = IncrementalPlanner.ComputeWillBuildWithSignatures(
-            plan, headCommit, DirtyFilesForNode, File.ReadAllText, CommittedFingerprintForNode, state, inPlace,
-            buildCycles, mode);
-
-        var nonNull = signatures
-            .Where(kv => kv.Value is not null)
-            .ToDictionary(kv => kv.Key, kv => kv.Value!, StringComparer.OrdinalIgnoreCase);
-
-        return (boundPlan, nonNull);
+        return (outside ? full : relative).Replace('\\', '/');
     }
 }

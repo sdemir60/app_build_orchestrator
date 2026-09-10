@@ -1281,31 +1281,98 @@ public class RunViewModelTests
         Assert.False(row.WillBuild);          // ama canlı succeeded→clean geçişi KORUNDU
     }
 
+    /// <summary>
+    /// [design v1.16.0 §2.4] Satırın karar etiketi CANLI geçişi izler: bir proje bu koşuda derlendiği anda
+    /// satır "up to date · just now" yazar, patladığı anda "failed · retry". Motorun bir sonraki önizlemesi
+    /// BEKLENMEZ — o önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık doğru olmayan bir
+    /// gerekçeyi ("modified") taşırdı.
+    /// </summary>
     [Fact]
-    public async Task Sync_completed_pushes_the_target_sha_onto_rows_that_already_exist_and_onto_later_ones()
+    public async Task A_finished_project_updates_the_facts_its_decision_label_reads()
     {
-        // [W1] Olay sırası SABİTTİR: buildPreview, syncCompleted'dan ÖNCE gelir. Kart hedef sha'yı render anında
-        // ata ağaçtan ÇEKSEYDİ (eski davranış) satır onu daha null'ken okur ve bir daha tazelenmezdi — ilk Sync'ten
-        // sonra slot BOŞ kalırdı. Değer artık satıra İTİLİR, yani sıradan bağımsızdır.
-        const string target = "b7e91d4c0affee1122334455667788990aabbcc";
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(WillBuildReason.SignatureChanged, row.WillBuildReason);   // ön koşul: "modified" diyordu
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+
+        Assert.False(row.WillBuild);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.False(row.OwnFilesChanged);
+        Assert.NotNull(row.LastBuiltAt);
+    }
+
+    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.</summary>
+    [Fact]
+    public async Task A_failed_project_reports_the_failure_as_its_reason()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "CS0103", null));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(WillBuildReason.LastFailed, row.WillBuildReason);
+        Assert.Null(row.LastBuiltAt);   // başarı yok → yaş da yok
+    }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — v1.16.0] Bu test "hedef sha her satıra İTİLİR ve olay sırasından bağımsızdır" diye
+    /// pinliyordu: <c>buildPreview</c> deterministik olarak <c>syncCompleted</c>'dan önce geldiği için kart
+    /// hedefi ata ağaçtan ÇEKSEYDİ satır onu null'ken okur ve bir daha tazelenmezdi. Satırda artık hedef sha
+    /// YOK — sağ yuvada kararın kendisi duruyor ve hedef commit motorda kalıyor (konsol satırı + pull).
+    /// Yerini alan iddia, aynı olay sırası sorusunun YENİ hâlidir: <c>syncCompleted</c>'ın taşıdığı MESAFE
+    /// (<c>Behind</c>) alt bardaki chip'e ulaşmalı ve worktree modunda chip ÇİZİLMEMELİDİR.
+    /// </summary>
+    [Fact]
+    public async Task Sync_completed_carries_the_distance_from_the_remote_to_the_action_bar()
+    {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\early.csproj", "Early", true, "aaaaaaa")]));
-        Assert.Null(Assert.Single(vm.Projects).TargetSha); // syncCompleted henüz gelmedi
+        Assert.Null(vm.Behind);
+        Assert.False(vm.CanShowBehind);       // Sync yapılmadan chip yok
 
-        vm.OnEvent(new SyncCompletedEvent("main", target, FetchDegraded: false, 1, 0));
-        Assert.Equal(target, Assert.Single(vm.Projects).TargetSha); // ÖNCE doğmuş satır tazelendi
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
 
-        // Sonradan doğan satır da (run ortasında ilk kez görülen proje) hedefi yeni bir Sync beklemeden alır.
-        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\late.csproj", "Late"));
-        Assert.Equal(target, vm.Projects.Single(p => p.Name == "Late").TargetSha);
+        Assert.Equal(3, vm.Behind);
+        Assert.True(vm.CanShowBehind);
 
-        // Topolojinin YERİNDE uzlaştırma yolu da (yeni bir proje eklendiğinde) aynı değeri taşır.
-        vm.OnEvent(new WorkspaceTopologyEvent(
-            Nodes: [Node(@"C:\p\early.csproj", "Early", 0), Node(@"C:\p\added.csproj", "Added", 1)],
-            Cycles: [], Solutions: [], LayerWarnings: []));
-        Assert.Equal(target, vm.Projects.Single(p => p.Name == "Added").TargetSha);
+        // Güncel: chip düşer (sayı biliniyor ama sıfır).
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 0));
+        Assert.False(vm.CanShowBehind);
+
+        // Çevrimdışı: mesafe BİLİNMEZ → chip yine yok (uydurma sayı gösterilmez).
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: true, 1, 0));
+        Assert.Null(vm.Behind);
+        Assert.False(vm.CanShowBehind);
+    }
+
+    /// <summary>Worktree modunda (aktif olmayan branch seçili) chip HİÇ çizilmez: derleme worktree'den
+    /// yapılıyor, ana ağacı ilerletmenin o koşuya etkisi olmazdı.</summary>
+    [Fact]
+    public async Task The_behind_chip_stays_hidden_while_another_branch_is_selected()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
+        Assert.True(vm.CanShowBehind);
+
+        vm.SelectBranch(new BranchRef("feature/x", "bbb", IsActive: false, IsRemoteTracking: false));
+
+        Assert.True(vm.IsWorktreeForced);
+        Assert.False(vm.CanShowBehind);
     }
 
     [Fact] // buildPreview arrives BEFORE the per-project events; ProjectStarted on an already-previewed row must still flip it to Started

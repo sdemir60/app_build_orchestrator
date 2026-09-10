@@ -56,8 +56,14 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
     /// kesikli çember çizilerek yapılan eski çözüm 8px'te tırtıklıydı). Ölçülen artış <b>+2</b> nesnedir
     /// (şablon kökü <c>Grid</c> + ikinci <c>Ellipse</c>): 40 → <b>42</b>. Tavan aynı +1 marjı korumak için
     /// 43'e alındı — bu bir bütçe GEVŞETMESİ değildir, tasarımın getirdiği maliyetin ölçülüp yazılmasıdır;
-    /// marj daralmadı, yani eager bir alt-ağaç geri sızarsa test yine kırılır.</para></summary>
-    private const int UnhoveredRowObjectCeiling = 43;
+    /// marj daralmadı, yani eager bir alt-ağaç geri sızarsa test yine kırılır.</para>
+    ///
+    /// <para>[design v1.16.0 §2.4] Sağ yuvadaki commit çifti yerini KARAR ETİKETİNE bıraktı ve etiket İKİ
+    /// RENKLİDİR: asıl sözcük (derlenecekse secondary) ve "·" sonrası kuyruk (her zaman faint). Tek bir
+    /// <c>TextBlock</c> bunu yapamaz — iki <c>Run</c> gerekir. Ölçülen artış <b>+1</b> nesnedir (düz metinli
+    /// TextBlock zaten bir Run üretiyordu): 42 → <b>43</b>. Tavan aynı +1 marjıyla 44'e alındı; marj
+    /// daralmadı.</para></summary>
+    private const int UnhoveredRowObjectCeiling = 44;
 
     /// <summary>
     /// Liste kurulumunun maliyeti satır SAYISINDAN bağımsızdır — sanallaştırma yalnız viewport'u realize eder.

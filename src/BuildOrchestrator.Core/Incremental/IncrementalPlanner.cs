@@ -56,27 +56,21 @@ using BuildOrchestrator.Core.Planning;
 /// </para>
 ///
 /// <para>
-/// <b>Hollow / pre-Sync:</b> <paramref name="headCommit"/> <c>null</c> ise (henüz Sync yapılmamış / anlamlı bir
-/// HEAD yok) TÜM düğümler için imza <c>null</c> döner — <see cref="WillBuildEvaluator.Evaluate"/> bunu hollow
-/// (<c>WillBuild=null</c>) olarak yorumlar; bu durumda <paramref name="committedFingerprintForNode"/> hiç
-/// çağrılmaz (kısa devre). Bu, <see cref="BuildSignature.Compute"/>'ın null committedFingerprint'i TOLERE
-/// ETMESİNDEN (deterministik NullMarker ile) farklı bir üst-seviye karardır — burada headCommit=null açıkça
-/// "henüz anlamlı bir imza hesaplanamaz" sinyali olarak ele alınır. <paramref name="headCommit"/>, [A6
-/// refinement — Task 7b] sonrası SADECE bu hollow kapısı için kullanılır; proje imzasının "committed" terimi
-/// artık bu parametreden DEĞİL, <paramref name="committedFingerprintForNode"/>'dan (per-project) gelir — bkz.
-/// <see cref="ComputeCommittedFingerprint"/> tip özeti.
+/// <b>[D1] İmza her zaman hesaplanabilir.</b> Karar diskteki içerikten geldiği için "anlamlı bir taban yok"
+/// diye bir hâl KALMADI: commit'i olmayan bir repo, git'i bozuk bir makine ya da sürüm kontrolü hiç olmayan
+/// bir klasör de tam bir karar üretir (hiç derlenmemiş projeler "derlenecek", diğerleri imzalarıyla
+/// karşılaştırılır). Eskiden buraya <c>headCommit</c> verilirdi ve <c>null</c> ise TÜM düğümler hollow
+/// (<c>WillBuild=null</c>) dönerdi — o kapı, imzanın git'ten beslendiği dönemin artığıydı. Hollow durum artık
+/// yalnız App tarafında ve yalnız "henüz hiç önizleme gelmedi" anlamında vardır.
 /// </para>
 /// </summary>
 public static class IncrementalPlanner
 {
     /// <param name="plan">Bir <see cref="BuildPlan"/>. Nodes'un topolojik sıralı olması GEREKMEZ (bkz. tip özeti "Safe").</param>
-    /// <param name="headCommit">HEAD commit SHA'sı; <c>null</c> ise hollow (tüm plan için WillBuild=null). [A6 refinement] Proje imzasına DOĞRUDAN girmez — yalnız hollow kapısı içindir, bkz. <paramref name="committedFingerprintForNode"/>.</param>
-    /// <param name="dirtyFilesForNode">Düğüm → bu projeye ait working-tree dirty dosya yollarının listesi
-    /// (zaten bu projeye filtrelenmiş — <see cref="BuildSignature.Compute"/>'ın beklediği gibi). Dirty yoksa boş liste.</param>
-    /// <param name="readFileContent">path → o dosyanın güncel içeriği (yalnız <paramref name="inPlace"/>=true iken, filtrelenmiş dirty dosyalar için çağrılır).</param>
-    /// <param name="committedFingerprintForNode">[A6 refinement — Task 7b] Düğüm → bu projenin PER-PROJECT committed fingerprint'i (bkz. <see cref="ComputeCommittedFingerprint"/> — GitService.GetTrackedBlobHashesAsync haritası ∩ projenin build-etkileyen dosyaları üzerinden çağıran tarafından önceden hesaplanır). Repo-GLOBAL headCommit'in YERİNİ alır: bir commit, yalnız BU projenin committed dosyalarını gerçekten değiştirdiyse bu terim değişir. <c>null</c> tolere edilir (proje hiç commit'lenmemiş / no-commits repo).</param>
+    /// <param name="contentFingerprintForNode">[D1] Düğüm → bu projenin girdi dosyalarının DİSKTEKİ içeriğini
+    /// temsil eden hash (bkz. <see cref="ComputeContentFingerprint"/>). <c>null</c> tolere edilir (hiçbir girdi
+    /// okunamadı) — <see cref="BuildSignature.Compute"/> onu sabit bir null-işaretiyle imzaya katar.</param>
     /// <param name="state">projectId → <see cref="BuildState"/> (bkz. <see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>). Kayıt yoksa never-built.</param>
-    /// <param name="inPlace">true → in-place mod (local-diff dahil); false → worktree/committed (local-diff atlanır).</param>
     /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>'ta <c>true</c>.
     /// <c>false</c> ⇒ üyeler <c>WillBuild=false</c>'a kısa devre yapar (<see cref="WillBuildEvaluator"/>),
     /// <c>true</c> ⇒ sıradan imza/state mantığına tabidirler — SCC'nin bileşik imzası (bkz.
@@ -86,58 +80,35 @@ public static class IncrementalPlanner
     /// <returns><paramref name="plan"/> ile aynı düğümler, her birinin <see cref="ProjectNode.WillBuild"/> alanı doldurulmuş.</returns>
     public static BuildPlan ComputeWillBuild(
         BuildPlan plan,
-        string? headCommit,
-        Func<ProjectNode, IReadOnlyList<string>> dirtyFilesForNode,
-        Func<string, string> readFileContent,
-        Func<ProjectNode, string?> committedFingerprintForNode,
+        Func<ProjectNode, string?> contentFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
-        bool inPlace,
         bool buildCycles,
         DependentMode mode = DependentMode.Safe)
-        => ComputeWillBuildWithSignatures(
-            plan, headCommit, dirtyFilesForNode, readFileContent, committedFingerprintForNode, state, inPlace,
-            buildCycles, mode).Plan;
+        => ComputeWillBuildWithSignatures(plan, contentFingerprintForNode, state, buildCycles, mode).Plan;
 
     /// <summary>
     /// [Task 19 wiring] <see cref="ComputeWillBuild"/> ile AYNI hesap, ek olarak her düğüm için hesaplanan
     /// (topological memoize edilmiş) imzayı da döner. Supervisor'ın kompozisyon kökü, bir proje
     /// <c>projectSucceeded</c> olduğunda <see cref="BuildState.BuiltSignature"/>'ı bu haritadan persist eder —
-    /// böylece BİR SONRAKİ <c>Build</c> koşusu incremental olur (temiz projeler skip). Hollow (headCommit=null)
-    /// durumda TÜM imzalar <c>null</c>'dır (persist edilmez).
+    /// böylece BİR SONRAKİ <c>Build</c> koşusu incremental olur (temiz projeler skip).
     /// </summary>
-    public static (BuildPlan Plan, IReadOnlyDictionary<string, string?> SignatureById) ComputeWillBuildWithSignatures(
+    public static (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) ComputeWillBuildWithSignatures(
         BuildPlan plan,
-        string? headCommit,
-        Func<ProjectNode, IReadOnlyList<string>> dirtyFilesForNode,
-        Func<string, string> readFileContent,
-        Func<ProjectNode, string?> committedFingerprintForNode,
+        Func<ProjectNode, string?> contentFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
-        bool inPlace,
         bool buildCycles,
         DependentMode mode = DependentMode.Safe)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(dirtyFilesForNode);
-        ArgumentNullException.ThrowIfNull(readFileContent);
-        ArgumentNullException.ThrowIfNull(committedFingerprintForNode);
+        ArgumentNullException.ThrowIfNull(contentFingerprintForNode);
         ArgumentNullException.ThrowIfNull(state);
 
         BuildState? StateLookup(string id) => state.TryGetValue(id, out var st) ? st : null;
 
-        if (headCommit is null)
-        {
-            // Hollow / pre-Sync: anlamlı bir imza yok — WillBuildEvaluator bunu null (hollow) olarak yorumlar.
-            // committedFingerprintForNode BURADA hiç çağrılmaz (kısa devre) — bkz. tip özeti "Hollow" notu.
-            var hollowSignatures = plan.Nodes.ToDictionary(
-                n => n.Id, _ => (string?)null, StringComparer.OrdinalIgnoreCase);
-            return (BuildPreview.ComputeWillBuild(plan, _ => null, StateLookup, buildCycles), hollowSignatures);
-        }
-
         var byId = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         // Fast frozen-upstream imzalarını da barındırdığı için "freshMemo" değil "computedMemo" — ikisi için de
-        // tek bir isim doğru. Değerler her zaman gerçek (non-null) imzadır; tip yalnız dönüş sözleşmesi
-        // (SignatureById, hollow dalında null taşır) ile aynı kalsın diye string?'tir.
-        var computedMemo = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        // tek bir isim doğru.
+        var computedMemo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var onStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // [A3] üye id → o üyenin SCC'sinin (sıralı) üye listesi. plan.Cycles, TopoSort/Tarjan'ın ürettiği
@@ -174,7 +145,7 @@ public static class IncrementalPlanner
 
         string Compute(ProjectNode node)
         {
-            if (computedMemo.TryGetValue(node.Id, out var done) && done is not null) return done;
+            if (computedMemo.TryGetValue(node.Id, out var done)) return done;
             // [A3] SCC üyesi: imza tek tek DEĞİL, component başına TEK kompozit olarak hesaplanır.
             if (componentOf.TryGetValue(node.Id, out var members)) return ComputeComponent(members);
             // Bir SCC'ye ait OLMAYAN kendine-bağımlılık (self-loop: TopoSort tek üyeli SCC'yi Cycles'a KOYMAZ)
@@ -184,8 +155,7 @@ public static class IncrementalPlanner
 
             var upstreamSignature = mode == DependentMode.Fast ? FrozenUpstream : (Func<string, string?>)Upstream;
             string signature = BuildSignature.Compute(
-                node, plan.Configuration, committedFingerprintForNode(node), dirtyFilesForNode(node),
-                readFileContent, upstreamSignature, inPlace);
+                node, plan.Configuration, contentFingerprintForNode(node), upstreamSignature);
 
             onStack.Remove(node.Id);
             computedMemo[node.Id] = signature;
@@ -223,10 +193,8 @@ public static class IncrementalPlanner
             {
                 var member = byId[id]; // members yalnız byId'de BULUNAN id'lerle kuruldu
                 sb.Append(BuildSignature.Compute(
-                    member, plan.Configuration, committedFingerprintForNode(member), dirtyFilesForNode(member),
-                    readFileContent,
-                    depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId),
-                    inPlace));
+                    member, plan.Configuration, contentFingerprintForNode(member),
+                    depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId)));
                 sb.Append(BuildSignature.ItemSeparator);
             }
             string composite = BuildSignature.HashText(sb.ToString());
@@ -242,92 +210,57 @@ public static class IncrementalPlanner
     }
 
     /// <summary>
-    /// [A6 refinement — Task 7b] Bir projenin PER-PROJECT committed fingerprint'i: <see
-    /// cref="BuildOrchestrator.Core.Git.GitService.GetTrackedBlobHashesAsync"/>'in döndürdüğü (repo-relative
-    /// path → blob SHA, HEAD'de) harita ile <paramref name="projectRepoRelativeFiles"/>'ın KESİŞİMİ üzerinden
-    /// deterministik (sıralı, case-insensitive) bir hash. Yalnız <see cref="BuildSignature.IsBuildAffecting"/>
-    /// dosyalar ve yalnız haritada BULUNAN (yani commit'lenmiş) dosyalar sayılır — projenin henüz commit'lenmemiş
-    /// YENİ bir dosyası (haritada yok) bu terimi ETKİLEMEZ; onun varlığı zaten working-tree dirty listesi
-    /// (in-place modda local-diff terimi) üzerinden ayrıca yakalanır.
-    /// <para>
-    /// Kesişim BOŞSA (proje hiç commit'lenmemiş VEYA repo'da commit yok → <paramref name="trackedBlobHashes"/>
-    /// boş) <c>null</c> döner — <see cref="BuildSignature.Compute"/> bunu sabit bir null-işaretiyle tolere eder.
-    /// </para>
-    /// <para>
-    /// Bu, eskiden TÜM projelere GLOBAL olarak enjekte edilen repo-HEAD commit SHA'sının YERİNİ alır: repo'da
-    /// ilişkisiz bir projeyi etkileyen bir commit artık bu projenin fingerprint'ini DEĞİŞTİRMEZ (bkz.
-    /// <c>IncrementalPlannerTests</c>: commit-granularity testleri).
-    /// </para>
-    /// </summary>
-    public static string? ComputeCommittedFingerprint(
-        IReadOnlyDictionary<string, string> trackedBlobHashes,
-        IReadOnlyList<string> projectRepoRelativeFiles)
-    {
-        ArgumentNullException.ThrowIfNull(trackedBlobHashes);
-        ArgumentNullException.ThrowIfNull(projectRepoRelativeFiles);
-
-        var matches = projectRepoRelativeFiles
-            .Where(BuildSignature.IsBuildAffecting)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(trackedBlobHashes.ContainsKey)
-            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (matches.Count == 0) return null; // proje hiç commit'lenmemiş / no-commits repo
-
-        return HashFingerprint(matches, path => trackedBlobHashes[path]);
-    }
-
-    /// <summary>
-    /// [design v1.14.0 §9] Ana repo DIŞINDAKİ bir projenin fingerprint'i — <see cref="ComputeCommittedFingerprint"/>
-    /// ile AYNI şekil, tek farkı terimin KAYNAĞI: git blob hash'i yerine dosyanın DİSKTEKİ içeriğinin hash'i.
+    /// [D1][D5] Bir projenin içerik fingerprint'i: girdi dosyalarının (bkz. <see cref="ProjectInputs"/>)
+    /// DİSKTEKİ içeriğinden hesaplanan deterministik (sıralı, case-insensitive) tek hash. Ana repo, harici
+    /// kökler, sürüm kontrolsüz klasörler — hepsi bu TEK yoldan geçer.
     ///
-    /// <para><b>Neden ayrı bir kaynak.</b> Committed fingerprint ana reponun <c>ls-tree</c> haritasından gelir
-    /// ve harici kökler o ağaçta yoktur; TFVC'de ise git hiç yoktur. İçerik hash'i her iki kaynak kontrolünde
-    /// de çalışır ve çalışma kopyasının GERÇEK hâlini anlatır — commit'lenmemiş değişiklik de doğal olarak
-    /// imzaya girer, bu yüzden harici projeler için ayrı bir local-diff terimine gerek kalmaz (ve karar
-    /// in-place / worktree ayrımından etkilenmez).</para>
+    /// <para><b>Terim çifti: yol + içerik.</b> Yol terimi <paramref name="pathTermOf"/> ile üretilir (çalışma
+    /// alanı köküne göreli, <c>/</c>-normalize — bkz. <see cref="IncrementalRunBinder.PathTerm"/>), içerik ise
+    /// dosyanın FİZİKSEL yolundan okunur. Ayrım D5'in kalbidir: worktree koşusunda kimlikler ana köke taşınmış
+    /// olsa da içerik havuzdaki gerçek dosyadan gelir, böylece aynı içerik in-place ve worktree koşusunda AYNI
+    /// imzayı üretir.</para>
     ///
-    /// <para>§4 kaynak-sinyali kuralı korunur: yalnız kaynak dosya İÇERİĞİ okunur — DLL/bin/obj ya da herhangi
-    /// bir timestamp ASLA. Bedeli, proje başına build-etkileyen dosyaların okunmasıdır; ana repo bu maliyeti
-    /// ödemez (blob haritası zaten tek bir git çağrısından gelir), harici kökler ise küçüktür.</para>
+    /// <para>§4 kaynak-sinyali kuralı korunur: yalnız kaynak dosya İÇERİĞİ okunur — DLL/bin/obj ya da bir
+    /// derleme çıktısının timestamp'ı ASLA. Okuma bedeli <see cref="SourceHashCache"/> ile koşu başına bir
+    /// stat geçişine iner.</para>
     ///
     /// <para>Okunamayan dosyalar (canlı build ↔ tarama yarışı, silinmiş dosya) sessizce elenir; hiçbiri
     /// okunamazsa <c>null</c> döner ve proje "hiç derlenmemiş" gibi ele alınır — güvenli taraf (over-build).</para>
     /// </summary>
-    /// <param name="projectFiles">Projenin build-etkileyen dosyalarının MUTLAK yolları (csproj + compile dosyaları).</param>
-    /// <param name="readFileContent">path → içerik; okunamıyorsa <c>null</c>.</param>
+    /// <param name="inputs">Projenin girdi dosyaları (kimlik + fiziksel yol çiftleri).</param>
+    /// <param name="pathTermOf">Kimlik yolu → imzaya girecek yol terimi.</param>
+    /// <param name="hashOf">Fiziksel yol → içerik özeti; okunamıyorsa <c>null</c>.</param>
     public static string? ComputeContentFingerprint(
-        IReadOnlyList<string> projectFiles, Func<string, string?> readFileContent)
+        IReadOnlyList<ProjectInput> inputs, Func<string, string> pathTermOf, Func<string, string?> hashOf)
     {
-        ArgumentNullException.ThrowIfNull(projectFiles);
-        ArgumentNullException.ThrowIfNull(readFileContent);
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentNullException.ThrowIfNull(pathTermOf);
+        ArgumentNullException.ThrowIfNull(hashOf);
 
-        var contents = projectFiles
-            .Where(BuildSignature.IsBuildAffecting)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .Select(path => (Path: path, Content: readFileContent(path)))
-            .Where(x => x.Content is not null)
+        var terms = inputs
+            .Select(i => (Term: pathTermOf(i.LogicalPath), Hash: hashOf(i.PhysicalPath)))
+            .Where(x => x.Hash is not null)
+            .GroupBy(x => x.Term, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Term: g.Key, g.First().Hash))
+            .OrderBy(x => x.Term, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (contents.Count == 0) return null;
+        if (terms.Count == 0) return null;
 
-        var byPath = contents.ToDictionary(x => x.Path, x => BuildSignature.HashText(x.Content!), StringComparer.OrdinalIgnoreCase);
-        return HashFingerprint([.. contents.Select(x => x.Path)], path => byPath[path]);
+        var byTerm = terms.ToDictionary(x => x.Term, x => x.Hash!, StringComparer.OrdinalIgnoreCase);
+        return HashFingerprint([.. terms.Select(x => x.Term)], term => byTerm[term]);
     }
 
-    /// <summary>İki fingerprint kaynağının PAYLAŞTIĞI gövde — ayraçlar, boundary-shift koruması ve hash
-    /// primitifi tek yerde kalsın diye (kopya YASAK, CLAUDE.md).</summary>
+    /// <summary>Fingerprint gövdesi — ayraçlar, boundary-shift koruması ve hash primitifi tek yerde
+    /// (kopya YASAK, CLAUDE.md).</summary>
     private static string HashFingerprint(IReadOnlyList<string> orderedPaths, Func<string, string> termOf)
     {
         var sb = new StringBuilder();
         foreach (var path in orderedPaths)
         {
-            // RAW path ASLA doğrudan ayraç yanına gömülmez — BuildSignature'daki boundary-shift korumasıyla
-            // aynı kalıp (bkz. BuildSignatureTests: separator/`=` içeren id/yol testleri). HashText ve
-            // ItemSeparator, BuildSignature'daki AYNI primitive'lerin (internal) reuse'u — review fix (Task 7b):
-            // eskiden burada verbatim-kopya edilmişti, artık tek kaynak.
+            // RAW yol terimi ASLA doğrudan ayraç yanına gömülmez — BuildSignature'daki boundary-shift
+            // korumasıyla aynı kalıp (bkz. BuildSignatureTests: separator/`=` içeren id/yol testleri).
+            // HashText ve ItemSeparator, BuildSignature'daki AYNI primitive'lerin (internal) reuse'u.
             sb.Append(BuildSignature.HashText(path)).Append('=').Append(termOf(path)).Append(BuildSignature.ItemSeparator);
         }
 

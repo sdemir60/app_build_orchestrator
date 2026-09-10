@@ -8,6 +8,7 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 using System.Windows.Automation;
 
@@ -117,29 +118,29 @@ public class ProjectRowInputTests
     /// seam'iyle pinler — burada kanıtlanan, o seam'in üretimde GERÇEK fare olaylarına bağlı olduğudur.
     /// </summary>
     [StaFact]
-    public void Real_mouse_enter_builds_the_hover_icons_and_swaps_them_with_the_sha_pair()
+    public void Real_mouse_enter_builds_the_hover_icons_and_swaps_them_with_the_decision_label()
     {
         var runVm = NewRunVm();
         var rowVm = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending)
         {
-            WillBuild = true, CurrentSha = "a3f81c2",
+            WillBuild = true, WillBuildReason = WillBuildReason.SignatureChanged, OwnFilesChanged = true,
         };
         var row = Realize(runVm, rowVm, out var window);
 
         // [L1] Hover ikonları TEMBEL: ilk hover'a kadar HİÇ kurulmaz.
         Assert.Null(row.HoverIcons);
-        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Visible, row.DecisionText.Visibility);
 
         RaiseMouse(row, Mouse.MouseEnterEvent);
 
         Assert.NotNull(row.HoverIcons);
         Assert.Equal(Visibility.Visible, row.HoverIcons!.Visibility);
-        Assert.Equal(Visibility.Collapsed, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.DecisionText.Visibility);
 
         RaiseMouse(row, Mouse.MouseLeaveEvent);
 
         Assert.Equal(Visibility.Collapsed, row.HoverIcons!.Visibility);
-        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Visible, row.DecisionText.Visibility);
         GC.KeepAlive(window);
     }
 

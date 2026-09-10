@@ -26,8 +26,8 @@ public static class ProjectIdentityRebase
     /// <param name="Plan">Kimlikleri (Id/ProjectPath/Dependencies/Cycles) ana köke taşınmış plan.</param>
     /// <param name="SolutionRefs">ANAHTARLARI ana köke taşınmış solution haritası. DEĞERLER (sln yolları)
     /// worktree'de KALIR: <c>SolutionDirResolver</c> diskteki gerçek dosyayı görmelidir.</param>
-    /// <param name="EvaluatedById">Anahtarları VE içerikleri (Path/CompileFiles/ProjectReferences) ana köke
-    /// taşınmış değerlendirme haritası — committed fingerprint repo-göreli yolları buradan türetir.</param>
+    /// <param name="EvaluatedById">Anahtarları VE içerikleri (Path/CompileFiles/ResourceFiles/ProjectReferences)
+    /// ana köke taşınmış değerlendirme haritası — içerik imzasının yol terimleri buradan türetilir.</param>
     /// <param name="BuildPathById">Ana kök id → MSBuild'e verilecek GERÇEK (worktree) csproj yolu.</param>
     public readonly record struct Result(
         BuildPlan Plan,
@@ -77,6 +77,7 @@ public static class ProjectIdentityRebase
             {
                 Path = Rebase(kv.Value.Path),
                 CompileFiles = [.. kv.Value.CompileFiles.Select(Rebase)],
+                ResourceFiles = [.. kv.Value.ResourceFiles.Select(Rebase)],
                 ProjectReferences = [.. kv.Value.ProjectReferences.Select(Rebase)],
             },
             StringComparer.OrdinalIgnoreCase);

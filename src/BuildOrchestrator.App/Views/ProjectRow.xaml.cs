@@ -148,7 +148,7 @@ public partial class ProjectRow : UserControl
     internal Rectangle Stripe => PART_Stripe;
     internal StatusDot Dot => PART_Dot;
     internal TextBlock DurationText => PART_Duration;
-    internal TextBlock ShaText => PART_Sha;
+    internal TextBlock DecisionText => PART_Decision;
     /// <summary>[L1] Hover eylem bloğu — İLK HOVER'a kadar <c>null</c> (hiç kurulmaz).</summary>
     internal FrameworkElement? HoverIcons => _actions?.HoverIcons;
     internal ProjectRowActions? Actions => _actions;
@@ -257,10 +257,12 @@ public partial class ProjectRow : UserControl
                 break;
             case nameof(ProjectRowViewModel.InCycle):
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
+                ApplyDecision();      // ...ve `failed` satırının uzun gerekçesini de o seçer
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
-                // [design v1.11.0 §9-1] Plan kanalının TEK görünür kalıntısı çift SHA metnidir — nokta ARTIK
-                // planı taşımaz (statü rengini taşır). Bu yüzden burada yalnız sağ blok tazelenir.
+                // [design v1.11.0 §9-1] Plan kanalının TEK görünür kalıntısı sağ yuvadaki KARAR ETİKETİdir —
+                // nokta planı taşımaz (statü rengini taşır). Bu yüzden burada yalnız sağ blok tazelenir;
+                // ApplyRightBlock görünürlüğü ayarlayıp ApplyDecision'ı zaten çağırır.
                 ApplyRightBlock();
                 break;
             case nameof(ProjectRowViewModel.DepIssues):
@@ -286,9 +288,10 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.SolutionName):
                 PART_Sln.Text = _vm?.SolutionName;
                 break;
-            case nameof(ProjectRowViewModel.CurrentSha):
-            case nameof(ProjectRowViewModel.TargetSha): // [W1] syncCompleted buildPreview'dan SONRA gelse de tazelenir
-                ApplySha();
+            case nameof(ProjectRowViewModel.LastBuiltAt):
+            case nameof(ProjectRowViewModel.OwnFilesChanged):
+            case nameof(ProjectRowViewModel.WillBuildReason):
+                ApplyDecision();
                 break;
         }
     }
@@ -452,48 +455,33 @@ public partial class ProjectRow : UserControl
         PART_DepTip.Content = warn;
     }
 
-    private void ApplySha()
-    {
-        // [W1] "{cur7} → {target7}" (design-v1 README §kart slot 4 + "SHA 7 hane a3f81c2"). İKİ YARI DA burada
-        // kısaltılır: kaynaklar HAM 40-hex'tir (cur = BuildState.BuiltCommit, target = remote-tracking ref) ve
-        // 118px'lik slota ham hâlleri sığmaz. Kısaltma tek yerden (RunViewModel.Short7 — branch popover'ı da onu
-        // kullanır) gelir; ikinci bir kırpma yardımcısı yazılmaz.
-        //
-        // İKİSİ DE SATIR VM'inden okunur: target artık ata ağaçtan ÇEKİLMİYOR (RunViewModel her satıra itiyor),
-        // böylece syncCompleted buildPreview'dan SONRA gelse bile satır kendi PropertyChanged'iyle tazelenir.
-        //
-        // HİÇ DERLENMEMİŞ proje (BuiltCommit yok) ⇒ sol yarı boştur: çift yerine YALNIZ hedef basılır — yalın-ok
-        // pürüzü (" → b7e91d4") üretilmez. Görünürlük ApplyRightBlock'ta.
-        // [design v1.7.0 §2.4] SHA HER satırda görünür ve iki biçimi vardır: derlenecek satırda çift
-        // ("cur → target", secondary), güncel satırda TEK sha (faint). Eskiden yalnız dirty satırlarda
-        // gösteriliyordu ve hover'dan çıkıldığında satırlar arasında layout sıçraması oluyordu.
-        PART_Sha.Text = ShaSlotText(_vm?.CurrentSha, _vm?.TargetSha, _vm?.WillBuild == true);
-        bool dirty = _vm?.WillBuild == true;
-        PART_Sha.SetResourceReference(TextBlock.ForegroundProperty,
-            dirty ? "Brush.TextSecondary" : "Brush.TextFaint");
-    }
-
     /// <summary>
-    /// Sha yuvasının metni — saf karar, kontrol dışında test edilir.
+    /// [design v1.16.0 §2.4] Sağ yuvanın metni: bir sonraki koşuda bu projeye NE OLACAĞI ve NEDEN.
     ///
-    /// <para>Derlenecek bir satırda çift ("cur → target"), aksi halde tek değer basılır. <b>Hedef yarısı
-    /// yoksa</b> (hiç derlenmemiş proje ya da HARİCİ bir satır — ana reponun hedef commit'i onlara itilmez)
-    /// yarım bir ok üretilmez: elde ne varsa o gösterilir.</para>
+    /// <para><b>[DEĞİŞEN KURAL]</b> Yuvada eskiden commit çifti (<c>a3f81c2 → b7e91d4</c>) dururdu. O çift
+    /// kararı anlatmıyordu ve yanıltıyordu: sağ yarı kullanıcının PULL ETMEDİĞİ bir uzak commit'ti, sol yarı
+    /// ise projeye değil REPOYA aitti — "commit aynı ama neden derlenecek?" sorusu tam da oradan doğuyordu.
+    /// Motor kararı artık diskteki içerikten verdiği için satır da o kararı söyler.</para>
     ///
-    /// <para>Kısaltma <see cref="ViewModels.RunViewModel.ShortSha"/>'ya aittir: git sha'sı 7 haneye iner,
-    /// TFVC changeset'i olduğu gibi kalır.</para>
+    /// <para>Sözcük seçimi <see cref="DecisionLabel"/>'de (saf, WPF'siz test edilir); burada yalnız iki Run'a
+    /// yazılır ve renklendirilir: asıl sözcük derlenecek satırda <c>text-secondary</c>, güncel satırda
+    /// <c>text-faint</c>; "·" sonrası kuyruk HER ZAMAN faint — asıl sözcük önde okunsun diye.</para>
     /// </summary>
-    internal static string ShaSlotText(string? currentSha, string? targetSha, bool dirty)
+    private void ApplyDecision()
     {
-        string cur = ViewModels.RunViewModel.ShortSha(currentSha);
-        string target = ViewModels.RunViewModel.ShortSha(targetSha);
+        var decision = _vm is null
+            ? RowDecision.None
+            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
+                DateTimeOffset.Now, _vm.InCycle);
 
-        if (target.Length == 0) return cur;                 // hedef yok → elde ne varsa (yarım ok YOK)
-        if (!dirty || cur.Length == 0 || cur == target) return target;
-        return $"{cur} → {target}";
+        PART_DecisionWord.Text = decision.Word;
+        PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;
+        PART_Decision.ToolTip = decision.IsEmpty ? null : decision.Title;
+        PART_DecisionWord.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty,
+            decision.Stale ? "Brush.TextSecondary" : "Brush.TextFaint");
     }
 
-    /// <summary>Sağ blok: hover'da aç-ikonları, değilse (will==dirty) sha çifti (BuildApp.jsx:387-403).
+    /// <summary>Sağ blok: hover'da aç-ikonları, değilse karar etiketi (design v1.16.0 §2.4).
     /// [L1] İkon bloğu hover'da TALEP ÜZERİNE kurulur; hover yokken kurulmamışsa dokunulacak bir şey de yoktur.</summary>
     private void ApplyRightBlock()
     {
@@ -503,14 +491,14 @@ public partial class ProjectRow : UserControl
         // [design §3.8] Koşunun HEDEFİ olan satırda Stop hover OLMADAN da görünür (prototip `hover || isTarget || menuOpen`).
         bool target = _vm?.IsRunTarget == true;
         bool showIcons = _hover || menuOpen || target;
-        bool showSha = !showIcons; // [design v1.7.0 §2.4] SHA her satırda — yalnız hover ikonları onu örter
+        bool showDecision = !showIcons; // [design v1.7.0 §2.4] Etiket her satırda — yalnız hover ikonları onu örter
         if (showIcons) EnsureActions().HoverIcons.Visibility = Visibility.Visible;
         else if (_actions is { } hidden) hidden.HoverIcons.Visibility = Visibility.Collapsed;
         // Kurulmuş blok gizliyken de tazelenir: hedef bırakıldığında play, Stop'un yerine geri dönmüş olmalı —
         // bir sonraki hover'da satır Stop göstermemeli.
         if (_actions is { } actions) ApplyActionState(actions);
-        PART_Sha.Visibility = showSha ? Visibility.Visible : Visibility.Collapsed;
-        if (showSha) ApplySha();
+        PART_Decision.Visibility = showDecision ? Visibility.Visible : Visibility.Collapsed;
+        if (showDecision) ApplyDecision();
     }
 
     /// <summary>[tek proje · design §3.8] Hover bloğunun koşuya bağlı hâli: play'in hedefi (satırın kimliği —

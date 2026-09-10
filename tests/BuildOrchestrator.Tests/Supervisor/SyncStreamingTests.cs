@@ -4,6 +4,7 @@ using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
+using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
@@ -124,7 +125,8 @@ public class SyncStreamingTests
             root => new SyncWorkspaceService(
                 new WorkspaceScanner(), new CsprojEvaluator(),
                 new EvaluationCache(Path.Combine(sandbox, "evaluation-cache.json")),
-                new GitService(gatedRunner, root), new BuildStateStore(sandbox)),
+                new GitService(gatedRunner, root), new BuildStateStore(sandbox),
+                new SourceHashCache(Path.Combine(sandbox, SourceHashCache.FileName))),
             root => new GitService(new ProcessRunner(), root),
             root => new WorktreeManager(new ProcessRunner(), root, Path.Combine(sandbox, "worktrees")));
 

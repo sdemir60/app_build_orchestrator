@@ -36,6 +36,24 @@ public sealed class PlanProgressLinesTests
     public void The_worktree_line_survives_a_missing_branch_name()
         => Assert.Equal("Preparing worktree", PlanProgressLines.PreparingWorktree(null));
 
+    /// <summary>
+    /// [v1.16.0] Sync'in mesafe satırı. Uzak uçtaki commit'in KİMLİĞİ yazılmaz — kullanıcı onu pull etmedikçe
+    /// yereldeki hiçbir şeyi anlatmaz; anlamlı olan tek şey MESAFEDİR.
+    /// </summary>
+    [Theory]
+    [InlineData(null, "HEAD a3f81c2")]
+    [InlineData(0, "HEAD a3f81c2 · up to date with origin/main")]
+    [InlineData(1, "HEAD a3f81c2 · 1 commit behind origin/main")]
+    [InlineData(3, "HEAD a3f81c2 · 3 commits behind origin/main")]
+    public void The_head_line_reports_the_distance_from_the_remote(int? behind, string expected)
+        => Assert.Equal(expected, PlanProgressLines.HeadDistance("a3f81c2", behind, "main"));
+
+    /// <summary>Mesafe bilinmiyorsa (fetch degrade / başka branch seçili) satır SUSAR: uydurma bir sayı
+    /// yazmak, chip'in de yanlış çıkmasına yol açardı.</summary>
+    [Fact]
+    public void An_unknown_distance_leaves_the_line_with_the_head_alone()
+        => Assert.DoesNotContain("behind", PlanProgressLines.HeadDistance("a3f81c2", null, "main"));
+
     /// <summary>Kopya yasağı (CLAUDE.md): bu dört satır iki tüketicilidir, bu yüzden metinleri ÜRETİM ağacında
     /// yalnız <see cref="PlanProgressLines"/> tanımlayabilir. Guard olmadan run planlamasına "Scanning
     /// solutions…" inline yazılır ve iki akış sessizce ayrışırdı.</summary>

@@ -149,23 +149,34 @@ public class ConsoleModesTests
     [Fact]
     public void An_empty_project_page_states_the_reason_and_the_evidence()
     {
+        // [DEĞİŞEN KURAL — v1.16.0] Kanıt satırı eskiden yalnız revizyonu söylüyordu ("Last built a3f81c2"),
+        // çünkü son başarılı derlemenin ZAMANI bu tarafta yoktu. Motor artık onu da taşıyor; satır iki soruyu
+        // birlikte cevaplıyor ve yaş biçimi satırın "up to date · 2h" etiketiyle AYNI (kullanıcı iki yerde iki
+        // farklı zaman görmez).
+        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+        var twoHoursAgo = now.AddHours(-2);
+        // Kısaltma YALNIZ gerçek bir git sha'sına (40 hex) uygulanır — kanıt satırı da o kuralı okur.
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+
         // Atlanmış — motorun söylediği gerekçeyle (SkipReasons, tek doğruluk kaynağı).
         Assert.Equal(
-            ["Up to date — nothing to compile in this run.", "Last built a3f81c2"],
+            ["Up to date — nothing to compile in this run.", "Last successful build: 2h ago (a3f81c2)"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
-                skipReason: SkipReasons.UpToDate, currentSha: "a3f81c29ff01")));
+                skipReason: SkipReasons.UpToDate, currentSha: sha, lastBuiltAt: twoHoursAgo), now));
 
         // Koşu uçuşta, sıra bu satırda değil — plan gerekçesi will-build'den gelir.
         Assert.Equal(
-            ["Queued — the signature changed since the last successful build.", "Last built a3f81c2"],
+            ["Queued — the signature changed since the last successful build.", "Last successful build: 2h ago (a3f81c2)"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
-                willBuildReason: WillBuildReason.SignatureChanged, currentSha: "a3f81c29ff01", runActive: true)));
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
+                runActive: true, lastBuiltAt: twoHoursAgo), now));
 
         // Koşu YOK: aynı plan "Will build" diye okunur — kuyruk, ancak bir koşu varken vardır.
+        // Zaman bilinmiyorsa (eski kayıt) satır yalnız revizyonu söyler — uydurma bir yaş yazılmaz.
         Assert.Equal(
-            ["Will build — its last build failed.", "Last built a3f81c2"],
+            ["Will build — its last build failed.", "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
-                willBuildReason: WillBuildReason.LastFailed, currentSha: "a3f81c29ff01")));
+                willBuildReason: WillBuildReason.LastFailed, currentSha: sha), now));
 
         // Hiç derlenmemiş: kanıt satırı gerekçeyi tekrarlayacağı için YAZILMAZ.
         Assert.Equal(
@@ -193,7 +204,7 @@ public class ConsoleModesTests
     private static ProjectRowViewModel Row(
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
-        bool runActive = false) =>
+        bool runActive = false, DateTimeOffset? lastBuiltAt = null) =>
         new(@"C:\p\a.csproj", "A", state)
         {
             SkipReason = skipReason,
@@ -201,6 +212,7 @@ public class ConsoleModesTests
             WillBuildReason = willBuildReason,
             InCycle = inCycle,
             CurrentSha = currentSha,
+            LastBuiltAt = lastBuiltAt,
             IsRunActive = runActive,
         };
 

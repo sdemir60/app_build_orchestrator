@@ -56,7 +56,8 @@ public class SyncWorkspaceServiceTests
     private static SyncWorkspaceService ServiceFor(string root, string cacheRoot, IProcessRunner? runner = null) =>
         new(new WorkspaceScanner(), new CsprojEvaluator(),
             new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json")),
-            new GitService(runner ?? new ProcessRunner(), root), new BuildStateStore(cacheRoot));
+            new GitService(runner ?? new ProcessRunner(), root), new BuildStateStore(cacheRoot),
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)));
 
     private static IReadOnlyList<SyncProgressEvent> Progress(List<IpcEvent> events) =>
         events.OfType<SyncProgressEvent>().ToList();
@@ -92,10 +93,16 @@ public class SyncWorkspaceServiceTests
         Assert.False(done.FetchDegraded);
         Assert.NotNull(done.TargetSha);
 
-        // §3.1 satır 2 — SHA sabit örnek DEĞİL, gerçekten çözülen hedef commit'in ilk 7 hanesi
+        // §3.1 satır 2 [v1.16.0] — YEREL HEAD + uzak uçtan mesafe.
+        //
+        // DEĞİŞEN KURAL: satır eskiden "HEAD <hedef sha> — computing osys-state diff" idi. İki sorunu vardı:
+        // yazdığı sha FETCH EDİLEN hedefti (kullanıcının derlediği yerel HEAD değil) ve "osys-state diff"
+        // kullanıcıya hiçbir şey söylemiyordu. Artık satır yerel HEAD'i ve uzak uçtan KAÇ COMMIT geride
+        // olduğunu söyler — alt bardaki "N behind" chip'iyle aynı sayı.
         var headLine = LineStartingWith(events, "HEAD ");
-        Assert.Equal($"HEAD {done.TargetSha![..7]} — computing osys-state diff", headLine.Line);
+        Assert.Equal($"HEAD {done.TargetSha![..7]} · up to date with origin/{branch}", headLine.Line);
         Assert.Equal("info", headLine.Level);
+        Assert.Equal(0, done.Behind);
 
         // Topoloji: gerçek bağımlılık + solution verisi taşır (D5/D1/E1'in beslendiği kanıt)
         var topology = Assert.Single(events.OfType<WorkspaceTopologyEvent>());
@@ -206,19 +213,65 @@ public class SyncWorkspaceServiceTests
 
         var git = new GitService(new ProcessRunner(), root);
         string? head = (await git.GetHeadCommitAsync()).Value;
-        var tracked = (await git.GetTrackedBlobHashesAsync()).Value!;
-        var dirty = (await git.GetDirtyPathsAsync()).Value!;
         var evaluatedById = scan.CsprojPaths
             .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
             .Where(x => x.Project is not null)
             .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
 
-        var (_, signatures) = IncrementalRunBinder.Bind(plan, evaluatedById, root, head, tracked, dirty,
-            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), inPlace: true, buildCycles: false, mode: DependentMode.Safe);
+        var binder = new IncrementalRunBinder(plan, evaluatedById, root,
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)));
+        var (_, signatures) = binder.Bind(
+            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), buildCycles: false, DependentMode.Safe);
 
         var store = new BuildStateStore(cacheRoot);
         foreach (var (projectId, signature) in signatures)
             store.Upsert(new BuildState(projectId, signature, head, BuildResult.Succeeded));
+    }
+
+    /// <summary>
+    /// [v1.16.0] Sync, yerel HEAD'in uzak uçtan kaç commit geride olduğunu ölçer ve hem konsola hem tele
+    /// yazar — alt bardaki <c>N behind</c> chip'inin tek kaynağı budur.
+    /// </summary>
+    [Fact]
+    public async Task Sync_reports_how_many_commits_the_local_head_is_behind()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        // Klon alındıktan SONRA uzak uçta iki commit daha: yerel HEAD artık 2 geride.
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int y; }");
+        origin.CommitAll("c3");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(
+            new SyncWorkspaceCommand(cloneRoot, branch), events.Add);
+
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(2, done.Behind);
+        Assert.Contains(Progress(events), e => e.Line.EndsWith($"· 2 commits behind origin/{branch}", StringComparison.Ordinal));
+    }
+
+    /// <summary>Başka bir branch seçiliyken mesafe ÖLÇÜLMEZ: derleme worktree'den yapılır ve ana ağacın uzak
+    /// uçla mesafesi kullanıcıya bir şey söylemez (chip de çizilmez).</summary>
+    [Fact]
+    public async Task No_distance_is_reported_when_the_selected_branch_is_not_the_active_one()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string cloneRoot = origin.CloneFull();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(
+            new SyncWorkspaceCommand(cloneRoot, "some-other-branch"), events.Add);
+
+        Assert.Null(Assert.IsType<SyncCompletedEvent>(events[^1]).Behind);
+        Assert.DoesNotContain(Progress(events), e => e.Line.Contains("behind origin/", StringComparison.Ordinal));
     }
 
     [Fact]

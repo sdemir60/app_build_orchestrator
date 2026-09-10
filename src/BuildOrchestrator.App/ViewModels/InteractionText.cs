@@ -8,6 +8,14 @@
 /// </summary>
 public static class InteractionText
 {
+    /// <summary>
+    /// [design v1.16.0 §2.7-6a] <c>N behind</c> chip'inin tooltip'i. İkinci cümle tek tıkla ne OLMADIĞINI
+    /// söyler: korkulan şey merge/rebase'tir ve bu chip ikisini de yapmaz.
+    /// </summary>
+    public static string BehindChipTooltip(int behind, string branch) =>
+        $"Fetch found {behind} new commit{(behind == 1 ? "" : "s")} on origin/{branch}. "
+        + "Click to fast-forward; nothing is merged or rewritten.";
+
     // ---- [design v1.8.0 §2.4] Proje listesi: FIRST RUN kurulum daveti ----
     // [DEĞİŞEN KURAL] Davet eskiden tek bir klasör seçiciye açılıyordu: "Pick a repository to get started" +
     // "Point to the OSYS solution root…" + bir `Choose Folder` düğmesi. v1.8.0 onu KALDIRDI — gereken ayar

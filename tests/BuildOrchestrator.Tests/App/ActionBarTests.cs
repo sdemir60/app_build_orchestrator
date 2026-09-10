@@ -107,6 +107,70 @@ public partial class ActionBarTests
 
     // ---------------------------------------------------------------- görünüm kablajı (GERÇEK ActionBar/BuildMenu)
 
+    // ---------------------------------------------------------------- [design v1.16.0 §2.7-6a] N behind chip'i
+
+    /// <summary>
+    /// Chip motorun OLGUSUNDAN doğar: mesafe biliniyor ve sıfırdan büyükse çizilir, sayı ve tooltip o sayıyı
+    /// söyler. Tooltip'in ikinci cümlesi tek tıkla ne OLMADIĞINI söyler — korkulan şey merge/rebase'tir.
+    /// </summary>
+    [StaFact]
+    public void The_behind_chip_appears_with_the_number_and_says_what_a_click_will_not_do()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
+        Assert.Equal(Visibility.Collapsed, bar.BehindChip.Visibility);   // Sync öncesi: mesafe bilinmiyor
+
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
+        bar.UpdateLayout();
+
+        Assert.Equal(Visibility.Visible, bar.BehindChip.Visibility);
+        var texts = DsResources.RealizedObjects(bar.BehindChip).OfType<TextBlock>().Select(t => t.Text).ToList();
+        Assert.Contains("3", texts);
+        Assert.Contains("behind", texts);
+        Assert.Equal(
+            "Fetch found 3 new commits on origin/main. Click to fast-forward; nothing is merged or rewritten.",
+            bar.BehindChip.ToolTip);
+        Assert.Equal("3 behind", System.Windows.Automation.AutomationProperties.GetName(bar.BehindChip));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Tek commit için tooltip tekil konuşur — sayı biçimi kadar dil de motorun olgusunu izler.</summary>
+    [StaFact]
+    public void A_single_commit_behind_reads_in_the_singular()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
+
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 1));
+        bar.UpdateLayout();
+
+        Assert.Equal(
+            "Fetch found 1 new commit on origin/main. Click to fast-forward; nothing is merged or rewritten.",
+            bar.BehindChip.ToolTip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Koşu sürerken chip diğer bar kontrolleriyle AYNI kilitte: görünür kalır ama tıklanamaz.</summary>
+    [StaFact]
+    public void The_behind_chip_is_locked_while_a_run_is_in_flight()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 2));
+        bar.UpdateLayout();
+        Assert.True(bar.BehindChip.IsEnabled);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        bar.UpdateLayout();
+
+        Assert.Equal(Visibility.Visible, bar.BehindChip.Visibility);
+        Assert.False(bar.BehindChip.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
     private static (ActionBar bar, Window window) Realize(RunViewModel vm)
     {
         var host = DsResources.NewHost();
@@ -176,28 +240,33 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T3c · c5] Sağ grubun sırası: workspace adı · branch · worktree · Debug|Release · perf ·
-    /// ayraç · Stop/Build grid'i (BuildApp.jsx:1570-1614).
+    /// <summary>[A13/T3c · c5] Sağ grubun sırası: workspace adı · branch · <b>behind</b> · worktree ·
+    /// Debug|Release · perf · ayraç · Stop/Build grid'i.
     /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-5a]</b> Grup artık <b>workspace adıyla BAŞLAR</b>: title
     /// bar'ın mono bağlam metni kaldırıldı ve geriye kalan tek yeni bilgi (hangi workspace) branch chip'inin
-    /// soluna geçti. Eski iddia gruba altı öğe sayıyordu ve ilk öğeyi branch chip'i sanıyordu.</para></summary>
+    /// soluna geçti. Eski iddia gruba altı öğe sayıyordu ve ilk öğeyi branch chip'i sanıyordu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.16.0 §2.7-6a]</b> Branch chip'inin HEMEN SAĞINA <c>N behind</c>
+    /// chip'i eklendi. Yeri tesadüfi değildir: mesafe branch'in bir olgusudur ve chip yalnız geride kalınca
+    /// çizilir (varsayılan <c>Collapsed</c>) — grup normalde eskisi gibi görünür.</para></summary>
     [StaFact]
-    public void The_right_group_orders_workspace_branch_worktree_config_perf_a_separator_then_the_build_area()
+    public void The_right_group_orders_workspace_branch_behind_worktree_config_perf_a_separator_then_the_build_area()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
         var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
-        Assert.Equal(7, rightChildren.Count);
+        Assert.Equal(8, rightChildren.Count);
         Assert.Same(bar.WorkspaceLabel, rightChildren[0]);
         Assert.Same(bar.BranchChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[2]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.Segment, rightChildren[3]);
-        Assert.Same(bar.PerfChip, rightChildren[4]);
-        var rightSeparator = Assert.IsType<Border>(rightChildren[5]);
+        Assert.Same(bar.BehindChip, rightChildren[2]);
+        Assert.Equal(Visibility.Collapsed, bar.BehindChip.Visibility);   // geride değilken çizilmez
+        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[3]).Children.Cast<UIElement>().First());
+        Assert.Same(bar.Segment, rightChildren[4]);
+        Assert.Same(bar.PerfChip, rightChildren[5]);
+        var rightSeparator = Assert.IsType<Border>(rightChildren[6]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
-        var buildArea = Assert.IsType<Grid>(rightChildren[6]);
+        var buildArea = Assert.IsType<Grid>(rightChildren[7]);
         Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
         Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
         GC.KeepAlive(window);

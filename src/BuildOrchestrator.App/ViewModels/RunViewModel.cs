@@ -75,22 +75,28 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// kurulurken atanır. Bir projeyi birden çok .sln içerebilir — kart tek (ilk) adı gösterir.</summary>
     [ObservableProperty] private string? _solutionName;
 
-    /// <summary>[T53-UI][W1/It-5] SHA çiftinin sol yarısı: projenin SON BAŞARIYLA DERLENDİĞİ commit — prototip
-    /// <c>st.curSha</c> (BuildApp.jsx:400). Kaynak <see cref="BuildPreviewItem.BuiltCommit"/>'tir (yani
-    /// <c>BuildState.BuiltCommit</c>); hem Sync hem run-başı önizlemesinden gelir. Değer HAM'dır (40-hex) —
-    /// 7 haneye kısaltma bir GÖRÜNTÜ kararıdır ve kartta (<c>ProjectRow.ApplySha</c>) yapılır. <b>Hiç
-    /// derlenmemiş</b> proje ⇒ <c>null</c> (uydurulmaz): kart o satırda çift yerine YALNIZ hedefi basar.
-    /// Kart yalnız <see cref="WillBuild"/>==true iken bu slotu gösterir.</summary>
+    /// <summary>[T53-UI][W1/It-5] Projenin SON BAŞARIYLA DERLENDİĞİ revizyon. Kaynak
+    /// <see cref="BuildPreviewItem.BuiltCommit"/>'tir (yani <c>BuildState.BuiltCommit</c>); hem Sync hem
+    /// run-başı önizlemesinden gelir. Değer HAM'dır (git'te 40-hex, TFVC'de changeset) — kısaltma bir GÖRÜNTÜ
+    /// kararıdır. <b>Hiç derlenmemiş</b> proje ⇒ <c>null</c> (uydurulmaz).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.16.0]</b> Bu değer artık SATIRDA GÖSTERİLMEZ; satırın sağ yuvasında
+    /// kararın gerekçesi durur (bkz. <see cref="DecisionLabel"/>). Revizyon yalnız proje logu başlığındaki
+    /// "Last successful build" satırını besler. Eski çift (<c>a3f81c2 → b7e91d4</c>) kararı ANLATMIYORDU:
+    /// sağ yarı pull edilmemiş bir UZAK commit'ti, sol yarı ise projeye değil repoya aitti — ikisi de "bu
+    /// proje neden derlenecek" sorusunu cevaplamıyordu. Bu yüzden satırın <c>TargetSha</c> alanı da
+    /// KALDIRILDI: hedef commit motorda kalır (konsol satırı ve pull için), satıra itilmez.</para></summary>
     [ObservableProperty] private string? _currentSha;
 
-    /// <summary>[W1/It-5] SHA çiftinin sağ yarısı: run-geneli hedef commit (<c>SyncCompletedEvent.TargetSha</c>),
-    /// <see cref="RunViewModel.TargetSha"/>'dan her satıra İTİLİR (<see cref="IsRunActive"/>/<see cref="NamePrefix"/>
-    /// deseni). <b>Neden satırda:</b> kart bunu eskiden render anında ata ağaçtaki <see cref="RunViewModel"/>'den
-    /// ÇEKİYORDU; <c>buildPreview</c> deterministik olarak <c>syncCompleted</c>'dan ÖNCE geldiği için satır
-    /// sha'sını TargetSha daha null'ken hesaplıyor ve bir daha tazelenmiyordu (ilk Sync'ten sonra slot boş
-    /// kalırdı). Değer artık İTİLDİĞİ için iki event'in sırası ÖNEMSİZDİR — hangisi sonra gelirse satır kendi
-    /// PropertyChanged'i üzerinden tazelenir (satır başına EK abone YOK). Değer HAM'dır (40-hex).</summary>
-    [ObservableProperty] private string? _targetSha;
+    /// <summary>[v1.16.0] Son BAŞARILI derlemenin zamanı — satırın <c>up to date · 2h</c> etiketindeki göreli
+    /// yaş ve proje logunun "Last successful build" satırı buradan. Kaynak
+    /// <see cref="BuildPreviewItem.LastBuiltAt"/>; hiç başarıyla derlenmemiş projede <c>null</c>.</summary>
+    [ObservableProperty] private DateTimeOffset? _lastBuiltAt;
+
+    /// <summary>[v1.16.0] Projenin KENDİ girdi dosyaları son derlemeden bu yana değişti mi — etiketin
+    /// <c>modified</c> (kendi dosyası) / <c>affected</c> (yalnız bağımlılığı) ayrımı. Kaynak
+    /// <see cref="BuildPreviewItem.OwnFilesChanged"/>; bilinmiyorsa <c>null</c>.</summary>
+    [ObservableProperty] private bool? _ownFilesChanged;
 
     /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
     /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
@@ -252,7 +258,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// sönme okunmuyordu." Eski kural: satırlar node'larla SENKRON sönerdi (kapsam 0.45'e 440ms'de, kapsam
     /// dışı 0.3'e 1120ms'de — ikisi aynı anda biter) ve koşu başlayınca tam opaklığa dönerlerdi. Sönme/geri
     /// gelme artık YALNIZ graf node'larında yaşıyor.</para>
-    /// <para>Değer satıra İTİLİR (<see cref="NamePrefix"/>/<see cref="TargetSha"/> deseni): 200 satırın
+    /// <para>Değer satıra İTİLİR (<see cref="NamePrefix"/> deseni): 200 satırın
     /// <c>RunViewModel</c>'e tek tek abone olması yerine sürücü tek tek yazar — satır başına EK abone YOK.</para>
     /// <para><b>Bitiş koreografisi (neon) satırlara UYGULANMAZ</b> (kullanıcı kararı, DEĞİŞMEDİ): liste koşu
     /// bitiminde sabit kalır, koreografi yalnız grafta yaşar.</para></summary>
@@ -1337,6 +1343,9 @@ public sealed partial class RunViewModel : ObservableObject
             // DEĞİLDİR — oraya bağlanırsa Rebuild/Cycles planlama boyunca sessizce kilitlenirdi.
             case PlanProgressEvent e: AppendRunLine(e.Line); break;
             case SyncCompletedEvent e: OnSyncCompleted(e); break;
+            // [v1.16.0] Pull sonucu: başarıysa chip düşer + otomatik Sync (konsol KORUNUR). Sync'in kendisi
+            // async'tir ve bu dal onu BEKLEMEZ — event pompası bloklanmaz (gönderim zaten milisaniyeler).
+            case PullCompletedEvent e: _ = OnPullCompletedAsync(e); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
             case WorktreeListEvent e: Worktrees.ReplaceAll(e.Worktrees); break;
@@ -1411,6 +1420,8 @@ public sealed partial class RunViewModel : ObservableObject
             // Sha'nın böyle bir koruma İHTİYACI YOKTUR — tersine, segment 2'nin okuduğu değer segment 1'in
             // persist'ini içerdiği için terminal satırların sol yarısı ancak burada TAZELENİR.
             row.CurrentSha = item.BuiltCommit;
+            row.LastBuiltAt = item.LastBuiltAt;              // [v1.16.0] "up to date · 2h" kuyruğu
+            row.OwnFilesChanged = item.OwnFilesChanged;      // [v1.16.0] modified ↔ affected ayrımı
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
@@ -1495,6 +1506,24 @@ public sealed partial class RunViewModel : ObservableObject
         // orada başarı "derlendi" demek değil "çıktıları silindi" demektir, yani proje güncel DEĞİL, tam tersine
         // derlenmesi gereken hâle gelmiştir. Motor da aynı anda defter kaydını siler (BuildStateStore.Remove).
         if (state == ProjectRowState.Succeeded && !RunIsClean) row.WillBuild = false;
+        // [design v1.16.0 §2.4] Satırın KARAR ETİKETİ de canlı geçişi izler: koşu biter bitmez derlenen satır
+        // "up to date · just now" yazar, patlayan satır "failed · retry". Olgular motorun bir sonraki
+        // önizlemesini BEKLEMEZ — o önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık
+        // doğru olmayan bir gerekçeyi ("modified") taşırdı.
+        row.WillBuildReason = state switch
+        {
+            // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını da siler, yani
+            // proje gerçekten "hiç derlenmemiş" hâline döner (bkz. BuildStateStore.Remove).
+            ProjectRowState.Succeeded when RunIsClean => WillBuildReason.NeverBuilt,
+            ProjectRowState.Succeeded => WillBuildReason.UpToDate,
+            ProjectRowState.Failed => WillBuildReason.LastFailed,
+            _ => row.WillBuildReason,
+        };
+        if (state == ProjectRowState.Succeeded)
+        {
+            row.LastBuiltAt = RunIsClean ? null : DateTimeOffset.Now;
+            row.OwnFilesChanged = RunIsClean ? null : false;   // az önce derlendi: kendi dosyası artık güncel
+        }
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla
         RefreshRunSurface();
@@ -1516,11 +1545,9 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var existing = FindRow(id);
         if (existing is not null) return existing;
-        // [W1] TargetSha da IsRunActive/NamePrefix ile AYNI itme deseninden gelir: run ortasında doğan bir satır
-        // (ör. topolojide olmayan bir projectStarted) hedef sha'yı yeni bir syncCompleted beklemeden alır.
         var row = new ProjectRowViewModel(id, name, initialState)
         {
-            IsRunActive = RunActive, NamePrefix = _graphNamePrefix, TargetSha = TargetSha,
+            IsRunActive = RunActive, NamePrefix = _graphNamePrefix,
             // [tek proje] kilit + hedef de aynı itme deseninden gelir (koşu ortasında doğan satır bilir)
             IsRunLocked = IsMidRunLocked,
             IsRunTarget = string.Equals(id, RunTargetId, StringComparison.OrdinalIgnoreCase),

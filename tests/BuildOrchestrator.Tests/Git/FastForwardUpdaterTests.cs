@@ -1,10 +1,9 @@
 using System.IO;
 using System.Threading.Tasks;
-using BuildOrchestrator.Core.Externals;
+using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Processes;
-using BuildOrchestrator.Tests.Git;
 
-namespace BuildOrchestrator.Tests.Externals;
+namespace BuildOrchestrator.Tests.Git;
 
 /// <summary>
 /// [D7] Harici bir git çalışma kopyasının güncellenmesi — kod tabanındaki TEK mutasyon yapan git yüzeyi.
@@ -13,9 +12,9 @@ namespace BuildOrchestrator.Tests.Externals;
 ///
 /// <para>Testler gerçek <c>git.exe</c> ve gerçek bir <c>file://</c> remote ile koşar — sahte repo yok.</para>
 /// </summary>
-public class ExternalGitUpdaterTests
+public class FastForwardUpdaterTests
 {
-    private static ExternalGitUpdater Updater(string root) => new(new ProcessRunner(), root);
+    private static FastForwardUpdater Updater(string root) => new(new ProcessRunner(), root);
 
     private static string HeadOf(string root) => GitTestRepo.RunGitAt(root, "rev-parse", "HEAD").Trim();
 
@@ -36,7 +35,7 @@ public class ExternalGitUpdaterTests
 
         var result = await Updater(clone).UpdateAsync();
 
-        Assert.Equal(ExternalUpdateStatus.Updated, result.Status);
+        Assert.Equal(FastForwardStatus.Updated, result.Status);
         Assert.Equal(expected, result.Revision);
         Assert.Equal(expected, HeadOf(clone));
         Assert.Equal("two", File.ReadAllText(Path.Combine(clone, "a.txt")));
@@ -52,7 +51,7 @@ public class ExternalGitUpdaterTests
 
         var result = await Updater(clone).UpdateAsync();
 
-        Assert.Equal(ExternalUpdateStatus.AlreadyCurrent, result.Status);
+        Assert.Equal(FastForwardStatus.AlreadyCurrent, result.Status);
         Assert.Equal(expected, result.Revision);
         Assert.Equal(expected, HeadOf(clone));
     }
@@ -73,7 +72,7 @@ public class ExternalGitUpdaterTests
 
         var result = await Updater(clone).UpdateAsync();
 
-        Assert.Equal(ExternalUpdateStatus.Dirty, result.Status);
+        Assert.Equal(FastForwardStatus.Dirty, result.Status);
         Assert.Equal(headBefore, HeadOf(clone));
         // Kapı fetch'ten ÖNCE kapanır: remote-tracking ref bile ilerlemez.
         Assert.Equal(trackingBefore, TrackingShaOf(clone, branch));
@@ -93,7 +92,7 @@ public class ExternalGitUpdaterTests
 
         var result = await Updater(clone).UpdateAsync();
 
-        Assert.Equal(ExternalUpdateStatus.Dirty, result.Status);
+        Assert.Equal(FastForwardStatus.Dirty, result.Status);
     }
 
     [Fact]
@@ -108,7 +107,7 @@ public class ExternalGitUpdaterTests
 
         var result = await Updater(clone).UpdateAsync();
 
-        Assert.Equal(ExternalUpdateStatus.Detached, result.Status);
+        Assert.Equal(FastForwardStatus.Detached, result.Status);
         Assert.Equal(headBefore, HeadOf(clone));
     }
 
@@ -129,7 +128,7 @@ public class ExternalGitUpdaterTests
 
         var result = await Updater(clone).UpdateAsync();
 
-        Assert.Equal(ExternalUpdateStatus.Diverged, result.Status);
+        Assert.Equal(FastForwardStatus.Diverged, result.Status);
         Assert.Equal(headBefore, HeadOf(clone));
         Assert.Equal(headBefore, result.Revision); // yerel sürümle devam edilebilsin diye revizyon yine bildirilir
     }
@@ -148,7 +147,7 @@ public class ExternalGitUpdaterTests
         var result = await Updater(clone).UpdateAsync();
 
         // Ağ/kimlik hatası build'i düşürmez — yerel sürümle devam edilir (ana repo degraded fetch felsefesi).
-        Assert.Equal(ExternalUpdateStatus.DegradedOffline, result.Status);
+        Assert.Equal(FastForwardStatus.DegradedOffline, result.Status);
         Assert.Equal(headBefore, result.Revision);
         Assert.Equal(headBefore, HeadOf(clone));
         Assert.False(string.IsNullOrWhiteSpace(result.Detail));
@@ -161,7 +160,7 @@ public class ExternalGitUpdaterTests
 
         var result = await Updater(temp.Path).UpdateAsync();
 
-        Assert.Equal(ExternalUpdateStatus.Failed, result.Status);
+        Assert.Equal(FastForwardStatus.Failed, result.Status);
         Assert.False(string.IsNullOrWhiteSpace(result.Detail));
     }
 }

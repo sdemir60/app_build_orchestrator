@@ -49,19 +49,32 @@ public static class WillBuildEvaluator
     /// sha çifti (commit) yan yana durduğu için "commit aynı ama neden derlenecek?" sorusu doğuyordu; cevabı
     /// motor biliyor ama eskiden IPC sınırında düşüyordu.</para>
     ///
-    /// <para>İki hâlde gerekçe YOKTUR: hollow (bilinmiyor) ve kapsam-dışı cycle üyeliği — ikincisinde üyelik
-    /// kanalı (döngü rozeti) zaten konuşur ve bir plan gerekçesi orada yanıltıcı olurdu.</para>
+    /// <para>Gerekçe YALNIZ hollow'da (imza yok / Sync öncesi) yoktur.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.16.0]</b> Kapsam dışı bir SCC üyesi de artık gerekçesini söyler. Eskiden
+    /// <c>(false, null)</c> dönerdi; gerekçe "üyelik kanalı zaten konuşuyor, bir PLAN gerekçesi orada
+    /// yanıltıcı olur" idi ve o dönemde gerekçe gerçekten bir plan kanalını (will-build noktası) besliyordu.
+    /// Gerekçe artık satırın KARAR ETİKETİNİ besliyor ve etiket bir DİSK OLGUSUDUR: "bu projenin dosyaları
+    /// değişti mi, en son ne zaman derlendi". O olgu döngü üyesi için de vardır ve gizlenmesi ölçüldü —
+    /// gerçek bir çalışma alanında 184 satırın 33'ü (tüm SCC üyeleri) hiçbir şey yazmıyordu. WillBuild
+    /// DEĞİŞMEDİ: kapsam dışı üye hâlâ <c>false</c>'tur, yani bu koşu onu derlemez; bunu söyleyen kanal da
+    /// aynı kalır (uyarı üçgeni).</para>
     /// </summary>
     public static (bool? WillBuild, WillBuildReason? Reason) EvaluateWithReason(
         bool inCycle, string? currentSignature, BuildState? state, bool buildCycles)
     {
-        if (inCycle && !buildCycles) return (false, null);                 // kapsam dışı: cycle projesi derlenmez
-        if (currentSignature is null) return (null, null);                 // hollow: imza yok / Sync öncesi
-        if (state?.BuiltSignature is null) return (true, WillBuildReason.NeverBuilt);
-        if (state.LastResult != BuildResult.Succeeded) return (true, WillBuildReason.LastFailed);
-        if (state.DepIssue) return (true, WillBuildReason.DepIssue);       // bayat bağımlılığa link'li (yukarıdaki nota bak)
-        return string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
-            ? (false, WillBuildReason.UpToDate)
-            : (true, WillBuildReason.SignatureChanged);
+        // Kapsam dışı cycle üyesi DERLENMEZ; hollow'da ise hiçbir şey bilinmez.
+        bool outOfScope = inCycle && !buildCycles;
+        if (currentSignature is null) return (outOfScope ? false : null, null);
+
+        var reason =
+            state?.BuiltSignature is null ? WillBuildReason.NeverBuilt
+            : state.LastResult != BuildResult.Succeeded ? WillBuildReason.LastFailed
+            : state.DepIssue ? WillBuildReason.DepIssue          // bayat bağımlılığa link'li (yukarıdaki nota bak)
+            : string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
+                ? WillBuildReason.UpToDate
+                : WillBuildReason.SignatureChanged;
+
+        return (outOfScope ? false : reason != WillBuildReason.UpToDate, reason);
     }
 }

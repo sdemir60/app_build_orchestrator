@@ -751,7 +751,11 @@ public class SettingsDialogViewTests
     /// <para><b>[DEĞİŞEN KURAL]</b> §9'un cümlesi "They are built before everything else, <i>in this order</i>"
     /// idi. "before" iddiası KORUNUR ve doğrudur (ayrılmış <c>External</c> katmanı, index −1); "in this order"
     /// DÜŞTÜ — kart sırası yalnız çalışma kopyalarının tazelenme sırasıdır, harici projeler arasındaki derleme
-    /// sırası topolojiden gelir. 3-Run yapısı, vurgulanan sözcük ve tipografi korunur.</para></summary>
+    /// sırası topolojiden gelir. 3-Run yapısı, vurgulanan sözcük ve tipografi korunur.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.16.0 §2.9]</b> Metin, kart sırasının ne olmadığını AÇIKÇA söyleyen
+    /// bir cümleyle bitiyor: sıranın tek anlamı çalışma kopyalarının güncellenme sırasıdır. Önceki hâli "in
+    /// this order"ı düşürmüştü ama yerine hiçbir şey koymamıştı — kullanıcı sıralamanın neye yaradığını
+    /// tahmin etmek zorunda kalıyordu.</para></summary>
     [StaFact]
     public void Settings_dialog_pins_the_external_projects_caption_description_and_empty_state_box_verbatim()
     {
@@ -765,7 +769,7 @@ public class SettingsDialogViewTests
         var description = blocks.Single(b =>
             b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text == "before"));
         Assert.Equal(
-            """Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. Everything found under a card joins the same project list and graph, grouped at the top and built before the repository's own projects.""",
+            """Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. The working copy root is found from the path upwards. They are built before everything else; the rest follows the layers below. Card order only sets the order the working copies are updated — among themselves they build in dependency order.""",
             string.Concat(description.Inlines.OfType<Run>().Select(r => r.Text)));
 
         var emphasis = description.Inlines.OfType<Run>().Single(r => r.Text == "before");

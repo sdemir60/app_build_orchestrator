@@ -189,7 +189,14 @@ public class SettingsDialogFocusTests
     /// <summary>[task-D6/T12] SONUÇ testi (mekanizma değil): bir katman kartının PATTERN input'u — DockPanel'in
     /// <c>LastChildFill</c> ile "esnek genişlik" alanı, dolayısıyla scrollbar sütunu daralırsa/genişlerse İLK
     /// etkilenen ölçü — az satırda (scrollbar GEREKMEZ) ve çok satırda (scrollbar GERÇEKTEN taşar) AYNI genişliği
-    /// ölçer. Non-vacuous: iki senaryonun GERÇEKTEN farklı scroll durumunda olduğu ayrıca doğrulanır.</summary>
+    /// ölçer. Non-vacuous: iki senaryonun GERÇEKTEN farklı scroll durumunda olduğu ayrıca doğrulanır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.16.0 §2.9]</b> Tek katmanlı hâlin kaydırma payı eskiden TAM SIFIRDI
+    /// ve test onu <c>Assert.Equal(0.0, …)</c> ile pinliyordu. External projects açıklaması v1.16.0'da bir
+    /// satır uzadı (kart sırasının ne olduğunu artık açıkça söylüyor) ve gövde 460px tavanına 0,1px taşıyor —
+    /// görünürde hiçbir şey değişmez (scrollbar sütunu zaten REZERVE, thumb yolu doldurur). Ayırt edicilik
+    /// korunsun diye eşik "pratikte kaymaz" (&lt;1px) ile "gerçekten kayar" (onlarca px) olarak yazıldı; sıfıra
+    /// pinlemek bundan böyle metin uzunluğunu ölçerdi, yerleşimi değil.</para></summary>
     [StaFact]
     public void Settings_body_layer_card_width_stays_constant_whether_or_not_the_scrollbar_is_needed()
     {
@@ -203,8 +210,8 @@ public class SettingsDialogFocusTests
 
         var fitsBar = BodyVerticalScrollBar(fits.Body);
         var overflowingBar = BodyVerticalScrollBar(overflowing.Body);
-        Assert.Equal(0.0, fitsBar.Maximum);          // non-vacuous: 1 satır GERÇEKTEN kaymaz
-        Assert.True(overflowingBar.Maximum > 0);     // non-vacuous: 20 satır GERÇEKTEN kayar (460'ı aşar)
+        Assert.True(fitsBar.Maximum < 1, $"1 satırlık gövde pratikte kaymamalı: {fitsBar.Maximum}px");
+        Assert.True(overflowingBar.Maximum > 50, $"20 satır GERÇEKTEN kaymalı: {overflowingBar.Maximum}px");
 
         double fitsWidth = PatternInputOf(fits.LayersList, ((SettingsDraftViewModel)fits.DataContext).Layers[0]).ActualWidth;
         double overflowingWidth = PatternInputOf(overflowing.LayersList, ((SettingsDraftViewModel)overflowing.DataContext).Layers[0]).ActualWidth;

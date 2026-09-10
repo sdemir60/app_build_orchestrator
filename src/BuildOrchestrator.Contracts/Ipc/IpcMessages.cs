@@ -26,7 +26,19 @@ public static class IpcJson
 [JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
 [JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
 [JsonDerivedType(typeof(SetPerfModeCommand), "setPerfMode")]
+[JsonDerivedType(typeof(PullRepositoryCommand), "pullRepository")]
 public abstract record IpcCommand;
+
+/// <summary>
+/// [v1.16.0] Ana repoyu uzak ucuna ff-only ilerletir — alt bardaki <c>N behind</c> chip'inin tek tetikleyicisi.
+///
+/// <para><b>Yalnız kullanıcı tıklamasıyla.</b> Araç kendiliğinden ASLA pull yapmaz: bu komut ne Sync'in ne
+/// Build'in içinden çıkar. Yürütme <c>FastForwardUpdater</c>'ın harici kartlarda kullandığı ilkeli ANA REPO
+/// köküne uygular — kir kapısı, ref-only fetch, "yalnız geride miyim" kontrolü ve <c>merge --ff-only</c>.
+/// Kirli ya da ayrışmış ağaç REDDEDİLİR ve gerekçe konsola yazılır.</para>
+/// </summary>
+/// <param name="Branch">Ilerletilecek branch — App bunu YALNIZ aktif branch seçiliyken gönderir.</param>
+public sealed record PullRepositoryCommand(string RootPath, string Branch) : IpcCommand;
 
 public sealed record PingCommand(int Seq) : IpcCommand;
 public sealed record ShutdownCommand : IpcCommand;
@@ -169,6 +181,7 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(SyncStartedEvent), "syncStarted")]
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
+[JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
 [JsonDerivedType(typeof(PlanProgressEvent), "planProgress")]
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
@@ -243,9 +256,21 @@ public sealed record PlanProgressEvent(string Line) : IpcEvent;
 /// o küme transitive dependent'ları da içerir (§3.1 "7 changed projects, 14 to build" tam olarak bu farktır).</param>
 /// <param name="ToBuildCount">[A5/T69] Will-build kümesinin boyutu (<c>DependentMode.Safe</c> — dirty + transitive dependent).</param>
 /// <param name="UpToDateCount">[A5/T69] Güncel (<c>WillBuild=false</c>) proje sayısı — Build'de pre-skip edilecekler.</param>
+/// <param name="Behind">[v1.16.0] Yerel HEAD'in <c>origin/&lt;branch&gt;</c>'ten kaç commit geride olduğu —
+/// alt bardaki <c>N behind</c> chip'i bunu okur. <c>null</c> ⇒ mesafe BİLİNMİYOR (fetch degrade oldu ya da
+/// seçili branch aktif branch değil): chip çizilmez, uydurma sayı gösterilmez. Alan default'lu: eski NDJSON
+/// satırları alansız çözülür.</param>
 public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool FetchDegraded,
     int ProjectCount, int CycleCount,
-    int ChangedCount = 0, int ToBuildCount = 0, int UpToDateCount = 0) : IpcEvent;
+    int ChangedCount = 0, int ToBuildCount = 0, int UpToDateCount = 0, int? Behind = null) : IpcEvent;
+/// <summary>
+/// [v1.16.0] <see cref="PullRepositoryCommand"/>'ın sonucu. Gerekçe satırları zaten <see
+/// cref="SyncProgressEvent"/> olarak akmıştır; bu event yalnız "ilerledi mi" sorusunu cevaplar.
+/// </summary>
+/// <param name="Succeeded">Fast-forward gerçekleşti mi. <c>true</c> ⇒ App chip'i düşürür ve otomatik bir Sync
+/// koşar (konsol KORUNARAK — kullanıcı kendi tetiklediği pull'un sonucunu görmeye devam etmeli).</param>
+public sealed record PullCompletedEvent(bool Succeeded) : IpcEvent;
+
 public sealed record BranchListEvent(IReadOnlyList<BranchRef> Branches) : IpcEvent;
 
 /// <summary>
@@ -306,8 +331,14 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// tooltip'inde bunu söyler ("commit aynı ama neden derlenecek?" sorusunun cevabı). Düğümden AYNEN taşınır;
 /// koordinatörün koşu-zamanlama kuralıyla (pre-skip) <c>false</c>'a çevirdiği projelerde <c>null</c>'dır —
 /// o karar imzadan gelmez, önizleme yalan söylemez. Alan default'lu: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="OwnFilesChanged">[v1.16.0] Projenin KENDİ girdi dosyaları son derlemeden bu yana değişti mi —
+/// satırın karar etiketi <c>modified</c> (kendi dosyası) ile <c>affected</c> (yalnız bağımlılığı) ayrımını
+/// buradan okur. Motorun Fast geçişinden gelir; karar bilinmiyorsa <c>null</c>. Alan default'lu: eski NDJSON
+/// satırları alansız çözülür.</param>
+/// <param name="LastBuiltAt">[v1.16.0] SON BAŞARILI derlemenin zamanı — <c>up to date · 2h</c> etiketindeki
+/// göreli yaşın kaynağı. Hiç başarıyla derlenmemiş projede <c>null</c> ("never built" olgusu budur).</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
-    WillBuildReason? Reason = null);
+    WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null);
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
 /// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>

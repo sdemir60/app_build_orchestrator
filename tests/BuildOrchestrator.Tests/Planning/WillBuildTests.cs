@@ -124,13 +124,34 @@ public class WillBuildTests
         => Assert.Equal(WillBuildReason.UpToDate,
             ReasonOf("sig1", new BuildState("A", "sig1", LastResult: BuildResult.Succeeded)));
 
-    /// <summary>Hollow ve kapsam-dışı hâllerde gerekçe YOKTUR: ilkinde bilinmiyor, ikincisinde üyelik
-    /// kanalı (döngü rozeti) zaten konuşuyor — plan gerekçesi orada yanıltıcı olurdu.</summary>
+    /// <summary>Hollow'da gerekçe YOKTUR: imza hesaplanamadıysa söylenecek bir şey de yoktur.</summary>
     [Fact]
-    public void hollow_and_out_of_cycle_scope_carry_no_reason()
+    public void hollow_carries_no_reason()
+        => Assert.Null(ReasonOf(null, null));
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — v1.16.0] Kapsam dışı bir SCC üyesi de gerekçesini SÖYLER.
+    ///
+    /// <para><b>Eski iddia:</b> "kapsam-dışı hâlde gerekçe yoktur; üyelik kanalı (döngü rozeti) zaten
+    /// konuşuyor, plan gerekçesi orada yanıltıcı olurdu" — ve o dönemde gerekçe gerçekten bir PLAN kanalını
+    /// (will-build noktası) besliyordu. Gerekçe artık satırın KARAR ETİKETİNİ besliyor; etiket ise bir DİSK
+    /// OLGUSUDUR ve o olgu döngü üyesi için de vardır. Gizlenmesi ölçüldü: gerçek bir çalışma alanında 184
+    /// satırın 33'ü (tüm SCC üyeleri) hiçbir şey yazmıyordu.</para>
+    ///
+    /// <para><b>WillBuild DEĞİŞMEDİ</b> — kapsam dışı üye hâlâ <c>false</c>: bu koşu onu derlemez.</para>
+    /// </summary>
+    [Fact]
+    public void an_out_of_scope_cycle_member_still_reports_why_it_is_stale()
     {
-        Assert.Null(ReasonOf(null, null));
-        Assert.Null(ReasonOf("sig1", null, inCycle: true));
+        var built = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded);
+
+        Assert.Equal(WillBuildReason.NeverBuilt, ReasonOf("sig1", null, inCycle: true));
+        Assert.Equal(WillBuildReason.UpToDate, ReasonOf("sig1", built, inCycle: true));
+        Assert.Equal(WillBuildReason.SignatureChanged, ReasonOf("sig2", built, inCycle: true));
+
+        // ...ama derlenmez: kapsam kararı aynen duruyor.
+        Assert.False(WillBuildEvaluator.Evaluate(true, "sig2", built, buildCycles: false));
+        Assert.False(WillBuildEvaluator.Evaluate(true, "sig1", null, buildCycles: false));
     }
 
     /// <summary>Evaluate, EvaluateWithReason'a delege eder — iki yüzey ayrışamaz (kopya yok).</summary>

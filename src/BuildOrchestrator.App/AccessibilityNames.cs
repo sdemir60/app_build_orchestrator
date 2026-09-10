@@ -96,6 +96,10 @@ public static class AccessibilityNames
 
     public const string StopButton = "Stop build";
     public const string BranchChip = "Branch — choose build target";
+
+    /// <summary>[design v1.16.0 §2.7-6a] <c>N behind</c> chip'i. Sayı bilindiğinde ad SAYIYLA yeniden
+    /// yazılır (<c>"3 behind"</c>) — burada duran, chip henüz hiç veri görmemişken geçerli olan addır.</summary>
+    public const string BehindChip = "Behind the remote — click to fast-forward";
     public const string WorktreeChip = "Worktree — build isolation";
     public const string PerfChip = "Performance profile";
     public const string BuildOptions = "Build options";

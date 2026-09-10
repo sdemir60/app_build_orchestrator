@@ -7,6 +7,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
+using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Core.Workspace;
@@ -64,7 +65,8 @@ public class ExternalSyncIntegrationTests
     private static SyncWorkspaceService ServiceFor(string root, string cacheRoot) =>
         new(new WorkspaceScanner(), new CsprojEvaluator(),
             new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json")),
-            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot));
+            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)));
 
     private static async Task<List<IpcEvent>> RunSyncAsync(GitTestRepo main, string cacheRoot, params ExternalProject[] externals)
     {
@@ -227,20 +229,16 @@ public class ExternalSyncIntegrationTests
         var workspace = Core.Externals.ExternalWorkspaceResolver.Resolve(scan.Scan(main.RootPath), [card], scan);
         var plan = new Core.Planning.BuildPlanBuilder(scan, evaluator, cache)
             .Build(workspace.Scan, "Debug", null, workspace.VcsByProjectId);
-        var git = new GitService(new ProcessRunner(), main.RootPath);
         var evaluated = workspace.Scan.CsprojPaths
             .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
             .Where(x => x.Project is not null)
             .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
 
-        var (_, signatures) = Core.Incremental.IncrementalRunBinder.Bind(
-            plan, evaluated, main.RootPath,
-            git.GetHeadCommitAsync().GetAwaiter().GetResult().Value,
-            git.GetTrackedBlobHashesAsync().GetAwaiter().GetResult().Value!,
-            git.GetDirtyPathsAsync().GetAwaiter().GetResult().Value!,
-            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase),
-            inPlace: true, buildCycles: false, DependentMode.Safe,
-            workspace.VcsByProjectId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
+        // Harici projeler için AYRI bir dal yok: aynı binder, aynı içerik yolu (D1).
+        var binder = new Core.Incremental.IncrementalRunBinder(plan, evaluated, main.RootPath,
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)));
+        var (_, signatures) = binder.Bind(
+            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), buildCycles: false, DependentMode.Safe);
 
         return signatures[projectId];
     }

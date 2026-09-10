@@ -56,7 +56,7 @@ public class BuildAfterStopTests
         var read = ContentMap(("DONE.cs", "v2"), ("KILLED.cs", "v2"), ("QUEUED.cs", "v2"));
         Func<ProjectNode, IReadOnlyList<string>> dirty = node => [node.Id + ".cs"];
 
-        string sigDone = BuildSignature.Compute(done, "Debug", "fpDone", ["DONE.cs"], read, _ => null, inPlace: true);
+        string sigDone = BuildSignature.Compute(done, "Debug", "fpDone", _ => null);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -69,8 +69,8 @@ public class BuildAfterStopTests
         };
 
         var result = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", dirty, read, fp, state,
-            inPlace: true, buildCycles: false, mode: DependentMode.Safe);
+            plan, fp, state,
+            buildCycles: false, mode: DependentMode.Safe);
 
         var willBuild = result.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
         Assert.False(willBuild["DONE"]);

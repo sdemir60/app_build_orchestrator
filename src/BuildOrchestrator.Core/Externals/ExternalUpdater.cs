@@ -1,5 +1,6 @@
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Processes;
 
@@ -44,8 +45,9 @@ public sealed class ExternalPreparationException(string message) : Exception(mes
 /// koşar</b> — bir fast-forward yeni proje dosyaları getirebilir ve tarama onları görmelidir.
 ///
 /// <para><b>Yalnız günceller.</b> "Ne derlenecek" kararı burada verilmez: harici projeler taramadan sonra
-/// sıradan düğümler olur ve ana repo projeleriyle AYNI incremental kararı alır. Bu sınıfın tek çıktısı
-/// çalışma kopyasının diskteki hâli ve kullanıcıya yazılan satırlardır.</para>
+/// sıradan düğümler olur ve ana repo projeleriyle AYNI incremental kararı alır (imza diskteki içerikten
+/// gelir). Bu sınıfın çıktısı çalışma kopyasının diskteki hâli, kullanıcıya yazılan satırlar ve okunabilen
+/// REVİZYON kimlikleridir — revizyon bir TANI bilgisidir, hiçbir kararı beslemez.</para>
 ///
 /// <para><b>İki farklı hata sınıfı.</b> Kullanıcının çözmesi gereken bir durum (kir, ayrışma, detached HEAD,
 /// kurulu olmayan tf.exe) koşuyu <see cref="ExternalPreparationException"/> ile HİÇ BAŞLATMADAN durdurur —
@@ -79,24 +81,33 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
     public static bool ShouldUpdate(RunMode mode, bool updateExternals, IReadOnlyList<ExternalProject>? externals) =>
         updateExternals && mode is not (RunMode.Cycles or RunMode.Clean) && externals is { Count: > 0 };
 
+    /// <returns>Güncellenen çalışma kopyalarının revizyonları: <c>çalışma kopyası kökü → revizyon</c>
+    /// (git'te sha, TFVC'de <c>C</c> önekli changeset). Okunamayan/güncellenemeyen kök haritada YOKTUR.</returns>
     /// <param name="externals">Kullanıcının listesi, KENDİ SIRASIYLA — güncelleme de o sırada koşar.</param>
     /// <param name="progress">Kullanıcıya görünen satırlar buraya akar.</param>
     /// <param name="scopeProjectPath">[tek proje · design v1.15.0 §9] Satırdan tetiklenen koşunun hedefi
     /// (tam csproj yolu). Dolu iken YALNIZ hedefi içeren kart güncellenir — kapsam dışına dokunulmaz: başka bir
     /// kartın kopyası ne güncellenir ne de onun için satır yazılır (çalışma kopyası olmayan kartın uyarısı
     /// dahil). Hedef ana repodaysa hiçbir karta dokunulmaz. <c>null</c> ⇒ tam koşu, her kart.</param>
-    public async Task UpdateAsync(
+    public async Task<IReadOnlyDictionary<string, string>> UpdateAsync(
         IReadOnlyList<ExternalProject> externals, Action<string> progress,
         string? scopeProjectPath = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(externals);
         ArgumentNullException.ThrowIfNull(progress);
 
+        var revisions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var project in externals)
-            await UpdateOneAsync(project, progress, scopeProjectPath, ct);
+        {
+            var (root, revision) = await UpdateOneAsync(project, progress, scopeProjectPath, ct);
+            if (root is not null && revision is not null) revisions[root] = revision;
+        }
+
+        return revisions;
     }
 
-    private async Task UpdateOneAsync(ExternalProject project, Action<string> progress, string? scopeProjectPath, CancellationToken ct)
+    private async Task<(string? Root, string? Revision)> UpdateOneAsync(
+        ExternalProject project, Action<string> progress, string? scopeProjectPath, CancellationToken ct)
     {
         string name = ExternalWorkspaceResolver.DisplayName(project.Path);
         string searchRoot = ExternalWorkspaceResolver.SearchRootOf(project.Path);
@@ -106,17 +117,23 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
         if (scopeProjectPath is not null
             && !Contains(searchRoot, scopeProjectPath)
             && !(root is not null && Contains(root, scopeProjectPath)))
-            return;
+            return (null, null);
         if (root is null)
         {
             progress(PlanProgressLines.ExternalNoWorkingCopy(name, project.Vcs));
-            return;
+            return (null, null);
         }
 
         progress(PlanProgressLines.UpdatingExternal(name));
 
-        if (project.Vcs is VcsKind.Tfvc) await UpdateTfvcAsync(name, root, progress, ct);
-        else await UpdateGitAsync(name, root, progress, ct);
+        string? revision = project.Vcs is VcsKind.Tfvc
+            ? await UpdateTfvcAsync(name, root, progress, ct)
+            : await UpdateGitAsync(name, root, progress, ct);
+
+        // Satır güncellemenin ARDINDAN yazılır: kullanıcı hangi sürümü derlediğini burada görür. Haritaya
+        // TAM revizyon girer (build-state kaydı ana repoyla aynı biçimi taşır); kısaltma yalnız gösterimdedir.
+        if (revision is not null) progress(PlanProgressLines.UpdatedExternal(name, RevisionText.Short(revision)));
+        return (root, revision);
     }
 
     /// <summary>
@@ -140,33 +157,36 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
         }
     }
 
-    private async Task UpdateGitAsync(string name, string rootPath, Action<string> progress, CancellationToken ct)
+    /// <returns>Güncelleme başarılıysa çalışma kopyasının TAM HEAD sha'sı, değilse <c>null</c>.</returns>
+    private async Task<string?> UpdateGitAsync(string name, string rootPath, Action<string> progress, CancellationToken ct)
     {
-        var result = await new ExternalGitUpdater(runner, rootPath).UpdateAsync(ct);
+        var result = await new FastForwardUpdater(runner, rootPath).UpdateAsync(ct);
 
         switch (result.Status)
         {
-            case ExternalUpdateStatus.Updated:
-            case ExternalUpdateStatus.AlreadyCurrent:
-                return;
+            case FastForwardStatus.Updated:
+            case FastForwardStatus.AlreadyCurrent:
+                return result.Revision;
 
-            case ExternalUpdateStatus.DegradedOffline:
-                // Ağ yok: koşu ölmez, yerel sürüm derlenir.
+            case FastForwardStatus.DegradedOffline:
+                // Ağ yok: koşu ölmez, yerel sürüm derlenir. Revizyon satırı YAZILMAZ — "Updated ... → X"
+                // demek, olmayan bir güncellemeyi bildirmek olurdu; uyarı zaten yerelde kalındığını söylüyor.
                 progress(PlanProgressLines.ExternalUpdateDegraded(name, result.Detail ?? "unreachable remote"));
-                return;
+                return null;
 
-            case ExternalUpdateStatus.Dirty:
+            case FastForwardStatus.Dirty:
                 throw ExternalPreparationException.Dirty(name, rootPath);
-            case ExternalUpdateStatus.Diverged:
+            case FastForwardStatus.Diverged:
                 throw ExternalPreparationException.Diverged(name, rootPath);
-            case ExternalUpdateStatus.Detached:
+            case FastForwardStatus.Detached:
                 throw ExternalPreparationException.Detached(name, rootPath);
             default:
                 throw ExternalPreparationException.UpdateFailed(name, rootPath, result.Detail);
         }
     }
 
-    private async Task UpdateTfvcAsync(string name, string rootPath, Action<string> progress, CancellationToken ct)
+    /// <returns>Get başarılıysa <c>C</c> önekli changeset numarası, değilse <c>null</c>.</returns>
+    private async Task<string?> UpdateTfvcAsync(string name, string rootPath, Action<string> progress, CancellationToken ct)
     {
         var tfvc = new TfvcService(runner, rootPath, await ResolveTfAsync(name, ct));
 
@@ -175,7 +195,16 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
         if (pending.Value) throw ExternalPreparationException.Dirty(name, rootPath);
 
         var get = await tfvc.GetLatestAsync(ct);
-        if (!get.Success) progress(PlanProgressLines.ExternalUpdateDegraded(name, get.Error!));
+        if (!get.Success)
+        {
+            progress(PlanProgressLines.ExternalUpdateDegraded(name, get.Error!));
+            return null;
+        }
+
+        // Changeset sorgusu SUNUCUYA gider — bu yüzden yalnız BURADA, get'in hemen ardından sorulur:
+        // güncelleme kapalıyken planlama ağa hiç çıkmaz.
+        var changeset = await tfvc.CurrentChangesetAsync(ct);
+        return changeset.Value is { Length: > 0 } number ? "C" + number : null;
     }
 
     /// <summary>tf.exe ilk TFVC haricide çözülür ve koşu boyunca saklanır.</summary>

@@ -32,6 +32,39 @@ public class TfvcServiceTests
         </Status>
         """;
 
+    // tf vc history /format:brief — başlık satırları LOKALİZEDİR ve rakamla başlamaz; veri satırı changeset
+    // numarasıyla başlar. Karar bu yapıdan okunur, metinden değil.
+    private const string HistoryBrief = """
+        Changeset User           Date       Comment
+        --------- -------------- ---------- ----------------------------------------
+        48213     DELTA\\sdemir   10.09.2026 Ocr okuyucu duzeltmesi
+        """;
+
+    [Fact]
+    public async Task The_current_changeset_is_read_from_the_leading_digits_of_the_first_data_row()
+    {
+        var runner = new FakeProcessRunner(FakeProcessRunner.Output(HistoryBrief));
+
+        var result = await Service(runner).CurrentChangesetAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal("48213", result.Value);
+        Assert.Contains("/stopafter:1", runner.LastSpec.Arguments);   // tek satır ister, tüm geçmişi değil
+        Assert.Contains("/version:W", runner.LastSpec.Arguments);     // workspace sürümü (sunucunun tepesi değil)
+    }
+
+    [Fact]
+    public async Task An_unreadable_history_yields_no_changeset_instead_of_an_error()
+    {
+        // Revizyon bir TANI bilgisidir: okunamaması koşuyu durdurmaz, yalnız o satır yazılmaz.
+        var runner = new FakeProcessRunner(FakeProcessRunner.Failure(1, "TF30063: You are not authorized"));
+
+        var result = await Service(runner).CurrentChangesetAsync();
+
+        Assert.True(result.Success);
+        Assert.Null(result.Value);
+    }
+
     [Fact]
     public async Task Pending_changes_are_read_from_the_xml_structure()
     {
