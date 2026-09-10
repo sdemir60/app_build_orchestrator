@@ -1,10 +1,9 @@
-﻿using BuildOrchestrator.Core.Git;
-using BuildOrchestrator.Core.Processes;
+﻿using BuildOrchestrator.Core.Processes;
 
-namespace BuildOrchestrator.Core.Externals;
+namespace BuildOrchestrator.Core.Git;
 
 /// <summary>Bir harici git çalışma kopyasını güncelleme denemesinin sonucu.</summary>
-public enum ExternalUpdateStatus
+public enum FastForwardStatus
 {
     /// <summary>Fast-forward yapıldı; çalışma kopyası artık remote ile aynı.</summary>
     Updated,
@@ -25,16 +24,22 @@ public enum ExternalUpdateStatus
 /// <param name="Status">Denemenin sonucu.</param>
 /// <param name="Revision">Çalışma kopyasının güncelleme SONRASI HEAD sha'sı; okunamadıysa null.</param>
 /// <param name="Detail">Kullanıcıya gösterilecek İngilizce açıklama (uyarı/hata metni); gerekmiyorsa null.</param>
-public sealed record ExternalUpdateResult(ExternalUpdateStatus Status, string? Revision, string? Detail);
+public sealed record FastForwardResult(FastForwardStatus Status, string? Revision, string? Detail);
 
 /// <summary>
-/// [D7] Bir harici git çalışma kopyasını remote'una ilerletir — kod tabanındaki <b>TEK mutasyon yapan git
-/// yüzeyi</b>.
+/// [D7][v1.16.0] Bir git çalışma kopyasını remote'una ilerletir — kod tabanındaki <b>TEK mutasyon yapan git
+/// yüzeyi</b>. Harici köklerin build öncesi güncellemesi ve ana reponun <c>N behind</c> chip'inden tetiklenen
+/// pull'u AYNI ilkeli buradan geçer.
 ///
-/// <para><b>Bu sınıfa ANA REPO KÖKÜ ASLA VERİLEMEZ.</b> Ana repo git açısından salt-okurdur; burada
-/// çalıştırılan <c>merge --ff-only</c> orada çalışırsa kullanıcının çalışma kopyası aracın altında
-/// değişir. Kural bir kaynak guard'ı ile de çitlenir: mutasyon yapan git komutları
-/// <c>Core/Externals</c> dışında geçemez.</para>
+/// <para><b>Ana repo kuralı (bilinçli güncelleme).</b> "Araç ana repoda pull yapmaz" kuralı duruyor: araç
+/// <b>kendiliğinden asla</b> ilerletmez — ne Sync, ne Build, ne bir arka plan işi bu sınıfı ana repo köküyle
+/// çağırır. Tek istisna kullanıcının ALT BARDAKİ chip'e basmasıdır ve o yol da yalnız aktif branch'te, yalnız
+/// fast-forward ile çalışır. Gerekçe: fetch zaten "3 commit gerideyim" diyorsa kullanıcıyı terminale
+/// göndermek aracın işini yarıda bırakmaktır; fast-forward ise aracın üstlenebileceği tek git yazma işlemidir
+/// — tarih yeniden yazılmaz, birleştirme kararı verilmez, kirli ağaca dokunulmaz ve sonuç geri alınabilir.</para>
+///
+/// <para>Sınır yine bir kaynak guard'ıyla çitlenir: mutasyon yapan git komutları BU DOSYANIN dışına
+/// çıkamaz (bkz. <c>NoGitMutationOutsideExternalsTests</c>).</para>
 ///
 /// <para><b>Neden <c>pull</c> değil:</b> <c>pull</c> yapılandırmaya göre merge commit'i ya da rebase
 /// üretebilir — ikisi de kullanıcının harici reposunu araç adına yeniden yazmak demektir. Bunun yerine akış
@@ -45,7 +50,7 @@ public sealed record ExternalUpdateResult(ExternalUpdateStatus Status, string? R
 /// mutasyona giden iki komut yaşar: <c>merge-base --is-ancestor</c> (karar) ve <c>merge --ff-only</c>
 /// (uygulama). Hiçbir kararda lokalize stderr METNİ ayrıştırılmaz; sinyaller exit kodudur.</para>
 /// </summary>
-public sealed class ExternalGitUpdater
+public sealed class FastForwardUpdater
 {
     /// <summary>Karar sorgusu için — <see cref="GitService"/>'in salt-okur komutlarıyla aynı tavan.</summary>
     private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(30);
@@ -60,9 +65,10 @@ public sealed class ExternalGitUpdater
     private readonly GitService _git;
 
     /// <param name="runner">Process çalıştırıcı.</param>
-    /// <param name="rootPath">HARİCİ çalışma kopyasının kökü — ana repo kökü ASLA verilmez (bkz. tip özeti).</param>
+    /// <param name="rootPath">İlerletilecek çalışma kopyasının kökü: harici bir kart ya da (yalnız kullanıcı
+    /// chip'e bastığında) ana repo (bkz. tip özeti).</param>
     /// <param name="gitExecutable">git yürütülebiliri; testler için değiştirilebilir.</param>
-    public ExternalGitUpdater(IProcessRunner runner, string rootPath, string gitExecutable = "git")
+    public FastForwardUpdater(IProcessRunner runner, string rootPath, string gitExecutable = "git")
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _rootPath = rootPath ?? throw new ArgumentNullException(nameof(rootPath));
@@ -76,14 +82,14 @@ public sealed class ExternalGitUpdater
     /// Çalışma kopyasını remote'una ilerletmeyi dener. Hiçbir koşulda exception fırlatmaz — her sonuç
     /// (kir, ayrışma, offline, bozuk repo) tipli veri olarak döner.
     /// </summary>
-    public async Task<ExternalUpdateResult> UpdateAsync(CancellationToken ct = default)
+    public async Task<FastForwardResult> UpdateAsync(CancellationToken ct = default)
     {
         // 1) Kir kapısı — fetch'ten bile ÖNCE: kullanıcının commit'lenmemiş çalışması varken bu araç o
         //    dizinde hiçbir şey yapmaz.
         var dirty = await _git.GetDirtyPathsAsync(ct);
         if (!dirty.Success) return Failed(dirty.Error);
         if (dirty.Value!.Count > 0)
-            return new ExternalUpdateResult(ExternalUpdateStatus.Dirty, null,
+            return new FastForwardResult(FastForwardStatus.Dirty, null,
                 $"{dirty.Value.Count} uncommitted change(s) in the working copy");
 
         // 2) Branch — detached HEAD'de neyin ilerletileceği belirsizdir.
@@ -92,7 +98,7 @@ public sealed class ExternalGitUpdater
         if (branch.Value is null)
         {
             var detachedHead = await _git.GetHeadCommitAsync(ct);
-            return new ExternalUpdateResult(ExternalUpdateStatus.Detached,
+            return new FastForwardResult(FastForwardStatus.Detached,
                 detachedHead.Success ? detachedHead.Value : null, "HEAD is not on a branch");
         }
 
@@ -102,10 +108,10 @@ public sealed class ExternalGitUpdater
         if (!head.Success) return Failed(head.Error);
 
         if (fetch.Degraded)
-            return new ExternalUpdateResult(ExternalUpdateStatus.DegradedOffline, head.Value, fetch.Warning);
+            return new FastForwardResult(FastForwardStatus.DegradedOffline, head.Value, fetch.Warning);
 
         if (string.Equals(head.Value, fetch.TargetSha, StringComparison.Ordinal))
-            return new ExternalUpdateResult(ExternalUpdateStatus.AlreadyCurrent, head.Value, null);
+            return new FastForwardResult(FastForwardStatus.AlreadyCurrent, head.Value, null);
 
         // 4) Fast-forward mümkün mü? exit=0 → HEAD hedefin atası (ileri sarılabilir), exit=1 → ayrışmış.
         //    Karar exit kodundan okunur; stderr METNİ ASLA ayrıştırılmaz (lokalize olabilir).
@@ -115,7 +121,7 @@ public sealed class ExternalGitUpdater
         if (!ancestry.Success) return Failed(ancestry.Error);
 
         if (ancestry.Value!.ExitCode == 1)
-            return new ExternalUpdateResult(ExternalUpdateStatus.Diverged, head.Value,
+            return new FastForwardResult(FastForwardStatus.Diverged, head.Value,
                 $"the local branch '{branch.Value}' has diverged from origin — fast-forward is not possible");
 
         if (ancestry.Value.ExitCode != 0)
@@ -130,9 +136,9 @@ public sealed class ExternalGitUpdater
         var updatedHead = await _git.GetHeadCommitAsync(ct);
         if (!updatedHead.Success) return Failed(updatedHead.Error);
 
-        return new ExternalUpdateResult(ExternalUpdateStatus.Updated, updatedHead.Value, null);
+        return new FastForwardResult(FastForwardStatus.Updated, updatedHead.Value, null);
     }
 
-    private static ExternalUpdateResult Failed(string? detail)
-        => new(ExternalUpdateStatus.Failed, null, detail);
+    private static FastForwardResult Failed(string? detail)
+        => new(FastForwardStatus.Failed, null, detail);
 }

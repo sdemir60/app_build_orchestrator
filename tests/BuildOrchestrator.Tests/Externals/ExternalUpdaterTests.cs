@@ -26,7 +26,7 @@ public class ExternalUpdaterTests
     private ExternalUpdater Updater(Func<CancellationToken, Task<string>>? tfResolver = null)
         => new(new ProcessRunner(), tfResolver);
 
-    private Task UpdateAsync(ExternalUpdater updater, params ExternalProject[] externals)
+    private Task<IReadOnlyDictionary<string, string>> UpdateAsync(ExternalUpdater updater, params ExternalProject[] externals)
         => updater.UpdateAsync(externals, _progress.Add);
 
     private static ExternalProject GitAt(string path) => new(path, VcsKind.Git);
@@ -171,6 +171,55 @@ public class ExternalUpdaterTests
         await UpdateAsync(Updater(_ => { resolved = true; return Task.FromResult(@"C:\TF.exe"); }), GitAt(clone));
 
         Assert.False(resolved);
+    }
+
+    // ---------------------------------------------------------------- revizyon: hangi sürüm derleniyor
+
+    /// <summary>
+    /// Güncellemenin ARDINDAN yazılan satır, çalışma kopyasının hangi sürümde olduğunu söyler. Satırlarda
+    /// revizyon GÖSTERİLMEDİĞİ için (v1.16.0: satır kararı söyler) kullanıcının bu bilgiyi görebildiği tek
+    /// yer konsoldur.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_update_reports_the_revision_it_landed_on()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.cs", "one");
+        upstream.CommitAll("first");
+        string clone = upstream.CloneFull();
+        upstream.WriteFile("a.cs", "two");
+        string head = upstream.CommitAll("second");
+
+        var revisions = await UpdateAsync(Updater(), GitAt(clone));
+
+        Assert.Contains($"Updated external '{Post(clone)}' → {head[..7]}", _progress);
+        // Haritada TAM sha durur: build-state kaydı ana repo satırlarıyla aynı biçimi taşır.
+        Assert.Equal(head, Assert.Single(revisions).Value);
+    }
+
+    [Fact]
+    public async Task A_copy_that_was_already_current_still_reports_its_revision()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.cs", "one");
+        string head = upstream.CommitAll("first");
+        string clone = upstream.CloneFull();
+
+        await UpdateAsync(Updater(), GitAt(clone));
+
+        Assert.Contains($"Updated external '{Post(clone)}' → {head[..7]}", _progress);
+    }
+
+    [Fact]
+    public async Task A_card_without_a_working_copy_reports_no_revision()
+    {
+        // Güncelleme hiç koşmadı: "Updated ... → X" demek olmayan bir işi bildirmek olurdu.
+        var missing = Path.Combine(Path.GetTempPath(), "gone-8c21");
+
+        var revisions = await UpdateAsync(Updater(), GitAt(missing));
+
+        Assert.Empty(revisions);
+        Assert.DoesNotContain(_progress, l => l.StartsWith("Updated external", StringComparison.Ordinal));
     }
 
     // ---------------------------------------------------------------- sıra

@@ -81,4 +81,45 @@ public sealed class TfvcService
             : GitResult<bool>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Tf, r));
     }
 
+    /// <summary>
+    /// Çalışma kopyasının kapsamındaki son changeset numarası — bu harici kökün revizyon kimliği.
+    ///
+    /// <para><b>Yalnız <c>tf vc get</c>'in HEMEN ARDINDAN sorulur.</b> Sorgu SUNUCUYA gider; planlamayı ağa
+    /// bağlamamak için güncelleme kapalıyken hiç çağrılmaz — o durumda TFVC köklerin revizyonu bilinmez ve
+    /// yazılmaz. Karara girmez: bir TFVC projesinin derlenip derlenmeyeceğine, ana repo projeleriyle aynı
+    /// şekilde, diskteki dosya içerikleri karar verir.</para>
+    ///
+    /// <para>Okunamazsa <c>Ok(null)</c> döner (hata DEĞİL): revizyon bir TANI bilgisidir, bilinmemesi koşuyu
+    /// durdurmaz.</para>
+    /// </summary>
+    public async Task<GitResult<string?>> CurrentChangesetAsync(CancellationToken ct = default)
+    {
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Tf, _tfExePath,
+            ["vc", "history", ".", "/recursive", "/stopafter:1", "/noprompt", "/version:W", "/format:brief"],
+            _rootPath, QueryTimeout, ct);
+        if (!outcome.Success) return GitResult<string?>.Ok(null);
+
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<string?>.Ok(null);
+
+        return GitResult<string?>.Ok(ParseLeadingChangeset(r.StandardOutput));
+    }
+
+    /// <summary>
+    /// <c>tf vc history /format:brief</c> çıktısının ilk VERİ satırındaki changeset numarası. Başlık satırları
+    /// lokalizedir ve rakamla BAŞLAMAZ; bu yüzden karar "satırın başındaki rakam dizisi" gibi dilden bağımsız
+    /// bir yapıdan okunur — metin ASLA aranmaz.
+    /// </summary>
+    private static string? ParseLeadingChangeset(string output)
+    {
+        foreach (string line in output.Split('\n'))
+        {
+            string trimmed = line.TrimStart();
+            int digits = 0;
+            while (digits < trimmed.Length && char.IsAsciiDigit(trimmed[digits])) digits++;
+            if (digits > 0) return trimmed[..digits];
+        }
+
+        return null;
+    }
 }

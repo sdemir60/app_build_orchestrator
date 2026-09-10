@@ -85,14 +85,27 @@ public sealed class SyncWorkspaceService(
         var fetch = await git.FetchRefOnlyAsync(cmd.Branch, ct);
         if (fetch.Degraded)
         {
-            // Ağ yok/remote geçersiz: AKIŞ DURMAZ — uyarı basılır, hedef yerel HEAD'e düşer ve analiz devam eder.
-            emit(Warn($"warning: git fetch failed — continuing against the local HEAD ({fetch.Warning})"));
+            // Ağ yok/remote geçersiz: AKIŞ DURMAZ — uyarı basılır, hedef yerel HEAD'e düşer ve analiz devam
+            // eder. Mesafe de bilinemez; bunu söylemek chip'in NEDEN çıkmadığını da açıklar.
+            emit(Warn($"warning: git fetch failed — continuing against the local HEAD; "
+                + $"distance from origin/{cmd.Branch} is unknown ({fetch.Warning})"));
         }
 
-        // §3.1 satır 2. SHA sabit örnek DEĞİL, gerçekten çözülen hedef commit'tir. Hedef hiç çözülemediyse
-        // (commit'siz repo) satır BASILMAZ — "HEAD  — ..." gibi yarım bir satır üretmek yerine sessiz kalınır.
+        // §3.1 satır 2 [v1.16.0]: yerel HEAD + uzak uçtan mesafe. Mesafe YALNIZ fetch başarılıyken ve seçili
+        // branch AKTİF branch iken hesaplanır — başka bir branch seçiliyken derleme worktree'den yapılır ve
+        // ana ağacın uzak uçla mesafesi kullanıcıya bir şey söylemez.
         string? targetSha = fetch.TargetSha;
-        if (targetSha is not null) emit(Info($"HEAD {ShortSha(targetSha)} — computing osys-state diff"));
+        string? activeBranch = (await git.GetCurrentBranchAsync(ct)).Value;
+        int? behind = null;
+        if (!fetch.Degraded && targetSha is not null && head.Value is not null
+            && string.Equals(activeBranch, cmd.Branch, StringComparison.Ordinal))
+        {
+            behind = (await git.CountBehindAsync(targetSha, ct)).Value;
+        }
+
+        // Hedef hiç çözülemediyse (commit'siz repo) satır BASILMAZ — yarım bir satır üretmek yerine sessiz kalınır.
+        if (head.Value is not null)
+            emit(Info(PlanProgressLines.HeadDistance(RevisionText.Short(head.Value), behind, cmd.Branch)));
 
         // --- 2) tarama + plan. [v7 A5/N1] granular adım satırları fetch satırından SONRA, dim/info tonunda.
         // [planlama görünürlüğü] Adım metinleri PlanProgressLines'tan gelir: AYNI satırları Supervisor'ın
@@ -164,7 +177,8 @@ public sealed class SyncWorkspaceService(
 
         emit(new SyncCompletedEvent(cmd.Branch, targetSha, fetch.Degraded,
             ProjectCount: outcome.Plan.Nodes.Count, CycleCount: outcome.Plan.Cycles.Count,
-            ChangedCount: outcome.Changed, ToBuildCount: outcome.ToBuild, UpToDateCount: outcome.UpToDate));
+            ChangedCount: outcome.Changed, ToBuildCount: outcome.ToBuild, UpToDateCount: outcome.UpToDate,
+            Behind: behind));
     }
 
     /// <summary>
@@ -247,9 +261,6 @@ public sealed class SyncWorkspaceService(
         .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
         .ThenBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
         .ToList();
-
-    /// <summary>Kullanıcıya gösterilen kısa commit kimliği (§3.1'deki <c>b7e91d4</c> formatı — 7 hane).</summary>
-    private static string ShortSha(string sha) => sha.Length <= 7 ? sha : sha[..7];
 
     private static SyncProgressEvent Cmd(string line) => new(line, "cmd");
     private static SyncProgressEvent Info(string line) => new(line, "info");

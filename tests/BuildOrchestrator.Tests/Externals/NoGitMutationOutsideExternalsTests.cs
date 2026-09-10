@@ -7,16 +7,23 @@ using BuildOrchestrator.Tests.App;
 namespace BuildOrchestrator.Tests.Externals;
 
 /// <summary>
-/// [D7] Mutasyon yapan git komutlarının kaynak-tarayan guard'ı: ana repo git açısından SALT-OKURDUR ve
-/// çalışma ağacını değiştiren tek yüzey <c>Core/Externals</c> içindedir.
+/// [D7] Mutasyon yapan git komutlarının kaynak-tarayan guard'ı: çalışma ağacını değiştiren git komutları TEK
+/// bir dosyada yaşar.
 ///
 /// <para><b>Neden var:</b> harici projeler özelliğiyle birlikte kod tabanına ilk kez bir <c>merge</c> girdi.
-/// O komut yanlış köke — kullanıcının OSYS reposuna — verilirse çalışma kopyası aracın altında değişir; bu,
-/// bu projenin en pahalı sessiz arızası olurdu. İnceleme dikkatine güvenmek yerine sınır burada çitlenir.</para>
+/// O komut yanlış köke ve yanlış anda verilirse kullanıcının çalışma kopyası aracın altında değişir; bu, bu
+/// projenin en pahalı sessiz arızası olurdu. İnceleme dikkatine güvenmek yerine sınır burada çitlenir.</para>
 ///
-/// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> yalnız harici çalışma kopyalarını güncelleyen dosya ve havuz
-/// worktree'lerini kuran/sıfırlayan dosya. Adet PİNLENMEZ ama dosya listesi pinlenir — yeni bir dosyaya
-/// mutasyon komutu eklemek guard'ı kırmızıya çeker.</para>
+/// <para><b>[DEĞİŞEN KURAL — v1.16.0]</b> Eski iddia "mutasyon <c>Core/Externals</c> DIŞINA çıkamaz" idi ve
+/// gerekçesi "ana repo hiçbir koşulda ilerletilmez"di. Kural bilinçli olarak güncellendi: kullanıcı alt
+/// bardaki <c>N behind</c> chip'ine bastığında ana repo da ff-only ilerletilir (yalnız aktif branch, yalnız
+/// kullanıcı tıklamasıyla, asla kendiliğinden). Bu yüzden yüzey artık VCS'e göre değil, DOSYAYA göre
+/// çitlenir — tek mutasyon dosyası <c>Core/Git/FastForwardUpdater.cs</c>'tir ve ana repo ile harici kökler
+/// aynı ilkeli oradan geçer. Guard'ın koruduğu şey değişmedi: mutasyonun ikinci bir yere sızmaması.</para>
+///
+/// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> yalnız fast-forward yüzeyi ve havuz worktree'lerini
+/// kuran/sıfırlayan dosya. Adet PİNLENMEZ ama dosya listesi pinlenir — yeni bir dosyaya mutasyon komutu
+/// eklemek guard'ı kırmızıya çeker.</para>
 ///
 /// <para><b>YAKALAYAMADIĞI (bilinçli sınır):</b> komut adını çalışma zamanında birleştirmek
 /// (<c>"mer" + "ge"</c>) ya da argümanları bir listeden okumak. Guard literal çağrı biçimine bakar; niyetin
@@ -43,8 +50,9 @@ public sealed class NoGitMutationOutsideExternalsTests
     /// <summary>Mutasyonun MEŞRU olduğu yollar (src köküne göre) ve gerekçeleri.</summary>
     private static readonly IReadOnlyCollection<string> Allowed =
     [
-        // Harici çalışma kopyasını ilerleten tek yüzey: merge-base kararı + merge --ff-only (§10.6).
-        @"BuildOrchestrator.Core\Externals\ExternalGitUpdater.cs",
+        // Çalışma kopyasını ilerleten tek yüzey: merge-base kararı + merge --ff-only (§10.6). Hem harici
+        // kartlar hem (yalnız kullanıcı chip'e bastığında) ana repo buradan geçer.
+        @"BuildOrchestrator.Core\Git\FastForwardUpdater.cs",
         // Havuz worktree'lerini kurar ve sıfırlar; üç kapısı (havuz altında, ana kök değil, detached HEAD)
         // ana repoya dokunmasını imkânsız kılar (§10.4).
         @"BuildOrchestrator.Core\Git\WorktreeManager.cs",
@@ -60,14 +68,14 @@ public sealed class NoGitMutationOutsideExternalsTests
     }
 
     [Fact]
-    public void The_external_updater_is_the_only_place_that_merges()
+    public void The_fast_forward_updater_is_the_only_place_that_merges()
     {
-        // Ana repo salt-okur kalmalı: 'merge' tek bir dosyada, tek biçimde (--ff-only) yaşar.
+        // 'merge' tek bir dosyada, tek biçimde (--ff-only) yaşar — hangi kök verilirse verilsin ilke aynı.
         var mergeUsers = SourceGuard.ScanSrc("*.cs", new Regex("\"merge\"|\"merge-base\"", RegexOptions.Compiled),
             allowedFiles: null, skipCommentLines: true);
 
         Assert.All(mergeUsers, offender =>
-            Assert.StartsWith(@"BuildOrchestrator.Core\Externals\ExternalGitUpdater.cs", offender, StringComparison.Ordinal));
+            Assert.StartsWith(@"BuildOrchestrator.Core\Git\FastForwardUpdater.cs", offender, StringComparison.Ordinal));
         Assert.NotEmpty(mergeUsers); // tarama gerçekten bir şey gördü
     }
 
@@ -77,7 +85,7 @@ public sealed class NoGitMutationOutsideExternalsTests
         // Boş bir tarama guard'ı sessizce yeşil bırakırdı.
         var scanned = SourceGuard.ScannedSrcFiles("*.cs");
 
-        Assert.Contains(@"BuildOrchestrator.Core\Externals\ExternalGitUpdater.cs", scanned);
+        Assert.Contains(@"BuildOrchestrator.Core\Git\FastForwardUpdater.cs", scanned);
         Assert.True(scanned.Count > 50, $"Beklenenden az dosya tarandı: {scanned.Count}");
     }
 

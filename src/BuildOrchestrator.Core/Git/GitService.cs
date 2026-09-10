@@ -237,6 +237,34 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     }
 
     /// <summary>
+    /// [v1.16.0] Yerel HEAD, <paramref name="targetSha"/>'nın KAÇ commit gerisinde — alt bardaki
+    /// <c>N behind</c> chip'inin ve Sync'in mesafe satırının tek kaynağı.
+    ///
+    /// <para>Ölçüm YEREL bir sorgudur (<c>rev-list --count HEAD..&lt;sha&gt;</c>): uzak uç zaten Sync'in
+    /// ref-only fetch'iyle çözülmüştür, bu yüzden burada ağa çıkılmaz. Fetch degrade olduysa çağıran bu
+    /// metodu HİÇ çağırmaz — uydurma bir sayı yazmaktansa mesafeyi bilinmez bırakmak doğrudur.</para>
+    ///
+    /// <para>Sonuç 0 ise yerel HEAD uzak uçla aynı ya da ONDAN İLERİDEDİR (ahead) — ikisi de "geride değil"
+    /// demektir ve chip çizilmez. Ayrışmış bir branch'te de sayı yalnız "kaç commit eksik" sorusunu cevaplar;
+    /// fast-forward'ın mümkün olup olmadığına <c>merge --ff-only</c> anında karar verilir.</para>
+    ///
+    /// <para><b>K1:</b> salt-okur.</para>
+    /// </summary>
+    public async Task<GitResult<int?>> CountBehindAsync(string targetSha, CancellationToken ct = default)
+    {
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable,
+            ["rev-list", "--count", $"HEAD..{targetSha}"], _repoRoot, CommandTimeout, ct);
+        if (!outcome.Success) return GitResult<int?>.Fail(outcome.Error!);
+
+        var r = outcome.Value!;
+        if (r.ExitCode != 0) return GitResult<int?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
+
+        return int.TryParse(r.StandardOutput.Trim(), out int behind)
+            ? GitResult<int?>.Ok(behind)
+            : GitResult<int?>.Fail($"unexpected 'git rev-list --count' output: '{r.StandardOutput.Trim()}'");
+    }
+
+    /// <summary>
     /// [Fix wave 1 — Finding 4] YEREL branch (<c>refs/heads/&lt;branch&gt;</c>) SHA'sı — <see
     /// cref="GetRemoteTrackingShaAsync"/>'in birebir aynı desendeki (salt-okur <c>rev-parse --verify -q</c>)
     /// yerel karşılığı. Gerekçe: <see cref="ListBranchesAsync"/> kullanıcıya <c>refs/heads/*</c>'ı da listeler,

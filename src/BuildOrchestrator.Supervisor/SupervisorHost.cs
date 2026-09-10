@@ -8,6 +8,7 @@ using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
@@ -107,6 +108,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await DeleteWorktreeAsync(d, ct); break;
             case SetPerfModeCommand p:
                 await ApplyPerfModeAsync(p, ct); break;
+            case PullRepositoryCommand p:
+                await PullRepositoryAsync(p, ct); break;
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
@@ -146,6 +149,38 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli — tanımlı bir event'e çevrilir.
             await writer.WriteAsync(new ErrorEvent("planFailed", ex.Message), ct);
         }
+    }
+
+    /// <summary>
+    /// [v1.16.0] Ana repoyu ff-only ilerletir — <b>yalnız kullanıcı alt bardaki <c>N behind</c> chip'ine
+    /// bastığında</b>. Yürütme <see cref="FastForwardUpdater"/>'dır: harici kartlarla AYNI ilke (kir kapısı →
+    /// ref-only fetch → "yalnız geride miyim" → <c>merge --ff-only</c>), yalnız kök farklı.
+    ///
+    /// <para>Her sonuç konsola bir satır yazar ve <see cref="PullCompletedEvent"/> ile kapanır; App başarı
+    /// durumunda chip'i düşürüp konsolu KORUYARAK bir Sync koşar. Reddetme bir HATA DEĞİLDİR: kirli ya da
+    /// ayrışmış bir ağaçta yapılacak doğru şey hiçbir şey yapmamaktır.</para>
+    /// </summary>
+    private async Task PullRepositoryAsync(PullRepositoryCommand cmd, CancellationToken ct)
+    {
+        var git = workspace.Git(cmd.RootPath);
+        string? before = (await git.GetHeadCommitAsync(ct)).Value;
+
+        await writer.WriteAsync(new SyncProgressEvent(PlanProgressLines.PullCommand(cmd.Branch), "cmd"), ct);
+        var result = await new FastForwardUpdater(new ProcessRunner(), cmd.RootPath).UpdateAsync(ct);
+
+        var (line, tone) = result.Status switch
+        {
+            FastForwardStatus.Updated => (
+                PlanProgressLines.Pulled(cmd.Branch, RevisionText.Short(before), RevisionText.Short(result.Revision)), "info"),
+            FastForwardStatus.AlreadyCurrent => (PlanProgressLines.PullAlreadyCurrent(cmd.Branch), "info"),
+            FastForwardStatus.Dirty => (PlanProgressLines.PullRefusedDirty(), "warn"),
+            FastForwardStatus.Diverged => (PlanProgressLines.PullRefusedDiverged(cmd.Branch), "warn"),
+            FastForwardStatus.Detached => (PlanProgressLines.PullRefusedDetached(), "warn"),
+            _ => (PlanProgressLines.PullFailed(result.Detail ?? "unknown error"), "error"),
+        };
+
+        await writer.WriteAsync(new SyncProgressEvent(line, tone), ct);
+        await writer.WriteAsync(new PullCompletedEvent(result.Status is FastForwardStatus.Updated), ct);
     }
 
     /// <summary>[A5/T69] Yerel + remote-tracking branch listesi (SALT-OKUR) → <see cref="BranchListEvent"/>.</summary>

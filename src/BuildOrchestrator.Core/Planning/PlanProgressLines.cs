@@ -36,6 +36,23 @@ public static class PlanProgressLines
 
     public static string BuildOrderResolved(int nodes) => $"Build order resolved ({nodes})";
 
+    /// <summary>
+    /// [v1.16.0] Sync'in ikinci satırı: yerel HEAD ve uzak uçtan mesafesi. <paramref name="behind"/>
+    /// <c>null</c> ise yalnız HEAD yazılır — mesafe bilinmiyor (fetch degrade oldu ya da seçili branch aktif
+    /// branch değil) ve uydurma bir sayı yazmaktansa susmak doğrudur.
+    ///
+    /// <para>Uzak uçtaki commit'in KİMLİĞİ yazılmaz: kullanıcı onu pull etmedikçe o commit yereldeki hiçbir
+    /// şeyi anlatmaz. Anlamlı olan tek şey MESAFEDİR — ve o mesafe alt bardaki <c>N behind</c> chip'iyle
+    /// aynı sayıdır.</para>
+    /// </summary>
+    public static string HeadDistance(string headRevision, int? behind, string branch) => behind switch
+    {
+        null => $"HEAD {headRevision}",
+        0 => $"HEAD {headRevision} · up to date with origin/{branch}",
+        1 => $"HEAD {headRevision} · 1 commit behind origin/{branch}",
+        _ => $"HEAD {headRevision} · {behind} commits behind origin/{branch}",
+    };
+
     /// <summary>Incremental pass (git diff + proje başına imza) planlamanın EN UZUN adımıdır ve kendi
     /// sayısını üretmez — satır işin ÖNCESİNDE yazılır, yoksa akış tam da en uzun beklemede sessizleşirdi.
     /// Yalnız run yolunda: Sync kendi iki-pass'ini <c>changed/to build</c> özetiyle raporlar.</summary>
@@ -50,6 +67,35 @@ public static class PlanProgressLines
     /// </summary>
     public static string IndexingSources(int files) => $"Indexing {files} source files — later runs reuse the index";
 
+    // --- Ana repo: kullanıcının tetiklediği ff-only pull (v1.16.0) --------------------------------
+    // Metinler İKİ şeyi birden söyler: ne YAPILDI ve ne YAPILMADI. Korkulan şey merge/rebase olduğu için
+    // reddetme satırları da nedeni ve çözümü açıkça yazar — kullanıcı terminale gitmeden ne yapacağını bilir.
+
+    /// <summary>Çalıştırılan git komutu (konsolda cmd tonu) — kullanıcı ne koştuğumuzu görür.</summary>
+    public static string PullCommand(string branch) => $"git merge --ff-only origin/{branch}";
+
+    /// <summary>Fast-forward başarılı: eski ve yeni HEAD kısa biçimde.</summary>
+    public static string Pulled(string branch, string fromRevision, string toRevision)
+        => $"Pulled origin/{branch} — fast-forward {fromRevision}..{toRevision}";
+
+    /// <summary>Commit'lenmemiş değişiklik var — araç kullanıcının dosyalarının üstüne çalışmaz.</summary>
+    public static string PullRefusedDirty()
+        => "Pull refused — uncommitted changes in the working tree; commit or stash them first";
+
+    /// <summary>Yerel branch ayrışmış: fast-forward mümkün değil, birleştirme kararı araca ait DEĞİLDİR.</summary>
+    public static string PullRefusedDiverged(string branch)
+        => $"Pull refused — local branch has diverged from origin/{branch}; reconcile it manually";
+
+    /// <summary>HEAD bir branch'e bağlı değil — neyin ilerletileceği belirsiz.</summary>
+    public static string PullRefusedDetached()
+        => "Pull refused — HEAD is not on a branch; check out a branch first";
+
+    /// <summary>Ağ/kimlik hatası ya da beklenmeyen git hatası; çalışma ağacına DOKUNULMADI.</summary>
+    public static string PullFailed(string reason) => $"Pull failed — {reason}";
+
+    /// <summary>Uzak uç zaten yakalanmıştı — ilerletilecek bir şey yok.</summary>
+    public static string PullAlreadyCurrent(string branch) => $"Already up to date with origin/{branch}";
+
     // --- Harici projeler ------------------------------------------------------------------------
     // Aynı metinler iki yüzeyde görünür: Sync transkripti ve koşu planlaması. Bu yüzden onlar da burada, tek
     // kaynakta durur. Koşuyu İPTAL eden metinler buraya GİRMEZ — onlar progress satırı değil,
@@ -57,6 +103,17 @@ public static class PlanProgressLines
 
     /// <summary>Bir haricinin çalışma kopyası güncelleniyor — iş sürerken satır önce yazılır.</summary>
     public static string UpdatingExternal(string name) => $"Updating external '{name}'";
+
+    /// <summary>
+    /// Bir haricinin çalışma kopyası güncellendi ve HANGİ sürümde olduğu okundu. Satır güncellemenin
+    /// ARDINDAN yazılır ve yalnız güncelleme gerçekten koştuğunda (kullanıcı bayrağı açık) görülür.
+    ///
+    /// <para>Revizyon kimliği kaynağına göre değişir: git'te kısa sha (<c>a1b2c3d</c>), TFVC'de changeset
+    /// (<c>C48213</c>). Kullanıcının "hangi sürümü derliyorum" sorusunun cevabı budur; satırlarda revizyon
+    /// GÖSTERİLMEZ (v1.16.0: satır kararı söyler, sürümü değil).</para>
+    /// </summary>
+    public static string UpdatedExternal(string name, string revision)
+        => $"Updated external '{name}' → {revision}";
 
     /// <summary>Remote'a ulaşılamadı; yerel sürümle devam edilir (ana repo degraded fetch ile aynı felsefe).</summary>
     public static string ExternalUpdateDegraded(string name, string reason)

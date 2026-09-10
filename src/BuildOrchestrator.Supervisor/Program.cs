@@ -130,8 +130,12 @@ public static class Program
             // Build'inkiyle AYNI kalsın.
             // [tek proje] Kapsamlı koşuda yalnız hedefi içeren çalışma kopyası güncellenir (ExternalUpdater'ın
             // kapsam kapısı) — kapsam dışına dokunulmaz.
+            // Güncellenen kopyaların revizyonları koşunun ilerisinde kullanılır: TFVC'de changeset YALNIZ
+            // burada (ağa çıkılmışken) okunabilir, git'te de bu okuma güncellemeden SONRAKİ hâli anlatır.
+            IReadOnlyDictionary<string, string> updatedRevisions =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (ExternalUpdater.ShouldUpdate(cmd.Mode, cmd.UpdateExternals, cmd.ExternalProjects))
-                new ExternalUpdater(new ProcessRunner())
+                updatedRevisions = new ExternalUpdater(new ProcessRunner())
                     .UpdateAsync(cmd.ExternalProjects!, progress, cmd.ScopeProjectId).GetAwaiter().GetResult();
 
             var workspace = PrepareAsync(cmd, new ProcessRunner(), worktreePoolRoot,
@@ -183,7 +187,7 @@ public static class Program
             // Harici köklerin revizyonu: satırın sha yuvasını besleyen TANI bilgisi. Bayraktan BAĞIMSIZ okunur
             // (yerel `rev-parse HEAD`, ucuz) — güncelleme kapalıyken de kullanıcı hangi sürümü derlediğini görür.
             var externalCommits = new ExternalRevisionReader(new ProcessRunner())
-                .ReadAsync(external.Roots).GetAwaiter().GetResult();
+                .ReadAsync(external.Roots, updatedRevisions).GetAwaiter().GetResult();
             var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, identity.Plan,
                 identity.EvaluatedById, stateStore, sourceHashes, identity.BuildPathById, externalCommits, progress);
             return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById);

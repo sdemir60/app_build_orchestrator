@@ -144,12 +144,7 @@ public sealed partial class RunViewModel
     /// (<c>C48213</c>) kırpılırsa anlamsız bir sayıya döner — 7 hane bir git alışkanlığıdır, evrensel bir
     /// biçim değil.</para>
     /// </summary>
-    internal static string ShortSha(string? revision)
-    {
-        if (string.IsNullOrEmpty(revision)) return string.Empty;
-
-        return revision.Length == 40 && revision.All(Uri.IsHexDigit) ? revision[..7] : revision;
-    }
+    internal static string ShortSha(string? revision) => Core.Git.RevisionText.Short(revision);
 
     // ---------------------------------------------------------------- [T40] worktree auto-ad + silme
 

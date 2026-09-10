@@ -33,6 +33,47 @@ public class ExternalRevisionReaderTests
         ExternalWorkspace workspace) =>
         new ExternalRevisionReader(new ProcessRunner()).ReadAsync(workspace.Roots);
 
+    /// <summary>
+    /// TFVC kökünün revizyonu YALNIZ güncelleme adımından gelebilir: changeset sorgusu sunucuya gider ve
+    /// planlama ağa bağlanmamalıdır. Güncelleme kapalıyken TFVC kökleri revizyonsuz kalır.
+    /// </summary>
+    [Fact]
+    public async Task A_tfvc_root_has_no_revision_unless_the_update_step_read_one()
+    {
+        using var temp = new TempDir();
+        Directory.CreateDirectory(Path.Combine(temp.Path, "$tf"));
+        string csproj = WriteProject(Path.Combine(temp.Path, "Ocr"), "Ocr");
+        var workspace = Resolve(new ExternalProject(temp.Path, VcsKind.Tfvc));
+
+        Assert.Empty(await ReadAsync(workspace));
+
+        var fromUpdate = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            [temp.Path] = "C48213",
+        };
+        var merged = await new ExternalRevisionReader(new ProcessRunner()).ReadAsync(workspace.Roots, fromUpdate);
+
+        Assert.Equal("C48213", merged[csproj]);
+    }
+
+    /// <summary>Aynı koşuda güncelleme yapılmışsa o okuma yeğlenir — güncellemeden SONRAKİ hâli anlatır.</summary>
+    [Fact]
+    public async Task A_revision_read_during_the_update_wins_over_the_local_read()
+    {
+        using var repo = new GitTestRepo();
+        string csproj = WriteProject(Path.Combine(repo.RootPath, "Mail"), "Mail");
+        repo.CommitAll("first");
+        var workspace = Resolve(new ExternalProject(repo.RootPath, VcsKind.Git));
+
+        var fromUpdate = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            [repo.RootPath] = "0123456789012345678901234567890123456789",
+        };
+        var merged = await new ExternalRevisionReader(new ProcessRunner()).ReadAsync(workspace.Roots, fromUpdate);
+
+        Assert.Equal("0123456789012345678901234567890123456789", merged[csproj]);
+    }
+
     [Fact]
     public async Task Every_project_under_a_git_root_carries_that_working_copys_head()
     {
