@@ -71,7 +71,7 @@ public static class ProjectInputs
         }
 
         string logicalDir = Path.GetDirectoryName(project)!;
-        SweepFolder(logicalDir, Path.GetFullPath(physical(logicalDir)), byLogical);
+        SweepFolder(logicalDir, Path.GetFullPath(physical(logicalDir)), physical, byLogical);
         WalkUp(logicalDir, workspaceRoot, physical, byLogical);
 
         return [.. byLogical.Select(kv => new ProjectInput(kv.Key, kv.Value))];
@@ -84,7 +84,8 @@ public static class ProjectInputs
     /// <para>Yürüyüş elle yapılır çünkü <c>obj</c>/<c>bin</c> dizinlerine HİÇ GİRİLMEMELİDİR: onları
     /// enumerate edip sonra elemek, bir derleme çıktısındaki binlerce dosyayı boşuna gezmek olurdu.</para>
     /// </summary>
-    private static void SweepFolder(string logicalDir, string physicalDir, SortedDictionary<string, string> into)
+    private static void SweepFolder(
+        string logicalDir, string physicalDir, Func<string, string> physical, SortedDictionary<string, string> into)
     {
         // (mantıksal, fiziksel) çiftleri birlikte yürür — iki ağaç aynı göreli yapıdadır.
         var pending = new Stack<(string Logical, string Physical)>();
@@ -99,7 +100,13 @@ public static class ProjectInputs
                 foreach (string file in Directory.EnumerateFiles(disk))
                 {
                     if (!BuildSignature.IsBuildAffecting(file) || WorkspaceScanner.IsTransientBuildArtifact(file)) continue;
-                    into[Path.Combine(logical, Path.GetFileName(file))] = file;
+                    // Dosyanın FİZİKSEL yolunu da eşleyici söyler (taramanın bulduğu yol DEĞİL): eşleyici
+                    // "bu kimlik diskte nerede yaşıyor" sorusunun TEK yetkilisidir. Üretimdeki iki eşleyici de
+                    // (in-place birebir, worktree önek takası) burada taramanın bulduğu yolun aynısını verir;
+                    // kural tekliği, tek bir dosyayı yeniden yönlendiren çağıranların da (ör. OSYS kabul
+                    // koşusunun sentetik değişikliği) aynı kapıdan geçmesini sağlar.
+                    string logicalFile = Path.Combine(logical, Path.GetFileName(file));
+                    into[logicalFile] = Path.GetFullPath(physical(logicalFile));
                 }
 
                 foreach (string sub in Directory.EnumerateDirectories(disk))

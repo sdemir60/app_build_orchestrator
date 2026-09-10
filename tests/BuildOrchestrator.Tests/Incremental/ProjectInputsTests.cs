@@ -165,6 +165,26 @@ public sealed class ProjectInputsTests : IDisposable
         Assert.DoesNotContain(LogicalPathsOf(csproj), p => p.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Eşleyici, klasör taramasının BULDUĞU dosyalar için de tek yetkilidir: "bu kimlik diskte nerede yaşıyor"
+    /// sorusunu yalnız o cevaplar. Üretimdeki iki eşleyici (in-place birebir, worktree önek takası) taramanın
+    /// bulduğu yolun aynısını verir; kuralın tek olması, tek bir dosyayı yeniden yönlendiren çağıranların
+    /// (ör. OSYS kabul koşusunun sentetik değişikliği) da aynı kapıdan geçmesini sağlar.
+    /// </summary>
+    [Fact]
+    public void the_mapper_also_decides_where_a_swept_file_is_read_from()
+    {
+        string csproj = Write(@"src\A\A.csproj", "<Project/>");
+        string swept = Write(@"src\A\Model.cs", "class Model {}");
+        string decoy = Write(@"decoy\Model.cs", "class Model { int changed; }");
+
+        var inputs = ProjectInputs.Collect(csproj, null, _root,
+            logical => string.Equals(logical, swept, StringComparison.OrdinalIgnoreCase) ? decoy : logical);
+
+        var input = inputs.Single(i => string.Equals(i.LogicalPath, swept, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(decoy, input.PhysicalPath);   // kimlik projede kalır, okuma yönlendirilir
+    }
+
     [Fact]
     public void the_physical_path_follows_the_mapper_while_the_identity_stays_on_the_main_root()
     {
