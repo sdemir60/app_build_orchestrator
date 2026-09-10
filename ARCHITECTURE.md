@@ -608,18 +608,20 @@ every member reads `false`, which is the truth — nothing in that run will comp
 During a run the value is live: the moment a project succeeds it turns `false`.
 
 **The evaluator also returns why** — never built, last build failed, built against a failed dependency, or the
-signature changed. That reason travels on the preview and is what the row's decision label reads (§13.2).
-Two facts ride with it: whether the project's **own** files changed (the `Fast` pass answers exactly this, so
-the label can separate `modified` from `affected` without a second mechanism) and when the project was last
-built successfully.
+signature changed — and it returns it even for a project the run will not compile, such as a cycle member
+outside a `Cycles` run. That reason travels on the preview and is what the row's decision label reads (§13.2),
+together with two facts: whether the project's **own** files changed (stored content fingerprint versus
+today's) and when it was last built successfully.
 
 ### 7.5 Build state
 
 `build-state.json` is **global**, keyed by project id (the full csproj path — the *logical* identity, so a
-worktree build writes the same keys an in-place one does, §8.6), holding the built signature, the built
-commit, the last result, the last run timestamp, the last branch, the last duration, a flag marking that this
-success was linked against a failed dependency (§8.3) and the signature at
-which this project's cycle last failed to converge (§8.8). That last field is deliberately *not* folded into
+worktree build writes the same keys an in-place one does, §8.6), holding the built signature, the **built
+content fingerprint**, the built commit, the last result, the last run timestamp, the last branch, the last
+duration, a flag marking that this success was linked against a failed dependency (§8.3) and the signature at
+which this project's cycle last failed to converge (§8.8). The content fingerprint is stored *next to* the
+signature rather than folded into it because it answers a different question — "did this project's own files
+change?" — and the row's `modified` ↔ `affected` split is the only thing that reads it (§13.2). That last field is deliberately *not* folded into
 the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a
 frozen upstream baseline — a signature that was never built would be taken for a clean one. A project from an
 external root (§10.6) has the same record under the same key shape, and its built-commit slot means the same
@@ -1490,7 +1492,7 @@ a right-aligned block (min 134 px): on hover four icon buttons (*build this proj
 Explorer*, *Open in Visual Studio*), and without hover the **decision label**. Then the status glyph, the fixed
 warning slot, and a 46 px duration column.
 
-The decision label is what a row says about the *next* run, in five fixed words — the shared vocabulary of git
+The decision label is what a row says about its own state, in five fixed words — the shared vocabulary of git
 and MSBuild, not invented terms:
 
 | Label | What the engine found |
@@ -1501,12 +1503,28 @@ and MSBuild, not invented terms:
 | `failed · retry` | the last attempt failed, so it is queued again |
 | `up to date · 2h` | it will be skipped; the tail is the age of the last successful build |
 
+`modified` and `affected` are separated by a fact of its own: the content fingerprint written into
+`build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the
+signature also carries upstream terms, so a project whose dependency failed would claim *its own* files
+changed. Measured on a real workspace: six projects the user had never touched read `modified` for exactly
+that reason. When the stored fingerprint is missing (an older record), the row shows the more cautious
+`affected`.
+
+**Scope does not silence the label.** A cycle member is not compiled by a plain Build, but if its files changed
+it still reads `modified` — that is true, and the warning triangle is what says *Resolve cycles* is the thing
+that will compile it. The same principle runs the other way: a Rebuild compiles everything, yet a row whose
+content is current keeps saying `up to date`. The label is a disk fact, never the run's scope. Hiding it was
+measured too: on that same workspace 33 of 184 rows — every SCC member — showed nothing at all.
+
 The slot carries no status colour — green and red belong to the glyph and the stripe (§14.3). The leading word
-is `text-secondary` when the project will build and `text-faint` when it will not; whatever follows the `·` is
-always faint, so the word reads first. The longer sentence (`Its own files changed since the last build`,
-`Up to date — last built 2h ago`) is a plain tooltip, in the same language as the icon buttons. When the
-decision is not known — no Sync yet, or the row was skipped by a run-scope rule rather than by its signature —
-the slot stays **empty**, which is the honest rendering of "I do not know yet".
+is `text-secondary` when work is pending and `text-faint` when the project is current; whatever follows the `·`
+is always faint, so the word reads first. The longer sentence (`Its own files changed since the last build`,
+`Up to date — last built 2h ago`) is a plain tooltip, in the same language as the icon buttons. The slot is
+**empty** only when the decision is genuinely unknown — no Sync yet, or the engine produced no reason.
+
+The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
+failure reads `failed · retry`. It does not wait for the engine's next preview, which may not arrive until the
+next Sync.
 
 The label replaced a commit pair (`a3f81c2 → b7e91d4`). That pair could not answer the question it appeared to
 answer: its right half was a remote commit the user had not pulled, and its left half described the repository,

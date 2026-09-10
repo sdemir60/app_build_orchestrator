@@ -41,15 +41,15 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// köklerden gelen projeler için dolar (bkz. <see cref="ExternalRevisionReader"/>). <see cref="HeadCommit"/>
 /// ANA REPOYU anlatır; harici bir projenin kaydına onu yazmak başka bir reponun commit'ini o satırın sha
 /// yuvasında göstermek olurdu.</param>
-/// <param name="OwnFilesChanged">[v1.16.0] KENDİ girdi dosyaları değişmiş projeler (motorun Fast geçişi) —
-/// önizleme satırının <c>modified</c> / <c>affected</c> ayrımı buradan okunur. <c>null</c> ⇒ bilgi yok
-/// (etiket sessiz kalır).</param>
+/// <param name="ContentById">[v1.16.0] Proje → KENDİ girdi dosyalarının içerik özeti. İki yere gider:
+/// başarılı bir derlemede deftere (<see cref="BuildState.BuiltContent"/>) ve önizlemeye — satırın
+/// <c>modified</c> ↔ <c>affected</c> ayrımı, deftere yazılmış özetle bugünkünün karşılaştırmasıdır.</param>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
     string? HeadCommit,
     string? Branch,
     IReadOnlyDictionary<string, string>? CommitByProjectId = null,
-    IReadOnlySet<string>? OwnFilesChanged = null);
+    IReadOnlyDictionary<string, string?>? ContentById = null);
 
 /// <summary>
 /// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
@@ -894,14 +894,21 @@ public sealed class RunCoordinator(
         // Cycles modunun kapsam dışı bıraktığı projeler.
         var preSkipped = upToDateSkips.Select(s => s.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new BuildPreviewEvent(
-            // Pre-skip edilenlerde gerekçe de DÜŞER (null): o "false" imzadan değil koşu-zamanlama kuralından
-            // gelir (yakınsamama hafızası / Cycles kapsamı) ve düğümün imza gerekçesini göstermek yalan olurdu.
+            // [DEĞİŞEN KURAL — v1.16.0] Pre-skip edilen satırın gerekçesi artık DÜŞMEZ. Eskiden null'lanırdı
+            // ("bu false imzadan değil koşu-zamanlama kuralından geliyor, imza gerekçesini göstermek yalan
+            // olur") — o dönemde gerekçe bir PLAN kanalını besliyordu. Artık satırın KARAR ETİKETİNİ besliyor
+            // ve etiket bir disk olgusudur: yakınsamayan ya da kapsam dışı bir projenin dosyalarının değişip
+            // değişmediği doğru bir bilgidir. WillBuild yine false kalır — bu koşu onu derlemez.
             [.. plan.Nodes.Select(n => preSkipped.Contains(n.Id)
                 ? new BuildPreviewItem(n.Id, n.Name, false, BuildStateStore.BuiltCommitOf(builtCommits, n.Id),
+                    n.WillBuildReason,
+                    OwnFilesChanged: BuildStateStore.OwnFilesChanged(
+                        builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
                     LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id))
                 : new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason,
-                    OwnFilesChanged: runPlan.Incremental?.OwnFilesChanged?.Contains(n.Id),
+                    OwnFilesChanged: BuildStateStore.OwnFilesChanged(
+                        builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
                     LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id)))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
@@ -1723,7 +1730,8 @@ public sealed class RunCoordinator(
             ? inc.CommitByProjectId?.GetValueOrDefault(projectId)
             : inc.HeadCommit;
         var state = new BuildState(projectId, signature, builtCommit, BuildResult.Succeeded,
-            DateTimeOffset.UtcNow, external ? null : inc.Branch, durationMs, DepIssue: depIssue);
+            DateTimeOffset.UtcNow, external ? null : inc.Branch, durationMs, DepIssue: depIssue,
+            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId));
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }

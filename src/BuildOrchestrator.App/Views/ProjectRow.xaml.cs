@@ -475,7 +475,7 @@ public partial class ProjectRow : UserControl
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;
         PART_Decision.ToolTip = decision.IsEmpty ? null : decision.Title;
         PART_DecisionWord.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty,
-            decision.WillBuild ? "Brush.TextSecondary" : "Brush.TextFaint");
+            decision.Stale ? "Brush.TextSecondary" : "Brush.TextFaint");
     }
 
     /// <summary>Sağ blok: hover'da aç-ikonları, değilse karar etiketi (design v1.16.0 §2.4).

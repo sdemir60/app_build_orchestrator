@@ -29,7 +29,7 @@ public class DecisionLabelTests
 
         Assert.Equal("modified", decision.Word);
         Assert.Null(decision.Tail);
-        Assert.True(decision.WillBuild);
+        Assert.True(decision.Stale);
         Assert.Equal("Its own files changed since the last build", decision.Title);
     }
 
@@ -64,7 +64,7 @@ public class DecisionLabelTests
 
         Assert.Equal("failed", decision.Word);
         Assert.Equal("retry", decision.Tail);   // kuyruk her zaman soluk çizilir
-        Assert.True(decision.WillBuild);
+        Assert.True(decision.Stale);
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public class DecisionLabelTests
 
         Assert.Equal("up to date", decision.Word);
         Assert.Equal("2h", decision.Tail);
-        Assert.False(decision.WillBuild);       // yuva soluk çizilir
+        Assert.False(decision.Stale);       // yuva soluk çizilir
         Assert.Equal("Up to date — last built 2h ago", decision.Title);
     }
 
@@ -105,6 +105,35 @@ public class DecisionLabelTests
         Assert.Equal("failed", For(true, WillBuildReason.LastFailed, ownChanged: true).Word);
     }
 
+    /// <summary>
+    /// [design v1.16.0 §2.4] Kapsam etiketi SUSTURMAZ: kapsam dışı bir döngü üyesi bu koşuda derlenmez
+    /// (<c>will=false</c>) ama dosyaları değişmişse bayattır ve etiketi bunu söyler. Onu derleyecek şeyin
+    /// <i>Resolve cycles</i> olduğunu uyarı üçgeni anlatır.
+    ///
+    /// <para>Ölçülen kusur: gerçek bir çalışma alanında 184 satırın 33'ü — tam olarak SCC üyeleri — hiçbir şey
+    /// yazmıyordu.</para>
+    /// </summary>
+    [Fact]
+    public void A_cycle_member_that_will_not_build_still_reports_its_disk_fact()
+    {
+        Assert.Equal("modified", For(false, WillBuildReason.SignatureChanged, ownChanged: true).Word);
+        Assert.Equal("affected", For(false, WillBuildReason.SignatureChanged, ownChanged: false).Word);
+        Assert.Equal("up to date", For(false, WillBuildReason.UpToDate, builtAt: Now.AddHours(-2)).Word);
+        Assert.Equal("never built", For(false, WillBuildReason.NeverBuilt).Word);
+    }
+
+    /// <summary>
+    /// Ayrım defterdeki içerik özetinden gelir; BİLİNMİYORSA daha ihtiyatlı sözcük yazılır. "Senin dosyan
+    /// değişti" demek, olmadığı hâlde söylenirse kullanıcıyı yanlış yere baktırır — ölçülen kusur buydu:
+    /// bağımlılığı patlamış altı proje, kullanıcı hiçbir dosyasına dokunmadığı hâlde <c>modified</c> diyordu.
+    /// </summary>
+    [Fact]
+    public void An_unknown_own_change_reads_as_affected_not_modified()
+    {
+        Assert.Equal("affected", For(true, WillBuildReason.SignatureChanged, ownChanged: null).Word);
+        Assert.Equal("affected", For(true, WillBuildReason.DepIssue, ownChanged: null).Word);
+    }
+
     [Fact]
     public void An_unknown_plan_leaves_the_slot_empty()
     {
@@ -113,10 +142,12 @@ public class DecisionLabelTests
     }
 
     /// <summary>
-    /// Koşu-zamanlama kuralıyla atlanan satır (döngü kapsamı, yakınsamama hafızası) GÜNCEL DEĞİLDİR: motorun
-    /// bir imza gerekçesi yoktur ve yuva boş kalır. "up to date" yazmak orada küçük bir yalan olurdu.
+    /// [DEĞİŞEN KURAL] Gerekçesi olmayan satır boş kalır. Eski iddia "koşu-zamanlama kuralıyla atlanan satır
+    /// (döngü kapsamı, yakınsamama hafızası) güncel değildir, yuva boş kalır" idi — o satırlar motorun
+    /// gerekçesini hiç taşımıyordu. Artık taşıyorlar (bkz. <c>WillBuildEvaluator</c> ve koordinatörün
+    /// önizlemesi), yani boş yuva GERÇEKTEN bilinmeyene indi: Sync yapılmadı ya da gerekçe üretilemedi.
     /// </summary>
     [Fact]
-    public void A_run_scoped_skip_is_not_called_up_to_date()
+    public void A_row_without_a_reason_stays_empty()
         => Assert.True(For(false, reason: null).IsEmpty);
 }

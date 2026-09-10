@@ -1506,6 +1506,24 @@ public sealed partial class RunViewModel : ObservableObject
         // orada başarı "derlendi" demek değil "çıktıları silindi" demektir, yani proje güncel DEĞİL, tam tersine
         // derlenmesi gereken hâle gelmiştir. Motor da aynı anda defter kaydını siler (BuildStateStore.Remove).
         if (state == ProjectRowState.Succeeded && !RunIsClean) row.WillBuild = false;
+        // [design v1.16.0 §2.4] Satırın KARAR ETİKETİ de canlı geçişi izler: koşu biter bitmez derlenen satır
+        // "up to date · just now" yazar, patlayan satır "failed · retry". Olgular motorun bir sonraki
+        // önizlemesini BEKLEMEZ — o önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık
+        // doğru olmayan bir gerekçeyi ("modified") taşırdı.
+        row.WillBuildReason = state switch
+        {
+            // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını da siler, yani
+            // proje gerçekten "hiç derlenmemiş" hâline döner (bkz. BuildStateStore.Remove).
+            ProjectRowState.Succeeded when RunIsClean => WillBuildReason.NeverBuilt,
+            ProjectRowState.Succeeded => WillBuildReason.UpToDate,
+            ProjectRowState.Failed => WillBuildReason.LastFailed,
+            _ => row.WillBuildReason,
+        };
+        if (state == ProjectRowState.Succeeded)
+        {
+            row.LastBuiltAt = RunIsClean ? null : DateTimeOffset.Now;
+            row.OwnFilesChanged = RunIsClean ? null : false;   // az önce derlendi: kendi dosyası artık güncel
+        }
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla
         RefreshRunSurface();

@@ -444,17 +444,10 @@ public static class Program
             var state = stateStore.Load();
             var (bound, signatures) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode);
 
-            // [v1.16.0 satır etiketi] Fast geçişi "kendi dosyası değişti mi" olgusunu verir — önizleme
-            // satırları modified/affected ayrımını buradan okur. İkinci geçiş yalnız imza hesabıdır: girdi
-            // kümesi ve içerik özetleri binder içinde zaten hesaplanmıştır, disk BİR KEZ okunur.
-            var (fastPlan, _) = binder.Bind(state, cmd.Mode == RunMode.Cycles, DependentMode.Fast);
-            var ownChanged = fastPlan.Nodes
-                .Where(n => n.WillBuild == true)
-                .Select(n => n.Id)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
             hashes.Flush();
-            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, ownChanged));
+            // [v1.16.0] İçerik özetleri de taşınır: başarılı derlemede deftere yazılır (BuildState.BuiltContent)
+            // ve önizlemenin modified ↔ affected ayrımı defterdeki özetle bugünkünün karşılaştırmasından çıkar.
+            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById));
         }
         catch (Exception ex)
         {

@@ -74,6 +74,28 @@ public sealed class BuildStateStore
         state is not null && state.TryGetValue(projectId, out var found) ? found.BuiltCommit : null;
 
     /// <summary>
+    /// [v1.16.0] Projenin KENDİ girdi dosyaları son başarılı derlemeden bu yana değişti mi — satırın
+    /// <c>modified</c> ↔ <c>affected</c> ayrımı.
+    ///
+    /// <para>Karşılaştırma deftere yazılmış içerik özetiyle bugünkü özet arasındadır, İMZAYLA DEĞİL: imza
+    /// upstream'leri de taşır, yani bir bağımlılığın kaydı geçersizleştiğinde (hata sonrası invalidasyon) de
+    /// değişir. Ölçüldü — gerçek bir çalışma alanında bağımlılığı patlamış altı proje, kullanıcı hiçbir
+    /// dosyasına dokunmadığı hâlde <c>modified</c> gösteriyordu; doğru sözcük <c>affected</c>'dı.</para>
+    ///
+    /// <para><c>null</c> ⇒ ayrım bilinmiyor (kayıt yok, ya da kayıt bu alandan önceki bir sürümde yazılmış).
+    /// Satır o durumda daha ihtiyatlı olan <c>affected</c>'ı gösterir: "senin dosyan değişti" demek, olmadığı
+    /// hâlde söylenirse kullanıcıyı yanlış yere baktırır.</para>
+    /// </summary>
+    public static bool? OwnFilesChanged(
+        IReadOnlyDictionary<string, BuildState>? state, string projectId, string? currentContent)
+    {
+        if (state is null || !state.TryGetValue(projectId, out var found)) return null;
+        if (found.BuiltContent is not { Length: > 0 } stored) return null;
+
+        return !string.Equals(stored, currentContent, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// [v1.16.0] Bir projenin SON BAŞARILI derlemesinin zamanı — satırın <c>up to date · 2h</c> etiketindeki
     /// göreli yaş ve proje logu başlığındaki "Last successful build" satırı bunu okur. Kayıt yoksa ya da son
     /// koşu başarılı DEĞİLSE <c>null</c>: "hiç derlenmemiş" ile "en son patladı" ayrı olgulardır ve ikisinde

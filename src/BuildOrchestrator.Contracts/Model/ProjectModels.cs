@@ -127,6 +127,12 @@ public sealed record BuildState(
     // BuildStateStore.IsCycleNonConvergent) grup bir daha turlarla DENENMEZ; gerçek bir tur kararına ulaşan
     // (Converged/CapReached) her koşu ise alanı temizler.
     string? NonConvergentSignature = null,
+    // [v1.16.0] Bu proje derlendiğinde KENDİ girdi dosyalarının içerik özeti (upstream'siz, cfg'siz).
+    // BuiltSignature'dan AYRI durur çünkü ayrı bir soruyu cevaplar: "bu projenin KENDİ dosyaları değişti mi?"
+    // İmza upstream'leri de taşır, dolayısıyla bir bağımlılığın kaydı geçersizleştiğinde de değişir — o yüzden
+    // satırın `modified` / `affected` ayrımı ondan TÜRETİLEMEZ. Eski kayıtlarda yoktur (null): o durumda ayrım
+    // bilinmez ve satır daha ihtiyatlı olan `affected`ı gösterir.
+    string? BuiltContent = null,
     // Bu başarı BAŞARISIZ bir bağımlılığın çıktısına link'liydi. Kayıt yine de yazılır (aksi hâlde defter
     // hiç ilerlemez — bir koşuda 74 başarının 0'ı yazıldığı ölçüldü) ama not projeyi derleme listesinde
     // tutar: WillBuildEvaluator bunu görünce bağımlılık düzelene kadar "derlenecek" der. LastResult

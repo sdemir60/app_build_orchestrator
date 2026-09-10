@@ -106,6 +106,17 @@ public sealed class IncrementalRunBinder
             _plan, FingerprintOf, state, buildCycles, mode);
     }
 
+    /// <summary>
+    /// [v1.16.0] Proje → KENDİ girdi dosyalarının içerik özeti (upstream ve configuration HARİÇ).
+    ///
+    /// <para>İmzadan ayrı yayınlanır çünkü ayrı bir soruyu cevaplar: "bu projenin kendi dosyaları değişti mi?"
+    /// Satırın <c>modified</c> ↔ <c>affected</c> ayrımı ve deftere yazılan <see cref="BuildState.BuiltContent"/>
+    /// bunu okur. <c>Fast</c> geçişinden türetilemez: bir bağımlılığın kaydı geçersizleştiğinde (hata sonrası)
+    /// Fast de "değişti" der ve satır kullanıcının hiç dokunmadığı bir projeye <c>modified</c> yazardı.</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, string?> ContentById =>
+        _plan.Nodes.ToDictionary(n => n.Id, FingerprintOf, StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Bir projenin girdi dosyaları (kimlik + fiziksel yol) — tanı ve test içindir.</summary>
     public IReadOnlyList<ProjectInput> InputsOf(string projectId) =>
         _inputsById.TryGetValue(projectId, out var inputs) ? inputs : [];

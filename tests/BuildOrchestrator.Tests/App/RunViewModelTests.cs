@@ -1282,6 +1282,51 @@ public class RunViewModelTests
     }
 
     /// <summary>
+    /// [design v1.16.0 §2.4] Satırın karar etiketi CANLI geçişi izler: bir proje bu koşuda derlendiği anda
+    /// satır "up to date · just now" yazar, patladığı anda "failed · retry". Motorun bir sonraki önizlemesi
+    /// BEKLENMEZ — o önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık doğru olmayan bir
+    /// gerekçeyi ("modified") taşırdı.
+    /// </summary>
+    [Fact]
+    public async Task A_finished_project_updates_the_facts_its_decision_label_reads()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(WillBuildReason.SignatureChanged, row.WillBuildReason);   // ön koşul: "modified" diyordu
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+
+        Assert.False(row.WillBuild);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.False(row.OwnFilesChanged);
+        Assert.NotNull(row.LastBuiltAt);
+    }
+
+    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.</summary>
+    [Fact]
+    public async Task A_failed_project_reports_the_failure_as_its_reason()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "CS0103", null));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(WillBuildReason.LastFailed, row.WillBuildReason);
+        Assert.Null(row.LastBuiltAt);   // başarı yok → yaş da yok
+    }
+
+    /// <summary>
     /// [DEĞİŞEN KURAL — v1.16.0] Bu test "hedef sha her satıra İTİLİR ve olay sırasından bağımsızdır" diye
     /// pinliyordu: <c>buildPreview</c> deterministik olarak <c>syncCompleted</c>'dan önce geldiği için kart
     /// hedefi ata ağaçtan ÇEKSEYDİ satır onu null'ken okur ve bir daha tazelenmezdi. Satırda artık hedef sha
