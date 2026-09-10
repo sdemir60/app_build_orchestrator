@@ -1,6 +1,8 @@
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Formatting;
+using BuildOrchestrator.Core.Git;
 
 namespace BuildOrchestrator.App.Console;
 
@@ -36,13 +38,14 @@ public static class ConsoleEmptyState
     public const string NeverBuilt = "Never built by this tool";
 
     /// <summary>Kart tıklandı, logu yok: gövdeye yazılacak satırlar (bir ya da iki).</summary>
-    public static IReadOnlyList<string> ForEmptyLog(ProjectRowViewModel row)
+    /// <param name="now">Şimdi — göreli yaş için; testler sabit bir an verir (D8).</param>
+    public static IReadOnlyList<string> ForEmptyLog(ProjectRowViewModel row, DateTimeOffset? now = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         // Derleniyor: kanıt henüz yok, akış birazdan gelir.
         if (row.State == ProjectRowState.Started) return [NoLog];
         string reason = Reason(row);
-        return RepeatsReason(row) ? [reason] : [reason, Evidence(row)];
+        return RepeatsReason(row) ? [reason] : [reason, Evidence(row, now ?? DateTimeOffset.Now)];
     }
 
     /// <summary>Kanıt satırı gerekçeyi TEKRAR ediyorsa yazılmaz: "hiç derlenmedi" iki kez söylenmez.</summary>
@@ -92,13 +95,20 @@ public static class ConsoleEmptyState
         };
     }
 
-    /// <summary>İkinci satır: elde ne var. Kaynak <see cref="ProjectRowViewModel.CurrentSha"/> — yani
-    /// <c>BuildState.BuiltCommit</c>, projenin son BAŞARIYLA derlendiği commit. Kısaltma bir GÖRÜNTÜ kararıdır
-    /// ve kartla aynı 7 haneyi kullanır.</summary>
-    private static string Evidence(ProjectRowViewModel row) =>
-        row.CurrentSha is { Length: > 0 } sha ? $"Last built {Short(sha)}" : NeverBuilt;
+    /// <summary>
+    /// İkinci satır: elde ne var — son BAŞARILI derlemenin zamanı ve o çıktıyı üreten revizyon. Kaynaklar
+    /// <see cref="ProjectRowViewModel.LastBuiltAt"/> ve <see cref="ProjectRowViewModel.CurrentSha"/> (yani
+    /// <c>BuildState</c>'in kendisi). Kısaltma ve yaş biçimi tek yerden gelir (kopya YASAK).
+    /// </summary>
+    private static string Evidence(ProjectRowViewModel row, DateTimeOffset now)
+    {
+        if (row.CurrentSha is not { Length: > 0 } revision) return NeverBuilt;
 
-    private static string Short(string sha) => sha.Length <= 7 ? sha : sha[..7];
+        string sha = RevisionText.Short(revision);
+        return AgeFormat.Age(row.LastBuiltAt, now) is { } age
+            ? $"Last successful build: {age} ago ({sha})"
+            : $"Last successful build: {sha}";
+    }
 
     /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>
     private const string InCycleText = "In a dependency cycle — Build never compiles one; use Resolve cycles.";

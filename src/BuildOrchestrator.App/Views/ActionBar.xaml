@@ -45,6 +45,11 @@
           </Popup>
         </Grid>
 
+        <!-- [design v1.16.0 §2.7-6a] "N behind" chip'i: YALNIZ geride kalınca ve YALNIZ aktif branch
+             seçiliyken görünür. Tıklama = ff-only pull (§3.9). Nötr ağırlık — statü rengi taşımaz. -->
+        <Button x:Name="PART_BehindChip" Style="{DynamicResource Ds.Chip.Action}" Margin="8,0,0,0"
+                VerticalAlignment="Center" Visibility="Collapsed" />
+
         <!-- worktree chip + popover -->
         <Grid Margin="8,0,0,0" VerticalAlignment="Center">
           <ToggleButton x:Name="PART_WorktreeChip" Style="{DynamicResource Ds.Chip}" />

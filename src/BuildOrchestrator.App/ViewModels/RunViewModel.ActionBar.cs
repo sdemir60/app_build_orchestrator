@@ -46,6 +46,15 @@ public sealed partial class RunViewModel
     public bool IsWorktreeForced =>
         ActiveBranchName is { } active && !string.Equals(Branch, active, StringComparison.Ordinal);
 
+    /// <summary>[v1.16.0] <see cref="CanShowBehind"/> <see cref="IsWorktreeForced"/>'a bağlıdır ve o da
+    /// türetilmiş bir özelliktir — branch seçimi ya da envanter değiştiğinde chip'in tazelenmesi için bildirim
+    /// ELLE atılır (türetilmiş özellikler kendiliğinden PropertyChanged üretmez).</summary>
+    private void NotifyBehindChip()
+    {
+        OnPropertyChanged(nameof(CanShowBehind));
+        PullRepositoryCommand.NotifyCanExecuteChanged();
+    }
+
     // ---------------------------------------------------------------- [T2 fix-1 · C1] açık seçim ↔ bayat seed
 
     /// <summary>
@@ -119,6 +128,7 @@ public sealed partial class RunViewModel
         // gerçek bir NİYET olarak gider (bkz. RunBranchIntent).
         _branchChosenByUser = true;
         Branch = branch.Name;
+        NotifyBehindChip();   // [v1.16.0] seçim aktif branch'ten ayrılınca (ya da ona dönünce) chip değişir
         if (branch.IsActive) return; // aktif branch: worktree zorlaması/reset/niyet-satırı YOK
 
         WorktreeName = null;  // seçili hedef worktree'yi auto'ya döndür (BuildApp.jsx:1340)

@@ -1,0 +1,122 @@
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Model;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [design v1.16.0 §2.4] Satırın sağ yuvası: karar etiketi.
+///
+/// <para><b>DEĞİŞEN KURAL.</b> Bu yuvada eskiden commit çifti (<c>a3f81c2 → b7e91d4</c>) dururdu ve onu
+/// pinleyen testler <c>ExternalShaSlotTests</c> + <c>ProjectRowTests</c>'teki sha aileleriydi: kısaltmanın
+/// yalnız 40-hex'e uygulanması, hedef yarısı yokken yarım ok basılmaması, çiftin 118px'lik yuvaya sığması.
+/// O çift kararı ANLATMIYORDU — sağ yarı kullanıcının pull etmediği bir UZAK commit'ti, sol yarı ise projeye
+/// değil REPOYA aitti. Motor kararı diskteki içerikten verdiğinden satır da artık kararı söyler; sözcükler
+/// SABİTTİR ve beş tanedir. Revizyon kısaltma kuralı ölmedi, yalnız yer değiştirdi: konsol satırlarını ve
+/// proje logu başlığını besler (<see cref="RunViewModel.ShortSha"/>).</para>
+/// </summary>
+public class DecisionLabelTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+
+    private static RowDecision For(
+        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, DateTimeOffset? builtAt = null)
+        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, Now);
+
+    [Fact]
+    public void Its_own_files_changed_reads_modified()
+    {
+        var decision = For(true, WillBuildReason.SignatureChanged, ownChanged: true);
+
+        Assert.Equal("modified", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.True(decision.WillBuild);
+        Assert.Equal("Its own files changed since the last build", decision.Title);
+    }
+
+    [Fact]
+    public void Only_a_dependency_changed_reads_affected()
+    {
+        var decision = For(true, WillBuildReason.SignatureChanged, ownChanged: false);
+
+        Assert.Equal("affected", decision.Word);
+        Assert.Equal("Its own files are unchanged — a dependency changed", decision.Title);
+    }
+
+    /// <summary>Bağımlılığı patlamış bir başarı da "etkilenmiş"tir: kendi dosyaları durur, bayat olan
+    /// bağımlılığının çıktısıdır.</summary>
+    [Fact]
+    public void A_project_linked_against_a_failed_dependency_reads_affected()
+        => Assert.Equal("affected", For(true, WillBuildReason.DepIssue, ownChanged: false).Word);
+
+    [Fact]
+    public void A_project_with_no_output_on_disk_reads_never_built()
+    {
+        var decision = For(true, WillBuildReason.NeverBuilt);
+
+        Assert.Equal("never built", decision.Word);
+        Assert.Equal("No build output on disk", decision.Title);
+    }
+
+    [Fact]
+    public void A_failed_project_reads_failed_retry()
+    {
+        var decision = For(true, WillBuildReason.LastFailed);
+
+        Assert.Equal("failed", decision.Word);
+        Assert.Equal("retry", decision.Tail);   // kuyruk her zaman soluk çizilir
+        Assert.True(decision.WillBuild);
+    }
+
+    [Fact]
+    public void An_up_to_date_project_reads_the_age_of_its_last_successful_build()
+    {
+        var decision = For(false, WillBuildReason.UpToDate, builtAt: Now.AddHours(-2));
+
+        Assert.Equal("up to date", decision.Word);
+        Assert.Equal("2h", decision.Tail);
+        Assert.False(decision.WillBuild);       // yuva soluk çizilir
+        Assert.Equal("Up to date — last built 2h ago", decision.Title);
+    }
+
+    [Theory]
+    [InlineData(0, 30, "just now")]
+    [InlineData(0, 14 * 60, "14m")]
+    [InlineData(3, 0, "3d")]
+    public void The_age_uses_one_coarse_unit(int days, int seconds, string expected)
+        => Assert.Equal(expected, For(false, WillBuildReason.UpToDate,
+            builtAt: Now.AddDays(-days).AddSeconds(-seconds)).Tail);
+
+    /// <summary>Eski bir kayıtta zaman yoksa etiket kuyruksuz kalır — uydurma bir yaş yazılmaz.</summary>
+    [Fact]
+    public void An_up_to_date_project_without_a_timestamp_has_no_tail()
+    {
+        var decision = For(false, WillBuildReason.UpToDate);
+
+        Assert.Equal("up to date", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.Equal("Up to date", decision.Title);
+    }
+
+    /// <summary>Öncelik: hiç derlenmemiş &gt; son derleme patladı &gt; kendi dosyası &gt; bağımlılığı.</summary>
+    [Fact]
+    public void The_disk_facts_outrank_the_content_facts()
+    {
+        Assert.Equal("never built", For(true, WillBuildReason.NeverBuilt, ownChanged: true).Word);
+        Assert.Equal("failed", For(true, WillBuildReason.LastFailed, ownChanged: true).Word);
+    }
+
+    [Fact]
+    public void An_unknown_plan_leaves_the_slot_empty()
+    {
+        Assert.True(For(null).IsEmpty);
+        Assert.Equal("", For(null).Word);
+    }
+
+    /// <summary>
+    /// Koşu-zamanlama kuralıyla atlanan satır (döngü kapsamı, yakınsamama hafızası) GÜNCEL DEĞİLDİR: motorun
+    /// bir imza gerekçesi yoktur ve yuva boş kalır. "up to date" yazmak orada küçük bir yalan olurdu.
+    /// </summary>
+    [Fact]
+    public void A_run_scoped_skip_is_not_called_up_to_date()
+        => Assert.True(For(false, reason: null).IsEmpty);
+}

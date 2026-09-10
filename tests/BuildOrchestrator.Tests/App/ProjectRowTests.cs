@@ -99,12 +99,12 @@ public class ProjectRowTests
     /// <c>&lt;see cref&gt;</c> ile buraya bağlanır — yeni bir mono alan eklenirse bu ALTI test OTOMATİK kapsamaz
     /// (bilinçli — kural kod incelemesiyle korunur).</para></summary>
     [StaFact]
-    public void The_project_row_sha_and_duration_columns_are_tabular()
+    public void The_project_row_decision_and_duration_columns_are_tabular()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded);
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(row.ShaText));
+        Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(row.DecisionText));
         Assert.Equal(FontNumeralAlignment.Tabular, Typography.GetNumeralAlignment(row.DurationText));
         GC.KeepAlive(window);
     }
@@ -175,31 +175,32 @@ public class ProjectRowTests
     }
 
     [StaFact]
-    public void Sha_is_shown_on_every_row_and_is_replaced_by_the_two_hover_icons()
+    public void The_decision_label_is_shown_on_every_row_and_is_replaced_by_the_hover_icons()
     {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        { WillBuild = true, WillBuildReason = WillBuildReason.SignatureChanged, OwnFilesChanged = true };
         var (row, window, _) = Realize(vm);
 
-        // dirty + hover yok → sha çifti görünür, aç-ikonları YOK ([L1] artık Collapsed bile değil: hiç kurulmamış).
-        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+        // hover yok → etiket görünür, aç-ikonları YOK ([L1] artık Collapsed bile değil: hiç kurulmamış).
+        Assert.Equal(Visibility.Visible, row.DecisionText.Visibility);
         Assert.Null(row.HoverIcons);
 
-        // hover → sha yerini folder + VS ikonlarına bırakır (aynı 118px blok).
+        // hover → etiket yerini folder + VS ikonlarına bırakır (aynı blok).
         row.SimulateHover(true);
-        Assert.Equal(Visibility.Collapsed, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.DecisionText.Visibility);
         Assert.Equal(Visibility.Visible, row.HoverIcons!.Visibility);
 
-        // hover biter → yine sha (ikon bloğu kurulu kalır, yalnız gizlenir → hover/leave döngüsü yeniden inşa etmez).
+        // hover biter → yine etiket (ikon bloğu kurulu kalır, yalnız gizlenir → hover/leave döngüsü yeniden inşa etmez).
         row.SimulateHover(false);
-        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Visible, row.DecisionText.Visibility);
         Assert.Equal(Visibility.Collapsed, row.HoverIcons!.Visibility);
 
-        // [DEĞİŞEN KURAL — design v1.7.0 §2.4] Eski iddia: "clean/unknown satırda sha ASLA gösterilmez".
-        // SHA artık HER satırda görünür (clean satırda tek sha, faint) — "yalnız derleneceklerde göster"
+        // [design v1.7.0 §2.4] Yuva GÜNCEL satırda da görünür (soluk) — "yalnız derleneceklerde göster"
         // hover'dan çıkışta satırlar arası layout sıçraması yaratıyordu.
         vm.WillBuild = false;
+        vm.WillBuildReason = WillBuildReason.UpToDate;
         row.UpdateLayout();
-        Assert.Equal(Visibility.Visible, row.ShaText.Visibility);
+        Assert.Equal(Visibility.Visible, row.DecisionText.Visibility);
         GC.KeepAlive(window);
     }
 
@@ -743,99 +744,56 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [design v1.16.0 §2.4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
+    ///
+    /// <para><b>DEĞİŞEN KURAL.</b> Bu yerde beş test vardı ve hepsi commit ÇİFTİNİ pinliyordu: eksik yarı
+    /// varken yarım ok basılmaması (iki yön), iki yarının da 7 haneye inmesi, geç gelen hedefin satırı
+    /// tazelemesi ve çiftin 118px'lik yuvaya sığması. Yuvada artık commit yok — kararın kendisi var (sözcük
+    /// seçimi <see cref="DecisionLabelTests"/>'te). Ölçüm iddiası KALIR, yalnız sınırı büyür: en uzun etiket
+    /// ("up to date · just now") 134px'lik yuvaya sığmalıdır; eski 118px onu kırpıp ad kolonundan yer
+    /// çalıyordu. "Geç gelen olgu satırı tazeler" iddiası da kalır — yalnız gelen şey artık sha değil olgudur.</para>
+    ///
+    /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
+    /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
+    /// </summary>
     [StaFact]
-    public void Sha_shows_the_current_half_alone_when_the_target_is_not_known()
+    public void The_longest_decision_label_fits_inside_the_right_block()
     {
-        // [DEĞİŞEN KURAL] Bu test eskiden yarım bir ok pinliyordu ("a3f81c2 → "): hedef bilinmezken cur yarısı
-        // ok'la birlikte basılıyordu. Kardeş kural ise ters yöndeydi — sol yarı yokken ok ÜRETİLMEZ diyordu
-        // (bkz. Sha_shows_the_target_alone_when_the_project_was_never_built) — yani iki eksik-yarı vakası
-        // birbirinden farklı davranıyordu.
-        //
-        // Harici projelerle birlikte bu tutarsızlık görünür bir kusura döndü: harici satırlara ana reponun
-        // hedef commit'i İTİLMEZ (o sha başka bir repoyu anlatır), dolayısıyla her harici satır kalıcı olarak
-        // yarım bir ok gösterirdi. Kural artık simetrik: eksik olan hangi yarı olursa olsun, elde ne varsa o
-        // basılır.
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, CurrentSha = "a3f81c2" };
-        var (row, window, _) = Realize(vm);
-
-        Assert.Equal("a3f81c2", row.ShaText.Text);
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
-    public void Sha_shows_the_target_alone_when_the_project_was_never_built()
-    {
-        // [W1 KARAR] Hiç derlenmemiş proje (BuildState kaydı yok ⇒ BuiltCommit null) sol yarısını BOŞ bırakır:
-        // kart o satırda çift yerine YALNIZ hedefi basar — yalın-ok pürüzü (" → a3f81c2") ÜRETİLMEZ ve "—"
-        // gibi bir yer tutucu UYDURULMAZ. Design-v1'de bu durumun karşılığı yoktur (prototip her projeye sentetik
-        // bir curSha üretir), bu yüzden E6 interim davranışı KORUNUR: en az sürprizli seçenek.
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
-        { WillBuild = true, TargetSha = "a3f81c2" }; // CurrentSha boş = hiç derlenmemiş
-        var (row, window, _) = Realize(vm);
-
-        Assert.Equal("a3f81c2", row.ShaText.Text);
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
-    public void Both_halves_of_the_sha_pair_are_shortened_to_seven_hex_digits()
-    {
-        // [W1] ÜRETİM KUSURU: her iki kaynak da HAM 40-hex'tir (CurrentSha = BuildState.BuiltCommit, TargetSha =
-        // remote-tracking ref) ve It-4b'de olduğu gibi basılıyordu. design-v1 README: "SHA 7 hane a3f81c2".
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
-            WillBuild = true,
-            CurrentSha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b",
-            TargetSha = "b7e91d4c0affee1122334455667788990aabbccd",
+            WillBuild = false,
+            WillBuildReason = WillBuildReason.UpToDate,
+            LastBuiltAt = DateTimeOffset.Now,     // "just now" — en uzun kuyruk
         };
         var (row, window, _) = Realize(vm);
+        row.DecisionText.FontFamily = DsResources.MonoFontFamily;
+        row.UpdateLayout();
 
-        Assert.Equal("a3f81c2 → b7e91d4", row.ShaText.Text);
+        Assert.Equal("up to date · just now", row.DecisionText.Text);
+        double width = row.DecisionText.DesiredSize.Width;
+        Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
+        Assert.True(width <= 134, $"en uzun karar etiketi 134px yuvaya sığmadı: {width}px");
+
+        // Kontrol grubu: eski 118px'lik yuva bu etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
+        Assert.True(width > 118, $"etiket eski 118px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
         GC.KeepAlive(window);
     }
 
+    /// <summary>Etiket satırın olgularıyla birlikte TAZELENİR: motorun ikinci bir önizlemesi (ör. Sync'ten
+    /// sonra gelen koşu önizlemesi) satırı yerinde değiştirir.</summary>
     [StaFact]
-    public void A_late_arriving_target_sha_refreshes_an_already_rendered_row()
+    public void A_late_arriving_fact_refreshes_an_already_rendered_row()
     {
-        // [W1] Olay sırası SABİT: buildPreview (CurrentSha) → syncCompleted (TargetSha). Kart hedefi render anında
-        // ata ağaçtan ÇEKSEYDİ, satır sha'sını target daha null'ken hesaplar ve bir daha tazelenmezdi (ilk Sync'ten
-        // sonra slot BOŞ kalırdı). Değer satıra İTİLDİĞİ için geç gelen taraf satırı GERÇEKTEN tazeler.
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
-        { WillBuild = true, CurrentSha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b" };
+        { WillBuild = true, WillBuildReason = WillBuildReason.SignatureChanged, OwnFilesChanged = false };
         var (row, window, _) = Realize(vm);
-        Assert.Equal("a3f81c2", row.ShaText.Text); // hedef henüz bilinmiyor → tek yarı (bkz. yukarıdaki DEĞİŞEN KURAL)
+        Assert.Equal("affected", row.DecisionText.Text);
 
-        vm.TargetSha = "b7e91d4c0affee1122334455667788990aabbccd"; // syncCompleted
+        vm.OwnFilesChanged = true;      // ikinci önizleme: kendi dosyası da değişmiş
         row.UpdateLayout();
 
-        Assert.Equal("a3f81c2 → b7e91d4", row.ShaText.Text);
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
-    public void The_rendered_sha_pair_fits_inside_the_118px_right_block()
-    {
-        // [W1] design-v1 sağ blok min 118px (README §kart slot 4). 7+7 haneye kısaltılmış çift GERÇEKTEN ölçülür —
-        // ham 40-hex hâli sığmazdı. pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
-        // (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
-        {
-            WillBuild = true,
-            CurrentSha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b",
-            TargetSha = "b7e91d4c0affee1122334455667788990aabbccd",
-        };
-        var (row, window, _) = Realize(vm);
-        row.ShaText.FontFamily = DsResources.MonoFontFamily;
-        row.UpdateLayout();
-
-        double width = row.ShaText.DesiredSize.Width;
-        Assert.True(width > 0, "sha metni hiç ölçülemedi (font çözülmedi mi?)");
-        Assert.True(width <= 118, $"kısaltılmış sha çifti 118px slota sığmadı: {width}px");
-
-        // Kontrol grubu: ham (kısaltılmamış) hâli AYNI ölçümle slota SIĞMAZ — yani iddia önemsizce doğru değil.
-        row.ShaText.Text = $"{vm.CurrentSha} → {vm.TargetSha}";
-        row.UpdateLayout();
-        Assert.True(row.ShaText.DesiredSize.Width > 118, "ham 40-hex çift beklenmedik biçimde 118px'e sığdı");
+        Assert.Equal("modified", row.DecisionText.Text);
         GC.KeepAlive(window);
     }
 
@@ -894,17 +852,16 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T3b · b7] design-v1 README §2.3 slot 4: "mono 10.5px" (BuildApp.jsx:399 <c>fontSize: 10.5</c>).
-    /// 118px'e sığma ZATEN pinliydi (yukarıdaki test); PUNTONUN KENDİSİ (10.5 — token ölçeğinde YOK, kasıtlı
-    /// literal, ProjectRow.xaml:75 yorumu) testsizdi.</summary>
+    /// <summary>[A13/T3b · b7] design README §2.4 slot 4: "mono 10.5px" — token ölçeğinde YOK, kasıtlı
+    /// literal (ProjectRow.xaml yorumu). Yuvaya sığma ayrı testte; burada PUNTONUN KENDİSİ pinlenir.</summary>
     [StaFact]
-    public void Sha_pairs_font_size_is_the_deliberate_ten_point_five_literal_not_a_token_size()
+    public void The_decision_labels_font_size_is_the_deliberate_ten_point_five_literal_not_a_token_size()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
-        { WillBuild = true, CurrentSha = "a3f81c2" };
+        { WillBuild = true, WillBuildReason = WillBuildReason.SignatureChanged };
         var (row, window, _) = Realize(vm);
 
-        Assert.Equal(10.5, row.ShaText.FontSize);
+        Assert.Equal(10.5, row.DecisionText.FontSize);
         GC.KeepAlive(window);
     }
 

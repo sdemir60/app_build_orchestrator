@@ -347,6 +347,25 @@
     </Style.Triggers>
   </Style>
 
+  <!-- [design v1.16.0 §2.7-6a] EYLEM chip'i: Ds.Chip ile aynı ölçü ve nötr ağırlık, ama bir DURUM
+       taşımaz — tıklanır ve iş yapar (aktif/checked hâli YOKTUR). Amber yok: bu bir statü değil, bir
+       davettir. -->
+  <Style x:Key="Ds.Chip.Action" TargetType="Button" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="24" />
+    <Setter Property="Padding" Value="8,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <Setter Property="controls:DsChrome.CornerRadius" Value="{DynamicResource Radius.Xs}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextSecondary}" />
+    <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Border}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- _ds_bundle.js:188-194 — chip'in SAYAÇ yuvası: mono, weight 400, tabular figürler, text-primary.
        Boyu chip'ten miras alınamaz (ayrı bir TextBlock'tur) → chip'in text-xs'i burada tekrar ilan edilir. -->
   <Style x:Key="Ds.Chip.Counter" TargetType="TextBlock">

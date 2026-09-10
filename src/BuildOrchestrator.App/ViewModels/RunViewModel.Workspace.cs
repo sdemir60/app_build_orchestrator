@@ -4,6 +4,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 
 namespace BuildOrchestrator.App.ViewModels;
 
@@ -78,19 +79,24 @@ public sealed partial class RunViewModel
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>
     [ObservableProperty] private string? _targetSha;
 
-    /// <summary>[W1] Hedef sha her satıra İTİLİR (<c>IsRunActive</c>/<c>NamePrefix</c> deseni) — kart onu render
-    /// anında ata ağaçtan ÇEKMEZ. <c>buildPreview</c> deterministik olarak <c>syncCompleted</c>'dan ÖNCE gelir;
-    /// çekme modelinde satır sha'sını TargetSha daha null'ken hesaplayıp bir daha tazelemiyordu (ilk Sync'ten
-    /// sonra slot BOŞ kalırdı). Tazeleme sinyali TEK ve VM tarafındadır: satır başına ek bir PropertyChanged
-    /// abonesi AÇILMAZ (satır zaten yalnız kendi VM'ini dinler) — L1'in satır-realize bütçesi korunur.</summary>
-    partial void OnTargetShaChanged(string? value)
-    {
-        // [Harici projeler] Hedef sha ANA REPOYU anlatır — harici satırlar bu itmenin dışında kalır.
-        foreach (var row in Projects) if (!row.IsExternal) row.TargetSha = value;
-    }
-
     /// <summary>true ⇒ son Sync'te fetch başarısız oldu ve akış yerel HEAD ile devam etti (offline degrade).</summary>
     [ObservableProperty] private bool _fetchDegraded;
+
+    /// <summary>
+    /// [design v1.16.0 §2.7-6a] Yerel HEAD'in <c>origin/&lt;branch&gt;</c>'ten kaç commit geride olduğu —
+    /// alt bardaki <c>N behind</c> chip'inin sayısı. <c>null</c> ⇒ MESAFE BİLİNMİYOR (fetch degrade oldu ya da
+    /// aktif olmayan bir branch seçili): chip çizilmez, uydurma sayı gösterilmez.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanShowBehind))]
+    [NotifyCanExecuteChangedFor(nameof(PullRepositoryCommand))]
+    private int? _behind;
+
+    /// <summary>
+    /// Chip GÖRÜNÜR mü: geride ve mesafe biliniyor <b>ve</b> aktif branch seçili. Worktree modunda chip YOK —
+    /// derleme worktree'den yapılıyor, ana ağacı ilerletmenin o koşuya bir etkisi olmazdı.
+    /// </summary>
+    public bool CanShowBehind => Behind is > 0 && !IsWorktreeForced;
 
     /// <summary>[Fix wave 1 — Finding 2] <c>syncStarted</c> geldi ama <c>syncCompleted</c> (ya da Sync'i bitiren
     /// bir hata) HENÜZ gelmedi. Bir run-bitiren hata kodunun KAYNAĞINI ayırt etmek için gerekir — bkz.
@@ -219,12 +225,47 @@ public sealed partial class RunViewModel
         NotifySyncGatedCommands();
     }
 
+    /// <summary>
+    /// [design v1.16.0 §3.9] <c>N behind</c> chip'i: ana repoyu uzak ucuna ff-only ilerlet.
+    ///
+    /// <para><b>Kuralın bilinçli güncellemesi.</b> Araç KENDİLİĞİNDEN asla pull yapmaz — bu komutun tek
+    /// tetikleyicisi kullanıcının chip'e basmasıdır. Motor tarafı yalnız fast-forward uygular; kirli ya da
+    /// ayrışmış bir ağaç reddedilir ve gerekçe konsola yazılır (satırlar <c>syncProgress</c> olarak akar).</para>
+    ///
+    /// <para>Konsol TIKLAMA ANINDA TEMİZLENMEZ: kullanıcının kendi tetiklediği işin sonucunu görmesi gerekir
+    /// ve pull sonrası otomatik Sync de aynı gerekçeyle geçmişi korur (<c>clearBuffers: false</c>).</para>
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanPullRepository))]
+    private async Task PullRepositoryAsync()
+    {
+        CurrentOperation = OperationLabel.Sync;   // ilerletme + ardından gelen Sync tek bir işlemdir
+        ArmEngineWatchdog();
+        await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository");
+    }
+
+    /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi).</summary>
+    private bool CanPullRepository() =>
+        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy;
+
+    /// <summary>
+    /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in
+    /// kararları); başarısızsa hiçbir şey değişmez — gerekçe zaten konsolda.
+    /// </summary>
+    private async Task OnPullCompletedAsync(PullCompletedEvent e)
+    {
+        if (!e.Succeeded) { CurrentOperation = null; return; }
+
+        Behind = 0;                          // ff sonrası yerel HEAD uzak uca eşitlendi
+        await SyncCoreAsync(clearBuffers: false);
+    }
+
     /// <summary>[A5/T69] Sync bitti: hedef commit + degrade bayrağı kaydedilir, faz <c>Idle</c>'a geçer
     /// (proje durumları artık bilinir — hollow değil).</summary>
     private void OnSyncCompleted(SyncCompletedEvent e)
     {
         TargetSha = e.TargetSha;
         FetchDegraded = e.FetchDegraded;
+        Behind = e.Behind;      // [v1.16.0] chip'in sayısı; null ⇒ mesafe bilinmiyor → chip yok
         SyncErrorMessage = null; // [E2/T10] Sync başarıyla bitti — varsa önceki hata metni temizlenir
         ReleaseSyncPhase();    // [C2 fold] uçuş bayrağını normal yoldan da BURADAN temizle (tek yer)
         Phase = AppPhase.Idle; // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil)
@@ -351,9 +392,6 @@ public sealed partial class RunViewModel
                     IsRunTarget = string.Equals(node.Id, RunTargetId, StringComparison.OrdinalIgnoreCase),
                     // [Harici projeler] Rozet topolojiden gelir; satır ömrü boyunca değişmez.
                     IsExternal = node.ExternalVcs is not null,
-                    // [W1] hedef sha satıra İTİLİR (kart onu atalardan çekmez) — ama YALNIZ ana repo satırlarına:
-                    // harici bir projenin yanında ana reponun commit'i yanlış bir şey söylerdi.
-                    TargetSha = node.ExternalVcs is null ? TargetSha : null,
                     // [design v1.11.0 §3.1] Yeni doğan satır BAŞLANGIÇ MODUNDADIR: bir koşu ortasında gelen
                     // topoloji hariç (orada koşan işlem zaten renk yazıyor).
                     Fresh = !IsRunning,
@@ -471,6 +509,7 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(ActiveBranchName));
         OnPropertyChanged(nameof(IsWorktreeForced));
         OnPropertyChanged(nameof(EffectiveUseWorktree));
+        NotifyBehindChip();   // [v1.16.0] chip worktree modunda çizilmez — o karar da buradan tazelenir
     }
 
     /// <summary>

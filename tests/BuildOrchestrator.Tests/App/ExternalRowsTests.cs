@@ -13,8 +13,7 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// Harici projelerin proje listesindeki hâli: satır mekaniği sıradan projelerinkiyle aynıdır, ama listenin
 /// BAŞINDA ve kendi <c>External</c> grubunda dururlar (katman index −1) — ana projeler onların çıktısına
-/// bağlıdır, o yüzden önce derlenirler. Ana reponun hedef commit'i onlara İTİLMEZ: o sha başka bir repoyu
-/// anlatır ve harici satırın yanında yalan söylerdi.
+/// bağlıdır, o yüzden önce derlenirler.
 /// </summary>
 public class ExternalRowsTests
 {
@@ -60,33 +59,38 @@ public class ExternalRowsTests
         Assert.False(vm.Projects[1].IsExternal);
     }
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL — v1.16.0] Bu yerde eskiden iki test vardı ve ikisi de "ana reponun hedef commit'i
+    /// harici satırlara İTİLMEZ" diye pinliyordu (o sha başka bir repoyu anlatır ve harici satırın yanında
+    /// yalan söylerdi). Hedef commit artık HİÇBİR satıra itilmiyor: satırın sağ yuvasında commit değil KARAR
+    /// duruyor. Geriye kalan — ve asıl önemli olan — iddia şudur: harici satır bu yüzeyde de SIRADAN bir
+    /// satırdır, ayrı bir dalı yoktur.
+    /// </summary>
     [Fact]
-    public async Task The_repository_target_sha_is_never_pushed_onto_an_external_row()
+    public async Task An_external_row_reads_the_decision_facts_exactly_like_a_main_row()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = NewVm(engine);
         vm.OnEvent(new WorkspaceTopologyEvent(
-            [ExternalNode("Mail", MailTarget), MainNode(@"D:\repo\a.csproj", "A", 1)], [], [], []));
+            [ExternalNode("Mail", MailTarget), MainNode(@"D:epo.csproj", "A", 1)], [], [], []));
 
-        vm.OnEvent(new SyncCompletedEvent("main", "1111111111111111111111111111111111111111", false, 2, 0, 0, 0, 0));
+        var builtAt = new System.DateTimeOffset(2026, 9, 10, 12, 0, 0, System.TimeSpan.Zero);
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(MailTarget, "Mail", false, "a1b2c3d", WillBuildReason.UpToDate,
+                OwnFilesChanged: false, LastBuiltAt: builtAt),
+            new BuildPreviewItem(@"D:epo.csproj", "A", true, "b7e91d4", WillBuildReason.SignatureChanged,
+                OwnFilesChanged: true, LastBuiltAt: builtAt),
+        ]));
 
-        Assert.Null(vm.Projects[0].TargetSha);                       // harici
-        Assert.NotNull(vm.Projects[1].TargetSha);                    // ana repo
-    }
+        var external = vm.Projects.Single(r => r.IsExternal);
+        var main = vm.Projects.Single(r => !r.IsExternal);
 
-    [Fact]
-    public async Task A_row_created_while_a_target_sha_is_already_known_still_stays_clean()
-    {
-        // Satır Sync'ten SONRA doğduğunda da itme yapılmamalı — iki ayrı yol vardır ve ikisi de kapalıdır.
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = NewVm(engine);
-        vm.OnEvent(new WorkspaceTopologyEvent([MainNode(@"D:\repo\a.csproj", "A", 0)], [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "2222222222222222222222222222222222222222", false, 1, 0, 0, 0, 0));
-
-        vm.OnEvent(new WorkspaceTopologyEvent(
-            [ExternalNode("Mail", MailTarget), MainNode(@"D:\repo\a.csproj", "A", 1)], [], [], []));
-
-        Assert.Null(vm.Projects[0].TargetSha);
+        Assert.Equal(builtAt, external.LastBuiltAt);
+        Assert.False(external.OwnFilesChanged);
+        Assert.Equal(WillBuildReason.UpToDate, external.WillBuildReason);
+        Assert.Equal(builtAt, main.LastBuiltAt);
+        Assert.True(main.OwnFilesChanged);
     }
 
     [Fact]

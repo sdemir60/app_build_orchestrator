@@ -68,17 +68,23 @@
           </Grid>
         </Grid>
 
-        <!-- 4) Sağ blok (MinWidth 118): hover→aç-ikonları, değilse (will==dirty) sha çifti.
+        <!-- 4) Sağ blok (MinWidth 134 — design v1.16.0 §2.4): hover→aç-ikonları, değilse KARAR ETİKETİ.
+             Genişlik bir kez büyüdü: en uzun etiket ("up to date · just now") mono 10.5px'te 132px sürüyor ve
+             eski 118px'lik yuva onu kırpıp ad kolonundan yer çalıyordu.
              [L1/It-5 perf] Hover ikonları + VS-chooser popover'ı BURADA DEĞİL: Views/ProjectRowActions.xaml'e
              taşındı ve İLK HOVER'da kod-tarafı buraya eklenir (ProjectRow.xaml.cs EnsureActions). Görsel sonuç
              aynı — hover edilmemiş satır o alt-ağacın 16 nesnesini artık hiç ödemez. -->
-        <Grid x:Name="PART_RightBlock" Grid.Column="2" Margin="8,0,0,0" MinWidth="118"
+        <Grid x:Name="PART_RightBlock" Grid.Column="2" Margin="8,0,0,0" MinWidth="134"
               VerticalAlignment="Center" HorizontalAlignment="Right">
-          <!-- SHA çifti: mono 10.5px (token ölçeğinde YOK — prototip :399 literal, kasıtlı). -->
-          <TextBlock x:Name="PART_Sha" HorizontalAlignment="Right" VerticalAlignment="Center"
+          <!-- Karar etiketi: mono 10.5px (token ölçeğinde YOK — prototip literal, kasıtlı). İki Run: asıl
+               sözcük (derlenecekse secondary, güncelse faint) ve "·" sonrası kuyruk (HER ZAMAN faint).
+               [design v1.16.0] DS Tooltip YOK — uzun gerekçe native ToolTip ile, ikon butonlarıyla aynı dilde. -->
+          <TextBlock x:Name="PART_Decision" HorizontalAlignment="Right" VerticalAlignment="Center"
                      Visibility="Collapsed" Typography.NumeralAlignment="Tabular"
                      FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="10.5"
-                     Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="NoWrap" />
+                     Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="NoWrap"><Run
+                       x:Name="PART_DecisionWord" /><Run x:Name="PART_DecisionTail"
+                       Foreground="{DynamicResource Brush.TextFaint}" /></TextBlock>
         </Grid>
 
         <!-- 5) Statü glyph'i 14px. [design v1.11.0 §2.4-5] TOOLTIP YOK: renk + glyph + süre sütunu aynı şeyi

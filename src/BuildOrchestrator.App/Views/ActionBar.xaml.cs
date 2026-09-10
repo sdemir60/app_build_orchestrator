@@ -42,6 +42,7 @@ public partial class ActionBar : UserControl
 
     // sayaç chip'leri + değer TextBlock'ları (StickyRibbon deseni — kod-tarafı kurulur, refresh'te güncellenir)
     private ToggleButton _sigmaChip = null!, _buildingChip = null!, _succeededChip = null!, _failedChip = null!, _skippedChip = null!, _warnChip = null!;
+    private TextBlock _behindValue = null!;
     private TextBlock _sigmaValue = null!, _buildingValue = null!, _succeededValue = null!, _failedValue = null!, _skippedValue = null!, _warnValue = null!;
     private BuildingSpinner _buildingSpinner = null!;
     private Ellipse _buildingDot = null!;
@@ -84,6 +85,7 @@ public partial class ActionBar : UserControl
     /// chip'lerinin yerini alır.</summary>
     internal ToggleButton WarnChip => _warnChip;
     internal ToggleButton BranchChip => PART_BranchChip;
+    internal Button BehindChip => PART_BehindChip;
     internal ToggleButton WorktreeChip => PART_WorktreeChip;
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
@@ -192,6 +194,11 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.UseWorktree):
             case nameof(RunViewModel.WorktreeName):
                 RefreshBranchWorktree();
+                RefreshBehindChip();   // [v1.16.0] chip branch'e bağlıdır (tooltip + worktree modu)
+                break;
+            case nameof(RunViewModel.Behind):
+            case nameof(RunViewModel.CanShowBehind):
+                RefreshBehindChip();
                 break;
             case nameof(RunViewModel.Configuration):
                 RefreshConfig();
@@ -342,9 +349,51 @@ public partial class ActionBar : UserControl
     private void BuildBranchWorktreeChips()
     {
         _branchValue = LabelChipContent(PART_BranchChip, "Icon.Branch", "branch", chevron: true);
+        BuildBehindChip();
         _worktreeValue = LabelChipContent(PART_WorktreeChip, "Icon.Tree", "worktree", chevron: true);
         AutomationProperties.SetName(PART_BranchChip, AccessibilityNames.BranchChip);
         AutomationProperties.SetName(PART_WorktreeChip, AccessibilityNames.WorktreeChip);
+    }
+
+    /// <summary>
+    /// [design v1.16.0 §2.7-6a] <c>N behind</c> chip'i: ikon + mono sayı + <c>behind</c>. Sayaç chip'leriyle
+    /// aynı ölçüler, ama NÖTR: amber yok, çünkü bu bir statü değil bir DAVETTİR (tıkla ve ilerlet).
+    /// </summary>
+    private void BuildBehindChip()
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(IconVisual.BoundToForeground(PART_BehindChip, "Icon.ArrowDownToLine", ChipIconSize, 24));
+        _behindValue = new TextBlock
+        {
+            Margin = new Thickness(ChipContentGap, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            FontFamily = AppFonts.Mono,
+        };
+        _behindValue.SetBinding(TextBlock.ForegroundProperty,
+            new Binding(nameof(Control.Foreground)) { Source = PART_BehindChip });
+        content.Children.Add(_behindValue);
+        content.Children.Add(ChipLabel("behind"));
+        PART_BehindChip.Content = content;
+        AutomationProperties.SetName(PART_BehindChip, AccessibilityNames.BehindChip);
+        PART_BehindChip.Click += (_, _) => _vm?.PullRepositoryCommand.Execute(null);
+    }
+
+    /// <summary>
+    /// Chip'in görünürlüğü, sayısı ve tooltip'i. <b>Görünme kuralı motorun olgusudur:</b> sayı biliniyor
+    /// (fetch başarılı), sıfırdan büyük ve aktif branch seçili. Çevrimdışıyken sayı bilinmez ⇒ chip HİÇ
+    /// çizilmez — uydurma bir sayı göstermektense susmak doğrudur.
+    /// </summary>
+    private void RefreshBehindChip()
+    {
+        if (!_built) return;
+        bool show = _vm?.CanShowBehind ?? false;
+        PART_BehindChip.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) return;
+
+        int behind = _vm!.Behind ?? 0;
+        _behindValue.Text = Inv(behind);
+        AutomationProperties.SetName(PART_BehindChip, Inv(behind) + " behind");
+        PART_BehindChip.ToolTip = InteractionText.BehindChipTooltip(behind, _vm.Branch);
     }
 
     private void BuildPerfChip()
@@ -498,6 +547,9 @@ public partial class ActionBar : UserControl
         PART_WorktreeChip.IsEnabled = hasWs && !midRun;
         PART_Segment.IsEnabled = hasWs && !midRun;
         PART_PerfChip.IsEnabled = hasWs; // mid-run'da da canlı
+        // [design v1.16.0 §2.7-6a] Chip koşu/bakım görevi sürerken diğer bar kontrolleriyle AYNI kilitte.
+        PART_BehindChip.IsEnabled = hasWs && !midRun;
+        RefreshBehindChip();
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;

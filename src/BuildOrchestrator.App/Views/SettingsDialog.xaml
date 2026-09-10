@@ -125,12 +125,14 @@
                           IsChecked="{Binding PullExternalsBeforeBuild, Mode=TwoWay}" />
               </StackPanel>
             </Grid>
+            <!-- [design v1.16.0 §2.9] Son cümle kart sırasının NE OLMADIĞINI söyler: sıra yalnız çalışma
+                 kopyalarının güncellenme sırasıdır; hariciler arasındaki derleme sırası bağımlılıktan gelir. -->
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
                        FontSize="{DynamicResource FontSize.Xs}"
                        Foreground="{DynamicResource Brush.TextDim}"><Run
-                       Text="Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. Everything found under a card joins the same project list and graph, grouped at the top and built " /><Run
+                       Text="Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. The working copy root is found from the path upwards. They are built " /><Run
                        Text="before" FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextSecondary}" /><Run
-                       Text=" the repository's own projects." /></TextBlock>
+                       Text=" everything else; the rest follows the layers below. Card order only sets the order the working copies are updated — among themselves they build in dependency order." /></TextBlock>
 
             <!-- Boş durum — Layers'ın PAYLAŞTIĞI şablon (Ds.Settings.EmptyState*), yalnız metin ve
                  görünürlük-bağlama yolu (Externals.Count) farklı. -->
