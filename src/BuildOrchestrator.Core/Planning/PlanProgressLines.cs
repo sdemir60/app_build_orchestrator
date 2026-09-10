@@ -41,6 +41,15 @@ public static class PlanProgressLines
     /// Yalnız run yolunda: Sync kendi iki-pass'ini <c>changed/to build</c> özetiyle raporlar.</summary>
     public static string ComputingIncremental(int projects) => $"Computing incremental state ({projects} projects)";
 
+    /// <summary>
+    /// [D1/D3] İçerik özeti önbelleğinin doldurulması — koşu başına yalnız EKSİK dosyalar için. Satır işin
+    /// ÖNCESİNDE yazılır: ilk indeksleme (ölçülen gerçek repoda 23 bin dosya) paralel okumayla bile onlarca
+    /// saniye sürer ve kullanıcı beklemenin nedenini görmelidir. Küçük değişiklik kümeleri için hiç
+    /// yazılmaz (bkz. <see cref="Incremental.SourceHashCache.NoisyPrefillThreshold"/>) — her koşuda
+    /// "3 dosya okundu" demek gürültü olurdu.
+    /// </summary>
+    public static string IndexingSources(int files) => $"Indexing {files} source files — later runs reuse the index";
+
     // --- Harici projeler ------------------------------------------------------------------------
     // Aynı metinler iki yüzeyde görünür: Sync transkripti ve koşu planlaması. Bu yüzden onlar da burada, tek
     // kaynakta durur. Koşuyu İPTAL eden metinler buraya GİRMEZ — onlar progress satırı değil,

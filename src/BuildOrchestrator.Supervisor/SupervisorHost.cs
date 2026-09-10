@@ -6,6 +6,7 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Git;
+using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
@@ -30,7 +31,8 @@ public sealed record WorkspaceServices(
         root => new SyncWorkspaceService(
             new WorkspaceScanner(), new CsprojEvaluator(),
             new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json")),
-            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot)),
+            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName))),
         root => new GitService(new ProcessRunner(), root),
         root => new WorktreeManager(new ProcessRunner(), root, poolRoot));
 }

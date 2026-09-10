@@ -74,6 +74,16 @@ public sealed class BuildStateStore
         state is not null && state.TryGetValue(projectId, out var found) ? found.BuiltCommit : null;
 
     /// <summary>
+    /// [v1.16.0] Bir projenin SON BAŞARILI derlemesinin zamanı — satırın <c>up to date · 2h</c> etiketindeki
+    /// göreli yaş ve proje logu başlığındaki "Last successful build" satırı bunu okur. Kayıt yoksa ya da son
+    /// koşu başarılı DEĞİLSE <c>null</c>: "hiç derlenmemiş" ile "en son patladı" ayrı olgulardır ve ikisinde
+    /// de bir başarı yaşı yazılamaz. <see cref="BuiltCommitOf"/> ile aynı desen — tek arama yeri.
+    /// </summary>
+    public static DateTimeOffset? LastBuiltAtOf(IReadOnlyDictionary<string, BuildState>? state, string projectId) =>
+        state is not null && state.TryGetValue(projectId, out var found)
+        && found.LastResult == BuildResult.Succeeded ? found.LastRunAt : null;
+
+    /// <summary>
     /// [Task 7] Bir SCC üyesinin, PLANLANAN (şu anki) bileşik imzada DAHA ÖNCE turlarla yakınsAMADIĞI hafızası —
     /// <see cref="BuildState.NonConvergentSignature"/>'ın TEK okuyucusu. Plan aşaması (RunCoordinator) ve
     /// (ileride) Sync/önizleme yolu aynı aramayı iki kez YAZMAZ — <see cref="BuiltCommitOf"/> ile aynı desen.

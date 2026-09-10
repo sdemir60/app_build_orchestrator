@@ -56,7 +56,8 @@ public class SyncWorkspaceServiceTests
     private static SyncWorkspaceService ServiceFor(string root, string cacheRoot, IProcessRunner? runner = null) =>
         new(new WorkspaceScanner(), new CsprojEvaluator(),
             new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json")),
-            new GitService(runner ?? new ProcessRunner(), root), new BuildStateStore(cacheRoot));
+            new GitService(runner ?? new ProcessRunner(), root), new BuildStateStore(cacheRoot),
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)));
 
     private static IReadOnlyList<SyncProgressEvent> Progress(List<IpcEvent> events) =>
         events.OfType<SyncProgressEvent>().ToList();
@@ -206,15 +207,15 @@ public class SyncWorkspaceServiceTests
 
         var git = new GitService(new ProcessRunner(), root);
         string? head = (await git.GetHeadCommitAsync()).Value;
-        var tracked = (await git.GetTrackedBlobHashesAsync()).Value!;
-        var dirty = (await git.GetDirtyPathsAsync()).Value!;
         var evaluatedById = scan.CsprojPaths
             .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
             .Where(x => x.Project is not null)
             .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
 
-        var (_, signatures) = IncrementalRunBinder.Bind(plan, evaluatedById, root, head, tracked, dirty,
-            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), inPlace: true, buildCycles: false, mode: DependentMode.Safe);
+        var binder = new IncrementalRunBinder(plan, evaluatedById, root,
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)));
+        var (_, signatures) = binder.Bind(
+            new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase), buildCycles: false, DependentMode.Safe);
 
         var store = new BuildStateStore(cacheRoot);
         foreach (var (projectId, signature) in signatures)

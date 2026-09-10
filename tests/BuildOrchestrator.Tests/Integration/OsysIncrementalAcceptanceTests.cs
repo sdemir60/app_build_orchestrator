@@ -130,12 +130,8 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         var notSkippedUnexplained = notSkipped.Except(run1LegitimateRebuild, StringComparer.OrdinalIgnoreCase).ToList();
         var run2Unexplained = run2Started.Except(run1LegitimateRebuild, StringComparer.OrdinalIgnoreCase).ToList();
 
-        // ---- MINIMAL REBUILD (in-process, SALT-OKUR OSYS): TEK proje dirty → o + transitive dependent'ları true.
+        // ---- MINIMAL REBUILD (in-process, SALT-OKUR OSYS): TEK proje değişti → o + transitive dependent'ları true.
         var (plan, evaluatedById) = BuildPlanAndEvaluated();
-        var git = new GitService(new ProcessRunner(), OsysRoot);
-        string? head = (await git.GetHeadCommitAsync(overall.Token)).Value;
-        var tracked = (await git.GetTrackedBlobHashesAsync(overall.Token)).Value
-                      ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         // Dependent'ı OLAN bir proje seç (cascade'i gösterebilmek için) — bir başkasının Dependencies'inde geçen.
         var dependentsOf = ReverseDependents(plan);
@@ -144,14 +140,22 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             && evaluatedById.TryGetValue(n.Id, out var ev) && ev.CompileFiles.Count > 0);
         Skip.If(targetNode is null, "dependent'ı olan + compile dosyası olan bir proje bulunamadı — minimal-rebuild atlandı.");
 
-        // Sentetik dirty path: hedef projenin bir compile dosyasının repo-relative yolu (OSYS working tree'ye
-        // DOKUNULMAZ — yalnız binder'a "bu dosya dirty" der; içerik gerçek dosyadan OKUNUR, YAZILMAZ).
-        string dirtyRel = IncrementalRunBinder.ToRepoRelativeNormalized(OsysRoot,
-            Path.GetFullPath(evaluatedById[targetNode!.Id].CompileFiles[0]));
+        // Sentetik değişiklik — OSYS working tree'ye DOKUNULMADAN: hedef projenin bir kaynak dosyası, binder'ın
+        // fiziksel yol eşleyicisiyle (worktree koşularının kullandığı ÜRETİM yolu) geçici bir KOPYAYA
+        // yönlendirilir; kopyanın içeriği farklıdır. İmzanın yol terimi kimlikten (repo-göreli) geldiği için
+        // değişmez, içerik terimi değişir — yani "o dosya düzenlenmiş" senaryosunun birebir aynısı, tek fark
+        // gerçek dosyanın okunmaması.
+        string targetFile = Path.GetFullPath(evaluatedById[targetNode!.Id].CompileFiles[0]);
+        string decoyDir = Directory.CreateTempSubdirectory("bo-it3-decoy-").FullName;
+        string decoyFile = Path.Combine(decoyDir, Path.GetFileName(targetFile));
+        File.WriteAllText(decoyFile, File.ReadAllText(targetFile) + Environment.NewLine + "// simulated edit");
 
-        var (dirtyPlan, _) = IncrementalRunBinder.Bind(
-            plan, evaluatedById, OsysRoot, head, tracked, [dirtyRel],
-            stateAfterRun1, inPlace: true, buildCycles: false, mode: DependentMode.Safe);
+        string cacheRoot = Directory.CreateTempSubdirectory("bo-it3-hash-").FullName;
+        var binder = new IncrementalRunBinder(
+            plan, evaluatedById, OsysRoot,
+            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)),
+            logical => string.Equals(logical, targetFile, StringComparison.OrdinalIgnoreCase) ? decoyFile : logical);
+        var (dirtyPlan, _) = binder.Bind(stateAfterRun1, buildCycles: false, DependentMode.Safe);
         var dirtyById = dirtyPlan.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
 
         var transitiveDependents = TransitiveDependents(targetNode.Id, dependentsOf);
@@ -209,8 +213,8 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine(Inv($"- [A2] Run 1: failed={run1.Failed.Count} + depIssue taşıyan success={run1.DepIssueCarriers.Count} → Run 2'de derlenmesi MEŞRU: {run1LegitimateRebuild.Count}"));
             sb.AppendLine(Inv($"- Run 2'de dispatch edilen (derlenen) proje: {run2Started.Count} · bunlardan MEŞRU kümede OLMAYAN: {run2Unexplained.Count} (0 OLMALI)"));
             sb.AppendLine();
-            sb.AppendLine("## Minimal rebuild (tek proje dirty, in-process — gerçek OSYS grafı)");
-            sb.AppendLine(Inv($"- Dirty edilen hedef: {Path.GetFileNameWithoutExtension(targetNode.Id)} (dirty path: {dirtyRel})"));
+            sb.AppendLine("## Minimal rebuild (tek proje değişti, in-process — gerçek OSYS grafı)");
+            sb.AppendLine(Inv($"- Değiştirilen hedef: {Path.GetFileNameWithoutExtension(targetNode.Id)} (kaynak: {IncrementalRunBinder.PathTerm(OsysRoot, targetFile)})"));
             sb.AppendLine(Inv($"- Hedef WillBuild: {dirtyById[targetNode.Id]}"));
             sb.AppendLine(Inv($"- Doğrudan (cycle-dışı) dependent: {directDependents.Count} · flip=true olmayan (İHLAL): {cascadeMisses.Count}"));
             sb.AppendLine(Inv($"- Transitive (cycle-dışı) dependent: {transNonCycle.Count} · flip=true olan: {transFlipped} ([A3] TAM cascade bekleniyor)"));

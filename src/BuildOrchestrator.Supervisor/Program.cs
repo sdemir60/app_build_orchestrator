@@ -139,6 +139,8 @@ public static class Program
             prepared = workspace;
 
             string cachePath = Path.Combine(cacheRoot, "evaluation-cache.json");
+            // [D3] Kaynak özetleri Sync ile AYNI dosyada paylaşılır — iki yüzey aynı içerikleri iki kez okumaz.
+            var sourceHashes = new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName));
             var scanner = new WorkspaceScanner();
             var evaluator = new CsprojEvaluator();
             var cache = new EvaluationCache(cachePath);
@@ -183,8 +185,7 @@ public static class Program
             var externalCommits = new ExternalRevisionReader(new ProcessRunner())
                 .ReadAsync(external.Roots).GetAwaiter().GetResult();
             var (boundPlan, incremental) = ComputeIncremental(cmd, workspace, identity.Plan,
-                identity.EvaluatedById, stateStore, external.VcsByProjectId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase),
-                externalCommits);
+                identity.EvaluatedById, stateStore, sourceHashes, identity.BuildPathById, externalCommits, progress);
             return new RunPlan(boundPlan, identity.SolutionRefs, incremental, identity.BuildPathById);
         }
     }
@@ -411,41 +412,65 @@ public static class Program
     private static (BuildPlan Plan, IncrementalPlan? Info) ComputeIncremental(
         StartRunCommand cmd, PreparedWorkspace workspace, BuildPlan plan,
         IReadOnlyDictionary<string, EvaluatedProject> evaluatedById, BuildStateStore stateStore,
-        IReadOnlySet<string> externalProjectIds, IReadOnlyDictionary<string, string> externalCommits)
+        SourceHashCache hashes, IReadOnlyDictionary<string, string> buildPathById,
+        IReadOnlyDictionary<string, string> externalCommits, Action<string> progress)
     {
         try
         {
+            // git yalnız TANI içindir: HEAD ve branch build-state kaydına (BuiltCommit/LastBranch) ve konsol
+            // satırlarına gider. [D1] KARARA GİRMEZ — imza diskteki içerikten hesaplanır, bu yüzden git'i
+            // bozuk ya da hiç olmayan bir makinede de tam bir incremental karar üretilir.
             var git = new GitService(new ProcessRunner(), workspace.ScanRoot);
             var headResult = git.GetHeadCommitAsync().GetAwaiter().GetResult();
             string? head = headResult.Success ? headResult.Value : null;
             var branchResult = git.GetCurrentBranchAsync().GetAwaiter().GetResult();
             string? branch = branchResult.Success ? branchResult.Value : null;
-            var dirtyResult = git.GetDirtyPathsAsync().GetAwaiter().GetResult();
-            IReadOnlyList<string> dirty = dirtyResult.Success ? dirtyResult.Value! : [];
-            var trackedResult = git.GetTrackedBlobHashesAsync().GetAwaiter().GetResult();
-            IReadOnlyDictionary<string, string> tracked = trackedResult.Success
-                ? trackedResult.Value! : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            // [A4] TAHMİN (`!cmd.UseWorktree`) DEĞİL, ÇÖZÜLMÜŞ workspace: worktree istenip de hazırlanamadıysa
-            // InPlace true kalır ve imza local-diff terimini DAHİL eder — derlemenin gerçekte üzerinde koştuğu ağaç.
-            // [worktree kimliği] Repo kökü ANA repodur: plan ve değerlendirme haritası buraya rebase edilmiş
-            // durumda geldi, dolayısıyla repo-göreli yollar iki kökte de AYNI çıkar ve imza kök-bağımsız olur.
-            // git olguları (head/dirty/tracked) yine ScanRoot'tan okunur — derlenen ağaç odur ve hepsi
-            // repo-göreli formattadır.
-            var (bound, signatures) = IncrementalRunBinder.Bind(
-                plan, evaluatedById, cmd.RootPath, head, tracked, dirty,
-                stateStore.Load(), workspace.InPlace, cmd.Mode == RunMode.Cycles, cmd.DependentMode,
-                externalProjectIds);
-            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits));
+            // [worktree kimliği · D5] Kimlikler ANA köke taşınmış durumda geldi; içerik ise DERLENEN ağaçtan
+            // okunmalıdır. buildPathById tam olarak o eşlemedir (in-place koşuda boştur ⇒ birebir).
+            string PhysicalPath(string logical) =>
+                buildPathById.Count == 0 ? logical : Rebase(cmd.RootPath, workspace.ScanRoot, logical);
+
+            var binder = new IncrementalRunBinder(plan, evaluatedById, cmd.RootPath, hashes, PhysicalPath);
+            binder.Prefill(files =>
+            {
+                if (files >= SourceHashCache.NoisyPrefillThreshold) progress(PlanProgressLines.IndexingSources(files));
+            });
+
+            var state = stateStore.Load();
+            var (bound, signatures) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode);
+
+            // [v1.16.0 satır etiketi] Fast geçişi "kendi dosyası değişti mi" olgusunu verir — önizleme
+            // satırları modified/affected ayrımını buradan okur. İkinci geçiş yalnız imza hesabıdır: girdi
+            // kümesi ve içerik özetleri binder içinde zaten hesaplanmıştır, disk BİR KEZ okunur.
+            var (fastPlan, _) = binder.Bind(state, cmd.Mode == RunMode.Cycles, DependentMode.Fast);
+            var ownChanged = fastPlan.Nodes
+                .Where(n => n.WillBuild == true)
+                .Select(n => n.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            hashes.Flush();
+            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, ownChanged));
         }
         catch (Exception ex)
         {
-            // Incremental bir OPTİMİZASYONDUR: git/discovery/hash yolunda HERHANGİ bir hata (I/O, XML, vb.) tüm
+            // Incremental bir OPTİMİZASYONDUR: discovery/hash yolunda HERHANGİ bir hata (I/O, XML, vb.) tüm
             // run'ı ÖLDÜRMEMELİ. Plan AYNEN döner (WillBuild=null) → Build o durumda pre-skip yapmaz (hepsini
             // derler, güvenli taraf). Tanı için stderr'e bir satır düşülür (stdout YALNIZ NDJSON [D4]).
             Console.Error.WriteLine("incremental pass skipped (plan kept as-is, everything will be built): " + ex);
             return (plan, null);
         }
+    }
+
+    /// <summary>[D5] Ana kök kimliğini derlenen ağacın fiziksel yoluna çevirir (worktree koşusu). Kök
+    /// ALTINDA olmayan yol aynen kalır — harici köklerden gelen projeler worktree'ye taşınmaz.</summary>
+    private static string Rebase(string fromRoot, string toRoot, string path)
+    {
+        string from = Path.GetFullPath(fromRoot);
+        if (!from.EndsWith(Path.DirectorySeparatorChar)) from += Path.DirectorySeparatorChar;
+        return path.StartsWith(from, StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(Path.GetFullPath(toRoot), path[from.Length..])
+            : path;
     }
 
     // MSBuild çözümü LAZY: vswhere/VS yoksa Supervisor yine ayağa kalkar (ping/getProjectLog çalışır), hata ancak

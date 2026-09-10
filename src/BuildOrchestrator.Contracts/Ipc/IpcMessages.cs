@@ -306,8 +306,14 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// tooltip'inde bunu söyler ("commit aynı ama neden derlenecek?" sorusunun cevabı). Düğümden AYNEN taşınır;
 /// koordinatörün koşu-zamanlama kuralıyla (pre-skip) <c>false</c>'a çevirdiği projelerde <c>null</c>'dır —
 /// o karar imzadan gelmez, önizleme yalan söylemez. Alan default'lu: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="OwnFilesChanged">[v1.16.0] Projenin KENDİ girdi dosyaları son derlemeden bu yana değişti mi —
+/// satırın karar etiketi <c>modified</c> (kendi dosyası) ile <c>affected</c> (yalnız bağımlılığı) ayrımını
+/// buradan okur. Motorun Fast geçişinden gelir; karar bilinmiyorsa <c>null</c>. Alan default'lu: eski NDJSON
+/// satırları alansız çözülür.</param>
+/// <param name="LastBuiltAt">[v1.16.0] SON BAŞARILI derlemenin zamanı — <c>up to date · 2h</c> etiketindeki
+/// göreli yaşın kaynağı. Hiç başarıyla derlenmemiş projede <c>null</c> ("never built" olgusu budur).</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
-    WillBuildReason? Reason = null);
+    WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null);
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
 /// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>

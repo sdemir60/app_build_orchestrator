@@ -33,17 +33,25 @@ namespace BuildOrchestrator.Core.Workspace;
 /// </summary>
 /// <param name="git">Kökü <see cref="SyncWorkspaceCommand.RootPath"/>'e BAĞLI bir <see cref="GitService"/> —
 /// worktree değil, KULLANICININ REPO KÖKÜ (Sync, Supervisor'ın build-anı worktree hazırlığıyla yarışmaz).</param>
+/// <param name="hashes">[D1/D3] Kaynak içerik özetlerinin önbelleği — kararın tek kaynağı budur ve Build ile
+/// AYNI dosyada paylaşılır (iki yüzey aynı özetleri iki kez hesaplamaz).</param>
 public sealed class SyncWorkspaceService(
     WorkspaceScanner scanner,
     CsprojEvaluator evaluator,
     EvaluationCache cache,
     GitService git,
-    BuildStateStore stateStore)
+    BuildStateStore stateStore,
+    SourceHashCache hashes)
 {
     /// <summary>Will-build pass'inin sonucu: bağlanmış plan + §3.1 konsol satırlarının/D2 şeridinin okuduğu sayaçlar.</summary>
     /// <param name="Known">false ⇒ anlamlı bir taban yok (repo'da hiç commit yok ya da pass hata verdi) — TÜM
     /// düğümler hollow (<c>WillBuild=null</c>) kalır ve sayaçlar RAPORLANMAZ (0 yazmak "hepsi güncel" yalanı olurdu).</param>
-    private readonly record struct WillBuildOutcome(BuildPlan Plan, int Changed, int ToBuild, int UpToDate, bool Known);
+    /// <param name="OwnChanged">[v1.16.0] KENDİ dosyaları değişmiş projeler (Fast geçişi) — satırın karar
+    /// etiketi <c>modified</c> ile <c>affected</c> ayrımını buradan okur.</param>
+    private readonly record struct WillBuildOutcome(
+        BuildPlan Plan, IReadOnlySet<string> OwnChanged, int Changed, int ToBuild, int UpToDate, bool Known);
+
+    private static readonly IReadOnlySet<string> EmptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     public async Task RunAsync(SyncWorkspaceCommand cmd, Action<IpcEvent> emit, CancellationToken ct = default)
     {
@@ -116,7 +124,7 @@ public sealed class SyncWorkspaceService(
         // yarısı). Pass'in İÇİNDE kalsaydı hollow/hata dallarında (pass hiç koşmaz) elde state olmazdı ve
         // "durumu bilinmeyen ama daha önce derlenmiş" satır sha'sını kaybederdi. SALT-OKUR: yalnız Load.
         var state = stateStore.Load();
-        var outcome = await ComputeWillBuildAsync(cmd, plan, scan, workspace, head.Value, state, emit, ct);
+        var outcome = ComputeWillBuild(cmd, plan, scan, state, emit);
 
         // --- 4) topoloji + önizleme. Önizleme AYRI bir will-build yolu DEĞİLDİR: App'in mevcut
         // BuildPreviewEvent handler'ı satırların WillBuild'ini zaten bu event'ten kurar (ikinci bir yol açılmaz).
@@ -128,7 +136,9 @@ public sealed class SyncWorkspaceService(
         emit(new BuildPreviewEvent(
             outcome.Plan.Nodes
                 .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
-                    BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason))
+                    BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason,
+                    OwnFilesChanged: outcome.Known ? outcome.OwnChanged.Contains(n.Id) : null,
+                    LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id)))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
@@ -176,26 +186,11 @@ public sealed class SyncWorkspaceService(
     /// </summary>
     /// <param name="state">[W1] Çağıranın okuduğu build-state map'i — burada AYRICA <c>Load()</c> ÇAĞRILMAZ
     /// (aynı Sync'te iki disk okuması olurdu; bkz. <see cref="RunAsync"/>).</param>
-    private async Task<WillBuildOutcome> ComputeWillBuildAsync(SyncWorkspaceCommand cmd, BuildPlan plan,
-        ScanResult scan, ExternalWorkspace workspace, string? headCommit,
-        IReadOnlyDictionary<string, BuildState> state, Action<IpcEvent> emit, CancellationToken ct)
+    private WillBuildOutcome ComputeWillBuild(SyncWorkspaceCommand cmd, BuildPlan plan,
+        ScanResult scan, IReadOnlyDictionary<string, BuildState> state, Action<IpcEvent> emit)
     {
-        // Commit'i olmayan repo: IncrementalPlanner'ın hollow kapısı zaten TÜM düğümleri null yapar — pass'i
-        // hiç koşturmaya (ve ls-tree/status maliyetine) gerek yok.
-        if (headCommit is null)
-        {
-            emit(Warn("warning: the repository has no commits yet — project states cannot be determined"));
-            return new WillBuildOutcome(plan, 0, 0, 0, Known: false);
-        }
-
         try
         {
-            var dirtyResult = await git.GetDirtyPathsAsync(ct);
-            IReadOnlyList<string> dirty = dirtyResult.Success ? dirtyResult.Value! : [];
-            var trackedResult = await git.GetTrackedBlobHashesAsync(ct);
-            IReadOnlyDictionary<string, string> tracked = trackedResult.Success
-                ? trackedResult.Value! : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
             // Cache SICAK (BuildPlanBuilder az önce değerlendirdi) — bu re-call mtime+size hızlı yolundan
             // bellekten döner. Canlı build ↔ scan yarışında kaybolan dosyalar (null) sessizce elenir.
             var evaluatedById = scan.CsprojPaths
@@ -203,23 +198,35 @@ public sealed class SyncWorkspaceService(
                 .Where(x => x.Project is not null)
                 .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
 
+            // [D1] Karar diskteki içerikten gelir: harici kökler ve ana repo AYNI yoldan geçer, git hiçbir
+            // terime girmez. Girdi kümesi bir kez toplanır, eksik özetler bir kez (paralel) okunur; iki
+            // bağlama geçişi de aynı önbelleği paylaşır.
+            var binder = new IncrementalRunBinder(plan, evaluatedById, cmd.RootPath, hashes);
+            binder.Prefill(files =>
+            {
+                if (files >= SourceHashCache.NoisyPrefillThreshold) emit(Info(PlanProgressLines.IndexingSources(files)));
+            });
+
             // Idle'daki will-dot'ların kaynağı BURASIDIR ve onlar BUILD'i tarif eder: Build bir SCC'yi asla
             // derlemez, bu yüzden buradaki kapı SABİT KAPALIDIR (buildCycles: false) ve cycle üyeleri her zaman
             // WillBuild=false gelir. Onları derleyen tek şey ayrı bir koştur (RunMode.Cycles) ve o koşu kendi
             // önizlemesini kendi başlangıcında yayınlar — Sync burada onun adına söz VERMEZ.
-            // Harici düğümlerin fingerprint'i ana reponun git ağacından DEĞİL, kendi dosyalarının
-            // içeriğinden gelir (bkz. IncrementalRunBinder) — TFVC'de git hiç yoktur.
-            var externalIds = workspace.VcsByProjectId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var (safePlan, _) = IncrementalRunBinder.Bind(
-                plan, evaluatedById, cmd.RootPath, headCommit, tracked, dirty, state,
-                inPlace: true, buildCycles: false, DependentMode.Safe, externalIds);
-            var (fastPlan, _) = IncrementalRunBinder.Bind(
-                plan, evaluatedById, cmd.RootPath, headCommit, tracked, dirty, state,
-                inPlace: true, buildCycles: false, DependentMode.Fast, externalIds);
+            var (safePlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe);
+            var (fastPlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Fast);
+            hashes.Flush();
+
+            // [v1.16.0 satır etiketi] "Kendi dosyası değişti mi" olgusu Fast geçişinden gelir: Safe true +
+            // Fast false = bağımlılığından etkilenmiş (affected), ikisi de true = kendi dosyası değişmiş
+            // (modified). İki geçiş zaten sayaçlar için koşuyordu; etiket ikinci bir kaynak AÇMAZ.
+            var ownChanged = fastPlan.Nodes
+                .Where(n => n.WillBuild == true)
+                .Select(n => n.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             return new WillBuildOutcome(
                 Plan: safePlan,
-                Changed: fastPlan.Nodes.Count(n => n.WillBuild == true),
+                OwnChanged: ownChanged,
+                Changed: ownChanged.Count,
                 ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true),
                 UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
                 Known: true);
@@ -229,7 +236,7 @@ public sealed class SyncWorkspaceService(
             // Tanı KULLANICIYA gider (Core'un konsola doğrudan yazması gerekmez — [D4] zaten stdout'u yalnız
             // NDJSON'a ayırır): pass atlandığında will-dot'lar sessizce hollow kalacağı için sebebin görünmesi şart.
             emit(Warn($"warning: change detection was skipped — project states stay unknown ({ex.Message})"));
-            return new WillBuildOutcome(plan, 0, 0, 0, Known: false);
+            return new WillBuildOutcome(plan, EmptySet, 0, 0, 0, Known: false);
         }
     }
 

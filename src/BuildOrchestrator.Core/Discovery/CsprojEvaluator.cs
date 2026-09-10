@@ -18,7 +18,22 @@ public sealed record RawHintPath(string Raw, string BaseName);
 public sealed record EvaluatedProject(
     string Path, string AssemblyName, IReadOnlyList<string> CompileFiles,
     IReadOnlyList<RawHintPath> HintPaths, IReadOnlyList<string> ProjectReferences, bool IsSdkStyle,
-    string? TargetFrameworkMoniker = null);
+    string? TargetFrameworkMoniker = null)
+{
+    /// <summary>
+    /// [D2] Derlemeye giren ama <c>Compile</c> OLMAYAN bildirilmiş öğeler: <c>Page</c>,
+    /// <c>ApplicationDefinition</c>, <c>EmbeddedResource</c>, <c>Resource</c> (mutlak yollar, sıralı, tekil).
+    ///
+    /// <para><b>Ne için var.</b> İçerik kararı bir projenin klasörünü zaten süpürür (bkz. <see
+    /// cref="BuildOrchestrator.Core.Incremental.ProjectInputs"/>); bu liste o süpürmenin göremediği TEK şeyi
+    /// yakalar: klasörün DIŞINA link verilmiş bir <c>.xaml</c> / <c>.resx</c>. Bu yüzden burada implicit
+    /// SDK glob'ları AÇILMAZ — klasör içi zaten görülür.</para>
+    ///
+    /// <para>Positional değil init-property olmasının nedeni geriye dönük uyumdur: evaluation-cache'teki
+    /// ESKİ JSON kayıtlarında bu alan yoktur ve alansız çözülen kayıt boş listeyle gelir (null değil).</para>
+    /// </summary>
+    public IReadOnlyList<string> ResourceFiles { get; init; } = [];
+}
 
 /// <summary>
 /// Ham-XML csproj evaluator. Legacy (.NET Framework, xmlns'li) ve SDK-style projeleri
@@ -29,6 +44,10 @@ public sealed class CsprojEvaluator
 {
     private static readonly EnumerationOptions Recurse = new() { RecurseSubdirectories = true };
     private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase) { "obj", "bin" };
+
+    /// <summary>[D2] <see cref="EvaluatedProject.ResourceFiles"/>'a giren item adları.</summary>
+    private static readonly string[] ResourceItemNames =
+        ["Page", "ApplicationDefinition", "EmbeddedResource", "Resource"];
 
     public EvaluatedProject Evaluate(string csprojPath)
     {
@@ -59,6 +78,13 @@ public sealed class CsprojEvaluator
             foreach (var f in Directory.EnumerateFiles(dir, "*.cs", Recurse))
                 if (!IsUnderSkipped(dir, f)) compile.Add(System.IO.Path.GetFullPath(f));
 
+        // [D2] Compile OLMAYAN bildirilmiş öğeler — yalnız EXPLICIT Include'lar (klasör içi zaten süpürülür,
+        // bkz. ProjectInputs): asıl kazanç klasör dışına link verilmiş xaml/resx'tir.
+        var resources = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string itemName in ResourceItemNames)
+            foreach (var inc in Items(root, itemName).Select(i => i.Attribute("Include")?.Value).Where(v => !string.IsNullOrWhiteSpace(v)))
+                foreach (var f in ResolveInclude(dir, inc!)) resources.Add(f);
+
         // HintPath yalnız <Reference><HintPath> olanlar; GAC ref'leri (HintPath yok) kenar değil.
         var hints = Items(root, "Reference")
             .Select(r => Elements(r, "HintPath").Select(h => h.Value.Trim()).FirstOrDefault())
@@ -73,7 +99,10 @@ public sealed class CsprojEvaluator
             .Select(v => System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, v)))
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToList();
 
-        return new EvaluatedProject(csprojPath, asmName, compile.ToList(), hints, projRefs, sdk, tfMoniker);
+        return new EvaluatedProject(csprojPath, asmName, compile.ToList(), hints, projRefs, sdk, tfMoniker)
+        {
+            ResourceFiles = resources.ToList(),
+        };
     }
 
     // MSBuild namespace toleransı: legacy'de xmlns var, SDK'da yok → LocalName ile eşle [D5].

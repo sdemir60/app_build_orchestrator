@@ -26,22 +26,13 @@ namespace BuildOrchestrator.Tests.Incremental;
 /// Derlenecek küme değişmedi — bu testin iddiaları aynen geçerli; değişen tek şey <c>state</c> kurulumunun
 /// gerçeği yansıtması: bayat imza yerine güncel imza + <c>DepIssue: true</c>.</para>
 ///
-/// <para>Kurulum deseni <see cref="IncrementalPlannerTests"/> ile aynıdır: gerçek repo yok, git olguları
-/// (fingerprint / dirty dosya listesi / state) enjekte edilir [D8].</para>
+/// <para>Kurulum deseni <see cref="IncrementalPlannerTests"/> ile aynıdır: gerçek repo/disk yok, her projeye
+/// opak bir içerik fingerprint'i ve state kaydı enjekte edilir [D8].</para>
 /// </summary>
 public class BuildAfterFailureTests
 {
     private static ProjectNode Node(string id, int buildOrder, params string[] dependencies) =>
         new(id, id, id, [], dependencies, buildOrder, null, null, InCycle: false, WillBuild: null);
-
-    private static readonly Func<string, string> NoRead = _ => throw new InvalidOperationException("okunmamalıydı");
-    private static readonly Func<ProjectNode, IReadOnlyList<string>> NoDirty = _ => [];
-
-    private static Func<string, string> ContentMap(params (string Path, string Content)[] entries)
-    {
-        var map = entries.ToDictionary(e => e.Path, e => e.Content, StringComparer.Ordinal);
-        return path => map.TryGetValue(path, out var c) ? c : throw new KeyNotFoundException(path);
-    }
 
     private static Func<ProjectNode, string?> Fingerprints(params (string Id, string Fingerprint)[] entries)
     {
@@ -68,20 +59,16 @@ public class BuildAfterFailureTests
         var s = Node("S", 3);
         var plan = new BuildPlan([f1, d1, d2, s], [], "Debug");
 
-        var fp = Fingerprints(("F1", "fpF1"), ("D1", "fpD1"), ("D2", "fpD2"), ("S", "fpS"));
+        var fp = Fingerprints(("F1", "fpF1-v2"), ("D1", "fpD1"), ("D2", "fpD2"), ("S", "fpS"));
 
-        // Hatadan ÖNCEKİ dünya: F1.cs = v1, zincir bu hâle karşı derlenmiş ve persist edilmişti.
-        var readV1 = ContentMap(("F1.cs", "v1"));
-        string oldF1 = BuildSignature.Compute(f1, "Debug", "fpF1", ["F1.cs"], readV1, _ => null, inPlace: true);
-        string sigS = BuildSignature.Compute(s, "Debug", "fpS", [], NoRead, _ => null, inPlace: true);
-
-        // Şimdi: F1.cs hâlâ dirty ve v2 içeriğinde (düzeltme yapıldı ya da yapılmadı — fark etmez).
-        var readV2 = ContentMap(("F1.cs", "v2"));
+        // Hatadan ÖNCEKİ dünya: F1'in kaynağı v1, zincir bu hâle karşı derlenmiş ve persist edilmişti.
+        string oldF1 = BuildSignature.Compute(f1, "Debug", "fpF1-v1", _ => null);
+        string sigS = BuildSignature.Compute(s, "Debug", "fpS", _ => null);
 
         // Hatalı koşunun BAŞINDA hesaplanan (v2 tabanlı) imzalar — D1/D2 kayıtlarına bunlar yazıldı.
-        string newF1 = BuildSignature.Compute(f1, "Debug", "fpF1", ["F1.cs"], readV2, _ => null, inPlace: true);
-        string newD1 = BuildSignature.Compute(d1, "Debug", "fpD1", [], NoRead, id => id == "F1" ? newF1 : null, inPlace: true);
-        string newD2 = BuildSignature.Compute(d2, "Debug", "fpD2", [], NoRead, id => id == "D1" ? newD1 : null, inPlace: true);
+        string newF1 = BuildSignature.Compute(f1, "Debug", "fpF1-v2", _ => null);
+        string newD1 = BuildSignature.Compute(d1, "Debug", "fpD1", id => id == "F1" ? newF1 : null);
+        string newD2 = BuildSignature.Compute(d2, "Debug", "fpD2", id => id == "D1" ? newD1 : null);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -94,11 +81,9 @@ public class BuildAfterFailureTests
             // S: temiz derlendi, imzası güncel, notu yok.
             ["S"] = new BuildState("S", sigS, LastResult: BuildResult.Succeeded),
         };
-        Func<ProjectNode, IReadOnlyList<string>> dirty = node => node.Id == "F1" ? ["F1.cs"] : [];
-
         var result = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", dirty, readV2, fp, state,
-            inPlace: true, buildCycles: false, mode: DependentMode.Safe);
+            plan, fp, state,
+            buildCycles: false, mode: DependentMode.Safe);
 
         var willBuild = result.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
         Assert.True(willBuild["F1"]);
@@ -121,8 +106,8 @@ public class BuildAfterFailureTests
         var plan = new BuildPlan([f1, d1], [], "Debug");
 
         var fp = Fingerprints(("F1", "fpF1"), ("D1", "fpD1"));
-        string sigF1 = BuildSignature.Compute(f1, "Debug", "fpF1", [], NoRead, _ => null, inPlace: true);
-        string sigD1 = BuildSignature.Compute(d1, "Debug", "fpD1", [], NoRead, id => id == "F1" ? sigF1 : null, inPlace: true);
+        string sigF1 = BuildSignature.Compute(f1, "Debug", "fpF1", _ => null);
+        string sigD1 = BuildSignature.Compute(d1, "Debug", "fpD1", id => id == "F1" ? sigF1 : null);
 
         var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
         {
@@ -131,8 +116,8 @@ public class BuildAfterFailureTests
         };
 
         var result = IncrementalPlanner.ComputeWillBuild(
-            plan, "headA", NoDirty, NoRead, fp, state,
-            inPlace: true, buildCycles: false, mode: DependentMode.Safe);
+            plan, fp, state,
+            buildCycles: false, mode: DependentMode.Safe);
 
         var willBuild = result.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
         Assert.True(willBuild["F1"]);
