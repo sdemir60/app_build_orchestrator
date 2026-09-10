@@ -19,8 +19,9 @@ public class DecisionLabelTests
     private static readonly DateTimeOffset Now = new(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
 
     private static RowDecision For(
-        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, DateTimeOffset? builtAt = null)
-        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, Now);
+        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, DateTimeOffset? builtAt = null,
+        bool inCycle = false)
+        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, Now, inCycle);
 
     [Fact]
     public void Its_own_files_changed_reads_modified()
@@ -65,6 +66,31 @@ public class DecisionLabelTests
         Assert.Equal("failed", decision.Word);
         Assert.Equal("retry", decision.Tail);   // kuyruk her zaman soluk çizilir
         Assert.True(decision.Stale);
+    }
+
+    /// <summary>
+    /// [TASARIMDAN BİLİNÇLİ SAPMA — design v1.16.0 §2.4] <c>retry</c> bir SÖZDÜR: "bir sonraki <b>Build</b>
+    /// bunu yeniden deneyecek". Düz bir Build bir bağımlılık döngüsünü ASLA derlemez, dolayısıyla döngü
+    /// üyesinde o söz tutulmaz — ölçüldü: gerçek bir çalışma alanında 18 <c>failed</c> satırının 15'i döngü
+    /// üyesiydi. Sözcük kalır (o bir olgudur), kuyruk düşer, uzun gerekçe kimin deneyeceğini söyler.
+    ///
+    /// <para>Tasarım bu durumu değerlendirmemişti: §2.4 tablosu döngü üyelerini hiç ele almıyor.</para>
+    /// </summary>
+    [Fact]
+    public void A_failed_row_that_this_run_will_not_retry_makes_no_promise()
+    {
+        var cycleMember = For(false, WillBuildReason.LastFailed, inCycle: true);
+
+        Assert.Equal("failed", cycleMember.Word);
+        Assert.Null(cycleMember.Tail);
+        Assert.Equal("The last build of this project failed — Resolve cycles will retry it", cycleMember.Title);
+        Assert.True(cycleMember.Stale);
+
+        // Döngüde OLMAYAN bir kapsam-dışı satır (ör. Cycles koşusunun kapsamı dışında kalan proje): söz yok,
+        // ama Resolve'u da vaat etmeyiz — onu derleyecek şey sıradan bir Build'dir.
+        var outOfScope = For(false, WillBuildReason.LastFailed);
+        Assert.Null(outOfScope.Tail);
+        Assert.Equal("The last build of this project failed", outOfScope.Title);
     }
 
     [Fact]
@@ -120,6 +146,9 @@ public class DecisionLabelTests
         Assert.Equal("affected", For(false, WillBuildReason.SignatureChanged, ownChanged: false).Word);
         Assert.Equal("up to date", For(false, WillBuildReason.UpToDate, builtAt: Now.AddHours(-2)).Word);
         Assert.Equal("never built", For(false, WillBuildReason.NeverBuilt).Word);
+
+        // ...ama hiçbiri SÖZ vermez: kuyruk yalnız gerçekten derlenecek satırda çıkar.
+        Assert.Null(For(false, WillBuildReason.LastFailed, inCycle: true).Tail);
     }
 
     /// <summary>

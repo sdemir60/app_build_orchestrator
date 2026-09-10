@@ -257,10 +257,12 @@ public partial class ProjectRow : UserControl
                 break;
             case nameof(ProjectRowViewModel.InCycle):
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
+                ApplyDecision();      // ...ve `failed` satırının uzun gerekçesini de o seçer
                 break;
             case nameof(ProjectRowViewModel.WillBuild):
-                // [design v1.11.0 §9-1] Plan kanalının TEK görünür kalıntısı çift SHA metnidir — nokta ARTIK
-                // planı taşımaz (statü rengini taşır). Bu yüzden burada yalnız sağ blok tazelenir.
+                // [design v1.11.0 §9-1] Plan kanalının TEK görünür kalıntısı sağ yuvadaki KARAR ETİKETİdir —
+                // nokta planı taşımaz (statü rengini taşır). Bu yüzden burada yalnız sağ blok tazelenir;
+                // ApplyRightBlock görünürlüğü ayarlayıp ApplyDecision'ı zaten çağırır.
                 ApplyRightBlock();
                 break;
             case nameof(ProjectRowViewModel.DepIssues):
@@ -469,7 +471,8 @@ public partial class ProjectRow : UserControl
     {
         var decision = _vm is null
             ? RowDecision.None
-            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt, DateTimeOffset.Now);
+            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
+                DateTimeOffset.Now, _vm.InCycle);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

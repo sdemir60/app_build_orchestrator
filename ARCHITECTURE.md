@@ -1498,10 +1498,17 @@ and MSBuild, not invented terms:
 | Label | What the engine found |
 |---|---|
 | `modified` | its own input files changed since the last build |
-| `affected` | its own files are unchanged; a dependency changed |
+| `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle |
 | `never built` | no build output on disk (a `Clean` produces this too) |
 | `failed · retry` | the last attempt failed, so it is queued again |
-| `up to date · 2h` | it will be skipped; the tail is the age of the last successful build |
+| `up to date · 2h` | it is current; the tail is the age of the last successful build |
+
+**The word is a fact; the tail can be a promise, and a promise is only made when it will be kept.** `retry`
+means "the next Build will try this again" — and a plain Build never compiles a dependency cycle, so a cycle
+member reads `failed` with no tail; its tooltip names what will retry it (*Resolve cycles*). This is a
+deliberate deviation from the design package, which fixes `failed · retry` as one unit: the design's table does
+not consider cycle members, and on a real workspace 15 of 18 `failed` rows were cycle members promising a retry
+that would never come.
 
 `modified` and `affected` are separated by a fact of its own: the content fingerprint written into
 `build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the
@@ -1525,6 +1532,12 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
 failure reads `failed · retry`. It does not wait for the engine's next preview, which may not arrive until the
 next Sync.
+
+**The slot is not a result column.** What a run did is carried by the stripe, the dot, the glyph and the
+duration; the slot always answers the same question — *what does this project's output need?* After a Sync that
+answer comes from comparing the stored signature with today's; after a build it comes from what just happened
+to that project. Both are the same fact at different moments, which is why the wording does not change between
+them.
 
 The label replaced a commit pair (`a3f81c2 → b7e91d4`). That pair could not answer the question it appeared to
 answer: its right half was a remote commit the user had not pulled, and its left half described the repository,

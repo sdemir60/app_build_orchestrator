@@ -37,10 +37,17 @@ public readonly record struct RowDecision(string Word, string? Tail, string Titl
 /// DEĞİL: imza upstream'leri de taşır, yani bir bağımlılığın kaydı geçersizleşince kullanıcının hiç
 /// dokunmadığı proje <c>modified</c> görünürdü.</para>
 ///
-/// <para><b>Kapsam etiketi susturmaz.</b> Kapsam dışı bir döngü üyesi bu koşuda derlenmez ama dosyaları
-/// değişmişse <c>modified</c> yazar: bayat olduğu doğrudur ve onu derleyecek şeyin <i>Resolve cycles</i>
-/// olduğunu uyarı üçgeni söyler. Bu, "etiket bir disk olgusudur" kuralının aynısıdır — ölçüldü: gerçek bir
-/// çalışma alanında 184 satırın 33'ü (tüm SCC üyeleri) hiçbir şey yazmıyordu.</para>
+/// <para><b>Kapsam etiketi susturmaz, ama SÖZ DE VERDİRMEZ.</b> Kapsam dışı bir döngü üyesi bu koşuda
+/// derlenmez; dosyaları değişmişse yine <c>modified</c> yazar (bayat olduğu doğrudur, onu derleyecek şeyin
+/// <i>Resolve cycles</i> olduğunu uyarı üçgeni söyler). Gizlemek ölçüldü: gerçek bir çalışma alanında 184
+/// satırın 33'ü (tüm SCC üyeleri) hiçbir şey yazmıyordu.</para>
+///
+/// <para><b>[TASARIMDAN BİLİNÇLİ SAPMA — design v1.16.0 §2.4]</b> Tasarım <c>failed · retry</c> çiftini tek
+/// parça olarak sabitler. <c>retry</c> bir SÖZDÜR: "bir sonraki <b>Build</b> bunu yeniden deneyecek". Düz bir
+/// Build bir SCC'yi ASLA derlemez, dolayısıyla döngü üyesinde o söz tutulmaz — ölçüldü: gerçek bir çalışma
+/// alanında 18 <c>failed</c> satırının 15'i döngü üyesiydi ve hiçbiri Build ile denenmeyecekti. Kuyruk artık
+/// yalnız satır GERÇEKTEN derlenecekse yazılır; sözcük (<c>failed</c>) her koşulda kalır, çünkü o bir olgudur.
+/// Tasarım bu durumu değerlendirmemişti (§2.4 tablosu döngü üyelerini hiç ele almıyor).</para>
 ///
 /// <para><b>Karar bilinmiyorsa yuva BOŞ kalır</b> — yalnız gerçekten bilinmiyorsa: Sync yapılmadı ya da motor
 /// bu satır için gerekçe üretmedi. Boş yuva "henüz bilmiyorum"un doğru karşılığıdır.</para>
@@ -53,8 +60,11 @@ public static class DecisionLabel
     /// bugünkünün karşılaştırması (<c>BuildStateStore.OwnFilesChanged</c>); bilinmiyorsa <c>null</c>.</param>
     /// <param name="lastBuiltAt">Son BAŞARILI derlemenin zamanı — <c>up to date</c> kuyruğu buradan.</param>
     /// <param name="now">Şimdi (yaş hesabı için).</param>
+    /// <param name="inCycle">Proje bir bağımlılık döngüsünün üyesi mi — yalnız <c>failed</c> satırının uzun
+    /// gerekçesini seçer (o satırı yeniden denemek <i>Resolve cycles</i>'ın işidir).</param>
     public static RowDecision For(
-        bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, DateTimeOffset? lastBuiltAt, DateTimeOffset now)
+        bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, DateTimeOffset? lastBuiltAt,
+        DateTimeOffset now, bool inCycle = false)
     {
         // Karar yok: Sync yapılmadı (willBuild null) ya da motor bu satır için gerekçe üretmedi.
         if (willBuild is null || reason is null) return RowDecision.None;
@@ -65,7 +75,12 @@ public static class DecisionLabel
                 return new("never built", null, "No build output on disk", Stale: true);
 
             case WillBuildReason.LastFailed:
-                return new("failed", "retry", "The last build of this project failed", Stale: true);
+                // Kuyruk bir SÖZDÜR ve yalnız satır gerçekten derlenecekse verilir (bkz. tip özeti).
+                return willBuild == true
+                    ? new("failed", "retry", "The last build of this project failed", Stale: true)
+                    : new("failed", null, inCycle
+                        ? "The last build of this project failed — Resolve cycles will retry it"
+                        : "The last build of this project failed", Stale: true);
 
             case WillBuildReason.UpToDate:
                 string? age = AgeFormat.Age(lastBuiltAt, now);
