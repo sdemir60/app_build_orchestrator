@@ -51,9 +51,10 @@ public static class AccessibilityNames
 
     // ---- Build menüsü: Clean Solution (design v1.11.0 §2.7-11) ----
     /// <summary>[design v1.11.0 §2.7-11] Build split-button menüsünün üçüncü maddesi. Bakım kutusundaki
-    /// <see cref="CleanTooltip"/> DERİN Clean'dir (bin/obj + artifacts + NuGet cache); bu ise Visual
-    /// Studio'nun <i>Clean Solution</i>'ıdır — yalnız <c>msbuild /t:Clean</c>, cache'lere dokunmaz. İkisi
-    /// birbirinin yerine GEÇMEZ, bu yüzden metin de tekrarlanmaz.
+    /// <see cref="CleanTooltip"/> DERİN Clean'dir (keşfedilen her projenin bin/obj'i + build-state sıfırlama,
+    /// yalnız dosya sistemi silme); bu ise Visual Studio'nun <i>Clean Solution</i>'ıdır — yalnız
+    /// <c>msbuild /t:Clean</c>, cache'lere dokunmaz. İkisi birbirinin yerine GEÇMEZ, bu yüzden metin de
+    /// tekrarlanmaz.
     /// <para>Arka ucu henüz yazılmadı — madde tasarımdaki yerinde ama pasif durur (bakım kutusuyla aynı
     /// karar).</para></summary>
     public const string CleanSolutionTooltip =
