@@ -86,6 +86,39 @@ alındı — hesaplanan değerler birebir aynı, yalnız daha hızlı hazır (54
 - **Kırmızıdan yeşile geçen iki kusur:** commit'lenmiş `.xaml` değişikliği ve sürüm kontrolünün hiç görmediği
   kaynak dosya artık projeyi derletiyor (ikisi de eski motorda kırmızı koşturuldu).
 
+## Kullanıcı testi sonrası kusur turu (aynı gün)
+
+Kullanıcı branch'te denedi ve iki şey bildirdi: "derledim, başarılı oldu, tekrar Sync'te yine `modified`
+yazıyor" ve "döngü uyarısı olan satırlarda hiçbir statü yazmıyor". Tahmin yürütmek yerine tanı aracı yazıldı
+(`ContentDecisionDiagnosticsTests`, salt-okur, `Category=Measurement`): kullanıcının KENDİ build-state'i ve
+KENDİ ayarlarıyla planı yeniden kurup imzaları karşılaştırıyor.
+
+**Ölçülen tablo (184 proje):** 147 kayıtlı imzasıyla eşleşiyor, 16 eşleşmiyor (16'sı da SCC üyesi), 3 kaydı
+yok, 18 son sonucu başarısız. Sync yolu ile Build yolu arasında imza farkı **0**. Yani motor doğru karar
+veriyordu: **derlenecek küme 12/184.**
+
+Üç bulgu, üçü de gerçek:
+
+1. **`modified` yanlış söylüyordu.** Derlenen 12 satırın 6'sı "bağımlılığı patlamış başarı" (PRM projeleri
+   derlenmiyor) ve kullanıcı o dosyalara hiç dokunmamıştı. Sebep: "kendi dosyası değişti mi" olgusunu Fast
+   geçişinden türetiyordum; bir bağımlılığın kaydı geçersizleştiğinde Fast de "değişti" der. **Düzeltme:** olgu
+   artık gerçek kaynağından geliyor — derlemede projenin KENDİ içerik özeti deftere yazılıyor
+   (`BuildState.BuiltContent`) ve satır onu bugünküyle karşılaştırıyor. Bilinmiyorsa daha ihtiyatlı olan
+   `affected` yazılıyor.
+2. **33 satır (tüm SCC üyeleri) boştu.** Motor kapsam dışı döngü üyesine gerekçe üretmiyordu — o kural gerekçe
+   bir PLAN kanalını beslerken doğruydu. **Düzeltme:** gerekçe artık üretiliyor; `WillBuild` aynen `false`
+   kalıyor (bu koşu onu derlemez, onu uyarı üçgeni söyler) ama satır olgusunu söylüyor.
+3. **Koşu sırasında satırlar bayat gerekçeyle kalıyordu.** Derlenen satır artık anında `up to date · just now`,
+   patlayan satır `failed · retry` oluyor — motorun bir sonraki önizlemesi beklenmiyor.
+
+**Sonuç (aynı durumda):** boş satır 0 (önce 33), yanlış `modified` 0, derlenecek küme değişmedi.
+
+**"Tekrar tekrar derleniyor"un gerçek nedeni bir kusur değil:** o 12 proje = 3 hiç derlenmemiş
+(`OSYS.Orchestration.*`) + 3 derlenmeyen (`*.PRM`) + 6 tanesi de o hatalı projelere bağlı. Bağımlılığı patlamış
+bir başarı, bayat bir DLL'e link'lidir ve düzelene kadar her koşuda yeniden derlenir (T54 kuralı, bu turdan
+önce de böyleydi). PRM derlenir derlenmez küme sönecek. Ayrıca 33 döngü üyesini yalnız *Resolve cycles*
+derler.
+
 ## Bilinen sınırlar
 
 - **Yükseltmede tek seferlik tam derleme:** imza formülü değiştiği için kayıtlı imzalar karşılaştırılamaz.
