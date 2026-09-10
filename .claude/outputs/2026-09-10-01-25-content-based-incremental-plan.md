@@ -188,4 +188,51 @@ Plan yazıldıktan sonra üzerinde anlaşılan eklemeler; fazlar buna göre okun
 
 ## Faz 0 sonucu
 
-_(ölçüm koşulduğunda doldurulacak: M0, M1, M2, M3 ve kapı kararı)_
+Ölçüm: 2026-09-10, gerçek OSYS (`D:\Projects\Delta\OSYS`), Release, uygulama açıkken.
+Araç: `tests/BuildOrchestrator.Tests/Incremental/ContentDecisionMeasurementTests.cs`
+(`--filter "Category=Measurement"`). Girdi kümesi D2'ye göre kuruldu: **177 proje, 22.982 dosya, 287,9 MB**;
+toplama (enumerate + csproj değerlendirme) 2.481 ms.
+
+| Ölçüm | Sonuç | Kapı | Karar |
+|---|---|---|---|
+| M0 · bugünkü taban (`ls-tree -r HEAD` 27.093 blob + `status --porcelain` + kirli okumaları) | **213 ms** | — | — |
+| M1 · tam okuma + SHA256, ilk geçiş (SOĞUK, sıralı) | **243.031 ms** | ≤ 6 s | **KALDI** |
+| M2 · tam okuma + SHA256, ikinci geçiş (OS önbelleği sıcak) | **1.020 ms** | ≤ 2 s | geçti |
+| M3 · yalnız stat (boyut + mtime) | **156 ms** (ikinci geçiş 130 ms) | ≤ 500 ms **ve** ≤ 1,5 × M0 = 320 ms | geçti |
+| (bilgi) M1 paralel, sıcak | 439 ms | — | — |
+| (bilgi) M3 paralel | 40 ms | — | — |
+
+**Kapı sonucu: M1 dışında hepsi geçti.** Steady-state bedel (M3 = 156 ms) bugünkü tabandan (213 ms) DAHA
+UCUZ; kapıda kalan tek şey soğuk ilk geçiş.
+
+### M1 neden bu kadar yavaş — ve paralel okuma ne kadar kurtarıyor
+
+287,9 MB'ı 243 saniyede okumak 1,2 MB/s eder; disk NVMe SSD (Micron 1 TB) olduğu için bu disk sınırı
+DEĞİLDİR — bedel dosya BAŞINA açılış giderindedir (Defender real-time / on-access tarama açık). Bunu
+doğrulamak için ikinci bir ölçüm koşuldu: içeriği o oturumda hiç okunmamış soğuk ikiz ağaç
+(`D:\Projects\Delta\OSYS-AI`, aynı 22.982 dosya) dönüşümlü iki yarıya bölündü; bir yarı sırayla, diğeri
+16 kanallı paralel okundu.
+
+| Soğuk ilk geçiş | Süre | Dosya başına |
+|---|---|---|
+| sıralı (11.491 dosya, 137,9 MB) | 102.111 ms | **8,89 ms** |
+| paralel/16 (11.491 dosya, 149,9 MB) | 21.393 ms | **1,86 ms** |
+
+Yani soğuk maliyet IO değil per-dosya açılış giderinden geliyor ve paralel okuma bunu **4,8 kat** saklıyor:
+tam ağaç için soğuk ilk geçiş **~43 s** (sıralı 243 s yerine). 6 saniyelik M1 eşiği paralel okumayla da
+tutmuyor.
+
+### Kapının anlamı ve kullanıcı kararı
+
+M1 eşiği "ilk kurulum / önbellek yokken tek seferlik" bedel içindi; kapının asıl koruduğu bedel (her
+Sync/Build'de ödenen M3) rahat geçti. Bu yüzden karar teknik değil, tercih meselesidir ve kullanıcıya
+bırakıldı: makine başına bir kez ~43 s süren, konsolda satırı olan bir indeksleme geçişi kabul edilirse plan
+uygulanır (D9 zaten yükseltmeden sonraki ilk Build'in her şeyi derleyeceğini söylüyor — indeksleme o koşunun
+yanında küçüktür); kabul edilmezse Plan B'ye düşülür.
+
+**Karar (kullanıcı, 2026-09-10): DEVAM.** Plan olduğu gibi uygulanır. M1 eşiği, koruduğu şey (her koşuda
+ödenen bedel) M3 ile zaten güvence altında olduğu için tek seferlik geçişte esnetildi; karşılığında D1'in üç
+kazancı (xaml/resx açığı, git kör noktaları, iki kod yolu) alınır. Uygulamaya bağlayıcı iki sonuç:
+
+- **İlk geçiş paralel okunur** (16 kanal) — sıralı 243 s yerine ~43 s.
+- **Konsolda kendi satırı olur:** kullanıcı ilk indekslemenin ne olduğunu görür, donmuş sanmaz.

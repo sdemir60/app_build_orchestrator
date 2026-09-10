@@ -1,0 +1,15 @@
+/* Delta Build Orchestrator — minimal base
+   (reset değil; sadece uygulama zemini ve metin varsayılanları) */
+body {
+  margin: 0;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+code, pre, kbd, samp { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+::selection { background: var(--amber-soft-hover); color: var(--text-primary); }
+:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
