@@ -538,13 +538,18 @@ answers: the repository read the blob table while external roots already read th
 apart. Reading content closes all three, works offline, and needs no version control at all.
 
 The cost is reading files, and it is paid once: `source-hash-cache.json` (§16) keys each hash by the file's
-size and modification time, so a steady-state run only stats the input set. Measured on the real OSYS
-repository (177 projects, 22,982 input files, 288 MB): a stat pass costs ~156 ms — less than the ~213 ms the
-two git commands used to cost — while a full re-hash with a warm OS cache costs ~1.0 s. The first pass on a
-cold disk is the one-time exception: ~8.9 ms per file sequentially, ~1.9 ms with 16-way parallel reads (the
-dominant cost is per-file open overhead, not throughput), so it is read in parallel and announced on the
-console. Upgrading to this formula rebuilds everything once, because every stored signature was computed by
-the old one.
+size and modification time, so a steady-state run only stats the input set. Measured end to end on the real
+OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
+per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
+but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
+inputs, scanning the cache for misses, reading the misses — runs 16-way parallel; the values do not depend on
+thread order (input lists are sorted, fingerprint terms are sorted), and leaving those loops serial measured
+544 ms instead of 303.
+
+The first pass on a **cold** disk is the one-time exception: ~8.9 ms per file sequentially, ~1.9 ms with 16-way
+parallel reads — the dominant cost is per-file open overhead (on-access scanning), not throughput — so a full
+first index of that repository takes about 40 s and is announced on the console. Upgrading to this formula
+rebuilds everything once, because every stored signature was computed by the old one.
 
 Transitivity is not coded separately. Because upstream signatures are produced by a memoized DFS, each already
 contains its own upstreams recursively.
