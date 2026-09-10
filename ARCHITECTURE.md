@@ -239,9 +239,9 @@ A process that dies announces itself. A process that *hangs* does not, and the A
 event that is never coming — the failure mode §4.3 describes, where a wedged planner leaves the phase on
 `starting` and then on `stopping` forever. So the App also watches for silence, but only inside the windows
 where an answer is owed: a run has been requested and `runStarted` has not arrived, a stop has been requested
-and `runStopped` has not, or a Sync has been requested and `syncCompleted` has not. Any event from the engine
-resets the clock; crossing the threshold with no event at all raises an amber ribbon line and reveals the same
-*Restart engine* action.
+and `runStopped` has not, a Sync has been requested and `syncCompleted` has not, or a Clean has been requested
+and `cleanCompleted` has not. Any event from the engine resets the clock; crossing the threshold with no event
+at all raises an amber ribbon line and reveals the same *Restart engine* action.
 
 Sync earns its place in that list twice over. It is a wait like the others — an engine wedged mid-Sync leaves
 the ribbon on `▸ Sync — git fetch origin…` with no way out — and it is now the only way out, because the Sync
@@ -281,12 +281,12 @@ discriminator whitelist on both hierarchies. An unknown discriminator does not d
 
 ### 5.2 Commands
 
-`ping` · `shutdown` · `syncWorkspace` · `startRun` · `stopRun` · `getProjectLog` · `listBranches` ·
-`listWorktrees` · `deleteWorktree` · `setPerfMode` · `debugSpawnChildren`.
+`ping` · `shutdown` · `syncWorkspace` · `cleanWorkspace` · `startRun` · `stopRun` · `getProjectLog` ·
+`listBranches` · `listWorktrees` · `deleteWorktree` · `setPerfMode` · `debugSpawnChildren`.
 
 The last one is a test hook for the breakaway probe. It remains part of the contract but is **rejected by
 default** with `error(debugHooksDisabled)`; only a Supervisor started with `--debug-hooks` executes it, and the
-App never passes that flag. In the shipped pair, ten commands execute.
+App never passes that flag. Every other command in the list executes in the shipped pair.
 
 `startRun` carries the run id, the mode, the repository root, the configuration, the parallelism, the branch,
 the worktree intent, the dependent-propagation mode, the layer patterns, the perf mode name and the external
@@ -316,10 +316,25 @@ camelCase text like every other enum, so adding a value never shifts the meaning
 `syncWorkspace` carries no cycle decision at all: its preview always describes a `Build`, and `Build` never
 compiles a cycle.
 
+`cleanWorkspace` carries nothing but the workspace root. It resets the build output of that workspace on disk:
+the `bin` and `obj` folders of every project a fresh scan of the root discovers, plus that workspace's entries
+in `build-state.json` (§16) — the state first, the folders second, so that the worst outcome of a Clean cut
+short is an extra compile, never a project whose signature still reads as current while its output is gone.
+It never invokes MSBuild's `-t:Clean`. On the old-style projects this tool targets, the set that target
+removes — the paths recorded in `FileListAbsolute.txt` — is a subset of `bin` and `obj`; deleting `obj` takes
+that record with it, so the target could not run after the folders are gone, and running it first would only
+remove a part of what the folder deletion removes anyway; and where tracked outputs were copied to the shared
+`OutDir`, `-t:Clean` would delete from there too, which the "`OutDir` is never touched" invariant forbids.
+`packages`, the shared `OutDir`, the worktree pool (its `_obj` roots included), the run logs, the evaluation
+cache and the UI state are all left alone. Like `syncWorkspace`, it blocks the command loop until it finishes
+rather than running on a background task, and a `cleanWorkspace` that arrives while a run holds the slot is
+rejected with `error(cleanRejected)` (§5.4).
+
 ### 5.3 Events
 
 Lifecycle: `engineReady` · `pong` · `error`.
 Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted`.
+Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
 `projectSkipped` · `cycleRoundStarted` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `worktreeList` · `projectLogChunk`.
@@ -327,6 +342,14 @@ Queries: `branchList` · `worktreeList` · `projectLogChunk`.
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
 segment (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
 transcript, and a run's planning window is not a Sync.
+
+`cleanProgress` shares its shape with `syncProgress` — a line and a level — but is a channel of its own for
+the same reason: the App's Sync gate keys off Sync events, and a Clean transcript is not a Sync. `cleanStarted`
+is what moves the App's Clean gate from *requested* to *in flight*, and `cleanCompleted` closes the window
+with its counters — project folders visited, folders removed, bytes freed, files that were in use, state
+entries cleared; the App's one-line stream summary uses the first four, and the state count appears only in
+the console line. A file that could not be deleted is not an error — it is skipped, counted there, and the
+deletion carries on; only a missing root or an unexpected exception becomes `error(cleanFailed)`.
 
 `cycleRoundStarted` is run-level rather than per-project, and it names the group's leader, the round, the cap
 and the member count. A strongly-connected component is one build unit whose per-round results are never
@@ -371,12 +394,18 @@ requested — a Win32 failure surfaces here as `null` plus a warning line, and d
 | Unresolvable perf mode | `error(badPerfMode)` | chip stays on the previous value |
 | Bad root path / planning failure | `error(planFailed)` | run ends, ribbon shows the error |
 | `startRun` while a run is active | `error(runInProgress)` | the *rejected* request drops its own pending flag; the live run is untouched |
+| `cleanWorkspace` while a run holds the slot | `error(cleanRejected)` | the Clean gate reopens; nothing was deleted, the run is untouched |
+| Clean failure (missing root or unexpected exception) | `error(cleanFailed)` | the Clean gate reopens; run and Sync state are untouched |
 
-The last row is a rejection, not a failure, and the distinction matters: the coordinator releases its run slot
-only after every event has been written, so for a short window after `runCompleted` reaches the App the slot is
-still held — and that is exactly when the buttons come back and a fast click lands. Treating the rejection as
-run-ending would tear down the run that is still going; ignoring it entirely would leave the pending flag set
-forever, locking the UI with nothing behind it to stop.
+The `runInProgress` row is a rejection, not a failure, and the distinction matters: the coordinator releases
+its run slot only after every event has been written, so for a short window after `runCompleted` reaches the
+App the slot is still held — and that is exactly when the buttons come back and a fast click lands. Treating
+the rejection as run-ending would tear down the run that is still going; ignoring it entirely would leave the
+pending flag set forever, locking the UI with nothing behind it to stop. `cleanRejected` is the same kind of
+answer from the other direction: the App's Clean button is already closed while a run is in flight, so the
+rejection exists for the request that was on the wire when a run began, and — like `cleanFailed` — it releases
+only the Clean gate. Both codes are a set of their own, shared with no run-ending code, so neither can end a
+run or a Sync.
 
 IPC records are positional and not `required`. A structurally valid command with a missing field binds to
 `null` and surfaces at the point of use as `planFailed`/`runFailed`. No malformed command takes the Supervisor
@@ -672,14 +701,14 @@ one place the two words diverge from the action bar, where *Rebuild* means "igno
 **Clean is the third target, and it is Visual Studio's.** *Clean* in a row menu runs `-t:Clean` on that
 project alone: MSBuild deletes the outputs it knows about, nothing is compiled, and no cache — NuGet's, the
 evaluation cache, another project's `obj` — is touched. It is a run like any other, so it reports a result,
-writes a project log and can be stopped; the maintenance box's deep *Clean* is a different, wider surface and
-still waits for its own engine. Two things follow from "the outputs are gone". The project's **build-state
-row is deleted**, not invalidated: the project did not fail, this tool simply no longer knows any output of
-it, and §4 forbids reading a DLL or `bin` timestamp to find out — a row left behind would let the next
-`Build` skip the project as up to date and report a green run over deleted outputs. And the row's will-build
-dot **stays lit** after the clean succeeds: elsewhere a success means "this is now current", here it means
-"its outputs are gone", which is the opposite. Package restore is skipped for the same reason a compile is:
-there is nothing to build.
+writes a project log and can be stopped; the maintenance box's *Clean* is a different, wider surface — the
+workspace reset of §13.2, which runs no MSBuild target at all (§5.2). Two things follow from "the outputs are
+gone". The project's **build-state row is deleted**, not invalidated: the project did not fail, this tool
+simply no longer knows any output of it, and §4 forbids reading a DLL or `bin` timestamp to find out — a row
+left behind would let the next `Build` skip the project as up to date and report a green run over deleted
+outputs. And the row's will-build dot **stays lit** after the clean succeeds: elsewhere a success means "this
+is now current", here it means "its outputs are gone", which is the opposite. Package restore is skipped for
+the same reason a compile is: there is nothing to build.
 
 **What the target was built against is recorded.** A direct dependency that this run did not compile but
 whose signature is dirty (or unknown) is a **stale** input: the target links to that dependency's previous
@@ -1459,11 +1488,15 @@ no repository, branch or worktree context — branch and worktree already have c
 one remaining fact, *which workspace is open*, sits next to them as a mono label whose tooltip is the
 repository root.
 
-**Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `RESOLVE` —
-mono, caps, 19 px, one-pixel border. It lights amber while the engine is working on that operation and goes
-neutral when it finishes, but it *stays* until the next operation begins: the phase line is momentary, the
-pill is the identity of what was last asked for. The progress indicator lives inside it, six pixels right of
-the text — a spinner while live, the result glyph when done; the phase line does not draw a second one.
+**Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
+`DEEP CLEAN` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is the `-t:Clean` run the row menu
+starts on one project, and `DEEP CLEAN` the maintenance box's workspace reset — two words because they are
+two different operations. It lights amber while a run or a Sync is in flight and goes neutral when they
+finish; `DEEP CLEAN` is written at the click and carries the Clean's identity, while the Clean's live state is
+told by the console transcript rather than the pill. It *stays* until the next operation begins: the phase
+line is momentary, the pill is the identity of what was last asked for. The progress indicator lives inside
+it, six pixels right of the text — a spinner while live, the result glyph when done; the phase line does not
+draw a second one.
 
 Then one mono line describing the phase, plus 20 px chips for the projects currently building (at most four,
 then `+N`), plus — only when there are failures — the failing chips on the right: the first three, and a
@@ -1559,9 +1592,10 @@ that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name
 console (`build requested — X (single project)`) and in the stream's opening line. While the run is in flight
 the target row's play button turns into a red **Stop** that stays visible without hover and drives the same
 stop command as the action bar; every other row's play button is disabled and its tooltip says why
-(`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean* is Visual Studio's project clean — `-t:Clean` on that project — and it
-locks with the other two while a run is in flight. It is not the maintenance box's deep *Clean*, which is a
-wider surface and still disabled, and neither is the *Clean* in the Build split menu.
+(`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
+is Visual Studio's project clean — `-t:Clean` on that project — and it locks with the other two while a run is
+in flight. It is not the maintenance box's *Clean* — the workspace reset described under the maintenance box
+below — and neither is the *Clean* in the Build split menu.
 
 The row's icon buttons are the one place the shared icon-button style is overridden: they hover to
 `surface-overlay` rather than `surface-raised`. The icons only appear while the row is hovered, and a hovered
@@ -1665,17 +1699,18 @@ known, greater than zero and the active branch is selected; the worktree chip; t
 the perf chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
 projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
 There is no *Continue* and no *Retry failed*: a stopped run is started again and a failed one is built again,
-and *Build* already covers both sets (§8.1). *Clean* has no engine behind it yet and is drawn disabled with a
-tooltip that says so — the same decision as the maintenance box. While a run is in flight the primary button
-becomes *Stop*, and the branch, worktree and configuration controls lock; the perf chip stays live.
+and *Build* already covers both sets (§8.1). *Clean* has no engine behind it and is drawn disabled with a
+tooltip that says so — the same decision as the maintenance box's *Optimize*. It is not the box's *Clean*, a
+different operation described below. While a run is in flight the primary button becomes *Stop*, and the
+branch, worktree and configuration controls lock; the perf chip stays live.
 
 **The maintenance box.** Three icon buttons in one chip-weight box — *Clean* (eraser), *Optimize* (gauge) and
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
 1px×14 divider between the buttons. The buttons carry no label: three labelled buttons overflow the bar at its
-1240px minimum and crush the Build split-button, so the meaning lives in the tooltip. *Clean* and *Optimize*
-have no engine behind them yet; they stay visibly disabled and their tooltips say so rather than doing nothing
-when pressed. *Resolve cycles* is the cycle run, disabled while the topology has no cycle. Its icon is neutral: orange left
-the interface entirely, so there is no longer a structural channel for it to echo — the presence of a cycle is
+1240px minimum and crush the Build split-button, so the meaning lives in the tooltip. *Optimize* has no engine
+behind it; it is drawn disabled and its tooltip says so rather than doing nothing when pressed. *Resolve
+cycles* is the cycle run, disabled while the topology has no cycle. Its icon is neutral: orange left the
+interface entirely, so there is no longer a structural channel for it to echo — the presence of a cycle is
 carried by the button's enabled state and its tooltip.
 
 The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
@@ -1687,6 +1722,29 @@ so before the click rather than after. Its tooltip carries the same fact in numb
 report — `Build dependency cycles — N cycles · M projects` — and falls back to the plain label when the
 workspace has none. The accessible name is unaffected either way: it stays the plain label, since a screen
 reader announces what the control does, not a count that moves under it on every Sync.
+
+**Clean is the workspace reset.** The eraser wipes the build output of the current workspace — the `bin` and
+`obj` folders of every project the engine discovers under the root, and that workspace's `build-state.json`
+entries — so the next *Build* compiles everything as never built, and no Sync is needed in between — Sync is
+read-only analysis and may run at any time. It is neither the row menu's project clean nor the Build
+menu's *Clean*: no MSBuild target runs, the deletion is on the file system alone, and the reasons are in §5.2.
+There is no confirmation dialog — the work starts on the click, because the only thing it removes is output the
+next build reproduces. The click clears the console and the event stream like every other operation, drops the
+selection, keeps the filter, sets the pill to `DEEP CLEAN` and writes `clean requested`; the engine's progress
+then runs through the console line by line — a line per project whose `bin`/`obj` was removed, a warning for
+each project with files in use — and the event stream gets one closing summary: projects, folders, bytes freed
+and, when there were any, files in use. A file held by a running application is skipped and counted rather
+than treated as a failure, the flow never stops for it, and the closing warning says to close the application
+and press *Clean* again. Because it removes `obj` outright, it also removes the cause of the stale-`obj`
+warning a run start can raise, rather than suppressing it.
+
+**Clean shares the Sync gate.** Its enabled state comes from the command alone, like *Resolve cycles*: a
+workspace must be selected — a topology is not required, the engine scans for itself — the engine must be
+alive, and no run, Sync or Clean may be in flight. While a Clean runs, from the click until `cleanCompleted`
+or the error that ends it, *Build*, *Rebuild*, *Resolve cycles*, the row actions, Sync and the `N behind` chip
+are all closed — deleting `bin` under a compiling MSBuild is a race, and a Sync, the automatic one after a pull
+included, would read folders that are disappearing. The gate opens on every exit, an engine death mid-Clean
+included, and the silence watchdog (§4.6) covers the wait.
 
 **No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
@@ -1706,7 +1764,8 @@ The gate opens at the **click**, not at `syncStarted`, for the same reason the r
 milliseconds and the engine may not reach the command for seconds, and a button that re-enables in between
 invites exactly the second press it is there to prevent. It closes again on every exit — the answer arrives,
 the send fails synchronously, the Sync fails, or the engine dies — so no path leaves a button permanently
-dark. Sync remains the way out of an empty topology; what it no longer is, is a way to interrupt itself.
+dark. Sync remains the way out of an empty topology; what it no longer is, is a way to interrupt itself. A
+Clean opens and closes the same gate under the same rules (see *Clean shares the Sync gate* above).
 
 The lock — and the *Stop* button with it — begins at the **click**, not at `runStarted`. The phase moves to
 `starting` and a line goes into the run document before the command is even written, mirroring what a stop
@@ -2918,6 +2977,12 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 
 Autostart additionally writes one `HKCU\...\Run` value.
 
+`build-state.json` is shared by every workspace, so *Clean* (§13.2) does not delete the file: it removes the
+entries whose key sits under the root being cleaned — a workspace-scoped reset that also sweeps the leftovers
+of projects since deleted or renamed — and leaves the rest untouched; when nothing matches, the file is not
+rewritten. The evaluation cache is not touched at all: it describes what the csproj files say, which a Clean
+does not change.
+
 The Supervisor accepts `--logs` and `--worktrees` to relocate the log/cache/state root and the pool root. The
 App never passes them; they exist so the test suite never touches the user's real data.
 
@@ -3338,6 +3403,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
 | Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
 | Sync flow (fetch → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
+| Clean flow (scan → workspace-scoped state reset → `bin`/`obj` deletion → summary), byte formatting | `Core/Workspace/CleanWorkspaceService.cs` |
+| Workspace-scoped build-state removal (root-prefix key filter) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
+| `cleanWorkspace` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` (`CleanWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`IsRunActive`) |
 | Planning step texts (shared by Sync and the run planner) | `Core/Planning/PlanProgressLines.cs` |
 
 **External projects**
@@ -3369,7 +3437,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
 | Filter rule, chip labels and active-chip colours (multi-select set) | `App/ViewModels/ProjectFilter.cs` |
 | Warning-triangle text (one line, strongest reason wins) | `App/ViewModels/RowWarning.cs` |
-| Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `RESOLVE`) | `App/ViewModels/OperationLabel.cs` |
+| Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `CLEAN` · `DEEP CLEAN` · `RESOLVE`) | `App/ViewModels/OperationLabel.cs` |
 | Status counters | `App/ViewModels/RunCounters.cs` |
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
@@ -3395,6 +3463,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
 | Maintenance box (Clean / Optimize / Resolve cycles) | `App/Views/MaintenanceBox.xaml(.cs)` |
+| Maintenance-box Clean command, its gate, the request/in-flight guard and the Clean error codes | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |

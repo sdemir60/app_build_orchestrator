@@ -26,7 +26,9 @@ public static class OperationLabel
     public const string Rebuild = "REBUILD";
     /// <summary>Bakım kutusunun üçüncü ikonu (<c>RunMode.Cycles</c>). Prototiple aynı sözcük: <c>RESOLVE</c>.</summary>
     public const string Resolve = "RESOLVE";
-    /// <summary>Build menüsündeki <i>Clean Solution</i> (yalnız <c>/t:Clean</c>).</summary>
+    /// <summary>Her <c>-t:Clean</c> koşusu — bugün satır menüsünün proje Clean'i (<c>RunMode.Clean</c>,
+    /// <see cref="ForRunMode"/>); Build menüsündeki <i>Clean Solution</i> de motoru geldiğinde aynı sözcüğü
+    /// kullanır (yalnız <c>/t:Clean</c>).</summary>
     public const string Clean = "CLEAN";
     /// <summary>Bakım kutusundaki Clean (<c>RunViewModel.CleanCommand</c>): keşfedilen HER projenin
     /// <c>bin</c>/<c>obj</c>'i + workspace'in build-state kayıtları, yalnız dosya sistemi silme (<c>/t:Clean</c>
