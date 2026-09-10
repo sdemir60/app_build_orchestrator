@@ -60,6 +60,22 @@ ARCHITECTURE §1 (değişmezler), §7.1/7.4/7.5, §10.1, §10.6, **§10.7 (yeni)
 §14.3, §16 (yeni önbellek dosyası), §21.3, §22; README (karar kaynağı, satır etiketi, behind chip'i, geçişte
 tek seferlik tam derleme); CLAUDE.md değişmezleri; sürüm notları.
 
+## Üretim yolunda gerçek bedel
+
+Faz 0'ın M1/M3'ü girdi kümesini elle kurup ölçüyordu. Aynı repoda **üretim yolu** da ölçüldü (gerçek tarama →
+gerçek binder → gerçek imza haritası, iki bağlama geçişi dahil):
+`ContentDecisionMeasurementTests.Measure_the_production_decision_path_cold_and_warm`.
+
+| Aşama | Süre |
+|---|---|
+| tarama + graf + csproj değerlendirme (zaten vardı) | 278 ms |
+| karar, önbellek BOŞ (dosyalar OS'te sıcak) | 669 ms |
+| **karar, önbellek SICAK — her Sync/Build'in bedeli** | **303 ms** |
+
+Eski git yolu 213 ms'ti; fark koşu başına ~90 ms. İlk ölçümde bu sayı 544 ms çıktı ve iki yerde seri kalmış
+IO bulundu: girdi toplama (proje başına klasör taraması) ve önbellek tarama geçişi. İkisi de 16 kanala
+alındı — hesaplanan değerler birebir aynı, yalnız daha hızlı hazır (544 → 448 → 303 ms).
+
 ## Kanıt
 
 - **Süit:** 2561 test yeşil (Acceptance ve Measurement hariç).

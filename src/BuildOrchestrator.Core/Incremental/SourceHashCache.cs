@@ -111,7 +111,11 @@ public sealed class SourceHashCache
     {
         ArgumentNullException.ThrowIfNull(paths);
 
-        var missing = paths.Distinct(StringComparer.OrdinalIgnoreCase).Where(p => !IsCached(p)).ToList();
+        // Eksik kümeyi bulmak 23 bin dosyalık bir stat geçişidir — o da IO'dur ve paralelleştirilebilir.
+        var missing = paths.Distinct(StringComparer.OrdinalIgnoreCase)
+            .AsParallel().WithDegreeOfParallelism(16)
+            .Where(p => !IsCached(p))
+            .ToList();
         if (missing.Count == 0) return 0;
 
         announce?.Invoke(missing.Count);

@@ -3,9 +3,12 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Processes;
 using Xunit;
 using Xunit.Abstractions;
@@ -176,6 +179,65 @@ public sealed class ContentDecisionMeasurementTests(ITestOutputHelper output)
         output.WriteLine(Inv($"- sequential: {swSeq.ElapsedMilliseconds} ms · {seqBytes / 1024.0 / 1024.0:F1} MB · {swSeq.Elapsed.TotalMilliseconds / Math.Max(sequential.Count, 1):F2} ms/file"));
         output.WriteLine(Inv($"- parallel(16): {swPar.ElapsedMilliseconds} ms · {parBytes / 1024.0 / 1024.0:F1} MB · {swPar.Elapsed.TotalMilliseconds / Math.Max(parallel.Count, 1):F2} ms/file"));
         output.WriteLine(Inv($"- projected full tree, parallel: {swPar.ElapsedMilliseconds * 2} ms"));
+    }
+
+    /// <summary>
+    /// [Faz 0 sonrası doğrulama] ÜRETİM YOLU: gerçek tarama → gerçek <see cref="IncrementalRunBinder"/> →
+    /// gerçek imza haritası, gerçek bir repoda. Faz 0'ın M1/M3'ü girdi kümesini elle kurup ölçüyordu; burada
+    /// ölçülen şey kullanıcının Sync'te GERÇEKTEN ödediği bedeldir — klasör taraması, önbellek ve iki bağlama
+    /// geçişi dahil.
+    ///
+    /// <para>İki koşu: önbellek BOŞ (ilk indeksleme) ve önbellek SICAK (steady state). İkincisi her Sync'in
+    /// bedelidir.</para>
+    /// </summary>
+    [SkippableFact]
+    public void Measure_the_production_decision_path_cold_and_warm()
+    {
+        string root = Root;
+        Skip.IfNot(Directory.Exists(root), $"Measurement root not found ({root}) — skipped.");
+
+        var scanner = new WorkspaceScanner();
+        var evaluator = new CsprojEvaluator();
+        string cacheRoot = Directory.CreateTempSubdirectory("bo-measure-cache-").FullName;
+        var cache = new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json"));
+
+        var sw = Stopwatch.StartNew();
+        var scan = scanner.Scan(root);
+        var plan = new BuildPlanBuilder(scanner, evaluator, cache).Build(scan, "Debug", null);
+        sw.Stop();
+        long planMs = sw.ElapsedMilliseconds;
+
+        var evaluatedById = scan.CsprojPaths
+            .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
+            .Where(x => x.Project is not null)
+            .ToDictionary(x => x.Id, x => x.Project!, StringComparer.OrdinalIgnoreCase);
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
+        string hashPath = Path.Combine(cacheRoot, SourceHashCache.FileName);
+
+        long Decide(string label, out int files)
+        {
+            var hashes = new SourceHashCache(hashPath);
+            var clock = Stopwatch.StartNew();
+            var binder = new IncrementalRunBinder(plan, evaluatedById, root, hashes);
+            int collected = binder.PhysicalPaths.Count;
+            int read = binder.Prefill();
+            binder.Bind(state, buildCycles: false, DependentMode.Safe);
+            binder.Bind(state, buildCycles: false, DependentMode.Fast);
+            hashes.Flush();
+            clock.Stop();
+
+            files = collected;
+            output.WriteLine(Inv($"- {label}: {clock.ElapsedMilliseconds} ms · {collected} girdi dosyası · {read} tanesi okundu"));
+            return clock.ElapsedMilliseconds;
+        }
+
+        output.WriteLine($"# Üretim yolu — {root}");
+        output.WriteLine(Inv($"- tarama + graf + değerlendirme: {planMs} ms · {plan.Nodes.Count} proje"));
+        long cold = Decide("önbellek BOŞ (ilk indeksleme)", out int inputs);
+        long warm = Decide("önbellek SICAK (her Sync'in bedeli)", out _);
+
+        Assert.True(inputs > 0);
+        output.WriteLine(Inv($"- soğuk/sıcak oranı: {(warm == 0 ? 0 : cold / (double)warm):F1}×"));
     }
 
     /// <summary>Bugünkü karar yolu: HEAD blob tablosu + kirli yollar + kirli dosyaların içeriği.</summary>

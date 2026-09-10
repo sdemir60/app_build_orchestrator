@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
@@ -26,8 +27,9 @@ public sealed class IncrementalRunBinder
     private readonly BuildPlan _plan;
     private readonly string _workspaceRoot;
     private readonly SourceHashCache _hashes;
-    private readonly Dictionary<string, IReadOnlyList<ProjectInput>> _inputsById;
-    private readonly Dictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<ProjectInput>> _inputsById;
+    // Fingerprint'ler Prefill'de PARALEL ısıtılır (aşağıda) ve DFS'ten tek tek okunur — eşzamanlı sözlük şart.
+    private readonly ConcurrentDictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="plan">Bağlanacak plan (kimlikleri ana köke taşınmış olmalıdır — bkz. <see
     /// cref="BuildOrchestrator.Core.Planning.ProjectIdentityRebase"/>).</param>
@@ -52,11 +54,13 @@ public sealed class IncrementalRunBinder
         _plan = plan;
         _workspaceRoot = Path.GetFullPath(workspaceRoot);
         _hashes = hashes;
-        _inputsById = plan.Nodes.ToDictionary(
-            n => n.Id,
-            n => ProjectInputs.Collect(
-                n.Id, evaluatedById.TryGetValue(n.Id, out var ev) ? ev : null, _workspaceRoot, physicalPathOf),
-            StringComparer.OrdinalIgnoreCase);
+        // Girdi toplama proje başına BAĞIMSIZDIR ve büyük kısmı klasör taramasıdır (IO). Gerçek OSYS'te 177
+        // projenin toplamı seri koşuşta ölçülebilir bir gecikmeydi; paralel toplamak sonucu değiştirmez.
+        var collected = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
+        Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 }, node =>
+            collected[node.Id] = ProjectInputs.Collect(
+                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot, physicalPathOf));
+        _inputsById = collected;
     }
 
     /// <summary>Bu koşuda özeti gerekecek TÜM fiziksel dosyalar (tekil).</summary>
@@ -69,8 +73,21 @@ public sealed class IncrementalRunBinder
     /// başına 8,89 ms yerine 1,86 ms.
     /// </summary>
     /// <param name="announce">Okunacak dosya sayısı, okuma başlamadan önce (konsol satırı için).</param>
-    public int Prefill(Action<int>? announce = null, CancellationToken ct = default) =>
-        _hashes.Prefill(PhysicalPaths, announce, ct);
+    public int Prefill(Action<int>? announce = null, CancellationToken ct = default)
+    {
+        int read = _hashes.Prefill(PhysicalPaths, announce, ct);
+
+        // Fingerprint'ler de BURADA, proje başına paralel ısıtılır. Ölçüldü: sıcak önbellekte bile bedelin
+        // yarısı stat geçişiydi ve bağlama DFS'i tek iş parçacığında ilerlediği için o geçiş seri koşuyordu
+        // (gerçek OSYS'te 177 proje / 22.982 dosya: 544 ms). Projeler birbirinden bağımsız olduğundan ısıtma
+        // paralelleştirilebilir; hesaplanan değer birebir aynıdır, yalnız daha erken ve daha hızlı hazırdır.
+        Parallel.ForEach(
+            _plan.Nodes,
+            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            node => FingerprintOf(node));
+
+        return read;
+    }
 
     /// <summary>
     /// Planı incremental willBuild + imza haritası ile bağlar. Dönen imzalar <b>her zaman non-null</b>'dır:
@@ -97,16 +114,9 @@ public sealed class IncrementalRunBinder
     /// Fingerprint koşu boyunca proje başına BİR KEZ hesaplanır: iki bağlama geçişi (Safe/Fast) ve SCC
     /// kompoziti aynı değeri okur — hem ikinci bir stat geçişi ödenmez hem de iki geçiş aynı diski görür.
     /// </summary>
-    private string? FingerprintOf(ProjectNode node)
-    {
-        if (_fingerprintById.TryGetValue(node.Id, out var cached)) return cached;
-
-        string? fingerprint = IncrementalPlanner.ComputeContentFingerprint(
-            InputsOf(node.Id), logical => PathTerm(_workspaceRoot, logical), _hashes.HashOf);
-
-        _fingerprintById[node.Id] = fingerprint;
-        return fingerprint;
-    }
+    private string? FingerprintOf(ProjectNode node) =>
+        _fingerprintById.GetOrAdd(node.Id, _ => IncrementalPlanner.ComputeContentFingerprint(
+            InputsOf(node.Id), logical => PathTerm(_workspaceRoot, logical), _hashes.HashOf));
 
     /// <summary>
     /// [D5] Bir girdi dosyasının imzaya giren YOL terimi: çalışma alanı kökünün altındaysa köke göreli ve
