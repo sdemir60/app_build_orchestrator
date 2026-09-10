@@ -58,9 +58,11 @@ Key consequences of that layout:
 - The shared `OutDir` is never touched: no `-p:OutDir` / `-p:OutputPath` is ever passed, so output lands
   exactly where Visual Studio would put it. Only `BaseIntermediateOutputPath` (`obj`) is isolated, and only in
   worktree mode, keyed by the project's full path.
-- "Did it change?" is answered only from source signals: the committed blob SHAs of the tree
-  (`git ls-tree -r HEAD`), the current commit (`git rev-parse HEAD`) and the dirty list
-  (`git status --porcelain`). No DLL or `bin` timestamp is ever read.
+- "Did it change?" is answered from the **content of the source files on disk** — the project file, the items
+  it declares, everything build-affecting under its folder, and the `Directory.Build.*` files above it. No DLL
+  or `bin` timestamp is ever read, and no version-control command takes part: git and TFVC are used for
+  fetching, branches and worktrees, never for deciding. Hashes are cached by size and modification time, so a
+  normal run only stats those files.
 
 ## Requirements
 
@@ -149,9 +151,16 @@ the running instance first — tray icon → Exit).
 
    **Sync colours nothing.** Which operation is coming is not known yet, so no plan is shown: every row sits
    in the start mode — a faint stripe, a four-arc ring in place of the dot, a dashed glyph — and every graph
-   node draws a dashed border. What is stale is still readable, from the commit pair on the row:
-   `a3f81c2 → b7e91d4` when the project is behind, a single hash when it is not. Colour arrives when you press
-   something.
+   node draws a dashed border. What is stale is still readable, from the **decision label** at the right end of
+   each row: `modified` (its own files changed), `affected` (only a dependency changed), `never built`,
+   `failed · retry`, or `up to date · 2h` — the tail being how long ago it was last built successfully. Colour
+   arrives when you press something.
+
+   The Sync line in the console also says where you stand against the remote:
+   `HEAD a3f81c2 · 3 commits behind origin/main`. When you are behind, a small **`3 behind`** chip appears next
+   to the branch chip; clicking it fast-forwards the repository (`merge --ff-only` — never a merge commit, never
+   a rebase, and never on a dirty or diverged tree) and runs a Sync afterwards. Nothing else in the tool ever
+   writes to your repository. Offline, the distance is unknown and the chip is not drawn.
 3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
    in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
    *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
@@ -183,9 +192,14 @@ the running instance first — tray icon → Exit).
    out correctly: for external roots it is read from the files themselves rather than from git, so an
    uncommitted edit marks the project stale just as a commit would.
 
-   Their rows carry a commit like everyone else's — the revision of **their own** working copy, not the
-   repository's. A TFVC root shows none, because reading its changeset would mean a round trip to the server
-   every time you plan a build.
+   When a copy is refreshed the console says where it landed — `Updated external 'DoganTrend' → a1b2c3d`, a
+   short sha for git and a `C`-prefixed changeset for TFVC. With the switch off a TFVC root reports no
+   revision at all, because reading its changeset means a round trip to the server and planning a build should
+   not need the network.
+
+   **Upgrading from an older version rebuilds everything once.** The way a signature is computed changed, so
+   the signatures already on record cannot be compared against the new ones. The first Build after the upgrade
+   compiles the whole workspace; the second is incremental again.
 
 5. **Build / Rebuild** — from the split button and its menu:
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on a

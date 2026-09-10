@@ -34,9 +34,9 @@ rebuilt, in what order, and how do we run that safely.**
 
 | Guarantee | Mechanism |
 |---|---|
-| The user's working tree is never checked out, switched or reset | Git surface is read-only; building another branch happens in a detached worktree (§10) |
+| The user's working tree is never checked out, switched or reset | The tool never writes to git on its own; building another branch happens in a detached worktree (§10). The one write a user can ask for is a fast-forward: the `N behind` chip (§10.7) |
 | Output lands exactly where Visual Studio would put it | `OutDir`/`OutputPath` are never passed to MSBuild (§9.4) |
-| "Changed?" is decided from source, never from build output | Signature is computed from git blobs + dirty files; no DLL/`bin` timestamp is ever read (§7.1) |
+| "Changed?" is decided from source, never from build output | The signature hashes source **content** on disk; no DLL/`bin` timestamp is ever read (§7.1) |
 | Killing the app kills the whole build tree | Nested job objects with `KILL_ON_JOB_CLOSE`, no breakaway (§4) |
 | Stopping a run never leaves a torn DLL | Graceful stop drains at project boundaries; no compiler server lives outside the job (§4.5) |
 | The build order is deterministic | Order-preserving ready-set scheduler; no hashing, no randomness (§8.2) |
@@ -485,28 +485,66 @@ being allowed to match everything.
 
 ### 7.1 Signature
 
-A project's signature is a SHA-256 over four terms:
+A project's signature is a SHA-256 over three terms:
 
 1. the configuration string (`Debug`/`Release`),
-2. the **per-project committed fingerprint** — a hash of the committed blob contents of exactly the files that
-   affect this project at `HEAD`,
-3. **only in in-place mode**, a hash of the working-tree changes to those files,
-4. the signatures of its direct upstream producers.
+2. the **content fingerprint** — a hash over this project's input files as they are **on disk**,
+3. the signatures of its direct upstream producers.
 
 Byte stability is a tested property: the same inputs always produce the same hex string, and the order of the
 input lists never matters (they are sorted `OrdinalIgnoreCase` internally). Every variable-length component
 (a path, a project id) is itself hashed before being concatenated, so a separator character inside a path
 cannot make two different input sets collapse to the same pre-hash string.
 
-Only these extensions participate in the working-tree term: `.cs`, `.xaml`, `.resx`, `.csproj`, `.props`,
-`.targets`. A changed `.md` does not rebuild anything.
+**Version control is not part of the decision.** Neither git nor TFVC is consulted to decide what to build:
+the repository's own projects, projects contributed by external roots (§10.6) and a folder under no version
+control at all take the same path. A repository with no commits, or a machine where git is broken, still gets
+a complete answer.
 
-Two deliberate refinements:
+The fingerprint pairs a **path term** with a **content term**. The path term is the file's path relative to
+the workspace root, `/`-normalised — so the same tree produces the same signature in the main working tree and
+in a pool worktree, and moving a clone to another folder changes nothing. Files outside the root (an external
+root's projects, a `Directory.Build.props` above the root) carry their full path instead. The content term is
+read from the file that will actually be compiled: in a worktree run identities stay on the main root while
+the bytes come from the pool copy.
 
-- **The commit term is per-project, not the repository HEAD.** Using the global HEAD meant that any commit or
-  branch bounce marked every project dirty, including projects that commit did not touch.
-- **In worktree mode the working-tree term is omitted entirely.** That worktree's source is fully described by
-  the committed fingerprint; the user's local edits are not in it and must not influence its signature.
+#### The input set
+
+A project's inputs are the union of four sources, de-duplicated and sorted:
+
+- the `.csproj` itself;
+- the items it declares — `Compile`, plus `Page`, `ApplicationDefinition`, `EmbeddedResource` and `Resource`
+  (this is what catches a `.xaml` or `.resx` **linked from outside** the project folder);
+- every build-affecting file under the project folder, `obj/` and `bin/` excluded — this is what catches files
+  that are not declared, not committed, or ignored by version control;
+- the nearest `Directory.Build.props`, `Directory.Build.targets` and `Directory.Packages.props` found walking
+  up from the project folder (MSBuild's own rule: the first hit for each name wins, and the walk stops at the
+  workspace root).
+
+Only these extensions participate: `.cs`, `.xaml`, `.resx`, `.csproj`, `.props`, `.targets`. A changed `.md`
+rebuilds nothing. WPF's transient `*_wpftmp.csproj` is excluded — it exists only during a build and would make
+the signature jitter between runs.
+
+A folder sweep sees nested projects: if one project's folder contains another, the outer project's set
+includes the inner one's files. The outer project is then rebuilt more often than strictly necessary — the
+safe direction, and the same behaviour as MSBuild's SDK glob.
+
+#### Why disk and not commits
+
+The commit-based formula had three holes. Its file list was built from `Compile` items only, so a committed
+`.xaml` or `.resx` change was invisible and the project was silently skipped. Files that git never saw —
+untracked, or ignored — were in neither the blob table nor the dirty list. And the same question had two
+answers: the repository read the blob table while external roots already read the disk, so the two could drift
+apart. Reading content closes all three, works offline, and needs no version control at all.
+
+The cost is reading files, and it is paid once: `source-hash-cache.json` (§16) keys each hash by the file's
+size and modification time, so a steady-state run only stats the input set. Measured on the real OSYS
+repository (177 projects, 22,982 input files, 288 MB): a stat pass costs ~156 ms — less than the ~213 ms the
+two git commands used to cost — while a full re-hash with a warm OS cache costs ~1.0 s. The first pass on a
+cold disk is the one-time exception: ~8.9 ms per file sequentially, ~1.9 ms with 16-way parallel reads (the
+dominant cost is per-file open overhead, not throughput), so it is read in parallel and announced on the
+console. Upgrading to this formula rebuilds everything once, because every stored signature was computed by
+the old one.
 
 Transitivity is not coded separately. Because upstream signatures are produced by a memoized DFS, each already
 contains its own upstreams recursively.
@@ -550,13 +588,13 @@ Before a run — and after every Sync — each project carries `WillBuild` as a 
 | `null` | no meaningful baseline yet (pre-Sync, or the signature could not be computed) |
 
 **The plan has no colour of its own.** It used to paint an amber/grey/hollow dot on the row and the core of
-the graph node; that channel was removed (§14.3). What the user sees of the plan is the row's commit pair —
-`a3f81c2 → b7e91d4` when the project is stale, a single hash when it is not — and the scope of the marking
-wave when an operation actually begins. The tri-state itself is unchanged: it still decides what a run
-compiles, and it still feeds the counters.
+the graph node; that channel was removed (§14.3). What the user sees of the plan is the row's **decision
+label** — `modified`, `affected`, `never built`, `failed · retry`, or `up to date · 2h` (§13.2) — and the
+scope of the marking wave when an operation actually begins. The tri-state itself is unchanged: it still
+decides what a run compiles, and it still feeds the counters.
 
-If there is no usable HEAD the counters are not reported at all — printing zeros would assert "everything is
-up to date", which is a different and false claim.
+If the decision pass fails outright (an I/O or parse error) the counters are not reported at all — printing
+zeros would assert "everything is up to date", which is a different and false claim.
 
 A cycle member is evaluated by the same three rules; what it evaluates is the component's composite signature
 (§7.3), so a group's members move together. The run's scope is the one short circuit: outside a `Cycles` run
@@ -565,9 +603,10 @@ every member reads `false`, which is the truth — nothing in that run will comp
 During a run the value is live: the moment a project succeeds it turns `false`.
 
 **The evaluator also returns why** — never built, last build failed, built against a failed dependency, or the
-signature changed. The reason no longer surfaces in the interface (the dot that carried it is gone), but it is
-still computed in one place and still travels on the preview, because it is the honest output of the decision
-and the next surface that needs it should not have to recompute it.
+signature changed. That reason travels on the preview and is what the row's decision label reads (§13.2).
+Two facts ride with it: whether the project's **own** files changed (the `Fast` pass answers exactly this, so
+the label can separate `modified` from `affected` without a second mechanism) and when the project was last
+built successfully.
 
 ### 7.5 Build state
 
@@ -581,7 +620,9 @@ frozen upstream baseline — a signature that was never built would be taken for
 external root (§10.6) has the same record under the same key shape, and its built-commit slot means the same
 thing — except that the revision written there is **its own** working copy's, not the repository's, because
 the repository's HEAD describes a different repository. The last-branch slot stays empty for the same reason,
-and so does the commit when the revision cannot be read locally (a TFVC root, §10.6). It is written by
+and so does the commit when the revision cannot be read without going to the network (a TFVC root whose update
+was switched off, §10.6). None of these fields feeds a decision: the built commit is diagnostic, and the
+project log's "last successful build" line is the only place a revision is shown. It is written by
 a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every project
 completes. Readers open with `FileShare.Delete` so they cannot block the writer's rename, and a transient
 sharing violation is retried a bounded number of times. A corrupt file never throws — it falls back to
@@ -744,8 +785,7 @@ forever if the failed dependency recovered without a source change. The reasonin
 enforced — just one layer later. What was wrong was the cost: `depIssues` are inherited down the whole chain,
 so a handful of real failures poisons the graph and nothing gets recorded. Measured on a real run:
 74 succeeded, 24 failed, 96 carrying a dependency issue — and not one of the 74 was written. Incremental
-building was effectively off, every Sync said "everything will build", and the cards' commit pairs stayed
-frozen at whatever they were the last time the repository was fully green.
+building was effectively off and every Sync said "everything will build".
 
 ### 8.4 ETA
 
@@ -1073,16 +1113,18 @@ The complete set of git invocations in the codebase:
 
 | Command | Mutates? |
 |---|---|
-| `rev-parse --verify -q HEAD` · `symbolic-ref --short -q HEAD` · `status --porcelain` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `ls-tree -r HEAD` · `worktree list --porcelain` | no |
+| `rev-parse --verify -q HEAD` · `symbolic-ref --short -q HEAD` · `status --porcelain` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `worktree list --porcelain` | no |
 | `fetch origin <branch> --no-tags` | only `refs/remotes/*` |
 | `worktree add --detach <path> <sha>` · `worktree remove --force <path>` | pool worktrees only |
 | `reset --hard <sha>` | **cwd is a pool worktree**, never the main repository |
 
-| `merge-base --is-ancestor` · `merge --ff-only` | **external working copies only**, and only when updates are on (§10.6) |
+| `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.6), and the **main repository only when the user clicks the `N behind` chip** (§10.7) |
 
 `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash` and `clean` do not appear anywhere. `merge`
-appears exactly once, as `--ff-only`, and only inside `Core/Externals` — the main repository never reaches it.
-A source guard fences that: a mutating git verb outside `Core/Externals` fails the suite.
+appears exactly once, as `--ff-only`, and in exactly one file — `Core/Git/FastForwardUpdater.cs`. A source
+guard pins that file list, so a mutating verb cannot appear anywhere else.
+
+`ls-tree` is gone: it existed to feed the signature, and the signature no longer reads git (§7.1).
 
 `reset --hard` passes three gates: the candidate path comes from git's own `worktree list --porcelain` and must
 be under the pool root; it is rejected if it equals the main repository root (junction defence); and it is
@@ -1215,21 +1257,41 @@ version is built, which is the same posture the repository's degraded fetch take
 and that is all. This is what keeps Sync fast and offline-tolerant, and it is why the dirty gate lives in
 Build, where the user has already decided to compile.
 
-**Each root's revision is read at plan time**, independently of the update flag, and handed to every project
-that root produced. It is what fills the commit slot on those rows, so an external project says which version
-it was last built from exactly the way a repository project does. The read is local and cheap (`rev-parse
-HEAD`), which is why turning updates off does not turn it off too. TFVC has no local equivalent — its history
-query goes to the server — so TFVC roots are left without a revision and those rows show no commit rather than
-a wrong one. A failure to read is never fatal: the revision is diagnostic, and no decision depends on it.
+**Each root's revision is read where reading it is free.** For a git root that is a local `rev-parse HEAD`,
+so it happens at plan time whether or not updates are on. TFVC has no local equivalent — its history query
+goes to the server — so a TFVC root's changeset is read in exactly one place: immediately after `tf vc get`,
+while the tool is on the network anyway. With updates off, a TFVC root simply has no revision. When an update
+does run, the console says where the copy landed: `Updated external 'DoganTrend' → a1b2c3d` (a short sha for
+git, a `C`-prefixed changeset for TFVC). A failure to read is never fatal: the revision is diagnostic, no
+decision depends on it, and rows do not display it — they display the decision (§13.2).
 
-The incremental decision needs no special case either, but its *input* differs. A repository project's
-committed fingerprint is read from the git blob map that one `ls-tree` produces; an external root is not in
-that tree, and a TFVC root has no git at all. So an external project's fingerprint is hashed from the content
-of its build-affecting files on disk — the same hash primitive, the same separators, the same signature
-function. Uncommitted work is captured naturally by that, which is why external projects need no local-diff
-term and behave identically in in-place and worktree runs. The cost is reading those files on every Sync and
-Build; the repository avoids it because its blob map is already free, and external roots are small enough that
-it does not show.
+The incremental decision needs no special case at all. Since the signature is hashed from file content on disk
+(§7.1), an external project and a repository project take the identical path: same input set, same hash
+primitive, same separators, same comparison against `build-state.json`. Uncommitted work in an external copy is
+captured naturally, and the answer does not depend on whether git or TFVC (or neither) is behind the folder.
+
+### 10.7 Distance from the remote, and the one pull
+
+Sync's ref-only fetch already resolves the remote tip, so the distance is a local question: `rev-list --count
+HEAD..<tip>`. It is measured only when the fetch succeeded **and** the selected branch is the active one — in
+worktree mode the build comes from the pool copy, and how far the main tree has fallen behind says nothing
+about it. The number reaches two places: the Sync line (`HEAD a3f81c2 · 3 commits behind origin/main`, or
+`· up to date with origin/main`) and the `N behind` chip next to the branch chip. When the distance is unknown
+the line drops the clause and the chip is not drawn at all — an invented number would be worse than silence.
+
+**The chip is the only way the tool writes to the main repository, and it is deliberate.** The rule "the tool
+never pulls" still holds for the tool: nothing — not Sync, not Build, not a background task — fast-forwards the
+main repository on its own. But once the fetch has said "you are three commits behind", sending the user to a
+terminal is leaving the job half done. Fast-forward is the one git write a build tool can honestly own: it
+rewrites no history, makes no merge decision, refuses to touch a dirty tree, and is trivially undone.
+
+Clicking it runs the same principled sequence the external roots use (`Core/Git/FastForwardUpdater.cs`): dirty
+gate → ref-only fetch → "am I strictly behind?" → `merge --ff-only`. Every outcome is a console line — the
+fast-forward range on success, and on refusal the reason and the fix (`uncommitted changes … commit or stash
+them first`, `local branch has diverged … reconcile it manually`, `HEAD is not on a branch`). A refusal is not
+an error state: on a dirty or diverged tree, doing nothing is the correct behaviour. After a successful
+fast-forward the chip drops and a Sync runs automatically — with the console **kept**, because the user needs
+to see the result of the action they just took.
 
 ---
 
@@ -1419,9 +1481,32 @@ standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
-a right-aligned block: on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in Explorer*,
-*Open in Visual Studio*), and without hover `curSha → targetSha` for stale projects. Then the status glyph,
-the fixed warning slot, and a 46 px duration column.
+a right-aligned block (min 134 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
+Explorer*, *Open in Visual Studio*), and without hover the **decision label**. Then the status glyph, the fixed
+warning slot, and a 46 px duration column.
+
+The decision label is what a row says about the *next* run, in five fixed words — the shared vocabulary of git
+and MSBuild, not invented terms:
+
+| Label | What the engine found |
+|---|---|
+| `modified` | its own input files changed since the last build |
+| `affected` | its own files are unchanged; a dependency changed |
+| `never built` | no build output on disk (a `Clean` produces this too) |
+| `failed · retry` | the last attempt failed, so it is queued again |
+| `up to date · 2h` | it will be skipped; the tail is the age of the last successful build |
+
+The slot carries no status colour — green and red belong to the glyph and the stripe (§14.3). The leading word
+is `text-secondary` when the project will build and `text-faint` when it will not; whatever follows the `·` is
+always faint, so the word reads first. The longer sentence (`Its own files changed since the last build`,
+`Up to date — last built 2h ago`) is a plain tooltip, in the same language as the icon buttons. When the
+decision is not known — no Sync yet, or the row was skipped by a run-scope rule rather than by its signature —
+the slot stays **empty**, which is the honest rendering of "I do not know yet".
+
+The label replaced a commit pair (`a3f81c2 → b7e91d4`). That pair could not answer the question it appeared to
+answer: its right half was a remote commit the user had not pulled, and its left half described the repository,
+not the project. The revision did not disappear — it moved to where it is actually evidence: the project log's
+`Last successful build: 2h ago (a3f81c2)`.
 
 The **⋯** menu — also opened by right-clicking the row, as in Solution Explorer — offers *Build · Rebuild ·
 Clean* scoped to that one project. It is anchored to the **row**, not to the ⋯ button: its right edge sits 8 px
@@ -1539,8 +1624,9 @@ outside the visible set fade to the same 0.1 the unfocused set uses. The matchin
 the chip, the list and the graph can never disagree.
 
 The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root
-itself); the branch chip (searchable popover); the worktree chip; the `Debug | Release` segment; the perf
-chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
+itself); the branch chip (searchable popover); the `N behind` chip (§10.7) — drawn only when the distance is
+known, greater than zero and the active branch is selected; the worktree chip; the `Debug | Release` segment;
+the perf chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
 projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
 There is no *Continue* and no *Retry failed*: a stopped run is started again and a failed one is built again,
 and *Build* already covers both sets (§8.1). *Clean* has no engine behind it yet and is drawn disabled with a
@@ -2497,7 +2583,8 @@ it. This is not the orange channel returning — the tone is the warning's own a
 **The start mode.** Sync and application startup colour **nothing**. Which operation is coming is not yet
 known, so no plan is shown: every row draws a plain grey stripe at full opacity and a **four-arc ring** in
 place of the filled dot, the glyph is a dashed circle, and every graph node carries a dashed border. What is
-stale is still readable without colour, from the commit pair (`a3f81c2 → b7e91d4`). The mode drops the moment
+stale is still readable without colour, from the **decision label** in the row's right slot — `modified`,
+`affected`, `never built`, `failed · retry`, `up to date · 2h`. The mode drops the moment
 an operation begins — the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing
 shifts — and returns with the next Sync; closing and reopening the application always lands back in it. The
 stripe and the ring used to draw a shade fainter (half and 0.85 opacity), so a plan would not be implied
@@ -2513,8 +2600,8 @@ the building spinner is that ring, rotating.
 **Two channels were removed, and their information did not go with them.** Until v1.11 the interface carried
 three orthogonal channels: the result (stripe, glyph, node border), the plan (an amber/grey will-build dot and
 the node's core), and the structure (an orange mark for cycle membership). Three meanings shared the same few
-pixels, and amber and orange were not reliably distinguishable side by side. The plan moved to the commit pair
-described above; the structure moved to a **single amber warning triangle** in the row's fixed 14 px slot.
+pixels, and amber and orange were not reliably distinguishable side by side. The plan moved to the decision
+label described above; the structure moved to a **single amber warning triangle** in the row's fixed 14 px slot.
 Orange left the interface entirely.
 
 **The warning triangle.** Statusless, always amber, one line of tooltip: `In a dependency cycle`, or
@@ -2655,7 +2742,7 @@ are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in 
 The **opening** plays the same way for every operation — Build, Rebuild, Clean, a row action, Resolve. It
 begins by **neutralising**: the console and the event stream are cleared, and every row drops to plain neutral
 grey — status, duration and dependency warning reset, the start mode dropped. The plan survives (the scope is
-read from it) and so does everything structural: cycle membership, the commit pair, the layer. Nothing of the
+read from it) and so does everything structural: cycle membership, the decision label, the layer. Nothing of the
 previous run is on screen when the wave starts, which is what makes "colour tells the story of the last
 operation" true from the first frame. Rebuild neutralises in place rather than emptying the list — clearing it
 would destroy the very rows the wave is marking.
@@ -2789,6 +2876,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `logs\run-<timestamp>\` | per-run and per-project logs | — |
 | `build-state.json` | per-project signature, commit, result, duration, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5) | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
+| `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, external roots (path and source) and whether to update them (§10.6), hotkey, autostart, tray-balloon-shown, last-seen release-notes version | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 | `worktrees\` | the worktree pool | LRU pruned to 20 GiB |
 
@@ -3037,11 +3125,18 @@ meaning. The one place a command line is assembled by hand (MSBuild) escapes acc
 - **Branch slug sanitization** replaces path-hostile characters, collapses repeated dashes, and **throws
   rather than falling back** if the result is empty or `.`/`..`. A separate validator rejects absolute paths,
   separators and `..` for any name that becomes a directory segment.
-- **Atomic state writes:** `build-state.json` and `evaluation-cache.json` are written to a unique temp name and
-  moved into place; readers open with `FileShare.Delete` so they cannot block the rename, which is retried a
-  bounded number of times on a transient sharing violation.
-- **Corrupt-JSON tolerance:** `build-state.json`, `evaluation-cache.json`, `ui-state.json` and a project's
-  `project.assets.json` all fall back to defaults instead of throwing. `ui-state.json` additionally tolerates a
+- **Atomic state writes:** `build-state.json`, `evaluation-cache.json` and `source-hash-cache.json` are written
+  to a unique temp name and moved into place; readers open with `FileShare.Delete` so they cannot block the
+  rename, which is retried a bounded number of times on a transient sharing violation.
+- **The one git write is gated three ways:** it is `--ff-only` (so it can neither rewrite history nor create a
+  merge), it refuses a dirty or diverged tree, and it never runs by itself — only from the user's click on the
+  `N behind` chip (§10.7). A source guard keeps every mutating git verb inside the single file that implements
+  it.
+- **Racy-file rule in the hash cache:** an entry whose file was modified within two seconds of the cache being
+  written is not persisted, so a file rewritten in the same second at the same size cannot be mistaken for
+  unchanged on the next run (git's own index rule).
+- **Corrupt-JSON tolerance:** `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`,
+  `ui-state.json` and a project's `project.assets.json` all fall back to defaults instead of throwing. `ui-state.json` additionally tolerates a
   field whose *type* changed between versions, so one stale token cannot wipe the whole file.
 - **Log line normalization:** embedded CR/LF inside one MSBuild line becomes a space, so one appended line is
   always one physical line.
@@ -3156,8 +3251,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Signature computation | `Core/Incremental/BuildSignature.cs` |
-| Propagation, Safe/Fast, SCC composite hash, committed fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
-| Path normalization glue for the fingerprint | `Core/Incremental/IncrementalRunBinder.cs` |
+| Propagation, Safe/Fast, SCC composite hash, content fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
+| The input set of a project (declared items, folder sweep, `Directory.Build.*`) | `Core/Incremental/ProjectInputs.cs` |
+| Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
+| Input collection, path terms and the two binding passes | `Core/Incremental/IncrementalRunBinder.cs` |
 | Will-build tri-state decision and its reason | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Worktree → main-root identity rebase | `Core/Planning/ProjectIdentityRebase.cs` |
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
@@ -3197,7 +3294,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| All git invocations (HEAD, status, refs, ls-tree, fetch) | `Core/Git/GitService.cs` |
+| All read-only git invocations (HEAD, status, refs, distance, fetch) | `Core/Git/GitService.cs` |
+| The only mutating git surface: dirty gate → fetch → is-ancestor → `merge --ff-only` | `Core/Git/FastForwardUpdater.cs` |
+| Revision text shortening (git sha vs TFVC changeset) | `Core/Git/RevisionText.cs` |
+| The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
 | Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
@@ -3213,9 +3313,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Working-copy root discovery for the selected source (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
 | The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
 | Per-root revision read, spread over the projects it produced | `Core/Externals/ExternalRevisionReader.cs` |
-| The only mutating git surface: fetch + fast-forward | `Core/Externals/ExternalGitUpdater.cs` |
-| TFVC surface: pending changes, get latest | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
-| Content fingerprint for projects outside the repository tree | `Core/Incremental/IncrementalPlanner.cs` |
+| TFVC surface: pending changes, get latest, current changeset | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
 
 **Process control and resource governance**
 
@@ -3249,7 +3347,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Sticky ribbon: phase, building chips, failure cluster, progress | `App/Views/StickyRibbon.xaml(.cs)` |
-| Project row: stripe, dot, sha pair, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)` |
+| Project row: stripe, dot, decision label, hover icons, play/Stop wiring, breath, shake | `App/Views/ProjectRow.xaml(.cs)`, `ProjectRowActions.xaml(.cs)`; label wording `App/ViewModels/DecisionLabel.cs` |
 | Row menu (Build · Rebuild · Clean; ⋯ and right-click) | `App/Views/ProjectRowMenu.xaml(.cs)` |
 | Single-project run commands (build · rebuild · clean), run target and lock pushed to rows | `App/ViewModels/RunViewModel.cs` (`BuildProjectCommand`, `RunTargetId`) |
 | Build-state row removal after a clean | `Core/State/BuildStateStore.cs` (`Remove`) |
