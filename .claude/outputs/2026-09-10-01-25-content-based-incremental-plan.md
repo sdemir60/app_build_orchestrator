@@ -163,6 +163,29 @@ tam derleme, satır anlamı); CLAUDE.md değişmezine stat-önbellek notu; sür�
 - **Kök dışı link dosyaları** — tam yol terimi; belgelenir.
 - **Geçişte tek seferlik tam derleme** — kullanıcıya önceden söylenir.
 
+## Karar güncellemesi (2026-09-10, kullanıcıyla kararlaştırıldı)
+
+Plan yazıldıktan sonra üzerinde anlaşılan eklemeler; fazlar buna göre okunur.
+
+- **Yürütme tek elden.** Ayrı motor session'ı AÇILMAYACAK: önce tasarım paketi (v1.16.0) üretilir, sonra
+  motor (Faz 0–4, 6) ve UI bağlama (Faz 5, 7) bu session'da, tek branch'te yapılır. Faz 0 kapısı aynen geçerli.
+- **Satır sözlüğü SABİT** (tasarım yalnız görünümü seçer): `modified` · `affected` · `never built` ·
+  `failed · retry` · `up to date · 2h`. Tel: `BuildPreviewItem`'a "kendi dosyası değişti" ve "son derleme zamanı"
+  (kuyruk, nullable).
+- **Konsol satırları (motor):** `Updated external '<ad>' → <revizyon>` (pull açıkken, güncelleme sonrası; TFVC
+  changeset dahil) ve Sync'te `HEAD <sha> · N commits behind origin/<branch>` / `· up to date with origin/<branch>`
+  (fetch degraded ise yazılmaz). Harici grup başlığına revizyon KONMAZ; D8'in "başlık" kısmı düşer.
+- **Faz 7 — "N behind" chip'i ve ff-only pull (yeni).** Alt barda branch chip'i yanında, yalnız geride ve
+  çevrimiçi iken, worktree modunda hiç, koşuda pasif. Tıklama → yeni IPC komutu (`pullRepository`) →
+  Supervisor, mevcut ff-only ilkelini (`ExternalGitUpdater`: kir kapısı → fetch → is-ancestor → `merge
+  --ff-only`) ANA REPO köküne uygular; kirli/ayrışmış/detached → reddeder ve konsola yazar; başarı → konsol
+  satırı + otomatik Sync. **Değişmez metni bilinçli olarak yeniden yazılır:** "araç kendiliğinden asla pull
+  yapmaz; kullanıcı chip'e basarsa yalnız ff-only, yalnız aktif branch'te." Kaynak guard'ının izin listesi ve
+  `ExternalGitUpdater`'ın "ana repo kökü ASLA verilemez" doc'u buna göre güncellenir; sınıf adı genelleştirilir.
+- **TFVC ana repo şimdilik yok, yolu açık.** Karar hattına yeni git bağımlılığı sokulmaz; git'e özgü olan her
+  şey yalnız Sync kapısı, fetch/behind, branch/worktree ve Faz 7'de kalır. İleride "ana repo TFVC" o dört
+  yerde bir kök-türü ayrımı açmaktan ibaret olur (ARCHITECTURE §1.3/§20 o zaman yeniden yazılır).
+
 ## Faz 0 sonucu
 
 _(ölçüm koşulduğunda doldurulacak: M0, M1, M2, M3 ve kapı kararı)_
