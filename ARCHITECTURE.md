@@ -1778,26 +1778,27 @@ when the engine happens to be slow makes the same click feel different every tim
 shell, as it does for the choreography: the view model says how long to wait, a dispatcher timer counts it, and
 under reduced motion nothing is waited at all.
 
-**A Clean invalidates the decisions on screen, and the Sync that follows rewrites them.** When the engine
-accepts the command, every row drops to the same hollow state a branch or root change produces: status
-`Pending`, no decision, no duration, no dependency warning, and the ribbon's *to build* count back to zero. It
-has to: a row reading `up to date` cannot go on saying so once its `bin` is gone, and a green status answers
-to nothing on disk. The list and the graph stay where they are: a Clean does not touch a single
-csproj, so the topology is still true, and a truly emptied list would make the panel claim there are no
-projects under the folder. The trigger is the engine's acceptance rather than the click, so a command that
-fails to send, or one the Supervisor rejects, leaves the screen intact. Then `cleanCompleted` chains a Sync
-with the console preserved — the same shape as the `N behind` chip's pull — because the engine's own analysis
-is the only thing that can put real decisions back, and the alternative is asking the user to press *Sync* for
-information the application can fetch itself. A failed Clean chains nothing: the reason is already in the
-console, and a second error line on top of it would only be noise.
+**The Sync is chained, not asked for.** `cleanCompleted` starts a Sync with the console preserved — the same
+shape as the `N behind` chip's pull — because the engine's own analysis is the only thing that can put real
+decisions back on the rows the click cleared, and the alternative is asking the user to press *Sync* for
+information the application can fetch itself. A row reading `up to date` cannot go on saying so once its `bin`
+is gone, and a green status answers to nothing on disk; that is why the plan surface goes at the click rather
+than waiting to be corrected. A failed Clean chains nothing: the reason is already in the console, and a second
+error line on top of it would only be noise.
 
 **Clean shares the Sync gate.** Its enabled state comes from the command alone, like *Resolve cycles*: a
 workspace must be selected — a topology is not required, the engine scans for itself — the engine must be
-alive, and no run, Sync or Clean may be in flight. While a Clean runs, from the click until its step ends,
-*Build*, *Rebuild*, *Resolve cycles*, the row actions, Sync and the `N behind` chip are all closed — deleting
-`bin` under a compiling MSBuild is a race, and a Sync, the automatic one after a pull included, would read
-folders that are disappearing. The gate outlasts `cleanCompleted` by the length of the held step, which is what
-keeps the spinner turning while it is held. It opens on every exit, an engine death mid-Clean included, and the
+alive, and no run, Sync or Clean may be in flight. *Build*, *Rebuild*, *Resolve cycles*, the row actions, Sync
+and the `N behind` chip are all closed while it runs — deleting `bin` under a compiling MSBuild is a race, and a
+Sync, the automatic one after a pull included, would read folders that are disappearing.
+
+**The gate is handed over, never dropped.** It stays shut from the click until the chained Sync has claimed it,
+which covers `cleanCompleted`, the held step and the beat after it: the two operations read as one busy stretch,
+nothing brightens in between, and the spinner keeps turning until the handover. Releasing it before that beat
+left a window where *Sync* and *Clean* were clickable and the buttons blinked from dim to live and back. The
+handover is synchronous — the Sync claims the gate before its first await — so there is no instant in which
+neither holds it. If the command cannot even be sent, the Sync releases its own gate and the release that
+follows is then the correct answer. The gate opens on every exit, an engine death mid-Clean included, and the
 silence watchdog (§4.6) covers the wait. The eraser itself carries the state the tooltip
 cannot: while its work runs the button takes the amber `active` ground and its icon becomes the spinner, and
 *Resolve cycles* does the same for a cycle run — the box says which of its jobs is in flight, while the other
