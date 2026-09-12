@@ -259,8 +259,27 @@ public sealed partial class RunViewModel
         ResetRowsToHollow();
     }
 
-    /// <summary>[clean guard] Clean bitti — yüzey serbest.</summary>
-    private void OnCleanCompleted() => ReleaseCleanSurface();
+    /// <summary>
+    /// [clean guard] Clean bitti: yüzey serbest bırakılır, sonra <b>konsol KORUNARAK bir Sync koşar</b>.
+    ///
+    /// <para>Otomatik Sync'in gerekçesi ekranın doğruyu söylemesidir, motorun ihtiyacı değil: bir sonraki
+    /// <c>Build</c> zaten sıfırdan planlar (defter boş → her şey <c>NeverBuilt</c>). Ama
+    /// <see cref="OnCleanStarted"/> satırların kararlarını düşürmüştür ve onları geri getirecek tek yer
+    /// motorun kendi analizidir — kullanıcıya elle Sync bastırmak, uygulamanın zaten yapabildiği bir işi ona
+    /// yüklemek olurdu. <c>clearBuffers: false</c>: kullanıcı kendi tetiklediği Clean'in transkriptini görmeye
+    /// devam etmeli (<see cref="OnPullCompletedAsync"/> ile AYNI gerekçe ve AYNI desen).</para>
+    ///
+    /// <para>Sıra: ÖNCE bırakma. <c>CleanBusy</c> açıkken Sync'in kapısı kapalıdır
+    /// (<c>RunViewModel.CanSync</c>), yani ters sıra kendi zincirini bloklardı.</para>
+    ///
+    /// <para><b>Hata yolunda zincir YOKTUR</b> (<see cref="TryConsumeCleanFailure"/>): başarısız bir işin
+    /// arkasına Sync takmak ikinci bir hata satırı üretirdi. Satırlar hollow kalır, Sync kullanıcıya kalır.</para>
+    /// </summary>
+    private async Task OnCleanCompletedAsync()
+    {
+        ReleaseCleanSurface();
+        await SyncCoreAsync(clearBuffers: false);
+    }
 
     /// <summary>[clean guard] Uçuştaki Clean'i serbest bırakır: İKİ bayrak da temizlenir (motor Clean'e HİÇ
     /// başlayamadan ölmüş olabilir, o hâlde uçuş bayrağı hiç kurulmamıştır) ve kapılar tek yerden açılır.

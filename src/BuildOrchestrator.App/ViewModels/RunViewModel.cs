@@ -1401,7 +1401,9 @@ public sealed partial class RunViewModel : ObservableObject
             // Satırlar Sync yüzeyine AİT DEĞİLDİR: ayrı bayrak, ayrı kanal.
             case CleanStartedEvent: OnCleanStarted(); break;
             case CleanProgressEvent e: AppendRunLine(e.Line); break;
-            case CleanCompletedEvent: OnCleanCompleted(); break;
+            // Bitişte konsol korunarak bir Sync zincirlenir; dal onu BEKLEMEZ — event pompası bloklanmaz
+            // (pullCompleted dalının aynı gerekçesi; gönderim zaten milisaniyeler).
+            case CleanCompletedEvent: _ = OnCleanCompletedAsync(); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
             case WorktreeListEvent e: Worktrees.ReplaceAll(e.Worktrees); break;

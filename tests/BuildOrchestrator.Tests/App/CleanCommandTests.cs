@@ -329,6 +329,49 @@ public class CleanCommandTests
         Assert.False(row.WillBuild);
     }
 
+    // ---------------------------------------------------------------- bitişte otomatik Sync
+
+    /// <summary>Clean satırların kararlarını düşürür (<see cref="A_started_clean_hollows_the_rows_and_the_will_build_surface"/>),
+    /// dolayısıyla o kararları geri getiren bir şey olmalıdır: bitişte KONSOL KORUNARAK bir Sync koşar —
+    /// <c>N behind</c> chip'indeki pull'un birebir deseni. Kullanıcı elle Sync'e basmak zorunda kalmaz ve
+    /// satırlar motorun GERÇEK kararlarıyla dolar (hepsi <c>never built</c>).</summary>
+    [Fact]
+    public void Clean_completion_runs_an_automatic_sync_and_keeps_the_console()
+    {
+        var vm = NewVm();
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+        vm.OnEvent(new CleanProgressEvent("build state reset — 2 entries cleared", "info"));
+
+        vm.OnEvent(Completed());
+
+        Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
+        // Konsol KORUNUR: kullanıcı kendi tetiklediği Clean'in transkriptini Sync satırlarının üstünde görmeye
+        // devam eder (pull'un clearBuffers:false gerekçesi).
+        Assert.Contains("build state reset", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Başarısız bir işin arkasına Sync TAKILMAZ: hata zaten konsolda, ikinci bir hata satırı yalnız
+    /// gürültü olurdu. Satırlar hollow kalır ve Sync kullanıcıya kalır.
+    /// <para>Kurulum <see cref="A_clean_error_releases_the_clean_surface"/> ile aynıdır ve öyle OLMALIDIR: hata
+    /// yolu yalnız Clean UÇUŞTAYKEN (<c>CleanBusy</c>) tüketilir, dolayısıyla gönderimi senkron düşmüş bir
+    /// Clean'de zincir zaten hiç kurulmaz ve test hiçbir şeyi pinlemezdi.</para></summary>
+    [Theory]
+    [InlineData("cleanFailed")]
+    [InlineData("cleanRejected")]
+    public void A_failed_clean_does_not_chain_a_sync(string code)
+    {
+        var vm = NewVm();
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new ErrorEvent(code, "boom"));
+
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+    }
+
     /// <summary>[v1.16.0 · clean] Alt bardaki <c>N behind</c> chip'i de bakım kilidine tabidir: başarılı bir pull
     /// otomatik Sync koşar ve o Sync, tam o sırada silinen bin/obj'i okurdu.</summary>
     [Fact]
