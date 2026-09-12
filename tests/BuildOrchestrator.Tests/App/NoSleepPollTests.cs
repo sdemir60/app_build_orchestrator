@@ -58,6 +58,10 @@ public sealed class NoSleepPollTests
         // Rename retry backoff'unun ÜRETİM VARSAYILANI (T49). Beklenen olay başka bir process'in okuma
         // handle'ını kapatmasıdır — beklenecek handle/TCS yok; gecikme enjekte edilebilir (RenameRetryDelay).
         [@"BuildOrchestrator.Core\State\BuildStateStore.cs"] = 1,
+        // Clean'in dosya-silme retry backoff'unun ÜRETİM VARSAYILANI. Beklenen olay BAŞKA bir process'in
+        // (çalışan uygulama, virüs tarayıcı) dosya handle'ını kapatmasıdır — beklenecek handle/TCS yoktur;
+        // gecikme enjekte edilebilir (CleanWorkspaceService.DeleteRetryDelay) ve testlerde anında döner.
+        [@"BuildOrchestrator.Core\Workspace\CleanWorkspaceService.cs"] = 1,
         // Clipboard contention retry'ının üretim varsayılanı: WPF Clipboard UI thread'inde kilitlenir,
         // beklenecek bir handle yoktur; gecikme yine enjekte edilebilir (ClipboardRetry.Try imzası).
         [@"BuildOrchestrator.App\Console\ClipboardRetry.cs"] = 1,

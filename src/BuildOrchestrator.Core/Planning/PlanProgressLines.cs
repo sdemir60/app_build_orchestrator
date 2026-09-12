@@ -126,6 +126,12 @@ public static class PlanProgressLines
     public static string ExternalNotScanned(string name, string problem)
         => $"warning: external '{name}': {problem} — no projects from it will be built";
 
+    /// <summary>[clean] Aynı çözümleme hatasının Clean'deki cümlesi. <see cref="ExternalNotScanned"/>'dan AYRI
+    /// olmasının nedeni SONUCUN farklı olmasıdır: Clean hiçbir şey DERLEMEZ, temizler — ve o kökün çıktıları
+    /// yerinde kalır. Clean bunu yazıp devam eder (ana kök yine temizlenir).</summary>
+    public static string ExternalNotCleaned(string name, string problem)
+        => $"warning: external '{name}': {problem} — nothing from it will be cleaned";
+
     /// <summary>Yolun üstünde SEÇİLEN türde bir çalışma kopyası işareti yok (git için <c>.git</c>, TFVC için
     /// <c>$tf</c>) — güncelleme ve kir kapısı çalışmaz, projeler olduğu gibi derlenir.</summary>
     public static string ExternalNoWorkingCopy(string name, VcsKind vcs)

@@ -270,6 +270,15 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
+    /// [clean] Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). TEK tüketicisi
+    /// <c>cleanWorkspace</c>'in reddetme kapısıdır — silme, uçuştaki bir build'in yazdığı klasörlerle
+    /// yarışmamalıdır.
+    /// <para><c>_finishing</c> KASITLI olarak dışarıda: drain sırasında da (sonuç event'leri yazılırken,
+    /// in-flight <c>MSBuild.exe</c>'ler post-build copy'lerini bitirirken) reddetmek doğru davranıştır.</para>
+    /// </summary>
+    public bool IsRunActive { get { lock (_gate) return _runActive; } }
+
+    /// <summary>
     /// [I2-K1] Aktif run'ın Stop'unu sahiplenir. <c>true</c> → <c>runStopped</c>'ı (in-flight sonuçları
     /// raporlandıktan SONRA) bu koordinatör yazar. <c>false</c> → sahiplenilecek run yok; çağıran (host) kendi
     /// ack'ini vermelidir.

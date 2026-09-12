@@ -35,21 +35,26 @@ public static class AccessibilityNames
     public const string OptimizeButton = "Optimize";
     public const string ResolveCyclesButton = "Resolve cycles";
 
-    /// <summary>[karar 2026-08-13] Clean/Optimize'ın arka ucu henüz yazılmadı; düğmeler tasarımdaki yerlerinde
-    /// ama pasif durur ve tooltip nedenini söyler. Ek metin TEK yerde durur, iki tooltip de ondan türer.</summary>
+    /// <summary>[karar 2026-08-13] Optimize'ın arka ucu henüz yazılmadı; düğme tasarımdaki yerinde ama pasif
+    /// durur ve tooltip nedenini söyler.</summary>
     private const string NotAvailableSuffix = " — not available yet";
 
+    /// <summary>Clean'in KAPSAMINI söyler: ne silinir ve sonucu nedir. <c>/t:Clean</c> ve <c>artifacts/</c>
+    /// ibareleri YOKTUR — motor MSBuild hedefi çağırmaz, yalnız keşfedilen projelerin <c>bin</c>/<c>obj</c>
+    /// klasörlerini siler ve build-state'i sıfırlar (bkz. <c>CleanWorkspaceCommand</c>).</summary>
     public const string CleanTooltip =
-        CleanButton + " — /t:Clean on every solution, then remove bin/, obj/, artifacts/" + NotAvailableSuffix;
+        CleanButton + " — remove every project's bin/ and obj/ and reset the build state; "
+        + "the next build compiles everything from scratch";
 
     public const string OptimizeTooltip =
         OptimizeButton + " — restore packages, prune the cache, rebuild the dependency index" + NotAvailableSuffix;
 
     // ---- Build menüsü: Clean Solution (design v1.11.0 §2.7-11) ----
     /// <summary>[design v1.11.0 §2.7-11] Build split-button menüsünün üçüncü maddesi. Bakım kutusundaki
-    /// <see cref="CleanTooltip"/> DERİN Clean'dir (bin/obj + artifacts + NuGet cache); bu ise Visual
-    /// Studio'nun <i>Clean Solution</i>'ıdır — yalnız <c>msbuild /t:Clean</c>, cache'lere dokunmaz. İkisi
-    /// birbirinin yerine GEÇMEZ, bu yüzden metin de tekrarlanmaz.
+    /// <see cref="CleanTooltip"/> DERİN Clean'dir (keşfedilen her projenin bin/obj'i + build-state sıfırlama,
+    /// yalnız dosya sistemi silme); bu ise Visual Studio'nun <i>Clean Solution</i>'ıdır — yalnız
+    /// <c>msbuild /t:Clean</c>, cache'lere dokunmaz. İkisi birbirinin yerine GEÇMEZ, bu yüzden metin de
+    /// tekrarlanmaz.
     /// <para>Arka ucu henüz yazılmadı — madde tasarımdaki yerinde ama pasif durur (bakım kutusuyla aynı
     /// karar).</para></summary>
     public const string CleanSolutionTooltip =

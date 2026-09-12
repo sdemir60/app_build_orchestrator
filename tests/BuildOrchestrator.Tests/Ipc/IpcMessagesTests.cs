@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -579,5 +579,38 @@ public class IpcMessagesTests
         Assert.Contains("\"toBuildCount\":14", json);
         Assert.Contains("\"upToDateCount\":22", json);
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
+    // [clean] Clean butonunun motoru: aktif workspace'in kesfedilen projelerinin bin/obj klasorlerini ve o
+    // workspace'e ait build-state kayitlarini siler. Komutun tasidigi TEK sey workspace kokudur; ayirt edici
+    // "cleanWorkspace" telde sabittir.
+    [Fact]
+    public void CleanWorkspace_roundtrips_with_discriminator()
+    {
+        var cmd = new CleanWorkspaceCommand(@"D:\repo");
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"type\":\"cleanWorkspace\"", json);
+        var back = Assert.IsType<CleanWorkspaceCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        Assert.Equal(@"D:\repo", back.RootPath);
+    }
+
+    // [clean] Clean'in ucu ayri bir kanaldir: syncProgress YENIDEN KULLANILMAZ (App'in Sync yuzeyine
+    // karismamali). Uc ayirt edici de telde pinlenir.
+    [Fact]
+    public void Clean_events_roundtrip_with_discriminators()
+    {
+        (IpcEvent Event, string Discriminator)[] cases =
+        [
+            (new CleanStartedEvent(@"D:\repo"), "cleanStarted"),
+            (new CleanProgressEvent("A - bin + obj removed (12 MB)", "dim"), "cleanProgress"),
+            (new CleanCompletedEvent(ProjectCount: 36, FoldersRemoved: 71, BytesRemoved: 1234567890,
+                LockedFileCount: 2, StateEntriesCleared: 36), "cleanCompleted"),
+        ];
+        foreach (var (ev, discriminator) in cases)
+        {
+            string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+            Assert.Contains($"\"type\":\"{discriminator}\"", json);
+            Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        }
     }
 }

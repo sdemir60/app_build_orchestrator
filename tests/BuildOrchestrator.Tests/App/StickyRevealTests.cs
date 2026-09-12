@@ -195,4 +195,71 @@ public class StickyRevealTests
         Assert.False(list.HasPendingRevealRelease);
         GC.KeepAlive(window);
     }
+
+    // ---------------------------------------------------------------- beliriş penceresi: boyanma DEĞİL
+
+    /// <summary>
+    /// [ölçülen kusur] <b>Beliriş bekleyen satırlar hiçbir karede tam opaklıkta BOYANMAZ.</b>
+    ///
+    /// <para>Reveal, container üretimi bittiğinde <c>DispatcherPriority.Loaded</c>(6) ile kuyruğa girer; render
+    /// ise <c>Render</c>(7), yani DAHA YÜKSEK önceliktedir. Sıra bu yüzden "satırları tam opaklıkta çiz →
+    /// sonra 0'a indir → kademeli aç"tı. Ölçüm (bu testin kırmızı hâli): <c>SetGroups(reveal:true)</c>'dan
+    /// sonra, reveal geri çağrısı koşmadan önce satır yüzeyi 1.0'dı.</para>
+    ///
+    /// <para>Kullanıcının gördüğü: liste boşken gelen bir topoloji "gelir, kaybolur, tekrar gelir". Liste zaten
+    /// doluyken aynı kare fark edilmiyordu, çünkü boyanan içerik bir öncekine benziyordu — Clean'in tıklamada
+    /// listeyi boşaltmasıyla pencere görünür hâle geldi.</para>
+    ///
+    /// <para>Çözüm satır yüzeyini beliriş boyunca kapalı tutmaktır; reveal (ya da onu reddeden yol) açar.</para>
+    /// </summary>
+    [StaFact]
+    public void Rows_waiting_for_a_reveal_are_never_painted_at_full_opacity()
+    {
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => true };
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, list);
+
+        list.SetGroups([new StickyLayerList.LayerGroup("", Rows(3))], reveal: true);
+
+        Assert.Equal(0.0, list.RowSurfaceOpacity); // render bu kareyi görse bile satırlar görünmez
+
+        list.PlayRevealStagger();
+
+        Assert.Equal(1.0, list.RowSurfaceOpacity); // beliriş başladı: yüzey açılır, satırlar kendi opaklığını oynar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Sessiz tazeleme (filtre yolu) belirişi oynatmaz, dolayısıyla yüzeyi de KAPATMAZ — aksi halde
+    /// her tuş vuruşunda liste bir kare kaybolurdu.</summary>
+    [StaFact]
+    public void A_silent_refresh_leaves_the_row_surface_visible()
+    {
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => true };
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, list);
+
+        list.SetGroups([new StickyLayerList.LayerGroup("", Rows(3))], reveal: false);
+
+        Assert.Equal(1.0, list.RowSurfaceOpacity);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Beliriş REDDEDİLSE de (azaltılmış hareket ya da başka bir hero sürüyorken) yüzey açılır —
+    /// yoksa liste kalıcı olarak görünmez kalırdı.</summary>
+    [StaFact]
+    public void A_rejected_reveal_still_reopens_the_row_surface()
+    {
+        var coordinator = new MotionCoordinator();
+        Assert.True(coordinator.TryBeginHero("frontier")); // başka bir hero sürüyor → stagger atlanır
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => false, HeroCoordinator = coordinator };
+        var host = DsResources.NewHost();
+        var window = DsResources.Realize(host, list);
+        list.SetGroups([new StickyLayerList.LayerGroup("", Rows(3))], reveal: true);
+        Assert.Equal(0.0, list.RowSurfaceOpacity);
+
+        list.PlayRevealStagger();
+
+        Assert.Equal(1.0, list.RowSurfaceOpacity);
+        GC.KeepAlive(window);
+    }
 }
