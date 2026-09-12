@@ -21,10 +21,10 @@ public class GraphSelectionFocusTests
     /// <summary>Base → Data → Api zinciri + bağlantısız Other.</summary>
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new("OSYS.Base", 0, GraphStatus.Succeeded),
-        new("OSYS.Other", 0, GraphStatus.Queued),
-        new("OSYS.Data", 1, GraphStatus.Building),
-        new("OSYS.Api", 2, GraphStatus.Queued),
+        new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Succeeded),
+        new("OSYS.Other", "OSYS.Other", 0, GraphStatus.Queued),
+        new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Building),
+        new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Queued),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>

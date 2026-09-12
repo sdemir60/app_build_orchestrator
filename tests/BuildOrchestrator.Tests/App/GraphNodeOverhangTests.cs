@@ -34,7 +34,7 @@ public class GraphNodeOverhangTests
     private static GraphView Built(GraphStatus status, bool animations)
     {
         var view = GraphTestView.Realized(Panel, () => animations);
-        view.SetGraph([new("Solo", 0, status), new("Other", 1, GraphStatus.Discovered)], []);
+        view.SetGraph([new("Solo", "Solo", 0, status), new("Other", "Other", 1, GraphStatus.Discovered)], []);
         return view;
     }
 

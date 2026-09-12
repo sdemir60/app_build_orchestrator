@@ -27,7 +27,7 @@ namespace BuildOrchestrator.Tests.App;
 public class GraphSkippedProjectTests
 {
     private static IReadOnlyList<GraphNode> Nodes(GraphStatus data) =>
-        [new("OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", 1, data)];
+        [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", "OSYS.Data", 1, data)];
 
     private static GraphView Running()
     {
@@ -125,7 +125,7 @@ public class GraphSkippedProjectTests
     {
         var view = Running();
 
-        view.UpdateStatuses([new("OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", 1, GraphStatus.Succeeded)]);
+        view.UpdateStatuses([new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Succeeded)]);
 
         var animation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf("OSYS.Data"));
         Assert.Equal(3, animation.KeyFrames.Count); // parlak → parlak → sonuç

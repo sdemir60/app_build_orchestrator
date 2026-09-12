@@ -21,7 +21,7 @@ public class GraphFilterDimTests
     {
         var view = GraphTestView.Realized(new Size(640, 400), () => true);
         view.SetGraph(
-            [new("OSYS.Base", 0, GraphStatus.Succeeded), new("OSYS.Data", 1, GraphStatus.Succeeded)],
+            [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Succeeded), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Succeeded)],
             [new("OSYS.Base", "OSYS.Data")]);
         return view;
     }
@@ -84,7 +84,7 @@ public class GraphFilterDimTests
         view.RunPhase = GraphRunPhase.Running;
 
         view.UpdateStatuses(
-            [new("OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", 1, GraphStatus.Queued)]);
+            [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Queued)]);
 
         Assert.Equal(
             TimeSpan.FromMilliseconds(GraphNodeOpacity.GlideMs),

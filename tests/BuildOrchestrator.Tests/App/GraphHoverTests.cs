@@ -21,8 +21,8 @@ public class GraphHoverTests
 
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new(LongName, 0, GraphStatus.Queued),
-        new("OSYS.Base", 1, GraphStatus.Queued),
+        new(LongName, LongName, 0, GraphStatus.Queued),
+        new("OSYS.Base", "OSYS.Base", 1, GraphStatus.Queued),
     ];
 
     private static GraphView Built(bool animations = true)

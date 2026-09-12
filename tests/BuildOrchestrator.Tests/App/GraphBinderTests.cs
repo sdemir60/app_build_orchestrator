@@ -46,10 +46,12 @@ public class GraphBinderTests
 
         var edges = GraphBinder.Edges(topology);
 
-        // From = bağımlılık (producer) adı, To = bağımlı (consumer) adı — GraphEdge sözleşmesi (yukarıdan aşağı).
-        Assert.Contains(edges, e => e.From == "Base" && e.To == "Data.Core");
-        Assert.Contains(edges, e => e.From == "Data.Core" && e.To == "Server.Api");
-        Assert.DoesNotContain(edges, e => e.From == "External"); // topoloji-dışı dep atlanır
+        // From = bağımlılık (producer), To = bağımlı (consumer) — GraphEdge sözleşmesi (yukarıdan aşağı).
+        // [DEĞİŞEN KURAL] Uçlar eskiden düğüm ADIydı. Ad benzersiz değildir (iki kök aynı AssemblyName'i
+        // üretebilir) ve Id→Ad çevirisi böyle bir durumda kenarı YANLIŞ düğüme bağlıyordu; uçlar artık Id.
+        Assert.Contains(edges, e => e.From == Id("Base") && e.To == Id("Data.Core"));
+        Assert.Contains(edges, e => e.From == Id("Data.Core") && e.To == Id("Server.Api"));
+        Assert.DoesNotContain(edges, e => e.From == Id("External")); // topoloji-dışı dep atlanır
         Assert.Equal(2, edges.Count);
     }
 

@@ -164,5 +164,7 @@ public sealed class OperationChoreographer
     }
 
     private void PushGraph() =>
-        PushToGraph?.Invoke(Step, new HashSet<string>(_scope.Where(r => r.Marked).Select(r => r.Name), StringComparer.Ordinal));
+        // Graf düğümleri proje Id'siyle anahtarlanır (ad benzersiz değildir) — küme de Id taşır.
+        PushToGraph?.Invoke(Step,
+            new HashSet<string>(_scope.Where(r => r.Marked).Select(r => r.Id), StringComparer.OrdinalIgnoreCase));
 }

@@ -26,8 +26,8 @@ public class GraphClickTests
 {
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new("OSYS.Base", 0, GraphStatus.Discovered),
-        new("OSYS.Data.Core", 1, GraphStatus.Discovered),
+        new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Discovered),
+        new("OSYS.Data.Core", "OSYS.Data.Core", 1, GraphStatus.Discovered),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() => [new("OSYS.Base", "OSYS.Data.Core")];

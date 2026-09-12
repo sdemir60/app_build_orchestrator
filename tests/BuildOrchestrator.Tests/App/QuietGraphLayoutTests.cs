@@ -22,7 +22,10 @@ public class QuietGraphLayoutTests
         var nodes = new List<GraphNode>();
         for (int layer = 0; layer < counts.Length; layer++)
             for (int i = 0; i < counts[layer]; i++)
-                nodes.Add(new GraphNode($"L{layer}.P{i:D3}", layer, GraphStatus.Discovered));
+            {
+                string name = $"L{layer}.P{i:D3}";
+                nodes.Add(new GraphNode(name, name, layer, GraphStatus.Discovered));
+            }
         return nodes;
     }
 
@@ -183,6 +186,32 @@ public class QuietGraphLayoutTests
         Assert.NotEqual(wide.Positions["L0.P000"], narrow.Positions["L0.P000"]);
     }
 
+    /// <summary>
+    /// AYIRT EDİCİ — düğümün kimliği ADI DEĞİL, proje Id'sidir: aynı <c>AssemblyName</c>'i üreten İKİ proje
+    /// İKİ AYRI hücre alır.
+    ///
+    /// <para><b>Eski iddia:</b> konumlar düğüm ADINA yazılıyordu. Ölçülen kusur (gerçek çalışma alanı, 191
+    /// proje): bir harici kart, ana repo kökünde ZATEN duran bir solution'ın ikinci bir kopyasını getirdiğinde
+    /// 7 ad çakıştı. Bant her düğüm için hücre ayırıyor ama konumu ada yazdığı için ikinci düğüm birincinin
+    /// konumunu EZİYOR; iki düğüm tek noktada üst üste biniyor ve ayrılan hücre BOŞ kalıyordu — kullanıcının
+    /// gördüğü "node'lar arasında boşluk açılmış, projeler gelmiyor" tam olarak buydu.</para>
+    /// </summary>
+    [Fact]
+    public void Two_projects_that_share_a_name_get_two_distinct_cells()
+    {
+        const string shared = "OSYS.UI.Rent";
+        IReadOnlyList<GraphNode> nodes =
+        [
+            new(@"D:\repo\Rent\OSYS.UI.Rent\OSYS.UI.Rent.csproj", shared, 0, GraphStatus.Discovered),
+            new(@"D:\ext\Rent\OSYS.UI.Rent\OSYS.UI.Rent.csproj", shared, 0, GraphStatus.Discovered),
+        ];
+
+        var result = QuietGraphLayout.Compute(nodes, new Size(640, 360));
+
+        Assert.Equal(2, result.Positions.Count);
+        Assert.NotEqual(result.Positions[nodes[0].Id], result.Positions[nodes[1].Id]);
+    }
+
     /// <summary>Boş graf çökmez; sonuç boştur (<c>SetGraph</c>'ın 0 düğümlü yolu buradan geçer).</summary>
     [Fact]
     public void An_empty_graph_yields_an_empty_layout_instead_of_throwing()
@@ -200,8 +229,8 @@ public class QuietGraphLayoutTests
     {
         IReadOnlyList<GraphNode> nodes =
         [
-            new("A", 0, GraphStatus.Discovered),
-            new("B", 5, GraphStatus.Discovered), // katman 1-4 hiç yok
+            new("A", "A", 0, GraphStatus.Discovered),
+            new("B", "B", 5, GraphStatus.Discovered), // katman 1-4 hiç yok
         ];
         var result = QuietGraphLayout.Compute(nodes, new Size(640, 360));
 
@@ -215,9 +244,9 @@ public class QuietGraphLayoutTests
     {
         IReadOnlyList<GraphNode> nodes =
         [
-            new("late", 2, GraphStatus.Discovered),
-            new("early", 0, GraphStatus.Discovered),
-            new("middle", 1, GraphStatus.Discovered),
+            new("late", "late", 2, GraphStatus.Discovered),
+            new("early", "early", 0, GraphStatus.Discovered),
+            new("middle", "middle", 1, GraphStatus.Discovered),
         ];
         var p = QuietGraphLayout.Compute(nodes, new Size(640, 360)).Positions;
 

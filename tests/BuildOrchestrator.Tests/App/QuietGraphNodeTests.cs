@@ -26,10 +26,10 @@ public class QuietGraphNodeTests
     // çerçevenin tek sahibi odur.
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new("OSYS.Base", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
-        new("OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
-        new("OSYS.Api", 2, GraphStatus.Queued, VisualStatus.Queued),
-        new("OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
+        new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+        new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
+        new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Queued, VisualStatus.Queued),
+        new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>
@@ -180,10 +180,10 @@ public class QuietGraphNodeTests
         // İkinci bir fresh düğüm AYNI örneği paylaşır; `discovered` ise KESİKLİ DEĞİLDİR.
         view.UpdateStatuses(
         [
-            new("OSYS.Base", 0, GraphStatus.Discovered, VisualStatus.Fresh),
-            new("OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
-            new("OSYS.Api", 2, GraphStatus.Discovered, VisualStatus.Discovered),
-            new("OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
+            new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Discovered, VisualStatus.Discovered),
+            new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
         ]);
         Assert.Same(fresh.StrokeDashArray, view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
         Assert.Empty(view.NodeVisuals["OSYS.Api"].Square.StrokeDashArray);

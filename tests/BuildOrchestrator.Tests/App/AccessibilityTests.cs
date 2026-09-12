@@ -91,7 +91,8 @@ public class AccessibilityTests
     {
         using var temp = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", null));
-        var body = window.Shell.GraphHost.NodeVisuals["OSYS.Base"].Body;
+        // NodeVisuals proje Id'siyle anahtarlanır (ad benzersiz değildir) — ekran-okuyucu ADI ise AD'dır.
+        var body = window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("OSYS.Base")].Body;
 
         var peer = UIElementAutomationPeer.CreatePeerForElement(body);
         Assert.True(peer is not null, "Düğüm gövdesinin automation peer'ı YOK — UIA ağacında hiç görünmüyor.");
@@ -103,7 +104,7 @@ public class AccessibilityTests
         Assert.Equal(AccessibilityNames.GraphNode("OSYS.Base", "Building"), peer.GetName());
         // Komşu düğüm etkilenmez (ad düğüm başına, tek bir ortak metin DEĞİL).
         Assert.Equal(AccessibilityNames.GraphNode("OSYS.Domain", "Discovered"),
-            AutomationProperties.GetName(window.Shell.GraphHost.NodeVisuals["OSYS.Domain"].Body));
+            AutomationProperties.GetName(window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("OSYS.Domain")].Body));
     }
 
     /// <summary>
@@ -122,7 +123,8 @@ public class AccessibilityTests
         using var temp = new TempDir();
         var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", null));
         var graph = window.Shell.GraphHost;
-        var peer = UIElementAutomationPeer.CreatePeerForElement(graph.NodeVisuals["OSYS.Base"].Body)!;
+        var peer = UIElementAutomationPeer.CreatePeerForElement(
+            graph.NodeVisuals[MainWindowHost.IdOf("OSYS.Base")].Body)!;
 
         var invoke = peer.GetPattern(PatternInterface.Invoke) as IInvokeProvider;
         Assert.True(invoke is not null, "Rol Button ama Invoke pattern'i YOK — vaat edilen yetenek gerçek değil.");
@@ -130,7 +132,8 @@ public class AccessibilityTests
 
         invoke!.Invoke();
         DispatcherPump.PumpUntil(() => graph.SelectedNode is not null, TimeSpan.FromSeconds(2));
-        Assert.Equal("OSYS.Base", graph.SelectedNode);
+        // Seçim KİMLİK taşır (proje Id'si), görünen ad DEĞİL — ad benzersiz değildir (bkz. GraphNode).
+        Assert.Equal(MainWindowHost.IdOf("OSYS.Base"), graph.SelectedNode);
 
         invoke.Invoke(); // aynı düğüm → fare ile AYNI toggle (seçim kalkar)
         DispatcherPump.PumpUntil(() => graph.SelectedNode is null, TimeSpan.FromSeconds(2));

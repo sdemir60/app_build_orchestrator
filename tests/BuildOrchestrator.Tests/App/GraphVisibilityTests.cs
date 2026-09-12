@@ -25,8 +25,8 @@ public class GraphVisibilityTests
 {
     private static IReadOnlyList<GraphNode> Nodes(GraphStatus status) =>
     [
-        new("OSYS.Base", 0, status),
-        new("OSYS.Data", 1, status),
+        new("OSYS.Base", "OSYS.Base", 0, status),
+        new("OSYS.Data", "OSYS.Data", 1, status),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() => [new("OSYS.Base", "OSYS.Data")];

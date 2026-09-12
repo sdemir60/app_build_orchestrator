@@ -17,9 +17,9 @@ public class GraphVisualPassTests
 {
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new("OSYS.Base", 0, GraphStatus.Succeeded),
-        new("OSYS.Data", 1, GraphStatus.Building),
-        new("OSYS.Api", 2, GraphStatus.Queued),
+        new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Succeeded),
+        new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Building),
+        new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Queued),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>

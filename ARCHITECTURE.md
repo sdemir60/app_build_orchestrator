@@ -2282,8 +2282,20 @@ fits the panel height. A band whose last row is short is centred against the row
 block is centred in the content box — a symmetric 36 px inset on every side, which is what makes the graph
 read as a picture with a margin rather than as a panel that has been filled to the edges. That inset is a
 single source: the overlay layer clamps to it as well, so a label never ends up hugging a corner. The consequence is
-that the graph always fits — there is no scrollbar, and no canvas larger than the panel. A node is a square
-of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
+that the graph always fits — there is no scrollbar, and no canvas larger than the panel.
+
+**A node is identified by its project id, never by its name.** Positions, the slot map, edge endpoints,
+selection, hover, the filter set and the marking set all key on the full `.csproj` path; the display name is
+only a label, used for the tooltip, the selection caption and the screen-reader name. The distinction is not
+academic: two projects can produce the same `AssemblyName` — an external card (§10.6) pointing at a second
+copy of a solution that already sits under the repository root is the ordinary way it happens. Keying on the
+name would have the band reserve a cell for each of them and then write both positions into one entry: the
+pair lands on a single point, one of them never receives a status or a click again, and the cell that was
+reserved stays empty — a hole in the band, with projects that look missing. Names carry no decision elsewhere
+either: the same collision makes the DLL ambiguous in the producer map, which drops the edge rather than guess
+(§6.4).
+
+A node is a square of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
 its edge; nodes in the **start mode** get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot
 be dashed. `discovered` is plain grey — the dash belongs to the start mode alone, so "nothing has happened
 yet" and "something is happening but not to this project" stay distinguishable.
@@ -3574,6 +3586,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Node visuals, status tick, opening wave, hover, hidden-panel gate | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
+| Graph node identity (project id, not name) and the label that is the name | `App/Graph/GraphModels.cs`, `QuietGraphLayout.cs` |
 | Opening/ending choreography on the graph (marking opacity, neon flicker) | `App/Graph/GraphView.xaml.cs` (`SetMarking`/`PlayEndFinale`) |
 | Automatic pitch, layer bands, node size | `App/Graph/QuietGraphLayout.cs` |
 | Run lifecycle opacity and its hold/fade timings | `App/Graph/GraphNodeOpacity.cs` |

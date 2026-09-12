@@ -289,10 +289,15 @@ public class MainWindowRealizeTests
         var row = vm.Projects.Single(r => r.Name == "A");
 
         row.Marked = true; // dalga bu üyeye geldi
-        window.ApplyMarkingToGraph(MarkStep.Wave, new HashSet<string>(["A"], StringComparer.Ordinal));
+        // [DEĞİŞEN KURAL] İşaretleme kümesi eskiden proje ADI taşıyordu. Graf düğümleri proje Id'siyle
+        // anahtarlanır (ad benzersiz değildir, bkz. GraphNode), dolayısıyla küme de Id taşır.
+        window.ApplyMarkingToGraph(MarkStep.Wave,
+            new HashSet<string>([MainWindowHost.IdOf("A")], StringComparer.OrdinalIgnoreCase));
 
-        Assert.Equal(VisualStatus.Marked, window.Shell.GraphHost.NodeVisuals["A"].Model.Visual);
+        Assert.Equal(VisualStatus.Marked,
+            window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("A")].Model.Visual);
         // B dalgaya girmedi: fixture Sync'ten geldiği için başlangıç modunda kalır — ama İŞARETLİ DEĞİL.
-        Assert.Equal(VisualStatus.Fresh, window.Shell.GraphHost.NodeVisuals["B"].Model.Visual);
+        Assert.Equal(VisualStatus.Fresh,
+            window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("B")].Model.Visual);
     }
 }

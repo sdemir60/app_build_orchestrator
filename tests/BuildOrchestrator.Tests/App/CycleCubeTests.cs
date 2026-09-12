@@ -94,9 +94,9 @@ public class CycleCubeTests
     [StaFact]
     public void The_node_frame_stays_grey_while_the_cube_turns_amber()
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
 
-        view.UpdateStatuses([new("n", 0, GraphStatus.Discovered, VisualStatus.Cycle)]);
+        view.UpdateStatuses([new("n", "n", 0, GraphStatus.Discovered, VisualStatus.Cycle)]);
 
         Assert.Equal(Token(view, "Brush.BorderStrong"), BorderColour(view, "n"));
         Assert.Equal(Token(view, "Brush.AmberText"), CoreColour(view, "n"));
@@ -107,9 +107,9 @@ public class CycleCubeTests
     [StaFact]
     public void A_skipped_member_keeps_the_skipped_frame_and_the_amber_cube_on_screen()
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
 
-        view.UpdateStatuses([new("n", 0, GraphStatus.Skipped, VisualStatus.CycleSkipped)]);
+        view.UpdateStatuses([new("n", "n", 0, GraphStatus.Skipped, VisualStatus.CycleSkipped)]);
 
         Assert.Equal(Token(view, "Brush.StatusSkippedBorder"), BorderColour(view, "n"));
         Assert.Equal(Token(view, "Brush.AmberText"), CoreColour(view, "n"));

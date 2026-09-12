@@ -37,9 +37,9 @@ public class GraphPanZoomTests
 
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
-        new("OSYS.Base", 0, GraphStatus.Discovered),
-        new("OSYS.Data", 1, GraphStatus.Discovered),
-        new("OSYS.Api", 2, GraphStatus.Discovered),
+        new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Discovered),
+        new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Discovered),
+        new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Discovered),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>

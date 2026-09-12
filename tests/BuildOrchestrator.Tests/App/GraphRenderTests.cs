@@ -24,11 +24,55 @@ public class GraphRenderTests
         GraphStatus apiStatus = GraphStatus.Discovered,
         GraphStatus portalStatus = GraphStatus.Discovered) =>
     [
-        new("OSYS.Base", 0, baseStatus),
-        new("OSYS.Data.Core", 1, dataStatus),
-        new("OSYS.Server.Api", 2, apiStatus),
-        new("OSYS.Web.Portal", 2, portalStatus),
+        new("OSYS.Base", "OSYS.Base", 0, baseStatus),
+        new("OSYS.Data.Core", "OSYS.Data.Core", 1, dataStatus),
+        new("OSYS.Server.Api", "OSYS.Server.Api", 2, apiStatus),
+        new("OSYS.Web.Portal", "OSYS.Web.Portal", 2, portalStatus),
     ];
+
+    /// <summary>
+    /// AYIRT EDİCİ — <b>aynı adlı iki proje grafta İKİ düğümdür.</b> Yerleşim ayrı konum verir
+    /// (<see cref="QuietGraphLayoutTests"/>), burada görünür ucu ölçülür: iki ayrı hücre çizilir, ikisi de
+    /// farklı merkezde durur, statüleri BAĞIMSIZ tazelenir ve seçim doğru olanı bulur.
+    ///
+    /// <para><b>Eski iddia:</b> düğümler <c>GraphNode.Name</c> ile anahtarlanıyordu — hem yerleşim konumu hem
+    /// <c>_slots</c>. Ölçülen kusur (gerçek çalışma alanı, 191 proje): bir harici kart ana repo kökünde zaten
+    /// duran bir solution'ın ikinci kopyasını getirdiğinde 7 ad çakıştı; iki hücre AYNI merkeze bindi, slot
+    /// haritasında son yazan kaldı ve diğeri bir daha statü/seçim almadı — kullanıcının gördüğü "boşluk
+    /// açılmış, projeler gelmiyor" buydu. Kimlik artık proje Id'sidir.</para>
+    /// </summary>
+    [StaFact]
+    public void Two_projects_that_share_a_name_are_two_separate_nodes_on_the_canvas()
+    {
+        const string shared = "OSYS.UI.Rent";
+        const string repoId = @"D:\repo\Rent\OSYS.UI.Rent\OSYS.UI.Rent.csproj";
+        const string extId = @"D:\ext\Rent\OSYS.UI.Rent\OSYS.UI.Rent.csproj";
+
+        var view = NewView(animationsEnabled: false);
+        view.SetGraph(
+            [new(repoId, shared, 0, GraphStatus.Discovered), new(extId, shared, 0, GraphStatus.Discovered)],
+            []);
+        view.UpdateLayout();
+
+        Assert.Equal(2, view.NodeCount);
+        Assert.Equal(2, view.NodeVisuals.Count);
+        // Ayrı hücreler, ayrı merkezler: biri diğerinin üstüne binmedi ve ayrılan hücre boş kalmadı.
+        Assert.NotSame(view.NodeVisuals[repoId].Cell, view.NodeVisuals[extId].Cell);
+        Assert.NotEqual(
+            Canvas.GetLeft(view.NodeVisuals[repoId].Cell), Canvas.GetLeft(view.NodeVisuals[extId].Cell));
+
+        // Statü BAĞIMSIZ akar: yalnız harici kopya derleniyor.
+        view.UpdateStatuses(
+            [new(repoId, shared, 0, GraphStatus.Discovered), new(extId, shared, 0, GraphStatus.Building)]);
+
+        Assert.Equal(GraphStatus.Discovered, view.NodeVisuals[repoId].Model.Status);
+        Assert.Equal(GraphStatus.Building, view.NodeVisuals[extId].Model.Status);
+
+        // Seçim de kimlikle çalışır — etiket paylaşılan AD olsa bile doğru düğüm seçilir.
+        view.SelectedNode = extId;
+        Assert.Equal(extId, view.SelectedNode);
+        Assert.Equal(shared, view.NodeVisuals[extId].Model.Name);
+    }
 
     private static IReadOnlyList<GraphEdge> Edges() =>
     [

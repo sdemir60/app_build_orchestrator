@@ -6,7 +6,14 @@ namespace BuildOrchestrator.App.Graph;
 // StatusGlyph'in graf-dışı ilk tüketicisi D1'dir. Buradaki kullanımlar için yukarıdaki using yeterlidir.
 
 /// <summary>
-/// [quiet] Graf düğümü — kimlik (tam proje adı), katman indeksi, statü ve döngü üyeliği. Hepsi bu kadardır.
+/// [quiet] Graf düğümü — kimlik (proje Id'si), görünen ad, katman indeksi ve statü. Hepsi bu kadardır.
+///
+/// <para><b>Kimlik <see cref="Id"/>'dir, <see cref="Name"/> DEĞİL.</b> Ad benzersiz değildir: iki ayrı proje
+/// aynı <c>AssemblyName</c>'i üretebilir (ör. bir harici kart, ana repo kökünde zaten duran bir solution'ın
+/// ikinci bir kopyasını getirir). Yerleşim ada göre anahtarlanırsa ikinci düğüm birincinin konumunu ezer:
+/// bant hücreyi AYIRIR ama kimse oraya oturmaz, yani düğüm görünmez olur ve yerinde bir boşluk kalır
+/// (ölçüldü: 191 projelik gerçek bir çalışma alanında 7 çakışan ad → 7 görünmez düğüm + 7 boşluk). Ad yalnız
+/// bir ETİKETTİR (tooltip, seçim etiketi, ekran-okuyucu adı); eşleşen her yer <see cref="Id"/> kullanır.</para>
 ///
 /// <para><b>Ne taşımadığı da bir karardır.</b> v1.3.0 §2.3'te düğümün üstünde ad etiketi yoktur (ad hover
 /// tooltip'i ve seçim etiketiyle verilir) ve graf içi dep-issue rozeti kaldırılmıştır (dep bilgisi liste
@@ -25,8 +32,11 @@ namespace BuildOrchestrator.App.Graph;
 /// <para><see cref="Status"/> KALIR: beads animasyonunun kapısı (Building) ve ekran-okuyucu adı ondan gelir —
 /// ikisi de bir RENK sorusu değildir.</para>
 /// </summary>
+/// <param name="Id">Düğümün KİMLİĞİ — proje Id'si (tam csproj yolu). Yerleşim, slot haritası, kenarlar,
+/// seçim, hover, filtre ve işaretleme kümelerinin tamamı bunu anahtarlar.</param>
+/// <param name="Name">Görünen ad (<c>AssemblyName</c>) — BENZERSİZ DEĞİLDİR, yalnız etiket olarak kullanılır.</param>
 /// <param name="Visual">Tek renk kanalı — <see cref="VisualStatuses"/> tablosuyla boyanır.</param>
-public sealed record GraphNode(string Name, int Layer, GraphStatus Status,
+public sealed record GraphNode(string Id, string Name, int Layer, GraphStatus Status,
     VisualStatus Visual = VisualStatus.Discovered)
 {
     /// <summary>[D5] Ortak öneği atılmış kısa ad. Grafın kendisi ARTIK kullanmaz (§2.3: node üstü etiket
@@ -65,5 +75,6 @@ public sealed record GraphNode(string Name, int Layer, GraphStatus Status,
 }
 
 /// <summary>[T63] Bağımlılık kenarı: <paramref name="From"/> (bağımlılık) → <paramref name="To"/> (bağımlı proje);
-/// prototype <c>GRAPH.edges</c> ile AYNI yön (yukarıdan aşağı).</summary>
+/// prototype <c>GRAPH.edges</c> ile AYNI yön (yukarıdan aşağı).
+/// <para>Uçlar <see cref="GraphNode.Id"/>'dir, ad DEĞİL — çakışan adlarda kenar yanlış düğüme bağlanırdı.</para></summary>
 public sealed record GraphEdge(string From, string To);
