@@ -36,7 +36,7 @@ sessiz kırılma o turda bulundu ve ikisi de gerçekleşti — aşağıdaki 1 ve
 | T5 | `5dc1496` | Supervisor wiring; **ikinci `IsRunActive` tuzağı** temizlendi; test harness'i ortaklaştırıldı |
 | T6 | `b7967d5` | App VM: komut, kapılar, karşılıklı dışlama, konsol/stream, pill |
 | T7 | `7b9de96` | Bakım kutusunda Optimize canlı + amber/spinner |
-| T8 | (doküman) | ARCHITECTURE + README |
+| T8 | `85fe7cd` | ARCHITECTURE + README; iki mevcut çelişki ve iki kod-doc uyuşmazlığı da giderildi |
 
 ---
 
@@ -130,7 +130,9 @@ sürücü-kökü davranışı değişmedi.
 
 ## Doğrulama
 
-- Tam süit (`Category!=Acceptance`) yeşil. `Category=Acceptance` süiti koşulmadı.
+- **Tam süit (final, `Category!=Acceptance`):** Başarısız 0 · Başarılı 2715 · Atlanan 1 · Toplam 2716.
+  Atlanan `DragReorderTests.Reorder_uses_mouse_capture_…` — ortam kaynaklı bilinen skip, bu işten önce de
+  atlanıyordu. `Category=Acceptance` süiti koşulmadı.
 - Her task'ta önce kırmızı gösterildi: T1/T2/T4/T6 derleme hatası ya da assert ile, T2 (never-throw),
   T3 (hedef guard'ı) ve T4 (harici kökler) ayrıca **mutasyonla**.
 - D8 sleep guard'ı T4'ten sonra gerçekten kırmızı verdi; gerekçeli allow-list satırı ondan sonra eklendi.
