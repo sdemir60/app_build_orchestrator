@@ -37,11 +37,15 @@ public partial class MaintenanceBox : UserControl
     // Resolve'un ikon Path'i — rengi döngü varlığına göre değişen TEK öğe.
     private Path _resolveIcon = null!;
 
+    // İşi koşarken ikonun YERİNE spinner konur; ikonlar burada saklanır ki iş bitince geri gelsinler.
+    private Viewbox _cleanIcon = null!;
+    private Viewbox _resolveIconBox = null!;
+
     public MaintenanceBox()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
-        Loaded += (_, _) => { Build(); Refresh(); };
+        Loaded += (_, _) => { Build(); Refresh(); RefreshBusy(); };
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -58,6 +62,7 @@ public partial class MaintenanceBox : UserControl
         _vm = e.NewValue as RunViewModel;
         if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
         Refresh();
+        RefreshBusy(); // DataContext sonradan gelirse uçuştaki iş yine de boyanır
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -65,15 +70,19 @@ public partial class MaintenanceBox : UserControl
         // Tooltip sayıları topolojiden gelir. HasCycles her workspaceTopology'de AÇIKÇA yayılır (boole aynı
         // kalsa da sayılar değişmiş olabilir — bkz. RunViewModel.Workspace.OnWorkspaceTopology).
         if (e.PropertyName is nameof(RunViewModel.HasCycles)) Refresh();
+        // Koşan işin düğmesi amber + spinner olur; ikisi de VM'de bildirimli DURUMLARDIR (komut değil).
+        if (e.PropertyName is nameof(RunViewModel.CleanBusy) or nameof(RunViewModel.IsResolvingCycles))
+            RefreshBusy();
     }
 
     private void Build()
     {
         if (_built) return;
         _built = true;
-        Compose(PART_Clean, "Icon.Eraser", AccessibilityNames.CleanButton);
+        _cleanIcon = Compose(PART_Clean, "Icon.Eraser", AccessibilityNames.CleanButton);
         Compose(PART_Optimize, "Icon.Gauge", AccessibilityNames.OptimizeButton);
-        _resolveIcon = Compose(PART_Resolve, "Icon.Unlink", AccessibilityNames.ResolveCyclesButton);
+        _resolveIconBox = Compose(PART_Resolve, "Icon.Unlink", AccessibilityNames.ResolveCyclesButton);
+        _resolveIcon = IconPathOf(_resolveIconBox);
 
         // Resolve'un işi MEVCUT döngü koşusudur (yüzey yer değiştirdi, iş değişmedi). Komut binding ile
         // bağlanır: DataContext sonradan gelse de düğme doğru komuta bakar.
@@ -93,8 +102,9 @@ public partial class MaintenanceBox : UserControl
         PART_Optimize.ToolTip = AccessibilityNames.OptimizeTooltip;
     }
 
-    /// <summary>Düğmeyi biçimlendirir ve ikon <see cref="Path"/>'ini döndürür (rengi sonradan değişebilsin diye).</summary>
-    private Path Compose(Button button, string iconKey, string uiaName)
+    /// <summary>Düğmeyi biçimlendirir ve ikon görselini döndürür — iş koşarken yerine spinner konacağı için
+    /// çağıran onu SAKLAR (<see cref="SetBusy"/>).</summary>
+    private Viewbox Compose(Button button, string iconKey, string uiaName)
     {
         if (TryFindResource("Ds.IconButton") is Style s) button.Style = s;
         button.Width = ButtonWidth;
@@ -104,7 +114,53 @@ public partial class MaintenanceBox : UserControl
         var icon = IconVisual.Make(this, iconKey, "Brush.TextSecondary", IconSize);
         button.Content = icon;
         AutomationProperties.SetName(button, uiaName);
-        return (Path)((Canvas)icon.Child).Children[0];
+        return icon;
+    }
+
+    /// <summary>İkon görselinin boyanabilir <see cref="Path"/>'i (<see cref="ResolveIconBrush"/> test yüzeyi).</summary>
+    private static Path IconPathOf(Viewbox icon) => (Path)((Canvas)icon.Child).Children[0];
+
+    /// <summary>
+    /// [design — BuildApp.jsx:2619-2622/2639-2641] Koşan işin düğmesi DS'in <c>active</c> hâline geçer:
+    /// amber-soft zemin ve ikonun yerinde dönen spinner. Motoru olan iki düğme için geçerlidir; Optimize'ın
+    /// gösterecek bir işi yoktur.
+    /// </summary>
+    private void RefreshBusy()
+    {
+        if (!_built) return;
+        SetBusy(PART_Clean, _cleanIcon, _vm?.CleanBusy == true);
+        SetBusy(PART_Resolve, _resolveIconBox, _vm?.IsResolvingCycles == true);
+    }
+
+    /// <summary>
+    /// Tek düğmenin meşgul boyaması. <b>Komut kapısına DOKUNULMAZ</b> — düğme uçuşta zaten pasiftir (ikinci
+    /// bir Clean anlamsız) ve enable'ın tek yazıcısı komut kalır; değişen yalnız görünümdür.
+    ///
+    /// <para>Üç şey birlikte gider: (a) zemin, <c>Ds.IconButton.Toggle</c>'ın <c>IsChecked</c> tetikleyicisiyle
+    /// AYNI token çiftinden (amber-soft) — yerel değer stilin hover tetikleyicisini de bastırır; (b) içerik,
+    /// ikonla aynı kutuda bir <see cref="BuildingSpinner"/> (kendi varsayılan stili onu zaten amber boyar ve
+    /// azaltılmış harekette döndürmez); (c) opaklık, çünkü <c>Ds.Button.Base</c> pasif düğmeyi 0.45'e söndürür
+    /// ve koşan iş sönük görünmemelidir (prototipte koşan düğme disabled kümesinin DIŞINDADIR).</para>
+    ///
+    /// <para>İşi bitince yerel değerler TEMİZLENİR (<c>ClearValue</c>), böylece stilin kendi varsayılanları ve
+    /// hover tetikleyicisi yeniden söz sahibi olur. Çağrı idempotenttir: aynı durum ikinci kez yazılmaz, aksi
+    /// halde her bildirimde yeni bir spinner kurulur ve animasyon baştan başlardı.</para>
+    /// </summary>
+    private static void SetBusy(Button button, Viewbox icon, bool busy)
+    {
+        if (busy == button.Content is BuildingSpinner) return;
+        if (busy)
+        {
+            button.Content = new BuildingSpinner { Size = IconSize };
+            button.SetResourceReference(DsTransition.AnimatedBackgroundProperty, "Brush.AmberSoft");
+            button.Opacity = 1;
+        }
+        else
+        {
+            button.Content = icon;
+            button.ClearValue(DsTransition.AnimatedBackgroundProperty);
+            button.ClearValue(OpacityProperty);
+        }
     }
 
     /// <summary>Resolve'un tooltip'inin TEK yazıcısı.

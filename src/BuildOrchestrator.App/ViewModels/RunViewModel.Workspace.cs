@@ -136,8 +136,12 @@ public sealed partial class RunViewModel
     private bool _cleanRequested;
 
     /// <summary>[clean guard] Clean yüzeyi MEŞGUL mü — istek uçuşta YA DA <c>cleanStarted</c> görüldü.
-    /// Clean/Sync/Build/Rebuild/Cycles kapılarının TEK predicate'i (kopya YASAK).</summary>
-    private bool CleanBusy => _cleanRequested || _cleanInFlight;
+    /// Clean/Sync/Build/Rebuild/Cycles kapılarının TEK predicate'i (kopya YASAK).
+    /// <para>Bakım kutusu da bunu okur (koşan düğme amber zemin + spinner olur), bu yüzden BİLDİRİMLİDİR:
+    /// değeri değiştiren her yol <see cref="NotifySyncGatedCommands"/>'dan geçer ve bildirim oradan atılır.
+    /// <b>İstek penceresi dahildir</b> — kullanıcı tıkladığı anda geri bildirim görmelidir, motorun cevabını
+    /// beklemez; gönderim düşerse bayrak da düşer ve spinner kaybolur.</para></summary>
+    public bool CleanBusy => _cleanRequested || _cleanInFlight;
 
     /// <summary>[clean guard testi] YALNIZ testler için — istek ve uçuş pencerelerinin gözlemlenebilir hâli.</summary>
     internal bool CleanRequested => _cleanRequested;
@@ -236,6 +240,10 @@ public sealed partial class RunViewModel
         CleanProjectCommand.NotifyCanExecuteChanged();
         CleanCommand.NotifyCanExecuteChanged(); // [clean] aynı kapıdan geçer — İKİNCİ bir liste açılmaz
         PullRepositoryCommand.NotifyCanExecuteChanged(); // [v1.16.0] chip de SyncBusy/CleanBusy'ye bağlıdır (CanPullRepository)
+        // [clean] Bakım kutusunun spinner'ı bir KOMUT değil bir DURUM okur. Bildirim buraya düşer çünkü
+        // CleanBusy'yi değiştiren dört yolun (istek, cleanStarted, bırakma, istek iptali) hepsi zaten bu
+        // metottan geçer — dört ayrı çağrı yazmak kopya olurdu.
+        OnPropertyChanged(nameof(CleanBusy));
     }
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
