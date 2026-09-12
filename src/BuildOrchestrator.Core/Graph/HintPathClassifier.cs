@@ -65,7 +65,13 @@ public static class HintPathClassifier
         IsNuGetPackagesPath(raw)
         || raw.Replace('/', '\\').Contains("Program Files", StringComparison.OrdinalIgnoreCase);
 
-    // '\bin\' segmenti + producer YOK → repo-dışı OSYS platform DLL'i (ExternalOsysPlatform).
-    private static bool IsUnderBin(string raw) =>
+    /// <summary>
+    /// Ham yol bir <c>\bin\</c> segmenti taşıyor mu — üreticisi olmayan böyle bir hedef repo-dışı OSYS
+    /// platform DLL'idir (<c>ExternalOsysPlatform</c>).
+    /// <para><see cref="IsNuGetPackagesPath"/> ile aynı sebeple public'tir: Optimize'ın "restore'un
+    /// çözemedikleri" teşhisi aynı ayrımı kullanır ve literal iki yerde YAZILMAZ. Üreticinin varlığı bir GRAF
+    /// sorusudur, yol sorusu değil — o kontrol çağırana aittir.</para>
+    /// </summary>
+    public static bool IsUnderBin(string raw) =>
         raw.Replace('/', '\\').Contains("\\bin\\", StringComparison.OrdinalIgnoreCase);
 }

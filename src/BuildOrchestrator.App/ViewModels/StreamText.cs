@@ -48,7 +48,7 @@ public static class StreamText
     public static string CleanCompleted(int projectCount, int foldersRemoved, long bytesRemoved, int lockedFileCount)
     {
         string line = string.Format(CultureInfo.InvariantCulture, "Clean — {0} projects, {1} folders, {2} freed",
-            projectCount, foldersRemoved, Core.Workspace.CleanWorkspaceService.FormatBytes(bytesRemoved));
+            projectCount, foldersRemoved, Core.Formatting.ByteFormat.Size(bytesRemoved));
         return lockedFileCount > 0
             ? string.Format(CultureInfo.InvariantCulture, "{0} · {1} in use", line, lockedFileCount)
             : line;

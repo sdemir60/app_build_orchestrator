@@ -132,6 +132,12 @@ public static class PlanProgressLines
     public static string ExternalNotCleaned(string name, string problem)
         => $"warning: external '{name}': {problem} — nothing from it will be cleaned";
 
+    /// <summary>[optimize] Aynı çözümleme hatasının Optimize'daki cümlesi. Sonuç yine farklıdır: o kökün
+    /// projeleri onarılmaz — paketleri restore edilmez, kırık referansları raporlanmaz, artıkları kalır.
+    /// Optimize bunu yazıp devam eder (ana kök yine onarılır).</summary>
+    public static string ExternalNotOptimized(string name, string problem)
+        => $"warning: external '{name}': {problem} — nothing from it will be repaired";
+
     /// <summary>Yolun üstünde SEÇİLEN türde bir çalışma kopyası işareti yok (git için <c>.git</c>, TFVC için
     /// <c>$tf</c>) — güncelleme ve kir kapısı çalışmaz, projeler olduğu gibi derlenir.</summary>
     public static string ExternalNoWorkingCopy(string name, VcsKind vcs)

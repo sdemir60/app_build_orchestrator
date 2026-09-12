@@ -1,6 +1,7 @@
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Externals;
+using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Scheduling;
 using BuildOrchestrator.Core.State;
@@ -124,12 +125,12 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
             int locked = tally.LockedFiles - lockedBefore;
             string name = Path.GetFileName(dir);
 
-            if (folders > 0) emit(Dim($"{name} — bin + obj removed ({FormatBytes(bytes)})"));
+            if (folders > 0) emit(Dim($"{name} — bin + obj removed ({ByteFormat.Size(bytes)})"));
             if (locked > 0) emit(Warn($"warning: {locked} files in use under {Relative(roots, dir)} — skipped"));
         }
 
         // --- 3) Tek bitiş özeti.
-        emit(Info($"Clean complete — {projectDirs.Count} projects · {tally.FoldersRemoved} folders · {FormatBytes(tally.BytesRemoved)} removed"));
+        emit(Info($"Clean complete — {projectDirs.Count} projects · {tally.FoldersRemoved} folders · {ByteFormat.Size(tally.BytesRemoved)} removed"));
         if (tally.LockedFiles > 0)
             emit(Warn($"warning: {tally.LockedFiles} files could not be removed (in use) — close the running application and run Clean again"));
 
@@ -241,20 +242,6 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
         string owner = OwningRoot(roots, dir) ?? roots[0];
         string relative = Path.GetRelativePath(owner, dir);
         return relative == "." ? Path.GetFileName(owner) : relative;
-    }
-
-    /// <summary>Kullanıcıya gösterilecek boyut metni. Projede insan-okur bayt biçimleyicisi YOKTU; TEK
-    /// tanımı burasıdır — konsol satırları da App'in stream özeti de (<c>StreamText.CleanCompleted</c>) BUNU
-    /// çağırır (kopya YASAK). Clean dışından üçüncü bir tüketici doğarsa ortak bir yere taşınır.</summary>
-    public static string FormatBytes(long bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        double value = bytes;
-        int unit = 0;
-        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
-        return unit == 0
-            ? $"{bytes} {units[unit]}"
-            : $"{value.ToString(value < 10 ? "0.0" : "0", System.Globalization.CultureInfo.InvariantCulture)} {units[unit]}";
     }
 
     // Satır fabrikaları — SyncWorkspaceService'in deseni; Level metni App'te satır rengine dönüşür.
