@@ -517,7 +517,7 @@ public partial class GraphView : UserControl
             foreach (var (percent, opacity) in EndFinale.NeonKeyframes)
                 flicker.KeyFrames.Add(new DiscreteDoubleKeyFrame(
                     opacity, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(EndFinale.NeonMs * percent))));
-            Timeline.SetDesiredFrameRate(flicker, DecorativeFrameRate);
+            Timeline.SetDesiredFrameRate(flicker, MotionTokens.DecorativeFrameRate);
 
             slot.Visual.OpacityAnimation = flicker;
             slot.Visual.OpacityTarget = double.NaN; // sıradaki ApplyNodeOpacity kapıyı GEÇSİN (değer titreşti)
