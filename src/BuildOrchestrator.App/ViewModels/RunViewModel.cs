@@ -1018,7 +1018,9 @@ public sealed partial class RunViewModel : ObservableObject
         CleanCommand.NotifyCanExecuteChanged();
         NotifySyncGatedCommands(); // run/Sync kapıları da AYNI anda kapanır (yarış penceresi bırakma)
         ArmEngineWatchdog();
-        bool sent = await TrySendAsync(new CleanWorkspaceCommand(RootPath), "clean");
+        // [harici projeler] Kartlar da gider: harici proje sıradan bir projedir, çıktısı da bu workspace'in
+        // çıktısıdır. Liste Sync/Build ile AYNI huniden geçer — ikinci bir kaynak açılmaz (kopya YASAK).
+        bool sent = await TrySendAsync(new CleanWorkspaceCommand(RootPath, ExternalProjectsForWire), "clean");
         if (!sent) ReleaseCleanRequest();
     }
 

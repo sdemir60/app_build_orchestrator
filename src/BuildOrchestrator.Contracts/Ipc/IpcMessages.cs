@@ -167,7 +167,15 @@ public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
 /// <para>Bir koşu uçuştayken komut <c>error(cleanRejected)</c> ile REDDEDİLİR; App kapısıyla birlikte çift
 /// katmanlı korumadır. Komut döngüsünü Sync gibi bloklar (arka plan task açılmaz).</para>
 /// </summary>
-public sealed record CleanWorkspaceCommand(string RootPath) : IpcCommand;
+/// <param name="ExternalProjects">[Harici projeler] Ayarlar'daki harici kökler — <see cref="SyncWorkspaceCommand"/>
+/// ile AYNI kart listesi ve AYNI çözümleme (<c>ExternalWorkspaceResolver</c>). Harici projeler sıradan
+/// projelerdir: aynı grafa girer, aynı kararı alır, dolayısıyla Clean de onların <c>bin</c>/<c>obj</c>'ini ve
+/// defter kayıtlarını temizler. Kökleri ana kökün DIŞINDA olduğu için tarama onları ancak bu liste ile bulur;
+/// liste boşsa akış ana kökle bayt-bayt aynıdır. Silme izni de bu köklerle sınırlıdır — kartı verilmemiş bir
+/// dizine ASLA dokunulmaz. <c>null</c> (varsayılan): alanı hiç yazmayan eski NDJSON satırları çözülmeye devam
+/// eder.</param>
+public sealed record CleanWorkspaceCommand(
+    string RootPath, IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
 
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;

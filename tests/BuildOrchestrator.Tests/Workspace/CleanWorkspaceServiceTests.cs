@@ -27,10 +27,11 @@ public class CleanWorkspaceServiceTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "bo-clean-" + Guid.NewGuid().ToString("N"));
     private readonly string _cacheRoot = Path.Combine(Path.GetTempPath(), "bo-clean-cache-" + Guid.NewGuid().ToString("N"));
+    private readonly string _externalRoot = Path.Combine(Path.GetTempPath(), "bo-clean-ext-" + Guid.NewGuid().ToString("N"));
 
     public void Dispose()
     {
-        foreach (string dir in new[] { _root, _cacheRoot })
+        foreach (string dir in new[] { _root, _cacheRoot, _externalRoot })
         {
             try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
             catch (IOException) { /* kilitli dosya testinden kalan handle — temizlik iddia taşımaz */ }
@@ -69,6 +70,32 @@ public class CleanWorkspaceServiceTests : IDisposable
         service.Run(new CleanWorkspaceCommand(root), events.Add);
         return events;
     }
+
+    /// <summary>[harici projeler] Ana kök DIŞINDA, kendi kökünde yaşayan bir proje — Settings'teki kartın
+    /// karşılığı. Ana kökten ayrı bir ağaçtır, bu yüzden ana taramaya HİÇ takılmaz.</summary>
+    private string SeedExternalProject(string name)
+    {
+        string dir = Path.Combine(_externalRoot, name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, name + ".csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        File.WriteAllText(Path.Combine(dir, name + ".cs"), "public class " + name + " { }");
+        Directory.CreateDirectory(Path.Combine(dir, "bin"));
+        File.WriteAllText(Path.Combine(dir, "bin", name + ".dll"), "binary-output");
+        Directory.CreateDirectory(Path.Combine(dir, "obj"));
+        File.WriteAllText(Path.Combine(dir, "obj", name + ".pdb"), "intermediate");
+        return dir;
+    }
+
+    private static List<IpcEvent> RunWithExternals(CleanWorkspaceService service, string root, params string[] cards)
+    {
+        var events = new List<IpcEvent>();
+        service.Run(
+            new CleanWorkspaceCommand(root, [.. cards.Select(c => new ExternalProject(c, VcsKind.Git))]),
+            events.Add);
+        return events;
+    }
+
+    private static BuildState State(string projectId) => new(projectId, "sig-" + Path.GetFileName(projectId));
 
     private static CleanCompletedEvent Completed(List<IpcEvent> events) =>
         Assert.IsType<CleanCompletedEvent>(events[^1]);
@@ -208,6 +235,63 @@ public class CleanWorkspaceServiceTests : IDisposable
         var error = Assert.IsType<ErrorEvent>(events[^1]);
         Assert.Equal("cleanFailed", error.Code);
         Assert.DoesNotContain(events, e => e is CleanCompletedEvent);
+    }
+
+    // ---------------------------------------------------------------- harici kökler
+
+    /// <summary>[harici projeler] Harici kökten gelen projeler SIRADAN projelerdir — aynı graf, aynı karar,
+    /// aynı Clean. Kökleri ana repo DIŞINDA yaşadığı için tarama onları ancak kart listesiyle bulur; birleştirme
+    /// Sync'in ve koşu planlayıcısının kullandığı <c>ExternalWorkspaceResolver</c> ile yapılır (kopya YASAK).
+    /// Defter kayıtları da her kök için ayrı süpürülür: anahtar tam csproj yolu olduğundan ana kökün öneki
+    /// harici kökü kapsamaz.</summary>
+    [Fact]
+    public void Clean_removes_bin_and_obj_of_external_projects_too()
+    {
+        string main = SeedProject("Main");
+        string external = SeedExternalProject("Shared");
+        var store = new BuildStateStore(_cacheRoot);
+        store.Upsert(State(Path.Combine(main, "Main.csproj")));
+        store.Upsert(State(Path.Combine(external, "Shared.csproj")));
+
+        var done = Completed(RunWithExternals(NewService(store), _root, _externalRoot));
+
+        Assert.False(Directory.Exists(Path.Combine(main, "bin")));
+        Assert.False(Directory.Exists(Path.Combine(external, "bin")));
+        Assert.False(Directory.Exists(Path.Combine(external, "obj")));
+        Assert.Equal(2, done.ProjectCount);        // harici proje sıradan bir projedir, sayılır
+        Assert.Equal(4, done.FoldersRemoved);
+        Assert.Equal(2, done.StateEntriesCleared); // her kök ayrı süpürülür
+        Assert.Empty(store.Load());
+    }
+
+    /// <summary>[güvenlik] Kart listesinde OLMAYAN bir kök HİÇ TARANMAZ, dolayısıyla çıktıları da durur. Silme
+    /// izninin tek kaynağı bu çalışma alanının çözdüğü proje kümesidir; o kümeye girmenin tek yolu ana kökün
+    /// altında olmak ya da kartla kaydedilmiş olmaktır.</summary>
+    [Fact]
+    public void A_root_that_was_not_registered_as_an_external_card_is_never_scanned()
+    {
+        SeedProject("Main");
+        string stranger = SeedExternalProject("Stranger"); // kart olarak VERİLMEZ
+
+        var done = Completed(Run(NewService(), _root));
+
+        Assert.True(Directory.Exists(Path.Combine(stranger, "bin")));
+        Assert.Equal(1, done.ProjectCount);
+    }
+
+    /// <summary>[harici projeler] Çözülemeyen kart Clean'i DURDURMAZ: Sync'in davranışının aynısı — uyarı
+    /// satırı düşer, ana kök yine temizlenir.</summary>
+    [Fact]
+    public void An_unresolvable_external_card_warns_and_the_clean_carries_on()
+    {
+        string main = SeedProject("Main");
+        string missing = Path.Combine(_externalRoot, "not-there");
+
+        var events = RunWithExternals(NewService(), _root, missing);
+
+        Assert.False(Directory.Exists(Path.Combine(main, "bin")));
+        Assert.Contains(Lines(events), l => l.Contains("not-there", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, Completed(events).ProjectCount);
     }
 
     // ---------------------------------------------------------------- kenar durumlar

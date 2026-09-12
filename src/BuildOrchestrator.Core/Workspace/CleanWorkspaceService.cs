@@ -1,5 +1,7 @@
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Externals;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Scheduling;
 using BuildOrchestrator.Core.State;
 
@@ -77,13 +79,35 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
 
         string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cmd.RootPath));
 
-        var projectDirs = scanner.Scan(root).CsprojPaths
+        // [harici projeler] Ana tarama + kayıtlı harici kökler, TEK çalışma alanı — Sync'in ve koşu
+        // planlayıcısının kullandığı AYNI çözümleyici (kopya YASAK). Harici proje sıradan bir projedir:
+        // aynı grafa girer, aynı kararı alır, aynı Clean'i görür.
+        var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(root), cmd.ExternalProjects, scanner);
+        foreach (var problem in workspace.Problems)
+            emit(Warn(PlanProgressLines.ExternalNotCleaned(problem.Name, problem.Problem)));
+
+        // Kayıtlı kökler: ana kök + her harici kartın arama kökü. İki işleri var — defterin ÖNEK süpürmesi
+        // (silinmiş/yeniden adlandırılmış projelerin artık kayıtları da bu sayede gider) ve uyarı satırındaki
+        // göreli yol. Silme İZNİ bunlardan DEĞİL, çözülen projelerden gelir (bkz. IsSafeOutputFolder).
+        var roots = new List<string> { root };
+        foreach (var external in workspace.Roots)
+        {
+            string searchRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(external.SearchRoot));
+            if (!roots.Contains(searchRoot, StringComparer.OrdinalIgnoreCase)) roots.Add(searchRoot);
+        }
+
+        var projectDirs = workspace.Scan.CsprojPaths
             .Select(p => Path.GetDirectoryName(Path.GetFullPath(p))!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList(); // tarama zaten sıralı → dedupe sonrası da deterministik
+            .ToList(); // birleşik tarama zaten sıralı → dedupe sonrası da deterministik
 
         // --- 1) ÖNCE state (bkz. sınıf doc'u): en kötü durum fazladan derleme olmalı, bayat çıktı DEĞİL.
-        int cleared = stateStore.RemoveUnderRoot(root);
+        // Defter anahtarı TAM csproj yoludur, yani ana kökün öneki harici kökü KAPSAMAZ: her kök ayrı süpürülür.
+        // Kayıtlı köklerin ALTINA düşmeyen projeler de kendi klasörleriyle süpürülür — bir harici kart <c>.sln</c>
+        // ise solution kendi klasörünün DIŞINDAKİ bir projeyi gösterebilir; kaydı kalsaydı bir sonraki Build onu
+        // "güncel" sayıp atlar ve silinmiş çıktıların üstüne yeşil bir koşu yazardı.
+        int cleared = roots.Sum(stateStore.RemoveUnderRoot)
+                      + projectDirs.Where(d => OwningRoot(roots, d) is null).Sum(stateStore.RemoveUnderRoot);
         emit(Info($"build state reset — {cleared} entries cleared, the next build compiles from scratch"));
 
         // --- 2) SONRA klasörler.
@@ -93,7 +117,7 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
             ct.ThrowIfCancellationRequested();
 
             (int foldersBefore, long bytesBefore, int lockedBefore) = (tally.FoldersRemoved, tally.BytesRemoved, tally.LockedFiles);
-            foreach (string folder in new[] { "bin", "obj" }) RemoveOutputFolder(Path.Combine(dir, folder), root, tally);
+            foreach (string folder in new[] { "bin", "obj" }) RemoveOutputFolder(Path.Combine(dir, folder), dir, tally);
 
             long bytes = tally.BytesRemoved - bytesBefore;
             int folders = tally.FoldersRemoved - foldersBefore;
@@ -101,7 +125,7 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
             string name = Path.GetFileName(dir);
 
             if (folders > 0) emit(Dim($"{name} — bin + obj removed ({FormatBytes(bytes)})"));
-            if (locked > 0) emit(Warn($"warning: {locked} files in use under {Relative(root, dir)} — skipped"));
+            if (locked > 0) emit(Warn($"warning: {locked} files in use under {Relative(roots, dir)} — skipped"));
         }
 
         // --- 3) Tek bitiş özeti.
@@ -116,24 +140,44 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
     /// <summary>Tek bir <c>bin</c>/<c>obj</c> klasörünü siler. Klasör yoksa sessizce geçilir (hata değildir).
     /// Klasör silme sayacına yalnız GERÇEKTEN yok olan klasör yazılır — kilitli bir dosya kalmışsa klasör de
     /// kalır ve sayılmaz.</summary>
-    private void RemoveOutputFolder(string folder, string root, Tally tally)
+    private void RemoveOutputFolder(string folder, string projectDir, Tally tally)
     {
         if (!Directory.Exists(folder)) return;
-        if (!IsSafeOutputFolder(folder, root)) return; // defense in depth: kök dışı ya da bin/obj olmayan yol ASLA silinmez
+        if (!IsSafeOutputFolder(folder, projectDir)) return; // defense in depth: başka hiçbir yol ASLA silinmez
 
         DeleteTree(folder, tally);
         if (!Directory.Exists(folder)) tally.FoldersRemoved++;
     }
 
-    /// <summary>[güvenlik] Silinecek yol kökün ALTINDA olmalı ve son segmenti <c>bin</c>/<c>obj</c> olmalı.
-    /// Çağıran zaten bunu kurar; bu kapı, ileride bir yeniden düzenlemenin sessizce kökün dışına silme
-    /// taşımasını engeller.</summary>
-    private static bool IsSafeOutputFolder(string folder, string root)
+    /// <summary>
+    /// [güvenlik] Silinecek yol, ÇÖZÜLEN bir projenin klasörünün HEMEN altında olmalı ve adı <c>bin</c>/<c>obj</c>
+    /// olmalı. İzin böylece tek bir yerden gelir: bu çalışma alanının derlediği proje kümesi. Harici projeler de
+    /// o kümededir (sıradan projelerdir), kartı verilmemiş bir dizin ise hiç taranmadığı için kümeye giremez.
+    ///
+    /// <para><b>Neden "kayıtlı kökün altında" DEĞİL:</b> o kural iki yönde de yanlış cevap veriyordu — kökün
+    /// altındaki ama hiçbir projeye ait OLMAYAN bir <c>bin</c>'i siliyor, bir harici <c>.sln</c>'in kendi
+    /// klasörü dışında listelediği projenin <c>bin</c>'ini ise silmiyordu. Proje klasörüne bağlamak ikisini de
+    /// çözer ve kapıyı ölçülebilir tutar.</para>
+    /// </summary>
+    private static bool IsSafeOutputFolder(string folder, string projectDir)
     {
         string full = Path.GetFullPath(folder);
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(full));
-        return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+        string? parent = Path.GetDirectoryName(full);
+        return parent is not null
+               && string.Equals(Path.TrimEndingDirectorySeparator(parent), Path.TrimEndingDirectorySeparator(projectDir),
+                                StringComparison.OrdinalIgnoreCase)
                && (name.Equals("bin", StringComparison.OrdinalIgnoreCase) || name.Equals("obj", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Verilen yolu İÇEREN izinli kök, yoksa <c>null</c>. Aynı soruyu güvenlik kapısı ve göreli yol
+    /// biçimleyici sorar — cevap TEK yerde durur.</summary>
+    private static string? OwningRoot(IReadOnlyList<string> roots, string fullPath)
+    {
+        foreach (string root in roots)
+            if (fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return root;
+        return null;
     }
 
     /// <summary>Bir ağacı dosya-dosya siler. Reparse point (junction/symlink) İZLENMEZ: yalnız bağlantının
@@ -190,10 +234,13 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
     }
 
-    private static string Relative(string root, string dir)
+    /// <summary>Uyarı satırının yol metni: dizini İÇEREN köke göre görelidir (harici bir projeyi ana köke göre
+    /// yazmak <c>..\..\</c> zinciri üretirdi).</summary>
+    private static string Relative(IReadOnlyList<string> roots, string dir)
     {
-        string relative = Path.GetRelativePath(root, dir);
-        return relative == "." ? Path.GetFileName(root) : relative;
+        string owner = OwningRoot(roots, dir) ?? roots[0];
+        string relative = Path.GetRelativePath(owner, dir);
+        return relative == "." ? Path.GetFileName(owner) : relative;
     }
 
     /// <summary>Kullanıcıya gösterilecek boyut metni. Projede insan-okur bayt biçimleyicisi YOKTU; TEK

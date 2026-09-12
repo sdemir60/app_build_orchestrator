@@ -43,6 +43,23 @@ public class CleanCommandTests
         Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<CleanWorkspaceCommand>()).RootPath);
     }
 
+    /// <summary>[harici projeler] Harici kartlar da gider: harici proje sıradan bir projedir ve onun çıktısı da
+    /// bu workspace'in çıktısıdır. Liste Sync/Build ile AYNI huniden (<c>ExternalProjectsForWire</c>) geçer —
+    /// ikinci bir kaynak açılmaz.</summary>
+    [Fact]
+    public async Task Clean_carries_the_registered_external_cards()
+    {
+        var vm = NewVm();
+        vm.ExternalProjects = [new ExternalProject(@"D:\ext\Shared", VcsKind.Git)];
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.CleanCommand.ExecuteAsync(null);
+
+        var cmd = Assert.Single(sent.OfType<CleanWorkspaceCommand>());
+        Assert.Equal(@"D:\ext\Shared", Assert.Single(cmd.ExternalProjects!).Path);
+    }
+
     // Clean bir "sıfırdan başla" anıdır: konsol önceki koşunun anlatısıyla karışmamalı. Sıfırlama bloğu
     // BeginRunAsync ile ORTAKTIR (kopya YASAK) — bu test o ortak yolun Clean'den de geçtiğini pinler.
     [Fact]
