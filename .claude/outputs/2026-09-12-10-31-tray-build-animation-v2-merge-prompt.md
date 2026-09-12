@@ -41,8 +41,9 @@ Bu iş artık `main`'e merge edilecek. Şu sırayla yürüt:
    dotnet build BuildOrchestrator.slnx
    dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"
    ```
-   Bu branch'te süit HİÇ koşulmadı (worktree'de yalnız derlendi) — kırmızı çıkması sürpriz değildir; kırmızı
-   varsa merge etme, bana raporla. Uygulama açıksa kapat — çalışan Supervisor kendi binary'lerini kilitler.
+   Süit bu branch'te bir kez yeşil görüldü (2026-09-12, worktree — v2 kaydının "Doğrulama" bölümü); `main`
+   ilerlediyse ya da branch'e dokunulduysa yeniden koş. Kırmızı varsa merge etme, bana raporla. Uygulama
+   açıksa kapat — çalışan Supervisor kendi binary'lerini kilitler.
 4. **Task 6 — gözle doğrulama.** Orijinal merge promptundaki on senaryoyu benimle birlikte koş: uygulamayı
    sen başlat, senaryoyu söyle, ben bakarım. Bu adım yapılmadan merge yok.
 5. **Doküman kontrolü.** ARCHITECTURE §12.2, §12.3, §14.4, §14.5, §22 ve README'nin ilgili paragrafı kodla

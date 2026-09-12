@@ -14,7 +14,7 @@
 | **Branch** | `feat/tray-build-animation-v2` — `origin`'e push EDİLDİ |
 | **Taban** | `main` @ `a0b0ae5` |
 | **Eski branch** | `feat/tray-build-animation` — DOKUNULMADI; v2 merge edilince `git branch -D` ile silinebilir |
-| **Durum** | Derleniyor (0 hata); **tam süit KOŞULMADI**, **Task 6 gözle doğrulama YAPILMADI** — ikisi de kullanıcı kararıyla ana projede yapılacak |
+| **Durum** | Tam süit worktree'de YEŞİL (bkz. Doğrulama); **Task 6 gözle doğrulama YAPILMADI**, **merge EDİLMEDİ** — ikisine kullanıcıyla birlikte karar verilecek |
 
 ---
 
@@ -25,8 +25,8 @@ sırasıyla güncel `main` üzerine taşındı. Eski branch'in tepesindeki üç 
 `a74720c`) BİLEREK alınmadı: başka bir oturumun yanlışlıkla bu branch'e yazdığı clean/optimize kayıtlarıydı ve
 dokundukları dosyalar `main`'dekiyle birebir aynı içerikteydi (`git diff` boş) — taşınacak bir şey yoktu.
 
-İş sabit worktree'de (`app_build_orchestrator-ai`) yapıldı. Ana projede başka bir iş sürdüğü için süit
-koşulmadı — kullanıcı talimatı; derleme worktree'de alındı.
+İş sabit worktree'de (`app_build_orchestrator-ai`) yapıldı. Ana projede başka bir iş sürdüğü için derleme de
+süit de worktree'de koşuldu; ana projenin çalışma ağacına dokunulmadı.
 
 ## Commit'ler (task → commit → not)
 
@@ -61,9 +61,9 @@ koşulmadı — kullanıcı talimatı; derleme worktree'de alındı.
 
 Plandan sapma listesi orijinal kayıttaki S-1…S-7 ile aynıdır; bu taşıma yeni sapma getirmedi.
 
-## Statik doğrulama (süit koşulmadan yapılabilenler)
+## Statik doğrulama (süitten önce)
 
-`main`'e bu arada gelen ya da değişen kaynak-tarayan guard'lar kural kural okundu:
+Süit koşulmadan önce `main`'e bu arada gelen ya da değişen kaynak-tarayan guard'lar kural kural okundu:
 
 | Guard | Kural | Sonuç |
 |---|---|---|
@@ -80,15 +80,23 @@ Ayrıca: test projesinde ad çakışması yok (`FakeMotionSettings` main'in; tra
 nested); değişiklik yüzeyi yalnız `src/BuildOrchestrator.App`, `tests`, `ARCHITECTURE.md`, `README.md` —
 Core/Supervisor/Contracts'ta sıfır dosya.
 
-**Bunlar derleme ve okuma kanıtıdır, koşu kanıtı değil.** Realize testleri (STA), `NoHardcodedMotionTests`'in
-istisna-bayatlama testi ve `AppMarkTests`'in ölçüm pini ancak süitte görülür.
+Okuma, süitin sonucunu doğru öngördü: hiçbir guard kırmızı vermedi.
 
-## Açık kalanlar (ana projede, kullanıcı onayıyla)
+## Doğrulama
 
-1. **Tam süit:** `dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"`
-   — uygulama kapalıyken.
-2. **Task 6 — gözle doğrulama:** on senaryo orijinal merge promptunda. Hiç yapılmadı; per-pixel geçirgenlik,
-   bitiş ritmi ve reduced-motion karesi ancak gerçek HWND'de görülür.
+- **Tam süit (`Category!=Acceptance`, worktree, 2026-09-12):** Başarısız 0 · Başarılı 2643 · Atlanan 1 ·
+  Toplam 2644 · 2 dk 57 s. İlk geçişte yeşil, yeniden koşu gerekmedi. Atlanan
+  `DragReorderTests.Reorder_uses_mouse_capture_…` — ortam kaynaklı bilinen skip (clean-v2 kaydındakiyle aynı).
+  `Category=Acceptance` süiti koşulmadı.
+- **Derleme:** 0 hata; altı uyarı, hepsi bu branch'in dokunmadığı eski test dosyalarında.
+
+## Açık kalanlar (kullanıcıyla birlikte)
+
+1. **Task 6 — gözle doğrulama:** on senaryo orijinal merge promptunda. Hiç yapılmadı; per-pixel geçirgenlik,
+   bitiş ritmi ve reduced-motion karesi ancak gerçek HWND'de görülür. Uygulama worktree'den başlatılabilir
+   (`dotnet run --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj`); ana projeden açık bir
+   instance varsa önce kapatılmalı (single-instance kapısı).
+2. **Merge kararı** ve `feat/clean-button-engine-v2` ile sıra.
 
 ## `feat/clean-button-engine-v2` ile çakışma yüzeyi
 
