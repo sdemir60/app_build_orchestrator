@@ -19,10 +19,9 @@ namespace BuildOrchestrator.App.Views;
 /// <para><b>Etiket YOK:</b> üç etiketli düğme barı 1240px minimumda taşırıyor ve Build split-button'ı
 /// eziyordu — anlamı tooltip taşır (<see cref="AccessibilityNames"/>).</para>
 ///
-/// <para><b>Optimize pasif (karar 2026-08-13):</b> arka ucu henüz yazılmadı. Düğme tasarımdaki yerinde durur,
-/// kalıcı olarak disabled'dır ve tooltip nedeni söyler — basılıp hiçbir şey olmaması yokluğu sessizce
-/// gizlemekten daha kötü olurdu. <b>Clean ve Resolve</b> gerçek komutlara bağlıdır; enable hâllerinin TEK
-/// yazıcısı o komutların <c>CanExecute</c>'udur.</para>
+/// <para><b>Üçünün de motoru vardır</b> ve üçü de gerçek komutlara bağlıdır; enable hâllerinin TEK yazıcısı o
+/// komutların <c>CanExecute</c>'udur — kutu kendi enable hâlini YAZMAZ. Koşan işin düğmesi amber zemin +
+/// spinner olur (<see cref="RefreshBusy"/>).</para>
 /// </summary>
 public partial class MaintenanceBox : UserControl
 {
@@ -39,6 +38,7 @@ public partial class MaintenanceBox : UserControl
 
     // İşi koşarken ikonun YERİNE spinner konur; ikonlar burada saklanır ki iş bitince geri gelsinler.
     private Viewbox _cleanIcon = null!;
+    private Viewbox _optimizeIcon = null!;
     private Viewbox _resolveIconBox = null!;
 
     public MaintenanceBox()
@@ -71,7 +71,8 @@ public partial class MaintenanceBox : UserControl
         // kalsa da sayılar değişmiş olabilir — bkz. RunViewModel.Workspace.OnWorkspaceTopology).
         if (e.PropertyName is nameof(RunViewModel.HasCycles)) Refresh();
         // Koşan işin düğmesi amber + spinner olur; ikisi de VM'de bildirimli DURUMLARDIR (komut değil).
-        if (e.PropertyName is nameof(RunViewModel.CleanBusy) or nameof(RunViewModel.IsResolvingCycles))
+        if (e.PropertyName is nameof(RunViewModel.CleanBusy) or nameof(RunViewModel.OptimizeBusy)
+            or nameof(RunViewModel.IsResolvingCycles))
             RefreshBusy();
     }
 
@@ -80,7 +81,7 @@ public partial class MaintenanceBox : UserControl
         if (_built) return;
         _built = true;
         _cleanIcon = Compose(PART_Clean, "Icon.Eraser", AccessibilityNames.CleanButton);
-        Compose(PART_Optimize, "Icon.Gauge", AccessibilityNames.OptimizeButton);
+        _optimizeIcon = Compose(PART_Optimize, "Icon.Gauge", AccessibilityNames.OptimizeButton);
         _resolveIconBox = Compose(PART_Resolve, "Icon.Unlink", AccessibilityNames.ResolveCyclesButton);
         _resolveIcon = IconPathOf(_resolveIconBox);
 
@@ -92,11 +93,12 @@ public partial class MaintenanceBox : UserControl
         // kutu kendi enable hâlini YAZMAZ (Resolve ile aynı desen, iki yazıcı olmaz).
         PART_Clean.SetBinding(ButtonBase.CommandProperty, new Binding(nameof(RunViewModel.CleanCommand)));
 
-        // Optimize'ın arka ucu yok → kalıcı disabled. Tooltip'ler SABİT olduğu için bir kez yazılır; Refresh
-        // yalnız Resolve'unkini (sayılara bağlı) tazeler. Pasif kontrolde WPF tooltip'i varsayılan olarak
-        // göstermez — açıkça açılır, yoksa metin var ama kullanıcı hiç göremez. Clean'de de KORUNUR: düğme
-        // mid-run/mid-sync pasiftir ve nedeni ancak tooltip'ten okunur.
-        PART_Optimize.IsEnabled = false;
+        // [optimize] Optimize'ın da motoru var: aynı desen, ikinci bir enable yazıcısı yok.
+        PART_Optimize.SetBinding(ButtonBase.CommandProperty, new Binding(nameof(RunViewModel.OptimizeCommand)));
+
+        // Tooltip'ler SABİT olduğu için bir kez yazılır; Refresh yalnız Resolve'unkini (sayılara bağlı) tazeler.
+        // Pasif kontrolde WPF tooltip'i varsayılan olarak göstermez — açıkça açılır, yoksa metin var ama
+        // kullanıcı hiç göremez. İki bakım düğmesi de mid-run/mid-sync pasiftir ve nedeni ancak tooltip'ten okunur.
         foreach (var button in new[] { PART_Clean, PART_Optimize }) ToolTipService.SetShowOnDisabled(button, true);
         PART_Clean.ToolTip = AccessibilityNames.CleanTooltip;
         PART_Optimize.ToolTip = AccessibilityNames.OptimizeTooltip;
@@ -122,13 +124,14 @@ public partial class MaintenanceBox : UserControl
 
     /// <summary>
     /// [design — BuildApp.jsx:2619-2622/2639-2641] Koşan işin düğmesi DS'in <c>active</c> hâline geçer:
-    /// amber-soft zemin ve ikonun yerinde dönen spinner. Motoru olan iki düğme için geçerlidir; Optimize'ın
-    /// gösterecek bir işi yoktur.
+    /// amber-soft zemin ve ikonun yerinde dönen spinner. Kutunun ÜÇ düğmesi de kendi işini gösterir — koşan
+    /// iş nerede başladıysa orada görünür.
     /// </summary>
     private void RefreshBusy()
     {
         if (!_built) return;
         SetBusy(PART_Clean, _cleanIcon, _vm?.CleanBusy == true);
+        SetBusy(PART_Optimize, _optimizeIcon, _vm?.OptimizeBusy == true);
         SetBusy(PART_Resolve, _resolveIconBox, _vm?.IsResolvingCycles == true);
     }
 

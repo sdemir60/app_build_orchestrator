@@ -86,8 +86,8 @@ public class MaintenanceBoxTests
     /// <summary>
     /// [DEĞİŞEN KURAL — clean] Eski iddia: "Clean ve Optimize'ın arka ucu yok, İKİSİ de kalıcı disabled"
     /// (karar 2026-08-13). Clean'in motoru artık VAR (<c>cleanWorkspace</c>) — düğme gerçek komuta bağlıdır
-    /// ve enable'ı komutun <c>CanExecute</c>'undan gelir. Pin bu yüzden ikiye bölündü; Optimize'ınki aynen
-    /// aşağıdaki testte durur.
+    /// ve enable'ı komutun <c>CanExecute</c>'undan gelir. Pin bu yüzden ikiye bölündü; Optimize'ınki de
+    /// motoru yazılınca aynı şekilde yeniden yazıldı (bir sonraki test).
     /// <para>Repo kapısı KOMUTTADIR (ActionBar/Resolve deseni): kutu kendi enable hâlini yazmaz, iki yerden
     /// yazılan bir enable olmaz. ShowOnDisabled KORUNUR — düğme mid-run/mid-sync pasiftir ve kullanıcı
     /// NEDEN pasif olduğunu ancak tooltip'ten okuyabilir.</para></summary>
@@ -105,20 +105,43 @@ public class MaintenanceBoxTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[karar 2026-08-13] Optimize'ın ARKA UCU henüz yok: düğme tasarımdaki yerinde durur ama kalıcı
-    /// olarak pasiftir ve tooltip bunu açıkça söyler — basılıp hiçbir şey olmaması, yokluğu sessizce
-    /// gizlemekten daha kötü olurdu. Pasif kontrolde tooltip WPF'te varsayılan olarak GÖSTERİLMEZ; bu yüzden
-    /// ShowOnDisabled da pinlenir.</summary>
+    /// <summary>
+    /// [DEĞİŞEN KURAL — optimize] Eski iddia: "Optimize'ın arka ucu yok, düğme KALICI pasiftir ve tooltip
+    /// 'not available yet' der" (karar 2026-08-13). Motor yazıldı: düğme artık <c>OptimizeCommand</c>'e
+    /// bağlıdır ve enable'ı komutun <c>CanExecute</c>'undan gelir — kutu kendi enable hâlini YAZMAZ.
+    /// Tooltip de kapsamı anlatır; "rebuild the dependency index" vaadi DÜŞTÜ çünkü öyle bir adım yok.
+    /// <para>Pasif kontrolde tooltip WPF'te varsayılan olarak GÖSTERİLMEZ; düğme mid-run/mid-sync pasif
+    /// olacağı için ShowOnDisabled hâlâ pinlenir.</para>
+    /// </summary>
     [StaFact]
-    public void Optimize_stays_disabled_and_says_so_in_a_tooltip_that_shows_while_disabled()
+    public void Optimize_is_wired_to_the_optimize_command_and_its_tooltip_names_the_job()
     {
         var vm = NewVm();
         var (box, window) = Realize(vm);
 
-        Assert.False(box.OptimizeButton.IsEnabled);
-        Assert.Equal("Optimize — restore packages, prune the cache, rebuild the dependency index — not available yet",
+        Assert.Same(vm.OptimizeCommand, box.OptimizeButton.Command);
+        Assert.True(box.OptimizeButton.IsEnabled); // repo seçili + motor sağlıklı → açık
+        Assert.Equal("Optimize — restore missing NuGet packages, report references that restore cannot fix, "
+                     + "clean stale obj leftovers and prune dead cache entries",
                      box.OptimizeButton.ToolTip);
+        Assert.DoesNotContain("not available yet", (string)box.OptimizeButton.ToolTip, StringComparison.Ordinal);
         Assert.True(ToolTipService.GetShowOnDisabled(box.OptimizeButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[optimize] Düğmenin pasifliği komuttan gelir: repo yokken basılamaz, uçuşta bir Clean varken de.</summary>
+    [StaFact]
+    public void Optimize_is_disabled_without_a_repository_and_while_a_clean_is_in_flight()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var (box, window) = Realize(vm);
+        Assert.False(box.OptimizeButton.IsEnabled); // repo yok
+
+        vm.RootPath = @"D:\repo";
+        Assert.True(box.OptimizeButton.IsEnabled);
+
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+        Assert.False(box.OptimizeButton.IsEnabled);
         GC.KeepAlive(window);
     }
 
@@ -295,6 +318,34 @@ public class MaintenanceBoxTests
         Assert.IsType<Viewbox>(box.OptimizeButton.Content);
         Assert.NotSame(box.FindResource("Brush.AmberSoft"),
             BuildOrchestrator.App.Controls.DsTransition.GetAnimatedBackground(box.OptimizeButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — optimize] Kutunun doc'u eskiden "koşan iş amber olur, Optimize'ın gösterecek bir işi
+    /// YOKTUR" diyordu; motoru yazıldığına göre artık onun da işi var ve aynı kurala tabidir. Bu test
+    /// <see cref="Only_the_button_whose_work_runs_goes_amber"/>'in Optimize ayağıdır: koşan Optimize amber
+    /// yanar, komşuları sönük kalır.
+    /// </summary>
+    [StaFact]
+    public void The_optimize_button_spins_in_amber_while_its_own_work_runs()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+        Assert.IsType<Viewbox>(box.OptimizeButton.Content); // boşta: ikon
+
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+
+        Assert.IsType<BuildOrchestrator.App.Controls.BuildingSpinner>(box.OptimizeButton.Content);
+        Assert.Same(box.FindResource("Brush.AmberSoft"),
+            BuildOrchestrator.App.Controls.DsTransition.GetAnimatedBackground(box.OptimizeButton));
+        Assert.Equal(1d, box.OptimizeButton.Opacity); // koşan iş SÖNÜK görünmez
+        // Komşular sönük kalır.
+        Assert.IsType<Viewbox>(box.CleanButton.Content);
+        Assert.IsType<Viewbox>(box.ResolveButton.Content);
+
+        vm.OnEvent(new OptimizeCompletedEvent(ProjectCount: 1));
+        Assert.IsType<Viewbox>(box.OptimizeButton.Content); // iş bitti: ikon geri
         GC.KeepAlive(window);
     }
 }

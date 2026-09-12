@@ -35,8 +35,9 @@ public static class AccessibilityNames
     public const string OptimizeButton = "Optimize";
     public const string ResolveCyclesButton = "Resolve cycles";
 
-    /// <summary>[karar 2026-08-13] Optimize'ın arka ucu henüz yazılmadı; düğme tasarımdaki yerinde ama pasif
-    /// durur ve tooltip nedenini söyler.</summary>
+    /// <summary>[karar 2026-08-13] Arka ucu henüz yazılmamış bir yüzeyin tooltip eki: düğme/madde tasarımdaki
+    /// yerinde ama pasif durur ve neden orada olduğunu söyler. Bugün TEK kullanıcısı Build menüsünün
+    /// <see cref="CleanSolutionTooltip"/>'idir; bakım kutusunun üç düğmesinin de motoru vardır.</summary>
     private const string NotAvailableSuffix = " — not available yet";
 
     /// <summary>Clean'in KAPSAMINI söyler: ne silinir ve sonucu nedir. <c>/t:Clean</c> ve <c>artifacts/</c>
@@ -46,8 +47,12 @@ public static class AccessibilityNames
         CleanButton + " — remove every project's bin/ and obj/ and reset the build state; "
         + "the next build compiles everything from scratch";
 
+    /// <summary>Optimize'ın KAPSAMINI söyler: neyi onarır ve neyi raporlar. "rebuild the dependency index"
+    /// ibaresi YOKTUR — öyle bir adım yoktur, indeksi tazeleyen iş Sync'indir. Metin Clean'inkiyle aynı
+    /// kalıptadır (fiil + ne yapılır), çünkü ikisi de aynı kutuda yan yana okunur.</summary>
     public const string OptimizeTooltip =
-        OptimizeButton + " — restore packages, prune the cache, rebuild the dependency index" + NotAvailableSuffix;
+        OptimizeButton + " — restore missing NuGet packages, report references that restore cannot fix, "
+        + "clean stale obj leftovers and prune dead cache entries";
 
     // ---- Build menüsü: Clean Solution (design v1.11.0 §2.7-11) ----
     /// <summary>[design v1.11.0 §2.7-11] Build split-button menüsünün üçüncü maddesi. Bakım kutusundaki

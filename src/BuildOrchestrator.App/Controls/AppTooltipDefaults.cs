@@ -54,8 +54,8 @@ public static class AppTooltipDefaults
         // Fare ayrılana kadar açık: int.MaxValue = "sonsuz" (WPF varsayılanı 5 sn'de kapatırdı).
         ToolTipService.ShowDurationProperty.OverrideMetadata(
             typeof(FrameworkElement), new FrameworkPropertyMetadata(int.MaxValue));
-        // Devre dışı öğede de görünür: bakım kutusunun Clean/Optimize butonları tam olarak bunun için
-        // tooltip taşır ("not available yet") ve devre dışıdırlar.
+        // Devre dışı öğede de görünür: bakım kutusunun düğmeleri mid-run/mid-sync pasiftir ve NEDENİ ancak
+        // tooltip'ten okunur; Build menüsünün Clean Solution maddesi de arka ucu yazılana dek böyle durur.
         ToolTipService.ShowOnDisabledProperty.OverrideMetadata(
             typeof(FrameworkElement), new FrameworkPropertyMetadata(true));
     }
