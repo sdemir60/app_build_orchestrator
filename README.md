@@ -269,8 +269,12 @@ fills them in again. The console keeps the whole story. It is not the per-projec
 not the Build menu's *Clean*: no `msbuild /t:Clean` runs. Files held by a running application are skipped and
 reported rather than failing the Clean.
 
-*Optimize* — the gauge in the middle of the box — is part of the design but has no engine behind it, so it
-is disabled and its tooltip says so.
+*Optimize* — the gauge in the middle of the box — is the workspace doctor: it restores missing NuGet packages,
+names the broken references a restore cannot fix, clears stale NuGet leftovers out of `obj` and prunes dead
+cache entries, over the same projects a build sees, external roots included. It changes no build decision —
+nothing it does makes a project stale — so unlike *Clean* it leaves the project list and the graph standing and
+runs no *Sync* afterwards. Its own button turns amber with a spinner while it works, and the console carries
+the repair line by line.
 
 Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members compile
 one after another, then the whole set compiles again, until two rounds in a row come back clean, three rounds
@@ -408,8 +412,8 @@ survives a stray keypress.
 ### State on disk
 
 Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run
-and per-project logs), `build-state.json`, `evaluation-cache.json`, `ui-state.json` and the `worktrees\` pool
-(capped at 20 GiB with LRU pruning). Autostart, when enabled, writes to
+and per-project logs), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
+and the `worktrees\` pool (capped at 20 GiB with LRU pruning). Autostart, when enabled, writes to
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service.
 
 ## Performance modes

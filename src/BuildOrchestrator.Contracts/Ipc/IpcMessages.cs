@@ -375,7 +375,9 @@ public sealed record OptimizeProgressEvent(string Line, string Level) : IpcEvent
 /// bile buradan düşer.</param>
 /// <param name="RemovedTempFiles">Süpürülen öksüz <c>.tmp</c> artığı sayısı (üç defterin toplamı).</param>
 /// <param name="LockedFileCount">Kilitli olduğu için silinemeyen dosya sayısı — HATA DEĞİLDİR, akış sürer.</param>
-/// <param name="BytesReclaimed">TÜM silme adımlarının (obj artıkları + <c>.tmp</c>) topladığı bayt.</param>
+/// <param name="BytesReclaimed">Silinen stale <c>obj</c> artıklarının toplam boyutu. Öksüz <c>.tmp</c>
+/// süpürmesi buraya GİRMEZ: o dosyalar yarım kalmış yazımların kalıntısıdır ve boyutları kullanıcıya bir şey
+/// anlatmaz — orada anlamlı olan sayıdır (<paramref name="RemovedTempFiles"/>).</param>
 public sealed record OptimizeCompletedEvent(int ProjectCount = 0, int RestoredProjects = 0, int FailedRestores = 0,
     int UnresolvedReferences = 0, int StaleObjCleaned = 0, int PrunedStateEntries = 0, int PrunedCacheEntries = 0,
     int PrunedSourceHashEntries = 0, int RemovedTempFiles = 0, int LockedFileCount = 0,
