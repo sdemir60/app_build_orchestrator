@@ -50,7 +50,7 @@ public class CleanCommandTests
     public async Task Clean_carries_the_registered_external_cards()
     {
         var vm = NewVm();
-        vm.ExternalProjects = [new ExternalProject(@"D:\ext\Shared", VcsKind.Git)];
+        vm.ExternalProjects = [new ExternalProject(@"D:\ext\Shared")];
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
 

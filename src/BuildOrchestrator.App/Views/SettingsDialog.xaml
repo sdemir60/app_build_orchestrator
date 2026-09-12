@@ -4,7 +4,6 @@
              xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
              xmlns:app="clr-namespace:BuildOrchestrator.App"
-             xmlns:model="clr-namespace:BuildOrchestrator.Contracts.Model;assembly=BuildOrchestrator.Contracts"
              Visibility="Collapsed" Focusable="True">
   <!-- [D7/T66] İlk modal diyalog. Tam-kanama scrim (Brush.Scrim) uygulamayı kaplar; ortada 760px Ds.Dialog
        (Brush.SurfaceRaised — README §2.9'daki surface-overlay sapması burada KAYITLI, kod kazanır). Diyaloğun
@@ -90,7 +89,7 @@
 
             <!-- ============================ EXTERNAL PROJECTS (design v1.14.0 §9) ============================
                  Workspace ile Layers ARASINDA: kartlar kökü genişletir, katmanlar ise bulunanları gruplar —
-                 bölümün konumu bu ilişkiyi anlatır. Kart = yol (klasör / .sln / .csproj) + kaynak (Git / TFVC).
+                 bölümün konumu bu ilişkiyi anlatır. Kart = yol (klasör / .sln / .csproj).
                  Diyalog yolu TARAMAZ: liste Save'de UiState'e yazılır (SettingsDraftViewModel.CommitAsync) ve
                  her Sync/Build komutuyla motora gider; taranan projeler, adları ve çalışma kopyası kökü Core'da
                  her koşuda yeniden çözülür (ARCHITECTURE §10.6).
@@ -130,7 +129,7 @@
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
                        FontSize="{DynamicResource FontSize.Xs}"
                        Foreground="{DynamicResource Brush.TextDim}"><Run
-                       Text="Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. The working copy root is found from the path upwards. They are built " /><Run
+                       Text="Projects outside the repository root — a folder, a solution or a project file. The git working copy root is found from the path upwards. They are built " /><Run
                        Text="before" FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextSecondary}" /><Run
                        Text=" everything else; the rest follows the layers below. Card order only sets the order the working copies are updated — among themselves they build in dependency order." /></TextBlock>
 
@@ -152,7 +151,8 @@
                          Style="{DynamicResource Ds.Settings.EmptyStateText}" />
             </Grid>
 
-            <!-- Kolon başlıkları — yalnız harici proje varken. PROJECT PATH esnek + SOURCE 96px sağda (§9). -->
+            <!-- Kolon başlığı — yalnız harici proje varken. PROJECT PATH tam genişlik: kart artık bir kaynak
+                 (Git/TFVC) seçimi TAŞIMAZ, TFVC kolu kaldırıldı ve SOURCE kolonu da onunla birlikte kalktı. -->
             <Grid Margin="30,0,34,4">
               <Grid.Style>
                 <Style TargetType="Grid">
@@ -165,7 +165,6 @@
                 </Style>
               </Grid.Style>
               <TextBlock Text="PROJECT PATH" HorizontalAlignment="Left" Style="{DynamicResource Ds.Settings.CapsHeading}" />
-              <TextBlock Text="SOURCE" Width="96" HorizontalAlignment="Right" Style="{DynamicResource Ds.Settings.CapsHeading}" />
             </Grid>
 
             <!-- Harici proje kartları — sürüklenebilir. Katman kartıyla BİREBİR aynı Border stili/trigger'ı
@@ -204,14 +203,6 @@
                           </Canvas>
                         </Viewbox>
                       </Button>
-                      <!-- Source: 96px sabit, Ds.Select (DS Select'in WPF portu) — yalnız Git/TFVC, varsayılan Git. -->
-                      <ComboBox DockPanel.Dock="Right" Width="96" Margin="0,0,6,0" VerticalAlignment="Center"
-                                Style="{DynamicResource Ds.Select}" SelectedValuePath="Tag"
-                                AutomationProperties.Name="{x:Static app:AccessibilityNames.ExternalProjectSource}"
-                                SelectedValue="{Binding Vcs, UpdateSourceTrigger=PropertyChanged}">
-                        <ComboBoxItem Content="Git" Tag="{x:Static model:VcsKind.Git}" />
-                        <ComboBoxItem Content="TFVC" Tag="{x:Static model:VcsKind.Tfvc}" />
-                      </ComboBox>
                       <!-- Path inputu (mono, esnek) — katman kartındaki ad input'uyla AYNI x'te başlar (sıra
                            numarası YOK — denendi, kaldırıldı: sıra zaten kart sırası, §9). -->
                       <TextBox Margin="6,0,6,0" VerticalAlignment="Center"

@@ -38,22 +38,25 @@ public class ProjectModelsTests
     [Fact]
     public void ExternalProject_round_trips_through_ipc_json()
     {
-        var external = new ExternalProject(@"D:\ext\mail\Mail.sln", VcsKind.Tfvc);
+        // [DEĞİŞEN KURAL] Kart eskiden bir `vcs` alanı da taşıyordu ("git"/"tfvc") ve ayrı bir test o metnin
+        // tel üzerinde METİN olarak gittiğini pinliyordu. TFVC kolu kaldırıldı: kartın taşıdığı tek şey yol.
+        var external = new ExternalProject(@"D:\ext\mail\Mail.sln");
         string json = JsonSerializer.Serialize(external, IpcJson.Options);
         Assert.Contains("\"path\":", json);   // camelCase
-        Assert.Contains("\"vcs\":\"tfvc\"", json); // enum METİN olarak
+        Assert.DoesNotContain("vcs", json);
         var back = JsonSerializer.Deserialize<ExternalProject>(json, IpcJson.Options)!;
         Assert.Equal(external, back);
     }
 
-    [Theory]
-    [InlineData(VcsKind.Git, "\"git\"")]
-    [InlineData(VcsKind.Tfvc, "\"tfvc\"")]
-    public void VcsKind_serializes_camelCase_text(VcsKind kind, string expected)
+    /// <summary>Eski bir NDJSON satırı / ayar dosyası hâlâ çözülür: tanınmayan <c>vcs</c> alanı YOK SAYILIR.
+    /// Bu, kullanıcının diskteki TFVC kartlı dosyasının uygulamayı düşürmemesinin garantisidir.</summary>
+    [Fact]
+    public void An_external_project_with_a_legacy_vcs_field_still_deserializes()
     {
-        // Tel üzerinde METİN taşınır: sonradan enum üyelerini yeniden sıralamak eski NDJSON satırlarının
-        // anlamını kaydıramaz.
-        Assert.Equal(expected, JsonSerializer.Serialize(kind, IpcJson.Options));
+        var back = JsonSerializer.Deserialize<ExternalProject>(
+            """{"path":"D:\\ext\\mail\\Mail.sln","vcs":"tfvc"}""", IpcJson.Options)!;
+
+        Assert.Equal(@"D:\ext\mail\Mail.sln", back.Path);
     }
 
     [Fact]

@@ -125,7 +125,7 @@ public sealed class SyncWorkspaceService(
         emit(Dim(PlanProgressLines.ReadingProjectItems(scan.CsprojPaths.Count)));
 
         var plan = new BuildPlanBuilder(scanner, evaluator, cache)
-            .Build(scan, cmd.Configuration, cmd.LayerPatterns, workspace.VcsByProjectId);
+            .Build(scan, cmd.Configuration, cmd.LayerPatterns, workspace.ExternalProjectIds);
         emit(Dim(PlanProgressLines.DependencyGraph(plan.Cycles.Count)));
         emit(Info(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count)));
 

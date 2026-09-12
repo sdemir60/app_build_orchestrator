@@ -48,8 +48,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
             var externals = new List<ExternalProject>();
             if (root.TryGetProperty("ExternalProjects", out var e) && e.ValueKind == JsonValueKind.Array)
                 foreach (var item in e.EnumerateArray())
-                    externals.Add(new ExternalProject(item.GetProperty("Path").GetString()!,
-                        (VcsKind)item.GetProperty("Vcs").GetInt32()));
+                    externals.Add(new ExternalProject(item.GetProperty("Path").GetString()!));
 
             var layers = new List<LayerPattern>();
             if (root.TryGetProperty("LayerPatterns", out var l) && l.ValueKind == JsonValueKind.Array)
@@ -82,7 +81,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
         var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(root), ui.Externals, scanner);
         var scan = workspace.Scan;
         var plan = new BuildPlanBuilder(scanner, evaluator, cache)
-            .Build(scan, ui.Configuration, ui.LayerPatterns, workspace.VcsByProjectId);
+            .Build(scan, ui.Configuration, ui.LayerPatterns, workspace.ExternalProjectIds);
         output.WriteLine(Inv($"- yapılandırma: {ui.Configuration} · harici kart: {ui.Externals.Count} · katman: {ui.LayerPatterns.Count}"));
         var evaluatedById = scan.CsprojPaths
             .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))

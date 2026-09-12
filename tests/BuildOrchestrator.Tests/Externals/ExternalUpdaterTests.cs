@@ -16,20 +16,23 @@ namespace BuildOrchestrator.Tests.Externals;
 /// [D5] Build'in ilk adımı: harici çalışma kopyalarını kendi sürüm kontrolünden güncelle. <b>Yalnız
 /// günceller</b> — "ne derlenecek" kararı taramadan sonra, sıradan incremental yoldan gelir.
 ///
-/// <para>Kir, ayrışma ve bozuk kurulum koşuyu HİÇ BAŞLATMADAN durdurur; ağ hatası yalnız uyarır ve yerel
+/// <para>Kir, ayrışma ve detached HEAD koşuyu HİÇ BAŞLATMADAN durdurur; ağ hatası yalnız uyarır ve yerel
 /// sürümle devam edilir (ana repo degraded fetch ile aynı felsefe).</para>
+///
+/// <para><b>Eski iddia:</b> iki test TFVC kolunu pinliyordu — "Team Explorer kurulu değilse koşu yönlendirmeyle
+/// durur" ve "tf.exe YALNIZ bir TFVC kartı varken çözülür". TFVC kolu tümden kaldırıldı (kullanıcı kararı);
+/// güncelleyicinin artık bir <c>tfResolver</c> parametresi de yok, dolayısıyla iki iddianın da konusu kalmadı.</para>
 /// </summary>
 public class ExternalUpdaterTests
 {
     private readonly List<string> _progress = [];
 
-    private ExternalUpdater Updater(Func<CancellationToken, Task<string>>? tfResolver = null)
-        => new(new ProcessRunner(), tfResolver);
+    private static ExternalUpdater Updater() => new(new ProcessRunner());
 
     private Task<IReadOnlyDictionary<string, string>> UpdateAsync(ExternalUpdater updater, params ExternalProject[] externals)
         => updater.UpdateAsync(externals, _progress.Add);
 
-    private static ExternalProject GitAt(string path) => new(path, VcsKind.Git);
+    private static ExternalProject GitAt(string path) => new(path);
 
     // ---------------------------------------------------------------- kapı: koşacak mı
 
@@ -142,35 +145,6 @@ public class ExternalUpdaterTests
         await UpdateAsync(Updater(), GitAt(missing));
 
         Assert.Contains(_progress, l => l.Contains("no git working copy found", StringComparison.Ordinal));
-    }
-
-    // ---------------------------------------------------------------- TFVC
-
-    [Fact]
-    public async Task A_tfvc_card_without_team_explorer_stops_the_run_with_guidance()
-    {
-        using var temp = new TempDir();
-        Directory.CreateDirectory(Path.Combine(temp.Path, "$tf"));
-
-        var ex = await Assert.ThrowsAsync<ExternalPreparationException>(() => UpdateAsync(
-            Updater(_ => throw new TfResolveException("TF.exe was not found — install Team Explorer.")),
-            new ExternalProject(temp.Path, VcsKind.Tfvc)));
-
-        Assert.Contains("Team Explorer", ex.Message);
-    }
-
-    [Fact]
-    public async Task The_tf_executable_is_resolved_only_when_a_tfvc_card_is_present()
-    {
-        using var upstream = new GitTestRepo();
-        upstream.WriteFile("a.cs", "one");
-        upstream.CommitAll("first");
-        string clone = upstream.CloneFull();
-        bool resolved = false;
-
-        await UpdateAsync(Updater(_ => { resolved = true; return Task.FromResult(@"C:\TF.exe"); }), GitAt(clone));
-
-        Assert.False(resolved);
     }
 
     // ---------------------------------------------------------------- revizyon: hangi sürüm derleniyor

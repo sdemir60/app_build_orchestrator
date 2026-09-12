@@ -34,24 +34,21 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
     public bool RegexInvalid => !LayerEngine.IsPatternCompilable(Regex);
 }
 
-/// <summary>[K5] Settings diyaloğundaki EXTERNAL PROJECTS editörünün tek satırı — düzenlenebilir yol + sürüm
-/// kontrol seçimi. <see cref="IDragReorderItem"/>: katman kartıyla AYNI sürükle-bırak mekanizmasını paylaşır
+/// <summary>[K5] Settings diyaloğundaki EXTERNAL PROJECTS editörünün tek satırı — düzenlenebilir bir yol.
+/// <para>[DEĞİŞEN KURAL] Satır eskiden bir kaynak (Git/TFVC) seçimi de taşıyordu; TFVC kolu kaldırıldığı için
+/// seçim yüzeyi de kalktı (bkz. <see cref="ExternalProject"/>).</para>
+/// <see cref="IDragReorderItem"/>: katman kartıyla AYNI sürükle-bırak mekanizmasını paylaşır
 /// (<see cref="DragReorderBehavior"/> öğe tipini bilmeden bu bayrağı set eder) — katman listesinden BAĞIMSIZ
 /// sıralanır (ayrı <see cref="SettingsDraftViewModel.Externals"/> koleksiyonu, ayrı sürükleme oturumu).</summary>
 public sealed partial class ExternalRowViewModel : ObservableObject, IDragReorderItem
 {
     [ObservableProperty] private string _path;
-    [ObservableProperty] private VcsKind _vcs;
 
     /// <summary>[D7 deseninin eşi] Sürüklenen kart mı — kart şablonu zemin/kenarı bundan sürer (Layer kartıyla
     /// AYNI paylaşılan <c>Ds.Settings.Card</c> stili/trigger'ı, kopya YOK).</summary>
     [ObservableProperty] private bool _isDragging;
 
-    public ExternalRowViewModel(string path, VcsKind vcs)
-    {
-        _path = path;
-        _vcs = vcs;
-    }
+    public ExternalRowViewModel(string path) => _path = path;
 }
 
 /// <summary>
@@ -102,7 +99,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
         if (initialExternals is { Count: > 0 })
             foreach (var e in initialExternals)
-                AddExternalRow(new ExternalRowViewModel(e.Path, e.Vcs));
+                AddExternalRow(new ExternalRowViewModel(e.Path));
     }
 
     /// <summary>[design v1.8.0 §2.9 · K5] Save ÜÇ koşulda bloklanır: (a) bir katmanın adı BOŞ (trim sonrası) ya
@@ -151,7 +148,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         {
             for (int i = Externals.Count - 1; i >= 0; i--) RemoveExternal(Externals[i]);
             foreach (var ext in externals)
-                AddExternalRow(new ExternalRowViewModel(ext.Path, VcsKinds.Parse(ext.Vcs)));
+                AddExternalRow(new ExternalRowViewModel(ext.Path));
         }
 
         // [design v1.15.0] Bayrak dosyada YOKSA (eski/yalnız-katman dosyası) taslaktaki değer KORUNUR — harici
@@ -180,8 +177,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     public void RemoveLayer(LayerRowViewModel row) => Layers.Remove(row);
 
-    /// <summary>[K5] "Add external project": boş path'li, Git kaynaklı bir kart ekler (§9 v1.14.0 birebir).</summary>
-    public void AddExternal() => AddExternalRow(new ExternalRowViewModel("", VcsKind.Git));
+    /// <summary>[K5] "Add external project": boş path'li bir kart ekler (§9 v1.14.0 birebir).</summary>
+    public void AddExternal() => AddExternalRow(new ExternalRowViewModel(""));
 
     public void RemoveExternal(ExternalRowViewModel row) => Externals.Remove(row);
 
@@ -195,7 +192,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// YASAK). Save'e kadar zaten <see cref="CanSave"/> boş path bırakmaz; filtre Export'un kendi güvenlik
     /// ağıdır (Export, CanSave'e bakmadan her zaman etkindir).</summary>
     public IReadOnlyList<ExternalProject> BuildExternals() =>
-        [.. Externals.Select(x => new ExternalProject(x.Path.Trim(), x.Vcs)).Where(x => x.Path.Length > 0)];
+        [.. Externals.Select(x => new ExternalProject(x.Path.Trim())).Where(x => x.Path.Length > 0)];
 
     /// <summary>Kaydet (commit): taslağı <see cref="UiState.LayerPatterns"/> VE <see cref="UiState.ExternalProjects"/>'e
     /// (K5) AYNI commit'te persist eder ve TEK yoldan uygular — <see cref="RunViewModel.ApplySettingsAsync"/>

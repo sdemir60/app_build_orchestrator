@@ -295,8 +295,8 @@ from the perf name but never recomputes the worker count, which the App has alre
 table.
 
 Both `startRun` and `syncWorkspace` carry the **external root list** (§10.6) — the roots the user listed in
-Settings. Each entry is exactly what a Settings card holds: a path — a folder, a solution or a project file —
-and the source the user picked, Git or TFVC. Everything else about a root (which projects it contains, their
+Settings. Each entry is exactly what a Settings card holds: a path — a folder, a solution or a project file.
+Everything else about a root (which projects it contains, their
 names, the working-copy root above them) is resolved from that path on every run and therefore can never go
 stale. The field is last and defaults to null, so lines written before external roots existed still parse; the
 App sends null rather than an empty list, so a setup without them writes the same line it always did.
@@ -529,7 +529,7 @@ input lists never matters (they are sorted `OrdinalIgnoreCase` internally). Ever
 (a path, a project id) is itself hashed before being concatenated, so a separator character inside a path
 cannot make two different input sets collapse to the same pre-hash string.
 
-**Version control is not part of the decision.** Neither git nor TFVC is consulted to decide what to build:
+**Version control is not part of the decision.** git is never consulted to decide what to build:
 the repository's own projects, projects contributed by external roots (§10.6) and a folder under no version
 control at all take the same path. A repository with no commits, or a machine where git is broken, still gets
 a complete answer.
@@ -660,8 +660,8 @@ frozen upstream baseline — a signature that was never built would be taken for
 external root (§10.6) has the same record under the same key shape, and its built-commit slot means the same
 thing — except that the revision written there is **its own** working copy's, not the repository's, because
 the repository's HEAD describes a different repository. The last-branch slot stays empty for the same reason,
-and so does the commit when the revision cannot be read without going to the network (a TFVC root whose update
-was switched off, §10.6). None of these fields feeds a decision: the built commit is diagnostic, and the
+and so does the commit when the working copy has no readable revision at all (§10.6). None of these fields
+feeds a decision: the built commit is diagnostic, and the
 project log's "last successful build" line is the only place a revision is shown. It is written by
 a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every project
 completes. Readers open with `FileShare.Delete` so they cannot block the writer's rename, and a transient
@@ -1231,25 +1231,29 @@ paths, separators and `..` for any name that will become a directory segment.
 ### 10.6 External roots
 
 Some projects an OSYS build depends on live **outside** the repository root — customer-specific components
-kept in their own git repositories or TFVC workspaces. The user lists them in Settings; every Sync scans them
+kept in their own git repositories. The user lists them in Settings; every Sync scans them
 into the same graph as the repository's own projects, and every Build updates their working copies before
 compiling.
 
-**A card is a path and a source.** The path may be a folder, a `.sln` or a `.csproj`. A folder is scanned
-recursively exactly the way the repository root is; a solution contributes only the projects it lists, because
-scanning its folder would drag in siblings it deliberately excludes; a project file contributes itself. The
-source is the user's choice, Git or TFVC, and is never detected. Anything that resolves to no project at all —
+**A card is a path.** The path may be a folder, a `.sln` or a `.csproj`. A folder is scanned recursively
+exactly the way the repository root is; a solution contributes only the projects it lists, because scanning
+its folder would drag in siblings it deliberately excludes; a project file contributes itself. Anything that
+resolves to no project at all —
 a path that is gone, an empty folder, a file that is neither — is reported: Sync warns and carries on, Build
 refuses to start. Letting a configured root silently vanish would produce a green build linked against
 whatever stale DLLs were lying around.
 
 **Everything else is derived, nothing is stored.** The project set, the display names and the working-copy
 root are resolved from the path on every run, so moving a project or recreating its working copy needs no
-settings change. The working-copy root is found by walking up from the path to the first marker of the
-*selected* kind — `.git` (a directory in a normal clone, a file in a linked worktree) for Git, `$tf` for a
-TFVC local workspace. Only that kind is looked for, so a `$tf` workspace nested inside a git clone reads as
-TFVC when the user said TFVC and as part of the clone when they said Git. If no working copy of that kind sits
-above the path, the projects are still built — after a warning naming the kind that was looked for.
+settings change. The working-copy root is found by walking up from the path to the first `.git` — a directory
+in a normal clone, a file in a linked worktree — so the nearest clone wins when clones are nested. If no
+working copy sits above the path, the projects are still built, after a warning saying so.
+
+**git is the only source, and the card does not ask.** There is no source picker, because a second
+version-control arm cost the user a decision on every card while depending on a Visual Studio component the
+build itself does not need, and on any working copy without local metadata on disk it silently did nothing —
+a picker promising an update that could not happen. A `vcs` key in a settings file or in persisted UI state
+is read and ignored, so a file written by an older version still loads; its cards are ordinary git cards.
 
 **Once scanned, an external project is an ordinary project** in everything that matters to the engine: the
 same scheduler, the same parallelism, the same MSBuild argument contract, the same incremental decision, and a
@@ -1268,7 +1272,7 @@ the whole run when one failed. That phase is gone: with real edges the graph enf
 a failure now costs only the projects that actually depend on it.
 
 **Updating is a separate step, and optional.** Before anything is scanned, each external working copy is
-brought up to date: `fetch` + `merge --ff-only` for git, `tf vc get` for TFVC. It runs first because a
+brought up to date with `fetch` + `merge --ff-only`. It runs first because a
 fast-forward can bring new project files that the scan must see, and before the worktree is prepared because a
 run that a dirty external will cancel should not pay for a worktree. `pull` is never used: it would produce a
 merge commit or a rebase depending on configuration, and either one rewrites the user's repository on the
@@ -1284,31 +1288,25 @@ compiled exactly as it stands, the same way the repository's own working copy al
 the step for the same reason — it repairs strongly connected components and has no business moving anyone's
 source.
 
-`tf.exe` is resolved through the same `vswhere` search that finds `MSBuild.exe`, lazily and only when a TFVC
-card is actually present, so git-only users never need Team Explorer. No decision reads localized tool output:
-pending changes come from the XML structure of `tf vc status` and failures from exit codes.
-
 Two error classes are kept apart. Something the user has to resolve — a path that resolves to no project,
-uncommitted changes, a diverged branch, a detached HEAD, a missing `tf.exe` — **cancels the run before it
-starts**; a half-finished run helps nobody. A transient network or credential failure only warns and the local
+uncommitted changes, a diverged branch, a detached HEAD — **cancels the run before it starts**; a half-finished run helps nobody. A transient network or credential failure only warns and the local
 version is built, which is the same posture the repository's degraded fetch takes.
 
 **Sync only looks.** It runs no version-control command against an external root whatsoever — it scans files,
 and that is all. This is what keeps Sync fast and offline-tolerant, and it is why the dirty gate lives in
 Build, where the user has already decided to compile.
 
-**Each root's revision is read where reading it is free.** For a git root that is a local `rev-parse HEAD`,
-so it happens at plan time whether or not updates are on. TFVC has no local equivalent — its history query
-goes to the server — so a TFVC root's changeset is read in exactly one place: immediately after `tf vc get`,
-while the tool is on the network anyway. With updates off, a TFVC root simply has no revision. When an update
-does run, the console says where the copy landed: `Updated external 'DoganTrend' → a1b2c3d` (a short sha for
-git, a `C`-prefixed changeset for TFVC). A failure to read is never fatal: the revision is diagnostic, no
+**Each root's revision is read where reading it is free.** `rev-parse HEAD` is local, so it happens at plan
+time whether or not updates are on; a root with no working copy above it simply has no revision. When an
+update does run, the console says where the copy landed: `Updated external 'DoganTrend' → a1b2c3d`, and that
+reading — taken right after the fast-forward — is preferred over the plan-time one. A failure to read is
+never fatal: the revision is diagnostic, no
 decision depends on it, and rows do not display it — they display the decision (§13.2).
 
 The incremental decision needs no special case at all. Since the signature is hashed from file content on disk
 (§7.1), an external project and a repository project take the identical path: same input set, same hash
 primitive, same separators, same comparison against `build-state.json`. Uncommitted work in an external copy is
-captured naturally, and the answer does not depend on whether git or TFVC (or neither) is behind the folder.
+captured naturally, and the answer does not depend on whether a git clone is behind the folder at all.
 
 ### 10.7 Distance from the remote, and the one pull
 
@@ -1874,7 +1872,7 @@ stays disabled while it is empty. Then a hairline, then **EXTERNAL PROJECTS**, t
 
 **External projects** sit between Workspace and Layers on purpose: they are meant to build *before* everything
 the repository root discovers, so the section's position tells that story before any card does. A card is a
-path — a folder, a solution or a project file — and a source, Git or TFVC, picked from a two-item `Ds.Select`
+path — a folder, a solution or a project file — in a full-width mono input
 (the design system's `<select>`, ported to a `ComboBox` template since the app had no combo-box style before
 this). Cards share the layer card's shell byte-for-byte — same 36 px height, same border and radius, same
 raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two lists reorder independently, each
@@ -2592,7 +2590,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
-| Select | A `ComboBox` template — the app's first, ported from the design system's `<select>` for the Settings dialog's external-project Source picker (Git/TFVC). Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
+| Select | A `ComboBox` template, ported from the design system's `<select>`. It is the library's one component with no live consumer — external-project cards carry no source picker (§10.6) — and is kept so the port does not have to be redone. Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
@@ -3278,7 +3276,6 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
 | External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.6): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
-| `TF.exe` path | `vswhere` output, checked to exist on disk | argv element of the TFVC child process | none |
 
 Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
 manual string concatenation is prohibited — `UseShellExecute` is false everywhere, and neither `cmd.exe` nor
@@ -3451,7 +3448,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | `MSBuild.exe` resolution via `vswhere` | `Core/MsBuild/MsBuildResolver.cs` |
-| The `vswhere` search itself (shared by `MSBuild.exe` and `TF.exe`) | `Core/MsBuild/VsWhereLocator.cs` |
+| The `vswhere` search itself | `Core/MsBuild/VsWhereLocator.cs` |
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
 | Invocation, output pumping, per-project kill | `Core/MsBuild/MsBuildInvoker.cs` |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
@@ -3466,7 +3463,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | All read-only git invocations (HEAD, status, refs, distance, fetch) | `Core/Git/GitService.cs` |
 | The only mutating git surface: dirty gate → fetch → is-ancestor → `merge --ff-only` | `Core/Git/FastForwardUpdater.cs` |
-| Revision text shortening (git sha vs TFVC changeset) | `Core/Git/RevisionText.cs` |
+| Revision text shortening (only a full 40-hex sha is cut to 7) | `Core/Git/RevisionText.cs` |
 | The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
@@ -3483,10 +3480,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Path → scannable root (folder, `.sln` or `.csproj`) merged into one workspace | `Core/Externals/ExternalWorkspaceResolver.cs` |
 | Reserved layer name and index for external projects (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
-| Working-copy root discovery for the selected source (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
+| Working-copy root discovery (`.git` file or directory) | `Core/Externals/VcsDetector.cs` |
 | The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
 | Per-root revision read, spread over the projects it produced | `Core/Externals/ExternalRevisionReader.cs` |
-| TFVC surface: pending changes, get latest, current changeset | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
 
 **Process control and resource governance**
 

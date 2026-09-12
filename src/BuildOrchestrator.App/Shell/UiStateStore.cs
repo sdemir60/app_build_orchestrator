@@ -59,13 +59,17 @@ public sealed class UiState
     /// <c>List&lt;string&gt;</c> hiç var olmadı (PerfMode'daki gibi bir toleranslı converter GEREKMEZ).</para></summary>
     public List<LayerPattern> LayerPatterns { get; set; } = [];
 
-    /// <summary>[design v1.14.0 §9] Settings editörünün EXTERNAL PROJECTS listesi (yol + vcs) — Save'de
+    /// <summary>[design v1.14.0 §9] Settings editörünün EXTERNAL PROJECTS listesi (yalnız yol) — Save'de
     /// katmanlarla AYNI commit'te yazılır, startup'ta <see cref="ViewModels.RunViewModel.ExternalProjects"/>'e
     /// seed edilir ve her Sync/Build komutuyla motora gider. SIRA ANLAMLIDIR: build sırası tam olarak budur —
     /// <see cref="LayerPatterns"/>'ın deseniyle AYNI, ayrı bir <c>order</c> alanı yazılmaz.
     /// <para>Setter null'ı boş listeye çevirir: diskte açıkça <c>"ExternalProjects": null</c> yazan bir dosya
     /// (elle düzenleme, yarım yazım) aksi halde koleksiyonu null bırakır ve ilk okuma tüm yerleşimi
-    /// sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe.</para></summary>
+    /// sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe.</para>
+    /// <para><b>Şema göçü:</b> eleman eskiden bir <c>Vcs</c> alanı da taşıyordu (0=Git, 1=TFVC). TFVC kolu
+    /// kaldırıldı; alan artık YAZILMAZ ve eski dosyalarda görülürse okunurken SESSİZCE yok sayılır (System.Text.Json
+    /// varsayılanı: eşlenmeyen üye atlanır) — eski bir TFVC kartı sıradan bir git kartı olarak yüklenir ve
+    /// çalışma kopyası bulunamazsa uyarı satırıyla olduğu gibi derlenir.</para></summary>
     public List<ExternalProject> ExternalProjects
     {
         get => _externalProjects;
@@ -74,8 +78,8 @@ public sealed class UiState
 
     private List<ExternalProject> _externalProjects = [];
 
-    /// <summary>[design v1.14.0 §9] Build, harici çalışma kopyalarını derlemeden ÖNCE kendi sürüm
-    /// kontrolünden güncellesin mi.
+    /// <summary>[design v1.14.0 §9] Build, harici çalışma kopyalarını derlemeden ÖNCE kendi klonundan
+    /// güncellesin mi (ff-only).
     /// <para><b>Alan NULLABLE ve varsayılanı "güncelle"dir.</b> <c>bool</c> olsaydı diskteki açık bir
     /// <c>null</c> token'ı (elle düzenleme, yarım yazım) <see cref="JsonUiStateStore.Load"/>'u düşürür ve TÜM
     /// yerleşimi sıfırlardı — <see cref="LegacyTolerantStringConverter"/> ile aynı gerekçe. Ayrıca "hiç

@@ -147,11 +147,8 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [Harici projeler] Bir REVİZYON KİMLİĞİNİ kısaltır. Kısaltma yalnız gerçek bir git sha'sına (40 hex)
-    /// uygulanır; başka her değer olduğu gibi gösterilir.
-    ///
-    /// <para>Gerekçe: sha yuvası artık iki farklı sürüm kontrolünün kimliğini taşıyor. Bir TFVC changeset'i
-    /// (<c>C48213</c>) kırpılırsa anlamsız bir sayıya döner — 7 hane bir git alışkanlığıdır, evrensel bir
-    /// biçim değil.</para>
+    /// uygulanır; başka her değer (zaten kısaltılmış bir sha, bir etiket, bir kayıt boşluğu) olduğu gibi
+    /// gösterilir — 7 haneye kırpmak yalnız tam sha için anlamlıdır.
     /// </summary>
     internal static string ShortSha(string? revision) => Core.Git.RevisionText.Short(revision);
 

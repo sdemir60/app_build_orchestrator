@@ -94,19 +94,21 @@ public class ExternalSyncIntegrationTests
         string mail = WriteExternal(external.Path, "Mail");
 
         var topology = Topology(await RunSyncAsync(main, NewCacheRoot(),
-            new ExternalProject(external.Path, VcsKind.Git)));
+            new ExternalProject(external.Path)));
 
         var node = Assert.Single(topology.Nodes, n => n.Id == mail);
         Assert.Equal("Mail", node.Name);
-        Assert.Equal(VcsKind.Git, node.ExternalVcs);          // rozet: hangi kaynaktan geldiğini söyler
+        Assert.True(node.IsExternal);                         // rozet: harici bir kökten geldiğini söyler
         Assert.Equal(Core.Externals.ExternalProjectsConventions.LayerName, node.LayerName);
         Assert.Equal(Core.Externals.ExternalProjectsConventions.LayerIndex, node.LayerIndex);
         Assert.Equal(0, node.BuildOrder);                     // listenin ve grafın EN ÜSTÜ
-        Assert.Contains(topology.Nodes, n => n.Name == "A" && n.ExternalVcs is null);
+        Assert.Contains(topology.Nodes, n => n.Name == "A" && !n.IsExternal);
     }
 
+    /// <summary><b>Eski iddia:</b> rozet kullanıcının SEÇTİĞİ kaynağı (Git/TFVC) taşıyordu. TFVC kolu
+    /// kaldırıldı: rozet artık yalnız "harici mi" der.</summary>
     [Fact]
-    public async Task The_source_badge_is_the_one_the_user_picked()
+    public async Task Every_project_from_a_card_carries_the_external_badge()
     {
         using var main = new GitTestRepo();
         WriteWorkspace(main);
@@ -115,9 +117,9 @@ public class ExternalSyncIntegrationTests
         string ocr = WriteExternal(external.Path, "Ocr");
 
         var topology = Topology(await RunSyncAsync(main, NewCacheRoot(),
-            new ExternalProject(external.Path, VcsKind.Tfvc)));
+            new ExternalProject(external.Path)));
 
-        Assert.Equal(VcsKind.Tfvc, Assert.Single(topology.Nodes, n => n.Id == ocr).ExternalVcs);
+        Assert.True(Assert.Single(topology.Nodes, n => n.Id == ocr).IsExternal);
     }
 
     [Fact]
@@ -131,7 +133,7 @@ public class ExternalSyncIntegrationTests
         string mail = WriteExternal(external.Path, "Mail");
 
         var topology = Topology(await RunSyncAsync(main, NewCacheRoot(),
-            new ExternalProject(external.Path, VcsKind.Git)));
+            new ExternalProject(external.Path)));
 
         Assert.Equal(mail, topology.Nodes[0].Id);
     }
@@ -149,7 +151,7 @@ public class ExternalSyncIntegrationTests
         string mail = WriteExternal(external.Path, "Mail");
 
         var topology = Topology(await RunSyncAsync(main, NewCacheRoot(),
-            new ExternalProject(external.Path, VcsKind.Git)));
+            new ExternalProject(external.Path)));
 
         var consumer = Assert.Single(topology.Nodes, n => n.Name == "A");
         Assert.Equal([mail], consumer.Dependencies);
@@ -168,7 +170,7 @@ public class ExternalSyncIntegrationTests
         WriteExternal(external.Path, "Mail");
 
         var topology = Topology(await RunSyncAsync(main, NewCacheRoot(),
-            new ExternalProject(external.Path, VcsKind.Git)));
+            new ExternalProject(external.Path)));
 
         Assert.Equal(Enumerable.Range(0, topology.Nodes.Count), topology.Nodes.Select(n => n.BuildOrder));
     }
@@ -185,7 +187,7 @@ public class ExternalSyncIntegrationTests
         main.CommitAll("workspace");
         using var external = new TempDir();
         string mail = WriteExternal(external.Path, "Mail");
-        var card = new ExternalProject(external.Path, VcsKind.Git);
+        var card = new ExternalProject(external.Path);
 
         var first = await RunSyncAsync(main, NewCacheRoot(), card);
 
@@ -202,7 +204,7 @@ public class ExternalSyncIntegrationTests
         main.CommitAll("workspace");
         using var external = new TempDir();
         string mail = WriteExternal(external.Path, "Mail");
-        var card = new ExternalProject(external.Path, VcsKind.Git);
+        var card = new ExternalProject(external.Path);
         string cacheRoot = NewCacheRoot();
 
         // "Son derlemede" hangi imza yazıldıysa onu deftere koy → proje güncel görünmeli.
@@ -228,7 +230,7 @@ public class ExternalSyncIntegrationTests
         var cache = new EvaluationCache(Path.Combine(cacheRoot, "signature-probe.json"));
         var workspace = Core.Externals.ExternalWorkspaceResolver.Resolve(scan.Scan(main.RootPath), [card], scan);
         var plan = new Core.Planning.BuildPlanBuilder(scan, evaluator, cache)
-            .Build(workspace.Scan, "Debug", null, workspace.VcsByProjectId);
+            .Build(workspace.Scan, "Debug", null, workspace.ExternalProjectIds);
         var evaluated = workspace.Scan.CsprojPaths
             .Select(p => (Id: Path.GetFullPath(p), Project: cache.GetOrEvaluate(p, evaluator.Evaluate)))
             .Where(x => x.Project is not null)
@@ -251,7 +253,7 @@ public class ExternalSyncIntegrationTests
         using var main = new GitTestRepo();
         WriteWorkspace(main);
         main.CommitAll("workspace");
-        var missing = new ExternalProject(Path.Combine(Path.GetTempPath(), "DoganTrend-77aa"), VcsKind.Git);
+        var missing = new ExternalProject(Path.Combine(Path.GetTempPath(), "DoganTrend-77aa"));
 
         var events = await RunSyncAsync(main, NewCacheRoot(), missing);
 
@@ -273,7 +275,7 @@ public class ExternalSyncIntegrationTests
         using var external = new TempDir();
         WriteExternal(external.Path, "Mail");
 
-        var withExternal = await RunSyncAsync(main, NewCacheRoot(), new ExternalProject(external.Path, VcsKind.Git));
+        var withExternal = await RunSyncAsync(main, NewCacheRoot(), new ExternalProject(external.Path));
         var withoutExternal = await RunSyncAsync(main, NewCacheRoot());
 
         Assert.Equal(withoutExternal.OfType<SyncCompletedEvent>().Single().ProjectCount + 1,
@@ -294,6 +296,6 @@ public class ExternalSyncIntegrationTests
 
         Assert.Equal(ProgressLines(withNull), ProgressLines(withEmpty));
         Assert.Equal(Topology(withNull).Nodes.Count, Topology(withEmpty).Nodes.Count);
-        Assert.All(Topology(withNull).Nodes, n => Assert.Null(n.ExternalVcs));
+        Assert.All(Topology(withNull).Nodes, n => Assert.False(n.IsExternal));
     }
 }

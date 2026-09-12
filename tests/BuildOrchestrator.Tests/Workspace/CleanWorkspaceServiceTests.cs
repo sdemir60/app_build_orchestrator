@@ -90,7 +90,7 @@ public class CleanWorkspaceServiceTests : IDisposable
     {
         var events = new List<IpcEvent>();
         service.Run(
-            new CleanWorkspaceCommand(root, [.. cards.Select(c => new ExternalProject(c, VcsKind.Git))]),
+            new CleanWorkspaceCommand(root, [.. cards.Select(c => new ExternalProject(c))]),
             events.Add);
         return events;
     }

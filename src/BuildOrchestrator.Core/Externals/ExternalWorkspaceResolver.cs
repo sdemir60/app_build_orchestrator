@@ -4,7 +4,7 @@ using BuildOrchestrator.Core.Discovery;
 namespace BuildOrchestrator.Core.Externals;
 
 /// <summary>Taraması çözülmüş bir harici çalışma alanı kökü.</summary>
-/// <param name="Project">Ayarlar'daki kart (yol + kaynak).</param>
+/// <param name="Project">Ayarlar'daki kart (yalnız yol).</param>
 /// <param name="Name">Kullanıcıya görünen ad — yolun son parçası (uzantısız).</param>
 /// <param name="SearchRoot">Çalışma kopyası kökü aramasının başladığı dizin (bkz. <see cref="VcsDetector"/>).</param>
 /// <param name="Scan">Bu kökten bulunan projeler ve solution'lar.</param>
@@ -15,8 +15,10 @@ public sealed record ExternalRoot(ExternalProject Project, string Name, string S
 /// ve derlemenin gördüğü tek küme budur.
 /// </summary>
 /// <param name="Scan">Birleşik tarama — ana kök ve tüm harici kökler, tekilleştirilmiş ve sıralı.</param>
-/// <param name="VcsByProjectId">YALNIZ harici projelerin id → kaynak eşlemesi. İki iş yapar: düğüme basılan
-/// rozet ve "bu proje harici mi" sorusunun tek cevabı (imza kaynağı, obj izolasyonu kapısı).</param>
+/// <param name="ExternalProjectIds">YALNIZ harici köklerden gelen projelerin id kümesi. İki iş yapar: düğüme
+/// basılan rozet ve "bu proje harici mi" sorusunun tek cevabı (obj izolasyonu kapısı).
+/// <para>[DEĞİŞEN KURAL] Eskiden bu bir <c>id → VcsKind</c> haritasıydı; kart artık bir kaynak türü taşımıyor
+/// (yalnız git), dolayısıyla taşınacak DEĞER kalmadı — soru "harici mi"ye indi.</para></param>
 /// <param name="Roots">Çözülen kökler — build anındaki VCS güncellemesi bunları gezer.</param>
 /// <param name="Problems">Hiçbir projeye çözülemeyen kartlar. <b>Sync bunları uyarı olarak yazar ve devam
 /// eder; Build durur</b> — yapılandırılmış bir haricinin sessizce düşmesi, bayat DLL'e link'lenmiş yeşil bir
@@ -25,7 +27,7 @@ public sealed record ExternalRoot(ExternalProject Project, string Name, string S
 /// <see cref="ExternalPreparationException.NotScanned"/>.</param>
 public sealed record ExternalWorkspace(
     ScanResult Scan,
-    IReadOnlyDictionary<string, VcsKind> VcsByProjectId,
+    IReadOnlySet<string> ExternalProjectIds,
     IReadOnlyList<ExternalRoot> Roots,
     IReadOnlyList<ExternalScanProblem> Problems);
 
@@ -42,9 +44,8 @@ public sealed record ExternalScanProblem(ExternalProject Project, string Name, s
 /// bir KLASÖR (ana kök gibi recursive taranır), bir <c>.sln</c> (yalnız o solution'ın listelediği projeler —
 /// klasörü taramak solution dışı kardeşleri de içeri alırdı) ya da bir <c>.csproj</c> (tek proje).</para>
 ///
-/// <para><b>Hiçbir VCS komutu çalıştırmaz.</b> Kaynak (Git/TFVC) yalnız rozete ve build-anı güncelleme
-/// adımına gider; burada dosya sisteminden başka bir şeye dokunulmaz — Sync'in hızlı ve çevrimdışı-toleranslı
-/// kalması buna bağlıdır.</para>
+/// <para><b>Hiçbir git komutu çalıştırmaz.</b> Burada dosya sisteminden başka bir şeye dokunulmaz — Sync'in
+/// hızlı ve çevrimdışı-toleranslı kalması buna bağlıdır; güncelleme build anının ilk adımıdır.</para>
 /// </summary>
 public static class ExternalWorkspaceResolver
 {
@@ -59,11 +60,11 @@ public static class ExternalWorkspaceResolver
         ArgumentNullException.ThrowIfNull(scanner);
 
         if (externals is not { Count: > 0 })
-            return new ExternalWorkspace(mainScan, EmptyVcsMap(), [], []);
+            return new ExternalWorkspace(mainScan, EmptyIdSet(), [], []);
 
         var roots = new List<ExternalRoot>();
         var problems = new List<ExternalScanProblem>();
-        var vcsByProjectId = new Dictionary<string, VcsKind>(StringComparer.OrdinalIgnoreCase);
+        var externalProjectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var csproj = new List<string>(mainScan.CsprojPaths);
         var sln = new List<string>(mainScan.SlnPaths);
 
@@ -81,15 +82,13 @@ public static class ExternalWorkspaceResolver
             foreach (string path in scan.CsprojPaths)
             {
                 csproj.Add(path);
-                // Aynı proje iki kartta görünürse İLK kartın kaynağı kazanır — ikinci bir yazım sessizce
-                // rozeti değiştirirdi; sıra kullanıcının listesidir ve öngörülebilir olmalıdır.
-                vcsByProjectId.TryAdd(path, project.Vcs);
+                externalProjectIds.Add(path);
             }
             sln.AddRange(scan.SlnPaths);
         }
 
         return new ExternalWorkspace(
-            new ScanResult(Canonical(csproj), Canonical(sln)), vcsByProjectId, roots, problems);
+            new ScanResult(Canonical(csproj), Canonical(sln)), externalProjectIds, roots, problems);
     }
 
     /// <summary>
@@ -177,6 +176,6 @@ public static class ExternalWorkspaceResolver
     private static IReadOnlyList<string> Canonical(IEnumerable<string> paths) =>
         [.. paths.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(p => p, StringComparer.OrdinalIgnoreCase)];
 
-    private static IReadOnlyDictionary<string, VcsKind> EmptyVcsMap() =>
-        new Dictionary<string, VcsKind>(StringComparer.OrdinalIgnoreCase);
+    private static IReadOnlySet<string> EmptyIdSet() =>
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 }

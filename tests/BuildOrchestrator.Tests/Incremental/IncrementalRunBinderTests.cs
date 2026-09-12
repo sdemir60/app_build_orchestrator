@@ -310,7 +310,7 @@ public sealed class IncrementalRunBinderTests : IDisposable
         Write(externalProjDir, "Mail.cs", "class Mail {}");
 
         var node = new ProjectNode(externalCsproj, "Mail", externalCsproj, [], [], 0, -1, "External",
-            InCycle: false, WillBuild: null, ExternalVcs: VcsKind.Git);
+            InCycle: false, WillBuild: null, IsExternal: true);
         var plan = new BuildPlan([node], [], "Debug");
         var evaluated = new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase)
         {

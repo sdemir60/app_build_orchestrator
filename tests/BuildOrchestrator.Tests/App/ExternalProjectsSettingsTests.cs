@@ -13,8 +13,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ExternalProjectsSettingsTests
 {
-    private static readonly ExternalProject Mail = new(@"D:\ext\mail", VcsKind.Git);
-    private static readonly ExternalProject Ocr = new(@"D:\ext\ocr\Ocr.sln", VcsKind.Tfvc);
+    private static readonly ExternalProject Mail = new(@"D:\ext\mail");
+    private static readonly ExternalProject Ocr = new(@"D:\ext\ocr\Ocr.sln");
 
     [Fact]
     public void The_external_list_survives_a_store_round_trip_in_order()
@@ -95,7 +95,7 @@ public class ExternalProjectsSettingsTests
     [Fact]
     public void The_saved_json_uses_the_shared_contract_shape()
     {
-        // Diskteki şekil Contracts tipinin kendisidir (yol + kaynak) — App-yerel ikinci bir kopya yoktur.
+        // Diskteki şekil Contracts tipinin kendisidir (yalnız yol) — App-yerel ikinci bir kopya yoktur.
         using var temp = new TempDir();
         string path = Path.Combine(temp.Path, "ui-state.json");
         new JsonUiStateStore(path).Save(new UiState { ExternalProjects = [Ocr] });
@@ -103,6 +103,9 @@ public class ExternalProjectsSettingsTests
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var entry = document.RootElement.GetProperty("ExternalProjects").EnumerateArray().Single();
         Assert.Equal(@"D:\ext\ocr\Ocr.sln", entry.GetProperty("Path").GetString());
-        Assert.True(entry.TryGetProperty("Vcs", out _));
+        // [DEĞİŞEN KURAL] Eski iddia: kayıt bir `Vcs` alanı da taşıyordu (0=Git, 1=TFVC). TFVC kolu
+        // kaldırıldı — alan artık YAZILMAZ; eski dosyalarda görülürse okunurken yok sayılır
+        // (bkz. UiStateStoreTests).
+        Assert.False(entry.TryGetProperty("Vcs", out _));
     }
 }

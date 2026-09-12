@@ -26,11 +26,14 @@ public class ExternalLinesTests
             "warning: external 'Mail': the path was not found — no projects from it will be built",
             PlanProgressLines.ExternalNotScanned("Mail", "the path was not found"));
 
-    [Theory]
-    [InlineData(VcsKind.Git, "git")]
-    [InlineData(VcsKind.Tfvc, "tfvc")]
-    public void A_path_without_a_working_copy_of_the_selected_kind_says_it_is_built_as_is(VcsKind vcs, string label)
+    /// <summary>
+    /// <b>Eski iddia:</b> satır seçilen kaynağın adını taşıyordu (<c>no git/tfvc working copy…</c>) ve iki
+    /// <c>InlineData</c> ile pinlenmişti. TFVC kolu kaldırıldı: aranan tek işaret <c>.git</c>, dolayısıyla
+    /// söylenecek tek sözcük de "git".
+    /// </summary>
+    [Fact]
+    public void A_path_without_a_git_working_copy_says_it_is_built_as_is()
         => Assert.Equal(
-            $"warning: external 'Mail': no {label} working copy found above its path — building as-is",
-            PlanProgressLines.ExternalNoWorkingCopy("Mail", vcs));
+            "warning: external 'Mail': no git working copy found above its path — building as-is",
+            PlanProgressLines.ExternalNoWorkingCopy("Mail"));
 }

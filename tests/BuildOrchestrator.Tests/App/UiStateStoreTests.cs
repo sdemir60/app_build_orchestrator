@@ -38,7 +38,7 @@ public class UiStateStoreTests
         state.LayerPatterns = [new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")];
         // [K5 · design v1.14.0 §9] ExternalProjects LayerPatterns'ın YANI BAŞINDA seed edilir — AYNI commit'te
         // yazılır, bu yüzden round-trip testi de aynı senaryoya katılır (kopya YASAK, ikinci bir test yok).
-        state.ExternalProjects = [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"D:\shared\b.csproj", VcsKind.Tfvc)];
+        state.ExternalProjects = [new ExternalProject(@"C:\a"), new ExternalProject(@"D:\shared\b.csproj")];
         state.Autostart = true;
         store.Save(state);
 
@@ -51,7 +51,7 @@ public class UiStateStoreTests
         Assert.Equal("feature-x-1", reloaded.WorktreeName);
         Assert.Equal([new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")], reloaded.LayerPatterns);
         Assert.Equal(
-            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"D:\shared\b.csproj", VcsKind.Tfvc)],
+            [new ExternalProject(@"C:\a"), new ExternalProject(@"D:\shared\b.csproj")],
             reloaded.ExternalProjects);
         Assert.True(reloaded.Autostart);
     }

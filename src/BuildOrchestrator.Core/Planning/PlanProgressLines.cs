@@ -108,9 +108,8 @@ public static class PlanProgressLines
     /// Bir haricinin çalışma kopyası güncellendi ve HANGİ sürümde olduğu okundu. Satır güncellemenin
     /// ARDINDAN yazılır ve yalnız güncelleme gerçekten koştuğunda (kullanıcı bayrağı açık) görülür.
     ///
-    /// <para>Revizyon kimliği kaynağına göre değişir: git'te kısa sha (<c>a1b2c3d</c>), TFVC'de changeset
-    /// (<c>C48213</c>). Kullanıcının "hangi sürümü derliyorum" sorusunun cevabı budur; satırlarda revizyon
-    /// GÖSTERİLMEZ (v1.16.0: satır kararı söyler, sürümü değil).</para>
+    /// <para>Revizyon kısa sha'dır (<c>a1b2c3d</c>). Kullanıcının "hangi sürümü derliyorum" sorusunun cevabı
+    /// budur; satırlarda revizyon GÖSTERİLMEZ (v1.16.0: satır kararı söyler, sürümü değil).</para>
     /// </summary>
     public static string UpdatedExternal(string name, string revision)
         => $"Updated external '{name}' → {revision}";
@@ -132,10 +131,10 @@ public static class PlanProgressLines
     public static string ExternalNotCleaned(string name, string problem)
         => $"warning: external '{name}': {problem} — nothing from it will be cleaned";
 
-    /// <summary>Yolun üstünde SEÇİLEN türde bir çalışma kopyası işareti yok (git için <c>.git</c>, TFVC için
-    /// <c>$tf</c>) — güncelleme ve kir kapısı çalışmaz, projeler olduğu gibi derlenir.</summary>
-    public static string ExternalNoWorkingCopy(string name, VcsKind vcs)
-        => $"warning: external '{name}': no {VcsKinds.Label(vcs)} working copy found above its path — building as-is";
+    /// <summary>Yolun üstünde <c>.git</c> yok — güncelleme ve kir kapısı çalışmaz, projeler olduğu gibi
+    /// derlenir.</summary>
+    public static string ExternalNoWorkingCopy(string name)
+        => $"warning: external '{name}': no git working copy found above its path — building as-is";
 
     // Planner'dan SONRAKİ iki adım (MSBuild.exe çözümü, bayat-obj taraması) BİLEREK raporlanmaz: vswhere
     // sonucu Supervisor ömrü boyunca cache'lenir (ilk run dışında "resolving" demek yalan olurdu), bayat-obj

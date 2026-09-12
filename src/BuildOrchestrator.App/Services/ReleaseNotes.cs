@@ -91,7 +91,7 @@ public static class ReleaseNotes
             new(NoteKind.Added, "Row actions: build a single project, or right-click for Build · Rebuild · Clean."),
             new(NoteKind.Added, "The Build menu offers Clean — msbuild /t:Clean on every solution."),
             new(NoteKind.Added, "Projects caught in a dependency cycle show an amber cube inside a grey node — the graph now says “not built, in a cycle” while you inspect a finished run."),
-            new(NoteKind.Added, "Settings has an External projects section: projects outside the repository root, each with its source (Git or TFVC), kept in build order."),
+            new(NoteKind.Added, "Settings has an External projects section: git working copies outside the repository root, kept in build order."),
             new(NoteKind.Added, "External projects are scanned into the same graph as the repository's own and build first, in their own External group at the top of the list."),
             new(NoteKind.Added, "Pull before build, in the External projects header: every build refreshes each external working copy first — turn it off to build them exactly as they are on disk."),
             new(NoteKind.Added, "Each row says what will happen to it and why: modified, affected, never built, failed · retry, or up to date with the age of its last successful build."),

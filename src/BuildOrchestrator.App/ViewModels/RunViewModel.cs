@@ -64,7 +64,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [ObservableProperty] private bool _isRunTarget;
 
     /// <summary>[Harici projeler] Bu satır ana repo DIŞINDAN gelen bir projeyi mi anlatıyor —
-    /// <see cref="ProjectNode.ExternalVcs"/>'ten topoloji uzlaştırmasında taşınır ve satır ömrü boyunca
+    /// <see cref="ProjectNode.IsExternal"/>'den topoloji uzlaştırmasında taşınır ve satır ömrü boyunca
     /// değişmez (kimlik gibi).
     /// <para>Tek görünür sonucu şudur: ana reponun hedef commit'i bu satıra İTİLMEZ. O sha başka bir repoyu
     /// anlatır ve harici satırın yanında duran bir yalan olurdu.</para></summary>
@@ -77,7 +77,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[T53-UI][W1/It-5] Projenin SON BAŞARIYLA DERLENDİĞİ revizyon. Kaynak
     /// <see cref="BuildPreviewItem.BuiltCommit"/>'tir (yani <c>BuildState.BuiltCommit</c>); hem Sync hem
-    /// run-başı önizlemesinden gelir. Değer HAM'dır (git'te 40-hex, TFVC'de changeset) — kısaltma bir GÖRÜNTÜ
+    /// run-başı önizlemesinden gelir. Değer HAM'dır (40-hex sha) — kısaltma bir GÖRÜNTÜ
     /// kararıdır. <b>Hiç derlenmemiş</b> proje ⇒ <c>null</c> (uydurulmaz).
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.16.0]</b> Bu değer artık SATIRDA GÖSTERİLMEZ; satırın sağ yuvasında

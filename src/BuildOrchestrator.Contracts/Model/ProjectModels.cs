@@ -28,10 +28,10 @@ public sealed record ProjectNode(
     // WillBuild'in GEREKÇESİ (kullanıcıya gösterilir). Alan SONA ve default'lu: eski NDJSON/plan üreticileri
     // onu yazmaz ve null olarak çözülür — o hâlde yüzey jenerik metne düşer.
     WillBuildReason? WillBuildReason = null,
-    // [Harici projeler] Bu düğüm ana repo DIŞINDAN gelen bir projeyse çalışma kopyasının VCS türü; sıradan
-    // projelerde null. Ayrı bir düğüm tipi AÇILMAZ: hariciler sıradan ProjectNode olarak akar, böylece liste
-    // gruplaması, graf bandı ve filtreler onları bedavaya taşır — rozet yalnız bu alandan okunur.
-    VcsKind? ExternalVcs = null)
+    // [Harici projeler] Bu düğüm ana repo DIŞINDAN gelen bir kökten mi geldi. Ayrı bir düğüm tipi AÇILMAZ:
+    // hariciler sıradan ProjectNode olarak akar, böylece liste gruplaması, graf bandı ve filtreler onları
+    // bedavaya taşır — rozet yalnız bu alandan okunur.
+    bool IsExternal = false)
 {
     // Derleyicinin ürettiği record eşitliği, IReadOnlyList<string> alanlarında EqualityComparer<T>.Default
     // kullanır; List<string> Equals'ı override etmediği için bu referans eşitliğine düşer (JSON round-trip
@@ -49,7 +49,7 @@ public sealed record ProjectNode(
         && InCycle == other.InCycle
         && WillBuild == other.WillBuild
         && WillBuildReason == other.WillBuildReason
-        && ExternalVcs == other.ExternalVcs;
+        && IsExternal == other.IsExternal;
 
     public override int GetHashCode()
     {
@@ -64,7 +64,7 @@ public sealed record ProjectNode(
         hash.Add(LayerName);
         hash.Add(InCycle);
         hash.Add(WillBuild);
-        hash.Add(ExternalVcs);
+        hash.Add(IsExternal);
         return hash.ToHashCode();
     }
 }
@@ -141,38 +141,24 @@ public sealed record BuildState(
     bool DepIssue = false);
 
 /// <summary>
-/// Bir harici projenin çalışma kopyasının hangi sürüm kontrol sistemiyle güncelleneceği — kullanıcının
-/// Ayarlar'da SEÇTİĞİ değer (design v1.14.0 §9: "Source seçimi... yalnız bu ikisi"). Tel üzerinde camelCase
-/// METİN taşınır ("git"/"tfvc"), sayı olarak DEĞİL — üyeleri sonradan yeniden sıralamak eski satırların anlamını
-/// kaydırmaz. Kullanıcı metni ve dosya biçimi aynı iki sözcüğü <see cref="VcsKinds"/> üzerinden kullanır.
-/// </summary>
-public enum VcsKind { Git, Tfvc }
-
-/// <summary>
-/// <see cref="VcsKind"/>'ın kullanıcıya görünen / dosyaya yazılan metni — TEK eşleme yeri (Settings dosyası,
-/// konsol satırları ve tel aynı sözcükleri kullanır; kopya YASAK). Bilinmeyen ya da eksik metin
-/// <see cref="VcsKind.Git"/>'e düşer (design v1.14.0 §9: "eksik/bilinmeyen vcs sessizce git'e düşer").
-/// </summary>
-public static class VcsKinds
-{
-    public static string Label(VcsKind kind) => kind == VcsKind.Tfvc ? "tfvc" : "git";
-
-    public static VcsKind Parse(string? text) => text == "tfvc" ? VcsKind.Tfvc : VcsKind.Git;
-}
-
-/// <summary>
-/// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi VCS'inden güncellenip derlenen bir proje (ör. müşteriye
-/// özel mail/OCR bileşenleri). Ayarlar'daki bir kartın birebir karşılığı: bir yol ve bir kaynak.
+/// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi klonundan güncellenip derlenen bir proje (ör. müşteriye
+/// özel mail/OCR bileşenleri). Ayarlar'daki bir kartın birebir karşılığı: yalnız bir yol.
 ///
 /// <para><b>Yol bir klasör, bir <c>.sln</c> ya da bir <c>.csproj</c> olabilir</b> (design v1.14.0 §9). Bir KÖKtür:
 /// altındaki projeler her koşuda yeniden taranır ve ana taramayla birleşir
 /// (<c>Core/Externals/ExternalWorkspaceResolver</c>); çalışma kopyasının kökü de o yoldan yukarı yürünerek
 /// bulunur (<c>VcsDetector</c>). Hiçbiri persist edilmez, böylece bayatlayamazlar — bulunan her proje bundan
 /// sonra sıradan bir projedir, kimliği kendi csproj yoludur.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL] Sürüm kontrolü yalnız git'tir.</b> Kart eskiden bir <c>Vcs</c> seçimi de
+/// taşıyordu (Git/TFVC) ve TFVC kolu <c>tf.exe</c> ile <c>tf vc get</c> koşuyordu. O kol kaldırıldı: seçim
+/// yüzeyi bir karar noktası olarak kullanıcıya maliyet çıkarıyordu, TFVC yolu Team Explorer kurulumuna
+/// bağlıydı ve local workspace işareti (<c>$tf</c>) bulunmayan yaygın kurulumlarda zaten hiç koşmuyordu.
+/// Eski dosyalardaki <c>vcs</c> anahtarı okunurken SESSİZCE yok sayılır (bkz. <c>SettingsFile</c>,
+/// <c>UiStateStore</c>) — kart sıradan bir git kartı olur.</para>
 /// </summary>
 /// <param name="Path">Klasör, solution ya da proje dosyası — kullanıcının yazdığı gibi.</param>
-/// <param name="Vcs">Çalışma kopyasının sürüm kontrol türü — kullanıcının seçimi; tespit edilmez.</param>
-public sealed record ExternalProject(string Path, VcsKind Vcs);
+public sealed record ExternalProject(string Path);
 
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);
