@@ -378,10 +378,14 @@ public class CleanCommandTests
     /// motorun penceresiyle örtüştürüldüğünde aynı tıklama bazen animasyonlu bazen anında olur (bkz.
     /// <c>RunViewModel.BeginRunAsync</c>'in koreografi kapısı — "ya her zaman oynar ya hiç").
     ///
-    /// <para>Dizi: adım en az <see cref="RunViewModel.CleanMinStepMs"/> görünür (spinner o süre boyunca DÖNMEYE
-    /// DEVAM eder — kapı henüz bırakılmaz), sonra adım biter, sonra <see cref="RunViewModel.CleanStepGapMs"/>
-    /// kadar hafif bir boşluk, EN SON Sync. Zamanı VM saymaz: bekleme enjekte edilen bir delegeye sorulur
-    /// (kabuk onu DispatcherTimer ile karşılar — VM timer türü TAŞIMAZ, D8).</para></summary>
+    /// <para>Dizi: adım en az <see cref="RunViewModel.CleanMinStepMs"/> görünür, ardından
+    /// <see cref="RunViewModel.CleanStepGapMs"/> kadar hafif bir boşluk, EN SON Sync. Zamanı VM saymaz: bekleme
+    /// enjekte edilen bir delegeye sorulur (kabuk onu DispatcherTimer ile karşılar — VM timer türü TAŞIMAZ, D8).</para>
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bu test boşluk sırasında <c>busy=False</c> bekliyordu, yani yüzey boşluktan
+    /// ÖNCE bırakılıyordu. Ölçüldü ki o pencerede Sync/Clean tıklanabilir haldeydi ve düğmeler kırpışıyordu;
+    /// kapı artık Sync devralana kadar KAPALI (bkz.
+    /// <see cref="Nothing_is_clickable_between_the_clean_and_the_sync_that_follows_it"/>), dolayısıyla spinner de
+    /// devralmaya kadar döner.</para></summary>
     [Fact]
     public async Task A_fast_clean_still_shows_its_step_before_the_sync_takes_over()
     {
@@ -403,10 +407,47 @@ public class CleanCommandTests
         Assert.Equal(
         [
             "clean sent",
-            "hold 390 busy=True",  // adım sürüyor: spinner DÖNÜYOR
-            "hold 200 busy=False", // adım bitti: iki işlem arasındaki hafif boşluk
+            "hold 390 busy=True", // adım sürüyor: spinner DÖNÜYOR
+            "hold 200 busy=True", // iki işlem arasındaki boşluk — kapı hâlâ kapalı, spinner hâlâ dönüyor
             "sync sent",
         ], log);
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-12] <b>Kapı, Clean'in tıklanmasından Sync'in devralmasına kadar BİR AN bile
+    /// açılmaz.</b> İki işlem tek bir meşgul pencere olarak okunur: arada hiçbir düğme canlanmaz, hiçbir şeye
+    /// tıklanamaz.
+    ///
+    /// <para><b>Ölçülen kusur:</b> yüzey iki adım arasındaki boşluktan ÖNCE bırakılıyordu, yani o boşluk boyunca
+    /// Build/Rebuild/Sync/Clean tıklanabilir haldeydi ve düğmeler sönük → canlı → sönük diye kırpışıyordu.
+    /// Kullanıcı tarifi: "o ara bir şeye tıklanmamalı".</para>
+    ///
+    /// <para>Yüzey artık Sync kapıyı devraldıktan SONRA bırakılır; spinner de o ana kadar döner, ardından
+    /// anlatıyı şeridin <c>SYNC</c> pill'i sürdürür.</para></summary>
+    [Fact]
+    public async Task Nothing_is_clickable_between_the_clean_and_the_sync_that_follows_it()
+    {
+        long now = 0;
+        var vm = NewVm(() => now);
+        SeedTopology(vm);
+        var gates = new List<string>();
+        vm.OperationHold = ms =>
+        {
+            gates.Add($"hold {ms}: build={vm.BuildCommand.CanExecute(null)} sync={vm.SyncCommand.CanExecute(null)} " +
+                      $"clean={vm.CleanCommand.CanExecute(null)} busy={vm.CleanBusy}");
+            return Task.CompletedTask;
+        };
+
+        await vm.CleanCommand.ExecuteAsync(null);
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+        now = 50;
+        vm.OnEvent(Completed());
+
+        Assert.Equal(
+        [
+            "hold 390: build=False sync=False clean=False busy=True", // adım oynuyor
+            "hold 200: build=False sync=False clean=False busy=True", // boşluk — kapı HÂLÂ kapalı
+        ], gates);
     }
 
     /// <summary>Yavaş bir Clean zaten görünmüştür: üstüne bekleme EKLENMEZ, yalnız iki işlem arasındaki boşluk

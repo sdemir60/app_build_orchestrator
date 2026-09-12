@@ -284,9 +284,17 @@ public sealed partial class RunViewModel
         // [kullanıcı kararı 2026-09-12] Adım kalanını oynat: spinner DÖNMEYE DEVAM eder, çünkü kapı henüz
         // bırakılmadı. Küçük bir workspace'te silme milisaniyeler sürüyor ve adım hiç görünmüyordu.
         await HoldAsync(CleanMinStepMs - (_nowMs() - _cleanStartedAtMs));
-        ReleaseCleanSurface();           // adım biter: spinner iner, kapılar açılır
-        await HoldAsync(CleanStepGapMs); // iki işlem iki adım gibi okunsun — ardı ardına iki animasyon dizisi tek bulanıklık olurdu
-        await SyncCoreAsync(clearBuffers: false);
+        // Ardından iki işlem arasındaki hafif boşluk — ama kapı KAPALI kalır. Ardı ardına iki animasyon dizisi
+        // tek bulanıklığa dönüşmesin diye beklenir, yoksa düğmeleri canlandırmak için değil.
+        await HoldAsync(CleanStepGapMs);
+        // [ölçülen kusur] Yüzey burada, Sync kapıyı DEVRALDIKTAN SONRA bırakılır. Önce bırakılıyordu ve o
+        // pencerede Sync/Clean tıklanabilir haldeydi, düğmeler de sönük → canlı → sönük kırpışıyordu; iki
+        // işlem tek bir meşgul pencere olarak okunmalıdır. Devralma SENKRONDUR: SyncCoreAsync ilk await'ine
+        // varmadan `_syncRequested`'ı kurar, yani Task'ı beklemeden başlatmak kapıyı kesintisiz tutar.
+        // Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve aşağıdaki bırakma doğru sonucu verir.
+        var sync = SyncCoreAsync(clearBuffers: false);
+        ReleaseCleanSurface();
+        await sync;
     }
 
     /// <summary>[clean guard] Uçuştaki Clean'i serbest bırakır: İKİ bayrak da temizlenir (motor Clean'e HİÇ
