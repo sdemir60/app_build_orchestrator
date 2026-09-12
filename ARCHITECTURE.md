@@ -1803,6 +1803,15 @@ cannot: while its work runs the button takes the amber `active` ground and its i
 *Resolve cycles* does the same for a cycle run — the box says which of its jobs is in flight, while the other
 two buttons sit in the ordinary disabled dim.
 
+**A running job is amber wherever its button is.** *Sync* speaks the same language as the maintenance box: while
+a Sync is in flight its button takes the amber ground and its icon becomes a spinner of the same size, with the
+*Sync* label left in place, and the disabled dim is suppressed so the work reads as live. The signal is the Sync
+surface itself, request window included, so the Sync a Clean chains looks exactly like one the user asked for —
+the indicator belongs to the work, not to whoever started it. This is a **deliberate departure from the
+prototype**, which leaves the Sync button merely disabled and lets the ribbon's operation pill carry the whole
+story: two neighbouring jobs on one bar, one spinning and one inert, described the same state two ways. The
+pill's own narrative is unchanged; this is an addition to it.
+
 **No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
 runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started before
@@ -3522,6 +3531,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
 | Maintenance box (Clean / Optimize / Resolve cycles), amber-plus-spinner on the running job | `App/Views/MaintenanceBox.xaml(.cs)` |
+| Amber-plus-spinner on a running Sync (same treatment, action bar) | `App/Views/ActionBar.xaml.cs` (`RefreshSyncBusy`) |
 | Maintenance-box Clean command, its gate, the request/in-flight guard, the Clean error codes and the Sync chained on completion | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
 | Hollow reset of rows and the will-build surface (branch change, root change) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
 | Emptying rows, graph and the will-build surface at a Clean click | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |

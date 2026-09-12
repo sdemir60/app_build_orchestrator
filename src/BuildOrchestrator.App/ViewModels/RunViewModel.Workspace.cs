@@ -117,8 +117,12 @@ public sealed partial class RunViewModel
 
     /// <summary>[Sync guard] Sync yüzeyi MEŞGUL mü: istek uçuşta (<see cref="_syncRequested"/>) YA DA
     /// <c>syncStarted</c> görüldü (<see cref="_syncInFlight"/>). Sync/Rebuild/Build/Cycles kapılarının
-    /// TEK predicate'idir — soru dört yerde ayrı ayrı yazılmaz (kopya YASAK).</summary>
-    private bool SyncBusy => _syncRequested || _syncInFlight;
+    /// TEK predicate'idir — soru dört yerde ayrı ayrı yazılmaz (kopya YASAK).
+    /// <para>Aksiyon barı da bunu okur (Sync düğmesi amber zemin + spinner olur), bu yüzden
+    /// <see cref="CleanBusy"/> gibi BİLDİRİMLİDİR: değeri değiştiren her yol
+    /// <see cref="NotifySyncGatedCommands"/>'dan geçer ve bildirim oradan atılır. İstek penceresi dahildir —
+    /// gösterge tıklamada başlar, motorun cevabını beklemez.</para></summary>
+    public bool SyncBusy => _syncRequested || _syncInFlight;
 
     /// <summary>[Sync guard testi] YALNIZ testler için — <see cref="SyncInFlight"/> seam'inin ikizi: istek
     /// penceresinin gözlemlenebilir hali (gönderimden önce kurulur, gönderim senkron düşerse geri açılır).</summary>
@@ -246,8 +250,10 @@ public sealed partial class RunViewModel
         PullRepositoryCommand.NotifyCanExecuteChanged(); // [v1.16.0] chip de SyncBusy/CleanBusy'ye bağlıdır (CanPullRepository)
         // [clean] Bakım kutusunun spinner'ı bir KOMUT değil bir DURUM okur. Bildirim buraya düşer çünkü
         // CleanBusy'yi değiştiren dört yolun (istek, cleanStarted, bırakma, istek iptali) hepsi zaten bu
-        // metottan geçer — dört ayrı çağrı yazmak kopya olurdu.
+        // metottan geçer — dört ayrı çağrı yazmak kopya olurdu. Sync'in meşgul yüzeyi (aksiyon barındaki
+        // düğmenin amber zemin + spinner'ı) AYNI gerekçeyle aynı yerden duyurulur.
         OnPropertyChanged(nameof(CleanBusy));
+        OnPropertyChanged(nameof(SyncBusy));
     }
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
