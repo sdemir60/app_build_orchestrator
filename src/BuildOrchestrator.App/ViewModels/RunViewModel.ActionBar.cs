@@ -133,13 +133,12 @@ public sealed partial class RunViewModel
 
         WorktreeName = null;  // seçili hedef worktree'yi auto'ya döndür (BuildApp.jsx:1340)
         UseWorktree = true;   // aktif-olmayan branch → kullanıcının toggle'ı da açılır (BuildApp.jsx:1342)
-        ResetRowsToHollow();  // BuildApp.jsx:1345 status='discovered' → Pending, will='unknown' → hollow
-        _willBuildIds.Clear();       // BuildApp.jsx:1346 eng.willBuild = new Set()
+        // BuildApp.jsx:1345-1346 status='discovered' → Pending, will='unknown' → hollow, eng.willBuild = new Set()
+        ResetRowsToHollow();
         Phase = AppPhase.Boot;       // BuildApp.jsx:1347
         string sha7 = Short7(branch.Sha);
         AppendRunLine($"branch target: {branch.Name} ({sha7}) — worktree will be used at Build");
         AppendRunLine($"Branch changed: {branch.Name} — Sync required"); // BuildApp.jsx:1350
-        RefreshRunSurface();         // sayaç/görünür-liste + willBuild yüzeyi tazelensin
     }
 
     /// <summary>Branch popover'daki mono SHA + niyet satırındaki <c>{sha7}</c> için 7-haneli kısaltma (uzunsa kırp,
@@ -335,8 +334,6 @@ public sealed partial class RunViewModel
         if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(path));
         RootPath = path;
         ResetRowsToHollow();
-        _willBuildIds.Clear();
-        RefreshRunSurface();
         return true;
     }
 
@@ -352,9 +349,19 @@ public sealed partial class RunViewModel
     internal static string RepositoryRootChangedLine(string path) =>
         string.Format(CultureInfo.InvariantCulture, "Repository root → {0} — Sync required", path);
 
-    /// <summary>[D7] Satırları yeni bir taban için "hollow"a sıfırlar (durum Pending, will bilinmiyor, süre/dep
-    /// temizli). Branch değişimi (<see cref="SelectBranch"/>) ve repo değişimi (<see cref="ChangeRepositoryAsync"/>)
-    /// AYNI reset'i paylaşır — tek yer (kopya YASAK).</summary>
+    /// <summary>[D7] Plan yüzeyini yeni bir taban için "hollow"a sıfırlar: satırlar (durum Pending, will
+    /// bilinmiyor, süre/dep temizli), <see cref="RunViewModel._willBuildIds"/> kümesi ve ondan türeyen şerit
+    /// yüzeyi (<c>wb</c>/<c>fin</c>/<c>allClean</c>).
+    ///
+    /// <para><b>Liste BOŞALTILMAZ, kararları boşaltılır.</b> Satırların varlığı topolojidendir ve bu reset'i
+    /// tetikleyen olayların hiçbiri topolojiyi geçersizleştirmez; koleksiyon gerçekten boşalsa panel
+    /// "<c>No projects found under this folder.</c>" derdi ve bu YANLIŞ olurdu.</para>
+    ///
+    /// <para>Üç çağıranı vardır ve üçü de "elimizdeki kararlar artık geçerli değil" demenin ayrı bir
+    /// biçimidir: branch değişimi (<see cref="SelectBranch"/>), repo değişimi
+    /// (<see cref="ApplyRepositoryRoot"/>) ve Clean'in başlaması (<c>RunViewModel.Workspace.OnCleanStarted</c> —
+    /// çıktılar siliniyor). Üçlü blok TEK yerde durur (kopya YASAK); çağıranların kendine ait olan tek şey
+    /// konsol notu ve faz seçimidir.</para></summary>
     private void ResetRowsToHollow()
     {
         foreach (var row in Projects)
@@ -364,5 +371,7 @@ public sealed partial class RunViewModel
             row.DepIssues = null;
             row.DurationMs = 0;
         }
+        _willBuildIds.Clear();  // küme ADD-ONLY'dir: temizlenmezse şeritteki wb sayacı bayat kalır
+        RefreshRunSurface();    // sayaç/görünür-liste + willBuild yüzeyi
     }
 }

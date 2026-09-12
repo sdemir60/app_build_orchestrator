@@ -263,6 +263,72 @@ public class CleanCommandTests
         Assert.Equal(OperationLabel.DeepClean, vm.CurrentOperation);
     }
 
+    // ---------------------------------------------------------------- liste + graf
+
+    /// <summary>Clean çıktıları siler, dolayısıyla ekrandaki KARARLAR da geçersizleşir: <c>up to date</c> yazan
+    /// bir satır, <c>bin</c>'i silinmişken o sözü söylemeye devam edemez. Motor Clean'i KABUL ettiğinde
+    /// (<c>cleanStarted</c>) satırlar branch/repo değişiminin AYNI hollow reset'inden geçer — liste ve graf
+    /// YERİNDE kalır (Clean tek bir csproj'a dokunmaz, topoloji hâlâ geçerlidir), yalnız kararlar, süreler ve
+    /// statüler gider. Gerçek kararları bitişteki otomatik Sync yazar.</summary>
+    [Fact]
+    public void A_started_clean_hollows_the_rows_and_the_will_build_surface()
+    {
+        var vm = NewVm();
+        SeedTopology(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1234));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 1234));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Succeeded, row.State); // ön-koşul: satırın bir sonucu ve süresi var
+        Assert.Equal(1234, row.DurationMs);
+        Assert.Equal(1, vm.WillBuildCount);
+
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+
+        Assert.Equal(ProjectRowState.Pending, row.State);
+        Assert.Null(row.WillBuild); // karar etiketi düşer (DecisionLabel.For → None)
+        Assert.Equal(0, row.DurationMs);
+        Assert.Equal(0, vm.WillBuildCount);
+        Assert.True(vm.AllClean);
+        Assert.Single(vm.Projects); // topoloji Clean'den ETKİLENMEZ — liste boşaltılmaz, hollow'a alınır
+    }
+
+    /// <summary>Motora HİÇ ulaşmamış bir Clean ekranı bozmaz: gönderim senkron düşerse (motor hazır değil ya da
+    /// ölü) hiçbir <c>cleanStarted</c> gelmez ve satırlar olduğu gibi kalır. Reset'in tetikleyicisi tıklama
+    /// DEĞİL, motorun kabulüdür — tam olarak bu yüzden.</summary>
+    [Fact]
+    public async Task A_clean_that_never_reaches_the_engine_leaves_the_rows_untouched()
+    {
+        var vm = NewVm();
+        SeedTopology(vm);
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(@"C:\p\a.csproj", "A", false, Reason: WillBuildReason.UpToDate)]));
+        var row = Assert.Single(vm.Projects);
+
+        await vm.CleanCommand.ExecuteAsync(null); // harness: gönderim SENKRON düşer
+
+        Assert.False(row.WillBuild); // karar YERİNDE (null değil — hollow'a alınmadı)
+    }
+
+    /// <summary>Reddedilen bir Clean de hiçbir şey silmez (Supervisor'da bir koşu uçuşta), dolayısıyla satırlar
+    /// da boşalmaz: <c>cleanRejected</c> zaten <c>cleanStarted</c> yerine gelir.</summary>
+    [Fact]
+    public async Task A_rejected_clean_leaves_the_rows_untouched()
+    {
+        var vm = NewVm();
+        SeedTopology(vm);
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(@"C:\p\a.csproj", "A", false, Reason: WillBuildReason.UpToDate)]));
+        var row = Assert.Single(vm.Projects);
+
+        await vm.CleanCommand.ExecuteAsync(null);
+        vm.OnEvent(new ErrorEvent("cleanRejected", "A run is in flight — stop it before cleaning the workspace."));
+
+        Assert.False(row.WillBuild);
+    }
+
     /// <summary>[v1.16.0 · clean] Alt bardaki <c>N behind</c> chip'i de bakım kilidine tabidir: başarılı bir pull
     /// otomatik Sync koşar ve o Sync, tam o sırada silinen bin/obj'i okurdu.</summary>
     [Fact]

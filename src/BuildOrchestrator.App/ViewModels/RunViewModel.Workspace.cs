@@ -240,12 +240,23 @@ public sealed partial class RunViewModel
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
     /// DEĞİŞMEZ — Clean için yeni bir <see cref="AppPhase"/> AÇILMAZ, anlatı konsol satırlarıyla taşınır
-    /// (şerit bu iş boyunca dinlenme fazını göstermeye devam eder; kullanıcının baktığı yer konsoldur).</summary>
+    /// (şerit bu iş boyunca dinlenme fazını göstermeye devam eder; kullanıcının baktığı yer konsoldur).
+    ///
+    /// <para><b>Ekrandaki kararlar BURADA düşer</b> (<see cref="RunViewModel.ResetRowsToHollow"/>): çıktılar
+    /// siliniyor, dolayısıyla <c>up to date</c> diyen bir satır o sözü söylemeye devam edemez ve yeşil bir
+    /// statü de artık diskte bir şeye karşılık gelmez. Liste ve graf yerinde kalır — Clean tek bir csproj'a
+    /// dokunmaz, topoloji hâlâ geçerlidir. Gerçek kararları bitişteki otomatik Sync yazar
+    /// (<see cref="OnCleanCompletedAsync"/>).</para>
+    ///
+    /// <para><b>Tıklama anı DEĞİL, motorun kabulü.</b> Gönderim senkron düşerse ya da komut
+    /// <c>cleanRejected</c> ile reddedilirse hiçbir şey silinmemiştir; reset o yollarda hiç koşmaz ve ekran
+    /// boşuna bozulmaz. Konsolun tıklama anında temizlenmesinden farkı milisaniyelerdir.</para></summary>
     private void OnCleanStarted()
     {
         _cleanInFlight = true;
         _cleanRequested = false;
         NotifySyncGatedCommands();
+        ResetRowsToHollow();
     }
 
     /// <summary>[clean guard] Clean bitti — yüzey serbest.</summary>
