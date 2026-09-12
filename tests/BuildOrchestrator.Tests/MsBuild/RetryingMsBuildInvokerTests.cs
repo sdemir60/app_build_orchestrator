@@ -68,6 +68,22 @@ public class RetryingMsBuildInvokerTests
         {
             CallCount++;
             ObservedTokens.Add(ct);
+            return NextAsync(onLine);
+        }
+
+        /// <summary>[optimize] Restore ayağı build'den AYRI sayılır — decorator'ın forward'ını (retry'sız)
+        /// ölçmek için hangi yolun kaç kez çağrıldığını ayırt etmek gerekir.</summary>
+        public int RestoreCallCount { get; private set; }
+
+        public Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct)
+        {
+            RestoreCallCount++;
+            ObservedTokens.Add(ct);
+            return NextAsync(onLine);
+        }
+
+        private Task<MsBuildInvokeResult> NextAsync(Action<string> onLine)
+        {
             var (result, lines) = _script[Math.Min(_index, _script.Count - 1)];
             _index++;
             foreach (var line in lines) onLine(line);
@@ -383,5 +399,31 @@ public class RetryingMsBuildInvokerTests
 
         Assert.Equal([TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(600)], recordingDelay.Calls);
         Assert.Empty(floor.Calls);
+    }
+
+    /// <summary>
+    /// [optimize] <c>RestoreAsync</c> inner'a DOĞRUDAN forward edilir — retry YOKTUR. Gerekçe: bu decorator'ın
+    /// tek işi MSB302x copy-contention'ını absorbe etmektir ve o, paralel post-build KOPYALARINA özgüdür;
+    /// restore'un başarısızlığı (offline kaynak, bozuk paket) yeniden denemekle geçmez, yalnız süreyi katlar.
+    /// Contention satırı GÖRÜLSE bile ikinci bir deneme yapılmaz.
+    /// </summary>
+    [Fact]
+    public async Task RestoreAsync_is_forwarded_to_the_inner_invoker_without_retry()
+    {
+        var scripted = new ScriptedInvoker(
+            (Contention, ContentionLines),
+            (Success, SuccessLines));
+        var recordingDelay = new RecordingDelay();
+        var invoker = new RetryingMsBuildInvoker(scripted, RetryingMsBuildInvoker.DefaultBackoff, recordingDelay.Delay);
+        var lines = new List<string>();
+
+        var result = await invoker.RestoreAsync(new MsBuildRestoreRequest("C:\\Repo\\Foo.csproj", "C:\\Repo"),
+            lines.Add, CancellationToken.None);
+
+        Assert.Equal(1, scripted.RestoreCallCount);
+        Assert.Equal(0, scripted.CallCount);      // build yolu hiç çağrılmaz
+        Assert.Empty(recordingDelay.Calls);       // backoff koşmadı
+        Assert.Equal(Contention.ExitCode, result.ExitCode);
+        Assert.NotEmpty(lines);                   // satırlar yine de çağırana akar
     }
 }

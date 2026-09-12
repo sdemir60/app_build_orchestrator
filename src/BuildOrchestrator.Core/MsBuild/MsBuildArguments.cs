@@ -40,8 +40,10 @@ public static class MsBuildArguments
     ];
 
     /// <summary>
-    /// Bir invoke isteğinin hangi MSBuild çağrılarına dönüştüğü — argüman seçiminin TEK kaynağı (invoker
-    /// yalnız çalıştırır, seçmez).
+    /// Bir invoke isteğinin hangi MSBuild çağrılarına dönüştüğü — BUILD yolunda argüman seçiminin TEK kaynağı
+    /// (invoker yalnız çalıştırır, seçmez). Optimize'ın restore-only yolu buradan geçmez: onun isteğinde
+    /// seçilecek bir şey yoktur (ne hedef, ne configuration, ne obj izolasyonu), doğrudan
+    /// <see cref="RestorePackagesConfig"/> çağrılır — argüman listesinin kaynağı yine TEKTİR.
     ///
     /// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca harici hedefler AYRI bir argüman listesi kullandı
     /// (<c>BuildProjectReferences</c> serbest, koşulsuz restore): o turda harici proje tek bir solution olarak,

@@ -46,14 +46,24 @@ public static class HintPathClassifier
         return new ClassificationReport(classified, edge, third, plat, unc, ratio, warnings);
     }
 
-    // Ham yol '\packages\' içeriyorsa (NuGet legacy) veya "Program Files" altındaysa third-party kabul edilir.
-    // '/'→'\' normalize edilir; gerçek HintPath'ler ayraç/case karışımı içerebilir.
-    private static bool IsThirdParty(string raw)
-    {
-        string n = raw.Replace('/', '\\');
-        return n.Contains("\\packages\\", StringComparison.OrdinalIgnoreCase)
-            || n.Contains("Program Files", StringComparison.OrdinalIgnoreCase);
-    }
+    /// <summary>
+    /// [optimize] Ham HintPath bir NuGet legacy <c>packages</c> deposunu mu gösteriyor? <c>\packages\</c>
+    /// literalinin TEK kaynağı budur — Optimize "bu eksik referans restore ile gelir mi" sorusunu buradan
+    /// sorar ve deseni yeniden yazmaz.
+    /// <para>"Program Files" yolları bilinçli olarak DIŞARIDADIR: onlar da third-party'dir
+    /// (bkz. <see cref="IsThirdParty"/>) ama restore onları ASLA getiremez — bir projeyi restore kuyruğuna
+    /// sokmaları yalnız boşa MSBuild child'ı demek olurdu.</para>
+    /// <para>'/'→'\' normalize edilir (gerçek HintPath'ler ayraç/harf kutusu karışımı içerir); segment
+    /// SINIRLARI korunur, yani <c>..\packagesfoo\</c> eşleşmez.</para>
+    /// </summary>
+    public static bool IsNuGetPackagesPath(string raw) =>
+        raw.Replace('/', '\\').Contains("\\packages\\", StringComparison.OrdinalIgnoreCase);
+
+    // Ham yol NuGet packages deposunu gösteriyorsa (bkz. IsNuGetPackagesPath) veya "Program Files"
+    // altındaysa third-party kabul edilir.
+    private static bool IsThirdParty(string raw) =>
+        IsNuGetPackagesPath(raw)
+        || raw.Replace('/', '\\').Contains("Program Files", StringComparison.OrdinalIgnoreCase);
 
     // '\bin\' segmenti + producer YOK → repo-dışı OSYS platform DLL'i (ExternalOsysPlatform).
     private static bool IsUnderBin(string raw) =>

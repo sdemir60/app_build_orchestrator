@@ -123,6 +123,26 @@ public class MsBuildArgumentsTests
         Assert.Matches(rule, File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, srcOwner))); // muaf dosya GERÇEKTEN eşleşiyor
     }
 
+    /// <summary>
+    /// [tek proje · design §3.8] Build yolunun argüman seçimi YALNIZ <see cref="MsBuildArguments.PlanFor"/>'dan
+    /// gelir — invoker çalıştırır, seçmez.
+    ///
+    /// <para>Guard bilinçlidir: invoker'ın gövdesi hedefi kendisi seçmeye kalkarsa satır menüsünün
+    /// <b>Rebuild</b>/<b>Clean</b> maddeleri SESSİZCE <c>-t:Build</c> koşar ve hiçbir davranış testi kırmızı
+    /// olmaz — tek proje koşusunun iddiaları kaydedilen request + <c>PlanFor</c> üzerinden kurulur, invoker'ın
+    /// ürettiği komut satırını gözleyen bir dikiş YOKTUR. Bu boşluk Optimize'ın restore ucu taşınırken
+    /// gerçekten açıldı (eski gövde hedefi tanımayan bir çağrı taşıyordu), mutasyonla doğrulandı.</para>
+    /// </summary>
+    [Fact]
+    public void The_invoker_never_picks_the_build_target_itself()
+    {
+        string text = File.ReadAllText(
+            Path.Combine(RepoPaths.SrcRoot, "BuildOrchestrator.Core", "MsBuild", "MsBuildInvoker.cs"));
+
+        Assert.Contains("MsBuildArguments.PlanFor(", text);      // build yolu tek kaynaktan geçiyor
+        Assert.DoesNotContain("MsBuildArguments.Build(", text);  // ...ve hedefi kendisi seçmiyor
+    }
+
     [Fact]
     public void Build_with_obj_isolation_has_trailing_backslash() // [SPIKE S2 şart-2 — bayat obj zehri]
     {

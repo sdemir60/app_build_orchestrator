@@ -86,15 +86,32 @@ public class RunCoordinatorTests
 
     // ---------------------------------------------------------------- fake invoker
 
-    internal sealed class FakeInvoker(Func<MsBuildInvokeRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>> handler)
+    internal sealed class FakeInvoker(
+        Func<MsBuildInvokeRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>> handler,
+        Func<MsBuildRestoreRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>>? restoreHandler = null)
         : IMsBuildInvoker
     {
         private readonly List<MsBuildInvokeRequest> _requests = [];
+        private readonly List<MsBuildRestoreRequest> _restoreRequests = [];
         private int _inFlight;
         private int _maxConcurrent;
 
         public int MaxConcurrent => Volatile.Read(ref _maxConcurrent);
         public IReadOnlyList<MsBuildInvokeRequest> Requests { get { lock (_requests) return [.. _requests]; } }
+
+        /// <summary>[optimize] Restore yolu build yolundan AYRI kaydedilir — bir run'ın restore çağırmadığı
+        /// (ve Optimize'ın build çağırmadığı) ayrı ayrı görülebilsin diye.</summary>
+        public IReadOnlyList<MsBuildRestoreRequest> RestoreRequests { get { lock (_restoreRequests) return [.. _restoreRequests]; } }
+
+        public Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct)
+        {
+            lock (_restoreRequests) _restoreRequests.Add(req);
+            return restoreHandler is null
+                // Bu fake'in senaryosunda restore YOKTUR: sessizce bir sonuç uydurmak, restore'u yanlışlıkla
+                // çağıran bir regresyonu gizlerdi.
+                ? throw new NotSupportedException("this fake has no restore script")
+                : restoreHandler(req, onLine, ct);
+        }
 
         public async Task<MsBuildInvokeResult> InvokeAsync(MsBuildInvokeRequest req, Action<string> onLine, CancellationToken ct)
         {

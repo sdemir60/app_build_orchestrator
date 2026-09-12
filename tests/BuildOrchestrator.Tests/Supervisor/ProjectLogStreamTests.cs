@@ -41,11 +41,17 @@ public class ProjectLogStreamTests
 
     // ---------------------------------------------------------------- sahte invoker
 
-    private sealed class FakeInvoker(Func<MsBuildInvokeRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>> handler)
+    private sealed class FakeInvoker(
+        Func<MsBuildInvokeRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>> handler,
+        Func<MsBuildRestoreRequest, Action<string>, CancellationToken, Task<MsBuildInvokeResult>>? restoreHandler = null)
         : IMsBuildInvoker
     {
         public Task<MsBuildInvokeResult> InvokeAsync(MsBuildInvokeRequest req, Action<string> onLine, CancellationToken ct) =>
             handler(req, onLine, ct);
+
+        // [optimize] Bu testin senaryosunda restore YOKTUR — çağrılırsa sessizce geçilmez, test kırılır.
+        public Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct) =>
+            restoreHandler is null ? throw new NotSupportedException("this fake has no restore script") : restoreHandler(req, onLine, ct);
     }
 
     // ---------------------------------------------------------------- in-process duplex stream (gerçek pipe'ı taklit eder)
