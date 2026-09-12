@@ -964,6 +964,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// — bir önceki İŞLEMİN tortusu değildir, ikinci bir clear onu da silerdi
     /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>
     /// bu notun HALA orada olduğunu pinler).</para>
+    ///
+    /// <para><b>Plan yüzeyi ise bayraktan BAĞIMSIZ, her Sync'te düşer</b> — bkz. aşağıdaki
+    /// <see cref="ClearPlanSurface"/> çağrısı. <paramref name="clearBuffers"/> yalnız konsol ve event
+    /// stream'in sorusudur (o ikisinde "bu işlemin ilk satırı kimin" diye bir sahiplik vardır); listenin ve
+    /// grafın böyle bir sahibi yoktur: her Sync topolojiyi baştan hesaplar, dolayısıyla ekranda duran plan
+    /// hangi yoldan gelinirse gelinsin o an geçersizdir.</para>
     /// </summary>
     private async Task SyncCoreAsync(bool clearBuffers)
     {
@@ -977,6 +983,11 @@ public sealed partial class RunViewModel : ObservableObject
             ClearConsoleForNewOperation();
             ClearStreamForNewOperation();
         }
+        // [kullanıcı kararı 2026-09-12] Liste ve graf da AYNI karede boşalır — Clean'in birebir simetriği
+        // (bkz. CleanAsync). Gerekçe aynı: ekranda duran plan bu işlemin sonucuyla değişecek, farklı bir anda
+        // düşerse tek işlem iki sarsıntı gibi görünür (konsol anında boşalıp liste bayat kalıyordu). Geri
+        // getiren şey Sync'in kendi yayınladığı topolojidir (OnWorkspaceTopology).
+        ClearPlanSurface();
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
         CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
@@ -1033,7 +1044,8 @@ public sealed partial class RunViewModel : ObservableObject
         ClearStreamForNewOperation();
         // [kullanıcı kararı 2026-09-12] Liste ve graf da AYNI karede boşalır: çıktılar siliniyor, ekranda duran
         // kararlar/statüler/düğümler o an geçersizdir. Farklı bir anda düşerlerse tek işlem iki sarsıntı gibi
-        // görünür. Geri getiren şey bitişteki Sync'tir (OnCleanCompletedAsync).
+        // görünür. Geri getiren şey bitişteki Sync'tir (OnCleanCompletedAsync). AYNI kural Sync'te de geçerli
+        // (SyncCoreAsync) — iki işlem tek yüzey davranışını paylaşır.
         ClearPlanSurface();
         _cleanStartedAtMs = _nowMs(); // adımın görünür süresi BURADAN sayılır (bkz. CleanMinStepMs)
         SelectedProjectId = null; // seçim temizlenir, filtre KORUNUR (Sync ile aynı davranış)

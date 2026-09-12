@@ -1690,7 +1690,9 @@ the clear is not the operation's kind but whether the click that starts it alrea
 the console — Sync from the ribbon button clears both panels, since nothing precedes it; a Sync that Settings'
 Save sends does not, because Save already wrote the console's first line (the new layer count, or the new
 root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one before
-it. It is not virtualized and does not need to
+it. That question is the console's and the stream's alone: the **plan surface** — rows, graph nodes, the cycle
+map, the *to build* count — is emptied by every Sync however it was reached, because a Sync recomputes the
+whole topology and what is on screen is stale the moment the click lands. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows
@@ -1770,12 +1772,19 @@ skip it as up to date and report green over deleted outputs.
 **The click empties the plan surface, and the Sync that follows fills it in again.** Rows, graph nodes, the
 cycle map and the *to build* count all go at the moment the button is pressed, in the same frame as the console
 and the event stream: the outputs are about to be deleted, so nothing on screen answers to anything on disk any
-more, and dropping the plan at some later instant would read as a second jolt in one operation. The phase moves
+more, and dropping the plan at some later instant would read as a second jolt in one operation. **Sync behaves
+identically**, and for the reason that generalises the rule: an operation that is about to replace the plan
+takes the old one down with the click, not with the reply. The phase moves
 to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
 `Idle` as "no projects under this folder", which would be a lie, and the graph shows its own *appears after
 Sync* empty state. A branch change does exactly this for the same reason. Because the emptying happens at the
 click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
+
+One consequence is worth stating, because it is visible: while the chained Sync is in flight there is no
+topology, so *Build*, *Rebuild* and *Resolve cycles* stay disabled a moment longer than *Sync* and *Clean* do.
+Their gate is the plan, not the Clean — sending a Build against a surface the user cannot see would compile a
+set nobody chose.
 
 **The step always plays for the same length.** On a small workspace the deletion finishes in milliseconds, so
 the spinner would flash and the Sync's animations would land on top of it. The Clean therefore holds its step

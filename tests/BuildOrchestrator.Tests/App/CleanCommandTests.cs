@@ -125,10 +125,20 @@ public class CleanCommandTests
 
     // ---------------------------------------------------------------- karşılıklı dışlama
 
-    // Clean silerken bir build başlarsa MSBuild, altından çekilen bir obj/bin ile yarışır. Kapı hem UÇUŞ
-    // (cleanStarted geldi) hem İSTEK penceresini (komut yolda, motor henüz cevap vermedi) kapsar.
+    /// <summary>
+    /// Clean silerken bir build başlarsa MSBuild, altından çekilen bir obj/bin ile yarışır. Kapı hem UÇUŞ
+    /// (<c>cleanStarted</c> geldi) hem İSTEK penceresini (komut yolda, motor henüz cevap vermedi) kapsar.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-12]</b> Eski iddia: <c>cleanCompleted</c> gelince
+    /// DÖRT komut da (Sync, Build, Rebuild, Clean) yeniden etkinleşir. Sync artık plan yüzeyini de tıklama
+    /// anında boşaltıyor (<c>SyncCoreAsync</c> → <c>ClearPlanSurface</c>, Clean'in simetriği) ve Clean'in
+    /// bitişi zaten bir Sync tetikliyor — dolayısıyla o an ortada TOPOLOJİ YOKTUR. Build/Rebuild/Cycles'ın
+    /// kapısı topolojidir, bu yüzden onlar Clean'in kapısıyla değil, o Sync'in yayınladığı topolojiyle geri
+    /// gelir. Doğrusu da budur: boşaltılmış bir planın üstüne Build göndermek, kullanıcının ekranda görmediği
+    /// bir kümeyi derlemek olurdu. Sync ve Clean'in kendi kapıları hemen açılır (ikisi topoloji istemez).</para>
+    /// </summary>
     [Fact]
-    public void Sync_build_rebuild_and_cycles_are_disabled_while_a_clean_is_in_flight_and_reopen_on_completion()
+    public void A_clean_closes_the_other_gates_and_completion_reopens_them_as_their_own_preconditions_allow()
     {
         var vm = NewVm();
         SeedTopology(vm);
@@ -146,10 +156,19 @@ public class CleanCommandTests
 
         vm.OnEvent(Completed());
 
+        // Topoloji İSTEMEYEN kapılar hemen açılır.
         Assert.True(vm.SyncCommand.CanExecute(null));
+        Assert.True(vm.CleanCommand.CanExecute(null));
+        // Topolojiye bağlı olanlar bekler: bitişin tetiklediği Sync yüzeyi boşalttı, henüz cevap gelmedi.
+        Assert.False(vm.HasTopology);
+        Assert.False(vm.BuildCommand.CanExecute(null));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
+
+        // O Sync'in topolojisi gelince geri gelirler — kapıyı açan şey Clean değil, plandır.
+        SeedTopology(vm);
+
         Assert.True(vm.BuildCommand.CanExecute(null));
         Assert.True(vm.RebuildCommand.CanExecute(null));
-        Assert.True(vm.CleanCommand.CanExecute(null));
     }
 
     // İstek penceresi: komut gönderildikten hemen SONRA, motor cevap vermeden önce de kapı KAPALIDIR —

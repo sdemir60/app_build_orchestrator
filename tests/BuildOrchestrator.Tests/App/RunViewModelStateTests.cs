@@ -346,6 +346,46 @@ public class RunViewModelStateTests
         Assert.Null(vm.SelectedProjectId);
     }
 
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-12] <b>Sync de plan yüzeyini TIKLAMA ANINDA boşaltır</b> — Clean'in birebir
+    /// simetriği (<c>CleanCommandTests.Clean_empties_the_project_list_and_the_graph_at_click</c>).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Sync eskiden yalnız konsolu ve event stream'i tıklamada temizliyordu; liste
+    /// ve graf ekranda ESKİ topolojiyle duruyor, ancak motorun cevabı gelince yenileniyordu. Kullanıcının
+    /// gördüğü şey tek bir işlemin iki ayrı sarsıntısıydı: konsol anında boşalıyor, liste bir süre bayat
+    /// kalıyor, sonra yerine yenisi geliyordu. Clean'in kuralı buraya da taşındı — aynı karede her şey boşalır,
+    /// Sync'in yayınladığı topoloji hepsini birden geri getirir.</para>
+    ///
+    /// <para>Bedeli Clean'inkiyle AYNI ve bilerek kabul edildi: gönderim düşerse liste boş kalır (burada motor
+    /// hiç başlatılmamıştır, yani gönderim SENKRON düşer) — geri getiren şey bir sonraki Sync'tir. Panel yanlış
+    /// konuşmaz: faz <see cref="AppPhase.Boot"/>'a döner ve davet hiçbir şey söylemez.</para>
+    /// </summary>
+    [Fact]
+    public async Task Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null)],
+            [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        Assert.Single(vm.Projects);   // ön-koşul: ekranda bir proje ve bir plan var
+        Assert.True(vm.HasTopology);
+        Assert.Equal(1, vm.WillBuildCount);
+        int topologyChanges = 0;
+        vm.TopologyChanged += (_, _) => topologyChanges++;
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Projects);
+        Assert.False(vm.HasTopology);   // graf da boşalır — kabuk TopologyChanged ile yeniden kurar
+        Assert.Equal(1, topologyChanges);
+        Assert.Equal(0, vm.WillBuildCount);
+        Assert.Equal(AppPhase.Boot, vm.Phase);
+        Assert.Equal(ListInviteState.None,
+            ListInvite.Resolve(vm.HasWorkspace, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
+    }
+
     [Fact]
     public async Task Sync_clears_the_selection_but_keeps_the_filter()
     {
