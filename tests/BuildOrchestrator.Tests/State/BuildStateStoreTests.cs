@@ -404,8 +404,9 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal("sig-c", map[@"D:\other\C\C.csproj"].BuiltSignature);
     }
 
-    // [clean] Yol karşılaştırması OrdinalIgnoreCase'tir ve önek ayraçla KAPATILIR: "C:\repo" isteği
-    // "C:\repo2\..." kayıtlarını SİLMEZ (çıplak StartsWith'in tuzağı).
+    // [clean] Harf kutusu ve prefix tuzağı kuralının SAHİBİ artık RootScope'tur ("C:\repo" isteği
+    // "C:\repo2\..." kayıtlarını SİLMEZ — çıplak StartsWith'in tuzağı). Bu test kuralı değil, RemoveUnderRoot'un
+    // o kapıya DOĞRU bağlandığını pinler; ikizi StoreHygieneTests'te budama kapısı için durur.
     [Fact]
     public void RemoveUnderRoot_matches_case_insensitively_and_normalizes_the_trailing_separator()
     {

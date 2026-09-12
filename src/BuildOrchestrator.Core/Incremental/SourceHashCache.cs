@@ -149,6 +149,33 @@ public sealed class SourceHashCache
         }
     }
 
+    /// <summary>
+    /// [optimize] Kök altındaki ÖLÜ girdileri budar: anahtarı (kaynak dosya yolu) artık diskte olmayan
+    /// kayıtlar gider, kaldırılan sayı döner. Bu defter csproj'la değil KAYNAK DOSYA'yla anahtarlandığı için
+    /// en hızlı birikendir — silinen/taşınan her dosya burada bir ölü girdi bırakır.
+    /// <para>Önbellek SALT bir optimizasyondur: budanan girdi bir sonraki koşuda yeniden özetlenir, hiçbir
+    /// karar değişmez. Kök dışındaki girdiler korunur; prefix normalizasyonu
+    /// <see cref="Paths.RootScope"/>'tadır. Gerçekten budandıysa <see cref="Flush"/> çağrılır.</para>
+    /// </summary>
+    public int PruneMissingUnderRoot(string rootPath)
+    {
+        if (Paths.RootScope.NormalizeRoot(rootPath) is not { } prefix) return 0;
+
+        var dead = _entries.Keys.Where(k => Paths.RootScope.Contains(prefix, k) && !File.Exists(k)).ToList();
+        int removed = 0;
+        foreach (string key in dead) if (_entries.TryRemove(key, out _)) removed++;
+        if (removed > 0) Flush();
+        return removed;
+    }
+
+    /// <summary>[optimize] Yarım kalmış atomik yazımlardan kalan kendi <c>.tmp</c> artıklarını süpürür
+    /// (bkz. <see cref="Paths.TempFileSweeper"/>); silinen sayıyı döner.</summary>
+    public int SweepOrphanTempFiles(TimeSpan olderThan) =>
+        Paths.TempFileSweeper.Sweep(_cachePath, olderThan, UtcNow);
+
+    /// <summary>[D8] Süpürme eşiğinin okuduğu saat — testte ileri alınır, üretimde <c>null</c>.</summary>
+    internal Func<DateTime>? UtcNow { get; set; }
+
     private static ConcurrentDictionary<string, Entry> Load(string path)
     {
         var empty = new ConcurrentDictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);

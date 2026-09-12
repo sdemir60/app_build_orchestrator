@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Paths;
 using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Core.State;
@@ -182,35 +183,56 @@ public sealed class BuildStateStore
     /// [clean] Verilen workspace kökü ALTINDAKİ tüm kayıtları kaldırır ve kaldırılan sayıyı döner — Clean'in
     /// "build state reset" adımı. Dosya GLOBALDİR (birden çok workspace aynı <c>build-state.json</c>'ı
     /// paylaşır), bu yüzden dosyanın kendisi SİLİNMEZ: yalnız <paramref name="rootPath"/> öneki taşıyan
-    /// anahtarlar çıkar. Önek ayraçla kapatılır (<c>C:\repo</c> isteği <c>C:\repo2\...</c>'yi ETKİLEMEZ) ve
-    /// karşılaştırma <see cref="StringComparison.OrdinalIgnoreCase"/>'tir. Silinmiş/yeniden adlandırılmış
-    /// projelerin artık kayıtları da bu süpürmeye takılır.
+    /// anahtarlar çıkar. Önek normalizasyonu ve prefix tuzağı <see cref="RootScope"/>'un işidir. Silinmiş /
+    /// yeniden adlandırılmış projelerin artık kayıtları da bu süpürmeye takılır.
     /// <para>Eşleşme yoksa dosyaya HİÇ dokunulmaz (yazım yok, rename yarışı yok) — <see cref="Write"/>'ın
     /// "değişen bir şey yok" sözleşmesi. Bozuk yol ya da okunamaz dosya fırlatmaz, 0 döner — <see cref="Load"/>'un
     /// never-throw sözleşmesiyle aynı çizgi.</para>
     /// </summary>
     public int RemoveUnderRoot(string rootPath)
     {
-        string prefix;
-        try
-        {
-            prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath)) + Path.DirectorySeparatorChar;
-        }
-        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
-        {
-            return 0; // bozuk yol → temizlenecek kayıt yok; Clean akışı bunun için durmaz
-        }
+        if (RootScope.NormalizeRoot(rootPath) is not { } prefix) return 0; // bozuk yol → Clean akışı durmaz
 
         int removed = 0;
         Write(map =>
         {
-            var doomed = map.Keys.Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
+            var doomed = map.Keys.Where(k => RootScope.Contains(prefix, k)).ToList();
             foreach (string key in doomed) map.Remove(key);
             removed = doomed.Count;
             return removed > 0; // 0 ⇒ Write dosyayı YENİDEN YAZMAZ — dokunulmamış kalır
         });
         return removed;
     }
+
+    /// <summary>
+    /// [optimize] Kök altındaki ÖLÜ kayıtları budar: anahtarı (csproj yolu) artık diskte olmayan girdiler
+    /// gider, kaldırılan sayı döner. <see cref="RemoveUnderRoot"/>'tan AYRI bir semantiktir — o kök altındaki
+    /// HER kaydı siler (Clean'in "sıfırla"sı), bu yalnız karşılığı kaybolmuş olanı (Optimize'ın hijyeni).
+    /// Diri kayıtlara dokunulmaz, dolayısıyla hiçbir projenin build kararı değişmez.
+    /// <para>Kök dışındaki kayıtlar (başka workspace'ler, worktree yollu girdiler) korunur; budanacak bir şey
+    /// yoksa dosya YENİDEN YAZILMAZ — <see cref="Write"/>'ın sözleşmesi.</para>
+    /// </summary>
+    public int PruneMissingUnderRoot(string rootPath)
+    {
+        if (RootScope.NormalizeRoot(rootPath) is not { } prefix) return 0;
+
+        int removed = 0;
+        Write(map =>
+        {
+            var dead = map.Keys.Where(k => RootScope.Contains(prefix, k) && !File.Exists(k)).ToList();
+            foreach (string key in dead) map.Remove(key);
+            removed = dead.Count;
+            return removed > 0;
+        });
+        return removed;
+    }
+
+    /// <summary>[optimize] Yarım kalmış atomik yazımlardan kalan kendi <c>.tmp</c> artıklarını süpürür
+    /// (bkz. <see cref="TempFileSweeper"/>); silinen sayıyı döner.</summary>
+    public int SweepOrphanTempFiles(TimeSpan olderThan) => TempFileSweeper.Sweep(_path, olderThan, UtcNow);
+
+    /// <summary>[D8] Süpürme eşiğinin okuduğu saat — testte ileri alınır, üretimde <c>null</c>.</summary>
+    internal Func<DateTime>? UtcNow { get; set; }
 
     /// <summary>
     /// <see cref="File.ReadAllText(string)"/> yerine: varsayılan <c>FileShare.Read</c> Delete-share İZİN VERMEZ,

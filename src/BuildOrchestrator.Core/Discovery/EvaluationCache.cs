@@ -104,6 +104,32 @@ public sealed class EvaluationCache(string cachePath)
         }
     }
 
+    /// <summary>
+    /// [optimize] Kök altındaki ÖLÜ girdileri budar: csproj'u artık diskte olmayan kayıtlar gider, kaldırılan
+    /// sayı döner. Cache SALT bir optimizasyondur — budanan girdi bir sonraki taramada yeniden değerlendirilir,
+    /// hiçbir karar değişmez. Kök dışındaki girdiler (başka workspace'ler, worktree yollu kayıtlar) korunur;
+    /// prefix normalizasyonu <see cref="Paths.RootScope"/>'tadır.
+    /// <para>Gerçekten budandıysa <see cref="Flush"/> çağrılır; budanacak bir şey yoksa dosyaya HİÇ
+    /// dokunulmaz.</para>
+    /// </summary>
+    public int PruneMissingUnderRoot(string rootPath)
+    {
+        if (Paths.RootScope.NormalizeRoot(rootPath) is not { } prefix) return 0;
+
+        var dead = _entries.Keys.Where(k => Paths.RootScope.Contains(prefix, k) && !File.Exists(k)).ToList();
+        foreach (string key in dead) _entries.Remove(key);
+        if (dead.Count > 0) Flush();
+        return dead.Count;
+    }
+
+    /// <summary>[optimize] Yarım kalmış atomik yazımlardan kalan kendi <c>.tmp</c> artıklarını süpürür
+    /// (bkz. <see cref="Paths.TempFileSweeper"/>); silinen sayıyı döner.</summary>
+    public int SweepOrphanTempFiles(TimeSpan olderThan) =>
+        Paths.TempFileSweeper.Sweep(cachePath, olderThan, UtcNow);
+
+    /// <summary>[D8] Süpürme eşiğinin okuduğu saat — testte ileri alınır, üretimde <c>null</c>.</summary>
+    internal Func<DateTime>? UtcNow { get; set; }
+
     private static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
 
     private static Dictionary<string, Entry> Load(string path)
