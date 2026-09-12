@@ -54,6 +54,13 @@ public static class StreamText
             : line;
     }
 
+    /// <summary>[optimize] Optimize'ın TEK stream satırı: <c>Optimize — {n} restored, {m} unresolved refs,
+    /// {k} entries pruned</c>. Budanan girdi sayısı ÜÇ defterin toplamıdır ve toplama ÇAĞIRANDA yapılır
+    /// (<c>AppendStreamFor</c>) — bu metot biçimleyicidir, sayaç birleştiricisi değil.</summary>
+    public static string Optimize(int restored, int unresolved, int entriesPruned) =>
+        string.Format(CultureInfo.InvariantCulture, "Optimize — {0} restored, {1} unresolved refs, {2} entries pruned",
+            restored, unresolved, entriesPruned);
+
     /// <summary>build-data.js:309 — <c>Build started — {n} projects, parallelism {p}</c>.</summary>
     public static string BuildStarted(int projects, int parallelism) =>
         string.Format(CultureInfo.InvariantCulture, "Build started — {0} projects, parallelism {1}", projects, parallelism);

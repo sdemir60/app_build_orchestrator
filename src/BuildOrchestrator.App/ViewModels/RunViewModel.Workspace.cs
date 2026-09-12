@@ -155,6 +155,23 @@ public sealed partial class RunViewModel
     /// bu andan ölçülür. Kaynak enjekte edilen monoton saattir (D8: testte deterministik).</summary>
     private long _cleanStartedAtMs;
 
+    /// <summary>[optimize guard] <c>optimizeStarted</c> görüldü, <c>optimizeCompleted</c> beklenıyor —
+    /// <see cref="_cleanInFlight"/>'ın ikizi.</summary>
+    private bool _optimizeInFlight;
+
+    /// <summary>[optimize guard] Optimize İSTENDİ ama motor henüz cevap vermedi — istek penceresi kapalı
+    /// tutulmazsa ikinci basış ikinci bir onarım kuyruklatırdı.</summary>
+    private bool _optimizeRequested;
+
+    /// <summary>[optimize guard] Optimize yüzeyi MEŞGUL mü — <see cref="CleanBusy"/>'nin birebir ikizi ve aynı
+    /// sebeple PUBLIC + BİLDİRİMLİDİR: bakım kutusu koşan düğmeyi bundan boyar (amber zemin + spinner) ve
+    /// değeri değiştiren her yol <see cref="NotifySyncGatedCommands"/>'dan geçer. İstek penceresi dahildir.</summary>
+    public bool OptimizeBusy => _optimizeRequested || _optimizeInFlight;
+
+    /// <summary>[optimize guard testi] YALNIZ testler için — istek ve uçuş pencerelerinin gözlemlenebilir hâli.</summary>
+    internal bool OptimizeRequested => _optimizeRequested;
+    internal bool OptimizeInFlight => _optimizeInFlight;
+
     /// <summary>Branch envanteri. <see cref="SnapshotCollection{T}"/>: yayın başına EN ÇOK bir bildirim, içerik
     /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
     public SnapshotCollection<BranchRef> Branches { get; } = [];
@@ -247,12 +264,14 @@ public sealed partial class RunViewModel
         RebuildProjectCommand.NotifyCanExecuteChanged();
         CleanProjectCommand.NotifyCanExecuteChanged();
         CleanCommand.NotifyCanExecuteChanged(); // [clean] aynı kapıdan geçer — İKİNCİ bir liste açılmaz
+        OptimizeCommand.NotifyCanExecuteChanged(); // [optimize] aynı kapı, aynı liste
         PullRepositoryCommand.NotifyCanExecuteChanged(); // [v1.16.0] chip de SyncBusy/CleanBusy'ye bağlıdır (CanPullRepository)
         // [clean] Bakım kutusunun spinner'ı bir KOMUT değil bir DURUM okur. Bildirim buraya düşer çünkü
         // CleanBusy'yi değiştiren dört yolun (istek, cleanStarted, bırakma, istek iptali) hepsi zaten bu
         // metottan geçer — dört ayrı çağrı yazmak kopya olurdu. Sync'in meşgul yüzeyi (aksiyon barındaki
         // düğmenin amber zemin + spinner'ı) AYNI gerekçeyle aynı yerden duyurulur.
         OnPropertyChanged(nameof(CleanBusy));
+        OnPropertyChanged(nameof(OptimizeBusy));
         OnPropertyChanged(nameof(SyncBusy));
     }
 
@@ -339,6 +358,51 @@ public sealed partial class RunViewModel
     /// bozuk kök) ve <c>cleanRejected</c> (Supervisor'da bir koşu uçuşta). Run-bitiren kodlarla KESİŞMEZ.</summary>
     private static readonly HashSet<string> CleanErrorCodes = new(StringComparer.Ordinal) { "cleanFailed", "cleanRejected" };
 
+    /// <summary>[optimize guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Clean gibi
+    /// Optimize de yeni bir <see cref="AppPhase"/> AÇMAZ — anlatı konsol satırlarıyla taşınır.</summary>
+    private void OnOptimizeStarted()
+    {
+        _optimizeRequested = false;
+        _optimizeInFlight = true;
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[optimize] Onarım bitti. Clean'in aksine ardından SYNC ZİNCİRLENMEZ: Optimize hiçbir projeyi
+    /// dirty yapmaz (imza kaynak-tabanlıdır), ekrandaki kararlar geçerli kalır — yenilenecek bir şey yoktur.
+    /// Sayılar stream özetine <c>AppendStreamFor</c> yolundan gider, bu yüzden event'in kendisi gerekmez.</summary>
+    private void OnOptimizeCompleted() => ReleaseOptimizeSurface();
+
+    /// <summary>[optimize guard] Uçuştaki Optimize'ı serbest bırakır: İKİ bayrak da temizlenir (motor işe HİÇ
+    /// başlayamadan ölmüş olabilir) ve kapılar tek yerden açılır. Çağıranlar: <see cref="OnOptimizeCompleted"/>,
+    /// <see cref="TryConsumeOptimizeFailure"/> ve <see cref="RunViewModel.ReleaseAfterEngineLoss"/>.</summary>
+    private void ReleaseOptimizeSurface()
+    {
+        _optimizeInFlight = false;
+        _optimizeRequested = false;
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[optimize guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde çağrılır — o yolda
+    /// hiçbir <c>optimizeStarted</c> gelmeyeceği için kapı başka hiçbir yerde açılmazdı.</summary>
+    private void ReleaseOptimizeRequest()
+    {
+        _optimizeRequested = false;
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[optimize guard] Dönüş değeri = "bu hata Optimize'a aittir, run/Sync state'ine DOKUNMA".
+    /// <see cref="TryConsumeCleanFailure"/>'ın birebir ikizi; özellikle <c>optimizeRejected</c> KOŞAN bir
+    /// run'ın ortasında gelebilir (kullanıcı run başlarken Optimize'a bastı) ve o run'ı YIKMAMALIDIR.</summary>
+    private bool TryConsumeOptimizeFailure(string code, string message)
+    {
+        if (!OptimizeErrorCodes.Contains(code) || !OptimizeBusy) return false;
+        ReleaseOptimizeSurface();
+        return true;
+    }
+
+    /// <summary>[optimize guard] Optimize'ın yayınlayabildiği hata kodları. Run-bitiren kodlarla KESİŞMEZ.</summary>
+    private static readonly HashSet<string> OptimizeErrorCodes = new(StringComparer.Ordinal) { "optimizeFailed", "optimizeRejected" };
+
     /// <summary>[Sync guard] İstek penceresini kapatır: gönderim SENKRON düştüğünde (motor hazır değil/ölü)
     /// çağrılır — o yolda hiçbir <c>syncStarted</c> gelmeyeceği için kapı başka hiçbir yerde açılmazdı.</summary>
     private void ReleaseSyncRequest()
@@ -368,7 +432,7 @@ public sealed partial class RunViewModel
     /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi —
     /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).</summary>
     private bool CanPullRepository() =>
-        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy;
+        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
 
     /// <summary>
     /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in

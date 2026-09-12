@@ -241,6 +241,13 @@ public sealed partial class RunViewModel
                     StreamText.CleanCompleted(e.ProjectCount, e.FoldersRemoved, e.BytesRemoved, e.LockedFileCount));
                 break;
 
+            // [optimize] Optimize da stream'e TEK satır düşer ve tonu Clean'inkiyle AYNIDIR: iki bakım işi
+            // aynı kefededir, birini Info'ya almak aynı anlamı iki renkte anlatmak olurdu.
+            case OptimizeCompletedEvent e:
+                PushStream(StreamKind.Sync, null, StreamText.Optimize(e.RestoredProjects, e.UnresolvedReferences,
+                    e.PrunedStateEntries + e.PrunedCacheEntries + e.PrunedSourceHashEntries));
+                break;
+
             case RunCompletedEvent e:
                 if (e.Outcome == RunOutcome.Stopped)
                     PushStream(StreamKind.Info, null, StreamText.Stopped(e.Queued)); // stopped → info (parıltı YOK)

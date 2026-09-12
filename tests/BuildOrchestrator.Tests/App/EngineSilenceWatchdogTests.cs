@@ -152,6 +152,31 @@ public sealed class EngineSilenceWatchdogTests
         Assert.Null(vm.EngineOverdueMessage);
     }
 
+    /// <summary>[optimize] Optimize penceresi kapsama Clean'den daha da güçlü bir gerekçeyle girer: onun bir
+    /// İPTAL KOMUTU YOKTUR (K-12), yani donmuş bir restore dizisinden çıkışın tek yolu gerçekten bu kapıdır.
+    /// Sağlıklı ama uzun bir restore yanlış alarm üretmez: servis 30 sn'de bir kalp atışı satırı basar ve
+    /// motorun HERHANGİ bir event'i saati sıfırlar.</summary>
+    [Fact]
+    public async Task A_silent_engine_during_an_optimize_raises_the_overdue_gate()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var (vm, clock) = NewVm(engine);
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        Assert.False(vm.OptimizeCommand.CanExecute(null)); // ön-koşul: kapılar kapalı
+
+        clock.Advance(RunViewModel.EngineSilenceThresholdMs - 1);
+        vm.TickElapsed();
+        Assert.Null(vm.EngineOverdueMessage); // eşiğin ALTI: tek bir NuGet indirmesi bu kadar sessiz kalabilir
+
+        clock.Advance(1);
+        vm.TickElapsed();
+        Assert.Equal(RunViewModel.EngineSilentMessage, vm.EngineOverdueMessage);
+
+        vm.OnEvent(new OptimizeCompletedEvent(ProjectCount: 1));
+        vm.TickElapsed();
+        Assert.Null(vm.EngineOverdueMessage);
+    }
+
     /// <summary>Sync'in ilerleme satırları da saati sıfırlar: yavaş ama KONUŞAN bir Sync (büyük fetch)
     /// asla uyarı üretmez.</summary>
     [Fact]
