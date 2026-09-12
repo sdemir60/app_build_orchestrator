@@ -357,11 +357,11 @@ public sealed partial class RunViewModel
     /// tetikleyen olayların hiçbiri topolojiyi geçersizleştirmez; koleksiyon gerçekten boşalsa panel
     /// "<c>No projects found under this folder.</c>" derdi ve bu YANLIŞ olurdu.</para>
     ///
-    /// <para>Üç çağıranı vardır ve üçü de "elimizdeki kararlar artık geçerli değil" demenin ayrı bir
-    /// biçimidir: branch değişimi (<see cref="SelectBranch"/>), repo değişimi
-    /// (<see cref="ApplyRepositoryRoot"/>) ve Clean'in başlaması (<c>RunViewModel.Workspace.OnCleanStarted</c> —
-    /// çıktılar siliniyor). Üçlü blok TEK yerde durur (kopya YASAK); çağıranların kendine ait olan tek şey
-    /// konsol notu ve faz seçimidir.</para></summary>
+    /// <para>İki çağıranı vardır ve ikisi de "elimizdeki kararlar artık geçerli değil" demenin ayrı bir
+    /// biçimidir: branch değişimi (<see cref="SelectBranch"/>) ve repo değişimi
+    /// (<see cref="ApplyRepositoryRoot"/>). İkili blok TEK yerde durur (kopya YASAK); çağıranların kendine ait
+    /// olan tek şey konsol notu ve faz seçimidir. <b>Clean bundan DAHA İLERİ gider</b> —
+    /// <see cref="ClearPlanSurface"/>: orada satırlar da düğümler de kalkar.</para></summary>
     private void ResetRowsToHollow()
     {
         foreach (var row in Projects)
@@ -373,5 +373,34 @@ public sealed partial class RunViewModel
         }
         _willBuildIds.Clear();  // küme ADD-ONLY'dir: temizlenmezse şeritteki wb sayacı bayat kalır
         RefreshRunSurface();    // sayaç/görünür-liste + willBuild yüzeyi
+    }
+
+    /// <summary>
+    /// [clean · kullanıcı kararı 2026-09-12] Plan yüzeyini TAMAMEN boşaltır: satırlar, topoloji (yani graf),
+    /// döngü haritası ve will-build kümesi. Tek çağıranı Clean'in tıklama anıdır — çıktılar siliniyor,
+    /// dolayısıyla ekranda duran hiçbir şey artık diskte bir şeye karşılık gelmiyor. Liste yeniden Sync'in
+    /// yayınladığı topolojiyle dolar.
+    ///
+    /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır</b> ve bu kozmetik değildir: davet kararı
+    /// (<c>ListInvite.Resolve</c>) boş listeyi <c>Idle</c> fazında "klasörde proje yok" diye okur ve bu YANLIŞ
+    /// olurdu. Boot, "henüz bilinmiyor" demenin mevcut yoludur — <see cref="SelectBranch"/> aynı gerekçeyle aynı
+    /// şeyi yapar. Ardından gelen Sync fazı zaten <c>Syncing</c>'e taşır.</para>
+    ///
+    /// <para><see cref="TopologyChanged"/> AÇIKÇA ateşlenir: grafı kuran tek sinyal odur, yoksa liste boşalırken
+    /// düğümler ekranda kalırdı.</para>
+    /// </summary>
+    private void ClearPlanSurface()
+    {
+        Projects.Clear();
+        Topology = [];
+        Solutions = [];
+        _cycleGroups = null;
+        _cycleMemberCount = 0;
+        OnPropertyChanged(nameof(HasCycles));
+        OnPropertyChanged(nameof(HasTopology));
+        Phase = AppPhase.Boot;
+        _willBuildIds.Clear();
+        TopologyChanged?.Invoke(this, EventArgs.Empty);
+        RefreshRunSurface();
     }
 }

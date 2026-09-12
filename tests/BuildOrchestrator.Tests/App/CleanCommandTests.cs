@@ -282,13 +282,23 @@ public class CleanCommandTests
 
     // ---------------------------------------------------------------- liste + graf
 
-    /// <summary>Clean çıktıları siler, dolayısıyla ekrandaki KARARLAR da geçersizleşir: <c>up to date</c> yazan
-    /// bir satır, <c>bin</c>'i silinmişken o sözü söylemeye devam edemez. Motor Clean'i KABUL ettiğinde
-    /// (<c>cleanStarted</c>) satırlar branch/repo değişiminin AYNI hollow reset'inden geçer — liste ve graf
-    /// YERİNDE kalır (Clean tek bir csproj'a dokunmaz, topoloji hâlâ geçerlidir), yalnız kararlar, süreler ve
-    /// statüler gider. Gerçek kararları bitişteki otomatik Sync yazar.</summary>
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-12] <b>Liste ve graf TIKLAMA ANINDA boşalır.</b> Clean çıktıları siler, yani
+    /// ekranda duran her şey (kararlar, süreler, yeşil/kırmızı statüler, düğümler) o an geçersizdir; konsol ve
+    /// event stream de aynı karede temizlenir, dolayısıyla plan yüzeyinin farklı bir anda düşmesi tek bir işlemi
+    /// iki ayrı sarsıntı gibi gösterirdi. Liste yeniden Sync'in yayınladığı topolojiyle dolar.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Önceki iki kural da bu testle değişti. (1) Eskiden satırlar listede KALIP
+    /// yalnız kararlarını bırakıyordu ("hollow"); gerekçe, koleksiyon boşalırsa panelin
+    /// "<c>No projects found under this folder.</c>" demesiydi. O gerekçe hâlâ geçerli ama çözümü ayrı: faz
+    /// <see cref="AppPhase.Boot"/>'a alınır ve davet kararı (<c>ListInvite.Resolve</c>) o fazda hiçbir şey
+    /// söylemez — branch değişiminin zaten yaptığı şey. (2) Tetikleyici eskiden motorun kabulüydü
+    /// (<c>cleanStarted</c>); kullanıcı "tıkladığım anda olsun" dedi, çünkü aradaki gecikme ekranı iki adımda
+    /// boşaltıyor gibi duruyordu. Bedeli kabul edildi: gönderim düşerse ya da komut reddedilirse liste boş kalır
+    /// ve geri getirmek kullanıcının Sync'ine kalır.</para>
+    /// </summary>
     [Fact]
-    public void A_started_clean_hollows_the_rows_and_the_will_build_surface()
+    public async Task Clean_empties_the_project_list_and_the_graph_at_click()
     {
         var vm = NewVm();
         SeedTopology(vm);
@@ -296,54 +306,46 @@ public class CleanCommandTests
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1234));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 1234));
-
-        var row = Assert.Single(vm.Projects);
-        Assert.Equal(ProjectRowState.Succeeded, row.State); // ön-koşul: satırın bir sonucu ve süresi var
-        Assert.Equal(1234, row.DurationMs);
+        Assert.Single(vm.Projects);        // ön-koşul: ekranda bir proje ve bir sonuç var
+        Assert.True(vm.HasTopology);
         Assert.Equal(1, vm.WillBuildCount);
-
-        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
-
-        Assert.Equal(ProjectRowState.Pending, row.State);
-        Assert.Null(row.WillBuild); // karar etiketi düşer (DecisionLabel.For → None)
-        Assert.Equal(0, row.DurationMs);
-        Assert.Equal(0, vm.WillBuildCount);
-        Assert.True(vm.AllClean);
-        Assert.Single(vm.Projects); // topoloji Clean'den ETKİLENMEZ — liste boşaltılmaz, hollow'a alınır
-    }
-
-    /// <summary>Motora HİÇ ulaşmamış bir Clean ekranı bozmaz: gönderim senkron düşerse (motor hazır değil ya da
-    /// ölü) hiçbir <c>cleanStarted</c> gelmez ve satırlar olduğu gibi kalır. Reset'in tetikleyicisi tıklama
-    /// DEĞİL, motorun kabulüdür — tam olarak bu yüzden.</summary>
-    [Fact]
-    public async Task A_clean_that_never_reaches_the_engine_leaves_the_rows_untouched()
-    {
-        var vm = NewVm();
-        SeedTopology(vm);
-        vm.OnEvent(new BuildPreviewEvent(
-            [new BuildPreviewItem(@"C:\p\a.csproj", "A", false, Reason: WillBuildReason.UpToDate)]));
-        var row = Assert.Single(vm.Projects);
-
-        await vm.CleanCommand.ExecuteAsync(null); // harness: gönderim SENKRON düşer
-
-        Assert.False(row.WillBuild); // karar YERİNDE (null değil — hollow'a alınmadı)
-    }
-
-    /// <summary>Reddedilen bir Clean de hiçbir şey silmez (Supervisor'da bir koşu uçuşta), dolayısıyla satırlar
-    /// da boşalmaz: <c>cleanRejected</c> zaten <c>cleanStarted</c> yerine gelir.</summary>
-    [Fact]
-    public async Task A_rejected_clean_leaves_the_rows_untouched()
-    {
-        var vm = NewVm();
-        SeedTopology(vm);
-        vm.OnEvent(new BuildPreviewEvent(
-            [new BuildPreviewItem(@"C:\p\a.csproj", "A", false, Reason: WillBuildReason.UpToDate)]));
-        var row = Assert.Single(vm.Projects);
+        int topologyChanges = 0;
+        vm.TopologyChanged += (_, _) => topologyChanges++;
 
         await vm.CleanCommand.ExecuteAsync(null);
-        vm.OnEvent(new ErrorEvent("cleanRejected", "A run is in flight — stop it before cleaning the workspace."));
 
-        Assert.False(row.WillBuild);
+        Assert.Empty(vm.Projects);
+        Assert.False(vm.HasTopology);      // graf da boşalır — kabuk TopologyChanged ile yeniden kurar
+        Assert.Equal(1, topologyChanges);
+        Assert.Equal(0, vm.WillBuildCount);
+        Assert.True(vm.AllClean);
+        // Panel YANLIŞ konuşmaz: boş liste + Boot fazı = hiçbir davet (klasörde proje YOK demek olurdu).
+        Assert.Equal(AppPhase.Boot, vm.Phase);
+        Assert.Equal(ListInviteState.None,
+            ListInvite.Resolve(vm.HasWorkspace, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
+    }
+
+    /// <summary>[kullanıcı kararı 2026-09-12] Boşaltma TIKLAMADADIR, dolayısıyla motora hiç ulaşmamış bir Clean de
+    /// listeyi boşaltmış olur — geri getiren şey kullanıcının Sync'idir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bu test eskiden tersini pinliyordu ("gönderim düşerse satırlara dokunulmaz");
+    /// gerekçesi, reddedilen ya da gönderilemeyen bir Clean'de ekranın bedelsiz bozulmamasıydı. Kullanıcı
+    /// anındalığı seçti; bu yol da (motor ölü) zaten kendi başına bir hata durumudur.</para></summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("cleanRejected")]
+    public async Task A_clean_that_never_runs_still_leaves_the_list_empty(string? errorCode)
+    {
+        var vm = NewVm();
+        SeedTopology(vm);
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(@"C:\p\a.csproj", "A", false, Reason: WillBuildReason.UpToDate)]));
+        Assert.Single(vm.Projects);
+
+        await vm.CleanCommand.ExecuteAsync(null); // harness: gönderim SENKRON düşer
+        if (errorCode is not null) vm.OnEvent(new ErrorEvent(errorCode, "a run is in flight"));
+
+        Assert.Empty(vm.Projects);
+        Assert.True(vm.CleanCommand.CanExecute(null)); // kapı yine de açılır — düğme kilitli kalmaz
     }
 
     // ---------------------------------------------------------------- bitişte otomatik Sync

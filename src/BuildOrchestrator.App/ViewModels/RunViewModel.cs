@@ -1008,6 +1008,10 @@ public sealed partial class RunViewModel : ObservableObject
     {
         ClearConsoleForNewOperation();
         ClearStreamForNewOperation();
+        // [kullanıcı kararı 2026-09-12] Liste ve graf da AYNI karede boşalır: çıktılar siliniyor, ekranda duran
+        // kararlar/statüler/düğümler o an geçersizdir. Farklı bir anda düşerlerse tek işlem iki sarsıntı gibi
+        // görünür. Geri getiren şey bitişteki Sync'tir (OnCleanCompletedAsync).
+        ClearPlanSurface();
         SelectedProjectId = null; // seçim temizlenir, filtre KORUNUR (Sync ile aynı davranış)
         // [design v1.11.0 §2.2] Kalıcı işlem pill'i. Sözcük DEEP CLEAN: menüdeki Clean (yalnız /t:Clean, CLEAN)
         // ile karıştırılmasın — bkz. OperationLabel.DeepClean.
