@@ -53,6 +53,10 @@ public partial class MainWindow : Window
     /// (reduced-motion'da koreografi hiç oynamaz).</summary>
     private readonly Services.OperationChoreographer _choreographer =
         new(() => App.Motion?.AnimationsEnabled ?? false);
+    /// <summary>[clean] Adımlar arası bekletme — motion sinyalini AYNI kaynaktan, taze okur (azaltılmış
+    /// harekette hiç beklenmez).</summary>
+    private readonly Services.StepHold _stepHold =
+        new(() => App.Motion?.AnimationsEnabled ?? false);
     /// <summary>[design v1.11.0 §9-5] Neonun random sırasını tohumlayan koşu sayacı — koreografi koşudan
     /// koşuya farklı bir sıra oynasın diye artar.</summary>
     private int _endFinaleRun;
@@ -254,6 +258,8 @@ public partial class MainWindow : Window
             Shell.GraphHost.BeginOperation(); // bir önceki koşunun neon'u anında kesilir (§9-5)
             return _choreographer.PlayAsync(_vm.Projects, scope);
         };
+        // [clean] Bekletmeyi de kabuk sayar: VM "şu kadar bekle" der, süreyi UI thread'indeki timer tutar.
+        _vm.OperationHold = _stepHold.HoldAsync;
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {

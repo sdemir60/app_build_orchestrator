@@ -147,6 +147,10 @@ public sealed partial class RunViewModel
     internal bool CleanRequested => _cleanRequested;
     internal bool CleanInFlight => _cleanInFlight;
 
+    /// <summary>[clean] Tıklama anının saati — adımın EN AZ <see cref="RunViewModel.CleanMinStepMs"/> görünmesi
+    /// bu andan ölçülür. Kaynak enjekte edilen monoton saattir (D8: testte deterministik).</summary>
+    private long _cleanStartedAtMs;
+
     /// <summary>Branch envanteri. <see cref="SnapshotCollection{T}"/>: yayın başına EN ÇOK bir bildirim, içerik
     /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
     public SnapshotCollection<BranchRef> Branches { get; } = [];
@@ -277,7 +281,11 @@ public sealed partial class RunViewModel
     /// </summary>
     private async Task OnCleanCompletedAsync()
     {
-        ReleaseCleanSurface();
+        // [kullanıcı kararı 2026-09-12] Adım kalanını oynat: spinner DÖNMEYE DEVAM eder, çünkü kapı henüz
+        // bırakılmadı. Küçük bir workspace'te silme milisaniyeler sürüyor ve adım hiç görünmüyordu.
+        await HoldAsync(CleanMinStepMs - (_nowMs() - _cleanStartedAtMs));
+        ReleaseCleanSurface();           // adım biter: spinner iner, kapılar açılır
+        await HoldAsync(CleanStepGapMs); // iki işlem iki adım gibi okunsun — ardı ardına iki animasyon dizisi tek bulanıklık olurdu
         await SyncCoreAsync(clearBuffers: false);
     }
 

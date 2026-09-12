@@ -779,6 +779,29 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     public Func<IReadOnlyList<ProjectRowViewModel>, Task>? OperationChoreography { get; set; }
 
+    /// <summary>
+    /// [clean · kullanıcı kararı 2026-09-12] "Şu kadar milisaniye bekle" kapısı — <see cref="OperationChoreography"/>
+    /// ile AYNI bölüşüm: <b>diziyi VM bilir, zamanı kabuk sayar</b> (kabuk bunu bir <c>DispatcherTimer</c> ile
+    /// karşılar; VM timer türü TAŞIMAZ ve üretimde <c>Task.Delay</c> de yasaktır — D8). <c>null</c> ise bekleme
+    /// YOKTUR: testler ve azaltılmış hareket kipi bu yoldan hiç geçmez.
+    /// </summary>
+    public Func<double, Task>? OperationHold { get; set; }
+
+    /// <summary>[clean] Clean adımının EN AZ görünür süresi. Tasarımın nötr vuruşu (<c>MarkingChoreography</c>) —
+    /// yeni bir sayı uydurulmaz. Gerekçe: küçük bir workspace'te silme milisaniyeler sürer ve spinner görünmeye
+    /// fırsat bulamaz; adım her zaman aynı sürede oynamalıdır (bkz. <see cref="BeginRunAsync"/>'in koreografi
+    /// kapısındaki "ya her zaman oynar ya hiç" kararı).</summary>
+    internal static double CleanMinStepMs => Controls.MarkingChoreography.NeutralMs;
+
+    /// <summary>[clean] Clean bitip Sync başlamadan önceki hafif boşluk — tasarımın kısa vuruşu. İki işlem iki
+    /// adım gibi okunsun diye vardır: ardı ardına başlayan iki animasyon dizisi tek bir bulanıklığa dönüşüyordu.</summary>
+    internal static double CleanStepGapMs => Controls.MarkingChoreography.LightMs;
+
+    /// <summary>[clean] Kabuk bir bekleme kapısı verdiyse <paramref name="ms"/> kadar bekler; vermediyse ya da
+    /// süre pozitif değilse ANINDA döner. Tek çağıranı Clean'in bitiş dizisidir.</summary>
+    private Task HoldAsync(double ms) =>
+        ms > 0 && OperationHold is { } hold ? hold(ms) : Task.CompletedTask;
+
     /// <summary>Koreografisi oynarken henüz GÖNDERİLMEMİŞ koşunun id'si; <c>null</c> = bekleyen koşu yok.
     /// Stop bu pencerede komutu değil <b>isteği</b> iptal eder (bkz. <see cref="CancelPendingRun"/>).</summary>
     private string? _pendingRunId;
@@ -1012,6 +1035,7 @@ public sealed partial class RunViewModel : ObservableObject
         // kararlar/statüler/düğümler o an geçersizdir. Farklı bir anda düşerlerse tek işlem iki sarsıntı gibi
         // görünür. Geri getiren şey bitişteki Sync'tir (OnCleanCompletedAsync).
         ClearPlanSurface();
+        _cleanStartedAtMs = _nowMs(); // adımın görünür süresi BURADAN sayılır (bkz. CleanMinStepMs)
         SelectedProjectId = null; // seçim temizlenir, filtre KORUNUR (Sync ile aynı davranış)
         // [design v1.11.0 §2.2] Kalıcı işlem pill'i. Sözcük DEEP CLEAN: menüdeki Clean (yalnız /t:Clean, CLEAN)
         // ile karıştırılmasın — bkz. OperationLabel.DeepClean.

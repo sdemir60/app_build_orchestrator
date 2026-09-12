@@ -18,8 +18,8 @@ public class CleanCommandTests
 {
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
-    private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+    private static RunViewModel NewVm(Func<long>? nowMs = null) =>
+        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", nowMs) { RootPath = @"D:\repo" };
 
     private static ProjectNode Node(string id, string name) => new(id, name, id, ["Osys"], [], 0, null, null, false, null);
 
@@ -371,8 +371,64 @@ public class CleanCommandTests
         Assert.Contains("build state reset", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-12] <b>Clean'in adımı HER ZAMAN aynı süre oynar.</b> Küçük bir workspace'te
+    /// silme milisaniyeler sürüyor, spinner görünmeye fırsat bulamıyor ve Sync'in animasyonları üstüne biniyordu
+    /// ("tıklıyorum git gel oluyor"). Bu, projenin ölçüp kayda geçirdiği kusurun aynısıdır: bir koreografi
+    /// motorun penceresiyle örtüştürüldüğünde aynı tıklama bazen animasyonlu bazen anında olur (bkz.
+    /// <c>RunViewModel.BeginRunAsync</c>'in koreografi kapısı — "ya her zaman oynar ya hiç").
+    ///
+    /// <para>Dizi: adım en az <see cref="RunViewModel.CleanMinStepMs"/> görünür (spinner o süre boyunca DÖNMEYE
+    /// DEVAM eder — kapı henüz bırakılmaz), sonra adım biter, sonra <see cref="RunViewModel.CleanStepGapMs"/>
+    /// kadar hafif bir boşluk, EN SON Sync. Zamanı VM saymaz: bekleme enjekte edilen bir delegeye sorulur
+    /// (kabuk onu DispatcherTimer ile karşılar — VM timer türü TAŞIMAZ, D8).</para></summary>
+    [Fact]
+    public async Task A_fast_clean_still_shows_its_step_before_the_sync_takes_over()
+    {
+        long now = 0;
+        var vm = NewVm(() => now);
+        var log = new List<string>();
+        vm.OperationHold = ms => { log.Add($"hold {ms} busy={vm.CleanBusy}"); return Task.CompletedTask; };
+        vm.DebugOnCommandSent = c =>
+        {
+            if (c is CleanWorkspaceCommand) log.Add("clean sent");
+            if (c is SyncWorkspaceCommand) log.Add("sync sent");
+        };
+
+        await vm.CleanCommand.ExecuteAsync(null);
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+        now = 50; // motor 50 ms'de bitirdi — adımın kalanı yine de oynar
+        vm.OnEvent(Completed());
+
+        Assert.Equal(
+        [
+            "clean sent",
+            "hold 390 busy=True",  // adım sürüyor: spinner DÖNÜYOR
+            "hold 200 busy=False", // adım bitti: iki işlem arasındaki hafif boşluk
+            "sync sent",
+        ], log);
+    }
+
+    /// <summary>Yavaş bir Clean zaten görünmüştür: üstüne bekleme EKLENMEZ, yalnız iki işlem arasındaki boşluk
+    /// kalır. Aksi halde uzun bir silmenin sonuna sebepsiz bir yarım saniye eklenirdi.</summary>
+    [Fact]
+    public async Task A_slow_clean_is_not_held_any_longer_than_the_gap()
+    {
+        long now = 0;
+        var vm = NewVm(() => now);
+        var holds = new List<double>();
+        vm.OperationHold = ms => { holds.Add(ms); return Task.CompletedTask; };
+
+        await vm.CleanCommand.ExecuteAsync(null);
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+        now = 9_000; // 9 saniye sürdü
+        vm.OnEvent(Completed());
+
+        Assert.Equal([RunViewModel.CleanStepGapMs], holds);
+    }
+
     /// <summary>Başarısız bir işin arkasına Sync TAKILMAZ: hata zaten konsolda, ikinci bir hata satırı yalnız
-    /// gürültü olurdu. Satırlar hollow kalır ve Sync kullanıcıya kalır.
+    /// gürültü olurdu. Liste boş kalır ve Sync kullanıcıya kalır.
     /// <para>Kurulum <see cref="A_clean_error_releases_the_clean_surface"/> ile aynıdır ve öyle OLMALIDIR: hata
     /// yolu yalnız Clean UÇUŞTAYKEN (<c>CleanBusy</c>) tüketilir, dolayısıyla gönderimi senkron düşmüş bir
     /// Clean'de zincir zaten hiç kurulmaz ve test hiçbir şeyi pinlemezdi.</para></summary>
