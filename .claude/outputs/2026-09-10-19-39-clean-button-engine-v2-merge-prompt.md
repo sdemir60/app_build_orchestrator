@@ -10,12 +10,15 @@
 | **Plan** | `.claude/outputs/2026-08-19-17-33-clean-button-engine-plan.md` |
 | **Sonuç kaydı (v2)** | `.claude/outputs/2026-09-10-19-39-clean-button-engine-v2-results.md` |
 | **Sonuç kaydı (2. tur)** | `.claude/outputs/2026-09-12-06-43-clean-post-run-refresh-and-busy-buttons.md` |
+| **Sonuç kaydı (3. tur)** | `.claude/outputs/2026-09-12-08-54-clean-externals-and-step-choreography.md` |
 | **Merge hedefi** | `main` |
 | **Merge commit mesajı** | `merge: clean butonu motoru` |
 
-> Branch iki tur taşır: motorun kendisi ve üstüne gelen "Clean sonrası tazeleme + koşan bakım butonu" turu
-> (satırların kararları `cleanStarted`'da düşer, `cleanCompleted` konsol korunarak Sync zincirler, koşan düğme
-> amber zemin + spinner). İkinci turun kararları K-11…K-15 olarak kendi kaydındadır.
+> Branch ÜÇ tur taşır: (1) motorun kendisi; (2) Clean sonrası tazeleme + koşan bakım butonu (bitişte konsol
+> korunarak Sync, düğmede amber zemin + spinner) — kararlar K-11…K-15; (3) harici projelerin de temizlenmesi,
+> liste/grafın tıklama anında boşalması ve adım koreografisi (440 ms adım + 200 ms boşluk, sonra Sync) —
+> kararlar K-16…K-20. Üçüncü tur ikinci turun iki kararını bilinçli olarak değiştirdi (boşaltmanın zamanı ve
+> derecesi); gerekçeler 3. tur kaydında.
 
 ---
 

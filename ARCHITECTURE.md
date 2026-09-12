@@ -316,10 +316,12 @@ camelCase text like every other enum, so adding a value never shifts the meaning
 `syncWorkspace` carries no cycle decision at all: its preview always describes a `Build`, and `Build` never
 compiles a cycle.
 
-`cleanWorkspace` carries nothing but the workspace root. It resets the build output of that workspace on disk:
-the `bin` and `obj` folders of every project a fresh scan of the root discovers, plus that workspace's entries
-in `build-state.json` (§16) — the state first, the folders second, so that the worst outcome of a Clean cut
-short is an extra compile, never a project whose signature still reads as current while its output is gone.
+`cleanWorkspace` carries the workspace root and the registered external cards — the same list `syncWorkspace`
+and `startRun` carry, resolved by the same merger, because an external project is an ordinary project. It resets
+the build output of that workspace on disk: the `bin` and `obj` folders of every project the merged scan
+discovers, plus their entries in `build-state.json` (§16) — the state first, the folders second, so that the
+worst outcome of a Clean cut short is an extra compile, never a project whose signature still reads as current
+while its output is gone. A card that resolves to nothing is a warning, not a stop: the rest is still cleaned.
 It never invokes MSBuild's `-t:Clean`. On the old-style projects this tool targets, the set that target
 removes — the paths recorded in `FileListAbsolute.txt` — is a subset of `bin` and `obj`; deleting `obj` takes
 that record with it, so the target could not run after the folders are gone, and running it first would only
@@ -1727,18 +1729,46 @@ workspace has none. The accessible name is unaffected either way: it stays the p
 reader announces what the control does, not a count that moves under it on every Sync.
 
 **Clean is the workspace reset.** The eraser wipes the build output of the current workspace — the `bin` and
-`obj` folders of every project the engine discovers under the root, and that workspace's `build-state.json`
-entries — so the next *Build* compiles everything as never built. It is neither the row menu's project clean
-nor the Build menu's *Clean*: no MSBuild target runs, the deletion is on the file system alone, and the reasons
-are in §5.2. There is no confirmation dialog — the work starts on the click, because the only thing it removes
-is output the next build reproduces. The click clears the console and the event stream like every other
-operation, drops the selection, keeps the filter, sets the pill to `DEEP CLEAN` and writes `clean requested`;
-the engine's progress then runs through the console line by line — a line per project whose `bin`/`obj` was
-removed, a warning for each project with files in use — and the event stream gets one closing summary:
+`obj` folders of every project the engine discovers, **registered external roots included**, and the
+`build-state.json` entries of all of them — so the next *Build* compiles everything as never built. An external
+project is an ordinary project here as everywhere else: the same resolver that merges those roots for a Sync or
+a run merges them for a Clean, and each root's ledger entries are swept on its own key prefix. It is neither
+the row menu's project clean nor the Build menu's *Clean*: no MSBuild target runs, the deletion is on the file
+system alone, and the reasons are in §5.2. There is no confirmation dialog — the work starts on the click,
+because the only thing it removes is output the next build reproduces. The engine's progress runs through the
+console line by line — a line per project whose `bin`/`obj` was removed, a warning for each project with files
+in use, a warning for a card that resolved to nothing — and the event stream gets one closing summary:
 projects, folders, bytes freed and, when there were any, files in use. A file held by a running application is
 skipped and counted rather than treated as a failure, the flow never stops for it, and the closing warning says
 to close the application and press *Clean* again. Because it removes `obj` outright, it also removes the cause
 of the stale-`obj` warning a run start can raise, rather than suppressing it.
+
+**What may be deleted is decided by the resolved project set, not by a path prefix.** A folder goes only if it
+sits directly inside the folder of a csproj this workspace resolved and is named `bin` or `obj`. Anchoring the
+gate to the project set rather than to "under a registered root" answers two questions the prefix rule got
+wrong in opposite directions: a `bin` under the root that belongs to no project was deleted, and a project an
+external `.sln` lists outside its own folder was not. The ledger follows the same set, because a surviving entry
+for a project whose output is gone is the one failure this design is built to prevent — the next *Build* would
+skip it as up to date and report green over deleted outputs.
+
+**The click empties the plan surface, and the Sync that follows fills it in again.** Rows, graph nodes, the
+cycle map and the *to build* count all go at the moment the button is pressed, in the same frame as the console
+and the event stream: the outputs are about to be deleted, so nothing on screen answers to anything on disk any
+more, and dropping the plan at some later instant would read as a second jolt in one operation. The phase moves
+to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
+`Idle` as "no projects under this folder", which would be a lie, and the graph shows its own *appears after
+Sync* empty state. A branch change does exactly this for the same reason. Because the emptying happens at the
+click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
+Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
+
+**The step always plays for the same length.** On a small workspace the deletion finishes in milliseconds, so
+the spinner would flash and the Sync's animations would land on top of it. The Clean therefore holds its step
+for the design's neutral beat measured from the click — the spinner keeps turning, the gate stays shut — then
+ends the step, waits the short beat, and only then starts the Sync. The rule it follows is the one the opening
+choreography already established: a choreography either always plays or never, because a step that appears only
+when the engine happens to be slow makes the same click feel different every time. The timing lives in the
+shell, as it does for the choreography: the view model says how long to wait, a dispatcher timer counts it, and
+under reduced motion nothing is waited at all.
 
 **A Clean invalidates the decisions on screen, and the Sync that follows rewrites them.** When the engine
 accepts the command, every row drops to the same hollow state a branch or root change produces: status
@@ -1755,11 +1785,12 @@ console, and a second error line on top of it would only be noise.
 
 **Clean shares the Sync gate.** Its enabled state comes from the command alone, like *Resolve cycles*: a
 workspace must be selected — a topology is not required, the engine scans for itself — the engine must be
-alive, and no run, Sync or Clean may be in flight. While a Clean runs, from the click until `cleanCompleted`
-or the error that ends it, *Build*, *Rebuild*, *Resolve cycles*, the row actions, Sync and the `N behind` chip
-are all closed — deleting `bin` under a compiling MSBuild is a race, and a Sync, the automatic one after a pull
-included, would read folders that are disappearing. The gate opens on every exit, an engine death mid-Clean
-included, and the silence watchdog (§4.6) covers the wait. The eraser itself carries the state the tooltip
+alive, and no run, Sync or Clean may be in flight. While a Clean runs, from the click until its step ends,
+*Build*, *Rebuild*, *Resolve cycles*, the row actions, Sync and the `N behind` chip are all closed — deleting
+`bin` under a compiling MSBuild is a race, and a Sync, the automatic one after a pull included, would read
+folders that are disappearing. The gate outlasts `cleanCompleted` by the length of the held step, which is what
+keeps the spinner turning while it is held. It opens on every exit, an engine death mid-Clean included, and the
+silence watchdog (§4.6) covers the wait. The eraser itself carries the state the tooltip
 cannot: while its work runs the button takes the amber `active` ground and its icon becomes the spinner, and
 *Resolve cycles* does the same for a cycle run — the box says which of its jobs is in flight, while the other
 two buttons sit in the ordinary disabled dim.
@@ -2997,8 +3028,9 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 Autostart additionally writes one `HKCU\...\Run` value.
 
 `build-state.json` is shared by every workspace, so *Clean* (§13.2) does not delete the file: it removes the
-entries whose key sits under the root being cleaned — a workspace-scoped reset that also sweeps the leftovers
-of projects since deleted or renamed — and leaves the rest untouched; when nothing matches, the file is not
+entries under each root it cleaned — the workspace root and every registered external root, a scoped reset that
+also sweeps the leftovers of projects since deleted or renamed — plus the entry of any resolved project that
+falls outside all of them, and leaves the rest untouched; when nothing matches, the file is not
 rewritten. The evaluation cache is not touched at all: it describes what the csproj files say, which a Clean
 does not change.
 
@@ -3422,7 +3454,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
 | Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
 | Sync flow (fetch → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
-| Clean flow (scan → workspace-scoped state reset → `bin`/`obj` deletion → summary), byte formatting | `Core/Workspace/CleanWorkspaceService.cs` |
+| Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate, byte formatting | `Core/Workspace/CleanWorkspaceService.cs` |
 | Workspace-scoped build-state removal (root-prefix key filter) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
 | `cleanWorkspace` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` (`CleanWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`IsRunActive`) |
 | Planning step texts (shared by Sync and the run planner) | `Core/Planning/PlanProgressLines.cs` |
@@ -3483,7 +3515,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
 | Maintenance box (Clean / Optimize / Resolve cycles), amber-plus-spinner on the running job | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Maintenance-box Clean command, its gate, the request/in-flight guard, the Clean error codes and the Sync chained on completion | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
-| Hollow reset of rows and the will-build surface (branch change, root change, Clean) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
+| Hollow reset of rows and the will-build surface (branch change, root change) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
+| Emptying rows, graph and the will-build surface at a Clean click | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
+| Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
