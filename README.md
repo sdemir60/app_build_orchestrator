@@ -263,9 +263,11 @@ then *Build* takes care of everything else, including whatever depends on them.
 
 *Clean* — the eraser in that box — is the workspace reset: it deletes the `bin` and `obj` folders of every
 project under the workspace root and that workspace's build state, so the next *Build* compiles everything
-from scratch; no *Sync* is needed in between. It starts on the click, with no confirmation dialog. It is not
-the per-project *Clean* in the row menu and not the Build menu's *Clean*: no `msbuild /t:Clean` runs. Files
-held by a running application are skipped and reported rather than failing the Clean.
+from scratch. It starts on the click, with no confirmation dialog, and the button turns amber with a spinner
+while it works. The rows lose their decisions along with the outputs, so a *Sync* runs by itself when the
+Clean finishes and fills them in again; the console keeps the whole story. It is not the per-project *Clean*
+in the row menu and not the Build menu's *Clean*: no `msbuild /t:Clean` runs. Files held by a running
+application are skipped and reported rather than failing the Clean.
 
 *Optimize* — the gauge in the middle of the box — is part of the design but has no engine behind it, so it
 is disabled and its tooltip says so.

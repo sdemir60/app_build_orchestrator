@@ -345,11 +345,13 @@ transcript, and a run's planning window is not a Sync.
 
 `cleanProgress` shares its shape with `syncProgress` — a line and a level — but is a channel of its own for
 the same reason: the App's Sync gate keys off Sync events, and a Clean transcript is not a Sync. `cleanStarted`
-is what moves the App's Clean gate from *requested* to *in flight*, and `cleanCompleted` closes the window
-with its counters — project folders visited, folders removed, bytes freed, files that were in use, state
-entries cleared; the App's one-line stream summary uses the first four, and the state count appears only in
-the console line. A file that could not be deleted is not an error — it is skipped, counted there, and the
-deletion carries on; only a missing root or an unexpected exception becomes `error(cleanFailed)`.
+is what moves the App's Clean gate from *requested* to *in flight* and what drops the decisions on the rows
+(§13.2 — the acceptance, not the click, so a rejected command leaves the screen intact). `cleanCompleted`
+closes the window with its counters — project folders visited, folders removed, bytes freed, files that were in
+use, state entries cleared; the App's one-line stream summary uses the first four, the state count appears only
+in the console line, and the App answers the event with a Sync of its own (§13.2). A file that could not be
+deleted is not an error — it is skipped, counted there, and the deletion carries on; only a missing root or an
+unexpected exception becomes `error(cleanFailed)`.
 
 `cycleRoundStarted` is run-level rather than per-project, and it names the group's leader, the round, the cap
 and the member count. A strongly-connected component is one build unit whose per-round results are never
@@ -1493,7 +1495,8 @@ repository root.
 starts on one project, and `DEEP CLEAN` the maintenance box's workspace reset — two words because they are
 two different operations. It lights amber while a run or a Sync is in flight and goes neutral when they
 finish; `DEEP CLEAN` is written at the click and carries the Clean's identity, while the Clean's live state is
-told by the console transcript rather than the pill. It *stays* until the next operation begins: the phase
+told by its own button in the maintenance box and by the console transcript. It *stays* until the next
+operation begins: the phase
 line is momentary, the pill is the identity of what was last asked for. The progress indicator lives inside
 it, six pixels right of the text — a spinner while live, the result glyph when done; the phase line does not
 draw a second one.
@@ -1725,18 +1728,30 @@ reader announces what the control does, not a count that moves under it on every
 
 **Clean is the workspace reset.** The eraser wipes the build output of the current workspace — the `bin` and
 `obj` folders of every project the engine discovers under the root, and that workspace's `build-state.json`
-entries — so the next *Build* compiles everything as never built, and no Sync is needed in between — Sync is
-read-only analysis and may run at any time. It is neither the row menu's project clean nor the Build
-menu's *Clean*: no MSBuild target runs, the deletion is on the file system alone, and the reasons are in §5.2.
-There is no confirmation dialog — the work starts on the click, because the only thing it removes is output the
-next build reproduces. The click clears the console and the event stream like every other operation, drops the
-selection, keeps the filter, sets the pill to `DEEP CLEAN` and writes `clean requested`; the engine's progress
-then runs through the console line by line — a line per project whose `bin`/`obj` was removed, a warning for
-each project with files in use — and the event stream gets one closing summary: projects, folders, bytes freed
-and, when there were any, files in use. A file held by a running application is skipped and counted rather
-than treated as a failure, the flow never stops for it, and the closing warning says to close the application
-and press *Clean* again. Because it removes `obj` outright, it also removes the cause of the stale-`obj`
-warning a run start can raise, rather than suppressing it.
+entries — so the next *Build* compiles everything as never built. It is neither the row menu's project clean
+nor the Build menu's *Clean*: no MSBuild target runs, the deletion is on the file system alone, and the reasons
+are in §5.2. There is no confirmation dialog — the work starts on the click, because the only thing it removes
+is output the next build reproduces. The click clears the console and the event stream like every other
+operation, drops the selection, keeps the filter, sets the pill to `DEEP CLEAN` and writes `clean requested`;
+the engine's progress then runs through the console line by line — a line per project whose `bin`/`obj` was
+removed, a warning for each project with files in use — and the event stream gets one closing summary:
+projects, folders, bytes freed and, when there were any, files in use. A file held by a running application is
+skipped and counted rather than treated as a failure, the flow never stops for it, and the closing warning says
+to close the application and press *Clean* again. Because it removes `obj` outright, it also removes the cause
+of the stale-`obj` warning a run start can raise, rather than suppressing it.
+
+**A Clean invalidates the decisions on screen, and the Sync that follows rewrites them.** When the engine
+accepts the command, every row drops to the same hollow state a branch or root change produces: status
+`Pending`, no decision, no duration, no dependency warning, and the ribbon's *to build* count back to zero. It
+has to: a row reading `up to date` cannot go on saying so once its `bin` is gone, and a green status answers
+to nothing on disk. The list and the graph stay where they are: a Clean does not touch a single
+csproj, so the topology is still true, and a truly emptied list would make the panel claim there are no
+projects under the folder. The trigger is the engine's acceptance rather than the click, so a command that
+fails to send, or one the Supervisor rejects, leaves the screen intact. Then `cleanCompleted` chains a Sync
+with the console preserved — the same shape as the `N behind` chip's pull — because the engine's own analysis
+is the only thing that can put real decisions back, and the alternative is asking the user to press *Sync* for
+information the application can fetch itself. A failed Clean chains nothing: the reason is already in the
+console, and a second error line on top of it would only be noise.
 
 **Clean shares the Sync gate.** Its enabled state comes from the command alone, like *Resolve cycles*: a
 workspace must be selected — a topology is not required, the engine scans for itself — the engine must be
@@ -1744,7 +1759,10 @@ alive, and no run, Sync or Clean may be in flight. While a Clean runs, from the 
 or the error that ends it, *Build*, *Rebuild*, *Resolve cycles*, the row actions, Sync and the `N behind` chip
 are all closed — deleting `bin` under a compiling MSBuild is a race, and a Sync, the automatic one after a pull
 included, would read folders that are disappearing. The gate opens on every exit, an engine death mid-Clean
-included, and the silence watchdog (§4.6) covers the wait.
+included, and the silence watchdog (§4.6) covers the wait. The eraser itself carries the state the tooltip
+cannot: while its work runs the button takes the amber `active` ground and its icon becomes the spinner, and
+*Resolve cycles* does the same for a cycle run — the box says which of its jobs is in flight, while the other
+two buttons sit in the ordinary disabled dim.
 
 **No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
@@ -2747,7 +2765,8 @@ imply the cycle is not there.
 
 Lucide geometry, 1.5–2 px stroke, single colour, 12–16 px, authored as XAML geometries. **Never emoji.** The
 building spinner is not a separate drawing — it is the start-mode dashed ring, in amber, rotating linearly
-over 1.4 s.
+over 1.4 s. The maintenance box borrows it in place of an icon: the button whose job is running swaps its
+eraser or unlink mark for the spinner, in the same 12 px box, so the strip needs no second indicator (§13.2).
 
 The Build split menu and the project row menu share **one icon family** on a single grid: play, rotate-cw,
 brush. The mapping lives in one place so the two menus cannot drift; the ⋯ that opens the row menu belongs to
@@ -3462,8 +3481,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
-| Maintenance box (Clean / Optimize / Resolve cycles) | `App/Views/MaintenanceBox.xaml(.cs)` |
-| Maintenance-box Clean command, its gate, the request/in-flight guard and the Clean error codes | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
+| Maintenance box (Clean / Optimize / Resolve cycles), amber-plus-spinner on the running job | `App/Views/MaintenanceBox.xaml(.cs)` |
+| Maintenance-box Clean command, its gate, the request/in-flight guard, the Clean error codes and the Sync chained on completion | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
+| Hollow reset of rows and the will-build surface (branch change, root change, Clean) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |

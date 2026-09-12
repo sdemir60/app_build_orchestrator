@@ -9,8 +9,13 @@
 | **Branch** | `feat/clean-button-engine-v2` (yalnız LOCAL) |
 | **Plan** | `.claude/outputs/2026-08-19-17-33-clean-button-engine-plan.md` |
 | **Sonuç kaydı (v2)** | `.claude/outputs/2026-09-10-19-39-clean-button-engine-v2-results.md` |
+| **Sonuç kaydı (2. tur)** | `.claude/outputs/2026-09-12-06-43-clean-post-run-refresh-and-busy-buttons.md` |
 | **Merge hedefi** | `main` |
 | **Merge commit mesajı** | `merge: clean butonu motoru` |
+
+> Branch iki tur taşır: motorun kendisi ve üstüne gelen "Clean sonrası tazeleme + koşan bakım butonu" turu
+> (satırların kararları `cleanStarted`'da düşer, `cleanCompleted` konsol korunarak Sync zincirler, koşan düğme
+> amber zemin + spinner). İkinci turun kararları K-11…K-15 olarak kendi kaydındadır.
 
 ---
 
