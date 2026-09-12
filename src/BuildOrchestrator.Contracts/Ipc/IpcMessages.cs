@@ -23,6 +23,7 @@ public static class IpcJson
 [JsonDerivedType(typeof(StartRunCommand), "startRun")]
 [JsonDerivedType(typeof(SyncWorkspaceCommand), "syncWorkspace")]
 [JsonDerivedType(typeof(CleanWorkspaceCommand), "cleanWorkspace")]
+[JsonDerivedType(typeof(OptimizeWorkspaceCommand), "optimizeWorkspace")]
 [JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
 [JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
 [JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
@@ -177,6 +178,35 @@ public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
 public sealed record CleanWorkspaceCommand(
     string RootPath, IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
 
+/// <summary>
+/// [optimize] Workspace'i ONAR — Optimize bir <b>workspace doktoru</b>dur: bilinen sorun sınıflarını tarar,
+/// düzeltebildiğini o anda düzeltir, düzeltemediğini isim isim raporlar. <see cref="SyncWorkspaceCommand"/>'in
+/// aksine salt-okur DEĞİLDİR; <see cref="CleanWorkspaceCommand"/>'in aksine de bir SİLİCİ değildir: Clean
+/// derleme çıktısını götürür, Optimize eksik olanı geri getirir ve yalnız build'i kıran artığı ayıklar.
+/// <para><b>Düzelttikleri:</b> (1) eksik NuGet paketleri — <c>packages.config</c>'li ve <c>\packages\</c>
+/// HintPath hedefi diskte olmayan projeler per-proje <c>-t:restore</c> ile restore edilir; (2) restore'un
+/// çözemediği kırık referanslar proje + dosya adıyla raporlanır (teşhis); (3) LEGACY projelerde build-kırıcı
+/// stale <c>obj</c> NuGet artıkları (<c>project.assets.json</c>, <c>*.nuget.g.props/targets</c>) silinir —
+/// SDK-style projede ASLA (restore'suz silmek build'i kırar); (4) üç kalıcı defterde (<c>build-state.json</c>,
+/// <c>evaluation-cache.json</c>, <c>source-hash-cache.json</c>) dosyası artık var olmayan girdiler budanır ve
+/// öksüz <c>.tmp</c> artıkları süpürülür.</para>
+/// <para><b>Dokunmadıkları:</b> global NuGet cache'leri, <c>NuGet.config</c>, git (Optimize hiçbir git komutu
+/// KOŞMAZ), worktree havuzu, <c>bin</c>/OutDir, run logları, <c>ui-state.json</c>. Build kararlarını
+/// DEĞİŞTİRMEZ — imza kaynak-tabanlıdır, hiçbir projeyi dirty yapmaz.</para>
+/// <para>Bir koşu uçuştayken reddedilir (<c>error(optimizeRejected)</c>) ve Sync gibi Supervisor'ın komut
+/// döngüsünü BLOKLAR — iptal komutu YOKTUR (uzun restore'larda tek kaçış "Restart engine"dir).</para>
+/// </summary>
+/// <param name="RootPath">Onarılacak workspace kökü. Configuration TAŞINMAZ: hiçbir adım configuration'a bakmaz
+/// (restore per-proje çalışır, artık temizliği ve defter budaması configuration'dan bağımsızdır).</param>
+/// <param name="ExternalProjects">[Harici projeler] Ayarlar'daki harici kökler — <see cref="SyncWorkspaceCommand"/>
+/// ve <see cref="CleanWorkspaceCommand"/> ile AYNI kart listesi ve AYNI çözümleme
+/// (<c>ExternalWorkspaceResolver</c>). Harici projeler sıradan projelerdir: aynı grafa girer, aynı kararı alır,
+/// dolayısıyla Optimize da onların paketlerini restore eder, kırık referanslarını raporlar ve stale
+/// <c>obj</c> artıklarını temizler. Onarım izni bu köklerle sınırlıdır — kartı verilmemiş bir dizine ASLA
+/// dokunulmaz. <c>null</c> (varsayılan): alanı hiç yazmayan eski NDJSON satırları çözülmeye devam eder.</param>
+public sealed record OptimizeWorkspaceCommand(
+    string RootPath, IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
+
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 
@@ -209,6 +239,9 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(CleanStartedEvent), "cleanStarted")]
 [JsonDerivedType(typeof(CleanProgressEvent), "cleanProgress")]
 [JsonDerivedType(typeof(CleanCompletedEvent), "cleanCompleted")]
+[JsonDerivedType(typeof(OptimizeStartedEvent), "optimizeStarted")]
+[JsonDerivedType(typeof(OptimizeProgressEvent), "optimizeProgress")]
+[JsonDerivedType(typeof(OptimizeCompletedEvent), "optimizeCompleted")]
 [JsonDerivedType(typeof(PlanProgressEvent), "planProgress")]
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
@@ -313,6 +346,40 @@ public sealed record CleanProgressEvent(string Line, string Level) : IpcEvent;
 /// <param name="StateEntriesCleared">Kaldırılan <c>build-state.json</c> kaydı sayısı (workspace-scoped).</param>
 public sealed record CleanCompletedEvent(int ProjectCount, int FoldersRemoved, long BytesRemoved,
     int LockedFileCount, int StateEntriesCleared) : IpcEvent;
+
+/// <summary>[optimize] Workspace onarımı başladı (bkz. <see cref="OptimizeWorkspaceCommand"/>).</summary>
+public sealed record OptimizeStartedEvent(string RootPath) : IpcEvent;
+
+/// <summary>[optimize] Onarımın tek bir ilerleme satırı. <see cref="SyncProgressEvent"/> ve
+/// <see cref="CleanProgressEvent"/>'in İKİZİDİR ama onların yüzeyine AİT DEĞİLDİR: App bu satırları kendi
+/// optimize penceresinin dili sayar — üç akışın tek diskriminatöre binmesi konsol geçmişini de teşhisi de
+/// bulandırırdı.</summary>
+/// <param name="Level">cmd/info/dim/warn — App tarafında satır rengini belirler.</param>
+public sealed record OptimizeProgressEvent(string Line, string Level) : IpcEvent;
+
+/// <summary>[optimize] Onarım bitti; sayaçlar konsol özetini ve stream satırını besler. TÜM alanlar default
+/// değerlidir — bu event'ten önce yazılmış NDJSON satırları alansız çözülmeye devam eder.</summary>
+/// <param name="ProjectCount">Taranan (değerlendirilebilen) proje sayısı — harici kökler dahil.</param>
+/// <param name="RestoredProjects">Restore'u exit 0 ile biten needy proje sayısı.</param>
+/// <param name="FailedRestores">Restore'u exit≠0 ile biten needy proje sayısı (offline/kaynak erişilemez
+/// senaryosu buraya düşer; HATA DEĞİLDİR, akış sürer). Needy toplamı <c>RestoredProjects + FailedRestores</c>
+/// olarak TÜRETİLİR — ayrı bir alan yoktur.</param>
+/// <param name="UnresolvedReferences">Restore DENENDİKTEN SONRA hâlâ diskte olmayan HintPath hedefi sayısı
+/// (sürüm drift'i, eksik platform DLL'i). Ad bilinçlidir: "broken" değil — restore'un çözemedikleri.</param>
+/// <param name="StaleObjCleaned">Stale NuGet artıkları temizlenen LEGACY proje sayısı (SDK-style projeler
+/// hiç dokunulmadığı için buraya hiç girmez).</param>
+/// <param name="PrunedStateEntries"><c>build-state.json</c>'dan budanan ölü girdi sayısı.</param>
+/// <param name="PrunedCacheEntries"><c>evaluation-cache.json</c>'dan budanan ölü girdi sayısı.</param>
+/// <param name="PrunedSourceHashEntries"><c>source-hash-cache.json</c>'dan budanan ölü girdi sayısı. Bu defter
+/// KAYNAK DOSYA yollarıyla anahtarlanır (ötekiler csproj ile), bu yüzden ayrı sayılır: silinen tek bir dosya
+/// bile buradan düşer.</param>
+/// <param name="RemovedTempFiles">Süpürülen öksüz <c>.tmp</c> artığı sayısı (üç defterin toplamı).</param>
+/// <param name="LockedFileCount">Kilitli olduğu için silinemeyen dosya sayısı — HATA DEĞİLDİR, akış sürer.</param>
+/// <param name="BytesReclaimed">TÜM silme adımlarının (obj artıkları + <c>.tmp</c>) topladığı bayt.</param>
+public sealed record OptimizeCompletedEvent(int ProjectCount = 0, int RestoredProjects = 0, int FailedRestores = 0,
+    int UnresolvedReferences = 0, int StaleObjCleaned = 0, int PrunedStateEntries = 0, int PrunedCacheEntries = 0,
+    int PrunedSourceHashEntries = 0, int RemovedTempFiles = 0, int LockedFileCount = 0,
+    long BytesReclaimed = 0) : IpcEvent;
 
 public sealed record BranchListEvent(IReadOnlyList<BranchRef> Branches) : IpcEvent;
 

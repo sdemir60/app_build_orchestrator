@@ -613,4 +613,48 @@ public class IpcMessagesTests
             Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
         }
     }
+
+    // [optimize] Optimize butonunun motoru: workspace doktoru. Komut Configuration TASIMAZ (hicbir adim
+    // configuration'a bakmaz) ama harici kok listesini tasir — harici projeler siradan projelerdir, Sync ve
+    // Clean gibi Optimize da onlari onarir. Ayirt edici "optimizeWorkspace" telde sabittir.
+    [Fact]
+    public void OptimizeWorkspace_roundtrips_with_discriminator()
+    {
+        var cmd = new OptimizeWorkspaceCommand(@"D:\repo",
+            [new ExternalProject(@"D:\externals\Shared", VcsKind.Git)]);
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"type\":\"optimizeWorkspace\"", json);
+        var back = Assert.IsType<OptimizeWorkspaceCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+        Assert.Equal(@"D:\repo", back.RootPath);
+        Assert.Equal(@"D:\externals\Shared", Assert.Single(back.ExternalProjects!).Path);
+    }
+
+    // [optimize] Optimize'in ucu de ayri bir kanaldir: syncProgress/cleanProgress YENIDEN KULLANILMAZ.
+    // Ayrica completed event'in TUM alanlari default degerlidir — alansiz yazilmis eski satirlar cozulmeye
+    // devam eder (K-11).
+    [Fact]
+    public void Optimize_events_roundtrip_with_discriminators()
+    {
+        (IpcEvent Event, string Discriminator)[] cases =
+        [
+            (new OptimizeStartedEvent(@"D:\repo"), "optimizeStarted"),
+            (new OptimizeProgressEvent("checking NuGet packages - 36 projects, 2 need restore", "info"), "optimizeProgress"),
+            (new OptimizeCompletedEvent(ProjectCount: 36, RestoredProjects: 2, FailedRestores: 1,
+                UnresolvedReferences: 3, StaleObjCleaned: 4, PrunedStateEntries: 5, PrunedCacheEntries: 6,
+                PrunedSourceHashEntries: 7, RemovedTempFiles: 8, LockedFileCount: 9,
+                BytesReclaimed: 1234567890), "optimizeCompleted"),
+        ];
+        foreach (var (ev, discriminator) in cases)
+        {
+            string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+            Assert.Contains($"\"type\":\"{discriminator}\"", json);
+            Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        }
+
+        // Ciplak satir: hicbir sayac yazilmamis eski bir optimizeCompleted da cozulur.
+        var bare = Assert.IsType<OptimizeCompletedEvent>(
+            JsonSerializer.Deserialize<IpcEvent>("{\"type\":\"optimizeCompleted\"}", IpcJson.Options));
+        Assert.Equal(0, bare.ProjectCount);
+        Assert.Equal(0L, bare.BytesReclaimed);
+    }
 }
