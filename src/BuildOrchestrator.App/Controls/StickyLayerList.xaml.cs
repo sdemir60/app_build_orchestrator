@@ -174,6 +174,18 @@ public partial class StickyLayerList : UserControl
         // reveal'in kendisi generation-guard'lı (<see cref="RevealStagger"/>) olduğundan zararsızdır:
         // en fazla taze listeyi bir kez kademeli gösterir, yanlış satırlara dokunamaz.
         _revealPending = reveal;
+        // [ölçülen kusur] Satır yüzeyi beliriş boyunca KAPALI kalır. Reveal, container üretimi bitince
+        // `DispatcherPriority.Loaded`(6) ile kuyruğa girer; render ise `Render`(7), yani DAHA YÜKSEK
+        // önceliktedir — sıra bu yüzden "satırları tam opaklıkta çiz → 0'a indir → kademeli aç"tı ve arada
+        // gözle görülür bir kare açılıyordu. (Liste zaten doluyken fark edilmiyordu: boyanan içerik bir
+        // öncekine benziyordu. Boş listeye gelen bir topolojide ise "gelir, kaybolur, tekrar gelir" olarak
+        // görülüyor.) Yüzeyi <see cref="PlayRevealStagger"/> açar — beliriş reddedilse de açar, aksi halde
+        // liste kalıcı görünmez kalırdı. Sessiz tazeleme (reveal:false) yüzeye DOKUNMAZ: her tuş vuruşunda
+        // bir kare kaybolmasın.
+        // Graf bu işi düğüm başına ZATEN böyle yapar (GraphView düğüm görselini `Opacity = 0` ile doğurur ve
+        // reveal'i SetGraph'tan SENKRON sürer); liste, container'ları WPF ürettiği için aynı şeyi yüzey
+        // seviyesinde yapar — iki sahip artık aynı ilkede.
+        Flow.Opacity = reveal ? 0 : 1;
         Flow.ItemsSource = entries;
         UpdateOverlay(Scroll.VerticalOffset);
     }
@@ -374,6 +386,11 @@ public partial class StickyLayerList : UserControl
         Flow.UpdateLayout();
         var rows = CollectRows();
 
+        // Yüzey AÇILIR: bundan sonra görünürlüğü satırların kendi opaklığı yönetir (aşağıdaki PlayReveal).
+        // Beliriş reddedilse de (azaltılmış hareket / başka hero) burası koşar — yoksa liste kalıcı olarak
+        // görünmez kalırdı. Tek karede olduğu için arada render YOKTUR: satırlar hiç tam opak boyanmaz.
+        Flow.Opacity = 1;
+
         // [W2 fold] Önceki hero + bekleyen release'i bırak, yeni kuşağı damgala, hero'yu al (başka hero sürüyorsa
         // animate düşer → ani sonuç). Muhasebe GraphView ile ORTAK: bkz. RevealStagger.Begin.
         var (animate, gen) = _reveal.Begin(AnimationsEnabledProvider(), ActiveHeroCoordinator, RevealHeroKey);
@@ -430,6 +447,10 @@ public partial class StickyLayerList : UserControl
 
     // test yüzeyi (GraphView deseni)
     internal int RevealGeneration => _reveal.Generation;
+
+    /// <summary>[test yüzeyi] Satır akışının opaklığı. Beliriş bekleyen bir liste 0'dadır: render, satırları tam
+    /// opaklıkta gösteren bir kare ÇİZEMEZ (bkz. <see cref="SetGroups(IReadOnlyList{LayerGroup}, bool)"/>).</summary>
+    internal double RowSurfaceOpacity => Flow.Opacity;
     internal bool HasPendingRevealRelease => _reveal.HasPendingRelease;
     internal IReadOnlyList<ProjectRow> RevealRows => CollectRows();
     /// <summary>[T2 fix-1 · I-D test yüzeyi] Follow/seçim controller'ı — <c>SetGroups</c> boyunca AYNI nesne

@@ -1640,6 +1640,14 @@ realized in the same layout round.
 One consequence is deliberate: the staggered reveal reaches the rows that exist, which is the visible window.
 Rows scrolled into view later simply appear.
 
+**A row waiting for its reveal is never painted.** The row surface is closed the moment the items are handed
+over and reopened by the reveal itself, so no frame can show the rows at full opacity before the stagger hides
+them. Without that the order was paint, hide, fade: the reveal is queued at a priority *below* render, so
+rendering ran first. The graph never had the problem because it gives birth to each node already transparent;
+the list cannot, because WPF owns its containers, so it closes the surface instead. A silent refresh — the
+filter path — leaves the surface alone, or every keystroke would cost a blank frame. A reveal that is refused,
+under reduced motion or while another hero holds the stage, still reopens it.
+
 **Every Sync replays the reveal.** The topology a Sync publishes is a fresh listing even when nothing in it
 changed, so the list is rebuilt and revealed again, and — when nothing is selected — scrolled back to the
 top; the graph replays its own reveal in the same moment, so the two read together as "listed from scratch".
