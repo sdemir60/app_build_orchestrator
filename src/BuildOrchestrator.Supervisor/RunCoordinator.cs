@@ -270,9 +270,9 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [clean] Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). TEK tüketicisi
-    /// <c>cleanWorkspace</c>'in reddetme kapısıdır — silme, uçuştaki bir build'in yazdığı klasörlerle
-    /// yarışmamalıdır.
+    /// [clean/optimize] Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). Tüketicileri
+    /// <c>cleanWorkspace</c> ve <c>optimizeWorkspace</c>'in reddetme kapılarıdır — ikisi de diski değiştirir ve
+    /// uçuştaki bir build'in yazdığı klasörlerle yarışmamalıdır.
     /// <para><c>_finishing</c> KASITLI olarak dışarıda: drain sırasında da (sonuç event'leri yazılırken,
     /// in-flight <c>MSBuild.exe</c>'ler post-build copy'lerini bitirirken) reddetmek doğru davranıştır.</para>
     /// </summary>

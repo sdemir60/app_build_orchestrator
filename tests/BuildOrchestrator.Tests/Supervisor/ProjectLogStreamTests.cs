@@ -122,8 +122,10 @@ public class ProjectLogStreamTests
                 console: _ => { });
             // [A5/T69] Sync/branch/worktree servisleri İZOLE köklerle bağlanır (bu harness onları kullanmaz,
             // ama kullanıcının gerçek cache/havuz dosyalarına hiçbir koşulda dokunulmamalıdır).
+            // [optimize] Restore fabrikası da çağrılmamalıdır — çağrılırsa test sessizce geçmez.
             var host = new SupervisorHost(supervisorWriter, new NdjsonReader(_toHost), Job, Coordinator,
-                WorkspaceServices.Default(LogsRoot, Path.Combine(LogsRoot, "worktrees")));
+                WorkspaceServices.Default(LogsRoot, Path.Combine(LogsRoot, "worktrees"),
+                    _ => throw new NotSupportedException("bu harness'te restore yok")));
             _cmdWriter = new NdjsonWriter(_toHost);
             _eventReader = new NdjsonReader(_fromHost);
             _hostTask = Task.Run(() => host.RunAsync());

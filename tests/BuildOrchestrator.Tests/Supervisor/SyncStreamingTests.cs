@@ -88,12 +88,6 @@ public class SyncStreamingTests
         repo.CommitAll("c1");
     }
 
-    private static List<IpcEvent> ParseWire(string text) => text
-        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Select(l => JsonSerializer.Deserialize<IpcEvent>(l, IpcJson.Options)
-                     ?? throw new InvalidOperationException("NDJSON olmayan satır [D4]: " + l))
-        .ToList();
-
     [Fact]
     public async Task Sync_events_reach_stdout_while_the_sync_is_still_running()
     {
@@ -129,7 +123,13 @@ public class SyncStreamingTests
                 new SourceHashCache(Path.Combine(sandbox, SourceHashCache.FileName))),
             root => new GitService(new ProcessRunner(), root),
             root => new WorktreeManager(new ProcessRunner(), root, Path.Combine(sandbox, "worktrees")),
-            _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(sandbox)));
+            _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(sandbox)),
+            // Bu test Sync akisini olcer; Optimize kurulur ama HIC cagrilmaz - restore fabrikasi da o yuzden firlatir.
+            _ => new OptimizeWorkspaceService(
+                new WorkspaceScanner(), new CsprojEvaluator(),
+                new EvaluationCache(Path.Combine(sandbox, "evaluation-cache.json")),
+                new BuildStateStore(sandbox), new SourceHashCache(Path.Combine(sandbox, SourceHashCache.FileName)),
+                _ => throw new NotSupportedException("no restore in this test")));
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator, services);
         var hostTask = Task.Run(() => host.RunAsync());
@@ -139,7 +139,7 @@ public class SyncStreamingTests
         string wireDuringSync = stdout.Text;
         Assert.False(hostTask.IsCompleted); // host hâlâ fetch kapısında — Sync KOŞMAYA DEVAM EDİYOR
 
-        var duringSync = ParseWire(wireDuringSync);
+        var duringSync = NdjsonWire.Parse(wireDuringSync);
         Assert.Contains(duringSync, e => e is SyncStartedEvent);
         Assert.DoesNotContain(duringSync, e => e is SyncCompletedEvent); // "sonda tek seferde" DEĞİL
 
@@ -147,7 +147,7 @@ public class SyncStreamingTests
         Assert.Equal(0, await hostTask.WaitAsync(Limit));
 
         // ---- akış bittiğinde tam sıra + [D4] her satır NDJSON
-        var all = ParseWire(stdout.Text);
+        var all = NdjsonWire.Parse(stdout.Text);
         Assert.IsType<EngineReadyEvent>(all[0]);
         Assert.IsType<SyncStartedEvent>(all[1]);
         Assert.IsType<SyncCompletedEvent>(all[^1]);
