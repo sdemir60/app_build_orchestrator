@@ -146,6 +146,10 @@ the running instance first — tray icon → Exit).
    disabled too — the engine handles one at a time, and anything started in that window would land in the
    middle of the Sync's console output. It takes seconds; they re-enable the moment it finishes.
 
+   If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
+   resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
+   drop one of the roots that contributes it.
+
    **Sync colours nothing.** Which operation is coming is not known yet, so no plan is shown: every row sits
    in the start mode — a faint stripe, a four-arc ring in place of the dot, a dashed glyph — and every graph
    node draws a dashed border. What is stale is still readable, from the **decision label** at the right end of

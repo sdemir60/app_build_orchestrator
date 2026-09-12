@@ -39,4 +39,23 @@ public class GraphBuilderTests
         Assert.Contains("dup.dll", producers.AmbiguousDlls);
         Assert.False(producers.DllToProducer.ContainsKey("dup.dll"));
     }
+
+    /// <summary>
+    /// Belirsiz bir DLL kenar üretmez ve bu SESSİZ bir kayıptır: o DLL'e HintPath ile bağlanan her proje
+    /// bağımlılığını kaybeder, yani yanlış sırada derlenebilir. Kullanıcının tek çözümü çakışan
+    /// <c>AssemblyName</c>'lerden birini değiştirmek ya da kökü listeden çıkarmaktır — bunu yapabilmesi için
+    /// HANGİ projelerin çakıştığını görmesi gerekir. Harita bu yüzden yalnız DLL adını değil, üreticileri de
+    /// taşır; sıra determinist (yol, OrdinalIgnoreCase).
+    /// </summary>
+    [Fact]
+    public void an_ambiguous_dll_names_the_projects_that_produce_it()
+    {
+        var a = P("C:\\r\\B.csproj", "DUP", [], []);
+        var b = P("C:\\r\\A.csproj", "DUP", [], []);
+
+        var producers = ProducerMapBuilder.Build([a, b]);
+
+        Assert.Equal(["C:\\r\\A.csproj", "C:\\r\\B.csproj"], producers.AmbiguousProducers["dup.dll"]);
+        Assert.Equal(producers.AmbiguousDlls, [.. producers.AmbiguousProducers.Keys]);
+    }
 }

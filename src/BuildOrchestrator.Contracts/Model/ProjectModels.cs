@@ -76,11 +76,15 @@ public sealed record ProjectNode(
 /// <param name="LayerWarnings">[A1/T15] <c>LayerEngine</c>'ın ürettiği ters-katman uyarıları (warn-only DATA:
 /// hiçbir alan bunları okuyup bloklama/yeniden sıralama yapmaz — yalnız kullanıcıya gösterilir). Katman
 /// ataması çalışmadıysa boş; planı doğrudan kuran (katmandan habersiz) yollarda null.</param>
+/// <param name="ProducerWarnings">Aynı <c>AssemblyName</c>'i üreten proje çiftleri için hazır uyarı satırları
+/// (warn-only DATA, <see cref="LayerWarnings"/> ile AYNI sözleşme). Belirsiz DLL kenar üretmez, yani bu bir
+/// SESSİZ kenar kaybıdır ve kullanıcıya ulaşmak zorundadır. Çakışma yoksa boş.</param>
 public sealed record BuildPlan(
     IReadOnlyList<ProjectNode> Nodes,
     IReadOnlyList<IReadOnlyList<string>> Cycles,
     string Configuration,
-    IReadOnlyList<string>? LayerWarnings = null);
+    IReadOnlyList<string>? LayerWarnings = null,
+    IReadOnlyList<string>? ProducerWarnings = null);
 
 /// <summary>[T15][N8] Katman ataması config'i: sıralı regex+isim. Order ÇİFT görev görür — (1) eşleşme
 /// önceliği (LayerEngine, küçük Order'ı önce dener, ilk eşleşen kazanır), (2) eşleşen projelere atanan

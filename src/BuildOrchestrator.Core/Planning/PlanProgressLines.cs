@@ -1,3 +1,4 @@
+using System.Globalization;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Core.Planning;
@@ -130,6 +131,21 @@ public static class PlanProgressLines
     /// yerinde kalır. Clean bunu yazıp devam eder (ana kök yine temizlenir).</summary>
     public static string ExternalNotCleaned(string name, string problem)
         => $"warning: external '{name}': {problem} — nothing from it will be cleaned";
+
+    /// <summary>
+    /// Birden fazla proje AYNI <c>AssemblyName</c>'i üretiyor. Belirsiz DLL kenar üretmez [D8/D11], yani ona
+    /// HintPath ile bağlanan hiçbir proje onu BEKLEMEZ — sessiz kalırsa kullanıcı grafında eksik bir kenar
+    /// olduğunu hiçbir yerden göremez ve yanlış sırada derlenmiş bir build'i "yeşil" sanır.
+    ///
+    /// <para>Satır çareyi de söyler, çünkü çare kullanıcıdadır: adlardan birini değiştirmek ya da köklerden
+    /// birini listeden çıkarmak. Bu yüzden üretici YOLLARI da yazılır — hangi kökten geldikleri ancak öyle
+    /// anlaşılır (tipik vaka: bir harici kart, repo kökünde zaten duran bir solution'ın ikinci kopyası).</para>
+    /// </summary>
+    public static string AmbiguousProducer(string dll, IReadOnlyList<string> producers)
+        => string.Format(CultureInfo.InvariantCulture,
+            "warning: {0} projects produce {1} — the dependency edge is dropped, so nothing that references it "
+            + "is ordered after it; rename one AssemblyName or remove a root ({2})",
+            producers.Count, dll, string.Join(", ", producers));
 
     /// <summary>Yolun üstünde <c>.git</c> yok — güncelleme ve kir kapısı çalışmaz, projeler olduğu gibi
     /// derlenir.</summary>

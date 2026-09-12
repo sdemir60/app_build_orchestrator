@@ -926,6 +926,10 @@ public sealed class RunCoordinator(
         // geçirmektir. Plan katmansızsa (varsayılan) LayerWarnings null/boştur → hiçbir satır basılmaz.
         foreach (string warning in plan.LayerWarnings ?? [])
             console("warning: " + warning);
+        // Belirsiz üretici uyarıları metinlerini KENDİLERİ taşır (PlanProgressLines "warning: " ile başlar) —
+        // Sync transkriptindeki satırın AYNISI; burada ikinci bir önek eklenmez.
+        foreach (string warning in plan.ProducerWarnings ?? [])
+            console(warning);
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,

@@ -126,6 +126,10 @@ public sealed class SyncWorkspaceService(
 
         var plan = new BuildPlanBuilder(scanner, evaluator, cache)
             .Build(scan, cmd.Configuration, cmd.LayerPatterns, workspace.ExternalProjectIds);
+        // Belirsiz üretici = DÜŞEN kenar. Graf satırından ÖNCE yazılır: "0 cycles" diyen bir satırın ardından
+        // gelen sessizlik, grafın eksiksiz olduğu izlenimini verirdi.
+        foreach (string warning in plan.ProducerWarnings ?? [])
+            emit(Warn(warning));
         emit(Dim(PlanProgressLines.DependencyGraph(plan.Cycles.Count)));
         emit(Info(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count)));
 

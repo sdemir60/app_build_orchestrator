@@ -458,6 +458,15 @@ The primary edge signal is **HintPath basename → producing project**. A map fr
 that produces it is built from the evaluated assembly names; every raw `HintPath` is then looked up in it.
 `ProjectReference` is the *secondary* signal — it produces edges too, deduplicated against the HintPath ones.
 
+**A DLL claimed by two projects produces no edge, and that is said out loud.** When two projects share an
+`AssemblyName` there is no way to know which one a `HintPath` meant, and guessing would mean guessing a build
+order; the entry is dropped from the map instead. The drop is silent in its consequences — every project
+linking against that DLL quietly loses its dependency and may compile before its producer — so the plan
+carries a warning line naming the DLL and both projects, and both surfaces that show a plan print it: the
+Sync transcript and the run console. The usual cause is two roots contributing the same solution — an
+external card (§10.6) pointing at a second copy of something already under the repository root — and the fix
+is the user's: rename one `AssemblyName`, or drop one of the roots.
+
 Not every `HintPath` resolves inside the repository, so each one is classified into one of four buckets:
 
 | Class | Meaning |
@@ -1284,9 +1293,10 @@ a target inside the repository updates nothing at all.
 
 The `updateExternals` flag (§5) turns the whole step off. With it off no version-control command runs at all
 and **there is no dirty gate either**: nothing is going to overwrite the user's files, so their working copy is
-compiled exactly as it stands, the same way the repository's own working copy always is. A `Cycles` run skips
-the step for the same reason — it repairs strongly connected components and has no business moving anyone's
-source.
+compiled exactly as it stands, the same way the repository's own working copy always is. Two run modes skip
+the step for the same reason: `Cycles`, which repairs strongly connected components, and `Clean`, which only
+deletes output. Neither has any business moving the user's source. Both still **scan**, so the graph they
+work against is the one Build would see.
 
 Two error classes are kept apart. Something the user has to resolve — a path that resolves to no project,
 uncommitted changes, a diverged branch, a detached HEAD — **cancels the run before it starts**; a half-finished run helps nobody. A transient network or credential failure only warns and the local
@@ -3461,6 +3471,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | `MSBuild.exe` resolution via `vswhere` | `Core/MsBuild/MsBuildResolver.cs` |
 | The `vswhere` search itself | `Core/MsBuild/VsWhereLocator.cs` |
+| Duplicate `AssemblyName` detection and the warning it produces | `Core/Graph/ProducerMap.cs`, `Core/Planning/PlanProgressLines.cs` |
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
 | Invocation, output pumping, per-project kill | `Core/MsBuild/MsBuildInvoker.cs` |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
