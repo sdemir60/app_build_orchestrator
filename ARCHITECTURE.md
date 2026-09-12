@@ -1781,10 +1781,13 @@ Sync* empty state. A branch change does exactly this for the same reason. Becaus
 click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
-One consequence is worth stating, because it is visible: while the chained Sync is in flight there is no
-topology, so *Build*, *Rebuild* and *Resolve cycles* stay disabled a moment longer than *Sync* and *Clean* do.
-Their gate is the plan, not the Clean — sending a Build against a surface the user cannot see would compile a
-set nobody chose.
+This costs no extra waiting in practice. *Build*, *Rebuild* and *Resolve cycles* are already shut for the
+whole of a Sync or a Clean (`!SyncBusy && !CleanBusy`), and the plan arrives in the same batch that clears the
+in-flight flag, so both halves of their gate open together. What the emptying does change is the failure case:
+a Sync that never delivers a plan — the engine is gone, planning failed — leaves the surface empty and those
+three shut until a Sync succeeds, where before they stayed enabled against a list that no longer described
+anything. That is the same cost Clean already accepted, and it is the safer end of it: a Build against a
+surface the user cannot see would compile a set nobody chose.
 
 **The step always plays for the same length.** On a small workspace the deletion finishes in milliseconds, so
 the spinner would flash and the Sync's animations would land on top of it. The Clean therefore holds its step

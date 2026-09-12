@@ -134,8 +134,14 @@ public class CleanCommandTests
     /// anında boşaltıyor (<c>SyncCoreAsync</c> → <c>ClearPlanSurface</c>, Clean'in simetriği) ve Clean'in
     /// bitişi zaten bir Sync tetikliyor — dolayısıyla o an ortada TOPOLOJİ YOKTUR. Build/Rebuild/Cycles'ın
     /// kapısı topolojidir, bu yüzden onlar Clean'in kapısıyla değil, o Sync'in yayınladığı topolojiyle geri
-    /// gelir. Doğrusu da budur: boşaltılmış bir planın üstüne Build göndermek, kullanıcının ekranda görmediği
-    /// bir kümeyi derlemek olurdu. Sync ve Clean'in kendi kapıları hemen açılır (ikisi topoloji istemez).</para>
+    /// gelir. Sync ve Clean'in kendi kapıları hemen açılır (ikisi topoloji istemez).</para>
+    ///
+    /// <para><b>Üretimde ekstra bir bekleme YOKTUR</b> ve bu testin yapaylığı tam orada: burada komut hiç
+    /// çalıştırılmaz, yalnız event beslenir — yani <c>CleanAsync</c>'in kendi yüzey temizliği koşmamıştır ve
+    /// topoloji ayakta kalmıştır. Gerçek akışta Clean tıklandığı anda yüzey zaten boşalır ve üç komut
+    /// <c>!CleanBusy</c>/<c>!SyncBusy</c> ile de kapalıdır; plan, uçuş bayrağını düşüren AYNI olay yığınında
+    /// geldiği için kapının iki yarısı birlikte açılır. Bu testin pinlediği şey bir gecikme değil, KAPININ
+    /// KİMDE olduğudur: planda.</para>
     /// </summary>
     [Fact]
     public void A_clean_closes_the_other_gates_and_completion_reopens_them_as_their_own_preconditions_allow()
