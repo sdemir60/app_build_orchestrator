@@ -13,7 +13,7 @@ namespace BuildOrchestrator.Tests.Supervisor;
 
 /// <summary>
 /// Harici projelerin koşu içindeki yeri: <b>sıradan düğümlerdir</b>. Aynı scheduler, aynı paralellik, aynı
-/// MSBuild argüman sözleşmesi, aynı dependent kuralı — tek işaretleri <see cref="ProjectNode.ExternalVcs"/>
+/// MSBuild argüman sözleşmesi, aynı dependent kuralı — tek işaretleri <see cref="ProjectNode.IsExternal"/>
 /// rozetidir ve o rozet yalnız iki şeye karar verir: obj izolasyonu ve defterdeki commit/branch yuvası.
 ///
 /// <para>Hariciler build-order'ın BAŞINDA gelir — ama bunu sağlayan şey ayrılmış <c>External</c> katmanıdır
@@ -36,7 +36,7 @@ public class ExternalRunTests
     private static ProjectNode ExternalNode(string name, string[]? deps = null) =>
         new(ExternalId(name), name, ExternalId(name), SolutionNames: [], Dependencies: [.. deps ?? []],
             BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: false, WillBuild: null,
-            WillBuildReason: null, ExternalVcs: VcsKind.Git);
+            WillBuildReason: null, IsExternal: true);
 
     private static string NameOf(string projectId) => Path.GetFileNameWithoutExtension(projectId);
 

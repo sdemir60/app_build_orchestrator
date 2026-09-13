@@ -42,8 +42,6 @@ public partial class MainWindow : Window
     // [D5/T50] Graf ↔ VM köprüsü. GraphView düğümleri AD ile anahtarlar, VM seçimi ID (yol) ile; iki yönlü ad↔id
     // haritası topoloji değişince yeniden kurulur. _suppressGraphSelection: VM→view seçim itişinin GraphView'de
     // uyandırdığı SelectionChanged echo'sunu view→VM dalında yok sayar (aksi halde döngü seçimi geri alırdı).
-    private readonly Dictionary<string, string> _graphIdByName = new(StringComparer.Ordinal);          // Ad → Id
-    private readonly Dictionary<string, string> _graphNameById = new(StringComparer.OrdinalIgnoreCase); // Id → Ad
     private bool _suppressGraphSelection;
 
     // [E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter (frontier follow'u seçime göre gate eder;
@@ -653,19 +651,14 @@ public partial class MainWindow : Window
     // ==================================== [D5/T50] Graf beslemesi ====================================
 
     /// <summary>[D5] Topoloji değişince grafı YENİDEN kurar (<see cref="Graph.GraphView.SetGraph"/> = tam inşa +
-    /// reveal stagger). Ad↔Id haritası tazelenir; <c>SetGraph</c> düğüm statülerini zaten uygular (GraphNode.Status
-    /// GraphBinder'dan gelir) → ayrıca UpdateStatuses gerekmez. Settled durumu + mevcut seçim de yansıtılır.</summary>
+    /// reveal stagger). <c>SetGraph</c> düğüm statülerini zaten uygular (GraphNode.Status GraphBinder'dan gelir)
+    /// → ayrıca UpdateStatuses gerekmez. Settled durumu + mevcut seçim de yansıtılır.
+    /// <para>Ad↔Id çeviri haritası YOKTUR: graf düğümleri proje Id'siyle anahtarlanır (bkz.
+    /// <see cref="Graph.GraphNode"/>), dolayısıyla VM seçimi doğrudan geçer. Harita ada göreydi ve aynı adlı
+    /// iki proje varken biri diğerini eziyordu.</para></summary>
     private void RebuildGraph()
     {
         var topology = _vm.Topology;
-        _graphIdByName.Clear();
-        _graphNameById.Clear();
-        foreach (var node in topology)
-        {
-            _graphIdByName[node.Name] = node.Id;
-            _graphNameById[node.Id] = node.Name;
-        }
-
         Shell.GraphHost.SetGraph(GraphBinder.Nodes(topology, RowsById()), GraphBinder.Edges(topology));
         PushGraphRunPhase();  // koşarken soluk/parlak sistemi, boşta tümü tam opak (design v1.3.0 §2.3)
         PushGraphSelection(); // mevcut seçim taze grafa yansısın
@@ -679,9 +672,9 @@ public partial class MainWindow : Window
     /// olmazsa graf ancak koşu tikinin (200ms) insafıyla tazelenir — 36 projede tempo ~31ms/node olduğu için
     /// dalga listede akıcı, grafta kesik kesik görünür. Tasarım ikisinin SENKRON olmasını ister (§9-4).</para>
     /// </summary>
-    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedNames)
+    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedProjectIds)
     {
-        Shell.GraphHost.SetMarking(step, markedNames);
+        Shell.GraphHost.SetMarking(step, markedProjectIds);
         PushGraphStatuses();
     }
 
@@ -712,24 +705,23 @@ public partial class MainWindow : Window
         return dict;
     }
 
-    /// <summary>[D5] VM seçimini (Id) grafa (AD) iter. Echo koruması: itiş sırasında GraphView SelectionChanged
-    /// yayınlar → <see cref="OnGraphSelectionChanged"/> bunu bayrakla yok sayar (aksi halde SelectProject toggle'ı
-    /// seçimi geri alırdı).</summary>
+    /// <summary>[D5] VM seçimini grafa iter — ikisi de proje Id'si kullandığı için çeviri YOK. Echo koruması:
+    /// itiş sırasında GraphView SelectionChanged yayınlar → <see cref="OnGraphSelectionChanged"/> bunu bayrakla
+    /// yok sayar (aksi halde SelectProject toggle'ı seçimi geri alırdı).</summary>
     private void PushGraphSelection()
     {
-        string? name = _vm.SelectedProjectId is { } id && _graphNameById.TryGetValue(id, out var n) ? n : null;
         _suppressGraphSelection = true;
-        try { Shell.GraphHost.SelectedNode = name; }
+        try { Shell.GraphHost.SelectedNode = _vm.SelectedProjectId; }
         finally { _suppressGraphSelection = false; }
     }
 
-    /// <summary>[D5] Graf seçimi (AD; boşluğa tıklama = null) → VM seçimi (Id). Kendi push'umuzun echo'su
-    /// (<see cref="_suppressGraphSelection"/>) yok sayılır.</summary>
-    private void OnGraphSelectionChanged(object? sender, string? name)
+    /// <summary>[D5] Graf seçimi (proje Id'si; boşluğa tıklama = null) → VM seçimi. İki taraf AYNI kimliği
+    /// kullandığı için çeviri yoktur. Kendi push'umuzun echo'su (<see cref="_suppressGraphSelection"/>) yok
+    /// sayılır.</summary>
+    private void OnGraphSelectionChanged(object? sender, string? projectId)
     {
         if (_suppressGraphSelection) return;
-        string? id = name is { } nm && _graphIdByName.TryGetValue(nm, out var i) ? i : null;
-        _vm.SelectProject(id);
+        _vm.SelectProject(projectId);
     }
 
     /// <summary>[D5] VM sinyalleri → graf: statü tikleri (Counters), run başlangıç/bitiş (RunPhase + statü),
@@ -936,7 +928,7 @@ public partial class MainWindow : Window
     {
         bool filtering = _vm.ActiveFilters.Count > 0 || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
         Shell.GraphHost.FilterMatches = filtering
-            ? _vm.VisibleProjects.Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
+            ? _vm.VisibleProjects.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
             : null;
     }
 

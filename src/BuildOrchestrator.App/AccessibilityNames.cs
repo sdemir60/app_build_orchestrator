@@ -180,9 +180,6 @@ public static class AccessibilityNames
     /// <summary>Harici proje kartındaki mono path input'u — kolon başlığı "PROJECT PATH", watermark bir
     /// ÖRNEK yoldur, etiket değildir.</summary>
     public const string ExternalProjectPath = "External project path";
-    /// <summary>Harici proje kartındaki Source (Git/TFVC) seçimi — kolon başlığı "SOURCE" ama ekran
-    /// okuyucunun duyacağı ad README §9 v1.14.0'da pinlenen "Version control"dur.</summary>
-    public const string ExternalProjectSource = "Version control";
     /// <summary>[design v1.15.0 §2.9] Bölüm başlığındaki switch — ekran okuyucu caps etiketi değil bu adı duyar.</summary>
     public const string PullExternalsBeforeBuild = "Pull external working copies before build";
 

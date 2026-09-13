@@ -49,7 +49,7 @@ internal static class SyntheticGraph
             {
                 string name = $"{NamePrefix}Synth.L{layer}.P{layerNames[layer].Count:D4}";
                 layerNames[layer].Add(name);
-                nodes.Add(new GraphNode(name, layer, NextStatus(rng)));
+                nodes.Add(new GraphNode(name, name, layer, NextStatus(rng)));
             }
         }
 

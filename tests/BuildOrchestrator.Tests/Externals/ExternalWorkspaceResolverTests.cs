@@ -47,7 +47,7 @@ public class ExternalWorkspaceResolverTests
         string mail = WriteProject(Path.Combine(temp.Path, "src", "Mail"), "Mail");
         string ocr = WriteProject(Path.Combine(temp.Path, "src", "Ocr"), "Ocr");
 
-        var workspace = Resolve(EmptyMain, new ExternalProject(temp.Path, VcsKind.Git));
+        var workspace = Resolve(EmptyMain, new ExternalProject(temp.Path));
 
         Assert.Equal([mail, ocr], workspace.Scan.CsprojPaths.Order(System.StringComparer.OrdinalIgnoreCase));
         Assert.Empty(workspace.Problems);
@@ -62,7 +62,7 @@ public class ExternalWorkspaceResolverTests
         WriteProject(Path.Combine(temp.Path, "Sandbox"), "Sandbox");
         string sln = WriteSolution(temp.Path, "Mail", inside);
 
-        var workspace = Resolve(EmptyMain, new ExternalProject(sln, VcsKind.Git));
+        var workspace = Resolve(EmptyMain, new ExternalProject(sln));
 
         Assert.Equal([inside], workspace.Scan.CsprojPaths);
         Assert.Equal([sln], workspace.Scan.SlnPaths);
@@ -75,7 +75,7 @@ public class ExternalWorkspaceResolverTests
         string csproj = WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
         WriteProject(Path.Combine(temp.Path, "Other"), "Other");
 
-        var workspace = Resolve(EmptyMain, new ExternalProject(csproj, VcsKind.Tfvc));
+        var workspace = Resolve(EmptyMain, new ExternalProject(csproj));
 
         Assert.Equal([csproj], workspace.Scan.CsprojPaths);
         Assert.Empty(workspace.Scan.SlnPaths);
@@ -91,38 +91,43 @@ public class ExternalWorkspaceResolverTests
         string mainProject = WriteProject(Path.Combine(main.Path, "A"), "A");
         string externalProject = WriteProject(Path.Combine(external.Path, "Mail"), "Mail");
 
-        var workspace = Resolve(new ScanResult([mainProject], []), new ExternalProject(external.Path, VcsKind.Git));
+        var workspace = Resolve(new ScanResult([mainProject], []), new ExternalProject(external.Path));
 
         Assert.Contains(mainProject, workspace.Scan.CsprojPaths);
         Assert.Contains(externalProject, workspace.Scan.CsprojPaths);
     }
 
+    /// <summary>
+    /// <b>Eski iddia:</b> rozet bir <c>id → VcsKind</c> haritasıydı ve "kullanıcının SEÇTİĞİ kaynak" oraya
+    /// yazılıyordu. TFVC kolu kaldırıldı: taşınacak bir değer kalmadı, soru "harici mi"ye indi ve harita bir
+    /// Id KÜMESİ oldu. Kuralın özü aynı: yalnız harici köklerden gelen projeler rozet taşır.
+    /// </summary>
     [Fact]
-    public void Only_external_projects_carry_a_source_and_it_is_the_one_the_user_picked()
+    public void Only_external_projects_are_marked_as_external()
     {
         using var main = new TempDir();
         using var external = new TempDir();
         string mainProject = WriteProject(Path.Combine(main.Path, "A"), "A");
         string externalProject = WriteProject(Path.Combine(external.Path, "Mail"), "Mail");
 
-        var workspace = Resolve(new ScanResult([mainProject], []), new ExternalProject(external.Path, VcsKind.Tfvc));
+        var workspace = Resolve(new ScanResult([mainProject], []), new ExternalProject(external.Path));
 
-        Assert.Equal(VcsKind.Tfvc, workspace.VcsByProjectId[externalProject]);
-        Assert.DoesNotContain(mainProject, workspace.VcsByProjectId.Keys);
+        Assert.Contains(externalProject, workspace.ExternalProjectIds);
+        Assert.DoesNotContain(mainProject, workspace.ExternalProjectIds);
     }
 
     [Fact]
     public void The_scan_stays_canonical_when_two_cards_overlap()
     {
-        // Aynı proje iki kartta görünebilir (iç içe yollar). Liste tekil ve sıralı kalmalı, rozet İLK karttan.
+        // Aynı proje iki kartta görünebilir (iç içe yollar). Liste tekil ve sıralı kalmalı, rozet tek kez.
         using var temp = new TempDir();
         string mail = WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
 
         var workspace = Resolve(EmptyMain,
-            new ExternalProject(temp.Path, VcsKind.Git), new ExternalProject(mail, VcsKind.Tfvc));
+            new ExternalProject(temp.Path), new ExternalProject(mail));
 
         Assert.Equal([mail], workspace.Scan.CsprojPaths);
-        Assert.Equal(VcsKind.Git, workspace.VcsByProjectId[mail]);
+        Assert.Equal([mail], workspace.ExternalProjectIds);
     }
 
     [Fact]
@@ -134,7 +139,7 @@ public class ExternalWorkspaceResolverTests
 
         Assert.Same(main, workspace.Scan);
         Assert.Empty(workspace.Roots);
-        Assert.Empty(workspace.VcsByProjectId);
+        Assert.Empty(workspace.ExternalProjectIds);
         Assert.Empty(workspace.Problems);
     }
 
@@ -145,7 +150,7 @@ public class ExternalWorkspaceResolverTests
     [InlineData("   ")]
     public void A_blank_path_is_reported_and_contributes_nothing(string path)
     {
-        var workspace = Resolve(EmptyMain, new ExternalProject(path, VcsKind.Git));
+        var workspace = Resolve(EmptyMain, new ExternalProject(path));
 
         Assert.Empty(workspace.Scan.CsprojPaths);
         Assert.Equal("the path is empty", Assert.Single(workspace.Problems).Problem);
@@ -156,7 +161,7 @@ public class ExternalWorkspaceResolverTests
     {
         var missing = Path.Combine(Path.GetTempPath(), "DoganTrend-9f31");
 
-        var workspace = Resolve(EmptyMain, new ExternalProject(missing, VcsKind.Git));
+        var workspace = Resolve(EmptyMain, new ExternalProject(missing));
 
         var problem = Assert.Single(workspace.Problems);
         Assert.Equal("DoganTrend-9f31", problem.Name);   // uyarıyı/iptali kuran metin adı buradan alır
@@ -169,7 +174,7 @@ public class ExternalWorkspaceResolverTests
     {
         using var temp = new TempDir();
 
-        var workspace = Resolve(EmptyMain, new ExternalProject(temp.Path, VcsKind.Git));
+        var workspace = Resolve(EmptyMain, new ExternalProject(temp.Path));
 
         Assert.Equal("no project file was found in the folder", Assert.Single(workspace.Problems).Problem);
     }
@@ -181,7 +186,7 @@ public class ExternalWorkspaceResolverTests
         string txt = Path.Combine(temp.Path, "notes.txt");
         File.WriteAllText(txt, "");
 
-        var workspace = Resolve(EmptyMain, new ExternalProject(txt, VcsKind.Git));
+        var workspace = Resolve(EmptyMain, new ExternalProject(txt));
 
         Assert.Contains("not a solution or project file", Assert.Single(workspace.Problems).Problem);
     }
@@ -193,8 +198,8 @@ public class ExternalWorkspaceResolverTests
         string mail = WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
 
         var workspace = Resolve(EmptyMain,
-            new ExternalProject(Path.Combine(Path.GetTempPath(), "gone-7b12"), VcsKind.Git),
-            new ExternalProject(temp.Path, VcsKind.Git));
+            new ExternalProject(Path.Combine(Path.GetTempPath(), "gone-7b12")),
+            new ExternalProject(temp.Path));
 
         Assert.Equal([mail], workspace.Scan.CsprojPaths);
         Assert.Single(workspace.Problems);

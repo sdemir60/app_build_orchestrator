@@ -24,9 +24,9 @@ public class GraphRevealTests
     {
         var view = GraphTestView.Realized(new Size(640, 400), () => true);
         view.SetGraph(
-            [new("A", 0, GraphStatus.Discovered),
-             new("B", 0, GraphStatus.Discovered),
-             new("C", 1, GraphStatus.Discovered)],
+            [new("A", "A", 0, GraphStatus.Discovered),
+             new("B", "B", 0, GraphStatus.Discovered),
+             new("C", "C", 1, GraphStatus.Discovered)],
             []);
 
         Assert.Equal(0.0, view.RevealDelayOf("A"));
@@ -52,7 +52,7 @@ public class GraphRevealTests
     public void A_node_starts_transparent_and_five_pixels_above_its_place()
     {
         var view = GraphTestView.Realized(new Size(640, 400), () => true);
-        view.SetGraph([new("A", 0, GraphStatus.Discovered)], []);
+        view.SetGraph([new("A", "A", 0, GraphStatus.Discovered)], []);
 
         var cell = view.NodeVisuals["A"].Cell;
         Assert.Equal(0.0, cell.Opacity, 6);
@@ -66,7 +66,7 @@ public class GraphRevealTests
     public void Reduced_motion_places_every_node_instantly_with_no_wave()
     {
         var view = GraphTestView.Realized(new Size(640, 400), () => false);
-        view.SetGraph([new("A", 0, GraphStatus.Discovered), new("B", 1, GraphStatus.Discovered)], []);
+        view.SetGraph([new("A", "A", 0, GraphStatus.Discovered), new("B", "B", 1, GraphStatus.Discovered)], []);
 
         Assert.All(view.NodeVisuals.Values, visual =>
         {

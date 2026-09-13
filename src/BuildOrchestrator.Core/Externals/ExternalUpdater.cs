@@ -16,7 +16,7 @@ public sealed class ExternalPreparationException(string message) : Exception(mes
 {
     /// <summary>Commit'lenmemiş yerel değişiklik — araç kullanıcının dosyalarının üstüne çalışmaz.</summary>
     public static ExternalPreparationException Dirty(string name, string rootPath) => new(
-        $"External project '{name}' has uncommitted changes in '{rootPath}' — commit, stash or shelve them, then build again.");
+        $"External project '{name}' has uncommitted changes in '{rootPath}' — commit or stash them, then build again.");
 
     /// <summary>Yerel branch remote'tan ayrışmış; fast-forward mümkün değil.</summary>
     public static ExternalPreparationException Diverged(string name, string rootPath) => new(
@@ -34,10 +34,6 @@ public sealed class ExternalPreparationException(string message) : Exception(mes
     /// <summary>Çalışma kopyası okunamadı / güncellenemedi (ağ hatası DEĞİL — o degrade edilir).</summary>
     public static ExternalPreparationException UpdateFailed(string name, string rootPath, string? detail) => new(
         $"External project '{name}' could not be prepared in '{rootPath}': {detail ?? "unknown error"}");
-
-    /// <summary>tf.exe yok ya da TFVC sorgusu başarısız — TFVC harici bu makinede hazırlanamaz.</summary>
-    public static ExternalPreparationException Tfvc(string name, string detail) => new(
-        $"External project '{name}' could not be prepared: {detail}");
 }
 
 /// <summary>
@@ -49,23 +45,18 @@ public sealed class ExternalPreparationException(string message) : Exception(mes
 /// gelir). Bu sınıfın çıktısı çalışma kopyasının diskteki hâli, kullanıcıya yazılan satırlar ve okunabilen
 /// REVİZYON kimlikleridir — revizyon bir TANI bilgisidir, hiçbir kararı beslemez.</para>
 ///
-/// <para><b>İki farklı hata sınıfı.</b> Kullanıcının çözmesi gereken bir durum (kir, ayrışma, detached HEAD,
-/// kurulu olmayan tf.exe) koşuyu <see cref="ExternalPreparationException"/> ile HİÇ BAŞLATMADAN durdurur —
-/// güncellenemeyen bir kaynak üstünde derlemek yarım bir koşudur. Geçici bir ağ/kimlik hatası ise yalnız
-/// uyarır ve yerel sürümle devam edilir; ana reponun degraded fetch davranışı da tam olarak budur.</para>
+/// <para><b>İki farklı hata sınıfı.</b> Kullanıcının çözmesi gereken bir durum (kir, ayrışma, detached HEAD)
+/// koşuyu <see cref="ExternalPreparationException"/> ile HİÇ BAŞLATMADAN durdurur — güncellenemeyen bir kaynak
+/// üstünde derlemek yarım bir koşudur. Geçici bir ağ/kimlik hatası ise yalnız uyarır ve yerel sürümle devam
+/// edilir; ana reponun degraded fetch davranışı da tam olarak budur.</para>
 ///
-/// <para><b>Seçilen türde çalışma kopyası yoksa</b> (yolun üstünde <c>.git</c> / <c>$tf</c> bulunamadı)
-/// güncelleme atlanır ve uyarı yazılır: projeler yine de olduğu gibi derlenir. Kir kapısı da o durumda
-/// çalışmaz — güncelleme yoksa kullanıcının dosyalarının üstüne yazma riski de yoktur.</para>
-///
-/// <para><b>tf.exe tembel çözülür:</b> yalnızca gerçekten bir TFVC harici varken aranır — git-only
-/// kullanıcılar Team Explorer kurmak zorunda kalmaz.</para>
+/// <para><b>Çalışma kopyası yoksa</b> (yolun üstünde <c>.git</c> bulunamadı) güncelleme atlanır ve uyarı
+/// yazılır: projeler yine de olduğu gibi derlenir. Kir kapısı da o durumda çalışmaz — güncelleme yoksa
+/// kullanıcının dosyalarının üstüne yazma riski de yoktur.</para>
 /// </summary>
 /// <param name="runner">Process çalıştırıcı.</param>
-/// <param name="tfResolver">tf.exe'yi çözen delege; null ise <see cref="TfResolver"/> kullanılır.</param>
-public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToken, Task<string>>? tfResolver = null)
+public sealed class ExternalUpdater(IProcessRunner runner)
 {
-    private string? _tfExePath;
 
     /// <summary>
     /// Bu koşu harici çalışma kopyalarına DOKUNACAK mı — kararın TEK yeri (Supervisor yalnız uygular).
@@ -81,8 +72,8 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
     public static bool ShouldUpdate(RunMode mode, bool updateExternals, IReadOnlyList<ExternalProject>? externals) =>
         updateExternals && mode is not (RunMode.Cycles or RunMode.Clean) && externals is { Count: > 0 };
 
-    /// <returns>Güncellenen çalışma kopyalarının revizyonları: <c>çalışma kopyası kökü → revizyon</c>
-    /// (git'te sha, TFVC'de <c>C</c> önekli changeset). Okunamayan/güncellenemeyen kök haritada YOKTUR.</returns>
+    /// <returns>Güncellenen çalışma kopyalarının revizyonları: <c>çalışma kopyası kökü → HEAD sha</c>.
+    /// Okunamayan/güncellenemeyen kök haritada YOKTUR.</returns>
     /// <param name="externals">Kullanıcının listesi, KENDİ SIRASIYLA — güncelleme de o sırada koşar.</param>
     /// <param name="progress">Kullanıcıya görünen satırlar buraya akar.</param>
     /// <param name="scopeProjectPath">[tek proje · design v1.15.0 §9] Satırdan tetiklenen koşunun hedefi
@@ -111,7 +102,7 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
     {
         string name = ExternalWorkspaceResolver.DisplayName(project.Path);
         string searchRoot = ExternalWorkspaceResolver.SearchRootOf(project.Path);
-        string? root = VcsDetector.FindRoot(searchRoot, project.Vcs);
+        string? root = VcsDetector.FindRoot(searchRoot);
         // Kapsam kapısı: hedef ne kartın arama kökünün ne de çalışma kopyasının altındaysa kart bu koşunun
         // konusu değildir — sessizce geçilir (uyarı satırı bile yok).
         if (scopeProjectPath is not null
@@ -120,15 +111,13 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
             return (null, null);
         if (root is null)
         {
-            progress(PlanProgressLines.ExternalNoWorkingCopy(name, project.Vcs));
+            progress(PlanProgressLines.ExternalNoWorkingCopy(name));
             return (null, null);
         }
 
         progress(PlanProgressLines.UpdatingExternal(name));
 
-        string? revision = project.Vcs is VcsKind.Tfvc
-            ? await UpdateTfvcAsync(name, root, progress, ct)
-            : await UpdateGitAsync(name, root, progress, ct);
+        string? revision = await UpdateGitAsync(name, root, progress, ct);
 
         // Satır güncellemenin ARDINDAN yazılır: kullanıcı hangi sürümü derlediğini burada görür. Haritaya
         // TAM revizyon girer (build-state kaydı ana repoyla aynı biçimi taşır); kısaltma yalnız gösterimdedir.
@@ -183,47 +172,5 @@ public sealed class ExternalUpdater(IProcessRunner runner, Func<CancellationToke
             default:
                 throw ExternalPreparationException.UpdateFailed(name, rootPath, result.Detail);
         }
-    }
-
-    /// <returns>Get başarılıysa <c>C</c> önekli changeset numarası, değilse <c>null</c>.</returns>
-    private async Task<string?> UpdateTfvcAsync(string name, string rootPath, Action<string> progress, CancellationToken ct)
-    {
-        var tfvc = new TfvcService(runner, rootPath, await ResolveTfAsync(name, ct));
-
-        var pending = await tfvc.HasPendingChangesAsync(ct);
-        if (!pending.Success) throw ExternalPreparationException.Tfvc(name, pending.Error!);
-        if (pending.Value) throw ExternalPreparationException.Dirty(name, rootPath);
-
-        var get = await tfvc.GetLatestAsync(ct);
-        if (!get.Success)
-        {
-            progress(PlanProgressLines.ExternalUpdateDegraded(name, get.Error!));
-            return null;
-        }
-
-        // Changeset sorgusu SUNUCUYA gider — bu yüzden yalnız BURADA, get'in hemen ardından sorulur:
-        // güncelleme kapalıyken planlama ağa hiç çıkmaz.
-        var changeset = await tfvc.CurrentChangesetAsync(ct);
-        return changeset.Value is { Length: > 0 } number ? "C" + number : null;
-    }
-
-    /// <summary>tf.exe ilk TFVC haricide çözülür ve koşu boyunca saklanır.</summary>
-    private async Task<string> ResolveTfAsync(string externalName, CancellationToken ct)
-    {
-        if (_tfExePath is not null) return _tfExePath;
-
-        try
-        {
-            _tfExePath = tfResolver is not null
-                ? await tfResolver(ct)
-                : await new TfResolver(runner).ResolveAsync(ct: ct);
-        }
-        catch (TfResolveException ex)
-        {
-            // Kurulum eksiği kullanıcının çözeceği bir durumdur — koşu hiç başlamaz.
-            throw ExternalPreparationException.Tfvc(externalName, ex.Message);
-        }
-
-        return _tfExePath;
     }
 }

@@ -114,13 +114,15 @@ public partial class GraphView : UserControl
     private static readonly DoubleCollection SolidDash = FrozenDash([]);
 
     /// <summary>TÜM düğümler — model + yerleşim + görsel. Sıra BESLEME sırasıdır (build-order).</summary>
-    private readonly Dictionary<string, GraphNodeSlot> _slots = new(StringComparer.Ordinal);
+    // Bu bes harita/kume ve asagidaki _hoveredNode/_selectedNode düğüm ADIYLA DEĞİL, düğüm Id'siyle
+    // (proje yolu) anahtarlanır — ad benzersiz değildir (bkz. GraphNode). Yol olduğu için OrdinalIgnoreCase.
+    private readonly Dictionary<string, GraphNodeSlot> _slots = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<GraphNodeSlot> _slotOrder = [];
     /// <summary>Düğüm → DOĞRUDAN bağımlılıkları (yukarıdaki komşular). Seçim kenarları YÖNLÜ çizildiği
     /// için birleşik bir komşuluk kümesi yetmez.</summary>
-    private readonly Dictionary<string, List<string>> _deps = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<string>> _deps = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Düğüm → DOĞRUDAN bağımlıları (aşağıdaki komşular).</summary>
-    private readonly Dictionary<string, List<string>> _dependents = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<string>> _dependents = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Seçimde kurulan kenar görselleri — seçim kalkınca SÖKÜLÜR.</summary>
     private readonly List<Path> _selectionEdges = [];
     /// <summary>Akan kesiklerin PAYLAŞTIĞI tek saat (en fazla komşu sayısı kadar çizgi vardır).</summary>
@@ -160,17 +162,17 @@ public partial class GraphView : UserControl
     /// BuildApp.jsx:460-468). <c>null</c> = ya hiç finale olmadı ya da seçim o zamandan beri değişti (odak
     /// normal çalışıyor). <see cref="IsFinale"/>'nin TEK okuyucusu budur — kopya YASAK.</summary>
     private string? _focusOff;
-    private HashSet<string> _focusSet = new(StringComparer.Ordinal);
+    private HashSet<string> _focusSet = new(StringComparer.OrdinalIgnoreCase);
     private GraphRunPhase _runPhase = GraphRunPhase.Idle;
     /// <summary>[design v1.7.0 — Filtreleme] Listenin görünür kümesinin proje ADLARI; null = filtre yok.</summary>
     private IReadOnlySet<string>? _filterMatches;
 
     // ---- [design v1.11.0 §9-4/§9-5] koreografiler: açılış (marking) ve bitiş (neon) ----
     private MarkStep _markStep = MarkStep.None;
-    private IReadOnlySet<string> _markedNodes = new HashSet<string>(StringComparer.Ordinal);
+    private IReadOnlySet<string> _markedNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private EndStep _endStep = EndStep.None;
-    private IReadOnlySet<string> _builtNodes = new HashSet<string>(StringComparer.Ordinal);
-    private IReadOnlyDictionary<string, int> _endOrder = new Dictionary<string, int>(StringComparer.Ordinal);
+    private IReadOnlySet<string> _builtNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyDictionary<string, int> _endOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     private double _endStaggerMs;
     private readonly StepPlayer _endPlayer = new();
     /// <summary>İmlecin altındaki düğüm — opaklık kararının son (ve her şeyi ezen) girdisi.</summary>
@@ -462,9 +464,9 @@ public partial class GraphView : UserControl
         // SetEndStep bu değeri okuyup kamerayı ve odağa bağlı görselleri ANINDA tazeler.
         _focusOff = _selectedNode;
 
-        _builtNodes = new HashSet<string>(builtNodeNames, StringComparer.Ordinal);
+        _builtNodes = new HashSet<string>(builtNodeNames, StringComparer.OrdinalIgnoreCase);
         var order = EndFinale.Order(builtNodeNames.Count, runCount);
-        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < builtNodeNames.Count; i++) map[builtNodeNames[i]] = order[i];
         _endOrder = map;
         _endStaggerMs = EndFinale.StaggerMs(builtNodeNames.Count);
@@ -489,8 +491,8 @@ public partial class GraphView : UserControl
         _endStep = step;
         if (step == EndStep.None)
         {
-            _builtNodes = new HashSet<string>(StringComparer.Ordinal);
-            _endOrder = new Dictionary<string, int>(StringComparer.Ordinal);
+            _builtNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            _endOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         }
         ApplyAllOpacities();
         // [design v1.13.2 §2.5] IsFinale burada değişmiş olabilir (finale doğarken ya da None'a dönerken) —
@@ -507,8 +509,8 @@ public partial class GraphView : UserControl
     {
         foreach (var slot in _slotOrder)
         {
-            if (!_builtNodes.Contains(slot.Model.Name)) continue;
-            int index = _endOrder.TryGetValue(slot.Model.Name, out int i) ? i : 0;
+            if (!_builtNodes.Contains(slot.Model.Id)) continue;
+            int index = _endOrder.TryGetValue(slot.Model.Id, out int i) ? i : 0;
 
             var flicker = new DoubleAnimationUsingKeyFrames
             {
@@ -668,10 +670,10 @@ public partial class GraphView : UserControl
 
         foreach (var node in nodes)
         {
-            if (!_layout.Positions.TryGetValue(node.Name, out var center)) continue;
+            if (!_layout.Positions.TryGetValue(node.Id, out var center)) continue;
             var visual = BuildNodeVisual(node);
             var slot = new GraphNodeSlot { Model = node, Center = center, Visual = visual };
-            _slots[node.Name] = slot;
+            _slots[node.Id] = slot;
             _slotOrder.Add(slot);
             _nodeLayer.Children.Add(visual.Cell);
             PlaceNode(slot);
@@ -695,7 +697,7 @@ public partial class GraphView : UserControl
     {
         foreach (var node in nodes)
         {
-            if (!_slots.TryGetValue(node.Name, out var slot)) continue;
+            if (!_slots.TryGetValue(node.Id, out var slot)) continue;
             // "Değişmediyse dokunma": GraphNode bir record'dur, değer eşitliği burada güvenlidir ve statü
             // görselinin TAMAMI yalnız bu modelden türetilir. Eskiden her tick her düğümde iki
             // SetResourceReference + IconPaint.Apply (ağaç yukarı TryFindResource yürüyüşü) yapılıyordu.
@@ -737,7 +739,7 @@ public partial class GraphView : UserControl
         _layout = QuietGraphLayout.Compute([.. _slotOrder.Select(slot => slot.Model)], ViewportSize);
         foreach (var slot in _slotOrder)
         {
-            if (!_layout.Positions.TryGetValue(slot.Model.Name, out var center)) continue;
+            if (!_layout.Positions.TryGetValue(slot.Model.Id, out var center)) continue;
             slot.Center = center;
             PlaceNode(slot);
         }
@@ -864,10 +866,11 @@ public partial class GraphView : UserControl
 
         var cell = new Grid { Children = { selectionRing, body } };
 
-        string name = node.Name;
+        // Seçim/hover KİMLİK üzerinden yürür (ad değil): aynı adlı iki proje ayrı düğümlerdir.
+        string id = node.Id;
         // [A13/T5 fix-1] Düğümün etkinleştirilmesi TEK yerde: fare tıklaması da UIA Invoke'u da (ekran okuyucu)
         // AYNI yerel fonksiyonu çağırır — ikinci bir seçim mantığı YOK (kopya YASAK).
-        void Toggle() => SelectedNode = string.Equals(SelectedNode, name, StringComparison.Ordinal) ? null : name;
+        void Toggle() => SelectedNode = string.Equals(SelectedNode, id, StringComparison.OrdinalIgnoreCase) ? null : id;
         body.Activate = Toggle;
         body.MouseLeftButtonDown += (_, e) =>
         {
@@ -875,8 +878,8 @@ public partial class GraphView : UserControl
             Toggle();
         };
         // §2.3: tooltip GECİKMESİZ — native ToolTipService değil, ekran koordinatlı overlay kullanılır.
-        body.MouseEnter += (_, _) => SetHover(name);
-        body.MouseLeave += (_, _) => { if (string.Equals(_hoveredNode, name, StringComparison.Ordinal)) SetHover(null); };
+        body.MouseEnter += (_, _) => SetHover(id);
+        body.MouseLeave += (_, _) => { if (string.Equals(_hoveredNode, id, StringComparison.OrdinalIgnoreCase)) SetHover(null); };
 
         var visual = new GraphNodeVisual
         {
@@ -1081,14 +1084,14 @@ public partial class GraphView : UserControl
     /// [quiet] §2.3 "Hover": node scale(1.7) (120ms ease-out), border 2px, opacity 1 (soluk moddayken bile),
     /// z-index öne; tooltip GECİKMESİZ ve TAM proje adıyla.
     /// </summary>
-    private void SetHover(string? nodeName)
+    private void SetHover(string? nodeId)
     {
-        if (string.Equals(_hoveredNode, nodeName, StringComparison.Ordinal)) return;
+        if (string.Equals(_hoveredNode, nodeId, StringComparison.OrdinalIgnoreCase)) return;
 
         string? previous = _hoveredNode;
-        _hoveredNode = nodeName;
+        _hoveredNode = nodeId;
         if (previous is not null) ApplyHover(previous);
-        if (nodeName is not null) ApplyHover(nodeName);
+        if (nodeId is not null) ApplyHover(nodeId);
         UpdateTooltip();
     }
 
@@ -1108,12 +1111,12 @@ public partial class GraphView : UserControl
     /// <c>_selectedNode</c> okumak önceden seçili düğümü finale boyunca VE final hâlde "spotlight"ta
     /// bırakırdı — kamerası, kenarları, halkası ve etiketi bırakılmışken.</para>
     /// </summary>
-    private void ApplyHover(string nodeName)
+    private void ApplyHover(string nodeId)
     {
-        if (!_slots.TryGetValue(nodeName, out var slot)) return;
+        if (!_slots.TryGetValue(nodeId, out var slot)) return;
         var visual = slot.Visual;
-        bool hovered = string.Equals(_hoveredNode, nodeName, StringComparison.Ordinal)
-            || string.Equals(nodeName, EffectiveSelection, StringComparison.Ordinal);
+        bool hovered = string.Equals(_hoveredNode, nodeId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(nodeId, EffectiveSelection, StringComparison.OrdinalIgnoreCase);
 
         double target = hovered ? HoverScale : 1.0;
         var scale = (ScaleTransform)visual.Body.RenderTransform;
@@ -1139,17 +1142,17 @@ public partial class GraphView : UserControl
     /// <summary>Tooltip'i (tek, yeniden kullanılan öğe) günceller ve EKRAN koordinatına yerleştirir.</summary>
     private void UpdateTooltip()
     {
-        if (_hoveredNode is not { } name || !_slots.TryGetValue(name, out var slot))
+        if (_hoveredNode is not { } id || !_slots.TryGetValue(id, out var slot))
         {
             TooltipBox.Visibility = Visibility.Collapsed;
             return;
         }
 
-        TooltipText.Text = name; // §2.3: TAM proje adı, kısaltmasız
+        TooltipText.Text = slot.Model.Name; // §2.3: TAM proje adı, kısaltmasız (kimlik yol, etiket AD)
         TooltipBox.Visibility = Visibility.Visible;
         // Hover edilen düğüm vurgu ölçeğindedir; halkası ancak AYNI ZAMANDA seçiliyse vardır (finale
         // sırasında/sonrasında hiç yoktur — EffectiveSelection null döner).
-        bool ringed = string.Equals(name, EffectiveSelection, StringComparison.Ordinal);
+        bool ringed = string.Equals(id, EffectiveSelection, StringComparison.OrdinalIgnoreCase);
         PlaceOverlayBox(TooltipBox, box => GraphOverlay.TooltipTopLeft(
             slot.Center, LiveCamera, PaintedHalfExtent(ringed, LiveCamera.Scale), ViewportSize, box));
     }
@@ -1196,35 +1199,35 @@ public partial class GraphView : UserControl
     /// null döner — odak kümesi BOŞ kurulur, yani "seçim yokmuş gibi" davranır.</summary>
     private void ApplySelection()
     {
-        _focusSet = new HashSet<string>(StringComparer.Ordinal);
+        _focusSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (EffectiveSelection is { } selected)
         {
             _focusSet.Add(selected);
-            foreach (string name in DirectNeighboursOf(selected))
-                _focusSet.Add(name);
+            foreach (string id in DirectNeighboursOf(selected))
+                _focusSet.Add(id);
         }
         RebuildSelectionEdges();
         UpdateSelectionLabel();
 
         foreach (var slot in _slotOrder)
         {
-            string name = slot.Model.Name;
-            bool isSelected = string.Equals(name, EffectiveSelection, StringComparison.Ordinal);
+            string id = slot.Model.Id;
+            bool isSelected = string.Equals(id, EffectiveSelection, StringComparison.OrdinalIgnoreCase);
             slot.Visual.SelectionRing.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
             // DS DependencyGraphNode: `border: ${selected ? 2 : 1.5}px …` — seçim kareyi de kalınlaştırır.
-            ApplyHover(name); // ölçek + çerçeve + z-order + opaklık TEK yerden (kopya YASAK)
+            ApplyHover(id); // ölçek + çerçeve + z-order + opaklık TEK yerden (kopya YASAK)
         }
     }
 
     // ---------------------------------------------------------------- seçim kenarları (§2.3)
 
     /// <summary>Seçili düğümün DOĞRUDAN komşuları (bağımlılıklar + bağımlılar) — odak kümesinin kaynağı.</summary>
-    private IEnumerable<string> DirectNeighboursOf(string node)
+    private IEnumerable<string> DirectNeighboursOf(string nodeId)
     {
-        if (_deps.TryGetValue(node, out var deps))
-            foreach (string name in deps) yield return name;
-        if (_dependents.TryGetValue(node, out var dependents))
-            foreach (string name in dependents) yield return name;
+        if (_deps.TryGetValue(nodeId, out var deps))
+            foreach (string id in deps) yield return id;
+        if (_dependents.TryGetValue(nodeId, out var dependents))
+            foreach (string id in dependents) yield return id;
     }
 
     /// <summary>
@@ -1243,16 +1246,16 @@ public partial class GraphView : UserControl
 
         var centre = ToWorld(target.Center);
         if (_deps.TryGetValue(selected, out var deps))
-            foreach (string name in deps) AddSelectionEdge(name, centre, dependencyAbove: true);
+            foreach (string id in deps) AddSelectionEdge(id, centre, dependencyAbove: true);
         if (_dependents.TryGetValue(selected, out var dependents))
-            foreach (string name in dependents) AddSelectionEdge(name, centre, dependencyAbove: false);
+            foreach (string id in dependents) AddSelectionEdge(id, centre, dependencyAbove: false);
 
         if (_selectionEdges.Count > 0 && AnimationsEnabledProvider()) EnsureEdgeFlowClock();
     }
 
-    private void AddSelectionEdge(string otherName, Point selectedCentre, bool dependencyAbove)
+    private void AddSelectionEdge(string otherId, Point selectedCentre, bool dependencyAbove)
     {
-        if (!_slots.TryGetValue(otherName, out var other)) return;
+        if (!_slots.TryGetValue(otherId, out var other)) return;
         var otherCentre = ToWorld(other.Center);
 
         var path = new Path
@@ -1307,7 +1310,7 @@ public partial class GraphView : UserControl
             return;
         }
 
-        SelectionLabelText.Text = selected;
+        SelectionLabelText.Text = slot.Model.Name; // kimlik yol, ETİKET ad
         SelectionLabelBox.Visibility = Visibility.Visible;
         // Seçili düğüm vurgu ölçeğinde durur VE halkası kareden taşar.
         PlaceOverlayBox(SelectionLabelBox, box => GraphOverlay.NameLabelTopLeft(
@@ -1346,7 +1349,7 @@ public partial class GraphView : UserControl
         // (PlayNeon) bu yoldan geçmez — o adım burada yalnız hedefi 1'de tutar.
         if (_markStep != MarkStep.None)
         {
-            bool marked = _markedNodes.Contains(visual.Model.Name);
+            bool marked = _markedNodes.Contains(visual.Model.Id);
             ApplyOpacityTarget(visual,
                 MarkingChoreography.Opacity(_markStep, marked, MarkingChoreography.NodeEnvOpacity),
                 MarkingChoreography.GlideMs(_markStep, marked), EaseInOut);
@@ -1354,7 +1357,7 @@ public partial class GraphView : UserControl
         }
         if (_endStep != EndStep.None)
         {
-            bool built = _builtNodes.Contains(visual.Model.Name);
+            bool built = _builtNodes.Contains(visual.Model.Id);
             // Neon adımında düğümün opaklığını PlayNeon sürüyor — burada ikinci bir animasyon kurma.
             if (built && _endStep == EndStep.Neon) return;
             ApplyOpacityTarget(visual, EndFinale.Opacity(_endStep, built), EndFinale.GlideMs(built), EaseInOut);
@@ -1365,10 +1368,10 @@ public partial class GraphView : UserControl
             visual.Model.Status,
             _runPhase,
             EffectiveSelection is not null,
-            _focusSet.Contains(visual.Model.Name),
-            string.Equals(_hoveredNode, visual.Model.Name, StringComparison.Ordinal),
+            _focusSet.Contains(visual.Model.Id),
+            string.Equals(_hoveredNode, visual.Model.Id, StringComparison.OrdinalIgnoreCase),
             _filterMatches is not null,
-            _filterMatches?.Contains(visual.Model.Name) ?? true);
+            _filterMatches?.Contains(visual.Model.Id) ?? true);
 
         if (target.Equals(visual.OpacityTarget)) return;
         visual.OpacityTarget = target;
@@ -1703,8 +1706,9 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- test/görünürlük yüzeyi
 
+    /// <summary>Anahtar düğüm Id'sidir (proje yolu), ad DEĞİL — bkz. <see cref="GraphNode"/>.</summary>
     internal IReadOnlyDictionary<string, GraphNodeVisual> NodeVisuals =>
-        _slots.ToDictionary(pair => pair.Key, pair => pair.Value.Visual, StringComparer.Ordinal);
+        _slots.ToDictionary(pair => pair.Key, pair => pair.Value.Visual, StringComparer.OrdinalIgnoreCase);
 
     internal int NodeCount => _slotOrder.Count;
     /// <summary>Statü görselinin kaç kez uygulandığı — "değişmediyse dokunma" hızlı yolunun ve gizli-panel
@@ -1736,8 +1740,8 @@ public partial class GraphView : UserControl
         _cameraTranslate.Y = camera.Ty;
     }
     /// <summary>Açılış dalgasında bir düğüme uygulanan gecikme (dalga oynamadıysa <c>null</c>).</summary>
-    internal double? RevealDelayOf(string nodeName) =>
-        _slots.TryGetValue(nodeName, out var slot) ? slot.Visual.RevealDelayMs : null;
+    internal double? RevealDelayOf(string nodeId) =>
+        _slots.TryGetValue(nodeId, out var slot) ? slot.Visual.RevealDelayMs : null;
     /// <summary>TÜM beads yörüngelerinin paylaştığı saat (hiç dönmüyorsa <c>null</c>).</summary>
     internal AnimationClock? BeadsClock => _beadsClock;
     /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>
@@ -1746,7 +1750,7 @@ public partial class GraphView : UserControl
     /// <summary>Hover'ı testten sürer — headless'ta gerçek <c>MouseEnter</c> yükseltilemez
     /// (<c>PresentationSource</c> yok). Seam'in ÜSTÜNDEKİ kablo (Body.MouseEnter/MouseLeave) gerçek routed
     /// event'le ayrıca pinlenir.</summary>
-    internal void SetHoverForTest(string? nodeName) => SetHover(nodeName);
+    internal void SetHoverForTest(string? nodeId) => SetHover(nodeId);
     internal string? HoveredNode => _hoveredNode;
     internal Visibility TooltipVisibility => TooltipBox.Visibility;
     internal string TooltipContent => TooltipText.Text;
@@ -1766,6 +1770,6 @@ public partial class GraphView : UserControl
         && m.Matrix.IsIdentity ? null : OverlayLayer.RenderTransform;
     /// <summary>Bir düğümün opaklığını süren animasyon (anında uygulandıysa <c>null</c>) — hold-fade'in
     /// zamanlamasını pinleyen testlerin okuduğu yüzey.</summary>
-    internal Timeline? OpacityAnimationOf(string nodeName) =>
-        _slots.TryGetValue(nodeName, out var slot) ? slot.Visual.OpacityAnimation : null;
+    internal Timeline? OpacityAnimationOf(string nodeId) =>
+        _slots.TryGetValue(nodeId, out var slot) ? slot.Visual.OpacityAnimation : null;
 }

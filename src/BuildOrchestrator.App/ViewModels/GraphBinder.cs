@@ -9,10 +9,11 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <see cref="GraphEdge"/>) çeviren SAF çekirdek — WPF/process bağımsız, tek başına test edilir. <c>GraphView</c>
 /// yalnız TÜKETİCİDİR (yeniden yazılmaz); D5'in işi besleme.
 ///
-/// <para><b>Anahtarlar (kritik):</b> <see cref="GraphView"/> düğümleri <see cref="GraphNode.Name"/> ile,
-/// <see cref="GraphLayout"/> konumları yine <c>Name</c> ile anahtarlar — bu yüzden <see cref="GraphEdge.From"/>/
-/// <see cref="GraphEdge.To"/> proje Id'si DEĞİL, düğüm <b>Adı</b>dır. <see cref="ProjectNode.Dependencies"/> ise
-/// üretici projectId'lerdir (Id = tam csproj yolu); kenar üretilirken Id→Ad çözülür.</para>
+/// <para><b>Anahtarlar (kritik):</b> <see cref="GraphView"/> düğümleri <see cref="GraphNode.Id"/> ile,
+/// <see cref="QuietGraphLayout"/> konumları yine <c>Id</c> ile anahtarlar — dolayısıyla
+/// <see cref="GraphEdge.From"/>/<see cref="GraphEdge.To"/> de proje Id'sidir (tam csproj yolu) ve
+/// <see cref="ProjectNode.Dependencies"/> HİÇ ÇEVRİLMEDEN geçer. Ad benzersiz olmadığı için (iki kök aynı
+/// <c>AssemblyName</c>'i üretebilir) kimlik olamaz — bkz. <see cref="GraphNode"/>.</para>
 ///
 /// <para><b>Statü otoritesi:</b> <see cref="StatusOf"/> eşlemeyi YENİDEN yazmaz — satır varsa
 /// <see cref="ProjectRowViewModel.Status"/>'a delege eder (State/InCycle/WillBuild/IsRunActive'in TEK eşleme
@@ -48,26 +49,27 @@ public static class GraphBinder
             var visual = row is { } r
                 ? VisualStatuses.For(status, r.Fresh, r.Marked, r.InCycle)
                 : VisualStatus.Fresh;
-            result.Add(new GraphNode(node.Name, LayerOf(node, depth), status, visual));
+            result.Add(new GraphNode(node.Id, node.Name, LayerOf(node, depth), status, visual));
         }
         return result;
     }
 
-    /// <summary>Bağımlılık kenarları: her düğüm N ve her <c>depId</c> için, <c>depId</c> topolojide bir düğüm D'ye
-    /// çözülüyorsa <c>GraphEdge(From: D.Name, To: N.Name)</c> (bağımlılık→bağımlı). Topolojide olmayan dep atlanır.
-    /// Build-order KORUNUR (topoloji sırasında gezilir).</summary>
+    /// <summary>Bağımlılık kenarları: her düğüm N ve her <c>depId</c> için, <c>depId</c> topolojide bir düğüme
+    /// çözülüyorsa <c>GraphEdge(From: depId, To: N.Id)</c> (bağımlılık→bağımlı). Topolojide olmayan dep atlanır.
+    /// Build-order KORUNUR (topoloji sırasında gezilir). Uçlar Id'dir: Id→Ad çevirisi çakışan adlarda kenarı
+    /// YANLIŞ düğüme bağlardı, ve çeviri kalktığı için ara harita da gerekmez.</summary>
     public static IReadOnlyList<GraphEdge> Edges(IReadOnlyList<ProjectNode> topology)
     {
         ArgumentNullException.ThrowIfNull(topology);
 
-        var nameById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in topology) nameById[node.Id] = node.Name;
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in topology) known.Add(node.Id);
 
         var edges = new List<GraphEdge>();
         foreach (var node in topology)
             foreach (var depId in node.Dependencies)
-                if (nameById.TryGetValue(depId, out var fromName))
-                    edges.Add(new GraphEdge(fromName, node.Name));
+                if (known.Contains(depId))
+                    edges.Add(new GraphEdge(depId, node.Id));
         return edges;
     }
 

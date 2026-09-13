@@ -93,7 +93,7 @@ public enum DependentMode { Safe, Fast }
 /// <c>null</c> (varsayılan) ⇒ perf modu bildirilmemiş: cap/priority'ye HİÇ dokunulmaz. Bu alan nullable +
 /// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
 /// <param name="UpdateExternals">[Harici projeler] Bu koşu, harici çalışma kopyalarını derlemeden ÖNCE kendi
-/// sürüm kontrolünden güncellesin mi (git <c>fetch</c> + <c>merge --ff-only</c> / <c>tf vc get</c>).
+/// klonundan güncellesin mi (<c>fetch</c> + <c>merge --ff-only</c>).
 /// <b>Varsayılan <c>true</c></b> — alanı hiç yazmayan eski NDJSON satırları da güncelleme YAPAR, yani mevcut
 /// davranış korunur.
 /// <para><c>false</c> iken TEK BİR VCS komutu bile çalışmaz ve <b>kir kapısı da yoktur</b>: güncelleme
@@ -145,8 +145,8 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// ters-katman uyarılarını taşır.</param>
 /// <param name="ExternalProjects">[Harici projeler] Ana repo DIŞINDA yaşayan, build'den önce güncellenip
 /// derlenen projeler — kullanıcının Ayarlar'da sıraladığı liste, o sırayla. Sync bunları yalnız OKUR
-/// (hiçbir VCS mutasyonu yapmaz): git olanların yerel HEAD'i ve kirliliği okunur, TFVC olanlar hollow
-/// kalır. null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
+/// (hiçbir git mutasyonu yapmaz): yerel HEAD'leri ve kirlilikleri okunur. null/boş ise akış bugünküyle
+/// bayt-bayt aynıdır.</param>
 /// <param name="Configuration">Will-build pass'inin imza terimine giren configuration (Debug/Release) — config
 /// değişimi TÜM projeleri dirty yapar (bkz. <c>BuildSignature.Compute</c> "cfg=" terimi), bu yüzden Sync'in
 /// önizlemesi ancak doğru configuration ile anlamlıdır.</param>

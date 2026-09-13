@@ -94,8 +94,8 @@ public class ReducedMotionCoverageTests
     {
         var view = NewGraphView();
         view.SetGraph(
-            [new("OSYS.Base", 0, GraphStatus.Building),
-             new("OSYS.Data", 1, GraphStatus.Discovered)],
+            [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building),
+             new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Discovered)],
             [new("OSYS.Base", "OSYS.Data")]);
 
         Assert.Null(view.NodeVisuals["OSYS.Base"].Beads);                            // beads yörüngesi HİÇ kurulmaz

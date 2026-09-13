@@ -33,14 +33,14 @@ Solution: `BuildOrchestrator.slnx` (kökte).
   parent-watcher / PID heuristiği yok.
 - **OutDir'e dokunulmaz.** Yalnız `obj` (worktree modunda, proje Id anahtarıyla) izole edilir. "Değişti mi"
   kararı sadece kaynak sinyalinden; DLL/bin timestamp asla okunmaz. Karar DİSKTEKİ kaynak İÇERİĞİNDEN verilir
-  ve sürüm kontrolü karara girmez (git/TFVC yalnız fetch, branch, worktree ve harici güncelleme içindir);
+  ve sürüm kontrolü karara girmez (git yalnız fetch, branch, worktree ve harici güncelleme içindir);
   kaynak dosyanın boyut+mtime bilgisi yalnız özet önbelleğinin anahtarıdır, karar terimi değildir. Harici
   köklerden gelen projeler sıradan projelerdir (aynı argümanlar, aynı graf, aynı karar) — tek farkları worktree
   modunda bile obj izolasyonu ALMAMALARIDIR: izolasyon havuza aittir, onlar orada yaşamaz.
 - **Git'e araç KENDİLİĞİNDEN yazmaz:** `checkout`/`switch`/`pull`/`reset` hiçbir akışta çalıştırılmaz. İki
   istisna da kullanıcının açık kararıdır: (a) kayıtlı **harici kökler** — build anında, yalnız kullanıcı
-  güncellemeyi açık bıraktıysa, kendi köklerinde ff-only güncelleme (`fetch` + `merge --ff-only`) ya da
-  `tf vc get`; (b) **ana repo** — yalnız kullanıcı alt bardaki `N behind` chip'ine bastığında, yalnız aktif
+  güncellemeyi açık bıraktıysa, kendi köklerinde ff-only güncelleme (`fetch` + `merge --ff-only`);
+  (b) **ana repo** — yalnız kullanıcı alt bardaki `N behind` chip'ine bastığında, yalnız aktif
   branch'te, yalnız ff-only. Mutasyon yüzeyi TEK dosyadır: `Core/Git/FastForwardUpdater.cs` (kaynak guard'ı).
 - **stdout yalnız NDJSON;** tüm log/tanı stderr'e.
 - **Planlama Core'da.** İş mantığını App/Supervisor'a sızdırma; Core UI ve process bağımsız test edilebilir kalır.
