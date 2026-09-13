@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
@@ -233,4 +234,22 @@ public sealed class TrayIndicatorBinderTests
     [InlineData(false, NotificationIcon.Error)]
     public void Tray_icon_run_finished_notification_uses_info_or_error(bool healthy, NotificationIcon expected)
         => Assert.Equal(expected, AppTrayIcon.RunFinishedIcon(healthy));
+
+    /// <summary>
+    /// [Ö4/K-2] Bildirime (balloon) tıklamak da pencereyi tepsi ikonuyla AYNI yoldan getirir — ikinci bir
+    /// restore yolu YAZILMAZ (karar K-2: "aynı RestoreRequested yolu").
+    ///
+    /// <para>Kural <see cref="AppTrayIcon"/>'un KAYNAĞINDA pinlenir çünkü sınıfın kendisi kurulamaz: ctor'u
+    /// gerçek bir <c>TaskbarIcon</c> yaratır (headless süitte tepsi yoktur) — komşusu
+    /// <see cref="Tray_icon_run_finished_notification_uses_info_or_error"/>'daki <c>RunFinishedIcon</c> pininin
+    /// AYNI gerekçesi. Pin kabloyu ÇALIŞTIRMAZ, METNİNİ arar; kablo silinir ya da başka bir olaya taşınırsa
+    /// regex hiç eşleşmez ve test kırmızıya döner.</para></summary>
+    [Fact]
+    public void Clicking_a_balloon_takes_the_same_restore_path_as_the_tray_icon()
+    {
+        string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "Shell", "AppTrayIcon.cs"));
+        var wiring = new Regex(@"TrayBalloonTipClicked\s*\+=\s*\(_,\s*_\)\s*=>\s*RestoreRequested\?\.Invoke\(\)");
+
+        Assert.Single(wiring.Matches(source));
+    }
 }

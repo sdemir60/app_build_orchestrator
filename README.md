@@ -351,9 +351,9 @@ clicking empty background with nothing selected returns the view to its default.
 You do not have to keep the window open to watch a build. Closing it with `X` drops the app to the tray, and if
 a build is running the product mark animates in the bottom-right corner of the screen — click it to bring the
 window back, or click straight through the empty space around it to whatever is underneath. When the run
-finishes the mark plays out its last turn, fades, and Windows shows a notification with the result; the same
-sentence is waiting in the ribbon when you open the window again. A run that finishes while the window is open
-shows no notification — the ribbon already says it.
+finishes the mark plays out its last turn, fades, and Windows shows a notification with the result — click it
+to bring the window back too — and the same sentence is waiting in the ribbon when you open the window again.
+A run that finishes while the window is open shows no notification — the ribbon already says it.
 
 If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
 says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take

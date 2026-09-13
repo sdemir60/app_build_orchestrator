@@ -42,10 +42,13 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         };
         _icon.TrayLeftMouseUp += (_, _) => RestoreRequested?.Invoke();
         _icon.TrayMouseDoubleClick += (_, _) => RestoreRequested?.Invoke();
+        // [Ö4/K-2] Balloon tıkı da AYNI yoldan geri getirir — bu ikonun gösterdiği HER balloon'a uygulanır
+        // (ilk-kapanış, ikinci-instance uyarısı, koşu sonucu): ikinci bir restore yolu YAZILMAZ.
+        _icon.TrayBalloonTipClicked += (_, _) => RestoreRequested?.Invoke();
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
     }
 
-    /// <summary>Tepsi ikonuna sol tık / çift tık — pencereyi geri getir.</summary>
+    /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
     public event Action? RestoreRequested;
     /// <summary>Tepsi menüsü → Stop (koşan derlemeyi graceful durdur).</summary>
     public event Action? StopRequested;

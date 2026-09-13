@@ -1545,7 +1545,8 @@ it would make the whole window click-through and kill the click-to-restore.
 When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
 slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
 events do not land on top of each other, an **OS balloon** reports the result. Its text is not composed a second
-time: it is the ribbon's own terminal line, so opening the window afterwards shows the same sentence. The icon
+time: it is the ribbon's own terminal line, so opening the window afterwards shows the same sentence. Clicking
+the notification restores the window through the *same* path as the tray icon and the overlay. The icon
 follows the line's status glyph (info, or error when something failed). A run that ends while the window is
 *visible* produces no balloon at all — the ribbon is already on screen.
 
