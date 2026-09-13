@@ -1,6 +1,7 @@
 <UserControl x:Class="BuildOrchestrator.App.Controls.TrayBuildIndicator"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
              Background="Transparent">
   <!--
     ================== TEPSİ DERLEME GÖSTERGESİ — marka animasyonu ==================
@@ -143,10 +144,21 @@
   </UserControl.Resources>
 
   <Viewbox Stretch="Uniform">
-    <!-- Sahne 430×286: logo ortada (286×286), iki yanda 72 birim hareket payı. Hiçbir yerde kırpma sınırı
-         yoktur — parçalar giriş/çıkışta kesilmez. -->
-    <Canvas Width="430" Height="286" ClipToBounds="False" Background="Transparent">
-      <Canvas Canvas.Left="72" Width="286" Height="286" ClipToBounds="False">
+    <!-- Sahne tasarımcının BANDI: dış Canvas (Stage) önizlemenin viewBox="-30 76 375 134" değeriyle BİREBİR
+         aynı ölçüde (.claude/outputs/2026-08-05-05-06-logo-animation-v1.3.0/Build Orchestrator Tray
+         Indicator.dc.html) — genişlik/yükseklik TrayBuildIndicator.StageWidth/StageHeight'tan okunur, burada
+         ikinci kez sayı yazılmaz. Asıl logo karesi (iç 286×286 canvas, Inner) bandın içine
+         Canvas.Left="30" Canvas.Top="-76" ile yerleşir: iç koordinatın (-30,76) noktası bandın (0,0)'ına
+         denk gelir, yani band iç koordinatta x −30..345 / y 76..210 aralığını gösterir. Döngünün çizdiği
+         her şey bu aralığın içinde kalır — şevron −24..339.5 arasında girip çıkar, şeritlerin yolu
+         30.5..250.5'tir, üstte ve altta (gölge dahil) 7'şer birim pay kalır (83→76, 203→210). Hiçbir yerde
+         kırpma sınırı yoktur (ClipToBounds="False"): çerçeveleme bu iki Canvas'ın ölçüsünden ve onu saran
+         overlay penceresinden gelir, parçalar giriş/çıkışta kesilmez. -->
+    <Canvas x:Name="Stage"
+            Width="{x:Static controls:TrayBuildIndicator.StageWidth}"
+            Height="{x:Static controls:TrayBuildIndicator.StageHeight}"
+            ClipToBounds="False" Background="Transparent">
+      <Canvas x:Name="Inner" Canvas.Left="30" Canvas.Top="-76" Width="286" Height="286" ClipToBounds="False">
 
         <!-- Şeritler: şevron siluetiyle SİLİNEREK açılır (kaplama şevronla birlikte kayar). -->
         <Canvas Width="286" Height="286" ClipToBounds="False">

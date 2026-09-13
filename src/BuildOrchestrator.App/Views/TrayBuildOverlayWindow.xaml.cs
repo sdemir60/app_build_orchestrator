@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Interop;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 
@@ -21,13 +22,21 @@ namespace BuildOrchestrator.App.Views;
 public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
 {
     /// <summary>
-    /// Sahne oranı (430×286) korunarak seçilmiş overlay ölçüleri ve ekran kenarına bırakılan pay — DIP.
+    /// Overlay ölçüsü göstergenin BANDINDAN (<see cref="TrayBuildIndicator.StageWidth"/> /
+    /// <see cref="TrayBuildIndicator.StageHeight"/>) tek bir ölçekle türer; ekran kenarına bırakılan pay — DIP.
+    ///
+    /// <para><b>Tek kaynak, tek ölçek:</b> büyütüp küçültmek istendiğinde dokunulacak TEK sayı
+    /// <see cref="Scale"/>'dir — 144/96 gibi bağımsız literaller yoktur, ikisi de bant ölçüsünün
+    /// <see cref="Scale"/> katıdır (kopya YASAK, CLAUDE.md). Bant, logonun üstünde/altında kalan boş göğü
+    /// zaten kırptığı için (bkz. <c>TrayBuildIndicator.xaml</c> başlığı) mark, taşbarın hemen üstüne, fazladan
+    /// boşluk bırakmadan oturur.</para>
     ///
     /// <para>Tasarım token'ı DEĞİLDİR: bu bileşenin kendi ölçüleridir (Controls.xaml'in "bileşenin KENDİ
     /// ölçüleri" istisnasıyla aynı statü). DPI hesabı YAPILMAZ: bunlar DIP'tir, PerMonitorV2 altında dönüşümü
     /// WPF yapar.</para></summary>
-    internal const double OverlayWidth = 144;
-    internal const double OverlayHeight = 96;
+    internal const double Scale = 2.0 / 3.0;
+    internal const double OverlayWidth = TrayBuildIndicator.StageWidth * Scale;
+    internal const double OverlayHeight = TrayBuildIndicator.StageHeight * Scale;
     internal const double EdgeMargin = 12;
 
     public TrayBuildOverlayWindow(ResourceDictionary? resourceScope = null)

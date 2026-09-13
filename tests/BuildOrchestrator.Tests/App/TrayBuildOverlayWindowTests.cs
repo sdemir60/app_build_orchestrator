@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.Views;
 
@@ -106,12 +107,15 @@ public sealed class TrayBuildOverlayWindowTests
     /// ya da üstte olabilir ve o zaman çalışma alanı (0,0)'dan başlamaz — köşe hesabı ekranın kendisinden
     /// değil, çalışma alanından türemeli.</summary>
     [Theory]
+    // Beklenen köşe OverlayWidth×OverlayHeight (Task 3'ten: 250×89.33) + EdgeMargin (12) üzerinden hesaplanır.
+    // Yerleşim KURALI değişmedi (Place hâlâ aynı formül) — sayılar yalnız Task 3'ün 2/3 ölçeğiyle güncellendi
+    // (eskiden 144×96'ydı, sağ kenar 1764'tü).
     // taskbar altta: 1920×1080 ekran, 40px şerit
-    [InlineData(0, 0, 1920, 1040, 1764, 932)]
+    [InlineData(0, 0, 1920, 1040, 1658, 938.66666666666663)]
     // taskbar solda (80px): alan x=80'den başlar — sağ kenar yine ekranın sağı
-    [InlineData(80, 0, 1840, 1080, 1764, 972)]
+    [InlineData(80, 0, 1840, 1080, 1658, 978.66666666666663)]
     // taskbar üstte: alan y=40'tan başlar, alt kenar ekranın altı
-    [InlineData(0, 40, 1920, 1040, 1764, 972)]
+    [InlineData(0, 40, 1920, 1040, 1658, 978.66666666666663)]
     public void Overlay_positions_into_the_bottom_right_of_a_given_work_area(
         double x, double y, double w, double h, double expectedLeft, double expectedTop)
     {
@@ -124,14 +128,39 @@ public sealed class TrayBuildOverlayWindowTests
         Assert.Equal(expectedTop, top);
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL]</b> Pencere oranı artık 430:286 DEĞİL, tasarımcının BANDININ oranıdır.
+    ///
+    /// <para><b>Eski iddia:</b> pencere sahnenin TAMAMININ (430×286) oranını 144×96 ölçüsünde, kabaca
+    /// (<c>precision: 1</c>) korurdu — Viewbox <c>Uniform</c> sapmayı boş kenar olarak gösterirdi.</para>
+    ///
+    /// <para><b>Değişme gerekçesi:</b> kullanıcının GÖRSEL TESTİ — 144×96'da şeritler ~7 piksele düşüyordu,
+    /// okunmuyordu. Tasarımcının önizlemesi sahneyi logonun BANDINA kırpıp çok daha büyük gösteriyordu
+    /// (<c>viewBox="-30 76 375 134"</c>, bkz. <see cref="TrayBuildIndicator.StageWidth"/>/
+    /// <see cref="TrayBuildIndicator.StageHeight"/>) — 430:286'dan belirgin biçimde farklı bir orandır.
+    /// Pencere artık BU bandın oranını, <see cref="TrayBuildOverlayWindow.Scale"/> sabit kaldığı sürece TAM
+    /// olarak korur (yaklaşıklık değil: ikisi de aynı ölçeğin katı).</para></summary>
     [Fact]
     public void The_overlay_keeps_the_scene_aspect_ratio()
     {
-        // Sahne 430×286; pencere oranı ondan belirgin biçimde sapmamalı (Viewbox Uniform ölçekler ve sapma
-        // ne kadar büyükse o kadar boş kenar bırakır).
-        double scene = 430.0 / 286.0;
+        double band = TrayBuildIndicator.StageWidth / TrayBuildIndicator.StageHeight;
         double window = TrayBuildOverlayWindow.OverlayWidth / TrayBuildOverlayWindow.OverlayHeight;
-        Assert.Equal(scene, window, precision: 1);
+        Assert.Equal(band, window);
+    }
+
+    /// <summary>
+    /// Overlay ölçüsünün TEK kaynağı: göstergenin bant ölçüsü (<see cref="TrayBuildIndicator.StageWidth"/>/
+    /// <see cref="TrayBuildIndicator.StageHeight"/>) çarpı TEK bir ölçek (<see cref="TrayBuildOverlayWindow.Scale"/>).
+    ///
+    /// <para>144/96 literalleri gitti; pencereyi büyütüp küçültmek istenirse dokunulacak TEK sayı
+    /// <c>Scale</c>'dir — eski ölçeğin (144/430 ≈ 0.335) kabaca iki katı (2/3), kullanıcının "çok küçük"
+    /// bulduğu geri bildirimin doğrudan karşılığı.</para></summary>
+    [Fact]
+    public void The_overlay_is_sized_from_the_stage_and_one_scale()
+    {
+        Assert.Equal(TrayBuildIndicator.StageWidth * TrayBuildOverlayWindow.Scale, TrayBuildOverlayWindow.OverlayWidth);
+        Assert.Equal(TrayBuildIndicator.StageHeight * TrayBuildOverlayWindow.Scale, TrayBuildOverlayWindow.OverlayHeight);
+        Assert.Equal(2.0 / 3.0, TrayBuildOverlayWindow.Scale);
     }
 
     // ---------------------------------------------------------------- view sözleşmesi

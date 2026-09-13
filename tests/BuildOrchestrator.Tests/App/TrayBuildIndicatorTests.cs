@@ -66,6 +66,33 @@ public sealed class TrayBuildIndicatorTests
         GC.KeepAlive(host);
     }
 
+    // ---------------------------------------------------------------- sahne (T3): tasarımcının bandı
+
+    /// <summary>
+    /// [tray indicator/T3] Sahne artık tasarımcının BANDIDIR: dış Canvas (<c>Stage</c>) tasarımcının
+    /// önizlemesindeki <c>viewBox="-30 76 375 134"</c>'ün ta kendisi
+    /// (<c>.claude/outputs/2026-08-05-05-06-logo-animation-v1.3.0/Build Orchestrator Tray Indicator.dc.html</c>).
+    ///
+    /// <para>Bu test üç şeyi birden pinler: dış Canvas'ın ölçüsü <see cref="TrayBuildIndicator.StageWidth"/>/
+    /// <see cref="TrayBuildIndicator.StageHeight"/>'tan gelir (ikinci bir yerde sayı yazılmaz), iç 286×286
+    /// canvas bandın içine <c>Canvas.Left="30" Canvas.Top="-76"</c> ile oturur (iç koordinatın (-30,76)
+    /// noktası bandın (0,0)'ına denk gelir), ve <b>375/134 sayılarının TA KENDİLERİ yalnız BURADA</b>
+    /// görünür — tasarımcının viewBox'ının pinidir, başka hiçbir testte tekrarlanmaz.</para></summary>
+    [StaFact]
+    public void The_stage_is_the_designers_band()
+    {
+        var (indicator, window, _) = Realize();
+
+        Assert.Equal(TrayBuildIndicator.StageWidth, indicator.StageCanvas.Width);
+        Assert.Equal(TrayBuildIndicator.StageHeight, indicator.StageCanvas.Height);
+        Assert.Equal(30.0, System.Windows.Controls.Canvas.GetLeft(indicator.InnerCanvas));
+        Assert.Equal(-76.0, System.Windows.Controls.Canvas.GetTop(indicator.InnerCanvas));
+        Assert.Equal(375.0, TrayBuildIndicator.StageWidth);
+        Assert.Equal(134.0, TrayBuildIndicator.StageHeight);
+
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- sanat eseri: senkron ve zaman çizelgesi
 
     /// <summary>

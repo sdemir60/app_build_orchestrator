@@ -19,6 +19,19 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 public partial class TrayBuildIndicator : UserControl
 {
+    /// <summary>
+    /// [tray indicator/T3] Tasarımcının BANDI — dış Canvas'ın (<c>Stage</c>) tek ölçü kaynağı, tasarımcının
+    /// önizlemesindeki <c>viewBox="-30 76 375 134"</c>'ün ta kendisi
+    /// (<c>.claude/outputs/2026-08-05-05-06-logo-animation-v1.3.0/Build Orchestrator Tray Indicator.dc.html</c>).
+    /// XAML bu iki sayıyı İKİNCİ kez YAZMAZ — dış Canvas'ın Width/Height'i <c>x:Static</c> ile buradan okur
+    /// (kopya YASAK, CLAUDE.md). Overlay penceresi de aynı sayılardan, tek bir ölçekle türer
+    /// (<c>TrayBuildOverlayWindow.Scale</c>).
+    /// </summary>
+    public const double StageWidth = 375;
+
+    /// <summary>Bkz. <see cref="StageWidth"/>.</summary>
+    public const double StageHeight = 134;
+
     private readonly Storyboard _loop;
 
     private bool _running;
@@ -49,6 +62,8 @@ public partial class TrayBuildIndicator : UserControl
     internal System.Windows.Shapes.Path ChevronFigure => Chevron;
     internal TranslateTransform ChevronShiftTransform => ChevronShift;
     internal TranslateTransform SweepShiftTransform => SweepShift;
+    internal Canvas StageCanvas => Stage;
+    internal Canvas InnerCanvas => Inner;
 
     /// <summary>Döngüyü baştan başlatır.</summary>
     public void BeginLoop()
