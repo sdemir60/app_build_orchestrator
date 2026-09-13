@@ -1531,10 +1531,9 @@ it, once — in-app toasts are prohibited by the design.
 
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
-animates in the bottom-right corner of the primary work area, carrying the same `finished/will-build` counter the
-ribbon shows. It appears if the user drops to the tray mid-run and disappears the instant the window comes back.
-The surface is its own top-level window: it must stay visible while the main window is hidden, so it cannot be a
-popup inside it.
+animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
+and disappears the instant the window comes back. The surface is its own top-level window: it must stay visible
+while the main window is hidden, so it cannot be a popup inside it.
 
 Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
@@ -3021,10 +3020,6 @@ unchanged, only the file moved. The shared dictionary holds the source SVG's own
 folded-in ones the mark used to carry; each consumer shifts its own canvas instead, which is why a test measures
 the drawn box and not just the figure count.
 
-The white pill is the one shape with two variants, both in that same file: the mark's own proportion and a wider
-one for the indicator, whose strip had to grow to fit a three-digit counter. The counter's slot is measured from
-that geometry rather than repeated as numbers next to it.
-
 The chevron is the one gradient in the application, and it too is a single shared brush. Flat surfaces are the
 rule and a guard enforces it, with a single file-scoped exemption for the mark's dictionary: flattening a logo
 would mean redrawing it, and source artwork is transferred verbatim. The chevron is amber — the same accent the
@@ -3035,9 +3030,7 @@ The mark's palette comes from the neutral ramp and the amber family, except a fe
 only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
 the other values the design source does not name. Two of them are also exposed as raw `Color` resources
 because a gradient stop takes a colour rather than a brush — the brushes are derived from those colours, so no
-hex is written twice. The tray counter's ink is one of these: it has to read against the light strip it sits on
-while staying quiet enough that the logo does not turn into a label, and no tone on the text ramp — tuned for
-dark surfaces — does both. Its opacity is folded into the alpha channel so the control carries no second one.
+hex is written twice.
 
 **Raster icons** (`.exe`, taskbar, tray) are generated from the same artwork by `Assets/generate-app-icons.ps1`
 into a multi-size ICO. They ship **without a background**: the mark sits on a transparent canvas and is fitted
@@ -3207,14 +3200,11 @@ dispatcher roots it, so an unstopped one ticks forever and can never be collecte
 the 200 ms tick writes only when the value actually changed, since assigning the same string still invalidates
 measure and draw five times a second.
 
-**Two seams in the tray indicator are deliberately not instant, and neither carries a number in code.** The
+**One seam in the tray indicator is deliberately not instant, and it carries no number in code.** The
 overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
 a short breath separates them; its length is `Duration.Slow`, which means reduced motion collapses it to zero on
 its own — a user who asked for no animation is not made to wait. The breath is an injectable seam, so the suite
-proves the ordering without spending real time. The counter behaves the same way: it is never written with an
-unchanged value, and when the digits do change the text dims and returns over `Duration.Fast` instead of
-swapping hard. Only opacity moves — the strip is a fixed width and the digits are monospaced, so nothing
-reflows.
+proves the ordering without spending real time.
 
 ### 14.6 Copy and tone
 
@@ -3614,8 +3604,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
 | Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
-| …its wiring to the view model (line, counter, phase) | `App/Services/TrayIndicatorBinder.cs` |
-| …the animated mark itself (loop, counter, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
+| …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
+| …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
