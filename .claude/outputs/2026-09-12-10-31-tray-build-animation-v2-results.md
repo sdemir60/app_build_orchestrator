@@ -14,7 +14,7 @@
 | **Branch** | `feat/tray-build-animation-v2` — `origin`'e push EDİLDİ |
 | **Taban** | `main` @ `a0b0ae5` |
 | **Eski branch** | `feat/tray-build-animation` — DOKUNULMADI; v2 merge edilince `git branch -D` ile silinebilir |
-| **Durum** | Tam süit worktree'de YEŞİL (bkz. Doğrulama); **Task 6 gözle doğrulama YAPILMADI**, **merge EDİLMEDİ** — ikisine kullanıcıyla birlikte karar verilecek |
+| **Durum** | `main`'e merge EDİLDİ (kullanıcı kararı); tam süit yeşil. **Task 6 gözle doğrulama YAPILMADI** — merge'den sonra, çalışan uygulamada yapılacak |
 
 ---
 
@@ -89,14 +89,26 @@ Okuma, süitin sonucunu doğru öngördü: hiçbir guard kırmızı vermedi.
   `DragReorderTests.Reorder_uses_mouse_capture_…` — ortam kaynaklı bilinen skip (clean-v2 kaydındakiyle aynı).
   `Category=Acceptance` süiti koşulmadı.
 - **Derleme:** 0 hata; altı uyarı, hepsi bu branch'in dokunmadığı eski test dosyalarında.
+- **Merge öncesi ikinci tur (2026-09-13):** `main` bu arada 30 commit ilerledi (clean motoru, git-only harici
+  projeler, graf kimliği, Sync yüzey davranışı). `git merge main` **çakışmasız** geçti; beş ortak dosya
+  (ARCHITECTURE, README, `MainWindow.xaml.cs`, `RunViewModel.cs`, `NoSleepPollTests.cs`) otomatik birleşti.
+  Birleşmenin kod düzeyinde tutarlı olduğu ayrıca doğrulandı: `RibbonText.Compose`'un tek çağrı yeri
+  (`RunViewModel.RibbonLine`) duruyor, `StickyRibbon` onu okuyor, sözlük zinciri beş, `MainWindow`'da tek
+  `Task.Delay` (guard izni 1), doküman paragrafları ve sürüm notu maddesi yerinde — tray maddesi tek kopya.
+  Derleme 0 hata. **Tam süit: Başarısız 0 · Başarılı 2701 · Atlanan 1 · Toplam 2702 · 2 dk 56 s** (aynı
+  bilinen skip).
 
-## Açık kalanlar (kullanıcıyla birlikte)
+## Açık kalan — Task 6 gözle doğrulama
 
-1. **Task 6 — gözle doğrulama:** on senaryo orijinal merge promptunda. Hiç yapılmadı; per-pixel geçirgenlik,
-   bitiş ritmi ve reduced-motion karesi ancak gerçek HWND'de görülür. Uygulama worktree'den başlatılabilir
-   (`dotnet run --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj`); ana projeden açık bir
-   instance varsa önce kapatılmalı (single-instance kapısı).
-2. **Merge kararı** ve `feat/clean-button-engine-v2` ile sıra.
+Merge edildi ama **gösterge hiç gözle görülmedi**: per-pixel geçirgenlik, bitiş koreografisinin ritmi, sayaç
+geçişi ve reduced-motion karesi ancak gerçek bir HWND'de sınanabilir. On senaryo orijinal merge promptundadır
+(`2026-08-20-12-40-tray-build-animation-merge-prompt.md` → "Bu işe özel dikkat"). Kırmızı çıkan bir senaryo
+olursa düzeltme `main` üzerinde yeni bir iş branch'idir.
+
+**Bilinçli sınır (yeni):** `Clean` bu branch main'den ayrıldıktan sonra geldi ve yeni bir faz AÇMIYOR
+(clean planı K-7), `Syncing` de baştan kapsam dışı. Yani tepsideyken koşan bir Clean ya da Sync göstergeyi
+göstermez — gösterge yalnız derleme fazları (`Starting | Running | Stopping`) içindir. Davranış değiştirilmek
+istenirse controller'ın aktif faz kümesi tek yerdedir.
 
 ## `feat/clean-button-engine-v2` ile çakışma yüzeyi
 
