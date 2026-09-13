@@ -129,23 +129,30 @@ public sealed class TrayBuildOverlayWindowTests
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL]</b> Pencere oranı artık 430:286 DEĞİL, tasarımcının BANDININ oranıdır.
+    /// <b>[DEĞİŞEN KURAL]</b> Pencere oranı artık 430:286 DEĞİL, tasarımcının BANDININ oranıdır (bant için
+    /// bkz. <see cref="TrayBuildIndicator.StageWidth"/>'in doc'u — viewBox burada ikinci kez anlatılmaz).
     ///
     /// <para><b>Eski iddia:</b> pencere sahnenin TAMAMININ (430×286) oranını 144×96 ölçüsünde, kabaca
     /// (<c>precision: 1</c>) korurdu — Viewbox <c>Uniform</c> sapmayı boş kenar olarak gösterirdi.</para>
     ///
     /// <para><b>Değişme gerekçesi:</b> kullanıcının GÖRSEL TESTİ — 144×96'da şeritler ~7 piksele düşüyordu,
-    /// okunmuyordu. Tasarımcının önizlemesi sahneyi logonun BANDINA kırpıp çok daha büyük gösteriyordu
-    /// (<c>viewBox="-30 76 375 134"</c>, bkz. <see cref="TrayBuildIndicator.StageWidth"/>/
-    /// <see cref="TrayBuildIndicator.StageHeight"/>) — 430:286'dan belirgin biçimde farklı bir orandır.
-    /// Pencere artık BU bandın oranını, <see cref="TrayBuildOverlayWindow.Scale"/> sabit kaldığı sürece TAM
-    /// olarak korur (yaklaşıklık değil: ikisi de aynı ölçeğin katı).</para></summary>
-    [Fact]
+    /// okunmuyordu. Tasarımcının bandı çok daha büyük — 430:286'dan belirgin biçimde farklı bir orandır.
+    /// İddia GERÇEKLENMİŞ pencerenin (<c>overlay.Width/Height</c>) oranı ile bandın oranı ÜZERİNEDİR — iki
+    /// sabit tanımın (<c>StageWidth/StageHeight</c> ile <c>OverlayWidth/OverlayHeight</c>) birbirine eşitliği
+    /// değil: ikisi derleyicinin katladığı AYNI ifade olsaydı bu hiçbir şeyi pinlemezdi.</para>
+    ///
+    /// <para><b>Neden yine de toleranslı (<c>precision: 10</c>):</b> <see cref="TrayBuildOverlayWindow.Scale"/>
+    /// ileride başka bir değere değişirse (ör. 0.7) çarpım/bölüm sırası son bitte yuvarlanabilir — kavramsal
+    /// olarak korunan bir oranı ULP gürültüsüyle kırmamak için 10 basamaklık pay bırakılır; gerçek bir oran
+    /// hatasını (ör. genişlik/yükseklik yer değiştirmesi) yine yakalar.</para></summary>
+    [StaFact]
     public void The_overlay_keeps_the_scene_aspect_ratio()
     {
+        var overlay = New();
+
         double band = TrayBuildIndicator.StageWidth / TrayBuildIndicator.StageHeight;
-        double window = TrayBuildOverlayWindow.OverlayWidth / TrayBuildOverlayWindow.OverlayHeight;
-        Assert.Equal(band, window);
+        double window = overlay.Width / overlay.Height;
+        Assert.Equal(band, window, precision: 10);
     }
 
     /// <summary>
@@ -154,12 +161,20 @@ public sealed class TrayBuildOverlayWindowTests
     ///
     /// <para>144/96 literalleri gitti; pencereyi büyütüp küçültmek istenirse dokunulacak TEK sayı
     /// <c>Scale</c>'dir — eski ölçeğin (144/430 ≈ 0.335) kabaca iki katı (2/3), kullanıcının "çok küçük"
-    /// bulduğu geri bildirimin doğrudan karşılığı.</para></summary>
-    [Fact]
+    /// bulduğu geri bildirimin doğrudan karşılığı.</para>
+    ///
+    /// <para>İddia GERÇEKLENMİŞ pencerenin (<c>overlay.Width/Height</c>) üzerinedir, <c>OverlayWidth</c>/
+    /// <c>OverlayHeight</c> sabitlerinin kendi tanımına karşı değil — ikisi derleyicinin katladığı AYNI ifade
+    /// olurdu ve karşılaştırma hiçbir şey pinlemezdi. Kurucunun <c>Width = OverlayWidth</c> atamasını
+    /// GERÇEKTEN çalıştırdığı da böylece doğrulanır. <c>precision: 10</c>: <c>Scale</c> ileride değişirse
+    /// son bitteki yuvarlama farkı testi kırmasın diye.</para></summary>
+    [StaFact]
     public void The_overlay_is_sized_from_the_stage_and_one_scale()
     {
-        Assert.Equal(TrayBuildIndicator.StageWidth * TrayBuildOverlayWindow.Scale, TrayBuildOverlayWindow.OverlayWidth);
-        Assert.Equal(TrayBuildIndicator.StageHeight * TrayBuildOverlayWindow.Scale, TrayBuildOverlayWindow.OverlayHeight);
+        var overlay = New();
+
+        Assert.Equal(TrayBuildIndicator.StageWidth * TrayBuildOverlayWindow.Scale, overlay.Width, precision: 10);
+        Assert.Equal(TrayBuildIndicator.StageHeight * TrayBuildOverlayWindow.Scale, overlay.Height, precision: 10);
         Assert.Equal(2.0 / 3.0, TrayBuildOverlayWindow.Scale);
     }
 

@@ -150,10 +150,13 @@
          ikinci kez sayı yazılmaz. Asıl logo karesi (iç 286×286 canvas, Inner) bandın içine
          Canvas.Left="30" Canvas.Top="-76" ile yerleşir: iç koordinatın (-30,76) noktası bandın (0,0)'ına
          denk gelir, yani band iç koordinatta x −30..345 / y 76..210 aralığını gösterir. Döngünün çizdiği
-         her şey bu aralığın içinde kalır — şevron −24..339.5 arasında girip çıkar, şeritlerin yolu
-         30.5..250.5'tir, üstte ve altta (gölge dahil) 7'şer birim pay kalır (83→76, 203→210). Hiçbir yerde
-         kırpma sınırı yoktur (ClipToBounds="False"): çerçeveleme bu iki Canvas'ın ölçüsünden ve onu saran
-         overlay penceresinden gelir, parçalar giriş/çıkışta kesilmez. -->
+         FİGÜRLER (şevron ve şeritlerin kendi geometrisi) bu aralığın içinde kalır — şevron −24..339.5
+         arasında girip çıkar, şeritlerin yolu 30.5..250.5'tir, üstte ve altta 7'şer birim pay kalır
+         (83→76, 203→210). Bu pay FİGÜRLER içindir: şevronun kendi DropShadowEffect'inin (ShadowDepth 2.6,
+         BlurRadius 5.6) en dış bulanıklık ucu bandın kenarını ~1 birim aşabilir (bu ölçekte alt-piksel) —
+         bant bunun için büyütülmedi, fark ekranda görünmez. Hiçbir yerde kırpma sınırı yoktur
+         (ClipToBounds="False"): çerçeveleme bu iki Canvas'ın ölçüsünden ve onu saran overlay penceresinden
+         gelir, parçalar giriş/çıkışta kesilmez. -->
     <Canvas x:Name="Stage"
             Width="{x:Static controls:TrayBuildIndicator.StageWidth}"
             Height="{x:Static controls:TrayBuildIndicator.StageHeight}"
