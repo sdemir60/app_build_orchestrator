@@ -280,4 +280,59 @@ public class MsBuildInvokerTests
         lock (recordedLock) anyLateLine = recorded.Any(r => r.AfterReturn);
         Assert.False(anyLateLine, "InvokeAsync döndükten SONRA onLine çağrıldı — abandoned pump latch edilmedi");
     }
+
+    // ---------------------------------------------------------------- [optimize] restore-only yüzey
+
+    /// <summary>
+    /// [optimize] <c>RestoreAsync</c> YALNIZ restore koşar: aynı fixture <c>InvokeAsync</c> ile derlendiğinde
+    /// DLL üretiliyor (yukarıdaki (a) testi bunu pinliyor), <c>RestoreAsync</c> ile üretilmiyor. Bu, argüman
+    /// setinin <c>-t:Build</c> İÇERMEDİĞİNİN davranışsal kanıtıdır — bir gün restore yolu build argümanlarına
+    /// kaysa bu test kırmızıya döner.
+    /// </summary>
+    [SkippableFact]
+    public async Task RestoreAsync_runs_restore_only_and_never_builds_the_project()
+    {
+        string exe = await ResolveMsBuildExeOrSkipAsync();
+        string dir = NewTempDir();
+        string csproj = LegacyFixture.CreateClassLib(dir, "RestoreOnlyLib");
+
+        using var job = JobObject.CreateKillOnClose();
+        var invoker = new MsBuildInvoker(job, exe);
+        var lines = new List<string>();
+
+        var result = await invoker.RestoreAsync(
+            new MsBuildRestoreRequest(csproj, dir),
+            line => { lock (lines) lines.Add(line); },
+            CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.False(result.TimedOut);
+        Assert.False(result.Killed);
+        Assert.NotEmpty(lines);
+        Assert.False(File.Exists(Path.Combine(dir, "bin", "Debug", "RestoreOnlyLib.dll")),
+            "restore yolu projeyi DERLEMİŞ — argüman seti build tarafına kaymış olmalı");
+    }
+
+    /// <summary>
+    /// [optimize] Restore child'ı build yolunun AYNI çekirdeğinde koşar: iptal aynı şekilde child'ı öldürür ve
+    /// <c>Killed=true / TimedOut=false</c> döner (timeout ayrımı build yolundaki (c) testinin ikizi). Token
+    /// önceden iptal edilir — child'ın işini bitirmesini beklemeye gerek yok, yarış da yok.
+    /// </summary>
+    [SkippableFact]
+    public async Task RestoreAsync_cancellation_kills_the_child_like_the_build_path()
+    {
+        string exe = await ResolveMsBuildExeOrSkipAsync();
+        string dir = NewTempDir();
+        string csproj = LegacyFixture.CreateClassLib(dir, "RestoreCancelLib");
+
+        using var job = JobObject.CreateKillOnClose();
+        var invoker = new MsBuildInvoker(job, exe);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await invoker.RestoreAsync(new MsBuildRestoreRequest(csproj, dir), _ => { }, cts.Token)
+            .WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.True(result.Killed);
+        Assert.False(result.TimedOut); // caller iptali — PerProjectTimeout değil
+    }
 }

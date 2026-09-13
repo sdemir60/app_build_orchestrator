@@ -29,50 +29,16 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// </summary>
 public class CleanDispatchTests : IDisposable
 {
-    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
-
     private readonly string _root = Directory.CreateTempSubdirectory("bo-cleandispatch-").FullName;
     private readonly string _sandbox = Directory.CreateTempSubdirectory("bo-cleandispatch-sb-").FullName;
 
     public void Dispose()
     {
-        foreach (string dir in new[] { _root, _sandbox })
-        {
-            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
+        SupervisorHostHarness.TryDeleteDirectories(_root, _sandbox);
         GC.SuppressFinalize(this);
     }
 
     // ---------------------------------------------------------------- fixture
-
-    /// <summary>Yalnız-yazılır stdout taklidi: yazılan her baytı biriktirir.</summary>
-    private sealed class CollectingStream : Stream
-    {
-        private readonly StringBuilder _text = new();
-        private readonly object _gate = new();
-
-        public string Text { get { lock (_gate) return _text.ToString(); } }
-
-        public override bool CanRead => false;
-        public override bool CanWrite => true;
-        public override bool CanSeek => false;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override Task FlushAsync(CancellationToken ct) => Task.CompletedTask;
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
-        {
-            lock (_gate) _text.Append(Encoding.UTF8.GetString(buffer.Span));
-            return ValueTask.CompletedTask;
-        }
-    }
 
     private string SeedProject(string name)
     {
@@ -96,22 +62,14 @@ public class CleanDispatchTests : IDisposable
         clean ?? (_ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(_sandbox))
         {
             DeleteRetryDelay = _ => { }, // [D8] testte gerçek bekleme yok
-        }));
+        }),
+        // Bu dosya Clean akışını ölçer; Optimize kurulur ama HİÇ çağrılmaz — restore fabrikası da o yüzden fırlatır.
+        _ => new OptimizeWorkspaceService(
+            new WorkspaceScanner(), new CsprojEvaluator(),
+            new EvaluationCache(Path.Combine(_sandbox, "evaluation-cache.json")),
+            new BuildStateStore(_sandbox), new SourceHashCache(Path.Combine(_sandbox, SourceHashCache.FileName)),
+            _ => throw new NotSupportedException("no optimize in this test")));
 
-    private static List<IpcEvent> ParseWire(string text) => text
-        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Select(l => JsonSerializer.Deserialize<IpcEvent>(l, IpcJson.Options)
-                     ?? throw new InvalidOperationException("NDJSON olmayan satır [D4]: " + l))
-        .ToList();
-
-    private static async Task<MemoryStream> StdinWith(params IpcCommand[] commands)
-    {
-        var stdin = new MemoryStream();
-        var writer = new NdjsonWriter(stdin);
-        foreach (var cmd in commands) await writer.WriteAsync(cmd);
-        stdin.Position = 0; // komutlar okunduktan sonra EOF → host düzenli çıkar
-        return stdin;
-    }
 
     // ---------------------------------------------------------------- testler
 
@@ -119,16 +77,16 @@ public class CleanDispatchTests : IDisposable
     public async Task CleanWorkspace_streams_started_progress_and_completion_in_order_and_deletes_bin_obj()
     {
         string a = SeedProject("A");
-        var stdout = new CollectingStream();
+        var stdout = new SupervisorHostHarness.CollectingStream();
         var writer = new NdjsonWriter(stdout);
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = NewCoordinator(writer, job);
 
-        var host = new SupervisorHost(writer, new NdjsonReader(await StdinWith(new CleanWorkspaceCommand(_root))),
+        var host = new SupervisorHost(writer, new NdjsonReader(await SupervisorHostHarness.StdinWith(new CleanWorkspaceCommand(_root))),
             job, coordinator, Services());
-        Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(Limit));
+        Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(SupervisorHostHarness.Limit));
 
-        var all = ParseWire(stdout.Text); // [D4] her satır NDJSON olarak çözülür
+        var all = NdjsonWire.Parse(stdout.Text); // [D4] her satır NDJSON olarak çözülür
         Assert.IsType<EngineReadyEvent>(all[0]);
         Assert.IsType<CleanStartedEvent>(all[1]);
         Assert.IsType<CleanCompletedEvent>(all[^1]);
@@ -144,7 +102,7 @@ public class CleanDispatchTests : IDisposable
     public async Task CleanWorkspace_is_rejected_with_cleanRejected_while_a_run_is_active_and_deletes_nothing()
     {
         string a = SeedProject("A");
-        var stdout = new CollectingStream();
+        var stdout = new SupervisorHostHarness.CollectingStream();
         var writer = new NdjsonWriter(stdout);
         using var job = JobObject.CreateKillOnClose();
 
@@ -158,13 +116,13 @@ public class CleanDispatchTests : IDisposable
 
         // startRun SENKRON olarak slotu tutar ve döner; dispatch loop serildir, yani cleanWorkspace okunduğunda
         // run KESİNLİKLE aktiftir — yarış yok.
-        var stdin = await StdinWith(
+        var stdin = await SupervisorHostHarness.StdinWith(
             new StartRunCommand("r1", RunMode.Build, _root, "Debug", 2),
             new CleanWorkspaceCommand(_root));
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator, Services());
-        Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(Limit));
+        Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(SupervisorHostHarness.Limit));
 
-        var all = ParseWire(stdout.Text);
+        var all = NdjsonWire.Parse(stdout.Text);
         Assert.Contains(all, e => e is ErrorEvent { Code: "cleanRejected" });
         Assert.DoesNotContain(all, e => e is CleanStartedEvent);
         Assert.True(Directory.Exists(Path.Combine(a, "bin")), "reddedilen Clean hiçbir şey silmemeli");
@@ -177,17 +135,17 @@ public class CleanDispatchTests : IDisposable
     [Fact]
     public async Task An_unexpected_clean_exception_becomes_error_cleanFailed_not_a_crash()
     {
-        var stdout = new CollectingStream();
+        var stdout = new SupervisorHostHarness.CollectingStream();
         var writer = new NdjsonWriter(stdout);
         using var job = JobObject.CreateKillOnClose();
         using var coordinator = NewCoordinator(writer, job);
 
-        var stdin = await StdinWith(new CleanWorkspaceCommand(_root), new PingCommand(7));
+        var stdin = await SupervisorHostHarness.StdinWith(new CleanWorkspaceCommand(_root), new PingCommand(7));
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator,
             Services(clean: _ => throw new InvalidOperationException("beklenmeyen hata")));
-        Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(Limit));
+        Assert.Equal(0, await Task.Run(() => host.RunAsync()).WaitAsync(SupervisorHostHarness.Limit));
 
-        var all = ParseWire(stdout.Text);
+        var all = NdjsonWire.Parse(stdout.Text);
         Assert.Contains(all, e => e is ErrorEvent { Code: "cleanFailed" });
         Assert.Contains(all, e => e is PongEvent { Seq: 7 }); // host ayakta: sonraki komut hâlâ işleniyor
     }

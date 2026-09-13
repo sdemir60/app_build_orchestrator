@@ -12,11 +12,26 @@ public sealed record MsBuildInvokeRequest(
     string ProjectId, string Configuration, string SolutionDir, bool NeedsRestore,
     string? BaseIntermediateOutputPath = null, MsBuildTarget Target = MsBuildTarget.Build);
 
+/// <summary>
+/// [optimize] Tek proje RESTORE isteği — <see cref="MsBuildInvokeRequest"/>'ten ayrı bir tiptir çünkü restore
+/// yolunun Configuration'a, obj izolasyonuna ve "önce restore sonra build" sıralamasına İHTİYACI YOKTUR.
+/// packages.config restore'u sln bağlamı ister [SPIKE S2-a]: <paramref name="SolutionDir"/> onu taşır.
+/// </summary>
+public sealed record MsBuildRestoreRequest(string ProjectId, string SolutionDir);
+
 public sealed record MsBuildInvokeResult(int ExitCode, long DurationMs, bool TimedOut, bool Killed);
 
 public interface IMsBuildInvoker
 {
     Task<MsBuildInvokeResult> InvokeAsync(MsBuildInvokeRequest req, Action<string> onLine, CancellationToken ct);
+
+    /// <summary>
+    /// [optimize] YALNIZ restore koşar (<c>-t:restore</c>, <c>-t:Build</c> YOK) — kullanıcı-tetikli Optimize'ın
+    /// "eksik NuGet paketlerini tamamla" adımı. Build yolundan ayrı bir üye olmasının sebebi, restore'un
+    /// build'in bir ön adımı DEĞİL kendi başına bir iş olmasıdır: Optimize, build'in hiç dokunmadığı (skip
+    /// edilen) projeleri de onarır.
+    /// </summary>
+    Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct);
 }
 
 /// <summary>
@@ -40,27 +55,68 @@ public sealed class MsBuildInvoker(JobObject innerJob, string msbuildExePath) : 
         ArgumentNullException.ThrowIfNull(req);
         ArgumentNullException.ThrowIfNull(onLine);
 
-        string workingDirectory = Path.GetDirectoryName(Path.GetFullPath(req.ProjectId))
-            ?? throw new ArgumentException("ProjectId is not a valid file path.", nameof(req));
-        var sw = Stopwatch.StartNew();
-
-        // Fix wave 1 / Finding 2: PerProjectTimeout invoke BAŞINA bir kez kurulur (restore + build toplamı) —
-        // önceden RunChildAsync içinde per-child kuruluyordu (NeedsRestore:true → restore 10dk + build 10dk =
-        // 20dk, "PerProjectTimeout" adının vaat ettiğinin iki katı). timeoutOnlyCts SADECE zaman aşımını temsil
-        // eder — ct'den ayrı tutulur, Finding 3'ün ct/timeout ayrımı bu ikisinin bağımsızlığına dayanır.
-        using var timeoutOnlyCts = new CancellationTokenSource(PerProjectTimeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutOnlyCts.Token);
-
-        // DurationMs tüm invoke'u (restore + build) kapsar — sw yalnız bir kez başlar, iki child de aynı sw'yi okur.
-        var (restoreArgs, buildArgs) = MsBuildArguments.PlanFor(req);
-        if (restoreArgs is not null)
+        var scope = OpenScope(req.ProjectId, nameof(req), ct);
+        try
         {
-            var restoreResult = await RunChildAsync(restoreArgs, workingDirectory, sw, onLine, linkedCts.Token, timeoutOnlyCts);
-            if (restoreResult.ExitCode != 0 || restoreResult.TimedOut || restoreResult.Killed)
-                return restoreResult; // restore başarısızsa build DENENMEZ
-        }
+            // DurationMs tüm invoke'u (restore + build) kapsar — sw yalnız bir kez başlar, iki child de aynı sw'yi okur.
+            // Argüman seçimi TEK kaynaktan: PlanFor hem restore ihtiyacını hem hedefi (Build/Rebuild/Clean) bilir;
+            // burada elle MsBuildArguments.Build çağırmak satır menüsünün hedefini sessizce düşürürdü.
+            var (restoreArgs, buildArgs) = MsBuildArguments.PlanFor(req);
+            if (restoreArgs is not null)
+            {
+                var restoreResult = await RunChildAsync(restoreArgs, scope.WorkingDirectory, scope.Stopwatch, onLine,
+                    scope.Linked.Token, scope.TimeoutOnly);
+                if (restoreResult.ExitCode != 0 || restoreResult.TimedOut || restoreResult.Killed)
+                    return restoreResult; // restore başarısızsa build DENENMEZ
+            }
 
-        return await RunChildAsync(buildArgs, workingDirectory, sw, onLine, linkedCts.Token, timeoutOnlyCts);
+            return await RunChildAsync(buildArgs, scope.WorkingDirectory, scope.Stopwatch, onLine,
+                scope.Linked.Token, scope.TimeoutOnly);
+        }
+        finally { scope.Dispose(); }
+    }
+
+    /// <summary>
+    /// [optimize] TEK bir restore child'ı koşar — build yolunun AYNI çekirdeğiyle (inner job'a assign, satır
+    /// pump'ı, bounded drain, timeout/iptalde kill). Argümanlar <see cref="MsBuildArguments.RestorePackagesConfig"/>
+    /// tek kaynağından gelir; <c>-t:Build</c> HİÇ eklenmez, dolayısıyla bu yol asla derleme yapmaz.
+    /// </summary>
+    public async Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(req);
+        ArgumentNullException.ThrowIfNull(onLine);
+
+        var scope = OpenScope(req.ProjectId, nameof(req), ct);
+        try
+        {
+            var restoreArgs = MsBuildArguments.RestorePackagesConfig(req.ProjectId, req.SolutionDir);
+            return await RunChildAsync(restoreArgs, scope.WorkingDirectory, scope.Stopwatch, onLine,
+                scope.Linked.Token, scope.TimeoutOnly);
+        }
+        finally { scope.Dispose(); }
+    }
+
+    /// <summary>
+    /// İki giriş noktasının ORTAK prologu: çalışma dizini, süre ölçümü ve <see cref="PerProjectTimeout"/>
+    /// kurulumu. Timeout invoke BAŞINA bir kez kurulur (build yolunda restore + build toplamı) — child başına
+    /// kurulsaydı "per project" adı iki katını vaat ederdi [Fix wave 1 / Finding 2]. <c>TimeoutOnly</c> SADECE
+    /// zaman aşımını temsil eder; ct'den ayrı tutulur, <c>TimedOut</c>/<c>Killed</c> ayrımı buna dayanır.
+    /// </summary>
+    private static InvokeScope OpenScope(string projectId, string paramName, CancellationToken ct)
+    {
+        string workingDirectory = Path.GetDirectoryName(Path.GetFullPath(projectId))
+            ?? throw new ArgumentException("ProjectId is not a valid file path.", paramName);
+        var timeoutOnly = new CancellationTokenSource(PerProjectTimeout);
+        return new InvokeScope(workingDirectory, Stopwatch.StartNew(), timeoutOnly,
+            CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutOnly.Token));
+    }
+
+    /// <summary>Prologun ürettiği tek kullanımlık kapsam. <see cref="IDisposable"/> DEĞİLDİR ve bilinçli
+    /// olarak <c>try/finally</c> ile kapatılır: <c>using</c> bir kopya üzerinde Dispose çağırırdı.</summary>
+    private readonly record struct InvokeScope(
+        string WorkingDirectory, Stopwatch Stopwatch, CancellationTokenSource TimeoutOnly, CancellationTokenSource Linked)
+    {
+        public void Dispose() { Linked.Dispose(); TimeoutOnly.Dispose(); }
     }
 
     private async Task<MsBuildInvokeResult> RunChildAsync(

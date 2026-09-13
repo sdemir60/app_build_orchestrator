@@ -132,6 +132,12 @@ public static class PlanProgressLines
     public static string ExternalNotCleaned(string name, string problem)
         => $"warning: external '{name}': {problem} — nothing from it will be cleaned";
 
+    /// <summary>[optimize] Aynı çözümleme hatasının Optimize'daki cümlesi. Sonuç yine farklıdır: o kökün
+    /// projeleri onarılmaz — paketleri restore edilmez, kırık referansları raporlanmaz, artıkları kalır.
+    /// Optimize bunu yazıp devam eder (ana kök yine onarılır).</summary>
+    public static string ExternalNotOptimized(string name, string problem)
+        => $"warning: external '{name}': {problem} — nothing from it will be repaired";
+
     /// <summary>
     /// Birden fazla proje AYNI <c>AssemblyName</c>'i üretiyor. Belirsiz DLL kenar üretmez [D8/D11], yani ona
     /// HintPath ile bağlanan hiçbir proje onu BEKLEMEZ — sessiz kalırsa kullanıcı grafında eksik bir kenar

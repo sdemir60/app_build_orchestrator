@@ -144,9 +144,10 @@ public partial class BuildMenu : UserControl
             Child = grid,
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
-        // [design v1.11.0 §2.7-11] Clean'in arka ucu henüz yazılmadı (bakım kutusundaki Clean/Optimize ile
-        // AYNI karar): madde yerinde durur, PASİFTİR ve tooltip nedeni söyler. Hover zemini de takılmaz —
-        // tıklanabilirmiş gibi görünmesi, basılıp hiçbir şey olmamasından daha kötü olurdu.
+        // [design v1.11.0 §2.7-11] Bu maddenin arka ucu henüz yazılmadı: madde yerinde durur, PASİFTİR ve
+        // tooltip nedeni söyler. Hover zemini de takılmaz — tıklanabilirmiş gibi görünmesi, basılıp hiçbir
+        // şey olmamasından daha kötü olurdu. (Bakım kutusundaki Clean DERİN Clean'dir ve motoru VARDIR; bu
+        // madde Visual Studio'nun /t:Clean'i, ayrı bir iş — bkz. AccessibilityNames.CleanSolutionTooltip.)
         if (item.Kind == "clean")
         {
             row.IsEnabled = false;

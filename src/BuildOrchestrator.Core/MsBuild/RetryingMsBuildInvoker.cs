@@ -43,6 +43,15 @@ public sealed class RetryingMsBuildInvoker(
     /// </summary>
     public const double CappedBackoffFactor = 1.5;
 
+    /// <summary>
+    /// [optimize] Restore inner invoker'a DOĞRUDAN forward edilir — bu decorator restore'u RETRY ETMEZ.
+    /// Gerekçe: sardığı tek olgu MSB302x copy-contention'ıdır ve o, paralel post-build KOPYALARINA özgüdür
+    /// (bkz. sınıf doc'u). Restore'un başarısızlığı (offline kaynak, çözülemeyen paket, bozuk feed) yeniden
+    /// denemekle geçmez; yalnız kullanıcının beklediği süreyi katlar ve Optimize'ın iptali de yoktur.
+    /// </summary>
+    public Task<MsBuildInvokeResult> RestoreAsync(MsBuildRestoreRequest req, Action<string> onLine, CancellationToken ct)
+        => _inner.RestoreAsync(req, onLine, ct);
+
     public async Task<MsBuildInvokeResult> InvokeAsync(MsBuildInvokeRequest req, Action<string> onLine, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(req);

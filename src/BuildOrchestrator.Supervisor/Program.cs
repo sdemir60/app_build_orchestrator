@@ -99,7 +99,10 @@ public static class Program
             worktreeObjRootResolver: _ => prepared?.WorktreeObjRoot, // [A4] obj izolasyonu artık CANLI
             stateStore: stateStore); // [Task 19] projectSucceeded → BuildState persist
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator,
-            WorkspaceServices.Default(cacheRoot, worktreePoolRoot), // [A5/T69] sync/branch/worktree komutları
+            // [A5/T69] sync/branch/worktree komutları · [optimize] restore invoker'ı koordinatörle AYNI
+            // memoize edilmiş toolset çözümünden gelir (ikinci bir vswhere araması yok).
+            WorkspaceServices.Default(cacheRoot, worktreePoolRoot,
+                async ct => (await ResolveMsBuildAsync(innerJob, ct)).Invoker),
             debugHooks); // [A13/B4] kapalıysa debugSpawnChildren error(debugHooksDisabled) ile reddedilir
         return await host.RunAsync();
 

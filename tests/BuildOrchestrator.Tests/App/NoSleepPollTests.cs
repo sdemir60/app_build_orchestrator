@@ -62,6 +62,11 @@ public sealed class NoSleepPollTests
         // (çalışan uygulama, virüs tarayıcı) dosya handle'ını kapatmasıdır — beklenecek handle/TCS yoktur;
         // gecikme enjekte edilebilir (CleanWorkspaceService.DeleteRetryDelay) ve testlerde anında döner.
         [@"BuildOrchestrator.Core\Workspace\CleanWorkspaceService.cs"] = 1,
+        // Optimize'ın restore kalp atışının ÜRETİM VARSAYILANI (K-13). POLL DEĞİLDİR: bekleme
+        // Task.WhenAny'nin öteki ayağıyla (restore child'ının task'ı) YARIŞIR, yani restore biter bitmez
+        // döngü anında çıkar — beklenen olayın kendi handle'ı vardır ve beklenir. Gecikme enjekte edilebilir
+        // (OptimizeWorkspaceService.HeartbeatDelay), testlerde senkron bir sinyale çevrilir.
+        [@"BuildOrchestrator.Core\Workspace\OptimizeWorkspaceService.cs"] = 1,
         // Clipboard contention retry'ının üretim varsayılanı: WPF Clipboard UI thread'inde kilitlenir,
         // beklenecek bir handle yoktur; gecikme yine enjekte edilebilir (ClipboardRetry.Try imzası).
         [@"BuildOrchestrator.App\Console\ClipboardRetry.cs"] = 1,

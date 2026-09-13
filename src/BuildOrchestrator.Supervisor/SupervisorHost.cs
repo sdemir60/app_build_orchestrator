@@ -8,6 +8,7 @@ using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
+using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
@@ -25,20 +26,38 @@ public sealed record WorkspaceServices(
     Func<string, SyncWorkspaceService> Sync,
     Func<string, GitService> Git,
     Func<string, WorktreeManager> Worktree,
-    Func<string, CleanWorkspaceService> Clean)
+    Func<string, CleanWorkspaceService> Clean,
+    Func<string, OptimizeWorkspaceService> Optimize)
 {
     /// <summary>Üretim bağlaması: gerçek <see cref="ProcessRunner"/>, <paramref name="cacheRoot"/>'taki
-    /// evaluation-cache + build-state, <paramref name="poolRoot"/>'taki worktree havuzu.</summary>
-    public static WorkspaceServices Default(string cacheRoot, string poolRoot) => new(
-        root => new SyncWorkspaceService(
-            new WorkspaceScanner(), new CsprojEvaluator(),
-            new EvaluationCache(Path.Combine(cacheRoot, "evaluation-cache.json")),
-            new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
-            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName))),
-        root => new GitService(new ProcessRunner(), root),
-        root => new WorktreeManager(new ProcessRunner(), root, poolRoot),
-        // Clean git'e hiç dokunmaz ve csproj DEĞERLENDİRMEZ: bin/obj csproj'un yanındadır.
-        _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(cacheRoot)));
+    /// evaluation-cache + build-state + source-hash, <paramref name="poolRoot"/>'taki worktree havuzu.</summary>
+    /// <param name="msbuildInvoker">[optimize] Restore child'ı için MSBuild toolset'ini LAZY çözen fabrika —
+    /// koordinatörün kullandığı memoize edilmiş çözümle AYNI kaynaktan gelir (ikinci bir vswhere araması
+    /// yapılmaz). Çözüm başarısız olursa Optimize düşmez, yalnız restore adımı atlanır (K-6).</param>
+    public static WorkspaceServices Default(string cacheRoot, string poolRoot,
+        Func<CancellationToken, Task<IMsBuildInvoker>> msbuildInvoker)
+    {
+        // Defter yolları TEK yerde kurulur: iki servis de aynı dosyaları açar, adlar ikinci kez yazılmaz.
+        string evaluationCachePath = Path.Combine(cacheRoot, "evaluation-cache.json");
+        string sourceHashPath = Path.Combine(cacheRoot, SourceHashCache.FileName);
+
+        return new(
+            root => new SyncWorkspaceService(
+                new WorkspaceScanner(), new CsprojEvaluator(),
+                new EvaluationCache(evaluationCachePath),
+                new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
+                new SourceHashCache(sourceHashPath)),
+            root => new GitService(new ProcessRunner(), root),
+            root => new WorktreeManager(new ProcessRunner(), root, poolRoot),
+            // Clean git'e hiç dokunmaz ve csproj DEĞERLENDİRMEZ: bin/obj csproj'un yanındadır.
+            _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(cacheRoot)),
+            // Optimize git'e hiç dokunmaz ama csproj DEĞERLENDİRİR (HintPath'ler needy tespitini besler) ve
+            // üç defteri de budar.
+            _ => new OptimizeWorkspaceService(
+                new WorkspaceScanner(), new CsprojEvaluator(),
+                new EvaluationCache(evaluationCachePath), new BuildStateStore(cacheRoot),
+                new SourceHashCache(sourceHashPath), msbuildInvoker));
+    }
 }
 
 /// <param name="debugHooks">[A13/B4] Test kancalarının (bugün yalnız <c>debugSpawnChildren</c>) AÇIK olup
@@ -105,6 +124,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await SyncWorkspaceAsync(s, ct); break;
             case CleanWorkspaceCommand c:
                 await CleanWorkspaceAsync(c, ct); break;
+            case OptimizeWorkspaceCommand o:
+                await OptimizeWorkspaceAsync(o, ct); break;
             case ListBranchesCommand b:
                 await ListBranchesAsync(b, ct); break;
             case ListWorktreesCommand w:
@@ -216,6 +237,38 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             // Servisin kendi kapıları bozuk girdiyi zaten cleanFailed'a çevirir; buraya yalnız GERÇEKTEN
             // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli.
             await writer.WriteAsync(new ErrorEvent("cleanFailed", ex.Message), ct);
+        }
+    }
+
+    /// <summary>
+    /// [optimize] Workspace onarımı: iş TAMAMEN Core'da (<see cref="OptimizeWorkspaceService"/>, D3), burada
+    /// yalnız kapı + event köprüsü var. Sync gibi komut döngüsünü BİTENE KADAR BLOKLAR — Optimize diski
+    /// değiştirir, ardından gelen bir <c>startRun</c>'ın yarı-onarılmış bir workspace'te başlaması
+    /// istenmez.
+    /// <para><b>Run uçuşta reddedilir.</b> App tarafında da bir kapı vardır (<c>CanOptimize</c>); bu ikinci
+    /// katman, iki kapı arasındaki YARIŞA karşıdır (kullanıcı Optimize'a run başlarken basarsa). Red bir iş
+    /// YAPMAZ: hiçbir dosyaya dokunulmadan dönülür ve KOŞAN RUN'A da dokunulmaz.</para>
+    /// </summary>
+    private async Task OptimizeWorkspaceAsync(OptimizeWorkspaceCommand cmd, CancellationToken ct)
+    {
+        if (coordinator.IsRunActive)
+        {
+            await writer.WriteAsync(new ErrorEvent("optimizeRejected", "A run is in flight — stop it before optimizing the workspace."), ct);
+            return;
+        }
+
+        // Emit köprüsü Sync'inkiyle aynı gerekçeye dayanır: Core senkron `emit` kullanır, writer async'tir ve
+        // bu komut zaten döngüyü bloklamış bir Supervisor thread'idir (SynchronizationContext yok).
+        void Emit(IpcEvent ev) => writer.WriteAsync(ev, ct).GetAwaiter().GetResult();
+        try
+        {
+            await workspace.Optimize(cmd.RootPath).RunAsync(cmd, Emit, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Servisin kendi kapıları bozuk girdiyi zaten optimizeFailed'a çevirir; buraya yalnız GERÇEKTEN
+            // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli.
+            await writer.WriteAsync(new ErrorEvent("optimizeFailed", ex.Message), ct);
         }
     }
 
