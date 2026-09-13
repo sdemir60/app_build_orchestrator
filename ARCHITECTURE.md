@@ -3815,10 +3815,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | AvalonEdit host, batching, active line, cascade, chunk paging | `App/Console/ConsoleView.xaml(.cs)` |
 | Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
-| Typewriter and cascade timing (pure) | `App/Console/TypewriterScheduler.cs`, `CascadeScheduler.cs`, `CascadeFadeTransformer.cs` |
+| Typewriter timing for the active stream line (pure) | `App/Console/TypewriterScheduler.cs` |
 | Batching, routing, render slice | `App/Console/ConsoleBatcher.cs`, `ConsoleBatchRouter.cs`, `ConsoleRenderSlice.cs` |
 | Chunk stitch and scroll compensation | `App/Console/ChunkStitch.cs` |
-| Typing suspension under load | `App/Console/ConsoleTypingGate.cs` |
 | Header, empty states, copy log, timestamps | `App/Console/ConsoleHeader.xaml(.cs)`, `ConsoleEmptyState.cs`, `CopyLogFeedback.cs`, `ClipboardRetry.cs`, `WallClockFormat.cs` |
 
 **Graph rendering**

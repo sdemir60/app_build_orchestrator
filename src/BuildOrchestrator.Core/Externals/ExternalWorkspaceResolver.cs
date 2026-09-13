@@ -17,9 +17,9 @@ public sealed record ExternalRoot(ExternalProject Project, string Name, string S
 /// <param name="Scan">Birleşik tarama — ana kök ve tüm harici kökler, tekilleştirilmiş ve sıralı.</param>
 /// <param name="ExternalProjectIds">YALNIZ harici köklerden gelen projelerin id kümesi. İki iş yapar: düğüme
 /// basılan rozet ve "bu proje harici mi" sorusunun tek cevabı (obj izolasyonu kapısı).
-/// <para>[DEĞİŞEN KURAL] Eskiden bu bir <c>id → VcsKind</c> haritasıydı; kart artık bir kaynak türü taşımıyor
-/// (yalnız git), dolayısıyla taşınacak DEĞER kalmadı — soru "harici mi"ye indi.</para></param>
-/// <param name="Roots">Çözülen kökler — build anındaki VCS güncellemesi bunları gezer.</param>
+/// <para>Bir KÜMEdir, harita değil: kartın taşıdığı tek şey bir yoldur, dolayısıyla id başına saklanacak bir
+/// DEĞER yoktur — sorulan tek soru "bu proje harici mi".</para></param>
+/// <param name="Roots">Çözülen kökler — build anındaki ff-only güncelleme bunları gezer.</param>
 /// <param name="Problems">Hiçbir projeye çözülemeyen kartlar. <b>Sync bunları uyarı olarak yazar ve devam
 /// eder; Build durur</b> — yapılandırılmış bir haricinin sessizce düşmesi, bayat DLL'e link'lenmiş yeşil bir
 /// build demektir. Metin BURADA kurulmaz: iki yüzeyin cümlesi farklıdır (uyarı vs. iptal gerekçesi) ve her
