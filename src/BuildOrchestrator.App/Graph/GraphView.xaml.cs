@@ -52,7 +52,6 @@ public partial class GraphView : UserControl
     /// opak, geri kalan HER ŞEY opacity 0.1"). <b>Eski değer 0.25'ti</b> — v1.3.0 grafı daha sessiz istiyor.</summary>
     public const double UnfocusedNodeOpacity = 0.1;
     /// <summary>Dekoratif sonsuz animasyonlarda kare hızı tavanı (feasibility §3.4).</summary>
-    public const int DecorativeFrameRate = 30;
     /// <summary>Düğüm karesinin çerçeve kalınlığı (§2.3: "1.5px border").</summary>
     public const double NodeBorderThickness = 1.5;
     /// <summary>Seçili düğüm karesinin çerçeve kalınlığı (DS: 2px).</summary>
@@ -520,7 +519,7 @@ public partial class GraphView : UserControl
             foreach (var (percent, opacity) in EndFinale.NeonKeyframes)
                 flicker.KeyFrames.Add(new DiscreteDoubleKeyFrame(
                     opacity, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(EndFinale.NeonMs * percent))));
-            Timeline.SetDesiredFrameRate(flicker, DecorativeFrameRate);
+            Timeline.SetDesiredFrameRate(flicker, MotionTokens.DecorativeFrameRate);
 
             slot.Visual.OpacityAnimation = flicker;
             slot.Visual.OpacityTarget = double.NaN; // sıradaki ApplyNodeOpacity kapıyı GEÇSİN (değer titreşti)
@@ -1035,7 +1034,7 @@ public partial class GraphView : UserControl
             Duration = TimeSpan.FromMilliseconds(GraphBeads.CycleMs),
             RepeatBehavior = RepeatBehavior.Forever,
         };
-        Timeline.SetDesiredFrameRate(spin, DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
+        Timeline.SetDesiredFrameRate(spin, MotionTokens.DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
         _beadsClock = spin.CreateClock();
 
         foreach (var slot in _slotOrder)
@@ -1286,7 +1285,7 @@ public partial class GraphView : UserControl
             Duration = TimeSpan.FromMilliseconds(SelectionEdgeStyle.FlowDurationMs),
             RepeatBehavior = RepeatBehavior.Forever,
         };
-        Timeline.SetDesiredFrameRate(flow, DecorativeFrameRate);
+        Timeline.SetDesiredFrameRate(flow, MotionTokens.DecorativeFrameRate);
         _edgeFlowClock = flow.CreateClock();
         foreach (var path in _selectionEdges)
             path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, _edgeFlowClock);

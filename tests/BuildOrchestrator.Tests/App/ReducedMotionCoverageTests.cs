@@ -295,6 +295,18 @@ public class ReducedMotionCoverageTests
         Assert.False(started); // anlık atlandı — hiç clock kurulmadı
     }
 
+    // ============================================ 10) TrayBuildIndicator (tepsideki 3 sn'lik marka döngüsü)
+    //
+    // Envanterde YERİ VAR, testi burada DEĞİL — ve bu bilinçlidir (kopya YASAK): sahibin reduced-motion
+    // kablajı iki ayrı yerde yaşar ve ikisi de kendi sınıfında pinlidir.
+    //   · Döngünün HİÇ başlatılmaması bir GÖRÜNÜM kararı değil, bir CONTROLLER kararıdır (gösterge kendisi
+    //     "başla" dendiğinde başlar): TrayBuildIndicatorControllerTests
+    //     .Reduced_motion_shows_the_static_frame_and_skips_the_exit_animation
+    //   · Kontrolün kendi iki yüzeyi: TrayBuildIndicatorTests
+    //     .The_static_frame_starts_no_clock_and_rests_every_part_in_place (duruş karesi, saat yok)
+    //     .Counter_change_snaps_with_no_clock_under_reduced_motion       (sayaç anlık, geçiş yok)
+    // Buraya üçüncü bir kopya yazmak, o üç iddiadan sessizce ayrışabilecek bir doğruluk kaynağı olurdu.
+
     // ---------------------------------------------------------------- helpers
 
     // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.
