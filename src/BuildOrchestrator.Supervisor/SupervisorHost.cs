@@ -24,7 +24,8 @@ namespace BuildOrchestrator.Supervisor;
 public sealed record WorkspaceServices(
     Func<string, SyncWorkspaceService> Sync,
     Func<string, GitService> Git,
-    Func<string, WorktreeManager> Worktree)
+    Func<string, WorktreeManager> Worktree,
+    Func<string, CleanWorkspaceService> Clean)
 {
     /// <summary>Üretim bağlaması: gerçek <see cref="ProcessRunner"/>, <paramref name="cacheRoot"/>'taki
     /// evaluation-cache + build-state, <paramref name="poolRoot"/>'taki worktree havuzu.</summary>
@@ -35,7 +36,9 @@ public sealed record WorkspaceServices(
             new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
             new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName))),
         root => new GitService(new ProcessRunner(), root),
-        root => new WorktreeManager(new ProcessRunner(), root, poolRoot));
+        root => new WorktreeManager(new ProcessRunner(), root, poolRoot),
+        // Clean git'e hiç dokunmaz ve csproj DEĞERLENDİRMEZ: bin/obj csproj'un yanındadır.
+        _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(cacheRoot)));
 }
 
 /// <param name="debugHooks">[A13/B4] Test kancalarının (bugün yalnız <c>debugSpawnChildren</c>) AÇIK olup
@@ -100,6 +103,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await SpawnDebugChildrenAsync(d, ct); break;
             case SyncWorkspaceCommand s:
                 await SyncWorkspaceAsync(s, ct); break;
+            case CleanWorkspaceCommand c:
+                await CleanWorkspaceAsync(c, ct); break;
             case ListBranchesCommand b:
                 await ListBranchesAsync(b, ct); break;
             case ListWorktreesCommand w:
@@ -181,6 +186,37 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
 
         await writer.WriteAsync(new SyncProgressEvent(line, tone), ct);
         await writer.WriteAsync(new PullCompletedEvent(result.Status is FastForwardStatus.Updated), ct);
+    }
+
+    /// <summary>
+    /// [clean] Clean akışı: iş TAMAMEN Core'da (<see cref="CleanWorkspaceService"/>, D3), burada yalnız
+    /// kapı + event köprüsü var. <see cref="SyncWorkspaceAsync"/> ile aynı gerekçeyle komut döngüsünü
+    /// BLOKLAR: silme sırasında gelecek bir <c>startRun</c>, temizlenmekte olan klasörlerle yarışırdı.
+    /// <para><b>Kapı:</b> bir koşu uçuştaysa komut <c>cleanRejected</c> ile reddedilir. App'in kendi kapısı
+    /// zaten butonu kapatır; bu ikinci katman, komut yoldayken başlayan bir run'ın yarışını kapatır.</para>
+    /// </summary>
+    private async Task CleanWorkspaceAsync(CleanWorkspaceCommand cmd, CancellationToken ct)
+    {
+        if (coordinator.IsRunActive)
+        {
+            await writer.WriteAsync(
+                new ErrorEvent("cleanRejected", "A run is in flight — stop it before cleaning the workspace."), ct);
+            return;
+        }
+
+        // Servisin `emit`i SENKRON (Core, IPC yazımını bilmez); köprüde bloklamak GÜVENLİDİR — bkz.
+        // SyncWorkspaceAsync'in aynı gerekçesi (bu komut zaten döngüyü bloklar, writer semaforu sırayı korur).
+        void Emit(IpcEvent ev) => writer.WriteAsync(ev, ct).GetAwaiter().GetResult();
+        try
+        {
+            workspace.Clean(cmd.RootPath).Run(cmd, Emit, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Servisin kendi kapıları bozuk girdiyi zaten cleanFailed'a çevirir; buraya yalnız GERÇEKTEN
+            // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli.
+            await writer.WriteAsync(new ErrorEvent("cleanFailed", ex.Message), ct);
+        }
     }
 
     /// <summary>[A5/T69] Yerel + remote-tracking branch listesi (SALT-OKUR) → <see cref="BranchListEvent"/>.</summary>

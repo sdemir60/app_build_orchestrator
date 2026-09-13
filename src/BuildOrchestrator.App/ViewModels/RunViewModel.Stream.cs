@@ -49,7 +49,11 @@ public sealed partial class RunViewModel
     private bool RunIsClean => _streamRunMode == RunMode.Clean;
 
     /// <summary>[design v1.7.0 §3.7] Şu an bir <b>Resolve cycles</b> koşusu mu sürüyor — şerit koşu satırını
-    /// buna göre yazar (sıradan bir Build değil, döngü çözen ardışık turlar).</summary>
+    /// buna göre yazar (sıradan bir Build değil, döngü çözen ardışık turlar) ve bakım kutusu Resolve düğmesini
+    /// buna göre amber zemin + spinner'a çevirir.
+    /// <para>İki terimi de bildirimlidir: <c>IsRunning</c> (yani <c>RunActive</c>) attribute zinciriyle,
+    /// <see cref="_streamRunMode"/> ise atandığı yerde AÇIKÇA yayınlar — türetilmiş özellikler kendiliğinden
+    /// <c>PropertyChanged</c> üretmez ve kutu, şerit gibi başka bir bildirimin sırtına binemez.</para></summary>
     public bool IsResolvingCycles => _streamRunMode == RunMode.Cycles && RunActive;
 
     /// <summary>[design v1.7.0 §3.7] Şu anki tur ve tavan — motorun kararı (<c>CycleRoundStartedEvent</c>);
@@ -119,6 +123,7 @@ public sealed partial class RunViewModel
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
                 _streamRunMode = e.Mode;
+                OnPropertyChanged(nameof(IsResolvingCycles)); // bakım kutusunun Resolve spinner'ı bunu okur
                 // [Task 4] Yeni run/segment: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
                 (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
                 _cycleRoundLeaderId = null;
@@ -227,6 +232,13 @@ public sealed partial class RunViewModel
 
             case SyncCompletedEvent e:
                 PushStream(StreamKind.Sync, null, StreamText.Sync(e.ToBuildCount, e.UpToDateCount));
+                break;
+
+            // [clean] Clean stream'e TEK satır düşer (ilerleme konsolda akar). Ton Sync'inkiyle aynıdır:
+            // ikisi de bir koşu değil, workspace'in durumunu değiştiren bir bakım anıdır.
+            case CleanCompletedEvent e:
+                PushStream(StreamKind.Sync, null,
+                    StreamText.CleanCompleted(e.ProjectCount, e.FoldersRemoved, e.BytesRemoved, e.LockedFileCount));
                 break;
 
             case RunCompletedEvent e:

@@ -60,7 +60,7 @@ Key consequences of that layout:
   worktree mode, keyed by the project's full path.
 - "Did it change?" is answered from the **content of the source files on disk** — the project file, the items
   it declares, everything build-affecting under its folder, and the `Directory.Build.*` files above it. No DLL
-  or `bin` timestamp is ever read, and no version-control command takes part: git and TFVC are used for
+  or `bin` timestamp is ever read, and no version-control command takes part: git is used for
   fetching, branches and worktrees, never for deciding. Hashes are cached by size and modification time, so a
   normal run only stats those files.
 
@@ -73,9 +73,6 @@ Key consequences of that layout:
   `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe`; without it, builds fail with a resolve
   error (the Supervisor itself still starts). "Open in Visual Studio" additionally needs a full VS IDE install.
 - **`git` on `PATH`** — the engine invokes `git` by name.
-- **Team Explorer**, only if you register a TFVC external project. `TF.exe` is resolved through the same
-  `vswhere` lookup that finds `MSBuild.exe`, and only when such a project is actually present — a git-only
-  setup never needs it.
 
 ## Build, test, run
 
@@ -136,7 +133,7 @@ the running instance first — tray icon → Exit).
    settings…* on the invitation opens the dialog with the file picker already up.
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
-   or a project file) and a source, Git or TFVC. Everything found under a card joins the same project list and
+   or a project file). Everything found under a card joins the same project list and
    the same graph as the repository's own projects, in an *External* group at the top, and is built first.
    Cards reorder the same way layer cards do, by dragging the grip; that order is the order their working
    copies are refreshed in. What Build does with them is step 4 below.
@@ -148,6 +145,10 @@ the running instance first — tray icon → Exit).
    real while the list and the graph stayed empty. While a Sync is *running*, those three and *Sync* itself are
    disabled too — the engine handles one at a time, and anything started in that window would land in the
    middle of the Sync's console output. It takes seconds; they re-enable the moment it finishes.
+
+   If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
+   resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
+   drop one of the roots that contributes it.
 
    **Sync colours nothing.** Which operation is coming is not known yet, so no plan is shown: every row sits
    in the start mode — a faint stripe, a four-arc ring in place of the dot, a dashed glyph — and every graph
@@ -167,8 +168,8 @@ the running instance first — tray icon → Exit).
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
 4. **External projects** *(optional)* — some projects a build depends on may live outside the repository. Add
-   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — a folder, a `.sln` or a `.csproj` — and
-   pick where it comes from, **Git** or **TFVC**.
+   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — a folder, a `.sln` or a `.csproj`.
+   That path is the whole card; the git working copy above it is found for you.
 
    Sync then scans that path the same way it scans the repository root. A folder contributes every project
    under it; a solution contributes the projects it lists; a project file contributes itself. They appear in
@@ -180,12 +181,12 @@ the running instance first — tray icon → Exit).
    to no project at all is called out: Sync warns, Build refuses to start.
 
    Before each Build their working copies are refreshed, in card order — unless you turn **Pull before build**
-   off, the switch in the section's header. A git root gets a fetch and a fast-forward — never a `pull`, so
-   nothing is rewritten on your behalf; a TFVC root gets a `tf vc get`.
+   off, the switch in the section's header. Each root gets a fetch and a fast-forward — never a `pull`, so
+   nothing is rewritten on your behalf.
    **Uncommitted changes stop the run before it starts**, with a line naming the project and its folder:
-   commit, stash or shelve them and press Build again. A branch that has diverged from its remote stops the
+   commit or stash them and press Build again. A branch that has diverged from its remote stops the
    run the same way. A remote that cannot be reached only warns and the local version is built; so does a path
-   with no `.git` (or `$tf`) above it, which is simply built as it stands.
+   with no `.git` above it, which is simply built as it stands.
 
    With the switch off **nothing** is fetched, merged or blocked — external projects are compiled exactly as
    they sit on disk, the way the repository's own working copy always is. Whether they changed is still worked
@@ -193,9 +194,9 @@ the running instance first — tray icon → Exit).
    uncommitted edit marks the project stale just as a commit would.
 
    When a copy is refreshed the console says where it landed — `Updated external 'DoganTrend' → a1b2c3d`, a
-   short sha for git and a `C`-prefixed changeset for TFVC. With the switch off a TFVC root reports no
-   revision at all, because reading its changeset means a round trip to the server and planning a build should
-   not need the network.
+   short sha. Reading a revision is local (`rev-parse HEAD`), so a root reports one even with the switch off;
+   a path with no `.git` above it reports none. The revision is only ever shown for information — no build
+   decision reads it.
 
    **Upgrading from an older version rebuilds everything once.** The way a signature is computed changed, so
    the signatures already on record cannot be compared against the new ones. The first Build after the upgrade
@@ -261,8 +262,16 @@ first, then rebuild until they converge`. While it runs the ribbon reports the e
 `Resolving cycles · round 2/3 · 5/7 · 12s` — rather than promising a fixed number of passes. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
 then *Build* takes care of everything else, including whatever depends on them.
 
-Two more icons share that box — *Clean* and *Optimize*. They are part of the design but have no engine behind
-them yet, so they stay disabled and say so in their tooltips.
+*Clean* — the eraser in that box — is the workspace reset: it deletes the `bin` and `obj` folders of every
+project it finds, external roots included, along with their build state, so the next *Build* compiles
+everything from scratch. It starts on the click, with no confirmation dialog: the project list and the graph
+empty out, the button turns amber with a spinner, and when the deletion is done a *Sync* runs by itself and
+fills them in again. The console keeps the whole story. It is not the per-project *Clean* in the row menu and
+not the Build menu's *Clean*: no `msbuild /t:Clean` runs. Files held by a running application are skipped and
+reported rather than failing the Clean.
+
+*Optimize* — the gauge in the middle of the box — is part of the design but has no engine behind it, so it
+is disabled and its tooltip says so.
 
 Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members compile
 one after another, then the whole set compiles again, until two rounds in a row come back clean, three rounds

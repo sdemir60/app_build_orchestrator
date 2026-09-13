@@ -386,4 +386,61 @@ public class BuildStateStoreTests : IDisposable
         Assert.Empty(Directory.GetFiles(_root, "*.tmp")); // [Minor 4] öksüz tmp kalmamalı
         Assert.DoesNotContain("P2", new BuildStateStore(_root).Load().Keys); // başarısız Upsert veri bırakmadı
     }
+
+    // [clean] build-state.json GLOBALDİR (anahtar = tam csproj yolu, birden çok workspace aynı dosyayı paylaşır).
+    // Clean bu yüzden dosyayı silemez; yalnız aktif workspace'in kökü altındaki kayıtları kaldırır.
+    [Fact]
+    public void RemoveUnderRoot_deletes_only_entries_under_the_given_root()
+    {
+        var store = new BuildStateStore(_root);
+        store.Upsert(new BuildState(@"C:\repo\src\A\A.csproj", "sig-a"));
+        store.Upsert(new BuildState(@"C:\repo\src\B\B.csproj", "sig-b"));
+        store.Upsert(new BuildState(@"D:\other\C\C.csproj", "sig-c"));
+
+        Assert.Equal(2, store.RemoveUnderRoot(@"C:\repo"));
+
+        var map = store.Load();
+        Assert.Equal([@"D:\other\C\C.csproj"], map.Keys);
+        Assert.Equal("sig-c", map[@"D:\other\C\C.csproj"].BuiltSignature);
+    }
+
+    // [clean] Yol karşılaştırması OrdinalIgnoreCase'tir ve önek ayraçla KAPATILIR: "C:\repo" isteği
+    // "C:\repo2\..." kayıtlarını SİLMEZ (çıplak StartsWith'in tuzağı).
+    [Fact]
+    public void RemoveUnderRoot_matches_case_insensitively_and_normalizes_the_trailing_separator()
+    {
+        var store = new BuildStateStore(_root);
+        store.Upsert(new BuildState(@"C:\repo\src\A\A.csproj", "sig-a"));
+        store.Upsert(new BuildState(@"C:\repo2\src\B\B.csproj", "sig-b"));
+
+        Assert.Equal(1, store.RemoveUnderRoot(@"c:\REPO\"));
+
+        Assert.Equal([@"C:\repo2\src\B\B.csproj"], store.Load().Keys);
+    }
+
+    // [clean] Eşleşme yoksa dosyaya HİÇ dokunulmaz — boş bir Clean başka bir workspace'in state'ini yeniden
+    // yazıp rename yarışına sokmaz.
+    [Fact]
+    public void RemoveUnderRoot_with_no_matching_entries_returns_zero_and_does_not_rewrite_the_file()
+    {
+        var store = new BuildStateStore(_root);
+        store.Upsert(new BuildState(@"D:\other\C\C.csproj", "sig-c"));
+        byte[] before = File.ReadAllBytes(StatePath);
+        DateTime writtenAt = File.GetLastWriteTimeUtc(StatePath);
+
+        Assert.Equal(0, store.RemoveUnderRoot(@"C:\repo"));
+
+        Assert.Equal(before, File.ReadAllBytes(StatePath));
+        Assert.Equal(writtenAt, File.GetLastWriteTimeUtc(StatePath));
+        Assert.Empty(Directory.GetFiles(_root, "*.tmp"));
+    }
+
+    // [clean] Hiç derleme yapılmamış makinede state dosyası yoktur; Clean yine de çalışmalı (Load'un
+    // never-throw sözleşmesi).
+    [Fact]
+    public void RemoveUnderRoot_on_a_missing_file_returns_zero()
+    {
+        Assert.Equal(0, new BuildStateStore(_root).RemoveUnderRoot(@"C:\repo"));
+        Assert.False(File.Exists(StatePath));
+    }
 }

@@ -9,6 +9,58 @@ namespace BuildOrchestrator.Tests.Planning;
 // [T26] BuildPlanBuilder integration test: tam pipeline (scan -> evaluate -> graph -> solution -> topo -> BuildPlan).
 public class BuildPlanBuilderTests
 {
+    /// <summary>
+    /// Plan, aynı <c>AssemblyName</c>'i üreten projeleri warn-only DATA olarak TAŞIR
+    /// (<see cref="BuildPlan.ProducerWarnings"/>, <c>LayerWarnings</c> ile aynı sözleşme).
+    ///
+    /// <para><b>Neden plana konur:</b> belirsiz DLL kenar üretmez [D8/D11] ve bu SESSİZ bir kenar kaybıdır.
+    /// İki tüketicisi vardır — Sync transkripti ve koşu konsolu — ve ikisi de yalnız planı görür; metni
+    /// buradan taşımasaydık her biri kendi cümlesini kurardı (kopya YASAK).</para>
+    /// </summary>
+    [Fact]
+    public void the_plan_carries_a_warning_naming_both_projects_that_produce_the_same_assembly()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "plan-dup-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "A"));
+            Directory.CreateDirectory(Path.Combine(root, "B"));
+            foreach (string name in new[] { "A", "B" })
+                File.WriteAllText(Path.Combine(root, name, name + ".csproj"),
+                    "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><PropertyGroup>" +
+                    "<AssemblyName>OSYS.Dup</AssemblyName></PropertyGroup></Project>");
+
+            var plan = new BuildPlanBuilder(new WorkspaceScanner(), new CsprojEvaluator(),
+                new EvaluationCache(Path.Combine(root, "cache.json"))).Build(root, "Debug");
+
+            string warning = Assert.Single(plan.ProducerWarnings!);
+            Assert.Contains("osys.dup.dll", warning, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(root, "A", "A.csproj"), warning, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(Path.Combine(root, "B", "B.csproj"), warning, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { /* test temizliği */ } }
+    }
+
+    /// <summary>Çakışma yoksa liste BOŞtur — uyarı gürültü olmamalı.</summary>
+    [Fact]
+    public void a_plan_without_duplicate_assembly_names_carries_no_producer_warning()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "plan-nodup-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "A"));
+            File.WriteAllText(Path.Combine(root, "A", "A.csproj"),
+                "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><PropertyGroup>" +
+                "<AssemblyName>OSYS.A</AssemblyName></PropertyGroup></Project>");
+
+            var plan = new BuildPlanBuilder(new WorkspaceScanner(), new CsprojEvaluator(),
+                new EvaluationCache(Path.Combine(root, "cache.json"))).Build(root, "Debug");
+
+            Assert.Empty(plan.ProducerWarnings!);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { /* test temizliği */ } }
+    }
+
     [Fact]
     public void builds_plan_in_build_order_with_edges_and_solutions()
     {

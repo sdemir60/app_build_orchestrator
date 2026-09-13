@@ -83,25 +83,59 @@ public class MaintenanceBoxTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[karar 2026-08-13] Clean ve Optimize'ın ARKA UCU henüz yok. Düğmeler tasarımdaki yerlerinde
-    /// durur ama kalıcı olarak pasiftir ve tooltip bunu açıkça söyler — basılıp hiçbir şey olmaması, yokluğu
-    /// sessizce gizlemekten daha kötü olurdu. Tooltip'in gövdesi tasarım metnidir (§2.7-2), sonuna durum eki
-    /// gelir. Pasif kontrolde tooltip WPF'te varsayılan olarak GÖSTERİLMEZ; bu yüzden ShowOnDisabled da
-    /// pinlenir — aksi halde metin var ama kullanıcı hiç göremez.</summary>
+    /// <summary>
+    /// [DEĞİŞEN KURAL — clean] Eski iddia: "Clean ve Optimize'ın arka ucu yok, İKİSİ de kalıcı disabled"
+    /// (karar 2026-08-13). Clean'in motoru artık VAR (<c>cleanWorkspace</c>) — düğme gerçek komuta bağlıdır
+    /// ve enable'ı komutun <c>CanExecute</c>'undan gelir. Pin bu yüzden ikiye bölündü; Optimize'ınki aynen
+    /// aşağıdaki testte durur.
+    /// <para>Repo kapısı KOMUTTADIR (ActionBar/Resolve deseni): kutu kendi enable hâlini yazmaz, iki yerden
+    /// yazılan bir enable olmaz. ShowOnDisabled KORUNUR — düğme mid-run/mid-sync pasiftir ve kullanıcı
+    /// NEDEN pasif olduğunu ancak tooltip'ten okuyabilir.</para></summary>
     [StaFact]
-    public void Clean_and_optimize_are_disabled_and_say_so_in_a_tooltip_that_shows_while_disabled()
+    public void Clean_is_wired_to_the_clean_command_and_its_tooltip_names_the_job()
     {
         var vm = NewVm();
         var (box, window) = Realize(vm);
 
-        Assert.False(box.CleanButton.IsEnabled);
+        Assert.Same(vm.CleanCommand, box.CleanButton.Command);
+        Assert.True(box.CleanButton.IsEnabled); // repo seçili (NewVm) → komut açık
+        Assert.Equal("Clean — remove every project's bin/ and obj/ and reset the build state; "
+                     + "the next build compiles everything from scratch", box.CleanButton.ToolTip);
+        Assert.True(ToolTipService.GetShowOnDisabled(box.CleanButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[karar 2026-08-13] Optimize'ın ARKA UCU henüz yok: düğme tasarımdaki yerinde durur ama kalıcı
+    /// olarak pasiftir ve tooltip bunu açıkça söyler — basılıp hiçbir şey olmaması, yokluğu sessizce
+    /// gizlemekten daha kötü olurdu. Pasif kontrolde tooltip WPF'te varsayılan olarak GÖSTERİLMEZ; bu yüzden
+    /// ShowOnDisabled da pinlenir.</summary>
+    [StaFact]
+    public void Optimize_stays_disabled_and_says_so_in_a_tooltip_that_shows_while_disabled()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
         Assert.False(box.OptimizeButton.IsEnabled);
-        Assert.Equal("Clean — /t:Clean on every solution, then remove bin/, obj/, artifacts/ — not available yet",
-                     box.CleanButton.ToolTip);
         Assert.Equal("Optimize — restore packages, prune the cache, rebuild the dependency index — not available yet",
                      box.OptimizeButton.ToolTip);
-        Assert.True(ToolTipService.GetShowOnDisabled(box.CleanButton));
         Assert.True(ToolTipService.GetShowOnDisabled(box.OptimizeButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[clean] Düğmenin pasifliği komuttan gelir: repo yokken basılamaz, uçuşta bir Sync varken de.</summary>
+    [StaFact]
+    public void Clean_is_disabled_without_a_repository_and_while_a_sync_is_in_flight()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var (box, window) = Realize(vm);
+        Assert.False(box.CleanButton.IsEnabled); // repo yok
+
+        vm.RootPath = @"D:\repo";
+        Assert.True(box.CleanButton.IsEnabled);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(box.CleanButton.IsEnabled);
+
         GC.KeepAlive(window);
     }
 
@@ -187,6 +221,80 @@ public class MaintenanceBoxTests
         Assert.Same(box.FindResource("Brush.TextSecondary"), box.ResolveIconBrush);
         // ...ama düğme ARTIK anlamlıdır: döngü var, tooltip de onu söylüyor.
         Assert.Equal(BuildOrchestrator.App.AccessibilityNames.ResolveCyclesTooltip(1, 2), box.ResolveButton.ToolTip);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- koşan iş: amber + spinner
+
+    /// <summary>[design — BuildApp.jsx:2619-2622] Bir bakım işi koşarken KENDİ düğmesi DS'in <c>active</c>
+    /// hâline geçer (amber-soft zemin) ve ikonun yerini dönen spinner alır. Düğme aynı anda <b>disabled</b>'dır
+    /// (uçuşta ikinci bir Clean anlamsız), ama disabled'ın 0.45 sönüklüğü BASTIRILIR: koşan iş sönük değil
+    /// CANLI görünmelidir — prototipte de koşan düğme disabled listesinin DIŞINDADIR.</summary>
+    [StaFact]
+    public void The_clean_button_spins_in_amber_while_its_own_work_runs()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+        Assert.IsType<Viewbox>(box.CleanButton.Content); // ön-koşul: silgi ikonu
+
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+
+        var spinner = Assert.IsType<BuildOrchestrator.App.Controls.BuildingSpinner>(box.CleanButton.Content);
+        Assert.Equal(12d, spinner.Size); // ikonla AYNI kutu (BuildApp.jsx:2622 size={12})
+        Assert.Same(box.FindResource("Brush.AmberSoft"),
+            BuildOrchestrator.App.Controls.DsTransition.GetAnimatedBackground(box.CleanButton));
+        Assert.Equal(1d, box.CleanButton.Opacity);
+        Assert.False(box.CleanButton.IsEnabled); // komut kapısı DEĞİŞMEZ, yalnız boyama değişir
+
+        vm.OnEvent(new CleanCompletedEvent(1, 2, 3, 0, 1));
+
+        Assert.IsType<Viewbox>(box.CleanButton.Content); // ikon geri gelir
+        // Amber KALKAR: yerel deger temizlenince stil kendi varsayilanini (Transparent) yeniden uygular.
+        Assert.NotSame(box.FindResource("Brush.AmberSoft"),
+            BuildOrchestrator.App.Controls.DsTransition.GetAnimatedBackground(box.CleanButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Aynı muamele Resolve cycles için de geçerlidir (BuildApp.jsx:2639-2641) — kutunun içinde iki
+    /// farklı davranış olmaz. Sinyal koşunun MODUDUR: sıradan bir Build spinner GÖSTERMEZ.</summary>
+    [StaFact]
+    public void The_resolve_button_spins_in_amber_while_a_cycles_run_is_in_flight()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.IsType<Viewbox>(box.ResolveButton.Content); // Build, Resolve'un işi DEĞİL
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 10));
+
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Cycles, 1, 1, "Debug", 0));
+
+        Assert.IsType<BuildOrchestrator.App.Controls.BuildingSpinner>(box.ResolveButton.Content);
+        Assert.Same(box.FindResource("Brush.AmberSoft"),
+            BuildOrchestrator.App.Controls.DsTransition.GetAnimatedBackground(box.ResolveButton));
+
+        vm.OnEvent(new RunCompletedEvent("r2", RunOutcome.Completed, 1, 0, 0, 0, 10));
+
+        Assert.IsType<Viewbox>(box.ResolveButton.Content);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Amber YALNIZ işi koşan düğmededir: kutudaki öteki düğmeler sıradan disabled görünümünde kalır
+    /// (sönük, ikonlu). Aksi halde "hangi iş koşuyor" sorusu kutuya bakılarak cevaplanamazdı.</summary>
+    [StaFact]
+    public void Only_the_button_whose_work_runs_goes_amber()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
+        vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+
+        Assert.IsType<Viewbox>(box.ResolveButton.Content);
+        Assert.NotSame(box.FindResource("Brush.AmberSoft"),
+            BuildOrchestrator.App.Controls.DsTransition.GetAnimatedBackground(box.ResolveButton));
+        Assert.IsType<Viewbox>(box.OptimizeButton.Content);
+        Assert.NotSame(box.FindResource("Brush.AmberSoft"),
+            BuildOrchestrator.App.Controls.DsTransition.GetAnimatedBackground(box.OptimizeButton));
         GC.KeepAlive(window);
     }
 }

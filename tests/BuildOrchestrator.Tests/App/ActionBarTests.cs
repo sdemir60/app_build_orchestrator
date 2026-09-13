@@ -769,4 +769,58 @@ public partial class ActionBarTests
         Assert.False(bar.PerfChip.IsChecked);
         GC.KeepAlive(window);
     }
+
+    // ---------------------------------------------------------------- koşan Sync: amber + spinner
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-12 · tasarımdan BİLİNÇLİ sapma] <b>Sync koşarken düğmesi bakım kutusundaki
+    /// Clean ile AYNI dili konuşur:</b> amber-soft zemin, ikonun yerinde ikonla AYNI boyda amber spinner, ve
+    /// pasifin 0.45 sönüklüğü bastırılır. Etiket ("Sync") yerinde kalır.
+    ///
+    /// <para><b>Sapmanın kaydı:</b> prototip Sync düğmesine spinner KOYMAZ (<c>BuildApp.jsx:2612</c> — yalnız
+    /// <c>disabled</c>); orada koşan işin tek göstergesi şeridin işlem pill'idir. Kullanıcı iki yüzeyin aynı
+    /// dili konuşmasını istedi: Clean'in düğmesi dönerken Sync'in dönmemesi, aynı bardaki iki eş işi farklı
+    /// anlatıyordu. Pill'in kendi anlatısı DEĞİŞMEDİ.</para>
+    ///
+    /// <para>Sinyal <c>SyncBusy</c>'dir — istek penceresi dâhil, yani tıklamada başlar; Clean'in ardından
+    /// kendiliğinden koşan Sync de aynı şekilde görünür (tek fark tetikleyicidir, iş aynıdır).</para></summary>
+    [StaFact]
+    public void The_sync_button_spins_in_amber_while_a_sync_is_in_flight()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        var iconContent = Assert.IsType<StackPanel>(bar.SyncButton.Content);
+        Assert.IsType<Viewbox>(iconContent.Children[0]); // ön-koşul: ilk çocuk sync ikonu
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        var busyContent = Assert.IsType<StackPanel>(bar.SyncButton.Content);
+        var spinner = Assert.IsType<BuildingSpinner>(busyContent.Children[0]);
+        Assert.Equal(14d, spinner.Size); // ikonla AYNI boy (LabelIconSize)
+        Assert.Same(bar.FindResource("Brush.AmberSoft"), DsTransition.GetAnimatedBackground(bar.SyncButton));
+        Assert.Equal(1d, bar.SyncButton.Opacity);
+        Assert.False(bar.SyncButton.IsEnabled); // komut kapısı DEĞİŞMEZ, yalnız boyama değişir
+        Assert.Equal("Sync", Assert.IsType<TextBlock>(busyContent.Children[1]).Text); // etiket yerinde
+
+        vm.OnEvent(new SyncCompletedEvent("main", "sha", false, 0, 0));
+
+        var restored = Assert.IsType<StackPanel>(bar.SyncButton.Content);
+        Assert.IsType<Viewbox>(restored.Children[0]); // ikon geri gelir
+        Assert.NotSame(bar.FindResource("Brush.AmberSoft"), DsTransition.GetAnimatedBackground(bar.SyncButton));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Clean'in ardından kendiliğinden koşan Sync de aynı şekilde görünür: gösterge işin KENDİSİNE
+    /// bağlıdır, onu kimin tetiklediğine değil.</summary>
+    [StaFact]
+    public void The_sync_that_follows_a_clean_shows_the_same_busy_surface()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // Clean sonrası zincirlenen Sync de bu event'i getirir
+
+        Assert.IsType<BuildingSpinner>(Assert.IsType<StackPanel>(bar.SyncButton.Content).Children[0]);
+        GC.KeepAlive(window);
+    }
 }

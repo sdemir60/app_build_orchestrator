@@ -40,6 +40,10 @@ public partial class ActionBar : UserControl
     private bool _built;
     private bool _syncingCfg; // segment'i programatik güncellerken Checked geri-tetiklemesini engeller
 
+    /// <summary>Sync düğmesinin dinlenme içeriği (ikon + etiket) — iş koşarken ikonun yerine spinner konduğu
+    /// için saklanır (bakım kutusunun deseni).</summary>
+    private StackPanel _syncIcon = null!;
+
     // sayaç chip'leri + değer TextBlock'ları (StickyRibbon deseni — kod-tarafı kurulur, refresh'te güncellenir)
     private ToggleButton _sigmaChip = null!, _buildingChip = null!, _succeededChip = null!, _failedChip = null!, _skippedChip = null!, _warnChip = null!;
     private TextBlock _behindValue = null!;
@@ -190,6 +194,10 @@ public partial class ActionBar : UserControl
                 RefreshEnabled();
                 RefreshBuildArea();
                 break;
+            // Koşan Sync'in göstergesi bir KOMUT değil bir DURUM okur (bakım kutusunun deseni).
+            case nameof(RunViewModel.SyncBusy):
+                RefreshSyncBusy();
+                break;
             case nameof(RunViewModel.Branch):
             case nameof(RunViewModel.UseWorktree):
             case nameof(RunViewModel.WorktreeName):
@@ -219,6 +227,7 @@ public partial class ActionBar : UserControl
         RefreshConfig();
         RefreshBuildArea();
         RefreshEnabled();
+        RefreshSyncBusy(); // DataContext sonradan gelirse uçuştaki Sync yine boyanır
     }
 
     // ---------------------------------------------------------------- sayaç chip'leri
@@ -490,7 +499,8 @@ public partial class ActionBar : UserControl
     // ---------------------------------------------------------------- Sync / Stop / Build split-button
     private void BuildButtons()
     {
-        PART_Sync.Content = ButtonContent("Icon.Sync", "Sync", "Brush.TextPrimary", 24);
+        _syncIcon = ButtonContent("Icon.Sync", "Sync", "Brush.TextPrimary", 24);
+        PART_Sync.Content = _syncIcon;
         // [Stopping] Stop'un İÇERİĞİ artık duruma bağlı (Stop / Stopping…) — tek yazıcısı RefreshBuildArea'dır.
         // UIA adı burada ve SABİT kalır: buton kimliği değişmiyor, yalnız durumu değişiyor.
         AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
@@ -528,6 +538,44 @@ public partial class ActionBar : UserControl
         var tb = new TextBlock { Text = text, Margin = new Thickness(ButtonGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         panel.Children.Add(tb); // metin buton Foreground'undan miras
         return panel;
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-12 · tasarımdan BİLİNÇLİ sapma] Sync koşarken düğmesi bakım kutusundaki
+    /// Clean ile AYNI dili konuşur: amber-soft zemin, ikonun yerinde ikonla AYNI boyda amber spinner. Etiket
+    /// ("Sync") yerinde kalır — düğme etiketlidir, kimliğini kaybetmemeli.
+    ///
+    /// <para><b>Sapmanın kaydı:</b> prototip Sync düğmesine spinner KOYMAZ (<c>BuildApp.jsx:2612</c> — yalnız
+    /// <c>disabled</c>) ve koşan işi yalnız şeridin işlem pill'i anlatır. Kullanıcı iki yüzeyin aynı dili
+    /// konuşmasını istedi: aynı bardaki iki eş iş, biri dönerken öteki durgun görünüyordu. Pill'in anlatısı
+    /// DEĞİŞMEDİ, bu ona EK bir göstergedir.</para>
+    ///
+    /// <para>Komut kapısına DOKUNULMAZ — düğme uçuşta zaten pasiftir; değişen yalnız boyamadır. Üç şey birlikte
+    /// gider: zemin (<c>Ds.IconButton.Toggle</c>'ın <c>IsChecked</c> tetikleyicisiyle AYNI token), içerik
+    /// (<see cref="BuildingSpinner"/> — kendi stili amber boyar, azaltılmış harekette döndürmez) ve opaklık
+    /// (<c>Ds.Button.Base</c> pasifi 0.45'e söndürür, koşan iş sönük görünmemeli). Çağrı idempotenttir.</para>
+    /// </summary>
+    private void RefreshSyncBusy()
+    {
+        if (!_built) return;
+        bool busy = _vm?.SyncBusy == true;
+        bool spinning = _syncIcon.Children[0] is BuildingSpinner;
+        if (busy == spinning) return;
+
+        if (busy)
+        {
+            _syncIcon.Children.RemoveAt(0);
+            _syncIcon.Children.Insert(0, new BuildingSpinner { Size = LabelIconSize, VerticalAlignment = VerticalAlignment.Center });
+            PART_Sync.SetResourceReference(DsTransition.AnimatedBackgroundProperty, "Brush.AmberSoft");
+            PART_Sync.Opacity = 1;
+        }
+        else
+        {
+            _syncIcon.Children.RemoveAt(0);
+            _syncIcon.Children.Insert(0, IconVisual.Make(this, "Icon.Sync", "Brush.TextPrimary", LabelIconSize, 24));
+            PART_Sync.ClearValue(DsTransition.AnimatedBackgroundProperty);
+            PART_Sync.ClearValue(OpacityProperty);
+        }
     }
 
     // ---------------------------------------------------------------- enable (repo yok / mid-run)

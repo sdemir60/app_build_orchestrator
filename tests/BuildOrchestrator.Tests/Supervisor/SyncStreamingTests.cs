@@ -128,7 +128,8 @@ public class SyncStreamingTests
                 new GitService(gatedRunner, root), new BuildStateStore(sandbox),
                 new SourceHashCache(Path.Combine(sandbox, SourceHashCache.FileName))),
             root => new GitService(new ProcessRunner(), root),
-            root => new WorktreeManager(new ProcessRunner(), root, Path.Combine(sandbox, "worktrees")));
+            root => new WorktreeManager(new ProcessRunner(), root, Path.Combine(sandbox, "worktrees")),
+            _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(sandbox)));
 
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), job, coordinator, services);
         var hostTask = Task.Run(() => host.RunAsync());

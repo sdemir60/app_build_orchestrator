@@ -479,8 +479,7 @@ public class SettingsDialogTests
         editor.AddExternal();
         Assert.True(canSaveNotifications > 0, "AddExternal sonrası CanSave bildirimi YOK");
         var row = Assert.Single(editor.Externals);
-        Assert.Equal("", row.Path);
-        Assert.Equal(VcsKind.Git, row.Vcs); // §9: "boş path'li, Git kaynaklı kart ekler"
+        Assert.Equal("", row.Path);   // §9: "boş path'li kart ekler" (kart artık bir kaynak seçimi TAŞIMAZ)
         Assert.False(editor.CanSave); // boş path → bloklar
 
         canSaveNotifications = 0;
@@ -506,13 +505,12 @@ public class SettingsDialogTests
         var editor = new SettingsDraftViewModel(null, @"D:\repo");
         editor.AddExternal();
         editor.Externals[0].Path = "  C:\\a  ";
-        editor.Externals[0].Vcs = VcsKind.Tfvc;
         editor.AddExternal();
         editor.Externals[1].Path = "   "; // boş — düşer
 
         var built = editor.BuildExternals();
 
-        Assert.Equal([new ExternalProject(@"C:\a", VcsKind.Tfvc)], built);
+        Assert.Equal([new ExternalProject(@"C:\a")], built);
     }
 
     /// <summary>[K5] Save: harici projeler katmanlarla AYNI commit'te UiState'e yazılır ve
@@ -529,13 +527,12 @@ public class SettingsDialogTests
         var editor = new SettingsDraftViewModel(null, @"D:\repo"); // 4 varsayılan katman
         editor.AddExternal();
         editor.Externals[0].Path = @"C:\src\shared\Delta.Common\Delta.Common.csproj";
-        editor.Externals[0].Vcs = VcsKind.Tfvc;
 
         await editor.CommitAsync(run, store);
 
         Assert.Contains("External projects → 1 — built before the repository projects", run.GetRunDocumentText());
         Assert.Equal(
-            [new ExternalProject(@"C:\src\shared\Delta.Common\Delta.Common.csproj", VcsKind.Tfvc)],
+            [new ExternalProject(@"C:\src\shared\Delta.Common\Delta.Common.csproj")],
             run.ExternalProjects);
         Assert.Equal(run.ExternalProjects, store.State.ExternalProjects); // AYNI commit'te UiState'e de yazıldı
     }
@@ -552,14 +549,14 @@ public class SettingsDialogTests
 
         // 0 → 2: sayı DEĞİŞTİ → not YAZILIR (N ≥ 1 deseni).
         await run.ApplySettingsAsync(patterns, @"D:\repo",
-            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"C:\b", VcsKind.Tfvc)]);
+            [new ExternalProject(@"C:\a"), new ExternalProject(@"C:\b")]);
         Assert.Contains("External projects → 2 — built before the repository projects", run.GetRunDocumentText());
         Assert.Equal(2, run.ExternalProjects.Count);
 
         // 2 → 2 (FARKLI path'ler, AYNI sayı): sayı DEĞİŞMEDİ → İKİNCİ bir not satırı EKLENMEZ — ama liste yine
         // GERÇEKTEN güncellenir (not-gating yalnız KONSOLU susturur, veriyi DONDURMAZ).
         await run.ApplySettingsAsync(patterns, @"D:\repo",
-            [new ExternalProject(@"C:\c", VcsKind.Git), new ExternalProject(@"C:\d", VcsKind.Git)]);
+            [new ExternalProject(@"C:\c"), new ExternalProject(@"C:\d")]);
         Assert.Equal(1, CountOccurrences(run.GetRunDocumentText(), "External projects → 2"));
         Assert.Equal(@"C:\c", run.ExternalProjects[0].Path);
 
@@ -732,7 +729,7 @@ public class SettingsDialogViewTests
     public void Settings_dialog_sections_appear_in_workspace_external_layers_order()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
-            run => run.ExternalProjects = [new ExternalProject(@"C:\a", VcsKind.Git)]);
+            run => run.ExternalProjects = [new ExternalProject(@"C:\a")]);
         using var _scope = scope;
 
         var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
@@ -769,7 +766,7 @@ public class SettingsDialogViewTests
         var description = blocks.Single(b =>
             b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text == "before"));
         Assert.Equal(
-            """Projects outside the repository root — a folder, a solution or a project file, and whether it comes from Git or TFVC. The working copy root is found from the path upwards. They are built before everything else; the rest follows the layers below. Card order only sets the order the working copies are updated — among themselves they build in dependency order.""",
+            """Projects outside the repository root — a folder, a solution or a project file. The git working copy root is found from the path upwards. They are built before everything else; the rest follows the layers below. Card order only sets the order the working copies are updated — among themselves they build in dependency order.""",
             string.Concat(description.Inlines.OfType<Run>().Select(r => r.Text)));
 
         var emphasis = description.Inlines.OfType<Run>().Single(r => r.Text == "before");
@@ -814,8 +811,7 @@ public class SettingsDialogViewTests
 
         var draft = (SettingsDraftViewModel)dialog.DataContext;
         var row = Assert.Single(draft.Externals);
-        Assert.Equal("", row.Path);
-        Assert.Equal(VcsKind.Git, row.Vcs); // §9: "boş path'li, Git kaynaklı kart ekler"
+        Assert.Equal("", row.Path);   // §9: "boş path'li kart ekler"
 
         var pathInput = DsResources.Descendants(dialog).OfType<TextBox>()
             .Single(t => BuildOrchestrator.App.Controls.DsChrome.GetWatermark(t) == @"C:\src\shared\Delta.Common\Delta.Common.csproj");

@@ -18,8 +18,8 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class ExternalProjectsWiringTests
 {
-    private static readonly ExternalProject Mail = new(@"D:\ext\mail", VcsKind.Git);
-    private static readonly ExternalProject Ocr = new(@"D:\ext\ocr", VcsKind.Tfvc);
+    private static readonly ExternalProject Mail = new(@"D:\ext\mail");
+    private static readonly ExternalProject Ocr = new(@"D:\ext\ocr");
 
     private static IReadOnlyList<ExternalProject> Externals(params ExternalProject[] items) => items;
 

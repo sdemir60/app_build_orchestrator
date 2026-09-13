@@ -222,7 +222,7 @@ public class ChoreographyTests
     [StaFact]
     public void The_wave_fades_a_node_into_amber_instead_of_snapping_it()
     {
-        var view = Graph(new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
+        var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
         var square = view.NodeVisuals["a"].Square;
         var greyToken = TokenBrush(view, VisualStatus.Discovered);
         var amberToken = TokenBrush(view, VisualStatus.Marked);
@@ -230,7 +230,7 @@ public class ChoreographyTests
         Assert.NotEqual(greyToken.Color, amberToken.Color);
 
         view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal));
-        view.UpdateStatuses([new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
+        view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
 
         var lit = Assert.IsType<SolidColorBrush>(square.Stroke);
         Assert.NotSame(amberToken, lit);            // düğüm kendi kopyasına devretti
@@ -244,15 +244,15 @@ public class ChoreographyTests
     [StaFact]
     public void Outside_the_choreography_a_node_keeps_the_shared_token_brush()
     {
-        var view = Graph(new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
+        var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
         var square = view.NodeVisuals["a"].Square;
 
         view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal));
-        view.UpdateStatuses([new GraphNode("a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
+        view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
         Assert.NotSame(TokenBrush(view, VisualStatus.Marked), square.Stroke); // ön-koşul: yerel fırçaya geçti
 
         view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal));
-        view.UpdateStatuses([new GraphNode("a", 0, GraphStatus.Succeeded, VisualStatus.Succeeded)]);
+        view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Succeeded, VisualStatus.Succeeded)]);
 
         Assert.Same(TokenBrush(view, VisualStatus.Succeeded), square.Stroke);
     }
@@ -579,7 +579,7 @@ public class ChoreographyTests
     [StaFact]
     public void With_nothing_built_the_end_finale_does_not_play()
     {
-        var view = Graph(new GraphNode("a", 0, GraphStatus.Skipped, VisualStatus.Skipped));
+        var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Skipped, VisualStatus.Skipped));
 
         view.PlayEndFinale([], runCount: 1);
 
@@ -592,8 +592,8 @@ public class ChoreographyTests
     public void The_end_finale_holds_everything_dim_then_lights_only_what_was_built()
     {
         var view = Graph(
-            new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
-            new GraphNode("skipped", 1, GraphStatus.Skipped, VisualStatus.Skipped));
+            new GraphNode("built", "built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+            new GraphNode("skipped", "skipped", 1, GraphStatus.Skipped, VisualStatus.Skipped));
 
         view.PlayEndFinale(["built"], runCount: 1);
 
@@ -608,7 +608,7 @@ public class ChoreographyTests
     [StaFact]
     public void A_new_operation_cuts_the_end_finale_immediately()
     {
-        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        var view = Graph(new GraphNode("built", "built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
         view.PlayEndFinale(["built"], runCount: 1);
         DispatcherPump.PumpUntil(() => view.EndStep == EndStep.Hold, TimeSpan.FromSeconds(2));
 
@@ -628,7 +628,7 @@ public class ChoreographyTests
     [StaFact]
     public void An_operation_with_an_empty_scope_still_cuts_the_end_finale()
     {
-        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        var view = Graph(new GraphNode("built", "built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
         view.PlayEndFinale(["built"], runCount: 1);
         DispatcherPump.PumpUntil(() => view.EndStep == EndStep.Hold, TimeSpan.FromSeconds(2));
 
@@ -649,7 +649,7 @@ public class ChoreographyTests
     [StaFact]
     public void The_end_finale_moves_the_camera_to_the_default_view_even_with_a_selection()
     {
-        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        var view = Graph(new GraphNode("built", "built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
         view.SelectedNode = "built";
         Assert.NotEqual(GraphCamera.Default, view.CurrentCamera); // ön-koşul: seçim kamerayı odaklamış olmalı
 
@@ -665,8 +665,8 @@ public class ChoreographyTests
     {
         var view = GraphTestView.Realized(new Size(640, 400), () => true);
         view.SetGraph(
-            [new("dep", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
-             new("built", 1, GraphStatus.Succeeded, VisualStatus.Succeeded)],
+            [new("dep", "dep", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+             new("built", "built", 1, GraphStatus.Succeeded, VisualStatus.Succeeded)],
             [new GraphEdge("dep", "built")]);
         view.SelectedNode = "built";
         Assert.NotEmpty(view.SelectionEdgePaths);                                            // ön-koşul
@@ -695,7 +695,7 @@ public class ChoreographyTests
     [StaFact]
     public void The_end_finale_also_drops_the_hover_spotlight_from_the_previously_selected_node()
     {
-        var view = Graph(new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
+        var view = Graph(new GraphNode("built", "built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded));
         view.SelectedNode = "built";
         var visual = view.NodeVisuals["built"];
         Assert.Equal(GraphView.HoverBorderThickness, visual.Square.StrokeThickness, 6);        // ön-koşul
@@ -717,8 +717,8 @@ public class ChoreographyTests
     public void The_end_finale_keeps_the_selection_but_the_view_stays_released_once_it_ends()
     {
         var view = Graph(
-            new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
-            new GraphNode("other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
+            new GraphNode("built", "built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+            new GraphNode("other", "other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
         view.SelectedNode = "built";
 
         view.PlayEndFinale(["built"], runCount: 1);
@@ -736,8 +736,8 @@ public class ChoreographyTests
     public void Selecting_a_different_project_reopens_focus_after_the_finale_ends()
     {
         var view = Graph(
-            new GraphNode("built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
-            new GraphNode("other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
+            new GraphNode("built", "built", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
+            new GraphNode("other", "other", 1, GraphStatus.Skipped, VisualStatus.Skipped));
         view.SelectedNode = "built";
         view.PlayEndFinale(["built"], runCount: 1);
         DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(6));

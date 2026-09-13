@@ -130,8 +130,8 @@ public static class Program
             // Build'inkiyle AYNI kalsın.
             // [tek proje] Kapsamlı koşuda yalnız hedefi içeren çalışma kopyası güncellenir (ExternalUpdater'ın
             // kapsam kapısı) — kapsam dışına dokunulmaz.
-            // Güncellenen kopyaların revizyonları koşunun ilerisinde kullanılır: TFVC'de changeset YALNIZ
-            // burada (ağa çıkılmışken) okunabilir, git'te de bu okuma güncellemeden SONRAKİ hâli anlatır.
+            // Güncellenen kopyaların revizyonları koşunun ilerisinde kullanılır: buradaki okuma
+            // fast-forward'dan SONRAKİ hâli anlatır.
             IReadOnlyDictionary<string, string> updatedRevisions =
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (ExternalUpdater.ShouldUpdate(cmd.Mode, cmd.UpdateExternals, cmd.ExternalProjects))
@@ -169,7 +169,7 @@ public static class Program
             // [A1/T15] Katman pattern'leri komuttan Core'a AKTARILIR — null/boş ise LayerEngine devre dışıdır
             // (varsayılan, mevcut davranış); dolu ise sert faz bariyeri + ters-katman uyarıları devreye girer.
             var plan = new BuildPlanBuilder(scanner, evaluator, cache)
-                .Build(scan, cmd.Configuration, cmd.LayerPatterns, external.VcsByProjectId);
+                .Build(scan, cmd.Configuration, cmd.LayerPatterns, external.ExternalProjectIds);
             progress(PlanProgressLines.DependencyGraph(plan.Cycles.Count));
             progress(PlanProgressLines.BuildOrderResolved(plan.Nodes.Count));
             var solutionRefs = SolutionMapper.MapRefs(scan.SlnPaths, scan.CsprojPaths);

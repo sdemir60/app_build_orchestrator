@@ -30,7 +30,7 @@ public sealed record LayerAssignmentResult(IReadOnlyList<ProjectNode> Nodes, IRe
 /// zaten null) döner, Warnings boş — mevcut (Task 15 öncesi) davranışla birebir aynı. <b>Tek istisna harici
 /// projelerdir</b> (aşağıya bakınız): onlar varsa pattern olmasa bile atama ve yeniden sıralama koşar.
 ///
-/// Harici kökten gelen projeler (<see cref="ProjectNode.ExternalVcs"/> dolu) AYRILMIŞ katmana girer:
+/// Harici kökten gelen projeler (<see cref="ProjectNode.IsExternal"/>) AYRILMIŞ katmana girer:
 /// <see cref="ExternalProjectsConventions"/> — ad <c>External</c>, indeks −1. Kullanıcı pattern'leri onlara
 /// UYGULANMAZ: eşleşseler bile <c>External</c>'da kalırlar, eşleşmeseler bile <c>Other</c>'a DÜŞMEZLER
 /// (<c>Other</c> ana reponun sınıflanmamış projeleri içindir). Negatif indeks sayesinde listede ve grafta her
@@ -82,7 +82,7 @@ public static class LayerEngine
         ArgumentNullException.ThrowIfNull(nodesInBuildOrder);
         ArgumentNullException.ThrowIfNull(patterns);
 
-        bool anyExternal = nodesInBuildOrder.Any(n => n.ExternalVcs is not null);
+        bool anyExternal = nodesInBuildOrder.Any(n => n.IsExternal);
         // Ne pattern ne harici varsa liste HİÇ dokunulmadan döner (Task 15 öncesi davranış, bayt-bayt).
         if (patterns.Count == 0 && !anyExternal)
             return new LayerAssignmentResult(nodesInBuildOrder, []);
@@ -107,7 +107,7 @@ public static class LayerEngine
         foreach (var n in nodesInBuildOrder)
         {
             // Harici projeler pattern döngüsüne HİÇ girmez — ayrılmış katman her koşulda kazanır.
-            if (n.ExternalVcs is not null)
+            if (n.IsExternal)
             {
                 byId[n.Id] = (ExternalProjectsConventions.LayerIndex, ExternalProjectsConventions.LayerName);
                 continue;

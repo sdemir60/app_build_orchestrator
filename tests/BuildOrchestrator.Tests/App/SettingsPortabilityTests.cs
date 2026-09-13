@@ -57,7 +57,7 @@ public class SettingsPortabilityTests
     public void The_settings_file_round_trips_the_external_projects_in_order()
     {
         IReadOnlyList<ExternalProject> externals =
-            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"D:\shared\b.csproj", VcsKind.Tfvc)];
+            [new ExternalProject(@"C:\a"), new ExternalProject(@"D:\shared\b.csproj")];
 
         string json = SettingsFile.From(@"D:\src\osys", [], externals).ToJson();
         var parsed = SettingsFile.TryParse(json);
@@ -65,8 +65,10 @@ public class SettingsPortabilityTests
         Assert.NotNull(parsed);
         Assert.NotNull(parsed!.ExternalProjects);
         Assert.Equal([@"C:\a", @"D:\shared\b.csproj"], parsed.ExternalProjects!.Select(e => e.Path));
-        Assert.Equal(["git", "tfvc"], parsed.ExternalProjects!.Select(e => e.Vcs));
         Assert.Contains("\"externalProjects\"", json, StringComparison.Ordinal);
+        // [DEGISEN KURAL] Eski iddia: her eleman bir `vcs` alani da tasiyordu ("git"/"tfvc") ve yazilan degerin
+        // normalize edildigi burada pinliydi. TFVC kolu kaldirildi - anahtar artik HIC yazilmaz.
+        Assert.DoesNotContain("\"vcs\"", json, StringComparison.Ordinal);
 
         // [review fix — Bulgu 1] Alan SIRASI da brief'in pinlediği yerdir: "repositoryRoot ile layers ARASINA
         // externalProjects". System.Text.Json alanları BİLDİRİM sırasıyla yazar — bu yüzden sıra, dosyanın
@@ -81,7 +83,7 @@ public class SettingsPortabilityTests
     }
 
     /// <summary>[K5, §9] "externalProjects dizisi nesne YA DA düz string olabilir" — her eleman yalnız bir yol
-    /// (string) olduğunda da (eksik <c>vcs</c>) dosya GEÇERLİ sayılır ve <c>vcs</c> "git"e düşer.</summary>
+    /// (string) olduğunda da dosya GEÇERLİ sayılır.</summary>
     [Fact]
     public void The_settings_file_accepts_a_plain_string_array_for_external_projects()
     {
@@ -94,12 +96,17 @@ public class SettingsPortabilityTests
         Assert.NotNull(parsed);
         Assert.NotNull(parsed!.ExternalProjects);
         Assert.Equal([@"C:\a", @"D:\shared\b.csproj"], parsed.ExternalProjects!.Select(e => e.Path));
-        Assert.All(parsed.ExternalProjects!, e => Assert.Equal("git", e.Vcs)); // eksik vcs → git
     }
 
-    /// <summary>[K5, §9] "eksik/bilinmeyen vcs → git" — yalnız tam olarak <c>"tfvc"</c> Tfvc'ye çözülür.</summary>
+    /// <summary>
+    /// <b>Eski iddia:</b> <c>An_unknown_or_missing_vcs_value_normalizes_to_git</c> — eksik/bilinmeyen bir
+    /// <c>vcs</c> değerinin <c>"git"</c>'e, yalnız tam olarak <c>"tfvc"</c>'nin TFVC'ye çözüldüğünü pinliyordu.
+    /// TFVC kolu kaldırıldı: normalize edilecek bir alan kalmadı. Yerine geçen kural kullanıcının DİSKTEKİ eski
+    /// dosyasını korur — tanınmayan <c>vcs</c> anahtarı taşıyan bir dosya hâlâ yüklenir, anahtar sessizce yok
+    /// sayılır ve kart sıradan bir git kartı olur.
+    /// </summary>
     [Fact]
-    public void An_unknown_or_missing_vcs_value_normalizes_to_git()
+    public void A_legacy_vcs_key_is_ignored_instead_of_rejecting_the_file()
     {
         const string json = """
             { "externalProjects": [
@@ -112,7 +119,8 @@ public class SettingsPortabilityTests
 
         var parsed = SettingsFile.TryParse(json);
 
-        Assert.Equal(["git", "git", "git", "tfvc"], parsed!.ExternalProjects!.Select(e => e.Vcs));
+        Assert.NotNull(parsed);
+        Assert.Equal([@"C:\a", @"C:\b", @"C:\c", @"C:\d"], parsed!.ExternalProjects!.Select(e => e.Path));
     }
 
     /// <summary>[K5, §9] "boş path'ler düşer" — nesne biçimindeki boş/yalnız-boşluk path'ler VE düz-string
@@ -140,7 +148,7 @@ public class SettingsPortabilityTests
     [Fact]
     public void The_import_feedback_mentions_external_projects_only_when_the_file_carries_the_key()
     {
-        var withExternals = SettingsFile.From(@"D:\src\osys", [], [new ExternalProject(@"C:\a", VcsKind.Git)]);
+        var withExternals = SettingsFile.From(@"D:\src\osys", [], [new ExternalProject(@"C:\a")]);
         Assert.Equal("Imported — 0 layers · 1 external · root set", withExternals.ImportedMessage());
 
         var withoutKey = SettingsFile.From(@"D:\src\osys", []); // externals parametresiz → anahtar YOK
@@ -155,7 +163,7 @@ public class SettingsPortabilityTests
     [Fact]
     public void Importing_a_layer_only_file_keeps_the_existing_external_projects()
     {
-        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProject(@"C:\kept", VcsKind.Git)]);
+        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProject(@"C:\kept")]);
 
         draft.LoadFrom(SettingsFile.From(@"D:\new", [new LayerPattern(0, "^X", "Xeno")]));
 
@@ -167,7 +175,7 @@ public class SettingsPortabilityTests
     [Fact]
     public void Importing_a_file_with_an_empty_external_projects_array_clears_the_draft_list()
     {
-        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProject(@"C:\kept", VcsKind.Git)]);
+        var draft = new SettingsDraftViewModel(null, @"D:\old", [new ExternalProject(@"C:\kept")]);
 
         draft.LoadFrom(SettingsFile.From(@"D:\new", [], []));
 
@@ -179,11 +187,10 @@ public class SettingsPortabilityTests
     {
         var draft = new SettingsDraftViewModel(null, @"D:\old");
 
-        draft.LoadFrom(SettingsFile.From(@"D:\new", [], [new ExternalProject(@"C:\new", VcsKind.Tfvc)]));
+        draft.LoadFrom(SettingsFile.From(@"D:\new", [], [new ExternalProject(@"C:\new")]));
 
         var row = Assert.Single(draft.Externals);
         Assert.Equal(@"C:\new", row.Path);
-        Assert.Equal(VcsKind.Tfvc, row.Vcs);
     }
 
     /// <summary>[K5, §9] "Load sample layers harici listeye DOKUNMAZ" — örnekler yalnız katmanları doldurur.</summary>
@@ -235,7 +242,7 @@ public class SettingsPortabilityTests
     public void Clearing_empties_the_root_every_layer_and_every_external_project()
     {
         var draft = new SettingsDraftViewModel(
-            [new LayerPattern(0, "^A", "Alpha")], @"D:\src\osys", [new ExternalProject(@"C:\a", VcsKind.Git)]);
+            [new LayerPattern(0, "^A", "Alpha")], @"D:\src\osys", [new ExternalProject(@"C:\a")]);
 
         draft.ClearAll();
 
@@ -260,7 +267,6 @@ public class SettingsPortabilityTests
 
         dialog.Draft!.AddExternal();
         dialog.Draft!.Externals[0].Path = @"C:\a";
-        dialog.Draft!.Externals[0].Vcs = VcsKind.Tfvc;
         dialog.Draft!.AddExternal(); // boş kalan ikinci kart — Export'un güvenlik ağı bunu düşürür
 
         Click(dialog.Export);
@@ -269,7 +275,6 @@ public class SettingsPortabilityTests
         var parsed = SettingsFile.TryParse(written!)!;
         var ext = Assert.Single(parsed.ExternalProjects!);
         Assert.Equal(@"C:\a", ext.Path);
-        Assert.Equal("tfvc", ext.Vcs);
         Assert.Empty(store.State.ExternalProjects); // hiçbir şey UYGULANMADI
         Assert.Empty(run.ExternalProjects);
     }
@@ -282,7 +287,7 @@ public class SettingsPortabilityTests
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
         dialog.PickImportPath = () => @"D:\in\settings.json";
-        dialog.ReadFile = _ => SettingsFile.From(@"D:\imported", [], [new ExternalProject(@"C:\a", VcsKind.Git)]).ToJson();
+        dialog.ReadFile = _ => SettingsFile.From(@"D:\imported", [], [new ExternalProject(@"C:\a")]).ToJson();
 
         Click(dialog.Import);
 
@@ -363,7 +368,7 @@ public class SettingsPortabilityTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r =>
         {
             r.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")];
-            r.ExternalProjects = [new ExternalProject(@"C:\a", VcsKind.Git)];
+            r.ExternalProjects = [new ExternalProject(@"C:\a")];
         });
         using var _scope = scope;
         object? baseTooltip = dialog.Clear.ToolTip; // armed/disarmed karşılaştırması için ÖNCEDEN oku

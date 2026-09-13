@@ -10,7 +10,7 @@ namespace BuildOrchestrator.Tests.Planning;
 /// listede ve grafta en üstte durmaları ve derleme sırasında ana repo projelerinden ÖNCE gelmeleridir — ana
 /// projeler zaten onların çıktısına bağlıdır.
 ///
-/// <para>Katman ataması <b>rozetten</b> okunur (<see cref="ProjectNode.ExternalVcs"/>), ayrı bir liste
+/// <para>Katman ataması <b>rozetten</b> okunur (<see cref="ProjectNode.IsExternal"/>), ayrı bir liste
 /// taşınmaz. Kullanıcının pattern'leri haricilere UYGULANMAZ: eşleşseler bile <c>External</c>'da kalırlar ve
 /// eşleşmeseler bile <c>Other</c>'a DÜŞMEZLER — <c>Other</c> ana reponun sınıflanmamış projeleri içindir.</para>
 /// </summary>
@@ -21,7 +21,7 @@ public class ExternalLayerTests
             BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: false, WillBuild: null);
 
     private static ProjectNode External(string name, string[]? deps = null) =>
-        Main(name, deps) with { ExternalVcs = VcsKind.Git };
+        Main(name, deps) with { IsExternal = true };
 
     [Fact]
     public void An_external_project_lands_in_the_reserved_layer_even_with_no_patterns_configured()

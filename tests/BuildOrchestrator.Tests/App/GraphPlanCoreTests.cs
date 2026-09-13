@@ -43,8 +43,8 @@ public class GraphPlanCoreTests
     public void After_sync_nothing_is_coloured_because_everyone_is_in_the_fresh_start_mode()
     {
         var view = Realized(
-            new("dirty", 0, GraphStatus.Discovered, VisualStatus.Fresh),
-            new("clean", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+            new("dirty", "dirty", 0, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("clean", "clean", 0, GraphStatus.Discovered, VisualStatus.Fresh));
 
         Assert.Equal(Token(view, "Brush.TextFaint"), CoreColour(view, "dirty"));
         Assert.Equal(Token(view, "Brush.TextFaint"), CoreColour(view, "clean"));
@@ -63,9 +63,9 @@ public class GraphPlanCoreTests
     public void The_border_and_the_core_are_painted_from_one_channel(
         VisualStatus state, string borderKey, string coreKey)
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
 
-        view.UpdateStatuses([new("n", 0, GraphStatus.Discovered, state)]);
+        view.UpdateStatuses([new("n", "n", 0, GraphStatus.Discovered, state)]);
 
         Assert.Equal(Token(view, borderKey), BorderColour(view, "n"));
         Assert.Equal(Token(view, coreKey), CoreColour(view, "n"));
@@ -76,10 +76,10 @@ public class GraphPlanCoreTests
     [StaFact]
     public void Only_the_fresh_start_mode_is_dashed()
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
         Assert.NotEmpty(view.NodeVisuals["n"].Square.StrokeDashArray);
 
-        view.UpdateStatuses([new("n", 0, GraphStatus.Discovered, VisualStatus.Discovered)]);
+        view.UpdateStatuses([new("n", "n", 0, GraphStatus.Discovered, VisualStatus.Discovered)]);
         DispatcherPump.PumpUntil(
             () => view.NodeVisuals["n"].Square.StrokeDashArray.Count == 0, TimeSpan.FromSeconds(3));
 
@@ -97,11 +97,11 @@ public class GraphPlanCoreTests
     [StaFact]
     public void Entering_a_run_dims_before_it_repaints()
     {
-        var view = Realized(new GraphNode("n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
         var dashedAtRest = view.NodeVisuals["n"].Square.StrokeDashArray;
 
         view.RunPhase = GraphRunPhase.Running;                                              // basış
-        view.UpdateStatuses([new("n", 0, GraphStatus.Queued, VisualStatus.Queued)]);        // plan hemen ardından geldi
+        view.UpdateStatuses([new("n", "n", 0, GraphStatus.Queued, VisualStatus.Queued)]);        // plan hemen ardından geldi
 
         // Sönme oynarken çerçeve HÂLÂ kesikli: görünüm değişimi beklemede.
         Assert.Equal(dashedAtRest, view.NodeVisuals["n"].Square.StrokeDashArray);

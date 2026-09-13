@@ -65,6 +65,58 @@ public class SyncWorkspaceServiceTests
     private static SyncProgressEvent LineStartingWith(List<IpcEvent> events, string prefix) =>
         Assert.Single(Progress(events), e => e.Line.StartsWith(prefix, StringComparison.Ordinal));
 
+    /// <summary>
+    /// AYIRT EDİCİ — <b>iki proje aynı <c>AssemblyName</c>'i üretiyorsa Sync bunu SÖYLER.</b>
+    ///
+    /// <para>Belirsiz bir DLL determinizm gereği kenar ÜRETMEZ ([D8/D11], <c>ProducerMap</c>): ona HintPath ile
+    /// bağlanan her proje bağımlılığını kaybeder ve yanlış sırada derlenebilir. Bu kayıp bugüne dek hesaplanıp
+    /// atılıyordu — kullanıcı grafında eksik bir kenar olduğunu hiçbir yerden göremiyordu. Ölçülen vaka: bir
+    /// harici kart, repo kökünde zaten duran bir solution'ın ikinci kopyasını getirdi ve 7 DLL birden belirsiz
+    /// oldu.</para>
+    ///
+    /// <para>Satır çözümü de söylemelidir: hangi DLL, hangi projeler.</para>
+    /// </summary>
+    [Fact]
+    public async Task Two_projects_producing_the_same_assembly_are_reported_because_their_edges_are_dropped()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        // C, A ile AYNI AssemblyName'i üretir → "a.dll" belirsizleşir ve B'nin A'ya olan HintPath kenarı düşer.
+        origin.WriteFile(Path.Combine("src", "C", "C.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot())
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var warning = LineStartingWith(events, "warning: 2 projects produce ");
+        Assert.Equal("warn", warning.Level);
+        Assert.Contains("a.dll", warning.Line, StringComparison.Ordinal);
+        Assert.Contains(Path.Combine("src", "A", "A.csproj"), warning.Line, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(Path.Combine("src", "C", "C.csproj"), warning.Line, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Çakışma YOKKEN tek bir satır bile yazılmaz — uyarı gürültü olmamalı.</summary>
+    [Fact]
+    public async Task A_workspace_without_duplicate_assembly_names_says_nothing_about_producers()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot())
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        Assert.DoesNotContain(Progress(events), e => e.Line.Contains("projects produce", StringComparison.Ordinal));
+    }
+
     // ---------------------------------------------------------------- 1) mutlu yol
 
     [Fact]

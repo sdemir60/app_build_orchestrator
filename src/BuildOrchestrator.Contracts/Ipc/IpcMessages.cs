@@ -22,6 +22,7 @@ public static class IpcJson
 [JsonDerivedType(typeof(DebugSpawnChildrenCommand), "debugSpawnChildren")]
 [JsonDerivedType(typeof(StartRunCommand), "startRun")]
 [JsonDerivedType(typeof(SyncWorkspaceCommand), "syncWorkspace")]
+[JsonDerivedType(typeof(CleanWorkspaceCommand), "cleanWorkspace")]
 [JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
 [JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
 [JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
@@ -92,7 +93,7 @@ public enum DependentMode { Safe, Fast }
 /// <c>null</c> (varsayılan) ⇒ perf modu bildirilmemiş: cap/priority'ye HİÇ dokunulmaz. Bu alan nullable +
 /// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
 /// <param name="UpdateExternals">[Harici projeler] Bu koşu, harici çalışma kopyalarını derlemeden ÖNCE kendi
-/// sürüm kontrolünden güncellesin mi (git <c>fetch</c> + <c>merge --ff-only</c> / <c>tf vc get</c>).
+/// klonundan güncellesin mi (<c>fetch</c> + <c>merge --ff-only</c>).
 /// <b>Varsayılan <c>true</c></b> — alanı hiç yazmayan eski NDJSON satırları da güncelleme YAPAR, yani mevcut
 /// davranış korunur.
 /// <para><c>false</c> iken TEK BİR VCS komutu bile çalışmaz ve <b>kir kapısı da yoktur</b>: güncelleme
@@ -144,14 +145,37 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// ters-katman uyarılarını taşır.</param>
 /// <param name="ExternalProjects">[Harici projeler] Ana repo DIŞINDA yaşayan, build'den önce güncellenip
 /// derlenen projeler — kullanıcının Ayarlar'da sıraladığı liste, o sırayla. Sync bunları yalnız OKUR
-/// (hiçbir VCS mutasyonu yapmaz): git olanların yerel HEAD'i ve kirliliği okunur, TFVC olanlar hollow
-/// kalır. null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
+/// (hiçbir git mutasyonu yapmaz): yerel HEAD'leri ve kirlilikleri okunur. null/boş ise akış bugünküyle
+/// bayt-bayt aynıdır.</param>
 /// <param name="Configuration">Will-build pass'inin imza terimine giren configuration (Debug/Release) — config
 /// değişimi TÜM projeleri dirty yapar (bkz. <c>BuildSignature.Compute</c> "cfg=" terimi), bu yüzden Sync'in
 /// önizlemesi ancak doğru configuration ile anlamlıdır.</param>
 public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug",
     IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
+
+/// <summary>
+/// [clean] Aktif workspace'in derleme çıktısını sıfırla. <b>Siler:</b> <paramref name="RootPath"/> altında
+/// keşfedilen her csproj'un klasöründeki <c>bin\</c> ve <c>obj\</c> + o workspace'e ait
+/// <c>build-state.json</c> kayıtları (RootPath önekiyle, workspace-scoped). <b>Silmez:</b> <c>packages\</c>,
+/// ortak OutDir, worktree havuzu (<c>_obj</c> dahil), run logları, <c>evaluation-cache.json</c>,
+/// <c>ui-state.json</c>.
+/// <para><b>MSBuild <c>/t:Clean</c> ÇAĞRILMAZ</b> — yalnız dosya sistemi silme. Gerekçe: eski-stil
+/// projelerde <c>/t:Clean</c>'in sildiği küme (<c>FileListAbsolute.txt</c> kayıtlıları) bin/obj silmenin alt
+/// kümesidir; obj silinince o kayıt da gider; ve tracked çıktılar ortak OutDir'e yazılmışsa <c>/t:Clean</c>
+/// oradan da silerdi — "OutDir'e dokunulmaz" değişmezinin ihlali.</para>
+/// <para>Bir koşu uçuştayken komut <c>error(cleanRejected)</c> ile REDDEDİLİR; App kapısıyla birlikte çift
+/// katmanlı korumadır. Komut döngüsünü Sync gibi bloklar (arka plan task açılmaz).</para>
+/// </summary>
+/// <param name="ExternalProjects">[Harici projeler] Ayarlar'daki harici kökler — <see cref="SyncWorkspaceCommand"/>
+/// ile AYNI kart listesi ve AYNI çözümleme (<c>ExternalWorkspaceResolver</c>). Harici projeler sıradan
+/// projelerdir: aynı grafa girer, aynı kararı alır, dolayısıyla Clean de onların <c>bin</c>/<c>obj</c>'ini ve
+/// defter kayıtlarını temizler. Kökleri ana kökün DIŞINDA olduğu için tarama onları ancak bu liste ile bulur;
+/// liste boşsa akış ana kökle bayt-bayt aynıdır. Silme izni de bu köklerle sınırlıdır — kartı verilmemiş bir
+/// dizine ASLA dokunulmaz. <c>null</c> (varsayılan): alanı hiç yazmayan eski NDJSON satırları çözülmeye devam
+/// eder.</param>
+public sealed record CleanWorkspaceCommand(
+    string RootPath, IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
 
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
@@ -182,6 +206,9 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
+[JsonDerivedType(typeof(CleanStartedEvent), "cleanStarted")]
+[JsonDerivedType(typeof(CleanProgressEvent), "cleanProgress")]
+[JsonDerivedType(typeof(CleanCompletedEvent), "cleanCompleted")]
 [JsonDerivedType(typeof(PlanProgressEvent), "planProgress")]
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
@@ -270,6 +297,22 @@ public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool F
 /// <param name="Succeeded">Fast-forward gerçekleşti mi. <c>true</c> ⇒ App chip'i düşürür ve otomatik bir Sync
 /// koşar (konsol KORUNARAK — kullanıcı kendi tetiklediği pull'un sonucunu görmeye devam etmeli).</param>
 public sealed record PullCompletedEvent(bool Succeeded) : IpcEvent;
+/// <summary>[clean] <see cref="CleanWorkspaceCommand"/> kabul edildi ve silme başlıyor.</summary>
+public sealed record CleanStartedEvent(string RootPath) : IpcEvent;
+/// <summary>[clean] Clean transkriptinin tek satırı. İmzası <see cref="SyncProgressEvent"/> ile aynıdır ama
+/// Sync yüzeyine AİT DEĞİLDİR: App'in <c>_syncInFlight</c> kapısını hiç ilgilendirmez, ayrı bir kanaldır
+/// (<see cref="PlanProgressEvent"/> emsali).</summary>
+/// <param name="Level">dim/info/warn — App tarafında satır rengini belirler.</param>
+public sealed record CleanProgressEvent(string Line, string Level) : IpcEvent;
+/// <summary>[clean] Clean bitti — tek bitiş özeti. Kilitli dosya HATA DEĞİLDİR: akış durmaz, dosya başına
+/// atlanır ve yalnız <paramref name="LockedFileCount"/> ile raporlanır.</summary>
+/// <param name="ProjectCount">Taramanın bulduğu ve temizlenen proje klasörü sayısı.</param>
+/// <param name="FoldersRemoved">Gerçekten silinen <c>bin</c>/<c>obj</c> klasörü sayısı.</param>
+/// <param name="BytesRemoved">Silinen dosyaların toplam boyutu.</param>
+/// <param name="LockedFileCount">Kullanımda olduğu için silinemeyen dosya sayısı.</param>
+/// <param name="StateEntriesCleared">Kaldırılan <c>build-state.json</c> kaydı sayısı (workspace-scoped).</param>
+public sealed record CleanCompletedEvent(int ProjectCount, int FoldersRemoved, long BytesRemoved,
+    int LockedFileCount, int StateEntriesCleared) : IpcEvent;
 
 public sealed record BranchListEvent(IReadOnlyList<BranchRef> Branches) : IpcEvent;
 
