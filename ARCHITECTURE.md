@@ -1544,11 +1544,14 @@ it would make the whole window click-through and kill the click-to-restore.
 
 When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
 slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
-events do not land on top of each other, an **OS balloon** reports the result. Its text is not composed a second
-time: it is the ribbon's own terminal line, so opening the window afterwards shows the same sentence. Clicking
-the notification restores the window through the *same* path as the tray icon and the overlay. The icon
-follows the line's status glyph (info, or error when something failed). A run that ends while the window is
-*visible* produces no balloon at all — the ribbon is already on screen.
+events do not land on top of each other, an **OS balloon** reports the result, carrying the application's own
+icon at its large size. Its text is not composed a second time: it is the ribbon's own terminal line, split once
+at the separator the ribbon itself writes — the head becomes the title (`Completed`, `▸ Stopped`, `Run failed`)
+and everything after it becomes the body. Opening the window afterwards shows that same sentence whole, in the
+ribbon. A line that carries no head — an engine death is a single clause with nothing behind it — falls back to
+the product name over the whole line. Clicking the notification restores the window through the *same* path as
+the tray icon and the overlay. A run that ends while the window is *visible* produces no balloon at all — the
+ribbon is already on screen.
 
 The overlay always sits on the primary screen, because that is where the tray is; on a multi-monitor desk the
 user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also

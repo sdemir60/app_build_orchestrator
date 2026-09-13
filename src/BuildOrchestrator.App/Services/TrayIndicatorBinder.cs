@@ -58,10 +58,8 @@ internal static class TrayIndicatorBinder
             controller.SetPhase(vm.Phase);
     }
 
-    /// <summary>[K-5] Bildirim metni = şeridin o anki satırı; sağlık = satırın kendi glyph'i.</summary>
-    private static void PushLine(RunViewModel vm, TrayBuildIndicatorController controller)
-    {
-        var line = vm.RibbonLine;
-        controller.SetTerminalText(line.Text, line.Healthy);
-    }
+    /// <summary>[K-5] Bildirime giden şey şeridin o anki SATIRIDIR — parçalanıp yeniden kurulmaz. Metin,
+    /// sağlık ve bildirimin başlık/gövde ayrımı hepsi o satırın içindedir.</summary>
+    private static void PushLine(RunViewModel vm, TrayBuildIndicatorController controller) =>
+        controller.SetTerminalLine(vm.RibbonLine);
 }

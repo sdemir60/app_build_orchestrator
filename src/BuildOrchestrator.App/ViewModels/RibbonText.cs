@@ -22,6 +22,30 @@ public readonly record struct RibbonLine(string Text, string BrushKey, string? G
     /// <summary>Başarısızlık glyph'inin adı — <see cref="Healthy"/> ile şeridin glyph eşlemesi aynı dizgiyi
     /// okur.</summary>
     public const string FailedGlyph = "failed";
+
+    /// <summary>Şeridin KENDİ ayırıcısı (<c>"Completed — …"</c>, <c>"Stopped — …"</c>, <c>"Run failed — …"</c>,
+    /// <c>"Sync failed — …"</c>). TEK yerde tanımlıdır: <see cref="Head"/>/<see cref="Detail"/> bölmeyi buradan
+    /// okur, <see cref="RibbonText.Compose"/>'un biçim dizgileri kaynak sanattır ve yeniden yazılmaz.</summary>
+    public const string HeadSeparator = " — ";
+
+    /// <summary>
+    /// [tray indicator/K-5] Satırın BAŞI — ilk <see cref="HeadSeparator"/>'ın öncesi (<c>"Completed"</c>,
+    /// <c>"▸ Stopped"</c>, <c>"Run failed"</c>, <c>"Sync failed"</c>); ayırıcı yoksa <c>null</c>
+    /// (ör. <c>"Engine stopped unexpectedly (exit 1)"</c>).
+    ///
+    /// <para>Tek tüketicisi tepsideki bitiş bildirimidir: başlığı buradan, gövdeyi <see cref="Detail"/>'den
+    /// alır. Bildirim İKİNCİ bir özet DERLEMEZ — aynı satırı okur ve kendi ayırıcısında bir kez böler, yani
+    /// şerit ile balloon ayrışamaz. Bölme burada durur çünkü ayırıcıyı yazan da bu dosyadır.</para></summary>
+    public string? Head => SeparatorIndex is { } i ? Text[..i] : null;
+
+    /// <summary>Satırın GÖVDESİ — ilk <see cref="HeadSeparator"/>'ın sonrası (sayılar, süre, gerekçe); ayırıcı
+    /// yoksa <c>null</c>. Bkz. <see cref="Head"/>.</summary>
+    public string? Detail => SeparatorIndex is { } i ? Text[(i + HeadSeparator.Length)..] : null;
+
+    /// <summary>İLK ayırıcının yeri — satır bir kez bölünür: gövdenin içinde ikinci bir tire geçse de gövdede
+    /// kalır. <c>Text</c> hiç verilmemiş (varsayılan) bir satırda da sessizce <c>null</c> döner.</summary>
+    private int? SeparatorIndex =>
+        Text?.IndexOf(HeadSeparator, StringComparison.Ordinal) is { } i and >= 0 ? i : null;
 }
 
 /// <summary>

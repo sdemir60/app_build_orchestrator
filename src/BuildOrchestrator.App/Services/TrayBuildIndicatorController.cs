@@ -28,7 +28,10 @@ public interface ITrayBuildIndicatorView
 /// toast design §8'de YASAK).</summary>
 public interface ITrayRunNotifier
 {
-    void ShowRunFinished(string message, bool healthy);
+    /// <summary>Şeridin o anki terminal SATIRI — metin+bayrak çifti DEĞİL. Bildirimin başlığı ile gövdesi
+    /// satırın kendi baş/gövde ayrımından (<see cref="RibbonLine.Head"/>/<see cref="RibbonLine.Detail"/>)
+    /// doğar; sağlık da satırın kendi glyph'indedir.</summary>
+    void ShowRunFinished(RibbonLine line);
 }
 
 /// <summary>
@@ -48,9 +51,9 @@ public interface ITrayRunNotifier
 /// motion token'ıdır ve token okumak WPF ister. Controller saf kalsın diye bekleme
 /// <see cref="ExitBreath"/>'e enjekte edilir; testte sahte dikiş senkron tamamlanır (D8: gerçek bekleme YOK).</para>
 ///
-/// <para><b>Balloon metni burada ÜRETİLMEZ</b> (K-5): şeridin o anki terminal satırı
-/// <see cref="SetTerminalText"/> ile verilir ve aynen taşınır. Alan bir ÖNBELLEK değildir, bir teslim
-/// kutusudur: bildirim çıkış evresinin sonuna ertelendiği için metin o ana kadar tutulmak zorundadır.</para>
+/// <para><b>Balloon metni burada ÜRETİLMEZ</b> (K-5): şeridin o anki terminal SATIRI
+/// <see cref="SetTerminalLine"/> ile verilir ve aynen taşınır. Alan bir ÖNBELLEK değildir, bir teslim
+/// kutusudur: bildirim çıkış evresinin sonuna ertelendiği için satır o ana kadar tutulmak zorundadır.</para>
 /// </summary>
 public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, ITrayRunNotifier notifier)
 {
@@ -62,8 +65,7 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
     private bool _exitPending;
     private bool _notified;
 
-    private string _terminalText = "";
-    private bool _terminalHealthy;
+    private RibbonLine _terminal;
 
     /// <summary>
     /// [K-14 · D8] Gizlenme ile balloon arasındaki NEFES. Üretimde <c>Duration.Slow</c> token'ından beslenir
@@ -108,13 +110,10 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
         ApplyMode();
     }
 
-    /// <summary>[K-5] Şeridin O ANKİ satırı + sağlık bayrağı. <c>healthy</c> şeridin glyph'inin
-    /// <c>"failed"</c> OLMAMASIDIR — glyph zaten tek kaynaklı statü sinyalidir.</summary>
-    public void SetTerminalText(string text, bool healthy)
-    {
-        _terminalText = text;
-        _terminalHealthy = healthy;
-    }
+    /// <summary>[K-5] Şeridin O ANKİ satırı — metin, brush anahtarı ve glyph tek parça hâlinde. Ayrı bir
+    /// sağlık bayrağı GEÇMEZ: sağlık da (<see cref="RibbonLine.Healthy"/>), bildirimin başlığı ile gövdesi de
+    /// satırın kendisinden okunur, yani controller taşıdığı şeyi HİÇ yorumlamaz.</summary>
+    public void SetTerminalLine(RibbonLine line) => _terminal = line;
 
     private void Apply()
     {
@@ -175,6 +174,6 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
 
         if (_notified) return;
         _notified = true;
-        notifier.ShowRunFinished(_terminalText, _terminalHealthy);
+        notifier.ShowRunFinished(_terminal);
     }
 }

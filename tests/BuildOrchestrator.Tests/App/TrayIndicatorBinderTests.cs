@@ -7,7 +7,6 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
-using H.NotifyIcon.Core;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -53,14 +52,12 @@ public sealed class TrayIndicatorBinderTests
     private sealed class SpyNotifier : ITrayRunNotifier
     {
         public int Count;
-        public string? LastMessage;
-        public bool? LastHealthy;
+        public RibbonLine? LastLine;
 
-        public void ShowRunFinished(string message, bool healthy)
+        public void ShowRunFinished(RibbonLine line)
         {
             Count++;
-            LastMessage = message;
-            LastHealthy = healthy;
+            LastLine = line;
         }
     }
 
@@ -119,8 +116,8 @@ public sealed class TrayIndicatorBinderTests
         view.FinishExit();
 
         Assert.Equal(1, notifier.Count);
-        Assert.Equal(vm.RibbonLine.Text, notifier.LastMessage);
-        Assert.StartsWith("Completed — ", notifier.LastMessage, StringComparison.Ordinal);
+        Assert.Equal(vm.RibbonLine, notifier.LastLine);
+        Assert.StartsWith("Completed — ", notifier.LastLine?.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -134,9 +131,9 @@ public sealed class TrayIndicatorBinderTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 0, 0, 1234, 0));
         view.FinishExit();
 
-        Assert.False(notifier.LastHealthy);
-        Assert.Equal(vm.RibbonLine.Text, notifier.LastMessage);
-        Assert.Contains("failed", notifier.LastMessage, StringComparison.Ordinal);
+        Assert.False(notifier.LastLine?.Healthy);
+        Assert.Equal(vm.RibbonLine, notifier.LastLine);
+        Assert.Contains("failed", notifier.LastLine?.Text, StringComparison.Ordinal);
     }
 
     /// <summary>Tepsi menüsünden Stop: drain bitince bildirim "Stopped — …" satırını taşır (kaç projenin
@@ -156,8 +153,8 @@ public sealed class TrayIndicatorBinderTests
         view.FinishExit();
 
         Assert.Equal(1, notifier.Count);
-        Assert.Equal(vm.RibbonLine.Text, notifier.LastMessage);
-        Assert.StartsWith("▸ Stopped — ", notifier.LastMessage, StringComparison.Ordinal);
+        Assert.Equal(vm.RibbonLine, notifier.LastLine);
+        Assert.StartsWith("▸ Stopped — ", notifier.LastLine?.Text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -174,8 +171,8 @@ public sealed class TrayIndicatorBinderTests
         view.FinishExit();
 
         Assert.Equal(1, notifier.Count);
-        Assert.Equal(vm.RibbonLine.Text, notifier.LastMessage);
-        Assert.False(notifier.LastHealthy);
+        Assert.Equal(vm.RibbonLine, notifier.LastLine);
+        Assert.False(notifier.LastLine?.Healthy);
     }
 
     // ---------------------------------------------------------------- görünürlük
@@ -221,19 +218,46 @@ public sealed class TrayIndicatorBinderTests
         Assert.Equal([Path.Combine("ViewModels", "RunViewModel.cs")], callers);
     }
 
-    // ---------------------------------------------------------------- balloon ikonu
+    // ---------------------------------------------------------------- balloon anatomisi
 
     /// <summary>
-    /// Sonuç → balloon ikonu. Başarılı bir derlemeye uyarı/hata ikonu koymak yanlış sinyaldir.
+    /// Bildirimin BAŞLIĞI satırın başı, GÖVDESİ satırın geri kalanıdır — tek satır kendi ayırıcısında ikiye
+    /// ayrılır, metin ikinci kez DERLENMEZ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bu pin eskiden <c>Tray_icon_run_finished_notification_uses_info_or_error</c>
+    /// idi ve <c>RunFinishedIcon</c>'un sağlıklı koşuda <c>Info</c>, aksi halde <c>Error</c> döndürmesini
+    /// pinliyordu — sonucu taşıyan şey bir OS glyph'iydi. Kural kullanıcının kararıyla değişti: bildirim artık
+    /// her sonuçta ürünün KENDİ ikonunu (büyük) taşır, çünkü Windows toast'ı zaten ürün adını başlığa yazıyordu
+    /// ve balloon logosuz kalıyordu. Sonuç bundan sonra SÖZCÜKLERDE durur: baş ("Completed" / "▸ Stopped" /
+    /// "Run failed") başlıkta, sayılar gövdede.</para>
     ///
     /// <para>Kural <see cref="AppTrayIcon"/>'un içinde SAF bir metot olarak durur çünkü sınıfın kendisi
     /// kurulamaz: ctor'u gerçek bir <c>TaskbarIcon</c> yaratır (headless süitte tepsi yoktur). Pin bu yüzden
     /// eşlemenin kendisine kurulur — plandaki "sarılamıyorsa çağıran koda kur" maddesinin karşılığı.</para></summary>
     [Theory]
-    [InlineData(true, NotificationIcon.Info)]
-    [InlineData(false, NotificationIcon.Error)]
-    public void Tray_icon_run_finished_notification_uses_info_or_error(bool healthy, NotificationIcon expected)
-        => Assert.Equal(expected, AppTrayIcon.RunFinishedIcon(healthy));
+    [InlineData("Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s",
+                "Completed", "3 failed · 24 succeeded · 9 skipped · 1m 12s")]
+    [InlineData("Run failed — MSBuild not found", "Run failed", "MSBuild not found")]
+    public void Tray_icon_run_finished_notification_splits_the_line_into_a_title_and_a_body(
+        string text, string expectedTitle, string expectedBody)
+    {
+        var line = new RibbonLine(text, "Brush.StatusFailText", RibbonLine.FailedGlyph);
+
+        Assert.Equal(expectedTitle, AppTrayIcon.RunFinishedTitle(line));
+        Assert.Equal(expectedBody, AppTrayIcon.RunFinishedBody(line));
+    }
+
+    /// <summary>Başı OLMAYAN satır (motor ölümü) ürün adının ALTINA, bütün hâlinde yazılır — uydurulmuş bir
+    /// başlık satırın söylemediği bir şeyi söylerdi, cümleyi kırpmak ise bilgiyi yok ederdi.</summary>
+    [Fact]
+    public void A_line_without_a_head_falls_back_to_the_product_name_over_the_whole_line()
+    {
+        var line = new RibbonLine("Engine stopped unexpectedly (exit 1)", "Brush.StatusFailText",
+            RibbonLine.FailedGlyph);
+
+        Assert.Equal(AppIdentity.Product, AppTrayIcon.RunFinishedTitle(line));
+        Assert.Equal("Engine stopped unexpectedly (exit 1)", AppTrayIcon.RunFinishedBody(line));
+    }
 
     /// <summary>
     /// [Ö4/K-2] Bildirime (balloon) tıklamak da pencereyi tepsi ikonuyla AYNI yoldan getirir — ikinci bir
@@ -241,8 +265,8 @@ public sealed class TrayIndicatorBinderTests
     ///
     /// <para>Kural <see cref="AppTrayIcon"/>'un KAYNAĞINDA pinlenir çünkü sınıfın kendisi kurulamaz: ctor'u
     /// gerçek bir <c>TaskbarIcon</c> yaratır (headless süitte tepsi yoktur) — komşusu
-    /// <see cref="Tray_icon_run_finished_notification_uses_info_or_error"/>'daki <c>RunFinishedIcon</c> pininin
-    /// AYNI gerekçesi. Pin kabloyu ÇALIŞTIRMAZ, METNİNİ arar; kablo silinir ya da başka bir olaya taşınırsa
+    /// <see cref="Tray_icon_run_finished_notification_splits_the_line_into_a_title_and_a_body"/>'deki
+    /// başlık/gövde pininin AYNI gerekçesi. Pin kabloyu ÇALIŞTIRMAZ, METNİNİ arar; kablo silinir ya da başka bir olaya taşınırsa
     /// regex hiç eşleşmez ve test kırmızıya döner.</para></summary>
     [Fact]
     public void Clicking_a_balloon_takes_the_same_restore_path_as_the_tray_icon()

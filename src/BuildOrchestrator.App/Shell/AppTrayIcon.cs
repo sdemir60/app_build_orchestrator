@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.ViewModels;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
 
@@ -16,15 +17,33 @@ namespace BuildOrchestrator.App.Shell;
 /// küçültülmesi amber "D"yi bozar (feasibility §3.2). [T64] Çok boyutlu <c>app-icon.ico</c> (pencere/taskbar)
 /// artık var ama tepsi BİLEREK 16px varyantında kalır: tepsi zaten 16px ister ve elle ayarlanmış kare
 /// rasterlestirilmiş olandan nettir.</para>
+///
+/// <para><b>Balloon ikonu ayrıdır:</b> koşu sonucu bildirimi <c>app-icon.ico</c>'nun BÜYÜK karesini taşır
+/// (<see cref="LargeIconPx"/>). Bildirim penceresi tepsi kutucuğundan çok daha geniştir; oraya 16px raster
+/// koymak ikonu bulanıklaştırır.</para>
 /// </summary>
 internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 {
     private const string IconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/tray-icon-16.ico";
 
+    /// <summary>Çok boyutlu uygulama ikonu — balloon'un büyük ikonu buradan gelir (pencere/taskbar da aynı
+    /// dosyayı kullanır, bkz. <c>MainWindow.xaml</c>).</summary>
+    private const string AppIconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico";
+
+    /// <summary>Windows'un "large icon" balloon'unda gösterdiği kare. <c>app-icon.ico</c> bu kareyi gerçekten
+    /// taşır (<c>IconGeometryTests</c> 16/24/32/48/256'yı pinler), yani ölçekleme yapılmaz.</summary>
+    private const int LargeIconPx = 48;
+
     private readonly TaskbarIcon _icon;
+
+    /// <summary>Bildirimin büyük ikonu — bir KEZ yüklenir ve handle'ı her balloon'a verilir; her bildirimde
+    /// yeniden çözmek gereksiz GDI nesnesi üretirdi. <see cref="Dispose"/> bırakır.</summary>
+    private readonly System.Drawing.Icon _largeIcon;
 
     public AppTrayIcon()
     {
+        _largeIcon = LoadLargeIcon();
+
         var stop = new MenuItem { Header = "Stop" };
         stop.Click += (_, _) => StopRequested?.Invoke();
         var exit = new MenuItem { Header = "Exit" };
@@ -46,6 +65,16 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         // (ilk-kapanış, ikinci-instance uyarısı, koşu sonucu): ikinci bir restore yolu YAZILMAZ.
         _icon.TrayBalloonTipClicked += (_, _) => RestoreRequested?.Invoke();
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
+    }
+
+    /// <summary>Gömülü <c>app-icon.ico</c>'dan istenen kareyi çözer. <c>System.Drawing.Icon</c> veriyi ctor'da
+    /// kendi içine kopyalar, bu yüzden akış hemen bırakılabilir.</summary>
+    private static System.Drawing.Icon LoadLargeIcon()
+    {
+        var resource = Application.GetResourceStream(new Uri(AppIconUri))
+            ?? throw new InvalidOperationException($"The application icon resource was not found: {AppIconUri}");
+        using var stream = resource.Stream;
+        return new System.Drawing.Icon(stream, new System.Drawing.Size(LargeIconPx, LargeIconPx));
     }
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
@@ -73,22 +102,33 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// <summary>
     /// [tray indicator/K-5] Uygulama TEPSİDEYKEN biten bir koşunun sonucu.
     ///
-    /// <para><paramref name="message"/> yeniden derlenmez — şeridin o anki terminal satırının TA KENDİSİDİR
+    /// <para><paramref name="line"/> yeniden derlenmez — şeridin o anki terminal satırının TA KENDİSİDİR
     /// (<c>RunViewModel.RibbonLine</c>). Kullanıcı pencereyi açtığında şeritte aynı cümleyi görür; iki yüzey
-    /// aynı şeyi söylemek zorundadır.</para>
+    /// aynı şeyi söylemek zorundadır. Bildirim o satırı yalnız İKİYE AYIRIR: başı başlık, geri kalanı gövde.</para>
     ///
     /// <para>Neden <see cref="ShowNotification"/> yeniden kullanılmıyor: o Warning ikonuna SABİTLENMİŞTİR ve
     /// kendi çağıranı (ikinci instance uyarısı) vardır; onu parametreleştirmek mevcut davranışı değiştirirdi.
-    /// Burada ikon sonuca göre seçilir — başarılı bir derlemeye uyarı ikonu koymak yanlış sinyaldir.</para></summary>
-    public void ShowRunFinished(string message, bool healthy) => _icon.ShowNotification(
-        title: AppIdentity.Product,   // [About] ürün adı tek kaynaktan (kopya YASAK)
-        message: message,
-        icon: RunFinishedIcon(healthy));
+    /// Burada ikon HER sonuçta ürünün kendi (büyük) ikonudur — bir OS glyph'i sonucu zaten taşımaz, sonuç
+    /// başlıktaki sözcüktedir ("Completed" / "▸ Stopped" / "Run failed").</para></summary>
+    public void ShowRunFinished(RibbonLine line) => _icon.ShowNotification(
+        title: RunFinishedTitle(line),
+        message: RunFinishedBody(line),
+        icon: NotificationIcon.None,           // yerini büyük ürün ikonu alır
+        customIconHandle: _largeIcon.Handle,
+        largeIcon: true);
 
-    /// <summary>Sonuç → balloon ikonu. Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye
+    /// <summary>Balloon başlığı = satırın BAŞI (<c>"Completed"</c>, <c>"Run failed"</c>); başı olmayan bir
+    /// satırda (motor ölümü) ürün adı. Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye
     /// (<c>TaskbarIcon</c> headless süitte kurulamaz).</summary>
-    internal static NotificationIcon RunFinishedIcon(bool healthy) =>
-        healthy ? NotificationIcon.Info : NotificationIcon.Error;
+    internal static string RunFinishedTitle(RibbonLine line) => line.Head ?? AppIdentity.Product;
 
-    public void Dispose() => _icon.Dispose();
+    /// <summary>Balloon gövdesi = satırın GERİ KALANI; başı olmayan bir satırda satırın tamamı (ürün adının
+    /// altında). Bkz. <see cref="RunFinishedTitle"/>.</summary>
+    internal static string RunFinishedBody(RibbonLine line) => line.Detail ?? line.Text;
+
+    public void Dispose()
+    {
+        _icon.Dispose();
+        _largeIcon.Dispose();
+    }
 }
