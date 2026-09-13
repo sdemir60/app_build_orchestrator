@@ -64,7 +64,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [ObservableProperty] private bool _isRunTarget;
 
     /// <summary>[Harici projeler] Bu satır ana repo DIŞINDAN gelen bir projeyi mi anlatıyor —
-    /// <see cref="ProjectNode.ExternalVcs"/>'ten topoloji uzlaştırmasında taşınır ve satır ömrü boyunca
+    /// <see cref="ProjectNode.IsExternal"/>'den topoloji uzlaştırmasında taşınır ve satır ömrü boyunca
     /// değişmez (kimlik gibi).
     /// <para>Tek görünür sonucu şudur: ana reponun hedef commit'i bu satıra İTİLMEZ. O sha başka bir repoyu
     /// anlatır ve harici satırın yanında duran bir yalan olurdu.</para></summary>
@@ -77,7 +77,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[T53-UI][W1/It-5] Projenin SON BAŞARIYLA DERLENDİĞİ revizyon. Kaynak
     /// <see cref="BuildPreviewItem.BuiltCommit"/>'tir (yani <c>BuildState.BuiltCommit</c>); hem Sync hem
-    /// run-başı önizlemesinden gelir. Değer HAM'dır (git'te 40-hex, TFVC'de changeset) — kısaltma bir GÖRÜNTÜ
+    /// run-başı önizlemesinden gelir. Değer HAM'dır (40-hex sha) — kısaltma bir GÖRÜNTÜ
     /// kararıdır. <b>Hiç derlenmemiş</b> proje ⇒ <c>null</c> (uydurulmaz).
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.16.0]</b> Bu değer artık SATIRDA GÖSTERİLMEZ; satırın sağ yuvasında
@@ -444,6 +444,29 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[D2/T38] Repo seçili mi (prototip <c>workspace</c>) — şerit "Not ready — no repository selected"
     /// davetini bununla ayırt eder.</summary>
     public bool HasWorkspace => RootPath.Length > 0;
+
+    /// <summary>
+    /// [D2/T38 · tray indicator/K-5] Şeridin O ANKİ tek satırı: metin + brush anahtarı + statü glyph'i.
+    ///
+    /// <para><b>Neden VM'de:</b> bu satırın İKİ tüketicisi var — ekrandaki şerit ve (uygulama tepsideyken)
+    /// koşu bitişini duyuran OS bildirimi. İkincisi için metni yeniden derlemek, aynı cümlenin iki ayrı yerde
+    /// üretilmesi olurdu: biri "3 failed · 24 succeeded" derken diğeri sessizce başka bir şey diyebilirdi.
+    /// Girdilerin hepsi zaten buradaki property'lerdir; satırı da burada üretmek tek doğruluk kaynağı bırakır.
+    /// (Önceden ifade görünümün içinde, <c>StickyRibbon</c>'da yaşıyordu.)</para>
+    ///
+    /// <para><b>PropertyChanged YAYMAZ</b> ve yaymamalıdır: değeri besleyen on kadar property'nin her biri zaten
+    /// kendi bildirimini yapar; tüketiciler onları dinleyip bunu okur. Ayrı bir bildirim, aynı değişimin ikinci
+    /// kez duyurulması olurdu.</para>
+    ///
+    /// <para><b>Bilinen boşluk (kablo):</b> <c>warnings: 0</c> — App derleyici-warning sayısını izlemiyor
+    /// (<c>RunCompletedEvent</c> taşımıyor). Satır bu yüzden " · N warnings" ekini hiç üretmez.</para></summary>
+    public RibbonLine RibbonLine => RibbonText.Compose(
+        Phase, HasWorkspace, AllClean, Counters,
+        WillBuildCount, FinishedOfWillBuild, Counters.Total,
+        ElapsedMs, EtaMs, checkDurMs: ElapsedMs, warnings: 0,
+        engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
+        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage,
+        resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
@@ -865,7 +888,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// koreografisinin ("neon tutuşma") kapsamı. Atlananlar ve dokunulmayanlar BURADA DEĞİLDİR: onlar
     /// koreografinin son adımında hep birlikte belirginleşir.</summary>
     public IReadOnlyList<string> BuiltInThisRun() =>
-        [.. Projects.Where(r => r.State is ProjectRowState.Succeeded or ProjectRowState.Failed).Select(r => r.Name)];
+        [.. Projects.Where(r => r.State is ProjectRowState.Succeeded or ProjectRowState.Failed).Select(r => r.Id)];
 
     /// <summary>[planlama görünürlüğü] Run dokümanına düşen tek satırlık not: konsol, tıklamanın KALICI
     /// kaydıdır (şerit bir sonraki faz değişiminde üzerine yazar). Motorun planlama adımları hemen ardından
@@ -969,6 +992,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// — bir önceki İŞLEMİN tortusu değildir, ikinci bir clear onu da silerdi
     /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>
     /// bu notun HALA orada olduğunu pinler).</para>
+    ///
+    /// <para><b>Plan yüzeyi ise bayraktan BAĞIMSIZ, her Sync'te düşer</b> — bkz. aşağıdaki
+    /// <see cref="ClearPlanSurface"/> çağrısı. <paramref name="clearBuffers"/> yalnız konsol ve event
+    /// stream'in sorusudur (o ikisinde "bu işlemin ilk satırı kimin" diye bir sahiplik vardır); listenin ve
+    /// grafın böyle bir sahibi yoktur: her Sync topolojiyi baştan hesaplar, dolayısıyla ekranda duran plan
+    /// hangi yoldan gelinirse gelinsin o an geçersizdir.</para>
     /// </summary>
     private async Task SyncCoreAsync(bool clearBuffers)
     {
@@ -982,6 +1011,11 @@ public sealed partial class RunViewModel : ObservableObject
             ClearConsoleForNewOperation();
             ClearStreamForNewOperation();
         }
+        // [kullanıcı kararı 2026-09-12] Liste ve graf da AYNI karede boşalır — Clean'in birebir simetriği
+        // (bkz. CleanAsync). Gerekçe aynı: ekranda duran plan bu işlemin sonucuyla değişecek, farklı bir anda
+        // düşerse tek işlem iki sarsıntı gibi görünür (konsol anında boşalıp liste bayat kalıyordu). Geri
+        // getiren şey Sync'in kendi yayınladığı topolojidir (OnWorkspaceTopology).
+        ClearPlanSurface();
         SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
         CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
@@ -1038,7 +1072,8 @@ public sealed partial class RunViewModel : ObservableObject
         ClearStreamForNewOperation();
         // [kullanıcı kararı 2026-09-12] Liste ve graf da AYNI karede boşalır: çıktılar siliniyor, ekranda duran
         // kararlar/statüler/düğümler o an geçersizdir. Farklı bir anda düşerlerse tek işlem iki sarsıntı gibi
-        // görünür. Geri getiren şey bitişteki Sync'tir (OnCleanCompletedAsync).
+        // görünür. Geri getiren şey bitişteki Sync'tir (OnCleanCompletedAsync). AYNI kural Sync'te de geçerli
+        // (SyncCoreAsync) — iki işlem tek yüzey davranışını paylaşır.
         ClearPlanSurface();
         _cleanStartedAtMs = _nowMs(); // adımın görünür süresi BURADAN sayılır (bkz. CleanMinStepMs)
         SelectedProjectId = null; // seçim temizlenir, filtre KORUNUR (Sync ile aynı davranış)

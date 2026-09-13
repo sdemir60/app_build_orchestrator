@@ -621,7 +621,7 @@ public class IpcMessagesTests
     public void OptimizeWorkspace_roundtrips_with_discriminator()
     {
         var cmd = new OptimizeWorkspaceCommand(@"D:\repo",
-            [new ExternalProject(@"D:\externals\Shared", VcsKind.Git)]);
+            [new ExternalProject(@"D:\externals\Shared")]);
         string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
         Assert.Contains("\"type\":\"optimizeWorkspace\"", json);
         var back = Assert.IsType<OptimizeWorkspaceCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));

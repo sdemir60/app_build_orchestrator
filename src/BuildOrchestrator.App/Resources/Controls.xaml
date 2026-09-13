@@ -675,7 +675,8 @@
   <!--
     [K5 · design v1.14.0 §9] _ds_bundle.js:779-834 (Select.jsx) + :714-728 (inputBase, Select PAYLAŞIR) — DS'in
     `<select>` bileşeni WPF'in native karşılığı olan ComboBox'a port edilir. Uygulamada başka bir ComboBox
-    stili YOK; ilk (ve bugün tek) tüketici Settings'in harici proje kartındaki Source seçimidir (Git/TFVC).
+    stili YOK. Bugün canlı bir tüketicisi de yok: tek tüketici olan Settings'in harici kart "Source" seçimi,
+    TFVC kolu kaldırılınca birlikte kalktı. Stil DS'in Select portu olarak duruyor.
 
     Kutu inputBase ile AYNI kabuktur (height 28, surface-sunken, 1px border-strong, radius-sm, text-primary,
     text-sm) — TEK fark paddingRight 26 (chevron için, :808) ve cursor pointer (:809). Odak halkası Ds.Input'un

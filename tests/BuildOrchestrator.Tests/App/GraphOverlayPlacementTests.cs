@@ -24,7 +24,7 @@ public class GraphOverlayPlacementTests
         // iddiaları onsuz anlamsız olurdu.
         view.Resources.MergedDictionaries.Add(DsResources.Load("Controls.xaml"));
         view.SetGraph(
-            [new(Short, 0, GraphStatus.Succeeded), new(Long, 0, GraphStatus.Succeeded)], []);
+            [new(Short, Short, 0, GraphStatus.Succeeded), new(Long, Long, 0, GraphStatus.Succeeded)], []);
         view.UpdateLayout();
         return view;
     }

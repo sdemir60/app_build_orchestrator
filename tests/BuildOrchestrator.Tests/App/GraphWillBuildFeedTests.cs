@@ -1,4 +1,5 @@
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -21,8 +22,12 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphWillBuildFeedTests
 {
+    // NodeVisuals proje Id'siyle anahtarlanır (ad benzersiz değildir) — fixture'ın Id kuralı MainWindowHost'ta.
+    private static GraphNodeVisual VisualOf(MainWindow window, string name) =>
+        window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf(name)];
+
     private static System.Windows.Media.Color CoreColour(MainWindow window, string name) =>
-        DsResources.ColorOf(window.Shell.GraphHost.NodeVisuals[name].Icon.Stroke);
+        DsResources.ColorOf(VisualOf(window, name).Icon.Stroke);
 
     [StaFact]
     public void A_build_preview_after_sync_leaves_every_cube_neutral_because_sync_shows_no_plan()
@@ -40,7 +45,7 @@ public class GraphWillBuildFeedTests
         // Plan bilinse bile RENK yok: ikisi de başlangıç modunun nötr küpünü taşır.
         Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Dirty"));
         Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Clean"));
-        Assert.NotEmpty(window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray); // kesikli = fresh
+        Assert.NotEmpty(VisualOf(window, "Dirty").Square.StrokeDashArray); // kesikli = fresh
     }
 
     /// <summary>Bir işlem başlayınca başlangıç modu DÜŞER ve bu graf'a ULAŞIR: kesikli çerçeve düze döner.
@@ -51,14 +56,14 @@ public class GraphWillBuildFeedTests
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
         var content = MainWindowHost.Realize(window);
-        Assert.NotEmpty(window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray); // ön-koşul
+        Assert.NotEmpty(VisualOf(window, "Dirty").Square.StrokeDashArray); // ön-koşul
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
         content.UpdateLayout();
 
         DispatcherPump.PumpUntil(
-            () => window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray.Count == 0,
+            () => VisualOf(window, "Dirty").Square.StrokeDashArray.Count == 0,
             TimeSpan.FromSeconds(3));
-        Assert.Empty(window.Shell.GraphHost.NodeVisuals["Dirty"].Square.StrokeDashArray);
+        Assert.Empty(VisualOf(window, "Dirty").Square.StrokeDashArray);
     }
 }

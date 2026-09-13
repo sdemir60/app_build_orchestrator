@@ -13,6 +13,7 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Processes;
@@ -37,13 +38,16 @@ public partial class MainWindow : Window
     private readonly FirstCloseBalloonGate _closeBalloon;
     private AppTrayIcon? _tray;
     private HotkeyRegistration? _hotkey;
+
+    // [tray indicator] Tepsideyken koşan derlemenin göstergesi. Overlay penceresi LAZY yaratılır: kullanıcı
+    // uygulamayı hiç tepsiye indirmeden kullanabilir ve o zaman bir HWND'e hiç ödeme yapılmaz.
+    private TrayBuildOverlayWindow? _trayOverlay;
+    private TrayBuildIndicatorController? _trayIndicator;
     private bool _exiting; // tepsi Exit'i (gerçek çıkış) ile X'i (tepsiye küçült) ayıran TEK bayrak
 
     // [D5/T50] Graf ↔ VM köprüsü. GraphView düğümleri AD ile anahtarlar, VM seçimi ID (yol) ile; iki yönlü ad↔id
     // haritası topoloji değişince yeniden kurulur. _suppressGraphSelection: VM→view seçim itişinin GraphView'de
     // uyandırdığı SelectionChanged echo'sunu view→VM dalında yok sayar (aksi halde döngü seçimi geri alırdı).
-    private readonly Dictionary<string, string> _graphIdByName = new(StringComparer.Ordinal);          // Ad → Id
-    private readonly Dictionary<string, string> _graphNameById = new(StringComparer.OrdinalIgnoreCase); // Id → Ad
     private bool _suppressGraphSelection;
 
     // [E4/T48] Üç panelin auto-scroll'unu hakem eden merkezi arbiter (frontier follow'u seçime göre gate eder;
@@ -653,19 +657,14 @@ public partial class MainWindow : Window
     // ==================================== [D5/T50] Graf beslemesi ====================================
 
     /// <summary>[D5] Topoloji değişince grafı YENİDEN kurar (<see cref="Graph.GraphView.SetGraph"/> = tam inşa +
-    /// reveal stagger). Ad↔Id haritası tazelenir; <c>SetGraph</c> düğüm statülerini zaten uygular (GraphNode.Status
-    /// GraphBinder'dan gelir) → ayrıca UpdateStatuses gerekmez. Settled durumu + mevcut seçim de yansıtılır.</summary>
+    /// reveal stagger). <c>SetGraph</c> düğüm statülerini zaten uygular (GraphNode.Status GraphBinder'dan gelir)
+    /// → ayrıca UpdateStatuses gerekmez. Settled durumu + mevcut seçim de yansıtılır.
+    /// <para>Ad↔Id çeviri haritası YOKTUR: graf düğümleri proje Id'siyle anahtarlanır (bkz.
+    /// <see cref="Graph.GraphNode"/>), dolayısıyla VM seçimi doğrudan geçer. Harita ada göreydi ve aynı adlı
+    /// iki proje varken biri diğerini eziyordu.</para></summary>
     private void RebuildGraph()
     {
         var topology = _vm.Topology;
-        _graphIdByName.Clear();
-        _graphNameById.Clear();
-        foreach (var node in topology)
-        {
-            _graphIdByName[node.Name] = node.Id;
-            _graphNameById[node.Id] = node.Name;
-        }
-
         Shell.GraphHost.SetGraph(GraphBinder.Nodes(topology, RowsById()), GraphBinder.Edges(topology));
         PushGraphRunPhase();  // koşarken soluk/parlak sistemi, boşta tümü tam opak (design v1.3.0 §2.3)
         PushGraphSelection(); // mevcut seçim taze grafa yansısın
@@ -679,9 +678,9 @@ public partial class MainWindow : Window
     /// olmazsa graf ancak koşu tikinin (200ms) insafıyla tazelenir — 36 projede tempo ~31ms/node olduğu için
     /// dalga listede akıcı, grafta kesik kesik görünür. Tasarım ikisinin SENKRON olmasını ister (§9-4).</para>
     /// </summary>
-    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedNames)
+    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedProjectIds)
     {
-        Shell.GraphHost.SetMarking(step, markedNames);
+        Shell.GraphHost.SetMarking(step, markedProjectIds);
         PushGraphStatuses();
     }
 
@@ -712,24 +711,23 @@ public partial class MainWindow : Window
         return dict;
     }
 
-    /// <summary>[D5] VM seçimini (Id) grafa (AD) iter. Echo koruması: itiş sırasında GraphView SelectionChanged
-    /// yayınlar → <see cref="OnGraphSelectionChanged"/> bunu bayrakla yok sayar (aksi halde SelectProject toggle'ı
-    /// seçimi geri alırdı).</summary>
+    /// <summary>[D5] VM seçimini grafa iter — ikisi de proje Id'si kullandığı için çeviri YOK. Echo koruması:
+    /// itiş sırasında GraphView SelectionChanged yayınlar → <see cref="OnGraphSelectionChanged"/> bunu bayrakla
+    /// yok sayar (aksi halde SelectProject toggle'ı seçimi geri alırdı).</summary>
     private void PushGraphSelection()
     {
-        string? name = _vm.SelectedProjectId is { } id && _graphNameById.TryGetValue(id, out var n) ? n : null;
         _suppressGraphSelection = true;
-        try { Shell.GraphHost.SelectedNode = name; }
+        try { Shell.GraphHost.SelectedNode = _vm.SelectedProjectId; }
         finally { _suppressGraphSelection = false; }
     }
 
-    /// <summary>[D5] Graf seçimi (AD; boşluğa tıklama = null) → VM seçimi (Id). Kendi push'umuzun echo'su
-    /// (<see cref="_suppressGraphSelection"/>) yok sayılır.</summary>
-    private void OnGraphSelectionChanged(object? sender, string? name)
+    /// <summary>[D5] Graf seçimi (proje Id'si; boşluğa tıklama = null) → VM seçimi. İki taraf AYNI kimliği
+    /// kullandığı için çeviri yoktur. Kendi push'umuzun echo'su (<see cref="_suppressGraphSelection"/>) yok
+    /// sayılır.</summary>
+    private void OnGraphSelectionChanged(object? sender, string? projectId)
     {
         if (_suppressGraphSelection) return;
-        string? id = name is { } nm && _graphIdByName.TryGetValue(nm, out var i) ? i : null;
-        _vm.SelectProject(id);
+        _vm.SelectProject(projectId);
     }
 
     /// <summary>[D5] VM sinyalleri → graf: statü tikleri (Counters), run başlangıç/bitiş (RunPhase + statü),
@@ -936,7 +934,7 @@ public partial class MainWindow : Window
     {
         bool filtering = _vm.ActiveFilters.Count > 0 || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
         Shell.GraphHost.FilterMatches = filtering
-            ? _vm.VisibleProjects.Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
+            ? _vm.VisibleProjects.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
             : null;
     }
 
@@ -1011,12 +1009,82 @@ public partial class MainWindow : Window
         _tray.StopRequested += () => { if (_vm.StopCommand.CanExecute(null)) _vm.StopCommand.Execute(null); };
         _tray.ExitRequested += ExitApplication;
 
+        SetUpTrayBuildIndicator(_tray);
+
         HwndSource.FromHwnd(hwnd)!.AddHook(HotkeyWndProc);
 
         // [v7Δ-5] Alt+B (ayarlanabilir) — çakışmada SESSİZ devre dışı.
         if (!HotkeyBinding.TryParse(_uiState.Load().Hotkey, out var binding))
             HotkeyBinding.TryParse(HotkeyBinding.DefaultGesture, out binding);
         _hotkey = HotkeyRegistration.Register(hwnd, GlobalHotkeyId, binding);
+    }
+
+    // ==================================== Tepsi build göstergesi ====================================
+
+    /// <summary>
+    /// [tray indicator/K-12] Göstergeyi kurar: karar controller'da, çizim overlay penceresinde, bildirim
+    /// tepsi ikonunda. Burada yalnız üçünü birbirine bağlarız.
+    ///
+    /// <para>Kurulum tepsi ikonunun YANINDA durur çünkü ikisi aynı şeyin parçasıdır: uygulama tepsideyken
+    /// nasıl görünür ve nasıl konuşur. Autostart yolu (<see cref="StartInTray"/>) da kendiliğinden kapsanır —
+    /// pencere hiç gösterilmediği için <c>IsVisibleChanged</c> hiç "görünür" demez ve ilk koşuda gösterge
+    /// doğru şekilde tepside belirir.</para></summary>
+    private void SetUpTrayBuildIndicator(ITrayRunNotifier notifier)
+    {
+        var controller = new TrayBuildIndicatorController(new LazyOverlayView(this), notifier)
+        {
+            // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
+            // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
+            ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
+        };
+        _trayIndicator = controller;
+
+        controller.SetAnimationsEnabled(MotionGate.StaticAnimationsEnabled);
+        if (App.Motion is { } motion) motion.AnimationsEnabledChanged += OnTrayIndicatorMotionChanged;
+
+        // Pencerenin görünürlüğü göstergenin var olma koşulunun yarısıdır (diğer yarısı faz).
+        IsVisibleChanged += (_, _) => controller.SetMainWindowVisible(IsVisible);
+        controller.SetMainWindowVisible(IsVisible);
+
+        TrayIndicatorBinder.Attach(_vm, controller);
+    }
+
+    /// <summary>[K-11] OS ayarı koşu SIRASINDA değişebilir — değer her seferinde TAZE okunur.</summary>
+    private void OnTrayIndicatorMotionChanged(object? sender, EventArgs e) =>
+        _trayIndicator?.SetAnimationsEnabled(MotionGate.StaticAnimationsEnabled);
+
+    /// <summary>Overlay penceresini ilk gerçek gösterimde yaratır ve geri getirme yolunu tepsi ikonuyla AYNI
+    /// handler'a bağlar (ikinci bir restore yolu yazılmaz).</summary>
+    private TrayBuildOverlayWindow EnsureTrayOverlay()
+    {
+        if (_trayOverlay is not null) return _trayOverlay;
+        _trayOverlay = new TrayBuildOverlayWindow();
+        _trayOverlay.RestoreRequested += ShowFromTray;
+        return _trayOverlay;
+    }
+
+    /// <summary>
+    /// Controller'ın gördüğü view — overlay penceresini GEREKTİĞİNDE yaratır.
+    ///
+    /// <para>Gizleme/sayaç/çıkış fiilleri pencere yoksa sessizce düşer: gösterilmemiş bir göstergeyi gizlemek
+    /// ya da sayacını güncellemek anlamsızdır ve bunun için HWND yaratmak saçma olurdu. Tek istisna
+    /// <see cref="BeginExit"/>'tir — controller orada bir CEVAP bekler; pencere yoksa oynatılacak çıkış evresi
+    /// de yoktur, o yüzden hemen bitmiş sayılır (aksi halde bildirim sonsuza dek beklerdi).</para></summary>
+    private sealed class LazyOverlayView(MainWindow owner) : ITrayBuildIndicatorView
+    {
+        public void ShowLoop() => owner.EnsureTrayOverlay().ShowLoop();
+
+        public void ShowStatic() => owner.EnsureTrayOverlay().ShowStatic();
+
+        public void UpdateCounter(int done, int total) => owner._trayOverlay?.UpdateCounter(done, total);
+
+        public void BeginExit(Action onFinished)
+        {
+            if (owner._trayOverlay is { } overlay) overlay.BeginExit(onFinished);
+            else onFinished();
+        }
+
+        public void HideNow() => owner._trayOverlay?.HideNow();
     }
 
     /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir.</summary>
@@ -1089,6 +1157,9 @@ public partial class MainWindow : Window
         if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
         _hotkey?.Dispose();
         _tray?.Dispose();
+        // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
+        if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
+        _trayOverlay?.Close();
         base.OnClosed(e);
     }
 

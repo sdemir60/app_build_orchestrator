@@ -258,7 +258,7 @@ public class SettingsDialogFocusTests
     public void External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_a_96px_source_select()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.ExternalProjects =
-            [new ExternalProject(@"C:\a", VcsKind.Git), new ExternalProject(@"C:\b", VcsKind.Tfvc)]);
+            [new ExternalProject(@"C:\a"), new ExternalProject(@"C:\b")]);
         using var _scope = scope;
 
         var draft = (SettingsDraftViewModel)dialog.DataContext;
@@ -277,13 +277,13 @@ public class SettingsDialogFocusTests
         var grip = DsResources.Descendants(card0).OfType<Border>().Single(b => DragReorderBehavior.GetIsDragHandle(b));
         Assert.Equal("Drag to reorder", ((ToolTip)grip.ToolTip).Content);
 
-        var select = DsResources.Descendants(card0).OfType<ComboBox>().Single();
-        Assert.Equal(96.0, select.Width);
-        Assert.Equal(96.0, select.ActualWidth);
-        Assert.Equal(AccessibilityNames.ExternalProjectSource, AutomationProperties.GetName(select));
+        // [DEĞİŞEN KURAL] Kartta eskiden 96px'lik bir Source (Git/TFVC) ComboBox'ı vardı ve genişliği + UIA
+        // adı burada pinliydi. TFVC kolu kaldırıldı: kartta artık HİÇ ComboBox yok, path input'u tüm genişliği
+        // alır. Yokluk da bir iddiadır — aksi halde ölü bir seçim yüzeyi sessizce geri gelebilirdi.
+        Assert.Empty(DsResources.Descendants(card0).OfType<ComboBox>());
 
-        // [review fix — küçük madde 3] Path input'unun UIA adı da doğrulanır (Source'unki gibi) — yalnız
-        // watermark'ın "doğru göründüğü" değil, AutomationProperties.Name'in GERÇEKTEN o sabite ÇÖZÜLDÜĞÜ.
+        // Path input'unun UIA adı: yalnız watermark'ın "doğru göründüğü" değil, AutomationProperties.Name'in
+        // GERÇEKTEN o sabite ÇÖZÜLDÜĞÜ.
         var pathInput = DsResources.Descendants(card0).OfType<TextBox>().Single();
         Assert.Equal(AccessibilityNames.ExternalProjectPath, AutomationProperties.GetName(pathInput));
     }

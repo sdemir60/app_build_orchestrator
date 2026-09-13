@@ -35,25 +35,21 @@ public class ExternalRevisionReaderTests
 
     /// <summary>
     /// TFVC kökünün revizyonu YALNIZ güncelleme adımından gelebilir: changeset sorgusu sunucuya gider ve
-    /// planlama ağa bağlanmamalıdır. Güncelleme kapalıyken TFVC kökleri revizyonsuz kalır.
+    /// planlama ağa bağlanmamalıdır.
+    ///
+    /// <para><b>Eski iddia:</b> bu test <c>$tf</c> işaretli bir TFVC kökünün yerelden OKUNAMADIĞINI ve
+    /// revizyonunun YALNIZ güncelleme adımından (<c>C</c> önekli changeset) gelebildiğini pinliyordu. TFVC kolu
+    /// kaldırıldı; kuralın hayatta kalan yarısı şudur: çalışma kopyası HİÇ yoksa yerel okuma da yoktur, ama
+    /// güncelleme adımı bir revizyon okuduysa o yine dağıtılır.</para>
     /// </summary>
     [Fact]
-    public async Task A_tfvc_root_has_no_revision_unless_the_update_step_read_one()
+    public async Task A_root_without_a_working_copy_has_no_revision_unless_the_update_step_read_one()
     {
         using var temp = new TempDir();
-        Directory.CreateDirectory(Path.Combine(temp.Path, "$tf"));
         string csproj = WriteProject(Path.Combine(temp.Path, "Ocr"), "Ocr");
-        var workspace = Resolve(new ExternalProject(temp.Path, VcsKind.Tfvc));
+        var workspace = Resolve(new ExternalProject(temp.Path));
 
         Assert.Empty(await ReadAsync(workspace));
-
-        var fromUpdate = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
-        {
-            [temp.Path] = "C48213",
-        };
-        var merged = await new ExternalRevisionReader(new ProcessRunner()).ReadAsync(workspace.Roots, fromUpdate);
-
-        Assert.Equal("C48213", merged[csproj]);
     }
 
     /// <summary>Aynı koşuda güncelleme yapılmışsa o okuma yeğlenir — güncellemeden SONRAKİ hâli anlatır.</summary>
@@ -63,7 +59,7 @@ public class ExternalRevisionReaderTests
         using var repo = new GitTestRepo();
         string csproj = WriteProject(Path.Combine(repo.RootPath, "Mail"), "Mail");
         repo.CommitAll("first");
-        var workspace = Resolve(new ExternalProject(repo.RootPath, VcsKind.Git));
+        var workspace = Resolve(new ExternalProject(repo.RootPath));
 
         var fromUpdate = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
         {
@@ -82,7 +78,7 @@ public class ExternalRevisionReaderTests
         string ocr = WriteProject(Path.Combine(repo.RootPath, "Ocr"), "Ocr");
         string head = repo.CommitAll("first");
 
-        var revisions = await ReadAsync(Resolve(new ExternalProject(repo.RootPath, VcsKind.Git)));
+        var revisions = await ReadAsync(Resolve(new ExternalProject(repo.RootPath)));
 
         Assert.Equal(head, revisions[mail]);
         Assert.Equal(head, revisions[ocr]);   // tek çalışma kopyası → tek revizyon
@@ -96,7 +92,7 @@ public class ExternalRevisionReaderTests
         string head = repo.CommitAll("first");
 
         // Kart doğrudan .csproj'u gösteriyor; kök yukarı yürünerek bulunur.
-        var revisions = await ReadAsync(Resolve(new ExternalProject(csproj, VcsKind.Git)));
+        var revisions = await ReadAsync(Resolve(new ExternalProject(csproj)));
 
         Assert.Equal(head, revisions[csproj]);
     }
@@ -110,7 +106,7 @@ public class ExternalRevisionReaderTests
         Directory.CreateDirectory(Path.Combine(temp.Path, "$tf"));
         WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
 
-        var revisions = await ReadAsync(Resolve(new ExternalProject(temp.Path, VcsKind.Tfvc)));
+        var revisions = await ReadAsync(Resolve(new ExternalProject(temp.Path)));
 
         Assert.Empty(revisions);
     }
@@ -121,7 +117,7 @@ public class ExternalRevisionReaderTests
         using var temp = new TempDir();
         WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
 
-        var revisions = await ReadAsync(Resolve(new ExternalProject(temp.Path, VcsKind.Git)));
+        var revisions = await ReadAsync(Resolve(new ExternalProject(temp.Path)));
 
         Assert.Empty(revisions);
     }
@@ -137,7 +133,7 @@ public class ExternalRevisionReaderTests
         string secondHead = second.CommitAll("second");
 
         var revisions = await ReadAsync(Resolve(
-            new ExternalProject(first.RootPath, VcsKind.Git), new ExternalProject(second.RootPath, VcsKind.Git)));
+            new ExternalProject(first.RootPath), new ExternalProject(second.RootPath)));
 
         Assert.Equal(firstHead, revisions[mail]);
         Assert.Equal(secondHead, revisions[ocr]);

@@ -22,7 +22,7 @@ namespace BuildOrchestrator.Tests.App;
 public class GraphRunLifecycleTests(ITestOutputHelper output)
 {
     private static IReadOnlyList<GraphNode> Nodes(GraphStatus baseStatus, GraphStatus dataStatus) =>
-        [new("OSYS.Base", 0, baseStatus), new("OSYS.Data", 1, dataStatus)];
+        [new("OSYS.Base", "OSYS.Base", 0, baseStatus), new("OSYS.Data", "OSYS.Data", 1, dataStatus)];
 
     private static GraphView Running(bool animations = true)
     {
@@ -97,7 +97,7 @@ public class GraphRunLifecycleTests(ITestOutputHelper output)
     {
         var view = Running();
 
-        view.UpdateStatuses([new("OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", 1, GraphStatus.Discovered)]);
+        view.UpdateStatuses([new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Discovered)]);
 
         var animation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf("OSYS.Data"));
         Assert.Equal(TimeSpan.Zero, animation.BeginTime); // bekleme YOK

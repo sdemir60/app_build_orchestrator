@@ -4,7 +4,8 @@ namespace BuildOrchestrator.App.Graph;
 
 /// <summary>[quiet] Yerleşim sonucu: düğüm MERKEZLERİ (ad → İÇERİK koordinatında nokta) + o yerleşimin
 /// seçtiği pitch, düğüm kenarı ve sütun sayısı.</summary>
-/// <param name="Positions">Ad → merkez. Koordinatlar İÇERİK kutusuna göredir; çizim tarafı
+/// <param name="Positions">Düğüm Id'si → merkez (ad DEĞİL: ad benzersiz değildir, bkz. <see cref="GraphNode"/>).
+/// Koordinatlar İÇERİK kutusuna göredir; çizim tarafı
 /// <see cref="QuietGraphLayout.ContentInset"/> kadar ötelenir.</param>
 public readonly record struct QuietLayoutResult(
     IReadOnlyDictionary<string, Point> Positions,
@@ -90,7 +91,8 @@ public static class QuietGraphLayout
     {
         ArgumentNullException.ThrowIfNull(nodes);
 
-        var positions = new Dictionary<string, Point>(nodes.Count, StringComparer.Ordinal);
+        // Anahtar düğüm Id'sidir (bir Windows yolu) → harf-duyarsız karşılaştırma.
+        var positions = new Dictionary<string, Point>(nodes.Count, StringComparer.OrdinalIgnoreCase);
         if (nodes.Count == 0) return new QuietLayoutResult(positions, MinPitch, MinNodeSize, 1);
 
         // Bantlar KATMAN sırasına göre (besleme sırası bir bant sırası vaadi değildir); bant İÇİNDE giriş
@@ -99,7 +101,7 @@ public static class QuietGraphLayout
         foreach (var node in nodes)
         {
             if (!byLayer.TryGetValue(node.Layer, out var band)) byLayer[node.Layer] = band = [];
-            band.Add(node.Name);
+            band.Add(node.Id);
         }
         var bands = byLayer.Values.ToList();
 
@@ -135,10 +137,10 @@ public static class QuietGraphLayout
         }
         double shiftX = content.Width / 2 - (x0 + x1) / 2;
         double shiftY = content.Height / 2 - (y0 + y1) / 2;
-        foreach (string name in positions.Keys.ToList())
+        foreach (string id in positions.Keys.ToList())
         {
-            var point = positions[name];
-            positions[name] = new Point(point.X + shiftX, point.Y + shiftY);
+            var point = positions[id];
+            positions[id] = new Point(point.X + shiftX, point.Y + shiftY);
         }
 
         return new QuietLayoutResult(

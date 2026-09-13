@@ -241,7 +241,7 @@ public class SuccessFlourishTests
     {
         var view = NewGraphView();
         view.SetGraph(
-            [new("OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", 1, GraphStatus.Queued)],
+            [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Queued)],
             [new("OSYS.Base", "OSYS.Data")]);
 
         // non-vacuous: building düğümün beads yörüngesi GERÇEKTEN döner.
@@ -250,7 +250,7 @@ public class SuccessFlourishTests
         Assert.True(view.NodeVisuals["OSYS.Base"].BeadsVisible);
         Assert.NotNull(view.BeadsClock);
 
-        view.UpdateStatuses([new("OSYS.Base", 0, GraphStatus.Succeeded), new("OSYS.Data", 1, GraphStatus.Succeeded)]);
+        view.UpdateStatuses([new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Succeeded), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Succeeded)]);
         view.HandleBeadsSpindownTick(); // §2.3: saat bitişten 700ms sonra bırakılır
 
         Assert.Null(view.BeadsClock);                                       // saat bırakıldı…

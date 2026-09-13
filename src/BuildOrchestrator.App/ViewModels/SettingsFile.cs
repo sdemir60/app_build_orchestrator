@@ -41,7 +41,7 @@ public sealed class SettingsFile
     /// <para><b>KASITLI OLARAK <c>null</c> BAŞLAR</b> (Layers'ın aksine bir <c>= []</c> başlatıcısı YOK):
     /// "dosyada anahtar hiç yok" (null) ile "anahtar var ama dizi BOŞ" (<c>[]</c>) ayrımı taşınmak ZORUNDADIR —
     /// <see cref="SettingsDraftViewModel.LoadFrom"/> yalnız BİRİNCİSİNDE mevcut taslağı korur. Eleman biçimi
-    /// TOLERANSLIDIR: nesne (<c>{path, vcs}</c>) YA DA düz bir string (yalnız path) — bkz.
+    /// TOLERANSLIDIR: nesne (<c>{path}</c>) YA DA düz bir string (yalnız path) — bkz.
     /// <see cref="ExternalProjectListConverter"/>.</para></summary>
     [JsonPropertyName("externalProjects")]
     [JsonConverter(typeof(ExternalProjectListConverter))]
@@ -77,7 +77,7 @@ public sealed class SettingsFile
             // sırası JSON çıktısını ETKİLEMEZ (System.Text.Json BİLDİRİM sırasını yazar), ama okunurluk için
             // sınıftaki alan sırasıyla AYNI tutulur — iki sıra sessizce ayrışmasın.
             ExternalProjects = externals is null ? null
-                : [.. externals.Select(e => new SettingsFileExternal { Path = e.Path, Vcs = VcsKinds.Label(e.Vcs) })],
+                : [.. externals.Select(e => new SettingsFileExternal { Path = e.Path })],
             Layers = [.. layers.OrderBy(l => l.Order).Select(l => new SettingsFileLayer { Name = l.Name, Pattern = l.Regex })],
         };
     }
@@ -131,27 +131,25 @@ public sealed class SettingsFileLayer
     [JsonPropertyName("pattern")] public string Pattern { get; set; } = "";
 }
 
-/// <summary>[K5 · design v1.14.0 §9] Dosyadaki tek harici proje: <c>{ path, vcs }</c>. Sıra dizinin KENDİ
-/// sırasıdır (Layer'ın deseniyle AYNI, kopya YASAK — ayrı bir <c>order</c> alanı yazılmaz). <c>Vcs</c> HER ZAMAN
-/// normalize edilmiş biçimde tutulur (<c>"git"</c> ya da <c>"tfvc"</c>) — okuyucu ("yazan") tarafı
-/// <see cref="ExternalProjectListConverter"/>'da, yazan taraf <see cref="SettingsFile.From"/>'dadır.</summary>
+/// <summary>[K5 · design v1.14.0 §9] Dosyadaki tek harici proje: <c>{ path }</c>. Sıra dizinin KENDİ sırasıdır
+/// (Layer'ın deseniyle AYNI, kopya YASAK — ayrı bir <c>order</c> alanı yazılmaz).
+/// <para>[DEĞİŞEN KURAL] Eleman eskiden bir <c>vcs</c> alanı da taşıyordu (<c>"git"</c>/<c>"tfvc"</c>). TFVC
+/// kolu kaldırıldı: anahtar artık YAZILMAZ, eski dosyalarda görülürse OKUNURKEN YOK SAYILIR — böylece dışa
+/// aktarılmış eski bir ayar dosyası hâlâ yüklenebilir.</para></summary>
 public sealed class SettingsFileExternal
 {
     [JsonPropertyName("path")] public string Path { get; set; } = "";
-    [JsonPropertyName("vcs")] public string Vcs { get; set; } = "git";
 }
 
 /// <summary>[K5 · design v1.14.0 §9] <c>externalProjects</c> dizisinin TOLERANSLI okuyucusu — prototipin
-/// <c>onFile</c>'ının (BuildApp.jsx:1765-1770) birebir portu: her eleman ya bir NESNE (<c>{path, vcs}</c>) ya da
-/// DÜZ bir STRING (yalnız path) olabilir; eksik/bilinmeyen <c>vcs</c> sessizce <c>"git"</c>'e düşer; boş
-/// (trim sonrası) path'ler ATLANIR.
+/// <c>onFile</c>'ının (BuildApp.jsx:1765-1770) birebir portu: her eleman ya bir NESNE (<c>{path}</c>) ya da
+/// DÜZ bir STRING (yalnız path) olabilir; boş (trim sonrası) path'ler ATLANIR. Nesnedeki tanınmayan alanlar
+/// (eski dosyaların <c>vcs</c>'i dahil) yok sayılır.
 ///
 /// <para><b>Neden düz POCO deserileştirme YETMEZ:</b> System.Text.Json bir dizi elemanı STRING iken hedef tip
 /// bir SINIFSA <see cref="JsonException"/> fırlatır — <see cref="SettingsFile.TryParse"/> bunu yutar ve
-/// GEÇERLİ bir dosya (§9'un açıkça izin verdiği düz-string biçimi) "Invalid settings file" olarak reddedilirdi.
-/// Aynı şekilde bilinmeyen bir <c>vcs</c> değeri (ör. <c>"svn"</c>) düz deserileştirmede OLDUĞU GİBİ kalır —
-/// normalize etmek okuma anında, burada olmalıdır (yazan taraf <see cref="SettingsFile.From"/> zaten normalize
-/// EDİLMİŞ değer üretir; TEK normalize noktası ikiye BÖLÜNMEZ).</para></summary>
+/// GEÇERLİ bir dosya (§9'un açıkça izin verdiği düz-string biçimi) "Invalid settings file" olarak
+/// reddedilirdi.</para></summary>
 internal sealed class ExternalProjectListConverter : JsonConverter<List<SettingsFileExternal>>
 {
     public override List<SettingsFileExternal>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -163,7 +161,6 @@ internal sealed class ExternalProjectListConverter : JsonConverter<List<Settings
         while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
         {
             string path = "";
-            string vcs = "";
             if (reader.TokenType == JsonTokenType.String)
             {
                 path = reader.GetString() ?? ""; // düz string eleman — yalnız path (§9)
@@ -173,7 +170,6 @@ internal sealed class ExternalProjectListConverter : JsonConverter<List<Settings
                 using var element = JsonDocument.ParseValue(ref reader);
                 var root = element.RootElement;
                 if (root.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.String) path = p.GetString() ?? "";
-                if (root.TryGetProperty("vcs", out var v) && v.ValueKind == JsonValueKind.String) vcs = v.GetString() ?? "";
             }
             else
             {
@@ -182,7 +178,7 @@ internal sealed class ExternalProjectListConverter : JsonConverter<List<Settings
             }
 
             if (string.IsNullOrWhiteSpace(path)) continue; // boş path'ler düşer (§9)
-            result.Add(new SettingsFileExternal { Path = path, Vcs = VcsKinds.Label(VcsKinds.Parse(vcs)) });
+            result.Add(new SettingsFileExternal { Path = path });
         }
         return result;
     }
@@ -194,7 +190,6 @@ internal sealed class ExternalProjectListConverter : JsonConverter<List<Settings
         {
             writer.WriteStartObject();
             writer.WriteString("path", item.Path);
-            writer.WriteString("vcs", item.Vcs);
             writer.WriteEndObject();
         }
         writer.WriteEndArray();

@@ -307,13 +307,12 @@ table.
 
 The **external root list** (§10.6) rides on every command that walks the workspace — `startRun`,
 `syncWorkspace`, `cleanWorkspace` and `optimizeWorkspace` — and carries the roots the user listed in Settings.
-Each entry is exactly what a Settings card holds: a path — a folder, a solution or a project file — and the
-source the user picked, Git or TFVC. Everything else about a root (which projects it contains, their names,
-the working-copy root above them) is resolved from that path on every run and therefore can never go stale.
-The field defaults to null, so lines written before external roots existed still parse; the App sends null
-rather than an empty list, so a setup without them writes the same line it always did. One list, one resolver,
-one merged workspace: an external project is an ordinary project, so it is planned, cleaned and repaired with
-the rest.
+Each entry is exactly what a Settings card holds: a path — a folder, a solution or a project file. Everything
+else about a root (which projects it contains, their names, the working-copy root above them) is resolved from
+that path on every run and therefore can never go stale. The field defaults to null, so lines written before
+external roots existed still parse; the App sends null rather than an empty list, so a setup without them
+writes the same line it always did. One list, one resolver, one merged workspace: an external project is an
+ordinary project, so it is planned, cleaned and repaired with the rest.
 
 `startRun` additionally carries **`updateExternals`**, which says whether this run may touch those working
 copies at all — the Settings switch described in §13.3. It defaults to **true**, so a line written before the
@@ -514,6 +513,15 @@ The primary edge signal is **HintPath basename → producing project**. A map fr
 that produces it is built from the evaluated assembly names; every raw `HintPath` is then looked up in it.
 `ProjectReference` is the *secondary* signal — it produces edges too, deduplicated against the HintPath ones.
 
+**A DLL claimed by two projects produces no edge, and that is said out loud.** When two projects share an
+`AssemblyName` there is no way to know which one a `HintPath` meant, and guessing would mean guessing a build
+order; the entry is dropped from the map instead. The drop is silent in its consequences — every project
+linking against that DLL quietly loses its dependency and may compile before its producer — so the plan
+carries a warning line naming the DLL and both projects, and both surfaces that show a plan print it: the
+Sync transcript and the run console. The usual cause is two roots contributing the same solution — an
+external card (§10.6) pointing at a second copy of something already under the repository root — and the fix
+is the user's: rename one `AssemblyName`, or drop one of the roots.
+
 Not every `HintPath` resolves inside the repository, so each one is classified into one of four buckets:
 
 | Class | Meaning |
@@ -585,7 +593,7 @@ input lists never matters (they are sorted `OrdinalIgnoreCase` internally). Ever
 (a path, a project id) is itself hashed before being concatenated, so a separator character inside a path
 cannot make two different input sets collapse to the same pre-hash string.
 
-**Version control is not part of the decision.** Neither git nor TFVC is consulted to decide what to build:
+**Version control is not part of the decision.** git is never consulted to decide what to build:
 the repository's own projects, projects contributed by external roots (§10.6) and a folder under no version
 control at all take the same path. A repository with no commits, or a machine where git is broken, still gets
 a complete answer.
@@ -716,8 +724,8 @@ frozen upstream baseline — a signature that was never built would be taken for
 external root (§10.6) has the same record under the same key shape, and its built-commit slot means the same
 thing — except that the revision written there is **its own** working copy's, not the repository's, because
 the repository's HEAD describes a different repository. The last-branch slot stays empty for the same reason,
-and so does the commit when the revision cannot be read without going to the network (a TFVC root whose update
-was switched off, §10.6). None of these fields feeds a decision: the built commit is diagnostic, and the
+and so does the commit when the working copy has no readable revision at all (§10.6). None of these fields
+feeds a decision: the built commit is diagnostic, and the
 project log's "last successful build" line is the only place a revision is shown. It is written by
 a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every project
 completes. Readers open with `FileShare.Delete` so they cannot block the writer's rename, and a transient
@@ -1320,25 +1328,29 @@ paths, separators and `..` for any name that will become a directory segment.
 ### 10.6 External roots
 
 Some projects an OSYS build depends on live **outside** the repository root — customer-specific components
-kept in their own git repositories or TFVC workspaces. The user lists them in Settings; every Sync scans them
+kept in their own git repositories. The user lists them in Settings; every Sync scans them
 into the same graph as the repository's own projects, and every Build updates their working copies before
 compiling.
 
-**A card is a path and a source.** The path may be a folder, a `.sln` or a `.csproj`. A folder is scanned
-recursively exactly the way the repository root is; a solution contributes only the projects it lists, because
-scanning its folder would drag in siblings it deliberately excludes; a project file contributes itself. The
-source is the user's choice, Git or TFVC, and is never detected. Anything that resolves to no project at all —
+**A card is a path.** The path may be a folder, a `.sln` or a `.csproj`. A folder is scanned recursively
+exactly the way the repository root is; a solution contributes only the projects it lists, because scanning
+its folder would drag in siblings it deliberately excludes; a project file contributes itself. Anything that
+resolves to no project at all —
 a path that is gone, an empty folder, a file that is neither — is reported: Sync warns and carries on, Build
 refuses to start. Letting a configured root silently vanish would produce a green build linked against
 whatever stale DLLs were lying around.
 
 **Everything else is derived, nothing is stored.** The project set, the display names and the working-copy
 root are resolved from the path on every run, so moving a project or recreating its working copy needs no
-settings change. The working-copy root is found by walking up from the path to the first marker of the
-*selected* kind — `.git` (a directory in a normal clone, a file in a linked worktree) for Git, `$tf` for a
-TFVC local workspace. Only that kind is looked for, so a `$tf` workspace nested inside a git clone reads as
-TFVC when the user said TFVC and as part of the clone when they said Git. If no working copy of that kind sits
-above the path, the projects are still built — after a warning naming the kind that was looked for.
+settings change. The working-copy root is found by walking up from the path to the first `.git` — a directory
+in a normal clone, a file in a linked worktree — so the nearest clone wins when clones are nested. If no
+working copy sits above the path, the projects are still built, after a warning saying so.
+
+**git is the only source, and the card does not ask.** There is no source picker, because a second
+version-control arm cost the user a decision on every card while depending on a Visual Studio component the
+build itself does not need, and on any working copy without local metadata on disk it silently did nothing —
+a picker promising an update that could not happen. A `vcs` key in a settings file or in persisted UI state
+is read and ignored, so a file written by an older version still loads; its cards are ordinary git cards.
 
 **Once scanned, an external project is an ordinary project** in everything that matters to the engine: the
 same scheduler, the same parallelism, the same MSBuild argument contract, the same incremental decision, and a
@@ -1357,7 +1369,7 @@ the whole run when one failed. That phase is gone: with real edges the graph enf
 a failure now costs only the projects that actually depend on it.
 
 **Updating is a separate step, and optional.** Before anything is scanned, each external working copy is
-brought up to date: `fetch` + `merge --ff-only` for git, `tf vc get` for TFVC. It runs first because a
+brought up to date with `fetch` + `merge --ff-only`. It runs first because a
 fast-forward can bring new project files that the scan must see, and before the worktree is prepared because a
 run that a dirty external will cancel should not pay for a worktree. `pull` is never used: it would produce a
 merge commit or a rebase depending on configuration, and either one rewrites the user's repository on the
@@ -1369,35 +1381,30 @@ a target inside the repository updates nothing at all.
 
 The `updateExternals` flag (§5) turns the whole step off. With it off no version-control command runs at all
 and **there is no dirty gate either**: nothing is going to overwrite the user's files, so their working copy is
-compiled exactly as it stands, the same way the repository's own working copy always is. A `Cycles` run skips
-the step for the same reason — it repairs strongly connected components and has no business moving anyone's
-source.
-
-`tf.exe` is resolved through the same `vswhere` search that finds `MSBuild.exe`, lazily and only when a TFVC
-card is actually present, so git-only users never need Team Explorer. No decision reads localized tool output:
-pending changes come from the XML structure of `tf vc status` and failures from exit codes.
+compiled exactly as it stands, the same way the repository's own working copy always is. Two run modes skip
+the step for the same reason: `Cycles`, which repairs strongly connected components, and `Clean`, which only
+deletes output. Neither has any business moving the user's source. Both still **scan**, so the graph they
+work against is the one Build would see.
 
 Two error classes are kept apart. Something the user has to resolve — a path that resolves to no project,
-uncommitted changes, a diverged branch, a detached HEAD, a missing `tf.exe` — **cancels the run before it
-starts**; a half-finished run helps nobody. A transient network or credential failure only warns and the local
+uncommitted changes, a diverged branch, a detached HEAD — **cancels the run before it starts**; a half-finished run helps nobody. A transient network or credential failure only warns and the local
 version is built, which is the same posture the repository's degraded fetch takes.
 
 **Sync only looks.** It runs no version-control command against an external root whatsoever — it scans files,
 and that is all. This is what keeps Sync fast and offline-tolerant, and it is why the dirty gate lives in
 Build, where the user has already decided to compile.
 
-**Each root's revision is read where reading it is free.** For a git root that is a local `rev-parse HEAD`,
-so it happens at plan time whether or not updates are on. TFVC has no local equivalent — its history query
-goes to the server — so a TFVC root's changeset is read in exactly one place: immediately after `tf vc get`,
-while the tool is on the network anyway. With updates off, a TFVC root simply has no revision. When an update
-does run, the console says where the copy landed: `Updated external 'DoganTrend' → a1b2c3d` (a short sha for
-git, a `C`-prefixed changeset for TFVC). A failure to read is never fatal: the revision is diagnostic, no
+**Each root's revision is read where reading it is free.** `rev-parse HEAD` is local, so it happens at plan
+time whether or not updates are on; a root with no working copy above it simply has no revision. When an
+update does run, the console says where the copy landed: `Updated external 'DoganTrend' → a1b2c3d`, and that
+reading — taken right after the fast-forward — is preferred over the plan-time one. A failure to read is
+never fatal: the revision is diagnostic, no
 decision depends on it, and rows do not display it — they display the decision (§13.2).
 
 The incremental decision needs no special case at all. Since the signature is hashed from file content on disk
 (§7.1), an external project and a repository project take the identical path: same input set, same hash
 primitive, same separators, same comparison against `build-state.json`. Uncommitted work in an external copy is
-captured naturally, and the answer does not depend on whether git or TFVC (or neither) is behind the folder.
+captured naturally, and the answer does not depend on whether a git clone is behind the folder at all.
 
 ### 10.7 Distance from the remote, and the one pull
 
@@ -1489,7 +1496,9 @@ the hero-motion coordinator.
 ### 12.2 Window chrome
 
 Custom dark title bar via `WindowChrome` (caption height 40, no Aero caption buttons) on a `SingleBorderWindow`.
-`AllowsTransparency` is never used. Consequences that had to be handled explicitly:
+**The main window never uses `AllowsTransparency`.** Exactly one surface does, and it is not this one: the tray
+build overlay of §12.3 has to be a layered window, because that is what makes the desktop show through where it
+is empty and what lets clicks fall through the same pixels. Consequences that had to be handled explicitly:
 
 - **Maximize padding correction is mandatory** (`dotnet/wpf#3887`): without it the content overflows the screen
   edge when maximized. It is driven by a `WindowState` dependency-property watcher rather than the `StateChanged`
@@ -1519,6 +1528,32 @@ balloon and exits with a distinct exit code.
 
 Closing the window with `X` minimizes to the tray. The first time this happens, an **OS tray balloon** explains
 it, once — in-app toasts are prohibited by the design.
+
+**A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
+in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
+animates in the bottom-right corner of the primary work area, carrying the same `finished/will-build` counter the
+ribbon shows. It appears if the user drops to the tray mid-run and disappears the instant the window comes back.
+The surface is its own top-level window: it must stay visible while the main window is hidden, so it cannot be a
+popup inside it.
+
+Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
+appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
+restores the window through the *same* path as clicking the tray icon, while clicks on the transparent area
+around it pass through to whatever is underneath — that separation is free, because a layered window is
+hit-tested per pixel by the OS against the alpha channel. `WS_EX_TRANSPARENT` is therefore deliberately absent:
+it would make the whole window click-through and kill the click-to-restore.
+
+When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
+slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
+events do not land on top of each other, an **OS balloon** reports the result. Its text is not composed a second
+time: it is the ribbon's own terminal line, so opening the window afterwards shows the same sentence. The icon
+follows the line's status glyph (info, or error when something failed). A run that ends while the window is
+*visible* produces no balloon at all — the ribbon is already on screen.
+
+The overlay always sits on the primary screen, because that is where the tray is; on a multi-monitor desk the
+user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also
+phase-driven rather than window-driven, so if starting a build from the tray without opening the window is ever
+added, the indicator needs no further work.
 
 The global hotkey (`Alt+B` by default, read from `ui-state.json`) is registered with `RegisterHotKey`. A
 conflict disables it silently; the tray icon still restores the window. There is no UI for changing it yet,
@@ -1772,7 +1807,9 @@ the clear is not the operation's kind but whether the click that starts it alrea
 the console — Sync from the ribbon button clears both panels, since nothing precedes it; a Sync that Settings'
 Save sends does not, because Save already wrote the console's first line (the new layer count, or the new
 root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one before
-it. It is not virtualized and does not need to
+it. That question is the console's and the stream's alone: the **plan surface** — rows, graph nodes, the cycle
+map, the *to build* count — is emptied by every Sync however it was reached, because a Sync recomputes the
+whole topology and what is on screen is stale the moment the click lands. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows
@@ -1857,12 +1894,22 @@ skip it as up to date and report green over deleted outputs.
 **The click empties the plan surface, and the Sync that follows fills it in again.** Rows, graph nodes, the
 cycle map and the *to build* count all go at the moment the button is pressed, in the same frame as the console
 and the event stream: the outputs are about to be deleted, so nothing on screen answers to anything on disk any
-more, and dropping the plan at some later instant would read as a second jolt in one operation. The phase moves
+more, and dropping the plan at some later instant would read as a second jolt in one operation. **Sync behaves
+identically**, and for the reason that generalises the rule: an operation that is about to replace the plan
+takes the old one down with the click, not with the reply. The phase moves
 to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
 `Idle` as "no projects under this folder", which would be a lie, and the graph shows its own *appears after
 Sync* empty state. A branch change does exactly this for the same reason. Because the emptying happens at the
 click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
+
+This costs no extra waiting in practice. *Build*, *Rebuild* and *Resolve cycles* are already shut for the
+whole of a Sync or a Clean (`!SyncBusy && !CleanBusy`), and the plan arrives in the same batch that clears the
+in-flight flag, so both halves of their gate open together. What the emptying does change is the failure case:
+a Sync that never delivers a plan — the engine is gone, planning failed — leaves the surface empty and those
+three shut until a Sync succeeds, where before they stayed enabled against a list that no longer described
+anything. That is the same cost Clean already accepted, and it is the safer end of it: a Build against a
+surface the user cannot see would compile a set nobody chose.
 
 **The step always plays for the same length.** On a small workspace the deletion finishes in milliseconds, so
 the spinner would flash and the Sync's animations would land on top of it. The Clean therefore holds its step
@@ -1991,7 +2038,7 @@ stays disabled while it is empty. Then a hairline, then **EXTERNAL PROJECTS**, t
 
 **External projects** sit between Workspace and Layers on purpose: they are meant to build *before* everything
 the repository root discovers, so the section's position tells that story before any card does. A card is a
-path — a folder, a solution or a project file — and a source, Git or TFVC, picked from a two-item `Ds.Select`
+path — a folder, a solution or a project file — in a full-width mono input
 (the design system's `<select>`, ported to a `ComboBox` template since the app had no combo-box style before
 this). Cards share the layer card's shell byte-for-byte — same 36 px height, same border and radius, same
 raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two lists reorder independently, each
@@ -2401,8 +2448,20 @@ fits the panel height. A band whose last row is short is centred against the row
 block is centred in the content box — a symmetric 36 px inset on every side, which is what makes the graph
 read as a picture with a margin rather than as a panel that has been filled to the edges. That inset is a
 single source: the overlay layer clamps to it as well, so a label never ends up hugging a corner. The consequence is
-that the graph always fits — there is no scrollbar, and no canvas larger than the panel. A node is a square
-of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
+that the graph always fits — there is no scrollbar, and no canvas larger than the panel.
+
+**A node is identified by its project id, never by its name.** Positions, the slot map, edge endpoints,
+selection, hover, the filter set and the marking set all key on the full `.csproj` path; the display name is
+only a label, used for the tooltip, the selection caption and the screen-reader name. The distinction is not
+academic: two projects can produce the same `AssemblyName` — an external card (§10.6) pointing at a second
+copy of a solution that already sits under the repository root is the ordinary way it happens. Keying on the
+name would have the band reserve a cell for each of them and then write both positions into one entry: the
+pair lands on a single point, one of them never receives a status or a click again, and the cell that was
+reserved stays empty — a hole in the band, with projects that look missing. Names carry no decision elsewhere
+either: the same collision makes the DLL ambiguous in the producer map, which drops the edge rather than guess
+(§6.4).
+
+A node is a square of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
 its edge; nodes in the **start mode** get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot
 be dashed. `discovered` is plain grey — the dash belongs to the start mode alone, so "nothing has happened
 yet" and "something is happening but not to this project" stay distinguishable.
@@ -2709,7 +2768,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
-| Select | A `ComboBox` template — the app's first, ported from the design system's `<select>` for the Settings dialog's external-project Source picker (Git/TFVC). Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
+| Select | A `ComboBox` template, ported from the design system's `<select>`. It is the library's one component with no live consumer — external-project cards carry no source picker (§10.6) — and is kept so the port does not have to be redone. Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
@@ -2951,20 +3010,34 @@ for the same reason; all three title-bar icon buttons read as one family.
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
 the product mark (title bar 19 px, About hero 30 px) and `Controls/BrandLogo.xaml` the company wordmark (title
-bar 10 px at 55 % opacity, About 13 px at 80 %). Guards assert each geometry appears in exactly one source
-file. The company logo is optional; where it is absent, the hairline separating it goes too.
+bar 10 px at 55 % opacity, About 13 px at 80 %). The company logo is optional; where it is absent, the hairline
+separating it goes too.
 
-The chevron is the one gradient in the application. Flat surfaces are the rule and a guard enforces it, with a
-single file-scoped exemption for the mark: flattening a logo would mean redrawing it, and source artwork is
-transferred verbatim. The chevron is amber — the same accent the interface uses — which is deliberate: the
-brand speaks the interface's palette. The cost is that the mark carries accent weight in the title bar, so no
-other amber element belongs in that region.
+**The product mark is drawn once and consumed twice.** The five pills and the chevron live in
+`Resources/BrandGeometry.xaml`; `AppMark` and the animated tray indicator (§12.3) both ask for them by key. A
+second drawing would be a second truth: one gets corrected, the other does not, and the brand quietly becomes
+two different shapes. A guard asserts the geometry appears in exactly one source file — the assertion is
+unchanged, only the file moved. The shared dictionary holds the source SVG's own coordinates rather than the
+folded-in ones the mark used to carry; each consumer shifts its own canvas instead, which is why a test measures
+the drawn box and not just the figure count.
 
-The mark's palette comes from the neutral ramp and the amber family, except two intermediate tones that exist
+The white pill is the one shape with two variants, both in that same file: the mark's own proportion and a wider
+one for the indicator, whose strip had to grow to fit a three-digit counter. The counter's slot is measured from
+that geometry rather than repeated as numbers next to it.
+
+The chevron is the one gradient in the application, and it too is a single shared brush. Flat surfaces are the
+rule and a guard enforces it, with a single file-scoped exemption for the mark's dictionary: flattening a logo
+would mean redrawing it, and source artwork is transferred verbatim. The chevron is amber — the same accent the
+interface uses — which is deliberate: the brand speaks the interface's palette. The cost is that the mark
+carries accent weight in the title bar, so no other amber element belongs in that region.
+
+The mark's palette comes from the neutral ramp and the amber family, except a few intermediate tones that exist
 only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
 the other values the design source does not name. Two of them are also exposed as raw `Color` resources
 because a gradient stop takes a colour rather than a brush — the brushes are derived from those colours, so no
-hex is written twice.
+hex is written twice. The tray counter's ink is one of these: it has to read against the light strip it sits on
+while staying quiet enough that the logo does not turn into a label, and no tone on the text ramp — tuned for
+dark surfaces — does both. Its opacity is folded into the alpha channel so the control carries no second one.
 
 **Raster icons** (`.exe`, taskbar, tray) are generated from the same artwork by `Assets/generate-app-icons.ps1`
 into a multi-size ICO. They ship **without a background**: the mark sits on a transparent canvas and is fitted
@@ -3001,7 +3074,14 @@ Five contract rules, each enforced by a test:
    live; the four `Duration.*` resources are zeroed and restored in place. Pure-XAML storyboards must use
    `DynamicResource` — a `StaticResource` resolves once and would never see the change — and code-driven
    animations must read the setting *at animation start*.
-3. **No literals.** Hardcoded hex or millisecond values in animation code fail a guard test.
+3. **No literals.** Hardcoded hex or millisecond values in animation code fail a guard test. There is one
+   file-scoped exemption on the XAML side, and it is the motion counterpart of the verbatim-artwork rule that
+   already exempts the mark's gradient: the tray indicator's three-second brand loop is a delivered timeline —
+   an entrance, a hold, and an exit, each piece with its own delay, curve and travel distance — not a member of
+   the 80–280 ms interface ramp. Binding it to a duration token would not shorten it, it would destroy it.
+   Reduced motion is honoured there by never starting the loop rather than by collapsing its durations, and the
+   exemption is paired with a test that fails if the exempt file stops carrying a timeline, so it cannot decay
+   into a dead line that someone later reads as permission.
 4. **Frozen brushes cannot be animated.** Shared/frozen resources are copied per instance before being driven;
    `ContainerVisual.Opacity` cannot be animated at all, which is why graph layer hosts are `UIElement`s.
 5. **WPF does not premultiply, CSS does.** WPF interpolates a colour's channels straight, so whenever the two
@@ -3101,7 +3181,18 @@ With nothing built it does not play at all, and a new operation cuts it instantl
 
 Under reduced motion neither choreography runs: the scope is marked and the run proceeds.
 
-Decorative infinite animations run at `DesiredFrameRate=30`; all counters tick from one `DispatcherTimer`;
+**A loop that has to finish gracefully cannot be infinite.** The tray indicator must complete the exit phase of
+whichever pass it is in when the build ends, and an endless storyboard has no boundary at which to ask that
+question — stopping it would mean cutting it in half. So it runs a single iteration and decides at each
+`Completed` whether to begin another; "finish" is then just a flag, with no seeking and no rate changes. The
+seam is invisible because the artwork was authored with no empty frame: the last strip dissolves exactly as the
+chevron re-enters. Two consequences are easy to get wrong and are pinned by tests — `Stop()` leaves the
+animations attached to their elements (and itself raises `Completed`, which would revive the loop), so tearing
+down means `Remove()` behind a re-entry guard; and a pending finish is honoured even when the indicator is
+dismissed early, or a run would end with no notification at all.
+
+Decorative infinite animations run at `DesiredFrameRate=30` — one shared constant, not a number repeated per
+owner; all counters tick from one `DispatcherTimer`;
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
 `DispatcherTimer` resolution. Resetting an observable collection is prohibited — it destroys running
 animations.
@@ -3115,6 +3206,15 @@ same discipline applies to periodic work: a one-shot `DispatcherTimer` stops its
 dispatcher roots it, so an unstopped one ticks forever and can never be collected), and anything called from
 the 200 ms tick writes only when the value actually changed, since assigning the same string still invalidates
 measure and draw five times a second.
+
+**Two seams in the tray indicator are deliberately not instant, and neither carries a number in code.** The
+overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
+a short breath separates them; its length is `Duration.Slow`, which means reduced motion collapses it to zero on
+its own — a user who asked for no animation is not made to wait. The breath is an injectable seam, so the suite
+proves the ordering without spending real time. The counter behaves the same way: it is never written with an
+unchanged value, and when the digits do change the text dims and returns over `Duration.Fast` instead of
+swapping hard. Only opacity moves — the strip is a fixed width and the digits are monospaced, so nothing
+reflows.
 
 ### 14.6 Copy and tone
 
@@ -3412,7 +3512,6 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
 | External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.6): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
-| `TF.exe` path | `vswhere` output, checked to exist on disk | argv element of the TFVC child process | none |
 
 Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
 manual string concatenation is prohibited — `UseShellExecute` is false everywhere, and neither `cmd.exe` nor
@@ -3514,6 +3613,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
+| Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
+| …its wiring to the view model (line, counter, phase) | `App/Services/TrayIndicatorBinder.cs` |
+| …the animated mark itself (loop, counter, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
+| …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
+| Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | Shortcut display text and descriptions (single source) | `App/Shell/ShortcutCatalog.cs` |
@@ -3586,7 +3690,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | `MSBuild.exe` resolution via `vswhere` | `Core/MsBuild/MsBuildResolver.cs` |
-| The `vswhere` search itself (shared by `MSBuild.exe` and `TF.exe`) | `Core/MsBuild/VsWhereLocator.cs` |
+| The `vswhere` search itself | `Core/MsBuild/VsWhereLocator.cs` |
+| Duplicate `AssemblyName` detection and the warning it produces | `Core/Graph/ProducerMap.cs`, `Core/Planning/PlanProgressLines.cs` |
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
@@ -3601,7 +3706,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | All read-only git invocations (HEAD, status, refs, distance, fetch) | `Core/Git/GitService.cs` |
 | The only mutating git surface: dirty gate → fetch → is-ancestor → `merge --ff-only` | `Core/Git/FastForwardUpdater.cs` |
-| Revision text shortening (git sha vs TFVC changeset) | `Core/Git/RevisionText.cs` |
+| Revision text shortening (only a full 40-hex sha is cut to 7) | `Core/Git/RevisionText.cs` |
 | The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
@@ -3625,10 +3730,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Path → scannable root (folder, `.sln` or `.csproj`) merged into one workspace | `Core/Externals/ExternalWorkspaceResolver.cs` |
 | Reserved layer name and index for external projects (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
-| Working-copy root discovery for the selected source (`.git` file or directory, `$tf`) | `Core/Externals/VcsDetector.cs` |
+| Working-copy root discovery (`.git` file or directory) | `Core/Externals/VcsDetector.cs` |
 | The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
 | Per-root revision read, spread over the projects it produced | `Core/Externals/ExternalRevisionReader.cs` |
-| TFVC surface: pending changes, get latest, current changeset | `Core/Externals/TfvcService.cs`, `TfResolver.cs` |
 
 **Process control and resource governance**
 
@@ -3686,6 +3790,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
 | What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
+| Brand geometry and chevron gradient — one source, two consumers | `App/Resources/BrandGeometry.xaml` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
@@ -3721,6 +3826,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Node visuals, status tick, opening wave, hover, hidden-panel gate | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
+| Graph node identity (project id, not name) and the label that is the name | `App/Graph/GraphModels.cs`, `QuietGraphLayout.cs` |
 | Opening/ending choreography on the graph (marking opacity, neon flicker) | `App/Graph/GraphView.xaml.cs` (`SetMarking`/`PlayEndFinale`) |
 | Automatic pitch, layer bands, node size | `App/Graph/QuietGraphLayout.cs` |
 | Run lifecycle opacity and its hold/fade timings | `App/Graph/GraphNodeOpacity.cs` |

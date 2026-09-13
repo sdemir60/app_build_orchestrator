@@ -1,3 +1,4 @@
+using System.Globalization;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Core.Planning;
@@ -108,9 +109,8 @@ public static class PlanProgressLines
     /// Bir haricinin çalışma kopyası güncellendi ve HANGİ sürümde olduğu okundu. Satır güncellemenin
     /// ARDINDAN yazılır ve yalnız güncelleme gerçekten koştuğunda (kullanıcı bayrağı açık) görülür.
     ///
-    /// <para>Revizyon kimliği kaynağına göre değişir: git'te kısa sha (<c>a1b2c3d</c>), TFVC'de changeset
-    /// (<c>C48213</c>). Kullanıcının "hangi sürümü derliyorum" sorusunun cevabı budur; satırlarda revizyon
-    /// GÖSTERİLMEZ (v1.16.0: satır kararı söyler, sürümü değil).</para>
+    /// <para>Revizyon kısa sha'dır (<c>a1b2c3d</c>). Kullanıcının "hangi sürümü derliyorum" sorusunun cevabı
+    /// budur; satırlarda revizyon GÖSTERİLMEZ (v1.16.0: satır kararı söyler, sürümü değil).</para>
     /// </summary>
     public static string UpdatedExternal(string name, string revision)
         => $"Updated external '{name}' → {revision}";
@@ -138,10 +138,25 @@ public static class PlanProgressLines
     public static string ExternalNotOptimized(string name, string problem)
         => $"warning: external '{name}': {problem} — nothing from it will be repaired";
 
-    /// <summary>Yolun üstünde SEÇİLEN türde bir çalışma kopyası işareti yok (git için <c>.git</c>, TFVC için
-    /// <c>$tf</c>) — güncelleme ve kir kapısı çalışmaz, projeler olduğu gibi derlenir.</summary>
-    public static string ExternalNoWorkingCopy(string name, VcsKind vcs)
-        => $"warning: external '{name}': no {VcsKinds.Label(vcs)} working copy found above its path — building as-is";
+    /// <summary>
+    /// Birden fazla proje AYNI <c>AssemblyName</c>'i üretiyor. Belirsiz DLL kenar üretmez [D8/D11], yani ona
+    /// HintPath ile bağlanan hiçbir proje onu BEKLEMEZ — sessiz kalırsa kullanıcı grafında eksik bir kenar
+    /// olduğunu hiçbir yerden göremez ve yanlış sırada derlenmiş bir build'i "yeşil" sanır.
+    ///
+    /// <para>Satır çareyi de söyler, çünkü çare kullanıcıdadır: adlardan birini değiştirmek ya da köklerden
+    /// birini listeden çıkarmak. Bu yüzden üretici YOLLARI da yazılır — hangi kökten geldikleri ancak öyle
+    /// anlaşılır (tipik vaka: bir harici kart, repo kökünde zaten duran bir solution'ın ikinci kopyası).</para>
+    /// </summary>
+    public static string AmbiguousProducer(string dll, IReadOnlyList<string> producers)
+        => string.Format(CultureInfo.InvariantCulture,
+            "warning: {0} projects produce {1} — the dependency edge is dropped, so nothing that references it "
+            + "is ordered after it; rename one AssemblyName or remove a root ({2})",
+            producers.Count, dll, string.Join(", ", producers));
+
+    /// <summary>Yolun üstünde <c>.git</c> yok — güncelleme ve kir kapısı çalışmaz, projeler olduğu gibi
+    /// derlenir.</summary>
+    public static string ExternalNoWorkingCopy(string name)
+        => $"warning: external '{name}': no git working copy found above its path — building as-is";
 
     // Planner'dan SONRAKİ iki adım (MSBuild.exe çözümü, bayat-obj taraması) BİLEREK raporlanmaz: vswhere
     // sonucu Supervisor ömrü boyunca cache'lenir (ilk run dışında "resolving" demek yalan olurdu), bayat-obj

@@ -78,6 +78,16 @@
     <Color x:Key="Color.Brand.ChevronDeep">#c9860c</Color>
     <SolidColorBrush x:Key="Brush.Brand.ChevronDeep" Color="{StaticResource Color.Brand.ChevronDeep}" />
 
+    <!--
+      Tepsi göstergesinin beyaz şeridi üzerindeki derleme sayacı ("139/248"). Yazı, üzerinde durduğu AÇIK
+      şeritten okunacak kadar koyu ama logoyu bir etikete çevirmeyecek kadar geri çekilmiş olmalı — bu yüzden
+      metin rampasının HİÇBİR tonu uymaz: TextDim/TextFaint koyu zemin için ayarlıdır ve açık şerit üzerinde
+      soluk kalır. Değer logo-animasyonu deliverable'ından birebir (#5A5A63, %72 opaklık) — opaklık ALFA
+      kanalına katlandı (Brush.Scrim / Brush.AmberSoft deseni), böylece kontrol tarafında ayrıca bir Opacity
+      taşınmaz. Markaya ait bir ara tondur: Brush.Brand.StripDim ile AYNI statüde.
+    -->
+    <SolidColorBrush x:Key="Brush.Brand.CounterText" Color="#B85A5A63" />
+
     <!-- Statü: success -->
     <SolidColorBrush x:Key="Brush.StatusSuccess" Color="#43b16b" />
     <SolidColorBrush x:Key="Brush.StatusSuccessText" Color="#58cb80" />

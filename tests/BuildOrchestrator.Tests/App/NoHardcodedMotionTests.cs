@@ -48,9 +48,43 @@ public sealed class NoHardcodedMotionTests
         "|(?:Duration|BeginTime|KeyTime)\\s*=\\s*TimeSpan\\.From(?:Milli)?[Ss]econds\\(\\s*[0-9]",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// Süresi bir tasarım token'ı OLMAYAN, kaynak sanatın kendisi olan zaman çizelgeleri — dosya bazında ve DAR.
+    ///
+    /// <para><b>[tray indicator/K-9] Neden bir istisna var:</b> yasak, arayüz geçişlerinin (80–280 ms
+    /// <c>Duration.*</c> rampası) süreyi kaynağından koparıp koda gömmesini engellemek içindir; o rampa
+    /// reduced-motion'da topluca sıfırlanır ve literal bir süre o sıfırlamayı görmez. Tepsi göstergesinin
+    /// 3 saniyelik marka animasyonu O RAMPAYA AİT DEĞİLDİR: tasarımcının teslim ettiği, parça parça
+    /// hesaplanmış bir zaman çizelgesidir (giriş 0–1.34s, duruş, çıkış 2.10–3.00s; her parçanın kendi
+    /// gecikmesi, eğrisi ve çıkış mesafesi var). Bir token'a bağlanamaz — bağlanırsa animasyon ölür.
+    /// Reduced-motion orada süreyi KISALTARAK değil, döngüyü HİÇ BAŞLATMAYARAK karşılanır.</para>
+    ///
+    /// <para>Bu, <c>AntiSlopTests</c>'in ürün markasının gradyanına verdiği muafiyetin motion karşılığıdır:
+    /// kaynak sanat yeniden yorumlanmaz. İstisna GEVŞETME DEĞİLDİR — tek dosyadır, gerekçelidir ve
+    /// <see cref="The_exempt_file_really_carries_a_bespoke_timeline"/> ile bayatlaması engellenir. Kod tarafı
+    /// yasağı bu dosya için de aynen geçerlidir (aşağıdaki <c>*.cs</c> taraması muafiyet TANIMAZ).</para></summary>
+    private static readonly string[] BespokeTimelineFiles =
+    [
+        Path.Combine("Controls", "TrayBuildIndicator.xaml"),
+    ];
+
     [Fact]
     public void No_xaml_declares_a_literal_animation_time_instead_of_a_duration_token()
-        => Assert.Empty(SourceGuard.ScanApp("*.xaml", XamlTimeLiteral));
+        => Assert.Empty(SourceGuard.ScanApp("*.xaml", XamlTimeLiteral, BespokeTimelineFiles));
+
+    /// <summary>Muafiyet BOŞA DÜŞMESİN: muaf dosya hâlâ var ve hâlâ literal bir zaman çizelgesi taşıyor.
+    /// Dosya taşınır ya da animasyon kaldırılırsa yukarıdaki istisna sessizce ölü bir satıra dönerdi ve
+    /// bir sonraki gelen onu "burası serbest" diye okurdu.</summary>
+    [Fact]
+    public void The_exempt_file_really_carries_a_bespoke_timeline()
+    {
+        foreach (string relative in BespokeTimelineFiles)
+        {
+            string path = Path.Combine(RepoPaths.AppSrcRoot, relative);
+            Assert.True(File.Exists(path), $"muaf dosya taşınmış — süre muafiyeti bayatladı: {relative}");
+            Assert.Matches(XamlTimeLiteral, File.ReadAllText(path));
+        }
+    }
 
     [Fact]
     public void No_cs_file_builds_an_animation_duration_from_a_literal_at_the_call_site()

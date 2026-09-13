@@ -23,7 +23,7 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 public class PullBeforeBuildTests
 {
-    private static readonly ExternalProject Mail = new(@"C:\src\shared\Delta.Common", VcsKind.Git);
+    private static readonly ExternalProject Mail = new(@"C:\src\shared\Delta.Common");
 
     private static SettingsDialogHost.FakeStore NewStore() => new();
 

@@ -25,7 +25,7 @@ public class ExternalRowsTests
     private static ProjectNode ExternalNode(string name, string target, int order = 0) =>
         new(target, name, target, [System.IO.Path.GetFileName(target)], [], order,
             ExternalProjectsConventions.LayerIndex, ExternalProjectsConventions.LayerName, false, true,
-            WillBuildReason.NeverBuilt, VcsKind.Git);
+            WillBuildReason.NeverBuilt, IsExternal: true);
 
     private static ProjectNode MainNode(string id, string name, int order) =>
         new(id, name, id, ["Osys"], [], order, null, null, false, true);

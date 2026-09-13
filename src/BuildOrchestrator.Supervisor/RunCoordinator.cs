@@ -926,6 +926,10 @@ public sealed class RunCoordinator(
         // geçirmektir. Plan katmansızsa (varsayılan) LayerWarnings null/boştur → hiçbir satır basılmaz.
         foreach (string warning in plan.LayerWarnings ?? [])
             console("warning: " + warning);
+        // Belirsiz üretici uyarıları metinlerini KENDİLERİ taşır (PlanProgressLines "warning: " ile başlar) —
+        // Sync transkriptindeki satırın AYNISI; burada ikinci bir önek eklenmez.
+        foreach (string warning in plan.ProducerWarnings ?? [])
+            console(warning);
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,
@@ -1050,10 +1054,10 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>[design v1.14.0 §9] Bu proje ana repo DIŞINDAKİ bir çalışma alanı kökünden mi geldi —
-    /// topolojiden okunur (rozet <see cref="ProjectNode.ExternalVcs"/>), ayrı bir liste tutulmaz. İki yerde
+    /// topolojiden okunur (rozet <see cref="ProjectNode.IsExternal"/>), ayrı bir liste tutulmaz. İki yerde
     /// karar verir: obj izolasyonu ve build-state'e yazılan commit/branch.</summary>
     private static bool IsExternal(RunContext run, string projectId) =>
-        run.NodeById.GetValueOrDefault(projectId)?.ExternalVcs is not null;
+        run.NodeById.GetValueOrDefault(projectId)?.IsExternal == true;
 
     /// <summary>
     /// decision.log'a yazar. Log bir TANI kaydıdır: disk hatası (dolu disk vb.) run'ı ÖLDÜRMEMELİ — konsola uyarı
@@ -1731,7 +1735,8 @@ public sealed class RunCoordinator(
             return;
 
         // [design v1.14.0 §9] HEAD ve branch ANA REPOYU anlatır. Harici bir proje kendi çalışma kopyasının
-        // revizyonunu taşır (ExternalRevisionReader); okunamadıysa (TFVC, ya da git hatası) yuva BOŞ kalır —
+        // revizyonunu taşır (ExternalRevisionReader); okunamadıysa (çalışma kopyası yok ya da git hatası)
+        // yuva BOŞ kalır —
         // yanlış bir reponun commit'ini göstermektense hiçbir şey göstermek doğrudur. Branch her koşulda ana
         // repoya aittir, harici kayda hiç yazılmaz.
         bool external = IsExternal(run, projectId);

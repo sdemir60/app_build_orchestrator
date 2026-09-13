@@ -483,7 +483,7 @@ public class OptimizeWorkspaceServiceTests : IDisposable
         if (packagesConfig)
             File.WriteAllText(Path.Combine(dir, "packages.config"),
                 "<?xml version=\"1.0\" encoding=\"utf-8\"?><packages><package id=\"P\" version=\"1.0.0\" /></packages>");
-        return new ExternalProject(csproj, VcsKind.Git);
+        return new ExternalProject(csproj);
     }
 
     /// <summary>
@@ -512,7 +512,7 @@ public class OptimizeWorkspaceServiceTests : IDisposable
     public async Task An_external_card_that_resolves_to_nothing_warns_and_the_main_root_is_still_repaired()
     {
         WriteLegacyProject("Main");
-        var ghost = new ExternalProject(Path.Combine(_tmp, "externals", "Ghost", "Ghost.csproj"), VcsKind.Git);
+        var ghost = new ExternalProject(Path.Combine(_tmp, "externals", "Ghost", "Ghost.csproj"));
 
         var events = await RunAsync(ServiceWith(), externals: [ghost]);
 
