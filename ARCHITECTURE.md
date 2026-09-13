@@ -1550,9 +1550,8 @@ at the separator the ribbon itself writes — the head becomes the title (`Compl
 and everything after it becomes the body. Opening the window afterwards shows that same sentence whole, in the
 ribbon. A line that carries no separator — today only the one an unexpected engine stop writes; the engine
 failures that name a reason keep their heads — falls back to the product name over the whole line. Clicking the
-notification restores the window through the *same* path as
-the tray icon and the overlay. A run that ends while the window is *visible* produces no balloon at all — the
-ribbon is already on screen.
+notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
+the window is *visible* produces no balloon at all — the ribbon is already on screen.
 
 The overlay always sits on the primary screen, because that is where the tray is; on a multi-monitor desk the
 user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also
@@ -3033,9 +3032,9 @@ carries accent weight in the title bar, so no other amber element belongs in tha
 
 The mark's palette comes from the neutral ramp and the amber family, except a few intermediate tones that exist
 only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
-the other values the design source does not name. Two of them are also exposed as raw `Color` resources
-because a gradient stop takes a colour rather than a brush — the brushes are derived from those colours, so no
-hex is written twice.
+the other values the design source does not name. The chevron's three gradient stops are also exposed as raw
+`Color` resources — `Color.Amber`, `Color.AmberBright` and `Color.Brand.ChevronDeep` — because a gradient stop
+takes a colour rather than a brush; the brushes are derived from those colours, so no hex is written twice.
 
 **Raster icons** (`.exe`, taskbar, tray) are generated from the same artwork by `Assets/generate-app-icons.ps1`
 into a multi-size ICO. They ship **without a background**: the mark sits on a transparent canvas and is fitted

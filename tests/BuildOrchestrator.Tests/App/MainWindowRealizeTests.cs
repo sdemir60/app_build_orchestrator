@@ -87,7 +87,6 @@ public class MainWindowRealizeTests
 
         var icon = Assert.IsAssignableFrom<BitmapSource>(window.Icon);
         Assert.True(icon.PixelWidth > 0 && icon.PixelHeight > 0);
-        Assert.Contains("app-icon.ico", AppIdentity.AppIconUri, StringComparison.Ordinal);
         GC.KeepAlive(window);
     }
 

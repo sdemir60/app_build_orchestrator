@@ -30,7 +30,7 @@ public static class AppIdentity
     /// <summary>
     /// Uygulama ikonunun (çok boyutlu <c>app-icon.ico</c>) gömülü kaynak adresi — ürün adı gibi TEK yerde.
     ///
-    /// <para>İki tüketicisi vardır: pencere/taskbar ikonu (<c>MainWindow.xaml</c>) ve tepsi bildiriminin büyük
+    /// <para>İki tüketicisi vardır: pencere/taskbar ikonu (<c>MainWindow.xaml.cs</c>) ve tepsi bildiriminin büyük
     /// ikonu (<c>Shell/AppTrayIcon</c>). Adres ikinci kez yazılsaydı dosya adı ya da klasör değiştiğinde biri
     /// düzelir, diğeri çalışma zamanında çözülemeyen bir kaynağa dönerdi — bedeli ctor'da atılan bir exception.
     /// Burada durur çünkü ikon da ürün kimliğidir (<see cref="Product"/>'ın kardeşi).</para></summary>

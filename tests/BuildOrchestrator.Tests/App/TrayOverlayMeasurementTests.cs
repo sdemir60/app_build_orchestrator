@@ -7,8 +7,17 @@ using Xunit.Abstractions;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [tray indicator/round 2] ÖLÇÜM — varsayılan süitten hariçtir (<c>Category=Measurement</c>), çünkü gerçek
-/// overlay'i ekrana çıkarır ve saniyeler boyunca pompalar.
+/// [tray indicator/round 2] ÖLÇÜM — gerçek overlay'i ekrana çıkarır ve saniyeler boyunca pompalar; bu yüzden
+/// varsayılan koşuda ÇALIŞMAMASI GEREKİR ama <c>Category=Measurement</c> etiketi TEK BAŞINA bunu sağlamaz:
+/// standart komut <c>--filter "Category!=Acceptance"</c> VSTest'in <c>!=</c> operatörüyle "Acceptance
+/// dışındaki HER Category değerini" kabul eder — <c>Measurement</c> de dahil olur. Gerçek kapı ilk satırdaki
+/// <c>Skip.IfNot</c>'tur: <c>BO_MEASURE_OVERLAY</c> ortam değişkeni <c>"1"</c> değilse test SKIPPED raporlanır
+/// ve pencere hiç açılmaz; değişken kurulduğunda gövde gerçekten koşar ve Topmost bir overlay'i ~17 sn ekranda
+/// tutar. Trait yalnız hedefli koşu için kalır (<c>FullyQualifiedName~TrayOverlayMeasurementTests</c>).
+///
+/// <para><b>Nasıl koşulur:</b> <c>$env:BO_MEASURE_OVERLAY='1'; dotnet test
+/// tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj -c Release --filter
+/// "FullyQualifiedName~TrayOverlayMeasurementTests"</c>.</para>
 ///
 /// <para><b>Soru:</b> tepsi göstergesi kendi başına ne kadar tutuyor? Kullanıcı derleme sırasında "ekran da
 /// animasyon da donuyor" dedi; katmanlı pencere + gölge efektleri suçlu olabilir, derlemenin kendisi de
@@ -26,25 +35,53 @@ public sealed class TrayOverlayMeasurementTests(ITestOutputHelper output)
     private static readonly TimeSpan SampleWindow = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan SettleWindow = TimeSpan.FromMilliseconds(600);
 
-    [StaFact]
-    public void The_loop_costs_this_much_on_this_machine()
+    [SkippableFact]
+    public async Task The_loop_costs_this_much_on_this_machine()
     {
-        var overlay = new TrayBuildOverlayWindow(DsResources.NewScope());
-        try
-        {
-            var idle = Sample(overlay, loop: false);
-            var loop = Sample(overlay, loop: true);
+        Skip.IfNot(Environment.GetEnvironmentVariable("BO_MEASURE_OVERLAY") == "1",
+            "Shows a real Topmost overlay for several seconds — opt in with BO_MEASURE_OVERLAY=1.");
 
-            output.WriteLine(Line("static frame", idle));
-            output.WriteLine(Line("loop        ", loop));
-            output.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                "loop minus static: {0:0.0} frames/s, {1:0.0} % of one core",
-                loop.FramesPerSecond - idle.FramesPerSecond, loop.CpuPercent - idle.CpuPercent));
-        }
-        finally
+        // [StaFact] DEĞİL: yukarıdaki Skip.IfNot'un attığı SkipException'ı StaFact'in runner'ı tanımaz
+        // (Skipped yerine sessizce Failed üretir) — DragReorderTests/AppShutdownTests'teki aynı kısıt. Gövde
+        // bu yüzden manuel bir STA thread'de koşar; test metodu (Skip.IfNot dahil) [SkippableFact] altında
+        // kalır.
+        await RunOnStaThreadAsync(() =>
         {
-            overlay.Close();
-        }
+            var overlay = new TrayBuildOverlayWindow(DsResources.NewScope());
+            try
+            {
+                var idle = Sample(overlay, loop: false);
+                var loop = Sample(overlay, loop: true);
+
+                output.WriteLine(Line("static frame", idle));
+                output.WriteLine(Line("loop        ", loop));
+                output.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "loop minus static: {0:0.0} frames/s, {1:0.0} % of one core",
+                    loop.FramesPerSecond - idle.FramesPerSecond, loop.CpuPercent - idle.CpuPercent));
+            }
+            finally
+            {
+                overlay.Close();
+            }
+        });
+    }
+
+    /// <summary>[Fix] Gövdeyi YENİ, ayrı bir STA thread'de senkron koşturur ve sonucu/istisnayı (tip
+    /// değişmeden) <see cref="TaskCompletionSource"/> ile çağıran thread'e taşır — DragReorderTests
+    /// .RunOnStaThreadAsync ile AYNI kalıp (StaFact'in runner'ı SkipException'ı tanımadığı için bu test de
+    /// [SkippableFact] altında kalıp gövdeyi manuel STA thread'de koşturmak zorunda).</summary>
+    private static Task RunOnStaThreadAsync(Action body)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { body(); tcs.SetResult(); }
+            catch (Exception ex) { tcs.SetException(ex); }
+        })
+        { IsBackground = true, Name = "tray-overlay-measurement-sta" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return tcs.Task;
     }
 
     private static string Line(string label, (double FramesPerSecond, double CpuPercent) s) =>

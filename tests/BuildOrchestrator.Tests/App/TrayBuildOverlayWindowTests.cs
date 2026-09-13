@@ -107,25 +107,25 @@ public sealed class TrayBuildOverlayWindowTests
     /// ya da üstte olabilir ve o zaman çalışma alanı (0,0)'dan başlamaz — köşe hesabı ekranın kendisinden
     /// değil, çalışma alanından türemeli.</summary>
     [Theory]
-    // Beklenen köşe OverlayWidth×OverlayHeight (Task 3'ten: 250×89.33) + EdgeMargin (12) üzerinden hesaplanır.
-    // Yerleşim KURALI değişmedi (Place hâlâ aynı formül) — sayılar yalnız Task 3'ün 2/3 ölçeğiyle güncellendi
-    // (eskiden 144×96'ydı, sağ kenar 1764'tü).
+    // Beklenen köşe testin GÖVDESİNDE, aynı girdiden (workArea) hesaplanır — Place'in kendi formülü
+    // (Right/Bottom eksi OverlayWidth/OverlayHeight eksi EdgeMargin). Elle kopyalanmış ondalık YOKTUR.
     // taskbar altta: 1920×1080 ekran, 40px şerit
-    [InlineData(0, 0, 1920, 1040, 1658, 938.66666666666663)]
+    [InlineData(0, 0, 1920, 1040)]
     // taskbar solda (80px): alan x=80'den başlar — sağ kenar yine ekranın sağı
-    [InlineData(80, 0, 1840, 1080, 1658, 978.66666666666663)]
+    [InlineData(80, 0, 1840, 1080)]
     // taskbar üstte: alan y=40'tan başlar, alt kenar ekranın altı
-    [InlineData(0, 40, 1920, 1040, 1658, 978.66666666666663)]
-    public void Overlay_positions_into_the_bottom_right_of_a_given_work_area(
-        double x, double y, double w, double h, double expectedLeft, double expectedTop)
+    [InlineData(0, 40, 1920, 1040)]
+    public void Overlay_positions_into_the_bottom_right_of_a_given_work_area(double x, double y, double w, double h)
     {
+        var workArea = new Rect(x, y, w, h);
         var (left, top) = TrayBuildOverlayWindow.Place(
-            new Rect(x, y, w, h),
-            TrayBuildOverlayWindow.OverlayWidth, TrayBuildOverlayWindow.OverlayHeight,
+            workArea, TrayBuildOverlayWindow.OverlayWidth, TrayBuildOverlayWindow.OverlayHeight,
             TrayBuildOverlayWindow.EdgeMargin);
 
-        Assert.Equal(expectedLeft, left);
-        Assert.Equal(expectedTop, top);
+        Assert.Equal(workArea.Right - TrayBuildOverlayWindow.OverlayWidth - TrayBuildOverlayWindow.EdgeMargin,
+            left, precision: 10);
+        Assert.Equal(workArea.Bottom - TrayBuildOverlayWindow.OverlayHeight - TrayBuildOverlayWindow.EdgeMargin,
+            top, precision: 10);
     }
 
     /// <summary>
