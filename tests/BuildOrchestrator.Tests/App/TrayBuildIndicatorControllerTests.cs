@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 
@@ -59,16 +59,16 @@ public sealed class TrayBuildIndicatorControllerTests
         {
             Count++;
             LastLine = line;
-            r.Log.Add($"Notify:{line.Text}|{line.Healthy}");
+            r.Log.Add($"Notify:{line.Text}");
         }
     }
 
-    /// <summary>Şeridin bir satırını taklit eder. Sağlık AYRI bir bayrak DEĞİLDİR: satırın kendi glyph'inden
-    /// doğar (<see cref="RibbonLine.Healthy"/>), yani dikiş de üretim gibi tek sinyalden beslenir.</summary>
-    private static RibbonLine Line(string text, bool healthy) =>
-        new(text,
-            healthy ? "Brush.StatusSuccessText" : "Brush.StatusFailText",
-            healthy ? "succeeded" : RibbonLine.FailedGlyph);
+    /// <summary>Şeridin BAŞARILI biten bir satırını taklit eder — statü ayrı bir bayrak değil, satırın kendi
+    /// glyph'idir (<c>RibbonText.Compose</c> da öyle yazar).</summary>
+    private static RibbonLine Succeeded(string text) => new(text, "Brush.StatusSuccessText", "succeeded");
+
+    /// <summary>Şeridin BAŞARISIZ biten bir satırı. Bkz. <see cref="Succeeded"/>.</summary>
+    private static RibbonLine Failed(string text) => new(text, "Brush.StatusFailText", "failed");
 
     /// <summary>Ortak kurulum: controller + iki dikiş + paylaşılan log. Varsayılan durum üretimin açılışıdır —
     /// pencere GÖRÜNÜR, faz <see cref="AppPhase.Empty"/>, animasyonlar AÇIK.</summary>
@@ -91,7 +91,7 @@ public sealed class TrayBuildIndicatorControllerTests
         /// <summary>Koşan bir derleme, pencere tepside — testlerin çoğunun başlangıç noktası.</summary>
         public Fixture RunningInTray(string terminalText = "Completed — 24 succeeded · 9 skipped · 1m 12s")
         {
-            Controller.SetTerminalLine(Line(terminalText, healthy: true));
+            Controller.SetTerminalLine(Succeeded(terminalText));
             Controller.SetMainWindowVisible(false);
             Controller.SetPhase(AppPhase.Running);
             Log.Clear();
@@ -182,7 +182,7 @@ public sealed class TrayBuildIndicatorControllerTests
         f.View.FinishExit();                  // 3.000 s karesi: son şerit yok oldu
 
         Assert.Equal(
-            ["BeginExit", "HideNow", "Notify:Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s|True"],
+            ["BeginExit", "HideNow", "Notify:Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s"],
             f.Log);
     }
 
@@ -199,7 +199,7 @@ public sealed class TrayBuildIndicatorControllerTests
         f.View.FinishExit();
 
         Assert.Equal(1, breaths);
-        Assert.Equal(["BeginExit", "HideNow", "Breath", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s|True"], f.Log);
+        Assert.Equal(["BeginExit", "HideNow", "Breath", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s"], f.Log);
     }
 
     [Fact]
@@ -216,7 +216,7 @@ public sealed class TrayBuildIndicatorControllerTests
         f.Controller.SetPhase(AppPhase.Done);
 
         Assert.Equal(1, breaths);
-        Assert.Equal(["HideNow", "Breath", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s|True"], f.Log);
+        Assert.Equal(["HideNow", "Breath", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s"], f.Log);
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         // Pencere GÖRÜNÜRKEN biten koşu balloon üretmez — şerit zaten oradadır (mevcut davranış değişmez).
         var f = new Fixture();
-        f.Controller.SetTerminalLine(Line("Completed — 24 succeeded · 9 skipped · 1m 12s", healthy: true));
+        f.Controller.SetTerminalLine(Succeeded("Completed — 24 succeeded · 9 skipped · 1m 12s"));
         f.Controller.SetPhase(AppPhase.Running);   // pencere görünür
         f.Log.Clear();
 
@@ -266,7 +266,7 @@ public sealed class TrayBuildIndicatorControllerTests
         // [K-4] BeginRunAsync yerel bir hatayla Starting → Idle'a döner. Bu da AKTİF KÜMEDEN ÇIKIŞTIR: özel dal
         // YAZILMAZ, balloon o anki şerit metnini (bir hata satırıdır) taşır.
         var f = new Fixture();
-        f.Controller.SetTerminalLine(Line("Run failed — engine did not start", healthy: false));
+        f.Controller.SetTerminalLine(Failed("Run failed — engine did not start"));
         f.Controller.SetMainWindowVisible(false);
         f.Controller.SetPhase(AppPhase.Starting);
         f.Log.Clear();
@@ -274,23 +274,25 @@ public sealed class TrayBuildIndicatorControllerTests
         f.Controller.SetPhase(AppPhase.Idle);
         f.View.FinishExit();
 
-        Assert.Equal(["BeginExit", "HideNow", "Notify:Run failed — engine did not start|False"], f.Log);
+        Assert.Equal(["BeginExit", "HideNow", "Notify:Run failed — engine did not start"], f.Log);
     }
 
     /// <summary>
-    /// Bildirimciye SATIRIN KENDİSİ ulaşır — metni ve sağlığı bir arada.
+    /// Bildirimciye SATIRIN KENDİSİ ulaşır — metni ve statü glyph'i bir arada, bozulmadan.
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Bu pin eskiden <c>Healthy_flag_reaches_the_notifier</c> idi ve yalnız
-    /// sağlık BAYRAĞININ (<c>ShowRunFinished(string, bool)</c>'ın ikinci parametresi) doğru aktığını
-    /// pinliyordu. Bildirim artık satırın başını başlık, geri kalanını gövde yapıyor; yani tepsiye giden şey
-    /// bir metin+bayrak ÇİFTİ değil satırın ta kendisidir. Çift kalsaydı controller satırı ikiye ayırıp
-    /// taşımak zorunda kalırdı — teslim kutusunun içine bir biçim kararı sızardı.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bu pin eskiden <c>Healthy_flag_reaches_the_notifier</c> idi: iddiası
+    /// satırın SAĞLIK BAYRAĞININ (<c>ShowRunFinished(string, bool)</c>'ın ikinci parametresi) bildirimciye
+    /// ulaştığı ve orada Info/Error ikonunu seçtiğiydi. İkisi de artık yok. Bildirim her sonuçta ürünün kendi
+    /// ikonunu taşıyor, yani sağlık hiçbir şeyi sürmüyor; <c>RibbonLine.Healthy</c> üretimde tüketicisiz
+    /// kaldığı için kaldırıldı (gerekirse tek satırda geri gelir). Geriye kalan — ve pinlenmeye DEVAM eden —
+    /// şey, tepsiye giden şeyin bir metin+bayrak çifti değil satırın ta kendisi olduğudur: statü de şeridin
+    /// TEK statü sinyalinde, yani <c>Glyph</c>'te durur.</para></summary>
     [Fact]
     public void The_terminal_line_itself_reaches_the_notifier()
     {
         const string text = "Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s";
         var f = new Fixture();
-        f.Controller.SetTerminalLine(Line(text, healthy: false));
+        f.Controller.SetTerminalLine(Failed(text));
         f.Controller.SetMainWindowVisible(false);
         f.Controller.SetPhase(AppPhase.Running);
 
@@ -298,7 +300,7 @@ public sealed class TrayBuildIndicatorControllerTests
         f.View.FinishExit();
 
         Assert.Equal(text, f.Notifier.LastLine?.Text);
-        Assert.False(f.Notifier.LastLine?.Healthy);
+        Assert.Equal("failed", f.Notifier.LastLine?.Glyph);
     }
 
     // ---------------------------------------------------------------- reduced motion
@@ -308,7 +310,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         var f = new Fixture();
         f.Controller.SetAnimationsEnabled(false);
-        f.Controller.SetTerminalLine(Line("Completed — 24 succeeded · 9 skipped · 1m 12s", healthy: true));
+        f.Controller.SetTerminalLine(Succeeded("Completed — 24 succeeded · 9 skipped · 1m 12s"));
         f.Controller.SetMainWindowVisible(false);
 
         f.Controller.SetPhase(AppPhase.Running);
@@ -320,7 +322,7 @@ public sealed class TrayBuildIndicatorControllerTests
 
         // Animasyon istemeyen kullanıcı bekletilmez: çıkış evresi HİÇ oynatılmaz, gizlenme anında olur.
         Assert.DoesNotContain("BeginExit", f.Log);
-        Assert.Equal(["HideNow", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s|True"], f.Log);
+        Assert.Equal(["HideNow", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s"], f.Log);
     }
 
     [Fact]

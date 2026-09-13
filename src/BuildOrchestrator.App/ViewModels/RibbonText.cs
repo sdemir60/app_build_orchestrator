@@ -11,18 +11,6 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public readonly record struct RibbonLine(string Text, string BrushKey, string? Glyph)
 {
-    /// <summary>
-    /// [tray indicator/K-5] Satır bir BAŞARISIZLIK bildirmiyor mu.
-    ///
-    /// <para>Ölçüt glyph'tir, metin değil: glyph zaten şeridin TEK statü sinyalidir ve failed sayısı,
-    /// run hatası, sync hatası, motor ölümü — hepsi ona düşer. Tepsideki bitiş bildirimi ikonunu (bilgi mi
-    /// hata mı) buradan seçer; ayrı bir "kötü mü" kuralı yazmak, aynı kararın ikinci bir tanımı olurdu.</para></summary>
-    public bool Healthy => Glyph != FailedGlyph;
-
-    /// <summary>Başarısızlık glyph'inin adı — <see cref="Healthy"/> ile şeridin glyph eşlemesi aynı dizgiyi
-    /// okur.</summary>
-    public const string FailedGlyph = "failed";
-
     /// <summary>Şeridin KENDİ ayırıcısı (<c>"Completed — …"</c>, <c>"Stopped — …"</c>, <c>"Run failed — …"</c>,
     /// <c>"Sync failed — …"</c>). TEK yerde tanımlıdır: <see cref="Head"/>/<see cref="Detail"/> bölmeyi buradan
     /// okur, <see cref="RibbonText.Compose"/>'un biçim dizgileri kaynak sanattır ve yeniden yazılmaz.</summary>
@@ -30,8 +18,12 @@ public readonly record struct RibbonLine(string Text, string BrushKey, string? G
 
     /// <summary>
     /// [tray indicator/K-5] Satırın BAŞI — ilk <see cref="HeadSeparator"/>'ın öncesi (<c>"Completed"</c>,
-    /// <c>"▸ Stopped"</c>, <c>"Run failed"</c>, <c>"Sync failed"</c>); ayırıcı yoksa <c>null</c>
-    /// (ör. <c>"Engine stopped unexpectedly (exit 1)"</c>).
+    /// <c>"▸ Stopped"</c>, <c>"Run failed"</c>, <c>"Sync failed"</c>); ayırıcı yoksa <c>null</c>.
+    ///
+    /// <para><b>Başsızlık motor ölümüyle EŞ ANLAMLI DEĞİLDİR:</b> bugün ayırıcı taşımayan tek satır
+    /// <c>"Engine stopped unexpectedly (…)"</c>'dır. Motorun diğer iki ölüm satırı
+    /// (<c>RunViewModel.EngineMissingMessage</c>, <c>RunViewModel.EngineCannotStartMessage</c>) ayırıcıyı
+    /// TAŞIR ve baş üretir ("Engine missing", "Engine could not start").</para>
     ///
     /// <para>Tek tüketicisi tepsideki bitiş bildirimidir: başlığı buradan, gövdeyi <see cref="Detail"/>'den
     /// alır. Bildirim İKİNCİ bir özet DERLEMEZ — aynı satırı okur ve kendi ayırıcısında bir kez böler, yani

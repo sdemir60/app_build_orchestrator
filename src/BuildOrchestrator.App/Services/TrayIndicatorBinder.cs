@@ -59,7 +59,7 @@ internal static class TrayIndicatorBinder
     }
 
     /// <summary>[K-5] Bildirime giden şey şeridin o anki SATIRIDIR — parçalanıp yeniden kurulmaz. Metin,
-    /// sağlık ve bildirimin başlık/gövde ayrımı hepsi o satırın içindedir.</summary>
+    /// statü glyph'i ve bildirimin başlık/gövde ayrımı hepsi o satırın içindedir.</summary>
     private static void PushLine(RunViewModel vm, TrayBuildIndicatorController controller) =>
         controller.SetTerminalLine(vm.RibbonLine);
 }

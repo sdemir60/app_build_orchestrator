@@ -68,6 +68,24 @@ public class AppIdentityTests
         Assert.Empty(offenders);
     }
 
+    /// <summary>
+    /// KAYNAK GUARD'ı: uygulama ikonunun pack URI'si de TEK yerde yazılır — <see cref="AppIdentity.AppIconUri"/>.
+    ///
+    /// <para>Ürün adının kardeşi: ikon da ürün kimliğidir ve iki tüketicisi vardır (pencere/taskbar ikonu ve
+    /// tepsi bildiriminin büyük ikonu). İkinci bir literal kopyası SESSİZCE ayrışır — dosya adı ya da klasör
+    /// değişince biri düzelir, diğeri çalışma zamanında patlar (ctor'da çözülemeyen bir kaynak). Guard sabitin
+    /// KENDİ dosyasını hariç tutar ve geri kalan tüm .cs/.xaml'de literali arar.</para></summary>
+    [Fact]
+    public void The_app_icon_uri_is_written_in_exactly_one_place()
+    {
+        var offenders = RepoPaths.AppSourceFiles("*.cs").Concat(RepoPaths.AppSourceFiles("*.xaml"))
+            .Where(f => File.ReadAllText(f).Contains(AppIdentity.AppIconUri, StringComparison.Ordinal))
+            .Select(f => Path.GetRelativePath(RepoPaths.AppSrcRoot, f))
+            .ToList();
+
+        Assert.Equal([Path.Combine("Services", "AppIdentity.cs")], offenders);
+    }
+
     // ------------------------------------------------------------------ motor kimliği
 
     /// <summary>Motor sürümü + PID artık SAKLANIR. Önceden <c>OnEngineReady</c> sürümü yalnız konsol satırına

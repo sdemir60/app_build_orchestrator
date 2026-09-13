@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.RegularExpressions;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
@@ -120,8 +120,17 @@ public sealed class TrayIndicatorBinderTests
         Assert.StartsWith("Completed — ", notifier.LastLine?.Text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Başarısız biten bir koşuda bildirimciye ulaşan satır, şeridin BAŞARISIZLIK satırının ta kendisidir —
+    /// hem metniyle hem <c>"failed"</c> glyph'iyle.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bu pin eskiden <c>A_failed_run_reaches_the_notifier_as_unhealthy</c> idi
+    /// ve satırın <c>Healthy</c>'sinin <c>false</c> olduğunu okuyordu; o bayrak bildirim ikonunu (Info/Error)
+    /// seçiyordu. Bildirim artık her sonuçta ürünün kendi ikonunu taşıdığı için sağlığın süreceği bir şey
+    /// kalmadı ve <c>RibbonLine.Healthy</c> kaldırıldı. İDDİA AYNI KALIR, yalnız doğrudan kaynağından okunur:
+    /// glyph şeridin TEK statü sinyalidir (<c>Healthy</c> zaten onun türeviydi).</para></summary>
     [Fact]
-    public void A_failed_run_reaches_the_notifier_as_unhealthy()
+    public void A_failed_run_reaches_the_notifier_carrying_the_failed_glyph()
     {
         var (vm, view, notifier, _) = Bound();
         StartRun(vm);
@@ -131,7 +140,7 @@ public sealed class TrayIndicatorBinderTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 0, 0, 1234, 0));
         view.FinishExit();
 
-        Assert.False(notifier.LastLine?.Healthy);
+        Assert.Equal("failed", notifier.LastLine?.Glyph);
         Assert.Equal(vm.RibbonLine, notifier.LastLine);
         Assert.Contains("failed", notifier.LastLine?.Text, StringComparison.Ordinal);
     }
@@ -172,7 +181,7 @@ public sealed class TrayIndicatorBinderTests
 
         Assert.Equal(1, notifier.Count);
         Assert.Equal(vm.RibbonLine, notifier.LastLine);
-        Assert.False(notifier.LastLine?.Healthy);
+        Assert.Equal("failed", notifier.LastLine?.Glyph);   // şeridin kalıcı kırmızısı satırla birlikte gider
     }
 
     // ---------------------------------------------------------------- görünürlük
@@ -241,22 +250,42 @@ public sealed class TrayIndicatorBinderTests
     public void Tray_icon_run_finished_notification_splits_the_line_into_a_title_and_a_body(
         string text, string expectedTitle, string expectedBody)
     {
-        var line = new RibbonLine(text, "Brush.StatusFailText", RibbonLine.FailedGlyph);
+        var line = new RibbonLine(text, "Brush.StatusFailText", "failed");
 
         Assert.Equal(expectedTitle, AppTrayIcon.RunFinishedTitle(line));
         Assert.Equal(expectedBody, AppTrayIcon.RunFinishedBody(line));
     }
 
-    /// <summary>Başı OLMAYAN satır (motor ölümü) ürün adının ALTINA, bütün hâlinde yazılır — uydurulmuş bir
-    /// başlık satırın söylemediği bir şeyi söylerdi, cümleyi kırpmak ise bilgiyi yok ederdi.</summary>
+    /// <summary>Başı OLMAYAN satır ürün adının ALTINA, bütün hâlinde yazılır — uydurulmuş bir başlık satırın
+    /// söylemediği bir şeyi söylerdi, cümleyi kırpmak ise bilgiyi yok ederdi.
+    /// <para>Bugün başsız tek satır beklenmeyen motor ölümüdür. Bu, "motor hatası = başsız" demek DEĞİLDİR:
+    /// gerekçesini söyleyen iki motor satırı ayırıcıyı taşır ve kendi başlığıyla gider — bkz.
+    /// <c>RibbonTextTests.Engine_failures_that_name_a_reason_do_carry_a_head</c>.</para></summary>
     [Fact]
     public void A_line_without_a_head_falls_back_to_the_product_name_over_the_whole_line()
     {
         var line = new RibbonLine("Engine stopped unexpectedly (exit 1)", "Brush.StatusFailText",
-            RibbonLine.FailedGlyph);
+            "failed");
 
         Assert.Equal(AppIdentity.Product, AppTrayIcon.RunFinishedTitle(line));
         Assert.Equal("Engine stopped unexpectedly (exit 1)", AppTrayIcon.RunFinishedBody(line));
+    }
+
+    /// <summary>
+    /// Hiç satır verilmemiş (varsayılan) bir <see cref="RibbonLine"/> bile bildirime <b>dizgi</b> taşır,
+    /// <c>null</c> değil.
+    ///
+    /// <para>Controller'ın teslim kutusu artık bir <c>RibbonLine</c> ve varsayılanı <c>default</c>: içindeki
+    /// <c>Text</c> <c>null</c>'dır. Eskiden kutu <c>_terminalText = ""</c> ile başlıyordu, yani savunma tabanı
+    /// BOŞ DİZGİYDİ; imza değişirken o taban sessizce düşmemelidir. Üretimde binder bağlanır bağlanmaz satırı
+    /// iter, ama bir bildirim yolunda <c>null</c> taşımak tabanı düşürmenin ta kendisidir.</para></summary>
+    [Fact]
+    public void A_line_that_was_never_pushed_still_yields_a_string_body()
+    {
+        var line = default(RibbonLine);
+
+        Assert.Equal(AppIdentity.Product, AppTrayIcon.RunFinishedTitle(line));
+        Assert.Equal("", AppTrayIcon.RunFinishedBody(line));
     }
 
     /// <summary>

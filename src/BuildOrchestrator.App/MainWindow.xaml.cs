@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.Input;
@@ -100,6 +101,12 @@ public partial class MainWindow : Window
         _console = console;
         DataContext = _vm;
         _closeBalloon = new FirstCloseBalloonGate(_uiState);
+
+        // [T64] Pencere/taskbar ikonu. Adres TEK kaynaktan gelir (AppIdentity.AppIconUri; tepsi bildiriminin
+        // büyük ikonu da onu okur) ve bu yüzden XAML'de DEĞİL burada kurulur: `Icon` bir ImageSource'tur,
+        // XAML'de bir markup extension'ın döndürdüğü DİZGİYE tip dönüştürücü UYGULANMAZ — `{x:Static}` ile
+        // yazıldığında pencere ctor'da XamlParseException ile düşüyordu (ölçüldü). Kod tarafı kesin çalışır.
+        Icon = BitmapFrame.Create(new Uri(AppIdentity.AppIconUri));
 
         // [T35 fold #1] Title-bar yüksekliğinin TEK kaynağı Size.TitleBarHeight token'ıdır: WindowChrome
         // (CaptionHeight = sürüklenebilir başlık bandı) VE title-bar satırı ONDAN türetilir. WindowChrome bir

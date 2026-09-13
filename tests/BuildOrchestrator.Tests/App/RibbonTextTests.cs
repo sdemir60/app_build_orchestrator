@@ -385,22 +385,41 @@ public class RibbonTextTests
     public void A_terminal_line_splits_into_a_head_and_a_detail_at_its_own_separator()
     {
         var line = new RibbonLine("Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s",
-            "Brush.StatusFailText", RibbonLine.FailedGlyph);
+            "Brush.StatusFailText", "failed");
 
         Assert.Equal("Completed", line.Head);
         Assert.Equal("3 failed · 24 succeeded · 9 skipped · 1m 12s", line.Detail);
     }
 
-    /// <summary>Ayırıcısı OLMAYAN satır (motor ölümü) baş da gövde de taşımaz — uydurulmuş bir başlık, satırın
-    /// söylemediği bir şeyi söylerdi. <c>null</c>, çağıranın geri düşmesi için yeterli işarettir.</summary>
+    /// <summary>Ayırıcısı OLMAYAN satır baş da gövde de taşımaz — uydurulmuş bir başlık, satırın söylemediği
+    /// bir şeyi söylerdi. <c>null</c>, çağıranın geri düşmesi için yeterli işarettir.
+    /// <para>Bugün bu sınıfın TEK örneği beklenmeyen motor ölümüdür; "motor ölümü" ile eş anlamlı DEĞİLDİR —
+    /// bkz. <see cref="Engine_failures_that_name_a_reason_do_carry_a_head"/>.</para></summary>
     [Fact]
     public void A_line_without_the_separator_has_neither_a_head_nor_a_detail()
     {
         var line = new RibbonLine("Engine stopped unexpectedly (exit 1)", "Brush.StatusFailText",
-            RibbonLine.FailedGlyph);
+            "failed");
 
         Assert.Null(line.Head);
         Assert.Null(line.Detail);
+    }
+
+    /// <summary>
+    /// "Başsız satır = motor ölümü" DEĞİLDİR: gerekçesini söyleyen iki motor hatası ayırıcıyı taşır ve baş
+    /// üretir. Bu pin, komşusundaki (<see cref="A_line_without_the_separator_has_neither_a_head_nor_a_detail"/>)
+    /// örneğin bir KURALA genellenmesini engeller — bildirim o iki satırda ürün adına DEĞİL, satırın kendi
+    /// başlığına düşer.</summary>
+    [Fact]
+    public void Engine_failures_that_name_a_reason_do_carry_a_head()
+    {
+        var missing = new RibbonLine(RunViewModel.EngineMissingMessage, "Brush.StatusFailText", "failed");
+        var cannotStart = new RibbonLine(RunViewModel.EngineCannotStartMessage, "Brush.StatusFailText", "failed");
+
+        Assert.Equal("Engine missing", missing.Head);
+        Assert.Equal("Engine could not start", cannotStart.Head);
+        Assert.NotNull(missing.Detail);
+        Assert.NotNull(cannotStart.Detail);
     }
 
     /// <summary>

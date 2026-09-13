@@ -6,7 +6,6 @@
         xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
         xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
         Title="{x:Static services:AppIdentity.Product}" Width="1400" Height="800" WindowState="Maximized"
-        Icon="pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
         WindowStyle="SingleBorderWindow"
         Background="{DynamicResource Brush.SurfaceBase}" Foreground="{DynamicResource Brush.TextPrimary}"

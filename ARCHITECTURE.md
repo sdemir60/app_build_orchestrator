@@ -1548,8 +1548,9 @@ events do not land on top of each other, an **OS balloon** reports the result, c
 icon at its large size. Its text is not composed a second time: it is the ribbon's own terminal line, split once
 at the separator the ribbon itself writes — the head becomes the title (`Completed`, `▸ Stopped`, `Run failed`)
 and everything after it becomes the body. Opening the window afterwards shows that same sentence whole, in the
-ribbon. A line that carries no head — an engine death is a single clause with nothing behind it — falls back to
-the product name over the whole line. Clicking the notification restores the window through the *same* path as
+ribbon. A line that carries no separator — today only the one an unexpected engine stop writes; the engine
+failures that name a reason keep their heads — falls back to the product name over the whole line. Clicking the
+notification restores the window through the *same* path as
 the tray icon and the overlay. A run that ends while the window is *visible* produces no balloon at all — the
 ribbon is already on screen.
 

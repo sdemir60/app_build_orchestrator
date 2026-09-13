@@ -26,10 +26,6 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 {
     private const string IconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/tray-icon-16.ico";
 
-    /// <summary>Çok boyutlu uygulama ikonu — balloon'un büyük ikonu buradan gelir (pencere/taskbar da aynı
-    /// dosyayı kullanır, bkz. <c>MainWindow.xaml</c>).</summary>
-    private const string AppIconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico";
-
     /// <summary>Windows'un "large icon" balloon'unda gösterdiği kare. <c>app-icon.ico</c> bu kareyi gerçekten
     /// taşır (<c>IconGeometryTests</c> 16/24/32/48/256'yı pinler), yani ölçekleme yapılmaz.</summary>
     private const int LargeIconPx = 48;
@@ -67,12 +63,14 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
     }
 
-    /// <summary>Gömülü <c>app-icon.ico</c>'dan istenen kareyi çözer. <c>System.Drawing.Icon</c> veriyi ctor'da
-    /// kendi içine kopyalar, bu yüzden akış hemen bırakılabilir.</summary>
+    /// <summary>Gömülü uygulama ikonundan (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere
+    /// ikonu da onu okur) istenen kareyi çözer. <c>System.Drawing.Icon</c> veriyi ctor'da kendi içine kopyalar,
+    /// bu yüzden akış hemen bırakılabilir.</summary>
     private static System.Drawing.Icon LoadLargeIcon()
     {
-        var resource = Application.GetResourceStream(new Uri(AppIconUri))
-            ?? throw new InvalidOperationException($"The application icon resource was not found: {AppIconUri}");
+        var resource = Application.GetResourceStream(new Uri(AppIdentity.AppIconUri))
+            ?? throw new InvalidOperationException(
+                $"The application icon resource was not found: {AppIdentity.AppIconUri}");
         using var stream = resource.Stream;
         return new System.Drawing.Icon(stream, new System.Drawing.Size(LargeIconPx, LargeIconPx));
     }
@@ -117,14 +115,17 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         customIconHandle: _largeIcon.Handle,
         largeIcon: true);
 
-    /// <summary>Balloon başlığı = satırın BAŞI (<c>"Completed"</c>, <c>"Run failed"</c>); başı olmayan bir
-    /// satırda (motor ölümü) ürün adı. Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye
-    /// (<c>TaskbarIcon</c> headless süitte kurulamaz).</summary>
+    /// <summary>Balloon başlığı = satırın BAŞI (<c>"Completed"</c>, <c>"Run failed"</c>); ayırıcı taşımayan bir
+    /// satırda ürün adı. Ayrı ve saf: gerçek bir tepsi ikonu kurmadan sınanabilsin diye (<c>TaskbarIcon</c>
+    /// headless süitte kurulamaz).</summary>
     internal static string RunFinishedTitle(RibbonLine line) => line.Head ?? AppIdentity.Product;
 
-    /// <summary>Balloon gövdesi = satırın GERİ KALANI; başı olmayan bir satırda satırın tamamı (ürün adının
-    /// altında). Bkz. <see cref="RunFinishedTitle"/>.</summary>
-    internal static string RunFinishedBody(RibbonLine line) => line.Detail ?? line.Text;
+    /// <summary>Balloon gövdesi = satırın GERİ KALANI; ayırıcı taşımayan bir satırda satırın tamamı (ürün
+    /// adının altında). Bkz. <see cref="RunFinishedTitle"/>.
+    /// <para>Son <c>?? ""</c> bir SAVUNMA TABANIdır, ölü dal değil: teslim kutusu (<c>SetTerminalLine</c>)
+    /// artık bir <c>RibbonLine</c> ve varsayılanı <c>default</c>, yani hiç satır itilmemişken <c>Text</c>
+    /// <c>null</c>'dır. Kutu eskiden <c>""</c> ile başlıyordu; imza değişirken taban düşmez.</para></summary>
+    internal static string RunFinishedBody(RibbonLine line) => line.Detail ?? line.Text ?? "";
 
     public void Dispose()
     {

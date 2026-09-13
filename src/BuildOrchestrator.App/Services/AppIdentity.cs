@@ -27,6 +27,15 @@ public static class AppIdentity
     public static string Copyright { get; } =
         Self.GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright ?? "";
 
+    /// <summary>
+    /// Uygulama ikonunun (çok boyutlu <c>app-icon.ico</c>) gömülü kaynak adresi — ürün adı gibi TEK yerde.
+    ///
+    /// <para>İki tüketicisi vardır: pencere/taskbar ikonu (<c>MainWindow.xaml</c>) ve tepsi bildiriminin büyük
+    /// ikonu (<c>Shell/AppTrayIcon</c>). Adres ikinci kez yazılsaydı dosya adı ya da klasör değiştiğinde biri
+    /// düzelir, diğeri çalışma zamanında çözülemeyen bir kaynağa dönerdi — bedeli ctor'da atılan bir exception.
+    /// Burada durur çünkü ikon da ürün kimliğidir (<see cref="Product"/>'ın kardeşi).</para></summary>
+    public const string AppIconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico";
+
     /// <summary>About hero'sundaki tek cümlelik ürün tanımı. Bunun bir assembly attribute karşılığı YOKTUR
     /// (<c>AssemblyDescription</c> MSBuild'de <c>&lt;Description&gt;</c> ile kurulur ve paket açıklamasıdır) —
     /// metnin tek yeri burasıdır.</summary>

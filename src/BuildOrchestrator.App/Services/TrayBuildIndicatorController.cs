@@ -30,7 +30,7 @@ public interface ITrayRunNotifier
 {
     /// <summary>Şeridin o anki terminal SATIRI — metin+bayrak çifti DEĞİL. Bildirimin başlığı ile gövdesi
     /// satırın kendi baş/gövde ayrımından (<see cref="RibbonLine.Head"/>/<see cref="RibbonLine.Detail"/>)
-    /// doğar; sağlık da satırın kendi glyph'indedir.</summary>
+    /// doğar; statü de satırın kendi glyph'indedir.</summary>
     void ShowRunFinished(RibbonLine line);
 }
 
@@ -110,9 +110,9 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
         ApplyMode();
     }
 
-    /// <summary>[K-5] Şeridin O ANKİ satırı — metin, brush anahtarı ve glyph tek parça hâlinde. Ayrı bir
-    /// sağlık bayrağı GEÇMEZ: sağlık da (<see cref="RibbonLine.Healthy"/>), bildirimin başlığı ile gövdesi de
-    /// satırın kendisinden okunur, yani controller taşıdığı şeyi HİÇ yorumlamaz.</summary>
+    /// <summary>[K-5] Şeridin O ANKİ satırı — metin, brush anahtarı ve glyph tek parça hâlinde. Yanında ikinci
+    /// bir parametre GEÇMEZ: bildirimin başlığı da gövdesi de statüsü de satırın kendisinden okunur, yani
+    /// controller taşıdığı şeyi HİÇ yorumlamaz.</summary>
     public void SetTerminalLine(RibbonLine line) => _terminal = line;
 
     private void Apply()
